@@ -12,11 +12,7 @@ use clap::Parser;
 use core::fmt;
 use foundry_common::shell;
 use foundry_config::{Chain, Config, FigmentProviders};
-#[cfg(feature = "monad")]
-use foundry_evm::hardfork::MonadHardfork;
-#[cfg(feature = "optimism")]
-use foundry_evm::hardfork::OpHardfork;
-use foundry_evm::hardfork::{EthereumHardfork, FoundryHardfork};
+use foundry_evm::hardfork::FoundryHardfork;
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::FoundryReceiptEnvelope;
 use futures::FutureExt;
@@ -33,7 +29,6 @@ use std::{
     task::{Context, Poll},
     time::Duration,
 };
-use tempo_hardfork::TempoHardfork;
 use tokio::time::{Instant, Interval};
 
 #[derive(Clone, Debug, Parser)]
@@ -83,6 +78,14 @@ pub struct NodeArgs {
     /// [default: m/44'/60'/0'/0/]
     #[arg(long)]
     pub derivation_path: Option<String>,
+
+    /// The account used to sponsor Tempo fee-payer requests (`eth_signRawTransaction` and raw
+    /// transactions carrying the sponsorship placeholder).
+    ///
+    /// Must be an unlocked account. Only used on Tempo networks; defaults to the last dev
+    /// account.
+    #[arg(long = "tempo.fee-payer", value_name = "ADDRESS")]
+    pub tempo_fee_payer: Option<Address>,
 
     /// The EVM hardfork to use.
     ///
@@ -336,6 +339,7 @@ impl NodeArgs {
             // Restore the source-derived or explicitly selected network after applying the
             // execution chain ID. Fork source discovery can refine an unresolved network later.
             .with_networks(networks)
+            .with_tempo_fee_payer(self.tempo_fee_payer)
             .with_disable_default_create2_deployer(self.evm.disable_default_create2_deployer)
             .with_disable_pool_balance_checks(self.evm.disable_pool_balance_checks)
             .with_slots_in_an_epoch(self.slots_in_an_epoch)
@@ -905,20 +909,7 @@ fn parse_hardfork(hf: &str, networks: &NetworkConfigs) -> eyre::Result<FoundryHa
         return Ok(hardfork);
     }
 
-    #[cfg(feature = "optimism")]
-    if networks.is_optimism() {
-        return Ok(OpHardfork::from_str(hf)?.into());
-    }
-    if networks.is_tempo() {
-        return Ok(TempoHardfork::from_str(hf)?.into());
-    }
-    #[cfg(feature = "monad")]
-    if networks.is_monad() {
-        return Ok(MonadHardfork::from_str(hf)
-            .map_err(|err| eyre::eyre!("unknown monad hardfork '{hf}': {err:?}"))?
-            .into());
-    }
-    Ok(EthereumHardfork::from_str(hf)?.into())
+    networks.execution_network().parse_hardfork(hf).map_err(eyre::Report::msg)
 }
 
 /// Clap's value parser for genesis. Loads a genesis.json file.
@@ -937,7 +928,11 @@ fn duration_from_secs_f64(s: &str) -> Result<Duration, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use foundry_evm::hardfork::EthereumHardfork;
+    #[cfg(feature = "optimism")]
+    use foundry_evm::hardfork::OpHardfork;
     use std::{env, net::Ipv4Addr};
+    use tempo_hardfork::TempoHardfork;
 
     #[test]
     fn test_parse_fork_url() {
@@ -1207,7 +1202,7 @@ mod tests {
         let args: NodeArgs =
             NodeArgs::parse_from(["anvil", "--network", "monad", "--hardfork", "MonadNine"]);
         let config = args.into_node_config().unwrap();
-        assert_eq!(config.hardfork, Some(MonadHardfork::MonadNine.into()));
+        assert_eq!(config.hardfork, Some(foundry_evm::hardfork::MonadHardfork::MonadNine.into()));
         assert!(config.networks.is_monad());
     }
 
@@ -1217,7 +1212,7 @@ mod tests {
         let args: NodeArgs = NodeArgs::parse_from(["anvil", "--network", "monad"]);
         let config = args.into_node_config().unwrap();
         assert_eq!(config.hardfork, None);
-        assert_eq!(config.get_hardfork(), MonadHardfork::default().into());
+        assert_eq!(config.get_hardfork(), foundry_evm::hardfork::MonadHardfork::default().into());
         assert!(config.networks.is_monad());
     }
 

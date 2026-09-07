@@ -30,20 +30,16 @@ use crate::{
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, B256, Selector, hex, keccak256};
+use alloy_primitives::{Address, B256, Selector, hex, keccak256, map::HashMap};
 use eyre::Result;
 use foundry_config::FuzzCorpusConfig;
-use foundry_evm_core::{
-    constants::{CHEATCODE_ADDRESS, MAGIC_ASSUME},
-    decode::SkipReason,
-    evm::FoundryEvmNetwork,
-};
+use foundry_evm_core::{constants::MAGIC_ASSUME, evm::FoundryEvmNetwork};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::{BasicTxDetails, invariant::FuzzRunIdentifiedContracts};
 use std::{
     borrow::Cow,
     cmp::Ordering,
-    collections::{BTreeSet, HashMap},
+    collections::BTreeSet,
     fmt,
     fs::File,
     io::{BufWriter, Write},
@@ -291,7 +287,7 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
     let mut failed_entries = 0usize;
     // Reused per call. In aggregate mode it accumulates across all entries; in per-input mode it
     // is cleared after each entry's file is written.
-    let mut evm_buf = EvmShowmap::new();
+    let mut evm_buf = EvmShowmap::default();
     let mut san_buf: Vec<u64> = Vec::new();
 
     for entry in entries {
@@ -324,10 +320,7 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
             let fingerprint = snapshot_edge_fingerprint(&call_result);
             // `vm.assume` rejects and cheatcode `vm.skip` are discarded by the campaign: the call
             // is not committed, checked, or counted toward coverage.
-            if call_result.result.as_ref() == MAGIC_ASSUME
-                || (call_result.reverter == Some(CHEATCODE_ADDRESS)
-                    && SkipReason::decode(&call_result.result).is_some())
-            {
+            if call_result.result.as_ref() == MAGIC_ASSUME || call_result.skip_reason().is_some() {
                 continue;
             }
             // Coverage-collection asymmetry across calls within a stateful sequence:
@@ -521,10 +514,7 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
             tx.call_details.calldata.get(..4).map(Selector::from_slice).unwrap_or_default();
         let fingerprint = snapshot_edge_fingerprint(&call_result);
 
-        if call_result.result.as_ref() == MAGIC_ASSUME
-            || (call_result.reverter == Some(CHEATCODE_ADDRESS)
-                && SkipReason::decode(&call_result.result).is_some())
-        {
+        if call_result.result.as_ref() == MAGIC_ASSUME || call_result.skip_reason().is_some() {
             observation.skipped += 1;
             continue;
         }
@@ -711,8 +701,12 @@ fn fuzz_replay_call_succeeded<FEN: FoundryEvmNetwork>(
     call_result: &mut crate::executors::RawCallResult<FEN>,
     fail_on_revert: bool,
 ) -> bool {
-    should_ignore_revert::<FEN>(fail_on_revert, target_addr, call_result.reverter)
-        || executor.is_raw_call_mut_success(target_addr, call_result, false)
+    should_ignore_revert(
+        fail_on_revert,
+        target_addr,
+        call_result.reverter,
+        executor.inspector().extra_cheatcode_addresses(),
+    ) || executor.is_raw_call_mut_success(target_addr, call_result, false)
 }
 
 fn newly_broken_invariants<FEN: FoundryEvmNetwork>(
@@ -893,7 +887,7 @@ mod tests {
     fn write_evm_emits_only_nonzero_deterministic_ids() {
         let mut buf: Vec<u8> = Vec::new();
         let h = B256::with_last_byte(0xab);
-        let mut evm = EvmShowmap::new();
+        let mut evm = EvmShowmap::default();
         evm.insert((h, 1u32), 0u64); // skipped (count=0)
         evm.insert((h, 0x2au32), 3u64);
         write_evm(&mut buf, &evm).unwrap();
@@ -912,7 +906,7 @@ mod tests {
     fn write_showmap_file_skips_when_empty() {
         let dir = temp_dir();
         let path = dir.join("trial.txt");
-        let written = write_showmap_file(&path, &EvmShowmap::new(), &[]).unwrap();
+        let written = write_showmap_file(&path, &EvmShowmap::default(), &[]).unwrap();
         assert_eq!(written, 0);
         assert!(!path.exists());
     }
@@ -922,7 +916,7 @@ mod tests {
         let dir = temp_dir();
         let path = dir.join("trial.txt");
         let h = B256::with_last_byte(0xff);
-        let mut evm = EvmShowmap::new();
+        let mut evm = EvmShowmap::default();
         evm.insert((h, 7u32), 5u64);
         let written = write_showmap_file(&path, &evm, &[2]).unwrap();
         assert_eq!(written, 1);
@@ -937,7 +931,7 @@ mod tests {
         let path = dir.join("trial.txt");
         std::fs::write(&path, "keep me").unwrap();
         let h = B256::with_last_byte(0xff);
-        let mut evm = EvmShowmap::new();
+        let mut evm = EvmShowmap::default();
         evm.insert((h, 7u32), 5u64);
         let err = write_showmap_file(&path, &evm, &[]).unwrap_err();
         assert!(err.to_string().contains("pick a different --showmap-trial"), "{err:?}");

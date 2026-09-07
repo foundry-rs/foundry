@@ -1499,12 +1499,7 @@ impl Config {
                         Solc::blocking_install(version)?
                     }
                 }
-                SolcReq::Local(solc) => {
-                    if !solc.is_file() {
-                        return Err(SolcError::msg(format!("`solc` {solc:?} does not exist")));
-                    }
-                    Solc::new_with_approval(solc)?
-                }
+                SolcReq::Local(solc) => Solc::new(resolve_solc_path(solc)?)?,
             };
             return Ok(Some(solc));
         }
@@ -1591,7 +1586,7 @@ impl Config {
             return Ok(None);
         }
         let vyper = if let Some(path) = &self.vyper.path {
-            Some(Vyper::new_with_approval(path)?)
+            Some(Vyper::new(path)?)
         } else {
             Vyper::new("vyper").ok()
         };
@@ -2103,8 +2098,13 @@ impl Config {
     }
 
     fn _with_root(root: &Path) -> Self {
-        // autodetect paths
-        let paths = ProjectPathsConfig::builder().build_with_root::<()>(root);
+        // Autodetect the source, artifact and library directories from `root`.
+        let paths = ProjectPathsConfig::builder()
+            // The builder autodetects remappings too, which is a separate and far more expensive
+            // scan: it recursively walks every directory under every library path. Only the
+            // directories are read below, so opt out of it.
+            .remappings(Vec::new())
+            .build_with_root::<()>(root);
         let artifacts: PathBuf = paths.artifacts.file_name().unwrap().into();
         let mut config = Self::default();
         if config.uses_default_src() {
@@ -2703,7 +2703,8 @@ impl Config {
                 .ok()
                 .and_then(|version| self.evm_version.normalize_version_solc(&version))
         {
-            figment = figment.merge(("evm_version", version));
+            let profile = figment.profile().clone();
+            figment = figment.merge(Serialized::default("evm_version", version).profile(profile));
         }
 
         // Normalize `deny` based on the provided `deny_warnings` value.
@@ -3096,8 +3097,16 @@ pub enum SolcReq {
     /// Requires a specific solc version, that's either already installed (via `svm`) or will be
     /// auto installed (via `svm`)
     Version(Version),
-    /// Path to an existing local solc installation
+    /// Path to an existing local solc installation, or an executable name on `PATH`.
     Local(PathBuf),
+}
+
+fn resolve_solc_path(solc: &Path) -> Result<PathBuf, SolcError> {
+    if solc.is_file() {
+        Ok(solc.to_path_buf())
+    } else {
+        which::which(solc).map_err(|_| SolcError::msg(format!("`solc` {solc:?} does not exist")))
+    }
 }
 
 impl SolcReq {
@@ -3108,7 +3117,7 @@ impl SolcReq {
     pub fn try_version(&self) -> Result<Version, SolcError> {
         match self {
             Self::Version(version) => Ok(version.clone()),
-            Self::Local(path) => Solc::new_with_approval(path).map(|solc| solc.version),
+            Self::Local(path) => Solc::new(resolve_solc_path(path)?).map(|solc| solc.version),
         }
     }
 }
@@ -3279,8 +3288,6 @@ mod tests {
         ModelCheckerEngine, YulDetails,
         vyper::{VyperOptimizationLevel, VyperOptimizationMode, VyperVenomSettings},
     };
-    #[cfg(feature = "monad")]
-    use foundry_evm_hardforks::MonadHardfork;
     use foundry_evm_hardforks::{TempoHardfork, latest_active_tempo_hardfork};
     use similar_asserts::assert_eq;
     use soldeer_core::remappings::RemappingsLocation;
@@ -5779,8 +5786,14 @@ mod tests {
             )?;
 
             let config = Config::load().unwrap();
-            assert_eq!(config.hardfork, Some(FoundryHardfork::Monad(MonadHardfork::MonadNine)));
-            assert_eq!(config.evm_spec_id::<MonadHardfork>(), MonadHardfork::MonadNine);
+            assert_eq!(
+                config.hardfork,
+                Some(FoundryHardfork::Monad(foundry_evm_hardforks::MonadHardfork::MonadNine))
+            );
+            assert_eq!(
+                config.evm_spec_id::<foundry_evm_hardforks::MonadHardfork>(),
+                foundry_evm_hardforks::MonadHardfork::MonadNine
+            );
             assert_eq!(
                 config.hardfork.as_ref().and_then(FoundryHardfork::namespace),
                 Some("monad")
@@ -5970,6 +5983,13 @@ mod tests {
 
             let loaded = Config::load().unwrap().sanitized();
             assert_eq!(loaded.evm_version, EvmVersion::London);
+
+            let figment = Config::figment_with_root(jail.directory()).merge(
+                Serialized::default("evm_version", EvmVersion::Amsterdam)
+                    .profile(Config::selected_profile()),
+            );
+            let loaded = Config::from_provider(figment).unwrap().sanitized();
+            assert_eq!(loaded.evm_version, EvmVersion::Amsterdam);
             Ok(())
         });
     }

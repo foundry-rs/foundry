@@ -156,6 +156,21 @@ impl FoundryTransactionRequest {
         }
     }
 
+    fn check_type(&self, ty: FoundryTxType) -> Result<(), Vec<&'static str>> {
+        match ty {
+            FoundryTxType::Legacy => self.as_ref().complete_legacy(),
+            FoundryTxType::Eip2930 => self.as_ref().complete_2930(),
+            FoundryTxType::Eip1559 => self.as_ref().complete_1559(),
+            FoundryTxType::Eip4844 => self.as_ref().complete_4844(),
+            FoundryTxType::Eip7702 => self.as_ref().complete_7702(),
+            #[cfg(feature = "optimism")]
+            FoundryTxType::Deposit => self.complete_deposit(),
+            #[cfg(feature = "optimism")]
+            FoundryTxType::PostExec => Err(vec!["not implemented for post-exec tx"]),
+            FoundryTxType::Tempo => self.complete_tempo(),
+        }
+    }
+
     /// Check if all necessary keys are present to build a transaction.
     ///
     /// # Returns
@@ -164,22 +179,8 @@ impl FoundryTransactionRequest {
     /// - Err((type, missing)) if some keys are missing to build the preferred type.
     pub fn missing_keys(&self) -> Result<FoundryTxType, (FoundryTxType, Vec<&'static str>)> {
         let pref = self.preferred_type();
-        if let Err(missing) = match pref {
-            FoundryTxType::Legacy => self.as_ref().complete_legacy(),
-            FoundryTxType::Eip2930 => self.as_ref().complete_2930(),
-            FoundryTxType::Eip1559 => self.as_ref().complete_1559(),
-            FoundryTxType::Eip4844 => self.complete_4844(),
-            FoundryTxType::Eip7702 => self.as_ref().complete_7702(),
-            #[cfg(feature = "optimism")]
-            FoundryTxType::Deposit => self.complete_deposit(),
-            #[cfg(feature = "optimism")]
-            FoundryTxType::PostExec => Err(vec!["not implemented for post-exec tx"]),
-            FoundryTxType::Tempo => self.complete_tempo(),
-        } {
-            Err((pref, missing))
-        } else {
-            Ok(pref)
-        }
+        let result = if pref.is_eip4844() { self.complete_4844() } else { self.check_type(pref) };
+        if let Err(missing) = result { Err((pref, missing)) } else { Ok(pref) }
     }
 
     /// Build a typed transaction from this request.
@@ -528,18 +529,7 @@ impl TransactionBuilder for FoundryTransactionRequest {
 
 impl NetworkTransactionBuilder<FoundryNetwork> for FoundryTransactionRequest {
     fn complete_type(&self, ty: FoundryTxType) -> Result<(), Vec<&'static str>> {
-        match ty {
-            FoundryTxType::Legacy => self.as_ref().complete_legacy(),
-            FoundryTxType::Eip2930 => self.as_ref().complete_2930(),
-            FoundryTxType::Eip1559 => self.as_ref().complete_1559(),
-            FoundryTxType::Eip4844 => self.as_ref().complete_4844(),
-            FoundryTxType::Eip7702 => self.as_ref().complete_7702(),
-            #[cfg(feature = "optimism")]
-            FoundryTxType::Deposit => self.complete_deposit(),
-            #[cfg(feature = "optimism")]
-            FoundryTxType::PostExec => Err(vec!["not implemented for post-exec tx"]),
-            FoundryTxType::Tempo => self.complete_tempo(),
-        }
+        self.check_type(ty)
     }
 
     fn can_submit(&self) -> bool {
@@ -563,18 +553,7 @@ impl NetworkTransactionBuilder<FoundryNetwork> for FoundryTransactionRequest {
 
     fn output_tx_type_checked(&self) -> Option<FoundryTxType> {
         let pref = self.preferred_type();
-        match pref {
-            FoundryTxType::Legacy => self.as_ref().complete_legacy().ok(),
-            FoundryTxType::Eip2930 => self.as_ref().complete_2930().ok(),
-            FoundryTxType::Eip1559 => self.as_ref().complete_1559().ok(),
-            FoundryTxType::Eip4844 => self.as_ref().complete_4844().ok(),
-            FoundryTxType::Eip7702 => self.as_ref().complete_7702().ok(),
-            #[cfg(feature = "optimism")]
-            FoundryTxType::Deposit => self.complete_deposit().ok(),
-            #[cfg(feature = "optimism")]
-            FoundryTxType::PostExec => self.complete_type(pref).ok(),
-            FoundryTxType::Tempo => self.complete_tempo().ok(),
-        }?;
+        self.check_type(pref).ok()?;
         Some(pref)
     }
 
@@ -588,40 +567,38 @@ impl NetworkTransactionBuilder<FoundryNetwork> for FoundryTransactionRequest {
         let is_deposit = {
             #[cfg(feature = "optimism")]
             {
-                preferred_type == FoundryTxType::Deposit
+                preferred_type.is_deposit()
             }
             #[cfg(not(feature = "optimism"))]
             {
                 false
             }
         };
-        if !is_deposit && preferred_type != FoundryTxType::Tempo {
+        if !is_deposit && !preferred_type.is_tempo() {
             inner.trim_conflicting_keys();
             inner.populate_blob_hashes();
         }
         if !is_deposit {
             inner.nonce.is_none().then(|| inner.set_nonce(Default::default()));
         }
-        if matches!(preferred_type, FoundryTxType::Legacy | FoundryTxType::Eip2930) {
+        if preferred_type.is_legacy() || preferred_type.is_eip2930() {
             inner.gas_price.is_none().then(|| inner.set_gas_price(Default::default()));
         }
-        if preferred_type == FoundryTxType::Eip2930 {
+        if preferred_type.is_eip2930() {
             inner.access_list.is_none().then(|| inner.set_access_list(Default::default()));
         }
-        if matches!(
-            preferred_type,
-            FoundryTxType::Eip1559
-                | FoundryTxType::Eip4844
-                | FoundryTxType::Eip7702
-                | FoundryTxType::Tempo
-        ) {
+        if preferred_type.is_eip1559()
+            || preferred_type.is_eip4844()
+            || preferred_type.is_eip7702()
+            || preferred_type.is_tempo()
+        {
             inner
                 .max_priority_fee_per_gas
                 .is_none()
                 .then(|| inner.set_max_priority_fee_per_gas(Default::default()));
             inner.max_fee_per_gas.is_none().then(|| inner.set_max_fee_per_gas(Default::default()));
         }
-        if preferred_type == FoundryTxType::Eip4844 {
+        if preferred_type.is_eip4844() {
             inner
                 .as_ref()
                 .max_fee_per_blob_gas()

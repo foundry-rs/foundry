@@ -26,13 +26,6 @@ use external::{ExternalResolver, MAX_PROVENANCE_ADDRESSES, MatchResult, match_ca
 
 const MAX_EXTERNAL_JOBS: usize = 32;
 
-fn same_endpoint(left: &str, right: &str) -> bool {
-    let (Ok(left), Ok(right)) = (reqwest::Url::parse(left), reqwest::Url::parse(right)) else {
-        return false;
-    };
-    left == right
-}
-
 /// State after we have broadcasted the script.
 /// It is assumed that at this point [BroadcastedState::sequence] contains receipts for all
 /// broadcasted transactions.
@@ -625,6 +618,13 @@ fn check_unverified<N: Network>(
             }
         }
     }
+}
+
+fn same_endpoint(left: &str, right: &str) -> bool {
+    let (Ok(left), Ok(right)) = (reqwest::Url::parse(left), reqwest::Url::parse(right)) else {
+        return false;
+    };
+    left == right
 }
 
 #[cfg(test)]

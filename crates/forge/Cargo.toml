@@ -83,9 +83,10 @@ revm = { workspace = true, features = ["parse"] }
 semver.workspace = true
 serde_json.workspace = true
 similar = { version = "3", features = ["inline"] }
-solar.workspace = true
+solar = { workspace = true, features = ["clap"] }
+solar-lsp.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["time", "signal"] }
+tokio = { workspace = true, features = ["time", "signal", "process"] }
 toml_edit.workspace = true
 watchexec = "8.0"
 watchexec-events = "6.0"
@@ -107,6 +108,9 @@ quick-junit = "0.7.0"
 tempfile.workspace = true
 
 [dev-dependencies]
+async-lsp.workspace = true
+tokio-util.workspace = true
+futures = { workspace = true, features = ["executor"] }
 alloy-hardforks.workspace = true
 anvil.workspace = true
 forge-script-sequence.workspace = true

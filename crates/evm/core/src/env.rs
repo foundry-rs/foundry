@@ -1,14 +1,12 @@
 use std::fmt::Debug;
-#[cfg(feature = "monad")]
-use std::ops::{Deref, DerefMut};
 
-use alloy_consensus::Typed2718;
+use alloy_chains::NamedChain;
+use alloy_consensus::{Transaction as _, Typed2718};
 pub use alloy_evm::EvmEnv;
 use alloy_evm::FromRecoveredTx;
 use alloy_network::{AnyRpcTransaction, AnyTxEnvelope, TransactionResponse};
 use alloy_primitives::{Address, B256, Bytes, U256};
-#[cfg(feature = "monad")]
-use monad_revm::{MonadCfgEnv, MonadChainContext, MonadJournal};
+use foundry_evm_networks::celo::CELO_DYNAMIC_FEE_TX_TYPE;
 #[cfg(feature = "optimism")]
 use op_revm::transaction::deposit::DEPOSIT_TRANSACTION_TYPE;
 use revm::{
@@ -414,6 +412,88 @@ impl FoundryTransaction for TempoTxEnv {
     }
 }
 
+/// Foundry extension for chain context type
+///
+/// Every family that doesn't need chain metadata uses `()`.
+pub trait FoundryChain<Tx>: Clone + Debug + Default + Send + Sync {
+    /// Builds chain context for a standalone synthetic transaction.
+    fn for_transaction(_tx: &Tx) -> Self {
+        Self::default()
+    }
+
+    /// Builds chain context for a transaction at an exact block position.
+    fn for_block(
+        _grandparent: &[Tx],
+        _parent: &[Tx],
+        _current: &[Tx],
+        _current_tx_index: usize,
+    ) -> Self {
+        Self::default()
+    }
+
+    /// Refreshes journal state derived from the active chain position.
+    fn refresh_journal<J: FoundryJournal>(&self, _journal: &mut J) {}
+}
+
+impl<Tx> FoundryChain<Tx> for () {}
+
+/// Foundry extension for Journal type
+pub trait FoundryJournal: JournalExt {
+    /// Captures Monad's reserve-balance tracker for the active transaction.
+    #[cfg(feature = "monad")]
+    fn capture_reserve_balance(
+        &self,
+    ) -> monad_revm::reserve_balance::tracker::ReserveBalanceTracker {
+        monad_revm::reserve_balance::tracker::ReserveBalanceTracker::default()
+    }
+
+    /// Restores Monad's reserve-balance tracker for the active transaction.
+    #[cfg(feature = "monad")]
+    fn restore_reserve_balance(
+        &mut self,
+        _tracker: monad_revm::reserve_balance::tracker::ReserveBalanceTracker,
+    ) {
+    }
+
+    /// Whether transaction boundaries currently preserve the reserve-balance tracker, e.g. for
+    /// an isolated call that models an inner call of the enclosing transaction rather than a
+    /// new one.
+    #[cfg(feature = "monad")]
+    fn preserves_reserve_balance(&self) -> bool {
+        false
+    }
+
+    /// Sets whether transaction boundaries preserve the reserve-balance tracker.
+    #[cfg(feature = "monad")]
+    fn set_preserve_reserve_balance(&mut self, _preserve: bool) {}
+}
+
+impl<DB: Database> FoundryJournal for Journal<DB> {}
+
+#[cfg(feature = "monad")]
+impl<DB: Database> FoundryJournal for monad_revm::MonadJournal<DB> {
+    fn capture_reserve_balance(
+        &self,
+    ) -> monad_revm::reserve_balance::tracker::ReserveBalanceTracker {
+        monad_revm::MonadJournalTr::reserve_balance(self).clone()
+    }
+
+    fn restore_reserve_balance(
+        &mut self,
+        tracker: monad_revm::reserve_balance::tracker::ReserveBalanceTracker,
+    ) {
+        *monad_revm::MonadJournalTr::reserve_balance_mut(self) = tracker;
+    }
+
+    fn preserves_reserve_balance(&self) -> bool {
+        monad_revm::MonadJournalTr::preserves_reserve_balance_tracker(self)
+    }
+
+    fn set_preserve_reserve_balance(&mut self, preserve: bool) {
+        monad_revm::MonadJournalTr::set_preserve_reserve_balance_tracker(self, preserve);
+    }
+}
+
 /// Extension trait providing mutable field access to block, tx, and cfg environments.
 ///
 /// [`ContextTr`] only exposes immutable references for block, tx, and cfg.
@@ -423,7 +503,8 @@ pub trait FoundryContextExt:
         Block: FoundryBlock + Clone,
         Tx: FoundryTransaction + Clone,
         Cfg: Cfg<Spec = Self::Spec> + Clone + From<CfgEnv<Self::Spec>> + Into<CfgEnv<Self::Spec>>,
-        Journal: JournalExt,
+        Journal: FoundryJournal,
+        Chain: FoundryChain<Self::Tx>,
     >
 {
     /// Specification id type
@@ -494,12 +575,18 @@ pub trait FoundryContextExt:
     }
 }
 
+/// Refreshes journal state derived from a context's active chain position.
+pub fn refresh_chain_journal<CTX: FoundryContextExt>(context: &mut CTX) {
+    let chain = context.chain().clone();
+    chain.refresh_journal(context.journal_mut());
+}
+
 impl<
     BLOCK: FoundryBlock + Clone,
     TX: FoundryTransaction + Clone,
     SPEC: Into<SpecId> + Copy + Debug,
     DB: Database,
-    C,
+    C: FoundryChain<TX>,
 > FoundryContextExt for Context<BLOCK, TX, CfgEnv<SPEC>, DB, Journal<DB>, C>
 {
     type Spec = <Self::Cfg as Cfg>::Spec;
@@ -534,7 +621,14 @@ impl<
 
 #[cfg(feature = "monad")]
 impl<DB: Database> FoundryContextExt
-    for Context<BlockEnv, TxEnv, MonadCfgEnv, DB, MonadJournal<DB>, MonadChainContext>
+    for Context<
+        BlockEnv,
+        TxEnv,
+        monad_revm::MonadCfgEnv,
+        DB,
+        monad_revm::MonadJournal<DB>,
+        monad_revm::MonadChainContext,
+    >
 {
     type Spec = <Self::Cfg as Cfg>::Spec;
     fn block_mut(&mut self) -> &mut Self::Block {
@@ -560,25 +654,24 @@ impl<DB: Database> FoundryContextExt
     fn set_spec_and_gas_params(&mut self, spec: Self::Spec) {
         let mut cfg = self.cfg.clone().into_inner();
         cfg.spec = spec;
-        self.cfg = MonadCfgEnv::from(cfg);
+        self.cfg = monad_revm::MonadCfgEnv::from(cfg);
     }
 
     fn db_journal_inner_mut(&mut self) -> (&mut Self::Db, &mut JournaledState) {
-        let journal: &mut Journal<DB> = self.journaled_state.deref_mut();
+        let journal: &mut Journal<DB> = std::ops::DerefMut::deref_mut(&mut self.journaled_state);
         (&mut journal.database, &mut journal.inner)
     }
 
     fn journal_inner(&self) -> &JournaledState {
-        let journal: &Journal<DB> = self.journaled_state.deref();
+        let journal: &Journal<DB> = std::ops::Deref::deref(&self.journaled_state);
         &journal.inner
     }
 }
 
 /// Trait for converting an [`AnyRpcTransaction`] into a specific `TxEnv`.
 ///
-/// Implementations extract the inner [`alloy_consensus::TxEnvelope`] via
-/// [`as_envelope()`](alloy_network::AnyTxEnvelope::as_envelope) then delegate to
-/// [`FromRecoveredTx`].
+/// Ethereum envelopes delegate to [`FromRecoveredTx`]. Implementations may also explicitly
+/// project compatible network-specific envelopes into their execution environment.
 pub trait FromAnyRpcTransaction: Sized {
     /// Tries to convert an [`AnyRpcTransaction`] into `Self`.
     fn from_any_rpc_transaction(tx: &AnyRpcTransaction) -> eyre::Result<Self>;
@@ -587,16 +680,43 @@ pub trait FromAnyRpcTransaction: Sized {
 impl FromAnyRpcTransaction for TxEnv {
     fn from_any_rpc_transaction(tx: &AnyRpcTransaction) -> eyre::Result<Self> {
         if let Some(envelope) = tx.as_envelope() {
-            Ok(Self::from_recovered_tx(envelope, tx.from()))
-        } else {
-            eyre::bail!("cannot convert unknown transaction type to TxEnv");
+            return Ok(Self::from_recovered_tx(envelope, tx.from()));
         }
+
+        // CIP-64 transactions have EIP-1559 execution fields plus a Celo-specific fee currency.
+        // Foundry does not model fee payment in TxEnv, but can replay their EVM payload. Preserve
+        // the custom type so revm does not compare the fee-currency price with the native-CELO
+        // base fee. Keep this projection restricted to active Celo chains so an unrelated network
+        // cannot silently acquire semantics for its own type 0x7b envelope.
+        if let AnyTxEnvelope::Unknown(unknown) = &*tx.inner.inner
+            && unknown.ty() == CELO_DYNAMIC_FEE_TX_TYPE
+            && matches!(
+                unknown.chain_id().and_then(NamedChain::from_chain_id),
+                Some(NamedChain::Celo | NamedChain::CeloSepolia)
+            )
+        {
+            return Ok(Self {
+                tx_type: CELO_DYNAMIC_FEE_TX_TYPE,
+                caller: tx.from(),
+                gas_limit: unknown.gas_limit(),
+                gas_price: unknown.max_fee_per_gas(),
+                gas_priority_fee: unknown.max_priority_fee_per_gas(),
+                kind: unknown.kind(),
+                value: unknown.value(),
+                data: unknown.input().clone(),
+                nonce: unknown.nonce(),
+                chain_id: unknown.chain_id(),
+                access_list: unknown.access_list().cloned().unwrap_or_default(),
+                ..Default::default()
+            });
+        }
+
+        eyre::bail!("cannot convert unknown transaction type to TxEnv");
     }
 }
 
 impl FromAnyRpcTransaction for TempoTxEnv {
     fn from_any_rpc_transaction(tx: &AnyRpcTransaction) -> eyre::Result<Self> {
-        use alloy_consensus::Transaction as _;
         if let Some(envelope) = tx.as_envelope() {
             return Ok(TxEnv::from_recovered_tx(envelope, tx.from()).into());
         }
@@ -631,6 +751,7 @@ impl FromAnyRpcTransaction for TempoTxEnv {
 #[cfg(feature = "optimism")]
 mod optimism {
     use super::*;
+    use alloy_eips::eip2718::Encodable2718;
     use alloy_op_evm::OpTx;
     use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, TxDeposit};
     use op_revm::{OpTransaction, transaction::OpTxTr};
@@ -822,7 +943,9 @@ mod optimism {
             if let Some(envelope) = tx.as_envelope() {
                 return Ok(Self(OpTransaction::<TxEnv> {
                     base: TxEnv::from_recovered_tx(envelope, tx.from()),
-                    enveloped_tx: None,
+                    // The L1 data fee is charged off these bytes, and op-revm rejects a
+                    // non-deposit transaction that arrives without them.
+                    enveloped_tx: Some(envelope.encoded_2718().into()),
                     deposit: Default::default(),
                 }));
             }
@@ -851,15 +974,11 @@ mod tests {
     use super::*;
     use alloy_consensus::{Signed, TxEip1559, transaction::Recovered};
     use alloy_evm::{EthEvmFactory, EvmFactory};
-    #[cfg(feature = "monad")]
-    use alloy_monad_evm::MonadEvmFactory;
     use alloy_network::{AnyTxType, UnknownTxEnvelope, UnknownTypedTransaction};
     use alloy_primitives::Signature;
     use alloy_rpc_types::{Transaction as RpcTransaction, TransactionInfo};
     use alloy_serde::WithOtherFields;
     use foundry_evm_hardforks::TempoHardfork;
-    #[cfg(feature = "monad")]
-    use monad_revm::{MonadHardfork, cfg::MONAD_MEMORY_LIMIT};
     use revm::database::EmptyDB;
     use tempo_alloy::primitives::{
         AASigned, TempoSignature, TempoTransaction, TempoTxEnvelope,
@@ -893,9 +1012,12 @@ mod tests {
     #[test]
     #[cfg(feature = "monad")]
     fn monad_evm_foundry_context_ext_implementation() {
-        let mut evm = MonadEvmFactory::default().create_evm(
+        let mut evm = alloy_monad_evm::MonadEvmFactory::default().create_evm(
             EmptyDB::default(),
-            EvmEnv::new(CfgEnv::new_with_spec(MonadHardfork::MonadNine), BlockEnv::default()),
+            EvmEnv::new(
+                CfgEnv::new_with_spec(monad_revm::MonadHardfork::MonadNine),
+                BlockEnv::default(),
+            ),
         );
 
         // Test EVM Context Block mutation
@@ -907,8 +1029,8 @@ mod tests {
         assert_eq!(evm.ctx().tx().nonce(), 99);
 
         // Test EVM Context Cfg mutation
-        evm.ctx_mut().cfg_mut().spec = MonadHardfork::MonadEight;
-        assert_eq!(evm.ctx().cfg().spec, MonadHardfork::MonadEight);
+        evm.ctx_mut().cfg_mut().spec = monad_revm::MonadHardfork::MonadEight;
+        assert_eq!(evm.ctx().cfg().spec, monad_revm::MonadHardfork::MonadEight);
 
         // Round-trip test to ensure no issues with cloning and setting tx_env and evm_env
         let tx_env = evm.ctx().tx_clone();
@@ -922,18 +1044,18 @@ mod tests {
     fn monad_memory_limit_follows_hardfork_transitions() {
         const FOUNDRY_MEMORY_LIMIT: u64 = 128 * 1024 * 1024;
 
-        let mut cfg = CfgEnv::new_with_spec(MonadHardfork::MonadEight);
+        let mut cfg = CfgEnv::new_with_spec(monad_revm::MonadHardfork::MonadEight);
         cfg.memory_limit = FOUNDRY_MEMORY_LIMIT;
-        let mut evm = MonadEvmFactory::default()
+        let mut evm = alloy_monad_evm::MonadEvmFactory::default()
             .create_evm(EmptyDB::default(), EvmEnv::new(cfg, BlockEnv::default()));
 
         assert_eq!(evm.ctx().cfg().memory_limit(), FOUNDRY_MEMORY_LIMIT);
 
-        evm.ctx_mut().set_spec_and_gas_params(MonadHardfork::MonadNine);
+        evm.ctx_mut().set_spec_and_gas_params(monad_revm::MonadHardfork::MonadNine);
         assert_eq!(evm.ctx().cfg().inner().memory_limit, FOUNDRY_MEMORY_LIMIT);
-        assert_eq!(evm.ctx().cfg().memory_limit(), MONAD_MEMORY_LIMIT);
+        assert_eq!(evm.ctx().cfg().memory_limit(), monad_revm::cfg::MONAD_MEMORY_LIMIT);
 
-        evm.ctx_mut().set_spec_and_gas_params(MonadHardfork::MonadEight);
+        evm.ctx_mut().set_spec_and_gas_params(monad_revm::MonadHardfork::MonadEight);
         assert_eq!(evm.ctx().cfg().memory_limit(), FOUNDRY_MEMORY_LIMIT);
     }
 
@@ -1058,6 +1180,55 @@ mod tests {
     }
 
     #[test]
+    fn from_any_rpc_transaction_for_celo_dynamic_fee() {
+        let from = Address::with_last_byte(0xAA);
+        let to = Address::with_last_byte(0xBB);
+        let fee_currency = Address::with_last_byte(0xCC);
+        let json = serde_json::json!({
+            "accessList": [],
+            "blockHash": B256::ZERO,
+            "blockNumber": "0x1",
+            "chainId": "0xa4ec",
+            "feeCurrency": fee_currency,
+            "from": from,
+            "gas": "0x5208",
+            "gasPrice": "0x3",
+            "hash": B256::ZERO,
+            "input": "0x1234",
+            "maxFeePerGas": "0x3",
+            "maxPriorityFeePerGas": "0x1",
+            "nonce": "0x2a",
+            "r": B256::ZERO,
+            "s": B256::ZERO,
+            "to": to,
+            "transactionIndex": "0x0",
+            "type": "0x7b",
+            "v": "0x0",
+            "value": "0x65",
+            "yParity": "0x0"
+        });
+        let mut non_celo_json = json.clone();
+        non_celo_json["chainId"] = serde_json::json!("0x1");
+        let non_celo_tx: AnyRpcTransaction = serde_json::from_value(non_celo_json).unwrap();
+        assert!(TxEnv::from_any_rpc_transaction(&non_celo_tx).is_err());
+
+        let any_tx: AnyRpcTransaction = serde_json::from_value(json).unwrap();
+
+        let tx_env = TxEnv::from_any_rpc_transaction(&any_tx).unwrap();
+
+        assert_eq!(tx_env.tx_type, CELO_DYNAMIC_FEE_TX_TYPE);
+        assert_eq!(tx_env.caller, from);
+        assert_eq!(tx_env.nonce, 42);
+        assert_eq!(tx_env.gas_limit, 21000);
+        assert_eq!(tx_env.gas_price, 3);
+        assert_eq!(tx_env.gas_priority_fee, Some(1));
+        assert_eq!(tx_env.kind, TxKind::Call(to));
+        assert_eq!(tx_env.value, U256::from(101));
+        assert_eq!(tx_env.data, Bytes::from_static(&[0x12, 0x34]));
+        assert_eq!(tx_env.chain_id, Some(42_220));
+    }
+
+    #[test]
     fn from_any_rpc_transaction_for_tempo_eth_envelope() {
         let from = Address::random();
         let signed_tx = make_signed_eip1559();
@@ -1118,6 +1289,7 @@ mod tests {
     mod optimism {
         use super::*;
         use alloy_consensus::Sealed;
+        use alloy_eips::eip2718::Encodable2718;
         use alloy_op_evm::{OpEvmFactory, OpTx};
         use op_alloy_consensus::{OpTxEnvelope, TxDeposit, transaction::OpTransactionInfo};
         use op_alloy_rpc_types::Transaction as OpRpcTransaction;
@@ -1162,6 +1334,12 @@ mod tests {
 
             let op_tx_env = OpTx::from_any_rpc_transaction(&any_tx).unwrap();
             assert_eq!(op_tx_env.base, expected_base);
+            // op-revm charges the L1 data fee off these bytes and rejects a non-deposit
+            // transaction that arrives without them.
+            assert_eq!(
+                op_tx_env.enveloped_tx,
+                Some(any_tx.as_envelope().unwrap().encoded_2718().into())
+            );
         }
 
         #[test]

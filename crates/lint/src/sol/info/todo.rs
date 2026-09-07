@@ -27,20 +27,13 @@ impl<'ast> EarlyLintPass<'ast> for TodoComment {
         if !ctx.is_lint_enabled(TODO_COMMENT.id()) {
             return;
         }
-
         let Some(file) = ctx.source_file() else { return };
-
-        // Build comments from the source, same call the crate already uses in mod.rs.
         let comments = Comments::new(file, ctx.session().source_map(), false, false, None);
-
-        for comment in comments.iter() {
-            if is_control_comment(comment) {
-                continue;
-            }
-
+        for comment in comments.iter().filter(|comment| !is_control_comment(comment)) {
             let mut found = Vec::new();
             // Unnormalized block comments are stored as one string, so split physical lines here.
             for line in comment.lines.iter().flat_map(|line| line.lines()) {
+                // A bare marker only counts at the start of a line or right after a NatSpec tag.
                 let mut allow_bare = true;
                 for token in strip_comment_prefix(line, comment).split_whitespace() {
                     if let Some(marker) = marker_at_start(token, allow_bare)
@@ -48,55 +41,41 @@ impl<'ast> EarlyLintPass<'ast> for TodoComment {
                     {
                         found.push(marker);
                     }
-
                     if token != "*" {
                         allow_bare = token.starts_with('@');
                     }
                 }
             }
-
-            if found.is_empty() {
-                continue;
+            if !found.is_empty() {
+                let noun = if found.len() > 1 { "comments" } else { "comment" };
+                let msg = format!("unresolved `{}` {noun}", found.join(", "));
+                ctx.emit_with_msg(&TODO_COMMENT, comment.span, msg);
             }
-
-            let markers = found.join(", ");
-            let noun = if found.len() > 1 { "comments" } else { "comment" };
-            ctx.emit_with_msg(
-                &TODO_COMMENT,
-                comment.span,
-                format!("unresolved `{markers}` {noun}"),
-            );
         }
     }
 }
 
 fn is_control_comment(comment: &Comment) -> bool {
-    let Some(first_line) = comment.lines.first() else { return false };
-    let content = strip_comment_prefix(first_line, comment).trim_start();
-    content.starts_with("@compile-flags:") || content.starts_with("forge-lint:")
+    comment.lines.first().is_some_and(|first_line| {
+        let content = strip_comment_prefix(first_line, comment).trim_start();
+        content.starts_with("@compile-flags:") || content.starts_with("forge-lint:")
+    })
 }
 
 /// If `token` begins with a marker followed by a valid boundary, return that marker.
 fn marker_at_start(token: &str, allow_bare: bool) -> Option<&str> {
-    MARKERS.iter().find_map(|m| {
-        let prefix = token.get(..m.len())?;
+    MARKERS.iter().copied().find(|m| {
+        let Some((prefix, suffix)) = token.split_at_checked(m.len()) else { return false };
         if !prefix.eq_ignore_ascii_case(m) {
-            return None;
+            return false;
         }
-
-        let suffix = &token[m.len()..];
-        if suffix.is_empty() {
-            return allow_bare.then_some(*m);
-        }
-
         let mut trailing = suffix.chars();
-        let after = trailing.next()?;
-        if !TRAILING.contains(&after)
-            || (after == '.' && trailing.next().is_some_and(|c| c.is_alphanumeric() || c == '_'))
-        {
-            return None;
+        match trailing.next() {
+            None => allow_bare,
+            // A `.` must end the marker, not start an identifier (`TODO.md`).
+            Some('.') => !trailing.next().is_some_and(|c| c.is_alphanumeric() || c == '_'),
+            Some(after) => TRAILING.contains(&after),
         }
-        Some(*m)
     })
 }
 

@@ -11,6 +11,7 @@ use anvil::{NodeConfig, spawn};
 use axum::{Router, body::Bytes as BodyBytes};
 use forge_script_sequence::ScriptSequence;
 use foundry_compilers::artifacts::EvmVersion;
+use foundry_evm::constants::CALLER;
 use foundry_test_utils::{
     ScriptOutcome, ScriptTester,
     rpc::{self, next_http_archive_rpc_url},
@@ -1117,6 +1118,47 @@ forgetest_async!(can_deploy_unlocked, |prj, cmd| {
         .add_sig("BroadcastTest", "deployOther()")
         .simulate(ScriptOutcome::OkSimulation)
         .broadcast(ScriptOutcome::OkBroadcast);
+});
+
+forgetest_async!(broadcast_honors_rpc_timeout, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let upstream = handle.http_endpoint();
+    let client = reqwest::Client::new();
+    let app = Router::new().fallback(move |body: BodyBytes| {
+        let upstream = upstream.clone();
+        let client = client.clone();
+        async move {
+            let request: Value = serde_json::from_slice(&body).unwrap();
+            if request.get("method").and_then(Value::as_str) == Some("eth_sendTransaction") {
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            }
+            client
+                .post(upstream)
+                .header("content-type", "application/json")
+                .body(body)
+                .send()
+                .await
+                .unwrap()
+                .bytes()
+                .await
+                .unwrap()
+        }
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let _proxy = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let mut tester = ScriptTester::new_broadcast(cmd, &endpoint, prj.root());
+    tester
+        .sender("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266".parse().unwrap())
+        .unlocked()
+        .args(&["--rpc-timeout", "1"])
+        .add_sig("BroadcastTest", "deployOther()")
+        .arg("--broadcast");
+    tester.cmd.assert_failure().stderr_eq(str![[r#"
+Error: Failed to send transaction after 4 attempts Err([..]operation timed out)
+
+"#]]);
 });
 
 forgetest_async!(can_deploy_script_remember_key, |prj, cmd| {
@@ -4805,6 +4847,54 @@ forgetest!(can_execute_script_command_with_tempo, |prj, cmd| {
         .assert_success();
 });
 
+forgetest_async!(tempo_script_runs_with_zero_fee_token_balance, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let script = prj.add_script(
+        "TempoScript.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract TempoScript is Script {
+    uint256 public value;
+
+    constructor() {
+        value = 1;
+    }
+
+    function setUp() external {
+        require(value == 1);
+        value = 2;
+    }
+
+    function run() external {
+        require(value == 2);
+        value = 3;
+    }
+}
+"#,
+    );
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let fee_token = address!("0x20c0000000000000000000000000000000000000");
+    let fee_manager = address!("0xfeec000000000000000000000000000000000000");
+    // Clear both balances so synthetic execution cannot accidentally succeed through fee
+    // accounting.
+    api.anvil_deal_tip20(CALLER, fee_token, U256::ZERO).await.unwrap();
+    api.anvil_deal_tip20(fee_manager, fee_token, U256::ZERO).await.unwrap();
+    cmd.arg("script").arg(script).args([
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--network",
+        "tempo",
+        "--tempo.fee-token",
+        "0x20c0000000000000000000000000000000000000",
+        "--with-gas-price",
+        "600000000",
+        "--block-gas-limit",
+        "18446744073709551615",
+    ]);
+    cmd.assert_success();
+});
+
 forgetest_async!(tempo_aa_script_broadcast_deploys_with_fee_token, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
     prj.add_source(
@@ -5107,4 +5197,104 @@ contract FundViaRpc is Script {
     let recipient = address!("0x000000000000000000000000000000000000dEaD");
     let balance = api.balance(recipient, None).await.unwrap();
     assert_eq!(balance, U256::from(500) * U256::from(10).pow(U256::from(18)));
+});
+
+// Regression test for https://github.com/foundry-rs/foundry/issues/13312: an account loaded before
+// `anvil_setCode` must be refreshed before the next call in the same script execution.
+forgetest_async!(can_call_contract_after_vm_rpc_set_code_on_fork, |prj, cmd| {
+    prj.add_script(
+        "SetCodeViaRpc.s.sol",
+        r#"
+interface Vm {
+    function deal(address account, uint256 newBalance) external;
+    function rpc(string calldata method, string calldata params) external returns (bytes memory);
+    function toString(address value) external pure returns (string memory);
+}
+
+interface ITarget {
+    function value() external view returns (uint256);
+}
+
+contract SetCodeViaRpc {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address constant TARGET = 0x0000000000000000000000000000000000001331;
+
+    function setUp() external {
+        vm.deal(TARGET, 123);
+    }
+
+    function run() external {
+        require(TARGET.code.length == 0, "target already has code");
+        require(TARGET.balance == 123, "setup balance missing");
+        vm.deal(TARGET, 456);
+
+        vm.rpc(
+            "anvil_setCode",
+            string.concat("[\"", vm.toString(TARGET), "\", \"0x602a60005260206000f3\"]")
+        );
+
+        require(ITarget(TARGET).value() == 42, "unexpected value");
+        require(TARGET.balance == 456, "local balance was lost");
+    }
+}
+"#,
+    );
+
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    cmd.arg("script")
+        .args(["SetCodeViaRpc", "--rpc-url", &handle.http_endpoint()])
+        .assert_success();
+
+    let target = address!("0x0000000000000000000000000000000000001331");
+    assert_eq!(
+        api.get_code(target, None).await.unwrap(),
+        Bytes::from(hex!("602a60005260206000f3"))
+    );
+});
+
+// An out-of-band storage mutation must replace the same locally modified slot.
+forgetest_async!(vm_rpc_set_storage_overrides_local_fork_slot, |prj, cmd| {
+    prj.add_script(
+        "SetStorageViaRpc.s.sol",
+        r#"
+interface Vm {
+    function load(address target, bytes32 slot) external view returns (bytes32);
+    function rpc(string calldata method, string calldata params) external returns (bytes memory);
+    function store(address target, bytes32 slot, bytes32 value) external;
+    function toString(address value) external pure returns (string memory);
+    function toString(bytes32 value) external pure returns (string memory);
+}
+
+contract SetStorageViaRpc {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address constant TARGET = 0x0000000000000000000000000000000000001331;
+    bytes32 constant SLOT = bytes32(0);
+
+    function setUp() external {
+        vm.store(TARGET, SLOT, bytes32(uint256(1)));
+    }
+
+    function run() external {
+        require(vm.load(TARGET, SLOT) == bytes32(uint256(1)), "setup value missing");
+
+        vm.rpc(
+            "anvil_setStorageAt",
+            string.concat(
+                "[\"", vm.toString(TARGET), "\", \"", vm.toString(SLOT), "\", \"",
+                vm.toString(bytes32(uint256(42))), "\"]"
+            )
+        );
+
+        require(vm.load(TARGET, SLOT) == bytes32(uint256(42)), "storage stayed stale");
+    }
+}
+"#,
+    );
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    cmd.arg("script")
+        .args(["SetStorageViaRpc", "--rpc-url", &handle.http_endpoint()])
+        .assert_success();
 });

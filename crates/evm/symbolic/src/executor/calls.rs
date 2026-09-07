@@ -15,6 +15,24 @@ impl SymbolicExecutor {
             || (state.is_static && matches!(kind, CallKind::Call)))
         .then(|| state.clone());
         let call_pc = state.pc.saturating_sub(1);
+
+        let has_value = matches!(kind, CallKind::Call | CallKind::CallCode);
+        let in_offset_idx = if has_value { 3 } else { 2 };
+        let in_offset = state.stack.peek(in_offset_idx)?.clone();
+        let in_size = state.stack.peek(in_offset_idx + 1)?.clone();
+        let out_offset = state.stack.peek(in_offset_idx + 2)?.clone();
+        let out_size = state.stack.peek(in_offset_idx + 3)?.clone();
+        if let Some(outcome) =
+            self.guard_memory_range(executor, state, worklist, &in_offset, &in_size)?
+        {
+            return Ok(outcome);
+        }
+        if let Some(outcome) =
+            self.guard_memory_range(executor, state, worklist, &out_offset, &out_size)?
+        {
+            return Ok(outcome);
+        }
+
         let gas = state.stack.pop()?;
         if gas.contains_gasleft() && !gas.is_raw_gasleft() {
             return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
@@ -87,6 +105,9 @@ impl SymbolicExecutor {
             }
         };
 
+        in_size.expand_memory(&mut self.cx, &mut state.memory, in_offset.clone());
+        out_size.expand_memory(&mut self.cx, &mut state.memory, out_offset.clone());
+
         if state.is_static && matches!(kind, CallKind::Call) {
             match state.constrained_word(&mut self.cx, &value) {
                 Some(value) if value.is_zero() => {}
@@ -127,6 +148,11 @@ impl SymbolicExecutor {
         }
 
         let call_input = in_size.read_from_memory(&mut self.cx, &state.memory, in_offset.clone());
+        // Gas is not modeled, so calldata derived from `GAS` / `gasleft()` must fail closed instead
+        // of handing the callee a fabricated gas value.
+        if call_input.contains_gasleft(&mut self.cx) {
+            return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
+        }
 
         if let Some(to) = target_address {
             if !state.function_mocks.is_empty() {
@@ -986,7 +1012,6 @@ impl SymbolicExecutor {
                 let mut frame = CallFrame::new(
                     &mut self.cx,
                     to,
-                    code_address,
                     to,
                     call_caller,
                     value.clone(),
@@ -999,16 +1024,8 @@ impl SymbolicExecutor {
             }
             CallKind::StaticCall => {
                 let value = SymExpr::zero(&mut self.cx);
-                let mut frame = CallFrame::new(
-                    &mut self.cx,
-                    to,
-                    code_address,
-                    to,
-                    call_caller,
-                    value,
-                    true,
-                    calldata,
-                );
+                let mut frame =
+                    CallFrame::new(&mut self.cx, to, to, call_caller, value, true, calldata);
                 frame.address_word = callee_address_word;
                 frame.caller_word = call_caller_word;
                 frame
@@ -1017,7 +1034,6 @@ impl SymbolicExecutor {
                 let mut frame = CallFrame::new(
                     &mut self.cx,
                     state.address,
-                    code_address,
                     state.storage_address,
                     state.caller,
                     state.callvalue.clone(),
@@ -1032,7 +1048,6 @@ impl SymbolicExecutor {
                 let mut frame = CallFrame::new(
                     &mut self.cx,
                     state.address,
-                    code_address,
                     state.storage_address,
                     call_caller,
                     value.clone(),
@@ -1052,112 +1067,54 @@ impl SymbolicExecutor {
             child.origin_word = origin_word;
         }
         self.apply_call_value_transfer(executor, &mut child, kind, to, call_caller, value);
-        child.expected_revert = None;
-        child.assume_no_revert_next_call = None;
         let outcomes = self.execute_external_call(executor, child, &child_code, completed_paths)?;
-        let Some((first, rest)) = outcomes.split_first() else {
+        if outcomes.is_empty() {
             return Ok(StepOutcome::AssumeRejected);
-        };
+        }
 
         let mut parents = VecDeque::with_capacity(outcomes.len());
-        for outcome in std::iter::once(first).chain(rest.iter()) {
-            let mut parent = state.clone();
-            parent.constraints = outcome.state.constraints.clone();
-            parent.next_symbol = outcome.state.next_symbol;
-            parent.inherit_branch_target_progress(&outcome.state);
-            parent.storage_load_hooks = outcome.state.storage_load_hooks.clone();
-            parent.storage_store_hooks = outcome.state.storage_store_hooks.clone();
-            parent.mapping_storage_store_hooks = outcome.state.mapping_storage_store_hooks.clone();
-            parent.inherit_mapping_hook_provenance(&outcome.state);
-            parent.inherit_inspector_recordings(&outcome.state);
-
-            if let Some(assumption) = parent.assume_no_revert_next_call.take()
-                && matches!(outcome.status, TopLevelCallStatus::Revert)
-                && self.assume_no_revert_rejects(
-                    &mut parent,
-                    &assumption,
-                    to,
-                    &outcome.return_data,
-                )?
-            {
-                continue;
-            }
-
-            if let Some(mut expected) = parent.expected_revert.clone() {
-                match outcome.status {
-                    TopLevelCallStatus::Success => {
-                        *state = parent;
-                        return Ok(StepOutcome::Failure);
-                    }
-                    TopLevelCallStatus::Revert | TopLevelCallStatus::Failure => {
-                        if !self.expected_revert_matches(
-                            &mut parent,
-                            &expected,
-                            to,
-                            &outcome.return_data,
-                        )? {
-                            *state = parent;
-                            return Ok(StepOutcome::Failure);
-                        }
-                        if expected.consume_one() {
-                            parent.expected_revert = None;
-                        } else {
-                            parent.expected_revert = Some(expected);
-                        }
-                        parent.expected_calls = outcome.state.expected_calls.clone();
-                        parent.expected_creates = outcome.state.expected_creates.clone();
-                        parent.call_mocks = outcome.state.call_mocks.clone();
-                        parent.function_mocks = outcome.state.function_mocks.clone();
-                        parent.world = original_world.clone();
-                        parent.return_data = SymReturnData::empty(&mut self.cx);
-                        parent.copy_call_output_offset(
-                            &mut self.cx,
-                            out_offset.clone(),
-                            &out_size,
-                        )?;
-                        parent.stack.push(SymExpr::one(&mut self.cx))?;
-                        parents.push_back(parent);
-                        continue;
-                    }
-                }
-            }
-
-            parent.world = if matches!(outcome.status, TopLevelCallStatus::Success) {
-                outcome.state.world.clone()
-            } else {
-                original_world.clone()
-            };
-            match outcome.status {
-                TopLevelCallStatus::Success => {
-                    parent.block = outcome.state.block.clone();
-                    parent.expected_emit = outcome.state.expected_emit.clone();
-                    parent.expected_calls = outcome.state.expected_calls.clone();
-                    parent.expected_creates = outcome.state.expected_creates.clone();
-                    parent.call_mocks = outcome.state.call_mocks.clone();
-                    parent.function_mocks = outcome.state.function_mocks.clone();
-                }
-                TopLevelCallStatus::Failure => {
+        for outcome in outcomes {
+            match self.join_call_outcome(state, outcome, to)? {
+                JoinedCallOutcome::Rejected => {}
+                JoinedCallOutcome::Failure(parent) => {
                     *state = parent;
                     return Ok(StepOutcome::Failure);
                 }
-                TopLevelCallStatus::Revert => {}
+                JoinedCallOutcome::ExpectedRevert { mut parent, child } => {
+                    parent.expected_calls = child.expected_calls;
+                    parent.expected_creates = child.expected_creates;
+                    parent.call_mocks = child.call_mocks;
+                    parent.function_mocks = child.function_mocks;
+                    parent.world = original_world.clone();
+                    parent.return_data = SymReturnData::empty(&mut self.cx);
+                    parent.copy_call_output_offset(&mut self.cx, out_offset.clone(), &out_size)?;
+                    parent.stack.push(SymExpr::one(&mut self.cx))?;
+                    parents.push_back(parent);
+                }
+                JoinedCallOutcome::Success { mut parent, child } => {
+                    parent.world = child.world;
+                    parent.block = child.block;
+                    parent.expected_emit = child.expected_emit;
+                    parent.expected_calls = child.expected_calls;
+                    parent.expected_creates = child.expected_creates;
+                    parent.call_mocks = child.call_mocks;
+                    parent.function_mocks = child.function_mocks;
+                    parent.return_data = child.frame.return_data;
+                    parent.copy_call_output_offset(&mut self.cx, out_offset.clone(), &out_size)?;
+                    parent.stack.push(SymExpr::one(&mut self.cx))?;
+                    parents.push_back(parent);
+                }
+                JoinedCallOutcome::Revert { mut parent, child } => {
+                    parent.world = original_world.clone();
+                    parent.return_data = child.frame.return_data;
+                    parent.copy_call_output_offset(&mut self.cx, out_offset.clone(), &out_size)?;
+                    parent.stack.push(SymExpr::zero(&mut self.cx))?;
+                    parents.push_back(parent);
+                }
             }
-            parent.return_data = outcome.return_data.clone();
-            parent.copy_call_output_offset(&mut self.cx, out_offset.clone(), &out_size)?;
-            let success = SymExpr::constant(
-                &mut self.cx,
-                U256::from(matches!(outcome.status, TopLevelCallStatus::Success)),
-            );
-            parent.stack.push(success)?;
-            parents.push_back(parent);
         }
 
-        let Some(first) = self.pop_next_path(&mut parents) else {
-            return Ok(StepOutcome::AssumeRejected);
-        };
-        *state = first;
-        worklist.extend(parents);
-        Ok(StepOutcome::Continue)
+        Ok(self.resume_parent_paths(state, worklist, parents))
     }
 
     #[expect(clippy::too_many_arguments)]

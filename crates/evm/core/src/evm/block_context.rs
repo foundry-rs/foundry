@@ -2,10 +2,11 @@ use alloy_consensus::BlockHeader;
 use alloy_evm::FromRecoveredTx;
 use alloy_network::{BlockResponse, TransactionResponse};
 use alloy_provider::Provider;
-use alloy_rpc_types::{BlockNumberOrTag, BlockTransactions};
+use alloy_rpc_types::BlockTransactions;
 use eyre::{Result, WrapErr};
 
-use super::{BlockResponseFor, ChainContextFor, FoundryEvmFactory, FoundryEvmNetwork, TxEnvFor};
+use super::{BlockResponseFor, ChainFor, FoundryEvmNetwork, TxEnvFor};
+use crate::FoundryChain;
 
 /// Transaction metadata for an exact block and its two ancestors.
 #[derive(Clone, Debug)]
@@ -46,13 +47,8 @@ impl<FEN: FoundryEvmNetwork> BlockContext<FEN> {
     }
 
     /// Builds context for the transaction at `index` in the current block.
-    pub fn transaction(&self, index: usize) -> ChainContextFor<FEN> {
-        FEN::EvmFactory::default().chain_context_for_block(
-            &self.grandparent,
-            &self.parent,
-            &self.current,
-            index,
-        )
+    pub fn transaction(&self, index: usize) -> ChainFor<FEN> {
+        ChainFor::<FEN>::for_block(&self.grandparent, &self.parent, &self.current, index)
     }
 
     /// Returns a cursor positioned immediately before `index` in the current block.
@@ -75,16 +71,11 @@ impl<FEN: FoundryEvmNetwork> BlockContext<FEN> {
     }
 
     /// Builds context for the next transaction at the cursor's current block position.
-    pub fn next_transaction(&self, tx: &TxEnvFor<FEN>) -> ChainContextFor<FEN> {
+    pub fn next_transaction(&self, tx: &TxEnvFor<FEN>) -> ChainFor<FEN> {
         let mut current = self.current.clone();
         let index = current.len();
         current.push(tx.clone());
-        FEN::EvmFactory::default().chain_context_for_block(
-            &self.grandparent,
-            &self.parent,
-            &current,
-            index,
-        )
+        ChainFor::<FEN>::for_block(&self.grandparent, &self.parent, &current, index)
     }
 
     /// Records a committed transaction at the cursor's current block position.
@@ -97,32 +88,6 @@ impl<FEN: FoundryEvmNetwork> BlockContext<FEN> {
         self.grandparent = std::mem::take(&mut self.parent);
         self.parent = std::mem::take(&mut self.current);
     }
-}
-
-/// Builds context for a synthetic transaction executed on top of `block_number`.
-pub async fn context_for_child_transaction<FEN, P>(
-    provider: &P,
-    block_number: u64,
-    tx: &TxEnvFor<FEN>,
-) -> Result<ChainContextFor<FEN>>
-where
-    FEN: FoundryEvmNetwork,
-    P: Provider<FEN::Network>,
-{
-    if !FEN::EvmFactory::NEEDS_BLOCK_CONTEXT {
-        return Ok(FEN::EvmFactory::default().chain_context_for_transaction(tx));
-    }
-
-    let block = provider
-        .get_block(BlockNumberOrTag::Number(block_number).into())
-        .full()
-        .await?
-        .ok_or_else(|| eyre::eyre!("block {block_number} not found while building EVM context"))?;
-    let parent = fetch_parent::<FEN, P>(provider, &block).await?;
-    let current = transaction_envs::<FEN>(&block)?;
-    let parent = parent.as_ref().map(transaction_envs::<FEN>).transpose()?.unwrap_or_default();
-
-    Ok(BlockContext::<FEN>::new(Vec::new(), parent, current).into_child().next_transaction(tx))
 }
 
 async fn fetch_parent<FEN, P>(

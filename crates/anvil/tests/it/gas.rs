@@ -191,6 +191,20 @@ async fn test_tip_above_fee_cap() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_zero_block_fee_history_is_empty() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+
+    let history = api.fee_history(U256::ZERO, BlockNumberOrTag::Latest, vec![50.0]).await.unwrap();
+
+    assert_eq!(history.oldest_block, 0);
+    assert!(history.base_fee_per_gas.is_empty());
+    assert!(history.gas_used_ratio.is_empty());
+    assert!(history.reward.is_none());
+    assert!(history.base_fee_per_blob_gas.is_empty());
+    assert!(history.blob_gas_used_ratio.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_can_use_fee_history() {
     let base_fee = 50u128;
     let (_api, handle) = spawn(NodeConfig::test().with_base_fee(Some(base_fee as u64))).await;
@@ -289,6 +303,7 @@ async fn test_fee_history_ignores_stale_cache_after_reset() {
 async fn test_memory_reset_restores_explicit_genesis_base_fee() {
     let (api, handle) = spawn(
         NodeConfig::test()
+            .with_hardfork(Some(EthereumHardfork::default().into()))
             .with_genesis(Some(Genesis { base_fee_per_gas: Some(0), ..Default::default() })),
     )
     .await;

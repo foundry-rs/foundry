@@ -407,11 +407,11 @@ fn doc_from_view(gcx: Gcx<'_>, item: ItemId) -> NatSpecDoc {
     }
     if let Some(fid) = callable_function(gcx, item) {
         let function = gcx.hir.function(fid);
-        for index in 0..function.parameters.len() {
-            doc.params[index] = positional_description(gcx, view.items(), view.parameter(index));
+        for (index, param) in doc.params[..function.parameters.len()].iter_mut().enumerate() {
+            *param = positional_description(gcx, view.items(), view.parameter(index));
         }
-        for index in 0..function.returns.len() {
-            doc.returns[index] = positional_description(gcx, view.items(), view.return_(index));
+        for (index, return_) in doc.returns[..function.returns.len()].iter_mut().enumerate() {
+            *return_ = positional_description(gcx, view.items(), view.return_(index));
         }
     }
     doc

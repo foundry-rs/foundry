@@ -1,7 +1,5 @@
 //! Helper types for working with [revm]
 
-#[cfg(feature = "monad")]
-use std::collections::BTreeSet;
 use std::{
     collections::BTreeMap,
     fmt::{self, Debug},
@@ -29,8 +27,6 @@ use foundry_evm::backend::{
     BlockchainDb, DatabaseError, DatabaseResult, EmptyDBWrapper, MemDb, RevertStateSnapshotAction,
     StateSnapshot,
 };
-#[cfg(feature = "monad")]
-use foundry_evm::hardfork::MonadHardfork;
 use foundry_primitives::{FoundryHeader, FoundryReceiptEnvelope, FoundryTxEnvelope};
 use revm::{
     Database, DatabaseCommit,
@@ -59,7 +55,7 @@ pub struct MonadBlockReplayProfile {
     /// Chain ID active when the block was executed.
     pub execution_chain_id: u64,
     /// Monad hardfork active when the block was executed.
-    pub hardfork: MonadHardfork,
+    pub hardfork: foundry_evm::hardfork::MonadHardfork,
 }
 
 /// Inserts a block hash, discards entries outside the EVM-visible cache, and returns its head.
@@ -726,7 +722,7 @@ pub struct SerializableState {
     /// used, so it is preserved even while the corresponding transaction bodies are retained.
     #[cfg(feature = "monad")]
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub monad_block_participants: BTreeMap<B256, BTreeSet<Address>>,
+    pub monad_block_participants: BTreeMap<B256, std::collections::BTreeSet<Address>>,
     /// Execution profile used for each locally stored Monad block.
     #[cfg(feature = "monad")]
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]

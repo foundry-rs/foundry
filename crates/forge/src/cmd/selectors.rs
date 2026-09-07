@@ -1,6 +1,9 @@
 use alloy_primitives::hex;
 use clap::Parser;
-use comfy_table::{Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN};
+use comfy_table::{
+    Table,
+    presets::{ASCII_FULL, ASCII_MARKDOWN},
+};
 use eyre::Result;
 use foundry_cli::{
     opts::{BuildOpts, ProjectPathOpts},
@@ -218,9 +221,9 @@ impl SelectorsSubcommands {
                 } else {
                     let mut table = Table::new();
                     if shell::is_markdown() {
-                        table.load_preset(ASCII_MARKDOWN);
+                        table.load_style(ASCII_MARKDOWN);
                     } else {
-                        table.apply_modifier(UTF8_ROUND_CORNERS);
+                        table.load_style(ASCII_FULL.with_rounded_corners());
                     }
                     table.set_header([
                         String::from("Selector"),
@@ -238,6 +241,15 @@ impl SelectorsSubcommands {
             Self::List { contract, project_paths, no_group } => {
                 sh_status!("Listing selectors for contracts in the project...")?;
                 let (mut project, compiler) = project_from_paths(project_paths)?;
+                let target_path = contract
+                    .as_ref()
+                    .filter(|_| project.no_artifacts)
+                    .and_then(|contract| project.find_contract_path(contract).ok());
+                let compiler = if let Some(target_path) = target_path {
+                    compiler.files([target_path])
+                } else {
+                    compiler
+                };
                 let outcome = compile_abi_project(&mut project, compiler.quiet(true))?;
                 let artifacts = if let Some(contract) = contract {
                     let found_artifact = outcome.find_first(&contract);
@@ -295,7 +307,7 @@ impl SelectorsSubcommands {
                 for (contract, artifact) in artifacts.by_ref() {
                     let abi = artifact.abi.ok_or_else(|| eyre::eyre!("Unable to fetch abi"))?;
 
-                    let contract_selectors = selectors.entry(contract.clone()).or_default();
+                    let contract_selectors = selectors.entry(contract).or_default();
 
                     for func in abi.functions() {
                         let sig = func.signature();
@@ -328,9 +340,9 @@ impl SelectorsSubcommands {
                 if no_group {
                     let mut table = Table::new();
                     if shell::is_markdown() {
-                        table.load_preset(ASCII_MARKDOWN);
+                        table.load_style(ASCII_MARKDOWN);
                     } else {
-                        table.apply_modifier(UTF8_ROUND_CORNERS);
+                        table.load_style(ASCII_FULL.with_rounded_corners());
                     }
                     table.set_header(["Type", "Signature", "Selector", "Contract"]);
 
@@ -353,9 +365,9 @@ impl SelectorsSubcommands {
                         sh_println!("{}{contract}", if idx == 0 { "" } else { "\n" })?;
                         let mut table = Table::new();
                         if shell::is_markdown() {
-                            table.load_preset(ASCII_MARKDOWN);
+                            table.load_style(ASCII_MARKDOWN);
                         } else {
-                            table.apply_modifier(UTF8_ROUND_CORNERS);
+                            table.load_style(ASCII_FULL.with_rounded_corners());
                         }
                         table.set_header(["Type", "Signature", "Selector"]);
 
@@ -385,9 +397,9 @@ impl SelectorsSubcommands {
 
                 let mut table = Table::new();
                 if shell::is_markdown() {
-                    table.load_preset(ASCII_MARKDOWN);
+                    table.load_style(ASCII_MARKDOWN);
                 } else {
-                    table.apply_modifier(UTF8_ROUND_CORNERS);
+                    table.load_style(ASCII_FULL.with_rounded_corners());
                 }
 
                 table.set_header(["Type", "Signature", "Selector", "Contract"]);

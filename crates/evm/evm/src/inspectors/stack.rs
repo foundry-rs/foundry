@@ -13,15 +13,16 @@ use foundry_common::{compile::Analysis, sh_warn};
 use foundry_config::FuzzCorpusConfig;
 use foundry_evm_core::{
     FoundryBlock, FoundryTransaction, InspectorExt,
-    backend::{ContextUpdate, DatabaseError, DatabaseExt, JournaledState},
+    backend::{ContextUpdateFor, DatabaseError, DatabaseExt, JournaledState},
     constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
     env::FoundryContextExt,
     evm::{
-        BlockEnvFor, ChainContextFor, EthEvmNetwork, EvmEnvFor, FoundryContextFor,
+        BlockEnvFor, ChainFor, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, FoundryContextFor,
         FoundryEvmFactory, FoundryEvmNetwork, TxEnvFor, get_create2_factory_call_inputs,
         with_cloned_context,
     },
     precompiles::P256_VERIFY,
+    refresh_chain_journal,
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_networks::{NetworkConfigs, arbitrum};
@@ -49,7 +50,7 @@ use std::{
     sync::Arc,
 };
 
-use crate::executors::{EarlyExit, EvmExecutionCancellation};
+use crate::executors::{EarlyExit, EvmExecutionCancellation, calculate_stipend};
 
 #[derive(Clone, Debug)]
 #[must_use = "builders do nothing unless you call `build` on them"]
@@ -87,8 +88,13 @@ pub struct InspectorStackBuilder<BLOCK: Clone> {
     /// In isolation mode all top-level calls are executed as a separate transaction in a separate
     /// EVM context, enabling more precise gas accounting and transaction state changes.
     pub enable_isolation: bool,
-    /// Networks with enabled features.
+    /// Configuration retained for Celo precompile support.
+    // TODO(monad-fen-dispatch): Replace this residual with a concrete Celo execution owner.
     pub networks: NetworkConfigs,
+    /// Concrete Tempo label inspector selected by the Tempo executor builder.
+    tempo_labels: Option<Box<TempoLabels>>,
+    /// Explicitly resolved additional cheatcode addresses.
+    pub extra_cheatcode_addresses: &'static [Address],
     /// The wallets to set in the cheatcodes context.
     pub wallets: Option<Wallets>,
     /// The CREATE2 deployer address.
@@ -110,6 +116,8 @@ impl<BLOCK: Clone> Default for InspectorStackBuilder<BLOCK> {
             chisel_state: None,
             enable_isolation: false,
             networks: NetworkConfigs::default(),
+            tempo_labels: None,
+            extra_cheatcode_addresses: &[],
             wallets: None,
             create2_deployer: Default::default(),
         }
@@ -208,10 +216,27 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
         self
     }
 
-    /// Set networks with enabled features.
+    /// Sets networks when building an inspector stack directly.
+    ///
+    /// [`ExecutorBuilder::build`](crate::executors::ExecutorBuilder::build) overrides this with its
+    /// explicit network configuration so the executor, backend, and inspector remain in sync.
     #[inline]
     pub const fn networks(mut self, networks: NetworkConfigs) -> Self {
         self.networks = networks;
+        self
+    }
+
+    /// Installs the Tempo label inspector.
+    #[inline]
+    pub(crate) fn tempo_labels(mut self, inspector: TempoLabels) -> Self {
+        self.tempo_labels = Some(Box::new(inspector));
+        self
+    }
+
+    /// Sets explicitly resolved additional cheatcode addresses.
+    #[inline]
+    pub const fn extra_cheatcode_addresses(mut self, addresses: &'static [Address]) -> Self {
+        self.extra_cheatcode_addresses = addresses;
         self
     }
 
@@ -238,14 +263,16 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
             chisel_state,
             enable_isolation,
             networks,
+            tempo_labels,
+            extra_cheatcode_addresses,
             wallets,
             create2_deployer,
         } = self;
         let mut stack = InspectorStack::new();
-
         // inspectors
         if let Some(config) = cheatcodes {
             let mut cheatcodes = Cheatcodes::new(config);
+            cheatcodes.set_extra_cheatcode_addresses(extra_cheatcode_addresses);
             // Set analysis capabilities if they are provided
             if let Some(analysis) = analysis {
                 stack.set_analysis(analysis.clone());
@@ -271,11 +298,9 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
 
         stack.enable_isolation(enable_isolation);
         stack.networks(networks);
+        stack.inner.tempo_labels = tempo_labels;
+        stack.set_extra_cheatcode_addresses(extra_cheatcode_addresses);
         stack.set_create2_deployer(create2_deployer);
-
-        if networks.is_tempo() {
-            stack.inner.tempo_labels = Some(Box::default());
-        }
 
         // environment, must come after all of the inspectors
         if let Some(block) = block {
@@ -337,6 +362,16 @@ pub struct InnerContextData {
     original_origin: Address,
     /// Accounts that were created locally before entering the nested EVM context.
     locally_created_accounts: AddressHashSet,
+}
+
+/// Gas accounting carried across an isolated frame's synthetic transaction boundary.
+struct IsolatedGas {
+    /// Regular execution gas available to the isolated frame.
+    regular_limit: u64,
+    /// State gas reservoir available to the isolated frame.
+    reservoir: u64,
+    /// State gas already charged by the outer opcode.
+    precharged_state: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -414,6 +449,8 @@ pub struct InspectorStackInner {
     pub sancov_trace_cmp: bool,
     pub enable_isolation: bool,
     pub networks: NetworkConfigs,
+    /// Additional addresses installed and recognized as cheatcode contracts.
+    pub extra_cheatcode_addresses: &'static [Address],
     pub create2_deployer: Address,
     /// Flag marking if we are in the inner EVM context.
     pub in_inner_context: bool,
@@ -469,30 +506,40 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
     ) -> Result<(), EVMError<DatabaseError>> {
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
         let factory = FEN::EvmFactory::default();
-        let chain_context = factory.capture_chain_context(ecx);
-        let state = factory.capture_transaction_state(ecx);
+        let chain_context = ecx.chain().clone();
+        #[cfg(feature = "monad")]
+        let state = foundry_evm_core::FoundryJournal::capture_reserve_balance(ecx.journal());
         let mut nested_chain_context = None;
-        let mut transaction_state = None;
+        #[cfg(feature = "monad")]
+        let mut reserve_balance = None;
         with_cloned_context(ecx, |db, evm_env, journaled_state| {
             let mut evm =
                 factory.create_foundry_nested_evm(db, evm_env, chain_context, &mut inspector);
             *evm.journal_inner_mut() = journaled_state;
-            evm.restore_transaction_state(state);
+            #[cfg(feature = "monad")]
+            {
+                foundry_evm_core::FoundryJournal::restore_reserve_balance(evm.journal_mut(), state);
+                foundry_evm_core::evm::refresh_nested_chain_journal(&mut *evm);
+            }
             f(&mut *evm)?;
-            nested_chain_context = Some(evm.capture_chain_context());
-            transaction_state = Some(evm.capture_transaction_state());
+            nested_chain_context = Some(evm.chain_mut().clone());
+            #[cfg(feature = "monad")]
+            {
+                reserve_balance = Some(foundry_evm_core::FoundryJournal::capture_reserve_balance(
+                    evm.journal_mut(),
+                ));
+            }
             let sub_inner = evm.journal_inner_mut().clone();
             let sub_evm_env = evm.to_evm_env();
             Ok((sub_evm_env, sub_inner))
         })?;
-        factory.apply_context_transition(
-            ecx,
-            Some(&nested_chain_context.expect("nested EVM chain context was captured")),
+        *ecx.chain_mut() = nested_chain_context.expect("nested EVM chain context was captured");
+        #[cfg(feature = "monad")]
+        foundry_evm_core::FoundryJournal::restore_reserve_balance(
+            ecx.journal_mut(),
+            reserve_balance.expect("nested EVM state was captured"),
         );
-        factory.restore_transaction_state(
-            ecx,
-            transaction_state.expect("nested EVM state was captured"),
-        );
+        refresh_chain_journal(ecx);
         Ok(())
     }
 
@@ -501,7 +548,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         cheats: &mut Cheatcodes<FEN>,
         db: &mut <FoundryContextFor<'_, FEN> as ContextTr>::Db,
         evm_env: EvmEnvFor<FEN>,
-        chain_context: ChainContextFor<FEN>,
+        chain_context: ChainFor<FEN>,
         f: NestedEvmClosureFor<'_, FEN>,
     ) -> Result<EvmEnvFor<FEN>, EVMError<DatabaseError>> {
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
@@ -521,7 +568,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         ecx: &mut FoundryContextFor<'_, FEN>,
         fork_id: Option<U256>,
         transaction: B256,
-    ) -> eyre::Result<ContextUpdate<ChainContextFor<FEN>>> {
+    ) -> eyre::Result<ContextUpdateFor<EvmFactoryFor<FEN>>> {
         let evm_env = ecx.evm_clone();
         let outer_tx_env = ecx.tx_clone();
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
@@ -713,6 +760,18 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
     #[inline]
     pub const fn networks(&mut self, networks: NetworkConfigs) {
         self.inner.networks = networks;
+    }
+
+    /// Returns additional addresses installed and recognized as cheatcode contracts.
+    #[inline]
+    pub const fn extra_cheatcode_addresses(&self) -> &'static [Address] {
+        self.inner.extra_cheatcode_addresses
+    }
+
+    /// Sets additional addresses installed and recognized as cheatcode contracts.
+    #[inline]
+    pub const fn set_extra_cheatcode_addresses(&mut self, addresses: &'static [Address]) {
+        self.inner.extra_cheatcode_addresses = addresses;
     }
 
     /// Set the CREATE2 deployer address.
@@ -949,9 +1008,10 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         kind: TxKind,
         caller: Address,
         input: Bytes,
-        gas_limit: u64,
+        gas: IsolatedGas,
         value: U256,
     ) -> (InterpreterResult, Option<Address>, bool) {
+        let IsolatedGas { regular_limit, reservoir, precharged_state } = gas;
         let cached_evm_env = ecx.evm_clone();
         let cached_tx_env = ecx.tx_clone();
         self.isolated_call_was_precompile = None;
@@ -964,8 +1024,17 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         ecx.tx_mut().set_kind(kind);
         ecx.tx_mut().set_data(input);
         ecx.tx_mut().set_value(value);
-        // Add 21000 to the gas limit to account for the base cost of transaction.
-        ecx.tx_mut().set_gas_limit(gas_limit + 21000);
+        let initial_gas = calculate_stipend(ecx.tx(), ecx.cfg());
+        // Preserve the frame's regular gas and reservoir across the synthetic transaction
+        // boundary. The extra state gas offsets the account-creation charge already paid by the
+        // outer opcode.
+        let regular_gas_limit = regular_limit.saturating_add(initial_gas);
+        ecx.cfg_env_mut().tx_gas_limit_cap = Some(regular_gas_limit);
+        let mut tx_gas_limit = regular_gas_limit.saturating_add(reservoir);
+        if let Some(precharged_state) = precharged_state {
+            tx_gas_limit = tx_gas_limit.saturating_add(precharged_state);
+        }
+        ecx.tx_mut().set_gas_limit(tx_gas_limit);
 
         // If we haven't disabled gas limit checks, ensure that transaction gas limit will not
         // exceed block gas limit.
@@ -1008,7 +1077,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let evm_env = ecx.evm_clone();
         let tx_env = ecx.tx_clone();
         let factory = FEN::EvmFactory::default();
-        let chain_context = factory.capture_chain_context(ecx);
+        let chain_context = ecx.chain().clone();
 
         let isolated_state = {
             let journal = ecx.journal_inner();
@@ -1031,41 +1100,54 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             state
         };
 
-        let state = factory.capture_transaction_state(ecx);
-        let (res, nested_chain_context, transaction_state) =
-            self.with_inspector(|mut inspector| {
-                let (res, nested_env, chain_context, transaction_state) = {
-                    let (db, _) = ecx.db_journal_inner_mut();
-                    let mut evm = factory.create_foundry_nested_evm(
-                        db,
-                        evm_env,
-                        chain_context,
-                        &mut inspector,
+        #[cfg(feature = "monad")]
+        let state = foundry_evm_core::FoundryJournal::capture_reserve_balance(ecx.journal());
+        #[cfg(feature = "monad")]
+        let mut reserve_balance = None;
+        let mut nested_chain_context = None;
+        let res = self.with_inspector(|mut inspector| {
+            let (res, nested_env) = {
+                let (db, _) = ecx.db_journal_inner_mut();
+                let mut evm =
+                    factory.create_foundry_nested_evm(db, evm_env, chain_context, &mut inspector);
+                evm.journal_inner_mut().state = isolated_state;
+                #[cfg(feature = "monad")]
+                {
+                    foundry_evm_core::FoundryJournal::restore_reserve_balance(
+                        evm.journal_mut(),
+                        state,
                     );
-                    evm.journal_inner_mut().state = isolated_state;
-                    evm.restore_transaction_state(state);
-                    evm.preserve_transaction_state_on_next_transaction();
-                    // Set depth to 1 to make sure traces are collected correctly.
-                    evm.journal_inner_mut().depth = 1;
-                    let res = evm.transact_raw(tx_env);
-                    (
-                        res,
-                        evm.to_evm_env(),
-                        evm.capture_chain_context(),
-                        evm.capture_transaction_state(),
-                    )
-                };
+                    foundry_evm_core::evm::refresh_nested_chain_journal(&mut *evm);
+                    foundry_evm_core::FoundryJournal::set_preserve_reserve_balance(
+                        evm.journal_mut(),
+                        true,
+                    );
+                }
+                // Set depth to 1 to make sure traces are collected correctly.
+                evm.journal_inner_mut().depth = 1;
+                let res = evm.transact_raw(tx_env);
+                nested_chain_context = Some(evm.chain_mut().clone());
+                #[cfg(feature = "monad")]
+                {
+                    reserve_balance =
+                        Some(foundry_evm_core::FoundryJournal::capture_reserve_balance(
+                            evm.journal_mut(),
+                        ));
+                }
+                (res, evm.to_evm_env())
+            };
 
-                // Restore env, preserving cheatcode cfg/block changes from the nested EVM
-                // but restoring the original tx and basefee (which we zeroed for the nested call).
-                let mut restored_evm_env = nested_env;
-                restored_evm_env.block_env.set_basefee(cached_evm_env.block_env.basefee());
-                ecx.set_evm(restored_evm_env);
-                ecx.set_tx(cached_tx_env);
+            // Restore env, preserving cheatcode cfg/block changes from the nested EVM
+            // but restoring the original tx and basefee (which we zeroed for the nested call).
+            let mut restored_evm_env = nested_env;
+            restored_evm_env.block_env.set_basefee(cached_evm_env.block_env.basefee());
+            restored_evm_env.cfg_env.tx_gas_limit_cap = cached_evm_env.cfg_env.tx_gas_limit_cap;
+            ecx.set_evm(restored_evm_env);
+            ecx.set_tx(cached_tx_env);
 
-                (res, chain_context, transaction_state)
-            });
-        factory.apply_context_transition(ecx, Some(&nested_chain_context));
+            res
+        });
+        *ecx.chain_mut() = nested_chain_context.expect("nested EVM chain context was captured");
 
         self.in_inner_context = false;
         self.inner_context_data = None;
@@ -1076,17 +1158,36 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             cheats.in_isolation_context = false;
         }
 
-        let mut gas = Gas::new(gas_limit);
+        let mut gas = Gas::new_with_regular_gas_and_reservoir(regular_limit, reservoir);
         let was_precompile_called = self.isolated_call_was_precompile.take().unwrap_or(false);
 
         let Ok(res) = res else {
-            factory.restore_transaction_state(ecx, transaction_state);
-            FEN::EvmFactory::default().apply_context_transition(ecx, None);
+            #[cfg(feature = "monad")]
+            foundry_evm_core::FoundryJournal::restore_reserve_balance(
+                ecx.journal_mut(),
+                reserve_balance.expect("isolated transaction state was captured"),
+            );
+            refresh_chain_journal(ecx);
             // Should we match, encode and propagate error as a revert reason?
             let result =
                 InterpreterResult { result: InstructionResult::Revert, output: Bytes::new(), gas };
             return (result, None, was_precompile_called);
         };
+
+        let transaction_gas = res.result.gas();
+        let mut state_gas_used = transaction_gas.block_state_gas_used();
+        if let Some(precharged_state) = precharged_state {
+            state_gas_used = state_gas_used.saturating_sub(precharged_state);
+        }
+        if state_gas_used == 0 {
+            let mut snapshot_gas = Gas::new(regular_limit);
+            let _ = snapshot_gas.record_regular_cost(transaction_gas.tx_gas_used());
+            if let Some(cheats) = self.cheatcodes.as_deref_mut() {
+                cheats.gas_metering.set_isolated_snapshot_gas_used(snapshot_gas.total_gas_spent());
+            }
+        }
+        let _ = gas.record_state_cost(state_gas_used);
+        let _ = gas.record_regular_cost(transaction_gas.block_regular_gas_used());
 
         let rolled_back = !res.result.is_success();
 
@@ -1114,29 +1215,29 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 slot_mut.is_cold &= val.is_cold;
             }
         }
-        factory.restore_transaction_state(ecx, transaction_state);
+        #[cfg(feature = "monad")]
+        foundry_evm_core::FoundryJournal::restore_reserve_balance(
+            ecx.journal_mut(),
+            reserve_balance.expect("isolated transaction state was captured"),
+        );
+        refresh_chain_journal(ecx);
 
         let (result, address, output) = match res.result {
             ExecutionResult::Success { reason, gas: result_gas, logs: _, output } => {
                 gas.set_refund(result_gas.final_refunded() as i64);
-                let _ = gas.record_regular_cost(result_gas.tx_gas_used());
                 let address = match output {
                     Output::Create(_, address) => address,
                     Output::Call(_) => None,
                 };
                 (reason.into(), address, output.into_data())
             }
-            ExecutionResult::Halt { reason, gas: result_gas, .. } => {
-                let _ = gas.record_regular_cost(result_gas.tx_gas_used());
+            ExecutionResult::Halt { reason, .. } => {
                 (InstructionResult::from(reason), None, Bytes::new())
             }
-            ExecutionResult::Revert { gas: result_gas, output, .. } => {
-                let _ = gas.record_regular_cost(result_gas.tx_gas_used());
-                (InstructionResult::Revert, None, output)
-            }
+            ExecutionResult::Revert { output, .. } => (InstructionResult::Revert, None, output),
         };
         if rolled_back {
-            FEN::EvmFactory::default().apply_context_transition(ecx, None);
+            refresh_chain_journal(ecx);
         }
         (InterpreterResult { result, output, gas }, address, was_precompile_called)
     }
@@ -1201,7 +1302,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             *ecx.journal_mut().evm_state_mut() = std::mem::take(&mut self.top_frame_journal);
         }
 
-        FEN::EvmFactory::default().apply_context_transition(ecx, None);
+        refresh_chain_journal(ecx);
     }
 
     // We take extra care in optimizing `step` and `step_end`, as they're are likely the most
@@ -1636,12 +1737,19 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                 // Isolate CALLs
                 CallScheme::Call => {
                     let input = call.input.bytes(ecx);
+                    let precharged_state = call
+                        .charged_new_account_state_gas
+                        .then_some(ecx.cfg().gas_params().new_account_state_gas());
                     let (result, _, was_precompile_called) = self.transact_inner(
                         ecx,
                         TxKind::Call(call.target_address),
                         call.caller,
                         input,
-                        call.gas_limit,
+                        IsolatedGas {
+                            regular_limit: call.gas_limit,
+                            reservoir: call.reservoir,
+                            precharged_state,
+                        },
                         call.value.get(),
                     );
                     return Some(CallOutcome {
@@ -1792,13 +1900,20 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                 .evm_state()
                 .get(&create.caller())
                 .map(|acc| create.caller().create(acc.info.nonce));
+            let precharged_state = create
+                .charged_create_state_gas()
+                .then_some(ecx.cfg().gas_params().create_state_gas());
 
             let (result, address, _) = self.transact_inner(
                 ecx,
                 TxKind::Create,
                 create.caller(),
                 create.init_code().clone(),
-                create.gas_limit(),
+                IsolatedGas {
+                    regular_limit: create.gas_limit(),
+                    reservoir: create.reservoir(),
+                    precharged_state,
+                },
                 create.value(),
             );
             let address =
@@ -1936,10 +2051,12 @@ impl<FEN: FoundryEvmNetwork> InspectorExt for InspectorStackRefMut<'_, FEN> {
 }
 
 impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for InspectorStack<FEN> {
+    #[inline(always)]
     fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut FoundryContextFor<'_, FEN>) {
         self.as_mut().step_inlined(interpreter, ecx)
     }
 
+    #[inline(always)]
     fn step_end(&mut self, interpreter: &mut Interpreter, ecx: &mut FoundryContextFor<'_, FEN>) {
         self.as_mut().step_end_inlined(interpreter, ecx)
     }

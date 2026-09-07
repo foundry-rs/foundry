@@ -4,7 +4,10 @@ use crate::{
     TestFunctionExt, preprocessor::DynamicTestLinkingPreprocessor, shell, term::SpinnerReporter,
 };
 use alloy_json_abi::JsonAbi;
-use comfy_table::{Cell, Color, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN};
+use comfy_table::{
+    Cell, Color, Table,
+    presets::{ASCII_FULL, ASCII_MARKDOWN},
+};
 use eyre::{OptionExt, Result};
 use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
@@ -60,6 +63,9 @@ pub struct ProjectCompiler {
     /// Whether to print anything at all. Overrides other `print` options.
     quiet: Option<bool>,
 
+    /// Whether to print the resolved settings for each compiler invocation.
+    print_compiler_settings: bool,
+
     /// Whether to bail on compiler errors.
     bail: Option<bool>,
 
@@ -92,6 +98,7 @@ impl ProjectCompiler {
             print_names: None,
             print_sizes: None,
             quiet: Some(crate::shell::is_quiet()),
+            print_compiler_settings: false,
             bail: None,
             ignore_eip_3860: false,
             size_limits: ContractSizeLimits::default(),
@@ -119,6 +126,13 @@ impl ProjectCompiler {
     #[doc(alias = "silent")]
     pub const fn quiet(mut self, yes: bool) -> Self {
         self.quiet = Some(yes);
+        self
+    }
+
+    /// Sets whether to print the resolved settings for each compiler invocation.
+    #[inline]
+    pub const fn print_compiler_settings(mut self, yes: bool) -> Self {
+        self.print_compiler_settings = yes;
         self
     }
 
@@ -209,16 +223,21 @@ impl ProjectCompiler {
         let quiet = self.quiet.unwrap_or(false);
         let bail = self.bail.unwrap_or(true);
 
-        let output = with_compilation_reporter(quiet, Some(self.project_root.clone()), || {
-            tracing::debug!("compiling project");
+        let output = with_compilation_reporter_and_settings(
+            quiet,
+            Some(self.project_root.clone()),
+            self.print_compiler_settings,
+            || {
+                tracing::debug!("compiling project");
 
-            let timer = Instant::now();
-            let r = f();
-            let elapsed = timer.elapsed();
+                let timer = Instant::now();
+                let r = f();
+                let elapsed = timer.elapsed();
 
-            tracing::debug!("finished compiling in {:.3}s", elapsed.as_secs_f64());
-            r
-        })?;
+                tracing::debug!("finished compiling in {:.3}s", elapsed.as_secs_f64());
+                r
+            },
+        )?;
 
         if bail && output.has_compiler_errors() {
             eyre::bail!("{output}");
@@ -288,7 +307,7 @@ impl ProjectCompiler {
                 // filter out forge-std specific contracts
                 !id.source.to_string_lossy().contains("/forge-std/src/")
             }) {
-                artifacts.entry(id.name.clone()).or_default().push((id.source.clone(), artifact));
+                artifacts.entry(id.name.clone()).or_default().push((id.source, artifact));
             }
 
             // Internal libraries are inlined into consumers and never deployed; skip them.
@@ -530,9 +549,9 @@ impl SizeReport {
     fn format_table_output(&self) -> Table {
         let mut table = Table::new();
         if shell::is_markdown() {
-            table.load_preset(ASCII_MARKDOWN);
+            table.load_style(ASCII_MARKDOWN);
         } else {
-            table.apply_modifier(UTF8_ROUND_CORNERS);
+            table.load_style(ASCII_FULL.with_rounded_corners());
         }
 
         table.set_header(vec![
@@ -771,14 +790,28 @@ pub fn with_compilation_reporter<O>(
     project_root: Option<PathBuf>,
     f: impl FnOnce() -> O,
 ) -> O {
+    with_compilation_reporter_and_settings(quiet, project_root, false, f)
+}
+
+fn with_compilation_reporter_and_settings<O>(
+    quiet: bool,
+    project_root: Option<PathBuf>,
+    print_compiler_settings: bool,
+    f: impl FnOnce() -> O,
+) -> O {
     #[expect(clippy::collapsible_else_if)]
     let reporter = if quiet || shell::is_json() {
         Report::new(NoReporter::default())
     } else {
         if std::io::stderr().is_terminal() {
-            Report::new(SpinnerReporter::spawn(project_root))
+            Report::new(
+                SpinnerReporter::spawn(project_root)
+                    .with_compiler_settings(print_compiler_settings),
+            )
         } else {
-            Report::new(BasicStdoutReporter::default())
+            Report::new(
+                BasicStdoutReporter::default().with_compiler_settings(print_compiler_settings),
+            )
         }
     };
 

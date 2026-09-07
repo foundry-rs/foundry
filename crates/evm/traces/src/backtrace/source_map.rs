@@ -66,7 +66,8 @@ impl<'a> PcSourceMapper<'a> {
             return None;
         }
 
-        let (line, column) = self.offset_to_line_column(source_idx, offset)?;
+        let line_offsets = self.line_offsets.get(source_idx)?;
+        let (line, column) = offset_to_line_column(line_offsets, offset);
 
         trace!(
             file = ?file_path,
@@ -102,23 +103,6 @@ impl<'a> PcSourceMapper<'a> {
 
         best_ic
     }
-
-    /// Converts a byte offset to line and column numbers.
-    ///
-    /// Returned lines and column numbers are 1-indexed.
-    fn offset_to_line_column(&self, source_idx: usize, offset: usize) -> Option<(usize, usize)> {
-        let line_offsets = self.line_offsets.get(source_idx)?;
-
-        // Find the line containing this offset
-        let line = line_offsets.binary_search(&offset).unwrap_or_else(|i| i.saturating_sub(1));
-
-        // Calculate column within the line
-        let line_start = if line == 0 { 0 } else { line_offsets[line - 1] + 1 };
-        let column = offset.saturating_sub(line_start);
-
-        // Lines and columns are 1-indexed
-        Some((line + 1, column + 1))
-    }
 }
 /// Represents a location in source code.
 #[derive(Debug, Clone)]
@@ -132,11 +116,18 @@ pub struct SourceLocation {
     pub offset: usize,
 }
 
-/// Computes line offset positions in source content.
+/// Computes the byte offset where each line starts in source content.
 fn compute_line_offsets(content: &str) -> Vec<usize> {
     let mut offsets = vec![0];
-    offsets.extend(memchr::memchr_iter(b'\n', content.as_bytes()));
+    offsets.extend(memchr::memchr_iter(b'\n', content.as_bytes()).map(|offset| offset + 1));
     offsets
+}
+
+/// Converts a byte offset to 1-indexed line and column numbers.
+fn offset_to_line_column(line_offsets: &[usize], offset: usize) -> (usize, usize) {
+    let line = line_offsets.partition_point(|&line_start| line_start <= offset) - 1;
+    let column = offset - line_offsets[line];
+    (line + 1, column + 1)
 }
 
 /// Loads sources for a specific ArtifactId.build_id
@@ -174,4 +165,30 @@ pub fn load_build_sources(
     }
 
     Some(sources)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{compute_line_offsets, offset_to_line_column};
+
+    fn line_column(content: &str, offset: usize) -> (usize, usize) {
+        offset_to_line_column(&compute_line_offsets(content), offset)
+    }
+
+    #[test]
+    fn maps_byte_offsets_to_line_and_column() {
+        assert_eq!(line_column("abc", 0), (1, 1));
+        assert_eq!(line_column("abc", 2), (1, 3));
+
+        assert_eq!(line_column("abc\ndef", 3), (1, 4));
+        assert_eq!(line_column("abc\ndef", 4), (2, 1));
+        assert_eq!(line_column("abc\ndef", 6), (2, 3));
+
+        assert_eq!(line_column("a\nbc\ndef", 0), (1, 1));
+        assert_eq!(line_column("a\nbc\ndef", 1), (1, 2));
+        assert_eq!(line_column("a\nbc\ndef", 2), (2, 1));
+        assert_eq!(line_column("a\nbc\ndef", 4), (2, 3));
+        assert_eq!(line_column("a\nbc\ndef", 5), (3, 1));
+        assert_eq!(line_column("a\nbc\ndef", 7), (3, 3));
+    }
 }

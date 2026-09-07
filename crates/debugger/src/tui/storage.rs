@@ -1,7 +1,10 @@
 //! Storage access helpers for debugger TUI views and commands.
 
 use crate::DebugNode;
-use alloy_primitives::{U256, map::IndexMap};
+use alloy_primitives::{
+    B256, U256,
+    map::{B256Map, IndexMap},
+};
 use revm::{bytecode::opcode, interpreter::InstructionResult};
 use revm_inspectors::tracing::types::{CallTraceStep, StorageChangeReason};
 
@@ -121,6 +124,50 @@ pub(super) fn storage_accesses_until(
     }
 
     accesses
+}
+
+pub(super) fn storage_values(accesses: &IndexMap<U256, StorageAccess>) -> B256Map<B256> {
+    accesses.iter().map(|(slot, access)| (B256::from(*slot), B256::from(access.value()))).collect()
+}
+
+/// Returns the value from the next persistent storage write to each slot in the current trace.
+pub(super) fn next_storage_write_values(
+    arena: &[DebugNode],
+    current_node_index: usize,
+    current_step_index: usize,
+) -> B256Map<B256> {
+    let current_node = &arena[current_node_index];
+    let current_absolute_step = current_node.step_offset.saturating_add(current_step_index);
+    let mut next_accesses = B256Map::<(usize, B256)>::default();
+
+    for node in arena.iter().filter(|node| node.trace_node_idx == current_node.trace_node_idx) {
+        for (step_index, _) in node.steps.iter().enumerate() {
+            let absolute_step = node.step_offset.saturating_add(step_index);
+            if absolute_step <= current_absolute_step {
+                continue;
+            }
+            let Some(access) = storage_access_at(&node.steps, step_index).filter(|access| {
+                access.space() == StorageSpace::Persistent
+                    && access.kind == StorageAccessKind::Store
+            }) else {
+                continue;
+            };
+            let slot = B256::from(access.slot());
+            let value = B256::from(access.value());
+            match next_accesses.get_mut(&slot) {
+                Some((next_step, next_value)) if absolute_step < *next_step => {
+                    *next_step = absolute_step;
+                    *next_value = value;
+                }
+                None => {
+                    next_accesses.insert(slot, (absolute_step, value));
+                }
+                _ => {}
+            }
+        }
+    }
+
+    next_accesses.into_iter().map(|(slot, (_, value))| (slot, value)).collect()
 }
 
 pub(super) fn storage_access_at(

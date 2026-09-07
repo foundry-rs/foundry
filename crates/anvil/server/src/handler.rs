@@ -130,7 +130,6 @@ mod tests {
     #[derive(Clone)]
     struct TypedHandler;
 
-    #[async_trait::async_trait]
     impl RpcHandler for TestHandler {
         type Request = serde_json::Value;
 
@@ -140,7 +139,6 @@ mod tests {
         }
     }
 
-    #[async_trait::async_trait]
     impl RpcHandler for TypedHandler {
         type Request = TypedRequest;
 

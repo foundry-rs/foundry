@@ -3,6 +3,7 @@ use chisel::session::ChiselSession as CachedChiselSession;
 use foundry_evm::core::evm::EthEvmNetwork;
 use session::ChiselSession;
 use std::{
+    fs,
     path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -51,6 +52,29 @@ repl_test!(repl_help, |repl| {
     repl.sendln_raw("!h");
     repl.expect("Chisel help");
     repl.expect_prompt();
+});
+
+repl_test!(command_output_after_raw_input, |repl| {
+    repl.sendln_raw("!help");
+    repl.expect("Chisel help");
+    repl.expect_prompt();
+
+    // A synchronous command must retain its output even after an explicit prompt wait.
+    repl.sendln("uint256(7)");
+    repl.expect("Hex: 0x7");
+    repl.expect("Decimal: 7");
+    repl.sendln("uint256(8)");
+    repl.expect("Decimal: 8");
+});
+
+repl_test!(sendln_waits_for_save, |repl| {
+    let id = unique_cache_id("wait-for-save");
+    let _cleanup = CacheCleanup(vec![id.clone()]);
+
+    // The first command must finish before the caller observes its filesystem effects.
+    repl.sendln(&format!("!save {id}"));
+    assert!(cache_file(&id).is_file());
+    repl.expect(&format!("Saved session to cache with ID = {id}"));
 });
 
 repl_test!(save_renamed_session_removes_stale_cache, |repl| {
@@ -103,12 +127,18 @@ repl_test!(failed_save_restores_previous_session_id, |repl| {
     let first_id = unique_cache_id("failed-save-first");
     let second_id = unique_cache_id("failed-save-second");
     let _cleanup = CacheCleanup(vec![first_id.clone(), second_id.clone()]);
-    let invalid_id = format!("{}/id", unique_cache_id("failed-save-invalid"));
 
     repl.sendln(&format!("!save {first_id}"));
-    // The nested path makes the write fail without touching the existing cache file.
-    repl.sendln_raw(&format!("!save {invalid_id}"));
-    repl.expect("No such file or directory");
+    // A directory at the destination makes a valid ID fail when writing the cache file.
+    let blocked_cache = tempfile::Builder::new()
+        .prefix("chisel-failed-save-")
+        .suffix(".json")
+        .tempdir_in(CachedChiselSession::<EthEvmNetwork>::cache_dir().unwrap())
+        .unwrap();
+    let blocked_name = blocked_cache.path().file_name().unwrap().to_str().unwrap();
+    let blocked_id = blocked_name.strip_prefix("chisel-").unwrap().strip_suffix(".json").unwrap();
+    repl.sendln_raw(&format!("!save {blocked_id}"));
+    repl.expect("Is a directory");
     repl.expect_prompt();
 
     // A failed rename must not lose the ID of the last successfully saved file.
@@ -120,6 +150,21 @@ repl_test!(failed_save_restores_previous_session_id, |repl| {
     repl.sendln_raw(&format!("!load {first_id}"));
     repl.expect("failed to load session");
     repl.expect_prompt();
+});
+
+repl_test!(load_session_preserves_active_force, "--force", |repl| {
+    let id = unique_cache_id("active-force");
+    let _cleanup = CacheCleanup(vec![id.clone()]);
+
+    repl.sendln(&format!("!save {id}"));
+
+    let out_dir = repl.project().root().join("out");
+    fs::create_dir_all(&out_dir).unwrap();
+    fs::write(out_dir.join("sentinel"), []).unwrap();
+
+    repl.sendln(&format!("!load {id}"));
+
+    assert!(!out_dir.exists());
 });
 
 // Test abi encode/decode.
@@ -184,7 +229,9 @@ repl_test!(cheatcodes_available, "", init = true, |repl| {
 
 // Test empty inputs.
 repl_test!(empty_input, |repl| {
-    repl.sendln("   \n \n\n    \t \t \n \n\t\t\t\t \n \n");
+    for line in "   \n \n\n    \t \t \n \n\t\t\t\t \n \n".split('\n') {
+        repl.sendln(line);
+    }
 });
 
 // Issue #4130: Test type(intN).min correctness.
@@ -195,15 +242,62 @@ repl_test!(int_min_values, |repl| {
     repl.expect("-57896044618658097711785492504343953926634992332820282019728792003956564819968");
 });
 
+// Issue #5370: The last evaluated result can be reused in subsequent input.
+repl_test!(last_result, |repl| {
+    repl.sendln("type(uint256).max");
+    repl.sendln("uint256 MAX = $_");
+    repl.sendln("MAX");
+    repl.expect(
+        "Decimal: 115792089237316195423570985008687907853269984665640564039457584007913129639935",
+    );
+
+    repl.sendln("uint256 value = 1");
+    repl.sendln("value = 2");
+    repl.sendln("uint256 assigned = $_");
+    repl.sendln("assigned");
+    repl.expect("Decimal: 2");
+
+    repl.sendln(r#""hello""#);
+    repl.sendln("string memory greeting = $_");
+    repl.sendln("greeting");
+    repl.expect("UTF-8: hello");
+});
+
+repl_test!(last_result_resets_with_session, |repl| {
+    let saved_id = unique_cache_id("last-result-saved");
+    let loaded_id = unique_cache_id("last-result-loaded");
+    let _cleanup = CacheCleanup(vec![saved_id.clone(), loaded_id.clone()]);
+
+    repl.sendln("uint256 persisted = 7");
+    repl.sendln(&format!("!save {saved_id}"));
+    std::fs::copy(cache_file(&saved_id), cache_file(&loaded_id)).unwrap();
+
+    repl.sendln(r#""stale""#);
+    repl.sendln_raw(&format!("!load {loaded_id}"));
+    repl.expect(&format!("Loaded Chisel session! (ID = {saved_id})"));
+    repl.expect_prompt();
+    repl.sendln_raw("$_");
+    repl.expect("no previous result");
+    repl.expect_prompt();
+
+    repl.sendln("persisted");
+    repl.sendln("!clear");
+    repl.sendln_raw("$_");
+    repl.expect("no previous result");
+    repl.expect_prompt();
+});
+
 // Issue #4393: Test edit command with traces.
-// TODO: test `!edit`
-// repl_test!(edit_with_traces, |repl| {
-//     repl.sendln("!traces");
-//     repl.sendln("uint x = 42");
-//     repl.sendln("!edit");
-//     // Should open editor without errors.
-//     repl.expect("Running");
-// });
+repl_test!(edit_with_traces, |repl| {
+    repl.sendln("!traces");
+    repl.expect("Enabled traces!");
+    repl.sendln("uint x = 42");
+    repl.sendln("!edit");
+    repl.expect("Traces:");
+    repl.expect("Successfully edited `run()` function's body!");
+    repl.sendln("x");
+    repl.expect("Decimal: 42");
+});
 
 // Test tuple support.
 repl_test!(tuples, |repl| {
@@ -218,13 +312,10 @@ repl_test!(tuples, |repl| {
 repl_test!(import, "", init = true, |repl| {
     repl.sendln("import {Counter} from \"src/Counter.sol\"");
     repl.sendln("Counter c = new Counter()");
-    // TODO: pre-existing inspection failure.
-    // repl.sendln("c.number()");
-    repl.sendln("uint x = c.number();\nx");
+    repl.sendln("c.number()");
     repl.expect("Decimal: 0");
     repl.sendln("c.increment();");
-    // repl.sendln("c.number()");
-    repl.sendln("x = c.number();\nx");
+    repl.sendln("c.number()");
     repl.expect("Decimal: 1");
 });
 
@@ -254,6 +345,22 @@ repl_test!(solc_flags, "--use 0.8.23", |repl| {
 // Issue #4915: `chisel eval`
 repl_test!(eval_subcommand, "eval type(uint8).max", |repl| {
     repl.expect("Decimal: 255");
+});
+
+// Issue #4963: inspect the value of the final inline assembly expression.
+repl_test!(inline_assembly_expression, |repl| {
+    repl.sendln("uint256 value = 1");
+    repl.sendln("assembly { value := 2 add(value, 0) } // trailing comment");
+    repl.expect("Decimal: 2");
+    repl.sendln("value");
+    repl.expect("Decimal: 2");
+
+    repl.sendln("assembly { let __chisel_yul_result := 3 add(__chisel_yul_result, 0) }");
+    repl.expect("Decimal: 3");
+
+    repl.sendln("uint256 __chisel_yul_result_1 = 0");
+    repl.sendln("assembly { add(3, 4) }");
+    repl.expect("Decimal: 7");
 });
 
 repl_test!(
@@ -332,7 +439,8 @@ repl_test!(assembly_no_return_intermediate, |repl| {
 
 // Issue #5051, #8978: Test EVM version normalization.
 repl_test!(flaky_evm_version_normalization, "--use 0.7.6 --evm-version london", |repl| {
-    repl.sendln("uint x;\nx");
+    repl.sendln("uint x;");
+    repl.sendln("x");
     repl.expect("Decimal: 0");
 });
 
@@ -364,7 +472,8 @@ repl_test!(fetch_interface_with_structs, |repl| {
         "Added 0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789's interface to source as `IEntryPoint`",
     );
     repl.expect_prompt();
-    repl.sendln("uint256 x = 1;\nx");
+    repl.sendln("uint256 x = 1;");
+    repl.sendln("x");
     repl.expect("Decimal: 1");
 });
 

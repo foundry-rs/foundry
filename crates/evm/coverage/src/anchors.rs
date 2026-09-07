@@ -190,10 +190,5 @@ fn is_in_source_range(element: &SourceElement, location: &SourceLocation) -> boo
     let start_of_ranges = location.bytes.start.max(element.offset());
     let end_of_ranges =
         (location.bytes.start + location.len()).min(element.offset() + element.length());
-    let within_ranges = start_of_ranges <= end_of_ranges;
-    if !within_ranges {
-        return false;
-    }
-
-    true
+    start_of_ranges <= end_of_ranges
 }

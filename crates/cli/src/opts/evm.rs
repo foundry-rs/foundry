@@ -3,7 +3,7 @@
 use alloy_primitives::{Address, B256, U256};
 use clap::Parser;
 use foundry_config::{
-    Chain, Config,
+    Chain, Config, FoundryHardfork,
     figment::{
         self, Metadata, Profile, Provider,
         error::Kind::InvalidType,
@@ -124,6 +124,13 @@ pub struct EvmArgs {
     #[arg(long, conflicts_with = "isolate")]
     #[serde(skip)]
     pub no_isolate: bool,
+
+    /// The runtime EVM hardfork to use.
+    ///
+    /// Network-specific hardforks must be namespaced, for example `tempo:T5`.
+    #[arg(long, value_name = "HARDFORK")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hardfork: Option<FoundryHardfork>,
 
     /// Network selection.
     #[command(flatten)]
@@ -357,6 +364,17 @@ mod tests {
 
         let env = EnvArgs::parse_from(["foundry-cli", "--chain-id", "goerli"]);
         assert_eq!(env.chain, Some(NamedChain::Goerli.into()));
+    }
+
+    #[test]
+    fn hardfork_arg_selects_network() {
+        let args = EvmArgs::parse_from(["foundry-cli", "--hardfork", "tempo:T5"]);
+        let hardfork = "tempo:T5".parse::<FoundryHardfork>().unwrap();
+        assert_eq!(args.hardfork, Some(hardfork));
+
+        let config = Config::from_provider(Config::figment().merge(args)).unwrap();
+        assert_eq!(config.hardfork, Some(hardfork));
+        assert!(config.networks.is_tempo());
     }
 
     #[test]

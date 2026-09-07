@@ -45,6 +45,14 @@ forgetest_init!(doc_supports_empty_projects, |_prj, cmd| {
     cmd.arg("doc").assert_success();
 });
 
+forgetest_init!(doc_supports_ignoring_all_sources, |prj, cmd| {
+    prj.add_source("Ignored.sol", "contract Ignored {}");
+    prj.update_config(|config| config.doc.ignore = vec!["src/**".to_string()]);
+
+    cmd.arg("doc").assert_success();
+    assert!(prj.root().join("docs/src/pages/.forge-doc-manifest").exists());
+});
+
 forgetest_init!(doc_uses_configured_commit_for_source_links, |prj, cmd| {
     prj.add_source(
         "Revision.sol",
@@ -144,7 +152,7 @@ exit 1
         config.skip = vec!["*Skipped*".parse().unwrap()];
     });
 
-    cmd.args(["doc", "--allow-local-compiler"]).assert_success();
+    cmd.arg("doc").assert_success();
     assert!(!invoked.exists(), "forge doc invoked the configured solc binary");
     assert!(!prj.root().join("docs/src/pages/src/contract.Skipped.mdx").exists());
 });

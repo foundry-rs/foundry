@@ -1,7 +1,5 @@
 //! Cheatcode EVM inspector.
 
-#[cfg(feature = "monad")]
-use crate::monad::{apply_monad_cheatcode as apply_monad_cheatcode_call, is_monad_cheatcode_call};
 use crate::{
     Cheatcode, CheatsConfig, CheatsCtxt, Error, Result,
     Vm::{self, AccountAccess},
@@ -41,14 +39,15 @@ use foundry_common::{
 use foundry_evm_core::{
     Breakpoints, EvmEnv, FoundryTransaction, InspectorExt,
     abi::Vm::stopExpectSafeMemoryCall,
-    backend::{ContextUpdate, DatabaseError, DatabaseExt, LocalForkId, RevertDiagnostic},
+    backend::{ContextUpdateFor, DatabaseError, DatabaseExt, LocalForkId, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
     env::FoundryContextExt,
     evm::{
-        BlockEnvFor, ChainContextFor, EthEvmNetwork, FoundryContextFor, FoundryEvmFactory,
-        FoundryEvmNetwork, NestedEvmClosureFor, SpecFor, TransactionRequestFor,
-        TransactionStateFor, TxEnvFor, with_cloned_context,
+        BlockEnvFor, ChainFor, EthEvmNetwork, EvmFactoryFor, FoundryContextFor, FoundryEvmFactory,
+        FoundryEvmNetwork, NestedEvmClosureFor, SpecFor, TransactionRequestFor, TxEnvFor,
+        with_cloned_context,
     },
+    refresh_chain_journal,
 };
 use foundry_evm_traces::{
     TracingInspector, TracingInspectorConfig, identifier::SignaturesIdentifier,
@@ -105,7 +104,7 @@ pub trait CheatcodesExecutor<FEN: FoundryEvmNetwork> {
         ecx: &mut FoundryContextFor<'_, FEN>,
         fork_id: Option<U256>,
         transaction: B256,
-    ) -> eyre::Result<ContextUpdate<ChainContextFor<FEN>>>;
+    ) -> eyre::Result<ContextUpdateFor<EvmFactoryFor<FEN>>>;
 
     /// Executes a `TransactionRequest` on the database. Inspector is assembled internally.
     fn transact_from_tx_on_db(
@@ -125,7 +124,7 @@ pub trait CheatcodesExecutor<FEN: FoundryEvmNetwork> {
         cheats: &mut Cheatcodes<FEN>,
         db: &mut <FoundryContextFor<'_, FEN> as ContextTr>::Db,
         evm_env: EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>,
-        chain_context: ChainContextFor<FEN>,
+        chain_context: ChainFor<FEN>,
         f: NestedEvmClosureFor<'_, FEN>,
     ) -> Result<EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>, EVMError<DatabaseError>>;
 
@@ -150,10 +149,12 @@ pub(crate) fn exec_create<FEN: FoundryEvmNetwork>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
 ) -> std::result::Result<CreateOutcome, EVMError<DatabaseError>> {
     let fee_token = ccx.ecx.tx().fee_token();
+    let tx_origin = ccx.ecx.tx().caller();
     let mut inputs = Some(inputs);
     let mut outcome = None;
     executor.with_nested_evm(ccx.state, ccx.ecx, &mut |evm| {
         evm.tx_mut().set_fee_token(fee_token);
+        evm.tx_mut().set_caller(tx_origin);
         let inputs = inputs.take().unwrap();
         evm.journal_inner_mut().depth += 1;
 
@@ -185,29 +186,39 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         f: NestedEvmClosureFor<'_, FEN>,
     ) -> Result<(), EVMError<DatabaseError>> {
         let factory = FEN::EvmFactory::default();
-        let chain_context = factory.capture_chain_context(ecx);
-        let state = factory.capture_transaction_state(ecx);
+        let chain_context = ecx.chain().clone();
+        #[cfg(feature = "monad")]
+        let state = foundry_evm_core::FoundryJournal::capture_reserve_balance(ecx.journal());
         let mut nested_chain_context = None;
-        let mut transaction_state = None;
+        #[cfg(feature = "monad")]
+        let mut reserve_balance = None;
         with_cloned_context(ecx, |db, evm_env, journaled_state| {
             let mut evm = factory.create_foundry_nested_evm(db, evm_env, chain_context, cheats);
             *evm.journal_inner_mut() = journaled_state;
-            evm.restore_transaction_state(state);
+            #[cfg(feature = "monad")]
+            {
+                foundry_evm_core::FoundryJournal::restore_reserve_balance(evm.journal_mut(), state);
+                foundry_evm_core::evm::refresh_nested_chain_journal(&mut *evm);
+            }
             f(&mut *evm)?;
-            nested_chain_context = Some(evm.capture_chain_context());
-            transaction_state = Some(evm.capture_transaction_state());
+            nested_chain_context = Some(evm.chain_mut().clone());
+            #[cfg(feature = "monad")]
+            {
+                reserve_balance = Some(foundry_evm_core::FoundryJournal::capture_reserve_balance(
+                    evm.journal_mut(),
+                ));
+            }
             let sub_inner = evm.journal_inner_mut().clone();
             let sub_evm_env = evm.to_evm_env();
             Ok((sub_evm_env, sub_inner))
         })?;
-        factory.apply_context_transition(
-            ecx,
-            Some(&nested_chain_context.expect("nested EVM chain context was captured")),
+        *ecx.chain_mut() = nested_chain_context.expect("nested EVM chain context was captured");
+        #[cfg(feature = "monad")]
+        foundry_evm_core::FoundryJournal::restore_reserve_balance(
+            ecx.journal_mut(),
+            reserve_balance.expect("nested EVM state was captured"),
         );
-        factory.restore_transaction_state(
-            ecx,
-            transaction_state.expect("nested EVM state was captured"),
-        );
+        refresh_chain_journal(ecx);
         Ok(())
     }
 
@@ -216,7 +227,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         cheats: &mut Cheatcodes<FEN>,
         db: &mut <FoundryContextFor<'_, FEN> as ContextTr>::Db,
         evm_env: EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>,
-        chain_context: ChainContextFor<FEN>,
+        chain_context: ChainFor<FEN>,
         f: NestedEvmClosureFor<'_, FEN>,
     ) -> Result<EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>, EVMError<DatabaseError>> {
         let mut evm = FEN::EvmFactory::default().create_foundry_nested_evm(
@@ -235,7 +246,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         ecx: &mut FoundryContextFor<'_, FEN>,
         fork_id: Option<U256>,
         transaction: B256,
-    ) -> eyre::Result<ContextUpdate<ChainContextFor<FEN>>> {
+    ) -> eyre::Result<ContextUpdateFor<EvmFactoryFor<FEN>>> {
         let evm_env = ecx.evm_clone();
         let outer_tx_env = ecx.tx_clone();
         let (db, inner) = ecx.db_journal_inner_mut();
@@ -441,10 +452,17 @@ pub struct GasMetering {
     /// Cache of the amount of gas used in previous call.
     /// This is used by the `lastCallGas` cheatcode.
     pub last_call_gas: Option<crate::Vm::Gas>,
+    /// Gas used by `snapshotGasLastCall`.
+    pub(crate) last_call_snapshot_gas_used: u64,
 
     /// Cache of the amount of gas used in previous call or create frame.
     /// This is used by the `lastFrameGas` cheatcode.
     pub last_frame_gas: Option<crate::Vm::Gas>,
+    /// Gas used by `snapshotGasLastFrame`.
+    pub(crate) last_frame_snapshot_gas_used: u64,
+
+    /// Post-refund gas used by the isolated transaction wrapping the current frame.
+    isolated_snapshot_gas_used: Option<u64>,
 
     /// True if gas recording is enabled.
     pub recording: bool,
@@ -480,6 +498,11 @@ impl GasMetering {
         self.touched = true;
         self.reset = true;
         self.paused_frames.clear();
+    }
+
+    /// Preserves the historical gas snapshot value for an isolated transaction.
+    pub const fn set_isolated_snapshot_gas_used(&mut self, gas_used: u64) {
+        self.isolated_snapshot_gas_used = Some(gas_used);
     }
 }
 
@@ -790,8 +813,17 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// Additional, user configurable context this Inspector has access to when inspecting a call.
     pub config: Arc<CheatsConfig>,
 
+    /// Additional addresses recognized as cheatcode contracts by this executor.
+    pub extra_cheatcode_addresses: &'static [Address],
+
     /// Test-scoped context holding data that needs to be reset every test run
     pub test_context: TestContext,
+
+    /// Revert payloads minted by the `skip` cheatcode during the current test call.
+    ///
+    /// A top-level revert is only classified as a skip when its data byte-equals one of these
+    /// payloads, so user-crafted `FOUNDRY::SKIP` revert data never skips a test on its own.
+    pub skip_payloads: Vec<Bytes>,
 
     /// Whether to commit FS changes such as file creations, writes and deletes.
     /// Used to prevent duplicate changes file executing non-committing calls.
@@ -888,9 +920,11 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// Per-state-snapshot copies of [`Self::fork_block_number_override`].
     pub fork_block_number_override_snapshots: HashMap<U256, Option<u64>>,
 
-    /// Transaction-position context and family-owned execution state captured atomically alongside
-    /// state snapshots.
-    pub context_snapshots: HashMap<U256, (ChainContextFor<FEN>, TransactionStateFor<FEN>)>,
+    /// Transaction-position context and Monad's reserve-balance-tracker state captured atomically
+    /// alongside state snapshots.
+    #[cfg(feature = "monad")]
+    pub context_snapshots:
+        HashMap<U256, (ChainFor<FEN>, monad_revm::reserve_balance::tracker::ReserveBalanceTracker)>,
 
     /// Whether we are currently executing inside an isolation context, i.e.
     /// the synthetic inner transaction wrapped by
@@ -921,6 +955,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             fs_commit: true,
             labels: config.labels.clone(),
             config,
+            extra_cheatcode_addresses: &[],
             block: Default::default(),
             fork_block_number_override: Default::default(),
             active_delegations: Default::default(),
@@ -952,6 +987,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             broadcastable_transactions: Default::default(),
             access_list: Default::default(),
             test_context: Default::default(),
+            skip_payloads: Default::default(),
             serialized_jsons: Default::default(),
             eth_deals: Default::default(),
             gas_metering: Default::default(),
@@ -980,9 +1016,16 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             env_overrides: Default::default(),
             env_overrides_snapshots: Default::default(),
             fork_block_number_override_snapshots: Default::default(),
+            #[cfg(feature = "monad")]
             context_snapshots: Default::default(),
             in_isolation_context: false,
         }
+    }
+
+    /// Sets additional addresses recognized as cheatcode contracts.
+    #[inline]
+    pub const fn set_extra_cheatcode_addresses(&mut self, addresses: &'static [Address]) {
+        self.extra_cheatcode_addresses = addresses;
     }
 
     /// Enables cheatcode analysis capabilities by providing a solar compiler instance.
@@ -1298,7 +1341,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         // but only if the backend is in forking mode
         ecx.db_mut().ensure_cheatcode_access_forking_mode(&caller)?;
 
-        apply_monad_cheatcode_call(
+        crate::monad::apply_monad_cheatcode(
             &mut CheatsCtxt { state: self, ecx, gas_limit: call.gas_limit, caller },
             &input,
         )
@@ -1436,7 +1479,10 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         }
 
         #[cfg(feature = "monad")]
-        if is_monad_cheatcode_call::<FEN>(call.target_address) {
+        if crate::monad::is_monad_cheatcode_call(
+            self.extra_cheatcode_addresses,
+            call.target_address,
+        ) {
             let checkpoint = ecx.journal_mut().checkpoint();
             return match self.apply_monad_cheatcode(ecx, call) {
                 Ok(retdata) => {
@@ -2081,6 +2127,24 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     }
 }
 
+const fn frame_gas(result: &InterpreterResult) -> Vm::Gas {
+    let gas = &result.gas;
+    // A halt consumes the regular gas restored while rolling back state gas.
+    let regular_gas_spent = if result.is_halt() {
+        gas.total_gas_spent()
+    } else {
+        gas.total_gas_spent().saturating_sub(gas.state_gas_spilled())
+    };
+    Vm::Gas {
+        gasLimit: gas.limit(),
+        gasTotalUsed: regular_gas_spent,
+        gasMemoryUsed: 0,
+        gasRefunded: gas.refunded(),
+        gasRemaining: gas.remaining(),
+        gasStateUsed: if result.is_ok() { gas.state_gas_spent() } else { 0 },
+    }
+}
+
 impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcodes<FEN> {
     fn initialize_interp(
         &mut self,
@@ -2335,6 +2399,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         call: &CallInputs,
         outcome: &mut CallOutcome,
     ) {
+        let isolated_snapshot_gas_used = self.gas_metering.isolated_snapshot_gas_used.take();
         if self.finish_storage_hook_call(ecx, call, outcome) {
             return;
         }
@@ -2342,7 +2407,11 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         let cheatcode_call = call.target_address == CHEATCODE_ADDRESS
             || call.target_address == HARDHAT_CONSOLE_ADDRESS;
         #[cfg(feature = "monad")]
-        let cheatcode_call = cheatcode_call || is_monad_cheatcode_call::<FEN>(call.target_address);
+        let cheatcode_call = cheatcode_call
+            || crate::monad::is_monad_cheatcode_call(
+                self.extra_cheatcode_addresses,
+                call.target_address,
+            );
         let curr_depth = ecx.journal().depth();
 
         self.finish_created_accounts_frame(
@@ -2523,16 +2592,13 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
 
         // Record the gas usage of the call, this allows the `lastFrameGas` cheatcode to
         // retrieve the gas usage of the last call or create.
-        let gas = outcome.result.gas;
-        let frame_gas = crate::Vm::Gas {
-            gasLimit: gas.limit(),
-            gasTotalUsed: gas.total_gas_spent(),
-            gasMemoryUsed: 0,
-            gasRefunded: gas.refunded(),
-            gasRemaining: gas.remaining(),
-        };
+        let frame_gas = frame_gas(&outcome.result);
+        let snapshot_gas_used =
+            isolated_snapshot_gas_used.unwrap_or_else(|| outcome.result.gas.total_gas_spent());
         self.gas_metering.last_call_gas = Some(frame_gas.clone());
         self.gas_metering.last_frame_gas = Some(frame_gas);
+        self.gas_metering.last_call_snapshot_gas_used = snapshot_gas_used;
+        self.gas_metering.last_frame_snapshot_gas_used = snapshot_gas_used;
 
         // If `startStateDiffRecording` has been called, update the `reverted` status of the
         // previous call depth's recorded accesses, if any
@@ -2942,6 +3008,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         call: &CreateInputs,
         outcome: &mut CreateOutcome,
     ) {
+        let isolated_snapshot_gas_used = self.gas_metering.isolated_snapshot_gas_used.take();
         let call = Some(call);
         let curr_depth = ecx.journal().depth();
 
@@ -3033,14 +3100,9 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         if curr_depth > 0 {
             // Record the gas usage of the create frame, this allows the `lastFrameGas` cheatcode to
             // retrieve the gas usage of the last call or create.
-            let gas = outcome.result.gas;
-            self.gas_metering.last_frame_gas = Some(crate::Vm::Gas {
-                gasLimit: gas.limit(),
-                gasTotalUsed: gas.total_gas_spent(),
-                gasMemoryUsed: 0,
-                gasRefunded: gas.refunded(),
-                gasRemaining: gas.remaining(),
-            });
+            self.gas_metering.last_frame_gas = Some(frame_gas(&outcome.result));
+            self.gas_metering.last_frame_snapshot_gas_used =
+                isolated_snapshot_gas_used.unwrap_or_else(|| outcome.result.gas.total_gas_spent());
         }
 
         // If `startStateDiffRecording` has been called, update the `reverted` status of the
@@ -4243,6 +4305,36 @@ mod tests {
             Default::default(),
         ));
         assert!(cheats.has_log_hooks());
+    }
+
+    #[test]
+    fn frame_gas_reports_settled_components() {
+        for mut gas in [Gas::new(100_000), Gas::new_with_regular_gas_and_reservoir(100_000, 50_000)]
+        {
+            assert!(gas.record_regular_cost(1_000));
+            assert!(gas.record_state_cost(20_000));
+
+            let mut result = InterpreterResult::new(InstructionResult::Stop, Bytes::new(), gas);
+            let reported = frame_gas(&result);
+            assert_eq!(reported.gasTotalUsed, 1_000);
+            assert_eq!(reported.gasStateUsed, 20_000);
+
+            result.result = InstructionResult::Revert;
+            assert_eq!(frame_gas(&result).gasStateUsed, 0);
+        }
+
+        let mut gas = Gas::new(100_000);
+        gas.refill_reservoir(20_000);
+        let result = InterpreterResult::new(InstructionResult::Stop, Bytes::new(), gas);
+        assert_eq!(frame_gas(&result).gasStateUsed, -20_000);
+
+        let mut gas = Gas::new(100_000);
+        assert!(gas.record_state_cost(20_000));
+        gas.spend_all();
+        let result = InterpreterResult::new(InstructionResult::OutOfGas, Bytes::new(), gas);
+        let reported = frame_gas(&result);
+        assert_eq!(reported.gasTotalUsed, 100_000);
+        assert_eq!(reported.gasStateUsed, 0);
     }
 
     #[test]

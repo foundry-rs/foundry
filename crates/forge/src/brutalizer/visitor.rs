@@ -8,15 +8,6 @@ use super::{
     value::{brutalize_cast, brutalize_payable_address, deterministic_mask},
 };
 
-pub(super) fn collect_transforms<'ast>(
-    source: &str,
-    ast: &'ast SourceUnit<'ast>,
-) -> Vec<Transform> {
-    let mut visitor = BrutalizerVisitor::new(source);
-    let _ = visitor.visit_source_unit(ast);
-    visitor.transforms
-}
-
 struct BrutalizerVisitor<'src> {
     transforms: Vec<Transform>,
     source: &'src str,
@@ -74,4 +65,13 @@ fn cast_call<'ast, 'src>(
     let CallArgsKind::Unnamed(args_exprs) = &call_args.kind else { return None };
     let arg_text = span_text(source, args_exprs.first()?.span)?;
     (!arg_text.is_empty()).then_some((ty, arg_text))
+}
+
+pub(super) fn collect_transforms<'ast>(
+    source: &str,
+    ast: &'ast SourceUnit<'ast>,
+) -> Vec<Transform> {
+    let mut visitor = BrutalizerVisitor::new(source);
+    let _ = visitor.visit_source_unit(ast);
+    visitor.transforms
 }

@@ -7,6 +7,7 @@ use crate::{
         },
         corpus::{
             CorpusInsertionMode, DynamicTargetCtx, ReplayTarget, WorkerCorpus, WorkerCorpusSeed,
+            persist_campaign_optimization,
         },
     },
     inspectors::Fuzzer,
@@ -14,7 +15,7 @@ use crate::{
 use alloy_json_abi::Function;
 use alloy_primitives::{
     Address, Bytes, FixedBytes, I256, Selector, U256, keccak256,
-    map::{AddressMap, hash_map::Entry as AddressMapEntry},
+    map::{AddressMap, AddressSet, HashMap, hash_map::Entry as AddressMapEntry},
 };
 use alloy_sol_types::{SolCall, sol};
 use eyre::{ContextCompat, Result, eyre};
@@ -28,14 +29,14 @@ use foundry_evm_core::{
     constants::{
         CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME,
     },
-    evm::{FoundryEvmFactory, FoundryEvmNetwork},
+    evm::FoundryEvmNetwork,
     precompiles::PRECOMPILES,
 };
 use foundry_evm_fuzz::{
     BasicTxDetails, FuzzCase, FuzzFixtures, ObservedCall,
     invariant::{
-        ArtifactFilters, FuzzRunIdentifiedContracts, InvariantContract, InvariantSettings,
-        RandomCallGenerator, SenderFilters, TargetedContract, TargetedContracts,
+        ArtifactFilters, FuzzRunIdentifiedContracts, InvariantContract, RandomCallGenerator,
+        SenderFilters, TargetedContract, TargetedContracts,
     },
     strategies::{EvmFuzzState, FuzzState, TxGenerator, override_call_strat},
 };
@@ -75,7 +76,7 @@ use campaign::{
 };
 
 mod replay;
-pub use replay::{replay_error, replay_run};
+pub use replay::{ReplayErrorResult, replay_error, replay_run};
 
 mod result;
 pub use result::InvariantFuzzTestResult;
@@ -429,20 +430,6 @@ fn invariant_focus_seed(
     })
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum InvariantCorpusPersistence {
-    /// Preserve the legacy single-worker behavior: each interesting input is written immediately.
-    Live,
-    /// Parallel workers return interesting inputs to the campaign coordinator for merged writes.
-    Deferred,
-}
-
-impl InvariantCorpusPersistence {
-    const fn is_deferred(self) -> bool {
-        matches!(self, Self::Deferred)
-    }
-}
-
 /// Converts a cumulative campaign total into an average per-second rate.
 ///
 /// Returns `0.0` during the initial zero-elapsed startup window to avoid
@@ -596,10 +583,10 @@ struct InvariantTestData {
     // Line coverage information collected from all fuzzed calls.
     line_coverage: Option<HitMaps>,
     // Metrics for each fuzzed selector.
-    metrics: Map<String, InvariantMetrics>,
+    metrics: HashMap<String, InvariantMetrics>,
     // Cache from fuzzed (target, selector) to its metric key. Only resolved keys are cached and
     // they are invalidated when targets change (see `invalidate_metric_key_cache`).
-    metric_key_cache: Map<(Address, Selector), String>,
+    metric_key_cache: HashMap<(Address, Selector), String>,
 
     // Proptest runner to query for random values.
     // The strategy only comes with the first `input`. We fill the rest of the `inputs`
@@ -638,8 +625,8 @@ impl InvariantTest {
             last_run_inputs: vec![],
             gas_report_traces: vec![],
             line_coverage: None,
-            metrics: Map::default(),
-            metric_key_cache: Map::default(),
+            metrics: HashMap::default(),
+            metric_key_cache: HashMap::default(),
             branch_runner,
             optimization_best_value: None,
             optimization_best_sequence: vec![],
@@ -941,6 +928,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let dynamic = self.dynamic_target_ctx();
         let corpus_seed = WorkerCorpusSeed::load_from_disk(
             &self.config.corpus,
+            None,
             Some(&corpus_replay_executor),
             ReplayTarget {
                 stateless: None,
@@ -948,11 +936,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 dynamic: Some(&dynamic),
             },
         )?;
-        let corpus_persistence = if actual_worker_count > 1 {
-            InvariantCorpusPersistence::Deferred
-        } else {
-            InvariantCorpusPersistence::Live
-        };
         let mut runner = self.runner.clone();
         let config = self.config.clone();
         let setup_contracts = self.setup_contracts;
@@ -962,7 +945,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let campaign_state =
             Arc::new(InvariantCampaignState::new(early_exit.clone(), self.config.timeout));
 
-        let worker_outputs = if corpus_persistence.is_deferred() {
+        let worker_outputs = if actual_worker_count > 1 {
             let worker_jobs = worker_plans
                 .into_iter()
                 .map(|worker_plan| {
@@ -1010,10 +993,12 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         &campaign_state,
                         worker_campaign_seed,
                         worker_corpus_seed,
-                        corpus_persistence,
                         actual_worker_count,
                         gas_report_samples,
                     );
+                    if output.is_err() {
+                        campaign_state.request_terminal_stop();
+                    }
                     debug!("finished in {:?}", timer.elapsed());
                     output
                 })
@@ -1051,7 +1036,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 &campaign_state,
                 worker_campaign_seed,
                 worker_corpus_seed,
-                corpus_persistence,
                 actual_worker_count,
                 gas_report_samples,
             )?]
@@ -1061,27 +1045,16 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         for worker_output in worker_outputs {
             aggregator.push(worker_output);
         }
-        let (result, corpus_entries) = if campaign_state.is_timed_campaign() {
-            aggregator.finish_partial_with_corpus_entries()?
+        let result = if campaign_state.is_timed_campaign() {
+            aggregator.finish_partial()?
         } else {
-            aggregator.finish_with_corpus_entries()?
+            aggregator.finish_campaign()?
         };
-        if corpus_persistence.is_deferred() {
-            let dynamic_target_ctx = self.dynamic_target_ctx();
-            corpus_seed.persist_filtered_campaign_outputs(
-                &self.config.corpus,
-                corpus_entries,
-                &self.executor,
-                ReplayTarget {
-                    stateless: None,
-                    fuzzed_contracts: Some(&replay_targets),
-                    dynamic: Some(&dynamic_target_ctx),
-                },
-                result
-                    .optimization_best_value
-                    .map(|value| (value, result.optimization_best_sequence.as_slice())),
-            )?;
-        }
+        persist_campaign_optimization(
+            &self.config.corpus,
+            result.optimization_best_value,
+            &result.optimization_best_sequence,
+        );
         Ok(result)
     }
 
@@ -1101,7 +1074,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         campaign_state: &InvariantCampaignState,
         campaign_seed: InvariantCampaignSeed,
         corpus_seed: WorkerCorpusSeed,
-        corpus_persistence: InvariantCorpusPersistence,
         worker_count: usize,
         gas_report_samples: usize,
     ) -> Result<InvariantWorkerOutput> {
@@ -1123,8 +1095,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             &campaign_seed,
             corpus_seed,
         )?;
-        let mut corpus_entries = Vec::new();
-
         let mut runs = 0;
         campaign_state.sync_handler_failures(&invariant_test.test_data.failures);
 
@@ -1445,20 +1415,13 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 campaign_state.sync_handler_failures(&invariant_test.test_data.failures);
             }
 
-            let insertion_mode = if corpus_persistence.is_deferred() {
-                CorpusInsertionMode::Deferred
-            } else {
-                CorpusInsertionMode::Live
-            };
             for (observed_calls, parent_tx) in observed_call_entries {
-                if let Some(entry) = corpus_manager.hoist_observed_calls(
+                corpus_manager.hoist_observed_calls(
                     &observed_calls,
                     &parent_tx,
                     &invariant_test.targeted_contracts,
-                    insertion_mode,
-                ) {
-                    corpus_entries.push(entry);
-                }
+                    CorpusInsertionMode::Live,
+                );
             }
 
             // Extend corpus only after the run and its optional hook have completed.
@@ -1466,15 +1429,13 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 let prefix = current_run.inputs[..current_run.optimization_prefix_len].to_vec();
                 (v, prefix)
             });
-            if corpus_persistence.is_deferred() {
-                if let Some(input) = corpus_manager.process_inputs_for_campaign(
+            if worker_count > 1 {
+                corpus_manager.process_inputs_for_campaign(
                     &current_run.inputs,
                     &current_run.cmp_seq,
                     current_run.new_coverage,
                     optimization,
-                ) {
-                    corpus_entries.push(input);
-                }
+                );
             } else {
                 corpus_manager.process_inputs(
                     &current_run.inputs,
@@ -1545,11 +1506,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         }
                         msg.push_str(&format!("⚠ {handler_bugs} handler bug(s)"));
                     }
-                    let msg = if corpus_persistence.is_deferred() {
-                        format!("[w{}] {msg}", plan.worker_id)
-                    } else {
-                        msg
-                    };
+                    let msg =
+                        if worker_count > 1 { format!("[w{}] {msg}", plan.worker_id) } else { msg };
                     progress.set_message(msg);
                 }
             } else if edge_coverage_enabled
@@ -1611,7 +1569,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             result.last_run_inputs,
             result.gas_report_traces,
             result.line_coverage,
-            result.metrics,
+            result.metrics.into_iter().collect(),
             if plan.worker_id == 0 { corpus_manager.failed_replays } else { 0 },
             1,
             result.optimization_best_value,
@@ -1626,7 +1584,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             // `first_global_run` offsets were computed from the original partition.
             plan
         };
-        Ok(InvariantWorkerOutput { plan: reported_plan, result: worker_result, corpus_entries })
+        Ok(InvariantWorkerOutput { plan: reported_plan, result: worker_result })
     }
 
     fn shrink_handler_failures(
@@ -1741,9 +1699,10 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         // Set up fuzzer WITHOUT call_generator initially.
         // We defer call_override until after the initial invariant check to avoid
         // injecting random calls during setup which would break the invariant assertion.
+        let extra_cheatcode_addresses = executor.inspector().extra_cheatcode_addresses();
         executor.inspector_mut().set_fuzzer(
             Fuzzer::new(config.dictionary.max_fuzz_dictionary_values, mapping_slots)
-                .with_extra_cheatcode_addresses(FEN::EvmFactory::EXTRA_CHEATCODE_ADDRESSES)
+                .with_extra_cheatcode_addresses(extra_cheatcode_addresses)
                 .with_call_recording(config.corpus.is_coverage_guided()),
         );
 
@@ -1796,7 +1755,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 
             // Collect handler addresses - these are the contracts we want to inject
             // reentrancy into (simulating malicious receive() functions).
-            let handler_addresses: std::collections::HashSet<Address> =
+            let handler_addresses: AddressSet =
                 targeted_contracts.targets().keys().copied().collect();
             let override_targets = targeted_contracts
                 .targets()
@@ -2196,18 +2155,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         contract.add_selectors(selectors.iter().copied(), should_exclude)?;
         Ok(())
     }
-
-    /// Computes the current invariant settings for the given invariant contract address.
-    ///
-    /// This extracts the target contracts, selectors, senders, and failure settings
-    /// that are used to determine if a persisted counterexample is still valid.
-    pub fn compute_settings(&mut self, invariant_address: Address) -> Result<InvariantSettings> {
-        self.select_contract_artifacts(invariant_address)?;
-        let (sender_filters, targeted_contracts) =
-            self.select_contracts_and_senders(invariant_address)?;
-        let targets = targeted_contracts.targets();
-        Ok(InvariantSettings::new(&targets, &sender_filters, self.config.fail_on_revert))
-    }
 }
 
 /// Collects data from call for fuzzing. However, it first verifies that the sender is not an EOA
@@ -2372,6 +2319,7 @@ mod tests {
                 EvmEnvFor::<EthEvmNetwork>::default(),
                 TxEnvFor::<EthEvmNetwork>::default(),
                 backend,
+                Default::default(),
             );
         let target = Address::repeat_byte(0x11);
         let mut code = vec![0x6e]; // PUSH15.
@@ -2770,6 +2718,7 @@ mod tests {
             EvmEnvFor::<EthEvmNetwork>::default(),
             TxEnvFor::<EthEvmNetwork>::default(),
             backend,
+            Default::default(),
         );
         // Return ABI-encoded `true` for the invariant predicate.
         executor
@@ -2850,7 +2799,6 @@ mod tests {
                     &campaign_state,
                     campaign_seed,
                     WorkerCorpusSeed::default(),
-                    InvariantCorpusPersistence::Live,
                     1,
                     1,
                 );
@@ -2877,7 +2825,6 @@ mod tests {
         assert!(output.result.line_coverage.is_none());
         assert!(output.result.metrics.is_empty());
         assert!(output.result.optimization_best_value.is_none());
-        assert!(output.corpus_entries.is_empty());
     }
 
     #[test]

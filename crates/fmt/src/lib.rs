@@ -236,7 +236,13 @@ pub fn format_ast<'ast>(
     let ast = source.ast.as_ref()?;
     let inline_config = parse_inline_config(gcx.sess, &comments, ast);
 
-    let mut state = state::State::new(gcx.sess.source_map(), config, inline_config, comments);
+    let mut state = state::State::new(
+        gcx.sess.source_map(),
+        source.file.start_pos,
+        config,
+        inline_config,
+        comments,
+    );
     state.print_source_unit(ast);
     Some(state.s.eof())
 }

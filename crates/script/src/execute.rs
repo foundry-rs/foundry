@@ -21,7 +21,7 @@ use foundry_common::{
     fmt::{format_token, format_token_raw},
     provider::ProviderBuilder,
 };
-use foundry_config::{Chain, FoundryHardfork, NamedChain};
+use foundry_config::{Chain, NamedChain};
 use foundry_debugger::Debugger;
 use foundry_evm::{
     core::evm::FoundryEvmNetwork,
@@ -452,25 +452,13 @@ pub(crate) fn build_trace_decoder_for_context<FEN: FoundryEvmNetwork>(
     let mut tracing = script_config.config.tracing.clone();
     tracing.labels.extend(execution_result.labeled_addresses.clone());
 
-    #[cfg_attr(not(feature = "monad"), allow(unused_mut))]
-    let mut builder = CallTraceDecoderBuilder::new()
+    let builder = CallTraceDecoderBuilder::new()
         .with_tracing_config(&tracing)
         .with_known_contracts(known_contracts)
         .with_signature_identifier(SignaturesIdentifier::from_config(&script_config.config)?)
         .with_networks(script_config.config.networks)
         .with_chain_id(chain_id.map(|chain| chain.id()))
-        .with_tempo_hardfork(resolved_hardfork.and_then(|hardfork| match hardfork {
-            FoundryHardfork::Tempo(hardfork) => Some(hardfork),
-            _ => None,
-        }));
-    #[cfg(feature = "monad")]
-    {
-        builder =
-            builder.with_monad_hardfork(resolved_hardfork.and_then(|hardfork| match hardfork {
-                FoundryHardfork::Monad(hardfork) => Some(hardfork),
-                _ => None,
-            }));
-    }
+        .with_hardfork(resolved_hardfork);
     let mut decoder = builder.build();
 
     if tracing.decode_internal {
@@ -639,6 +627,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                     .collect(),
             )
             .decoder(&self.execution_artifacts.decoder)
+            .known_contracts(&self.build_data.known_contracts)
             .sources(self.build_data.sources)
             .breakpoints(self.execution_result.breakpoints)
             .layout(self.args.debug_layout.unwrap_or_default())

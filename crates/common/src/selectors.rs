@@ -71,6 +71,8 @@ impl OpenChainClient {
             .send()
             .await
             .inspect_err(|err| self.on_reqwest_err(err))?
+            .error_for_status()
+            .inspect_err(|err| self.on_reqwest_err(err))?
             .text()
             .await
             .inspect_err(|err| self.on_reqwest_err(err))
@@ -88,6 +90,8 @@ impl OpenChainClient {
             .json(body)
             .send()
             .await
+            .inspect_err(|err| self.on_reqwest_err(err))?
+            .error_for_status()
             .inspect_err(|err| self.on_reqwest_err(err))?
             .json()
             .await
@@ -651,6 +655,24 @@ struct Signature {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::{
+        Router,
+        http::StatusCode,
+        routing::{get, post},
+    };
+
+    async fn spawn_status_server() -> (String, tokio::task::JoinHandle<()>) {
+        let app = Router::new()
+            .route("/unavailable", get(|| async { StatusCode::SERVICE_UNAVAILABLE }))
+            .route("/bad-request", get(|| async { StatusCode::BAD_REQUEST }))
+            .route("/post-unavailable", post(|| async { StatusCode::SERVICE_UNAVAILABLE }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (format!("http://{addr}"), handle)
+    }
 
     #[test]
     fn test_parse_signatures() {
@@ -742,5 +764,53 @@ mod tests {
         // The Nth failure (N == MAX_TIMEDOUT_REQ) should flip the spurious flag.
         let _ = client.get_text(url).await;
         assert!(client.is_spurious(), "expected spurious after threshold failures");
+    }
+
+    #[tokio::test]
+    async fn spurious_marked_on_http_5xx_threshold() {
+        let (base_url, server_task) = spawn_status_server().await;
+        let client = OpenChainClient::new().expect("client must build");
+
+        for i in 0..(MAX_TIMEDOUT_REQ - 1) {
+            let result = client.get_text(format!("{base_url}/unavailable")).await;
+            assert!(result.is_err(), "expected HTTP 503 on attempt {}", i + 1);
+            assert!(!client.is_spurious(), "unexpected spurious after {} failed attempts", i + 1);
+        }
+
+        let result = client.get_text(format!("{base_url}/unavailable")).await;
+        assert!(result.is_err());
+        assert!(client.is_spurious(), "expected spurious after threshold HTTP 503 responses");
+
+        server_task.abort();
+    }
+
+    #[tokio::test]
+    async fn post_http_5xx_counts_as_connectivity_failure() {
+        let (base_url, server_task) = spawn_status_server().await;
+        let client = OpenChainClient::new().expect("client must build");
+        let body = serde_json::json!({});
+
+        for _ in 0..MAX_TIMEDOUT_REQ {
+            let result = client
+                .post_json::<_, serde_json::Value>(&format!("{base_url}/post-unavailable"), &body)
+                .await;
+            assert!(result.is_err(), "expected HTTP 503");
+        }
+
+        assert!(client.is_spurious(), "expected HTTP 503 POSTs to mark the connection spurious");
+        server_task.abort();
+    }
+
+    #[tokio::test]
+    async fn http_4xx_does_not_count_as_connectivity_failure() {
+        let (base_url, server_task) = spawn_status_server().await;
+        let client = OpenChainClient::new().expect("client must build");
+
+        assert!(client.get_text(format!("{base_url}/bad-request")).await.is_err());
+        assert!(client.get_text(format!("{base_url}/missing")).await.is_err());
+        assert_eq!(client.timedout_requests.load(Ordering::SeqCst), 0);
+        assert!(!client.is_spurious());
+
+        server_task.abort();
     }
 }

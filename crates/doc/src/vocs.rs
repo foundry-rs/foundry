@@ -3,8 +3,12 @@
 //! Generates `vocs.config.ts`, `pages/index.mdx`, `package.json`, and `.gitignore`
 //! from the emitted MDX pages.
 
-use crate::utils::{git_raw_url, git_source_url};
+use crate::{
+    render::{code_regions, region_contains},
+    utils::{git_raw_url, git_source_url},
+};
 use foundry_config::DocConfig;
+use markdown::ParseOptions;
 use path_slash::PathExt;
 use std::{
     collections::HashMap,
@@ -324,25 +328,40 @@ fn build_source_to_url(pages: &[PathBuf]) -> SourceToUrl {
 /// HTML-like tokens like `<TOKEN>` would be interpreted as MDX expressions/JSX
 /// and break `vocs dev` / `vocs build`.
 fn escape_mdx_outside_code_fences(text: &str) -> String {
+    struct Fence {
+        marker: char,
+        len: usize,
+    }
+
     let mut out = String::with_capacity(text.len());
-    let mut in_fence = false;
-    let mut fence_marker = "";
+    let mut fence: Option<Fence> = None;
     for line in text.split_inclusive('\n') {
         let trimmed = line.trim_start();
-        if in_fence {
+        if let Some(open) = fence.as_ref() {
             out.push_str(line);
-            if trimmed.starts_with(fence_marker) {
-                in_fence = false;
+            let marker_len = trimmed.chars().take_while(|&ch| ch == open.marker).count();
+            // Fence markers are ASCII, so their character count is also the byte index.
+            let suffix = &trimmed[marker_len..];
+            if marker_len >= open.len && suffix.trim().is_empty() {
+                fence = None;
             }
-        } else if trimmed.starts_with("```") {
-            in_fence = true;
-            fence_marker = "```";
-            out.push_str(line);
-        } else if trimmed.starts_with("~~~") {
-            in_fence = true;
-            fence_marker = "~~~";
-            out.push_str(line);
         } else {
+            let opening = trimmed.chars().next().and_then(|marker| {
+                if !matches!(marker, '`' | '~') {
+                    return None;
+                }
+                let len = trimmed.chars().take_while(|&ch| ch == marker).count();
+                if len < 3 || marker == '`' && trimmed[len..].contains('`') {
+                    return None;
+                }
+                Some(Fence { marker, len })
+            });
+            if let Some(opening) = opening {
+                fence = Some(opening);
+                out.push_str(line);
+                continue;
+            }
+
             // Escape `{` and bare `<` (not already `&lt;` or a known entity).
             let mut inline_code_ticks = 0usize;
             let mut pending_ticks = 0usize;
@@ -381,6 +400,7 @@ fn escape_mdx_outside_code_fences(text: &str) -> String {
 /// * `.sol` paths that resolve to a known page → vocs URL.
 /// * Any other relative path under `root` → `{repo}/blob/{commit}/...`.
 /// * Absolute URLs, anchors, and unresolved targets are left untouched.
+/// * Code fences and inline code spans are left untouched.
 fn rewrite_homepage_links(
     text: &str,
     base_dir: &Path,
@@ -389,11 +409,22 @@ fn rewrite_homepage_links(
     repo: Option<&str>,
     commit: Option<&str>,
 ) -> String {
+    // The README is plain GitHub-flavored Markdown at this point, so parse it as such rather than
+    // as MDX, which may fail on unescaped `{`/`<` and would leave every region unprotected.
+    let code_regions = code_regions(text, &ParseOptions::gfm());
+    let mut region_cursor = 0;
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
+    let mut consumed = 0usize;
     while let Some(open) = rest.find("](") {
+        let abs_open = consumed + open;
         out.push_str(&rest[..open + 2]);
         rest = &rest[open + 2..];
+        consumed += open + 2;
+        // Solidity syntax like `new address[](2)` inside code is not a link.
+        if region_contains(&code_regions, &mut region_cursor, abs_open) {
+            continue;
+        }
         // Scan the URL, counting parens so we don't split on `(` / `)` inside it.
         let bytes = rest.as_bytes();
         let mut i = 0;
@@ -414,7 +445,9 @@ fn rewrite_homepage_links(
                     i += 1;
                 }
                 b'\\' => {
-                    i += 2; // skip escaped character
+                    // Skip the escaped character; clamp so a trailing backslash
+                    // can't index past the end of the text.
+                    i = (i + 2).min(bytes.len());
                 }
                 _ => {
                     i += 1;
@@ -422,17 +455,18 @@ fn rewrite_homepage_links(
             }
         }
         let target = &rest[..i];
+        if !closed {
+            out.push_str(target);
+            rest = &rest[i..];
+            break;
+        }
         match try_rewrite_target(target, base_dir, root, src_to_url, repo, commit) {
             Some(new) => out.push_str(&new),
             None => out.push_str(target),
         }
-        if closed {
-            out.push(')');
-            rest = &rest[i + 1..];
-        } else {
-            rest = &rest[i..];
-            break;
-        }
+        out.push(')');
+        rest = &rest[i + 1..];
+        consumed += i + 1;
     }
     out.push_str(rest);
     out
@@ -631,9 +665,90 @@ End {brace}.
     }
 
     #[test]
+    fn escape_mdx_supports_longer_backtick_fences() {
+        let input = "````markdown\n```solidity\ncontract Test {\n    function value() external returns (uint256) {\n        return 1;\n    }\n}\n```\n````\n\nOutside {text}.\n";
+        let out = escape_mdx_outside_code_fences(input);
+
+        assert_eq!(out, input.replace("Outside {text}", r"Outside \{text}"));
+    }
+
+    #[test]
+    fn escape_mdx_supports_longer_tilde_fences() {
+        let input = "~~~~markdown\n~~~solidity\ncontract Test {\n    function value() external returns (uint256) {\n        return 1;\n    }\n}\n~~~\n~~~~\n\nOutside {text}.\n";
+        let out = escape_mdx_outside_code_fences(input);
+
+        assert_eq!(out, input.replace("Outside {text}", r"Outside \{text}"));
+    }
+
+    #[test]
+    fn escape_mdx_rejects_backticks_in_fence_info() {
+        let input = "```bad`\n```still-bad`\n{process.exit(42)}\n";
+        let out = escape_mdx_outside_code_fences(input);
+
+        assert_eq!(out, input.replace("{process.exit(42)}", r"\{process.exit(42)}"));
+    }
+
+    #[test]
     fn json_str_emits_valid_typescript_strings() {
         assert_eq!(json_str(r#"Acme\"#), r#""Acme\\""#);
         assert_eq!(json_str("Bob's Docs"), r#""Bob's Docs""#);
         assert_eq!(json_str(r#"Quote " Docs"#), r#""Quote \" Docs""#);
+    }
+
+    #[test]
+    fn rewrite_homepage_links_leaves_code_alone() {
+        let map = build_source_to_url(&[PathBuf::from("src/contract.Foo.mdx")]);
+        let root = Path::new("/repo");
+        let repo = Some("https://github.com/x/y");
+        let commit = Some("abc123");
+        let input = "\
+See [Foo](./src/Foo.sol) for details.
+
+```solidity
+function deploy() external {
+    address[] memory targets = new address[](2);
+}
+```
+
+Also uses `new address[](2)` inline, then links [Contrib](./CONTRIBUTING.md).
+
+A lone ` backtick is not a code span: [Logo](./img/logo.png).
+
+    address[] memory indented = new address[](2);
+";
+        let expected = "\
+See [Foo](/src/contract.Foo) for details.
+
+```solidity
+function deploy() external {
+    address[] memory targets = new address[](2);
+}
+```
+
+Also uses `new address[](2)` inline, then links [Contrib](https://github.com/x/y/blob/abc123/CONTRIBUTING.md).
+
+A lone ` backtick is not a code span: [Logo](https://github.com/x/y/raw/abc123/img/logo.png).
+
+    address[] memory indented = new address[](2);
+";
+        let out = rewrite_homepage_links(input, root, root, &map, repo, commit);
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn rewrite_homepage_links_handles_trailing_unclosed_backslash() {
+        // A dangling `](` whose target ends in a backslash must not panic.
+        let map = SourceToUrl::new();
+        let root = Path::new("/repo");
+        let input = "See [Foo](abc\\";
+        let out = rewrite_homepage_links(
+            input,
+            root,
+            root,
+            &map,
+            Some("https://github.com/x/y"),
+            Some("abc123"),
+        );
+        assert_eq!(out, input, "unclosed target should be left untouched, not panic");
     }
 }

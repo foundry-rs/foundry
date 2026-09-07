@@ -41,6 +41,22 @@ LL │             values[i] = i;
 note[costly-loop]: storage write inside a loop
    ╭▸ ROOT/testdata/CostlyLoop.sol:LL:CC
    │
+LL │             getValues()[i] = i;
+   │             ━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/costly-loop
+
+note[costly-loop]: storage write inside a loop
+   ╭▸ ROOT/testdata/CostlyLoop.sol:LL:CC
+   │
+LL │             values.push() = i;
+   │             ━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/costly-loop
+
+note[costly-loop]: storage write inside a loop
+   ╭▸ ROOT/testdata/CostlyLoop.sol:LL:CC
+   │
 LL │             delete counter;
    │             ━━━━━━━━━━━━━━
    │

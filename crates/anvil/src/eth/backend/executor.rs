@@ -45,6 +45,9 @@ use revm::{
 };
 use std::{fmt, fmt::Debug, mem::take, sync::Arc};
 
+#[cfg(feature = "optimism")]
+pub(crate) mod optimism;
+
 /// Determines whether an executor produces a complete block or a historical transaction prefix.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum BlockExecutionKind {
@@ -135,7 +138,7 @@ fn append_deposit_requests(
     Ok(())
 }
 
-/// Receipt builder for Foundry/Anvil that handles all transaction types
+/// Receipt builder for transaction types that do not require network-specific metadata.
 #[derive(Debug, Default, Clone, Copy)]
 #[non_exhaustive]
 pub struct FoundryReceiptBuilder;
@@ -167,27 +170,10 @@ impl FoundryReceiptBuilder {
         result: &ExecutionResult,
         logs: Vec<Log>,
         cumulative_gas_used: u64,
-        deposit_nonce: Option<u64>,
-        deposit_receipt_version: Option<u64>,
     ) -> FoundryReceiptEnvelope {
         let receipt =
             Receipt { status: Eip658Value::Eip658(result.is_success()), cumulative_gas_used, logs }
                 .with_bloom();
-        #[cfg(feature = "optimism")]
-        if tx_type == FoundryTxType::Deposit {
-            return FoundryReceiptEnvelope::Deposit(
-                op_alloy_consensus::OpDepositReceiptWithBloom {
-                    receipt: op_alloy_consensus::OpDepositReceipt {
-                        inner: receipt.receipt,
-                        deposit_nonce,
-                        deposit_receipt_version,
-                    },
-                    logs_bloom: receipt.logs_bloom,
-                },
-            );
-        }
-        #[cfg(not(feature = "optimism"))]
-        let _ = (deposit_nonce, deposit_receipt_version);
         Self::wrap_receipt(tx_type, receipt)
     }
 }
@@ -253,21 +239,27 @@ pub struct AnvilBlockExecutor<E> {
     gas_used: u64,
     /// Blob gas used by the block.
     blob_gas_used: u64,
+    /// Maximum blob gas available to transactions in this block.
+    max_blob_gas_per_block: u64,
+    /// Whether OP Jovian repurposes `blobGasUsed` for the DA footprint.
+    optimism_jovian: bool,
     /// State changes captured for deferred publication.
     state_changes: Option<Vec<EvmState>>,
 }
 
 impl<E: fmt::Debug> fmt::Debug for AnvilBlockExecutor<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("AnvilBlockExecutor")
+        let mut debug = f.debug_struct("AnvilBlockExecutor");
+        debug
             .field("evm", &self.evm)
             .field("parent_hash", &self.parent_hash)
             .field("spec_id", &self.spec_id)
             .field("ethereum_transitions", &self.ethereum_transitions)
             .field("gas_used", &self.gas_used)
             .field("blob_gas_used", &self.blob_gas_used)
-            .field("receipts", &self.receipts.len())
-            .finish_non_exhaustive()
+            .field("max_blob_gas_per_block", &self.max_blob_gas_per_block)
+            .field("optimism_jovian", &self.optimism_jovian);
+        debug.field("receipts", &self.receipts.len()).finish_non_exhaustive()
     }
 }
 
@@ -288,6 +280,8 @@ impl<E> AnvilBlockExecutor<E> {
             receipts: Vec::new(),
             gas_used: 0,
             blob_gas_used: 0,
+            max_blob_gas_per_block: u64::MAX,
+            optimism_jovian: false,
             state_changes: None,
         }
     }
@@ -295,6 +289,12 @@ impl<E> AnvilBlockExecutor<E> {
     /// Captures every committed changeset so callers can publish them after block execution.
     pub(crate) fn with_state_changes(mut self) -> Self {
         self.state_changes = Some(Vec::new());
+        self
+    }
+
+    /// Applies the active block blob gas limit.
+    pub(crate) const fn with_max_blob_gas_per_block(mut self, limit: u64) -> Self {
+        self.max_blob_gas_per_block = limit;
         self
     }
 
@@ -339,14 +339,23 @@ where
 
         let sender = *tx.signer();
         let transaction_hash = tx.tx().trie_hash();
+        #[cfg(feature = "optimism")]
+        let blob_gas_used =
+            optimism::blob_gas_used(self.evm.db_mut(), tx.tx(), self.optimism_jovian)?;
+        #[cfg(not(feature = "optimism"))]
+        let blob_gas_used = tx.tx().blob_gas_used().unwrap_or_default();
+        let blob_gas_limit = block_blob_gas_limit(
+            self.optimism_jovian,
+            self.evm.block().gas_limit(),
+            self.max_blob_gas_per_block,
+        );
+        if self.blob_gas_used.saturating_add(blob_gas_used) > blob_gas_limit {
+            return Err(BlockExecutionError::msg("block blob gas limit exceeded"));
+        }
         let result = transact(&mut self.evm, tx_env, transaction_hash)?;
 
         Ok(AnvilTxResult {
-            inner: EthTxResult {
-                result,
-                blob_gas_used: tx.tx().blob_gas_used().unwrap_or_default(),
-                tx_type: tx.tx().tx_type(),
-            },
+            inner: EthTxResult { result, blob_gas_used, tx_type: tx.tx().tx_type() },
             sender,
         })
     }
@@ -427,22 +436,8 @@ where
         }
 
         #[cfg(feature = "optimism")]
-        let receipt = if tx_type == FoundryTxType::Deposit {
-            let deposit_nonce = state.get(&sender).map(|acc| acc.info.nonce);
-            let receipt = alloy_consensus::Receipt {
-                status: Eip658Value::Eip658(result.is_success()),
-                cumulative_gas_used: self.gas_used,
-                logs: result.into_logs(),
-            }
-            .with_bloom();
-            FoundryReceiptEnvelope::Deposit(op_alloy_consensus::OpDepositReceiptWithBloom {
-                receipt: op_alloy_consensus::OpDepositReceipt {
-                    inner: receipt.receipt,
-                    deposit_nonce,
-                    deposit_receipt_version: deposit_nonce.map(|_| 1),
-                },
-                logs_bloom: receipt.logs_bloom,
-            })
+        let receipt = if tx_type.is_deposit() {
+            optimism::build_mined_deposit_receipt(result, &state, sender, self.gas_used)
         } else {
             self.receipt_builder.build_receipt(ReceiptBuilderCtx {
                 tx_type,
@@ -641,10 +636,11 @@ where
             continue;
         }
 
-        // Blob gas check
-        let tx_blob_gas = pending.transaction.blob_gas_used().unwrap_or(0);
-        if blob_gas_used.saturating_add(tx_blob_gas) > gas_config.max_blob_gas_per_block {
-            trace!(target: "backend", blob_gas = %tx_blob_gas, ?pool_tx, "block blob gas limit exhausting, skipping transaction");
+        // Reject declared blob gas before execution. Network-specific accounting is checked again
+        // against the execution result below.
+        let declared_blob_gas = pending.transaction.blob_gas_used().unwrap_or(0);
+        if blob_gas_used.saturating_add(declared_blob_gas) > gas_config.max_blob_gas_per_block {
+            trace!(target: "backend", blob_gas = %declared_blob_gas, ?pool_tx, "block blob gas limit exhausting, skipping transaction");
             continue;
         }
 
@@ -671,7 +667,7 @@ where
                     executor.evm_mut().inspector_mut().finish_transaction(inspector_config);
 
                 if gas_config.is_cancun {
-                    blob_gas_used = blob_gas_used.saturating_add(tx_blob_gas);
+                    blob_gas_used = blob_gas_used.saturating_add(declared_blob_gas);
                 }
 
                 let (exit_reason, out, _logs) = match exec_result {
@@ -772,6 +768,18 @@ where
     }
 
     tx_env
+}
+
+/// Returns the block's blob gas budget.
+///
+/// OP Jovian repurposes the block gas limit as the DA-footprint budget. Every other execution
+/// profile uses the active EIP-4844 limit.
+pub(crate) const fn block_blob_gas_limit(
+    optimism_jovian: bool,
+    block_gas_limit: u64,
+    max_blob_gas_per_block: u64,
+) -> u64 {
+    if optimism_jovian { block_gas_limit } else { max_blob_gas_per_block }
 }
 
 #[cfg(test)]

@@ -77,7 +77,9 @@ impl ForkEndpointIdentity {
     }
 }
 
-/// Ensures the fork network can be executed by Anvil's EVM backend.
+/// Ensures Anvil's EVM backend can execute the resolved upstream source chain.
+///
+/// Anvil's execution chain-ID override does not change the bytecode format in remote fork state.
 pub(crate) fn ensure_fork_network_supported(chain_id: u64) -> Result<(), BlockchainError> {
     if matches!(NamedChain::try_from(chain_id), Ok(NamedChain::ZkSync | NamedChain::ZkSyncTestnet))
     {
@@ -341,14 +343,23 @@ impl<N: Network> ClientFork<N> {
         hash: B256,
         opts: GethDebugTracingOptions,
     ) -> Result<GethTrace, TransportError> {
-        if let Some(traces) = self.storage_read().geth_transaction_traces.get(&hash).cloned() {
-            return Ok(traces);
+        if let Some(trace) = self
+            .storage_read()
+            .geth_transaction_traces
+            .get(&hash)
+            .and_then(|traces| traces.iter().find(|(cached_opts, _)| cached_opts == &opts))
+            .map(|(_, trace)| trace.clone())
+        {
+            return Ok(trace);
         }
 
-        let trace = self.provider().debug_trace_transaction(hash, opts).await?;
+        let trace = self.provider().debug_trace_transaction(hash, opts.clone()).await?;
 
         let mut storage = self.storage_write();
-        storage.geth_transaction_traces.insert(hash, trace.clone());
+        let traces = storage.geth_transaction_traces.entry(hash).or_default();
+        if !traces.iter().any(|(cached_opts, _)| cached_opts == &opts) {
+            traces.push((opts, trace.clone()));
+        }
 
         Ok(trace)
     }
@@ -386,14 +397,24 @@ impl<N: Network> ClientFork<N> {
         block_hash: B256,
         opts: GethDebugTracingOptions,
     ) -> Result<Vec<TraceResult>, TransportError> {
-        if let Some(traces) = self.storage_read().geth_block_traces.get(&block_hash).cloned() {
+        if let Some(traces) = self
+            .storage_read()
+            .geth_block_traces
+            .get(&block_hash)
+            .and_then(|traces| traces.iter().find(|(cached_opts, _)| cached_opts == &opts))
+            .map(|(_, traces)| traces.clone())
+        {
             return Ok(traces);
         }
 
-        let trace_results = self.provider().debug_trace_block_by_hash(block_hash, opts).await?;
+        let trace_results =
+            self.provider().debug_trace_block_by_hash(block_hash, opts.clone()).await?;
 
         let mut storage = self.storage_write();
-        storage.geth_block_traces.insert(block_hash, trace_results.clone());
+        let traces = storage.geth_block_traces.entry(block_hash).or_default();
+        if !traces.iter().any(|(cached_opts, _)| cached_opts == &opts) {
+            traces.push((opts, trace_results.clone()));
+        }
 
         Ok(trace_results)
     }
@@ -903,8 +924,8 @@ pub struct ForkedStorage<N: Network = AnyNetwork> {
     pub transaction_receipts: FbHashMap<32, FoundryTxReceipt>,
     pub transaction_traces: FbHashMap<32, Vec<Trace>>,
     pub logs: HashMap<Filter, Vec<Log>>,
-    pub geth_transaction_traces: FbHashMap<32, GethTrace>,
-    pub geth_block_traces: FbHashMap<32, Vec<TraceResult>>,
+    pub geth_transaction_traces: FbHashMap<32, Vec<(GethDebugTracingOptions, GethTrace)>>,
+    pub geth_block_traces: FbHashMap<32, Vec<(GethDebugTracingOptions, Vec<TraceResult>)>>,
     pub block_traces: HashMap<u64, Vec<Trace>>,
     pub block_receipts: HashMap<u64, Vec<FoundryTxReceipt>>,
     pub code_at: HashMap<(Address, u64), Bytes>,

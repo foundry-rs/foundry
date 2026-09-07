@@ -27,7 +27,7 @@ use foundry_config::{
         error::Kind::InvalidType,
         value::{Dict, Map, Value},
     },
-    filter::expand_globs,
+    filter::{expand_globs, is_ignored_path},
 };
 use serde::Serialize;
 use solar::{
@@ -94,7 +94,7 @@ impl BuildArgs {
         let mut config = self.load_config()?;
 
         if locked {
-            self.check_foundry_lock_consistency(&config, true)?;
+            self.check_foundry_lock_consistency(&config)?;
         }
 
         if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
@@ -104,9 +104,6 @@ impl BuildArgs {
         }
 
         self.check_soldeer_lock_consistency(&config).await;
-        if !locked {
-            self.check_foundry_lock_consistency(&config, false)?;
-        }
 
         let project = config.project()?;
 
@@ -128,6 +125,7 @@ impl BuildArgs {
         let mut output = ProjectCompiler::new()
             .files(files)
             .dynamic_test_linking(config.dynamic_test_linking)
+            .print_compiler_settings(shell::verbosity() >= 2)
             .print_names(self.names)
             .print_sizes(self.sizes)
             .ignore_eip_3860(self.ignore_eip_3860)
@@ -207,8 +205,7 @@ impl BuildArgs {
                     if let Some(files) = files {
                         return files.iter().any(|file| &curr_dir.join(file) == p);
                     }
-                    skip.is_match(p)
-                        && !(ignored.contains(p) || ignored.contains(&curr_dir.join(p)))
+                    skip.is_match(p) && !is_ignored_path(p, &ignored, &curr_dir)
                 })
                 .collect::<Vec<_>>();
 
@@ -303,33 +300,19 @@ impl BuildArgs {
     }
 
     /// Checks foundry.lock file consistency with Git submodules.
-    fn check_foundry_lock_consistency(&self, config: &Config, locked: bool) -> Result<()> {
+    fn check_foundry_lock_consistency(&self, config: &Config) -> Result<()> {
         let git = Git::new(&config.root);
         let mut lockfile = Lockfile::new(&config.root).with_git(&git);
-        let mismatches = match lockfile.check() {
-            Ok(mismatches) => mismatches,
-            Err(err) if locked => return Err(err),
-            Err(err) => {
-                sh_warn!("Failed to check foundry.lock: {err}")?;
-                return Ok(());
-            }
-        };
+        let mismatches = lockfile.check()?;
         if mismatches.is_empty() {
             return Ok(());
         }
 
-        if locked {
-            let mut message = String::from("foundry.lock does not match installed dependencies:");
-            for mismatch in mismatches {
-                write!(message, "\n  {mismatch}")?;
-            }
-            return Err(eyre::eyre!(message));
-        }
-
+        let mut message = String::from("foundry.lock does not match installed dependencies:");
         for mismatch in mismatches {
-            sh_warn!("{mismatch}")?;
+            write!(message, "\n  {mismatch}")?;
         }
-        Ok(())
+        Err(eyre::eyre!(message))
     }
 }
 

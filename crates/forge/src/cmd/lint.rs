@@ -11,7 +11,11 @@ use foundry_cli::{
 };
 use foundry_common::shell;
 use foundry_compilers::{FileFilter, solc::SolcLanguage, utils::SOLC_EXTENSIONS};
-use foundry_config::{SkipBuildFilters, filter::expand_globs, lint::Severity};
+use foundry_config::{
+    SkipBuildFilters,
+    filter::{expand_globs, is_ignored_path},
+    lint::Severity,
+};
 use std::path::PathBuf;
 
 /// CLI arguments for `forge lint`.
@@ -65,7 +69,7 @@ impl LintArgs {
                 config
                     .project_paths::<SolcLanguage>()
                     .input_files_iter()
-                    .filter(|p| !(ignored.contains(p) || ignored.contains(&cwd.join(p))))
+                    .filter(|p| !is_ignored_path(p, &ignored, &cwd))
                     .collect()
             }
             paths => {

@@ -1,5 +1,10 @@
 use super::*;
-use std::process::{Child, Output};
+use std::{
+    io::{BufRead, BufReader, Read},
+    process::{Child, ChildStdin, Output},
+    sync::mpsc::{Receiver, RecvTimeoutError},
+    thread::JoinHandle,
+};
 use wait_timeout::ChildExt;
 
 mod hard_arith_fallback;
@@ -15,10 +20,16 @@ pub(crate) use hard_arith_fallback::{
 #[cfg(test)]
 pub(crate) use monotonic_product::product_monotonic_unsat;
 use monotonic_product::{product_monotonic_unsat_normalized, remove_implied_monotonic_constraints};
-pub(crate) use opt::normalize_constraints_for_solver;
-use opt::{constraints_are_directly_unsat, sorted_bool_exprs_are_subset, write_smt_assertions};
+use opt::{
+    constraints_are_directly_unsat, normalize_constraints_for_solver_cached,
+    sorted_bool_exprs_are_subset, write_smt_assertions,
+};
 #[cfg(test)]
-pub(crate) use opt::{normalize_bool_for_solver, normalize_expr_for_solver};
+pub(crate) use opt::{
+    normalize_bool_for_solver, normalize_constraints_for_solver, normalize_expr_for_solver,
+};
+
+const Z3_QUERY_END: &str = "foundry-query-complete";
 
 /// Errors that arise when parsing or constructing solver commands from configuration.
 #[derive(Debug, thiserror::Error)]
@@ -75,103 +86,6 @@ impl fmt::Display for SolverOutcome {
 
 pub(crate) type QueryObserver = Box<dyn Fn(usize) + Send + Sync + 'static>;
 
-/// Minimal solver backend interface used by the symbolic executor.
-///
-/// Implementations are responsible for translating accumulated symbolic constraints
-/// into solver queries, enforcing query budgets, and extracting concrete model values
-/// for counterexample replay. The trait is intentionally small so alternate SMT
-/// backends can be added without changing the executor entrypoints.
-pub(crate) trait SymbolicSolver {
-    /// Returns solver counters collected by this backend.
-    fn stats(&self) -> SymbolicStats;
-
-    /// Registers a callback invoked after each logical solver query is reserved.
-    fn set_query_observer(&mut self, observer: Option<QueryObserver>);
-
-    /// Returns aggregate staged-portfolio diagnostics collected by this backend.
-    fn portfolio_diagnostics(&self) -> Option<&PortfolioDiagnostics>;
-
-    /// Captures verbose diagnostics for later rendering instead of writing them live.
-    fn capture_diagnostics(&mut self);
-
-    /// Takes any captured verbose diagnostics collected by this backend.
-    fn take_diagnostics(&mut self) -> Option<String>;
-
-    /// Clears cached expression keys tied to a previous symbolic context.
-    fn clear_context_caches(&mut self) {}
-
-    /// Returns the number of satisfiable witnesses produced by local hard-arithmetic search.
-    fn heuristic_witnesses(&self) -> usize {
-        0
-    }
-
-    /// Verifies that the configured solver can be invoked before exploration starts.
-    ///
-    /// Backends should keep this check lightweight and return a [`SymbolicError`] with
-    /// a stable stop reason when the solver executable or service is unavailable.
-    fn check_available(&self) -> Result<(), SymbolicError>;
-
-    /// Returns whether the supplied path constraints are satisfiable.
-    ///
-    /// Implementations should count this as one solver query and map solver `unknown`
-    /// or timeout responses into [`SymbolicError::SolverUnknown`] or
-    /// [`SymbolicError::Solver`], as appropriate.
-    fn is_sat(
-        &mut self,
-        cx: &mut SymCx,
-        constraints: &[SymBoolExpr],
-    ) -> Result<bool, SymbolicError>;
-
-    /// Returns satisfiability with path-local storage symbols that concrete replay can set.
-    fn is_sat_with_replayable_storage(
-        &mut self,
-        cx: &mut SymCx,
-        constraints: &[SymBoolExpr],
-        _replayable_storage: &SymbolicVars,
-    ) -> Result<bool, SymbolicError> {
-        self.is_sat(cx, constraints)
-    }
-
-    #[cfg(test)]
-    fn is_sat_branch(
-        &mut self,
-        cx: &mut SymCx,
-        constraints: &[SymBoolExpr],
-    ) -> Result<bool, SymbolicError> {
-        self.is_sat(cx, constraints)
-    }
-
-    /// Returns branch satisfiability with path-local storage symbols concrete replay can set.
-    fn is_sat_branch_with_replayable_storage(
-        &mut self,
-        cx: &mut SymCx,
-        constraints: &[SymBoolExpr],
-        replayable_storage: &SymbolicVars,
-    ) -> Result<bool, SymbolicError> {
-        self.is_sat_with_replayable_storage(cx, constraints, replayable_storage)
-    }
-
-    /// Returns a concrete model for all symbolic variables constrained by the path.
-    ///
-    /// The executor uses the returned variable assignments to materialize ABI
-    /// arguments, calldata, and invariant sequences for concrete replay.
-    fn model(
-        &mut self,
-        cx: &mut SymCx,
-        constraints: &[SymBoolExpr],
-    ) -> Result<SymbolicModel, SymbolicError>;
-
-    /// Returns a model with path-local storage symbols that concrete replay can set.
-    fn model_with_replayable_storage(
-        &mut self,
-        cx: &mut SymCx,
-        constraints: &[SymBoolExpr],
-        _replayable_storage: &SymbolicVars,
-    ) -> Result<SymbolicModel, SymbolicError> {
-        self.model(cx, constraints)
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SolverCommand {
     program: String,
@@ -223,6 +137,7 @@ pub(crate) struct SmtLibSubprocessSolver {
     captured_diagnostics: Option<String>,
     heuristic_witnesses: usize,
     replayable_storage: SymbolicVars,
+    normalization_cache: HashMap<SymBoolExpr, SymBoolExpr>,
     sat_cache: HashMap<Vec<SymBoolExpr>, bool>,
     model_cache: HashMap<Vec<SymBoolExpr>, SymbolicModel>,
     sat_queries: usize,
@@ -235,6 +150,7 @@ pub(crate) struct SmtLibSubprocessSolver {
     smt_max_query_bytes: u64,
     smt_build_time: Duration,
     smt_max_query_time: Duration,
+    z3_session: Option<Z3Session>,
 }
 
 impl SmtLibSubprocessSolver {
@@ -256,6 +172,7 @@ impl SmtLibSubprocessSolver {
             captured_diagnostics: None,
             heuristic_witnesses: 0,
             replayable_storage: SymbolicVars::default(),
+            normalization_cache: HashMap::default(),
             sat_cache: HashMap::default(),
             model_cache: HashMap::default(),
             sat_queries: 0,
@@ -268,6 +185,7 @@ impl SmtLibSubprocessSolver {
             smt_max_query_bytes: 0,
             smt_build_time: Duration::ZERO,
             smt_max_query_time: Duration::ZERO,
+            z3_session: None,
         }
     }
 
@@ -280,10 +198,9 @@ impl SmtLibSubprocessSolver {
             config.dump_smt,
         )
     }
-}
 
-impl SymbolicSolver for SmtLibSubprocessSolver {
-    fn stats(&self) -> SymbolicStats {
+    /// Returns solver counters collected by this backend.
+    pub(crate) fn stats(&self) -> SymbolicStats {
         SymbolicStats {
             paths: 0,
             solver_queries: self.queries,
@@ -306,36 +223,39 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
     }
 
     /// Registers a live query observer for progress rendering.
-    fn set_query_observer(&mut self, observer: Option<QueryObserver>) {
+    pub(crate) fn set_query_observer(&mut self, observer: Option<QueryObserver>) {
         self.query_observer = observer;
     }
 
     /// Returns staged-portfolio diagnostics collected by this solver.
-    fn portfolio_diagnostics(&self) -> Option<&PortfolioDiagnostics> {
+    pub(crate) fn portfolio_diagnostics(&self) -> Option<&PortfolioDiagnostics> {
         (!self.portfolio_diagnostics.is_empty()).then_some(&self.portfolio_diagnostics)
     }
 
     /// Enables deferred diagnostic rendering for verbose symbolic solver output.
-    fn capture_diagnostics(&mut self) {
+    pub(crate) fn capture_diagnostics(&mut self) {
         self.captured_diagnostics.get_or_insert_with(String::new);
     }
 
     /// Returns and clears deferred diagnostic rendering output.
-    fn take_diagnostics(&mut self) -> Option<String> {
+    pub(crate) fn take_diagnostics(&mut self) -> Option<String> {
         self.captured_diagnostics.take().filter(|diagnostics| !diagnostics.is_empty())
     }
 
-    fn clear_context_caches(&mut self) {
+    /// Clears cached expression keys tied to a previous symbolic context.
+    pub(crate) fn clear_context_caches(&mut self) {
+        self.normalization_cache.clear();
         self.sat_cache.clear();
         self.model_cache.clear();
     }
 
     /// Returns how many validated local hard-arithmetic witnesses this solver used.
-    fn heuristic_witnesses(&self) -> usize {
+    pub(crate) const fn heuristic_witnesses(&self) -> usize {
         self.heuristic_witnesses
     }
 
-    fn check_available(&self) -> Result<(), SymbolicError> {
+    /// Verifies that a configured solver can be invoked before exploration starts.
+    pub(crate) fn check_available(&self) -> Result<(), SymbolicError> {
         let commands = self.commands()?;
         let mut errors = Vec::new();
         for command in commands {
@@ -354,7 +274,8 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
         Err(SymbolicError::Solver(errors.join("; ")))
     }
 
-    fn is_sat(
+    #[cfg(test)]
+    pub(crate) fn is_sat(
         &mut self,
         cx: &mut SymCx,
         constraints: &[SymBoolExpr],
@@ -362,7 +283,8 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
         self.is_sat_inner(cx, constraints, false)
     }
 
-    fn is_sat_with_replayable_storage(
+    /// Returns satisfiability with path-local storage symbols that concrete replay can set.
+    pub(crate) fn is_sat_with_replayable_storage(
         &mut self,
         cx: &mut SymCx,
         constraints: &[SymBoolExpr],
@@ -375,7 +297,7 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
     }
 
     #[cfg(test)]
-    fn is_sat_branch(
+    pub(crate) fn is_sat_branch(
         &mut self,
         cx: &mut SymCx,
         constraints: &[SymBoolExpr],
@@ -383,7 +305,8 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
         self.is_sat_inner(cx, constraints, true)
     }
 
-    fn is_sat_branch_with_replayable_storage(
+    /// Returns branch satisfiability with path-local storage symbols concrete replay can set.
+    pub(crate) fn is_sat_branch_with_replayable_storage(
         &mut self,
         cx: &mut SymCx,
         constraints: &[SymBoolExpr],
@@ -395,25 +318,33 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
         result
     }
 
-    fn model_with_replayable_storage(
+    /// Returns a model with path-local storage symbols that concrete replay can set.
+    pub(crate) fn model_with_replayable_storage(
         &mut self,
         cx: &mut SymCx,
         constraints: &[SymBoolExpr],
         replayable_storage: &SymbolicVars,
     ) -> Result<SymbolicModel, SymbolicError> {
         let previous = std::mem::replace(&mut self.replayable_storage, replayable_storage.clone());
-        let result = <Self as SymbolicSolver>::model(self, cx, constraints);
+        let result = self.model(cx, constraints);
         self.replayable_storage = previous;
         result
     }
 
-    fn model(
+    /// Returns variable assignments used to materialize inputs for concrete replay.
+    pub(crate) fn model(
         &mut self,
         cx: &mut SymCx,
         constraints: &[SymBoolExpr],
     ) -> Result<SymbolicModel, SymbolicError> {
+        // Local witnesses may decide the feasibility of gas-dependent branches, but a model assigns
+        // `gasleft()` a concrete value the engine cannot replay faithfully, so fail closed here.
+        if constraints.iter().any(SymBoolExpr::contains_gasleft) {
+            return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
+        }
         self.model_queries += 1;
-        let smt_constraints = normalize_constraints_for_solver(cx, constraints);
+        let smt_constraints =
+            normalize_constraints_for_solver_cached(cx, constraints, &mut self.normalization_cache);
         let cache_key = smt_constraints.clone();
 
         if self.sat_cache.get(&cache_key) == Some(&false) {
@@ -530,9 +461,7 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
             other => Err(SymbolicError::Solver(format!("unexpected solver response `{other}`"))),
         }
     }
-}
 
-impl SmtLibSubprocessSolver {
     fn is_sat_inner(
         &mut self,
         cx: &mut SymCx,
@@ -540,7 +469,8 @@ impl SmtLibSubprocessSolver {
         defer_hard_arith_without_witness: bool,
     ) -> Result<bool, SymbolicError> {
         self.sat_queries += 1;
-        let smt_constraints = normalize_sat_constraints(cx, constraints);
+        let smt_constraints =
+            normalize_sat_constraints(cx, constraints, &mut self.normalization_cache);
         let cache_key = smt_constraints.clone();
         if let Some(result) = self.sat_cache.get(&cache_key) {
             self.sat_cache_hits += 1;
@@ -556,14 +486,16 @@ impl SmtLibSubprocessSolver {
         if defer_hard_arith_without_witness
             && let Some((condition, base)) = constraints.split_last()
             && {
-                let normalized_base = normalize_sat_constraints(cx, base);
+                let normalized_base =
+                    normalize_sat_constraints(cx, base, &mut self.normalization_cache);
                 self.sat_cache.get(&normalized_base) == Some(&true)
             }
             && {
                 let mut complement = Vec::with_capacity(constraints.len());
                 complement.extend(base.iter().cloned());
                 complement.push(condition.clone().not(cx));
-                let normalized_complement = normalize_sat_constraints(cx, &complement);
+                let normalized_complement =
+                    normalize_sat_constraints(cx, &complement, &mut self.normalization_cache);
                 self.has_cached_unsat_subset(&normalized_complement)
             }
         {
@@ -592,6 +524,13 @@ impl SmtLibSubprocessSolver {
             trace!("is_sat: monotonic product contradiction");
             self.cache_sat_result(cache_key, false);
             return Ok(false);
+        }
+        if !constraints.is_empty()
+            && model_satisfies_constraints(&SymbolicModel::default(), constraints)
+            && !constraints.iter().any(SymBoolExpr::contains_gasleft)
+        {
+            self.cache_sat_result(cache_key, true);
+            return Ok(true);
         }
         if let Some(model) = fallback_single_var_model(&smt_constraints)
             && model_satisfies_constraints(&model, constraints)
@@ -779,13 +718,22 @@ impl SmtLibSubprocessSolver {
         }
 
         let started = Instant::now();
-        let result = run_solver_commands(
-            cx,
-            &commands,
-            &smt,
-            self.timeout,
-            model.then_some(model_constraints),
-        );
+        let result = if let [command] = commands.as_slice()
+            && command.smt_timeout
+            && command.program == "z3"
+            && command.args == ["-in", "-smt2"]
+        {
+            let output = self.query_z3(command, &smt).into_result();
+            SolverCommandRun { output, summaries: Vec::new() }
+        } else {
+            run_solver_commands(
+                cx,
+                &commands,
+                &smt,
+                self.timeout,
+                model.then_some(model_constraints),
+            )
+        };
         let query_time = started.elapsed();
         self.solver_time += query_time;
         self.smt_max_query_time = self.smt_max_query_time.max(query_time);
@@ -801,11 +749,164 @@ impl SmtLibSubprocessSolver {
         }
         result.output
     }
+
+    fn query_z3(&mut self, command: &SolverCommand, smt: &str) -> SolverProcessOutcome {
+        let mut session = match self.z3_session.take() {
+            Some(session) => session,
+            None => match Z3Session::spawn(command) {
+                Ok(session) => session,
+                Err(err) => return SolverProcessOutcome::Error(err),
+            },
+        };
+        let outcome = session.query(command, smt, self.timeout);
+        match outcome {
+            output @ SolverProcessOutcome::Output(_) => {
+                self.z3_session = Some(session);
+                output
+            }
+            SolverProcessOutcome::Error(_) => {
+                drop(session);
+                run_solver_process(command, smt, self.timeout, &AtomicBool::new(false))
+            }
+            other => other,
+        }
+    }
 }
 
-/// Normalizes satisfiability constraints and removes soundly implied nonlinear comparisons.
-fn normalize_sat_constraints(cx: &mut SymCx, constraints: &[SymBoolExpr]) -> Vec<SymBoolExpr> {
-    remove_implied_monotonic_constraints(normalize_constraints_for_solver(cx, constraints))
+/// Normalizes satisfiability constraints and removes soundly redundant constraints.
+fn normalize_sat_constraints(
+    cx: &mut SymCx,
+    constraints: &[SymBoolExpr],
+    normalization_cache: &mut HashMap<SymBoolExpr, SymBoolExpr>,
+) -> Vec<SymBoolExpr> {
+    let constraints = remove_implied_monotonic_constraints(
+        normalize_constraints_for_solver_cached(cx, constraints, normalization_cache),
+    );
+    remove_witnessed_isolated_hash_constraints(cx, constraints)
+}
+
+/// Removes independently satisfiable constraints over one opaque hash symbol.
+///
+/// SMT treats symbolic hashes as free bit-vector symbols. If a constraint's only SMT symbol is a
+/// hash unused by other constraints, a concrete witness proves that it cannot affect conjunction
+/// satisfiability. The witness is discarded because hash values are not replayable inputs.
+fn remove_witnessed_isolated_hash_constraints(
+    cx: &mut SymCx,
+    constraints: Vec<SymBoolExpr>,
+) -> Vec<SymBoolExpr> {
+    if !constraints.iter().any(|constraint| {
+        constraint.visit_bool(|expr| {
+            matches!(expr.kind(), SymExprKind::Keccak { .. } | SymExprKind::Hash { .. })
+        })
+    }) {
+        return constraints;
+    }
+
+    let mut symbol_constraint_counts = HashMap::<Symbol, usize>::default();
+    let hash_candidates = constraints
+        .iter()
+        .map(|constraint| {
+            let mut symbols = SymbolicVars::default();
+            let contains_hash = collect_solver_vars(constraint, &mut symbols);
+            for symbol in &symbols {
+                *symbol_constraint_counts.entry(*symbol).or_default() += 1;
+            }
+            if contains_hash && symbols.len() == 1 { symbols.first().copied() } else { None }
+        })
+        .collect::<Vec<_>>();
+
+    constraints
+        .into_iter()
+        .zip(hash_candidates)
+        .filter_map(|(constraint, candidate)| {
+            let Some(symbol) =
+                candidate.filter(|symbol| symbol_constraint_counts.get(symbol) == Some(&1))
+            else {
+                return Some(constraint);
+            };
+            let abstracted = constraint.clone().fold_exprs(cx, &mut |cx, expr| match expr.kind() {
+                SymExprKind::Keccak { name, .. } | SymExprKind::Hash { name, .. }
+                    if *name == symbol =>
+                {
+                    SymExpr::get_var(cx, symbol)
+                }
+                _ => expr,
+            });
+            let removable = fallback_single_var_model(std::slice::from_ref(&abstracted)).is_some();
+            (!removable).then_some(constraint)
+        })
+        .collect()
+}
+
+/// Collects variables as the SMT writer sees them, stopping at opaque hash leaves.
+fn collect_solver_vars(constraint: &SymBoolExpr, vars: &mut SymbolicVars) -> bool {
+    fn visit_bool(expr: &SymBoolExpr, vars: &mut SymbolicVars) -> bool {
+        match expr.kind() {
+            SymBoolExprKind::Const(_) => false,
+            SymBoolExprKind::Not(expr) => visit_bool(expr, vars),
+            SymBoolExprKind::And(exprs) => {
+                let mut contains_hash = false;
+                for expr in exprs.iter() {
+                    contains_hash |= visit_bool(expr, vars);
+                }
+                contains_hash
+            }
+            SymBoolExprKind::Cmp(_, left, right) => {
+                visit_word(left, vars) | visit_word(right, vars)
+            }
+        }
+    }
+
+    fn visit_word(expr: &SymExpr, vars: &mut SymbolicVars) -> bool {
+        match expr.kind() {
+            SymExprKind::Const(_) => false,
+            SymExprKind::Var(symbol) | SymExprKind::GasLeft(symbol) => {
+                vars.insert(*symbol);
+                false
+            }
+            SymExprKind::Keccak { name, .. } | SymExprKind::Hash { name, .. } => {
+                vars.insert(*name);
+                true
+            }
+            SymExprKind::Not(expr) => visit_word(expr, vars),
+            SymExprKind::BinOp(_, left, right) => visit_word(left, vars) | visit_word(right, vars),
+            SymExprKind::TernOp(_, left, right, modulus) => {
+                visit_word(left, vars) | visit_word(right, vars) | visit_word(modulus, vars)
+            }
+            SymExprKind::Ite(condition, then_expr, else_expr) => {
+                visit_bool(condition, vars)
+                    | visit_word(then_expr, vars)
+                    | visit_word(else_expr, vars)
+            }
+        }
+    }
+
+    visit_bool(constraint, vars)
+}
+
+#[cfg(test)]
+#[test]
+fn removes_only_witnessed_isolated_hash_constraints() {
+    let mut cx = SymCx::new();
+    let input = SymExpr::var(&mut cx, "input");
+    let hash = keccak_word(&mut cx, vec![input.clone()]);
+    let modulus = SymExpr::constant(&mut cx, U256::MAX);
+    let mulmod = SymExpr::ternop(&mut cx, SymTernOp::MulMod, hash.clone(), hash.clone(), modulus);
+    let hash_branch = SymBoolExpr::eq_word_const(&mut cx, &mulmod, U256::ZERO);
+    let preimage_constraint = SymBoolExpr::eq_word_const(&mut cx, &input, U256::from(1));
+
+    let remaining = remove_witnessed_isolated_hash_constraints(
+        &mut cx,
+        vec![hash_branch.clone(), preimage_constraint.clone()],
+    );
+    assert_eq!(remaining, vec![preimage_constraint]);
+
+    let shared_hash_constraint = SymBoolExpr::eq_word_const(&mut cx, &hash, U256::from(1));
+    let remaining = remove_witnessed_isolated_hash_constraints(
+        &mut cx,
+        vec![hash_branch, shared_hash_constraint],
+    );
+    assert_eq!(remaining.len(), 2, "a shared hash symbol is not an independent component");
 }
 
 /// Returns a hard-arithmetic fallback model only after validating it against original constraints.
@@ -823,7 +924,7 @@ fn model_satisfies_constraints(
     model: &(impl SymbolicModelLookup + ?Sized),
     constraints: &[SymBoolExpr],
 ) -> bool {
-    constraints.iter().all(|constraint| constraint.eval_model(model).unwrap_or(false))
+    eval_model_constraints(constraints, model)
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1057,6 +1158,20 @@ enum SolverProcessOutcome {
     Error(String),
 }
 
+impl SolverProcessOutcome {
+    fn into_result(self) -> Result<String, SymbolicError> {
+        match self {
+            Self::Output(output) => Ok(output),
+            Self::Unknown => Err(SymbolicError::SolverUnknown),
+            Self::Cancelled => {
+                warn!("solver query was cancelled");
+                Err(SymbolicError::Solver("solver query was cancelled".to_string()))
+            }
+            Self::Error(err) => Err(SymbolicError::Solver(err)),
+        }
+    }
+}
+
 #[derive(Debug)]
 struct SolverProcessResult {
     index: usize,
@@ -1277,15 +1392,8 @@ fn run_solver_commands(
         };
     }
     if commands.len() == 1 {
-        let output = match run_solver_process(&commands[0], smt, timeout, &AtomicBool::new(false)) {
-            SolverProcessOutcome::Output(output) => Ok(output),
-            SolverProcessOutcome::Unknown => Err(SymbolicError::SolverUnknown),
-            SolverProcessOutcome::Cancelled => {
-                warn!("solver query was cancelled");
-                Err(SymbolicError::Solver("solver query was cancelled".to_string()))
-            }
-            SolverProcessOutcome::Error(err) => Err(SymbolicError::Solver(err)),
-        };
+        let output =
+            run_solver_process(&commands[0], smt, timeout, &AtomicBool::new(false)).into_result();
         return SolverCommandRun { output, summaries: Vec::new() };
     }
 
@@ -1570,6 +1678,128 @@ fn format_solver_portfolio_summaries(summaries: &[SolverRunSummary]) -> String {
     output
 }
 
+struct Z3Session {
+    child: SolverChild,
+    stdin: ChildStdin,
+    stdout: Receiver<Result<String, String>>,
+    stderr: Receiver<String>,
+    stdout_thread: Option<JoinHandle<()>>,
+    stderr_thread: Option<JoinHandle<()>>,
+}
+
+impl Z3Session {
+    fn spawn(command: &SolverCommand) -> Result<Self, String> {
+        let mut child = spawn_solver_process(command)?;
+        let stdin = child.child_mut().stdin.take().expect("piped solver stdin is available");
+        let stdout = child.child_mut().stdout.take().expect("piped solver stdout is available");
+        let stderr = child.child_mut().stderr.take().expect("piped solver stderr is available");
+
+        let (stdout_tx, stdout_rx) = mpsc::channel();
+        let stdout_thread = thread::spawn(move || {
+            for line in BufReader::new(stdout).lines() {
+                let line = line.map_err(|err| format!("failed to read solver output: {err}"));
+                let failed = line.is_err();
+                if stdout_tx.send(line).is_err() || failed {
+                    break;
+                }
+            }
+        });
+        let (stderr_tx, stderr_rx) = mpsc::channel();
+        let stderr_thread = thread::spawn(move || {
+            let mut stderr = BufReader::new(stderr);
+            let mut output = String::new();
+            let _ = stderr.read_to_string(&mut output);
+            let _ = stderr_tx.send(output);
+        });
+
+        Ok(Self {
+            child,
+            stdin,
+            stdout: stdout_rx,
+            stderr: stderr_rx,
+            stdout_thread: Some(stdout_thread),
+            stderr_thread: Some(stderr_thread),
+        })
+    }
+
+    fn query(
+        &mut self,
+        command: &SolverCommand,
+        smt: &str,
+        timeout: Option<u32>,
+    ) -> SolverProcessOutcome {
+        if let Err(err) = self
+            .stdin
+            .write_all(b"(reset)\n")
+            .and_then(|_| self.stdin.write_all(smt.as_bytes()))
+            .and_then(|_| writeln!(self.stdin, "(echo \"{Z3_QUERY_END}\")"))
+            .and_then(|_| self.stdin.flush())
+        {
+            return SolverProcessOutcome::Error(format!("failed to write solver query: {err}"));
+        }
+
+        let started_at = Instant::now();
+        let timeout = timeout
+            .filter(|seconds| *seconds > 0)
+            .map(|seconds| Duration::from_secs(seconds.into()));
+        let mut output = String::new();
+        loop {
+            let Some(wait) = solver_wait_duration(started_at.elapsed(), timeout) else {
+                return SolverProcessOutcome::Unknown;
+            };
+            match self.stdout.recv_timeout(wait) {
+                Ok(Ok(line)) if line == Z3_QUERY_END => {
+                    return SolverProcessOutcome::Output(output);
+                }
+                Ok(Ok(line)) => {
+                    output.push_str(&line);
+                    output.push('\n');
+                }
+                Ok(Err(err)) => return SolverProcessOutcome::Error(err),
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => {
+                    let stderr =
+                        self.stderr.recv_timeout(SOLVER_CANCEL_CHECK_INTERVAL).unwrap_or_default();
+                    return match self.child.child_mut().try_wait() {
+                        Ok(Some(status)) => SolverProcessOutcome::Error(solver_exit_error(
+                            command, status, &output, &stderr,
+                        )),
+                        Ok(None) => SolverProcessOutcome::Error(
+                            "solver stdout closed before the query completed".to_string(),
+                        ),
+                        Err(err) => SolverProcessOutcome::Error(format!(
+                            "failed to query solver process status: {err}"
+                        )),
+                    };
+                }
+            }
+        }
+    }
+}
+
+impl Drop for Z3Session {
+    fn drop(&mut self) {
+        self.child.terminate();
+        if let Some(thread) = self.stdout_thread.take() {
+            let _ = thread.join();
+        }
+        if let Some(thread) = self.stderr_thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+fn spawn_solver_process(command: &SolverCommand) -> Result<SolverChild, String> {
+    Command::new(&command.program)
+        .args(&command.args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map(SolverChild::new)
+        .map_err(|err| format!("failed to spawn `{}`: {err}", command.display))
+}
+
 /// Runs one solver process to completion, timeout, or cooperative cancellation.
 fn run_solver_process(
     command: &SolverCommand,
@@ -1577,22 +1807,10 @@ fn run_solver_process(
     timeout: Option<u32>,
     cancel: &AtomicBool,
 ) -> SolverProcessOutcome {
-    let child = match Command::new(&command.program)
-        .args(&command.args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-    {
+    let mut child = match spawn_solver_process(command) {
         Ok(child) => child,
-        Err(err) => {
-            return SolverProcessOutcome::Error(format!(
-                "failed to spawn `{}`: {err}",
-                command.display
-            ));
-        }
+        Err(err) => return SolverProcessOutcome::Error(err),
     };
-    let mut child = SolverChild::new(child);
 
     if let Some(mut stdin) = child.child_mut().stdin.take()
         && let Err(err) = stdin.write_all(smt.as_bytes())
@@ -1666,14 +1884,18 @@ impl SolverChild {
     fn wait_with_output(mut self) -> std::io::Result<Output> {
         self.child.take().expect("solver child exists").wait_with_output()
     }
-}
 
-impl Drop for SolverChild {
-    fn drop(&mut self) {
+    fn terminate(&mut self) {
         if let Some(mut child) = self.child.take() {
             let _ = child.kill();
             let _ = child.wait();
         }
+    }
+}
+
+impl Drop for SolverChild {
+    fn drop(&mut self) {
+        self.terminate();
     }
 }
 
@@ -1718,7 +1940,7 @@ pub(crate) fn parse_and_validate_model(
 ) -> Result<SymbolicModel, SymbolicError> {
     let symbols = model_symbols_for_constraints(cx, constraints);
     let model = parse_model_with_symbols(output, &symbols)?;
-    if constraints.iter().all(|constraint| constraint.eval_model(&model).unwrap_or(false)) {
+    if eval_model_constraints(constraints, &model) {
         Ok(model)
     } else {
         let reason = if constraints.iter().any(SymBoolExpr::contains_keccak) {
@@ -1833,4 +2055,24 @@ fn model_symbols_for_constraints(
         constraint.collect_vars(&mut vars);
     }
     vars.into_iter().map(|symbol| (cx.symbol_name(symbol).to_owned(), symbol)).collect()
+}
+
+#[cfg(test)]
+#[test]
+fn z3_session_resets_and_reuses_the_process() {
+    let command = named_solver_command("z3").unwrap();
+    if solver_command_availability_error(&command).is_some() {
+        return;
+    }
+
+    let mut solver = SmtLibSubprocessSolver::new(Ok(vec![command]), Some(5), 2, false);
+    let mut cx = SymCx::new();
+    let value = SymExpr::var(&mut cx, "value");
+    let one = SymExpr::one(&mut cx);
+    let constraints = vec![SymBoolExpr::eq(&mut cx, value, one)];
+
+    assert_eq!(solver.query_normalized(&cx, &constraints, false, &constraints).unwrap(), "sat\n");
+    let pid = solver.z3_session.as_mut().unwrap().child.child_mut().id();
+    assert_eq!(solver.query_normalized(&cx, &constraints, false, &constraints).unwrap(), "sat\n");
+    assert_eq!(solver.z3_session.as_mut().unwrap().child.child_mut().id(), pid);
 }

@@ -402,6 +402,53 @@ else
   echo -e "\n=== SKIPPING T6 receive-policy/admin-key tests (HARDFORK=$HARDFORK) ==="
 fi
 
+# --- T3+ set-scope tests ---
+if [[ ! "$HARDFORK_UPPER" =~ ^T(0|1|1B|2)$ ]]; then
+  echo -e "\n=== CAST KEYCHAIN: SET-SCOPE ==="
+  # Provision a fresh unrestricted key through the AccountKeychain precompile.
+  kc_ss_json="$(cast wallet new --json)"
+  KC_SS_PK="$(wallet_json_field "$kc_ss_json" private_key)"
+  KC_SS_ADDR="$(wallet_json_field "$kc_ss_json" address)"
+  cast keychain auth "$KC_SS_ADDR" secp256k1 1893456000 \
+    --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
+  fund_and_wait "$KC_SS_ADDR"
+
+  cast keychain ss "$KC_SS_ADDR" \
+    --scope 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D \
+    --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
+  echo "OK: set-scope applied"
+
+  echo -e "\n=== CAST KEYCHAIN: SET-SCOPE ALLOWED ==="
+  cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
+    0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' \
+    --tempo.access-key "$KC_SS_PK" --tempo.root-account "$ADDR"
+  echo "OK: set-scope key allowed to call permitted target"
+
+  echo -e "\n=== CAST KEYCHAIN: SET-SCOPE BLOCKED ==="
+  if cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
+    0x4ef5DFf69C1514f4Dbf85aA4F9D95F804F64275F 'doesNotExist()' \
+    --tempo.access-key "$KC_SS_PK" --tempo.root-account "$ADDR" 2>&1; then
+    echo "ERROR: set-scope key should have been blocked for disallowed target"
+    exit 1
+  fi
+  echo "OK: set-scope key correctly blocked for disallowed target"
+
+  echo -e "\n=== CAST KEYCHAIN: REMOVE-SCOPE ==="
+  cast keychain rs "$KC_SS_ADDR" 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D \
+    --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
+
+  echo -e "\n=== CAST KEYCHAIN: REMOVE-SCOPE BLOCKED ==="
+  if cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
+    0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' \
+    --tempo.access-key "$KC_SS_PK" --tempo.root-account "$ADDR" 2>&1; then
+    echo "ERROR: call should have been blocked after remove-scope"
+    exit 1
+  fi
+  echo "OK: call correctly blocked after remove-scope"
+else
+  echo -e "\n=== SKIPPING T3+ set-scope tests (HARDFORK=$HARDFORK) ==="
+fi
+
 # --- T3-only scope / call-restriction tests ---
 if [[ "$HARDFORK" == "T3" ]]; then
   echo -e "\n=== CAST KEYCHAIN: AUTHORIZE WITH --scope (ADDRESS ONLY, UNRESTRICTED) ==="
@@ -485,56 +532,6 @@ if [[ "$HARDFORK" == "T3" ]]; then
     --tempo.access-key "$KC_HEX_PK" --tempo.root-account "$ADDR"
   echo "OK: raw hex selector key allowed to call increment()"
 
-  echo -e "\n=== CAST KEYCHAIN: SET-SCOPE ==="
-  # Create a new unrestricted key, then add scope restrictions via set-scope
-  kc_ss_json="$(cast wallet new --json)"
-  KC_SS_PK="$(wallet_json_field "$kc_ss_json" private_key)"
-  KC_SS_ADDR="$(wallet_json_field "$kc_ss_json" address)"
-  cast keychain auth "$KC_SS_ADDR" secp256k1 1893456000 \
-    --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
-
-  # Now restrict it to only the counter contract
-  cast keychain ss "$KC_SS_ADDR" \
-    --scope 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D \
-    --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
-  echo "OK: set-scope applied"
-
-  echo -e "\n=== CAST KEYCHAIN: SET-SCOPE ALLOWED ==="
-  fund_and_wait "$KC_SS_ADDR"
-  cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
-    0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' \
-    --tempo.access-key "$KC_SS_PK" --tempo.root-account "$ADDR"
-  echo "OK: set-scope key allowed to call permitted target"
-
-  echo -e "\n=== CAST KEYCHAIN: SET-SCOPE BLOCKED ==="
-  if cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
-    0x4ef5DFf69C1514f4Dbf85aA4F9D95F804F64275F 'doesNotExist()' \
-    --tempo.access-key "$KC_SS_PK" --tempo.root-account "$ADDR" 2>&1; then
-    echo "ERROR: set-scope key should have been blocked for disallowed target"
-    exit 1
-  fi
-  echo "OK: set-scope key correctly blocked for disallowed target"
-
-  echo -e "\n=== CAST KEYCHAIN: REMOVE-SCOPE (BEFORE — CALL SUCCEEDS) ==="
-  cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
-    0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' \
-    --tempo.access-key "$KC_SS_PK" --tempo.root-account "$ADDR"
-  echo "OK: call to scoped target succeeds before remove-scope"
-
-  echo -e "\n=== CAST KEYCHAIN: REMOVE-SCOPE ==="
-  cast keychain rs "$KC_SS_ADDR" 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D \
-    --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
-  echo "OK: remove-scope applied"
-
-  echo -e "\n=== CAST KEYCHAIN: REMOVE-SCOPE (AFTER — CALL FAILS) ==="
-  if cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
-    0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' \
-    --tempo.access-key "$KC_SS_PK" --tempo.root-account "$ADDR" 2>&1; then
-    echo "ERROR: call should have been blocked after remove-scope"
-    exit 1
-  fi
-  echo "OK: call correctly blocked after remove-scope"
-
   echo -e "\n=== CAST KEYCHAIN: AUTHORIZE WITH RECIPIENT RESTRICTION ==="
   kc_recip_json="$(cast wallet new --json)"
   KC_RECIP_PK="$(wallet_json_field "$kc_recip_json" private_key)"
@@ -581,9 +578,25 @@ echo -e "\n=== CAST SEND WITH SPONSOR (--tempo.sponsor-signature) ==="
 # Step 2: Sign it with the sponsor's private key
 # Step 3: Send with --tempo.sponsor and --tempo.sponsor-signature
 
+# The sponsor digest commits to the full transaction, including nonce, gas limit and
+# fees. Pin those fields explicitly so `cast mktx` and `cast send` build the identical
+# transaction: refilling them from live chain state (basefee moves, gas estimates change)
+# between the two invocations changes the digest and invalidates the pre-signed sponsor
+# signature. The gas limit is pinned to a padded estimate; a limit below actual usage
+# would make the transaction run out of gas during Tempo AA validation and be dropped
+# without a receipt.
+SPONSOR_TX_NONCE=$(cast nonce "$ADDR" --rpc-url "$ETH_RPC_URL")
+SPONSOR_TX_GAS=$(cast estimate --rpc-url "$ETH_RPC_URL" \
+  0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' --from "$ADDR")
+SPONSOR_TX_ARGS=(
+  0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()'
+  --nonce "$SPONSOR_TX_NONCE" --gas-limit $((2 * SPONSOR_TX_GAS))
+  --gas-price 20gwei --priority-gas-price 1gwei
+)
+
 # Step 1: Get the hash that the sponsor needs to sign
 FEE_PAYER_HASH=$(cast mktx ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
-  0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' --private-key "$PK" \
+  "${SPONSOR_TX_ARGS[@]}" --private-key "$PK" \
   --tempo.print-sponsor-hash)
 printf "Fee payer signature hash: %s\n" "$FEE_PAYER_HASH"
 
@@ -591,10 +604,16 @@ printf "Fee payer signature hash: %s\n" "$FEE_PAYER_HASH"
 SPONSOR_SIG=$(cast wallet sign --private-key "$SPONSOR_PK" "$FEE_PAYER_HASH" --no-hash)
 printf "Sponsor signature: %s\n" "$SPONSOR_SIG"
 
-# Step 3: Send the sponsored transaction with the signature
-RECEIPT=$(cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
-  0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' --private-key "$PK" \
-  --tempo.sponsor "$SPONSOR_ADDR" --tempo.sponsor-signature "$SPONSOR_SIG" --json)
+# Step 3: Send the sponsored transaction with the signature. With --json, cast reports
+# errors as a JSON envelope on stdout, which the command substitution captures; print the
+# captured output on failure so the error is visible in CI logs.
+if ! RECEIPT=$(cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
+  "${SPONSOR_TX_ARGS[@]}" --private-key "$PK" \
+  --tempo.sponsor "$SPONSOR_ADDR" --tempo.sponsor-signature "$SPONSOR_SIG" --json); then
+  echo "ERROR: sponsored cast send failed"
+  echo "Output: $RECEIPT"
+  exit 1
+fi
 
 # Verify the fee_payer in the receipt matches the sponsor address
 RECEIPT_FEE_PAYER=$(echo "$RECEIPT" | jq -r '.feePayer // .fee_payer // empty')

@@ -77,14 +77,6 @@ Display options:
           and
             backtraces with line numbers.
 
-Compiler options:
-      --allow-local-compiler
-          Allow use of local compiler executables without prompting
-
-Project options:
-      --allow-project-env
-          Allow loading project dotenv files without prompting
-
 Find more information in the book: https://getfoundry.sh/forge/overview
 
 "#]]);
@@ -123,14 +115,6 @@ solc = "0.8.5"
 Warning: Found unknown config section in foundry.toml: [default]
 This notation for profiles has been deprecated and may result in the profile not being registered in future versions.
 Please use [profile.default] instead or run `forge config --fix`.
-note[could-be-constant]: state variable could be declared constant
-  [FILE]:6:17
-  │
-6 │     uint public value = 42;
-  │                 ━━━━━
-  │
-  ╰ help: https://getfoundry.sh/forge/linting/could-be-constant
-
 
 "#]]);
     // `forge clear` should not warn
@@ -4734,9 +4718,8 @@ Bindings have been generated to [..]
     let bindings_path = prj.root().join("out/bindings");
 
     assert!(bindings_path.exists(), "Bindings directory should exist");
-    let out = Command::new("cargo")
+    let out = super::bind::bindings_cargo(&bindings_path)
         .arg("build")
-        .current_dir(&bindings_path)
         .output()
         .expect("Failed to run cargo build");
 
@@ -4762,21 +4745,6 @@ Flattened file written at [..]flat.sol
 "#]]);
 
     assert!(out.exists(), "flattened file should have been written");
-});
-
-// `forge generate test` writes the scaffolded file and emits its status string to stderr,
-// keeping stdout empty so agents can pipe the command without diagnostics.
-forgetest!(generate_test_writes_status_to_stderr, |prj, cmd| {
-    cmd.args(["generate", "test", "--contract-name", "Counter"])
-        .assert_success()
-        .stdout_eq(str![""])
-        .stderr_eq(str![[r#"
-Warning: `forge generate` is deprecated and will be removed in a future version
-Generated test file: test/Counter.t.sol
-
-"#]]);
-
-    assert!(prj.root().join("test/Counter.t.sol").exists(), "scaffolded test file should exist");
 });
 
 // `forge init` writes its status prose to stderr and keeps stdout empty so agents

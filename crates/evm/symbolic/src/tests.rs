@@ -731,6 +731,26 @@ fn memory_copies_symbolic_bytecode_size_with_guarded_tail() {
 }
 
 #[test]
+fn memory_symbolic_copy_size_controls_extent() {
+    let mut cx = SymCx::new();
+    let mut memory = SymMemory::default();
+    let dest = SymExpr::constant(&mut cx, U256::from(0x100));
+    let size = SymExpr::var(&mut cx, "size");
+    let bytes = (0u8..4).map(|idx| SymExpr::constant(&mut cx, U256::from(idx + 1))).collect();
+    let bytes = SymBytes::exprs(&mut cx, bytes);
+    memory.copy_bytes_size_offset(&mut cx, dest, size, bytes).unwrap();
+    let memory_size = memory.size_word(&mut cx);
+
+    let size_zero = symbolic_model(&mut cx, [("size".to_string(), U256::ZERO)]);
+    assert_eq!(memory_size.eval_model(&size_zero).unwrap(), U256::ZERO);
+
+    for size in 1..=4 {
+        let model = symbolic_model(&mut cx, [("size".to_string(), U256::from(size))]);
+        assert_eq!(memory_size.eval_model(&model).unwrap(), U256::from(0x120));
+    }
+}
+
+#[test]
 fn memory_copies_folded_symbolic_size_prefix_only() {
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
@@ -1056,6 +1076,23 @@ fn memory_size_tracks_concrete_and_symbolic_extents() {
 }
 
 #[test]
+fn memory_size_tracks_symbolic_copy_extent_not_materialized_bound() {
+    let mut cx = SymCx::new();
+    let mut memory = SymMemory::default();
+    let size = SymExpr::var(&mut cx, "size");
+    let bytes = SymBytes::concrete(&mut cx, vec![1, 2, 3, 4]);
+    let dest = SymExpr::constant(&mut cx, U256::from(64));
+    memory.copy_bytes_size_offset(&mut cx, dest, size, bytes).unwrap();
+    let logical_size = memory.size_word(&mut cx);
+
+    let empty = symbolic_model(&mut cx, [("size".to_string(), U256::ZERO)]);
+    assert_eq!(logical_size.eval_model(&empty).unwrap(), U256::ZERO);
+
+    let nonempty = symbolic_model(&mut cx, [("size".to_string(), U256::from(1))]);
+    assert_eq!(logical_size.eval_model(&nonempty).unwrap(), U256::from(96));
+}
+
+#[test]
 fn memory_concrete_write_overrides_older_symbolic_write() {
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
@@ -1291,6 +1328,42 @@ fn memory_call_output_accepts_symbolic_size_with_guarded_tail() {
         memory.read_bytes(&mut cx, 0, 4).eval_model(&mut cx, &size_four).unwrap(),
         vec![1, 2, 3, 4]
     );
+}
+
+#[test]
+fn memory_call_output_size_controls_extent() {
+    let mut cx = SymCx::new();
+    let return_data = SymReturnData::empty(&mut cx);
+    let mut memory = SymMemory::default();
+    let dest = SymExpr::constant(&mut cx, U256::from(0x100));
+    let size = SymExpr::var(&mut cx, "size");
+    let copy_size = BoundedCopySize::Symbolic { size, max_size: 4 };
+
+    memory.copy_call_output_offset(&mut cx, dest, &copy_size, &return_data).unwrap();
+    let memory_size = memory.size_word(&mut cx);
+
+    let size_zero = symbolic_model(&mut cx, [("size".to_string(), U256::ZERO)]);
+    assert_eq!(memory_size.eval_model(&size_zero).unwrap(), U256::ZERO);
+
+    let size_one = symbolic_model(&mut cx, [("size".to_string(), U256::from(1))]);
+    assert_eq!(memory_size.eval_model(&size_one).unwrap(), U256::from(0x120));
+}
+
+#[test]
+fn memory_call_output_preserves_symbolic_read_bound() {
+    let mut cx = SymCx::new();
+    let return_data = SymReturnData::from_concrete_bytes(&mut cx, vec![1]);
+    let mut memory = SymMemory::default();
+    let dest = SymExpr::constant(&mut cx, U256::from(0x100));
+
+    memory
+        .copy_call_output_offset(&mut cx, dest, &BoundedCopySize::Concrete(1), &return_data)
+        .unwrap();
+
+    let offset = SymExpr::var(&mut cx, "offset");
+    let value = memory.load_word_offset(&mut cx, offset).unwrap();
+    let model = symbolic_model(&mut cx, [("offset".to_string(), U256::from(0x100))]);
+    assert_eq!(value.eval_model(&model).unwrap(), U256::from(1) << 248);
 }
 
 #[test]
@@ -1735,16 +1808,17 @@ fn path_state_extracts_symbolic_usize_upper_bound() {
 }
 
 #[test]
-fn path_state_child_replaces_frame_and_resets_local_loop_state() {
+fn path_state_child_replaces_frame_and_resets_local_state() {
     let mut cx = SymCx::new();
     let mut state = PathState::empty(&mut cx, Address::ZERO, Address::ZERO, false);
     state.call_depth = 2;
     state.next_symbol = 7;
     state.loop_jumps.insert(3, 4);
+    state.expected_revert = Some(ExpectedRevert::new(ExpectedRevertData::Any, None, 1));
+    state.assume_no_revert_next_call = Some(AssumeNoRevert::Any);
 
     let parent_stack = SymExpr::constant(&mut cx, U256::from(0xab));
     state.stack.push(parent_stack).unwrap();
-
     let constrained = SymExpr::var(&mut cx, "constrained");
     let seven = SymExpr::constant(&mut cx, U256::from(7));
     let constraint = SymBoolExpr::eq(&mut cx, constrained, seven);
@@ -1761,7 +1835,6 @@ fn path_state_child_replaces_frame_and_resets_local_loop_state() {
         &mut cx,
         child_address,
         child_address,
-        child_address,
         Address::ZERO,
         callvalue,
         false,
@@ -1776,7 +1849,11 @@ fn path_state_child_replaces_frame_and_resets_local_loop_state() {
     assert_eq!(child.world.cached_nonce(cached), Some(9));
     assert_eq!(child.address, child_address);
     assert!(child.loop_jumps.is_empty());
+    assert!(child.expected_revert.is_none());
+    assert!(child.assume_no_revert_next_call.is_none());
     assert_eq!(state.loop_jumps.get(&3), Some(&4));
+    assert!(state.expected_revert.is_some());
+    assert!(state.assume_no_revert_next_call.is_some());
     assert!(child.stack.peek(0).is_err());
 }
 
@@ -2526,6 +2603,34 @@ fn fallback_model_finds_wrapping_arithmetic_riddle_candidate() {
     let model = fallback_single_var_model(&constraints).unwrap();
 
     assert!(constraints.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
+}
+
+#[test]
+fn fallback_model_uses_direct_bound_witness() {
+    let mut cx = SymCx::new();
+    let calldata = SymExpr::var(&mut cx, "calldata_0");
+    let upper_bound = SymExpr::constant(&mut cx, U256::from(512));
+    let constraint = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, calldata, upper_bound);
+
+    let model = fallback_single_var_model(&[constraint]).unwrap();
+
+    assert_eq!(model_value(&cx, &model, "calldata_0"), Some(U256::from(512)));
+}
+
+#[test]
+fn fallback_model_uses_boundary_witness() {
+    let mut cx = SymCx::new();
+    let calldata = SymExpr::var(&mut cx, "calldata_0");
+    let mut constraints = Vec::new();
+    for excluded in 0..3 {
+        let value = SymExpr::constant(&mut cx, U256::from(excluded));
+        let equals = SymBoolExpr::eq(&mut cx, calldata.clone(), value);
+        constraints.push(equals.not(&mut cx));
+    }
+
+    let model = fallback_single_var_model(&constraints).unwrap();
+
+    assert_eq!(model_value(&cx, &model, "calldata_0"), Some(U256::MAX));
 }
 
 #[test]
@@ -3298,8 +3403,13 @@ fn solver_normalizes_constraint_batches_by_flattening_and_deduping() {
     ];
 
     let normalized = normalize_constraints_for_solver(&mut cx, &grouped);
+    let reversed =
+        normalize_constraints_for_solver(&mut cx, &grouped.into_iter().rev().collect::<Vec<_>>());
 
-    assert_eq!(normalized, vec![b, a]);
+    assert_eq!(normalized.len(), 2);
+    assert_eq!(normalized, reversed);
+    assert!(normalized.contains(&a));
+    assert!(normalized.contains(&b));
 
     let x_eq_y = SymBoolExpr::eq(&mut cx, x, y);
     let false_expr = SymBoolExpr::constant(&mut cx, false);
@@ -4077,20 +4187,31 @@ fn solver_normalizes_checked_add_overflow_guard_for_bounded_operands() {
 }
 
 #[test]
-fn solver_does_not_normalize_unbounded_checked_add_overflow_guard() {
+fn solver_normalizes_unbounded_checked_add_overflow_guard() {
     let mut cx = SymCx::new();
     let a = SymExpr::var(&mut cx, "a");
     let b = SymExpr::var(&mut cx, "b");
-    let sum = SymExpr::binop(&mut cx, SymBinOp::Add, a.clone(), b);
-    let original = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, a, sum);
-    let normalized = normalize_bool_for_solver(&mut cx, original.clone());
+    let sum = SymExpr::binop(&mut cx, SymBinOp::Add, a.clone(), b.clone());
+    let limit = SymExpr::not(&mut cx, a.clone());
+    let overflow = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, limit.clone(), b.clone());
+    let no_overflow = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, b, limit);
+    let cases = [
+        (SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, a.clone(), sum.clone()), overflow.clone()),
+        (SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, sum.clone(), a.clone()), overflow),
+        (SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, a.clone(), sum.clone()), no_overflow.clone()),
+        (SymBoolExpr::cmp(&mut cx, SymCmpOp::Uge, sum.clone(), a.clone()), no_overflow.clone()),
+        (SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, sum, a).not(&mut cx), no_overflow),
+    ];
+    for (original, expected) in &cases {
+        assert_eq!(normalize_bool_for_solver(&mut cx, original.clone()), *expected);
+    }
 
-    assert_ne!(normalized, SymBoolExpr::constant(&mut cx, false));
-
-    let model =
-        symbolic_model(&mut cx, [("a".to_string(), U256::MAX), ("b".to_string(), U256::from(1))]);
-    assert!(original.eval_model(&model).unwrap());
-    assert_eq!(original.eval_model(&model).unwrap(), normalized.eval_model(&model).unwrap());
+    for (a, b) in [(U256::MAX, U256::ZERO), (U256::MAX, U256::ONE)] {
+        let model = symbolic_model(&mut cx, [("a".to_string(), a), ("b".to_string(), b)]);
+        for (original, expected) in &cases {
+            assert_eq!(original.eval_model(&model).unwrap(), expected.eval_model(&model).unwrap());
+        }
+    }
 }
 
 #[test]
@@ -4603,6 +4724,30 @@ fn is_sat_uses_two_var_witness_before_solver() {
 
 #[cfg(unix)]
 #[test]
+fn is_sat_uses_zero_witness_before_solver() {
+    let mut cx = SymCx::new();
+    let marker = portfolio_test_marker("zero-is-sat");
+    let commands = vec![counted_solver_command(&marker, "unsat")];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
+    let x = SymExpr::var(&mut cx, "calldata_0");
+    let y = SymExpr::var(&mut cx, "calldata_1");
+    let z = SymExpr::var(&mut cx, "calldata_2");
+    let sum = SymExpr::binop(&mut cx, SymBinOp::Add, x, y);
+    let sum = SymExpr::binop(&mut cx, SymBinOp::Add, sum, z);
+    let ten = SymExpr::constant(&mut cx, U256::from(10));
+    let constraints = vec![SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, sum, ten)];
+
+    assert!(solver.is_sat(&mut cx, &constraints).unwrap());
+
+    let stats = solver.stats();
+    assert_eq!(stats.solver_queries, 1);
+    assert_eq!(stats.smt_queries, 0);
+    assert_eq!(counted_solver_invocations(&marker), 0);
+    let _ = std::fs::remove_file(&marker);
+}
+
+#[cfg(unix)]
+#[test]
 fn gasleft_can_use_single_var_witness_before_solver() {
     let mut cx = SymCx::new();
     let marker = portfolio_test_marker("gasleft-single-var");
@@ -4638,6 +4783,26 @@ fn gasleft_fails_at_smt_emission() {
     let stats = solver.stats();
     assert_eq!(stats.solver_queries, 1);
     assert_eq!(stats.smt_queries, 1);
+    assert_eq!(counted_solver_invocations(&marker), 0);
+    let _ = std::fs::remove_file(&marker);
+}
+
+#[cfg(unix)]
+#[test]
+fn gasleft_model_fails_closed() {
+    let mut cx = SymCx::new();
+    let marker = portfolio_test_marker("gasleft-model");
+    let commands = vec![counted_solver_command(&marker, "sat")];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
+    let gas = SymExpr::gas_left(&mut cx, 0);
+    let limit = SymExpr::constant(&mut cx, U256::from(10));
+    let constraints = vec![SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, gas, limit)];
+
+    let err = solver.model(&mut cx, &constraints).unwrap_err();
+    assert!(matches!(err, SymbolicError::Unsupported("GAS/gasleft() not modeled")));
+
+    let stats = solver.stats();
+    assert_eq!(stats.smt_queries, 0);
     assert_eq!(counted_solver_invocations(&marker), 0);
     let _ = std::fs::remove_file(&marker);
 }
@@ -4816,9 +4981,9 @@ fn is_sat_removes_implied_mul_div_monotonic_condition() {
     assert!(solver.is_sat_branch(&mut cx, &constraints).unwrap());
 
     let stats = solver.stats();
-    assert_eq!(stats.smt_queries, 1);
+    assert_eq!(stats.smt_queries, 0);
     assert_eq!(solver.heuristic_witnesses(), 0);
-    assert_eq!(counted_solver_invocations(&marker), 1);
+    assert_eq!(counted_solver_invocations(&marker), 0);
     let _ = std::fs::remove_file(&marker);
 }
 
@@ -5064,7 +5229,7 @@ fn sat_cache_reuses_reversed_comparisons() {
     assert_eq!(stats.solver_queries, 3);
     assert_eq!(stats.sat_queries, 6);
     assert_eq!(stats.sat_cache_hits, 3);
-    assert_eq!(counted_solver_invocations(&marker), 3);
+    assert_eq!(counted_solver_invocations(&marker), 2);
     let _ = std::fs::remove_file(&marker);
 }
 

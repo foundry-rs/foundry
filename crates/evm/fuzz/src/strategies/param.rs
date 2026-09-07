@@ -84,13 +84,24 @@ fn fuzz_param_inner(
         DynSolType::Function | DynSolType::Bool => DynSolValue::type_strategy(param).boxed(),
         DynSolType::Bytes => value(),
         DynSolType::FixedBytes(_size @ 1..=32) => value(),
-        DynSolType::String => value()
-            .prop_map(move |value| {
+        DynSolType::String => {
+            let default_strategy = DynSolValue::type_strategy(param).prop_map(move |value| {
                 DynSolValue::String(
                     value.as_str().unwrap().trim().trim_end_matches('\0').to_string(),
                 )
-            })
-            .boxed(),
+            });
+            if let Some(fixtures) = fuzz_fixtures {
+                let fixtures = fixtures.to_vec();
+                proptest::prop_oneof![
+                    50 => any::<prop::sample::Index>()
+                        .prop_map(move |index| index.get(&fixtures).clone()),
+                    50 => default_strategy,
+                ]
+                .boxed()
+            } else {
+                default_strategy.boxed()
+            }
+        }
         DynSolType::Tuple(ref params) => params
             .iter()
             .map(|param| fuzz_param_inner(param, None))
@@ -596,6 +607,22 @@ mod tests {
             strategy.new_tree(&mut runner).unwrap().current(),
             DynSolValue::Uint(U256::ZERO, 256)
         );
+    }
+
+    #[test]
+    fn string_fixtures_are_emitted_verbatim() {
+        let fixture = DynSolValue::String("  padded fixture  \0".to_string());
+        let strategy = super::fuzz_param_with_fixtures(
+            &DynSolType::String,
+            Some(std::slice::from_ref(&fixture)),
+            "value",
+        );
+        let mut runner = TestRunner::deterministic();
+
+        let emitted =
+            (0..1000).any(|_| strategy.new_tree(&mut runner).unwrap().current() == fixture);
+
+        assert!(emitted, "string fixture was never emitted verbatim");
     }
 
     #[test]

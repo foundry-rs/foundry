@@ -7,7 +7,7 @@ macro_rules! fmt_test {
         #[test]
         fn $name() {
             let (_, mut cmd) = ExtTester::new($org, $repo, $commit).setup_forge_prj(false);
-            cmd.args(["fmt", "--allow-project-env"]).assert_success();
+            cmd.arg("fmt").assert_success();
             cmd.arg("--check").assert_success();
         }
     };

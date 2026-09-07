@@ -21,6 +21,8 @@ use tempo_precompiles::{
     validator_config,
 };
 
+use crate::constants::SYSTEM_PRECOMPILE_STUB;
+
 pub use foundry_common::tempo::{
     ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
 };
@@ -122,7 +124,7 @@ fn initialize_tempo_genesis_inner_with_precompiles(
     let mut ctx = StorageCtx;
 
     // Set sentinel bytecode for precompile addresses
-    let sentinel = Bytecode::new_legacy(Bytes::from_static(&[0xef]));
+    let sentinel = Bytecode::new_legacy(Bytes::from_static(SYSTEM_PRECOMPILE_STUB));
     for precompile in precompiles {
         ctx.set_code(precompile, sentinel.clone())?;
     }

@@ -384,6 +384,7 @@ mod tests {
     use foundry_config::Config;
     use foundry_evm::{
         core::{evm::MonadEvmNetwork, opts::EvmOpts},
+        executors::ExecutorBuilder,
         hardforks::MonadHardfork,
     };
     use foundry_evm_networks::NetworkConfigs;
@@ -419,6 +420,7 @@ mod tests {
         let script_config = ScriptConfig::<MonadEvmNetwork>::new(
             Config::default(),
             evm_opts,
+            ExecutorBuilder::<MonadEvmNetwork>::new(),
             false,
             TempoOpts::default(),
             Some(0),
@@ -463,7 +465,7 @@ mod tests {
         assert_eq!(monad_eight_runner.evm_opts.networks, NetworkConfigs::with_monad());
         assert!(!monad_eight_runner.evm_opts.fork_network_is_inferred);
         assert_eq!(monad_eight.decoder.chain_id, Some(NamedChain::Monad as u64));
-        assert_eq!(monad_eight.decoder.monad_hardfork(), Some(MonadHardfork::MonadEight));
+        assert_eq!(monad_eight.decoder.hardfork(), Some(MonadHardfork::MonadEight.into()));
         assert!(!monad_eight.decoder.precompile_labels().contains_key(&RESERVE_BALANCE_ADDRESS));
 
         let monad_nine = context_for_rpc(&contexts, &monad_nine_rpc);
@@ -475,7 +477,7 @@ mod tests {
         assert_eq!(monad_nine_runner.evm_opts.networks, NetworkConfigs::with_monad());
         assert!(!monad_nine_runner.evm_opts.fork_network_is_inferred);
         assert_eq!(monad_nine.decoder.chain_id, Some(NamedChain::Monad as u64));
-        assert_eq!(monad_nine.decoder.monad_hardfork(), Some(MonadHardfork::MonadNine));
+        assert_eq!(monad_nine.decoder.hardfork(), Some(MonadHardfork::MonadNine.into()));
         assert_eq!(
             monad_nine.decoder.precompile_labels().get(&RESERVE_BALANCE_ADDRESS),
             Some(&"ReserveBalance".to_string())
@@ -509,6 +511,7 @@ mod tests {
                 networks: NetworkConfigs::with_monad(),
                 ..Default::default()
             },
+            ExecutorBuilder::<MonadEvmNetwork>::new(),
             false,
             TempoOpts::default(),
             Some(0),
@@ -545,11 +548,11 @@ mod tests {
         .collect::<HashMap<_, _>>();
 
         let monad_eight = decoders.get(&monad_eight_rpc).unwrap();
-        assert_eq!(monad_eight.monad_hardfork(), Some(MonadHardfork::MonadEight));
+        assert_eq!(monad_eight.hardfork(), Some(MonadHardfork::MonadEight.into()));
         assert!(!monad_eight.precompile_labels().contains_key(&RESERVE_BALANCE_ADDRESS));
 
         let monad_nine = decoders.get(&monad_nine_rpc).unwrap();
-        assert_eq!(monad_nine.monad_hardfork(), Some(MonadHardfork::MonadNine));
+        assert_eq!(monad_nine.hardfork(), Some(MonadHardfork::MonadNine.into()));
         assert_eq!(
             monad_nine.precompile_labels().get(&RESERVE_BALANCE_ADDRESS),
             Some(&"ReserveBalance".to_string())
@@ -564,6 +567,7 @@ mod tests {
         let script_config = ScriptConfig::<MonadEvmNetwork>::new(
             Config::default(),
             EvmOpts { fork_url: Some(monad.http_endpoint()), ..Default::default() },
+            ExecutorBuilder::<MonadEvmNetwork>::new(),
             false,
             TempoOpts::default(),
             Some(0),
@@ -655,6 +659,7 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
                     self.execution_artifacts.rpc_data.chain_ids.get(&tx.rpc).copied(),
                     self.args.legacy,
                     self.script_config.config.eip1559_fee_estimate,
+                    &self.script_config.config,
                 )
                 .await?;
 
@@ -810,7 +815,7 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
                     });
                     if let Some((base_fee, priority_fee)) = &fee_breakdown {
                         json["estimated_max_fee_per_gas"] =
-                            serde_json::Value::from(estimated_gas_price.clone());
+                            serde_json::Value::from(estimated_gas_price);
                         json["estimated_base_fee_per_gas"] =
                             serde_json::Value::from(base_fee.clone());
                         json["estimated_max_priority_fee_per_gas"] =

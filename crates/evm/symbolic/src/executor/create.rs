@@ -14,6 +14,12 @@ impl SymbolicExecutor {
             return Ok(StepOutcome::Revert);
         }
 
+        let offset = state.stack.peek(1)?.clone();
+        let size = state.stack.peek(2)?.clone();
+        if let Some(outcome) = self.guard_memory_range(executor, state, worklist, &offset, &size)? {
+            return Ok(outcome);
+        }
+
         let value = state.stack.pop()?;
         let offset = state.stack.pop()?;
         let size = state.stack.pop()?;
@@ -21,8 +27,7 @@ impl SymbolicExecutor {
             Some(Ok(size)) => BoundedCopySize::Concrete(size),
             Some(Err(_)) => {
                 state.return_data = SymReturnData::empty(&mut self.cx);
-                state.stack.push(SymExpr::zero(&mut self.cx))?;
-                return Ok(StepOutcome::Continue);
+                return Ok(StepOutcome::Revert);
             }
             None => {
                 let max_limit = self.config.max_calldata_bytes as usize;
@@ -43,6 +48,8 @@ impl SymbolicExecutor {
         };
         let salt =
             if matches!(kind, CreateKind::Create2) { Some(state.stack.pop()?) } else { None };
+
+        size.expand_memory(&mut self.cx, &mut state.memory, offset.clone());
 
         let initcode = match &size {
             BoundedCopySize::Concrete(size) => {
@@ -96,7 +103,6 @@ impl SymbolicExecutor {
             &mut self.cx,
             created,
             created,
-            created,
             state.address,
             value.clone(),
             false,
@@ -110,115 +116,66 @@ impl SymbolicExecutor {
         child.world.mark_current_transaction_created(created);
         child.world.set_nonce(created, 1);
         child.world.transfer(&mut self.cx, executor, state.address, created, value);
-        child.expected_revert = None;
-        child.assume_no_revert_next_call = None;
 
         let outcomes = self.execute_external_call(executor, child, &initcode, completed_paths)?;
-        let Some((first, rest)) = outcomes.split_first() else {
+        if outcomes.is_empty() {
             return Ok(StepOutcome::AssumeRejected);
-        };
+        }
 
         let mut parents = VecDeque::with_capacity(outcomes.len());
-        for outcome in std::iter::once(first).chain(rest.iter()) {
-            let mut parent = state.clone();
-            parent.constraints = outcome.state.constraints.clone();
-            parent.next_symbol = outcome.state.next_symbol;
-            parent.inherit_branch_target_progress(&outcome.state);
-            parent.storage_load_hooks = outcome.state.storage_load_hooks.clone();
-            parent.storage_store_hooks = outcome.state.storage_store_hooks.clone();
-            parent.mapping_storage_store_hooks = outcome.state.mapping_storage_store_hooks.clone();
-            parent.inherit_mapping_hook_provenance(&outcome.state);
-            parent.inherit_inspector_recordings(&outcome.state);
-            parent.return_data = SymReturnData::empty(&mut self.cx);
-
-            if let Some(assumption) = parent.assume_no_revert_next_call.take()
-                && matches!(outcome.status, TopLevelCallStatus::Revert)
-                && self.assume_no_revert_rejects(
-                    &mut parent,
-                    &assumption,
-                    created,
-                    &outcome.return_data,
-                )?
-            {
-                continue;
-            }
-
-            if let Some(mut expected) = parent.expected_revert.clone() {
-                match outcome.status {
-                    TopLevelCallStatus::Success => {
-                        *state = parent;
-                        return Ok(StepOutcome::Failure);
-                    }
-                    TopLevelCallStatus::Revert | TopLevelCallStatus::Failure => {
-                        if !self.expected_revert_matches(
-                            &mut parent,
-                            &expected,
-                            created,
-                            &outcome.return_data,
-                        )? {
-                            *state = parent;
-                            return Ok(StepOutcome::Failure);
-                        }
-                        if expected.consume_one() {
-                            parent.expected_revert = None;
-                        } else {
-                            parent.expected_revert = Some(expected);
-                        }
-                        parent.expected_calls = outcome.state.expected_calls.clone();
-                        parent.expected_creates = pending_expected_creates.clone();
-                        parent.call_mocks = outcome.state.call_mocks.clone();
-                        parent.function_mocks = outcome.state.function_mocks.clone();
-                        parent.world = failure_world.clone();
-                        parent.stack.push(created_word.clone())?;
-                        parents.push_back(parent);
-                        continue;
-                    }
+        for outcome in outcomes {
+            match self.join_call_outcome(state, outcome, created)? {
+                JoinedCallOutcome::Rejected => {}
+                JoinedCallOutcome::Failure(mut parent) => {
+                    parent.return_data = SymReturnData::empty(&mut self.cx);
+                    *state = parent;
+                    return Ok(StepOutcome::Failure);
                 }
-            }
-
-            match outcome.status {
-                TopLevelCallStatus::Success => {
-                    parent.world = outcome.state.world.clone();
-                    parent.block = outcome.state.block.clone();
-                    parent.expected_emit = outcome.state.expected_emit.clone();
-                    parent.expected_calls = outcome.state.expected_calls.clone();
+                JoinedCallOutcome::ExpectedRevert { mut parent, child } => {
+                    parent.return_data = SymReturnData::empty(&mut self.cx);
+                    parent.expected_calls = child.expected_calls;
                     parent.expected_creates = pending_expected_creates.clone();
-                    parent.call_mocks = outcome.state.call_mocks.clone();
-                    parent.function_mocks = outcome.state.function_mocks.clone();
+                    parent.call_mocks = child.call_mocks;
+                    parent.function_mocks = child.function_mocks;
+                    parent.world = failure_world.clone();
+                    parent.stack.push(created_word.clone())?;
+                    parents.push_back(parent);
+                }
+                JoinedCallOutcome::Success { mut parent, child } => {
+                    parent.return_data = SymReturnData::empty(&mut self.cx);
+                    parent.world = child.world;
+                    parent.block = child.block;
+                    parent.expected_emit = child.expected_emit;
+                    parent.expected_calls = child.expected_calls;
+                    parent.expected_creates = pending_expected_creates.clone();
+                    parent.call_mocks = child.call_mocks;
+                    parent.function_mocks = child.function_mocks;
                     self.observe_expected_create(
                         &mut parent,
                         state.address,
                         kind,
-                        &outcome.return_data,
+                        &child.frame.return_data,
                     )?;
                     if !parent.world.is_destroyed(created) {
                         parent
                             .world
-                            .install_code(created, outcome.return_data.to_code(&mut self.cx)?);
+                            .install_code(created, child.frame.return_data.to_code(&mut self.cx)?);
                         parent.world.set_nonce(created, 1);
                     }
                     parent.stack.push(created_word.clone())?;
+                    parents.push_back(parent);
                 }
-                TopLevelCallStatus::Revert => {
+                JoinedCallOutcome::Revert { mut parent, child } => {
+                    parent.return_data = SymReturnData::empty(&mut self.cx);
                     parent.world = failure_world.clone();
-                    parent.return_data = outcome.return_data.clone();
+                    parent.return_data = child.frame.return_data;
                     parent.stack.push(SymExpr::zero(&mut self.cx))?;
-                }
-                TopLevelCallStatus::Failure => {
-                    *state = parent;
-                    return Ok(StepOutcome::Failure);
+                    parents.push_back(parent);
                 }
             }
-
-            parents.push_back(parent);
         }
 
-        let Some(first) = self.pop_next_path(&mut parents) else {
-            return Ok(StepOutcome::AssumeRejected);
-        };
-        *state = first;
-        worklist.extend(parents);
-        Ok(StepOutcome::Continue)
+        Ok(self.resume_parent_paths(state, worklist, parents))
     }
 
     pub(super) fn execute_external_call<FEN: FoundryEvmNetwork>(
@@ -227,128 +184,7 @@ impl SymbolicExecutor {
         initial: PathState,
         code: &SymCode,
         completed_paths: &mut usize,
-    ) -> Result<Vec<ExternalCallOutcome>, SymbolicError> {
-        let mut worklist = VecDeque::from([initial]);
-        let mut outcomes = Vec::new();
-        let path_limit = self.config.path_width() as usize;
-        let depth_limit = self.config.execution_depth() as usize;
-
-        while let Some(mut state) = self.pop_next_feasible_path(&mut worklist)? {
-            if *completed_paths >= path_limit {
-                return Err(SymbolicError::Unsupported("symbolic path limit exceeded"));
-            }
-            if std::mem::take(&mut state.pending_storage_hook_revert) {
-                *completed_paths += 1;
-                outcomes.push(ExternalCallOutcome {
-                    status: TopLevelCallStatus::Revert,
-                    return_data: state.return_data.clone(),
-                    state,
-                });
-                continue;
-            }
-
-            loop {
-                self.check_timeout()?;
-                if state.depth >= depth_limit {
-                    return Err(SymbolicError::Unsupported("symbolic depth limit exceeded"));
-                }
-                state.depth += 1;
-
-                let op = match code.guarded_opcode(&mut self.cx, state.pc)? {
-                    GuardedOpcode::End => {
-                        *completed_paths += 1;
-                        outcomes.push(ExternalCallOutcome {
-                            status: if state.storage_hook_active || state.expectations_satisfied() {
-                                TopLevelCallStatus::Success
-                            } else {
-                                TopLevelCallStatus::Failure
-                            },
-                            return_data: state.return_data.clone(),
-                            state,
-                        });
-                        break;
-                    }
-                    GuardedOpcode::Concrete(op) => op,
-                    GuardedOpcode::SymbolicSize { condition, opcode } => {
-                        let mut in_bounds_constraints = state.constraints.clone();
-                        in_bounds_constraints.push(condition.clone());
-                        let in_bounds_sat =
-                            self.is_sat_with_state(&state, &in_bounds_constraints)?;
-
-                        let mut out_of_bounds_constraints = state.constraints.clone();
-                        out_of_bounds_constraints.push(condition.not(&mut self.cx));
-                        if self.is_sat_with_state(&state, &out_of_bounds_constraints)? {
-                            let mut halted = state.clone();
-                            halted.constraints = out_of_bounds_constraints;
-                            *completed_paths += 1;
-                            outcomes.push(ExternalCallOutcome {
-                                status: if halted.storage_hook_active
-                                    || halted.expectations_satisfied()
-                                {
-                                    TopLevelCallStatus::Success
-                                } else {
-                                    TopLevelCallStatus::Failure
-                                },
-                                return_data: halted.return_data.clone(),
-                                state: halted,
-                            });
-                        }
-
-                        if in_bounds_sat {
-                            state.constraints = in_bounds_constraints;
-                            opcode
-                        } else {
-                            break;
-                        }
-                    }
-                };
-
-                match self.step(
-                    executor,
-                    code,
-                    code.jump_table(),
-                    &mut state,
-                    &mut worklist,
-                    completed_paths,
-                    op,
-                )? {
-                    StepOutcome::Continue => {}
-                    StepOutcome::Halt => {
-                        *completed_paths += 1;
-                        outcomes.push(ExternalCallOutcome {
-                            status: if state.storage_hook_active || state.expectations_satisfied() {
-                                TopLevelCallStatus::Success
-                            } else {
-                                TopLevelCallStatus::Failure
-                            },
-                            return_data: state.return_data.clone(),
-                            state,
-                        });
-                        break;
-                    }
-                    StepOutcome::Revert => {
-                        *completed_paths += 1;
-                        outcomes.push(ExternalCallOutcome {
-                            status: TopLevelCallStatus::Revert,
-                            return_data: state.return_data.clone(),
-                            state,
-                        });
-                        break;
-                    }
-                    StepOutcome::Failure => {
-                        *completed_paths += 1;
-                        outcomes.push(ExternalCallOutcome {
-                            status: TopLevelCallStatus::Failure,
-                            return_data: state.return_data.clone(),
-                            state,
-                        });
-                        break;
-                    }
-                    StepOutcome::AssumeRejected | StepOutcome::Forked => break,
-                }
-            }
-        }
-
-        Ok(outcomes)
+    ) -> Result<Vec<CallOutcome>, SymbolicError> {
+        self.execute_call_paths(executor, initial, code, completed_paths, CallPathKind::External)
     }
 }

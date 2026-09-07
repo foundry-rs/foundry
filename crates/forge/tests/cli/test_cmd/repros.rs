@@ -1102,3 +1102,53 @@ Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 
 "#]]);
 });
+
+// https://github.com/foundry-rs/foundry/issues/16197
+forgetest_init!(issue_16197, |prj, cmd| {
+    prj.add_test(
+        "Issue16197.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Deployment {
+    function ping() external pure {
+        revert("deployment probe");
+    }
+}
+
+// Mirrors the shape of the issue: an inherited base `setUp` performs substantial setup work
+// whose internals catch a revert before the test's own `setUp` calls `vm.skip`.
+contract CommonBase is Test {
+    Deployment internal deployment;
+
+    function setUp() public virtual {
+        deployment = new Deployment();
+        (bool success,) = address(deployment).call(abi.encodeWithSignature("ping()"));
+        require(!success, "probe call should revert");
+    }
+}
+
+contract Issue16197Test is CommonBase {
+    function setUp() public override {
+        super.setUp();
+        vm.skip(true, "probe after super");
+    }
+
+    function test_probe_succeeds() public pure {}
+}
+    "#,
+    );
+
+    cmd.args(["test", "--mc", "Issue16197Test"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/Issue16197.t.sol:Issue16197Test
+[SKIP: skipped: probe after super] setUp() ([GAS])
+Suite result: ok. 0 passed; 0 failed; 1 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 0 failed, 1 skipped (1 total tests)
+
+"#]]);
+});

@@ -25,6 +25,11 @@ pub(in crate::runtime) enum SymBoolExprKind {
 }
 
 impl SymBoolExpr {
+    #[inline]
+    pub(in crate::runtime) fn stable_hash_cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.kind.stable_hash_cmp(&other.kind)
+    }
+
     pub(in crate::runtime) fn kind(&self) -> &SymBoolExprKind {
         self.kind.value()
     }
@@ -578,21 +583,7 @@ impl SymBoolExpr {
         &self,
         model: &M,
     ) -> Result<bool, SymbolicError> {
-        Ok(match self.kind() {
-            SymBoolExprKind::Const(value) => *value,
-            SymBoolExprKind::Not(value) => !value.eval_model(model)?,
-            SymBoolExprKind::And(values) => {
-                for value in values.iter() {
-                    if !value.eval_model(model)? {
-                        return Ok(false);
-                    }
-                }
-                true
-            }
-            SymBoolExprKind::Cmp(op, left, right) => {
-                op.eval(left.eval_model(model)?, right.eval_model(model)?)
-            }
-        })
+        ModelEvaluator::new(model).eval_bool(self)
     }
 
     pub(crate) fn eval_model_if_complete<M: SymbolicModelLookup + ?Sized>(

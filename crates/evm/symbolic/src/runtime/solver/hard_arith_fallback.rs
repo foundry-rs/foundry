@@ -533,7 +533,7 @@ fn fallback_model_satisfies_all_constraints(
     constraints: &[SymBoolExpr],
     model: &(impl SymbolicModelLookup + ?Sized),
 ) -> bool {
-    constraints.iter().all(|constraint| constraint.eval_model(model).unwrap_or(false))
+    eval_model_constraints(constraints, model)
 }
 
 fn complete_fallback_support_model(
@@ -854,7 +854,15 @@ pub(crate) fn fallback_single_var_model(constraints: &[SymBoolExpr]) -> Option<S
         return None;
     }
 
-    let mut candidates = HashSet::<U256>::default();
+    let mut model = SymbolicModel::default();
+    let mut remaining_support_visits = usize::MAX;
+    if complete_fallback_support_model(constraints, &mut model, &mut remaining_support_visits)
+        && model.len() == 1
+        && model.contains_key(&var)
+    {
+        return Some(model);
+    }
+
     for candidate in [
         U256::ZERO,
         U256::from(1),
@@ -863,9 +871,14 @@ pub(crate) fn fallback_single_var_model(constraints: &[SymBoolExpr]) -> Option<S
         U256::MAX - U256::from(1),
         U256::MAX - U256::from(2),
     ] {
-        push_fallback_candidate(&mut candidates, candidate, hints);
+        let mut model = SymbolicModel::default();
+        model.insert(var, (candidate | hints.one) & !hints.zero);
+        if eval_model_constraints(constraints, &model) {
+            return Some(model);
+        }
     }
 
+    let mut candidates = HashSet::<U256>::default();
     for constant in constants.iter().copied() {
         push_fallback_candidate(&mut candidates, constant, hints);
         push_fallback_candidate(&mut candidates, constant.wrapping_add(U256::from(1)), hints);
@@ -886,7 +899,7 @@ pub(crate) fn fallback_single_var_model(constraints: &[SymBoolExpr]) -> Option<S
     for candidate in candidates {
         let mut model = SymbolicModel::default();
         model.insert(var, candidate);
-        if constraints.iter().all(|constraint| constraint.eval_model(&model).unwrap_or(false)) {
+        if eval_model_constraints(constraints, &model) {
             return Some(model);
         }
     }

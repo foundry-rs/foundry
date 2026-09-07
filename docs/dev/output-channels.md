@@ -150,7 +150,6 @@ Each row's status is one of:
 | `forge clean`          | (empty)                                              | n/a                                        | migrated |
 | `forge completions`    | Generated shell completion script                    | n/a                                        | migrated |
 | `forge doc`            | (empty)                                              | n/a                                        | migrated |
-| `forge generate`       | (empty) or generated path                            | n/a                                        | migrated |
 | `forge soldeer`        | Passthrough to `soldeer` crate; foundry adds no wrapper prose | n/a                               | migrated |
 | `forge remappings`     | One remapping per line                               | n/a                                        | migrated |
 | `forge compiler`       | Compiler info                                        | JSON                                       | migrated |

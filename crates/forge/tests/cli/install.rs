@@ -571,6 +571,55 @@ Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag:
     assert!(matches!(forge_std_lock, DepIdentifier::Tag { .. }));
 });
 
+// https://github.com/foundry-rs/foundry/issues/4353
+forgetest!(can_reinit_submodules, |prj, cmd| {
+    cmd.git_init();
+
+    let source = tempfile::tempdir().unwrap();
+    let source_git = Git::new(source.path());
+    source_git.init().unwrap();
+    fs::write(source.path().join("source.txt"), "first revision\n").unwrap();
+    source_git.add(["source.txt"]).unwrap();
+    source_git.commit("first revision").unwrap();
+    let first_rev = source_git.head().unwrap();
+
+    fs::write(source.path().join("source.txt"), "second revision\n").unwrap();
+    source_git.add(["source.txt"]).unwrap();
+    source_git.commit("second revision").unwrap();
+    let second_rev = source_git.head().unwrap();
+
+    let output = Command::new("git")
+        .current_dir(prj.root())
+        .args(["-c", "protocol.file.allow=always", "submodule", "add", "--"])
+        .arg(source.path())
+        .arg("lib/dep")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+
+    let dependency = prj.root().join("lib/dep");
+    let dependency_git = Git::new(&dependency);
+    dependency_git.checkout(false, &first_rev).unwrap();
+    cmd.git_add();
+    cmd.git_commit("add dependency");
+
+    dependency_git.checkout(false, &second_rev).unwrap();
+    Git::new(prj.root()).add(["lib/dep"]).unwrap();
+    cmd.git_commit("advance dependency");
+
+    dependency_git.checkout(false, &first_rev).unwrap();
+    fs::write(dependency.join("source.txt"), "local edit\n").unwrap();
+
+    cmd.forge_fuse();
+    cmd.env("GIT_ALLOW_PROTOCOL", "file");
+    cmd.arg("reinit").assert_success();
+    assert_eq!(dependency_git.head().unwrap(), second_rev);
+    assert_eq!(
+        read_string(dependency.join("source.txt")).replace("\r\n", "\n"),
+        "second revision\n"
+    );
+});
+
 // test that we can repeatedly install the same dependency without changes
 forgetest!(can_install_repeatedly, |_prj, cmd| {
     cmd.git_init();
@@ -860,7 +909,7 @@ async fn uni_v4_core_sync_foundry_lock() {
     let submod_solmate =
         submodules.into_iter().find(|s| s.path() == &PathBuf::from("lib/solmate")).unwrap();
 
-    cmd.args(["install", "--allow-project-env"]).assert_success();
+    cmd.arg("install").assert_success();
 
     let forge_std = lockfile_get(prj.root(), &PathBuf::from("lib/forge-std")).unwrap();
     assert!(matches!(forge_std, DepIdentifier::Rev { .. }));
@@ -877,7 +926,7 @@ async fn uni_v4_core_sync_foundry_lock() {
     git.commit("Foundry lock").unwrap();
 
     // Try update. Nothing should get updated everything is pinned tag/rev.
-    cmd.forge_fuse().args(["update", "--allow-project-env"]).assert_success();
+    cmd.forge_fuse().arg("update").assert_success();
 
     let forge_std = lockfile_get(prj.root(), &PathBuf::from("lib/forge-std")).unwrap();
     assert!(matches!(forge_std, DepIdentifier::Rev { .. }));

@@ -1,8 +1,7 @@
-use crate::Cast;
+use alloy_provider::Provider;
 use clap::Parser;
 use eyre::Result;
-use foundry_cli::{json::print_json_success, opts::RpcOpts, utils, utils::LoadConfig};
-use foundry_common::shell;
+use foundry_cli::{json::print_json_value_or_scalar, opts::RpcOpts, utils, utils::LoadConfig};
 use itertools::Itertools;
 
 /// CLI arguments for `cast rpc`.
@@ -36,32 +35,25 @@ pub struct RpcArgs {
 impl RpcArgs {
     pub async fn run(self) -> Result<()> {
         let Self { raw, method, params, rpc } = self;
-
         let config = rpc.load_config()?;
 
-        let params = if raw {
-            if params.is_empty() {
-                serde_json::Deserializer::from_reader(std::io::stdin())
-                    .into_iter()
-                    .next()
-                    .transpose()?
-                    .ok_or_else(|| eyre::format_err!("Empty JSON parameters"))?
-            } else {
-                value_or_string(params.into_iter().join(" "))
-            }
-        } else {
+        let params = if !raw {
             serde_json::Value::Array(params.into_iter().map(value_or_string).collect())
+        } else if params.is_empty() {
+            serde_json::Deserializer::from_reader(std::io::stdin())
+                .into_iter()
+                .next()
+                .transpose()?
+                .ok_or_else(|| eyre::format_err!("Empty JSON parameters"))?
+        } else {
+            value_or_string(params.into_iter().join(" "))
         };
 
-        let provider = utils::get_provider(&config)?;
-        let result = Cast::new(provider).rpc(&method, params).await?;
-        if shell::is_json() {
-            let result: serde_json::Value = serde_json::from_str(&result)?;
-            print_json_success(result)?;
-        } else {
-            sh_println!("{result}")?;
-        }
-        Ok(())
+        let result = utils::get_provider(&config)?
+            .raw_request::<_, serde_json::Value>(method.into(), params)
+            .await?;
+        let result = serde_json::to_string(&result)?;
+        print_json_value_or_scalar(result)
     }
 }
 

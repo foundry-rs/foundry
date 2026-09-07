@@ -116,7 +116,7 @@ impl<N: Network, B: ForkBlockEnv> ForkedDatabase<N, B> {
 
     /// Removes the snapshot from the tracked snapshot and sets it as the current state
     pub fn revert_state_snapshot(&mut self, id: U256, action: RevertStateSnapshotAction) -> bool {
-        let state_snapshot = { self.state_snapshots().lock().remove_at(id) };
+        let state_snapshot = { self.state_snapshots().lock().remove(id) };
         if let Some(state_snapshot) = state_snapshot {
             if action.is_keep() {
                 self.state_snapshots().lock().insert_at(state_snapshot.clone(), id);
@@ -325,5 +325,21 @@ mod tests {
 
         let got = DatabaseRef::storage_ref(&snapshot, address, slot).unwrap();
         assert_eq!(got, expected);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fork_db_revert_invalidates_newer_snapshots() {
+        let rpc = foundry_test_utils::rpc::next_http_rpc_endpoint();
+        let provider = get_http_provider(rpc.clone());
+        let meta = BlockchainDbMeta::new(BlockEnv::default(), rpc);
+        let db = BlockchainDb::new(meta, None);
+        let backend = SharedBackend::spawn_backend(Arc::new(provider), db.clone(), None).await;
+        let mut db = ForkedDatabase::new(backend, db);
+
+        let first = db.insert_state_snapshot();
+        let second = db.insert_state_snapshot();
+
+        assert!(db.revert_state_snapshot(first, RevertStateSnapshotAction::RevertRemove));
+        assert!(!db.revert_state_snapshot(second, RevertStateSnapshotAction::RevertRemove));
     }
 }
