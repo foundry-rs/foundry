@@ -43,3 +43,12 @@ version = "1.7.2"
 [[allow.exact]]
 crate = "wnaf"
 version = "0.14.1"
+
+# Exact-version exceptions for the solc installation race fixes.
+[[allow.exact]]
+crate = "svm-rs"
+version = "0.5.27"
+
+[[allow.exact]]
+crate = "svm-rs-builds"
+version = "0.5.27"
