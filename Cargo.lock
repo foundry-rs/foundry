@@ -1368,7 +1368,7 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio-util",
  "tower",
- "tower-http 0.7.0",
+ "tower-http 0.7.1",
  "tracing",
 ]
 
@@ -5363,7 +5363,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "toml_edit",
- "tower-http 0.7.0",
+ "tower-http 0.7.1",
  "tracing",
  "url",
  "watchexec",
@@ -5703,7 +5703,7 @@ dependencies = [
  "toml 1.1.4+spec-1.1.0",
  "tracing",
  "tracing-subscriber",
- "tracing-tracy 0.11.4",
+ "tracing-tracy",
  "yansi",
 ]
 
@@ -6367,7 +6367,7 @@ dependencies = [
  "time",
  "tokio",
  "tower",
- "tower-http 0.7.0",
+ "tower-http 0.7.1",
  "tracing",
  "uuid 1.26.0",
  "webbrowser",
@@ -6947,9 +6947,9 @@ dependencies = [
 
 [[package]]
 name = "hyper"
-version = "1.11.0"
+version = "1.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d22053281f852e11534f5198498373cbb59295120a20771d90f7ed1897490a72"
+checksum = "27b501faa50e7a26c3d3560ca625132f4078a17771f4810baf70475ae48cbe43"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -11938,7 +11938,7 @@ dependencies = [
  "tikv-jemallocator",
  "tracing",
  "tracing-subscriber",
- "tracing-tracy 0.12.0",
+ "tracing-tracy",
 ]
 
 [[package]]
@@ -13219,9 +13219,9 @@ dependencies = [
 
 [[package]]
 name = "tower-http"
-version = "0.7.0"
+version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b11f75e912b0c2be01b63d8cf8057b8c3f97cf34abb3d431a3a4c8675498e233"
+checksum = "08a05a66a4fdd61cbbe0a1d755ffe0ca6aba159dd4820936a0ff8a8278245b9c"
 dependencies = [
  "bitflags 2.13.1",
  "bytes",
@@ -13349,36 +13349,13 @@ dependencies = [
 
 [[package]]
 name = "tracing-tracy"
-version = "0.11.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0eaa1852afa96e0fe9e44caa53dc0bd2d9d05e0f2611ce09f97f8677af56e4ba"
-dependencies = [
- "tracing-core",
- "tracing-subscriber",
- "tracy-client 0.18.5",
-]
-
-[[package]]
-name = "tracing-tracy"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b326790213b869d948a5d1ea56472ed5b20c7cefde07684ee35d6b7a980fef1"
 dependencies = [
  "tracing-core",
  "tracing-subscriber",
- "tracy-client 0.19.0",
-]
-
-[[package]]
-name = "tracy-client"
-version = "0.18.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6131992ff3e2cb96f407eb4eb005427ba15e2687260d99089b90e60e33169ce0"
-dependencies = [
- "loom",
- "once_cell",
- "rustc-demangle",
- "tracy-client-sys 0.29.0",
+ "tracy-client",
 ]
 
 [[package]]
@@ -13390,17 +13367,7 @@ dependencies = [
  "loom",
  "once_cell",
  "rustc-demangle",
- "tracy-client-sys 0.30.0",
-]
-
-[[package]]
-name = "tracy-client-sys"
-version = "0.29.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab27f167b093214c68413a2e0bcd318f0591af475597405ff68138ba0a433379"
-dependencies = [
- "cc",
- "windows-targets 0.52.6",
+ "tracy-client-sys",
 ]
 
 [[package]]
