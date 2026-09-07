@@ -61,7 +61,7 @@ yansi.workspace = true
 rustls = { workspace = true, features = ["ring"] }
 dunce.workspace = true
 
-tracing-tracy = { version = "0.11", optional = true, features = ["demangle"] }
+tracing-tracy = { version = "0.12", optional = true, features = ["demangle"] }
 
 [dev-dependencies]
 tempfile.workspace = true

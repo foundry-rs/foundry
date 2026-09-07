@@ -44,17 +44,15 @@ fn normalize_constraints_for_solver_with(
     }
 
     // Context-dependent rewrites must not contribute facts to the context that proves them. Mark
-    // removable candidates by syntax rather than by whether the full context happens to prove a
-    // rewrite: contradictory bounds can make an interval unavailable until another candidate is
-    // removed. Rewrites to `false` remain in the context because they terminate the conjunction
-    // rather than dropping a fact.
+    // candidates by syntax rather than by whether the full context happens to prove a rewrite:
+    // contradictory bounds can make an interval unavailable until another candidate is removed.
     let retained_count = normalized
         .iter()
-        .filter(|constraint| !ConstraintContext::could_contextually_disappear(constraint))
+        .filter(|constraint| !ConstraintContext::requires_independent_context(constraint))
         .count();
     let retained = normalized
         .iter()
-        .filter(|constraint| !ConstraintContext::could_contextually_disappear(constraint));
+        .filter(|constraint| !ConstraintContext::requires_independent_context(constraint));
     let context = ConstraintContext::from_constraints(retained, retained_count);
     let normalized_len = normalized.len();
     normalize_constraint_batch(
@@ -810,21 +808,32 @@ impl ConstraintContext {
         self.lower_bounds.get(expr).copied()
     }
 
-    /// Conservatively identifies every conjunct that path facts may rewrite to `true`.
-    fn could_contextually_disappear(expr: &SymBoolExpr) -> bool {
+    /// Conservatively identifies every conjunct that path facts may rewrite.
+    fn requires_independent_context(expr: &SymBoolExpr) -> bool {
         let root_candidate = match expr.kind() {
-            SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) => {
-                Self::mul_div_identity_operands(left, right).is_some()
-                    || Self::mul_div_identity_operands(right, left).is_some()
-                    || Self::masked_word_side_eq_self_shape(left, right).is_some()
-                    || Self::masked_word_side_eq_self_shape(right, left).is_some()
-            }
-            SymBoolExprKind::Not(value) => value
-                .zero_check_operand()
-                .is_some_and(|word| matches!(word.kind(), SymExprKind::BinOp(SymBinOp::Or, _, _))),
-            SymBoolExprKind::Const(_) | SymBoolExprKind::Cmp(_, _, _) | SymBoolExprKind::And(_) => {
-                false
-            }
+            SymBoolExprKind::Cmp(op, left, right) => match op {
+                SymCmpOp::Eq => {
+                    Self::mul_div_identity_operands(left, right).is_some()
+                        || Self::mul_div_identity_operands(right, left).is_some()
+                        || Self::masked_word_side_eq_self_shape(left, right).is_some()
+                        || Self::masked_word_side_eq_self_shape(right, left).is_some()
+                }
+                SymCmpOp::Ult | SymCmpOp::Ule => {
+                    Self::udiv_comparison_operands(*op, left, right).is_some()
+                }
+                SymCmpOp::Ugt | SymCmpOp::Uge | SymCmpOp::Slt | SymCmpOp::Sgt => false,
+            },
+            SymBoolExprKind::Not(value) => match value.kind() {
+                SymBoolExprKind::Cmp(op, left, right)
+                    if Self::udiv_comparison_operands(*op, left, right).is_some() =>
+                {
+                    true
+                }
+                _ => value.zero_check_operand().is_some_and(|word| {
+                    matches!(word.kind(), SymExprKind::BinOp(SymBinOp::Or, _, _))
+                }),
+            },
+            SymBoolExprKind::Const(_) | SymBoolExprKind::And(_) => false,
         };
         root_candidate
             || expr.visit_bool(|word| {
@@ -839,6 +848,18 @@ impl ConstraintContext {
             expr.fold_exprs(cx, &mut |cx, expr| self.normalize_word(cx, expr))
         };
         let expr = normalize_bool_for_solver(cx, expr);
+        if let SymBoolExprKind::Cmp(op, left, right) = expr.kind()
+            && let Some(normalized) = self.normalize_udiv_comparison(cx, *op, left, right)
+        {
+            return normalized;
+        }
+        if let SymBoolExprKind::Not(value) = expr.kind()
+            && let SymBoolExprKind::Cmp(op, left, right) = value.kind()
+            && let Some(normalized) = self.normalize_udiv_comparison(cx, *op, left, right)
+        {
+            return normalized.not(cx);
+        }
+
         match expr.kind() {
             SymBoolExprKind::Not(value) if self.unsigned_bool_always_true(value) => {
                 SymBoolExpr::constant(cx, false)
@@ -1247,6 +1268,62 @@ impl ConstraintContext {
             return None;
         };
         Some((denominator, other))
+    }
+
+    fn udiv_comparison_operands<'a>(
+        op: SymCmpOp,
+        left: &'a SymExpr,
+        right: &'a SymExpr,
+    ) -> Option<(&'a SymExpr, &'a SymExpr, &'a SymExpr, bool)> {
+        if !matches!(op, SymCmpOp::Ult | SymCmpOp::Ule) {
+            return None;
+        }
+        if let Some((numerator, denominator)) = left.udiv_operands()
+            && denominator.as_const().is_some_and(|value| !value.is_zero())
+            && !right.contains_udiv()
+        {
+            return Some((numerator, denominator, right, true));
+        }
+        if let Some((numerator, denominator)) = right.udiv_operands()
+            && denominator.as_const().is_some_and(|value| !value.is_zero())
+            && !left.contains_udiv()
+        {
+            return Some((numerator, denominator, left, false));
+        }
+        None
+    }
+
+    fn normalize_udiv_comparison(
+        &self,
+        cx: &mut SymCx,
+        op: SymCmpOp,
+        left: &SymExpr,
+        right: &SymExpr,
+    ) -> Option<SymBoolExpr> {
+        let (numerator, denominator, threshold, quotient_on_left) =
+            Self::udiv_comparison_operands(op, left, right)?;
+        let increment_threshold =
+            matches!((op, quotient_on_left), (SymCmpOp::Ule, true) | (SymCmpOp::Ult, false));
+        let threshold = if increment_threshold {
+            // Prove the successor cannot wrap before constructing the word addition.
+            self.interval(threshold)?.max.checked_add(U256::ONE)?;
+            let one = SymExpr::one(cx);
+            SymExpr::binop(cx, SymBinOp::Add, threshold.clone(), one)
+        } else {
+            threshold.clone()
+        };
+        if !self.mul_cannot_overflow_256(&threshold, denominator) {
+            return None;
+        }
+
+        let scaled_threshold = SymExpr::binop(cx, SymBinOp::Mul, threshold, denominator.clone());
+        Some(if quotient_on_left {
+            // `n / d < k => n < k * d`; `n / d <= k => n < (k + 1) * d`.
+            SymBoolExpr::cmp(cx, SymCmpOp::Ult, numerator.clone(), scaled_threshold)
+        } else {
+            // `k <= n / d => k * d <= n`; `k < n / d => (k + 1) * d <= n`.
+            SymBoolExpr::cmp(cx, SymCmpOp::Ule, scaled_threshold, numerator.clone())
+        })
     }
 
     fn interval(&self, expr: &SymExpr) -> Option<WordInterval> {
@@ -2076,6 +2153,34 @@ mod tests {
         );
         assert_eq!(normalized, vec![identity]);
         assert_eq!(cache.len(), 2);
+    }
+
+    #[test]
+    fn cached_normalization_keeps_udiv_rewrites_contextual() {
+        let mut cx = SymCx::new();
+        let numerator = SymExpr::var(&mut cx, "numerator");
+        let threshold = SymExpr::var(&mut cx, "threshold");
+        let scale = SymExpr::constant(&mut cx, U256::from(1_000_000_000_000_000_000u128));
+        let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, numerator, scale);
+        let comparison = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, quotient, threshold.clone());
+        let uint128_max = SymExpr::constant(&mut cx, U256::from(u128::MAX));
+        let bounded = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, threshold, uint128_max);
+        let mut cache = HashMap::default();
+
+        let normalized = normalize_constraints_for_solver_cached(
+            &mut cx,
+            &[comparison.clone(), bounded],
+            &mut cache,
+        );
+        assert!(normalized.iter().all(|constraint| !constraint.contains_udiv()));
+        assert_eq!(cache.get(&comparison), Some(&comparison));
+
+        let normalized = normalize_constraints_for_solver_cached(
+            &mut cx,
+            std::slice::from_ref(&comparison),
+            &mut cache,
+        );
+        assert_eq!(normalized, vec![comparison]);
     }
 
     #[test]

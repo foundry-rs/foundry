@@ -52,3 +52,13 @@ version = "0.5.27"
 [[allow.exact]]
 crate = "svm-rs-builds"
 version = "0.5.27"
+
+# Temporary exact-version exceptions for Soldeer's validated archive extraction fixes.
+# Remove once the 0.12.0 releases published on 2026-09-07 clear the cooldown.
+[[allow.exact]]
+crate = "soldeer-commands"
+version = "0.12.0"
+
+[[allow.exact]]
+crate = "soldeer-core"
+version = "0.12.0"

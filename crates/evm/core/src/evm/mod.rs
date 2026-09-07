@@ -1,4 +1,4 @@
-use std::{fmt::Debug, ops::Deref};
+use std::{fmt::Debug, ops::DerefMut};
 
 use crate::{
     FoundryBlock, FoundryChain, FoundryContextExt, FoundryInspectorExt, FoundryJournal,
@@ -156,16 +156,18 @@ pub trait FoundryEvmFactory:
             BlockEnv = Self::BlockEnv,
             Spec = Self::Spec,
             HaltReason = Self::HaltReason,
-        > + Deref<Target = Self::FoundryContext<'db>>
+        > + DerefMut<Target = Self::FoundryContext<'db>>
     where
         Self: 'db;
 
     /// Creates a Foundry-wrapped EVM with the given inspector.
+    ///
+    /// Callers carrying execution context must install it through the returned context's
+    /// `chain_mut` before executing. This also preserves OP's block-derived L1 fee information.
     fn create_foundry_evm_with_inspector<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>>(
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        chain_context: Self::Chain,
         inspector: I,
     ) -> Self::FoundryEvm<'db, I>;
 
@@ -201,11 +203,12 @@ pub trait FoundryEvmFactory:
     /// the generic `I: FoundryInspectorExt<Self::FoundryContext<'db>>` bound when the context
     /// type is only known through an associated type.  Each concrete factory implements this
     /// directly, side-stepping the higher-kinded lifetime issue.
+    /// Install inherited chain state with [`NestedEvm::chain_mut`] before executing or restoring
+    /// journal-derived state.
     fn create_foundry_nested_evm<'db>(
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        chain_context: Self::Chain,
         inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
     ) -> NestedEvmFor<'db, Self>;
 }
