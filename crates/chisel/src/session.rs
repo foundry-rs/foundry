@@ -10,6 +10,19 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use time::{OffsetDateTime, format_description};
 
+/// Rejects a session id that would let `chisel-<id>.json` escape the cache directory when
+/// concatenated into a path (e.g. `../../etc/cron.d/evil`, which yields the literal path
+/// component `chisel-..`, followed by a real `..` component once the id itself contains a `/`).
+fn validate_session_id(id: &str) -> Result<()> {
+    if id.is_empty() || id == "." || id == ".." || id.contains(['/', '\\']) {
+        eyre::bail!(
+            "invalid Chisel session id `{id}`: must not be empty, `.`, `..`, or contain a path \
+             separator"
+        );
+    }
+    Ok(())
+}
+
 /// A Chisel REPL Session
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(bound = "")]
@@ -80,6 +93,7 @@ impl<FEN: FoundryEvmNetwork> ChiselSession<FEN> {
 
     /// Removes a cached session if it exists.
     pub fn remove_cached_session(id: &str) -> Result<()> {
+        validate_session_id(id)?;
         let cache_file = format!("{}chisel-{id}.json", Self::cache_dir()?);
         match std::fs::remove_file(cache_file) {
             Ok(()) => Ok(()),
@@ -101,6 +115,7 @@ impl<FEN: FoundryEvmNetwork> ChiselSession<FEN> {
         let cache_file_name = match self.id.as_ref() {
             Some(id) => {
                 // ID is already set- use the existing cache file.
+                validate_session_id(id)?;
                 format!("{cache_dir}chisel-{id}.json")
             }
             None => {
@@ -197,6 +212,7 @@ impl<FEN: FoundryEvmNetwork> ChiselSession<FEN> {
     ///
     /// Optionally, an owned instance of the loaded chisel session.
     pub fn load(id: &str, executor_builder: ExecutorBuilder<FEN>) -> Result<Self> {
+        validate_session_id(id)?;
         let cache_dir = Self::cache_dir()?;
         let contents = std::fs::read_to_string(Path::new(&format!("{cache_dir}chisel-{id}.json")))?;
         Self::deserialize_cached(&contents, executor_builder)
@@ -289,5 +305,56 @@ mod tests {
             session.source.config.executor_builder.extra_cheatcode_addresses(),
             &[MONAD_CHEATCODE_ADDRESS]
         );
+    }
+
+    /// A session id containing a path separator lets `chisel-<id>.json` escape the cache
+    /// directory once resolved: `chisel-x/../../../foo.json` has real `..` path components
+    /// after the `x` segment, walking back out past the cache directory entirely.
+    #[test]
+    fn path_traversal_ids_are_rejected() {
+        for id in
+            ["../evil", "x/../../../../../../tmp/pwned", "..", ".", "", "sub/dir", "back\\slash"]
+        {
+            let err = validate_session_id(id).unwrap_err();
+            assert!(err.to_string().contains("invalid Chisel session id"), "{id:?}: {err}");
+        }
+
+        // ordinary numeric and name-like ids remain accepted
+        for id in ["0", "42", "my-session", "my_session"] {
+            validate_session_id(id).unwrap();
+        }
+    }
+
+    #[test]
+    fn load_rejects_path_traversal_id() {
+        let err = ChiselSession::<EthEvmNetwork>::load(
+            "../../evil",
+            ExecutorBuilder::<EthEvmNetwork>::new(),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("invalid Chisel session id"), "{err}");
+    }
+
+    #[test]
+    fn remove_cached_session_rejects_path_traversal_id() {
+        let err = ChiselSession::<EthEvmNetwork>::remove_cached_session("../../evil").unwrap_err();
+        assert!(err.to_string().contains("invalid Chisel session id"), "{err}");
+    }
+
+    #[test]
+    fn write_rejects_path_traversal_id() {
+        let mut session = ChiselSession::<EthEvmNetwork>::new(SessionSourceConfig {
+            foundry_config: Config {
+                solc: Some(SolcReq::Version(Version::new(0, 8, 29))),
+                ..Default::default()
+            },
+            no_vm: true,
+            ..Default::default()
+        })
+        .unwrap();
+        session.id = Some("../../evil".to_string());
+
+        let err = session.write().unwrap_err();
+        assert!(err.to_string().contains("invalid Chisel session id"), "{err}");
     }
 }

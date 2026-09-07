@@ -18,6 +18,8 @@ use foundry_cli::{
 };
 use foundry_common::{provider::RetryProvider, shell};
 
+mod permit;
+
 sol! {
     #[sol(rpc)]
     interface IERC20 {
@@ -39,6 +41,34 @@ sol! {
 /// Interact with ERC20 tokens.
 #[derive(Debug, Parser, Clone)]
 pub enum Erc20Subcommand {
+    /// Sign an ERC-2612 approval without sending a transaction, or submit it with --broadcast.
+    ///
+    /// The owner is the signing wallet. Amounts are in raw token units and the deadline is an
+    /// absolute Unix timestamp in seconds. This does not transfer tokens or deposit into a vault.
+    /// For deposits, the permit must target the underlying asset, not the vault's share token.
+    ///
+    /// By default stdout contains the 65-byte signature (r, s, v). With --json, it contains the
+    /// signature, permit calldata, owner, spender, value, nonce, deadline, token, and typed data.
+    /// With --broadcast, output follows cast send: a receipt, or a transaction hash with --async.
+    /// Anyone can submit the generated calldata to the token before the deadline.
+    /// Transaction options require --broadcast; --nonce selects the transaction nonce, while the
+    /// permit nonce is always read from the token.
+    ///
+    /// Uses EIP-5267 domain discovery when available. Otherwise uses name(), version "1", the
+    /// RPC chain ID, and the token address. --domain-name and --domain-version override the name
+    /// and version. The resulting domain must match DOMAIN_SEPARATOR() before signing.
+    /// DAI-style permits and Permit2 are not supported.
+    ///
+    /// Example:
+    /// ```text
+    /// cast erc20 permit $TOKEN $SPENDER 1000000 --deadline $DEADLINE \
+    ///     --account owner --rpc-url $RPC_URL --json
+    /// cast erc20 permit $TOKEN $SPENDER 1000000 --deadline $DEADLINE \
+    ///     --account owner --rpc-url $RPC_URL --broadcast --async
+    /// ```
+    #[command(verbatim_doc_comment)]
+    Permit(permit::PermitArgs),
+
     /// Query ERC20 token balance.
     #[command(visible_alias = "b")]
     Balance {
@@ -228,6 +258,7 @@ pub enum Erc20Subcommand {
 impl Erc20Subcommand {
     pub async fn run(self) -> Result<()> {
         match self {
+            Self::Permit(args) => args.run().await,
             Self::Allowance { token, owner, spender, block, rpc } => {
                 let (provider, erc20) = token_at(&rpc, token).await?;
                 let owner = owner.resolve(&provider).await?;
