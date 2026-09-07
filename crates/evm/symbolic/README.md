@@ -137,8 +137,9 @@ For example, a fuzz run may pass after reaching `feeMultiplier == 100` at a
 calldata and comparison site needed to solve the adjacent missed branch.
 
 Forge writes one bounded artifact per stateless fuzz test at
-`<fuzz_frontier_dir>/<contract>/<test>/branch-frontiers.json`, or one per
-invariant campaign at `<fuzz_frontier_dir>/<contract>/branch-frontiers.json`.
+`<fuzz_frontier_dir>/<contract>/<test>/branch-frontiers.json`. Merged boolean
+invariant campaigns use `<fuzz_frontier_dir>/<contract>/branch-frontiers.json`;
+isolated boolean and optimization campaigns add a final `<test>` directory.
 Stateless artifacts use schema `foundry:fuzz.branch-frontiers@v1`. Invariant
 artifacts use `foundry:fuzz.branch-frontiers@v2`, storing concrete sequences
 once in a top-level `sequences` array and referencing them by `sequence_index`
