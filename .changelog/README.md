@@ -19,6 +19,10 @@ the check action's built-in AI installer, which does not pin the installed CLI.
 - If the manifest is already ahead of the latest stable tag, release preparation uses that
   candidate without applying another bump. At adoption, `1.7.2` follows `v1.7.1` and maps
   directly to `v1.7.2`.
+- Stable preparation uses the pinned CLI's prerelease-promotion behavior with a
+  temporary candidate version to preserve the checked-in target, even when fragments
+  contain minor or major changes. This temporary version is never committed or tagged;
+  fragment classifications still determine the release-note sections.
 - Nightlies use the candidate version, keeping `1.7.2-nightly` SemVer-newer than stable
   `1.7.1`. The candidate must advance when stable advances.
 - A stable `vX.Y.Z` tag must point to a commit whose workspace version is exactly `X.Y.Z`.
