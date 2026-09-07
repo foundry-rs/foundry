@@ -3,8 +3,9 @@ use crate::{
     linter::{EarlyLintPass, LintContext},
     sol::{Severity, SolLint},
 };
+use alloy_primitives::U256;
 use solar::{
-    ast::{Stmt, StmtKind, visit::Visit, yul},
+    ast::{LitKind, Stmt, StmtKind, visit::Visit, yul},
     data_structures::Never,
     interface::kw,
 };
@@ -33,13 +34,15 @@ impl<'ast> Visit<'ast> for ShiftChecker<'_, '_> {
     type BreakValue = Never;
 
     fn visit_yul_expr(&mut self, expr: &'ast yul::Expr<'ast>) -> ControlFlow<Self::BreakValue> {
-        // `shl(x, 2)`: the shift amount comes first in Yul, so a literal in the value position
-        // and a computed amount betray swapped arguments.
+        // A computed shift of a literal suggests swapped arguments, except `shl(n, 1)`,
+        // which constructs a single-bit mask.
         if let yul::ExprKind::Call(call) = &expr.kind
             && matches!(call.name.name, kw::Shl | kw::Shr | kw::Sar)
             && let [left, right] = call.arguments.as_ref()
             && !matches!(left.kind, yul::ExprKind::Lit(_))
-            && matches!(right.kind, yul::ExprKind::Lit(_))
+            && let yul::ExprKind::Lit(lit) = &right.kind
+            && !(call.name.name == kw::Shl
+                && matches!(lit.kind, LitKind::Number(value) if value == U256::ONE))
         {
             self.ctx.emit(&INCORRECT_SHIFT, expr.span);
         }
