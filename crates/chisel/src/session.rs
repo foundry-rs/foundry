@@ -223,8 +223,7 @@ impl<FEN: FoundryEvmNetwork> ChiselSession<FEN> {
         validate_session_id(id)?;
         let contents = std::fs::read_to_string(Path::new(&format!("{cache_dir}chisel-{id}.json")))?;
         let mut session = Self::deserialize_cached(&contents, executor_builder)?;
-        // Trust the id used to locate the file, not whatever the file's own `id` field claims -
-        // a hand-edited or stale cache file can have a missing, null, or mismatched `id`.
+        // Use the requested ID even if the cached ID is missing or stale.
         session.id = Some(id.to_string());
         Ok(session)
     }
@@ -267,8 +266,7 @@ impl<FEN: FoundryEvmNetwork> ChiselSession<FEN> {
         let last_session = Self::latest_cached_session_in(cache_dir)?;
         let last_session_contents = std::fs::read_to_string(Path::new(&last_session))?;
         let mut session = Self::deserialize_cached(&last_session_contents, executor_builder)?;
-        // Same rationale as `load`: derive the id from the file we actually read rather than
-        // trusting the file's own (possibly missing, null, or stale) `id` field.
+        // Bind the session to the file that was loaded.
         session.id = Self::session_id_from_cache_file_name(&last_session);
         Ok(session)
     }
@@ -380,10 +378,7 @@ mod tests {
         .unwrap()
     }
 
-    /// A hand-edited or stale cache file can have an `id` field that doesn't match its own file
-    /// name (or is missing/null entirely). Before this fix, `load`/`latest` returned that
-    /// embedded value verbatim, and `ChiselDispatcher::load_session` unwraps it unconditionally
-    /// - so loading such a file panicked Chisel instead of erroring or just working.
+    /// Loading uses the filename rather than a stale or missing cached ID.
     #[test]
     fn load_normalizes_id_ignoring_a_stale_or_missing_embedded_id() {
         let dir = tempfile::tempdir().unwrap();
@@ -419,7 +414,7 @@ mod tests {
         let cache_dir = format!("{}/", dir.path().to_str().unwrap());
 
         let session = session_for_normalization_tests();
-        // `new()` leaves `id: None`, i.e. exactly the "missing id" shape of a hand-crafted file.
+        // New sessions serialize with a null ID.
         let serialized = serde_json::to_string(&session).unwrap();
         std::fs::write(format!("{cache_dir}chisel-9.json"), serialized).unwrap();
 
