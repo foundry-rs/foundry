@@ -1,6 +1,8 @@
 //! Tests for commands using the preprocessed cache.
 
 use foundry_compilers::artifacts::{EvmVersion, remappings::Remapping};
+#[cfg(unix)]
+use foundry_compilers::artifacts::{SolcInput, output_selection::OutputSelection};
 use foundry_config::{CompilationRestrictions, SettingsOverrides};
 
 // <https://github.com/foundry-rs/foundry/issues/16682>
@@ -401,7 +403,7 @@ if [ "$1" = "--version" ]; then
     echo "Version: 0.8.35+commit.69074fbd"
     exit 0
 fi
-touch "$0.invoked"
+cat > "$0.invoked"
 exit 1
 "#,
     )
@@ -446,6 +448,16 @@ exit 1
     prj.update_config(|config| config.cache = false);
     cmd.forge_fuse().args(["test", "--match-contract", "CounterTest"]).assert_failure();
     assert!(invoked.exists(), "cache=false reused cached discovery");
+    let input = serde_json::from_slice::<SolcInput>(&fs::read(&invoked).unwrap()).unwrap();
+    // A bytecode compile could also fail here; prove that discovery itself invoked Solc.
+    let expected = OutputSelection::common_output_selection(["abi".to_string()]);
+    assert!(!input.settings.output_selection.0.is_empty());
+    for selection in input.settings.output_selection.0.values() {
+        assert_eq!(
+            selection, &expected.0["*"],
+            "cache=false must recompile ABI discovery before attempting bytecode compilation",
+        );
+    }
     cmd.forge_fuse().arg("clean").assert_success();
     assert!(!abi_cache.exists());
 });
