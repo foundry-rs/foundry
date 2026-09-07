@@ -70,20 +70,15 @@ impl FoundryEvmFactory for OpEvmFactory {
         op_evm
     }
 
-    fn create_nested_evm<'db>(
+    fn create_nested_evm_with_inspector<'db, I>(
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-    ) -> NestedEvmFor<'db, Self> {
-        Box::new(self.create_evm(db, evm_env).into_inner())
-    }
-
-    fn create_foundry_nested_evm<'db>(
-        &self,
-        db: &'db mut dyn DatabaseExt<Self>,
-        evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
-    ) -> NestedEvmFor<'db, Self> {
+        inspector: I,
+    ) -> NestedEvmFor<'db, Self>
+    where
+        I: FoundryInspectorExt<Self::FoundryContext<'db>> + 'db,
+    {
         Box::new(self.create_foundry_evm_with_inspector(db, evm_env, inspector).into_inner())
     }
 }
@@ -184,11 +179,10 @@ mod tests {
             assert_eq!(evm.chain().l1_base_fee, chain.l1_base_fee);
             assert_eq!(evm.chain().tx_l1_cost, chain.tx_l1_cost);
         }
-        let mut inspector = NoOpInspector;
-        let mut evm = factory.create_foundry_nested_evm(
+        let mut evm = factory.create_nested_evm_with_inspector(
             &mut db,
             EvmEnvFor::<OpEvmNetwork>::default(),
-            &mut inspector,
+            NoOpInspector,
         );
         *evm.chain_mut() = chain.clone();
         assert_eq!(evm.chain_mut().l2_block, chain.l2_block);

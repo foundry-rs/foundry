@@ -2284,7 +2284,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
             let depth = journaled_state.depth + 1;
             let factory = FEN::EvmFactory::default();
             let chain_context = self.chain_context_for_synthetic_transaction(&tx_env)?;
-            let mut evm = factory.create_foundry_nested_evm(&mut db, evm_env, inspector);
+            let mut evm = factory.create_nested_evm_with_inspector(&mut db, evm_env, inspector);
             *evm.chain_mut() = chain_context;
             evm.journal_inner_mut().depth = depth;
             evm.transact_raw(tx_env)?
@@ -3213,8 +3213,8 @@ fn commit_transaction<FEN: FoundryEvmNetwork>(
             Backend::new_with_fork(fork_id, fork, journaled_state, networks)?;
         db.fork_block_number_override = Some(rpc_block_number);
 
-        let mut evm =
-            FEN::EvmFactory::default().create_foundry_nested_evm(&mut db, evm_env, inspector);
+        let mut evm = FEN::EvmFactory::default()
+            .create_nested_evm_with_inspector(&mut db, evm_env, inspector);
         *evm.chain_mut() = chain_context;
         evm.journal_inner_mut().depth = depth + 1;
         evm.transact_raw(tx_env).wrap_err("backend: failed committing transaction")?

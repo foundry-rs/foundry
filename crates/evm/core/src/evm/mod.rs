@@ -22,7 +22,7 @@ use revm::{
         result::{EVMError, HaltReason, ResultAndState},
     },
     handler::{EvmTr, FrameResult},
-    inspector::{InspectorEvmTr, InspectorHandler},
+    inspector::{InspectorEvmTr, InspectorHandler, NoOpInspector},
     interpreter::{
         CallInput, CallInputs, CallScheme, CallValue, CreateInputs, FrameInput, GasTracker,
         InstructionResult, SharedMemory, interpreter::EthInterpreter,
@@ -171,30 +171,26 @@ pub trait FoundryEvmFactory:
         inspector: I,
     ) -> Self::FoundryEvm<'db, I>;
 
-    /// Creates an uninspected, boxed Alloy EVM with the supplied environment unchanged.
-    ///
-    /// Unlike Foundry execution construction, this does not initialize test accounts or apply
-    /// test-validation defaults. Replay callers install position context through `chain_mut`.
+    /// Creates a Foundry-wrapped nested EVM without an inspector.
     fn create_nested_evm<'db>(
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-    ) -> NestedEvmFor<'db, Self>;
+    ) -> NestedEvmFor<'db, Self> {
+        self.create_nested_evm_with_inspector(db, evm_env, NoOpInspector)
+    }
 
-    /// Creates a Foundry-wrapped EVM with a dynamic inspector, returning a boxed [`NestedEvm`].
-    ///
-    /// This helper exists because `&mut dyn FoundryInspectorExt<FoundryContext>` cannot satisfy
-    /// the generic `I: FoundryInspectorExt<Self::FoundryContext<'db>>` bound when the context
-    /// type is only known through an associated type.  Each concrete factory implements this
-    /// directly, side-stepping the higher-kinded lifetime issue.
+    /// Creates a Foundry-wrapped nested EVM with the given inspector.
     /// Install inherited chain state with [`NestedEvm::chain_mut`] before executing or restoring
     /// journal-derived state.
-    fn create_foundry_nested_evm<'db>(
+    fn create_nested_evm_with_inspector<'db, I>(
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
-    ) -> NestedEvmFor<'db, Self>;
+        inspector: I,
+    ) -> NestedEvmFor<'db, Self>
+    where
+        I: FoundryInspectorExt<Self::FoundryContext<'db>> + 'db;
 }
 
 /// Object-safe EVM operations used by nested execution and fork replay.

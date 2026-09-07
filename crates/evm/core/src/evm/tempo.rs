@@ -69,20 +69,15 @@ impl FoundryEvmFactory for TempoEvmFactory {
         tempo_evm
     }
 
-    fn create_nested_evm<'db>(
+    fn create_nested_evm_with_inspector<'db, I>(
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-    ) -> NestedEvmFor<'db, Self> {
-        Box::new(self.create_evm(db, evm_env).into_inner())
-    }
-
-    fn create_foundry_nested_evm<'db>(
-        &self,
-        db: &'db mut dyn DatabaseExt<Self>,
-        evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
-    ) -> NestedEvmFor<'db, Self> {
+        inspector: I,
+    ) -> NestedEvmFor<'db, Self>
+    where
+        I: FoundryInspectorExt<Self::FoundryContext<'db>> + 'db,
+    {
         Box::new(self.create_foundry_evm_with_inspector(db, evm_env, inspector).into_inner())
     }
 }
@@ -205,16 +200,21 @@ pub(crate) fn initialize_tempo_evm<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use revm::Database;
+
     use crate::{backend::Backend, evm::TempoEvmNetwork};
 
     #[test]
-    fn replay_skip_does_not_initialize_tempo_accounts() {
+    fn replay_skip_does_not_commit_tempo_initialization() {
         let mut db = Backend::<TempoEvmNetwork>::spawn(None).unwrap();
-        let env = EvmEnv::default();
-        let mut evm = TempoEvmFactory::default().create_nested_evm(&mut db, env.clone());
-        assert_eq!(evm.to_evm_env().cfg_env.tx_chain_id_check, env.cfg_env.tx_chain_id_check);
-        assert!(evm.journal_inner_mut().state.is_empty());
+        let account_before = db.basic(TEMPO_TIP20_TOKENS[0]).unwrap();
+        let mut evm = TempoEvmFactory::default().create_nested_evm(&mut db, EvmEnv::default());
+        assert!(evm.to_evm_env().cfg_env.tx_chain_id_check);
+        let initialized_state = evm.journal_inner_mut().state.clone();
+        assert!(!initialized_state.is_empty());
         assert!(evm.transact_replay(TempoTxEnv::default(), true).unwrap().is_none());
-        assert!(evm.journal_inner_mut().state.is_empty());
+        assert_eq!(evm.journal_inner_mut().state, initialized_state);
+        drop(evm);
+        assert_eq!(db.basic(TEMPO_TIP20_TOKENS[0]).unwrap(), account_before);
     }
 }

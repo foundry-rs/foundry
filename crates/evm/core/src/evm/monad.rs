@@ -380,27 +380,15 @@ impl FoundryEvmFactory for MonadEvmFactory {
         monad_evm
     }
 
-    fn create_nested_evm<'db>(
+    fn create_nested_evm_with_inspector<'db, I>(
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-    ) -> NestedEvmFor<'db, Self> {
-        let spec = evm_env.cfg_env.spec;
-        Box::new(
-            monad_context_with_db(db)
-                .with_block(evm_env.block_env)
-                .with_cfg(MonadCfgEnv::from(evm_env.cfg_env))
-                .build_monad_with_inspector(revm::inspector::NoOpInspector)
-                .with_precompiles(MonadPrecompilesMap::new_with_spec(spec)),
-        )
-    }
-
-    fn create_foundry_nested_evm<'db>(
-        &self,
-        db: &'db mut dyn DatabaseExt<Self>,
-        evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
-    ) -> NestedEvmFor<'db, Self> {
+        inspector: I,
+    ) -> NestedEvmFor<'db, Self>
+    where
+        I: FoundryInspectorExt<Self::FoundryContext<'db>> + 'db,
+    {
         let spec = evm_env.cfg_env.spec;
         let monad_cfg = MonadCfgEnv::from(evm_env.cfg_env);
         let mut evm = monad_context_with_db(db)

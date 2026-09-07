@@ -53,20 +53,15 @@ impl FoundryEvmFactory for EthEvmFactory {
         eth_evm
     }
 
-    fn create_nested_evm<'db>(
+    fn create_nested_evm_with_inspector<'db, I>(
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv,
-    ) -> NestedEvmFor<'db, Self> {
-        Box::new(self.create_evm(db, evm_env).into_inner())
-    }
-
-    fn create_foundry_nested_evm<'db>(
-        &self,
-        db: &'db mut dyn DatabaseExt<Self>,
-        evm_env: EvmEnv,
-        inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
-    ) -> NestedEvmFor<'db, Self> {
+        inspector: I,
+    ) -> NestedEvmFor<'db, Self>
+    where
+        I: FoundryInspectorExt<Self::FoundryContext<'db>> + 'db,
+    {
         Box::new(self.create_foundry_evm_with_inspector(db, evm_env, inspector).into_inner())
     }
 }
