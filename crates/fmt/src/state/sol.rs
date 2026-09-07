@@ -2009,8 +2009,7 @@ impl<'ast> State<'_, 'ast> {
         self.print_stmt_bound(stmt, None);
     }
 
-    /// Like [`Self::print_stmt`], but bounds the statement's own trailing-comment scan by
-    /// `next_pos` instead of scanning unbounded.
+    /// Prints a statement with a bounded trailing-comment scan.
     fn print_stmt_bound(&mut self, stmt: &'ast ast::Stmt<'ast>, next_pos: Option<BytePos>) {
         let ast::Stmt { ref docs, span, ref kind } = *stmt;
         self.print_docs(docs);
