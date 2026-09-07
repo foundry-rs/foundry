@@ -307,7 +307,7 @@ impl ProjectCompiler {
                 // filter out forge-std specific contracts
                 !id.source.to_string_lossy().contains("/forge-std/src/")
             }) {
-                artifacts.entry(id.name.clone()).or_default().push((id.source.clone(), artifact));
+                artifacts.entry(id.name.clone()).or_default().push((id.source, artifact));
             }
 
             // Internal libraries are inlined into consumers and never deployed; skip them.

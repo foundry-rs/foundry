@@ -15,7 +15,6 @@ use foundry_evm::{
     backend::Backend,
     core::evm::{BlockEnvFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
     decode::decode_console_logs,
-    executors::ExecutorBuilder,
     inspectors::CheatsConfig,
     opts::{ExecutionSpecContext, resolve_execution_spec},
     traces::TraceRequirements,
@@ -328,7 +327,10 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
             None,
         );
 
-        let executor = ExecutorBuilder::default()
+        let executor = self
+            .config
+            .executor_builder
+            .clone()
             .inspectors(|stack| {
                 stack
                     .logs(self.config.foundry_config.live_logs)
@@ -635,7 +637,9 @@ mod tests {
     use crate::source::SessionSourceConfig;
     use foundry_compilers::{error::SolcError, solc::Solc};
     use foundry_config::Config;
-    use foundry_evm::{core::evm::EthEvmNetwork, opts::EvmOpts};
+    #[cfg(feature = "monad")]
+    use foundry_evm::core::{constants::MONAD_CHEATCODE_ADDRESS, evm::MonadEvmNetwork};
+    use foundry_evm::{core::evm::EthEvmNetwork, executors::ExecutorBuilder, opts::EvmOpts};
     use foundry_evm_networks::{NetworkConfigs, celo::transfer::CELO_TRANSFER_ADDRESS};
     use solar::sema::Compiler;
     use std::sync::Mutex;
@@ -683,6 +687,25 @@ mod tests {
             serde_json::from_str::<SessionSourceConfig<EthEvmNetwork>>(&encoded).unwrap();
         restored.initialize_local_context();
         assert_celo_transfer_precompile(restored).await;
+    }
+
+    #[cfg(feature = "monad")]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn chisel_runner_uses_dispatched_monad_tooling() {
+        let networks = NetworkConfigs::with_monad();
+        let mut source = SessionSource::<MonadEvmNetwork>::new(SessionSourceConfig {
+            foundry_config: Config { networks, ..Default::default() },
+            evm_opts: EvmOpts { networks, ..Default::default() },
+            executor_builder: ExecutorBuilder::<MonadEvmNetwork>::new(),
+            ..Default::default()
+        })
+        .unwrap();
+
+        let runner = source.build_runner(0).await.unwrap();
+        assert_eq!(
+            runner.executor.inspector().extra_cheatcode_addresses(),
+            &[MONAD_CHEATCODE_ADDRESS]
+        );
     }
 
     #[test]

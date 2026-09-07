@@ -124,8 +124,17 @@ contract StateGasTarget {
     }
 }
 
+contract LargeRuntime {
+    constructor() {
+        assembly {
+            return(0, 12000)
+        }
+    }
+}
+
 contract StateGasTest is Test {
     uint64 constant STORAGE_SET_STATE_GAS = 64 * 1530;
+    uint64 constant LARGE_RUNTIME_STATE_GAS = 12_000 * 1530;
     uint256 constant CALLDATA_SIZE = 20_000;
     uint256 constant CALL_FLOOR_BASE_GAS = 15_000;
     uint256 constant CALLDATA_FLOOR_GAS_PER_BYTE = 64;
@@ -170,6 +179,16 @@ contract StateGasTest is Test {
         );
     }
 
+    function testLargeContractDeployment() public {
+        LargeRuntime deployed = new LargeRuntime();
+        assertEq(address(deployed).code.length, 12_000);
+        assertEq(
+            VM_GAS.lastFrameGas().gasStateUsed,
+            int64(LARGE_RUNTIME_STATE_GAS),
+            "wrong code deposit state gas"
+        );
+    }
+
     /// forge-config: default.isolate = true
     function testCalldataFloorPreservesRegularGas() public {
         bytes memory data = new bytes(CALLDATA_SIZE);
@@ -196,6 +215,15 @@ contract StateGasTest is Test {
     // Amsterdam is an experimental EVM version in solc 0.8.36.
     let args = ["test", "--use", "0.8.36", "--evm-version", "amsterdam", "--experimental"];
     cmd.args(args).assert_success();
+    // Exercise the individual and combined CLI flags.
     cmd.forge_fuse().args(args).arg("--enable-tx-gas-limit").assert_success();
     cmd.forge_fuse().args(args).arg("--isolate").assert_success();
+    cmd.forge_fuse().args(args).args(["--isolate", "--enable-tx-gas-limit"]).assert_success();
+
+    // Exercise the equivalent foundry.toml settings.
+    prj.update_config(|config| {
+        config.isolate = true;
+        config.enable_tx_gas_limit = true;
+    });
+    cmd.forge_fuse().args(args).assert_success();
 });

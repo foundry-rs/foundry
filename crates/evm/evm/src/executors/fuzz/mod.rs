@@ -351,7 +351,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             self.config.fail_on_revert,
             address,
             call.reverter,
-            self.executor_f.inspector().networks.extra_cheatcode_addresses(),
+            self.executor_f.inspector().extra_cheatcode_addresses(),
         ) || self.executor_f.is_raw_call_mut_success(address, &mut call, false);
 
         let mut result = FuzzTestResult {
@@ -490,7 +490,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             self.config.fail_on_revert,
             address,
             call.reverter,
-            state.0.inspector().networks.extra_cheatcode_addresses(),
+            state.0.inspector().extra_cheatcode_addresses(),
         ) || state.0.is_raw_call_mut_success(address, &mut call, false);
 
         if success {

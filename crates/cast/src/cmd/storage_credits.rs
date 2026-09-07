@@ -1,18 +1,17 @@
 use crate::{
-    cmd::{
-        keychain::ensure_tempo_precompile_active,
-        tip20::{resolve_tip20_signer, send_tip20_transaction},
-    },
-    tempo::print_payload,
+    cmd::tip20::send_tip20_transaction,
+    tempo::{ensure_tempo_precompile_active, print_payload, tempo_provider},
     tx::{SendTxOpts, TxParams},
 };
 use alloy_ens::NameOrAddress;
+use alloy_primitives::Address;
+use alloy_sol_types::SolCall;
 use clap::{Parser, ValueEnum};
 use eyre::Result;
-use foundry_cli::{opts::RpcOpts, utils::LoadConfig};
-use foundry_common::provider::ProviderBuilder;
+use foundry_cli::opts::RpcOpts;
+use foundry_common::provider::RetryProvider;
 use foundry_evm::hardfork::TempoHardfork;
-use serde_json::json;
+use serde_json::{Value, json};
 use std::str::FromStr;
 use tempo_alloy::TempoNetwork;
 use tempo_contracts::precompiles::{IStorageCredits, STORAGE_CREDITS_ADDRESS};
@@ -106,130 +105,80 @@ pub enum CreditMode {
 impl StorageCreditsSubcommand {
     pub async fn run(self) -> Result<()> {
         match self {
-            Self::Balance { account, rpc } => balance(account, rpc).await,
-            Self::Mode { account, rpc } => mode(account, rpc).await,
-            Self::Budget { account, rpc } => budget(account, rpc).await,
-            Self::SetMode { mode, send_tx, tx } => set_mode(mode, send_tx, tx).await,
-            Self::SetBudget { credits, send_tx, tx } => set_budget(credits, send_tx, tx).await,
+            Self::Balance { account, rpc } => {
+                read(account, rpc, "balance", "Balance:", |credits, account| async move {
+                    Ok(json!(credits.balanceOf(account).call().await?))
+                })
+                .await
+            }
+            Self::Mode { account, rpc } => {
+                read(account, rpc, "mode", "Mode:   ", |credits, account| async move {
+                    Ok(json!(credits.modeOf(account).call().await?.as_str()))
+                })
+                .await
+            }
+            Self::Budget { account, rpc } => {
+                read(account, rpc, "budget", "Budget: ", |credits, account| async move {
+                    Ok(json!(credits.budgetOf(account).call().await?))
+                })
+                .await
+            }
+            Self::SetMode { mode, send_tx, tx } => {
+                ensure_t7(&send_tx.eth.rpc, "cast storage-credits set-mode").await?;
+                let new_mode = match mode {
+                    CreditMode::Refund => IStorageCredits::Mode::Refund,
+                    CreditMode::Preserve => IStorageCredits::Mode::Preserve,
+                    CreditMode::Direct => IStorageCredits::Mode::Direct,
+                };
+                let data = IStorageCredits::setModeCall { newMode: new_mode }.abi_encode();
+                send_tip20_transaction(STORAGE_CREDITS_ADDRESS, data, send_tx, tx).await
+            }
+            Self::SetBudget { credits, send_tx, tx } => {
+                ensure_t7(&send_tx.eth.rpc, "cast storage-credits set-budget").await?;
+                let data = IStorageCredits::setBudgetCall { credits }.abi_encode();
+                send_tip20_transaction(STORAGE_CREDITS_ADDRESS, data, send_tx, tx).await
+            }
         }
     }
 }
 
-async fn balance(account: NameOrAddress, rpc: RpcOpts) -> Result<()> {
-    let config = rpc.load_config()?;
-    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
-    ensure_storage_credits_t7(&provider, "cast storage-credits balance").await?;
+type Credits = IStorageCredits::IStorageCreditsInstance<RetryProvider<TempoNetwork>, TempoNetwork>;
+
+/// Reads one account field from the precompile and prints it as `key` in JSON mode and after
+/// `label` otherwise.
+async fn read<F, Fut>(
+    account: NameOrAddress,
+    rpc: RpcOpts,
+    key: &str,
+    label: &str,
+    query: F,
+) -> Result<()>
+where
+    F: FnOnce(Credits, Address) -> Fut,
+    Fut: Future<Output = Result<Value>>,
+{
+    let provider = ensure_t7(&rpc, &format!("cast storage-credits {key}")).await?;
     let account = account.resolve(&provider).await?;
-
-    let credits = IStorageCredits::new(STORAGE_CREDITS_ADDRESS, &provider);
-    let balance = credits.balanceOf(account).call().await?;
-    let payload = json!({ "account": format!("{account}"), "balance": balance });
+    let value = query(IStorageCredits::new(STORAGE_CREDITS_ADDRESS, provider), account).await?;
+    let payload = json!({ "account": format!("{account}"), key: value });
     print_payload(payload, |payload| {
-        sh_println!(
-            "Account: {}\nBalance: {}",
-            payload["account"].as_str().unwrap_or_default(),
-            payload["balance"],
-        )
+        let value = &payload[key];
+        let value = value.as_str().map_or_else(|| value.to_string(), str::to_string);
+        sh_println!("Account: {}\n{label} {value}", payload["account"].as_str().unwrap_or_default())
     })
-}
-
-async fn mode(account: NameOrAddress, rpc: RpcOpts) -> Result<()> {
-    let config = rpc.load_config()?;
-    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
-    ensure_storage_credits_t7(&provider, "cast storage-credits mode").await?;
-    let account = account.resolve(&provider).await?;
-
-    let credits = IStorageCredits::new(STORAGE_CREDITS_ADDRESS, &provider);
-    let mode = credits.modeOf(account).call().await?;
-    let payload = json!({ "account": format!("{account}"), "mode": mode.as_str() });
-    print_payload(payload, |payload| {
-        sh_println!(
-            "Account: {}\nMode:    {}",
-            payload["account"].as_str().unwrap_or_default(),
-            payload["mode"].as_str().unwrap_or_default(),
-        )
-    })
-}
-
-async fn budget(account: NameOrAddress, rpc: RpcOpts) -> Result<()> {
-    let config = rpc.load_config()?;
-    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
-    ensure_storage_credits_t7(&provider, "cast storage-credits budget").await?;
-    let account = account.resolve(&provider).await?;
-
-    let credits = IStorageCredits::new(STORAGE_CREDITS_ADDRESS, &provider);
-    let budget = credits.budgetOf(account).call().await?;
-    let payload = json!({ "account": format!("{account}"), "budget": budget });
-    print_payload(payload, |payload| {
-        sh_println!(
-            "Account: {}\nBudget:  {}",
-            payload["account"].as_str().unwrap_or_default(),
-            payload["budget"],
-        )
-    })
-}
-
-async fn set_mode(mode: CreditMode, send_tx: SendTxOpts, tx: TxParams) -> Result<()> {
-    ensure_send_storage_credits_t7(&send_tx, "cast storage-credits set-mode").await?;
-    let (signer, access_key) = resolve_tip20_signer(&send_tx, &tx).await?;
-    // The precompile ABI encodes `Mode` as its `uint8` discriminant.
-    let mode_arg = (mode.to_sol() as u8).to_string();
-    send_tip20_transaction(
-        NameOrAddress::Address(STORAGE_CREDITS_ADDRESS),
-        "setMode(uint8)",
-        vec![mode_arg],
-        send_tx,
-        tx,
-        signer,
-        access_key,
-    )
-    .await
-}
-
-async fn set_budget(credits: u64, send_tx: SendTxOpts, tx: TxParams) -> Result<()> {
-    ensure_send_storage_credits_t7(&send_tx, "cast storage-credits set-budget").await?;
-    let (signer, access_key) = resolve_tip20_signer(&send_tx, &tx).await?;
-    send_tip20_transaction(
-        NameOrAddress::Address(STORAGE_CREDITS_ADDRESS),
-        "setBudget(uint64)",
-        vec![credits.to_string()],
-        send_tx,
-        tx,
-        signer,
-        access_key,
-    )
-    .await
 }
 
 /// The StorageCredits precompile only exists on T7+; fail early with a clear message instead of
-/// surfacing a raw revert. Fall back to a code check when the RPC lacks the hardfork query.
-async fn ensure_storage_credits_t7<P>(provider: &P, command: &str) -> Result<()>
-where
-    P: alloy_provider::Provider<TempoNetwork>,
-{
+/// surfacing a raw revert (or, for writes, a silently successful no-op transaction to an empty
+/// account).
+async fn ensure_t7(rpc: &RpcOpts, command: &str) -> Result<RetryProvider<TempoNetwork>> {
+    let (_, provider) = tempo_provider(rpc)?;
     ensure_tempo_precompile_active(
-        provider,
+        &provider,
         TempoHardfork::T7,
         STORAGE_CREDITS_ADDRESS,
         &format!("{command} requires a Tempo T7-capable StorageCredits RPC"),
     )
-    .await
-}
-
-/// Gate a write command on T7 before signing: on pre-T7 the precompile address is an empty account,
-/// so a transaction to it would silently succeed as a no-op.
-async fn ensure_send_storage_credits_t7(send_tx: &SendTxOpts, command: &str) -> Result<()> {
-    let config = send_tx.eth.rpc.load_config()?;
-    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
-    ensure_storage_credits_t7(&provider, command).await
-}
-
-impl CreditMode {
-    const fn to_sol(self) -> IStorageCredits::Mode {
-        match self {
-            Self::Refund => IStorageCredits::Mode::Refund,
-            Self::Preserve => IStorageCredits::Mode::Preserve,
-            Self::Direct => IStorageCredits::Mode::Direct,
-        }
-    }
+    .await?;
+    Ok(provider)
 }

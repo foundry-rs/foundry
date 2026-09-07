@@ -813,6 +813,9 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// Additional, user configurable context this Inspector has access to when inspecting a call.
     pub config: Arc<CheatsConfig>,
 
+    /// Additional addresses recognized as cheatcode contracts by this executor.
+    pub extra_cheatcode_addresses: &'static [Address],
+
     /// Test-scoped context holding data that needs to be reset every test run
     pub test_context: TestContext,
 
@@ -952,6 +955,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             fs_commit: true,
             labels: config.labels.clone(),
             config,
+            extra_cheatcode_addresses: &[],
             block: Default::default(),
             fork_block_number_override: Default::default(),
             active_delegations: Default::default(),
@@ -1016,6 +1020,12 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             context_snapshots: Default::default(),
             in_isolation_context: false,
         }
+    }
+
+    /// Sets additional addresses recognized as cheatcode contracts.
+    #[inline]
+    pub const fn set_extra_cheatcode_addresses(&mut self, addresses: &'static [Address]) {
+        self.extra_cheatcode_addresses = addresses;
     }
 
     /// Enables cheatcode analysis capabilities by providing a solar compiler instance.
@@ -1470,7 +1480,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
         #[cfg(feature = "monad")]
         if crate::monad::is_monad_cheatcode_call(
-            self.config.evm_opts.networks.extra_cheatcode_addresses(),
+            self.extra_cheatcode_addresses,
             call.target_address,
         ) {
             let checkpoint = ecx.journal_mut().checkpoint();
@@ -2399,7 +2409,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         #[cfg(feature = "monad")]
         let cheatcode_call = cheatcode_call
             || crate::monad::is_monad_cheatcode_call(
-                self.config.evm_opts.networks.extra_cheatcode_addresses(),
+                self.extra_cheatcode_addresses,
                 call.target_address,
             );
         let curr_depth = ecx.journal().depth();

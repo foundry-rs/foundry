@@ -56,22 +56,28 @@ impl TimeManager {
     /// Resets the current time manager to the given timestamp, resetting the offsets and
     /// next block timestamp option
     pub fn reset(&self, start_timestamp: u64) {
-        self.reset_timestamp(start_timestamp, true);
+        self.reset_timestamp(start_timestamp, true, None);
     }
 
     /// Sets the current timestamp without changing when the current head was installed.
     pub fn set_time(&self, timestamp: u64) {
-        self.reset_timestamp(timestamp, false);
+        self.reset_timestamp(timestamp, false, None);
     }
 
-    fn reset_timestamp(&self, start_timestamp: u64, mark_new_head: bool) {
+    /// Restores the timestamp and offset captured by a state snapshot.
+    pub(crate) fn reset_with_offset(&self, start_timestamp: u64, offset: i128) {
+        self.reset_timestamp(start_timestamp, true, Some(offset));
+    }
+
+    fn reset_timestamp(&self, start_timestamp: u64, mark_new_head: bool, offset: Option<i128>) {
         let current = duration_since_unix_epoch();
         let mut state = self.state.write();
         state.last_timestamp = start_timestamp;
         if mark_new_head {
             state.last_block_wall_time = current.as_millis().try_into().unwrap_or(u64::MAX);
         }
-        state.offset = (start_timestamp as i128) - current.as_secs() as i128;
+        state.offset =
+            offset.unwrap_or_else(|| (start_timestamp as i128) - current.as_secs() as i128);
         state.offset_reset_generation = state.offset_reset_generation.wrapping_add(1);
         state.next_exact_timestamp = None;
         state.next_override_generation = state.next_override_generation.wrapping_add(1);

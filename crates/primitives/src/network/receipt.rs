@@ -152,12 +152,13 @@ impl TryFrom<AnyTransactionReceipt> for FoundryTxReceipt {
                     TEMPO_TX_TYPE_ID => FoundryReceiptEnvelope::Tempo(receipt_with_bloom),
                     #[cfg(feature = "optimism")]
                     0x7E => build_deposit_receipt_envelope(receipt_with_bloom, &other),
-                    _ => {
-                        let tx_type = r#type;
-                        return Err(ConversionError::Custom(format!(
-                            "Unknown transaction receipt type: 0x{tx_type:02X}"
-                        )));
-                    }
+                    // Chains anvil can fork but not execute, such as Arbitrum and its Orbit
+                    // rollups, mint their own transaction types. Keep those receipts verbatim
+                    // instead of failing the whole request.
+                    ty => FoundryReceiptEnvelope::Unknown(AnyReceiptEnvelope {
+                        inner: receipt_with_bloom,
+                        r#type: ty,
+                    }),
                 },
             },
             other,
@@ -175,5 +176,18 @@ mod tests {
         let s = r#"{"type":"0x4","status":"0x1","cumulativeGasUsed":"0x903fd1","logs":[{"address":"0x0000d9fcd47bf761e7287d8ee09917d7e2100000","topics":["0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef","0x0000000000000000000000000000000000000000000000000000000000000000","0x000000000000000000000000234ce51365b9c417171b6dad280f49143e1b0547"],"data":"0x00000000000000000000000000000000000000000000032139b42c3431700000","blockHash":"0xd26b59c1d8b5bfa9362d19eb0da3819dfe0b367987a71f6d30908dd45e0d7a60","blockNumber":"0x159663e","blockTimestamp":"0x68411f7b","transactionHash":"0x17a6af73d1317e69cfc3cac9221bd98261d40f24815850a44dbfbf96652ae52a","transactionIndex":"0x22","logIndex":"0x158","removed":false}],"logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000000000000000008100000000000000000000000000000000000000000000000020000200000000000000800000000800000000000000010000000000000000002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000000","transactionHash":"0x17a6af73d1317e69cfc3cac9221bd98261d40f24815850a44dbfbf96652ae52a","transactionIndex":"0x22","blockHash":"0xd26b59c1d8b5bfa9362d19eb0da3819dfe0b367987a71f6d30908dd45e0d7a60","blockNumber":"0x159663e","gasUsed":"0x28ee7","effectiveGasPrice":"0x4bf02090","from":"0x234ce51365b9c417171b6dad280f49143e1b0547","to":"0x234ce51365b9c417171b6dad280f49143e1b0547","contractAddress":null}"#;
         let receipt: AnyTransactionReceipt = serde_json::from_str(s).unwrap();
         let _converted = FoundryTxReceipt::try_from(receipt).unwrap();
+    }
+
+    // Arbitrum and its Orbit rollups mint transaction types anvil cannot execute; forked receipts
+    // for them must still convert, keeping the original type byte.
+    #[test]
+    fn test_arbitrum_internal_receipt_convert() {
+        let s = r#"{"type":"0x6a","status":"0x1","cumulativeGasUsed":"0x0","logs":[],"logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","transactionHash":"0x7c9e0e2b0f2ffbd0a1ee3e2e2b6ff5a2ff8b6a0f1c0b4a5c1d5a8b6c9d0e1f22","transactionIndex":"0x0","blockHash":"0x3a2b1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a2b","blockNumber":"0x159663e","gasUsed":"0x0","effectiveGasPrice":"0x0","from":"0x00000000000000000000000000000000000a4b05","to":"0x00000000000000000000000000000000000a4b05","contractAddress":null,"gasUsedForL1":"0x0","l1BlockNumber":"0x1499e2c"}"#;
+        let receipt: AnyTransactionReceipt = serde_json::from_str(s).unwrap();
+        let converted = FoundryTxReceipt::try_from(receipt).unwrap();
+
+        assert!(converted.0.inner.inner.is_unknown());
+        assert_eq!(converted.0.inner.inner.ty(), 0x6a);
+        assert_eq!(serde_json::to_value(&converted).unwrap()["type"], "0x6a");
     }
 }

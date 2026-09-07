@@ -3,7 +3,7 @@ use crate::{
     etherscan::EtherscanVerificationProvider,
     utils::{
         BytecodeType, JsonResult, check_and_encode_args, check_explorer_args,
-        load_fork_config_and_evm_opts, maybe_predeploy_contract, synthetic_deployment_context,
+        load_fork_config_and_evm_opts, maybe_predeploy_contract, validate_encoded_constructor_args,
     },
     verify::VerifierArgs,
 };
@@ -30,21 +30,18 @@ use foundry_common::{
 };
 use foundry_compilers::info::ContractInfo;
 use foundry_config::{Chain, Config, figment, impl_figment_convert};
-#[cfg(feature = "monad")]
-use foundry_evm::core::evm::MonadEvmNetwork;
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
+#[cfg(feature = "monad")]
+use foundry_evm::core::evm::{BlockContext, MonadEvmNetwork};
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
     core::{
         FoundryChain, FoundryTransaction as _,
         env::FromAnyRpcTransaction as _,
-        evm::{
-            BlockContext, ChainFor, EthEvmNetwork, EvmEnvFor, FoundryEvmNetwork, TempoEvmNetwork,
-            TxEnvFor,
-        },
+        evm::{ChainFor, EthEvmNetwork, EvmEnvFor, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor},
     },
-    executors::{EvmError, TracingExecutor},
+    executors::{EvmError, ExecutorBuilder, TracingExecutor},
     opts::{EvmOpts, ForkEndpointIdentity},
     utils::apply_chain_specific_tx_replay_env_changes_for_chain,
 };
@@ -255,6 +252,7 @@ impl VerifyBytecodeArgs {
                     endpoint_identity,
                     network_was_inferred,
                     replay_block_transactions::<EthEvmNetwork>,
+                    ExecutorBuilder::<EthEvmNetwork>::new(),
                 )
                 .await
             }
@@ -265,6 +263,7 @@ impl VerifyBytecodeArgs {
                     endpoint_identity,
                     network_was_inferred,
                     replay_block_transactions::<OpEvmNetwork>,
+                    ExecutorBuilder::<OpEvmNetwork>::new(),
                 )
                 .await
             }
@@ -274,6 +273,7 @@ impl VerifyBytecodeArgs {
                     endpoint_identity,
                     network_was_inferred,
                     replay_block_transactions::<TempoEvmNetwork>,
+                    ExecutorBuilder::<TempoEvmNetwork>::new(),
                 )
                 .await
             }
@@ -284,6 +284,7 @@ impl VerifyBytecodeArgs {
                     endpoint_identity,
                     network_was_inferred,
                     replay_monad_block_transactions,
+                    ExecutorBuilder::<MonadEvmNetwork>::new(),
                 )
                 .await
             }
@@ -296,6 +297,7 @@ impl VerifyBytecodeArgs {
         endpoint_identity: Option<ForkEndpointIdentity>,
         network_was_inferred: bool,
         replay_block: ReplayBlockFn<FEN>,
+        executor_builder: ExecutorBuilder<FEN>,
     ) -> Result<()>
     where
         FEN: FoundryEvmNetwork,
@@ -444,16 +446,20 @@ impl VerifyBytecodeArgs {
             .ok_or_eyre("Unlinked bytecode is not supported for verification")?;
 
         // Get and encode user provided constructor args
-        let provided_constructor_args = if let Some(path) = self.constructor_args_path.clone() {
-            // Read from file
-            Some(read_constructor_args_file(path)?)
+        let provided_constructor_args = if let Some(encoded) = &self.encoded_constructor_args {
+            Some(validate_encoded_constructor_args(&artifact, hex::decode(encoded)?)?)
         } else {
-            self.constructor_args.clone()
-        }
-        .map(|args| check_and_encode_args(&artifact, args))
-        .transpose()?
-        .or(self.encoded_constructor_args.clone().map(hex::decode).transpose()?);
+            if let Some(path) = self.constructor_args_path.clone() {
+                // Read from file.
+                Some(read_constructor_args_file(path)?)
+            } else {
+                self.constructor_args.clone()
+            }
+            .map(|args| check_and_encode_args(&artifact, args))
+            .transpose()?
+        };
 
+        let args_from_user = provided_constructor_args.is_some();
         let mut constructor_args = if let Some(provided) = provided_constructor_args {
             provided.into()
         } else if let Some(source_code) = &source_code {
@@ -522,6 +528,7 @@ impl VerifyBytecodeArgs {
                 deploy_block,
                 deploy_block_info.as_ref(),
                 evm_opts,
+                executor_builder.clone(),
             )
             .await?;
             Self::ensure_endpoint_identity_unchanged(&config, endpoint_identity.as_ref()).await?;
@@ -536,16 +543,6 @@ impl VerifyBytecodeArgs {
             tx_env.set_gas_limit(evm_env.block_env.gas_limit());
             tx_env.set_gas_price(evm_env.block_env.basefee() as u128);
 
-            let kind = TxKind::Create;
-            let block_context =
-                if !maybe_predeploy && deploy_block != 0 && config.networks.is_monad() {
-                    Some(monad_block_context::<FEN>(&config, deploy_block).await?)
-                } else {
-                    None
-                };
-            let target_context =
-                synthetic_deployment_context::<FEN>(block_context.as_ref(), &tx_env);
-
             // Seed deployer account with funds
             let account_info = AccountInfo {
                 balance: U256::from(100 * 10_u128.pow(18)),
@@ -554,13 +551,17 @@ impl VerifyBytecodeArgs {
             };
             executor.backend_mut().insert_account_info(deployer, account_info);
 
-            let fork_address = crate::utils::deploy_contract::<FEN>(
-                &mut executor,
-                &evm_env,
-                &tx_env,
-                kind,
-                target_context,
-            )?;
+            let fork_address = if maybe_predeploy || deploy_block == 0 {
+                crate::utils::deploy_contract::<FEN>(
+                    &mut executor,
+                    &evm_env,
+                    &tx_env,
+                    TxKind::Create,
+                    ChainFor::<FEN>::for_transaction(&tx_env),
+                )?
+            } else {
+                executor.deploy_with_env(evm_env.clone(), tx_env.clone(), None)?.address
+            };
 
             // Compare runtime bytecode. The onchain code is read at `deploy_block` to stay
             // anchored to the same height as the local fork. Predeploys keep reading at the
@@ -662,11 +663,11 @@ impl VerifyBytecodeArgs {
         Self::ensure_endpoint_identity_unchanged(&config, endpoint_identity.as_ref()).await?;
 
         // In some cases, Etherscan will return incorrect constructor arguments. If this
-        // happens, try extracting arguments ourselves.
-        if !maybe_creation_code.ends_with(&constructor_args) {
+        // happens, try extracting arguments ourselves. Never replace user-provided arguments.
+        if !args_from_user && !maybe_creation_code.ends_with(&constructor_args) {
             trace!("mismatch of constructor args with etherscan");
-            // If local bytecode is longer than on-chain one, this is probably not a match.
             if maybe_creation_code.len() >= local_bytecode.len() {
+                // If local bytecode is longer than on-chain one, this is probably not a match.
                 constructor_args =
                     Bytes::copy_from_slice(&maybe_creation_code[local_bytecode.len()..]);
                 trace!(
@@ -682,20 +683,64 @@ impl VerifyBytecodeArgs {
         let mut local_bytecode_vec = local_bytecode.to_vec();
         local_bytecode_vec.extend_from_slice(&constructor_args);
 
+        // A suffix check alone is insufficient for dynamic ABI values: one valid encoding can
+        // be a suffix of a different valid encoding. Always compare the complete creation code
+        // when arguments came from the user, even if creation output is ignored.
+        let creation_match_type = crate::utils::match_bytecodes(
+            local_bytecode_vec.as_slice(),
+            &maybe_creation_code,
+            &constructor_args,
+            false,
+            config.bytecode_hash,
+        );
+        if args_from_user
+            && creation_match_type.is_none()
+            && self.ignore.is_none_or(|b| !b.is_creation())
+        {
+            let message =
+                "Provided constructor args could not be validated against deployment creation code";
+            if shell::is_json() {
+                json_results.push(JsonResult {
+                    bytecode_type: BytecodeType::Creation,
+                    match_type: None,
+                    message: Some(message.to_string()),
+                });
+                if self.ignore.is_none_or(|b| !b.is_runtime()) {
+                    json_results.push(JsonResult {
+                        bytecode_type: BytecodeType::Runtime,
+                        match_type: None,
+                        message: Some(message.to_string()),
+                    });
+                }
+                sh_println!("{}", serde_json::to_string(&json_results)?)?;
+            } else {
+                sh_warn!("{message}")?;
+                crate::utils::print_result(
+                    None,
+                    BytecodeType::Creation,
+                    &mut json_results,
+                    etherscan_metadata,
+                    &config,
+                );
+                if self.ignore.is_none_or(|b| !b.is_runtime()) {
+                    crate::utils::print_result(
+                        None,
+                        BytecodeType::Runtime,
+                        &mut json_results,
+                        etherscan_metadata,
+                        &config,
+                    );
+                }
+            }
+            return Ok(());
+        }
+
         trace!(ignore = ?self.ignore);
         // Check if `--ignore` is set to `creation`.
         if self.ignore.is_none_or(|b| !b.is_creation()) {
             // Compare creation code with locally built bytecode and `maybe_creation_code`.
-            let match_type = crate::utils::match_bytecodes(
-                local_bytecode_vec.as_slice(),
-                &maybe_creation_code,
-                &constructor_args,
-                false,
-                config.bytecode_hash,
-            );
-
             crate::utils::print_result(
-                match_type,
+                creation_match_type,
                 BytecodeType::Creation,
                 &mut json_results,
                 etherscan_metadata,
@@ -703,7 +748,7 @@ impl VerifyBytecodeArgs {
             );
 
             // If the creation code does not match, the runtime also won't match. Hence return.
-            if match_type.is_none() {
+            if creation_match_type.is_none() {
                 crate::utils::print_result(
                     None,
                     BytecodeType::Runtime,
@@ -772,6 +817,7 @@ impl VerifyBytecodeArgs {
                 simulation_block,
                 block.as_ref(),
                 evm_opts,
+                executor_builder,
             )
             .await?;
             Self::ensure_endpoint_identity_unchanged(&config, endpoint_identity.as_ref()).await?;
@@ -927,7 +973,7 @@ fn replay_monad_block_transactions<'a>(
         let BlockTransactions::Full(txs) = block.transactions() else {
             return Err(eyre::eyre!("Could not get block txs"));
         };
-        let block_context = monad_block_context::<MonadEvmNetwork>(config, block_number).await?;
+        let block_context = monad_block_context(config, block_number).await?;
         let target_index = txs
             .iter()
             .position(|tx| tx.tx_hash() == target_hash)
@@ -1005,15 +1051,18 @@ fn execute_replay_transaction<FEN: FoundryEvmNetwork>(
 }
 
 /// Fetches the block context Monad needs to reconstruct replay ordering.
-async fn monad_block_context<FEN: FoundryEvmNetwork>(
+#[cfg(feature = "monad")]
+async fn monad_block_context(
     config: &Config,
     block_number: u64,
-) -> Result<BlockContext<FEN>> {
-    let provider = ProviderBuilder::<FEN::Network>::from_config(config)?.build()?;
+) -> Result<BlockContext<MonadEvmNetwork>> {
+    let provider =
+        ProviderBuilder::<<MonadEvmNetwork as FoundryEvmNetwork>::Network>::from_config(config)?
+            .build()?;
     let block = provider.get_block(block_number.into()).full().await?.ok_or_else(|| {
         eyre::eyre!("block {block_number} is required to reconstruct transaction context")
     })?;
-    BlockContext::<FEN>::fetch(&provider, &block).await
+    BlockContext::<MonadEvmNetwork>::fetch(&provider, &block).await
 }
 
 #[cfg(test)]

@@ -9,6 +9,7 @@
 //! profile runs it with retries. These endpoints are free, unauthenticated and rate limited, so
 //! an outage must not fail a normal CI run.
 
+use alloy_primitives::{hex, keccak256};
 use foundry_test_utils::TestCommand;
 
 /// How far behind the tip to start looking.
@@ -22,6 +23,15 @@ const TIP_CONFIRMATIONS: u64 = 3;
 /// Chains with sub-second blocks routinely produce empty blocks, and Tempo produces long runs of
 /// them, so a single block is not enough to test against.
 const BLOCK_SCAN_DEPTH: u64 = 24;
+
+/// The highest EIP-2718 type byte every chain here is expected to encode.
+///
+/// `cast tx --raw` re-encodes the transaction rather than reformatting the response, so unlike
+/// the other read commands it needs a consensus encoding for the type. Foundry's envelope covers
+/// the standard Ethereum types everywhere, and a few chain-specific ones where the RPC form
+/// carries enough to rebuild them. Above this sit the types a chain can serve that Foundry does
+/// not model at all, such as Arbitrum's `ArbitrumInternalTx` (`0x6a`).
+const MAX_STANDARD_TX_TYPE: u64 = 0x04;
 
 /// A public endpoint to exercise the read commands against.
 struct Network {
@@ -94,6 +104,8 @@ fn assert_read_commands_work(cmd: &mut TestCommand, network: &Network) {
         network.name
     );
 
+    assert_raw_encoding(cmd, network, &tx, &tx_hash);
+
     // The receipt decodes through a separate path from the transaction, so agreeing on the block
     // is a real cross-check rather than a restatement.
     let receipt = json_output(cmd, &["receipt", &tx_hash, "--rpc-url", network.rpc_url])
@@ -150,6 +162,58 @@ fn assert_read_commands_work(cmd: &mut TestCommand, network: &Network) {
             args[0]
         );
     }
+}
+
+/// Asserts `cast tx --raw` either encodes the transaction or reports why it cannot.
+///
+/// Alloy panics rather than invent an encoding for a type it does not model, so the type that
+/// cannot be encoded has to be reported rather than reached.
+fn assert_raw_encoding(
+    cmd: &mut TestCommand,
+    network: &Network,
+    tx: &serde_json::Value,
+    tx_hash: &str,
+) {
+    let ty = hex_field(tx, "type")
+        .unwrap_or_else(|| panic!("{}: {tx_hash} reports no transaction type", network.name));
+    let output =
+        cmd.cast_fuse().args(["tx", tx_hash, "--raw", "--rpc-url", network.rpc_url]).execute();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Asserted on both outcomes, because the failure being guarded against is a crash rather than
+    // an exit code.
+    assert!(
+        !stderr.contains("panicked"),
+        "{}: `cast tx --raw` panicked on {tx_hash} (type 0x{ty:x}): {stderr}",
+        network.name
+    );
+
+    if !output.status.success() {
+        assert!(
+            ty > MAX_STANDARD_TX_TYPE,
+            "{}: `cast tx --raw` failed for {tx_hash} (type 0x{ty:x}): {stderr}",
+            network.name
+        );
+        assert!(
+            stderr.contains(&format!("Cannot EIP-2718 encode transaction type 0x{ty:x}")),
+            "{}: `cast tx --raw` on type 0x{ty:x} failed without naming the type: {stderr}",
+            network.name
+        );
+        return;
+    }
+
+    // Hashing the encoding checks the bytes rather than just that something hex-shaped was
+    // printed, since a transaction hash is the keccak of its EIP-2718 encoding.
+    let raw = hex::decode(stdout.trim()).unwrap_or_else(|err| {
+        panic!("{}: `cast tx --raw` printed no hex for {tx_hash}: {err}", network.name)
+    });
+    assert_eq!(
+        keccak256(&raw).to_string(),
+        tx_hash,
+        "{}: re-encoding {tx_hash} did not reproduce it",
+        network.name
+    );
 }
 
 /// Fetches a block, optionally with full transaction bodies.

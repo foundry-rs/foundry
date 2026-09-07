@@ -9,9 +9,8 @@ use comfy_table::{
     Cell, CellAlignment, Color, Table,
     presets::{ASCII_FULL, ASCII_MARKDOWN},
 };
-use foundry_common::{TestFunctionExt, calc, shell};
+use foundry_common::{TestFunctionExt, calc, get_contract_name, shell};
 use foundry_evm::traces::CallKind;
-
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{collections::BTreeMap, fmt::Display};
@@ -43,16 +42,14 @@ impl GasReport {
         extra_cheatcode_addresses: impl IntoIterator<Item = Address>,
     ) -> Self {
         let report_for = report_for.into_iter().collect::<HashSet<_>>();
-        let ignore = ignore.into_iter().collect::<HashSet<_>>();
-        let extra_cheatcode_addresses = extra_cheatcode_addresses.into_iter().collect();
         let report_any = report_for.is_empty() || report_for.contains("*");
         Self {
             report_any,
             report_for,
-            ignore,
+            ignore: ignore.into_iter().collect(),
             include_tests,
-            extra_cheatcode_addresses,
-            ..Default::default()
+            extra_cheatcode_addresses: extra_cheatcode_addresses.into_iter().collect(),
+            contracts: BTreeMap::new(),
         }
     }
 
@@ -95,21 +92,17 @@ impl GasReport {
 
     async fn analyze_node(&mut self, node: &CallTraceNode, decoder: &CallTraceDecoder) {
         let trace = &node.trace;
-
         if self.is_internal_address(trace.address) {
             return;
         }
-
-        let Some(name) = decoder.contracts.get(&node.trace.address) else { return };
-        let contract_name = name.rsplit(':').next().unwrap_or(name);
-
+        let Some(name) = decoder.contracts.get(&trace.address) else { return };
+        let contract_name = get_contract_name(name);
         if !self.should_report(contract_name) {
             return;
         }
+
         let contract_info = self.contracts.entry(name.clone()).or_default();
         let is_create_call = trace.kind.is_any_create();
-
-        // Record contract deployment size.
         if is_create_call {
             trace!(contract_name, "adding create size info");
             contract_info.size = trace.data.len();
@@ -121,23 +114,24 @@ impl GasReport {
             return;
         }
 
-        let decoded = || decoder.decode_function(&node.trace);
-
         if is_create_call {
             trace!(contract_name, "adding create gas info");
             contract_info.gas = trace.gas_used;
-        } else if let Some(DecodedCallData { signature, .. }) = decoded().await.call_data {
+        } else if let Some(DecodedCallData { signature, .. }) =
+            decoder.decode_function(trace).await.call_data
+        {
             let name = signature.split('(').next().unwrap();
-            // ignore any test/setup functions
+            // Ignore any test/setup functions.
             if self.include_tests || !name.test_function_kind().is_known() {
                 trace!(contract_name, signature, "adding gas info");
-                let gas_info = contract_info
+                contract_info
                     .functions
                     .entry(name.to_string())
                     .or_default()
-                    .entry(signature.clone())
-                    .or_default();
-                gas_info.frames.push(trace.gas_used);
+                    .entry(signature)
+                    .or_default()
+                    .frames
+                    .push(trace.gas_used);
             }
         }
     }
@@ -146,137 +140,111 @@ impl GasReport {
     #[must_use]
     pub fn finalize(mut self) -> Self {
         trace!("finalizing gas report");
-        for contract in self.contracts.values_mut() {
-            for sigs in contract.functions.values_mut() {
-                for func in sigs.values_mut() {
-                    func.frames.sort_unstable();
-                    func.min = func.frames.first().copied().unwrap_or_default();
-                    func.max = func.frames.last().copied().unwrap_or_default();
-                    func.mean = calc::mean(&func.frames);
-                    func.median = calc::median_sorted(&func.frames);
-                    func.calls = func.frames.len() as u64;
-                }
-            }
+        for func in self
+            .contracts
+            .values_mut()
+            .flat_map(|c| c.functions.values_mut().flat_map(|s| s.values_mut()))
+        {
+            func.frames.sort_unstable();
+            func.min = func.frames.first().copied().unwrap_or_default();
+            func.max = func.frames.last().copied().unwrap_or_default();
+            func.mean = calc::mean(&func.frames);
+            func.median = calc::median_sorted(&func.frames);
+            func.calls = func.frames.len() as u64;
         }
         self
+    }
+
+    /// Contracts with at least one recorded function call.
+    fn reported_contracts(&self) -> impl Iterator<Item = (&String, &ContractInfo)> {
+        self.contracts.iter().filter(|(name, contract)| {
+            if contract.functions.is_empty() {
+                trace!(name, "gas report contract without functions");
+            }
+            !contract.functions.is_empty()
+        })
     }
 }
 
 impl Display for GasReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         if shell::is_json() {
-            writeln!(f, "{}", self.format_json_output())?;
-        } else {
-            for (name, contract) in &self.contracts {
-                if contract.functions.is_empty() {
-                    trace!(name, "gas report contract without functions");
-                    continue;
-                }
-
-                let table = self.format_table_output(contract, name);
-                writeln!(f, "\n{table}")?;
-            }
+            return writeln!(f, "{}", self.format_json_output());
         }
-
+        for (name, contract) in self.reported_contracts() {
+            writeln!(f, "\n{}", format_table_output(contract, name))?;
+        }
         Ok(())
     }
 }
 
 impl GasReport {
     fn format_json_output(&self) -> String {
-        serde_json::to_string(
-            &self
-                .contracts
-                .iter()
-                .filter_map(|(name, contract)| {
-                    if contract.functions.is_empty() {
-                        trace!(name, "gas report contract without functions");
-                        return None;
-                    }
-
-                    let functions = contract
-                        .functions
-                        .values()
-                        .flat_map(|sigs| {
-                            sigs.iter().map(|(sig, gas_info)| {
-                                let display_name = sig.replace(':', "");
-                                (display_name, gas_info)
-                            })
-                        })
-                        .collect::<BTreeMap<_, _>>();
-
-                    Some(json!({
-                        "contract": name,
-                        "deployment": {
-                            "gas": contract.gas,
-                            "size": contract.size,
-                        },
-                        "functions": functions,
-                    }))
+        let contracts = self
+            .reported_contracts()
+            .map(|(name, contract)| {
+                let functions = contract
+                    .functions
+                    .values()
+                    .flat_map(|sigs| sigs.iter().map(|(sig, info)| (sig.replace(':', ""), info)))
+                    .collect::<BTreeMap<_, _>>();
+                json!({
+                    "contract": name,
+                    "deployment": { "gas": contract.gas, "size": contract.size },
+                    "functions": functions,
                 })
-                .collect::<Vec<_>>(),
-        )
-        .unwrap()
+            })
+            .collect::<Vec<_>>();
+        serde_json::to_string(&contracts).unwrap()
     }
+}
 
-    fn format_table_output(&self, contract: &ContractInfo, name: &str) -> Table {
-        let mut table = Table::new();
-        if shell::is_markdown() {
-            table.load_style(ASCII_MARKDOWN);
-        } else {
-            table.load_style(ASCII_FULL.with_rounded_corners());
+fn format_table_output(contract: &ContractInfo, name: &str) -> Table {
+    let num = |value: &dyn Display, color: Option<Color>| {
+        let cell = Cell::new(value.to_string()).set_alignment(CellAlignment::Right);
+        match color {
+            Some(color) => cell.fg(color),
+            None => cell,
         }
+    };
 
-        table.set_header(vec![Cell::new(format!("{name} Contract")).fg(Color::Magenta)]);
-
-        table.add_row(vec![
-            Cell::new("Deployment Cost").fg(Color::Cyan),
-            Cell::new("Deployment Size").fg(Color::Cyan),
-        ]);
-        table.add_row(vec![
-            Cell::new(contract.gas.to_string()).set_alignment(CellAlignment::Right),
-            Cell::new(contract.size.to_string()).set_alignment(CellAlignment::Right),
-        ]);
-
-        // Add a blank row to separate deployment info from function info.
-        table.add_row(vec![Cell::new("")]);
-
-        table.add_row(vec![
-            Cell::new("Function Name"),
-            Cell::new("Min").fg(Color::Green),
-            Cell::new("Avg").fg(Color::Yellow),
-            Cell::new("Median").fg(Color::Yellow),
-            Cell::new("Max").fg(Color::Red),
-            Cell::new("# Calls").fg(Color::Cyan),
-        ]);
-
-        for (fname, sigs) in &contract.functions {
-            for (sig, gas_info) in sigs {
-                // Show function signature if overloaded else display function name.
-                let display_name =
-                    if sigs.len() == 1 { fname.clone() } else { sig.replace(':', "") };
-
-                table.add_row(vec![
-                    Cell::new(display_name),
-                    Cell::new(gas_info.min.to_string())
-                        .fg(Color::Green)
-                        .set_alignment(CellAlignment::Right),
-                    Cell::new(gas_info.mean.to_string())
-                        .fg(Color::Yellow)
-                        .set_alignment(CellAlignment::Right),
-                    Cell::new(gas_info.median.to_string())
-                        .fg(Color::Yellow)
-                        .set_alignment(CellAlignment::Right),
-                    Cell::new(gas_info.max.to_string())
-                        .fg(Color::Red)
-                        .set_alignment(CellAlignment::Right),
-                    Cell::new(gas_info.calls.to_string()).set_alignment(CellAlignment::Right),
-                ]);
-            }
-        }
-
-        table
+    let mut table = Table::new();
+    if shell::is_markdown() {
+        table.load_style(ASCII_MARKDOWN);
+    } else {
+        table.load_style(ASCII_FULL.with_rounded_corners());
     }
+    table.set_header(vec![Cell::new(format!("{name} Contract")).fg(Color::Magenta)]);
+    table.add_row(vec![
+        Cell::new("Deployment Cost").fg(Color::Cyan),
+        Cell::new("Deployment Size").fg(Color::Cyan),
+    ]);
+    table.add_row(vec![num(&contract.gas, None), num(&contract.size, None)]);
+    // Add a blank row to separate deployment info from function info.
+    table.add_row(vec![Cell::new("")]);
+    table.add_row(vec![
+        Cell::new("Function Name"),
+        Cell::new("Min").fg(Color::Green),
+        Cell::new("Avg").fg(Color::Yellow),
+        Cell::new("Median").fg(Color::Yellow),
+        Cell::new("Max").fg(Color::Red),
+        Cell::new("# Calls").fg(Color::Cyan),
+    ]);
+    for (fname, sigs) in &contract.functions {
+        for (sig, gas_info) in sigs {
+            // Show function signature if overloaded else display function name.
+            let display_name = if sigs.len() == 1 { fname.clone() } else { sig.replace(':', "") };
+            table.add_row(vec![
+                Cell::new(display_name),
+                num(&gas_info.min, Some(Color::Green)),
+                num(&gas_info.mean, Some(Color::Yellow)),
+                num(&gas_info.median, Some(Color::Yellow)),
+                num(&gas_info.max, Some(Color::Red)),
+                num(&gas_info.calls, None),
+            ]);
+        }
+    }
+    table
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

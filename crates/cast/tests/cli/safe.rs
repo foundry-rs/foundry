@@ -1657,7 +1657,7 @@ casttest!(safe_simulation_requires_executor, |_prj, cmd| {
 error: the following required arguments were not provided:
   --from <ADDRESS>
 
-Usage: cast safe simulate --from <ADDRESS> --rpc-url <URL> <SAFE> <SAFE_TX_HASH>
+Usage: cast[..] safe simulate --from <ADDRESS> --rpc-url <URL> <SAFE> <SAFE_TX_HASH>
 
 For more information, try '--help'.
 

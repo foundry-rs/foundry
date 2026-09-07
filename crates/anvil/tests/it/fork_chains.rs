@@ -1,8 +1,9 @@
 //! Fork tests for popular chains that serve RPC responses differing from Ethereum mainnet.
 //!
 //! Every chain runs through [`assert_can_fork`], so chain specific response shapes such as Arbitrum
-//! Orbit system transactions, OP-stack deposits, or vendor specific header fields are covered by
-//! the same assertions.
+//! Orbit system transactions, Celo's CIP-64 transactions, OP-stack deposits, or vendor specific
+//! header fields are covered by the same assertions. Each chain round-trips both a standard
+//! transaction and, when its blocks carry one, a transaction of a type anvil cannot execute.
 //!
 //! These tests fork from public endpoints and are therefore prefixed with `flaky_` so they only run
 //! in the nightly flaky job. A request the endpoint fails to serve skips the test; a response anvil
@@ -12,7 +13,7 @@ use alloy_chains::NamedChain;
 use alloy_eips::Typed2718;
 use alloy_network::{ReceiptResponse, TransactionBuilder, TransactionResponse};
 use alloy_primitives::{Address, B256};
-use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest, state::EvmOverrides};
+use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest, state::EvmOverrides};
 use alloy_transport::{RpcError, TransportError};
 use anvil::{
     NodeConfig,
@@ -21,12 +22,16 @@ use anvil::{
 };
 use foundry_primitives::FoundryNetwork;
 use foundry_test_utils::rpc::next_rpc_endpoint;
-use std::fmt::{Debug, Display};
+use std::{
+    collections::BTreeMap,
+    fmt::{Debug, Display},
+};
 
-/// Highest EIP-2718 transaction type every chain is expected to serve in the standard shape.
+/// Highest EIP-2718 transaction type defined for every chain.
 ///
-/// Chain specific transactions above this range, such as Arbitrum's `0x6a`, Celo's CIP-64 `0x7b`,
-/// or OP-stack deposits, are not part of the surface these tests assert on.
+/// Anything above it is minted by the chain itself: Arbitrum's `0x6a`, Celo's CIP-64 `0x7b`, or
+/// OP-stack deposits at `0x7e`. Anvil cannot execute those, but it must still serve them from a
+/// fork, so they are round-tripped alongside the standard types rather than skipped.
 const MAX_STANDARD_TX_TYPE: u8 = 4;
 
 /// Number of blocks scanned back from the fork head when looking for a transaction to round-trip.
@@ -118,43 +123,87 @@ async fn fork_and_assert(chain: NamedChain) -> Option<()> {
         assert_eq!(balance, genesis_balance, "{chain:?} fork did not fund the dev accounts");
     }
 
-    let (block_number, tx_hash) = standard_transaction(chain, &api, fork_block).await?;
+    let transactions = transactions_to_round_trip(chain, &api, fork_block).await?;
 
-    // Selecting the transaction cached the whole block on `api`, which would serve the lookups
-    // below without ever calling the endpoint. Use a fork that has not read that block instead,
-    // so both responses are decoded as the endpoint returns them.
+    // Selecting the transactions cached whole blocks on `api`, which would serve the lookups below
+    // without ever calling the endpoint. Use a fork that has not read those blocks instead, so
+    // every response is decoded as the endpoint returns it.
     let lookup_config = NodeConfig::test()
         .with_eth_rpc_url(Some(fork_rpc))
         .with_fork_block_number(Some(fork_block));
     let (lookup_api, _) = fork_ok(chain, "transaction fork setup", try_spawn(lookup_config).await)?;
 
-    let tx =
-        fork_ok(chain, "eth_getTransactionByHash", lookup_api.transaction_by_hash(tx_hash).await)?
-            .unwrap_or_else(|| panic!("{chain:?} fork lost transaction {tx_hash}"));
-    assert_eq!(tx.tx_hash(), tx_hash);
-    assert_eq!(tx.block_number, Some(block_number));
+    let mut blocks = transactions.iter().map(|(number, _, _)| *number).collect::<Vec<_>>();
+    blocks.sort_unstable();
+    blocks.dedup();
 
-    let receipt =
-        fork_ok(chain, "eth_getTransactionReceipt", lookup_api.transaction_receipt(tx_hash).await)?
-            .unwrap_or_else(|| panic!("{chain:?} fork lost the receipt for {tx_hash}"));
-    assert_eq!(receipt.transaction_hash(), tx_hash);
-    assert_eq!(receipt.block_number(), Some(block_number));
+    for (block_number, tx_hash, tx_type) in transactions {
+        let tx = fork_ok(
+            chain,
+            "eth_getTransactionByHash",
+            lookup_api.transaction_by_hash(tx_hash).await,
+        )?
+        .unwrap_or_else(|| panic!("{chain:?} fork lost transaction {tx_hash}"));
+        assert_eq!(tx.tx_hash(), tx_hash);
+        assert_eq!(tx.block_number, Some(block_number));
+        assert_eq!(tx.inner.ty(), tx_type, "{chain:?} fork changed the type of {tx_hash}");
+
+        let receipt = fork_ok(
+            chain,
+            "eth_getTransactionReceipt",
+            lookup_api.transaction_receipt(tx_hash).await,
+        )?
+        .unwrap_or_else(|| panic!("{chain:?} fork lost the receipt for {tx_hash}"));
+        assert_eq!(receipt.transaction_hash(), tx_hash);
+        assert_eq!(receipt.block_number(), Some(block_number));
+        assert_eq!(receipt.0.inner.inner.ty(), tx_type, "{chain:?} fork changed the receipt type");
+
+        assert_raw_transaction(chain, &lookup_api, tx_hash, tx_type).await?;
+    }
 
     // Local mining continues from the forked head.
     api.mine_one().await.unwrap();
     assert_eq!(api.block_number().unwrap().to::<u64>(), fork_block + 1);
 
+    // Block receipts decode every transaction in a block at once, so one undecodable chain
+    // specific receipt takes the whole block down rather than a single lookup. Public endpoints do
+    // not all whitelist `eth_getBlockReceipts`, so a refusal only drops this check rather than the
+    // assertions above.
+    for number in blocks {
+        let Some(receipts) = fork_ok(
+            chain,
+            "eth_getBlockReceipts",
+            lookup_api.block_receipts(BlockId::number(number)).await,
+        ) else {
+            break;
+        };
+        let receipts = receipts
+            .unwrap_or_else(|| panic!("{chain:?} fork served no receipts for block {number}"));
+        assert!(!receipts.is_empty(), "{chain:?} fork served an empty block {number}");
+    }
+
     Some(())
 }
 
-/// Returns the block number and hash of a transaction with a standard EIP-2718 type, searching
-/// backwards from the fork head.
-async fn standard_transaction(
+/// The block range scanned back from the fork head when looking for transactions.
+fn scanned_blocks(head: u64) -> impl DoubleEndedIterator<Item = u64> {
+    head.saturating_sub(TRANSACTION_LOOKBACK)..=head
+}
+
+/// Returns the transactions to round-trip as `(block number, hash, EIP-2718 type)`.
+///
+/// Yields one standard transaction plus one for every distinct chain specific type in the scanned
+/// blocks, so a chain that mints several — Celo serves both CIP-64 `0x7b` and OP-stack deposits —
+/// is covered for each of them rather than whichever happened to come first.
+async fn transactions_to_round_trip(
     chain: NamedChain,
     api: &EthApi<FoundryNetwork>,
     head: u64,
-) -> Option<(u64, B256)> {
-    for number in (head.saturating_sub(TRANSACTION_LOOKBACK)..=head).rev() {
+) -> Option<Vec<(u64, B256, u8)>> {
+    let mut standard = None;
+    let mut chain_specific = BTreeMap::new();
+
+    for number in scanned_blocks(head).rev() {
         let block = fork_ok(
             chain,
             "eth_getBlockByNumber",
@@ -163,14 +212,50 @@ async fn standard_transaction(
         let Some(block) = block else { continue };
         assert_eq!(block.header.number, number, "{chain:?} fork returned the wrong block");
 
-        if let Some(transactions) = block.transactions.as_transactions()
-            && let Some(tx) = transactions.iter().find(|tx| tx.inner.ty() <= MAX_STANDARD_TX_TYPE)
-        {
-            return Some((number, tx.tx_hash()));
+        let Some(transactions) = block.transactions.as_transactions() else { continue };
+        for tx in transactions {
+            let ty = tx.inner.ty();
+            if ty <= MAX_STANDARD_TX_TYPE {
+                standard.get_or_insert((number, tx.tx_hash(), ty));
+            } else {
+                chain_specific.entry(ty).or_insert((number, tx.tx_hash(), ty));
+            }
         }
     }
 
-    skip(chain, "transaction lookup", "no standard transaction near the fork head")
+    let Some(standard) = standard else {
+        return skip(chain, "transaction lookup", "no standard transaction near the fork head");
+    };
+    Some(std::iter::once(standard).chain(chain_specific.into_values()).collect())
+}
+
+/// Asserts `debug_getRawTransaction` answers rather than taking the request handler down.
+///
+/// A chain specific transaction reaches anvil only in its JSON-RPC form, which is not enough to
+/// rebuild its consensus encoding, so anvil reports that instead. Alloy panics when asked to
+/// encode one, which is the regression this guards.
+async fn assert_raw_transaction(
+    chain: NamedChain,
+    api: &EthApi<FoundryNetwork>,
+    tx_hash: B256,
+    tx_type: u8,
+) -> Option<()> {
+    match api.raw_transaction(tx_hash).await {
+        Ok(raw) => {
+            assert!(raw.is_some(), "{chain:?} fork lost the raw transaction for {tx_hash}");
+        }
+        Err(BlockchainError::UnsupportedTransactionEncoding(reported)) => {
+            assert!(
+                tx_type > MAX_STANDARD_TX_TYPE,
+                "{chain:?} fork refused to encode standard transaction {tx_hash}"
+            );
+            assert_eq!(reported, tx_type, "{chain:?} fork reported the wrong unsupported type");
+        }
+        Err(err) => {
+            fork_ok::<(), _>(chain, "debug_getRawTransaction", Err(err))?;
+        }
+    }
+    Some(())
 }
 
 /// Unwraps a fork response, returning `None` once the endpoint failed to serve the request.

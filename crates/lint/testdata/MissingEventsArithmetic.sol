@@ -456,6 +456,211 @@ contract ReproAccessCheckTooBroad {
     }
 }
 
+// Regression: state variable declared in a base contract, protected entry point and
+// arithmetic use declared in the derived contract.
+contract EventsArithmeticBase {
+    uint256 public baseRate;
+}
+
+contract EventsArithmeticDerived is EventsArithmeticBase {
+    address public owner = msg.sender;
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "not owner");
+        _;
+    }
+
+    function increaseBaseRate(uint256 delta) external onlyOwner {
+        baseRate += delta; //~WARN: `baseRate` is changed without an event but is used in arithmetic
+    }
+
+    function baseRateQuote(uint256 amount) external view returns (uint256) {
+        return amount * baseRate;
+    }
+}
+
+// Regression: an overridden base implementation is not an entry point of the derived
+// contract, so its write must not be reported when the override emits an event.
+abstract contract EventsArithmeticOverrideBase {
+    uint256 public fee;
+    address public owner = msg.sender;
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "not owner");
+        _;
+    }
+
+    function setFee(uint256 newFee) external virtual onlyOwner {
+        fee = newFee;
+    }
+
+    function quote(uint256 amount) external view returns (uint256) {
+        return amount * fee;
+    }
+}
+
+contract EventsArithmeticOverrideDerived is EventsArithmeticOverrideBase {
+    event FeeUpdated(uint256 fee);
+
+    function setFee(uint256 newFee) external override onlyOwner {
+        fee = newFee;
+        emit FeeUpdated(newFee);
+    }
+}
+
+// Regression: a `virtual` internal hook dispatches to the derived override, which emits.
+abstract contract EventsArithmeticHookBase {
+    uint256 public hookFee;
+    address public owner = msg.sender;
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "not owner");
+        _;
+    }
+
+    function setHookFee(uint256 newFee) external onlyOwner {
+        _setHookFee(newFee);
+    }
+
+    function _setHookFee(uint256 newFee) internal virtual {
+        hookFee = newFee;
+    }
+
+    function hookQuote(uint256 amount) external view returns (uint256) {
+        return amount * hookFee;
+    }
+}
+
+contract EventsArithmeticHookDerived is EventsArithmeticHookBase {
+    event HookFeeUpdated(uint256 fee);
+
+    function _setHookFee(uint256 newFee) internal override {
+        hookFee = newFee;
+        emit HookFeeUpdated(newFee);
+    }
+}
+
+// An unimplemented `virtual` hook resolves to the derived implementation, which is inspected.
+abstract contract EventsArithmeticAbstractHookBase {
+    uint256 public abstractFee;
+    address public owner = msg.sender;
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "not owner");
+        _;
+    }
+
+    function setAbstractFee(uint256 newFee) external onlyOwner {
+        _setAbstractFee(newFee);
+    }
+
+    function _setAbstractFee(uint256 newFee) internal virtual;
+
+    function abstractQuote(uint256 amount) external view returns (uint256) {
+        return amount * abstractFee;
+    }
+}
+
+contract EventsArithmeticAbstractHookDerived is EventsArithmeticAbstractHookBase {
+    function _setAbstractFee(uint256 newFee) internal override {
+        abstractFee = newFee; //~WARN: `abstractFee` is changed without an event but is used in arithmetic
+    }
+}
+
+// An inherited arithmetic expression follows a virtual return helper to the derived override.
+abstract contract EventsArithmeticReturnHookBase {
+    uint256 public returnHookFee;
+    address public owner = msg.sender;
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "not owner");
+        _;
+    }
+
+    function setReturnHookFee(uint256 newFee) external onlyOwner {
+        returnHookFee = newFee; //~WARN: `returnHookFee` is changed without an event but is used in arithmetic
+    }
+
+    function returnHookQuote(uint256 amount) external view returns (uint256) {
+        return amount * _returnHookFee();
+    }
+
+    function _returnHookFee() internal view virtual returns (uint256);
+}
+
+contract EventsArithmeticReturnHookDerived is EventsArithmeticReturnHookBase {
+    function _returnHookFee() internal view override returns (uint256) {
+        return returnHookFee;
+    }
+}
+
+// Qualified inherited helper calls preserve their Solidity dispatch semantics.
+contract EventsArithmeticQualifiedBase {
+    uint256 public superFee;
+    uint256 public baseFee;
+    address public owner = msg.sender;
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "not owner");
+        _;
+    }
+
+    function _setSuperFee(uint256 newFee) internal {
+        superFee = newFee; //~WARN: `superFee` is changed without an event but is used in arithmetic
+    }
+
+    function _setBaseFee(uint256 newFee) internal {
+        baseFee = newFee; //~WARN: `baseFee` is changed without an event but is used in arithmetic
+    }
+
+    function _superFee() internal view returns (uint256) {
+        return superFee;
+    }
+
+    function _baseFee() internal view returns (uint256) {
+        return baseFee;
+    }
+}
+
+contract EventsArithmeticQualifiedDerived is EventsArithmeticQualifiedBase {
+    function setSuperFee(uint256 newFee) external onlyOwner {
+        super._setSuperFee(newFee);
+    }
+
+    function setBaseFee(uint256 newFee) external onlyOwner {
+        EventsArithmeticQualifiedBase._setBaseFee(newFee);
+    }
+
+    function superQuote(uint256 amount) external view returns (uint256) {
+        return amount * super._superFee();
+    }
+
+    function baseQuote(uint256 amount) external view returns (uint256) {
+        return amount * EventsArithmeticQualifiedBase._baseFee();
+    }
+}
+
+// A concrete base inherited unchanged is reported once, not once per contract in the hierarchy.
+contract EventsArithmeticConcreteBase {
+    uint256 public concreteFee;
+    address public owner = msg.sender;
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "not owner");
+        _;
+    }
+
+    function setConcreteFee(uint256 newFee) external onlyOwner {
+        concreteFee = newFee; //~WARN: `concreteFee` is changed without an event but is used in arithmetic
+    }
+
+    function concreteQuote(uint256 amount) external view returns (uint256) {
+        return amount * concreteFee;
+    }
+}
+
+contract EventsArithmeticConcreteDerived is EventsArithmeticConcreteBase {}
+
 contract ReproAccessNameCalleeResultIgnored {
     address public owner = msg.sender;
     uint256 public price;

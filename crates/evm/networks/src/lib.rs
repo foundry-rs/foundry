@@ -19,7 +19,7 @@ use alloy_chains::{
     Chain, NamedChain,
     NamedChain::{Chiado, Gnosis, Moonbase, Moonbeam, MoonbeamDev, Moonriver, Rsk, RskTestnet},
 };
-use alloy_eips::eip1559::BaseFeeParams;
+use alloy_eips::{eip1559::BaseFeeParams, eip7840::BlobParams};
 use alloy_evm::precompiles::{DynPrecompile, PrecompilesMap};
 use alloy_primitives::{Address, ChainId, address, map::AddressHashMap};
 use clap::Parser;
@@ -46,9 +46,6 @@ use tempo_contracts::precompiles::{
 
 /// The Monad cheatcode handler address.
 pub const MONAD_CHEATCODE_ADDRESS: Address = address!("0xc0FFeeCD43A10e1C2b0De63c6CDCFe5B7d0e0CEA");
-
-#[cfg(feature = "monad")]
-const MONAD_CHEATCODE_ADDRESSES: &[Address] = &[MONAD_CHEATCODE_ADDRESS];
 
 pub mod arbitrum;
 pub mod celo;
@@ -283,9 +280,15 @@ impl NetworkVariant {
     }
 
     /// Returns `true` if this is the Optimism network variant.
-    #[cfg(feature = "optimism")]
     pub const fn is_optimism(&self) -> bool {
-        matches!(self, Self::Optimism)
+        #[cfg(feature = "optimism")]
+        {
+            matches!(self, Self::Optimism)
+        }
+        #[cfg(not(feature = "optimism"))]
+        {
+            false
+        }
     }
 
     /// Returns `true` if this is the Tempo network variant.
@@ -459,6 +462,13 @@ impl NetworkConfigs {
         if let Some(network) = self.resolved_network() { network.is_tempo() } else { false }
     }
 
+    /// Returns whether Optimism network features are enabled.
+    ///
+    /// Always returns `false` when built without the `optimism` feature.
+    pub const fn is_optimism(&self) -> bool {
+        if let Some(network) = self.resolved_network() { network.is_optimism() } else { false }
+    }
+
     #[cfg(feature = "monad")]
     pub const fn is_monad(&self) -> bool {
         if let Some(network) = self.resolved_network() { network.is_monad() } else { false }
@@ -484,15 +494,6 @@ impl NetworkConfigs {
             return MonadHardfork::from(hardfork).into();
         }
         hardfork
-    }
-
-    /// Returns additional cheatcode contract addresses for the active network.
-    pub const fn extra_cheatcode_addresses(&self) -> &'static [Address] {
-        #[cfg(feature = "monad")]
-        if self.is_monad() {
-            return MONAD_CHEATCODE_ADDRESSES;
-        }
-        &[]
     }
 
     pub const fn is_celo(&self) -> bool {
@@ -580,6 +581,28 @@ impl NetworkConfigs {
     pub const fn base_fee_params(&self, timestamp: u64) -> BaseFeeParams {
         let _ = timestamp;
         BaseFeeParams::ethereum()
+    }
+
+    /// Calculates the blob excess gas inherited by the next block.
+    ///
+    /// OP Stack headers use the blob fields for protocol metadata rather than EIP-4844 blobs, so
+    /// their excess blob gas remains zero. Other execution profiles use the configured Ethereum
+    /// blob schedule.
+    pub fn next_block_blob_excess_gas(
+        &self,
+        blob_params: BlobParams,
+        parent_excess_blob_gas: u64,
+        parent_blob_gas_used: u64,
+        parent_base_fee: u64,
+    ) -> u64 {
+        if self.is_optimism() {
+            return 0;
+        }
+        blob_params.next_block_excess_blob_gas_osaka(
+            parent_excess_blob_gas,
+            parent_blob_gas_used,
+            parent_base_fee,
+        )
     }
 
     /// Returns contract size limits for networks that override Ethereum defaults.
@@ -768,23 +791,6 @@ impl NetworkConfigs {
         }
     }
 
-    /// Injects chain-specific precompiles active at the given timestamp.
-    pub fn inject_chain_precompiles(
-        self,
-        precompiles: &mut PrecompilesMap,
-        chain_id: ChainId,
-        timestamp: u64,
-    ) {
-        let Some(p256verify) = bsc_p256_precompile(chain_id, timestamp) else { return };
-        precompiles.apply_precompile(&BSC_P256_ADDRESS, move |_| {
-            p256verify.map(|p256verify| {
-                DynPrecompile::new(p256verify.id().clone(), move |input| {
-                    p256verify.execute(input.data, input.gas, input.reservoir)
-                })
-            })
-        });
-    }
-
     /// Returns precompile labels for configured networks at the given hardfork, to be used in
     /// traces.
     pub fn precompiles_label(self, hardfork: Option<FoundryHardfork>) -> AddressHashMap<String> {
@@ -862,6 +868,22 @@ impl NetworkConfigs {
         }
         precompiles
     }
+}
+
+/// Applies the BSC P256 precompile active at the given timestamp.
+pub fn apply_bsc_p256_precompile(
+    precompiles: &mut PrecompilesMap,
+    chain_id: ChainId,
+    timestamp: u64,
+) {
+    let Some(p256verify) = bsc_p256_precompile(chain_id, timestamp) else { return };
+    precompiles.apply_precompile(&BSC_P256_ADDRESS, move |_| {
+        p256verify.map(|p256verify| {
+            DynPrecompile::new(p256verify.id().clone(), move |input| {
+                p256verify.execute(input.data, input.gas, input.reservoir)
+            })
+        })
+    });
 }
 
 impl From<NetworkVariant> for NetworkConfigs {
@@ -947,9 +969,11 @@ mod tests {
     #[test]
     fn network_variant_predicates() {
         assert!(NetworkVariant::Ethereum.is_ethereum());
+        assert!(!NetworkVariant::Ethereum.is_optimism());
         assert!(!NetworkVariant::Ethereum.is_tempo());
         assert!(NetworkVariant::Tempo.is_tempo());
         assert!(!NetworkVariant::Tempo.is_ethereum());
+        assert!(!NetworkVariant::Tempo.is_optimism());
 
         #[cfg(feature = "monad")]
         {
@@ -957,6 +981,7 @@ mod tests {
             assert!(!NetworkVariant::Tempo.is_monad());
             assert!(NetworkVariant::Monad.is_monad());
             assert!(!NetworkVariant::Monad.is_ethereum());
+            assert!(!NetworkVariant::Monad.is_optimism());
             assert!(!NetworkVariant::Monad.is_tempo());
         }
 
@@ -969,9 +994,6 @@ mod tests {
             #[cfg(feature = "monad")]
             assert!(!NetworkVariant::Optimism.is_monad());
         }
-
-        #[cfg(all(feature = "optimism", feature = "monad"))]
-        assert!(!NetworkVariant::Monad.is_optimism());
     }
 
     #[test]
@@ -1462,7 +1484,7 @@ mod tests {
     fn removes_bsc_p256_before_haber() {
         let mut precompiles = PrecompilesMap::from_static(Precompiles::osaka());
         assert!(precompiles.get(&BSC_P256_ADDRESS).is_some());
-        NetworkConfigs::default().inject_chain_precompiles(
+        apply_bsc_p256_precompile(
             &mut precompiles,
             BSC_MAINNET_CHAIN_ID,
             BSC_MAINNET_HABER_TIMESTAMP - 1,
@@ -1579,7 +1601,6 @@ mod tests {
         let cfg = NetworkConfigs::with_monad();
         assert_eq!(cfg.active_network_name(), Some("monad"));
         assert!(cfg.is_monad());
-        assert_eq!(cfg.extra_cheatcode_addresses(), &[MONAD_CHEATCODE_ADDRESS]);
     }
 
     #[test]
@@ -1595,7 +1616,7 @@ mod tests {
     fn active_network_name_default_is_none() {
         let cfg = NetworkConfigs::default();
         assert_eq!(cfg.active_network_name(), None);
-        assert!(cfg.extra_cheatcode_addresses().is_empty());
+        assert!(!cfg.is_optimism());
     }
 
     // --- Serde round-trip ---

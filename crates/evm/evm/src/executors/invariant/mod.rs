@@ -35,8 +35,8 @@ use foundry_evm_core::{
 use foundry_evm_fuzz::{
     BasicTxDetails, FuzzCase, FuzzFixtures, ObservedCall,
     invariant::{
-        ArtifactFilters, FuzzRunIdentifiedContracts, InvariantContract, InvariantSettings,
-        RandomCallGenerator, SenderFilters, TargetedContract, TargetedContracts,
+        ArtifactFilters, FuzzRunIdentifiedContracts, InvariantContract, RandomCallGenerator,
+        SenderFilters, TargetedContract, TargetedContracts,
     },
     strategies::{EvmFuzzState, FuzzState, TxGenerator, override_call_strat},
 };
@@ -76,7 +76,7 @@ use campaign::{
 };
 
 mod replay;
-pub use replay::{replay_error, replay_run};
+pub use replay::{ReplayErrorResult, replay_error, replay_run};
 
 mod result;
 pub use result::InvariantFuzzTestResult;
@@ -1699,7 +1699,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         // Set up fuzzer WITHOUT call_generator initially.
         // We defer call_override until after the initial invariant check to avoid
         // injecting random calls during setup which would break the invariant assertion.
-        let extra_cheatcode_addresses = executor.inspector().networks.extra_cheatcode_addresses();
+        let extra_cheatcode_addresses = executor.inspector().extra_cheatcode_addresses();
         executor.inspector_mut().set_fuzzer(
             Fuzzer::new(config.dictionary.max_fuzz_dictionary_values, mapping_slots)
                 .with_extra_cheatcode_addresses(extra_cheatcode_addresses)
@@ -2154,18 +2154,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         };
         contract.add_selectors(selectors.iter().copied(), should_exclude)?;
         Ok(())
-    }
-
-    /// Computes the current invariant settings for the given invariant contract address.
-    ///
-    /// This extracts the target contracts, selectors, senders, and failure settings
-    /// that are used to determine if a persisted counterexample is still valid.
-    pub fn compute_settings(&mut self, invariant_address: Address) -> Result<InvariantSettings> {
-        self.select_contract_artifacts(invariant_address)?;
-        let (sender_filters, targeted_contracts) =
-            self.select_contracts_and_senders(invariant_address)?;
-        let targets = targeted_contracts.targets();
-        Ok(InvariantSettings::new(&targets, &sender_filters, self.config.fail_on_revert))
     }
 }
 

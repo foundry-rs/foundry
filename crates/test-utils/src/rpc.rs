@@ -428,6 +428,55 @@ pub async fn spawn_rpc_proxy_canned_method(
     (format!("http://{address}"), calls)
 }
 
+/// Spawns an RPC proxy that reports the first transaction of every full block under `tx_type`.
+///
+/// Chains anvil can fork but not execute, such as Arbitrum and its Orbit rollups, open their
+/// blocks with a system transaction of a type Foundry does not model. This reproduces that shape
+/// on top of any endpoint, without depending on a public archive node.
+pub async fn spawn_rpc_proxy_retyping_first_block_transaction(
+    endpoint: String,
+    tx_type: &'static str,
+) -> String {
+    let client = reqwest::Client::new();
+    let router = Router::new().route(
+        "/",
+        post(move |Json(request): Json<Value>| {
+            let client = client.clone();
+            let endpoint = endpoint.clone();
+            async move {
+                let mut response = client
+                    .post(endpoint)
+                    .json(&request)
+                    .send()
+                    .await
+                    .unwrap()
+                    .json::<Value>()
+                    .await
+                    .unwrap();
+                let responses = match response.as_array_mut() {
+                    Some(batch) => batch.iter_mut().collect::<Vec<_>>(),
+                    None => vec![&mut response],
+                };
+                for response in responses {
+                    if let Some(transactions) = response
+                        .get_mut("result")
+                        .and_then(|result| result.get_mut("transactions"))
+                        .and_then(Value::as_array_mut)
+                        && let Some(first) = transactions.first_mut().and_then(Value::as_object_mut)
+                    {
+                        first.insert("type".to_string(), Value::from(tx_type));
+                    }
+                }
+                Json(response).into_response()
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    format!("http://{address}")
+}
+
 #[derive(Clone)]
 enum RpcMethodRejection {
     Before(usize),

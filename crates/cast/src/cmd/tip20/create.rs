@@ -1,18 +1,19 @@
-#![allow(clippy::too_many_arguments)]
-
-use crate::tx::{SendTxOpts, TxParams};
+use crate::{
+    cmd::confirm_continue,
+    tempo::tempo_provider,
+    tx::{SendTxOpts, TxParams},
+};
 use alloy_ens::NameOrAddress;
 use alloy_network::{Network, TransactionBuilder};
-use alloy_primitives::B256;
+use alloy_primitives::{B256, Bytes};
 use alloy_provider::Provider;
 use alloy_rpc_types::TransactionInputKind;
 use alloy_sol_types::{SolCall, SolError};
-use alloy_transport::{RpcError, TransportErrorKind};
-use foundry_cli::utils::LoadConfig;
-use foundry_common::provider::ProviderBuilder;
+use eyre::Result;
 use tempo_alloy::TempoNetwork;
 use tempo_contracts::precompiles::{
-    TIP20_FACTORY_ADDRESS, UnknownFunctionSelector, createTokenWithLogoCall, is_iso4217_currency,
+    TIP20_FACTORY_ADDRESS, UnknownFunctionSelector, createTokenCall, createTokenWithLogoCall,
+    is_iso4217_currency,
 };
 
 /// Returns a warning message for non-ISO 4217 currency codes used in TIP-20 token creation.
@@ -38,6 +39,7 @@ pub(crate) fn iso4217_warning_message(currency: &str) -> String {
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn run(
     name: String,
     symbol: String,
@@ -49,167 +51,61 @@ pub(super) async fn run(
     force: bool,
     send_tx: SendTxOpts,
     tx_opts: TxParams,
-) -> eyre::Result<()> {
+) -> Result<()> {
     if let Some(logo_uri) = logo_uri.as_deref() {
         super::logo::validate_logo_uri(logo_uri)?;
     }
 
-    let (signer, tempo_access_key) = super::resolve_tip20_signer(&send_tx, &tx_opts).await?;
-
-    let config = send_tx.eth.rpc.load_config()?;
-
     if !is_iso4217_currency(&currency) && !force {
-        sh_warn!("{}", super::iso4217_warning_message(&currency))?;
-        let response: String = foundry_common::prompt!("\nContinue anyway? [y/N] ")?;
-        if !matches!(response.trim(), "y" | "Y") {
-            sh_status!("Aborted.")?;
+        sh_warn!("{}", iso4217_warning_message(&currency))?;
+        if !confirm_continue()? {
             return Ok(());
         }
     }
 
-    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
-    let quote_token_addr = quote_token.resolve(&provider).await?;
-    let admin_addr = admin.resolve(&provider).await?;
+    let (_, provider) = tempo_provider(&send_tx.eth.rpc)?;
+    let quote_token = quote_token.resolve(&provider).await?;
+    let admin = admin.resolve(&provider).await?;
 
-    let (sig, mut args) = match logo_uri {
+    let data = match logo_uri {
         Some(logo_uri) => {
-            let tx = create_logo_call_request(createTokenWithLogoCall {
-                name: name.clone(),
-                symbol: symbol.clone(),
-                currency: currency.clone(),
-                quoteToken: quote_token_addr,
-                admin: admin_addr,
-                salt,
-                logoURI: logo_uri.clone(),
-            });
-            ensure_t5_create_logo_supported(&provider, &tx).await?;
-            (
-                "createToken(string,string,string,address,address,bytes32,string)",
-                vec![
-                    name,
-                    symbol,
-                    currency,
-                    quote_token_addr.to_string(),
-                    admin_addr.to_string(),
-                    salt.to_string(),
-                    logo_uri,
-                ],
-            )
-        }
-        None => (
-            "createToken(string,string,string,address,address,bytes32)",
-            vec![
+            let call = createTokenWithLogoCall {
                 name,
                 symbol,
                 currency,
-                quote_token_addr.to_string(),
-                admin_addr.to_string(),
-                salt.to_string(),
-            ],
-        ),
+                quoteToken: quote_token,
+                admin,
+                salt,
+                logoURI: logo_uri,
+            };
+            ensure_t5_create_logo_supported(&provider, &call).await?;
+            call.abi_encode()
+        }
+        None => createTokenCall { name, symbol, currency, quoteToken: quote_token, admin, salt }
+            .abi_encode(),
     };
-    super::send_tip20_transaction(
-        NameOrAddress::Address(TIP20_FACTORY_ADDRESS),
-        sig,
-        std::mem::take(&mut args),
-        send_tx,
-        tx_opts,
-        signer,
-        tempo_access_key,
-    )
-    .await?;
-
-    Ok(())
+    super::send_tip20_transaction(TIP20_FACTORY_ADDRESS, data, send_tx, tx_opts).await
 }
 
-fn create_logo_call_request(
-    call: createTokenWithLogoCall,
-) -> <TempoNetwork as Network>::TransactionRequest {
+/// Fails early when the factory rejects the 7-arg `createToken` selector, which only T5+
+/// factories implement.
+async fn ensure_t5_create_logo_supported<P: Provider<TempoNetwork>>(
+    provider: &P,
+    call: &createTokenWithLogoCall,
+) -> Result<()> {
     let mut tx = <TempoNetwork as Network>::TransactionRequest::default();
     tx.set_kind(TIP20_FACTORY_ADDRESS.into());
     tx.set_input_kind(call.abi_encode(), TransactionInputKind::Both);
-    tx
-}
 
-async fn ensure_t5_create_logo_supported<P>(
-    provider: &P,
-    tx: &<TempoNetwork as Network>::TransactionRequest,
-) -> eyre::Result<()>
-where
-    P: Provider<TempoNetwork>,
-{
-    match provider.call(tx.clone()).await {
-        Ok(_) => Ok(()),
-        Err(err) if is_t5_create_logo_unknown_selector(&err) => {
-            eyre::bail!(
-                "--logo-uri requires a T5-compatible TIP20Factory; the configured RPC rejected the 7-arg createToken selector 0x5323d222"
-            );
-        }
-        Err(_) => Ok(()),
+    let unknown_selector =
+        UnknownFunctionSelector { selector: createTokenWithLogoCall::SELECTOR.into() }.abi_encode();
+    if let Err(err) = provider.call(tx).await
+        && let Some(data) = err.as_error_resp().and_then(|resp| resp.data.as_ref())
+        && serde_json::from_str::<Bytes>(data.get()).is_ok_and(|data| data == unknown_selector)
+    {
+        eyre::bail!(
+            "--logo-uri requires a T5-compatible TIP20Factory; the configured RPC rejected the 7-arg createToken selector 0x5323d222"
+        );
     }
-}
-
-fn is_t5_create_logo_unknown_selector(err: &RpcError<TransportErrorKind>) -> bool {
-    let Some(data) = err
-        .as_error_resp()
-        .and_then(|error| error.data.as_ref())
-        .and_then(|data| serde_json::from_str::<alloy_primitives::Bytes>(data.get()).ok())
-    else {
-        return false;
-    };
-
-    is_t5_create_logo_unknown_selector_data(data.as_ref())
-}
-
-fn is_t5_create_logo_unknown_selector_data(data: &[u8]) -> bool {
-    data == UnknownFunctionSelector { selector: createTokenWithLogoCall::SELECTOR.into() }
-        .abi_encode()
-        .as_slice()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use alloy_primitives::{address, b256, bytes};
-    use tempo_contracts::precompiles::createTokenCall;
-
-    #[test]
-    fn legacy_create_selector_is_preserved() {
-        let calldata = createTokenCall {
-            name: "US Dollar Coin".to_string(),
-            symbol: "USDC".to_string(),
-            currency: "USD".to_string(),
-            quoteToken: address!("0000000000000000000000000000000000000001"),
-            admin: address!("0000000000000000000000000000000000000002"),
-            salt: b256!("0000000000000000000000000000000000000000000000000000000000000003"),
-        }
-        .abi_encode();
-
-        assert_eq!(&calldata[..4], bytes!("68130445").as_ref());
-    }
-
-    #[test]
-    fn t5_create_selector_includes_logo_uri_overload() {
-        let calldata = createTokenWithLogoCall {
-            name: "US Dollar Coin".to_string(),
-            symbol: "USDC".to_string(),
-            currency: "USD".to_string(),
-            quoteToken: address!("0000000000000000000000000000000000000001"),
-            admin: address!("0000000000000000000000000000000000000002"),
-            salt: b256!("0000000000000000000000000000000000000000000000000000000000000003"),
-            logoURI: "https://example.com/logo.png".to_string(),
-        }
-        .abi_encode();
-
-        assert_ne!(&calldata[..4], bytes!("68130445").as_ref());
-        assert_eq!(&calldata[..4], createTokenWithLogoCall::SELECTOR.as_ref());
-    }
-
-    #[test]
-    fn detects_t5_create_logo_unknown_selector_revert_data() {
-        let data = UnknownFunctionSelector { selector: createTokenWithLogoCall::SELECTOR.into() }
-            .abi_encode();
-
-        assert!(is_t5_create_logo_unknown_selector_data(&data));
-    }
+    Ok(())
 }

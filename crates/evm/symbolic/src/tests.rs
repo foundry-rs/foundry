@@ -1808,12 +1808,14 @@ fn path_state_extracts_symbolic_usize_upper_bound() {
 }
 
 #[test]
-fn path_state_child_replaces_frame_and_resets_local_loop_state() {
+fn path_state_child_replaces_frame_and_resets_local_state() {
     let mut cx = SymCx::new();
     let mut state = PathState::empty(&mut cx, Address::ZERO, Address::ZERO, false);
     state.call_depth = 2;
     state.next_symbol = 7;
     state.loop_jumps.insert(3, 4);
+    state.expected_revert = Some(ExpectedRevert::new(ExpectedRevertData::Any, None, 1));
+    state.assume_no_revert_next_call = Some(AssumeNoRevert::Any);
 
     let parent_stack = SymExpr::constant(&mut cx, U256::from(0xab));
     state.stack.push(parent_stack).unwrap();
@@ -1847,7 +1849,11 @@ fn path_state_child_replaces_frame_and_resets_local_loop_state() {
     assert_eq!(child.world.cached_nonce(cached), Some(9));
     assert_eq!(child.address, child_address);
     assert!(child.loop_jumps.is_empty());
+    assert!(child.expected_revert.is_none());
+    assert!(child.assume_no_revert_next_call.is_none());
     assert_eq!(state.loop_jumps.get(&3), Some(&4));
+    assert!(state.expected_revert.is_some());
+    assert!(state.assume_no_revert_next_call.is_some());
     assert!(child.stack.peek(0).is_err());
 }
 
@@ -4777,6 +4783,26 @@ fn gasleft_fails_at_smt_emission() {
     let stats = solver.stats();
     assert_eq!(stats.solver_queries, 1);
     assert_eq!(stats.smt_queries, 1);
+    assert_eq!(counted_solver_invocations(&marker), 0);
+    let _ = std::fs::remove_file(&marker);
+}
+
+#[cfg(unix)]
+#[test]
+fn gasleft_model_fails_closed() {
+    let mut cx = SymCx::new();
+    let marker = portfolio_test_marker("gasleft-model");
+    let commands = vec![counted_solver_command(&marker, "sat")];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
+    let gas = SymExpr::gas_left(&mut cx, 0);
+    let limit = SymExpr::constant(&mut cx, U256::from(10));
+    let constraints = vec![SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, gas, limit)];
+
+    let err = solver.model(&mut cx, &constraints).unwrap_err();
+    assert!(matches!(err, SymbolicError::Unsupported("GAS/gasleft() not modeled")));
+
+    let stats = solver.stats();
+    assert_eq!(stats.smt_queries, 0);
     assert_eq!(counted_solver_invocations(&marker), 0);
     let _ = std::fs::remove_file(&marker);
 }
