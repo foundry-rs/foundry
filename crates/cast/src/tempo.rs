@@ -26,7 +26,6 @@ use serde_json::Value;
 use std::str::FromStr;
 use tempo_alloy::{
     TempoNetwork,
-    provider::TempoProviderExt,
     transport::{RelayConnector, SponsorshipMode},
 };
 
@@ -185,12 +184,25 @@ struct AnvilNodeInfo {
     network: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct TempoForkSchedule {
+    active: String,
+}
+
 pub(crate) async fn is_tempo_hardfork_active<P: Provider<TempoNetwork>>(
     provider: &P,
     hardfork: TempoHardfork,
 ) -> Result<bool> {
-    match provider.is_hardfork_active(hardfork).await {
-        Ok(active) => Ok(active),
+    match provider.raw_request::<_, TempoForkSchedule>("tempo_forkSchedule".into(), ()).await {
+        Ok(schedule) => {
+            let active = schedule.active.parse::<TempoHardfork>().map_err(|_| {
+                eyre::eyre!(
+                    "RPC reported unknown Tempo hardfork '{}'; upgrade Foundry before using this chain",
+                    schedule.active
+                )
+            })?;
+            Ok(active >= hardfork)
+        }
         Err(err) if is_rpc_method_not_found(&err) => {
             match anvil_tempo_hardfork_active(provider, hardfork).await {
                 Ok(Some(active)) => Ok(active),
@@ -340,6 +352,47 @@ mod tests {
     use alloy_provider::{ProviderBuilder as AlloyProviderBuilder, mock::Asserter};
     use alloy_rpc_client::RpcClient;
 
+    #[tokio::test]
+    async fn tempo_fork_schedule_detects_t13_and_earlier_forks() {
+        for (active, required, expected) in [
+            ("T2", TempoHardfork::T3, false),
+            ("T3", TempoHardfork::T3, true),
+            ("T11", TempoHardfork::T3, true),
+            ("T12", TempoHardfork::T13, false),
+            ("T13", TempoHardfork::T3, true),
+            ("T13", TempoHardfork::T13, true),
+        ] {
+            let asserter = Asserter::new();
+            asserter.push_success(&serde_json::json!({ "active": active }));
+            let provider = AlloyProviderBuilder::new()
+                .network::<TempoNetwork>()
+                .connect_mocked_client(asserter);
+            assert_eq!(is_tempo_hardfork_active(&provider, required).await.unwrap(), expected);
+        }
+    }
+
+    #[tokio::test]
+    async fn tempo_fork_schedule_rejects_unknown_forks() {
+        let asserter = Asserter::new();
+        asserter.push_success(&serde_json::json!({ "active": "T999" }));
+        let provider =
+            AlloyProviderBuilder::new().network::<TempoNetwork>().connect_mocked_client(asserter);
+        assert_eq!(
+            is_tempo_hardfork_active(&provider, TempoHardfork::T3).await.unwrap_err().to_string(),
+            "RPC reported unknown Tempo hardfork 'T999'; upgrade Foundry before using this chain"
+        );
+    }
+
+    #[tokio::test]
+    async fn tempo_fork_schedule_falls_back_to_anvil_t13() {
+        let asserter = Asserter::new();
+        asserter.push_failure(alloy_json_rpc::ErrorPayload::method_not_found());
+        asserter.push_success(&serde_json::json!({ "network": "tempo", "hardFork": "T13" }));
+        let provider =
+            AlloyProviderBuilder::new().network::<TempoNetwork>().connect_mocked_client(asserter);
+        assert!(is_tempo_hardfork_active(&provider, TempoHardfork::T3).await.unwrap());
+    }
+
     #[test]
     fn active_from_anvil_node_info_requires_tempo_network() {
         let info = |network: &str, hard_fork: &str| AnvilNodeInfo {
@@ -352,6 +405,14 @@ mod tests {
         assert_eq!(active_from_anvil_node_info(&tempo_t3, TempoHardfork::T4), Some(false));
         assert_eq!(
             active_from_anvil_node_info(&info("tempo", "T11"), TempoHardfork::T11),
+            Some(true)
+        );
+        assert_eq!(
+            active_from_anvil_node_info(&info("tempo", "T13"), TempoHardfork::T3),
+            Some(true)
+        );
+        assert_eq!(
+            active_from_anvil_node_info(&info("tempo", "T13"), TempoHardfork::T13),
             Some(true)
         );
         assert_eq!(active_from_anvil_node_info(&info("ethereum", "T3"), TempoHardfork::T3), None);
