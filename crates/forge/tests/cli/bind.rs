@@ -1,12 +1,20 @@
 use foundry_compilers::utils::read_json_file;
 use foundry_config::SolcReq;
-use foundry_test_utils::TestProject;
+use foundry_test_utils::{TestProject, cargo_profile_dir};
 use std::{fs, path::Path, process::Command};
 
+// Keep each generated crate isolated while reusing its dependencies across binding tests.
+// Cargo locks the shared target directory across nextest processes and fingerprints each crate.
+pub(super) fn bindings_cargo(bindings_path: &Path) -> Command {
+    let mut cmd = Command::new("cargo");
+    cmd.current_dir(bindings_path)
+        .env("CARGO_TARGET_DIR", cargo_profile_dir().join("bind-test-target"));
+    cmd
+}
+
 fn assert_bindings_compile(bindings_path: &Path) {
-    let out = Command::new("cargo")
+    let out = bindings_cargo(bindings_path)
         .args(["check", "--tests"])
-        .current_dir(bindings_path)
         .output()
         .expect("failed to run cargo check");
 
