@@ -350,8 +350,7 @@ async fn accepts_spend_after_funding_when_pool_checks_disabled() {
     assert!(receipt2.status());
 }
 
-/// Replacing a *queued* (future-nonce) transaction must remove the old one, not stack it -
-/// otherwise the pool grows unbounded and only one of the stacked entries can ever be mined.
+/// Queued replacements must remove the previous transaction.
 #[tokio::test(flavor = "multi_thread")]
 async fn queued_tx_replacement_removes_old_tx() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
@@ -364,8 +363,7 @@ async fn queued_tx_replacement_removes_old_tx() {
     let recipient = accounts[1].address();
     let gas_price_base = 221435145689u128;
 
-    // account's current nonce is 0, so nonce 5 always lands in the queued/waiting pool, never
-    // the ready pool - isolates the `PendingTransactions::add_transaction` path under test.
+    // Nonce 5 remains queued until nonces 0 through 4 arrive.
     let make_tx = |gas_price: u128| {
         WithOtherFields::new(
             TransactionRequest::default()
@@ -382,7 +380,6 @@ async fn queued_tx_replacement_removes_old_tx() {
     let status = provider.txpool_status().await.unwrap();
     assert_eq!(status.queued, 1, "first tx should be queued");
 
-    // replace with a higher-priced tx at the same (sender, nonce)
     let second = provider.send_transaction(make_tx(gas_price_base * 2)).await.unwrap();
     let second_hash = *second.tx_hash();
 
@@ -391,9 +388,7 @@ async fn queued_tx_replacement_removes_old_tx() {
     assert!(provider.get_transaction_by_hash(first_hash).await.unwrap().is_none());
     assert!(provider.get_transaction_by_hash(second_hash).await.unwrap().is_some());
 
-    // replace a second time - proves the marker bookkeeping wasn't corrupted by the first
-    // removal (the fix trap: removing the old marker entry *after* inserting the new one would
-    // delete the new tx's own marker instead, silently disabling this exact check downstream)
+    // A second replacement checks that marker cleanup preserves replacement tracking.
     let third = provider.send_transaction(make_tx(gas_price_base * 3)).await.unwrap();
     let third_hash = *third.tx_hash();
     let status = provider.txpool_status().await.unwrap();
@@ -401,22 +396,17 @@ async fn queued_tx_replacement_removes_old_tx() {
     assert!(provider.get_transaction_by_hash(second_hash).await.unwrap().is_none());
     assert!(provider.get_transaction_by_hash(third_hash).await.unwrap().is_some());
 
-    // an underpriced replacement attempt at the same slot must still be rejected
+    // Underpriced replacements must still be rejected.
     let underpriced_err =
         provider.send_transaction(make_tx(gas_price_base * 2 + 1)).await.unwrap_err();
     let msg = format!("{underpriced_err:?}").to_lowercase();
     assert!(msg.contains("underpriced"), "expected underpriced rejection, got: {msg}");
 
-    // still only one queued tx, still the third one
     let status = provider.txpool_status().await.unwrap();
     assert_eq!(status.queued, 1);
     assert!(provider.get_transaction_by_hash(third_hash).await.unwrap().is_some());
 
-    // fill nonces 0-4 and mine: this exercises `mark_and_unlock`, which walks
-    // `required_markers` for the surviving (third) queued tx. If replacement's marker
-    // cleanup were incomplete (e.g. a stale hash left behind in `required_markers`), this
-    // would either panic (the `expect` in `mark_and_unlock`) or fail to promote/mine the
-    // third tx - not just leave a stray pool-accounting mismatch.
+    // Fill the nonce gap to check marker cleanup also preserves promotion and mining.
     for nonce in 0..5u64 {
         let filler = WithOtherFields::new(
             TransactionRequest::default()
@@ -438,9 +428,7 @@ async fn queued_tx_replacement_removes_old_tx() {
     );
 }
 
-/// `anvil_dropTransaction` must remove a *queued* (future-nonce) transaction too, not just a
-/// ready one - the pool's other bulk-remove paths (`remove_invalid`,
-/// `remove_transactions_by_address`) already touch both pools; this one didn't.
+/// Dropping a transaction must also search the queued pool.
 #[tokio::test(flavor = "multi_thread")]
 async fn anvil_drop_transaction_removes_queued_tx() {
     let (api, handle) = spawn(NodeConfig::test()).await;

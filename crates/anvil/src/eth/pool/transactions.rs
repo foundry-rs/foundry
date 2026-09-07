@@ -286,9 +286,7 @@ impl<T: Transaction> PendingTransactions<T> {
         } else {
             None
         };
-        // remove the replaced tx (and its marker bookkeeping) *before* inserting the new one's
-        // markers below, so the new tx's `waiting_markers`/`required_markers` entries can't be
-        // clobbered by removing the old ones afterwards
+        // Remove old markers before inserting the replacement, which shares their keys.
         if let Some(replaced_hash) = replaced_hash {
             self.remove(vec![replaced_hash]);
         }
