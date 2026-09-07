@@ -26,6 +26,20 @@ use foundry_test_utils::rpc;
 use serde_json::{Value, json};
 
 #[tokio::test(flavor = "multi_thread")]
+async fn non_blob_receipt_omits_blob_fields() {
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Cancun.into()));
+    let (_api, handle) = spawn(node_config).await;
+    let provider = http_provider(&handle.http_endpoint());
+    let accounts = handle.dev_accounts().collect::<Vec<_>>();
+
+    let tx = TransactionRequest::default().with_from(accounts[0]).with_to(accounts[1]);
+    let receipt = provider.send_transaction(tx.into()).await.unwrap().get_receipt().await.unwrap();
+
+    assert_eq!(receipt.blob_gas_used, None);
+    assert_eq!(receipt.blob_gas_price, None);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn can_send_eip4844_transaction() {
     let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Cancun.into()));
     let (api, handle) = spawn(node_config).await;

@@ -1,4 +1,7 @@
-use crate::{executors::Executor, inspectors::InspectorStackBuilder};
+use crate::{
+    executors::Executor,
+    inspectors::{InspectorStackBuilder, TempoLabels},
+};
 use alloy_primitives::Address;
 #[cfg(feature = "optimism")]
 use foundry_evm_core::evm::OpEvmNetwork;
@@ -138,10 +141,10 @@ impl ExecutorBuilder<OpEvmNetwork> {
 }
 
 impl ExecutorBuilder<TempoEvmNetwork> {
-    /// Creates the default Tempo executor builder.
+    /// Creates a Tempo executor builder with its native label inspector.
     #[inline]
     pub fn new() -> Self {
-        Self::default()
+        Self::default().inspectors(|stack| stack.tempo_labels(TempoLabels::default()))
     }
 }
 

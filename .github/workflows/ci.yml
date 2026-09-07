@@ -17,6 +17,11 @@ env:
   RUSTC_WRAPPER: "sccache"
 
 jobs:
+  cargo-cooldown:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/cargo-cooldown.yml
+
   test:
     uses: ./.github/workflows/test.yml
     permissions:
@@ -36,6 +41,7 @@ jobs:
       id-token: write
 
   doctest:
+    needs: cargo-cooldown
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -51,11 +57,12 @@ jobs:
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          cache-targets: false
-          prefix-key: v1-rust-doctest-no-target
+          cache-bin: false
+          prefix-key: v2-rust-doctest
       - run: cargo test --workspace --doc --locked
 
   no-default-features:
+    needs: cargo-cooldown
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -69,11 +76,16 @@ jobs:
           toolchain: stable
       - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          cache-bin: false
+          prefix-key: v1-rust-no-default-features
       - run: cargo build --workspace --no-default-features --locked
 
   touch-id-link:
     name: touch-id link (macOS)
     if: github.event_name == 'push'
+    needs: cargo-cooldown
     runs-on: depot-macos-latest
     timeout-minutes: 45
     permissions:
@@ -145,6 +157,7 @@ jobs:
           node --test .github/scripts/tests/test-create-tag.js
 
   clippy:
+    needs: cargo-cooldown
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -180,6 +193,7 @@ jobs:
       - run: cargo fmt --all --check
 
   forge-fmt:
+    needs: cargo-cooldown
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -195,14 +209,14 @@ jobs:
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          cache-targets: false
           cache-bin: false
-          prefix-key: v1-rust-forge-fmt-no-target
+          prefix-key: v2-rust-forge-fmt
       - name: forge fmt
         shell: bash
         run: ./.github/scripts/format.sh --check
 
   deny:
+    needs: cargo-cooldown
     uses: tempoxyz/ci/.github/workflows/deny.yml@268b3ce142717ff86c58fbbcc3abc3f109f0fb8d # main
     permissions:
       contents: read
@@ -249,12 +263,14 @@ jobs:
     if: always()
     permissions: {}
     needs:
+      - cargo-cooldown
       - test
       - docs
       - doctest
       - no-default-features
       - touch-id-link
       - typos
+      - shellcheck
       - github-scripts
       - clippy
       - rustfmt

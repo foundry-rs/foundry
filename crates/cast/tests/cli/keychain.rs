@@ -659,73 +659,24 @@ casttest!(send_with_authorized_access_key_succeeds, async |_prj, cmd| {
     assert_eq!(receipt["status"], "0x1", "unexpected receipt: {output}");
 });
 
-// On-chain: `keychain set-scope` uses the legacy ABI before T11 and the RLP ABI from T11 onward.
+// On-chain: `keychain set-scope` keeps the tuple ABI across T11.
 casttest!(keychain_set_scope_succeeds_across_t11, async |_prj, cmd| {
     for hardfork in [TempoHardfork::T10, TempoHardfork::T11] {
         let (_, handle) =
             anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(hardfork.into()))).await;
         let rpc = handle.http_endpoint();
 
-        if hardfork < TempoHardfork::T11 {
-            cmd.cast_fuse()
-                .args([
-                    "keychain",
-                    "authorize",
-                    accounts::ADDR2,
-                    "--private-key",
-                    accounts::PK1,
-                    "--rpc-url",
-                    &rpc,
-                ])
-                .assert_success();
-        } else {
-            let authorization = cmd
-                .cast_fuse()
-                .args([
-                    "key-authorization",
-                    "sign",
-                    accounts::ADDR2,
-                    "--chain-id",
-                    "31337",
-                    "--private-key",
-                    accounts::PK1,
-                ])
-                .assert_success()
-                .get_output()
-                .stdout_lossy()
-                .trim()
-                .to_string();
-            let tempo_home = tempfile::tempdir().unwrap();
-            cmd.cast_fuse();
-            cmd.env("TEMPO_HOME", tempo_home.path());
-            cmd.args([
-                "tempo",
-                "import-access-key",
-                "--account",
-                accounts::ADDR1,
-                "--access-key",
-                accounts::PK2,
-                "--authorization",
-                &authorization,
-            ])
-            .assert_success();
-            cmd.cast_fuse();
-            cmd.env("TEMPO_HOME", tempo_home.path());
-            cmd.args([
-                "send",
-                &path_usd(),
-                "approve(address,uint256)",
-                accounts::ADDR3,
-                "0",
-                "--from",
-                accounts::ADDR1,
-                "--tempo.fee-token",
-                &path_usd(),
+        cmd.cast_fuse()
+            .args([
+                "keychain",
+                "authorize",
+                accounts::ADDR2,
+                "--private-key",
+                accounts::PK1,
                 "--rpc-url",
                 &rpc,
             ])
             .assert_success();
-        }
 
         cmd.cast_fuse()
             .args([

@@ -207,7 +207,7 @@ impl BindArgs {
                 let name = stem.split('.').next().unwrap();
 
                 // Best effort identifier cleanup.
-                let name = name.replace(char::is_whitespace, "").replace('-', "_");
+                let name = name.replace(char::is_whitespace, "").replace(['-', '$'], "_");
 
                 Some((name, path))
             })

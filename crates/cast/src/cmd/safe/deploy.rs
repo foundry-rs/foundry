@@ -1,92 +1,132 @@
 use super::{
     contracts::{
-        ISafe, ISafeProxyFactory, PREDETERMINED_SALT_NONCE, SAFE_L2_V1_4_1, SAFE_V1_4_1,
-        SENTINEL_OWNER,
+        COMPATIBILITY_FALLBACK_HANDLER_V1_4_1, ISafe, ISafeProxyFactory, PREDETERMINED_SALT_NONCE,
+        SAFE_L2_V1_4_1, SAFE_PROXY_FACTORY_V1_4_1, SAFE_V1_4_1, SENTINEL_OWNER,
     },
-    transaction::send_safe_call,
+    rpc_provider,
+    transaction::SafeSendOpts,
 };
 use alloy_network::Ethereum;
 use alloy_primitives::{Address, Bytes, U256, keccak256, map::AddressHashSet};
 use alloy_provider::Provider;
 use alloy_sol_types::{SolCall, SolEvent};
+use clap::Args;
 use eyre::{Context, Result, ensure};
-use foundry_cli::{
-    json::print_scalar,
-    opts::{RpcOpts, TransactionOpts},
-    utils::LoadConfig,
-};
-use foundry_common::{provider::ProviderBuilder, sh_status};
-use foundry_wallets::WalletOpts;
+use foundry_cli::json::print_scalar;
+use foundry_common::sh_status;
 
-#[allow(clippy::too_many_arguments)]
-pub(super) async fn run(
+/// CLI arguments for `cast safe create`.
+#[derive(Args, Debug)]
+pub struct CreateArgs {
+    /// Addresses that own the Safe.
+    #[arg(required = true, num_args = 1..)]
     owners: Vec<Address>,
+
+    /// Number of owner signatures required. Defaults to all owners.
+    #[arg(long)]
     threshold: Option<usize>,
+
+    /// CREATE2 salt nonce. Defaults to Safe Protocol Kit's chain-specific nonce.
+    #[arg(long)]
     salt_nonce: Option<U256>,
+
+    /// Safe singleton address. Defaults to the canonical v1.4.1 deployment.
+    #[arg(long, conflicts_with = "l1")]
     singleton: Option<Address>,
+
+    /// Use the L1 Safe singleton instead of SafeL2.
+    #[arg(long)]
     l1: bool,
+
+    /// SafeProxyFactory address.
+    #[arg(long, default_value_t = SAFE_PROXY_FACTORY_V1_4_1)]
     factory: Address,
+
+    /// CompatibilityFallbackHandler address. Pass the zero address to disable it.
+    #[arg(long, default_value_t = COMPATIBILITY_FALLBACK_HANDLER_V1_4_1)]
     fallback_handler: Address,
+
+    /// Number of confirmations to wait for.
+    #[arg(long, default_value = "1")]
     confirmations: u64,
+
+    /// Timeout for deployment confirmation, in seconds.
+    #[arg(long, env = "ETH_TIMEOUT")]
     timeout: Option<u64>,
+
+    /// Polling interval for the deployment receipt, in seconds.
+    #[arg(long, env = "ETH_POLL_INTERVAL")]
     poll_interval: Option<u64>,
-    rpc: RpcOpts,
-    wallet: WalletOpts,
-    tx: TransactionOpts,
-) -> Result<()> {
-    let threshold = validate_owners(&owners, threshold)?;
-    let config = rpc.load_config()?;
-    let provider = ProviderBuilder::<Ethereum>::from_config(&config)?.build()?;
-    let chain_id = provider.get_chain_id().await?;
-    let singleton =
-        singleton.unwrap_or(if l1 || chain_id == 1 { SAFE_V1_4_1 } else { SAFE_L2_V1_4_1 });
-    ensure_contract(&provider, singleton, "Safe singleton", "--singleton").await?;
-    ensure_contract(&provider, factory, "SafeProxyFactory", "--factory").await?;
-    if fallback_handler != Address::ZERO {
-        ensure_contract(
-            &provider,
+
+    #[command(flatten)]
+    send: SafeSendOpts,
+}
+
+impl CreateArgs {
+    pub(super) async fn run(self) -> Result<()> {
+        let Self {
+            owners,
+            threshold,
+            salt_nonce,
+            singleton,
+            l1,
+            factory,
             fallback_handler,
-            "CompatibilityFallbackHandler",
-            "--fallback-handler",
-        )
-        .await?;
-    }
+            confirmations,
+            timeout,
+            poll_interval,
+            send,
+        } = self;
+        let threshold = validate_owners(&owners, threshold)?;
+        let (provider, chain_id) = rpc_provider(&send.rpc).await?;
+        let singleton =
+            singleton.unwrap_or(if l1 || chain_id == 1 { SAFE_V1_4_1 } else { SAFE_L2_V1_4_1 });
+        ensure_contract(&provider, singleton, "Safe singleton", "--singleton").await?;
+        ensure_contract(&provider, factory, "SafeProxyFactory", "--factory").await?;
+        if fallback_handler != Address::ZERO {
+            ensure_contract(
+                &provider,
+                fallback_handler,
+                "CompatibilityFallbackHandler",
+                "--fallback-handler",
+            )
+            .await?;
+        }
 
-    let salt_nonce = salt_nonce.unwrap_or_else(|| default_salt_nonce(chain_id));
-    let initializer: Bytes = ISafe::setupCall {
-        owners,
-        threshold: U256::from(threshold),
-        to: Address::ZERO,
-        data: Bytes::new(),
-        fallbackHandler: fallback_handler,
-        paymentToken: Address::ZERO,
-        payment: U256::ZERO,
-        paymentReceiver: Address::ZERO,
-    }
-    .abi_encode()
-    .into();
+        let initializer = ISafe::setupCall {
+            owners,
+            threshold: U256::from(threshold),
+            to: Address::ZERO,
+            data: Bytes::new(),
+            fallbackHandler: fallback_handler,
+            paymentToken: Address::ZERO,
+            payment: U256::ZERO,
+            paymentReceiver: Address::ZERO,
+        }
+        .abi_encode()
+        .into();
 
-    sh_status!("Deploying Safe with singleton {singleton}")?;
-    let calldata: Bytes = ISafeProxyFactory::createProxyWithNonceCall {
-        singleton,
-        initializer,
-        saltNonce: salt_nonce,
-    }
-    .abi_encode()
-    .into();
-    let result =
-        send_safe_call(factory, calldata, confirmations, timeout, poll_interval, rpc, wallet, tx)
+        sh_status!("Deploying Safe with singleton {singleton}")?;
+        let calldata = ISafeProxyFactory::createProxyWithNonceCall {
+            singleton,
+            initializer,
+            saltNonce: salt_nonce.unwrap_or_else(|| default_salt_nonce(chain_id)),
+        }
+        .abi_encode()
+        .into();
+        let result = send
+            .send(factory, calldata, confirmations, timeout, poll_interval)
             .await
             .wrap_err("failed to submit Safe deployment")?;
-    let deployed = result
-        .logs
-        .iter()
-        .filter(|log| log.address() == factory)
-        .find_map(|log| ISafeProxyFactory::ProxyCreation::decode_log(&log.inner).ok())
-        .ok_or_else(|| eyre::eyre!("Safe deployment receipt did not emit ProxyCreation"))?;
-    sh_status!("Transaction hash: {}", result.tx_hash)?;
-    print_scalar(deployed.proxy.to_checksum(None))?;
-    Ok(())
+        let deployed = result
+            .logs
+            .iter()
+            .filter(|log| log.address() == factory)
+            .find_map(|log| ISafeProxyFactory::ProxyCreation::decode_log(&log.inner).ok())
+            .ok_or_else(|| eyre::eyre!("Safe deployment receipt did not emit ProxyCreation"))?;
+        sh_status!("Transaction hash: {}", result.tx_hash)?;
+        print_scalar(deployed.proxy.to_checksum(None))
+    }
 }
 
 fn validate_owners(owners: &[Address], threshold: Option<usize>) -> Result<usize> {
@@ -111,15 +151,12 @@ fn default_salt_nonce(chain_id: u64) -> U256 {
     U256::from_be_slice(keccak256(format!("{PREDETERMINED_SALT_NONCE}{chain_id}")).as_slice())
 }
 
-pub(super) async fn ensure_contract<P>(
+pub(super) async fn ensure_contract<P: Provider<Ethereum>>(
     provider: &P,
     address: Address,
     name: &str,
     flag: &str,
-) -> Result<()>
-where
-    P: Provider<Ethereum>,
-{
+) -> Result<()> {
     ensure!(
         !provider.get_code_at(address).await?.is_empty(),
         "{name} is not deployed at {address}; provide the network deployment with {flag}"

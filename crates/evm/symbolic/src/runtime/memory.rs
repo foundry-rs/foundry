@@ -233,23 +233,9 @@ impl SymMemory {
         } else {
             let size = Self::size_after_access_word(cx, offset.clone(), 32);
             self.expand_to(cx, size);
-            self.load_word_dynamic(cx, &offset)
+            // Share the byte-read path so symbolic writes are included.
+            Ok(self.read_bytes_offset(cx, offset, 32).word_at(cx, 0))
         }
-    }
-
-    fn load_word_dynamic(
-        &self,
-        cx: &mut SymCx,
-        offset: &SymExpr,
-    ) -> Result<SymExpr, SymbolicError> {
-        let mut result = SymExpr::zero(cx);
-        for candidate in (0..self.materialized_size).rev() {
-            let candidate_expr = SymExpr::constant(cx, U256::from(candidate));
-            let condition = SymBoolExpr::eq(cx, offset.clone(), candidate_expr);
-            let word = self.load_word(cx, candidate)?;
-            result = SymExpr::ite(cx, condition, word, result);
-        }
-        Ok(result)
     }
 
     pub(crate) fn read_concrete(
@@ -439,18 +425,45 @@ impl SymMemory {
         result
     }
 
+    /// Reads the byte at `offset + delta`.
+    ///
+    /// Symbolic stores need not extend `materialized_size`, even when their offsets
+    /// are const-evaluable. Enumerate that region only if it contains every write;
+    /// otherwise fold all writes in insertion order so later writes win.
     pub(crate) fn byte_dynamic_with_delta(
         &self,
         cx: &mut SymCx,
         offset: &SymExpr,
         delta: usize,
     ) -> SymExpr {
+        let materialized_size = self.materialized_size;
+        let all_writes_bounded = self.symbolic_writes.iter().all(|write| {
+            write
+                .concrete_offset()
+                .and_then(|write_offset| write_offset.checked_add(write.bytes.len()))
+                .is_some_and(|end| end <= materialized_size)
+        });
+
+        if all_writes_bounded {
+            let mut result = SymExpr::zero(cx);
+            for candidate in (delta..self.materialized_size).rev() {
+                let candidate_expr = SymExpr::constant(cx, U256::from(candidate - delta));
+                let condition = SymBoolExpr::eq(cx, offset.clone(), candidate_expr);
+                let byte = self.byte(cx, candidate);
+                result = SymExpr::ite(cx, condition, byte, result);
+            }
+            return result;
+        }
+
+        let target = SymExpr::add_const(cx, offset.clone(), U256::from(delta));
         let mut result = SymExpr::zero(cx);
-        for candidate in (delta..self.materialized_size).rev() {
-            let candidate_expr = SymExpr::constant(cx, U256::from(candidate - delta));
-            let condition = SymBoolExpr::eq(cx, offset.clone(), candidate_expr);
-            let byte = self.byte(cx, candidate);
-            result = SymExpr::ite(cx, condition, byte, result);
+        for write in &self.symbolic_writes {
+            for idx in 0..write.bytes.len() {
+                let write_offset = SymExpr::add_const(cx, write.offset.clone(), U256::from(idx));
+                let condition = SymBoolExpr::eq(cx, write_offset, target.clone());
+                let byte = write.bytes.byte(cx, idx);
+                result = SymExpr::ite(cx, condition, byte, result);
+            }
         }
         result
     }

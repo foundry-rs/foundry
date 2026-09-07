@@ -419,3 +419,181 @@ contract SuperNonStorageChild is SuperNonStorageBase {
     function use_() external view returns (uint256) { return slot.val; }
     function init() external { super._init(slot); }
 }
+
+contract StoragePointerAlias {
+    struct Data { uint256 val; }
+    Data public slot;
+
+    function set(uint256 v) external {
+        Data storage p = slot;
+        p.val = v;
+    }
+
+    function get() public view returns (uint256) { return slot.val; }
+}
+
+contract StoragePointerChainedAlias {
+    struct Data { uint256 val; }
+    Data public slot;
+
+    function set(uint256 v) external {
+        Data storage p = slot;
+        Data storage q = p;
+        q.val = v;
+    }
+
+    function get() public view returns (uint256) { return slot.val; }
+}
+
+contract StoragePointerReadOnly {
+    struct Data { uint256 val; }
+    Data public slot; //~WARN: state variable is read but never written
+
+    function get() external view returns (uint256) {
+        Data storage p = slot;
+        return p.val;
+    }
+}
+
+contract StoragePointerArrayElement {
+    struct Data { uint256 val; }
+    Data[2] public items;
+
+    function set(uint256 i, uint256 v) external {
+        Data storage p = items[i];
+        p.val = v;
+    }
+
+    function get(uint256 i) public view returns (uint256) { return items[i].val; }
+}
+
+// Alias tracking is flow-insensitive: a pointer may reference every target it is ever assigned.
+contract StoragePointerReassigned {
+    struct Data { uint256 val; }
+    Data public slotA;
+    Data public slotB;
+
+    function set(bool chooseB, uint256 v) external {
+        Data storage p = slotA;
+        if (chooseB) p = slotB;
+        p.val = v;
+    }
+
+    function getA() public view returns (uint256) { return slotA.val; }
+    function getB() public view returns (uint256) { return slotB.val; }
+}
+
+contract StoragePointerReassignedInLoop {
+    struct Data { uint256 val; }
+    Data public slotA;
+    Data public slotB;
+    Data public slotC;
+
+    function set(uint256 count, uint256 v) external {
+        Data storage p = slotA;
+        Data storage q = slotB;
+        for (uint256 i; i < count; ++i) {
+            p = q;
+            q = slotC;
+        }
+        p.val = v;
+    }
+
+    function getA() public view returns (uint256) { return slotA.val; }
+    function getB() public view returns (uint256) { return slotB.val; }
+    function getC() public view returns (uint256) { return slotC.val; }
+}
+
+contract StoragePointerTernary {
+    struct Data { uint256 val; }
+    Data public slotA;
+    Data public slotB;
+
+    function set(bool chooseB, uint256 v) external {
+        Data storage p = chooseB ? slotB : slotA;
+        p.val = v;
+    }
+
+    function getA() public view returns (uint256) { return slotA.val; }
+    function getB() public view returns (uint256) { return slotB.val; }
+}
+
+// Repointing a storage pointer is not a write to either target.
+contract StoragePointerRepointOnly {
+    struct Data { uint256 val; }
+    Data public slotA; //~WARN: state variable is read but never written
+    Data public slotB; //~WARN: state variable is read but never written
+
+    function get() external view returns (uint256) {
+        Data storage p = slotA;
+        p = slotB;
+        return p.val;
+    }
+}
+
+contract StoragePointerStorageArg {
+    struct Data { uint256 val; }
+    Data public slot;
+
+    function _set(Data storage target, uint256 v) internal { target.val = v; }
+
+    function set(uint256 v) external {
+        Data storage p = slot;
+        _set(p, v);
+    }
+
+    function get() public view returns (uint256) { return slot.val; }
+}
+
+contract StoragePointerPush {
+    uint256[] public items;
+
+    function add(uint256 v) external {
+        uint256[] storage arr = items;
+        arr.push(v);
+    }
+
+    function count() external view returns (uint256) { return items.length; }
+}
+
+contract StoragePointerTupleDeclaration {
+    struct Data { uint256 val; }
+    Data public slotA;
+    Data public slotB;
+
+    function set(uint256 v) external {
+        (Data storage p, Data storage q) = (slotA, slotB);
+        p.val = v;
+        (q, ) = (slotA, uint256(0));
+        q.val = v;
+    }
+
+    function getA() public view returns (uint256) { return slotA.val; }
+    function getB() public view returns (uint256) { return slotB.val; }
+}
+
+contract StoragePointerInModifier {
+    struct Data { uint256 val; }
+    Data public slot;
+
+    modifier bump() {
+        Data storage p = slot;
+        p.val += 1;
+        _;
+    }
+
+    function get() external view bump returns (uint256) { return slot.val; }
+}
+
+// A pointer passed to a `memory` parameter is copied, not written.
+contract StoragePointerMemoryArg {
+    struct Data { uint256 val; }
+    Data public slot; //~WARN: state variable is read but never written
+
+    function _read(Data memory d) internal pure returns (uint256) { return d.val; }
+
+    function get() external view returns (uint256) {
+        Data storage p = slot;
+        return _read(p);
+    }
+}

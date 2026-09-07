@@ -2,8 +2,13 @@ use super::{
     data::{ContractData, PreprocessorData},
     span_to_range,
 };
-use foundry_compilers::Updates;
+use crate::fs::normalize_path;
+use foundry_compilers::{
+    ProjectPathsConfig, Updates,
+    artifacts::{SolcLanguage, remappings::Remapping},
+};
 use itertools::Itertools;
+use path_slash::PathExt;
 use solar::sema::{
     Gcx, Hir,
     hir::{
@@ -31,13 +36,18 @@ impl PreprocessorDependencies {
         gcx: Gcx<'_>,
         paths: &[PathBuf],
         script_paths: &HashSet<PathBuf>,
-        src_dir: &Path,
-        root_dir: &Path,
+        project_paths: &ProjectPathsConfig<SolcLanguage>,
+        source_units: &[PathBuf],
         mocks: &mut HashSet<PathBuf>,
     ) -> Self {
+        let relative_paths = project_paths.paths_relative();
+        let src_dir = &relative_paths.sources;
+        let root_dir = &project_paths.root;
+        let remappings = &project_paths.remappings;
         let mut preprocessed_contracts = BTreeMap::new();
         let mut referenced_contracts = HashSet::new();
         let mut current_mocks = HashSet::new();
+        let mut candidate_files = HashSet::new();
 
         // Helper closure for iterating candidate contracts to preprocess (tests and scripts).
         let candidate_contracts = || {
@@ -63,7 +73,8 @@ impl PreprocessorDependencies {
                 let base = gcx.hir.contract(*base_id);
                 matches!(
                     &gcx.hir.source(base.source).file.name,
-                    FileName::Real(base_path) if base_path.starts_with(src_dir)
+                    FileName::Real(base_path)
+                        if is_path_in_dir(base_path, src_dir, root_dir)
                 )
             }) {
                 let mock_path = root_dir.join(path);
@@ -75,15 +86,12 @@ impl PreprocessorDependencies {
         // Collect dependencies for non-mock test/script contracts.
         for (contract_id, contract, source, path) in candidate_contracts() {
             let full_path = root_dir.join(path);
+            candidate_files.insert(full_path.clone());
 
             if current_mocks.contains(&full_path) {
                 trace!("{} is a mock, skipping", path.display());
                 continue;
             }
-
-            // Make sure current contract is not in list of mocks (could happen when a contract
-            // which used to be a mock is refactored to a non-mock implementation).
-            mocks.remove(&full_path);
 
             // Treat the contract as a script when its file lives under the configured script
             // directory, or when it inherits from a `Script` base (forge-std). The inheritance
@@ -94,21 +102,62 @@ impl PreprocessorDependencies {
                     .iter()
                     .skip(1)
                     .any(|base_id| gcx.hir.contract(*base_id).name.as_str() == "Script");
-            let mut deps_collector =
-                BytecodeDependencyCollector::new(gcx, source.file.src.as_str(), src_dir, is_script);
+            let mut deps_collector = BytecodeDependencyCollector::new(
+                gcx,
+                source.file.src.as_str(),
+                src_dir,
+                root_dir,
+                is_script,
+            );
             // Analyze current contract.
             let _ = deps_collector.walk_contract(contract);
+            let keep_native = (!deps_collector.dependencies.is_empty()
+                && mocks.contains(&full_path))
+                || deps_collector.dependencies.iter().any(|dependency| {
+                    let dependency_id = dependency.referenced_contract;
+                    let dependency = gcx.hir.contract(dependency_id);
+                    let dependency_source = gcx.hir.source(dependency.source);
+                    let FileName::Real(dependency_path) = &dependency_source.file.name else {
+                        return true;
+                    };
+                    let has_constructor_args = dependency
+                        .ctor
+                        .is_some_and(|ctor_id| !gcx.hir.function(ctor_id).parameters.is_empty());
+                    !can_rewrite(
+                        dependency_path,
+                        path,
+                        root_dir,
+                        source_units,
+                        remappings,
+                        has_constructor_args,
+                        dependency_id,
+                    )
+                });
+            if keep_native {
+                trace!("{} has an unsafe bytecode dependency, keeping it native", path.display());
+                current_mocks.insert(full_path.clone());
+                preprocessed_contracts.retain(|contract_id, _| {
+                    let source = gcx.hir.source(gcx.hir.contract(*contract_id).source);
+                    !matches!(&source.file.name, FileName::Real(path) if root_dir.join(path) == full_path)
+                });
+                continue;
+            }
             // Ignore empty test contracts declared in source files with other contracts.
             if !deps_collector.dependencies.is_empty() {
                 preprocessed_contracts.insert(contract_id, deps_collector.dependencies);
             }
-
-            // Record collected referenced contract ids.
-            referenced_contracts.extend(deps_collector.referenced_contracts);
         }
 
-        // Add current mocks.
+        // Replace classifications only for files examined in this compiler job. This clears stale
+        // mocks after a file is refactored while preserving fallback state across narrower jobs.
+        for file in candidate_files {
+            mocks.remove(&file);
+        }
         mocks.extend(current_mocks);
+
+        for dependencies in preprocessed_contracts.values() {
+            referenced_contracts.extend(dependencies.iter().map(|dep| dep.referenced_contract));
+        }
 
         Self { preprocessed_contracts, referenced_contracts }
     }
@@ -155,6 +204,8 @@ struct BytecodeDependencyCollector<'gcx, 'src> {
     src: &'src str,
     /// Project source dir, used to determine if referenced contract is a source contract.
     src_dir: &'src Path,
+    /// Project root, used to compare relative and absolute source paths.
+    root_dir: &'src Path,
     /// Whether the contract being analyzed lives in a script file.
     /// Script bytecode references must not be rewritten: native script CREATE/CREATE2 frames
     /// are handled by the script execution inspector, and `type(Contract).creationCode` must keep
@@ -164,20 +215,24 @@ struct BytecodeDependencyCollector<'gcx, 'src> {
     preserve_native_creation_code: bool,
     /// Dependencies collected for current contract.
     dependencies: Vec<BytecodeDependency>,
-    /// Unique HIR ids of contracts referenced from current contract.
-    referenced_contracts: HashSet<ContractId>,
 }
 
 impl<'gcx, 'src> BytecodeDependencyCollector<'gcx, 'src> {
-    fn new(gcx: Gcx<'gcx>, src: &'src str, src_dir: &'src Path, is_script: bool) -> Self {
+    const fn new(
+        gcx: Gcx<'gcx>,
+        src: &'src str,
+        src_dir: &'src Path,
+        root_dir: &'src Path,
+        is_script: bool,
+    ) -> Self {
         Self {
             gcx,
             src,
             src_dir,
+            root_dir,
             is_script,
             preserve_native_creation_code: false,
             dependencies: vec![],
-            referenced_contracts: HashSet::default(),
         }
     }
 
@@ -225,15 +280,82 @@ impl<'gcx, 'src> BytecodeDependencyCollector<'gcx, 'src> {
             return;
         };
 
-        if !path.starts_with(self.src_dir) {
+        // Remapped imports can have absolute or symlinked paths, while compiler input paths are
+        // relative and configured source directories can be canonicalized.
+        if !is_path_in_dir(path, self.src_dir, self.root_dir) {
             let path = path.display();
             trace!("ignore dependency {path}");
             return;
         }
 
-        self.referenced_contracts.insert(dependency.referenced_contract);
         self.dependencies.push(dependency);
     }
+}
+
+/// Returns whether generated helper and artifact references preserve the source-unit identity.
+fn can_rewrite(
+    path: &Path,
+    source_path: &Path,
+    root_dir: &Path,
+    source_units: &[PathBuf],
+    remappings: &[Remapping],
+    has_constructor_args: bool,
+    contract_id: ContractId,
+) -> bool {
+    let generated_path = path.strip_prefix(root_dir).unwrap_or(path);
+    if !source_units.iter().any(|source_unit| source_unit == generated_path)
+        || source_units.iter().filter(|source_unit| source_unit.ends_with(generated_path)).count()
+            != 1
+    {
+        return false;
+    }
+
+    // Runtime artifact lookup uses the running test's context, which can differ from the source
+    // containing an inherited helper. Any remapping matching the generated path is therefore
+    // unsafe unless every possible runtime context is known.
+    if remappings.iter().any(|remapping| remapping_matches_path(remapping, generated_path)) {
+        return false;
+    }
+
+    if !has_constructor_args {
+        return true;
+    }
+
+    let helper_path = PathBuf::from(format!("foundry-pp/DeployHelper{}.sol", contract_id.index()));
+    !remappings.iter().any(|remapping| {
+        // The test imports the generated helper, which in turn imports the dependency.
+        remapping_applies(remapping, &helper_path, source_path, root_dir)
+            || remapping_applies(remapping, generated_path, &helper_path, root_dir)
+    })
+}
+
+/// Returns whether `path` resolves within `dir`, accepting relative, absolute, and symlinked paths.
+fn is_path_in_dir(path: &Path, dir: &Path, root_dir: &Path) -> bool {
+    let path = normalize_path(&root_dir.join(path));
+    let dir = normalize_path(&root_dir.join(dir));
+    path.starts_with(&dir)
+        || dunce::canonicalize(path)
+            .is_ok_and(|path| dunce::canonicalize(dir).is_ok_and(|dir| path.starts_with(dir)))
+}
+
+/// Returns whether a generated import would be redirected by `remapping`.
+fn remapping_applies(
+    remapping: &Remapping,
+    import_path: &Path,
+    source_unit: &Path,
+    root_dir: &Path,
+) -> bool {
+    let source_unit = source_unit.strip_prefix(root_dir).unwrap_or(source_unit).to_slash_lossy();
+    remapping
+        .context
+        .as_ref()
+        .is_none_or(|context| source_unit.starts_with(Path::new(context).to_slash_lossy().as_ref()))
+        && remapping_matches_path(remapping, import_path)
+}
+
+/// Returns whether `path` has the string prefix selected by `remapping`.
+fn remapping_matches_path(remapping: &Remapping, path: &Path) -> bool {
+    path.to_slash_lossy().starts_with(&remapping.name)
 }
 
 impl<'gcx> Visit<'gcx> for BytecodeDependencyCollector<'gcx, '_> {
@@ -470,7 +592,7 @@ pub(crate) fn remove_bytecode_dependencies(
                     }
 
                     if constructor_data.is_some() {
-                        // Insert our helper
+                        // Insert our helper.
                         used_helpers.insert(dep.referenced_contract);
 
                         update.push_str(", ");

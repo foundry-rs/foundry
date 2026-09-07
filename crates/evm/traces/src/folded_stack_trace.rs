@@ -105,7 +105,9 @@ impl EvmFoldedStackTraceBuilder {
         if let Some(decoded_step) = &step.decoded {
             match decoded_step.as_ref() {
                 DecodedTraceStep::InternalCall(decoded_internal_call, step_end_idx) => {
-                    let gas_used = step.gas_remaining - steps[*step_end_idx].gas_remaining;
+                    // Gas metering resets can increase the remaining gas across an internal call.
+                    let gas_used =
+                        step.gas_remaining.saturating_sub(steps[*step_end_idx].gas_remaining);
                     self.fst.enter(decoded_internal_call.func_name.clone(), gas_used);
                     step_exits.push(*step_end_idx);
                 }
@@ -378,6 +380,30 @@ mod tests {
         assert_eq!(
             super::build(&arena, false),
             vec!["fallback 70", "fallback;DebugVarsTest::foo(uint256) 30",]
+        );
+    }
+
+    #[test]
+    fn folded_stack_trace_saturates_internal_call_gas_on_reset_metering() {
+        // Model an internal call whose gas meter resets before returning.
+        let mut arena = CallTraceArena::default();
+        let root = &mut arena.nodes_mut()[0];
+        root.trace.gas_used = 100;
+        root.trace.gas_limit = 100;
+        root.trace.steps = vec![trace_step(70), trace_step(100)];
+        root.trace.steps[0].decoded = Some(Box::new(DecodedTraceStep::InternalCall(
+            DecodedInternalCall {
+                func_name: "DebugVarsTest::resetsGas()".to_string(),
+                args: None,
+                return_data: None,
+            },
+            1,
+        )));
+        root.ordering = vec![TraceMemberOrder::Step(0), TraceMemberOrder::Step(1)];
+
+        assert_eq!(
+            super::build(&arena, false),
+            vec!["fallback 100", "fallback;DebugVarsTest::resetsGas() 0",]
         );
     }
 }
