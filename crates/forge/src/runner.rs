@@ -296,6 +296,7 @@ pub(crate) struct InvariantCampaignScope<'a> {
 struct InvariantCampaignSelection<'a> {
     matched_boolean_invariant_fns: Vec<&'a Function>,
     merge_boolean_suite: bool,
+    shared_boolean_namespace: bool,
     boolean_suite_anchor: Option<&'a Function>,
     optimization_anchors: usize,
 }
@@ -416,11 +417,18 @@ fn select_invariant_campaigns<'a>(
         .filter(|func| func.is_invariant_test() && is_optimization_invariant(func))
         .count();
 
-    // A uniformly configured boolean suite is contract-level. Decide from the full suite so test
-    // filters cannot change its corpus/frontier namespace, then use the canonical anchor when it
-    // remains selected. Differently configured predicates stay isolated.
+    // Merge compatible selected predicates even when an excluded predicate has different config.
+    // Decide the corpus/frontier namespace separately from the full suite so filtering cannot
+    // move an isolated campaign into the contract-level namespace.
     let canonical_boolean_anchor = boolean_invariant_fns.first().copied();
     let merge_boolean_suite = !matched_boolean_invariant_fns.is_empty()
+        && invariant_suite_configs_match(
+            config,
+            inline_config,
+            contract_name,
+            &matched_boolean_invariant_fns,
+        );
+    let shared_boolean_namespace = merge_boolean_suite
         && invariant_suite_configs_match(
             config,
             inline_config,
@@ -438,6 +446,7 @@ fn select_invariant_campaigns<'a>(
     InvariantCampaignSelection {
         matched_boolean_invariant_fns,
         merge_boolean_suite,
+        shared_boolean_namespace,
         boolean_suite_anchor,
         optimization_anchors,
     }
@@ -699,6 +708,53 @@ mod tests {
             .unwrap();
 
         assert_eq!(count_anchors(&abi, &inline_config), 2);
+    }
+
+    #[test]
+    fn selected_campaign_merges_without_changing_namespace() {
+        let abi = JsonAbi::parse([
+            "function invariantOne() external",
+            "function invariantTwo() external",
+            "function invariantThree() external",
+        ])
+        .unwrap();
+        let functions = abi.functions().collect::<Vec<_>>();
+        let selected = functions
+            .iter()
+            .copied()
+            .filter(|func| func.name != "invariantThree")
+            .collect::<Vec<_>>();
+        let mut inline_config = InlineConfig::new();
+        inline_config
+            .insert(&NatSpec {
+                contract: CONTRACT_NAME.to_string(),
+                function: Some("invariantThree".to_string()),
+                line: "1:1".to_string(),
+                docs: "forge-config: default.invariant.fail-on-revert = true".to_string(),
+            })
+            .unwrap();
+        let config = Config::default();
+        let selection = select_invariant_campaigns(
+            &functions,
+            &selected,
+            &config,
+            &inline_config,
+            CONTRACT_NAME,
+        );
+        assert_eq!(selection.anchor_count(), 1);
+        assert!(selection.merge_boolean_suite);
+        assert!(!selection.shared_boolean_namespace);
+
+        let uniform = select_invariant_campaigns(
+            &functions,
+            &selected,
+            &config,
+            &InlineConfig::new(),
+            CONTRACT_NAME,
+        );
+        assert_eq!(uniform.anchor_count(), 1);
+        assert!(uniform.merge_boolean_suite);
+        assert!(uniform.shared_boolean_namespace);
     }
 
     #[test]
@@ -1386,6 +1442,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         let InvariantCampaignSelection {
             matched_boolean_invariant_fns,
             merge_boolean_suite: merge_invariant_suite,
+            shared_boolean_namespace,
             boolean_suite_anchor: invariant_suite_anchor,
             optimization_anchors: _,
         } = select_invariant_campaigns(
@@ -1450,7 +1507,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                 let mut res = FunctionRunner::new(&self, &setup).run(
                     func,
                     invariants,
-                    merge_invariant_suite,
+                    shared_boolean_namespace,
                     kind,
                     call_after_invariant,
                     identified_contracts.as_ref(),
@@ -2091,7 +2148,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         mut self,
         func: &Function,
         invariants: &[&Function],
-        merge_invariant_suite: bool,
+        shared_invariant_namespace: bool,
         kind: TestFunctionKind,
         call_after_invariant: bool,
         identified_contracts: Option<&ContractsByAddress>,
@@ -2142,7 +2199,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 self.run_invariant_test(
                     func,
                     invariant_fns,
-                    merge_invariant_suite,
+                    shared_invariant_namespace,
                     call_after_invariant,
                     identified_contracts.unwrap(),
                 )
@@ -3803,7 +3860,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         mut self,
         func: &Function,
         invariants: Vec<(&Function, bool)>,
-        merge_invariant_suite: bool,
+        shared_invariant_namespace: bool,
         call_after_invariant: bool,
         identified_contracts: &ContractsByAddress,
     ) -> TestResult {
@@ -3815,7 +3872,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         let invariant_config = &invariant_config;
         let is_optimization = is_optimization_invariant(func);
         let isolated_campaign =
-            (is_optimization || !merge_invariant_suite).then_some(func.name.as_str());
+            (is_optimization || !shared_invariant_namespace).then_some(func.name.as_str());
 
         let mut live_invariants = Vec::new();
         let mut skipped_predicate_results = Vec::new();
