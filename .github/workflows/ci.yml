@@ -217,9 +217,16 @@ jobs:
 
   deny:
     needs: cargo-cooldown
-    uses: tempoxyz/ci/.github/workflows/deny.yml@268b3ce142717ff86c58fbbcc3abc3f109f0fb8d # main
+    uses: tempoxyz/gh-actions/.github/workflows/rust-lint.yml@9b0664503f535261c1d4af0aadf0098bb7cbf26f # main
     permissions:
       contents: read
+    secrets:
+      STEP_SECURITY_API_KEY: ${{ secrets.STEP_SECURITY_API_KEY }}
+    with:
+      run-clippy: false
+      run-fmt: false
+      run-typos: false
+      deny-rust-toolchain: nightly
 
   codeql:
     name: analyze (${{ matrix.language }})
