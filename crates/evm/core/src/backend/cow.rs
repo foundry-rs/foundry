@@ -209,8 +209,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for CowBackend<'_, FEN
     }
 
     fn delete_state_snapshots(&mut self) {
-        // Same reasoning as `delete_state_snapshot`: avoid cloning when there's nothing to
-        // clear.
+        // Avoid cloning when there are no snapshots.
         if self.backend.state_snapshots().is_empty() {
             return;
         }

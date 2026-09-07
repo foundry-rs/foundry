@@ -1,5 +1,7 @@
 ---
 foundry-evm: patch
+forge: patch
+foundry-evm-core: patch
 ---
 
-Fixed `vm.deleteStateSnapshot`/`vm.deleteStateSnapshots` silently returning `false`/no-op for a snapshot taken before the current fuzz run's first mutating cheatcode call (e.g. a snapshot taken in `setUp()`), even though the snapshot genuinely exists.
+Fixed deletion of setup snapshots before the test backend is initialized.
