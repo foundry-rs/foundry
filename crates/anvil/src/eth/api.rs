@@ -4375,9 +4375,15 @@ impl EthApi<FoundryNetwork> {
 
         let mut blocks = Vec::with_capacity(mined_blocks as usize);
 
+        // `latest` is a fresh read taken after mining completes, not a value carried through
+        // the loop above: a concurrent chain-height-mutating call (e.g. `anvil_rollback`) can
+        // still land between the last mined block and this read, or between iterations here,
+        // leaving `latest` lower than `mined_blocks - 1` implies. Use `checked_sub` and skip
+        // numbers that no longer exist instead of assuming the subtraction always fits - this can
+        // legitimately return fewer than `mined_blocks` blocks rather than panicking or wrapping.
         let latest = self.backend.best_number();
         for offset in (0..mined_blocks).rev() {
-            let block_num = latest - offset;
+            let Some(block_num) = latest.checked_sub(offset) else { continue };
             if let Some(mut block) =
                 self.backend.block_by_number_full(BlockNumber::Number(block_num)).await?
             {
@@ -5308,6 +5314,43 @@ fn reward_at_percentile(rewards: &[u128], percentile: f64) -> u128 {
 mod tests {
     use super::*;
     use crate::{NodeConfig, spawn};
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn evm_mine_detailed_handles_concurrent_rollback() {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            for _ in 0..20 {
+                let (api, _handle) = spawn(NodeConfig::test().with_no_mining(true)).await;
+                let mining_api = api.clone();
+                let mining = tokio::spawn(async move {
+                    mining_api
+                        .evm_mine_detailed(Some(MineOptions::Options {
+                            timestamp: None,
+                            blocks: Some(50),
+                        }))
+                        .await
+                });
+
+                while !mining.is_finished() {
+                    if api.backend.best_number() >= 5 {
+                        api.anvil_rollback(Some(5)).await.unwrap();
+                    }
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+
+                let blocks = mining.await.unwrap().unwrap();
+                assert!(blocks.len() <= 50);
+                assert!(
+                    blocks.windows(2).all(|pair| pair[0].header.number < pair[1].header.number)
+                );
+                if blocks.len() < 50 {
+                    return;
+                }
+            }
+            panic!("rollback did not shorten the mined block range");
+        })
+        .await
+        .unwrap();
+    }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn set_rpc_url_installs_context_equivalent_identity_with_new_instance() {

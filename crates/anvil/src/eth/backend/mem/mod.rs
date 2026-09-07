@@ -6825,6 +6825,13 @@ where
     /// The state of the chain is rewound using `rewind` to the common block, including the db,
     /// storage, and env.
     pub async fn rollback(&self, common_block: Block) -> Result<(), BlockchainError> {
+        // Hold the same lock `do_mine_block` takes so a rollback can never interleave with an
+        // in-flight mine: without this, a concurrent multi-block mine (e.g. `evm_mine_detailed`)
+        // can have a block it just mined vanish out from under it mid-loop, surfacing as a
+        // confusing `BlockNotFound` (or, if the height read happens to land after the unwind,
+        // an out-of-range block number) instead of either running to completion or failing
+        // cleanly up front.
+        let _mining_guard = self.mining.lock().await;
         let hash = common_block.header.hash_slow();
 
         // Get the database at the common block
