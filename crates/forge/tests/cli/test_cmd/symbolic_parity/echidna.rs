@@ -7,7 +7,9 @@ use foundry_test_utils::{forgetest_init, str, util::OutputExt};
 // ---------------------------------------------------------------------------
 // Source: https://github.com/crytic/echidna/blob/master/tests/solidity/basic/flags.sol
 // Echidna finds a sequence that falsifies `echidna_sometimesfalse`.
-// We port it as a stateful symbolic invariant with bounded depth.
+// We port it as a stateful symbolic invariant with bounded depth under the
+// default per-call invariant check, so the engine already reports the shortest
+// failing prefix and minimization has nothing left to shrink.
 forgetest_init!(echidna_flags_parity, |prj, cmd| {
     skip_unless_z3!("echidna_flags_parity");
 
@@ -65,12 +67,11 @@ contract EchidnaFlagsParity is Test {
     let failure = failures.first().expect("invariant failure");
     let minimization = &failure["minimization"];
     assert_eq!(failure["artifact"], minimization["minimized"]);
+    // With the default check interval the engine reports the shortest failing prefix, so the
+    // two-call witness is already minimal and minimization must leave it alone.
+    assert_eq!(minimization["original_sequence_len"], 2);
     assert_eq!(minimization["minimized_sequence_len"], 2);
-    assert!(
-        minimization["original_sequence_len"].as_u64().unwrap()
-            > minimization["minimized_sequence_len"].as_u64().unwrap()
-    );
-    assert!(minimization["accepted"].as_u64().unwrap() > 0);
+    assert_eq!(minimization["original_calldata_bytes"], minimization["minimized_calldata_bytes"]);
 
     let original = read_artifact_ref(&minimization["original"]);
     let minimized = read_artifact_ref(&minimization["minimized"]);
@@ -104,6 +105,8 @@ contract EchidnaFlagsParity is Test {
 // ---------------------------------------------------------------------------
 // Source: https://github.com/crytic/echidna/blob/master/tests/solidity/basic/revert.sol
 // Echidna's suite asserts this shrinks to one `f(int,address,address)` call.
+// The invariant is only checked at the terminal depth so there is a longer
+// sequence to shrink.
 forgetest_init!(echidna_revert_magic_args_parity, |prj, cmd| {
     skip_unless_z3!("echidna_revert_magic_args_parity");
 
@@ -134,6 +137,8 @@ contract EchidnaRevertParity is Test {
         targetContract(address(target));
     }
 
+    /// forge-config: default.symbolic.invariant_depth = 3
+    /// forge-config: default.invariant.check_interval = 0
     /// forge-config: default.invariant.runs = 1
     /// forge-config: default.invariant.depth = 20
     /// forge-config: default.invariant.shrink_run_limit = 10000

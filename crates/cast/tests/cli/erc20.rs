@@ -725,3 +725,247 @@ forgetest_async!(erc20_metadata_json, |prj, cmd| {
     let total_supply: U256 = v["data"].as_str().expect("string data").parse().unwrap();
     assert_eq!(total_supply, U256::from(1_000_000_000_000_000_000_000u128));
 });
+
+async fn setup_permit_test(
+    prj: &foundry_test_utils::TestProject,
+    cmd: &mut foundry_test_utils::TestCommand,
+) -> (String, String, NodeHandle) {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source("TestToken.sol", include_str!("../fixtures/PermitToken.sol"));
+    cmd.forge_fuse();
+    let token = deploy_test_token(cmd, &rpc, anvil_const::PK1);
+    (rpc, token, handle)
+}
+
+casttest!(erc20_permit_sign_and_relay, async |prj, cmd| {
+    let (rpc, token, _handle) = setup_permit_test(&prj, &mut cmd).await;
+    let output = cmd
+        .cast_fuse()
+        .args([
+            "erc20",
+            "permit",
+            &token,
+            anvil_const::ADDR2,
+            "123",
+            "--deadline",
+            "4000000000",
+            "--private-key",
+            anvil_const::PK1,
+            "--rpc-url",
+            &rpc,
+            "--json",
+        ])
+        .assert_json_stdout_with_status(
+            true,
+            str![[r#"
+{
+  "schema_version": 1,
+  "success": true,
+  "data": {
+    "token": "0x5fbdb2315678afecb367f032d93f642f64180aa3",
+    "owner": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+    "spender": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
+    "value": "123",
+    "nonce": "0",
+    "deadline": "4000000000",
+    "signature": "[..]",
+    "calldata": "[..]",
+    "typed_data": "{...}"
+  },
+  "errors": [],
+  "warnings": []
+}
+"#]],
+        );
+    // Extract calldata for a real submission by another account, not just a snapshot assertion.
+    let output = serde_json::from_slice::<serde_json::Value>(&output.get_output().stdout).unwrap();
+    let calldata = output["data"]["calldata"].as_str().unwrap();
+    let signature = output["data"]["signature"].as_str().unwrap();
+    cmd.cast_fuse()
+        .args([
+            "erc20",
+            "permit",
+            &token,
+            anvil_const::ADDR2,
+            "123",
+            "--deadline",
+            "4000000000",
+            "--private-key",
+            anvil_const::PK1,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_success()
+        .stdout_eq(format!("{signature}\n"));
+    assert_eq!(
+        get_allowance(&mut cmd, &token, anvil_const::ADDR1, anvil_const::ADDR2, &rpc),
+        U256::ZERO
+    );
+    cmd.cast_fuse()
+        .args([
+            "send",
+            &token,
+            "--data",
+            calldata,
+            "--private-key",
+            anvil_const::_PK2,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_success();
+    assert_eq!(
+        get_allowance(&mut cmd, &token, anvil_const::ADDR1, anvil_const::ADDR2, &rpc),
+        U256::from(123)
+    );
+    cmd.cast_fuse()
+        .args(["call", &token, "nonces(address)(uint256)", anvil_const::ADDR1, "--rpc-url", &rpc])
+        .assert_success()
+        .stdout_eq(str![[r#"
+1
+
+"#]]);
+    // A consumed permit cannot be replayed.
+    cmd.cast_fuse()
+        .args([
+            "send",
+            &token,
+            "--data",
+            calldata,
+            "--private-key",
+            anvil_const::_PK2,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_failure();
+});
+
+casttest!(erc20_permit_broadcast_and_domain_fallback, async |prj, cmd| {
+    let (rpc, token, _handle) = setup_permit_test(&prj, &mut cmd).await;
+    for (version, discovery, extra) in [
+        ("2", "true", vec![]),
+        ("1", "false", vec![]),
+        ("2", "false", vec!["--domain-version", "2"]),
+    ] {
+        cmd.cast_fuse()
+            .args([
+                "send",
+                &token,
+                "setDomain(string,bool)",
+                version,
+                discovery,
+                "--private-key",
+                anvil_const::PK1,
+                "--rpc-url",
+                &rpc,
+            ])
+            .assert_success();
+        cmd.cast_fuse()
+            .args([
+                "erc20",
+                "permit",
+                &token,
+                anvil_const::ADDR2,
+                "456",
+                "--deadline",
+                "4000000000",
+                "--private-key",
+                anvil_const::PK1,
+                "--rpc-url",
+                &rpc,
+                "--broadcast",
+            ])
+            .args(extra)
+            .assert_success();
+        assert_eq!(
+            get_allowance(&mut cmd, &token, anvil_const::ADDR1, anvil_const::ADDR2, &rpc),
+            U256::from(456)
+        );
+    }
+    cmd.cast_fuse()
+        .args([
+            "erc20",
+            "permit",
+            &token,
+            anvil_const::ADDR2,
+            "456",
+            "--deadline",
+            "4000000000",
+            "--private-key",
+            anvil_const::PK1,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: EIP-712 domain does not match DOMAIN_SEPARATOR(); check --domain-name and --domain-version
+
+"#]]);
+});
+
+casttest!(erc20_permit_rejects_wrong_owner_and_expired_submission, async |prj, cmd| {
+    let (rpc, token, _handle) = setup_permit_test(&prj, &mut cmd).await;
+    cmd.cast_fuse()
+        .args([
+            "erc20",
+            "permit",
+            &token,
+            anvil_const::ADDR2,
+            "123",
+            "--deadline",
+            "4000000000",
+            "--private-key",
+            anvil_const::PK1,
+            "--chain",
+            "mainnet",
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: Configured chain does not match the RPC chain
+
+"#]]);
+    cmd.cast_fuse()
+        .args([
+            "erc20",
+            "permit",
+            &token,
+            anvil_const::ADDR2,
+            "123",
+            "--deadline",
+            "4000000000",
+            "--private-key",
+            anvil_const::PK1,
+            "--from",
+            anvil_const::ADDR2,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: --from must match the permit signing wallet
+
+"#]]);
+    cmd.cast_fuse()
+        .args([
+            "erc20",
+            "permit",
+            &token,
+            anvil_const::ADDR2,
+            "123",
+            "--deadline",
+            "0",
+            "--private-key",
+            anvil_const::PK1,
+            "--rpc-url",
+            &rpc,
+            "--broadcast",
+        ])
+        .assert_failure();
+    assert_eq!(
+        get_allowance(&mut cmd, &token, anvil_const::ADDR1, anvil_const::ADDR2, &rpc),
+        U256::ZERO
+    );
+});

@@ -28,11 +28,11 @@ impl<'ast> ProjectLintPass<'ast> for InternalFunctionUsedOnce {
             return;
         }
         let gcx = ctx.gcx();
-        let hir = &gcx.hir;
 
         // Only functions declared in user-provided files are reported, while references are
         // counted across the whole unit, dependencies included.
-        let input_source_idx: HashMap<_, _> = hir
+        let input_source_idx: HashMap<_, _> = gcx
+            .hir
             .sources_enumerated()
             .filter_map(|(sid, src)| {
                 let FileName::Real(path) = &src.file.name else { return None };
@@ -46,8 +46,8 @@ impl<'ast> ProjectLintPass<'ast> for InternalFunctionUsedOnce {
         // A function bound as a user-defined operator (`using {f as +} for T`) is out of scope:
         // its operator uses are not `Ident`/`Member` references, and the binding requires a
         // named function anyway.
-        let source_usings = hir.source_ids().flat_map(|id| hir.source(id).usings);
-        let contract_usings = hir.contract_ids().flat_map(|id| hir.contract(id).usings);
+        let source_usings = gcx.hir.source_ids().flat_map(|id| gcx.hir.source(id).usings);
+        let contract_usings = gcx.hir.contract_ids().flat_map(|id| gcx.hir.contract(id).usings);
         let operator_bound: HashSet<_> = source_usings
             .chain(contract_usings)
             .flat_map(|directive| directive.entries)
@@ -62,13 +62,13 @@ impl<'ast> ProjectLintPass<'ast> for InternalFunctionUsedOnce {
 
         let mut counter =
             ReferenceCounter { gcx, current: None, callee: None, refs: HashMap::new() };
-        for source_id in hir.source_ids() {
+        for source_id in gcx.hir.source_ids() {
             let _ = counter.visit_nested_source(source_id);
         }
         let refs = counter.refs;
 
-        for function_id in hir.function_ids() {
-            let function = hir.function(function_id);
+        for function_id in gcx.hir.function_ids() {
+            let function = gcx.hir.function(function_id);
             let Some(&src_idx) = input_source_idx.get(&function.source) else { continue };
             // Only ordinary internal functions with a body qualify. `virtual` functions and
             // overrides exist for dynamic dispatch, and a `_`-prefixed name follows the hook

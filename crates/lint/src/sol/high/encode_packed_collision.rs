@@ -11,7 +11,7 @@ use solar::{
     interface::sym,
     sema::{
         Gcx,
-        hir::{Expr, ExprKind, Hir},
+        hir::{Expr, ExprKind},
     },
 };
 
@@ -22,14 +22,8 @@ declare_forge_lint!(
     "`abi.encodePacked()` called with multiple dynamic type arguments; hash collisions possible"
 );
 
-impl<'hir> LateLintPass<'hir> for EncodedPackedCollision {
-    fn check_expr(
-        &mut self,
-        ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        _hir: &'hir Hir<'hir>,
-        expr: &'hir Expr<'hir>,
-    ) {
+impl<'gcx> LateLintPass<'gcx> for EncodedPackedCollision {
+    fn check_expr(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, expr: &'gcx Expr<'gcx>) {
         let ExprKind::Call(callee, args, _) = &expr.kind else { return };
         let ExprKind::Member(base, member) = &callee.peel_parens().kind else { return };
         if member.name != sym::encodePacked || !is_builtin(base, sym::abi) {
@@ -50,7 +44,7 @@ fn is_str_lit(expr: &Expr<'_>) -> bool {
     matches!(expr.peel_parens().kind, ExprKind::Lit(lit) if matches!(lit.kind, LitKind::Str(..)))
 }
 
-fn is_dynamic_arg<'hir>(gcx: Gcx<'hir>, expr: &Expr<'hir>) -> bool {
+fn is_dynamic_arg<'gcx>(gcx: Gcx<'gcx>, expr: &Expr<'gcx>) -> bool {
     match &expr.peel_parens().kind {
         // String literals (and multi-line/hex string sequences) are always dynamic.
         ExprKind::Lit(_) => is_str_lit(expr),

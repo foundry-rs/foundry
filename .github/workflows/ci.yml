@@ -57,8 +57,8 @@ jobs:
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          cache-targets: false
-          prefix-key: v1-rust-doctest-no-target
+          cache-bin: false
+          prefix-key: v2-rust-doctest
       - run: cargo test --workspace --doc --locked
 
   no-default-features:
@@ -76,6 +76,10 @@ jobs:
           toolchain: stable
       - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          cache-bin: false
+          prefix-key: v1-rust-no-default-features
       - run: cargo build --workspace --no-default-features --locked
 
   touch-id-link:
@@ -205,9 +209,8 @@ jobs:
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          cache-targets: false
           cache-bin: false
-          prefix-key: v1-rust-forge-fmt-no-target
+          prefix-key: v2-rust-forge-fmt
       - name: forge fmt
         shell: bash
         run: ./.github/scripts/format.sh --check

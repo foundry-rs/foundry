@@ -31,7 +31,7 @@ contract MedusaAssertionParity {
 ...
 Failing tests:
 Encountered 1 failing test in test/MedusaAssertionParity.t.sol:MedusaAssertionParity
-[FAIL: panic: assertion failed (0x01); counterexample: calldata=0xda659cbe000000000000000000000000000000000000000000000000deadbeefcafebabe args=[16045690984503098046 [1.604e19]]] checkNoMagic(uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0xda659cbe000000000000000000000000000000000000000000000000deadbeefcafebabe args=[16045690984503098046 [1.604e19]]] checkNoMagic(uint256) ([METRICS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 

@@ -3,9 +3,6 @@ name: docs
 permissions: {}
 
 on:
-  push:
-    branches:
-      - master
   workflow_call:
 
 concurrency:

@@ -4789,6 +4789,26 @@ fn gasleft_fails_at_smt_emission() {
 
 #[cfg(unix)]
 #[test]
+fn gasleft_model_fails_closed() {
+    let mut cx = SymCx::new();
+    let marker = portfolio_test_marker("gasleft-model");
+    let commands = vec![counted_solver_command(&marker, "sat")];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
+    let gas = SymExpr::gas_left(&mut cx, 0);
+    let limit = SymExpr::constant(&mut cx, U256::from(10));
+    let constraints = vec![SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, gas, limit)];
+
+    let err = solver.model(&mut cx, &constraints).unwrap_err();
+    assert!(matches!(err, SymbolicError::Unsupported("GAS/gasleft() not modeled")));
+
+    let stats = solver.stats();
+    assert_eq!(stats.smt_queries, 0);
+    assert_eq!(counted_solver_invocations(&marker), 0);
+    let _ = std::fs::remove_file(&marker);
+}
+
+#[cfg(unix)]
+#[test]
 fn model_uses_single_var_witness_before_solver() {
     let mut cx = SymCx::new();
     let marker = portfolio_test_marker("single-var-model");
