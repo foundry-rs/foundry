@@ -25,7 +25,6 @@ use foundry_common::{
 use foundry_config::{Chain, Config, Eip1559FeeEstimatePreset};
 use foundry_wallets::{BrowserWalletOpts, TempoAccountsWallet, WalletOpts, WalletSigner};
 use itertools::Itertools;
-use serde_json::value::RawValue;
 use std::{fmt::Write, marker::PhantomData, str::FromStr, time::Duration};
 
 #[derive(Debug, Clone, Args)]
@@ -61,6 +60,13 @@ pub struct SendTxOpts {
     pub browser: BrowserWalletOpts,
 }
 
+/// Applies the `--poll-interval` (in seconds) to a provider's receipt polling when one was given.
+pub(crate) fn apply_poll_interval<N: Network>(provider: &impl Provider<N>, interval: Option<u64>) {
+    if let Some(interval) = interval {
+        provider.client().set_poll_interval(Duration::from_secs(interval));
+    }
+}
+
 /// Transaction options shared across cast commands that submit on-chain transactions.
 #[derive(Debug, Clone, Args)]
 #[command(next_help_heading = "Transaction options")]
@@ -90,23 +96,7 @@ impl TxParams {
     where
         N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
-        if let Some(gas_limit) = self.gas_limit {
-            tx.set_gas_limit(gas_limit.to());
-        }
-
-        if let Some(gas_price) = self.gas_price {
-            if legacy {
-                tx.set_gas_price(gas_price.to());
-            } else {
-                tx.set_max_fee_per_gas(gas_price.to());
-            }
-        }
-
-        if !legacy && let Some(priority_fee) = self.priority_gas_price {
-            tx.set_max_priority_fee_per_gas(priority_fee.to());
-        }
-
-        self.tempo.apply::<N>(tx, self.nonce.map(|n| n.to()));
+        self.clone().into_transaction_opts().apply::<N>(tx, legacy);
     }
 
     /// Converts the shared compact transaction options into the full `cast send` options.
@@ -151,23 +141,18 @@ impl SenderKind<'_> {
 
     /// Resolves the sender from the wallet options.
     ///
-    /// This function prefers the `from` field and may return a different address from the
-    /// configured signer
-    /// If from is specified, returns it
-    /// If from is not specified, but there is a signer configured, returns the signer's address
-    /// If from is not specified and there is no signer configured, returns zero address
+    /// Prefers a configured signer (or Tempo wallet account) over `from`, and falls back to the
+    /// zero address when neither is available.
     pub async fn from_wallet_opts(mut opts: WalletOpts) -> Result<Self> {
         let from = opts.from.take();
         let (signer, tempo_wallet) = opts.maybe_signer().await?;
-        if let Some(signer) = signer {
-            Ok(Self::OwnedSigner(Box::new(signer)))
+        Ok(if let Some(signer) = signer {
+            signer.into()
         } else if let Some(tempo_wallet) = tempo_wallet {
-            Ok(tempo_wallet.account().into())
-        } else if let Some(from) = from {
-            Ok(from.into())
+            tempo_wallet.account().into()
         } else {
-            Ok(Address::ZERO.into())
-        }
+            from.unwrap_or_default().into()
+        })
     }
 
     /// Returns the signer if available.
@@ -175,7 +160,7 @@ impl SenderKind<'_> {
         match self {
             Self::Signer(signer) => Some(signer),
             Self::OwnedSigner(signer) => Some(signer.as_ref()),
-            _ => None,
+            Self::Address(_) => None,
         }
     }
 }
@@ -196,6 +181,18 @@ impl From<WalletSigner> for SenderKind<'_> {
     fn from(signer: WalletSigner) -> Self {
         Self::OwnedSigner(Box::new(signer))
     }
+}
+
+/// Resolves the sender of a read-only request: the browser wallet address when `--browser` is
+/// set, otherwise the wallet options. Also returns whether the browser wallet was used.
+pub(crate) async fn read_only_sender<N: Network>(
+    browser: &BrowserWalletOpts,
+    wallet: WalletOpts,
+) -> Result<(SenderKind<'static>, bool)> {
+    Ok(match browser.run::<N>().await? {
+        Some(browser) => (browser.address().into(), true),
+        None => (SenderKind::from_wallet_opts(wallet).await?, false),
+    })
 }
 
 /// Validates that `sender` can resolve every EIP-7702 authorization.
@@ -221,6 +218,21 @@ pub(crate) fn validate_authorizations(
     }
 
     Ok(())
+}
+
+/// Resolves the sending signer, falling back to the wallet options, and validates it against an
+/// explicit `--from`.
+pub(crate) async fn resolve_send_signer(
+    pre_resolved: Option<WalletSigner>,
+    eth: &EthereumOpts,
+) -> Result<(WalletSigner, Address)> {
+    let signer = match pre_resolved {
+        Some(signer) => signer,
+        None => eth.wallet.signer().await?,
+    };
+    let from = signer.address();
+    validate_from_address(eth.wallet.from, from)?;
+    Ok((signer, from))
 }
 
 /// Prevents a misconfigured hwlib from sending a transaction that defies user-specified --from
@@ -277,77 +289,19 @@ where
 
     /// Sends a transaction and waits for receipt synchronously
     pub async fn send_sync(&self, tx: N::TransactionRequest) -> Result<(B256, String)> {
-        let mut receipt = TransactionReceiptWithRevertReason::<N> {
-            receipt: self.provider.send_transaction_sync(tx).await?,
-            revert_reason: None,
-        };
-        let tx_hash = receipt.receipt.transaction_hash();
-        // Allow to fail silently
-        let _ = receipt.update_revert_reason(&self.provider).await;
-
-        self.format_receipt(receipt, None).map(|formatted| (tx_hash, formatted))
+        let receipt = self.provider.send_transaction_sync(tx).await?;
+        self.finish(receipt, None).await
     }
 
-    /// Sends a transaction to the specified address
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use cast::tx::CastTxSender;
-    /// use alloy_primitives::{Address, U256, Bytes};
-    /// use alloy_serde::WithOtherFields;
-    /// use alloy_rpc_types::{TransactionRequest};
-    /// use alloy_provider::{RootProvider, ProviderBuilder, network::AnyNetwork};
-    /// use std::str::FromStr;
-    /// use alloy_sol_types::{sol, SolCall};    ///
-    ///
-    /// sol!(
-    ///     function greet(string greeting) public;
-    /// );
-    ///
-    /// # async fn foo() -> eyre::Result<()> {
-    /// let provider = ProviderBuilder::<_,_, AnyNetwork>::default().connect("http://localhost:8545").await?;;
-    /// let from = Address::from_str("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")?;
-    /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
-    /// let greeting = greetCall { greeting: "hello".to_string() }.abi_encode();
-    /// let bytes = Bytes::from_iter(greeting.iter());
-    /// let gas = U256::from_str("200000").unwrap();
-    /// let value = U256::from_str("1").unwrap();
-    /// let nonce = U256::from_str("1").unwrap();
-    /// let tx = TransactionRequest::default().to(to).input(bytes.into()).from(from);
-    /// let tx = WithOtherFields::new(tx);
-    /// let cast = CastTxSender::new(provider);
-    /// let data = cast.send(tx).await?;
-    /// println!("{:#?}", data);
-    /// # Ok(())
-    /// # }
-    /// ```
+    /// Sends a transaction and returns the pending transaction handle.
     pub async fn send(&self, tx: N::TransactionRequest) -> Result<PendingTransactionBuilder<N>> {
-        let res = self.provider.send_transaction(tx).await?;
-
-        Ok(res)
-    }
-
-    /// Sends a raw RLP-encoded transaction via `eth_sendRawTransaction`.
-    ///
-    /// Used for transaction types that the standard Alloy network stack doesn't understand
-    /// (e.g., Tempo transactions).
-    pub async fn send_raw(&self, raw_tx: &[u8]) -> Result<PendingTransactionBuilder<N>> {
-        let res = self.provider.send_raw_transaction(raw_tx).await?;
-        Ok(res)
+        Ok(self.provider.send_transaction(tx).await?)
     }
 
     /// Sends a raw RLP-encoded transaction and waits for its receipt synchronously.
     pub async fn send_raw_sync(&self, raw_tx: &[u8]) -> Result<(B256, String)> {
-        let mut receipt = TransactionReceiptWithRevertReason::<N> {
-            receipt: self.provider.send_raw_transaction_sync(raw_tx).await?,
-            revert_reason: None,
-        };
-        let tx_hash = receipt.receipt.transaction_hash();
-        // Allow this to fail silently.
-        let _ = receipt.update_revert_reason(&self.provider).await;
-
-        self.format_receipt(receipt, None).map(|formatted| (tx_hash, formatted))
+        let receipt = self.provider.send_raw_transaction_sync(raw_tx).await?;
+        self.finish(receipt, None).await
     }
 
     /// Prints the transaction hash (if async) or waits for the receipt and prints it.
@@ -371,22 +325,8 @@ where
         Ok(())
     }
 
-    /// # Example
-    ///
-    /// ```
-    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
-    /// use cast::tx::CastTxSender;
-    ///
-    /// async fn foo() -> eyre::Result<()> {
-    /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
-    /// let cast = CastTxSender::new(provider);
-    /// let tx_hash = "0xf8d1713ea15a81482958fb7ddf884baee8d3bcc478c5f2f604e008dc788ee4fc";
-    /// let receipt = cast.receipt(tx_hash.to_string(), None, 1, None, false).await?;
-    /// println!("{}", receipt);
-    /// # Ok(())
-    /// # }
-    /// ```
+    /// Fetches the receipt of `tx_hash`, polling for it unless `cast_async` is set, and formats
+    /// it (or the requested `field`).
     pub async fn receipt(
         &self,
         tx_hash: String,
@@ -396,47 +336,39 @@ where
         cast_async: bool,
     ) -> Result<String> {
         let tx_hash = TxHash::from_str(&tx_hash).wrap_err("invalid tx hash")?;
-
-        let mut receipt = TransactionReceiptWithRevertReason::<N> {
-            receipt: match self.provider.get_transaction_receipt(tx_hash).await? {
-                Some(r) => r,
-                None => {
-                    // if the async flag is provided, immediately exit if no tx is found, otherwise
-                    // try to poll for it
-                    if cast_async {
-                        eyre::bail!("tx not found: {:?}", tx_hash);
-                    }
-                    PendingTransactionBuilder::<N>::new(self.provider.root().clone(), tx_hash)
-                        .with_required_confirmations(confs)
-                        .with_timeout(timeout.map(Duration::from_secs))
-                        .get_receipt()
-                        .await?
-                }
-            },
-            revert_reason: None,
+        let receipt = match self.provider.get_transaction_receipt(tx_hash).await? {
+            Some(receipt) => receipt,
+            None if cast_async => eyre::bail!("tx not found: {tx_hash:?}"),
+            None => {
+                PendingTransactionBuilder::<N>::new(self.provider.root().clone(), tx_hash)
+                    .with_required_confirmations(confs)
+                    .with_timeout(timeout.map(Duration::from_secs))
+                    .get_receipt()
+                    .await?
+            }
         };
-
-        // Allow to fail silently
-        let _ = receipt.update_revert_reason(&self.provider).await;
-
-        self.format_receipt(receipt, field)
+        Ok(self.finish(receipt, field).await?.1)
     }
 
-    /// Helper method to format transaction receipts consistently
-    fn format_receipt(
+    /// Attaches the revert reason (best effort) and formats the receipt.
+    async fn finish(
         &self,
-        receipt: TransactionReceiptWithRevertReason<N>,
+        receipt: N::ReceiptResponse,
         field: Option<String>,
-    ) -> Result<String> {
-        Ok(if let Some(ref field) = field {
-            get_pretty_receipt_w_reason_attr(&receipt, field)
-                .ok_or_else(|| eyre::eyre!("invalid receipt field: {}", field))?
+    ) -> Result<(B256, String)> {
+        let mut receipt = TransactionReceiptWithRevertReason::<N> { receipt, revert_reason: None };
+        let tx_hash = receipt.receipt.transaction_hash();
+        let _ = receipt.update_revert_reason(&self.provider).await;
+        let formatted = if let Some(field) = field {
+            get_pretty_receipt_w_reason_attr(&receipt, &field)
+                .ok_or_else(|| eyre::eyre!("invalid receipt field: {field}"))?
         } else if shell::is_json() {
             // to_value first to sort json object keys
             serde_json::to_value(&receipt)?.to_string()
         } else {
             receipt.pretty()
-        })
+        };
+        Ok((tx_hash, formatted))
     }
 }
 
@@ -446,8 +378,15 @@ where
 /// [ToState] -> [InputState].
 #[derive(Debug)]
 pub struct CastTxBuilder<N: Network, P, S> {
+    inner: TxBuilderInner<N, P>,
+    state: S,
+}
+
+/// The state-independent part of [`CastTxBuilder`].
+#[derive(Debug)]
+struct TxBuilderInner<N: Network, P> {
     provider: P,
-    pub(crate) tx: N::TransactionRequest,
+    tx: N::TransactionRequest,
     /// Whether the transaction should be sent as a legacy transaction.
     legacy: bool,
     blob: bool,
@@ -467,45 +406,58 @@ pub struct CastTxBuilder<N: Network, P, S> {
     etherscan_api_key: Option<String>,
     etherscan_api_url: Option<String>,
     access_list: Option<Option<AccessList>>,
-    state: S,
 }
 
 impl<N: Network, P, S> CastTxBuilder<N, P, S> {
     /// Returns the resolved chain for this builder.
     pub const fn chain(&self) -> Chain {
-        self.chain
+        self.inner.chain
+    }
+
+    /// Returns the Etherscan API key and URL resolved for this builder's chain.
+    pub(crate) fn etherscan_api(&self) -> (Option<&str>, Option<&str>) {
+        (self.inner.etherscan_api_key.as_deref(), self.inner.etherscan_api_url.as_deref())
+    }
+
+    /// Returns the transaction request being built.
+    pub(crate) const fn tx_mut(&mut self) -> &mut N::TransactionRequest {
+        &mut self.inner.tx
     }
 
     /// Marks this transaction as destined for browser wallet submission.
     pub const fn with_browser_wallet(mut self) -> Self {
-        self.browser = true;
+        self.inner.browser = true;
         self
     }
 
     /// Applies a percentage multiplier to provider gas estimates.
     pub const fn with_gas_estimate_multiplier(mut self, multiplier: Option<u64>) -> Self {
-        self.gas_estimate_multiplier = multiplier;
+        self.inner.gas_estimate_multiplier = multiplier;
         self
     }
 
     /// Returns whether this builder contains any EIP-7702 authorizations.
     pub(crate) const fn has_auth(&self) -> bool {
-        !self.auth.is_empty()
+        !self.inner.auth.is_empty()
     }
 
     /// Validates that the configured sender can resolve all EIP-7702 authorizations.
     pub(crate) fn validate_auth(&self, sender: &SenderKind<'_>) -> Result<()> {
-        validate_authorizations(&self.auth, sender)
+        validate_authorizations(&self.inner.auth, sender)
     }
 
     /// Returns whether building this request will disclose an EIP-7702 authorization to an RPC
     /// endpoint.
     pub(crate) fn will_disclose_auth_during_build(&self) -> bool {
+        // Generating an access list or estimating gas sends the authorization-bearing request
+        // to the RPC.
         self.has_auth()
-            // Generating an access list sends the authorization-bearing request to the RPC.
-            && (matches!(self.access_list, Some(None))
-                // Gas estimation also sends the authorization-bearing request to the RPC.
-                || (self.fill && self.tx.gas_limit().is_none()))
+            && (matches!(self.inner.access_list, Some(None))
+                || (self.inner.fill && self.inner.tx.gas_limit().is_none()))
+    }
+
+    fn with_state<S2>(self, state: S2) -> CastTxBuilder<N, P, S2> {
+        CastTxBuilder { inner: self.inner, state }
     }
 }
 
@@ -525,48 +477,36 @@ where
         // mark it as legacy if requested or the chain is legacy and no 7702 is provided.
         let legacy = tx_opts.legacy || (chain.is_legacy() && tx_opts.auth.is_empty());
 
-        // Apply gas, value, fee, and network-specific options.
         tx_opts.apply::<N>(&mut tx, legacy);
 
         Ok(Self {
-            provider,
-            tx,
-            legacy,
-            blob: tx_opts.blob,
-            eip4844: tx_opts.eip4844,
-            fill: true,
-            browser: false,
-            eip1559_fee_estimate: config.eip1559_fee_estimate,
-            gas_estimate_multiplier: None,
-            chain,
-            etherscan_api_key,
-            etherscan_api_url,
-            auth: tx_opts.auth,
-            access_list: tx_opts.access_list,
+            inner: TxBuilderInner {
+                provider,
+                tx,
+                legacy,
+                blob: tx_opts.blob,
+                eip4844: tx_opts.eip4844,
+                fill: true,
+                browser: false,
+                eip1559_fee_estimate: config.eip1559_fee_estimate,
+                gas_estimate_multiplier: None,
+                chain,
+                etherscan_api_key,
+                etherscan_api_url,
+                auth: tx_opts.auth,
+                access_list: tx_opts.access_list,
+            },
             state: InitState,
         })
     }
 
     /// Sets [TxKind] for this builder and changes state to [ToState].
     pub async fn with_to(self, to: Option<NameOrAddress>) -> Result<CastTxBuilder<N, P, ToState>> {
-        let to = if let Some(to) = to { Some(to.resolve(&self.provider).await?) } else { None };
-        Ok(CastTxBuilder {
-            provider: self.provider,
-            tx: self.tx,
-            legacy: self.legacy,
-            blob: self.blob,
-            eip4844: self.eip4844,
-            fill: self.fill,
-            browser: self.browser,
-            eip1559_fee_estimate: self.eip1559_fee_estimate,
-            gas_estimate_multiplier: self.gas_estimate_multiplier,
-            chain: self.chain,
-            etherscan_api_key: self.etherscan_api_key,
-            etherscan_api_url: self.etherscan_api_url,
-            auth: self.auth,
-            access_list: self.access_list,
-            state: ToState { to },
-        })
+        let to = match to {
+            Some(to) => Some(to.resolve(&self.inner.provider).await?),
+            None => None,
+        };
+        Ok(self.with_state(ToState { to }))
     }
 }
 
@@ -583,17 +523,11 @@ where
         sig: Option<String>,
         args: Vec<String>,
     ) -> Result<CastTxBuilder<N, P, InputState>> {
+        let to = self.state.to;
         let (mut args, func) = if let Some(sig) = sig {
-            parse_function_args(
-                &sig,
-                args,
-                self.state.to,
-                self.chain,
-                &self.provider,
-                self.etherscan_api_key.as_deref(),
-                self.etherscan_api_url.as_deref(),
-            )
-            .await?
+            let (key, url) = self.etherscan_api();
+            parse_function_args(&sig, args, to, self.chain(), &self.inner.provider, key, url)
+                .await?
         } else {
             (Vec::new(), None)
         };
@@ -606,33 +540,16 @@ where
             args
         };
 
-        if self.state.to.is_none() && code.is_none() {
-            let has_value = self.tx.value().is_some_and(|v| !v.is_zero());
-            let has_auth = !self.auth.is_empty();
-            // We only allow user to omit the recipient address if transaction is an EIP-7702 tx
-            // without a value.
-            if !has_auth || has_value {
-                eyre::bail!("Must specify a recipient address or contract code to deploy");
-            }
+        // We only allow user to omit the recipient address if transaction is an EIP-7702 tx
+        // without a value.
+        if to.is_none()
+            && code.is_none()
+            && (!self.has_auth() || self.inner.tx.value().is_some_and(|v| !v.is_zero()))
+        {
+            eyre::bail!("Must specify a recipient address or contract code to deploy");
         }
 
-        Ok(CastTxBuilder {
-            provider: self.provider,
-            tx: self.tx,
-            legacy: self.legacy,
-            blob: self.blob,
-            eip4844: self.eip4844,
-            fill: self.fill,
-            browser: self.browser,
-            eip1559_fee_estimate: self.eip1559_fee_estimate,
-            gas_estimate_multiplier: self.gas_estimate_multiplier,
-            chain: self.chain,
-            etherscan_api_key: self.etherscan_api_key,
-            etherscan_api_url: self.etherscan_api_url,
-            auth: self.auth,
-            access_list: self.access_list,
-            state: InputState { kind: self.state.to.into(), input, func },
-        })
+        Ok(self.with_state(InputState { kind: to.into(), input, func }))
     }
 }
 
@@ -646,7 +563,7 @@ where
         self,
         sender: impl Into<SenderKind<'_>>,
     ) -> Result<(N::TransactionRequest, Option<Function>)> {
-        self.build_inner(sender, None).await
+        self.inner.build(self.state, &sender.into(), None).await
     }
 
     /// Builds a transaction that will be signed by a Tempo access key.
@@ -659,33 +576,64 @@ where
         wallet: &TempoAccountsWallet,
     ) -> Result<(N::TransactionRequest, Option<Function>, TempoAccountsWallet)> {
         let mut prepared = wallet.clone();
-        let (tx, func) = self.build_inner(wallet.account(), Some(&mut prepared)).await?;
+        let (tx, func) =
+            self.inner.build(self.state, &wallet.account().into(), Some(&mut prepared)).await?;
         Ok((tx, func, prepared))
     }
 
-    async fn build_inner(
+    /// Populates the blob sidecar for the transaction if any blob data was provided.
+    pub fn with_blob_data(mut self, blob_data: Option<Vec<u8>>) -> Result<Self> {
+        let Some(blob_data) = blob_data else { return Ok(self) };
+
+        let mut coder = SidecarBuilder::<SimpleCoder>::default();
+        coder.ingest(&blob_data);
+        if self.inner.eip4844 {
+            self.inner.tx.set_blob_sidecar_4844(coder.build_4844()?);
+        } else {
+            self.inner.tx.set_blob_sidecar_7594(coder.build_7594()?);
+        }
+        Ok(self)
+    }
+
+    /// Skips gas, fee and nonce filling. Use for read-only calls
+    /// (eth_call, eth_estimateGas, eth_createAccessList).
+    pub const fn raw(mut self) -> Self {
+        self.inner.fill = false;
+        self
+    }
+}
+
+impl<N: Network, P: Provider<N>> TxBuilderInner<N, P>
+where
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+{
+    async fn build(
         mut self,
-        sender: impl Into<SenderKind<'_>>,
+        state: InputState,
+        sender: &SenderKind<'_>,
         tempo_wallet: Option<&mut TempoAccountsWallet>,
     ) -> Result<(N::TransactionRequest, Option<Function>)> {
         let fill = self.fill;
+        let from = sender.address();
 
-        // prepare
-        let sender = sender.into();
-        self.prepare(&sender);
-
+        self.tx.set_kind(state.kind);
+        // We set both fields to the same value because some nodes only accept the legacy
+        // `data` field: https://github.com/foundry-rs/foundry/issues/7764#issuecomment-2210453249
+        self.tx.set_input_kind(state.input, TransactionInputKind::Both);
+        if !from.is_zero() {
+            self.tx.set_from(from);
+        }
+        self.tx.set_chain_id(self.chain.id());
         // For batch transactions with calls, clear `to` and `value` so the node correctly
         // identifies this as an AA batch transaction. The `calls` field determines the actual
         // targets. If `to` is set, `build_aa()` would add a spurious extra call.
         self.tx.clear_batch_to();
 
-        // resolve
         // Read-only calls do not need a nonce unless it is required to sign an authorization.
         // Avoid an otherwise unused `eth_getTransactionCount` request for raw transactions.
         let resolve_in_parallel =
             fill && self.auth.is_empty() && tempo_wallet.is_none() && !self.chain.is_tempo();
         let tx_nonce = if resolve_in_parallel {
-            let nonce = self.tx.nonce();
             let fees_are_complete = if self.legacy {
                 self.tx.gas_price().is_some()
             } else {
@@ -697,25 +645,25 @@ where
             let gas_request =
                 (fees_are_complete && self.access_list.is_none() && self.tx.gas_limit().is_none())
                     .then(|| self.tx.clone());
+            let (blob, legacy, browser, eip1559_fee_estimate, gas_estimate_multiplier) = (
+                self.blob,
+                self.legacy,
+                self.browser,
+                self.eip1559_fee_estimate,
+                self.gas_estimate_multiplier,
+            );
+            let Self { provider, tx, .. } = &mut self;
+            let provider = &*provider;
             let (tx_nonce, (), gas_limit) = tokio::try_join!(
-                Self::resolve_nonce(&self.provider, sender.address(), nonce),
-                Self::fill_fees(
-                    &self.provider,
-                    &mut self.tx,
-                    self.blob,
-                    self.legacy,
-                    self.browser,
-                    self.eip1559_fee_estimate,
-                ),
+                Self::resolve_nonce(provider, from, tx.nonce()),
+                Self::fill_fees(provider, tx, blob, legacy, browser, eip1559_fee_estimate),
                 async {
                     match gas_request {
-                        Some(request) => Self::estimate_gas(
-                            &self.provider,
-                            request,
-                            self.gas_estimate_multiplier,
-                        )
-                        .await
-                        .map(Some),
+                        Some(request) => {
+                            Self::estimate_gas(provider, request, gas_estimate_multiplier)
+                                .await
+                                .map(Some)
+                        }
                         None => Ok(None),
                     }
                 },
@@ -725,7 +673,7 @@ where
             }
             Some(tx_nonce)
         } else if fill || !self.auth.is_empty() {
-            Some(Self::resolve_nonce(&self.provider, sender.address(), self.tx.nonce()).await?)
+            Some(Self::resolve_nonce(&self.provider, from, self.tx.nonce()).await?)
         } else {
             None
         };
@@ -733,7 +681,7 @@ where
             if fill {
                 self.tx.set_nonce(tx_nonce);
             }
-            self.resolve_auth(&sender, tx_nonce).await?;
+            self.resolve_auth(sender, tx_nonce).await?;
         }
         if let Some(wallet) = tempo_wallet {
             *wallet = self.tx.prepare_with_tempo_wallet(&self.provider, wallet).await?;
@@ -749,48 +697,35 @@ where
             )
             .await?;
         }
-        self.resolve_access_list().await?;
-        if fill {
-            self.fill_gas_limit().await?;
+        // Fetch the access list from the provider if `--access-list` was passed without a value.
+        let access_list = match self.access_list.take() {
+            None => None,
+            Some(None) => Some(self.provider.create_access_list(&self.tx).await?.access_list),
+            Some(Some(access_list)) => Some(access_list),
+        };
+        if let Some(access_list) = access_list {
+            self.tx.set_access_list(access_list);
+        }
+        if fill && self.tx.gas_limit().is_none() {
+            let request = if self.browser && self.chain.is_tempo() {
+                self.tx.browser_wallet_gas_estimation_request()
+            } else {
+                self.tx.clone()
+            };
+            let estimated =
+                Self::estimate_gas(&self.provider, request, self.gas_estimate_multiplier).await?;
+            self.tx.set_gas_limit(estimated);
         }
 
-        Ok((self.tx, self.state.func))
-    }
-
-    /// Sets the core transaction fields from the builder state: kind, input, optional from, and
-    /// chain id.
-    fn prepare(&mut self, sender: &SenderKind<'_>) {
-        self.tx.set_kind(self.state.kind);
-        // We set both fields to the same value because some nodes only accept the legacy
-        // `data` field: https://github.com/foundry-rs/foundry/issues/7764#issuecomment-2210453249
-        self.tx.set_input_kind(self.state.input.clone(), TransactionInputKind::Both);
-        let sender = sender.address();
-        if !sender.is_zero() {
-            self.tx.set_from(sender);
-        }
-        self.tx.set_chain_id(self.chain.id());
+        Ok((self.tx, state.func))
     }
 
     /// Resolves the transaction nonce. Returns the existing nonce or fetches one from the provider.
     async fn resolve_nonce(provider: &P, from: Address, nonce: Option<u64>) -> Result<u64> {
-        if let Some(nonce) = nonce {
-            Ok(nonce)
-        } else {
-            Ok(provider.get_transaction_count(from).await?)
+        match nonce {
+            Some(nonce) => Ok(nonce),
+            None => Ok(provider.get_transaction_count(from).await?),
         }
-    }
-
-    /// Resolves the access list. Fetches from the provider if `--access-list` was passed without
-    /// a value.
-    async fn resolve_access_list(&mut self) -> Result<()> {
-        if let Some(access_list) = match self.access_list.take() {
-            None => None,
-            Some(None) => Some(self.provider.create_access_list(&self.tx).await?.access_list),
-            Some(Some(access_list)) => Some(access_list),
-        } {
-            self.tx.set_access_list(access_list);
-        }
-        Ok(())
     }
 
     /// Parses the passed --auth values and sets the authorization list on the transaction.
@@ -801,34 +736,26 @@ where
         if self.auth.is_empty() {
             return Ok(());
         }
+        validate_authorizations(&self.auth, sender)?;
 
-        self.validate_auth(sender)?;
-        let auths = std::mem::take(&mut self.auth);
-
-        let mut signed_auths = Vec::with_capacity(auths.len());
-
-        for auth in auths {
-            let signed_auth = match auth {
+        let mut signed_auths = Vec::with_capacity(self.auth.len());
+        for auth in std::mem::take(&mut self.auth) {
+            signed_auths.push(match auth {
                 CliAuthorizationList::Address(address) => {
                     let auth = Authorization {
                         chain_id: U256::from(self.chain.id()),
                         nonce: tx_nonce + 1,
                         address,
                     };
-
                     let signer =
                         sender.as_signer().expect("address-based authorization requires a signer");
                     let signature = signer.sign_hash(&auth.signature_hash()).await?;
-
                     auth.into_signed(signature)
                 }
                 CliAuthorizationList::Signed(auth) => auth,
-            };
-            signed_auths.push(signed_auth);
+            });
         }
-
         self.tx.set_authorization_list(signed_auths);
-
         Ok(())
     }
 
@@ -846,24 +773,7 @@ where
         if blob && tx.max_fee_per_blob_gas().is_none() {
             tx.set_max_fee_per_blob_gas(provider.get_blob_base_fee().await?)
         }
-
         fill_transaction_gas_fees(provider, tx, legacy, browser, eip1559_fee_estimate).await
-    }
-
-    /// Fills gas limit from the provider.
-    async fn fill_gas_limit(&mut self) -> Result<()> {
-        if self.tx.gas_limit().is_none() {
-            let request = if self.browser && self.chain.is_tempo() {
-                self.tx.browser_wallet_gas_estimation_request()
-            } else {
-                self.tx.clone()
-            };
-            let estimated =
-                Self::estimate_gas(&self.provider, request, self.gas_estimate_multiplier).await?;
-            self.tx.set_gas_limit(estimated);
-        }
-
-        Ok(())
     }
 
     /// Estimate tx gas from provider call. Tries to decode custom error if execution reverted.
@@ -872,47 +782,21 @@ where
         request: N::TransactionRequest,
         multiplier: Option<u64>,
     ) -> Result<u64> {
-        match provider.estimate_gas(request).await {
-            Ok(estimated) => apply_gas_estimate_multiplier(estimated, multiplier),
-            Err(err) => {
-                if let TransportError::ErrorResp(payload) = &err {
-                    // If execution reverted with code 3 during provider gas estimation then try
-                    // to decode custom errors and append it to the error message.
-                    if payload.code == 3
-                        && let Some(data) = &payload.data
-                        && let Ok(Some(decoded_error)) = decode_execution_revert(data).await
-                    {
-                        eyre::bail!("Failed to estimate gas: {}: {}", err, decoded_error);
-                    }
-                }
-                eyre::bail!("Failed to estimate gas: {}", err);
-            }
+        let err = match provider.estimate_gas(request).await {
+            Ok(estimated) => return apply_gas_estimate_multiplier(estimated, multiplier),
+            Err(err) => err,
+        };
+        // If execution reverted with code 3 during provider gas estimation then try to decode
+        // custom errors and append it to the error message.
+        if let TransportError::ErrorResp(payload) = &err
+            && payload.code == 3
+            && let Some(data) = &payload.data
+            && let Ok(data) = serde_json::from_str::<Bytes>(data.get())
+            && let Ok(Some(decoded_error)) = decode_custom_error(&data).await
+        {
+            eyre::bail!("Failed to estimate gas: {err}: {decoded_error}");
         }
-    }
-
-    /// Populates the blob sidecar for the transaction if any blob data was provided.
-    pub fn with_blob_data(mut self, blob_data: Option<Vec<u8>>) -> Result<Self> {
-        let Some(blob_data) = blob_data else { return Ok(self) };
-
-        let mut coder = SidecarBuilder::<SimpleCoder>::default();
-        coder.ingest(&blob_data);
-
-        if self.eip4844 {
-            let sidecar = coder.build_4844()?;
-            self.tx.set_blob_sidecar_4844(sidecar);
-        } else {
-            let sidecar = coder.build_7594()?;
-            self.tx.set_blob_sidecar_7594(sidecar);
-        }
-
-        Ok(self)
-    }
-
-    /// Skips gas, fee and nonce filling. Use for read-only calls
-    /// (eth_call, eth_estimateGas, eth_createAccessList).
-    pub const fn raw(mut self) -> Self {
-        self.fill = false;
-        self
+        eyre::bail!("Failed to estimate gas: {err}");
     }
 }
 
@@ -968,26 +852,21 @@ where
     Ok(())
 }
 
-/// Helper function that tries to decode custom error name and inputs from error payload data.
-async fn decode_execution_revert(data: &RawValue) -> Result<Option<String>> {
-    let data = serde_json::from_str::<Bytes>(data.get())?;
-    decode_custom_error(&data).await
-}
-
+/// Tries to decode a custom error name and inputs from revert data.
 pub(crate) async fn decode_custom_error(data: &[u8]) -> Result<Option<String>> {
     let Some(selector) = data.get(..4) else { return Ok(None) };
-    if let Some(known_error) =
+    let Some(known_error) =
         SignaturesIdentifier::new(false)?.identify_error(selector.try_into().unwrap()).await
+    else {
+        return Ok(None);
+    };
+    let mut decoded_error = known_error.name.clone();
+    if !known_error.inputs.is_empty()
+        && let Ok(error) = known_error.decode_error(data)
     {
-        let mut decoded_error = known_error.name.clone();
-        if !known_error.inputs.is_empty()
-            && let Ok(error) = known_error.decode_error(data)
-        {
-            write!(decoded_error, "({})", format_tokens(&error.body).format(", "))?;
-        }
-        return Ok(Some(decoded_error));
+        write!(decoded_error, "({})", format_tokens(&error.body).format(", "))?;
     }
-    Ok(None)
+    Ok(Some(decoded_error))
 }
 
 #[cfg(test)]
@@ -1048,6 +927,26 @@ mod tests {
         }
     }
 
+    const TO: Address = Address::repeat_byte(0x11);
+
+    /// Builds a transaction to [`TO`] from the given `cast send` style arguments.
+    async fn builder<P: Provider<Ethereum>>(
+        provider: P,
+        args: &[&str],
+    ) -> CastTxBuilder<Ethereum, P, InputState> {
+        let config = Config { chain: Some(Chain::mainnet()), ..Default::default() };
+        let opts = TransactionOpts::parse_from([&["test"], args].concat());
+        CastTxBuilder::new(provider, opts, &config)
+            .await
+            .unwrap()
+            .with_to(Some(TO.into()))
+            .await
+            .unwrap()
+            .with_code_sig_and_args(None, None, Vec::new())
+            .await
+            .unwrap()
+    }
+
     #[tokio::test]
     async fn filled_build_applies_multiplier_to_concurrent_gas_estimate() {
         let asserter = Asserter::new();
@@ -1062,22 +961,10 @@ mod tests {
         };
         let provider = ProviderBuilder::new_with_network::<Ethereum>()
             .connect_client(RpcClient::new(transport, true));
-        let config = Config { chain: Some(Chain::mainnet()), ..Default::default() };
 
-        let builder = CastTxBuilder::new(
-            &provider,
-            TransactionOpts::parse_from(["test", "--legacy", "--gas-price", "1"]),
-            &config,
-        )
-        .await
-        .unwrap()
-        .with_gas_estimate_multiplier(Some(150))
-        .with_to(Some(Address::repeat_byte(0x11).into()))
-        .await
-        .unwrap()
-        .with_code_sig_and_args(None, None, Vec::new())
-        .await
-        .unwrap();
+        let builder = builder(&provider, &["--legacy", "--gas-price", "1"])
+            .await
+            .with_gas_estimate_multiplier(Some(150));
         let (tx, _) = timeout(Duration::from_secs(1), builder.build(Address::repeat_byte(0x22)))
             .await
             .expect("nonce and gas requests were not in flight together")
@@ -1097,115 +984,31 @@ mod tests {
         // guards against restoring the unused `eth_getTransactionCount` request.
         let provider =
             ProviderBuilder::new_with_network::<Ethereum>().connect_mocked_client(Asserter::new());
-        let config = Config { chain: Some(Chain::mainnet()), ..Default::default() };
-
-        CastTxBuilder::new(&provider, TransactionOpts::parse_from(["test"]), &config)
-            .await
-            .unwrap()
-            .with_to(Some(Address::repeat_byte(0x11).into()))
-            .await
-            .unwrap()
-            .with_code_sig_and_args(None, None, Vec::new())
-            .await
-            .unwrap()
-            .raw()
-            .build(Address::repeat_byte(0x22))
-            .await
-            .unwrap();
+        builder(&provider, &[]).await.raw().build(Address::repeat_byte(0x22)).await.unwrap();
     }
 
     #[tokio::test]
     async fn detects_auth_rpc_disclosure() {
         let provider =
             ProviderBuilder::new_with_network::<Ethereum>().connect_mocked_client(Asserter::new());
-        let config = Config { chain: Some(Chain::mainnet()), ..Default::default() };
-        let address = Address::repeat_byte(0x11);
+        let auth = TO.to_string();
 
-        let no_auth = CastTxBuilder::new(
-            &provider,
-            TransactionOpts::parse_from(["test", "--gas-limit", "21000"]),
-            &config,
-        )
-        .await
-        .unwrap()
-        .with_to(Some(address.into()))
-        .await
-        .unwrap()
-        .with_code_sig_and_args(None, None, Vec::new())
-        .await
-        .unwrap()
-        .raw();
+        let no_auth = builder(&provider, &["--gas-limit", "21000"]).await.raw();
         assert!(!no_auth.has_auth());
         assert!(!no_auth.will_disclose_auth_during_build());
 
-        let rpc_call = CastTxBuilder::new(
-            &provider,
-            TransactionOpts::parse_from([
-                "test",
-                "--auth",
-                &address.to_string(),
-                "--gas-limit",
-                "21000",
-            ]),
-            &config,
-        )
-        .await
-        .unwrap()
-        .with_to(Some(address.into()))
-        .await
-        .unwrap()
-        .with_code_sig_and_args(None, None, Vec::new())
-        .await
-        .unwrap()
-        .raw();
+        let rpc_call = builder(&provider, &["--auth", &auth, "--gas-limit", "21000"]).await.raw();
         assert!(rpc_call.has_auth());
         assert!(!rpc_call.will_disclose_auth_during_build());
 
-        let generated_access_list = CastTxBuilder::new(
-            &provider,
-            TransactionOpts::parse_from(["test", "--auth", &address.to_string(), "--access-list"]),
-            &config,
-        )
-        .await
-        .unwrap()
-        .with_to(Some(address.into()))
-        .await
-        .unwrap()
-        .with_code_sig_and_args(None, None, Vec::new())
-        .await
-        .unwrap()
-        .raw();
-        assert!(generated_access_list.will_disclose_auth_during_build());
+        let generated_access_list = builder(&provider, &["--auth", &auth, "--access-list"]).await;
+        assert!(generated_access_list.raw().will_disclose_auth_during_build());
 
-        let explicit_access_list = CastTxBuilder::new(
-            &provider,
-            TransactionOpts::parse_from([
-                "test",
-                "--auth",
-                &address.to_string(),
-                "--access-list",
-                "[]",
-            ]),
-            &config,
-        )
-        .await
-        .unwrap()
-        .with_to(Some(address.into()))
-        .await
-        .unwrap()
-        .with_code_sig_and_args(None, None, Vec::new())
-        .await
-        .unwrap()
-        .raw();
-        assert!(!explicit_access_list.will_disclose_auth_during_build());
+        let explicit_access_list =
+            builder(&provider, &["--auth", &auth, "--access-list", "[]"]).await;
+        assert!(!explicit_access_list.raw().will_disclose_auth_during_build());
 
-        let estimated_gas = CastTxBuilder::new(
-            &provider,
-            TransactionOpts::parse_from(["test", "--auth", &address.to_string()]),
-            &config,
-        )
-        .await
-        .unwrap();
+        let estimated_gas = builder(&provider, &["--auth", &auth]).await;
         assert!(estimated_gas.will_disclose_auth_during_build());
     }
 }

@@ -16,14 +16,8 @@ declare_forge_lint!(
     "`delete` on a value containing a mapping does not clear the mapping"
 );
 
-impl<'hir> LateLintPass<'hir> for MappingDeletion {
-    fn check_expr(
-        &mut self,
-        ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        _hir: &'hir hir::Hir<'hir>,
-        expr: &'hir hir::Expr<'hir>,
-    ) {
+impl<'gcx> LateLintPass<'gcx> for MappingDeletion {
+    fn check_expr(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, expr: &'gcx hir::Expr<'gcx>) {
         if let ExprKind::Delete(operand) = &expr.kind
             && let Some(ty) = gcx.type_of_expr(operand.peel_parens().id)
             && ty_contains_mapping(gcx, ty, &mut Vec::new())
@@ -35,7 +29,7 @@ impl<'hir> LateLintPass<'hir> for MappingDeletion {
 
 /// True if `ty` is, or transitively contains, a `mapping`. `delete` cannot enumerate a mapping's
 /// keys, so the entries survive. `seen` guards against recursive struct definitions.
-fn ty_contains_mapping<'hir>(gcx: Gcx<'hir>, ty: Ty<'hir>, seen: &mut Vec<hir::StructId>) -> bool {
+fn ty_contains_mapping<'gcx>(gcx: Gcx<'gcx>, ty: Ty<'gcx>, seen: &mut Vec<hir::StructId>) -> bool {
     match ty.peel_refs().kind {
         TyKind::Mapping(..) => true,
         TyKind::Array(elem, _) | TyKind::DynArray(elem) | TyKind::Slice(elem) => {

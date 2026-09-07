@@ -3,6 +3,10 @@
 Solidity linter for identifying potential errors, vulnerabilities, gas optimizations, and style guide violations.
 It helps enforce best practices and improve code quality within Foundry projects.
 
+Files under the configured test and script directories are excluded from all lints except
+`unsafe-cheatcode`, including when a lint is explicitly selected. The exception still respects
+severity filters, exclusions, and inline suppressions. Production source files remain linted.
+
 ## Supported Lints
 
 `forge-lint` includes rules across several categories:

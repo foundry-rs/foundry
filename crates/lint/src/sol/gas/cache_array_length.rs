@@ -27,19 +27,11 @@ declare_forge_lint!(
     "array length read in loop condition should be cached outside the loop"
 );
 
-impl<'hir> LateLintPass<'hir> for CacheArrayLength {
-    fn check_stmt(
-        &mut self,
-        ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        hir: &'hir hir::Hir<'hir>,
-        stmt: &'hir Stmt<'hir>,
-    ) {
-        let StmtKind::Loop(block, LoopSource::For | LoopSource::ForWithUpdate) = &stmt.kind else {
-            return;
-        };
-        // `for (init; cond; update) body` lowers to `loop { if (cond) { body; update } else break
-        // }`.
+impl<'gcx> LateLintPass<'gcx> for CacheArrayLength {
+    fn check_stmt(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, stmt: &'gcx Stmt<'gcx>) {
+        let StmtKind::Loop(block, LoopSource::For { .. }) = &stmt.kind else { return };
+        // `for (init; cond; update) body` lowers to `loop { if (cond) { body } else break }` with
+        // the update kept on the loop source.
         let Some(Stmt { kind: StmtKind::If(condition, _, Some(else_stmt)), .. }) =
             block.stmts.first()
         else {
@@ -55,7 +47,7 @@ impl<'hir> LateLintPass<'hir> for CacheArrayLength {
             return;
         }
 
-        let mut facts = LoopFacts { gcx, hir, written: Vec::new(), skip: false };
+        let mut facts = LoopFacts { gcx, written: Vec::new(), skip: false };
         let _ = facts.visit_stmt(stmt);
         if facts.skip {
             return;
@@ -69,9 +61,9 @@ impl<'hir> LateLintPass<'hir> for CacheArrayLength {
 }
 
 /// Collects `<state dynamic array>.length` reads compared against an identifier in `expr`.
-fn collect_length_reads<'hir>(
-    gcx: Gcx<'hir>,
-    expr: &'hir Expr<'hir>,
+fn collect_length_reads<'gcx>(
+    gcx: Gcx<'gcx>,
+    expr: &'gcx Expr<'gcx>,
     reads: &mut Vec<(Span, VariableId)>,
 ) {
     let ExprKind::Binary(lhs, op, rhs) = &expr.peel_parens().kind else { return };
@@ -103,21 +95,20 @@ fn collect_length_reads<'hir>(
 
 /// Loop body facts that make caching unsafe: variables written, array length mutations and
 /// calls that may mutate state.
-struct LoopFacts<'hir> {
-    gcx: Gcx<'hir>,
-    hir: &'hir hir::Hir<'hir>,
+struct LoopFacts<'gcx> {
+    gcx: Gcx<'gcx>,
     written: Vec<VariableId>,
     skip: bool,
 }
 
-impl<'hir> hir::Visit<'hir> for LoopFacts<'hir> {
+impl<'gcx> hir::Visit<'gcx> for LoopFacts<'gcx> {
     type BreakValue = Never;
 
-    fn hir(&self) -> &'hir hir::Hir<'hir> {
-        self.hir
+    fn hir(&self) -> &'gcx hir::Hir<'gcx> {
+        &self.gcx.hir
     }
 
-    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
+    fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
         match &expr.kind {
             ExprKind::Assign(lhs, ..) | ExprKind::Delete(lhs) => {
                 self.skip |= is_array_like(self.gcx, lhs);
@@ -127,7 +118,7 @@ impl<'hir> hir::Visit<'hir> for LoopFacts<'hir> {
                 for_each_lhs_var(inner, &mut |v| self.written.push(v));
             }
             ExprKind::Call(callee, ..) => {
-                self.skip |= call_may_mutate_state(self.gcx, self.hir, callee);
+                self.skip |= call_may_mutate_state(self.gcx, callee);
             }
             _ => {}
         }
@@ -136,16 +127,12 @@ impl<'hir> hir::Visit<'hir> for LoopFacts<'hir> {
 }
 
 /// Whether a call may write storage; array `push`/`pop` count since they change the length.
-fn call_may_mutate_state<'hir>(
-    gcx: Gcx<'hir>,
-    hir: &'hir hir::Hir<'hir>,
-    callee: &'hir Expr<'hir>,
-) -> bool {
+fn call_may_mutate_state<'gcx>(gcx: Gcx<'gcx>, callee: &'gcx Expr<'gcx>) -> bool {
     let callee = callee.peel_parens();
     match &callee.kind {
         ExprKind::Type(_) => false,
         ExprKind::Ident(_) => {
-            function_ids(callee).next().is_none_or(|f| hir.function(f).mutates_state())
+            function_ids(callee).next().is_none_or(|f| gcx.hir.function(f).mutates_state())
         }
         ExprKind::Member(base, member)
             if matches!(member.name, sym::push | kw::Pop) && is_array_like(gcx, base) =>
@@ -159,7 +146,7 @@ fn call_may_mutate_state<'hir>(
     }
 }
 
-fn is_array_like<'hir>(gcx: Gcx<'hir>, expr: &Expr<'hir>) -> bool {
+fn is_array_like<'gcx>(gcx: Gcx<'gcx>, expr: &Expr<'gcx>) -> bool {
     gcx.type_of_expr(expr.peel_parens().id).is_some_and(|ty| {
         matches!(
             ty.peel_refs().kind,
@@ -169,7 +156,7 @@ fn is_array_like<'hir>(gcx: Gcx<'hir>, expr: &Expr<'hir>) -> bool {
 }
 
 /// The state variable `expr` names, if it is a dynamic array.
-fn state_dyn_array<'hir>(gcx: Gcx<'hir>, expr: &Expr<'hir>) -> Option<VariableId> {
+fn state_dyn_array<'gcx>(gcx: Gcx<'gcx>, expr: &Expr<'gcx>) -> Option<VariableId> {
     let expr = expr.peel_parens();
     let ExprKind::Ident(reses) = &expr.kind else { return None };
     let var = reses.iter().find_map(Res::as_variable)?;
