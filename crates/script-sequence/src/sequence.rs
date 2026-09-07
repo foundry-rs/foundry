@@ -105,7 +105,7 @@ impl<N: Network> ScriptSequence<N> {
         .wrap_err(format!("Deployment's sensitive details not found for chain `{chain_id}`."))?;
 
         script_sequence.fill_sensitive(&sensitive_script_sequence).wrap_err(format!(
-            "Deployment's sensitive details are out of sync with the broadcast file for chain `{chain_id}`; the two were likely written partially (e.g. interrupted mid-save). Try re-running the deployment from scratch."
+            "Deployment's sensitive details are out of sync with the broadcast file for chain `{chain_id}`; restore matching broadcast and sensitive-cache files before resuming."
         ))?;
 
         script_sequence.paths = Some((path, sensitive_path));
@@ -235,8 +235,7 @@ impl<N: Network> ScriptSequence<N> {
         self.transactions.iter().map(|tx| tx.tx())
     }
 
-    /// Fills each transaction's sensitive metadata (currently just the RPC url) from the
-    /// corresponding entry in `sensitive`.
+    /// Copies RPC URLs from a matching sensitive-cache sequence.
     pub fn fill_sensitive(&mut self, sensitive: &SensitiveScriptSequence) -> Result<()> {
         let transactions_len = self.transactions.len();
         let sensitive_len = sensitive.transactions.len();
@@ -248,7 +247,6 @@ impl<N: Network> ScriptSequence<N> {
             );
         }
         for (i, tx) in self.transactions.iter_mut().enumerate() {
-            // Length equality was already checked above, so this index is always in bounds.
             tx.rpc.clone_from(&sensitive.transactions[i].rpc);
         }
         Ok(())
@@ -283,6 +281,58 @@ pub fn now() -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_network::Ethereum;
+
+    fn sequence_with_two_transactions() -> ScriptSequence<Ethereum> {
+        let mut sequence = ScriptSequence::default();
+        for rpc in ["first", "second"] {
+            let mut tx = TransactionWithMetadata::from_tx_request(
+                TransactionMaybeSigned::Unsigned(Default::default()),
+            );
+            tx.rpc = rpc.to_string();
+            sequence.transactions.push_back(tx);
+        }
+        sequence
+    }
+
+    #[test]
+    fn fill_sensitive_rejects_mismatched_counts_without_mutation() {
+        for count in [1, 3] {
+            let mut sequence = sequence_with_two_transactions();
+            let sensitive = SensitiveScriptSequence {
+                transactions: (0..count)
+                    .map(|_| SensitiveTransactionMetadata { rpc: "replacement".to_string() })
+                    .collect(),
+            };
+            assert_eq!(
+                sequence.fill_sensitive(&sensitive).unwrap_err().to_string(),
+                format!(
+                    "sensitive-cache entry count ({count}) does not match transaction count (2); \
+                     the broadcast file and its sensitive-cache counterpart are out of sync"
+                )
+            );
+            assert_eq!(
+                sequence.transactions.iter().map(|tx| tx.rpc.as_str()).collect::<Vec<_>>(),
+                ["first", "second"]
+            );
+        }
+    }
+
+    #[test]
+    fn fill_sensitive_restores_matching_cache() {
+        let mut sequence = sequence_with_two_transactions();
+        let sensitive = SensitiveScriptSequence {
+            transactions: ["restored-first", "restored-second"]
+                .into_iter()
+                .map(|rpc| SensitiveTransactionMetadata { rpc: rpc.to_string() })
+                .collect(),
+        };
+        sequence.fill_sensitive(&sensitive).unwrap();
+        assert_eq!(
+            sequence.transactions.iter().map(|tx| tx.rpc.as_str()).collect::<Vec<_>>(),
+            ["restored-first", "restored-second"]
+        );
+    }
 
     #[test]
     fn can_convert_sig() {

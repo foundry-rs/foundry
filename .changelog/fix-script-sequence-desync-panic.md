@@ -1,5 +1,7 @@
 ---
 forge: patch
+forge-script: patch
+forge-script-sequence: patch
 ---
 
-`forge script`'s broadcast-sequence loading no longer panics when a deployment's broadcast file and its sensitive-cache counterpart have a mismatched number of entries (e.g. from an interrupted `save()`); it now errors with a clear message instead.
+Return an error when broadcast files and their sensitive caches have mismatched entry counts.
