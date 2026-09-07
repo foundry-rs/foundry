@@ -352,9 +352,9 @@ impl BenchmarkProject {
         verbose: bool,
     ) -> Result<HyperfineResult> {
         let command = self.cmd("forge test");
-        // Clean inherited artifacts once so earlier benchmarks cannot hide discovery misses.
-        // The first test invocation populates normal artifacts; the second warms discovery.
-        let setup = format!("forge clean && {command} && {command}");
+        // Force cleanup in the first warmup using the same root/configuration as the tests.
+        // The second invocation warms discovery against the resulting normal artifacts.
+        let setup = format!("FOUNDRY_FORCE=true {command} && {command}");
         self.hyperfine(
             "forge_test_filtered",
             version,

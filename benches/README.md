@@ -133,9 +133,10 @@ versioned per-run results. Like `--json-output`, the sidecar path is relative to
 
 For filtered test discovery, use `--benchmarks forge_test_filtered` with test filters
 in the repository's extra arguments or `foundry.toml`. This keeps the project's
-dynamic-linking configuration, cleans inherited artifacts once before each benchmark
-series, and warms the selected tests twice: once to populate normal artifacts and
-once to populate ABI discovery for that cache. Timed runs retain that warm cache.
+dynamic-linking configuration and warms the selected tests twice. The first warmup
+forces cleanup using the same root and configuration as the tests, then populates
+normal artifacts. The second populates ABI discovery for that cache. Timed runs
+retain that warm cache.
 The result is labeled `Forge Test (Warm Cache)` because without effective filters
 it measures ordinary unfiltered tests; it does not guarantee ABI-discovery coverage.
 No unfiltered build runs during setup. For example:
