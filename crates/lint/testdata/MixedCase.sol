@@ -97,3 +97,15 @@ contract MixedCaseTest {
     function HAS_MORE_THAN_ONE_RETURN() external view returns (uint256, uint256) {} //~NOTE: function names should use mixedCase
     function NOT_ELEMENTARY_RETURN() external view returns (uint256[] memory) {} //~NOTE: function names should use mixedCase
 }
+
+contract PublicConstantGetters {
+    bytes32 private separator;
+
+    // Public getters follow the same naming convention as external getters.
+    function DOMAIN_SEPARATOR() public view returns (bytes32) { return separator; }
+    function PUBLIC_CUSTOM_TYPE() public view returns (IERC20) { return IERC20(address(0)); }
+
+    function PUBLIC_WITH_PARAM(uint256 value) public view returns (uint256) { return value; } //~NOTE: function names should use mixedCase
+    function INTERNAL_GETTER() internal view returns (bytes32) { return separator; } //~NOTE: function names should use mixedCase
+    function PUBLIC_MUTATOR() public returns (bytes32) { separator = bytes32(uint256(1)); return separator; } //~NOTE: function names should use mixedCase
+}
