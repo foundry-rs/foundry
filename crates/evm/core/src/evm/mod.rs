@@ -229,15 +229,10 @@ pub trait NestedEvm {
     /// Executes a full transaction with the given tx env.
     fn transact_raw(&mut self, tx: Self::Tx) -> eyre::Result<ResultAndState<HaltReason>>;
 
-    /// Executes a replay transaction, or skips a system envelope unsupported by this EVM.
+    /// Replays a transaction, skipping unsupported system envelopes.
     ///
-    /// `is_system` is the original RPC envelope classification. Decoding into `Self::Tx` may
-    /// discard the system transaction type, so callers must retain that classification.
-    /// Returning `None` must leave the EVM, database, and inspector unchanged.
-    /// Ordinary execution and error propagation use the existing full-transaction operation;
-    /// concrete implementations may recognize and execute their own system envelopes. Every
-    /// execution family that supports protocol system envelopes must override this method; the
-    /// default deliberately skips unsupported system envelopes.
+    /// `is_system` preserves the RPC envelope classification that conversion to `Self::Tx` may
+    /// discard. Returning `None` must not mutate the EVM, database, or inspector.
     fn transact_replay(
         &mut self,
         tx: Self::Tx,
