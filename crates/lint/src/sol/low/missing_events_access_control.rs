@@ -12,8 +12,11 @@ use crate::{
 use solar::{
     ast::{ContractKind, DataLocation, StateMutability, Visibility},
     interface::{Span, data_structures::Never},
-    sema::hir::{
-        self, EventId, Expr, ExprKind, FunctionId, ItemId, Stmt, StmtKind, VariableId, Visit,
+    sema::{
+        Gcx,
+        hir::{
+            self, EventId, Expr, ExprKind, FunctionId, ItemId, Stmt, StmtKind, VariableId, Visit,
+        },
     },
 };
 use std::{
@@ -29,13 +32,12 @@ declare_forge_lint!(
     "access control changes should emit events"
 );
 
-impl<'hir> LateLintPass<'hir> for MissingEventsAccessControl {
+impl<'gcx> LateLintPass<'gcx> for MissingEventsAccessControl {
     fn check_contract(
         &mut self,
         ctx: &LintContext,
-        _gcx: solar::sema::Gcx<'hir>,
-        hir: &'hir hir::Hir<'hir>,
-        contract: &'hir hir::Contract<'hir>,
+        gcx: Gcx<'gcx>,
+        contract: &'gcx hir::Contract<'gcx>,
     ) {
         if !matches!(contract.kind, ContractKind::Contract | ContractKind::AbstractContract) {
             return;
@@ -43,25 +45,26 @@ impl<'hir> LateLintPass<'hir> for MissingEventsAccessControl {
 
         // Every state variable some access check in the contract depends on.
         let functions: Vec<_> = contract.all_functions().collect();
-        let targets: HashSet<_> = functions.iter().flat_map(|&id| guard_vars(hir, id)).collect();
+        let targets: HashSet<_> =
+            functions.iter().flat_map(|&id| guard_vars(&gcx.hir, id)).collect();
         if targets.is_empty() {
             return;
         }
 
         for func_id in functions {
-            let func = hir.function(func_id);
+            let func = gcx.hir.function(func_id);
             let is_entry_point = func.kind.is_function()
                 && matches!(func.visibility, Visibility::Public | Visibility::External)
                 && !func.is_constructor()
                 && !func.is_special()
                 && !matches!(func.state_mutability, StateMutability::Pure | StateMutability::View);
-            if !is_entry_point || !is_protected(hir, func_id) {
+            if !is_entry_point || !is_protected(&gcx.hir, func_id) {
                 continue;
             }
 
-            let guard_targets = guard_vars(hir, func_id);
+            let guard_targets = guard_vars(&gcx.hir, func_id);
             let mut analyzer = WriteAnalyzer {
-                hir,
+                gcx,
                 targets: &targets,
                 guard_targets: &guard_targets,
                 state: State {
@@ -81,7 +84,8 @@ impl<'hir> LateLintPass<'hir> for MissingEventsAccessControl {
                 if write.evented || !emitted.insert(write.var_id) {
                     continue;
                 }
-                let name = hir
+                let name = gcx
+                    .hir
                     .variable(write.var_id)
                     .name
                     .map_or_else(|| "state variable".to_string(), |name| name.to_string());
@@ -96,7 +100,7 @@ impl<'hir> LateLintPass<'hir> for MissingEventsAccessControl {
 }
 
 /// Calls `f` on every index and slice bound along the spine of an lvalue.
-fn for_each_lhs_index<'hir>(expr: &'hir Expr<'hir>, f: &mut impl FnMut(&'hir Expr<'hir>)) {
+fn for_each_lhs_index<'gcx>(expr: &'gcx Expr<'gcx>, f: &mut impl FnMut(&'gcx Expr<'gcx>)) {
     match &expr.peel_parens().kind {
         ExprKind::Index(base, index) => {
             for_each_lhs_index(base, f);
@@ -149,8 +153,8 @@ struct State {
 }
 
 /// Collects writes to `targets` reachable from an entry point and marks those an `emit` covers.
-struct WriteAnalyzer<'a, 'hir> {
-    hir: &'hir hir::Hir<'hir>,
+struct WriteAnalyzer<'a, 'gcx> {
+    gcx: Gcx<'gcx>,
     targets: &'a HashSet<VariableId>,
     /// Targets checked by this entry point's own guards; clearing one of them is reportable even
     /// when the written value carries no source.
@@ -159,12 +163,12 @@ struct WriteAnalyzer<'a, 'hir> {
     call_stack: Vec<FunctionId>,
 }
 
-impl<'hir> WriteAnalyzer<'_, 'hir> {
+impl<'gcx> WriteAnalyzer<'_, 'gcx> {
     fn analyze_function(&mut self, func_id: FunctionId) {
         if self.call_stack.contains(&func_id) {
             return;
         }
-        let func = self.hir.function(func_id);
+        let func = self.gcx.hir.function(func_id);
         let Some(body) = func.body else { return };
         self.call_stack.push(func_id);
         for modifier in func.modifiers {
@@ -181,8 +185,9 @@ impl<'hir> WriteAnalyzer<'_, 'hir> {
 
     /// Inlines `callee_id` with its parameters bound to the sources of `args`; locals and storage
     /// aliases are callee-private, pending writes flow back to the caller.
-    fn analyze_call(&mut self, callee_id: FunctionId, args: &hir::CallArgs<'hir>) {
+    fn analyze_call(&mut self, callee_id: FunctionId, args: &hir::CallArgs<'gcx>) {
         let params = self
+            .gcx
             .hir
             .function(callee_id)
             .parameters
@@ -208,7 +213,7 @@ impl<'hir> WriteAnalyzer<'_, 'hir> {
                 out.insert(Source::Sender);
             }
             if let Some(var_id) = underlying_var(e) {
-                if self.hir.variable(var_id).kind.is_state() {
+                if self.gcx.hir.variable(var_id).kind.is_state() {
                     out.insert(Source::Var(var_id));
                 }
                 if let Some(sources) = self.state.taint.get(&var_id) {
@@ -224,7 +229,7 @@ impl<'hir> WriteAnalyzer<'_, 'hir> {
     fn lhs_state_vars(&self, lhs: &Expr<'_>) -> Vec<VariableId> {
         let mut vars = Vec::new();
         for_each_lhs_var(lhs, &mut |var_id| {
-            let root = if self.hir.variable(var_id).kind.is_state() {
+            let root = if self.gcx.hir.variable(var_id).kind.is_state() {
                 Some(var_id)
             } else {
                 self.state.storage_aliases.get(&var_id).copied()
@@ -265,7 +270,7 @@ impl<'hir> WriteAnalyzer<'_, 'hir> {
     /// Records `var_id = value`, tracking which state variable a storage pointer aliases.
     fn set_local(&mut self, var_id: VariableId, sources: Sources, value: &Expr<'_>) {
         self.set_taint(var_id, sources);
-        let root = (self.hir.variable(var_id).data_location == Some(DataLocation::Storage))
+        let root = (self.gcx.hir.variable(var_id).data_location == Some(DataLocation::Storage))
             .then(|| self.lhs_state_vars(value).into_iter().next())
             .flatten();
         match root {
@@ -279,11 +284,10 @@ impl<'hir> WriteAnalyzer<'_, 'hir> {
     fn mark_event(&mut self, expr: &Expr<'_>) {
         let Some(event_id) = emitted_event_id(expr) else { return };
         let event_sources = self.value_sources(expr);
-        let hir = self.hir;
         for write in &mut self.state.writes {
             if !write.evented
                 && (write.fixed_clear || !write.sources.is_disjoint(&event_sources))
-                && event_mentions_state_var(hir, event_id, write.var_id)
+                && event_mentions_state_var(self.gcx, event_id, write.var_id)
             {
                 write.evented = true;
             }
@@ -291,17 +295,17 @@ impl<'hir> WriteAnalyzer<'_, 'hir> {
     }
 }
 
-impl<'hir> Visit<'hir> for WriteAnalyzer<'_, 'hir> {
+impl<'gcx> Visit<'gcx> for WriteAnalyzer<'_, 'gcx> {
     type BreakValue = Never;
 
-    fn hir(&self) -> &'hir hir::Hir<'hir> {
-        self.hir
+    fn hir(&self) -> &'gcx hir::Hir<'gcx> {
+        &self.gcx.hir
     }
 
-    fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<Never> {
+    fn visit_stmt(&mut self, stmt: &'gcx Stmt<'gcx>) -> ControlFlow<Never> {
         match stmt.kind {
             StmtKind::DeclSingle(var_id) => {
-                if let Some(init) = self.hir.variable(var_id).initializer {
+                if let Some(init) = self.gcx.hir.variable(var_id).initializer {
                     self.visit_expr(init)?;
                     let sources = self.value_sources(init);
                     self.set_local(var_id, sources, init);
@@ -340,7 +344,7 @@ impl<'hir> Visit<'hir> for WriteAnalyzer<'_, 'hir> {
         ControlFlow::Continue(())
     }
 
-    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Never> {
+    fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Never> {
         match &expr.kind {
             ExprKind::Assign(lhs, op, rhs) => {
                 self.visit_expr(rhs)?;
@@ -351,7 +355,7 @@ impl<'hir> Visit<'hir> for WriteAnalyzer<'_, 'hir> {
                     sources.extend(self.value_sources(lhs));
                 }
                 self.record_writes(lhs, &sources, is_zero_value(rhs));
-                if let Some(local) = lhs_local_var(self.hir, lhs) {
+                if let Some(local) = lhs_local_var(&self.gcx.hir, lhs) {
                     self.set_local(local, sources, rhs);
                 }
                 ControlFlow::Continue(())
@@ -421,16 +425,16 @@ fn emitted_event_id(expr: &Expr<'_>) -> Option<EventId> {
 
 /// Whether the event name or one of its parameter names mentions the state variable: its
 /// normalized name, its singular form, or a role keyword it contains.
-fn event_mentions_state_var(hir: &hir::Hir<'_>, event_id: EventId, var_id: VariableId) -> bool {
-    let Some(var_name) = hir.variable(var_id).name else { return false };
+fn event_mentions_state_var(gcx: Gcx<'_>, event_id: EventId, var_id: VariableId) -> bool {
+    let Some(var_name) = gcx.hir.variable(var_id).name else { return false };
     let var_name = normalize(var_name.as_str());
     let mut keywords = vec![var_name.as_str()];
     keywords.extend(var_name.strip_suffix('s').filter(|singular| !singular.is_empty()));
     let roles = ["owner", "admin", "guardian", "manager", "role"];
     keywords.extend(roles.into_iter().filter(|role| var_name.contains(role)));
 
-    let event = hir.event(event_id);
-    let param_names = event.parameters.iter().filter_map(|&p| hir.variable(p).name);
+    let event = gcx.hir.event(event_id);
+    let param_names = event.parameters.iter().filter_map(|&p| gcx.hir.variable(p).name);
     iter::once(event.name).chain(param_names).any(|name| {
         let name = normalize(name.as_str());
         keywords.iter().any(|keyword| !keyword.is_empty() && name.contains(keyword))

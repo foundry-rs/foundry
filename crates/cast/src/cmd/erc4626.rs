@@ -1,14 +1,13 @@
 use std::str::FromStr;
 
 use crate::{
-    SimpleCast,
-    cmd::send::SendTxArgs,
-    format_uint_exp,
+    cmd::{erc20::print_amount, rpc_provider, send::SendTxArgs},
     tx::{SendTxOpts, TxParams},
 };
 use alloy_eips::BlockId;
 use alloy_ens::NameOrAddress;
-use alloy_primitives::{Address, FixedBytes, U256, address, hex};
+use alloy_network::AnyNetwork;
+use alloy_primitives::{Address, FixedBytes, U256, address};
 use alloy_provider::Provider;
 use alloy_sol_types::{SolCall, sol};
 use clap::Parser;
@@ -18,9 +17,8 @@ use foundry_cli::{
         JsonError, JsonMessage, print_json_success, print_json_success_with_warnings, print_scalar,
     },
     opts::RpcOpts,
-    utils::{LoadConfig, get_provider},
 };
-use foundry_common::shell;
+use foundry_common::{provider::RetryProvider, shell};
 use serde::Serialize;
 
 const NATIVE_ASSET: Address = address!("EeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE");
@@ -766,7 +764,7 @@ impl TokenAmount {
         Self {
             raw: value.to_string(),
             formatted: decimals
-                .and_then(|decimals| SimpleCast::format_units(&value.to_string(), decimals).ok()),
+                .and_then(|decimals| crate::args::format_units(&value.to_string(), decimals).ok()),
         }
     }
 }
@@ -849,213 +847,122 @@ impl Erc4626Subcommand {
                 check_compatibility(vault, account, block, rpc).await
             }
             Self::Asset { vault, block, rpc } => {
-                let config = rpc.load_config()?;
-                let provider = get_provider(&config)?;
-                let vault = vault.resolve(&provider).await?;
-                let asset = IERC4626::new(vault, &provider)
-                    .asset()
-                    .block(block.unwrap_or_default())
-                    .call()
-                    .await?;
+                let (_, vault) = vault_at(&rpc, vault).await?;
+                let asset = vault.asset().block(block.unwrap_or_default()).call().await?;
                 warn_if_native_asset(asset)?;
                 print_scalar(asset.to_string())
             }
             Self::TotalAssets { vault, block, rpc } => {
-                let config = rpc.load_config()?;
-                let provider = get_provider(&config)?;
-                let vault = vault.resolve(&provider).await?;
-                let assets = IERC4626::new(vault, &provider)
-                    .totalAssets()
-                    .block(block.unwrap_or_default())
-                    .call()
-                    .await?;
-                print_amount(assets)
+                let (_, vault) = vault_at(&rpc, vault).await?;
+                print_amount(vault.totalAssets().block(block.unwrap_or_default()).call().await?)
             }
             Self::ConvertToShares { vault, assets, block, rpc } => {
-                let config = rpc.load_config()?;
-                let provider = get_provider(&config)?;
-                let vault = vault.resolve(&provider).await?;
-                let shares = IERC4626::new(vault, &provider)
-                    .convertToShares(assets)
-                    .block(block.unwrap_or_default())
-                    .call()
-                    .await?;
-                print_amount(shares)
+                let (_, vault) = vault_at(&rpc, vault).await?;
+                let call = vault.convertToShares(assets).block(block.unwrap_or_default());
+                print_amount(call.call().await?)
             }
             Self::ConvertToAssets { vault, shares, block, rpc } => {
-                let config = rpc.load_config()?;
-                let provider = get_provider(&config)?;
-                let vault = vault.resolve(&provider).await?;
-                let assets = IERC4626::new(vault, &provider)
-                    .convertToAssets(shares)
-                    .block(block.unwrap_or_default())
-                    .call()
-                    .await?;
-                print_amount(assets)
+                let (_, vault) = vault_at(&rpc, vault).await?;
+                let call = vault.convertToAssets(shares).block(block.unwrap_or_default());
+                print_amount(call.call().await?)
             }
             Self::MaxDeposit { vault, receiver, block, rpc } => {
-                let config = rpc.load_config()?;
-                let provider = get_provider(&config)?;
-                let vault = vault.resolve(&provider).await?;
+                let (provider, vault) = vault_at(&rpc, vault).await?;
                 let receiver = receiver.resolve(&provider).await?;
-                let assets = IERC4626::new(vault, &provider)
-                    .maxDeposit(receiver)
-                    .block(block.unwrap_or_default())
-                    .call()
-                    .await?;
+                let assets =
+                    vault.maxDeposit(receiver).block(block.unwrap_or_default()).call().await?;
                 warn_if_zero_entry_max("maxDeposit", assets)?;
                 print_amount(assets)
             }
             Self::PreviewDeposit { vault, assets, block, rpc } => {
-                let config = rpc.load_config()?;
-                let provider = get_provider(&config)?;
-                let vault = vault.resolve(&provider).await?;
-                let shares = IERC4626::new(vault, &provider)
-                    .previewDeposit(assets)
-                    .block(block.unwrap_or_default())
-                    .call()
-                    .await
-                    .wrap_err(
-                        "previewDeposit failed; asynchronous ERC-7540 deposit vaults intentionally \
-                         revert this preview",
-                    )?;
-                print_amount(shares)
+                let (_, vault) = vault_at(&rpc, vault).await?;
+                let call = vault.previewDeposit(assets).block(block.unwrap_or_default());
+                print_amount(call.call().await.wrap_err_with(|| preview_error("Deposit"))?)
             }
             Self::Deposit { vault, assets, receiver, send_tx, tx } => {
-                let addresses = prepare_write(&vault, &[receiver], &send_tx).await?;
-                send_call(
-                    vault,
-                    IERC4626::depositCall { assets, receiver: addresses[0] },
-                    send_tx,
-                    tx,
-                )
-                .await
+                let [receiver] = prepare_write(&vault, [receiver], &send_tx).await?;
+                send_call(vault, IERC4626::depositCall { assets, receiver }, send_tx, tx).await
             }
             Self::MaxMint { vault, receiver, block, rpc } => {
-                let config = rpc.load_config()?;
-                let provider = get_provider(&config)?;
-                let vault = vault.resolve(&provider).await?;
+                let (provider, vault) = vault_at(&rpc, vault).await?;
                 let receiver = receiver.resolve(&provider).await?;
-                let shares = IERC4626::new(vault, &provider)
-                    .maxMint(receiver)
-                    .block(block.unwrap_or_default())
-                    .call()
-                    .await?;
+                let shares =
+                    vault.maxMint(receiver).block(block.unwrap_or_default()).call().await?;
                 warn_if_zero_entry_max("maxMint", shares)?;
                 print_amount(shares)
             }
             Self::PreviewMint { vault, shares, block, rpc } => {
-                let config = rpc.load_config()?;
-                let provider = get_provider(&config)?;
-                let vault = vault.resolve(&provider).await?;
-                let assets = IERC4626::new(vault, &provider)
-                    .previewMint(shares)
-                    .block(block.unwrap_or_default())
-                    .call()
-                    .await
-                    .wrap_err(
-                        "previewMint failed; asynchronous ERC-7540 deposit vaults intentionally \
-                         revert this preview",
-                    )?;
-                print_amount(assets)
+                let (_, vault) = vault_at(&rpc, vault).await?;
+                let call = vault.previewMint(shares).block(block.unwrap_or_default());
+                print_amount(call.call().await.wrap_err_with(|| preview_error("Mint"))?)
             }
             Self::Mint { vault, shares, receiver, send_tx, tx } => {
-                let addresses = prepare_write(&vault, &[receiver], &send_tx).await?;
-                send_call(vault, IERC4626::mintCall { shares, receiver: addresses[0] }, send_tx, tx)
-                    .await
+                let [receiver] = prepare_write(&vault, [receiver], &send_tx).await?;
+                send_call(vault, IERC4626::mintCall { shares, receiver }, send_tx, tx).await
             }
             Self::MaxWithdraw { vault, owner, block, rpc } => {
-                let config = rpc.load_config()?;
-                let provider = get_provider(&config)?;
-                let vault = vault.resolve(&provider).await?;
+                let (provider, vault) = vault_at(&rpc, vault).await?;
                 let owner = owner.resolve(&provider).await?;
                 let block = block.unwrap_or_default();
-                let contract = IERC4626::new(vault, &provider);
-                let assets = contract.maxWithdraw(owner).block(block).call().await?;
-                if assets.is_zero()
-                    && contract
-                        .balanceOf(owner)
-                        .block(block)
-                        .call()
-                        .await
-                        .is_ok_and(|shares| !shares.is_zero())
-                {
+                let assets = vault.maxWithdraw(owner).block(block).call().await?;
+                if assets.is_zero() && has_shares(&vault, owner, block).await {
                     warn_if_zero_exit_max("maxWithdraw")?;
                 }
                 print_amount(assets)
             }
             Self::PreviewWithdraw { vault, assets, block, rpc } => {
-                let config = rpc.load_config()?;
-                let provider = get_provider(&config)?;
-                let vault = vault.resolve(&provider).await?;
-                let shares = IERC4626::new(vault, &provider)
-                    .previewWithdraw(assets)
-                    .block(block.unwrap_or_default())
-                    .call()
-                    .await
-                    .wrap_err(
-                        "previewWithdraw failed; asynchronous ERC-7540 redeem vaults intentionally \
-                         revert this preview",
-                    )?;
-                print_amount(shares)
+                let (_, vault) = vault_at(&rpc, vault).await?;
+                let call = vault.previewWithdraw(assets).block(block.unwrap_or_default());
+                print_amount(call.call().await.wrap_err_with(|| preview_error("Withdraw"))?)
             }
             Self::Withdraw { vault, assets, receiver, owner, send_tx, tx } => {
-                let addresses = prepare_write(&vault, &[receiver, owner], &send_tx).await?;
-                send_call(
-                    vault,
-                    IERC4626::withdrawCall { assets, receiver: addresses[0], owner: addresses[1] },
-                    send_tx,
-                    tx,
-                )
-                .await
+                let [receiver, owner] = prepare_write(&vault, [receiver, owner], &send_tx).await?;
+                let call = IERC4626::withdrawCall { assets, receiver, owner };
+                send_call(vault, call, send_tx, tx).await
             }
             Self::MaxRedeem { vault, owner, block, rpc } => {
-                let config = rpc.load_config()?;
-                let provider = get_provider(&config)?;
-                let vault = vault.resolve(&provider).await?;
+                let (provider, vault) = vault_at(&rpc, vault).await?;
                 let owner = owner.resolve(&provider).await?;
                 let block = block.unwrap_or_default();
-                let contract = IERC4626::new(vault, &provider);
-                let shares = contract.maxRedeem(owner).block(block).call().await?;
-                if shares.is_zero()
-                    && contract
-                        .balanceOf(owner)
-                        .block(block)
-                        .call()
-                        .await
-                        .is_ok_and(|balance| !balance.is_zero())
-                {
+                let shares = vault.maxRedeem(owner).block(block).call().await?;
+                if shares.is_zero() && has_shares(&vault, owner, block).await {
                     warn_if_zero_exit_max("maxRedeem")?;
                 }
                 print_amount(shares)
             }
             Self::PreviewRedeem { vault, shares, block, rpc } => {
-                let config = rpc.load_config()?;
-                let provider = get_provider(&config)?;
-                let vault = vault.resolve(&provider).await?;
-                let assets = IERC4626::new(vault, &provider)
-                    .previewRedeem(shares)
-                    .block(block.unwrap_or_default())
-                    .call()
-                    .await
-                    .wrap_err(
-                        "previewRedeem failed; asynchronous ERC-7540 redeem vaults intentionally \
-                         revert this preview",
-                    )?;
-                print_amount(assets)
+                let (_, vault) = vault_at(&rpc, vault).await?;
+                let call = vault.previewRedeem(shares).block(block.unwrap_or_default());
+                print_amount(call.call().await.wrap_err_with(|| preview_error("Redeem"))?)
             }
             Self::Redeem { vault, shares, receiver, owner, send_tx, tx } => {
-                let addresses = prepare_write(&vault, &[receiver, owner], &send_tx).await?;
-                send_call(
-                    vault,
-                    IERC4626::redeemCall { shares, receiver: addresses[0], owner: addresses[1] },
-                    send_tx,
-                    tx,
-                )
-                .await
+                let [receiver, owner] = prepare_write(&vault, [receiver, owner], &send_tx).await?;
+                let call = IERC4626::redeemCall { shares, receiver, owner };
+                send_call(vault, call, send_tx, tx).await
             }
         }
     }
+}
+
+type Vault = IERC4626::IERC4626Instance<RetryProvider, AnyNetwork>;
+
+async fn vault_at(rpc: &RpcOpts, vault: NameOrAddress) -> Result<(RetryProvider, Vault)> {
+    let provider = rpc_provider(rpc)?;
+    let vault = vault.resolve(&provider).await?;
+    Ok((provider.clone(), IERC4626::new(vault, provider)))
+}
+
+async fn has_shares(vault: &Vault, owner: Address, block: BlockId) -> bool {
+    vault.balanceOf(owner).block(block).call().await.is_ok_and(|shares| !shares.is_zero())
+}
+
+/// Error context for a failed `preview*` call; asynchronous ERC-7540 vaults revert these.
+fn preview_error(method: &str) -> String {
+    let kind = if matches!(method, "Deposit" | "Mint") { "deposit" } else { "redeem" };
+    format!(
+        "preview{method} failed; asynchronous ERC-7540 {kind} vaults intentionally revert this \
+         preview"
+    )
 }
 
 async fn show_info(
@@ -1064,11 +971,9 @@ async fn show_info(
     block: Option<BlockId>,
     rpc: RpcOpts,
 ) -> Result<()> {
-    let config = rpc.load_config()?;
-    let provider = get_provider(&config)?;
-    let vault = vault.resolve(&provider).await?;
+    let (provider, contract) = vault_at(&rpc, vault).await?;
+    let vault = *contract.address();
     let block = block.unwrap_or_default();
-    let contract = IERC4626::new(vault, &provider);
 
     let name_call = contract.name().block(block);
     let symbol_call = contract.symbol().block(block);
@@ -1106,28 +1011,16 @@ async fn show_info(
         (name.ok(), symbol.ok(), decimals.ok())
     };
 
-    let assets_per_share = if let Some(unit) = decimals.and_then(decimal_unit) {
-        contract
-            .convertToAssets(unit)
-            .block(block)
-            .call()
-            .await
-            .ok()
-            .map(|value| TokenAmount::new(value, asset_decimals))
-    } else {
-        None
-    };
-    let shares_per_asset = if let Some(unit) = asset_decimals.and_then(decimal_unit) {
-        contract
-            .convertToShares(unit)
-            .block(block)
-            .call()
-            .await
-            .ok()
-            .map(|value| TokenAmount::new(value, decimals))
-    } else {
-        None
-    };
+    let assets_per_share = match decimals.and_then(decimal_unit) {
+        Some(unit) => contract.convertToAssets(unit).block(block).call().await.ok(),
+        None => None,
+    }
+    .map(|value| TokenAmount::new(value, asset_decimals));
+    let shares_per_asset = match asset_decimals.and_then(decimal_unit) {
+        Some(unit) => contract.convertToShares(unit).block(block).call().await.ok(),
+        None => None,
+    }
+    .map(|value| TokenAmount::new(value, decimals));
 
     print_info(
         VaultInfo {
@@ -1156,12 +1049,10 @@ async fn show_position(
     block: Option<BlockId>,
     rpc: RpcOpts,
 ) -> Result<()> {
-    let config = rpc.load_config()?;
-    let provider = get_provider(&config)?;
-    let vault = vault.resolve(&provider).await?;
+    let (provider, contract) = vault_at(&rpc, vault).await?;
+    let vault = *contract.address();
     let owner = owner.resolve(&provider).await?;
     let block = block.unwrap_or_default();
-    let contract = IERC4626::new(vault, &provider);
 
     let asset_call = contract.asset().block(block);
     let symbol_call = contract.symbol().block(block);
@@ -1237,15 +1128,13 @@ async fn check_compatibility(
     block: Option<BlockId>,
     rpc: RpcOpts,
 ) -> Result<()> {
-    let config = rpc.load_config()?;
-    let provider = get_provider(&config)?;
-    let vault = vault.resolve(&provider).await?;
+    let (provider, contract) = vault_at(&rpc, vault).await?;
+    let vault = *contract.address();
     let account = match account {
         Some(account) => account.resolve(&provider).await?,
         None => Address::ZERO,
     };
     let block = block.unwrap_or_default();
-    let contract = IERC4626::new(vault, &provider);
 
     let code_call = provider.get_code_at(vault).block_id(block);
     let asset_call = contract.asset().block(block);
@@ -1438,30 +1327,27 @@ fn print_info(info: VaultInfo, human: bool, warnings: Vec<VaultWarning>) -> Resu
     }
 
     print_warnings(&warnings)?;
+    let asset_symbol = info.asset_symbol.as_deref();
+    let symbol = info.symbol.as_deref();
     print_field("Vault", &info.vault)?;
-    print_field("Name", optional_text(&info.name))?;
-    print_field("Symbol", optional_text(&info.symbol))?;
-    print_field("Decimals", optional_number(info.decimals))?;
+    print_field("Name", or_unavailable(info.name.as_ref()))?;
+    print_field("Symbol", or_unavailable(symbol))?;
+    print_field("Decimals", or_unavailable(info.decimals))?;
     print_field("Asset", &info.asset)?;
-    print_field("Asset name", optional_text(&info.asset_name))?;
-    print_field("Asset symbol", optional_text(&info.asset_symbol))?;
-    print_field("Asset decimals", optional_number(info.asset_decimals))?;
-    print_field(
-        "Total assets",
-        display_amount(&info.total_assets, human, info.asset_symbol.as_deref()),
-    )?;
-    print_field("Total supply", display_amount(&info.total_supply, human, info.symbol.as_deref()))?;
+    print_field("Asset name", or_unavailable(info.asset_name.as_ref()))?;
+    print_field("Asset symbol", or_unavailable(asset_symbol))?;
+    print_field("Asset decimals", or_unavailable(info.asset_decimals))?;
+    print_field("Total assets", display_amount(&info.total_assets, human, asset_symbol))?;
+    print_field("Total supply", display_amount(&info.total_supply, human, symbol))?;
     print_field(
         "Assets per share",
-        display_optional_amount(
-            info.assets_per_share.as_ref(),
-            human,
-            info.asset_symbol.as_deref(),
+        or_unavailable(
+            info.assets_per_share.as_ref().map(|a| display_amount(a, human, asset_symbol)),
         ),
     )?;
     print_field(
         "Shares per asset",
-        display_optional_amount(info.shares_per_asset.as_ref(), human, info.symbol.as_deref()),
+        or_unavailable(info.shares_per_asset.as_ref().map(|a| display_amount(a, human, symbol))),
     )
 }
 
@@ -1471,29 +1357,22 @@ fn print_position(position: VaultPosition, human: bool, warnings: Vec<VaultWarni
     }
 
     print_warnings(&warnings)?;
+    let share_symbol = position.share_symbol.as_deref();
+    let asset_symbol = position.asset_symbol.as_deref();
     print_field("Vault", &position.vault)?;
     print_field("Owner", &position.owner)?;
     print_field("Asset", &position.asset)?;
-    print_field("Share symbol", optional_text(&position.share_symbol))?;
-    print_field("Share decimals", optional_number(position.share_decimals))?;
-    print_field("Asset symbol", optional_text(&position.asset_symbol))?;
-    print_field("Asset decimals", optional_number(position.asset_decimals))?;
-    print_field(
-        "Share balance",
-        display_amount(&position.share_balance, human, position.share_symbol.as_deref()),
-    )?;
+    print_field("Share symbol", or_unavailable(share_symbol))?;
+    print_field("Share decimals", or_unavailable(position.share_decimals))?;
+    print_field("Asset symbol", or_unavailable(asset_symbol))?;
+    print_field("Asset decimals", or_unavailable(position.asset_decimals))?;
+    print_field("Share balance", display_amount(&position.share_balance, human, share_symbol))?;
     print_field(
         "Assets equivalent",
-        display_amount(&position.assets_equivalent, human, position.asset_symbol.as_deref()),
+        display_amount(&position.assets_equivalent, human, asset_symbol),
     )?;
-    print_field(
-        "Max withdraw",
-        display_amount(&position.max_withdraw, human, position.asset_symbol.as_deref()),
-    )?;
-    print_field(
-        "Max redeem",
-        display_amount(&position.max_redeem, human, position.share_symbol.as_deref()),
-    )
+    print_field("Max withdraw", display_amount(&position.max_withdraw, human, asset_symbol))?;
+    print_field("Max redeem", display_amount(&position.max_redeem, human, share_symbol))
 }
 
 fn print_compatibility_report(report: &CompatibilityReport) -> Result<()> {
@@ -1545,36 +1424,21 @@ fn print_warnings(warnings: &[VaultWarning]) -> Result<()> {
     Ok(())
 }
 
-fn optional_text(value: &Option<String>) -> &str {
-    value.as_deref().unwrap_or("<unavailable>")
-}
-
-fn optional_number(value: Option<u8>) -> String {
+fn or_unavailable(value: Option<impl std::fmt::Display>) -> String {
     value.map_or_else(|| "<unavailable>".to_string(), |value| value.to_string())
 }
 
 fn display_amount(amount: &TokenAmount, human: bool, symbol: Option<&str>) -> String {
-    if !human {
-        return amount.raw.clone();
-    }
-    let Some(formatted) = &amount.formatted else { return amount.raw.clone() };
-    match symbol.filter(|symbol| !symbol.is_empty()) {
-        Some(symbol) => format!("{formatted} {symbol}"),
-        None => formatted.clone(),
+    match (&amount.formatted, symbol.filter(|symbol| !symbol.is_empty())) {
+        (Some(formatted), Some(symbol)) if human => format!("{formatted} {symbol}"),
+        (Some(formatted), None) if human => formatted.clone(),
+        _ => amount.raw.clone(),
     }
 }
 
-fn display_optional_amount(
-    amount: Option<&TokenAmount>,
-    human: bool,
-    symbol: Option<&str>,
-) -> String {
-    amount
-        .map_or_else(|| "<unavailable>".to_string(), |amount| display_amount(amount, human, symbol))
-}
-
+/// `10^decimals`, or `None` when it overflows.
 fn decimal_unit(decimals: u8) -> Option<U256> {
-    (0..decimals).try_fold(U256::ONE, |unit, _| unit.checked_mul(U256::from(10)))
+    U256::from(10).checked_pow(U256::from(decimals))
 }
 
 fn push_check(
@@ -1663,14 +1527,6 @@ fn record_preview<E>(
     }
 }
 
-fn print_amount(amount: U256) -> Result<()> {
-    if shell::is_json() {
-        print_json_success(amount.to_string())
-    } else {
-        sh_println!("{}", format_uint_exp(amount))
-    }
-}
-
 fn warn_if_zero_entry_max(method: &str, amount: U256) -> Result<()> {
     if amount.is_zero() {
         sh_warn!(
@@ -1716,22 +1572,20 @@ fn native_asset_warning() -> VaultWarning {
     }
 }
 
-async fn prepare_write(
+/// Warns when the vault holds the native asset and resolves the write's account arguments.
+async fn prepare_write<const N: usize>(
     vault: &NameOrAddress,
-    accounts: &[NameOrAddress],
+    accounts: [NameOrAddress; N],
     send_tx: &SendTxOpts,
-) -> Result<Vec<Address>> {
-    let config = send_tx.eth.rpc.load_config()?;
-    let provider = get_provider(&config)?;
-    let vault = vault.resolve(&provider).await?;
-
-    if let Ok(asset) = IERC4626::new(vault, &provider).asset().call().await {
+) -> Result<[Address; N]> {
+    let (provider, vault) = vault_at(&send_tx.eth.rpc, vault.clone()).await?;
+    if let Ok(asset) = vault.asset().call().await {
         warn_if_native_asset(asset)?;
     }
 
-    let mut resolved = Vec::with_capacity(accounts.len());
-    for account in accounts {
-        resolved.push(account.resolve(&provider).await?);
+    let mut resolved = [Address::ZERO; N];
+    for (slot, account) in resolved.iter_mut().zip(accounts) {
+        *slot = account.resolve(&provider).await?;
     }
     Ok(resolved)
 }
@@ -1742,8 +1596,8 @@ async fn send_call<C: SolCall>(
     send_tx: SendTxOpts,
     tx: TxParams,
 ) -> Result<()> {
-    let data = hex::encode_prefixed(call.abi_encode());
-    SendTxArgs::contract_call(vault, data, send_tx, tx).run().await
+    // Boxed to keep the large `cast send` future off this command's stack frame.
+    Box::pin(SendTxArgs::contract_call(vault, call.abi_encode(), send_tx, tx).run()).await
 }
 
 #[cfg(test)]
