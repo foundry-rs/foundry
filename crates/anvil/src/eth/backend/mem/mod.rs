@@ -5674,7 +5674,7 @@ where
     pub async fn pending_block(
         &self,
         pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
-    ) -> BlockInfo<N> {
+    ) -> Result<BlockInfo<N>, BlockchainError> {
         self.with_pending_block(pool_transactions, |_, block| block).await
     }
 
@@ -5685,7 +5685,7 @@ where
         &self,
         pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
         f: F,
-    ) -> T
+    ) -> Result<T, BlockchainError>
     where
         F: FnOnce(Box<dyn MaybeFullDatabase + '_>, BlockInfo<N>) -> T,
     {
@@ -5701,27 +5701,21 @@ where
         let inspector_tx_config = self.inspector_tx_config();
         let gas_config = self.pool_tx_gas_config(&evm_env);
 
-        let (pool_result, block_result) = self
-            .execute_with_block_executor(
-                &mut cache_db,
-                &evm_env,
-                parent_hash,
-                spec_id,
-                self.hardfork(),
-                Some(B256::ZERO),
-                BlockExecutionKind::Complete,
-                &pool_transactions,
-                &gas_config,
-                &inspector_tx_config,
-                &|pool_tx, account| {
-                    self.validate_pool_transaction_for(
-                        &pool_tx.pending_transaction,
-                        account,
-                        &evm_env,
-                    )
-                },
-            )
-            .expect("pending block execution failed");
+        let (pool_result, block_result) = self.execute_with_block_executor(
+            &mut cache_db,
+            &evm_env,
+            parent_hash,
+            spec_id,
+            self.hardfork(),
+            Some(B256::ZERO),
+            BlockExecutionKind::Complete,
+            &pool_transactions,
+            &gas_config,
+            &inspector_tx_config,
+            &|pool_tx, account| {
+                self.validate_pool_transaction_for(&pool_tx.pending_transaction, account, &evm_env)
+            },
+        )?;
 
         // Extract inner CacheDB (which implements MaybeFullDatabase)
         let cache_db = cache_db.0;
@@ -5739,7 +5733,7 @@ where
             Some(B256::ZERO),
         );
 
-        f(Box::new(cache_db), block_info)
+        Ok(f(Box::new(cache_db), block_info))
     }
 
     /// Returns the ERC20/TIP20 token balance for an account.
@@ -6200,7 +6194,7 @@ where
                         let block = block.block;
                         f(state, block_env_from_header(&block.header))
                     })
-                    .await;
+                    .await?;
                 return Ok(result);
             }
             Some(BlockRequest::Number(bn)) => Some(BlockNumber::Number(bn)),
@@ -6264,7 +6258,7 @@ where
                         let block_env = block_env_from_header(&block_info.block.header);
                         f(state, block_env, context)
                     })
-                    .await;
+                    .await?;
             }
             Some(BlockRequest::Number(number)) => Some(BlockNumber::Number(number)),
             None => None,
@@ -7289,9 +7283,9 @@ where
     pub async fn pending_block_receipts(
         &self,
         pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
-    ) -> Vec<FoundryTxReceipt> {
+    ) -> Result<Vec<FoundryTxReceipt>, BlockchainError> {
         let BlockInfo { block, transactions, receipts } =
-            self.pending_block(pool_transactions).await;
+            self.pending_block(pool_transactions).await?;
         let block_hash = block.header.hash_slow();
         let mut pending_receipts = Vec::with_capacity(receipts.len());
         let mut next_log_index = 0;
@@ -7309,7 +7303,7 @@ where
             next_log_index += log_count;
         }
 
-        pending_receipts
+        Ok(pending_receipts)
     }
 
     /// Returns the blocks receipts for the given number
@@ -7408,6 +7402,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
     pub async fn load_state(&self, mut state: SerializableState) -> Result<bool, BlockchainError> {
         let _mining_guard = self.mining.lock().await;
         let mut block_env = state.block.take();
+        let mut fork_block_boundary = None;
         let mut selected_head = None;
         let mut selected_header = None;
         let mut checkpoint = None;
@@ -7431,6 +7426,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
                 } else {
                     // If loading state file on a fork, set best number to the fork block number.
                     // Ref: https://github.com/foundry-rs/foundry/pull/9215#issue-2618681838
+                    fork_block_boundary = Some(number);
                     (number, Some(hash))
                 }
             } else {
@@ -7506,8 +7502,8 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         let blocks = std::mem::take(&mut state.blocks);
         let transactions = std::mem::take(&mut state.transactions);
         let mut storage = self.blockchain.storage.read().clone();
-        storage.load_blocks(blocks);
-        storage.load_transactions(transactions);
+        storage.load_blocks(blocks, fork_block_boundary);
+        storage.load_transactions(transactions, fork_block_boundary);
         if let Some(checkpoint) = checkpoint {
             storage.insert_block(checkpoint);
         }
@@ -8550,7 +8546,7 @@ impl Backend<FoundryNetwork> {
                         optimism_jovian,
                     )
                 })
-                .await
+                .await?
             }
             block_request => {
                 let base_block_number = match block_request.as_ref() {

@@ -101,6 +101,31 @@ contract StateSnapshotTest is Test {
     }
 }
 
+// Snapshots inherited from setUp must be deletable before backend initialization.
+contract StateSnapshotDeleteFromSetUpTest is Test {
+    uint256 id;
+
+    function setUp() public {
+        id = vm.snapshotState();
+    }
+
+    function testDeleteStateSnapshotTakenInSetUpAsFirstCall() public {
+        // Keep deletion as the first mutating cheatcode.
+        assertTrue(vm.deleteStateSnapshot(id));
+        assert(!vm.revertToState(id));
+    }
+
+    function testDeleteStateSnapshotsTakenInSetUpAsFirstCall() public {
+        vm.deleteStateSnapshots();
+        assert(!vm.revertToState(id));
+    }
+
+    function testFuzz_DeleteStateSnapshotTakenInSetUp(uint256) public {
+        // Each fuzz run inherits the same setup snapshot.
+        assertTrue(vm.deleteStateSnapshot(id));
+    }
+}
+
 // TODO: remove this test suite once `snapshot*` has been deprecated in favor of `snapshotState*`.
 contract DeprecatedStateSnapshotTest is Test {
     Storage store;

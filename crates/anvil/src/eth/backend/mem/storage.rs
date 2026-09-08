@@ -469,10 +469,17 @@ impl<N: Network> BlockchainStorage<N> {
         block_hash
     }
 
-    /// Deserialize and add all blocks data to the backend storage
-    pub fn load_blocks(&mut self, serializable_blocks: Vec<SerializableBlock>) {
+    /// Deserialize and add blocks above the fork boundary to the backend storage.
+    pub fn load_blocks(
+        &mut self,
+        serializable_blocks: Vec<SerializableBlock>,
+        fork_boundary: Option<u64>,
+    ) {
         for serializable_block in serializable_blocks {
             let block: Block = serializable_block.into();
+            if fork_boundary.is_some_and(|boundary| block.header.number() <= boundary) {
+                continue;
+            }
             self.insert_block(block);
         }
     }
@@ -515,9 +522,18 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> BlockchainStorage<N> 
         transactions
     }
 
-    /// Deserialize and add all transactions data to the backend storage
-    pub fn load_transactions(&mut self, serializable_transactions: Vec<SerializableTransaction>) {
+    /// Deserialize and add transactions above the fork boundary to the backend storage.
+    pub fn load_transactions(
+        &mut self,
+        serializable_transactions: Vec<SerializableTransaction>,
+        fork_boundary: Option<u64>,
+    ) {
         for serializable_transaction in serializable_transactions {
+            if fork_boundary
+                .is_some_and(|boundary| serializable_transaction.block_number <= boundary)
+            {
+                continue;
+            }
             let transaction: MinedTransaction<N> = serializable_transaction.into();
             self.transactions.insert(transaction.info.transaction_hash, transaction);
         }
@@ -880,8 +896,8 @@ mod tests {
 
         let mut load_storage = BlockchainStorage::<FoundryNetwork>::empty();
 
-        load_storage.load_blocks(serialized_blocks);
-        load_storage.load_transactions(serialized_transactions);
+        load_storage.load_blocks(serialized_blocks, None);
+        load_storage.load_transactions(serialized_transactions, None);
 
         let loaded_block = load_storage.blocks.get(&block_hash).unwrap();
         assert_eq!(loaded_block.header.gas_limit(), header.gas_limit());
@@ -911,7 +927,7 @@ mod tests {
         assert!(canonical_hash < stale_hash);
 
         let mut loaded = BlockchainStorage::<FoundryNetwork>::empty();
-        loaded.load_blocks(storage.serialized_blocks());
+        loaded.load_blocks(storage.serialized_blocks(), None);
         assert_eq!(loaded.hashes.get(&1), Some(&canonical_hash));
     }
 
@@ -992,7 +1008,7 @@ mod tests {
         let serialized = serde_json::to_string(&dump_storage.serialized_blocks()).unwrap();
         let blocks: Vec<SerializableBlock> = serde_json::from_str(&serialized).unwrap();
         let mut load_storage = BlockchainStorage::<FoundryNetwork>::empty();
-        load_storage.load_blocks(blocks);
+        load_storage.load_blocks(blocks, None);
 
         let loaded_block = load_storage.blocks.get(&block_hash).unwrap();
         assert_eq!(loaded_block.header, expected_header);
@@ -1025,7 +1041,7 @@ mod tests {
         let dummy_genesis_hash = B256::repeat_byte(0xab);
         load_storage.genesis_hash = dummy_genesis_hash;
 
-        load_storage.load_blocks(serialized_blocks);
+        load_storage.load_blocks(serialized_blocks, None);
 
         assert_eq!(load_storage.genesis_hash, block_hash);
         assert_ne!(load_storage.genesis_hash, dummy_genesis_hash);
@@ -1042,7 +1058,7 @@ mod tests {
             header_only_73.into(),
             Vec::<MaybeImpersonatedTransaction<FoundryTxEnvelope>>::new(),
         );
-        sanity_storage.load_blocks(vec![block_73.into()]);
+        sanity_storage.load_blocks(vec![block_73.into()], None);
         assert_eq!(sanity_storage.genesis_hash, dummy_genesis_hash);
     }
 }
