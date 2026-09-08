@@ -1,0 +1,127 @@
+name: tempo checks
+
+permissions: {}
+
+# The caller must depend on the shared Socket dependency gate.
+on:
+  workflow_call:
+    inputs:
+      network:
+        type: string
+        default: ""
+      scripts:
+        type: string
+        default: both
+    secrets:
+      TEMPO_MAINNET_RPC_URL:
+        required: false
+      TEMPO_TESTNET_RPC_URL:
+        required: false
+      TEMPO_DEVNET_RPC_URL:
+        required: false
+      VERIFIER_URL:
+        required: false
+      THROW_AWAY_MAINNET_PKEY:
+        required: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTC_WRAPPER: "sccache"
+
+jobs:
+  tempo-check:
+    # Skip on PRs from forks and Dependabot, which cannot access the RPC secrets.
+    if: |
+      (github.event_name != 'schedule' || github.repository == 'foundry-rs/foundry') &&
+      (github.event_name != 'pull_request' ||
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login != 'dependabot[bot]'))
+    runs-on: depot-ubuntu-latest-16
+    timeout-minutes: 60
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@09dddc697b1c8c1d3c3733b41d6fdd2274f17734
+        with:
+          egress-policy: audit
+      # Checkout the repository
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
+
+      - uses: ./.github/actions/setup-sccache
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      # Build and install binaries
+      - name: Build and install Foundry binaries
+        run: |
+          cargo build --profile dev --locked --bin forge --bin cast --bin anvil --bin chisel
+          echo "${{ github.workspace }}/target/debug" >> "$GITHUB_PATH"
+
+      - name: Check Tempo fork schedule compatibility
+        env:
+          TEMPO_MAINNET_RPC_URL: ${{ secrets.TEMPO_MAINNET_RPC_URL }}
+          TEMPO_TESTNET_RPC_URL: ${{ secrets.TEMPO_TESTNET_RPC_URL }}
+          TEMPO_DEVNET_RPC_URL: ${{ vars.TEMPO_DEVNET_CI != 'false' && secrets.TEMPO_DEVNET_RPC_URL || '' }}
+        run: |
+          cargo test --locked -p foundry-common --lib tempo::tests::test_fork_schedule_parses_configured_rpcs -- --exact --nocapture
+
+      - name: Run Tempo check on mainnet
+        if: |
+          inputs.network == 'mainnet' ||
+          inputs.network == 'all'
+        env:
+          ETH_RPC_URL: ${{ secrets.TEMPO_MAINNET_RPC_URL }}
+          TEMPO_FEE_TOKEN: "0x20c0000000000000000000000000000000000000"
+          VERIFIER_URL: ${{ secrets.VERIFIER_URL }}
+          PRIVATE_KEY: ${{ secrets.THROW_AWAY_MAINNET_PKEY }}
+          SCRIPTS: ${{ inputs.scripts || 'both' }}
+        run: |
+          if [ "$SCRIPTS" = "check" ] || [ "$SCRIPTS" = "both" ]; then
+            ./.github/scripts/tempo-check.sh
+          fi
+          if [ "$SCRIPTS" = "deploy" ] || [ "$SCRIPTS" = "both" ]; then
+            ./.github/scripts/tempo-deploy.sh
+          fi
+
+      - name: Run Tempo check on testnet
+        if: |
+          github.event_name == 'schedule' ||
+          inputs.network == 'testnet' ||
+          inputs.network == 'all'
+        env:
+          ETH_RPC_URL: ${{ secrets.TEMPO_TESTNET_RPC_URL }}
+          VERIFIER_URL: ${{ secrets.VERIFIER_URL }}
+          SCRIPTS: ${{ inputs.scripts || 'both' }}
+        run: |
+          if [ "$SCRIPTS" = "check" ] || [ "$SCRIPTS" = "both" ]; then
+            ./.github/scripts/tempo-check.sh
+          fi
+          if [ "$SCRIPTS" = "deploy" ] || [ "$SCRIPTS" = "both" ]; then
+            ./.github/scripts/tempo-deploy.sh
+          fi
+
+      - name: Run Tempo check on devnet
+        if: vars.TEMPO_DEVNET_CI != 'false' && (github.event_name == 'push' || github.event_name == 'pull_request' || inputs.network == 'devnet' || inputs.network == 'all')
+        env:
+          ETH_RPC_URL: ${{ secrets.TEMPO_DEVNET_RPC_URL }}
+          SCRIPTS: ${{ inputs.scripts || 'both' }}
+        run: |
+          if [ "$SCRIPTS" = "check" ] || [ "$SCRIPTS" = "both" ]; then
+            ./.github/scripts/tempo-check.sh
+          fi
+          if [ "$SCRIPTS" = "deploy" ] || [ "$SCRIPTS" = "both" ]; then
+            ./.github/scripts/tempo-deploy.sh
+          fi
+
+      - name: Run Tempo wallet tests on devnet
+        if: vars.TEMPO_DEVNET_CI != 'false' && (github.event_name == 'push' || github.event_name == 'pull_request' || inputs.network == 'devnet' || inputs.network == 'all')
+        env:
+          ETH_RPC_URL: ${{ secrets.TEMPO_DEVNET_RPC_URL }}
+          TEMPO_HOME: ${{ runner.temp }}/tempo-wallet
+        run: ./.github/scripts/tempo-wallet.sh

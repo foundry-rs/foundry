@@ -23,6 +23,34 @@ jobs:
       contents: read
     uses: ./.github/workflows/socket-dependencies.yml
 
+  mpp:
+    needs: socket-dependencies
+    # Preserve the existing restriction on secret-backed MPP tests.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    uses: ./.github/workflows/mpp.yml
+    permissions:
+      id-token: write
+      contents: read
+    secrets:
+      MPP_API_KEY: ${{ secrets.MPP_API_KEY }}
+
+  tempo:
+    needs: socket-dependencies
+    # Fork and Dependabot PRs cannot access the RPC secrets.
+    if: |
+      github.event_name != 'pull_request' ||
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login != 'dependabot[bot]')
+    uses: ./.github/workflows/tempo.yml
+    permissions:
+      id-token: write
+      contents: read
+    secrets:
+      TEMPO_MAINNET_RPC_URL: ${{ secrets.TEMPO_MAINNET_RPC_URL }}
+      TEMPO_TESTNET_RPC_URL: ${{ secrets.TEMPO_TESTNET_RPC_URL }}
+      TEMPO_DEVNET_RPC_URL: ${{ secrets.TEMPO_DEVNET_RPC_URL }}
+      VERIFIER_URL: ${{ secrets.VERIFIER_URL }}
+
   test:
     needs: socket-dependencies
     uses: ./.github/workflows/test.yml
@@ -329,6 +357,8 @@ jobs:
       id-token: write
     needs:
       - socket-dependencies
+      - mpp
+      - tempo
       - test
       - docs
       - doctest
@@ -352,5 +382,5 @@ jobs:
       - name: Decide whether the needed jobs succeeded or failed
         uses: re-actors/alls-green@b5b5b37504aa4183270bd3d855c52a67f212be35 # v1.3.0
         with:
-          allowed-skips: touch-id-link
+          allowed-skips: touch-id-link, mpp, tempo
           jobs: ${{ toJSON(needs) }}
