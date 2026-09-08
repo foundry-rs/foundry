@@ -1,4 +1,9 @@
 use super::{abi::*, runtime::*, *};
+use foundry_evm::{
+    core::{backend::Backend, evm::EthEvmNetwork},
+    executors::ExecutorBuilder,
+    inspectors::cheatcodes::{ForgeContext, set_execution_context},
+};
 
 fn empty_state(cx: &mut SymCx) -> PathState {
     let calldata =
@@ -5798,4 +5803,68 @@ fn error_payload(message: &str) -> Vec<u8> {
     let padded_len = message.len().div_ceil(32) * 32;
     payload.resize(4 + 64 + padded_len, 0);
     payload
+}
+
+#[test]
+fn is_context_uses_actual_execution_context() {
+    set_execution_context(ForgeContext::Coverage);
+    let mut executor = ExecutorBuilder::<EthEvmNetwork>::new().build(
+        Default::default(),
+        Default::default(),
+        Backend::spawn(None).unwrap(),
+        Default::default(),
+    );
+    let target = Address::repeat_byte(0x11);
+    let function = Function::parse("check_context()").unwrap();
+
+    for (context, expected) in [
+        (1, false),
+        (2, true),
+        (0, true),
+        (3, false),
+        (4, false),
+        (5, false),
+        (6, false),
+        (7, false),
+        (8, false),
+    ] {
+        // Store isContext calldata, STATICCALL, and revert unless the result matches.
+        let mut code = vec![0x63];
+        code.extend_from_slice(&Vm::isContextCall::SELECTOR);
+        code.extend_from_slice(&[0x60, 0xe0, 0x1b, 0x5f, 0x52, 0x60, context, 0x60, 0x04, 0x52]);
+        code.extend_from_slice(&[0x60, 0x20, 0x5f, 0x60, 0x24, 0x5f, 0x73]);
+        code.extend_from_slice(CHEATCODE_ADDRESS.as_slice());
+        code.extend_from_slice(&[
+            0x62,
+            0x0f,
+            0x42,
+            0x40,
+            0xfa,
+            0x5f,
+            0x51,
+            0x60,
+            u8::from(expected),
+            0x14,
+            0x16,
+        ]);
+        let success_pc = u8::try_from(code.len() + 6).unwrap();
+        code.extend_from_slice(&[0x60, success_pc, 0x57, 0x5f, 0x5f, 0xfd, 0x5b, 0x00]);
+        executor.set_code(target, Bytecode::new_raw(code.into())).unwrap();
+
+        let result = SymbolicExecutor::new(SymbolicConfig::default()).run(SymbolicRunInput {
+            executor: &executor,
+            target,
+            sender: CALLER,
+            function: &function,
+            value: U256::ZERO,
+            ffi_enabled: false,
+            collect_success_input: false,
+            corpus_seeds: Vec::new(),
+            branch_target: None,
+        });
+        assert!(
+            matches!(result, SymbolicRunResult::Safe { .. }),
+            "context {context}, expected {expected}: {result:?}"
+        );
+    }
 }

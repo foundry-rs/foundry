@@ -1,4 +1,5 @@
 use foundry_cheatcodes_spec::Vm::*;
+use foundry_evm::inspectors::cheatcodes::current_execution_context;
 
 use super::*;
 
@@ -2444,9 +2445,13 @@ impl SymbolicExecutor {
                     0,
                     "symbolic vm.isContext",
                 )?;
+                let context = u8::try_from(context)
+                    .ok()
+                    .and_then(|context| ForgeContext::try_from(context).ok())
+                    .ok_or(SymbolicError::Unsupported("symbolic vm.isContext invalid context"))?;
                 return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(
                     &mut self.cx,
-                    U256::from(context == U256::ZERO || context == U256::from(1)),
+                    U256::from(current_execution_context() == Some(context)),
                 )]));
             }
             toString_0Call::SELECTOR => {
