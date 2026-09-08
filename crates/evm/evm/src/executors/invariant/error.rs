@@ -185,13 +185,9 @@ pub(crate) fn record_handler_assertion_bug<FEN: FoundryEvmNetwork>(
         });
     }
 
-    // Standard reverted-input pop. Delay-enabled campaigns and frontier capture keep reverted
-    // calls so their warp/roll contribution can be replayed.
-    if call_reverted
-        && !is_optimization
-        && !config.has_delay()
-        && !config.corpus.capture_branch_frontiers()
-    {
+    // Standard reverted-input pop. Delay-enabled campaigns keep reverted calls so their warp/roll
+    // contribution can be replayed.
+    if call_reverted && !is_optimization && !config.has_delay() {
         inputs.pop();
     }
 }

@@ -12,18 +12,27 @@ const DEFAULT_SENDER: &str = "0x0000000000000000000000000000000000000001";
 const DEFAULT_TEST_TARGET: &str = "0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496";
 
 fn find_first_json(root: &std::path::Path) -> std::path::PathBuf {
+    find_json_files(root)
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| panic!("no json corpus entry under {}", root.display()))
+}
+
+fn find_json_files(root: &std::path::Path) -> Vec<std::path::PathBuf> {
     let mut dirs = vec![root.to_path_buf()];
+    let mut files = Vec::new();
     while let Some(dir) = dirs.pop() {
         for entry in std::fs::read_dir(dir).unwrap() {
             let path = entry.unwrap().path();
             if path.is_dir() {
                 dirs.push(path);
             } else if path.extension().is_some_and(|extension| extension == "json") {
-                return path;
+                files.push(path);
             }
         }
     }
-    panic!("no json corpus entry under {}", root.display());
+    files.sort();
+    files
 }
 
 fn artifact_abi(root: &Path, artifact: &str) -> JsonAbi {
@@ -1408,11 +1417,7 @@ contract ForgeFuzzRunStatefulFrontiersTest is Test {
         ])
         .assert_success();
 
-    let frontier_path = prj
-        .root()
-        .join("stateful_frontiers")
-        .join("ForgeFuzzRunStatefulFrontiersTest")
-        .join("branch-frontiers.json");
+    let frontier_path = find_first_json(&prj.root().join("stateful_frontiers"));
     let artifact: Value = serde_json::from_slice(
         &std::fs::read(&frontier_path)
             .unwrap_or_else(|err| panic!("failed to read {}: {err}", frontier_path.display())),
@@ -1514,20 +1519,21 @@ contract ForgeFuzzRunIsolatedFrontiersTest is Test {
         ])
         .assert_success();
 
-    for invariant in ["invariant_one", "invariant_two"] {
-        let frontier_path = prj
-            .root()
-            .join("isolated_frontiers")
-            .join("ForgeFuzzRunIsolatedFrontiersTest")
-            .join(invariant)
-            .join("branch-frontiers.json");
+    let frontier_paths = find_json_files(&prj.root().join("isolated_frontiers"));
+    assert_eq!(frontier_paths.len(), 2);
+    let mut captured = BTreeSet::new();
+    for frontier_path in frontier_paths {
         let artifact: Value = serde_json::from_slice(
             &std::fs::read(&frontier_path)
                 .unwrap_or_else(|err| panic!("failed to read {}: {err}", frontier_path.display())),
         )
         .unwrap();
-        assert_eq!(artifact["test"], format!("{invariant}()"));
+        captured.insert(artifact["test"].as_str().unwrap().to_string());
     }
+    assert_eq!(
+        captured,
+        BTreeSet::from(["invariant_one()".to_string(), "invariant_two()".to_string()])
+    );
 
     cmd.forge_fuse()
         .args([
@@ -1549,10 +1555,11 @@ contract ForgeFuzzRunIsolatedFrontiersTest is Test {
             "filtered_isolated_frontiers",
         ])
         .assert_success();
-    let filtered_root =
-        prj.root().join("filtered_isolated_frontiers").join("ForgeFuzzRunIsolatedFrontiersTest");
-    assert!(filtered_root.join("invariant_two/branch-frontiers.json").is_file());
-    assert!(!filtered_root.join("branch-frontiers.json").exists());
+    let filtered_paths = find_json_files(&prj.root().join("filtered_isolated_frontiers"));
+    assert_eq!(filtered_paths.len(), 1);
+    let artifact: Value =
+        serde_json::from_slice(&std::fs::read(&filtered_paths[0]).unwrap()).unwrap();
+    assert_eq!(artifact["test"], "invariant_two()");
 });
 
 forgetest_init!(forge_fuzz_run_frontiers_keep_reverted_environment_prefix, |prj, cmd| {
@@ -1567,6 +1574,7 @@ contract ForgeFuzzRunRevertedFrontierTest is Test {
     function setUp() public {
         vm.warp(1);
         targetContract(address(this));
+        targetSender(address(this));
     }
 
     function advance(uint256 value) external {
@@ -1600,14 +1608,12 @@ contract ForgeFuzzRunRevertedFrontierTest is Test {
             "1",
             "--frontier-dir",
             "reverted_frontiers",
+            "--corpus-dir",
+            "reverted_corpus",
         ])
         .assert_success();
 
-    let frontier_path = prj
-        .root()
-        .join("reverted_frontiers")
-        .join("ForgeFuzzRunRevertedFrontierTest")
-        .join("branch-frontiers.json");
+    let frontier_path = find_first_json(&prj.root().join("reverted_frontiers"));
     let artifact: Value = serde_json::from_slice(
         &std::fs::read(&frontier_path)
             .unwrap_or_else(|err| panic!("failed to read {}: {err}", frontier_path.display())),
@@ -1621,6 +1627,40 @@ contract ForgeFuzzRunRevertedFrontierTest is Test {
         .unwrap_or_else(|| panic!("missing post-revert frontier in {artifact:#}"));
     let sequence_index = frontier["sequence_index"].as_u64().unwrap() as usize;
     assert_eq!(artifact["sequences"][sequence_index].as_array().unwrap().len(), 2);
+
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "run",
+            "--match-contract",
+            "ForgeFuzzRunRevertedFrontierTest",
+            "--match-test",
+            "invariant",
+            "--runs",
+            "1",
+            "--depth",
+            "2",
+            "--seed",
+            "0x4321",
+            "--threads",
+            "1",
+            "--corpus-dir",
+            "baseline_corpus",
+        ])
+        .assert_success();
+
+    let read_corpus = |name: &str| {
+        let dir = prj.root().join(name).join("ForgeFuzzRunRevertedFrontierTest/worker0/corpus");
+        let mut entries = find_json_files(&dir)
+            .into_iter()
+            .map(|entry| std::fs::read_to_string(entry).unwrap())
+            .collect::<Vec<_>>();
+        entries.sort();
+        entries
+    };
+    let captured = read_corpus("reverted_corpus");
+    assert!(!captured.is_empty());
+    assert_eq!(captured, read_corpus("baseline_corpus"));
 });
 
 forgetest_init!(forge_fuzz_run_runs_sets_invariant_runs, |prj, cmd| {

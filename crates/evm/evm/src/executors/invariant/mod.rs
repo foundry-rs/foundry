@@ -767,6 +767,13 @@ struct InvariantTestRun<FEN: FoundryEvmNetwork> {
     optimization_prefix_len: usize,
 }
 
+/// Recorder-only call history which preserves accepted reverted calls without changing the
+/// canonical campaign inputs consumed by corpus and failure reporting.
+struct InvariantFrontierRun {
+    inputs: Vec<BasicTxDetails>,
+    cmp_seq: Vec<Vec<crate::inspectors::CmpOperands>>,
+}
+
 /// Immutable state selected once for a logical invariant campaign and cloned into each worker.
 #[derive(Clone)]
 struct InvariantCampaignSeed {
@@ -1159,6 +1166,11 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             let run_depth =
                 invariant_run_depth(&config, &mut invariant_test.test_data.branch_runner);
 
+            let mut frontier_run = (frontier_limit > 0).then(|| InvariantFrontierRun {
+                inputs: Vec::with_capacity(run_depth as usize),
+                cmp_seq: Vec::with_capacity(run_depth as usize),
+            });
+
             // Create current invariant run data.
             let mut current_run = InvariantTestRun::new(
                 initial_seq[0].clone(),
@@ -1253,6 +1265,16 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                                 return Ok(CampaignControl::Continue);
                             }
                             debug_assert_eq!(kind, CampaignCallKind::Accepted);
+                            if let Some(frontier_run) = &mut frontier_run {
+                                frontier_run.inputs.push(
+                                    current_run
+                                        .inputs
+                                        .last()
+                                        .expect("accepted call has a campaign input")
+                                        .clone(),
+                                );
+                                frontier_run.cmp_seq.push(call_cmp_values.clone());
+                            }
                             let (handler_target, handler_selector) =
                                 handler.take().expect("feedback precedes campaign checks");
                             let mut state_changeset = std::mem::take(&mut result.state_changeset);
@@ -1346,7 +1368,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                                     if result.reverted
                                         && !invariant_contract.is_optimization()
                                         && !config.has_delay()
-                                        && !config.corpus.capture_branch_frontiers()
                                     {
                                         current_run.inputs.pop();
                                     }
@@ -1463,7 +1484,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             }
 
             // Extend corpus only after the run and its optional hook have completed.
-            frontier_recorder.capture_sequence(&current_run.inputs, &current_run.cmp_seq);
+            if let Some(frontier_run) = &frontier_run {
+                frontier_recorder.capture_sequence(&frontier_run.inputs, &frontier_run.cmp_seq);
+            }
             let optimization = current_run.optimization_value.map(|v| {
                 let prefix = current_run.inputs[..current_run.optimization_prefix_len].to_vec();
                 (v, prefix)
@@ -2294,7 +2317,7 @@ pub fn execute_tx<FEN: FoundryEvmNetwork>(
 
 /// Executes an invariant replay call on a validation executor and registers created targets.
 ///
-/// This mirrors sequence replay's non-reverted commit behavior while allowing callers to update
+/// This uses live campaign acceptance and commit behavior while allowing callers to update
 /// updatable target sets before validating later calls in the same artifact.
 pub fn execute_tx_and_register_created<FEN: FoundryEvmNetwork>(
     executor: &mut Executor<FEN>,
@@ -2303,17 +2326,17 @@ pub fn execute_tx_and_register_created<FEN: FoundryEvmNetwork>(
     dynamic_target_ctx: &DynamicTargetCtx<'_>,
     created_contracts: &mut Vec<Address>,
 ) -> Result<()> {
-    let mut call_result = execute_tx(executor, tx)?;
-    if !call_result.reverted {
-        targeted_contracts.collect_created_contracts(
-            &call_result.state_changeset,
-            dynamic_target_ctx.project_contracts,
-            dynamic_target_ctx.setup_contracts,
-            dynamic_target_ctx.artifact_filters,
-            created_contracts,
-        )?;
-        executor.commit(&mut call_result);
+    let (kind, call_result) = super::campaign::execute_invariant_replay_tx(executor, tx)?;
+    if kind == CampaignCallKind::AssumptionRejected {
+        return Err(eyre!("invariant replay prefix rejected by vm.assume"));
     }
+    targeted_contracts.collect_created_contracts(
+        &call_result.state_changeset,
+        dynamic_target_ctx.project_contracts,
+        dynamic_target_ctx.setup_contracts,
+        dynamic_target_ctx.artifact_filters,
+        created_contracts,
+    )?;
     Ok(())
 }
 
@@ -2423,6 +2446,13 @@ mod tests {
             .unwrap();
 
         assert_eq!(outcome, CampaignSequenceOutcome::Stopped);
+        assert_eq!(state.0.evm_env().block_env, initial_block);
+        assert_eq!(state.0.inspector().cheatcodes.as_ref().unwrap().block, initial_cheatcode_block);
+
+        let (kind, _) =
+            crate::executors::campaign::execute_invariant_replay_tx(&mut state.0, &state.1)
+                .unwrap();
+        assert_eq!(kind, CampaignCallKind::AssumptionRejected);
         assert_eq!(state.0.evm_env().block_env, initial_block);
         assert_eq!(state.0.inspector().cheatcodes.as_ref().unwrap().block, initial_cheatcode_block);
     }

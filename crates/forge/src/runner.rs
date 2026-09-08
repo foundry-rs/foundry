@@ -510,6 +510,55 @@ mod tests {
     }
 
     #[test]
+    fn stateful_frontier_paths_include_artifact_pass_and_campaign() {
+        let root = Path::new("/tmp/frontiers");
+        let first =
+            invariant_frontier_dir(root, "src/a/Same.t.sol:Same", None, "ethereum", "single");
+        let other_artifact =
+            invariant_frontier_dir(root, "src/b/Same.t.sol:Same", None, "ethereum", "single");
+        let other_profile =
+            invariant_frontier_dir(root, "src/a/Same.t.sol:Same", None, "tempo", "override");
+        let default_pass =
+            invariant_frontier_dir(root, "src/a/Same.t.sol:Same", None, "ethereum", "default");
+        let override_pass =
+            invariant_frontier_dir(root, "src/a/Same.t.sol:Same", None, "ethereum", "override");
+        let isolated = invariant_frontier_dir(
+            root,
+            "src/a/Same.t.sol:Same",
+            Some("invariant_one"),
+            "ethereum",
+            "single",
+        );
+
+        assert_ne!(first, other_artifact);
+        assert_ne!(first, other_profile);
+        assert_ne!(default_pass, override_pass);
+        assert_ne!(first, isolated);
+        assert!(first.ends_with("ethereum/single/shared"));
+        assert!(isolated.ends_with("ethereum/single/isolated/invariant_one"));
+
+        let mut corpus = FuzzCorpusConfig {
+            corpus_dir: Some(PathBuf::from("/tmp/corpus")),
+            frontier_dir: Some(root.to_path_buf()),
+            ..Default::default()
+        };
+        let failures = invariant_suite_paths(
+            &mut corpus,
+            PathBuf::from("/tmp/persist"),
+            "src/a/Same.t.sol:Same",
+            Some("invariant_one"),
+            "ethereum",
+            "single",
+        );
+        assert_eq!(
+            corpus.corpus_dir,
+            Some(canonicalized(PathBuf::from("/tmp/corpus/Same/invariant_one")))
+        );
+        assert_eq!(corpus.frontier_dir, Some(canonicalized(isolated)));
+        assert_eq!(failures, canonicalized(PathBuf::from("/tmp/persist/failures/Same")));
+    }
+
+    #[test]
     fn symbolic_sequence_failure_identity_includes_failure_site() {
         let outcome = |site: CheckSequenceFailureSite| CheckSequenceOutcome {
             success: false,
@@ -3392,8 +3441,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     return None;
                 }
                 let invariant_idx = invariant_indexes[candidate.invariant_idx];
-                let mut calls = prefix.to_vec();
-                calls.push(BasicTxDetails {
+                let call = BasicTxDetails {
                     warp: None,
                     roll: None,
                     sender: candidate.step.sender,
@@ -3402,13 +3450,12 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         calldata: candidate.step.calldata,
                         value: None,
                     },
-                });
-                let sequence = (0..calls.len()).collect::<Vec<_>>();
+                };
                 let policy = invariant_contract.invariant_fns[invariant_idx].1;
                 let outcome = check_sequence(
-                    self.clone_executor(),
-                    &calls,
-                    &sequence,
+                    prefix_executor.clone(),
+                    std::slice::from_ref(&call),
+                    &[0],
                     invariant_contract.address,
                     invariant_contract.invariant_calldata(invariant_idx),
                     CheckSequenceOptions {
@@ -3429,8 +3476,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     }
                     _ => false,
                 };
-                (!outcome.success && outcome.replayed_entirely && exact_failure)
-                    .then_some((invariant_idx, calls))
+                if outcome.success || !outcome.replayed_entirely || !exact_failure {
+                    return None;
+                }
+                let mut calls = Vec::with_capacity(prefix.len() + 1);
+                calls.extend_from_slice(prefix);
+                calls.push(call);
+                Some((invariant_idx, calls))
             })
             .collect()
     }
@@ -3920,11 +3972,21 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             );
             config.corpus.frontier_dir = None;
         }
+        let execution_profile = self.tcfg.evm_opts.networks.execution_profile_name();
+        let execution_pass = if self.cr.mcr.tcfg.multi_network.all_override_networks.is_empty() {
+            "single"
+        } else if self.cr.mcr.tcfg.multi_network.pass_network.is_some() {
+            "override"
+        } else {
+            "default"
+        };
         let failure_dir = invariant_suite_paths(
             &mut config.corpus,
             invariant_config.failure_persist_dir.clone().unwrap(),
             self.cr.name,
             isolated_campaign,
+            execution_profile,
+            execution_pass,
         );
         // Snapshot the per-test corpus dir before `config` is moved into `InvariantExecutor`.
         let resolved_corpus_dir = config.corpus.corpus_dir.clone();
@@ -5597,20 +5659,44 @@ fn invariant_corpus_dir(
     if let Some(name) = isolated_campaign { dir.join(name) } else { dir }
 }
 
+/// Returns the collision-free directory for one stateful frontier campaign.
+fn invariant_frontier_dir(
+    root: &Path,
+    contract_name: &str,
+    isolated_campaign: Option<&str>,
+    execution_profile: &str,
+    execution_pass: &str,
+) -> PathBuf {
+    let contract = stable_hashed_component(contract_short_name(contract_name), contract_name);
+    let campaign = if let Some(name) = isolated_campaign {
+        PathBuf::from("isolated").join(sanitize_symbolic_artifact_component(name))
+    } else {
+        PathBuf::from("shared")
+    };
+    root.join("v2").join(contract).join(execution_profile).join(execution_pass).join(campaign)
+}
+
 /// Sets the invariant corpus directory and returns the contract-level failure directory.
 fn invariant_suite_paths(
     corpus_config: &mut FuzzCorpusConfig,
     persist_dir: PathBuf,
     contract_name: &str,
     isolated_campaign: Option<&str>,
+    execution_profile: &str,
+    execution_pass: &str,
 ) -> PathBuf {
     if let Some(root) = &corpus_config.corpus_dir {
         corpus_config.corpus_dir =
             Some(canonicalized(invariant_corpus_dir(root, contract_name, isolated_campaign)));
     }
     if let Some(root) = &corpus_config.frontier_dir {
-        corpus_config.frontier_dir =
-            Some(canonicalized(invariant_corpus_dir(root, contract_name, isolated_campaign)));
+        corpus_config.frontier_dir = Some(canonicalized(invariant_frontier_dir(
+            root,
+            contract_name,
+            isolated_campaign,
+            execution_profile,
+            execution_pass,
+        )));
     }
     canonicalized(persist_dir.join("failures").join(contract_short_name(contract_name)))
 }
@@ -5630,15 +5716,19 @@ fn sanitize_symbolic_artifact_component(value: &str) -> String {
     if sanitized.is_empty() { "_".to_string() } else { sanitized }
 }
 
+fn stable_hashed_component(label: &str, identity: &str) -> String {
+    let hash = keccak256(identity.as_bytes());
+    let hash = hex::encode(&hash[..16]);
+    format!("{}-{hash}", sanitize_symbolic_artifact_component(label))
+}
+
 fn symbolic_artifact_file_name(
     contract_id: &str,
     value: &str,
     kind: SymbolicCounterexampleArtifactKind,
 ) -> String {
     let identity = format!("{contract_id}\0{value}\0{kind:?}");
-    let hash = keccak256(identity.as_bytes());
-    let hash = hex::encode(&hash[..16]);
-    format!("{}-{hash}.json", sanitize_symbolic_artifact_component(value))
+    format!("{}.json", stable_hashed_component(value, &identity))
 }
 
 /// Persists an invariant failure, with any symbolic replay storage and confirmed failure site.

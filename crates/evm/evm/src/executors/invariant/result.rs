@@ -423,14 +423,10 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
             }
         }
 
-        if reverted
-            && !is_optimization
-            && !invariant_config.has_delay()
-            && !invariant_config.corpus.capture_branch_frontiers()
-        {
+        if reverted && !is_optimization && !invariant_config.has_delay() {
             // If we don't fail the test on revert, remove the reverted call from inputs.
-            // Delay-enabled campaigns and frontier capture keep reverted calls so their
-            // warp/roll contribution can be replayed.
+            // Delay-enabled campaigns keep reverted calls so their warp/roll contribution can be
+            // replayed.
             invariant_run.inputs.pop();
         }
     }

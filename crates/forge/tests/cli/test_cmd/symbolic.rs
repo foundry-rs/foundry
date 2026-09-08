@@ -26,6 +26,30 @@ fn frontier_artifact_path(root: &Path, contract: &str, test: &str) -> PathBuf {
     root.join("fuzz_frontiers").join(contract).join(test).join("branch-frontiers.json")
 }
 
+fn find_stateful_frontier_artifact(root: &Path) -> PathBuf {
+    let mut pending = vec![root.to_path_buf()];
+    let mut matches = Vec::new();
+    while let Some(dir) = pending.pop() {
+        for entry in std::fs::read_dir(&dir)
+            .unwrap_or_else(|err| panic!("failed to read {}: {err}", dir.display()))
+        {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                pending.push(path);
+            } else if path.file_name().is_some_and(|name| name == "branch-frontiers.json") {
+                matches.push(path);
+            }
+        }
+    }
+    assert_eq!(
+        matches.len(),
+        1,
+        "expected one stateful frontier artifact under {}",
+        root.display()
+    );
+    matches.pop().unwrap()
+}
+
 fn keep_only_matching_frontier(
     frontier_path: &Path,
     missing: &str,
@@ -3356,11 +3380,9 @@ contract SymbolicInvariantFrontierSeed is Test {
         ])
         .assert_success();
 
-    let frontier_path = prj
-        .root()
-        .join("invariant_frontiers")
-        .join("SymbolicInvariantFrontierSeed")
-        .join("branch-frontiers.json");
+    let frontier_root = prj.root().join("invariant_frontiers");
+    let frontier_path = find_stateful_frontier_artifact(&frontier_root);
+    let frontier_relative = frontier_path.strip_prefix(&frontier_root).unwrap().to_path_buf();
     let mut artifact: Value = serde_json::from_slice(
         &std::fs::read(&frontier_path)
             .unwrap_or_else(|err| panic!("failed to read {}: {err}", frontier_path.display())),
@@ -3384,11 +3406,8 @@ contract SymbolicInvariantFrontierSeed is Test {
     std::fs::write(&frontier_path, serde_json::to_vec_pretty(&artifact).unwrap())
         .unwrap_or_else(|err| panic!("failed to write {}: {err}", frontier_path.display()));
 
-    let covered_frontier_path = prj
-        .root()
-        .join("covered_invariant_frontiers")
-        .join("SymbolicInvariantFrontierSeed")
-        .join("branch-frontiers.json");
+    let covered_frontier_path =
+        prj.root().join("covered_invariant_frontiers").join(&frontier_relative);
     std::fs::create_dir_all(covered_frontier_path.parent().unwrap()).unwrap();
     let mut covered_artifact = artifact.clone();
     let mut opposite_frontier = target_frontier.clone();
@@ -3399,11 +3418,8 @@ contract SymbolicInvariantFrontierSeed is Test {
     std::fs::write(&covered_frontier_path, serde_json::to_vec_pretty(&covered_artifact).unwrap())
         .unwrap_or_else(|err| panic!("failed to write {}: {err}", covered_frontier_path.display()));
 
-    let payable_frontier_path = prj
-        .root()
-        .join("payable_invariant_frontiers")
-        .join("SymbolicInvariantFrontierSeed")
-        .join("branch-frontiers.json");
+    let payable_frontier_path =
+        prj.root().join("payable_invariant_frontiers").join(&frontier_relative);
     std::fs::create_dir_all(payable_frontier_path.parent().unwrap()).unwrap();
     let mut payable_artifact = artifact.clone();
     let sequence_index = target_frontier["sequence_index"].as_u64().unwrap() as usize;
@@ -3483,11 +3499,7 @@ contract SymbolicInvariantFrontierSeed is Test {
         ("forbidden_prefix_frontiers", "forbidden_prefix_corpus", 0),
         ("forbidden_suffix_frontiers", "forbidden_suffix_corpus", call_index),
     ] {
-        let forbidden_frontier_path = prj
-            .root()
-            .join(frontier_dir)
-            .join("SymbolicInvariantFrontierSeed")
-            .join("branch-frontiers.json");
+        let forbidden_frontier_path = prj.root().join(frontier_dir).join(&frontier_relative);
         std::fs::create_dir_all(forbidden_frontier_path.parent().unwrap()).unwrap();
         let mut forbidden_artifact = artifact.clone();
         forbidden_artifact["sequences"][sequence_index][forbidden_call_index]["sender"] =
@@ -3664,6 +3676,110 @@ contract SymbolicInvariantFrontierSeed is Test {
     );
 });
 
+forgetest_init!(symbolic_invariant_frontier_seeding_replays_reverted_prefix, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_invariant_frontier_seeding_replays_reverted_prefix because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicInvariantRevertedPrefix.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicInvariantRevertedPrefixTarget is Test {
+    bool public broken;
+
+    function advance(uint256 value) external {
+        if (block.timestamp < 1000) {
+            vm.warp(1000);
+            revert("advance timestamp");
+        }
+        if (value >= 123456789) {
+            broken = true;
+        }
+    }
+}
+
+contract SymbolicInvariantRevertedPrefixTest is Test {
+    SymbolicInvariantRevertedPrefixTarget target;
+
+    function setUp() public {
+        vm.warp(1);
+        target = new SymbolicInvariantRevertedPrefixTarget();
+        targetContract(address(target));
+    }
+
+    function invariant_notBroken() public view {
+        assertFalse(target.broken());
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "run",
+            "--match-contract",
+            "SymbolicInvariantRevertedPrefixTest",
+            "--runs",
+            "1",
+            "--depth",
+            "2",
+            "--seed",
+            "0x4321",
+            "--threads",
+            "1",
+            "--frontier-dir",
+            "reverted_prefix_frontiers",
+        ])
+        .assert_success();
+
+    let frontier_path =
+        find_stateful_frontier_artifact(&prj.root().join("reverted_prefix_frontiers"));
+    keep_only_matching_frontier(&frontier_path, "value >= 123456789", |frontier| {
+        frontier["call_index"] == 1
+            && frontier["site"]["opcode_name"] == "LT"
+            && (frontier["operands"]["lhs"] == "0x75bcd15"
+                || frontier["operands"]["rhs"] == "0x75bcd15")
+    });
+
+    cmd.forge_fuse();
+    cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+    cmd.args([
+        "test",
+        "--match-contract",
+        "SymbolicInvariantRevertedPrefixTest",
+        "--threads",
+        "1",
+        "--invariant-frontier-dir",
+        "reverted_prefix_frontiers",
+        "--invariant-corpus-dir",
+        "reverted_prefix_corpus",
+        "--symbolic-use-fuzz-frontiers",
+        "--symbolic-check-invariant-frontiers",
+        "--symbolic-frontier-limit",
+        "1",
+    ])
+    .assert_success();
+
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--match-contract",
+            "SymbolicInvariantRevertedPrefixTest",
+            "--match-test",
+            "invariant_notBroken",
+            "--corpus-dir",
+            "reverted_prefix_corpus",
+        ])
+        .assert_failure();
+});
+
 forgetest_init!(symbolic_invariant_frontier_seeding_keeps_fail_on_revert_branch, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(
@@ -3721,11 +3837,7 @@ contract SymbolicInvariantRevertSeed is Test {
         ])
         .assert_success();
 
-    let frontier_path = prj
-        .root()
-        .join("revert_frontiers")
-        .join("SymbolicInvariantRevertSeed")
-        .join("branch-frontiers.json");
+    let frontier_path = find_stateful_frontier_artifact(&prj.root().join("revert_frontiers"));
     let target_frontier = keep_only_matching_frontier(&frontier_path, "value > 777", |frontier| {
         frontier["call_index"] == 0
             && frontier["site"]["opcode_name"] == "GT"
@@ -3865,11 +3977,7 @@ contract SymbolicInvariantAssertionSeed is Test {
         ])
         .assert_success();
 
-    let frontier_path = prj
-        .root()
-        .join("assertion_frontiers")
-        .join("SymbolicInvariantAssertionSeed")
-        .join("branch-frontiers.json");
+    let frontier_path = find_stateful_frontier_artifact(&prj.root().join("assertion_frontiers"));
     let target_frontier = keep_only_matching_frontier(&frontier_path, "value > 777", |frontier| {
         frontier["call_index"] == 0
             && frontier["site"]["opcode_name"] == "GT"
@@ -4010,11 +4118,7 @@ contract SymbolicInvariantPropertySeed is Test {
         ])
         .assert_success();
 
-    let frontier_path = prj
-        .root()
-        .join("property_frontiers")
-        .join("SymbolicInvariantPropertySeed")
-        .join("branch-frontiers.json");
+    let frontier_path = find_stateful_frontier_artifact(&prj.root().join("property_frontiers"));
     let mut artifact: Value = serde_json::from_slice(
         &std::fs::read(&frontier_path)
             .unwrap_or_else(|err| panic!("failed to read {}: {err}", frontier_path.display())),
@@ -4241,11 +4345,7 @@ contract SymbolicInvariantHookSeed is Test {
         ])
         .assert_success();
 
-    let frontier_path = prj
-        .root()
-        .join("hook_frontiers")
-        .join("SymbolicInvariantHookSeed")
-        .join("branch-frontiers.json");
+    let frontier_path = find_stateful_frontier_artifact(&prj.root().join("hook_frontiers"));
     let mut artifact: Value = serde_json::from_slice(
         &std::fs::read(&frontier_path)
             .unwrap_or_else(|err| panic!("failed to read {}: {err}", frontier_path.display())),
