@@ -552,7 +552,7 @@ impl SymbolicExecutor {
                             };
                             let calldata = step.calldata.call_data(&mut self.cx);
                             let constraints = step.calldata.constraints().to_vec();
-                            let outcomes = self.execute_sequence_call(
+                            let mut call = self.prepare_sequence_call(
                                 input.executor,
                                 sequence.state.clone(),
                                 target.address,
@@ -560,10 +560,13 @@ impl SymbolicExecutor {
                                 &target.function,
                                 calldata,
                                 constraints,
-                                &mut completed_paths,
                             )?;
 
-                            for outcome in outcomes {
+                            while let Some(outcome) = self.execute_sequence_call_next(
+                                input.executor,
+                                &mut call,
+                                &mut completed_paths,
+                            )? {
                                 let mut steps = sequence.steps.clone();
                                 steps.push(step.clone());
 

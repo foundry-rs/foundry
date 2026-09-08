@@ -35,8 +35,15 @@ fn normalize_constraints_for_solver_with(
     constraints: &[SymBoolExpr],
     mut normalize: impl FnMut(&mut SymCx, &SymBoolExpr) -> SymBoolExpr,
 ) -> Vec<SymBoolExpr> {
+    let mut changed_conjuncts = HashSet::default();
     let normalized = normalize_constraint_batch(
-        constraints.iter().map(|constraint| normalize(cx, constraint)),
+        constraints.iter().map(|constraint| {
+            let normalized = normalize(cx, constraint);
+            if normalized != *constraint {
+                mark_conjuncts(&normalized, &mut changed_conjuncts);
+            }
+            normalized
+        }),
         constraints.len(),
     );
     if matches!(normalized.as_slice(), [expr] if expr.as_const() == Some(false)) {
@@ -56,9 +63,24 @@ fn normalize_constraints_for_solver_with(
     let context = ConstraintContext::from_constraints(retained, retained_count);
     let normalized_len = normalized.len();
     normalize_constraint_batch(
-        normalized.into_iter().map(|constraint| context.normalize_bool(cx, constraint)),
+        normalized.into_iter().map(|constraint| {
+            let changed = changed_conjuncts.contains(&constraint);
+            context.normalize_bool(cx, constraint, changed)
+        }),
         normalized_len,
     )
+}
+
+fn mark_conjuncts(expr: &SymBoolExpr, out: &mut HashSet<SymBoolExpr>) {
+    let mut pending = vec![expr.clone()];
+    while let Some(expr) = pending.pop() {
+        if !out.insert(expr.clone()) {
+            continue;
+        }
+        if let SymBoolExprKind::And(values) = expr.kind() {
+            pending.extend(values.iter().cloned());
+        }
+    }
 }
 
 fn normalize_constraint_batch(
@@ -836,18 +858,29 @@ impl ConstraintContext {
             SymBoolExprKind::Const(_) | SymBoolExprKind::And(_) => false,
         };
         root_candidate
-            || expr.visit_bool(|word| {
+            || expr.visit_unique_bool(|word| {
                 Self::mul_div_operands(word).is_some() || Self::ceil_div_shape(word)
             })
     }
 
-    fn normalize_bool(&self, cx: &mut SymCx, expr: SymBoolExpr) -> SymBoolExpr {
-        let expr = if self.is_exact_value_constraint(&expr) {
-            expr
+    fn normalize_bool(
+        &self,
+        cx: &mut SymCx,
+        expr: SymBoolExpr,
+        context_free_changed: bool,
+    ) -> SymBoolExpr {
+        let may_normalize_word = !self.is_exact_value_constraint(&expr)
+            && expr.visit_unique_bool(|word| self.may_normalize_word(word));
+        let expr = if may_normalize_word {
+            let expr = expr.fold_exprs(cx, &mut |cx, expr| self.normalize_word(cx, expr));
+            normalize_bool_for_solver(cx, expr)
+        } else if context_free_changed {
+            // The first pass can create new Boolean predicates, such as an overflow comparison
+            // while eliminating a division. Normalize those predicates before applying facts.
+            normalize_bool_for_solver(cx, expr)
         } else {
-            expr.fold_exprs(cx, &mut |cx, expr| self.normalize_word(cx, expr))
+            expr
         };
-        let expr = normalize_bool_for_solver(cx, expr);
         if let SymBoolExprKind::Cmp(op, left, right) = expr.kind()
             && let Some(normalized) = self.normalize_udiv_comparison(cx, *op, left, right)
         {
@@ -926,6 +959,27 @@ impl ConstraintContext {
 
     fn exact_value(&self, expr: &SymExpr) -> Option<U256> {
         self.exact_values.get(expr).copied()
+    }
+
+    fn may_normalize_word(&self, expr: &SymExpr) -> bool {
+        if self.exact_values.contains_key(expr)
+            || Self::mul_div_operands(expr).is_some()
+            || Self::ceil_div_shape(expr)
+        {
+            return true;
+        }
+        match expr.kind() {
+            SymExprKind::BinOp(SymBinOp::Or, left, right) => {
+                left.as_const() == Some(U256::ONE) || right.as_const() == Some(U256::ONE)
+            }
+            SymExprKind::BinOp(SymBinOp::Mul, _, _) => Self::constant_mul_operands(expr)
+                .is_some_and(|(value, _)| Self::constant_mul_operands(value).is_some()),
+            SymExprKind::BinOp(SymBinOp::UDiv, numerator, denominator) => {
+                denominator.as_const().is_some_and(|value| !value.is_zero())
+                    && Self::constant_mul_operands(numerator).is_some()
+            }
+            _ => false,
+        }
     }
 
     fn normalize_word(&self, cx: &mut SymCx, expr: SymExpr) -> SymExpr {
@@ -2376,6 +2430,27 @@ mod tests {
                 SymBoolExprKind::Cmp(SymCmpOp::Ule, left, _) if left.as_const() == Some(scale)
             )
         }));
+    }
+
+    #[test]
+    fn contextual_normalization_revisits_generated_overflow_comparison() {
+        let mut cx = SymCx::new();
+        let byte_mask = SymExpr::constant(&mut cx, U256::from(0xff));
+        let left = SymExpr::var(&mut cx, "left");
+        let left = SymExpr::binop(&mut cx, SymBinOp::And, left, byte_mask.clone());
+        let denominator = SymExpr::var(&mut cx, "denominator");
+        let denominator = SymExpr::binop(&mut cx, SymBinOp::And, denominator, byte_mask);
+        let zero = SymExpr::zero(&mut cx);
+        let denominator_nonzero =
+            SymBoolExpr::eq(&mut cx, denominator.clone(), zero.clone()).not(&mut cx);
+        let numerator = SymExpr::binop(&mut cx, SymBinOp::Add, left, denominator.clone());
+        let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, numerator, denominator);
+        let quotient_zero = SymBoolExpr::eq(&mut cx, quotient, zero);
+
+        let normalized =
+            normalize_constraints_for_solver(&mut cx, &[denominator_nonzero, quotient_zero]);
+
+        assert!(constraints_are_directly_unsat(&mut cx, &normalized));
     }
 
     #[test]

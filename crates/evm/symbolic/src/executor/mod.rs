@@ -47,6 +47,13 @@ struct SequencePath {
     steps: Vec<SequenceStepTemplate>,
 }
 
+#[derive(Debug)]
+struct SequenceCall {
+    code: SymCode,
+    worklist: VecDeque<PathState>,
+    deferred_worklist: VecDeque<PathState>,
+}
+
 #[derive(Clone, Debug)]
 struct SequenceStepTemplate {
     sender: Address,
@@ -191,25 +198,34 @@ impl SymbolicExecutor {
         StepOutcome::Continue
     }
 
-    fn execute_call_paths<FEN: FoundryEvmNetwork>(
+    fn execute_call_path_batch<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
-        initial: PathState,
         code: &SymCode,
+        worklist: &mut VecDeque<PathState>,
+        deferred_worklist: &mut VecDeque<PathState>,
         completed_paths: &mut usize,
         kind: CallPathKind,
     ) -> Result<Vec<CallOutcome>, SymbolicError> {
-        let mut worklist = VecDeque::from([initial]);
-        let mut deferred_worklist = VecDeque::new();
         let mut outcomes = Vec::new();
         let path_limit = self.config.path_width() as usize;
         let depth_limit = self.config.execution_depth() as usize;
 
-        while let Some(mut state) = self.pop_next_feasible_path(
-            &mut worklist,
-            &mut deferred_worklist,
-            matches!(kind, CallPathKind::Sequence),
-        )? {
+        loop {
+            // Let invariant execution inspect each completed sequence outcome before escalating a
+            // deferred hard-arithmetic sibling. External calls still return all outcomes together
+            // because their parent frame must join them before it can continue.
+            if matches!(kind, CallPathKind::Sequence) && !outcomes.is_empty() {
+                break;
+            }
+            let Some(mut state) = self.pop_next_feasible_path(
+                worklist,
+                deferred_worklist,
+                matches!(kind, CallPathKind::Sequence),
+            )?
+            else {
+                break;
+            };
             if *completed_paths >= path_limit {
                 return Err(SymbolicError::Unsupported("symbolic path limit exceeded"));
             }
@@ -284,7 +300,7 @@ impl SymbolicExecutor {
                     code,
                     code.jump_table(),
                     &mut state,
-                    &mut worklist,
+                    &mut *worklist,
                     completed_paths,
                     op,
                 )? {
