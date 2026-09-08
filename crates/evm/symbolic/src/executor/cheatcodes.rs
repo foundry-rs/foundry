@@ -33,6 +33,12 @@ impl SymbolicExecutor {
         reverter: Option<SymExpr>,
         remaining: u64,
     ) -> CheatcodeOutcome {
+        if state.expected_revert.is_some() {
+            return CheatcodeOutcome::Revert(error_string_return_data(
+                &mut self.cx,
+                "you must call another function prior to expecting a second revert",
+            ));
+        }
         state.expected_revert = Some(ExpectedRevert::new(data, reverter, remaining));
         CheatcodeOutcome::Continue(Vec::new())
     }
