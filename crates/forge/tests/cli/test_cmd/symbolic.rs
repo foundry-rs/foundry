@@ -713,6 +713,52 @@ contract SymbolicFixedPointFee {
     }
 });
 
+forgetest_init!(symbolic_proves_quadratic_quote_domain, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_proves_quadratic_quote_domain because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicQuadraticQuote.t.sol",
+        r#"
+library FixedPointMathLib {
+    function mulWad(uint256 x, uint256 y) internal pure returns (uint256 z) {
+        assembly {
+            if gt(x, div(not(0), y)) {
+                if y { revert(0, 0) }
+            }
+            z := div(mul(x, y), 1000000000000000000)
+        }
+    }
+}
+
+contract SymbolicQuadraticQuote {
+    function quote(uint256 value) external pure returns (uint256) {
+        return FixedPointMathLib.mulWad(value, value);
+    }
+
+    function checkQuoteDomain(uint256 value) external {
+        (bool success,) = address(this).staticcall(abi.encodeCall(this.quote, (value)));
+        assert(success == (value <= type(uint128).max));
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicQuadraticQuote"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkQuoteDomain(uint256)");
+    assert_eq!(result["symbolic"]["status"], "pass");
+    assert_eq!(result["symbolic"]["solver"]["stats"]["heuristic_witnesses"], 0);
+});
+
 forgetest_init!(symbolic_proves_saturating_mul_equivalence, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(

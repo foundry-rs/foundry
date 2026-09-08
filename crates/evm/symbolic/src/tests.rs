@@ -3586,6 +3586,74 @@ fn solver_normalizes_udiv_nonzero_predicates_without_bvudiv() {
 }
 
 #[test]
+fn solver_normalizes_constant_over_self_division_bounds() {
+    for numerator_value in (0u16..=255).map(U256::from).chain([U256::MAX]) {
+        let mut cx = SymCx::new();
+        let value = SymExpr::var(&mut cx, "value");
+        let numerator = SymExpr::constant(&mut cx, numerator_value);
+        let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, numerator, value.clone());
+        let zero = SymExpr::zero(&mut cx);
+        let value_is_zero = SymBoolExpr::eq(&mut cx, value.clone(), zero.clone());
+        let guarded = SymExpr::ite(&mut cx, value_is_zero, zero, quotient.clone());
+        let conditions = [
+            SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, value.clone(), quotient),
+            SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, value.clone(), guarded.clone()),
+            SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, guarded.clone(), value.clone()),
+            SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, value.clone(), guarded.clone()),
+            SymBoolExpr::cmp(&mut cx, SymCmpOp::Uge, guarded, value.clone()),
+        ];
+
+        for condition in conditions {
+            for original in [condition.clone(), condition.not(&mut cx)] {
+                let normalized = normalize_bool_for_solver(&mut cx, original.clone());
+                assert!(!normalized.smt(&cx).contains("bvudiv"));
+
+                let threshold = numerator_value.root(2);
+                let values = [
+                    U256::ZERO,
+                    threshold.checked_sub(U256::ONE).unwrap_or(U256::ZERO),
+                    threshold,
+                    threshold.checked_add(U256::ONE).unwrap_or(U256::MAX),
+                    U256::MAX,
+                ];
+                for value in values {
+                    let model = symbolic_model(&mut cx, [("value", value)]);
+                    assert_eq!(
+                        original.eval_model(&model).unwrap(),
+                        normalized.eval_model(&model).unwrap(),
+                        "numerator={numerator_value} value={value} condition={original:?}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn solver_keeps_other_self_division_comparisons() {
+    let mut cx = SymCx::new();
+    let value = SymExpr::var(&mut cx, "value");
+    let other = SymExpr::var(&mut cx, "other");
+    let numerator = SymExpr::constant(&mut cx, U256::from(8));
+    let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, numerator, value.clone());
+    let zero = SymExpr::zero(&mut cx);
+    let other_is_zero = SymBoolExpr::eq(&mut cx, other.clone(), zero.clone());
+    let wrongly_guarded = SymExpr::ite(&mut cx, other_is_zero, zero, quotient.clone());
+    let conditions = [
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, value.clone(), quotient.clone()),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, quotient.clone(), value.clone()),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, other, quotient.clone()),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, value.clone(), wrongly_guarded),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Slt, quotient, value),
+    ];
+
+    for condition in conditions {
+        let normalized = normalize_bool_for_solver(&mut cx, condition);
+        assert!(normalized.smt(&cx).contains("bvudiv"));
+    }
+}
+
+#[test]
 fn solver_normalizes_bounded_udiv_comparisons_without_bvudiv() {
     let mut cx = SymCx::new();
     let numerator = SymExpr::var(&mut cx, "numerator");

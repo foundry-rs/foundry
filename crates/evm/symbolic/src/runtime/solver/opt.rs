@@ -1563,6 +1563,18 @@ impl SymExpr {
 
 impl SymBoolExpr {
     fn normalize_udiv_for_solver(&self, cx: &mut SymCx) -> Option<Self> {
+        if let SymBoolExprKind::Cmp(op, left, right) = self.kind()
+            && let Some(normalized) = Self::normalize_const_over_self_udiv_cmp(cx, *op, left, right)
+        {
+            return Some(normalized);
+        }
+        if let SymBoolExprKind::Not(value) = self.kind()
+            && let SymBoolExprKind::Cmp(op, left, right) = value.kind()
+            && let Some(normalized) = Self::normalize_const_over_self_udiv_cmp(cx, *op, left, right)
+        {
+            return Some(normalized.not(cx));
+        }
+
         match self.kind() {
             SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right)
                 if right.as_const().is_some_and(|value| value.is_zero()) =>
@@ -1722,6 +1734,47 @@ impl SymBoolExpr {
             },
             SymCmpOp::Eq | SymCmpOp::Slt | SymCmpOp::Sgt => None,
         }
+    }
+
+    fn normalize_const_over_self_udiv_cmp(
+        cx: &mut SymCx,
+        op: SymCmpOp,
+        left: &SymExpr,
+        right: &SymExpr,
+    ) -> Option<Self> {
+        let (value, quotient, complement) = match op {
+            // `a <= c / a`.
+            SymCmpOp::Ule => (left, right, false),
+            // `c / a < a`, the complement of `a <= c / a`.
+            SymCmpOp::Ult => (right, left, true),
+            SymCmpOp::Eq | SymCmpOp::Ugt | SymCmpOp::Uge | SymCmpOp::Slt | SymCmpOp::Sgt => {
+                return None;
+            }
+        };
+        let (numerator, denominator) = match quotient.kind() {
+            SymExprKind::BinOp(SymBinOp::UDiv, numerator, denominator) => (numerator, denominator),
+            SymExprKind::Ite(condition, zero, division)
+                if zero.as_const().is_some_and(|value| value.is_zero()) =>
+            {
+                let (numerator, denominator) = division.udiv_operands()?;
+                if condition.zero_check_operand() != Some(denominator) {
+                    return None;
+                }
+                (numerator, denominator)
+            }
+            _ => return None,
+        };
+        if denominator != value {
+            return None;
+        }
+
+        let threshold = numerator.as_const()?.root(2);
+        let threshold = SymExpr::constant(cx, threshold);
+        Some(if complement {
+            Self::cmp(cx, SymCmpOp::Ult, threshold, value.clone())
+        } else {
+            Self::cmp(cx, SymCmpOp::Ule, value.clone(), threshold)
+        })
     }
 
     fn eq_zero(cx: &mut SymCx, expr: &SymExpr) -> Self {
