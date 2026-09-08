@@ -748,55 +748,107 @@ function act(uint256 v) external override;
     );
 });
 
-// Fenced code examples in NatSpec are code: their MDX-sensitive characters must reach the
-// page verbatim, while prose outside fences keeps the escaping that stops MDX from parsing
-// `<` as a JSX tag and a bare `{` as an expression.
-forgetest_init!(natspec_preserves_fenced_code_characters, |prj, cmd| {
+forgetest_init!(natspec_fences_are_limited_to_standalone_descriptions, |prj, cmd| {
     prj.add_source(
-        "Fenced.sol",
+        "FenceScope.sol",
         r#"
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-contract Fenced {
-    /// @notice Compares two values.
-    ///
+interface IFenced {
     /// @dev Example:
     /// ```solidity
-    /// if (a < b) { revert TooSmall(a, b); }
-    /// ```
-    ///
-    /// A bare < in prose like a < b stays escaped, and {Fenced} still links.
-    function cmp(uint256 a, uint256 b) external pure returns (bool) {
-        return a < b;
-    }
+    /**
+     * if (value < 1) {
+     * ```
+     * Outside < and {
+     */
+    /// @param value Parameter example:
+    /// ~~~solidity
+    /// if (value < 1) {
+    /// ~~~
+    function inspect(uint256 value) external;
+}
+
+contract Child is IFenced {
+    /// @inheritdoc IFenced
+    function inspect(uint256 value) external override {}
+}
+
+/**
+ * @title Metadata
+ * ~~~
+ * @author Author
+ * ```
+ * @custom:note Note
+ * ~~~~
+ * @notice ~~~
+ * {1+1}
+ * ~~~
+ */
+contract Metadata {
+    /// @custom:name {1+1}
+    /// @custom:name <name>
+    function inspect(uint256, uint256) external {}
 }
 "#,
     );
 
     cmd.args(["doc"]).assert_success();
-    assert_data_eq!(
-        Data::read_from(&prj.root().join("docs/src/pages/src/contract.Fenced.mdx"), None),
-        str![[r#"
+    for page in ["interface.IFenced.mdx", "contract.Child.mdx"] {
+        assert_data_eq!(
+            Data::read_from(&prj.root().join("docs/src/pages/src").join(page), None),
+            str![[r#"
 ...
-### cmp
-
-Compares two values.
+### inspect
 
 <i>
 
 Example:
 ```solidity
-if (a < b) { revert TooSmall(a, b); }
+if (value < 1) {
 ```
+Outside &lt; and &#123;
 
 </i>
 
-A bare &lt; in prose like a &lt; b stays escaped, and [Fenced](/src/contract.Fenced) still links.
+...
+**Parameters**
 
-```solidity
-function cmp(uint256 a, uint256 b) external pure returns (bool);
-```
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| value | `uint256` | Parameter example:<br/>~~~solidity<br/>if (value &lt; 1) &#123;<br/>~~~ |
+...
+"#]],
+        );
+    }
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/contract.Metadata.mdx"), None),
+        str![[r#"
+...
+# Metadata
+
+**Title:** Metadata
+&#126;~~
+
+**Author:** Author
+&#96;``
+
+~~~
+{1+1}
+~~~
+
+**Note:**
+
+- **note:** Note
+&#126;~~~
+
+...
+### inspect
+
+...
+| `1+1` | `uint256` |  |
+| &lt;name> | `uint256` |  |
 ...
 "#]],
     );

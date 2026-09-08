@@ -6,7 +6,6 @@
 //! * `natspec_doc`: resolves effective NatSpec for a callable item.
 //! * `replace_inline_links`: rewrites `{Ident}` to markdown links.
 
-use crate::render::{logical_lines, region_contains};
 use path_slash::PathBufExt;
 use solar::{
     ast::{
@@ -21,7 +20,6 @@ use solar::{
 };
 use std::{
     collections::{HashMap, HashSet, hash_map::Entry},
-    ops::Range,
     path::{Path, PathBuf},
 };
 use tracing::warn;
@@ -463,7 +461,7 @@ fn normalized_natspec_content(gcx: Gcx<'_>, item: &NatSpecItem) -> String {
         .to_string()
 }
 
-/// Returns the original tagged parent of a synthetic line-comment notice. The outer `Option`
+/// Returns the original tagged parent of a synthetic comment notice. The outer `Option`
 /// distinguishes a continuation from a standalone untagged notice; the inner value is `None` when
 /// Solar's resolved view omitted the parent because a local section replaced it.
 fn continuation_parent(
@@ -471,14 +469,37 @@ fn continuation_parent(
     all_items: &[NatSpecItem],
     item: &NatSpecItem,
 ) -> Option<Option<Span>> {
-    if !matches!(item.kind, NatSpecKind::Notice)
-        || !gcx.sess.source_map().span_to_snippet(item.span).ok()?.starts_with("///")
-    {
+    if !matches!(item.kind, NatSpecKind::Notice) {
         return None;
     }
 
     let source_map = gcx.sess.source_map();
+    let snippet = source_map.span_to_snippet(item.span).ok()?;
     let location = source_map.lookup_char_pos(item.span.lo());
+    if snippet.starts_with("/**") {
+        let index = all_items.iter().position(|candidate| candidate.span == item.span)?;
+        let previous = all_items.get(index.checked_sub(1)?)?;
+        if !matches!(
+            previous.kind,
+            NatSpecKind::Notice
+                | NatSpecKind::Dev
+                | NatSpecKind::Param { .. }
+                | NatSpecKind::Return { .. }
+        ) {
+            return None;
+        }
+        let previous_location = source_map.lookup_char_pos(previous.span.lo());
+        if location.line != previous_location.line + 1
+            || !std::sync::Arc::ptr_eq(&location.file, &previous_location.file)
+        {
+            return None;
+        }
+        return Some(continuation_parent(gcx, all_items, previous).unwrap_or(Some(previous.span)));
+    }
+    if !snippet.starts_with("///") {
+        return None;
+    }
+
     let mut previous_line = location.line.checked_sub(2)?;
     loop {
         let line = location.file.get_line(previous_line)?.trim_start();
@@ -930,71 +951,6 @@ fn escape_link_label(s: &str) -> String {
     s.replace('{', "&#123;").replace('<', "&lt;").replace('[', "\\[").replace(']', "\\]")
 }
 
-/// Sequential fenced-code-block state across a stream of logical lines.
-///
-/// `collect_comments` sanitizes NatSpec items one line at a time (solar emits one item per
-/// `///` line, before continuations are stitched back together), so a fenced example's
-/// boundaries span successive calls. This tracker applies the same CommonMark rules as
-/// `fenced_code_regions` to each line in order; `feed` reports whether the line belongs to a
-/// fenced code block (an opening or closing marker line, or content inside one) and must be
-/// emitted verbatim.
-#[derive(Default)]
-pub(crate) struct FenceTracker {
-    /// Open fence state: (marker, marker length).
-    open: Option<(char, usize)>,
-}
-
-impl FenceTracker {
-    pub(crate) fn feed(&mut self, line: &str) -> bool {
-        let indent = line.len() - line.trim_start_matches(' ').len();
-        if indent <= 3 {
-            let trimmed = &line[indent..];
-            if let Some(marker @ ('`' | '~')) = trimmed.chars().next() {
-                let len = trimmed.chars().take_while(|&ch| ch == marker).count();
-                if let Some((open_marker, open_len)) = self.open {
-                    if marker == open_marker && len >= open_len && trimmed[len..].trim().is_empty()
-                    {
-                        self.open = None;
-                        return true;
-                    }
-                } else if len >= 3 && !(marker == '`' && trimmed[len..].contains('`')) {
-                    self.open = Some((marker, len));
-                    return true;
-                }
-            }
-        }
-        self.open.is_some()
-    }
-}
-
-/// Byte ranges of unambiguous fenced code blocks (` ``` ` or `~~~`) in `text`.
-///
-/// NatSpec descriptions reach `replace_inline_links` with their continuation lines already
-/// stitched back together (see `positional_description`), so a fenced example's opening and
-/// closing lines are visible in the same string. Detection follows the CommonMark
-/// fenced-code-block rules MDX inherits; see `FenceTracker` for the per-line rules.
-/// Everything else - prose, inline code spans, tables, ambiguous constructs - stays outside
-/// these ranges and keeps its existing escaping.
-pub(crate) fn fenced_code_regions(text: &str) -> Vec<Range<usize>> {
-    let mut regions = Vec::new();
-    let mut tracker = FenceTracker::default();
-    let mut open_start: Option<usize> = None;
-    let mut last_end = 0;
-    for (start, line) in logical_lines(text) {
-        if tracker.feed(line) {
-            open_start.get_or_insert(start);
-            last_end = start + line.len();
-        } else if let Some(region_start) = open_start.take() {
-            regions.push(region_start..last_end);
-        }
-    }
-    if let Some(region_start) = open_start {
-        // An unclosed fence runs to the end of the text (CommonMark).
-        regions.push(region_start..text.len());
-    }
-    regions
-}
-
 /// Replace `{Ident}` and `{xref-Ident}` with markdown links using `name_to_page`.
 ///
 /// Matches the legacy pattern: `{[xref-]Ident[-part]}[label]` where `label` defaults
@@ -1004,34 +960,17 @@ pub(crate) fn fenced_code_regions(text: &str) -> Vec<Range<usize>> {
 /// contract (`{member}`, or `{Contract-member}` where `Contract` is the current
 /// contract) becomes an anchor-only link within the page; everything else goes
 /// through the global `name_to_page` index.
-///
-/// Text inside unambiguous fenced code blocks (` ``` ` or `~~~`) is emitted verbatim:
-/// a fenced example is code, so its `<` and `{` are literal content, not MDX hazards
-/// or link references. Prose, inline code spans, and table cells keep the existing
-/// escaping behavior unchanged.
 pub fn replace_inline_links(
     text: &str,
     name_to_page: &NameToPage,
     current_page: &Path,
     local: Option<&LocalMembers>,
 ) -> String {
-    let fences = fenced_code_regions(text);
-    let mut fence_cursor = 0;
-
     let mut out = String::with_capacity(text.len());
     let bytes = text.as_bytes();
     let mut i = 0;
 
     while i < bytes.len() {
-        if region_contains(&fences, &mut fence_cursor, i) {
-            // Inside a fenced code example: emit verbatim, so `<` and `{` are neither escaped
-            // nor rewritten into links. `fence_cursor` now points at the covering region.
-            let end = fences[fence_cursor].end;
-            out.push_str(&text[i..end]);
-            i = end;
-            continue;
-        }
-
         if bytes[i] == b'{' {
             // Try to parse {[xref-]Ident[-part]}[optional label].
             if let Some((end, ident, part, label)) = parse_inline_link(&text[i..]) {
@@ -1347,136 +1286,5 @@ mod tests {
             None,
         );
         assert_eq!(out, "Calls [transfer](/src/other/contract.transfer).");
-    }
-
-    #[test]
-    fn fenced_example_preserves_mdx_hazards_verbatim() {
-        let mut name_to_page = NameToPage::new();
-        name_to_page
-            .by_name
-            .insert("ERC721".to_string(), vec![PathBuf::from("src/contract.ERC721.mdx")]);
-
-        let text = "Prose with {ERC721} and <0xABC>.\n\
-                    ```solidity\n\
-                    if (a < b) { revert TooSmall(a, b); }\n\
-                    ```\n\
-                    Trailing {ERC721} and <b> prose.";
-        let out =
-            replace_inline_links(text, &name_to_page, Path::new("src/contract.Foo.mdx"), None);
-
-        assert_eq!(
-            out,
-            "Prose with [ERC721](/src/contract.ERC721) and &lt;0xABC>.\n\
-             ```solidity\n\
-             if (a < b) { revert TooSmall(a, b); }\n\
-             ```\n\
-             Trailing [ERC721](/src/contract.ERC721) and &lt;b> prose."
-        );
-    }
-
-    #[test]
-    fn fenced_tilde_and_longer_backtick_fences() {
-        let name_to_page = NameToPage::new();
-
-        // A ~~~ fence, and a 4-backtick fence wrapping a 3-backtick block, stay verbatim.
-        let text = "~~~\n{a} <b>\n~~~\n\
-                    ````markdown\n```solidity\ncontract C {}\n```\n````\n\
-                    Outside <b> {brace.";
-        let out =
-            replace_inline_links(text, &name_to_page, Path::new("src/contract.Foo.mdx"), None);
-
-        assert!(out.contains("~~~\n{a} <b>\n~~~"));
-        assert!(out.contains("````markdown\n```solidity\ncontract C {}\n```\n````"));
-        assert!(out.ends_with("Outside &lt;b> &#123;brace."));
-    }
-
-    #[test]
-    fn ambiguous_backtick_fence_info_keeps_escaping() {
-        // A backtick fence whose info string contains a backtick opens nothing (CommonMark),
-        // so the following lines are prose and keep the existing escaping.
-        let text = "```bad`\n<still> {unclosed\n";
-        let out =
-            replace_inline_links(text, &NameToPage::new(), Path::new("src/contract.Foo.mdx"), None);
-
-        assert_eq!(out, "```bad`\n&lt;still> &#123;unclosed\n");
-    }
-
-    #[test]
-    fn unclosed_fence_runs_to_end_of_text() {
-        // CommonMark: an unclosed fence swallows the rest of the text as code.
-        let text = "```solidity\nif (a < b) { revert(); }\nand <more> {prose";
-        let out =
-            replace_inline_links(text, &NameToPage::new(), Path::new("src/contract.Foo.mdx"), None);
-
-        assert_eq!(out, text);
-    }
-
-    #[test]
-    fn fence_indentation_follows_commonmark() {
-        let name_to_page = NameToPage::new();
-
-        // Up to three spaces of indentation still opens a fence.
-        let text = "   ```solidity\nif (a < b) { revert(); }\n   ```\nafter <b> {c\n";
-        let out =
-            replace_inline_links(text, &name_to_page, Path::new("src/contract.Foo.mdx"), None);
-
-        assert!(out.contains("   ```solidity\nif (a < b) { revert(); }\n   ```"));
-        assert!(out.ends_with("after &lt;b> &#123;c\n"));
-
-        // Four spaces is an indented code block, not a fence, so prose escaping applies.
-        let text = "    ```solidity\n<inside> {it\n";
-        let out =
-            replace_inline_links(text, &name_to_page, Path::new("src/contract.Foo.mdx"), None);
-
-        assert_eq!(out, "    ```solidity\n&lt;inside> &#123;it\n");
-    }
-
-    #[test]
-    fn closing_fence_requires_same_marker_and_count() {
-        let name_to_page = NameToPage::new();
-
-        // A ~~~ line cannot close a ``` fence; the ``` after it does, and prose between the
-        // two fences is escaped normally.
-        let text = "```solidity\n{a} <b>\n~~~\n```\nstill <inside>\n```\nafter <c> {d\n";
-        let out =
-            replace_inline_links(text, &name_to_page, Path::new("src/contract.Foo.mdx"), None);
-
-        assert!(out.contains("```solidity\n{a} <b>\n~~~\n```"));
-        assert!(out.contains("still &lt;inside>"));
-        assert!(out.ends_with("after <c> {d\n"));
-    }
-
-    #[test]
-    fn prose_and_inline_code_escaping_unchanged() {
-        // Outside fences the existing behavior is retained byte-for-byte: `<` in prose and
-        // inline code is escaped, and an unresolved `{Ident}` is emitted as inline code.
-        let out = replace_inline_links(
-            "Use `forge create <Contract>` then {OWNER} and <plain>.",
-            &NameToPage::new(),
-            Path::new("src/contract.Foo.mdx"),
-            None,
-        );
-
-        assert_eq!(out, "Use `forge create &lt;Contract>` then `OWNER` and &lt;plain>.");
-    }
-
-    #[test]
-    fn fence_tracker_tracks_state_across_lines() {
-        let mut fences = FenceTracker::default();
-
-        // Prose before the fence.
-        assert!(!fences.feed("Some prose."));
-        // Opening marker, content, and closing marker are all fence lines.
-        assert!(fences.feed("```solidity"));
-        assert!(fences.feed("if (a < b) { revert Err(); }"));
-        assert!(fences.feed("```"));
-        // Back inside prose.
-        assert!(!fences.feed("More <prose>."));
-
-        // A fence whose closing line is indented up to three spaces still closes.
-        assert!(fences.feed("~~~"));
-        assert!(fences.feed("text"));
-        assert!(fences.feed("   ~~~"));
-        assert!(!fences.feed("text"));
     }
 }
