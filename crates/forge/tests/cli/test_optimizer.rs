@@ -1,6 +1,8 @@
 //! Tests for commands using the preprocessed cache.
 
 use foundry_compilers::artifacts::{EvmVersion, remappings::Remapping};
+#[cfg(unix)]
+use foundry_compilers::artifacts::{SolcInput, output_selection::OutputSelection};
 use foundry_config::{CompilationRestrictions, SettingsOverrides};
 
 // <https://github.com/foundry-rs/foundry/issues/16682>
@@ -401,7 +403,7 @@ if [ "$1" = "--version" ]; then
     echo "Version: 0.8.35+commit.69074fbd"
     exit 0
 fi
-touch "$0.invoked"
+cat > "$0.invoked"
 exit 1
 "#,
     )
@@ -410,7 +412,7 @@ exit 1
     permissions.set_mode(0o755);
     fs::set_permissions(&solc, permissions).unwrap();
     prj.update_config(|config| {
-        config.solc = Some(foundry_config::SolcReq::Local(solc));
+        config.solc = Some(foundry_config::SolcReq::Local(solc.clone()));
     });
 
     let output =
@@ -424,6 +426,40 @@ exit 1
 
     cmd.forge_fuse().args(["selectors", "list"]).assert_success();
     assert!(!invoked.exists(), "selector compilation did not reuse the preprocessed cache");
+
+    // A new, unselected test is available only through discovery's secondary cache.
+    prj.update_config(|config| {
+        config.solc = Some(foundry_config::SolcReq::Version(
+            foundry_test_utils::util::SOLC_VERSION.parse().unwrap(),
+        ));
+    });
+    prj.add_test("Other.t.sol", "contract OtherTest { function test_other() public {} }");
+    cmd.forge_fuse().args(["test", "--match-contract", "CounterTest"]).assert_success();
+    let abi_cache = prj.cache().with_file_name("solidity-files-cache.json.abi");
+    assert!(abi_cache.is_dir());
+    assert!(!prj.artifacts().join("Other.t.sol").exists());
+    prj.update_config(|config| {
+        config.solc = Some(foundry_config::SolcReq::Local(solc));
+    });
+    cmd.forge_fuse().args(["test", "--match-contract", "CounterTest"]).assert_success();
+    assert!(!invoked.exists(), "partial-cache discovery invoked solc");
+
+    // Disabling caching must bypass both stores, even after warming them.
+    prj.update_config(|config| config.cache = false);
+    cmd.forge_fuse().args(["test", "--match-contract", "CounterTest"]).assert_failure();
+    assert!(invoked.exists(), "cache=false reused cached discovery");
+    let input = serde_json::from_slice::<SolcInput>(&fs::read(&invoked).unwrap()).unwrap();
+    // A bytecode compile could also fail here; prove that discovery itself invoked Solc.
+    let expected = OutputSelection::common_output_selection(["abi".to_string()]);
+    assert!(!input.settings.output_selection.0.is_empty());
+    for selection in input.settings.output_selection.0.values() {
+        assert_eq!(
+            selection, &expected.0["*"],
+            "cache=false must recompile ABI discovery before attempting bytecode compilation",
+        );
+    }
+    cmd.forge_fuse().arg("clean").assert_success();
+    assert!(!abi_cache.exists());
 });
 
 // <https://github.com/foundry-rs/foundry/issues/8842>

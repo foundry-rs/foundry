@@ -16,9 +16,11 @@ Compile-time support and runtime selection are separate:
   [`FoundryEvmFactory`](../../crates/evm/core/src/evm/mod.rs). Tool entry points dispatch to a
   concrete implementation only after runtime selection.
 
-`NetworkConfigs` is discovery and selection state, not an execution-policy container. Its lifetime
-ends when a tool selects its concrete `FoundryEvmNetwork`. After that dispatch, the selected types,
-factory, context, and narrow resolved inputs are authoritative.
+`NetworkConfigs` is discovery and selection state, not an execution-policy container. The target
+architecture ends its lifetime when a tool selects its concrete `FoundryEvmNetwork`. After that
+dispatch, the selected types, factory, context, and narrow resolved inputs are authoritative.
+Existing backend fork-position and Celo inspector configuration are named migration exceptions;
+they are not precedent for new post-dispatch family checks.
 
 An optional RPC capability probe must not become a requirement for an otherwise valid endpoint.
 Before an endpoint has positively identified a custom execution family, failed optional probes
@@ -40,10 +42,12 @@ CLI, config, and RPC discovery
    concrete FoundryEvmNetwork dispatch
 ```
 
-Code below that boundary must not receive, store, or reconstruct `NetworkConfigs`. In particular,
-executors, backends, inspectors, replay helpers, nested EVM construction, and typed runner state
-must not repeat `is_monad()`, `is_tempo()`, or equivalent family checks after the concrete FEN has
-been selected.
+New code below that boundary must not receive, store, or reconstruct `NetworkConfigs`. In
+particular, executors, backends, inspectors, replay helpers, nested EVM construction, and typed
+runner state must not add `is_monad()`, `is_tempo()`, or equivalent family checks after the concrete
+FEN has been selected. The remaining backend fork-position and Celo inspector consumers should be
+removed with their complete state-lifecycle owners rather than hidden behind another generic
+policy layer.
 
 Do not disguise downstream dispatch as:
 
@@ -126,6 +130,12 @@ If state must survive a nested execution, implement the transfer explicitly at t
 or journal boundary. Do not rely on cloning the ordinary account database to preserve state owned by
 another component. Do not add optional custom-family state to a generic context or return generic
 "context update" signals when only one concrete family can use them.
+
+Historical replay retains the RPC envelope's system classification after transaction conversion.
+The default nested replay behavior deliberately skips system envelopes unsupported by the selected
+execution family without mutating state. A family that supports protocol system envelopes must
+override that behavior in its concrete nested EVM and test canonical execution, foreign-envelope
+skips, malformed envelopes, and rollback after failed protocol prestate.
 
 ## Tool coverage
 

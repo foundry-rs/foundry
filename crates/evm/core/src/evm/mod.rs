@@ -1,4 +1,4 @@
-use std::{fmt::Debug, ops::Deref};
+use std::{fmt::Debug, ops::DerefMut};
 
 use crate::{
     FoundryBlock, FoundryChain, FoundryContextExt, FoundryInspectorExt, FoundryJournal,
@@ -156,61 +156,44 @@ pub trait FoundryEvmFactory:
             BlockEnv = Self::BlockEnv,
             Spec = Self::Spec,
             HaltReason = Self::HaltReason,
-        > + Deref<Target = Self::FoundryContext<'db>>
+        > + DerefMut<Target = Self::FoundryContext<'db>>
     where
         Self: 'db;
 
     /// Creates a Foundry-wrapped EVM with the given inspector.
+    ///
+    /// Callers carrying execution context must install it through the returned context's
+    /// `chain_mut` before executing. This also preserves OP's block-derived L1 fee information.
     fn create_foundry_evm_with_inspector<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>>(
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        chain_context: Self::Chain,
         inspector: I,
     ) -> Self::FoundryEvm<'db, I>;
 
-    /// Tries to execute a canonical system transaction on a regular Alloy EVM during replay.
-    ///
-    /// Returning `Ok(None)` means the transaction was not recognized. Implementations must not
-    /// mutate the EVM, its database, or inspector before returning `Ok(None)`, because callers may
-    /// fall back to ordinary execution using the same EVM instance.
-    #[cfg(feature = "monad")]
-    fn try_transact_system_replay<DB, I>(
-        &self,
-        _evm: &mut Self::Evm<DB, I>,
-        _tx: &Self::Tx,
-    ) -> eyre::Result<Option<ResultAndState<Self::HaltReason>>>
-    where
-        DB: alloy_evm::Database,
-        I: revm::inspector::Inspector<Self::Context<DB>>,
-    {
-        Ok(None)
-    }
-
-    /// Creates an uninspected EVM with explicit transaction-position context.
-    fn create_evm_with_context<DB: alloy_evm::Database>(
-        &self,
-        db: DB,
-        evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        chain_context: Self::Chain,
-    ) -> Self::Evm<DB, NoOpInspector>;
-
-    /// Creates a Foundry-wrapped EVM with a dynamic inspector, returning a boxed [`NestedEvm`].
-    ///
-    /// This helper exists because `&mut dyn FoundryInspectorExt<FoundryContext>` cannot satisfy
-    /// the generic `I: FoundryInspectorExt<Self::FoundryContext<'db>>` bound when the context
-    /// type is only known through an associated type.  Each concrete factory implements this
-    /// directly, side-stepping the higher-kinded lifetime issue.
-    fn create_foundry_nested_evm<'db>(
+    /// Creates a Foundry-wrapped nested EVM without an inspector.
+    fn create_nested_evm<'db>(
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        chain_context: Self::Chain,
-        inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
-    ) -> NestedEvmFor<'db, Self>;
+    ) -> NestedEvmFor<'db, Self> {
+        self.create_nested_evm_with_inspector(db, evm_env, NoOpInspector)
+    }
+
+    /// Creates a Foundry-wrapped nested EVM with the given inspector.
+    /// Install inherited chain state with [`NestedEvm::chain_mut`] before executing or restoring
+    /// journal-derived state.
+    fn create_nested_evm_with_inspector<'db, I>(
+        &self,
+        db: &'db mut dyn DatabaseExt<Self>,
+        evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
+        inspector: I,
+    ) -> NestedEvmFor<'db, Self>
+    where
+        I: FoundryInspectorExt<Self::FoundryContext<'db>> + 'db;
 }
 
-/// Object-safe trait exposing the operations that cheatcode nested EVM closures need.
+/// Object-safe EVM operations used by nested execution and fork replay.
 ///
 /// This abstracts over the concrete EVM type (`FoundryEvm`, future `TempoEvm`, etc.)
 /// so that cheatcode impls can build and run nested EVMs without knowing the concrete type.
@@ -234,6 +217,9 @@ pub trait NestedEvm {
     /// Returns a mutable reference to the chain-position context.
     fn chain_mut(&mut self) -> &mut Self::Chain;
 
+    /// Returns the precompile map.
+    fn precompiles_mut(&mut self) -> &mut PrecompilesMap;
+
     /// Returns a mutable reference to the Journal.
     fn journal_mut(&mut self) -> &mut Self::Journal;
 
@@ -242,6 +228,21 @@ pub trait NestedEvm {
 
     /// Executes a full transaction with the given tx env.
     fn transact_raw(&mut self, tx: Self::Tx) -> eyre::Result<ResultAndState<HaltReason>>;
+
+    /// Replays a transaction, skipping unsupported system envelopes.
+    ///
+    /// `is_system` preserves the RPC envelope classification that conversion to `Self::Tx` may
+    /// discard. Returning `None` must not mutate the EVM, database, or inspector.
+    fn transact_replay(
+        &mut self,
+        tx: Self::Tx,
+        is_system: bool,
+    ) -> eyre::Result<Option<ResultAndState<HaltReason>>> {
+        if is_system {
+            return Ok(None);
+        }
+        self.transact_raw(tx).map(Some)
+    }
 
     fn to_evm_env(&self) -> EvmEnv<Self::Spec, Self::Block>;
 }
