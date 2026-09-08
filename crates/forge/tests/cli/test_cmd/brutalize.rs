@@ -952,7 +952,8 @@ contract RemappedTargetTest {
         let alias = temp.path().join("alias");
         fs::create_dir(&real).unwrap();
         symlink(&real, &alias).unwrap();
-        cmd.env("TMPDIR", &alias).assert_success();
+        cmd.env("TMPDIR", &alias);
+        cmd.assert_success();
     }
 });
 
