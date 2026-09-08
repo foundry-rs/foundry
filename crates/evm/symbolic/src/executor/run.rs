@@ -45,6 +45,11 @@ impl SymbolicExecutor {
         self.deferred_incomplete.get_or_insert(DeferredIncomplete::SolverUnknown);
     }
 
+    /// Defers an incomplete result for a hard-arithmetic branch skipped by nested execution.
+    pub(super) fn defer_hard_arithmetic(&mut self) {
+        self.deferred_incomplete.get_or_insert(DeferredIncomplete::HardArithmetic);
+    }
+
     pub(super) fn is_sat_with_state(
         &mut self,
         state: &PathState,
@@ -60,12 +65,7 @@ impl SymbolicExecutor {
         state: &PathState,
         constraints: &[SymBoolExpr],
     ) -> Result<bool, SymbolicError> {
-        let replayable_storage = state.world.replay_storage_symbols();
-        match self.solver.is_sat_branch_with_replayable_storage(
-            &mut self.cx,
-            constraints,
-            &replayable_storage,
-        ) {
+        match self.is_sat_with_state(state, constraints) {
             Ok(feasible) => Ok(feasible),
             Err(SymbolicError::SolverUnknown) => {
                 self.defer_solver_unknown();
@@ -85,6 +85,10 @@ impl SymbolicExecutor {
             DeferredIncomplete::SolverUnknown => {
                 Some((SymbolicStopReason::Timeout, "solver returned unknown".to_string()))
             }
+            DeferredIncomplete::HardArithmetic => Some((
+                SymbolicStopReason::Timeout,
+                "nested hard arithmetic branch requires deferred SMT solving".to_string(),
+            )),
         }
     }
 
@@ -208,7 +212,6 @@ impl SymbolicExecutor {
         &mut self,
         input: SymbolicRunInput<'_, FEN>,
     ) -> Result<SymbolicRunResult, SymbolicError> {
-        let heuristic_witness_baseline = self.solver.heuristic_witnesses();
         let account = input
             .executor
             .backend()
@@ -241,6 +244,7 @@ impl SymbolicExecutor {
         }
         order_roots_by_corpus_seed_count(&mut roots, self.config.exploration_order);
         let mut worklist = roots.into_iter().collect::<VecDeque<_>>();
+        let mut deferred_worklist = VecDeque::new();
         let mut completed_paths = 0usize;
         let mut reverted_paths = 0usize;
         let mut normal_paths = 0usize;
@@ -248,7 +252,9 @@ impl SymbolicExecutor {
         let path_limit = self.config.path_width() as usize;
         let depth_limit = self.config.execution_depth() as usize;
 
-        while let Some(mut state) = self.pop_next_feasible_path(&mut worklist)? {
+        while let Some(mut state) =
+            self.pop_next_feasible_path(&mut worklist, &mut deferred_worklist, true)?
+        {
             if completed_paths >= path_limit {
                 debug!(completed_paths, path_limit, "symbolic path limit reached");
                 return Ok(SymbolicRunResult::Incomplete {
@@ -409,14 +415,6 @@ impl SymbolicExecutor {
             });
         }
 
-        if self.heuristic_witnesses_used_since(heuristic_witness_baseline) {
-            return Ok(SymbolicRunResult::Incomplete {
-                kind: SymbolicStopReason::Timeout,
-                reason: Self::hard_arith_heuristic_incomplete_reason(),
-                stats: self.stats_with_paths(completed_paths),
-            });
-        }
-
         if let Some((kind, reason)) = self.take_deferred_incomplete() {
             return Ok(SymbolicRunResult::Incomplete {
                 kind,
@@ -480,7 +478,6 @@ impl SymbolicExecutor {
         &mut self,
         input: SymbolicInvariantRunInput<'_, FEN>,
     ) -> Result<SymbolicInvariantRunResult, SymbolicError> {
-        let heuristic_witness_baseline = self.solver.heuristic_witnesses();
         if input.targets.is_empty() {
             return Err(SymbolicError::Unsupported("symbolic invariant has no targets"));
         }
@@ -555,7 +552,7 @@ impl SymbolicExecutor {
                             };
                             let calldata = step.calldata.call_data(&mut self.cx);
                             let constraints = step.calldata.constraints().to_vec();
-                            let outcomes = self.execute_sequence_call(
+                            let mut call = self.prepare_sequence_call(
                                 input.executor,
                                 sequence.state.clone(),
                                 target.address,
@@ -563,10 +560,13 @@ impl SymbolicExecutor {
                                 &target.function,
                                 calldata,
                                 constraints,
-                                &mut completed_paths,
                             )?;
 
-                            for outcome in outcomes {
+                            while let Some(outcome) = self.execute_sequence_call_next(
+                                input.executor,
+                                &mut call,
+                                &mut completed_paths,
+                            )? {
                                 let mut steps = sequence.steps.clone();
                                 steps.push(step.clone());
 
@@ -723,14 +723,6 @@ impl SymbolicExecutor {
             frontier = next_frontier;
         }
 
-        if self.heuristic_witnesses_used_since(heuristic_witness_baseline) {
-            return Ok(SymbolicInvariantRunResult::Incomplete {
-                kind: SymbolicStopReason::Timeout,
-                reason: Self::hard_arith_heuristic_incomplete_reason(),
-                stats: self.stats_with_paths(completed_paths),
-            });
-        }
-
         if let Some((kind, reason)) = self.take_deferred_incomplete() {
             return Ok(SymbolicInvariantRunResult::Incomplete {
                 kind,
@@ -746,16 +738,6 @@ impl SymbolicExecutor {
         let mut stats = self.solver.stats();
         stats.paths = paths;
         stats
-    }
-
-    /// Returns whether this run used a hard-arithmetic heuristic witness.
-    const fn heuristic_witnesses_used_since(&self, baseline: usize) -> bool {
-        self.solver.heuristic_witnesses() > baseline
-    }
-
-    /// Returns the incomplete reason used when heuristic witnesses cannot certify safety.
-    fn hard_arith_heuristic_incomplete_reason() -> String {
-        "hard arithmetic heuristic witness used; no replayed counterexample found".to_string()
     }
 }
 
@@ -793,7 +775,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn stateless_runs_do_not_use_symbolic_timeout_as_wall_clock_deadline() {
+    fn stateless_runs_only_start_wall_clock_deadline_for_deferred_solver_phase() {
         let mut executor =
             SymbolicExecutor::new(SymbolicConfig { timeout: Some(1), ..Default::default() });
 

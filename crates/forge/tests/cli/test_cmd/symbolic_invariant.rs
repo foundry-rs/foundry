@@ -4,6 +4,8 @@ use super::symbolic_helpers::{
 };
 use crate::skip_unless_z3;
 use foundry_test_utils::{forgetest_init, str, util::OutputExt};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 forgetest_init!(symbolic_invariant_runs_before_fuzz_campaign, |prj, cmd| {
     skip_unless_z3!("symbolic_invariant_runs_before_fuzz_campaign");
@@ -1745,6 +1747,78 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 [SEED] (use `--fuzz-seed` to reproduce)
 
 "#]]);
+});
+
+#[cfg(unix)]
+forgetest_init!(symbolic_invariant_checks_easy_path_before_deferred_sibling, |prj, cmd| {
+    let solver = prj.root().join("slow-solver");
+    std::fs::write(
+        &solver,
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+    printf 'mock solver\n'
+    exit 0
+fi
+cat >"$0.query"
+printf 'unknown\n'
+"#,
+    )
+    .unwrap();
+    let mut permissions = std::fs::metadata(&solver).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&solver, permissions).unwrap();
+
+    prj.update_config(|config| {
+        config.invariant.runs = 0;
+        config.symbolic.solver_command = Some(solver.display().to_string());
+        config.symbolic.timeout = Some(30);
+    });
+    prj.add_test(
+        "SymbolicInvariantDeferredSibling.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicDeferredSiblingTarget {
+    uint256 public marker;
+
+    function handler(uint256 value) external {
+        if (value == 0) {
+            assert(false);
+            return;
+        }
+        if (value * value == 2) {
+            marker = 1;
+        }
+    }
+}
+
+contract SymbolicInvariantDeferredSibling is Test {
+    SymbolicDeferredSiblingTarget target;
+
+    function setUp() public {
+        target = new SymbolicDeferredSiblingTarget();
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = target.handler.selector;
+        targetSelector(FuzzSelector({addr: address(target), selectors: selectors}));
+        targetContract(address(target));
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 1
+    /// forge-config: default.symbolic.exploration_order = "dfs"
+    function invariant_markerIsBounded() public pure {}
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--match-test", "invariant_markerIsBounded"])
+        .assert_failure()
+        .get_output()
+        .clone();
+    let result = json_test_result(&output.stdout, "invariant_markerIsBounded()");
+    assert_eq!(result["symbolic"]["status"], "fail_counterexample");
+    assert_eq!(result["symbolic"]["replay"]["status"], "confirmed");
+    assert!(!solver.with_extension("query").exists());
 });
 
 // Top-level invariant sequence calls must look up code through the symbolic

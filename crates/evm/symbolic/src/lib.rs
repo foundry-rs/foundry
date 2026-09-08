@@ -359,6 +359,7 @@ pub struct SymbolicExecutor {
 enum DeferredIncomplete {
     Unsupported(&'static str),
     SolverUnknown,
+    HardArithmetic,
 }
 
 fn symbolic_create_uint_selectors() -> &'static [(usize, [u8; 4]); 32] {
