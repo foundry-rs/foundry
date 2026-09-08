@@ -748,6 +748,112 @@ function act(uint256 v) external override;
     );
 });
 
+forgetest_init!(natspec_fences_are_limited_to_standalone_descriptions, |prj, cmd| {
+    prj.add_source(
+        "FenceScope.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface IFenced {
+    /// @dev Example:
+    /// ```solidity
+    /**
+     * if (value < 1) {
+     * ```
+     * Outside < and {
+     */
+    /// @param value Parameter example:
+    /// ~~~solidity
+    /// if (value < 1) {
+    /// ~~~
+    function inspect(uint256 value) external;
+}
+
+contract Child is IFenced {
+    /// @inheritdoc IFenced
+    function inspect(uint256 value) external override {}
+}
+
+/**
+ * @title Metadata
+ * ~~~
+ * @author Author
+ * ```
+ * @custom:note Note
+ * ~~~~
+ * @notice ~~~
+ * {1+1}
+ * ~~~
+ */
+contract Metadata {
+    /// @custom:name {1+1}
+    /// @custom:name <name>
+    function inspect(uint256, uint256) external {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+    for page in ["interface.IFenced.mdx", "contract.Child.mdx"] {
+        assert_data_eq!(
+            Data::read_from(&prj.root().join("docs/src/pages/src").join(page), None),
+            str![[r#"
+...
+### inspect
+
+<i>
+
+Example:
+```solidity
+if (value < 1) {
+```
+Outside &lt; and &#123;
+
+</i>
+
+...
+**Parameters**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| value | `uint256` | Parameter example:<br/>~~~solidity<br/>if (value &lt; 1) &#123;<br/>~~~ |
+...
+"#]],
+        );
+    }
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/contract.Metadata.mdx"), None),
+        str![[r#"
+...
+# Metadata
+
+**Title:** Metadata
+&#126;~~
+
+**Author:** Author
+&#96;``
+
+~~~
+{1+1}
+~~~
+
+**Note:**
+
+- **note:** Note
+&#126;~~~
+
+...
+### inspect
+
+...
+| `1+1` | `uint256` |  |
+| &lt;name> | `uint256` |  |
+...
+"#]],
+    );
+});
+
 forgetest_init!(multiline_notice_populates_frontmatter_description, |prj, cmd| {
     prj.add_source(
         "Vault.sol",
