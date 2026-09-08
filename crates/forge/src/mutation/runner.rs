@@ -809,26 +809,27 @@ mod tests {
         config.mutation.timeout = Some(5);
 
         let temp_config = temp_config_for_mutation(&config, temp.path());
+        let expected_root = dunce::canonicalize(temp.path()).unwrap();
 
-        assert_eq!(temp_config.root, temp.path());
-        assert_eq!(temp_config.src, temp.path().join("contracts"));
-        assert_eq!(temp_config.test, temp.path().join("checks"));
-        assert_eq!(temp_config.script, temp.path().join("deploy"));
-        assert_eq!(temp_config.out, temp.path().join("custom-out"));
-        assert_eq!(temp_config.cache_path, temp.path().join("custom-cache"));
-        assert_eq!(temp_config.snapshots, temp.path().join("custom-snapshots"));
-        assert_eq!(temp_config.broadcast, temp.path().join("custom-broadcast"));
-        assert_eq!(temp_config.mutation_dir, temp.path().join("custom-cache/mutation"));
-        assert_eq!(temp_config.libs, vec![temp.path().join("vendor")]);
-        assert_eq!(temp_config.include_paths, vec![temp.path().join("shared")]);
-        assert_eq!(temp_config.allow_paths, vec![temp.path().join("fixtures")]);
+        assert_eq!(temp_config.root, expected_root);
+        assert_eq!(temp_config.src, expected_root.join("contracts"));
+        assert_eq!(temp_config.test, expected_root.join("checks"));
+        assert_eq!(temp_config.script, expected_root.join("deploy"));
+        assert_eq!(temp_config.out, expected_root.join("custom-out"));
+        assert_eq!(temp_config.cache_path, expected_root.join("custom-cache"));
+        assert_eq!(temp_config.snapshots, expected_root.join("custom-snapshots"));
+        assert_eq!(temp_config.broadcast, expected_root.join("custom-broadcast"));
+        assert_eq!(temp_config.mutation_dir, expected_root.join("custom-cache/mutation"));
+        assert_eq!(temp_config.libs, vec![expected_root.join("vendor")]);
+        assert_eq!(temp_config.include_paths, vec![expected_root.join("shared")]);
+        assert_eq!(temp_config.allow_paths, vec![expected_root.join("fixtures")]);
         assert_eq!(
             temp_config.fuzz.failure_persist_dir,
-            Some(temp.path().join("custom-cache/fuzz"))
+            Some(expected_root.join("custom-cache/fuzz"))
         );
         assert_eq!(
             temp_config.invariant.failure_persist_dir,
-            Some(temp.path().join("custom-cache/invariant"))
+            Some(expected_root.join("custom-cache/invariant"))
         );
         assert!(temp_config.dynamic_test_linking);
         assert!(temp_config.cache);

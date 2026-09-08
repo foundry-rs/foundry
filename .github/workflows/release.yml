@@ -213,7 +213,7 @@ jobs:
       - name: Build changelog
         id: build_changelog
         if: ${{ steps.existing_release.outputs.skip_assets != 'true' }}
-        uses: mikepenz/release-changelog-builder-action@c9bcd8238b6f41e05561348339429d360b1c0247 # v6.2.3
+        uses: mikepenz/release-changelog-builder-action@cb021f9b36a51a7c6f18e4679b6fa2cb77a1260c # v6.3.0
         with:
           configuration: "./.github/changelog.json"
           fromTag: ${{ steps.release_info.outputs.from_tag || '' }}
@@ -492,7 +492,7 @@ jobs:
           cat "$FOUNDRY_CHECKSUM"
 
       - name: Install Syft
-        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
 
       - name: Generate SBOM (SPDX)
         env:

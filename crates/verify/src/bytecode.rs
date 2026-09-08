@@ -235,7 +235,7 @@ impl VerifyBytecodeArgs {
     /// Run the `verify-bytecode` command to verify the bytecode onchain against the locally built
     /// bytecode.
     pub async fn run(mut self) -> Result<()> {
-        let mut config = self.load_config()?;
+        let mut config = self.load_config_with_dependencies()?;
         config.libraries.append(&mut self.libraries);
 
         if let Some(network) = self.network {

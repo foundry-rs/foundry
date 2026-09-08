@@ -55,11 +55,21 @@ pub(crate) fn parse_scope(s: &str) -> Result<CallScope, String> {
 }
 
 fn parse_selector_rules(s: &str) -> Result<Vec<SelectorRule>, String> {
-    let mut rules = Vec::new();
+    let mut rules = Vec::<SelectorRule>::new();
 
     for part in split_selector_rule_parts(s) {
         let part = part.trim();
         if part.is_empty() {
+            continue;
+        }
+
+        // Require a hex prefix to distinguish recipients from hex-like function names.
+        if let Some(rule) = rules.last_mut()
+            && !rule.recipients.is_empty()
+            && (part.starts_with("0x") || part.starts_with("0X"))
+            && let Ok(addr) = part.parse::<Address>()
+        {
+            rule.recipients.push(addr);
             continue;
         }
 
@@ -168,6 +178,7 @@ mod tests {
     fn parse_scope_variants() {
         let target = address!("0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D");
         let recipient = address!("0x1111111111111111111111111111111111111111");
+        let recipient2 = address!("0x2222222222222222222222222222222222222222");
         // (input, expected selectors, expected recipients per rule)
         let cases = [
             ("0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D", vec![]),
@@ -190,6 +201,27 @@ mod tests {
                 "0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D:0xaabbccdd@0x1111111111111111111111111111111111111111",
                 vec![([0xaa, 0xbb, 0xcc, 0xdd], vec![recipient])],
             ),
+            (
+                // Multiple recipients for one rule.
+                "0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D:transfer@0x1111111111111111111111111111111111111111,0x2222222222222222222222222222222222222222",
+                vec![(selector("transfer(address,uint256)"), vec![recipient, recipient2])],
+            ),
+            (
+                // An unrestricted rule ends the previous recipient list.
+                "0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D:transfer@0x1111111111111111111111111111111111111111,0x2222222222222222222222222222222222222222,approve",
+                vec![
+                    (selector("transfer(address,uint256)"), vec![recipient, recipient2]),
+                    (selector("approve(address,uint256)"), vec![]),
+                ],
+            ),
+            (
+                // Recipient lists stay local to their rules.
+                "0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D:transfer@0x1111111111111111111111111111111111111111,approve@0x2222222222222222222222222222222222222222",
+                vec![
+                    (selector("transfer(address,uint256)"), vec![recipient]),
+                    (selector("approve(address,uint256)"), vec![recipient2]),
+                ],
+            ),
         ];
         for (input, expected) in cases {
             let scope = parse_scope(input).unwrap();
@@ -198,6 +230,31 @@ mod tests {
                 scope.selectorRules.iter().map(|r| (r.selector.0, r.recipients.clone())).collect();
             assert_eq!(rules, expected, "{input}");
         }
+    }
+
+    #[test]
+    fn parse_scope_hex_like_function_name_starts_a_new_rule() {
+        let scope = parse_scope(
+            "0x20c0000000000000000000000000000000000001:transfer@0x1111111111111111111111111111111111111111,aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )
+        .unwrap();
+        assert_eq!(scope.selectorRules.len(), 2);
+        assert_eq!(scope.selectorRules[0].recipients.len(), 1);
+        assert_eq!(
+            scope.selectorRules[1].selector.0,
+            selector("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa()")
+        );
+        assert!(scope.selectorRules[1].recipients.is_empty());
+    }
+
+    #[test]
+    fn parse_scope_bogus_selector_after_unrestricted_rule_still_errors() {
+        // A bare address cannot continue a rule without an @ clause.
+        let err = parse_scope(
+            "0x20c0000000000000000000000000000000000001:transfer,0x2222222222222222222222222222222222222222",
+        )
+        .unwrap_err();
+        assert!(err.contains("hex selector must be 4 bytes"), "{err}");
     }
 
     #[test]

@@ -673,6 +673,67 @@ contract SymbolicBoundedCarry {
     assert_eq!(result["symbolic"]["replay"]["status"], "confirmed");
 });
 
+forgetest_init!(symbolic_proves_fixed_point_fee_bounds, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_proves_fixed_point_fee_bounds because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicFixedPointFee.t.sol",
+        r#"
+library FixedPointMathLib {
+    function mulWad(uint256 x, uint256 y) internal pure returns (uint256 z) {
+        assembly {
+            if gt(x, div(not(0), y)) {
+                if y { revert(0, 0) }
+            }
+            z := div(mul(x, y), 1000000000000000000)
+        }
+    }
+}
+
+contract SymbolicFixedPointFee {
+    uint256 constant WAD = 1e18;
+    uint256 constant RATE = 3e15;
+
+    function checkMinimumFee(uint128 amount, uint128 minimum) public pure {
+        uint256 fee = FixedPointMathLib.mulWad(amount, RATE);
+        if (fee >= minimum) {
+            unchecked {
+                assert(uint256(amount) * RATE >= uint256(minimum) * WAD);
+            }
+        }
+    }
+
+    function checkMaximumFee(uint128 amount, uint128 maximum) public pure {
+        uint256 fee = FixedPointMathLib.mulWad(amount, RATE);
+        if (fee <= maximum) {
+            unchecked {
+                assert(uint256(amount) * RATE < (uint256(maximum) + 1) * WAD);
+            }
+        }
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicFixedPointFee"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+
+    for signature in ["checkMinimumFee(uint128,uint128)", "checkMaximumFee(uint128,uint128)"] {
+        let result = json_test_result(&output, signature);
+        assert_eq!(result["symbolic"]["status"], "pass");
+        assert_eq!(result["symbolic"]["solver"]["stats"]["heuristic_witnesses"], 0);
+    }
+});
+
 forgetest_init!(symbolic_proves_saturating_mul_equivalence, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(
@@ -4272,12 +4333,8 @@ contract SymbolicInvariantPropertySeed is Test {
         .stdout
         .clone();
     let result = json_test_result(&output, "invariant_cPartialOutcomeIsRetained()");
-    assert_eq!(result["symbolic"]["status"], "incomplete");
-    assert_eq!(
-        result["symbolic"]["incomplete"]["reason"],
-        "unsupported symbolic execution feature: symbolic vm.lastCallGas not modeled"
-    );
-    assert!(result["symbolic"]["counterexample"].is_null());
+    assert_eq!(result["symbolic"]["status"], "fail_counterexample");
+    assert_eq!(result["symbolic"]["replay"]["status"], "confirmed");
 });
 
 forgetest_init!(symbolic_invariant_frontier_seeding_checks_after_invariant, |prj, cmd| {

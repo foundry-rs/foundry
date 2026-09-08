@@ -1,4 +1,4 @@
-use super::{fuzz::FuzzRunArgs, install, watch::WatchArgs};
+use super::{fuzz::FuzzRunArgs, watch::WatchArgs};
 use crate::{
     MultiContractRunner, MultiContractRunnerBuilder, brutalizer,
     decode::decode_console_logs,
@@ -39,7 +39,7 @@ use foundry_cli::{
 };
 use foundry_common::{
     ContractsByArtifact, EmptyTestFilter, TestFilter, TestFunctionExt, TestFunctionKind,
-    compile::{ProjectCompiler, compile_abi_project},
+    compile::{ProjectCompiler, compile_abi_project, compile_abi_project_cached},
     fs, sh_status, sh_warn, shell,
 };
 use foundry_compilers::{
@@ -1506,7 +1506,7 @@ impl TestArgs {
             return Ok((src_files().chain(test_files()).collect(), None));
         }
 
-        let mut project = config.create_project(true, true)?;
+        let mut project = config.create_project(config.cache, true)?;
         let sources = src_files()
             .chain(
                 // Preserve path-filter behavior for conventional test files while still
@@ -1514,7 +1514,7 @@ impl TestArgs {
                 test_files().filter(|path| !path.is_sol_test() || test_filter.matches_path(path)),
             )
             .collect::<BTreeSet<_>>();
-        let output = compile_abi_project(
+        let output = compile_abi_project_cached(
             &mut project,
             ProjectCompiler::new()
                 .files(sources.iter().cloned())
@@ -1629,11 +1629,7 @@ impl TestArgs {
         // Merge all configs.
         let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
 
-        if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
-        {
-            // need to re-configure here to also catch additional remappings
-            config = self.load_config()?;
-        }
+        self.install_missing_dependencies(&mut config)?;
         let brutalized_workspace =
             if self.brutalize { Some(self.brutalize_workspace(&mut config)?) } else { None };
         let should_mutate = self.mutate.is_some();
