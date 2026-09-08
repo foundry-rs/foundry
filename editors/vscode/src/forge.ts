@@ -8,6 +8,14 @@ const installationHelp =
   "then verify `forge lsp --stdio --help`. For a source build, use `cargo build --locked -p forge --bin forge`. " +
   "Set solarLsp.forgePath to that Forge executable if it is not on PATH.";
 
+export function isFormattingVersionCurrent(
+  expectedVersion: number,
+  currentVersion: number,
+  isClosed: boolean,
+): boolean {
+  return !isClosed && expectedVersion === currentVersion;
+}
+
 /** Resolve once so the server, formatter and Forge checks use the same executable. */
 export async function resolveForge(
   configuredPath: string,

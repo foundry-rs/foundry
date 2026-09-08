@@ -52,8 +52,9 @@ pub(super) fn launch(path: Option<&Path>, code_path: Option<&Path>) -> Result<()
     // Separate projects, executables and profiles cannot inherit a stale VS Code process
     // environment.
     let session_key = keccak256(serde_json::to_vec(&(&project, &forge, &profile))?);
-    // VS Code appends a Unix socket name; keep the profile path within platform limits.
-    let session = cache.join("vscode").join(&format!("{session_key:x}")[..16]);
+    // VS Code appends a Unix socket name to the user-data directory. Keep this path short on
+    // macOS, where the socket limit is only 103 bytes.
+    let session = vscode_session_dir(&cache, &format!("{session_key:x}")[..16]);
     let user_data = session.join("user-data");
     let extensions = session.join("extensions");
     fs::create_dir_all(user_data.join("User"))?;
@@ -87,6 +88,9 @@ pub(super) fn launch(path: Option<&Path>, code_path: Option<&Path>) -> Result<()
         .arg("--extensions-dir")
         .arg(&extensions)
         .arg(&project)
+        .env_remove("VSCODE_APPDATA")
+        .env_remove("VSCODE_EXTENSIONS")
+        .env_remove("VSCODE_PORTABLE")
         .env("FOUNDRY_LSP_FORGE", &forge)
         .env("FOUNDRY_PROFILE", &profile)
         .stdin(Stdio::null())
@@ -103,6 +107,24 @@ pub(super) fn launch(path: Option<&Path>, code_path: Option<&Path>) -> Result<()
         })?;
     ensure!(status.success(), "VS Code launcher exited with {status}");
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn vscode_session_dir(_cache: &Path, key: &str) -> PathBuf {
+    // VS Code appends `<version>-main.sock` to this directory. Prefer the user's private
+    // temporary directory, but fall back to a fixed short root if its path is too long.
+    let private = std::env::temp_dir().join("foundry-lsp").join(key);
+    let socket = private.join("user-data/1.13-main.sock");
+    if socket.to_string_lossy().len() < 103 {
+        private
+    } else {
+        PathBuf::from("/tmp/foundry-lsp").join(key)
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn vscode_session_dir(cache: &Path, key: &str) -> PathBuf {
+    cache.join("vscode").join(key)
 }
 
 fn prepare_extension(cache: &Path) -> Result<PathBuf> {
@@ -155,4 +177,32 @@ fn default_code_path() -> PathBuf {
         }
     }
     PathBuf::from(if cfg!(windows) { "code.cmd" } else { "code" })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::vscode_session_dir;
+    use std::path::Path;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn vscode_session_path_fits_macos_socket_limit() {
+        let session = vscode_session_dir(
+            Path::new("/Users/this-is-a-very-long-account-name/.foundry/cache"),
+            "0123456789abcdef",
+        );
+        let socket = session.join("user-data/1.13-main.sock");
+        let length = socket.to_string_lossy().len();
+        assert!(length < 103, "{length} bytes");
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn vscode_session_path_uses_foundry_cache() {
+        let cache = Path::new("/tmp/foundry-cache");
+        assert_eq!(
+            vscode_session_dir(cache, "0123456789abcdef"),
+            cache.join("vscode/0123456789abcdef")
+        );
+    }
 }

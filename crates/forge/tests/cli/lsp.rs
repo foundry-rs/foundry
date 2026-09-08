@@ -45,12 +45,14 @@ forgetest!(lsp_vscode_opens_current_project_with_bundled_extension, |prj, cmd| {
         r#"#!/bin/sh
 printf '%s\n' "$@" > "$FORGE_LSP_TEST_ARGS"
 printf '%s\n' "$FOUNDRY_PROFILE" "$FOUNDRY_LSP_FORGE" > "$FORGE_LSP_TEST_PROFILE"
+printf '%s\n' "${VSCODE_APPDATA-unset}" "${VSCODE_EXTENSIONS-unset}" "${VSCODE_PORTABLE-unset}" > "$FORGE_LSP_TEST_ENV"
 "#,
     )
     .unwrap();
     fs::set_permissions(&code, fs::Permissions::from_mode(0o755)).unwrap();
     let captured_args = executables.path().join("args");
     let captured_profile = executables.path().join("profile");
+    let captured_env = executables.path().join("env");
     let mut standalone = Command::new(&forge);
     standalone.current_dir(&project).env("NO_COLOR", "1");
     cmd.set_cmd(standalone);
@@ -58,6 +60,10 @@ printf '%s\n' "$FOUNDRY_PROFILE" "$FOUNDRY_LSP_FORGE" > "$FORGE_LSP_TEST_PROFILE
     cmd.env("PATH", executables.path());
     cmd.env("FORGE_LSP_TEST_ARGS", &captured_args);
     cmd.env("FORGE_LSP_TEST_PROFILE", &captured_profile);
+    cmd.env("FORGE_LSP_TEST_ENV", &captured_env);
+    cmd.env("VSCODE_APPDATA", "/stale/appdata");
+    cmd.env("VSCODE_EXTENSIONS", "/stale/extensions");
+    cmd.env("VSCODE_PORTABLE", "/stale/portable");
     cmd.args(["lsp", "--vscode", "--profile", "editor", "--code-path"]).arg(&code);
     cmd.assert_empty_stdout();
 
@@ -96,6 +102,7 @@ printf '%s\n' "$FOUNDRY_PROFILE" "$FOUNDRY_LSP_FORGE" > "$FORGE_LSP_TEST_PROFILE
         fs::read_to_string(&captured_profile).unwrap(),
         format!("editor\n{}\n", forge.display())
     );
+    assert_eq!(fs::read_to_string(&captured_env).unwrap(), "unset\nunset\nunset\n");
     assert!(!project.join(".vscode").exists());
 
     // A terminal needs only `forge lsp`, and reopening preserves the managed profile's settings.
@@ -111,6 +118,7 @@ printf '%s\n' "$FOUNDRY_PROFILE" "$FOUNDRY_LSP_FORGE" > "$FORGE_LSP_TEST_PROFILE
         .env("FOUNDRY_PROFILE", "editor")
         .env("FORGE_LSP_TEST_ARGS", &captured_args)
         .env("FORGE_LSP_TEST_PROFILE", &captured_profile)
+        .env("FORGE_LSP_TEST_ENV", &captured_env)
         .arg("lsp");
     let mut terminal = spawn_with_options(
         terminal,

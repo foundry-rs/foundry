@@ -5,7 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { promisify } = require("node:util");
 const { test } = require("node:test");
-const { resolveForge, validateForgeLsp, formatterRoot, shouldFormatOnSave } = require("../out/forge");
+const { resolveForge, validateForgeLsp, formatterRoot, shouldFormatOnSave, isFormattingVersionCurrent } = require("../out/forge");
 
 async function fixture(t) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "foundry-editor-"));
@@ -69,4 +69,10 @@ test("legacy save formatting yields when editor.formatOnSave is enabled", () => 
   assert.equal(shouldFormatOnSave(true, true, true), false);
   assert.equal(shouldFormatOnSave(false, true, false), false);
   assert.equal(shouldFormatOnSave(true, false, false), false);
+});
+
+test("formatting results are rejected after a document edit or close", () => {
+  assert.equal(isFormattingVersionCurrent(3, 3, false), true);
+  assert.equal(isFormattingVersionCurrent(3, 4, false), false);
+  assert.equal(isFormattingVersionCurrent(3, 3, true), false);
 });

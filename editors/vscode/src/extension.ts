@@ -8,7 +8,13 @@ import {
   State,
 } from "vscode-languageclient/node";
 import { spawn } from "node:child_process";
-import { formatterRoot, resolveForge, shouldFormatOnSave, validateForgeLsp } from "./forge";
+import {
+  formatterRoot,
+  isFormattingVersionCurrent,
+  resolveForge,
+  shouldFormatOnSave,
+  validateForgeLsp,
+} from "./forge";
 
 let client: LanguageClient | undefined;
 let clientLifecycle: Promise<void> = Promise.resolve();
@@ -56,14 +62,14 @@ export function activate(context: vscode.ExtensionContext) {
       const edits = await formatDocument(document, version);
       // Formatting is asynchronous. Do not apply edits computed for an older
       // document version after the user has edited the document meanwhile.
-      if (document.isClosed || document.version !== version) {
+      if (!isFormattingVersionCurrent(version, document.version, document.isClosed)) {
         return;
       }
       // Build and apply the edits synchronously inside `editor.edit`. This
       // gives us one final version check immediately before VS Code commits
       // the edit, without a race between `applyEdit` preparation and commit.
       await editor.edit((editBuilder) => {
-        if (document.isClosed || document.version !== version) {
+        if (!isFormattingVersionCurrent(version, document.version, document.isClosed)) {
           return;
         }
         for (const edit of edits) {
@@ -348,8 +354,7 @@ async function formatDocument(
 ): Promise<vscode.TextEdit[]> {
   await clientLifecycle;
   if (
-    document.isClosed ||
-    document.version !== expectedVersion ||
+    !isFormattingVersionCurrent(expectedVersion, document.version, document.isClosed) ||
     !activeForgePath
   ) {
     return [];
@@ -369,7 +374,7 @@ async function formatDocument(
     textDocument: { uri: document.uri.toString() },
     options,
   });
-  if (document.isClosed || document.version !== expectedVersion) {
+  if (!isFormattingVersionCurrent(expectedVersion, document.version, document.isClosed)) {
     return [];
   }
   const convertedEdits = await runningClient.protocol2CodeConverter.asTextEdits(edits);
@@ -420,7 +425,7 @@ async function formatDocumentWithForge(
     });
 
     forgeProcess.on("close", (code) => {
-      if (document.version !== version || document.isClosed) {
+      if (!isFormattingVersionCurrent(version, document.version, document.isClosed)) {
         resolve(undefined);
         return;
       }
