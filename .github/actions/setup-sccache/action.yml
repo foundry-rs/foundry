@@ -1,0 +1,27 @@
+name: Set up sccache
+description: Set up sccache without proxying the runner-provided Depot cache through Socket
+runs:
+  using: composite
+  steps:
+    - name: Keep Depot cache outside Socket proxy
+      shell: bash
+      run: |
+        node <<'NODE'
+        const fs = require('node:fs');
+        const endpoint = process.env.SCCACHE_WEBDAV_ENDPOINT;
+        if (!endpoint) process.exit(0);
+
+        const url = new URL(endpoint);
+        if (!['http:', 'https:'].includes(url.protocol) || /[\s,*]/.test(url.hostname)) {
+          throw new Error('Invalid sccache WebDAV endpoint');
+        }
+
+        // Bypass only the runner-provided cache host, not package registries.
+        // Preserve both spellings because proxy clients differ in precedence.
+        const hosts = [process.env.NO_PROXY, process.env.no_proxy, url.hostname]
+          .filter(Boolean).flatMap(value => value.split(','))
+          .map(value => value.trim()).filter(Boolean);
+        const bypass = [...new Set(hosts)].join(',');
+        fs.appendFileSync(process.env.GITHUB_ENV, `NO_PROXY=${bypass}\nno_proxy=${bypass}\n`);
+        NODE
+    - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
