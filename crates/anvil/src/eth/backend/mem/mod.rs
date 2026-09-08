@@ -7408,6 +7408,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
     pub async fn load_state(&self, mut state: SerializableState) -> Result<bool, BlockchainError> {
         let _mining_guard = self.mining.lock().await;
         let mut block_env = state.block.take();
+        let mut fork_block_boundary = None;
         let mut selected_head = None;
         let mut selected_header = None;
         let mut checkpoint = None;
@@ -7431,6 +7432,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
                 } else {
                     // If loading state file on a fork, set best number to the fork block number.
                     // Ref: https://github.com/foundry-rs/foundry/pull/9215#issue-2618681838
+                    fork_block_boundary = Some(number);
                     (number, Some(hash))
                 }
             } else {
@@ -7506,8 +7508,8 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         let blocks = std::mem::take(&mut state.blocks);
         let transactions = std::mem::take(&mut state.transactions);
         let mut storage = self.blockchain.storage.read().clone();
-        storage.load_blocks(blocks);
-        storage.load_transactions(transactions);
+        storage.load_blocks(blocks, fork_block_boundary);
+        storage.load_transactions(transactions, fork_block_boundary);
         if let Some(checkpoint) = checkpoint {
             storage.insert_block(checkpoint);
         }
