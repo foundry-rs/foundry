@@ -51,10 +51,25 @@ export function activate(context: vscode.ExtensionContext) {
         return;
       }
 
-      const edits = await formatDocument(editor.document);
-      const workspaceEdit = new vscode.WorkspaceEdit();
-      workspaceEdit.set(editor.document.uri, edits);
-      await vscode.workspace.applyEdit(workspaceEdit);
+      const document = editor.document;
+      const version = document.version;
+      const edits = await formatDocument(document, version);
+      // Formatting is asynchronous. Do not apply edits computed for an older
+      // document version after the user has edited the document meanwhile.
+      if (document.isClosed || document.version !== version) {
+        return;
+      }
+      // Build and apply the edits synchronously inside `editor.edit`. This
+      // gives us one final version check immediately before VS Code commits
+      // the edit, without a race between `applyEdit` preparation and commit.
+      await editor.edit((editBuilder) => {
+        if (document.isClosed || document.version !== version) {
+          return;
+        }
+        for (const edit of edits) {
+          editBuilder.replace(edit.range, edit.newText);
+        }
+      });
     },
   );
 
@@ -72,7 +87,7 @@ export function activate(context: vscode.ExtensionContext) {
       ) &&
       event.document.languageId === "solidity"
     ) {
-      event.waitUntil(formatDocument(event.document));
+      event.waitUntil(formatDocument(event.document, event.document.version));
     }
   });
 
@@ -329,13 +344,18 @@ function parseCodeLensLocation(
 
 async function formatDocument(
   document: vscode.TextDocument,
+  expectedVersion = document.version,
 ): Promise<vscode.TextEdit[]> {
   await clientLifecycle;
-  if (!activeForgePath) {
+  if (
+    document.isClosed ||
+    document.version !== expectedVersion ||
+    !activeForgePath
+  ) {
     return [];
   }
   if (!serverSupportsDocumentFormatting()) {
-    const edit = await formatDocumentWithForge(document);
+    const edit = await formatDocumentWithForge(document, expectedVersion);
     return edit ? [edit] : [];
   }
 
@@ -349,7 +369,14 @@ async function formatDocument(
     textDocument: { uri: document.uri.toString() },
     options,
   });
-  return (await runningClient.protocol2CodeConverter.asTextEdits(edits)) ?? [];
+  if (document.isClosed || document.version !== expectedVersion) {
+    return [];
+  }
+  const convertedEdits = await runningClient.protocol2CodeConverter.asTextEdits(edits);
+  if (document.isClosed || document.version !== expectedVersion) {
+    return [];
+  }
+  return convertedEdits ?? [];
 }
 
 function serverSupportsDocumentFormatting(): boolean {
@@ -361,12 +388,13 @@ function serverSupportsDocumentFormatting(): boolean {
 
 async function formatDocumentWithForge(
   document: vscode.TextDocument,
+  expectedVersion = document.version,
 ): Promise<vscode.TextEdit | undefined> {
   const forgePath = activeForgePath;
   if (!forgePath) {
     return undefined;
   }
-  const version = document.version;
+  const version = expectedVersion;
   const source = document.getText();
   const root = await formatterRoot(
     document.uri.fsPath,
