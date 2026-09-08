@@ -15,7 +15,7 @@ impl SymbolicExecutor {
         let calldata = SymbolicCalldata::selector_only(&mut self.cx, invariant)?;
         let call_data = calldata.call_data(&mut self.cx);
         let constraints = calldata.into_constraints();
-        let outcomes = self.execute_sequence_call(
+        let mut call = self.prepare_sequence_call(
             executor,
             state,
             invariant_address,
@@ -23,19 +23,16 @@ impl SymbolicExecutor {
             invariant,
             call_data,
             constraints,
-            completed_paths,
         )?;
 
         let mut checked = Vec::new();
-        for mut outcome in outcomes {
-            if !matches!(outcome.status, CallStatus::Success) {
-                checked.push(InvariantCheckOutcome { failed: true, state: outcome.state });
-                continue;
-            }
-
-            if self.invariant_return_failed(invariant, &mut outcome.state)? {
-                checked.push(InvariantCheckOutcome { failed: true, state: outcome.state });
-                continue;
+        while let Some(mut outcome) =
+            self.execute_sequence_call_next(executor, &mut call, completed_paths)?
+        {
+            if !matches!(outcome.status, CallStatus::Success)
+                || self.invariant_return_failed(invariant, &mut outcome.state)?
+            {
+                return Ok(vec![InvariantCheckOutcome { failed: true, state: outcome.state }]);
             }
 
             let Some(after_invariant) = after_invariant else {
@@ -46,7 +43,7 @@ impl SymbolicExecutor {
             let after_calldata = SymbolicCalldata::selector_only(&mut self.cx, after_invariant)?;
             let calldata = after_calldata.call_data(&mut self.cx);
             let constraints = after_calldata.constraints().to_vec();
-            for after_outcome in self.execute_sequence_call(
+            let mut after_call = self.prepare_sequence_call(
                 executor,
                 outcome.state,
                 invariant_address,
@@ -54,12 +51,16 @@ impl SymbolicExecutor {
                 after_invariant,
                 calldata,
                 constraints,
-                completed_paths,
-            )? {
-                checked.push(InvariantCheckOutcome {
-                    failed: !matches!(after_outcome.status, CallStatus::Success),
-                    state: after_outcome.state,
-                });
+            )?;
+            while let Some(after_outcome) =
+                self.execute_sequence_call_next(executor, &mut after_call, completed_paths)?
+            {
+                let failed = !matches!(after_outcome.status, CallStatus::Success);
+                let checked_outcome = InvariantCheckOutcome { failed, state: after_outcome.state };
+                if failed {
+                    return Ok(vec![checked_outcome]);
+                }
+                checked.push(checked_outcome);
             }
         }
         Ok(checked)
@@ -100,7 +101,7 @@ impl SymbolicExecutor {
     }
 
     #[expect(clippy::too_many_arguments)]
-    pub(super) fn execute_sequence_call<FEN: FoundryEvmNetwork>(
+    pub(super) fn prepare_sequence_call<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
         mut state: PathState,
@@ -109,8 +110,7 @@ impl SymbolicExecutor {
         _function: &Function,
         calldata: SymCalldata,
         constraints: Vec<SymBoolExpr>,
-        completed_paths: &mut usize,
-    ) -> Result<Vec<CallOutcome>, SymbolicError> {
+    ) -> Result<SequenceCall, SymbolicError> {
         state.world.clear_transaction_scoped_state();
         state.mapping_hook_keccak_preimages.clear();
         let code = state.world.extcode(&mut self.cx, executor, target)?;
@@ -121,7 +121,32 @@ impl SymbolicExecutor {
         state.frame =
             CallFrame::new(&mut self.cx, target, target, sender, callvalue, false, calldata);
         state.constraints.extend(constraints);
-        self.execute_call_paths(executor, state, &code, completed_paths, CallPathKind::Sequence)
+        Ok(SequenceCall {
+            code,
+            worklist: VecDeque::from([state]),
+            deferred_worklist: VecDeque::new(),
+        })
+    }
+
+    pub(super) fn execute_sequence_call_next<FEN: FoundryEvmNetwork>(
+        &mut self,
+        executor: &Executor<FEN>,
+        call: &mut SequenceCall,
+        completed_paths: &mut usize,
+    ) -> Result<Option<CallOutcome>, SymbolicError> {
+        if call.worklist.is_empty() && call.deferred_worklist.is_empty() {
+            return Ok(None);
+        }
+        let mut outcomes = self.execute_call_path_batch(
+            executor,
+            &call.code,
+            &mut call.worklist,
+            &mut call.deferred_worklist,
+            completed_paths,
+            CallPathKind::Sequence,
+        )?;
+        debug_assert!(outcomes.len() <= 1);
+        Ok(outcomes.pop())
     }
 
     pub(super) fn materialize_sequence(

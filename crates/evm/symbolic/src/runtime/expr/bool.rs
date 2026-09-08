@@ -627,6 +627,67 @@ impl SymBoolExpr {
         .is_break()
     }
 
+    /// Visits each distinct word node at most once.
+    pub(crate) fn visit_unique_bool(&self, mut visitor: impl FnMut(&SymExpr) -> bool) -> bool {
+        let mut pending_bools = vec![self.clone()];
+        let mut pending_words = Vec::new();
+        let mut visited_bools = HashSet::<Self>::default();
+        let mut visited_words = HashSet::<SymExpr>::default();
+
+        loop {
+            if let Some(expr) = pending_bools.pop() {
+                if !visited_bools.insert(expr.clone()) {
+                    continue;
+                }
+                match expr.kind() {
+                    SymBoolExprKind::Const(_) => {}
+                    SymBoolExprKind::Not(value) => pending_bools.push(value.clone()),
+                    SymBoolExprKind::And(values) => {
+                        pending_bools.extend(values.iter().cloned());
+                    }
+                    SymBoolExprKind::Cmp(_, left, right) => {
+                        pending_words.push(left.clone());
+                        pending_words.push(right.clone());
+                    }
+                }
+                continue;
+            }
+
+            let Some(expr) = pending_words.pop() else { return false };
+            if !visited_words.insert(expr.clone()) {
+                continue;
+            }
+            if visitor(&expr) {
+                return true;
+            }
+            match expr.kind() {
+                SymExprKind::Const(_) | SymExprKind::Var(_) | SymExprKind::GasLeft(_) => {}
+                SymExprKind::Keccak { len, bytes, .. } => {
+                    pending_words.push(len.clone());
+                    pending_words.extend(bytes.iter().cloned());
+                }
+                SymExprKind::Hash { bytes, .. } => {
+                    pending_words.extend(bytes.iter().cloned());
+                }
+                SymExprKind::Not(value) => pending_words.push(value.clone()),
+                SymExprKind::BinOp(_, left, right) => {
+                    pending_words.push(left.clone());
+                    pending_words.push(right.clone());
+                }
+                SymExprKind::TernOp(_, left, right, modulus) => {
+                    pending_words.push(left.clone());
+                    pending_words.push(right.clone());
+                    pending_words.push(modulus.clone());
+                }
+                SymExprKind::Ite(condition, left, right) => {
+                    pending_bools.push(condition.clone());
+                    pending_words.push(left.clone());
+                    pending_words.push(right.clone());
+                }
+            }
+        }
+    }
+
     pub(crate) fn fold(
         self,
         cx: &mut SymCx,
@@ -788,6 +849,24 @@ impl SymCmpOp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unique_word_visitor_deduplicates_shared_dag() {
+        let mut cx = SymCx::new();
+        let mut shared = SymExpr::var(&mut cx, "shared");
+        for _ in 0..16 {
+            shared = SymExpr::binop(&mut cx, SymBinOp::Add, shared.clone(), shared);
+        }
+        let zero = SymExpr::zero(&mut cx);
+        let condition = SymBoolExpr::eq(&mut cx, shared, zero);
+        let mut visits = 0;
+
+        assert!(!condition.visit_unique_bool(|_| {
+            visits += 1;
+            false
+        }));
+        assert_eq!(visits, 18);
+    }
 
     #[test]
     fn constant_ite_equality_rejects_exponential_shared_dag() {
