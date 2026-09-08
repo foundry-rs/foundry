@@ -848,7 +848,7 @@ fn remove_witnessed_isolated_hash_constraints(
             else {
                 return Some(constraint);
             };
-            let abstracted = constraint.clone().fold_exprs(cx, &mut |cx, expr| match expr.kind() {
+            let abstracted = constraint.fold_exprs(cx, &mut |cx, expr| match expr.kind() {
                 SymExprKind::Keccak { name, .. } | SymExprKind::Hash { name, .. }
                     if *name == symbol =>
                 {

@@ -18,6 +18,15 @@ pub(crate) use bool::*;
 pub(crate) use cx::*;
 pub(crate) use word::*;
 
+/// Results from one deterministic bottom-up expression fold.
+///
+/// Keys borrow the original DAG so the memo table does not add strong references to source nodes.
+#[derive(Default)]
+struct ExpressionFoldCache<'a> {
+    words: HashMap<&'a SymExpr, SymExpr>,
+    bools: HashMap<&'a SymBoolExpr, SymBoolExpr>,
+}
+
 /// Evaluates hash-consed expressions once per model.
 ///
 /// Symbolic expressions form a DAG, so recursively evaluating both operands without caching can
