@@ -1,9 +1,9 @@
 use crate::executors::{
     EarlyExit, EvmError, Executor, RawCallResult,
+    campaign::execute_invariant_replay_tx,
     invariant::{
         IInvariantTest, call_after_invariant_function, call_invariant_function,
         error::{handler_edge_fingerprint, snapshot_edge_fingerprint},
-        execute_tx,
         result::did_fail_on_assert,
     },
 };
@@ -179,12 +179,10 @@ impl<K: Eq + Hash> ShrinkCandidateKeys<K> {
     }
 }
 
-/// Per-call decision returned by callbacks driving `replay_sequence`. `Continue` hands
-/// the result back so non-reverted calls auto-commit; `Stop` short-circuits.
-#[expect(clippy::large_enum_variant)]
-enum ReplayDecision<T, FEN: FoundryEvmNetwork> {
+/// Per-call decision returned by callbacks driving `replay_sequence`.
+enum ReplayDecision<T> {
     Stop(T),
-    Continue(RawCallResult<FEN>),
+    Continue,
 }
 
 /// Options controlling how `check_sequence` evaluates a candidate call sequence.
@@ -610,7 +608,7 @@ pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
 
 /// Replays `sequence` (indices into `calls`) against `executor`. When
 /// `accumulate_warp_roll` is set, warp/roll from skipped calls is folded into the next
-/// included call. `on_call` may stop early; otherwise non-reverted calls are committed.
+/// included call. `on_call` may stop after each campaign-faithful replay transition.
 fn replay_sequence<FEN, T, F>(
     executor: &mut Executor<FEN>,
     calls: &[BasicTxDetails],
@@ -620,20 +618,16 @@ fn replay_sequence<FEN, T, F>(
 ) -> eyre::Result<Option<T>>
 where
     FEN: FoundryEvmNetwork,
-    F: FnMut(usize, RawCallResult<FEN>) -> eyre::Result<ReplayDecision<T, FEN>>,
+    F: FnMut(usize, RawCallResult<FEN>) -> eyre::Result<ReplayDecision<T>>,
 {
     // Fast path: no warp/roll accumulation → iterate only kept indices (O(k)) and pass
     // `&calls[idx]` directly to skip the per-call `BasicTxDetails` clone.
     if !accumulate_warp_roll {
         for &idx in sequence {
-            let call_result = execute_tx(executor, &calls[idx])?;
+            let (_, call_result) = execute_invariant_replay_tx(executor, &calls[idx])?;
             match on_call(idx, call_result)? {
                 ReplayDecision::Stop(val) => return Ok(Some(val)),
-                ReplayDecision::Continue(mut call_result) => {
-                    if !call_result.reverted {
-                        executor.commit(&mut call_result);
-                    }
-                }
+                ReplayDecision::Continue => {}
             }
         }
         return Ok(None);
@@ -654,15 +648,11 @@ where
         seq_iter.next();
 
         let executed = apply_warp_roll(tx.clone(), accumulated_warp, accumulated_roll);
-        let call_result = execute_tx(executor, &executed)?;
+        let (_, call_result) = execute_invariant_replay_tx(executor, &executed)?;
 
         match on_call(idx, call_result)? {
             ReplayDecision::Stop(val) => return Ok(Some(val)),
-            ReplayDecision::Continue(mut call_result) => {
-                if !call_result.reverted {
-                    executor.commit(&mut call_result);
-                }
-            }
+            ReplayDecision::Continue => {}
         }
 
         accumulated_warp = U256::ZERO;
@@ -702,7 +692,7 @@ pub fn check_sequence<FEN: FoundryEvmNetwork>(
             // scenarios that are replayed with a modified version of test driver (that use
             // new `vm.assume` cheatcodes).
             if call_result.result.as_ref() == MAGIC_ASSUME {
-                return Ok(ReplayDecision::Continue(call_result));
+                return Ok(ReplayDecision::Continue);
             }
             if call_result.reverted {
                 reverts += 1;
@@ -742,7 +732,7 @@ pub fn check_sequence<FEN: FoundryEvmNetwork>(
                     sequence_assertion_failure: false,
                 }));
             }
-            Ok(ReplayDecision::Continue(call_result))
+            Ok(ReplayDecision::Continue)
         },
     )?;
     if let Some(result) = early {
@@ -1006,7 +996,7 @@ pub fn replay_handler_failure_sequence<FEN: FoundryEvmNetwork>(
                     anchor_fingerprint: B256::ZERO,
                 }));
             }
-            Ok(ReplayDecision::Continue(call_result))
+            Ok(ReplayDecision::Continue)
         },
     )?;
 
@@ -1108,11 +1098,7 @@ pub fn check_sequence_value<FEN: FoundryEvmNetwork>(
 
             let tx_with_accumulated =
                 apply_warp_roll(tx.clone(), accumulated_warp, accumulated_roll);
-            let mut call_result = execute_tx(&mut executor, &tx_with_accumulated)?;
-
-            if !call_result.reverted {
-                executor.commit(&mut call_result);
-            }
+            execute_invariant_replay_tx(&mut executor, &tx_with_accumulated)?;
 
             accumulated_warp = U256::ZERO;
             accumulated_roll = U256::ZERO;
