@@ -1,0 +1,59 @@
+name: Socket dependency policy
+
+on:
+  workflow_call:
+    inputs:
+      check-master:
+        description: Also check and pin the source-built benchmark baseline
+        default: false
+        type: boolean
+    outputs:
+      baseline-sha:
+        description: Exact master commit whose dependencies passed the gate
+        value: ${{ jobs.check.outputs.baseline-sha }}
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    permissions:
+      contents: read
+      id-token: write
+    name: Check locked dependencies through Socket
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      baseline-sha: ${{ steps.baseline.outputs.sha }}
+    env:
+      RUSTC_WRAPPER: ""
+    steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@09dddc697b1c8c1d3c3733b41d6fdd2274f17734
+        with:
+          egress-policy: audit
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
+      - name: Fetch locked dependencies through Socket with an empty cache
+        shell: bash
+        run: bash .github/scripts/socket-dependencies.sh
+      - name: Checkout benchmark baseline
+        if: inputs.check-master
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: master
+          path: socket-baseline
+          persist-credentials: false
+      - name: Check baseline dependencies through Socket with an empty cache
+        if: inputs.check-master
+        id: baseline
+        shell: bash
+        run: |
+          bash .github/scripts/socket-dependencies.sh socket-baseline
+          echo "sha=$(git -C socket-baseline rev-parse HEAD)" >> "$GITHUB_OUTPUT"

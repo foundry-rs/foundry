@@ -24,6 +24,14 @@ env:
   RUST_FEATURES: aws-kms,gcp-kms,turnkey,cli,asm-keccak,js-tracer,monad,optimism
 
 jobs:
+  socket-dependencies:
+    if: |
+      github.event_name != 'schedule' || github.repository == 'foundry-rs/foundry'
+    permissions:
+      id-token: write
+      contents: read
+    uses: ./.github/workflows/socket-dependencies.yml
+
   prepare:
     name: Prepare release
     if: github.event_name != 'schedule' || github.repository == 'foundry-rs/foundry'
@@ -273,7 +281,7 @@ jobs:
 
   release-docker:
     name: Release Docker
-    needs: prepare
+    needs: [socket-dependencies, prepare]
     uses: ./.github/workflows/docker-publish.yml
     permissions:
       actions: read
@@ -284,6 +292,7 @@ jobs:
       packages: write
     with:
       tag_name: ${{ needs.prepare.outputs.tag_name }}
+      dependencies-checked: true
 
   release-docker-metadata:
     name: Record Docker digest
@@ -327,7 +336,7 @@ jobs:
     name: release ${{ matrix.target }} (${{ matrix.runner }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 240
-    needs: [prepare]
+    needs: [socket-dependencies, prepare]
     if: ${{ needs.prepare.outputs.skip_assets != 'true' }}
     strategy:
       fail-fast: false
@@ -658,6 +667,7 @@ jobs:
     name: Open an issue
     runs-on: ubuntu-latest
     needs: [
+      socket-dependencies,
       prepare,
       release-docker,
       release-docker-metadata,

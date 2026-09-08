@@ -11,6 +11,10 @@ on:
         type: string
   workflow_call:
     inputs:
+      dependencies-checked:
+        description: Caller already passed the Socket gate for this commit
+        default: false
+        type: boolean
       tag_name:
         required: true
         type: string
@@ -32,7 +36,16 @@ env:
   RUST_FEATURES: aws-kms,gcp-kms,turnkey,cli,asm-keccak,js-tracer,monad,optimism
 
 jobs:
+  socket-dependencies:
+    if: ${{ !inputs.dependencies-checked }}
+    permissions:
+      id-token: write
+      contents: read
+    uses: ./.github/workflows/socket-dependencies.yml
+
   build:
+    needs: socket-dependencies
+    if: ${{ !cancelled() && (needs.socket-dependencies.result == 'success' || (inputs.dependencies-checked && needs.socket-dependencies.result == 'skipped')) }}
     name: build, sign, and stage
     runs-on: depot-ubuntu-latest
     permissions:

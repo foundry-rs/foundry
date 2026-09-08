@@ -25,7 +25,16 @@ env:
   RUSTC_WRAPPER: "sccache"
 
 jobs:
+  socket-dependencies:
+    if: |
+      github.event_name != 'schedule' || github.repository == 'foundry-rs/foundry'
+    permissions:
+      id-token: write
+      contents: read
+    uses: ./.github/workflows/socket-dependencies.yml
+
   test:
+    needs: socket-dependencies
     name: deploy + verify
     if: github.event_name != 'schedule' || github.repository == 'foundry-rs/foundry'
     runs-on: depot-ubuntu-latest-16
@@ -134,7 +143,7 @@ jobs:
   refund:
     name: Open a refund issue
     runs-on: ubuntu-latest
-    needs: [test]
+    needs: [socket-dependencies, test]
     if: always() && github.event_name == 'schedule' && needs.test.outputs.low != ''
     permissions:
       id-token: write
@@ -163,7 +172,7 @@ jobs:
   issue:
     name: Open an issue
     runs-on: ubuntu-latest
-    needs: [test]
+    needs: [socket-dependencies, test]
     if: failure() && github.event_name == 'schedule'
     permissions:
       id-token: write

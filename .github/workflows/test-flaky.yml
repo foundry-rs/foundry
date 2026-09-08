@@ -19,7 +19,16 @@ env:
   RUSTC_WRAPPER: "sccache"
 
 jobs:
+  socket-dependencies:
+    if: |
+      github.event_name != 'schedule' || github.repository == 'foundry-rs/foundry'
+    permissions:
+      id-token: write
+      contents: read
+    uses: ./.github/workflows/socket-dependencies.yml
+
   test:
+    needs: socket-dependencies
     name: flaky tests
     if: github.event_name != 'schedule' || github.repository == 'foundry-rs/foundry'
     runs-on: depot-ubuntu-latest-16
@@ -66,7 +75,7 @@ jobs:
   issue:
     name: Open an issue
     runs-on: ubuntu-latest
-    needs: [test]
+    needs: [socket-dependencies, test]
     if: failure()
     permissions:
       id-token: write

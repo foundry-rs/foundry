@@ -19,7 +19,16 @@ env:
   RUSTC_WRAPPER: "sccache"
 
 jobs:
+  socket-dependencies:
+    permissions:
+      id-token: write
+      contents: read
+    uses: ./.github/workflows/socket-dependencies.yml
+    with:
+      check-master: ${{ contains(inputs.versions || 'master,local', 'local') }}
+
   run-benchmarks:
+    needs: socket-dependencies
     name: Run All Benchmarks
     runs-on: depot-ubuntu-24.04-32
     permissions:
@@ -63,11 +72,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REQUESTED_VERSIONS: ${{ github.event.inputs.versions || env.DEFAULT_VERSIONS }}
+          CHECKED_BASELINE_SHA: ${{ needs.socket-dependencies.outputs.baseline-sha }}
         run: |
           compact="${REQUESTED_VERSIONS//[[:space:]]/}"
           if [[ ",$compact," == *,local,* ]]; then
-            git fetch --no-tags origin master:refs/remotes/origin/master
-            base_sha="$(git rev-parse origin/master)"
+            # Build exactly the baseline checked by the shared gate.
+            test -n "$CHECKED_BASELINE_SHA"
+            git fetch --no-tags origin "$CHECKED_BASELINE_SHA"
+            base_sha="$CHECKED_BASELINE_SHA"
             candidate_sha="$(git rev-parse HEAD)"
             git worktree add --detach ../foundry-baseline "$base_sha"
             echo "versions=master=../foundry-baseline,local" >> "$GITHUB_OUTPUT"
