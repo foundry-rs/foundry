@@ -1,8 +1,9 @@
 # Forge lint documentation
 
-This directory contains one markdown file per registered `forge-lint` rule. Each file is referenced
-by the lint's `help` URL (`https://getfoundry.sh/forge/linting/<id>`) and is consumed by the
-[Foundry book](https://github.com/foundry-rs/book) to render the lint reference page.
+This directory contains one markdown file per registered `forge-lint` rule. Each file documents
+the page targeted by the lint's `help` URL (`https://getfoundry.sh/forge/linting/<id>`).
+Publishing that page in the [Foundry book](https://github.com/foundry-rs/book) is a separate step;
+adding a file here does not make the public URL available immediately.
 
 ## Adding a new lint
 
@@ -12,6 +13,14 @@ When you add a new lint with `declare_forge_lint!`, you **must** also add a docu
 severity, and required section order.
 
 Use [`_template.md`](./_template.md) as a starting point.
+
+The Forge CLI's `ensure_lint_rule_docs` test checks the documentation in this checkout and the
+canonical help URLs. Regular tests do not depend on the Book's deployment state. After publishing
+the pages, audit the live site explicitly with:
+
+```sh
+cargo test -p forge --test cli lint::ensure_published_lint_rule_docs -- --exact --ignored
+```
 
 ## File structure
 
