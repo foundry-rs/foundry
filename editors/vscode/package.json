@@ -1,0 +1,225 @@
+{
+  "name": "solar-lsp",
+  "displayName": "Solar LSP",
+  "description": "Solidity language support powered by forge lsp and forge fmt",
+  "version": "0.1.0",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/foundry-rs/foundry.git",
+    "directory": "editors/vscode"
+  },
+  "bugs": {
+    "url": "https://github.com/foundry-rs/foundry/issues"
+  },
+  "homepage": "https://github.com/foundry-rs/foundry/tree/master/editors/vscode",
+  "engines": {
+    "vscode": "^1.93.0"
+  },
+  "categories": [
+    "Formatters",
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:solidity"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "solidity",
+        "aliases": [
+          "Solidity",
+          "solidity"
+        ],
+        "extensions": [
+          ".sol"
+        ],
+        "configuration": "language-configuration.json"
+      },
+      {
+        "id": "solidity-markdown-injection"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "solidity",
+        "scopeName": "source.solidity",
+        "path": "./syntaxes/solidity.json"
+      },
+      {
+        "language": "solidity-markdown-injection",
+        "scopeName": "markdown.solidity.codeblock",
+        "path": "./syntaxes/solidity-markdown-injection.json",
+        "injectTo": [
+          "text.html.markdown"
+        ],
+        "embeddedLanguages": {
+          "meta.embedded.block.solidity": "solidity"
+        }
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "Solar LSP Configuration",
+      "properties": {
+        "solarLsp.enable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable Solidity language support using forge lsp"
+        },
+        "solarLsp.serverPath": {
+          "type": "string",
+          "default": "solar",
+          "description": "Path to solar executable",
+          "deprecationMessage": "No longer used: this setting selected standalone Solar. Remove it and use solarLsp.forgePath to select a Forge executable."
+        },
+        "solarLsp.forgePath": {
+          "type": "string",
+          "default": "forge",
+          "description": "Forge executable path (relative paths use the first workspace folder), or command name resolved from PATH. Used for LSP, formatting and default Forge checks. Requires forge lsp --stdio support."
+        },
+        "solarLsp.formatOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Format files on save through forge lsp (or forge fmt for older servers). Defers to editor.formatOnSave when enabled to avoid duplicate formatting."
+        },
+        "solarLsp.trace.server": {
+          "type": "string",
+          "enum": [
+            "messages",
+            "verbose"
+          ],
+          "default": "messages",
+          "description": "Server execution trace detail. Set the Solar LSP output channel log level to Trace to enable tracing."
+        },
+        "solarLsp.codeLens.enable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show Solidity CodeLens annotations"
+        },
+        "solarLsp.codeLens.selectors": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show function selector CodeLens annotations"
+        },
+        "solarLsp.codeLens.references": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show reference count CodeLens annotations"
+        },
+        "solarLsp.codeLens.inheritance": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show contract inheritance CodeLens annotations"
+        },
+        "solarLsp.indexing.exclude": {
+          "type": "array",
+          "default": [],
+          "description": "Additional glob patterns to exclude from workspace indexing, relative to each workspace root and using `/` separators. Excluded files can still be loaded when imported.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "solarLsp.indexing.useDefaultExcludes": {
+          "type": "boolean",
+          "default": true,
+          "description": "Exclude directories named node_modules, lib, cache, out, target, artifacts, build, dist, and broadcast from workspace indexing"
+        },
+        "solarLsp.indexing.excludeHiddenDirectories": {
+          "type": "boolean",
+          "default": true,
+          "description": "Exclude hidden directories from workspace indexing"
+        },
+        "solarLsp.indexing.excludeNestedRepositories": {
+          "type": "boolean",
+          "default": true,
+          "description": "Exclude nested repositories containing a .git entry from workspace indexing"
+        },
+        "solarLsp.flychecks": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "default": null,
+          "description": "Flycheck commands to run on save. Leave unset to auto-detect forge lint when available.",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "command"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Stable diagnostic owner id for this flycheck"
+              },
+              "command": {
+                "type": "string",
+                "description": "Command to execute"
+              },
+              "args": {
+                "type": "array",
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "description": "Command arguments"
+              },
+              "cwd": {
+                "type": "string",
+                "description": "Working directory relative to the workspace root, or an absolute path"
+              },
+              "output": {
+                "type": "string",
+                "default": "solc-json",
+                "enum": [
+                  "solc-json",
+                  "forge-lint-json"
+                ],
+                "description": "JSON diagnostic output format"
+              }
+            }
+          }
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "solarLsp.formatDocument",
+        "title": "Format Document",
+        "category": "Solar"
+      },
+      {
+        "command": "solar.clearCache",
+        "title": "Clear Analysis Cache",
+        "category": "Solar"
+      },
+      {
+        "command": "solar.reindex",
+        "title": "Reindex Workspace",
+        "category": "Solar"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "check": "tsc -p ./ --noEmit",
+    "test": "npm run compile && node --test test/forge.test.cjs",
+    "package": "vsce package --out bundle/solar-lsp.vsix",
+    "test:host": "npm run compile && node scripts/test-host.cjs",
+    "prepackage": "node -e \"require('node:fs').mkdirSync('bundle', { recursive: true })\""
+  },
+  "devDependencies": {
+    "@types/node": "26.x",
+    "@types/vscode": "1.93.0",
+    "@vscode/test-electron": "^3.1.0",
+    "@vscode/vsce": "^3.9.2",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^10.1.1"
+  }
+}

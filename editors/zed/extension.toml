@@ -1,0 +1,21 @@
+id = "solar"
+name = "Foundry"
+description = "Solidity support powered by forge lsp and forge fmt."
+version = "0.1.0"
+schema_version = 1
+authors = ["Oliver Nordbjerg <hi@notbjerg.me>"]
+repository = "https://github.com/foundry-rs/foundry"
+
+[language_servers.solar]
+name = "Foundry"
+language = "Solidity"
+
+[grammars.solidity]
+repository = "https://github.com/JoranHonig/tree-sitter-solidity"
+commit = "048fe686cb1fde267243739b8bdbec8fc3a55272"
+
+# Forge can be installed at any user-selected path; only the LSP probe is needed.
+[[capabilities]]
+kind = "process:exec"
+command = "*"
+args = ["lsp", "--stdio", "--help"]

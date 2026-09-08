@@ -1,9 +1,13 @@
 use async_lsp::{
     LanguageServer,
     lsp_types::{
-        ClientCapabilities, DidChangeWatchedFilesParams, FileChangeType, FileEvent,
-        InitializeParams, InitializedParams, Url, WorkspaceFolder, WorkspaceSymbolParams,
-        WorkspaceSymbolResponse,
+        ClientCapabilities, DiagnosticSeverity, DidChangeTextDocumentParams,
+        DidChangeWatchedFilesParams, DidOpenTextDocumentParams, DocumentFormattingParams,
+        FileChangeType, FileEvent, FormattingOptions, GotoDefinitionParams, GotoDefinitionResponse,
+        InitializeParams, InitializedParams, Location, OneOf, Position, Range,
+        TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
+        TextDocumentPositionParams, TextEdit, Url, VersionedTextDocumentIdentifier,
+        WorkspaceFolder, WorkspaceSymbolParams, WorkspaceSymbolResponse,
     },
 };
 use std::{
@@ -198,3 +202,169 @@ fn lsp_stdio_handshake_uses_only_lsp_stdout() {
         client.shutdown();
     }
 }
+
+forgetest!(lsp_reports_unsaved_diagnostics_and_resolves_definition, |prj, _cmd| {
+    prj.create_file("foundry.toml", "[profile.default]\nsrc = \"src\"\n");
+    let saved = "contract Saved {}\n";
+    prj.create_file("src/Example.sol", saved);
+    let project_root = dunce::canonicalize(prj.root()).unwrap();
+    let path = project_root.join("src/Example.sol");
+    let uri = Url::from_file_path(&path).unwrap();
+    let empty_path = tempfile::tempdir().unwrap();
+    let mut client = LspClient::spawn(&project_root, empty_path.path(), &["lsp", "--stdio"]);
+    let initialize = request(
+        &client.runtime,
+        client.server.initialize(InitializeParams {
+            capabilities: ClientCapabilities::default(),
+            workspace_folders: Some(vec![WorkspaceFolder {
+                uri: Url::from_directory_path(&project_root).unwrap(),
+                name: "fixture".into(),
+            }]),
+            ..InitializeParams::default()
+        }),
+    );
+    assert!(initialize.capabilities.definition_provider.is_some());
+    client.server.initialized(InitializedParams {}).unwrap();
+    client.wait_for_log_message();
+    client
+        .server
+        .did_open(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem {
+                uri: uri.clone(),
+                language_id: "solidity".into(),
+                version: 1,
+                text: "contract Example { function read() public { missing(); } }".into(),
+            },
+        })
+        .unwrap();
+    client.wait_for_diagnostics(&uri, |params| {
+        params.diagnostics.iter().any(|diag| diag.severity == Some(DiagnosticSeverity::ERROR))
+    });
+
+    let corrected = r#"// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
+contract Example {
+    function read() public pure returns (uint256) { return 42; }
+    function caller() public pure returns (uint256) {
+        return read();
+    }
+}
+"#;
+    client
+        .server
+        .did_change(DidChangeTextDocumentParams {
+            text_document: VersionedTextDocumentIdentifier { uri: uri.clone(), version: 2 },
+            content_changes: vec![TextDocumentContentChangeEvent {
+                range: None,
+                range_length: None,
+                text: corrected.into(),
+            }],
+        })
+        .unwrap();
+    client.wait_for_diagnostics(&uri, |params| params.diagnostics.is_empty());
+    let definition = request(
+        &client.runtime,
+        client.server.definition(GotoDefinitionParams {
+            text_document_position_params: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier { uri: uri.clone() },
+                position: Position::new(5, 15),
+            },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        }),
+    )
+    .expect("the unsaved function call should resolve");
+    let locations = match definition {
+        GotoDefinitionResponse::Scalar(location) => vec![location],
+        GotoDefinitionResponse::Array(locations) => locations,
+        GotoDefinitionResponse::Link(links) => links
+            .into_iter()
+            .map(|link| Location { uri: link.target_uri, range: link.target_selection_range })
+            .collect(),
+    };
+    assert_eq!(
+        locations,
+        vec![Location { uri, range: Range::new(Position::new(3, 13), Position::new(3, 17)) }]
+    );
+    assert_eq!(fs::read_to_string(path).unwrap(), saved);
+    client.shutdown();
+});
+
+forgetest!(lsp_formats_unsaved_document_with_nested_foundry_config, |prj, _cmd| {
+    prj.create_file("foundry.toml", "[profile.default]\nsrc = \"src\"\n[fmt]\ntab_width = 6\n");
+    prj.create_file(
+        "nested/foundry.toml",
+        "[profile.default]\nsrc = \"src\"\n[fmt]\ntab_width = 2\n",
+    );
+    let saved = "contract Saved {}\n";
+    prj.create_file("nested/src/Example.sol", saved);
+    let project_root = dunce::canonicalize(prj.root()).unwrap();
+    let path = project_root.join("nested/src/Example.sol");
+    let uri = Url::from_file_path(&path).unwrap();
+    let empty_path = tempfile::tempdir().unwrap();
+    let mut client = LspClient::spawn(&project_root, empty_path.path(), &["lsp", "--stdio"]);
+    let initialize = request(
+        &client.runtime,
+        client.server.initialize(InitializeParams {
+            capabilities: ClientCapabilities::default(),
+            workspace_folders: Some(vec![WorkspaceFolder {
+                uri: Url::from_directory_path(&project_root).unwrap(),
+                name: "fixture".into(),
+            }]),
+            ..InitializeParams::default()
+        }),
+    );
+    assert_eq!(initialize.capabilities.document_formatting_provider, Some(OneOf::Left(true)));
+    client.server.initialized(InitializedParams {}).unwrap();
+    client.wait_for_log_message();
+    client
+        .server
+        .did_open(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem {
+                uri: uri.clone(),
+                language_id: "solidity".into(),
+                version: 1,
+                text: saved.into(),
+            },
+        })
+        .unwrap();
+    let unsaved =
+        "contract Example{uint256 public value;function set(uint256 next) public{value=next;}}";
+    client
+        .server
+        .did_change(DidChangeTextDocumentParams {
+            text_document: VersionedTextDocumentIdentifier { uri: uri.clone(), version: 2 },
+            content_changes: vec![TextDocumentContentChangeEvent {
+                range: None,
+                range_length: None,
+                text: unsaved.into(),
+            }],
+        })
+        .unwrap();
+    let edits = request(
+        &client.runtime,
+        client.server.formatting(DocumentFormattingParams {
+            text_document: TextDocumentIdentifier { uri },
+            options: FormattingOptions { tab_size: 8, insert_spaces: true, ..Default::default() },
+            work_done_progress_params: Default::default(),
+        }),
+    )
+    .expect("Forge should format the unsaved document");
+    assert_eq!(
+        edits,
+        vec![TextEdit {
+            range: Range::new(Position::new(0, 0), Position::new(0, unsaved.len() as u32)),
+            new_text: r#"contract Example {
+  uint256 public value;
+
+  function set(uint256 next) public {
+    value = next;
+  }
+}
+"#
+            .into(),
+        }]
+    );
+    assert_eq!(fs::read_to_string(path).unwrap(), saved);
+    client.shutdown();
+});

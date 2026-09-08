@@ -1,6 +1,9 @@
 use async_lsp::{
     LanguageServer, MainLoop, ServerSocket,
-    lsp_types::notification::{self, Notification},
+    lsp_types::{
+        PublishDiagnosticsParams, Url,
+        notification::{self, Notification},
+    },
     router::Router,
 };
 use futures::{
@@ -26,6 +29,7 @@ pub struct LspClient {
     pub(crate) server: ServerSocket,
     main_loop: Option<JoinHandle<async_lsp::Result<()>>>,
     notifications: Receiver<String>,
+    diagnostics: Receiver<PublishDiagnosticsParams>,
 }
 
 impl LspClient {
@@ -48,11 +52,16 @@ impl LspClient {
         let stdin = child.stdin.take().unwrap();
 
         let (notification_sender, notifications) = mpsc::channel();
+        let (diagnostic_sender, diagnostics) = mpsc::channel();
         let (main_loop, server) = MainLoop::new_client(move |_| {
             let mut router = Router::new(());
             let log_sender = notification_sender.clone();
             router.notification::<notification::LogMessage>(move |_, _| {
                 let _ = log_sender.send(notification::LogMessage::METHOD.to_owned());
+                std::ops::ControlFlow::Continue(())
+            });
+            router.notification::<notification::PublishDiagnostics>(move |_, params| {
+                let _ = diagnostic_sender.send(params);
                 std::ops::ControlFlow::Continue(())
             });
             router
@@ -74,7 +83,14 @@ impl LspClient {
             })
         });
 
-        Self { child: Some(child), runtime, server, main_loop: Some(main_loop), notifications }
+        Self {
+            child: Some(child),
+            runtime,
+            server,
+            main_loop: Some(main_loop),
+            notifications,
+            diagnostics,
+        }
     }
 
     pub fn wait_for_log_message(&self) {
@@ -90,6 +106,30 @@ impl LspClient {
                 }
                 Err(RecvTimeoutError::Disconnected) => {
                     panic!("LSP client stopped before receiving a log message")
+                }
+            }
+        }
+    }
+
+    pub fn wait_for_diagnostics(
+        &self,
+        uri: &Url,
+        matches: impl Fn(&PublishDiagnosticsParams) -> bool,
+    ) -> PublishDiagnosticsParams {
+        let deadline = std::time::Instant::now() + REQUEST_TIMEOUT;
+        let mut observed = Vec::new();
+        loop {
+            let timeout = deadline.saturating_duration_since(std::time::Instant::now());
+            match self.diagnostics.recv_timeout(timeout) {
+                Ok(params) if params.uri == *uri && matches(&params) => return params,
+                Ok(params) => observed.push(params),
+                Err(RecvTimeoutError::Timeout) => {
+                    panic!(
+                        "timed out waiting for LSP diagnostics for {uri}; observed: {observed:?}"
+                    )
+                }
+                Err(RecvTimeoutError::Disconnected) => {
+                    panic!("LSP client stopped before receiving diagnostics for {uri}")
                 }
             }
         }
