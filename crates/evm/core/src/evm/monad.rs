@@ -351,6 +351,8 @@ where
             .wrap_err("failed to execute protocol system transaction")?;
         finish_protocol_system_call(result)
     })();
+    // Restore EVM-owned protocol state. Callers that require atomic inspector state isolate the
+    // inspector and database, as the Executor/Cow replay path does.
     if result.is_err() {
         evm.ctx_mut().set_journal_inner(journal);
         evm.ctx_mut().chain = chain;
@@ -367,17 +369,6 @@ impl FoundryEvmFactory for MonadEvmFactory {
     type FoundryEvm<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>> =
         MonadEvm<&'db mut dyn DatabaseExt<Self>, I>;
 
-    fn create_evm_with_context<DB: alloy_evm::Database>(
-        &self,
-        db: DB,
-        evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        chain_context: Self::Chain,
-    ) -> Self::Evm<DB, revm::inspector::NoOpInspector> {
-        let mut evm = self.create_evm(db, evm_env);
-        evm.ctx_mut().chain = chain_context;
-        evm
-    }
-
     fn create_foundry_evm_with_inspector<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>>(
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
@@ -389,24 +380,15 @@ impl FoundryEvmFactory for MonadEvmFactory {
         monad_evm
     }
 
-    fn try_transact_system_replay<DB, I>(
-        &self,
-        evm: &mut Self::Evm<DB, I>,
-        tx: &Self::Tx,
-    ) -> eyre::Result<Option<ResultAndState<Self::HaltReason>>>
-    where
-        DB: alloy_evm::Database,
-        I: Inspector<Self::Context<DB>>,
-    {
-        try_transact_monad_system_replay(evm, tx)
-    }
-
-    fn create_foundry_nested_evm<'db>(
+    fn create_nested_evm_with_inspector<'db, I>(
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
-    ) -> NestedEvmFor<'db, Self> {
+        inspector: I,
+    ) -> NestedEvmFor<'db, Self>
+    where
+        I: FoundryInspectorExt<Self::FoundryContext<'db>> + 'db,
+    {
         let spec = evm_env.cfg_env.spec;
         let monad_cfg = MonadCfgEnv::from(evm_env.cfg_env);
         let mut evm = monad_context_with_db(db)
@@ -439,6 +421,10 @@ impl<'db, I: FoundryInspectorExt<MonadContext<&'db mut dyn DatabaseExt<MonadEvmF
 
     fn chain_mut(&mut self) -> &mut Self::Chain {
         &mut self.ctx_mut().chain
+    }
+
+    fn precompiles_mut(&mut self) -> &mut alloy_evm::precompiles::PrecompilesMap {
+        &mut self.0.precompiles
     }
 
     fn journal_mut(&mut self) -> &mut Self::Journal {
@@ -478,12 +464,25 @@ impl<'db, I: FoundryInspectorExt<MonadContext<&'db mut dyn DatabaseExt<MonadEvmF
                 .wrap_err("failed to execute protocol system transaction")?;
             finish_protocol_system_call(result)
         })();
+        // Restore EVM-owned protocol state. Callers that require atomic inspector state isolate
+        // the inspector and database, as the Executor/Cow replay path does.
         if result.is_err() {
             self.ctx_mut().set_journal_inner(journal);
             self.ctx_mut().chain = chain;
             *self.ctx_mut().journaled_state.reserve_balance_mut() = reserve_balance;
         }
         result
+    }
+
+    fn transact_replay(
+        &mut self,
+        tx: Self::Tx,
+        is_system: bool,
+    ) -> eyre::Result<Option<ResultAndState>> {
+        if is_system && protocol_system_call(&tx)?.is_none() {
+            return Ok(None);
+        }
+        self.transact_raw(tx).map(Some)
     }
 
     fn to_evm_env(&self) -> EvmEnv<Self::Spec, Self::Block> {
@@ -526,19 +525,78 @@ mod tests {
     };
 
     #[test]
-    fn ethereum_system_replay_hook_and_nested_execution_are_not_equivalent() {
+    fn ethereum_replay_skips_monad_system_envelopes() {
         let tx = system_transaction(syscallSnapshotCall {}.abi_encode(), U256::ZERO);
         let factory = EthEvmFactory::default();
         let evm_env = EvmEnv::default();
-        let mut regular = factory.create_evm(InMemoryDB::default(), evm_env.clone());
-        assert!(factory.try_transact_system_replay(&mut regular, &tx).unwrap().is_none());
-
         let mut db = Backend::<EthEvmNetwork>::spawn(None).unwrap();
         db.set_networks(foundry_evm_networks::NetworkConfigs::with_monad());
-        let mut inspector = revm::inspector::NoOpInspector;
-        let mut nested = factory.create_foundry_nested_evm(&mut db, evm_env, &mut inspector);
+        let mut nested = factory.create_nested_evm(&mut db, evm_env);
+        assert!(nested.transact_replay(tx.clone(), true).unwrap().is_none());
+        assert!(nested.journal_inner_mut().state.is_empty());
         let error = nested.transact_raw(tx).unwrap_err();
         assert!(format!("{error:?}").contains("gas"), "{error:?}");
+    }
+
+    #[test]
+    fn nested_replay_executes_monad_envelopes_once_and_skips_foreign_systems() {
+        let factory = MonadEvmFactory::default();
+        let evm_env =
+            EvmEnv::new(CfgEnv::new_with_spec(MonadHardfork::MonadNine), BlockEnv::default());
+        let mut db = Backend::<MonadEvmNetwork>::spawn(None).unwrap();
+        db.insert_account_info(SYSTEM_ADDRESS, AccountInfo { nonce: 3, ..Default::default() });
+        let mut evm = factory.create_nested_evm(&mut db, evm_env.clone());
+
+        // The RPC system classification must survive decoding into an ordinary TxEnv.
+        let foreign = TxEnv { caller: Address::with_last_byte(42), ..Default::default() };
+        assert!(evm.transact_replay(foreign, true).unwrap().is_none());
+        assert!(evm.journal_inner_mut().state.is_empty());
+
+        let tx = system_transaction(syscallSnapshotCall {}.abi_encode(), U256::ZERO);
+        let result = evm.transact_replay(tx.clone(), true).unwrap().unwrap();
+        assert!(result.result.is_success());
+        assert_eq!(result.result.tx_gas_used(), 0);
+        drop(evm);
+        db.commit(result.state);
+        assert_eq!(db.basic(SYSTEM_ADDRESS).unwrap().unwrap().nonce, 4);
+
+        let mut evm = factory.create_nested_evm(&mut db, evm_env);
+        assert!(evm.transact_replay(tx, true).unwrap_err().to_string().contains("nonce"));
+        assert!(evm.journal_inner_mut().state.is_empty());
+        drop(evm);
+        assert_eq!(db.basic(SYSTEM_ADDRESS).unwrap().unwrap().nonce, 4);
+    }
+
+    #[test]
+    fn nested_replay_failure_restores_monad_prestate() {
+        let initial_balance = U256::from(3) * MON;
+        let mut db = Backend::<MonadEvmNetwork>::spawn(None).unwrap();
+        db.insert_account_info(SYSTEM_ADDRESS, AccountInfo { nonce: 3, ..Default::default() });
+        db.insert_account_info(
+            STAKING_ADDRESS,
+            AccountInfo { balance: initial_balance, ..Default::default() },
+        );
+        let tx = system_transaction(
+            syscallRewardCall { blockAuthor: Address::with_last_byte(42) }.abi_encode(),
+            U256::from(25) * MON,
+        );
+        let factory = MonadEvmFactory::default();
+        let evm_env =
+            EvmEnv::new(CfgEnv::new_with_spec(MonadHardfork::MonadNine), BlockEnv::default());
+        let mut evm = factory.create_nested_evm(&mut db, evm_env);
+        let journal_before = evm.journal_inner_mut().clone();
+        let chain_before = evm.chain_mut().clone();
+        let tracker_before = evm.journal_mut().reserve_balance().clone();
+
+        let error = evm.transact_replay(tx, true).unwrap_err();
+        assert!(error.to_string().contains("reverted or halted"), "{error:?}");
+        assert_eq!(evm.journal_inner_mut().state, journal_before.state);
+        assert_eq!(evm.chain_mut(), &chain_before);
+        assert_eq!(evm.journal_mut().reserve_balance(), &tracker_before);
+        drop(evm);
+        assert_eq!(db.basic(SYSTEM_ADDRESS).unwrap().unwrap().nonce, 3);
+        assert_eq!(db.basic(STAKING_ADDRESS).unwrap().unwrap().balance, initial_balance);
+        assert_eq!(db.storage(STAKING_ADDRESS, global_slots::PROPOSER_VAL_ID).unwrap(), U256::ZERO);
     }
 
     #[derive(Default)]
@@ -682,7 +740,7 @@ mod tests {
         let chain_before = evm.ctx().chain.clone();
         let tracker_before = evm.ctx().journaled_state.reserve_balance().clone();
 
-        assert!(factory.try_transact_system_replay(&mut evm, &tx).unwrap().is_none());
+        assert!(try_transact_monad_system_replay(&mut evm, &tx).unwrap().is_none());
         assert_eq!(evm.tx(), &tx_before);
         assert_eq!(evm.ctx().journal_inner().state, journal_before.state);
         assert_eq!(evm.ctx().chain, chain_before);
@@ -921,7 +979,7 @@ mod tests {
         let mut evm =
             factory.create_evm_with_inspector(db, evm_env, ProtocolPrestateInspector::default());
 
-        let result = factory.try_transact_system_replay(&mut evm, &tx).unwrap().unwrap();
+        let result = try_transact_monad_system_replay(&mut evm, &tx).unwrap().unwrap();
 
         assert!(result.result.is_success());
         assert_eq!(result.result.tx_gas_used(), 0);
@@ -981,7 +1039,7 @@ mod tests {
         let chain_before = evm.ctx().chain.clone();
         let tracker_before = evm.ctx().journaled_state.reserve_balance().clone();
 
-        let error = factory.try_transact_system_replay(&mut evm, &tx).unwrap_err();
+        let error = try_transact_monad_system_replay(&mut evm, &tx).unwrap_err();
 
         assert!(error.to_string().contains("reverted or halted"));
         assert!(evm.inspector().call_count > 0);

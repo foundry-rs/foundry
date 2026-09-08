@@ -166,7 +166,7 @@ impl CowBackend<'_, MonadEvmNetwork> {
         self.pending_init = Some((evm_env.cfg_env.spec, tx_env.caller(), tx_env.kind()));
 
         let factory = <MonadEvmNetwork as FoundryEvmNetwork>::EvmFactory::default();
-        let mut evm = factory.create_foundry_nested_evm(self, evm_env.clone(), inspector);
+        let mut evm = factory.create_nested_evm_with_inspector(self, evm_env.clone(), inspector);
         *evm.chain_mut() = chain_context;
         let result = evm.transact_raw(tx_env.clone())?;
 
