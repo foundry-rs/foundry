@@ -3600,7 +3600,7 @@ fn solver_normalizes_constant_over_self_division_bounds() {
             SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, value.clone(), guarded.clone()),
             SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, guarded.clone(), value.clone()),
             SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, value.clone(), guarded.clone()),
-            SymBoolExpr::cmp(&mut cx, SymCmpOp::Uge, guarded, value.clone()),
+            SymBoolExpr::cmp(&mut cx, SymCmpOp::Uge, guarded, value),
         ];
 
         for condition in conditions {
