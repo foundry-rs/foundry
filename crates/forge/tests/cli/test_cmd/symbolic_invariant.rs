@@ -1373,8 +1373,8 @@ contract SymbolicTerminalRevertInvariant is Test {
 // Foundry cheatcode effects are not journaled with EVM state. A top-level revert
 // therefore rolls back contract storage but keeps effects such as `vm.mockCall`
 // for the next invariant call.
-forgetest_init!(symbolic_reverted_handler_effect_is_not_reported_safe, |prj, cmd| {
-    skip_unless_z3!("symbolic_reverted_handler_effect_is_not_reported_safe");
+forgetest_init!(symbolic_reverted_handler_effect_replays_counterexample, |prj, cmd| {
+    skip_unless_z3!("symbolic_reverted_handler_effect_replays_counterexample");
 
     prj.add_test(
         "SymbolicRevertedCheatcodeEffects.t.sol",
@@ -1418,8 +1418,7 @@ contract SymbolicRevertedCheatcodeEffects is Test {
 "#,
     );
 
-    // The symbolic engine must not report this safe; the concrete fuzz campaign that follows the
-    // incomplete symbolic run is what observes the mock surviving the reverted handler call.
+    // Concrete confirmation must preserve the mock installed by the reverted handler call.
     let output = cmd
         .args(["test", "--symbolic", "--json", "--match-test", "invariant_notBroken"])
         .assert_failure()
@@ -1428,11 +1427,8 @@ contract SymbolicRevertedCheatcodeEffects is Test {
         .clone();
     let result = json_test_result(&output, "invariant_notBroken()");
     assert_eq!(result["status"], "Failure");
-    assert_eq!(result["symbolic"]["status"], "incomplete", "{result}");
-    assert_eq!(
-        result["symbolic"]["incomplete"]["reason"],
-        "symbolic invariant counterexample did not replay"
-    );
+    assert_eq!(result["symbolic"]["status"], "fail_counterexample", "{result}");
+    assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "{result}");
 });
 
 forgetest_init!(symbolic_invariant_does_not_inherit_prank_into_nested_call, |prj, cmd| {
