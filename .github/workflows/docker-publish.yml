@@ -32,15 +32,15 @@ env:
   RUST_FEATURES: aws-kms,gcp-kms,turnkey,cli,asm-keccak,js-tracer,monad,optimism
 
 jobs:
-  cargo-cooldown:
+  socket-dependencies:
     permissions:
       id-token: write
       contents: read
-    uses: ./.github/workflows/cargo-cooldown.yml
+    uses: ./.github/workflows/socket-dependencies.yml
 
   build:
     name: build, sign, and stage
-    needs: cargo-cooldown
+    needs: socket-dependencies
     runs-on: depot-ubuntu-latest
     permissions:
       attestations: write

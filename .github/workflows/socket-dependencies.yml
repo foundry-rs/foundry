@@ -1,4 +1,4 @@
-name: Cargo dependency cooldown
+name: Socket dependency policy
 
 on:
   workflow_call:
@@ -11,7 +11,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    name: Reject newly published crates
+    name: Check locked dependencies through Socket
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -29,7 +29,6 @@ jobs:
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
           toolchain: stable
-      - name: Enforce Cargo dependency cooldown
-        uses: tempoxyz/gh-actions/actions/cargo-cooldown@0aa93238d85fd085d7901320b670cc6adb7a02f3
-        with:
-          strict-project-config: true
+      - name: Fetch locked dependencies through Socket with an empty cache
+        shell: bash
+        run: bash .github/scripts/socket-dependencies.sh

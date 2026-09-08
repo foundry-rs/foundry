@@ -29,12 +29,6 @@ env:
   RUST_MIN_STACK: 4194304 # 2 * the default (2 * 1024 * 1024)
 
 jobs:
-  cargo-cooldown:
-    permissions:
-      id-token: write
-      contents: read
-    uses: ./.github/workflows/cargo-cooldown.yml
-
   matrices:
     name: build matrices
     runs-on: ubuntu-latest
@@ -72,7 +66,7 @@ jobs:
     permissions:
       id-token: write
       contents: read
-    needs: [cargo-cooldown, matrices]
+    needs: matrices
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.matrices.outputs.test-matrix) }}
