@@ -137,10 +137,8 @@ impl InspectArgs {
                 print_json(&artifact.gas_estimates)?;
             }
             ContractArtifactField::StorageLayout => {
-                let mut layout = artifact
-                    .storage_layout
-                    .clone()
-                    .ok_or_else(|| missing_error("storage layout"))?;
+                let mut layout =
+                    artifact.storage_layout.ok_or_else(|| missing_error("storage layout"))?;
                 if is_solidity_source(&target_path) {
                     let namespaces = output
                         .parser_mut()
