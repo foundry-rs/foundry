@@ -1,4 +1,4 @@
-use super::{fuzz::FuzzRunArgs, install, watch::WatchArgs};
+use super::{fuzz::FuzzRunArgs, watch::WatchArgs};
 use crate::{
     MultiContractRunner, MultiContractRunnerBuilder, brutalizer,
     decode::decode_console_logs,
@@ -1607,11 +1607,7 @@ impl TestArgs {
         // Merge all configs.
         let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
 
-        if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
-        {
-            // need to re-configure here to also catch additional remappings
-            config = self.load_config()?;
-        }
+        self.install_missing_dependencies(&mut config)?;
         let brutalized_workspace =
             if self.brutalize { Some(self.brutalize_workspace(&mut config)?) } else { None };
         let should_mutate = self.mutate.is_some();

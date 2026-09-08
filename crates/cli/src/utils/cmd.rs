@@ -178,6 +178,18 @@ pub trait LoadConfig {
         load_config_from_provider(self.figment())
     }
 
+    /// Loads config and installs missing project dependencies.
+    fn load_config_with_dependencies(&self) -> Result<Config, ExtractConfigError> {
+        let mut config = self.load_config()?;
+        self.install_missing_dependencies(&mut config)?;
+        Ok(config)
+    }
+
+    /// Installs missing dependencies, reloading config only for automatic remapping discovery.
+    fn install_missing_dependencies(&self, config: &mut Config) -> Result<(), ExtractConfigError> {
+        crate::install::install_missing_dependencies(config, || self.load_config())
+    }
+
     /// Same as [`LoadConfig::load_config`] but does not emit warnings.
     fn load_config_no_warnings(&self) -> Result<Config, ExtractConfigError> {
         self.load_config_unsanitized_no_warnings().map(Config::sanitized)

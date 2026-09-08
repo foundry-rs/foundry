@@ -1,5 +1,4 @@
 use super::{
-    install,
     test::{ProjectPathsAwareFilter, TestArgs, TestExecutionOptions},
     watch::WatchArgs,
 };
@@ -146,11 +145,7 @@ impl CoverageArgs {
         let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
 
         // install missing dependencies
-        if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
-        {
-            // need to re-configure here to also catch additional remappings
-            config = self.load_config()?;
-        }
+        self.install_missing_dependencies(&mut config)?;
 
         // Default to a static fuzz seed so coverage reports are deterministic,
         // but allow the user to override it via `--fuzz-seed` or `[fuzz] seed` in config.

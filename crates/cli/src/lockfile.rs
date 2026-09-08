@@ -1,8 +1,8 @@
 //! foundry.lock handler type.
 
+use crate::utils::{Git, SubmoduleCheckoutStatus};
 use alloy_primitives::map::HashMap;
 use eyre::{Context, OptionExt, Result};
-use foundry_cli::utils::{Git, SubmoduleCheckoutStatus};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, hash_map::Entry},
@@ -16,7 +16,7 @@ pub type DepMap = HashMap<PathBuf, DepIdentifier>;
 
 /// A difference between `foundry.lock` and an installed dependency submodule.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum LockfileMismatch {
+pub enum LockfileMismatch {
     /// An installed dependency is not recorded in the lockfile.
     MissingLockEntry { path: PathBuf, actual: Option<String> },
     /// A lockfile entry does not have a corresponding dependency submodule.
@@ -182,7 +182,7 @@ impl<'a> Lockfile<'a> {
     }
 
     /// Checks whether the lockfile matches dependency submodules without modifying either.
-    pub(crate) fn check(&mut self) -> Result<Vec<LockfileMismatch>> {
+    pub fn check(&mut self) -> Result<Vec<LockfileMismatch>> {
         let lockfile_exists = self.exists();
         if lockfile_exists {
             self.read().wrap_err("Failed to read foundry.lock")?;
