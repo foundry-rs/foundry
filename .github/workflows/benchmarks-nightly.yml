@@ -14,6 +14,7 @@ jobs:
   cargo-cooldown:
     if: github.event_name != 'schedule' || github.repository == 'foundry-rs/foundry'
     permissions:
+      id-token: write
       contents: read
     uses: ./.github/workflows/cargo-cooldown.yml
 
@@ -23,10 +24,15 @@ jobs:
     if: github.event_name != 'schedule' || github.repository == 'foundry-rs/foundry'
     runs-on: depot-ubuntu-24.04-32
     permissions:
+      id-token: write
       contents: read
     outputs:
       has_regression: ${{ steps.compare.outputs.has_regression }}
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@09dddc697b1c8c1d3c3733b41d6fdd2274f17734
+        with:
+          egress-policy: audit
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -195,8 +201,13 @@ jobs:
     if: needs.run-benchmarks.outputs.has_regression == 'true' && github.event_name == 'schedule'
     runs-on: ubuntu-latest
     permissions:
+      id-token: write
       issues: write
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@09dddc697b1c8c1d3c3733b41d6fdd2274f17734
+        with:
+          egress-policy: audit
       - name: Download benchmark results
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:

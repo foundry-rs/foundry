@@ -19,12 +19,14 @@ env:
 jobs:
   cargo-cooldown:
     permissions:
+      id-token: write
       contents: read
     uses: ./.github/workflows/cargo-cooldown.yml
 
   test:
     uses: ./.github/workflows/test.yml
     permissions:
+      id-token: write
       contents: read
     with:
       profile: default
@@ -45,8 +47,13 @@ jobs:
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
+      id-token: write
       contents: read
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@09dddc697b1c8c1d3c3733b41d6fdd2274f17734
+        with:
+          egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -66,8 +73,13 @@ jobs:
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
+      id-token: write
       contents: read
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@09dddc697b1c8c1d3c3733b41d6fdd2274f17734
+        with:
+          egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -89,10 +101,15 @@ jobs:
     runs-on: depot-macos-latest
     timeout-minutes: 45
     permissions:
+      id-token: write
       contents: read
     env:
       MACOSX_DEPLOYMENT_TARGET: "11.0"
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@09dddc697b1c8c1d3c3733b41d6fdd2274f17734
+        with:
+          egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -119,8 +136,13 @@ jobs:
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
+      id-token: write
       contents: read
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@09dddc697b1c8c1d3c3733b41d6fdd2274f17734
+        with:
+          egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -130,8 +152,13 @@ jobs:
     runs-on: depot-ubuntu-latest
     timeout-minutes: 5
     permissions:
+      id-token: write
       contents: read
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@09dddc697b1c8c1d3c3733b41d6fdd2274f17734
+        with:
+          egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -146,8 +173,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
+      id-token: write
       contents: read
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@09dddc697b1c8c1d3c3733b41d6fdd2274f17734
+        with:
+          egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -161,8 +193,13 @@ jobs:
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
+      id-token: write
       contents: read
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@09dddc697b1c8c1d3c3733b41d6fdd2274f17734
+        with:
+          egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -181,8 +218,13 @@ jobs:
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
+      id-token: write
       contents: read
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@09dddc697b1c8c1d3c3733b41d6fdd2274f17734
+        with:
+          egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -197,8 +239,13 @@ jobs:
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
+      id-token: write
       contents: read
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@09dddc697b1c8c1d3c3733b41d6fdd2274f17734
+        with:
+          egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -232,6 +279,7 @@ jobs:
     name: analyze (${{ matrix.language }})
     runs-on: ubuntu-latest
     permissions:
+      id-token: write
       security-events: write
       actions: read
       contents: read
@@ -242,6 +290,10 @@ jobs:
           - language: actions
             build-mode: none
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@09dddc697b1c8c1d3c3733b41d6fdd2274f17734
+        with:
+          egress-policy: audit
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -270,7 +322,8 @@ jobs:
   ci-success:
     runs-on: ubuntu-latest
     if: always()
-    permissions: {}
+    permissions:
+      id-token: write
     needs:
       - cargo-cooldown
       - test
@@ -289,6 +342,10 @@ jobs:
       - workflow-validation
     timeout-minutes: 30
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@09dddc697b1c8c1d3c3733b41d6fdd2274f17734
+        with:
+          egress-policy: audit
       - name: Decide whether the needed jobs succeeded or failed
         uses: re-actors/alls-green@b5b5b37504aa4183270bd3d855c52a67f212be35 # v1.3.0
         with:

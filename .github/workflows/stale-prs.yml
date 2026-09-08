@@ -14,9 +14,14 @@ jobs:
     if: github.repository == 'foundry-rs/foundry'
     runs-on: ubuntu-latest
     permissions:
+      id-token: write
       issues: write
       pull-requests: write
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@09dddc697b1c8c1d3c3733b41d6fdd2274f17734
+        with:
+          egress-policy: audit
       - uses: actions/stale@4391f3da665fdf50b6810c1a66712fb9ba21aa93 # v11.0.0
         with:
           days-before-issue-stale: -1

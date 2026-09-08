@@ -31,6 +31,7 @@ env:
 jobs:
   cargo-cooldown:
     permissions:
+      id-token: write
       contents: read
     uses: ./.github/workflows/cargo-cooldown.yml
 
@@ -38,10 +39,15 @@ jobs:
     name: build matrices
     runs-on: ubuntu-latest
     permissions:
+      id-token: write
       contents: read
     outputs:
       test-matrix: ${{ steps.gen.outputs.test-matrix }}
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@09dddc697b1c8c1d3c3733b41d6fdd2274f17734
+        with:
+          egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -64,12 +70,17 @@ jobs:
     runs-on: ${{ matrix.runner_label }}
     timeout-minutes: 60
     permissions:
+      id-token: write
       contents: read
     needs: [cargo-cooldown, matrices]
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.matrices.outputs.test-matrix) }}
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@09dddc697b1c8c1d3c3733b41d6fdd2274f17734
+        with:
+          egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false

@@ -17,9 +17,15 @@ concurrency:
 
 jobs:
   validate-ref:
+    permissions:
+      id-token: write
     name: Validate trusted ref
     runs-on: ubuntu-latest
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@09dddc697b1c8c1d3c3733b41d6fdd2274f17734
+        with:
+          egress-policy: audit
       - name: Require master
         env:
           REF: ${{ github.ref }}
@@ -34,10 +40,15 @@ jobs:
     runs-on: ubuntu-latest
     environment: release
     permissions:
+      id-token: write
       actions: read
       contents: write
       packages: write
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@09dddc697b1c8c1d3c3733b41d6fdd2274f17734
+        with:
+          egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}

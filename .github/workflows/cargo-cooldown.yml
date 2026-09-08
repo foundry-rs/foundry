@@ -8,12 +8,19 @@ permissions:
 
 jobs:
   check:
+    permissions:
+      contents: read
+      id-token: write
     name: Reject newly published crates
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       RUSTC_WRAPPER: ""
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@09dddc697b1c8c1d3c3733b41d6fdd2274f17734
+        with:
+          egress-policy: audit
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

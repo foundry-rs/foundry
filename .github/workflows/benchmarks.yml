@@ -21,6 +21,7 @@ env:
 jobs:
   cargo-cooldown:
     permissions:
+      id-token: write
       contents: read
     uses: ./.github/workflows/cargo-cooldown.yml
 
@@ -29,6 +30,7 @@ jobs:
     needs: cargo-cooldown
     runs-on: depot-ubuntu-24.04-32
     permissions:
+      id-token: write
       contents: read
       pull-requests: read
     outputs:
@@ -38,6 +40,10 @@ jobs:
       FOUNDRY_BENCH_LOCAL_BUILD_PROFILE: profiling
       FOUNDRY_BENCH_LOCAL_BUILD_BINS: forge
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@09dddc697b1c8c1d3c3733b41d6fdd2274f17734
+        with:
+          egress-policy: audit
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -234,10 +240,15 @@ jobs:
     # All git writes happen here, on a clean ubuntu-latest runner that has
     # never executed third-party benchmark code.
     permissions:
+      id-token: write
       contents: write
       pull-requests: write
 
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@09dddc697b1c8c1d3c3733b41d6fdd2274f17734
+        with:
+          egress-policy: audit
       - name: Checkout repository # zizmor: ignore[artipacked] persists credentials to push benchmark data
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

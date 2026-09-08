@@ -30,8 +30,13 @@ jobs:
     # Scopes the EVENTS_* mTLS secrets; shared across all `bench` subcommands.
     environment: bench
     permissions:
+      id-token: write
       pull-requests: write
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@09dddc697b1c8c1d3c3733b41d6fdd2274f17734
+        with:
+          egress-policy: audit
       - name: Validate request
         id: request
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
