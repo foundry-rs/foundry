@@ -40,20 +40,10 @@ impl FoundryEvmFactory for TempoEvmFactory {
     type FoundryEvm<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>> =
         TempoEvm<&'db mut dyn DatabaseExt<Self>, I>;
 
-    fn create_evm_with_context<DB: alloy_evm::Database>(
-        &self,
-        db: DB,
-        evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        _chain_context: Self::Chain,
-    ) -> Self::Evm<DB, revm::inspector::NoOpInspector> {
-        self.create_evm(db, evm_env)
-    }
-
     fn create_foundry_evm_with_inspector<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>>(
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        _chain_context: Self::Chain,
         inspector: I,
     ) -> Self::FoundryEvm<'db, I> {
         let is_forked = db.is_forked_mode();
@@ -79,17 +69,16 @@ impl FoundryEvmFactory for TempoEvmFactory {
         tempo_evm
     }
 
-    fn create_foundry_nested_evm<'db>(
+    fn create_nested_evm_with_inspector<'db, I>(
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        chain_context: Self::Chain,
-        inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
-    ) -> NestedEvmFor<'db, Self> {
-        Box::new(
-            self.create_foundry_evm_with_inspector(db, evm_env, chain_context, inspector)
-                .into_inner(),
-        )
+        inspector: I,
+    ) -> NestedEvmFor<'db, Self>
+    where
+        I: FoundryInspectorExt<Self::FoundryContext<'db>> + 'db,
+    {
+        Box::new(self.create_foundry_evm_with_inspector(db, evm_env, inspector).into_inner())
     }
 }
 
@@ -131,6 +120,10 @@ impl<'db, I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmF
 
     fn chain_mut(&mut self) -> &mut Self::Chain {
         &mut self.ctx_mut().chain
+    }
+
+    fn precompiles_mut(&mut self) -> &mut alloy_evm::precompiles::PrecompilesMap {
+        &mut self.precompiles
     }
 
     fn journal_mut(&mut self) -> &mut Self::Journal {

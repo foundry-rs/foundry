@@ -1174,6 +1174,207 @@ fn memory_symbolic_write_after_concrete_overwrite_still_applies() {
 }
 
 #[test]
+fn memory_dynamic_read_finds_symbolic_write_with_no_concrete_write_at_all() {
+    // Symbolic stores do not extend the materialized region.
+    let mut cx = SymCx::new();
+    let mut memory = SymMemory::default();
+
+    let write_offset = SymExpr::var(&mut cx, "write_offset");
+    let byte = SymExpr::var(&mut cx, "byte");
+    memory.store_byte_offset(&mut cx, write_offset, byte);
+
+    let read_offset = SymExpr::var(&mut cx, "read_offset");
+    let loaded = memory.byte_dynamic_with_delta(&mut cx, &read_offset, 0);
+
+    let model = symbolic_model(
+        &mut cx,
+        [
+            ("write_offset".to_string(), U256::from(500)),
+            ("read_offset".to_string(), U256::from(500)),
+            ("byte".to_string(), U256::from(0xcd)),
+        ],
+    );
+    assert_eq!(loaded.eval_model(&model).unwrap(), U256::from(0xcd));
+}
+
+#[test]
+fn memory_dynamic_read_finds_symbolic_write_beyond_concretely_materialized_region() {
+    // A symbolic store beyond a concrete region must remain visible.
+    let mut cx = SymCx::new();
+    let mut memory = SymMemory::default();
+
+    let concrete = SymExpr::constant(&mut cx, U256::from(0xaa));
+    memory.store_byte(&mut cx, 0x20, concrete); // establishes a small materialized_size
+
+    let write_offset = SymExpr::var(&mut cx, "write_offset");
+    let byte = SymExpr::var(&mut cx, "byte");
+    memory.store_byte_offset(&mut cx, write_offset, byte); // symbolic offset, well past 0x20
+
+    let read_offset = SymExpr::var(&mut cx, "read_offset");
+    let loaded = memory.byte_dynamic_with_delta(&mut cx, &read_offset, 0);
+
+    let model = symbolic_model(
+        &mut cx,
+        [
+            ("write_offset".to_string(), U256::from(0x200)),
+            ("read_offset".to_string(), U256::from(0x200)),
+            ("byte".to_string(), U256::from(0xef)),
+        ],
+    );
+    assert_eq!(loaded.eval_model(&model).unwrap(), U256::from(0xef));
+}
+
+#[test]
+fn memory_load_word_offset_dynamic_finds_symbolic_write_beyond_materialized_region() {
+    // Exercise the same case through MLOAD.
+    let mut cx = SymCx::new();
+    let mut memory = SymMemory::default();
+
+    let concrete = SymExpr::constant(&mut cx, U256::from(0xaa));
+    memory.store_byte(&mut cx, 0x20, concrete);
+
+    let write_offset = SymExpr::var(&mut cx, "write_offset");
+    let word = SymExpr::var(&mut cx, "word");
+    memory.store_word_offset(&mut cx, write_offset, word);
+
+    let read_offset = SymExpr::var(&mut cx, "read_offset");
+    let loaded = memory.load_word_offset(&mut cx, read_offset).unwrap();
+
+    let model = symbolic_model(
+        &mut cx,
+        [
+            ("write_offset".to_string(), U256::from(0x200)),
+            ("read_offset".to_string(), U256::from(0x200)),
+            ("word".to_string(), U256::from(0x1234)),
+        ],
+    );
+    assert_eq!(loaded.eval_model(&model).unwrap(), U256::from(0x1234));
+}
+
+#[test]
+fn memory_dynamic_read_finds_write_at_const_evaluable_but_undispatched_concrete_offset() {
+    // eval() resolves this offset, but as_const() does not; the store remains symbolic.
+    let mut cx = SymCx::new();
+    let mut memory = SymMemory::default();
+
+    let (write_offset, concrete_write_offset) = undispatched_concrete_offset(&mut cx, 1);
+
+    let write_byte = SymExpr::constant(&mut cx, U256::from(0xef));
+    memory.store_byte_offset(&mut cx, write_offset, write_byte);
+
+    let read_offset = SymExpr::var(&mut cx, "read_offset");
+    let loaded = memory.byte_dynamic_with_delta(&mut cx, &read_offset, 0);
+
+    let model = symbolic_model(&mut cx, [("read_offset".to_string(), concrete_write_offset)]);
+    assert_eq!(loaded.eval_model(&model).unwrap(), U256::from(0xef));
+}
+
+#[test]
+fn memory_load_word_offset_dynamic_finds_write_at_const_evaluable_but_undispatched_concrete_offset()
+{
+    // MLOAD must find const-evaluable writes beyond the concrete region.
+    let mut cx = SymCx::new();
+    let mut memory = SymMemory::default();
+
+    let filler = SymExpr::constant(&mut cx, U256::from(0xaa));
+    memory.store_byte(&mut cx, 31, filler); // establishes materialized_size = 32
+
+    let (write_offset, concrete_write_offset) = undispatched_concrete_offset(&mut cx, 2);
+
+    let write_byte = SymExpr::constant(&mut cx, U256::from(0xef));
+    memory.store_byte_offset(&mut cx, write_offset, write_byte);
+
+    let read_offset = SymExpr::var(&mut cx, "read_offset");
+    let loaded = memory.load_word_offset(&mut cx, read_offset).unwrap();
+
+    let model = symbolic_model(&mut cx, [("read_offset".to_string(), concrete_write_offset)]);
+    let mut expected_bytes = [0u8; 32];
+    expected_bytes[0] = 0xef;
+    let expected = U256::from_be_bytes(expected_bytes);
+    assert_eq!(loaded.eval_model(&model).unwrap(), expected);
+}
+
+/// Builds a const-evaluable offset in 0..=255 that does not fold to a literal.
+fn undispatched_concrete_offset(cx: &mut SymCx, seed: u64) -> (SymExpr, U256) {
+    let preimage = SymExpr::constant(cx, U256::from(seed));
+    let len = SymExpr::constant(cx, U256::from(1));
+    let name = stable_symbol(cx, "test-keccak-offset", &seed.to_be_bytes());
+    let keccak = SymExpr::keccak_symbol(cx, name, len, vec![preimage]);
+    let mask = SymExpr::constant(cx, U256::from(0xff));
+    let offset = SymExpr::binop(cx, SymBinOp::And, keccak, mask);
+    assert!(offset.as_const().is_none(), "must not fold to a literal Const at construction");
+    let value = offset.eval().expect("Keccak(const) & 0xff is fully evaluable with no free vars");
+    (offset, value)
+}
+
+#[test]
+fn memory_dynamic_read_finds_write_straddling_the_materialized_boundary() {
+    // A write starting inside the materialized region can still extend beyond it.
+    let mut cx = SymCx::new();
+    let mut memory = SymMemory::default();
+
+    let (write_offset, offset_value) = undispatched_concrete_offset(&mut cx, 3);
+    let offset_usize = usize::try_from(offset_value).unwrap();
+
+    // The concrete store materializes only the start of the later word write.
+    let filler = SymExpr::constant(&mut cx, U256::from(0xaa));
+    memory.store_byte(&mut cx, offset_usize + 1, filler);
+
+    let write_word = SymExpr::var(&mut cx, "write_word");
+    memory.store_word_offset(&mut cx, write_offset, write_word);
+
+    // Memory expands in 32-byte words; the marker must cross that rounded boundary.
+    let materialized_end = (offset_usize + 2).next_multiple_of(32);
+    assert!(offset_usize < materialized_end);
+    assert!(offset_usize + 31 >= materialized_end);
+    let read_offset = SymExpr::var(&mut cx, "read_offset");
+    let loaded = memory.byte_dynamic_with_delta(&mut cx, &read_offset, 0);
+
+    let mut write_word_bytes = [0u8; 32];
+    write_word_bytes[31] = 0xab;
+    let model = symbolic_model(
+        &mut cx,
+        [
+            ("read_offset".to_string(), offset_value + U256::from(31)),
+            ("write_word".to_string(), U256::from_be_bytes(write_word_bytes)),
+        ],
+    );
+    assert_eq!(loaded.eval_model(&model).unwrap(), U256::from(0xab));
+}
+
+#[test]
+fn memory_load_word_offset_dynamic_word_read_includes_pseudo_concrete_write_past_materialized_size()
+{
+    // The stored byte must be visible at index 24 of a dynamic word read.
+    let mut cx = SymCx::new();
+    let mut memory = SymMemory::default();
+
+    let filler = SymExpr::constant(&mut cx, U256::from(0xaa));
+    memory.store_byte(&mut cx, 31, filler); // establishes materialized_size = 32
+
+    // Keep offset - 24 nonnegative.
+    let (keccak_masked, _) = undispatched_concrete_offset(&mut cx, 4);
+    let high_bit = SymExpr::constant(&mut cx, U256::from(0x80));
+    let write_offset = SymExpr::binop(&mut cx, SymBinOp::Or, keccak_masked, high_bit);
+    assert!(write_offset.as_const().is_none(), "must not fold to a literal Const at construction");
+    let offset_value = write_offset.eval().expect("offset is fully evaluable with no free vars");
+    assert!(offset_value >= U256::from(0x80));
+
+    let write_byte = SymExpr::constant(&mut cx, U256::from(0xef));
+    memory.store_byte_offset(&mut cx, write_offset, write_byte);
+
+    let read_offset = SymExpr::var(&mut cx, "read_offset");
+    let loaded = memory.load_word_offset(&mut cx, read_offset).unwrap();
+
+    let model =
+        symbolic_model(&mut cx, [("read_offset".to_string(), offset_value - U256::from(24))]);
+    let mut expected_bytes = [0u8; 32];
+    expected_bytes[24] = 0xef;
+    let expected = U256::from_be_bytes(expected_bytes);
+    assert_eq!(loaded.eval_model(&model).unwrap(), expected);
+}
+
+#[test]
 fn memory_store_byte_accepts_symbolic_offsets() {
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
@@ -1808,12 +2009,14 @@ fn path_state_extracts_symbolic_usize_upper_bound() {
 }
 
 #[test]
-fn path_state_child_replaces_frame_and_resets_local_loop_state() {
+fn path_state_child_replaces_frame_and_resets_local_state() {
     let mut cx = SymCx::new();
     let mut state = PathState::empty(&mut cx, Address::ZERO, Address::ZERO, false);
     state.call_depth = 2;
     state.next_symbol = 7;
     state.loop_jumps.insert(3, 4);
+    state.expected_revert = Some(ExpectedRevert::new(ExpectedRevertData::Any, None, 1));
+    state.assume_no_revert_next_call = Some(AssumeNoRevert::Any);
 
     let parent_stack = SymExpr::constant(&mut cx, U256::from(0xab));
     state.stack.push(parent_stack).unwrap();
@@ -1847,7 +2050,11 @@ fn path_state_child_replaces_frame_and_resets_local_loop_state() {
     assert_eq!(child.world.cached_nonce(cached), Some(9));
     assert_eq!(child.address, child_address);
     assert!(child.loop_jumps.is_empty());
+    assert!(child.expected_revert.is_none());
+    assert!(child.assume_no_revert_next_call.is_none());
     assert_eq!(state.loop_jumps.get(&3), Some(&4));
+    assert!(state.expected_revert.is_some());
+    assert!(state.assume_no_revert_next_call.is_some());
     assert!(child.stack.peek(0).is_err());
 }
 
@@ -3379,6 +3586,191 @@ fn solver_normalizes_udiv_nonzero_predicates_without_bvudiv() {
 }
 
 #[test]
+fn solver_normalizes_bounded_udiv_comparisons_without_bvudiv() {
+    let mut cx = SymCx::new();
+    let numerator = SymExpr::var(&mut cx, "numerator");
+    let threshold_word = SymExpr::var(&mut cx, "threshold");
+    let uint64_max = SymExpr::constant(&mut cx, U256::from(u64::MAX));
+    let threshold = SymExpr::binop(&mut cx, SymBinOp::And, threshold_word, uint64_max);
+    let divisor = SymExpr::constant(&mut cx, U256::from(3));
+    let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, numerator, divisor);
+    let conditions = [
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, quotient.clone(), threshold.clone()),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, quotient.clone(), threshold.clone()),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, quotient.clone(), threshold.clone()),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Uge, quotient.clone(), threshold.clone()),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, threshold.clone(), quotient.clone()),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, threshold.clone(), quotient.clone()),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, threshold.clone(), quotient.clone()),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Uge, threshold, quotient),
+    ];
+
+    for condition in conditions {
+        for original in [condition.clone(), condition.not(&mut cx)] {
+            let normalized =
+                normalize_constraints_for_solver(&mut cx, std::slice::from_ref(&original));
+            assert_eq!(normalized.len(), 1);
+            assert!(!normalized[0].smt(&cx).contains("bvudiv"));
+
+            for threshold in [U256::ZERO, U256::ONE, U256::from(u64::MAX)] {
+                let lower = threshold * U256::from(3);
+                let upper = (threshold + U256::ONE) * U256::from(3);
+                let mut numerators = vec![U256::ZERO, lower, upper, U256::MAX];
+                if let Some(value) = lower.checked_sub(U256::ONE) {
+                    numerators.push(value);
+                }
+                if let Some(value) = upper.checked_sub(U256::ONE) {
+                    numerators.push(value);
+                }
+                if let Some(value) = upper.checked_add(U256::ONE) {
+                    numerators.push(value);
+                }
+
+                for numerator in numerators {
+                    let model = symbolic_model(
+                        &mut cx,
+                        [
+                            ("numerator".to_string(), numerator),
+                            ("threshold".to_string(), threshold),
+                        ],
+                    );
+                    assert_eq!(
+                        original.eval_model(&model).unwrap(),
+                        normalized[0].eval_model(&model).unwrap(),
+                        "numerator={numerator} threshold={threshold} condition={original:?}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn solver_normalizes_udiv_comparisons_only_at_safe_product_boundaries() {
+    let mut cx = SymCx::new();
+    let numerator = SymExpr::var(&mut cx, "numerator");
+    let divisor_value = U256::from(3);
+    let divisor = SymExpr::constant(&mut cx, divisor_value);
+    let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, numerator, divisor);
+    let threshold = SymExpr::constant(&mut cx, U256::MAX / divisor_value);
+    let safe = [
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, quotient.clone(), threshold.clone()),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, threshold.clone(), quotient.clone()),
+    ];
+    let overflowing = [
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, quotient.clone(), threshold.clone()),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, threshold, quotient.clone()),
+    ];
+
+    for condition in safe {
+        let normalized =
+            normalize_constraints_for_solver(&mut cx, std::slice::from_ref(&condition));
+        assert_eq!(normalized.len(), 1);
+        assert!(!normalized[0].smt(&cx).contains("bvudiv"));
+    }
+    for condition in overflowing {
+        let normalized =
+            normalize_constraints_for_solver(&mut cx, std::slice::from_ref(&condition));
+        assert_eq!(normalized, vec![condition]);
+    }
+
+    let threshold = SymExpr::constant(&mut cx, U256::MAX / divisor_value - U256::ONE);
+    let comparison = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, quotient.clone(), threshold.clone());
+    let normalized = normalize_constraints_for_solver(&mut cx, std::slice::from_ref(&comparison));
+    assert_eq!(normalized.len(), 1);
+    assert!(!normalized[0].smt(&cx).contains("bvudiv"));
+    for numerator in [U256::MAX - U256::ONE, U256::MAX] {
+        let model = symbolic_model(&mut cx, [("numerator", numerator)]);
+        assert_eq!(
+            comparison.eval_model(&model).unwrap(),
+            normalized[0].eval_model(&model).unwrap(),
+            "numerator={numerator} threshold={threshold:?}"
+        );
+    }
+
+    let symbolic_threshold = SymExpr::var(&mut cx, "symbolic_threshold");
+    let max = SymExpr::constant(&mut cx, U256::MAX);
+    let threshold_is_max = SymBoolExpr::eq(&mut cx, symbolic_threshold.clone(), max);
+    let comparison = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, quotient, symbolic_threshold);
+    let normalized =
+        normalize_constraints_for_solver(&mut cx, &[threshold_is_max, comparison.clone()]);
+    assert!(normalized.contains(&comparison));
+
+    let symbolic_divisor = SymExpr::var(&mut cx, "divisor");
+    let numerator = SymExpr::var(&mut cx, "other_numerator");
+    let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, numerator, symbolic_divisor);
+    let threshold = SymExpr::constant(&mut cx, U256::from(10));
+    let comparison = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, quotient, threshold);
+    let normalized = normalize_constraints_for_solver(&mut cx, &[comparison]);
+    assert!(normalized[0].smt(&cx).contains("bvudiv"));
+}
+
+#[test]
+fn solver_normalizes_udiv_comparison_with_independent_bound() {
+    let mut cx = SymCx::new();
+    let numerator = SymExpr::var(&mut cx, "numerator");
+    let threshold = SymExpr::var(&mut cx, "threshold");
+    let divisor = SymExpr::constant(&mut cx, U256::from(1_000_000_000_000_000_000u128));
+    let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, numerator, divisor);
+    let uint128_max = SymExpr::constant(&mut cx, U256::from(u128::MAX));
+    let threshold_bounded =
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, threshold.clone(), uint128_max);
+    let comparison = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, quotient, threshold);
+    let constraints = vec![threshold_bounded, comparison];
+
+    let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
+    assert_eq!(normalized.len(), 2);
+    assert!(normalized.iter().all(|constraint| !constraint.smt(&cx).contains("bvudiv")));
+}
+
+#[test]
+fn solver_does_not_use_udiv_comparison_to_bound_itself() {
+    let mut cx = SymCx::new();
+    let numerator = SymExpr::var(&mut cx, "numerator");
+    let threshold = SymExpr::var(&mut cx, "threshold");
+    let divisor_value = U256::from(3);
+    let divisor = SymExpr::constant(&mut cx, divisor_value);
+    let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, numerator, divisor);
+    let five = SymExpr::constant(&mut cx, U256::from(5));
+    let quotient_is_five = SymBoolExpr::eq(&mut cx, quotient.clone(), five.clone());
+    let comparison = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, threshold, quotient.clone());
+    let constraints = vec![quotient_is_five, comparison.clone()];
+    let model = symbolic_model(
+        &mut cx,
+        [
+            ("numerator".to_string(), U256::from(15)),
+            ("threshold".to_string(), U256::MAX / divisor_value + U256::ONE),
+            ("quotient_alias".to_string(), U256::from(5)),
+        ],
+    );
+
+    assert!(constraints[0].eval_model(&model).unwrap());
+    assert!(!comparison.eval_model(&model).unwrap());
+    let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
+    assert!(normalized.contains(&comparison));
+    assert!(normalized.iter().any(|constraint| !constraint.eval_model(&model).unwrap()));
+
+    let alias = SymExpr::var(&mut cx, "quotient_alias");
+    let alias_is_quotient = SymBoolExpr::eq(&mut cx, alias.clone(), quotient.clone());
+    let alias_is_five = SymBoolExpr::eq(&mut cx, alias, five);
+    let threshold = SymExpr::var(&mut cx, "threshold");
+    let reversed = SymBoolExpr::cmp(&mut cx, SymCmpOp::Uge, quotient.clone(), threshold.clone());
+    let less_than = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, quotient, threshold);
+    let negated = less_than.not(&mut cx);
+    for comparison in [reversed, negated] {
+        let conjunction = SymBoolExpr::and(
+            &mut cx,
+            vec![comparison, alias_is_quotient.clone(), alias_is_five.clone()],
+        );
+        let constraints = vec![conjunction];
+        assert!(constraints.iter().any(|constraint| !constraint.eval_model(&model).unwrap()));
+
+        let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
+        assert!(normalized.iter().any(|constraint| !constraint.eval_model(&model).unwrap()));
+    }
+}
+
+#[test]
 fn solver_normalizes_constraint_batches_by_flattening_and_deduping() {
     let mut cx = SymCx::new();
     let x = SymExpr::var(&mut cx, "x");
@@ -4777,6 +5169,26 @@ fn gasleft_fails_at_smt_emission() {
     let stats = solver.stats();
     assert_eq!(stats.solver_queries, 1);
     assert_eq!(stats.smt_queries, 1);
+    assert_eq!(counted_solver_invocations(&marker), 0);
+    let _ = std::fs::remove_file(&marker);
+}
+
+#[cfg(unix)]
+#[test]
+fn gasleft_model_fails_closed() {
+    let mut cx = SymCx::new();
+    let marker = portfolio_test_marker("gasleft-model");
+    let commands = vec![counted_solver_command(&marker, "sat")];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
+    let gas = SymExpr::gas_left(&mut cx, 0);
+    let limit = SymExpr::constant(&mut cx, U256::from(10));
+    let constraints = vec![SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, gas, limit)];
+
+    let err = solver.model(&mut cx, &constraints).unwrap_err();
+    assert!(matches!(err, SymbolicError::Unsupported("GAS/gasleft() not modeled")));
+
+    let stats = solver.stats();
+    assert_eq!(stats.smt_queries, 0);
     assert_eq!(counted_solver_invocations(&marker), 0);
     let _ = std::fs::remove_file(&marker);
 }

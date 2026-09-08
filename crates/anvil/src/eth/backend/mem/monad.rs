@@ -39,8 +39,9 @@ use foundry_evm::{
     core::{
         FoundryChain, FromAnyRpcTransaction,
         evm::{
-            EvmEnvFor, FoundryEvmFactory, MonadBlockParticipants, MonadEvmNetwork,
-            monad_block_participants, monad_context_from_participants, protocol_system_call,
+            EvmEnvFor, MonadBlockParticipants, MonadEvmNetwork, monad_block_participants,
+            monad_context_from_participants, protocol_system_call,
+            try_transact_monad_system_replay,
         },
     },
     hardfork::FoundryHardfork,
@@ -367,8 +368,7 @@ impl<N: Network> Backend<N> {
                 executor.execute_transaction_without_commit_with(
                     (tx_env, recovered),
                     |evm, tx_env, transaction_hash| {
-                        MonadEvmFactory::default()
-                            .try_transact_system_replay(evm, &tx_env)
+                        try_transact_monad_system_replay(evm, &tx_env)
                             .map_err(|err| {
                                 BlockExecutionError::msg(format!(
                                     "failed to replay Monad transaction {transaction_hash}: {err}"
@@ -435,8 +435,7 @@ impl<N: Network> Backend<N> {
             inspector_tx_config,
             |evm, tx_env, _transaction_hash| {
                 prepare_transaction(evm, &tx_env);
-                let result = match MonadEvmFactory::default()
-                    .try_transact_system_replay(evm, &tx_env)
+                let result = match try_transact_monad_system_replay(evm, &tx_env)
                     .map_err(BlockExecutionError::msg)
                 {
                     Ok(Some(result)) => Ok(result),
@@ -742,7 +741,7 @@ impl<N: Network> Backend<N> {
         match execution.kind {
             EnvelopeExecutionKind::Transaction => Ok(evm.transact(tx_env)?),
             EnvelopeExecutionKind::Replay => {
-                if let Some(result) = factory.try_transact_system_replay(&mut evm, &tx_env)? {
+                if let Some(result) = try_transact_monad_system_replay(&mut evm, &tx_env)? {
                     Ok(result)
                 } else {
                     Ok(evm.transact(tx_env)?)

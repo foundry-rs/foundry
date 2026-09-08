@@ -69,6 +69,10 @@ contract MixedCaseTest {
     // ERC is, by default, an allowed infix
     function rescueERC6909(address token, address to, uint256 tokenId, uint256 amount) public {}
     function ERC20DoSomething() public {}
+    function _rescueERC20() public {} // a preserved leading underscore keeps the exception
+    function rescueERC20_() public {} // a preserved trailing underscore keeps the exception
+    function __rescueERC20() public {} //~NOTE: function names should use mixedCase
+    function rescueERC20__() public {} //~NOTE: function names should use mixedCase
     function ERC20_DoSomething() public {} // invalid because of the underscore
     //~^NOTE: function names should use mixedCase
 
@@ -92,4 +96,16 @@ contract MixedCaseTest {
     function HAS_NO_RETURN() external view {} //~NOTE: function names should use mixedCase
     function HAS_MORE_THAN_ONE_RETURN() external view returns (uint256, uint256) {} //~NOTE: function names should use mixedCase
     function NOT_ELEMENTARY_RETURN() external view returns (uint256[] memory) {} //~NOTE: function names should use mixedCase
+}
+
+contract PublicConstantGetters {
+    bytes32 private separator;
+
+    // Public getters follow the same naming convention as external getters.
+    function DOMAIN_SEPARATOR() public view returns (bytes32) { return separator; }
+    function PUBLIC_CUSTOM_TYPE() public view returns (IERC20) { return IERC20(address(0)); }
+
+    function PUBLIC_WITH_PARAM(uint256 value) public view returns (uint256) { return value; } //~NOTE: function names should use mixedCase
+    function INTERNAL_GETTER() internal view returns (bytes32) { return separator; } //~NOTE: function names should use mixedCase
+    function PUBLIC_MUTATOR() public returns (bytes32) { separator = bytes32(uint256(1)); return separator; } //~NOTE: function names should use mixedCase
 }

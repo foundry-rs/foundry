@@ -113,41 +113,29 @@ impl FoundryEvmFactory for BaseEvmFactory {
 
     type FoundryEvm<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>> = BaseRevmEvm<'db, I>;
 
-    fn create_evm_with_context<DB: alloy_evm::Database>(
-        &self,
-        db: DB,
-        evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        chain_context: Self::Chain,
-    ) -> Self::Evm<DB, revm::inspector::NoOpInspector> {
-        let factory = base_factory_for_env(*self, &evm_env);
-        let mut evm = factory.create_evm(db, evm_env);
-        evm.ctx_mut().chain = chain_context;
-        evm
-    }
-
     fn create_foundry_evm_with_inspector<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>>(
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        chain_context: Self::Chain,
         inspector: I,
     ) -> Self::FoundryEvm<'db, I> {
         let factory = base_factory_for_env(*self, &evm_env);
         let mut base_evm = factory.create_evm_with_inspector(db, evm_env, inspector);
-        base_evm.ctx_mut().chain = chain_context;
         base_evm.ctx_mut().cfg.tx_chain_id_check = true;
         plant_code_sentinels(&mut base_evm);
         base_evm
     }
 
-    fn create_foundry_nested_evm<'db>(
+    fn create_nested_evm_with_inspector<'db, I>(
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        chain_context: Self::Chain,
-        inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
-    ) -> NestedEvmFor<'db, Self> {
-        Box::new(self.create_foundry_evm_with_inspector(db, evm_env, chain_context, inspector))
+        inspector: I,
+    ) -> NestedEvmFor<'db, Self>
+    where
+        I: FoundryInspectorExt<Self::FoundryContext<'db>> + 'db,
+    {
+        Box::new(self.create_foundry_evm_with_inspector(db, evm_env, inspector))
     }
 }
 
@@ -186,6 +174,10 @@ impl<'db, I: FoundryInspectorExt<BaseContext<&'db mut dyn DatabaseExt<BaseEvmFac
 
     fn journal_mut(&mut self) -> &mut Self::Journal {
         &mut self.ctx_mut().journaled_state
+    }
+
+    fn precompiles_mut(&mut self) -> &mut PrecompilesMap {
+        Evm::precompiles_mut(self)
     }
 
     fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>> {

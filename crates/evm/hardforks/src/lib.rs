@@ -714,11 +714,11 @@ mod tests {
     fn test_tempo_hardfork_from_chain_and_timestamp() {
         assert_eq!(
             FoundryHardfork::from_chain_and_timestamp(4217, u64::MAX),
-            Some(FoundryHardfork::Tempo(TempoHardfork::T10))
+            Some(FoundryHardfork::Tempo(TempoHardfork::T11))
         );
         assert_eq!(
             FoundryHardfork::from_chain_and_timestamp(42431, u64::MAX),
-            Some(FoundryHardfork::Tempo(TempoHardfork::T10))
+            Some(FoundryHardfork::Tempo(TempoHardfork::T11))
         );
 
         assert_eq!(
@@ -857,6 +857,8 @@ mod tests {
         assert_eq!(evm_spec_id_from_str::<TempoHardfork>("tempo:T2"), Some(TempoHardfork::T2));
         assert_eq!(evm_spec_id_from_str::<TempoHardfork>("tempo:T7"), Some(TempoHardfork::T7));
         assert_eq!(evm_spec_id_from_str::<TempoHardfork>("tempo:T8"), Some(TempoHardfork::T8));
+        assert_eq!(evm_spec_id_from_str::<TempoHardfork>("tempo:T13"), Some(TempoHardfork::T13));
+        assert_eq!(evm_spec_id_from_str::<TempoHardfork>("T13"), Some(TempoHardfork::T13));
         assert_eq!(evm_spec_id_from_str::<TempoHardfork>("ethereum:prague"), None);
 
         #[cfg(feature = "monad")]

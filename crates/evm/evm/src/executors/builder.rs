@@ -105,8 +105,8 @@ impl<FEN: FoundryEvmNetwork> ExecutorBuilder<FEN> {
         mut evm_env: EvmEnvFor<FEN>,
         tx_env: TxEnvFor<FEN>,
         db: Backend<FEN>,
-        // TODO(monad-fen-dispatch): Remove this argument after inspector inputs and backend fork
-        // behavior are resolved by the initial concrete FEN dispatch.
+        // TODO(monad-fen-lifecycle): Remove this argument after the backend's Monad fork-position
+        // migration and the inspector's separate Celo configuration cleanup are complete.
         networks: NetworkConfigs,
     ) -> Executor<FEN> {
         let Self { mut stack, gas_limit, spec, legacy_assertions, .. } = self;

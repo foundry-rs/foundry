@@ -52,6 +52,8 @@ rayon.workspace = true
 regex = { workspace = true, default-features = false }
 serde_json.workspace = true
 serde.workspace = true
+semver.workspace = true
+soldeer-commands.workspace = true
 toml.workspace = true
 strsim = "0.11"
 tokio = { workspace = true, features = ["macros"] }
@@ -61,7 +63,7 @@ yansi.workspace = true
 rustls = { workspace = true, features = ["ring"] }
 dunce.workspace = true
 
-tracing-tracy = { version = "0.11", optional = true, features = ["demangle"] }
+tracing-tracy = { version = "0.12", optional = true, features = ["demangle"] }
 
 [dev-dependencies]
 tempfile.workspace = true

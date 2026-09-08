@@ -48,6 +48,9 @@ contract TestVaultAsset {
 
 contract TestVault {
     TestVaultAsset public immutable underlying;
+    string public name = "Test Vault";
+    string public symbol = "TV";
+    uint8 public decimals = 18;
     uint256 public totalSupply;
 
     mapping(address => uint256) public balanceOf;
@@ -169,5 +172,90 @@ contract TestVault {
             require(allowed >= shares, "Insufficient allowance");
             allowance[owner][msg.sender] = allowed - shares;
         }
+    }
+}
+
+contract TestAsyncVault {
+    uint256 public totalSupply;
+
+    mapping(address => uint256) public balanceOf;
+    mapping(address => mapping(address => uint256)) public allowance;
+
+    function name() external pure virtual returns (string memory) {
+        return "Test Async Vault";
+    }
+
+    function symbol() external pure virtual returns (string memory) {
+        return "TAV";
+    }
+
+    function decimals() external pure virtual returns (uint8) {
+        return 18;
+    }
+
+    function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
+        return interfaceId == 0xce3bbe50 || interfaceId == 0x620ee8e4;
+    }
+
+    function asset() external pure returns (address) {
+        return 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
+    }
+
+    function totalAssets() external pure returns (uint256) {
+        return 1 ether;
+    }
+
+    function convertToShares(uint256 assets) external pure returns (uint256) {
+        return assets;
+    }
+
+    function convertToAssets(uint256 shares) external pure returns (uint256) {
+        return shares;
+    }
+
+    function maxDeposit(address) external pure returns (uint256) {
+        return 0;
+    }
+
+    function previewDeposit(uint256) external pure returns (uint256) {
+        revert("ERC-7540 async deposit");
+    }
+
+    function maxMint(address) external pure returns (uint256) {
+        return 0;
+    }
+
+    function previewMint(uint256) external pure returns (uint256) {
+        revert("ERC-7540 async deposit");
+    }
+
+    function maxWithdraw(address) external pure returns (uint256) {
+        return 0;
+    }
+
+    function previewWithdraw(uint256) external pure returns (uint256) {
+        revert("ERC-7540 async redeem");
+    }
+
+    function maxRedeem(address) external pure returns (uint256) {
+        return 0;
+    }
+
+    function previewRedeem(uint256) external pure returns (uint256) {
+        revert("ERC-7540 async redeem");
+    }
+}
+
+contract TestMissingMetadataVault is TestAsyncVault {
+    function name() external pure override returns (string memory) {
+        revert();
+    }
+
+    function symbol() external pure override returns (string memory) {
+        revert();
+    }
+
+    function decimals() external pure override returns (uint8) {
+        revert();
     }
 }

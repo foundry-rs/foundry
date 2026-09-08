@@ -115,7 +115,7 @@ pub enum EthRequest {
     EthCoinbase(()),
 
     #[serde(rename = "eth_getBalance")]
-    EthGetBalance(Address, Option<BlockId>),
+    EthGetBalance(Address, #[serde(default)] Option<BlockId>),
 
     #[serde(rename = "eth_getAccount")]
     EthGetAccount(Address, Option<BlockId>),
@@ -124,11 +124,11 @@ pub enum EthRequest {
     EthGetAccountInfo(Address, Option<BlockId>),
 
     #[serde(rename = "eth_getStorageAt")]
-    EthGetStorageAt(Address, U256, Option<BlockId>),
+    EthGetStorageAt(Address, U256, #[serde(default)] Option<BlockId>),
 
     /// Returns storage values for multiple accounts and slots in a single call.
     #[serde(rename = "eth_getStorageValues")]
-    EthGetStorageValues(HashMap<Address, Vec<B256>>, Option<BlockId>),
+    EthGetStorageValues(HashMap<Address, Vec<B256>>, #[serde(default)] Option<BlockId>),
 
     #[serde(rename = "eth_getBlockByHash")]
     EthGetBlockByHash(B256, bool),
@@ -169,7 +169,7 @@ pub enum EthRequest {
 
     #[cfg(not(feature = "base"))]
     #[serde(rename = "eth_getTransactionCount")]
-    EthGetTransactionCount(Address, Option<BlockId>),
+    EthGetTransactionCount(Address, #[serde(default)] Option<BlockId>),
 
     #[serde(rename = "eth_getBlockTransactionCountByHash", with = "sequence")]
     EthGetTransactionCountByHash(B256),
@@ -190,12 +190,12 @@ pub enum EthRequest {
     EthGetUnclesCountByNumber(BlockNumber),
 
     #[serde(rename = "eth_getCode")]
-    EthGetCodeAt(Address, Option<BlockId>),
+    EthGetCodeAt(Address, #[serde(default)] Option<BlockId>),
 
     /// Returns the account and storage values of the specified account including the Merkle-proof.
     /// This call can be used to verify that the data you are pulling from is not tampered with.
     #[serde(rename = "eth_getProof")]
-    EthGetProof(Address, Vec<B256>, Option<BlockId>),
+    EthGetProof(Address, Vec<B256>, #[serde(default)] Option<BlockId>),
 
     /// The sign method calculates an Ethereum specific signature with:
     #[serde(rename = "eth_sign")]
@@ -2105,6 +2105,45 @@ true}]}"#;
 ["0x295a70b2de5e3953354a6a8344e616ed314d7251", "0x0", "latest"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_serde_state_requests_without_block() {
+        let requests = [
+            r#"{"method":"eth_getBalance","params":["0x295a70b2de5e3953354a6a8344e616ed314d7251"]}"#,
+            r#"{"method":"eth_getCode","params":["0x295a70b2de5e3953354a6a8344e616ed314d7251"]}"#,
+            r#"{"method":"eth_getStorageAt","params":["0x295a70b2de5e3953354a6a8344e616ed314d7251","0x0"]}"#,
+            r#"{"method":"eth_getStorageValues","params":[{"0x295a70b2de5e3953354a6a8344e616ed314d7251":["0x0000000000000000000000000000000000000000000000000000000000000000"]}]}"#,
+            r#"{"method":"eth_getTransactionCount","params":["0x295a70b2de5e3953354a6a8344e616ed314d7251"]}"#,
+            r#"{"method":"eth_getProof","params":["0x295a70b2de5e3953354a6a8344e616ed314d7251",[]]}"#,
+        ];
+
+        for request in requests {
+            #[cfg(not(feature = "base"))]
+            if let EthRequest::EthGetTransactionCount(_, block) =
+                serde_json::from_str::<EthRequest>(request).unwrap()
+            {
+                assert!(block.is_none());
+                continue;
+            }
+            #[cfg(feature = "base")]
+            if let EthRequest::EthGetTransactionCount(params) =
+                serde_json::from_str::<EthRequest>(request).unwrap()
+            {
+                let (_, block, nonce_key) = params.into_parts();
+                assert!(block.is_none());
+                assert!(nonce_key.is_none());
+                continue;
+            }
+            assert!(matches!(
+                serde_json::from_str::<EthRequest>(request).unwrap(),
+                EthRequest::EthGetBalance(_, None)
+                    | EthRequest::EthGetCodeAt(_, None)
+                    | EthRequest::EthGetStorageAt(_, _, None)
+                    | EthRequest::EthGetStorageValues(_, None)
+                    | EthRequest::EthGetProof(_, _, None)
+            ));
+        }
     }
 
     #[test]

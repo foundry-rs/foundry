@@ -36,7 +36,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "1.8.1"
+version = "1.8.2"
 edition = "2024"
 rust-version = "1.89"
 authors = ["Foundry Contributors"]
@@ -298,9 +298,6 @@ alloy-json-abi.opt-level = "s"
 
 [workspace.dependencies]
 anvil = { path = "crates/anvil", default-features = false }
-cast = { path = "crates/cast", default-features = false }
-chisel = { path = "crates/chisel", default-features = false }
-forge = { path = "crates/forge", default-features = false }
 
 forge-doc = { path = "crates/doc", default-features = false }
 forge-fmt = { path = "crates/fmt", default-features = false }
@@ -346,7 +343,7 @@ solar = { package = "solar-compiler", version = "=0.2.0", default-features = fal
 solar-cli = { version = "=0.2.0", default-features = false }
 solar-lsp = { version = "=0.2.0", default-features = false }
 solar-lint = { version = "=0.2.0", default-features = false }
-svm = { package = "svm-rs", version = "0.5", default-features = false, features = [
+svm = { package = "svm-rs", version = "0.5.27", default-features = false, features = [
     "rustls",
 ] }
 
@@ -369,14 +366,8 @@ alloy-rpc-types-eth = { version = "2.4.0", default-features = false }
 alloy-rpc-types-mev = { version = "2.4.0", default-features = false }
 alloy-serde = { version = "2.4.0", default-features = false }
 alloy-signer = { version = "2.4.0", default-features = false }
-alloy-signer-aws = { version = "2.4.0", default-features = false }
-alloy-signer-gcp = { version = "2.4.0", default-features = false }
-alloy-signer-ledger = { version = "2.4.0", default-features = false }
 alloy-signer-local = { version = "2.4.0", default-features = false }
-alloy-signer-trezor = { version = "2.4.0", default-features = false }
-alloy-signer-turnkey = { version = "2.4.0", default-features = false }
 alloy-transport = { version = "2.4.0", default-features = false }
-alloy-transport-http = { version = "2.4.0", default-features = false }
 alloy-transport-ipc = { version = "2.4.0", default-features = false }
 alloy-transport-ws = { version = "2.4.0", default-features = false }
 alloy-hardforks = { version = "0.4.8", default-features = false }
@@ -490,12 +481,11 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["arbitrary_precision"] }
 shlex = "2"
 similar-asserts = "2.0"
-soldeer-commands = "=0.11.0"
-soldeer-core = { version = "=0.11.0", features = ["serde"] }
+soldeer-commands = "=0.12.0"
+soldeer-core = { version = "=0.12.0", features = ["serde"] }
 strum = "0.28"
 tempfile = "3.23"
 tokio = "1"
-tokio-tungstenite = { version = "0.29", features = ["rustls-tls-webpki-roots"] }
 toml = "1.1"
 toml_edit = "0.25"
 tower = "0.5"
@@ -529,20 +519,20 @@ mpp = { git = "https://github.com/tempoxyz/mpp-rs", rev = "965692a8a5457896b2269
     "reqwest-rustls-tls",
     "ws",
 ] }
-tempo-hardfork = { git = "https://github.com/tempoxyz/tempo", rev = "5e149ec51a30386b0c0fa8376ba02508d4e21b5d", default-features = false, features = [
+tempo-hardfork = { git = "https://github.com/tempoxyz/tempo", rev = "3f1b3f2b122f7cb8e14fe9863b87e4609c76e7d0", default-features = false, features = [
     "serde",
     "std",
 ] }
-tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "5e149ec51a30386b0c0fa8376ba02508d4e21b5d", default-features = false, features = [
+tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "3f1b3f2b122f7cb8e14fe9863b87e4609c76e7d0", default-features = false, features = [
     "serde",
 ] }
-tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "5e149ec51a30386b0c0fa8376ba02508d4e21b5d", default-features = false }
-tempo-evm = { git = "https://github.com/tempoxyz/tempo", rev = "5e149ec51a30386b0c0fa8376ba02508d4e21b5d", default-features = false }
-tempo-revm = { git = "https://github.com/tempoxyz/tempo", rev = "5e149ec51a30386b0c0fa8376ba02508d4e21b5d", default-features = false, features = [
+tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "3f1b3f2b122f7cb8e14fe9863b87e4609c76e7d0", default-features = false }
+tempo-evm = { git = "https://github.com/tempoxyz/tempo", rev = "3f1b3f2b122f7cb8e14fe9863b87e4609c76e7d0", default-features = false }
+tempo-revm = { git = "https://github.com/tempoxyz/tempo", rev = "3f1b3f2b122f7cb8e14fe9863b87e4609c76e7d0", default-features = false, features = [
     "serde",
 ] }
-tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "5e149ec51a30386b0c0fa8376ba02508d4e21b5d" }
-tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "5e149ec51a30386b0c0fa8376ba02508d4e21b5d" }
+tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "3f1b3f2b122f7cb8e14fe9863b87e4609c76e7d0" }
+tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "3f1b3f2b122f7cb8e14fe9863b87e4609c76e7d0" }
 
 # Monad
 alloy-monad-evm = { version = "0.7.0", default-features = false, features = [
@@ -576,16 +566,16 @@ snapbox = { version = "1.2", features = ["json", "regex", "term-svg"] }
 idna_adapter = "=1.1.0"
 
 [patch.crates-io]
-solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "0b8a4f83b3831e8a82bc7008788f85bc7bb80062" }
-solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "0b8a4f83b3831e8a82bc7008788f85bc7bb80062" }
-solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "0b8a4f83b3831e8a82bc7008788f85bc7bb80062" }
-solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "0b8a4f83b3831e8a82bc7008788f85bc7bb80062" }
+solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "8d73a1e1fd53980a7f4ae020c821fb92f025616a" }
+solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "8d73a1e1fd53980a7f4ae020c821fb92f025616a" }
+solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "8d73a1e1fd53980a7f4ae020c821fb92f025616a" }
+solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "8d73a1e1fd53980a7f4ae020c821fb92f025616a" }
 
 ## foundry-core
-foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "6ce81d5c491121c22b3912fb91455d4f2875439e" }
-foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "6ce81d5c491121c22b3912fb91455d4f2875439e" }
-foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", rev = "6ce81d5c491121c22b3912fb91455d4f2875439e" }
-foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "6ce81d5c491121c22b3912fb91455d4f2875439e" }
+foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "4afd49526c95bc5abc60fcd4767a6212bea03fed" }
+foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "4afd49526c95bc5abc60fcd4767a6212bea03fed" }
+foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", rev = "4afd49526c95bc5abc60fcd4767a6212bea03fed" }
+foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "4afd49526c95bc5abc60fcd4767a6212bea03fed" }
 
 ## alloy-core
 # alloy-dyn-abi = { path = "../../alloy-rs/core/crates/dyn-abi" }
@@ -644,9 +634,9 @@ op-alloy-rpc-types = { git = "https://github.com/foundry-rs/optimism", rev = "56
 alloy-op-hardforks = { git = "https://github.com/foundry-rs/optimism", rev = "566d19ee21aef0b1235c028bd1a4a98eacb95753" }
 
 ## tempo — unify crates.io versions (pulled by mpp/foundry-wallets) with git rev
-tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "5e149ec51a30386b0c0fa8376ba02508d4e21b5d" }
-tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "5e149ec51a30386b0c0fa8376ba02508d4e21b5d" }
-tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "5e149ec51a30386b0c0fa8376ba02508d4e21b5d" }
+tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "3f1b3f2b122f7cb8e14fe9863b87e4609c76e7d0" }
+tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "3f1b3f2b122f7cb8e14fe9863b87e4609c76e7d0" }
+tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "3f1b3f2b122f7cb8e14fe9863b87e4609c76e7d0" }
 
 [workspace.metadata.cargo-shear]
 ignored = ["idna_adapter", "cast", "chisel", "forge", "alloy-contract"]
