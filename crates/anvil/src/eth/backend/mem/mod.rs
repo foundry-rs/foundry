@@ -977,6 +977,11 @@ pub struct Backend<N: Network> {
     startup_fork_cache_user: StagedForkDbUser<Box<dyn Db>>,
 }
 
+/// Proof that block production is locked for a composed backend operation.
+pub(crate) struct MiningGuard {
+    _guard: tokio::sync::OwnedMutexGuard<()>,
+}
+
 impl<N: Network> Clone for Backend<N> {
     fn clone(&self) -> Self {
         Self {
@@ -1058,8 +1063,8 @@ impl<N: Network> Backend<N> {
     }
 
     /// Locks block production while a backend-wide lifecycle transition is committed.
-    pub(crate) async fn lock_mining(&self) -> tokio::sync::MutexGuard<'_, ()> {
-        self.mining.lock().await
+    pub(crate) async fn lock_mining(&self) -> MiningGuard {
+        MiningGuard { _guard: self.mining.clone().lock_owned().await }
     }
 
     /// Returns the `AccountInfo` from the database
@@ -5020,6 +5025,15 @@ where
         &self,
         pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
     ) -> Result<MinedBlockOutcome<FoundryTxEnvelope>, BlockchainError> {
+        let mining_guard = self.lock_mining().await;
+        self.mine_block_with_guard(pool_transactions, &mining_guard).await
+    }
+
+    pub(crate) async fn mine_block_with_guard(
+        &self,
+        pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
+        _mining_guard: &MiningGuard,
+    ) -> Result<MinedBlockOutcome<FoundryTxEnvelope>, BlockchainError> {
         self.do_mine_block(pool_transactions).await
     }
 
@@ -5394,7 +5408,6 @@ where
         &self,
         pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
     ) -> Result<MinedBlockOutcome<FoundryTxEnvelope>, BlockchainError> {
-        let _mining_guard = self.mining.lock().await;
         trace!(target: "backend", "creating new block with {} transactions", pool_transactions.len());
 
         let (outcome, header, block_hash) = {
@@ -5652,11 +5665,22 @@ where
         tx_pairs: HashMap<u64, Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>>,
         common_block: Block,
     ) -> Result<(), BlockchainError> {
-        self.rollback(common_block).await?;
+        let mining_guard = self.lock_mining().await;
+        self.reorg_with_guard(depth, tx_pairs, common_block, &mining_guard).await
+    }
+
+    pub(crate) async fn reorg_with_guard(
+        &self,
+        depth: u64,
+        tx_pairs: HashMap<u64, Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>>,
+        common_block: Block,
+        mining_guard: &MiningGuard,
+    ) -> Result<(), BlockchainError> {
+        self.rollback_with_guard(common_block, mining_guard).await?;
         // Create the new reorged chain, filling the blocks with transactions if supplied
         for i in 0..depth {
             let to_be_mined = tx_pairs.get(&i).cloned().unwrap_or_else(Vec::new);
-            let outcome = self.do_mine_block(to_be_mined).await?;
+            let outcome = self.mine_block_with_guard(to_be_mined, mining_guard).await?;
             node_info!(
                 "    Mined reorg block number {}. With {} valid txs and with invalid {} txs",
                 outcome.block_number,
@@ -6825,13 +6849,15 @@ where
     /// The state of the chain is rewound using `rewind` to the common block, including the db,
     /// storage, and env.
     pub async fn rollback(&self, common_block: Block) -> Result<(), BlockchainError> {
-        // Hold the same lock `do_mine_block` takes so a rollback can never interleave with an
-        // in-flight mine: without this, a concurrent multi-block mine (e.g. `evm_mine_detailed`)
-        // can have a block it just mined vanish out from under it mid-loop, surfacing as a
-        // confusing `BlockNotFound` (or, if the height read happens to land after the unwind,
-        // an out-of-range block number) instead of either running to completion or failing
-        // cleanly up front.
-        let _mining_guard = self.mining.lock().await;
+        let mining_guard = self.lock_mining().await;
+        self.rollback_with_guard(common_block, &mining_guard).await
+    }
+
+    pub(crate) async fn rollback_with_guard(
+        &self,
+        common_block: Block,
+        _mining_guard: &MiningGuard,
+    ) -> Result<(), BlockchainError> {
         let hash = common_block.header.hash_slow();
 
         // Get the database at the common block
