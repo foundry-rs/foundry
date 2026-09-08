@@ -1,11 +1,13 @@
+use super::clone::dump_verified_sources;
 use alloy_json_abi::{Event, EventParam, InternalType, JsonAbi, Param};
+use alloy_primitives::Address;
 use clap::Parser;
 use comfy_table::{
     Cell, Table,
     presets::{ASCII_FULL, ASCII_MARKDOWN},
 };
 use eyre::{Result, eyre};
-use foundry_cli::opts::{BuildOpts, CompilerOpts};
+use foundry_cli::opts::{BuildOpts, CompilerOpts, EtherscanOpts};
 use foundry_common::{
     compile::{PathOrContractInfo, ProjectCompiler},
     find_matching_contract_artifact, find_target_path, shell,
@@ -27,12 +29,35 @@ use serde_json::{Map, Value};
 use solar::sema::interface::source_map::FileName;
 use std::{collections::BTreeMap, fmt, ops::ControlFlow, path::Path, str::FromStr, sync::LazyLock};
 
+/// The contract to inspect: either one in the current project, or a verified contract on chain.
+#[derive(Clone, Debug)]
+pub enum InspectTarget {
+    /// A contract in the current project, as `(<path>:)?<contractname>`.
+    Local(PathOrContractInfo),
+    /// A verified contract deployed at this address, on the chain given by `--chain`.
+    OnChain(Address),
+}
+
+impl FromStr for InspectTarget {
+    type Err = eyre::Report;
+
+    fn from_str(s: &str) -> Result<Self> {
+        // An address is never a valid contract identifier, so it unambiguously selects an
+        // on-chain target.
+        if let Ok(address) = Address::from_str(s) {
+            return Ok(Self::OnChain(address));
+        }
+        PathOrContractInfo::from_str(s).map(Self::Local)
+    }
+}
+
 /// CLI arguments for `forge inspect`.
 #[derive(Clone, Debug, Parser)]
 pub struct InspectArgs {
-    /// The identifier of the contract to inspect in the form `(<path>:)?<contractname>`.
-    #[arg(value_parser = PathOrContractInfo::from_str)]
-    pub contract: PathOrContractInfo,
+    /// The contract to inspect, either as `(<path>:)?<contractname>` in the current project, or as
+    /// the address of a verified contract on the chain given by `--chain`.
+    #[arg(value_parser = InspectTarget::from_str)]
+    pub contract: InspectTarget,
 
     /// The contract artifact field to inspect.
     #[arg(value_enum)]
@@ -41,6 +66,14 @@ pub struct InspectArgs {
     /// All build arguments are supported
     #[command(flatten)]
     build: BuildOpts,
+
+    /// Block explorer options, used to fetch the sources of an on-chain contract.
+    #[command(flatten)]
+    etherscan: EtherscanOpts,
+
+    /// Inspect the implementation contract if the target address is a proxy.
+    #[arg(long)]
+    pub implementation: bool,
 
     /// Whether to remove comments when inspecting `ir` and `irOptimized` artifact fields.
     #[arg(long, short, help_heading = "Display options")]
@@ -52,8 +85,60 @@ pub struct InspectArgs {
 }
 
 impl InspectArgs {
-    pub fn run(self) -> Result<()> {
-        let Self { contract, field, build, strip_yul_comments, wrap } = self;
+    pub async fn run(self) -> Result<()> {
+        let Self {
+            contract,
+            field,
+            mut build,
+            strip_yul_comments,
+            wrap,
+            etherscan,
+            implementation,
+        } = self;
+
+        // An on-chain contract is downloaded into a throwaway project, which then takes exactly
+        // the same compile-and-inspect path as a local one. The directory is held until the end
+        // of the command so it outlives the compilation.
+        let (contract, _tmp_project) = match contract {
+            InspectTarget::Local(contract) => {
+                eyre::ensure!(
+                    !implementation,
+                    "--implementation is only supported when inspecting an on-chain contract by \
+                     address"
+                );
+                (contract, None)
+            }
+            InspectTarget::OnChain(address) => {
+                eyre::ensure!(
+                    build.project_paths.root.is_none(),
+                    "--root is not supported when inspecting an on-chain contract; the sources \
+                     are fetched into a temporary project"
+                );
+                let tmp = tempfile::tempdir()?;
+                let meta =
+                    dump_verified_sources(address, tmp.path(), &etherscan, implementation).await?;
+                if !implementation
+                    && meta.proxy != 0
+                    && let Some(impl_addr) = meta.implementation
+                {
+                    sh_warn!(
+                        "{address} is a proxy; pass --implementation to inspect its \
+                         implementation at {impl_addr}"
+                    )?;
+                }
+                if field == ContractArtifactField::StorageLayout
+                    && let Ok(version) = meta.compiler_version()
+                    && version < semver::Version::new(0, 5, 13)
+                {
+                    sh_warn!(
+                        "the contract was verified with solc {version}, which does not emit \
+                         storage layouts; the layout will be empty"
+                    )?;
+                }
+                build.project_paths.root = Some(tmp.path().to_path_buf());
+                (PathOrContractInfo::from_str(&meta.contract_name)?, Some(tmp))
+            }
+        };
 
         trace!(target: "forge", ?field, ?contract, "running forge inspect");
 
@@ -881,6 +966,24 @@ mod tests {
                     assert_eq!(alias.parse::<ContractArtifactField>().unwrap(), field);
                 }
             }
+        }
+    }
+
+    // An address selects the on-chain target; anything else stays a local contract identifier,
+    // including names and paths that merely look hex-ish.
+    #[test]
+    fn parse_inspect_target() {
+        let address = "0x35Fb958109b70799a8f9Bc2a8b1Ee4cC62034193";
+        assert!(matches!(
+            InspectTarget::from_str(address).unwrap(),
+            InspectTarget::OnChain(parsed) if parsed == Address::from_str(address).unwrap()
+        ));
+
+        for local in ["Counter", "src/Counter.sol:Counter", "0xContract"] {
+            assert!(
+                matches!(InspectTarget::from_str(local).unwrap(), InspectTarget::Local(_)),
+                "{local} should be a local target"
+            );
         }
     }
 }
