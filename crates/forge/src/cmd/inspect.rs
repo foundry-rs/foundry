@@ -1,3 +1,4 @@
+use self::erc7201::StorageNamespace;
 use alloy_json_abi::{Event, EventParam, InternalType, JsonAbi, Param};
 use clap::Parser;
 use comfy_table::{
@@ -23,13 +24,14 @@ use foundry_compilers::{
         },
     },
     solc::SolcLanguage,
-    storage_layout::StorageNamespace,
 };
 use path_slash::PathExt;
 use regex::Regex;
 use serde_json::{Map, Value};
 use solar::sema::interface::source_map::FileName;
 use std::{collections::BTreeMap, fmt, ops::ControlFlow, path::Path, str::FromStr, sync::LazyLock};
+
+mod erc7201;
 
 /// CLI arguments for `forge inspect`.
 #[derive(Clone, Debug, Parser)]
@@ -140,10 +142,11 @@ impl InspectArgs {
                 let mut layout =
                     artifact.storage_layout.ok_or_else(|| missing_error("storage layout"))?;
                 if is_solidity_source(&target_path) {
-                    let namespaces = output
-                        .parser_mut()
-                        .solc_mut()
-                        .erc7201_storage_layouts(&target_path, contract.name())?;
+                    let namespaces = erc7201::erc7201_storage_layouts(
+                        output.parser_mut().solc_mut().compiler_mut(),
+                        &target_path,
+                        contract.name(),
+                    )?;
                     merge_storage_namespaces(&mut layout, namespaces)?;
                 }
                 print_storage_layout(Some(&layout), "storage layout", wrap)?;
