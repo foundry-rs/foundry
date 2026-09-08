@@ -1365,6 +1365,72 @@ forgetest_async!(can_deploy_and_simulate_25_txes_concurrently, |prj, cmd| {
         .await;
 });
 
+forgetest_async!(broadcast_records_hashes_in_submission_order, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let upstream = handle.http_endpoint();
+    let client = reqwest::Client::new();
+    let submissions = std::sync::Arc::new(AtomicUsize::new(0));
+    let release_first = std::sync::Arc::new(tokio::sync::Notify::new());
+    let app = Router::new().fallback(move |body: BodyBytes| {
+        let upstream = upstream.clone();
+        let client = client.clone();
+        let submissions = submissions.clone();
+        let release_first = release_first.clone();
+        async move {
+            let request: Value = serde_json::from_slice(&body).unwrap();
+            let position = (request["method"] == "eth_sendRawTransaction")
+                .then(|| submissions.fetch_add(1, Ordering::SeqCst));
+            let response = client
+                .post(upstream)
+                .header("content-type", "application/json")
+                .body(body)
+                .send()
+                .await
+                .unwrap()
+                .bytes()
+                .await
+                .unwrap();
+            if position == Some(0) {
+                release_first.notified().await;
+                // Let the later submission's response reach the broadcaster first.
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            } else if position == Some(1) {
+                release_first.notify_one();
+            }
+            response
+        }
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let proxy = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    ScriptTester::new_broadcast(cmd, &endpoint, prj.root())
+        .load_private_keys(&[0])
+        .await
+        .add_sig("BroadcastTestNoLinking", "deployMany()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast);
+    let path = prj.root().join("broadcast/Broadcast.t.sol/31337/deployMany-latest.json");
+    let sequence: ScriptSequence<Ethereum> = foundry_common::fs::read_json_file(&path).unwrap();
+    assert_eq!(sequence.transactions.len(), 25);
+    let client = reqwest::Client::new();
+    for (nonce, transaction) in sequence.transactions.iter().enumerate() {
+        let response: Value = client
+            .post(handle.http_endpoint())
+            .json(&serde_json::json!({
+                "jsonrpc": "2.0", "id": 1, "method": "eth_getTransactionByHash",
+                "params": [transaction.hash.unwrap()]
+            }))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(response["result"]["nonce"], format!("0x{nonce:x}"));
+    }
+    proxy.abort();
+});
+
 forgetest_async!(fork_script_reuses_chain_ids, |prj, cmd| {
     static CHAIN_ID_REQUESTS: AtomicUsize = AtomicUsize::new(0);
     CHAIN_ID_REQUESTS.store(0, Ordering::Relaxed);
