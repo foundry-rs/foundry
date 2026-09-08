@@ -976,14 +976,19 @@ ANVIL_PID=$!
 # Ensure anvil is stopped on script exit
 trap 'kill "$ANVIL_PID" 2>/dev/null || true' EXIT
 
-# Wait for anvil to be ready (max 10 seconds)
-for i in {1..10}; do
-  if cast client --rpc-url "http://127.0.0.1:$ANVIL_PORT" 2>/dev/null; then
+# Fork initialization performs remote RPC calls and can take longer than local startup.
+for i in {1..120}; do
+  if ! kill -0 "$ANVIL_PID" 2>/dev/null; then
+    echo "ERROR: Anvil fork exited before becoming ready"
+    wait "$ANVIL_PID" || true
+    exit 1
+  fi
+  if cast client --rpc-url "http://127.0.0.1:$ANVIL_PORT" --rpc-timeout 2 2>/dev/null; then
     echo "Anvil fork started successfully"
     break
   fi
-  if [[ $i -eq 10 ]]; then
-    echo "ERROR: Anvil fork failed to start"
+  if [[ $i -eq 120 ]]; then
+    echo "ERROR: Anvil fork failed to start after 120 readiness attempts"
     exit 1
   fi
   sleep 1
