@@ -419,11 +419,11 @@ impl PathState {
         self.function_mocks = reverted.function_mocks;
     }
 
-    /// Returns `true` if a successful path can be materialized into a fuzz corpus seed.
+    /// Returns `true` if the path can be materialized into a replayable corpus seed.
     ///
     /// Gas-dependent constraints are never modeled, so a seed for such a path would carry a
     /// fabricated `gasleft()` value; skip the seed rather than failing the whole run.
-    pub(crate) fn can_seed_success_input(&self) -> bool {
+    pub(crate) fn can_materialize_seed(&self) -> bool {
         !self.constraints.iter().any(SymBoolExpr::contains_gasleft)
     }
 

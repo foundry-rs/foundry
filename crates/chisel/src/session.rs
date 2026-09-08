@@ -13,11 +13,12 @@ use time::{OffsetDateTime, format_description};
 /// Rejects a session id that would let `chisel-<id>.json` escape the cache directory when
 /// concatenated into a path (e.g. `../../etc/cron.d/evil`, which yields the literal path
 /// component `chisel-..`, followed by a real `..` component once the id itself contains a `/`).
+/// Also rejects `:` to prevent targeting Windows Alternate Data Streams (ADS).
 fn validate_session_id(id: &str) -> Result<()> {
-    if id.is_empty() || id == "." || id == ".." || id.contains(['/', '\\']) {
+    if id.is_empty() || id == "." || id == ".." || id.contains(['/', '\\', ':']) {
         eyre::bail!(
             "invalid Chisel session id `{id}`: must not be empty, `.`, `..`, or contain a path \
-             separator"
+             separator or `:`"
         );
     }
     Ok(())
@@ -336,11 +337,21 @@ mod tests {
     /// A session id containing a path separator lets `chisel-<id>.json` escape the cache
     /// directory once resolved: `chisel-x/../../../foo.json` has real `..` path components
     /// after the `x` segment, walking back out past the cache directory entirely.
+    /// Also verifies that `:` is rejected to prevent targeting NTFS Alternate Data Streams (ADS).
     #[test]
     fn path_traversal_ids_are_rejected() {
-        for id in
-            ["../evil", "x/../../../../../../tmp/pwned", "..", ".", "", "sub/dir", "back\\slash"]
-        {
+        for id in [
+            "../evil",
+            "x/../../../../../../tmp/pwned",
+            "..",
+            ".",
+            "",
+            "sub/dir",
+            "back\\slash",
+            ":colon",
+            "foo:bar",
+            "session:1",
+        ] {
             let err = validate_session_id(id).unwrap_err();
             assert!(err.to_string().contains("invalid Chisel session id"), "{id:?}: {err}");
         }

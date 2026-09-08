@@ -764,6 +764,14 @@ pub struct TestArgs {
     #[arg(long, env = "FOUNDRY_INVARIANT_CORPUS_DIR", value_name = "PATH", value_hint = ValueHint::DirPath)]
     pub invariant_corpus_dir: Option<PathBuf>,
 
+    /// Directory for invariant branch frontier artifacts.
+    #[arg(long, env = "FOUNDRY_INVARIANT_FRONTIER_DIR", value_name = "PATH", value_hint = ValueHint::DirPath)]
+    pub invariant_frontier_dir: Option<PathBuf>,
+
+    /// Maximum number of invariant branch frontier records to write per campaign.
+    #[arg(long, env = "FOUNDRY_INVARIANT_FRONTIER_LIMIT", value_name = "COUNT")]
+    pub invariant_frontier_limit: Option<usize>,
+
     /// Percent chance that fuzzed payable invariant calls carry non-zero msg.value.
     #[arg(long, env = "FOUNDRY_INVARIANT_PAYABLE_VALUE_WEIGHT", value_name = "PERCENT")]
     pub invariant_payable_value_weight: Option<u32>,
@@ -856,6 +864,10 @@ pub struct TestArgs {
     /// Run targeted symbolic solving from existing fuzz branch frontier artifacts.
     #[arg(long, env = "FOUNDRY_SYMBOLIC_USE_FUZZ_FRONTIERS")]
     pub symbolic_use_fuzz_frontiers: bool,
+
+    /// Check invariants from imported stateful fuzz frontier prefixes before flipping comparisons.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_CHECK_INVARIANT_FRONTIERS")]
+    pub symbolic_check_invariant_frontiers: bool,
 
     /// Maximum number of fuzz branch frontiers to try for one symbolic test.
     #[arg(long, env = "FOUNDRY_SYMBOLIC_FRONTIER_LIMIT", value_name = "COUNT")]
@@ -1281,8 +1293,16 @@ impl TestArgs {
         }
         let unused: &[(bool, &str, &str)] = if fuzz == 0 && invariant > 0 {
             &[
-                (self.fuzz_frontier_dir.is_some(), "--frontier-dir", "fuzz"),
-                (self.fuzz_frontier_limit.is_some(), "--frontier-limit", "fuzz"),
+                (
+                    self.fuzz_frontier_dir.is_some() && self.invariant_frontier_dir.is_none(),
+                    "--frontier-dir",
+                    "fuzz",
+                ),
+                (
+                    self.fuzz_frontier_limit.is_some() && self.invariant_frontier_limit.is_none(),
+                    "--frontier-limit",
+                    "fuzz",
+                ),
                 (self.fuzz_run.is_some(), "--fuzz-run", "fuzz"),
             ]
         } else if invariant == 0 && fuzz > 0 {
@@ -1363,8 +1383,10 @@ impl TestArgs {
             invariant_mutation_weight_abi: campaign.mutation_weight_abi,
             fuzz_mutation_weight_cmp: campaign.mutation_weight_cmp,
             invariant_mutation_weight_cmp: campaign.mutation_weight_cmp,
-            fuzz_frontier_dir: campaign.frontier_dir,
+            fuzz_frontier_dir: campaign.frontier_dir.clone(),
+            invariant_frontier_dir: campaign.frontier_dir,
             fuzz_frontier_limit: campaign.frontier_limit,
+            invariant_frontier_limit: campaign.frontier_limit,
             invariant_depth: campaign.depth,
             invariant_min_depth: campaign.min_depth,
             invariant_depth_mode: campaign.depth_mode,
@@ -3002,6 +3024,8 @@ impl Provider for TestArgs {
             "corpus_random_sequence_weight_configured" =>
                 self.invariant_corpus_random_sequence_weight.map(|_| true),
             "corpus_dir" => path_string(&self.invariant_corpus_dir),
+            "frontier_dir" => path_string(&self.invariant_frontier_dir),
+            "frontier_limit" => self.invariant_frontier_limit,
             "payable_value_weight" => self.invariant_payable_value_weight,
             "timeout" => self.invariant_timeout_override,
             "mutation_weight_splice" => self.invariant_mutation_weight_splice,
@@ -3018,6 +3042,8 @@ impl Provider for TestArgs {
             "use_fuzz_corpus" => self.symbolic_use_fuzz_corpus.then_some(true),
             "corpus_seed_limit" => self.symbolic_corpus_seed_limit,
             "use_fuzz_frontiers" => self.symbolic_use_fuzz_frontiers.then_some(true),
+            "check_invariant_frontiers" =>
+                self.symbolic_check_invariant_frontiers.then_some(true),
             "frontier_limit" => self.symbolic_frontier_limit,
             "frontier_ids" => self.symbolic_frontier_ids.clone(),
             "frontier_pcs" => self.symbolic_frontier_pcs.clone(),
@@ -3605,6 +3631,10 @@ mod tests {
             "7",
             "--workers",
             "2",
+            "--frontier-dir",
+            "frontiers",
+            "--frontier-limit",
+            "17",
         ]);
         let args = TestArgs::from_fuzz_run(args);
         let figment = figment::Figment::from(&args);
@@ -3615,6 +3645,16 @@ mod tests {
         assert_eq!(figment.extract_inner::<u64>("invariant.runs").unwrap(), 9);
         assert_eq!(figment.extract_inner::<u32>("invariant.timeout").unwrap(), 3);
         assert_eq!(figment.extract_inner::<u32>("invariant.depth").unwrap(), 7);
+        assert_eq!(
+            figment.extract_inner::<PathBuf>("fuzz.frontier_dir").unwrap(),
+            PathBuf::from("frontiers")
+        );
+        assert_eq!(figment.extract_inner::<usize>("fuzz.frontier_limit").unwrap(), 17);
+        assert_eq!(
+            figment.extract_inner::<PathBuf>("invariant.frontier_dir").unwrap(),
+            PathBuf::from("frontiers")
+        );
+        assert_eq!(figment.extract_inner::<usize>("invariant.frontier_limit").unwrap(), 17);
         assert_eq!(
             figment.extract_inner::<InvariantWorkers>("invariant.workers").unwrap(),
             InvariantWorkers::Fixed(std::num::NonZeroUsize::new(2).unwrap())
@@ -3781,6 +3821,7 @@ mod tests {
             "--fuzz-mutation-weight-cmp",
             "5",
             "--symbolic-use-fuzz-frontiers",
+            "--symbolic-check-invariant-frontiers",
             "--symbolic-frontier-limit",
             "3",
             "--symbolic-frontier-ids",
@@ -3831,6 +3872,7 @@ mod tests {
         assert_eq!(config.fuzz.corpus.mutation_weights.mutation_weight_abi, 3);
         assert_eq!(config.fuzz.corpus.mutation_weights.mutation_weight_cmp, 5);
         assert!(config.symbolic.use_fuzz_frontiers);
+        assert!(config.symbolic.check_invariant_frontiers);
         assert_eq!(config.symbolic.frontier_limit, 3);
         assert_eq!(config.symbolic.frontier_ids, vec![4, 9]);
         assert_eq!(config.symbolic.frontier_pcs, vec![123, 456]);

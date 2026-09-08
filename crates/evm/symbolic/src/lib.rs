@@ -18,7 +18,7 @@ use base64::prelude::*;
 use foundry_cheatcodes_spec::{SymbolicVm, Vm};
 use foundry_config::{SymbolicConfig, SymbolicExplorationOrder, SymbolicStorageLayout};
 use foundry_evm::{
-    constants::{CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS},
+    constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS},
     core::{backend::DatabaseExt, evm::FoundryEvmNetwork},
     executors::Executor,
     revm::{
@@ -182,6 +182,15 @@ pub struct SymbolicConcreteInput {
     pub calldata: Bytes,
 }
 
+/// Result of best-effort symbolic exploration toward one branch target.
+#[derive(Debug)]
+pub struct SymbolicBranchTargetSearchResult {
+    /// Concrete inputs whose completed root path reached the requested branch outcome.
+    pub candidates: Vec<SymbolicConcreteInput>,
+    /// Underlying execution result, retained so callers can report incomplete exploration.
+    pub execution: SymbolicRunResult,
+}
+
 /// A concrete invariant target selected from Foundry's invariant discovery.
 #[derive(Clone, Debug)]
 pub struct SymbolicInvariantTarget {
@@ -191,6 +200,59 @@ pub struct SymbolicInvariantTarget {
     pub contract_name: Option<String>,
     /// ABI function invoked with symbolic arguments.
     pub function: Function,
+}
+
+/// Input for best-effort invariant candidate search after one symbolic handler call.
+pub struct SymbolicInvariantCandidateInput<'a, FEN: FoundryEvmNetwork> {
+    /// Concrete Foundry executor containing the replayed invariant frontier prefix.
+    pub executor: &'a Executor<FEN>,
+    /// Address of the deployed invariant test contract.
+    pub invariant_address: Address,
+    /// Invariant functions checked independently after the handler call.
+    pub invariants: &'a [&'a Function],
+    /// Optional campaign hook checked from the unchanged post-handler state.
+    pub after_invariant: Option<&'a Function>,
+    /// Concrete handler target selected from the captured frontier.
+    pub target: &'a SymbolicInvariantTarget,
+    /// Sender of the captured handler call.
+    pub handler_sender: Address,
+    /// Whether symbolic `vm.ffi` calls are allowed to execute subprocesses.
+    pub ffi_enabled: bool,
+}
+
+/// One unconfirmed symbolic input produced by invariant candidate search.
+#[derive(Clone, Debug)]
+pub struct SymbolicInvariantCandidate {
+    /// Index within [`SymbolicInvariantCandidateInput::invariants`] predicted to fail.
+    pub invariant_idx: usize,
+    /// Concrete handler call extracted from the solver model.
+    pub step: SymbolicInvariantStep,
+    /// Concrete setup-storage values needed to replay the candidate.
+    pub storage: Vec<SymbolicStorageAssignment>,
+}
+
+/// An execution or solver limitation encountered during best-effort candidate search.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SymbolicInvariantSearchLimitation {
+    /// Category describing why part of the search could not complete.
+    pub kind: SymbolicStopReason,
+    /// Human-readable description of the limitation.
+    pub reason: String,
+}
+
+impl From<SymbolicError> for SymbolicInvariantSearchLimitation {
+    fn from(error: SymbolicError) -> Self {
+        Self { kind: error.stop_reason(), reason: error.to_string() }
+    }
+}
+
+/// Result of best-effort invariant candidate search after one symbolic handler call.
+#[derive(Clone, Debug)]
+pub struct SymbolicInvariantCandidateSearchResult {
+    /// Unconfirmed candidates that must be replayed concretely by the caller.
+    pub candidates: Vec<SymbolicInvariantCandidate>,
+    /// First encountered search limitation, if any. `None` is not a proof of safety.
+    pub limitation: Option<SymbolicInvariantSearchLimitation>,
 }
 
 /// Input for bounded symbolic invariant execution.
