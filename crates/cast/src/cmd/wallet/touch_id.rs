@@ -1,20 +1,18 @@
+use super::{
+    TouchIdSidecarState, ensure_touch_id_available, existing_keystore_path,
+    remove_touch_id_sidecar, touch_id_sidecar_path, touch_id_sidecar_policy,
+    touch_id_sidecar_state,
+};
 use clap::{Args, Parser};
 use eyre::Result;
 use foundry_cli::json::print_json_success;
 use foundry_common::{sh_println, shell};
 use serde_json::json;
 
-use super::{
-    TouchIdSidecarState, ensure_touch_id_available, existing_keystore_path,
-    remove_touch_id_sidecar, touch_id_sidecar_path, touch_id_sidecar_policy,
-    touch_id_sidecar_state,
-};
-
-#[cfg(all(target_os = "macos", feature = "touch-id"))]
-use alloy_signer_local::PrivateKeySigner;
-
 #[cfg(all(target_os = "macos", feature = "touch-id"))]
 use super::{ensure_touch_id_sidecar_available, password_or_prompt};
+#[cfg(all(target_os = "macos", feature = "touch-id"))]
+use alloy_signer_local::PrivateKeySigner;
 
 /// Arguments for `cast wallet touch-id`.
 #[derive(Debug, Args)]

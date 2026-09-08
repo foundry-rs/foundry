@@ -11,9 +11,10 @@ use foundry_test_utils::{
     util::{OTHER_SOLC_VERSION, OutputExt, SOLC_VERSION},
 };
 use similar_asserts::assert_eq;
+use std::{io::Write, path::PathBuf, str::FromStr};
+
 #[cfg(unix)]
 use std::fs;
-use std::{io::Write, path::PathBuf, str::FromStr};
 
 mod brutalize;
 mod core;

@@ -10,14 +10,15 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-#[cfg(feature = "optimism")]
-use op_alloy_rpc_types as _;
-
 use crate::constants::DEFAULT_CREATE2_DEPLOYER;
 use alloy_primitives::{Address, map::HashMap};
 use auto_impl::auto_impl;
+use foundry_evm_networks::NetworkConfigs;
 use revm::{Inspector, inspector::NoOpInspector, interpreter::CreateInputs};
 use revm_inspectors::access_list::AccessListInspector;
+
+#[cfg(feature = "optimism")]
+use op_alloy_rpc_types as _;
 
 /// Map keyed by breakpoints char to their location (contract address, pc)
 pub type Breakpoints = HashMap<char, (Address, usize)>;
@@ -32,7 +33,6 @@ pub mod abi {
 
 pub mod env;
 pub use env::*;
-use foundry_evm_networks::NetworkConfigs;
 
 pub mod backend;
 pub mod buffer;

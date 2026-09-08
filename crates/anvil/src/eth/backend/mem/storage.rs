@@ -10,8 +10,6 @@ use crate::eth::{
     pool::transactions::PoolTransaction,
 };
 use alloy_consensus::BlockHeader;
-#[cfg(test)]
-use alloy_consensus::Header;
 use alloy_network::Network;
 use alloy_primitives::{
     B256, Bytes, U256,
@@ -32,11 +30,10 @@ use foundry_evm::{
     backend::MemDb,
     traces::{CallKind, ParityTraceBuilder, TracingInspectorConfig},
 };
-#[cfg(test)]
-use foundry_primitives::FoundryNetwork;
 use foundry_primitives::{FoundryHeader, FoundryReceiptEnvelope, FoundryTxEnvelope};
 use parking_lot::RwLock;
 use std::{collections::VecDeque, fmt, path::PathBuf, sync::Arc, time::Duration};
+
 // use yansi::Paint;
 
 // === various limits in number of blocks ===
@@ -688,8 +685,10 @@ pub struct MinedTransactionReceipt<N: Network> {
 mod tests {
     use super::*;
     use crate::eth::backend::{db::Db, mem::in_memory_db::StateRootDb};
+    use alloy_consensus::Header;
     use alloy_primitives::{Address, hex};
     use alloy_rlp::Decodable;
+    use foundry_primitives::FoundryNetwork;
     use revm::{database::DatabaseRef, interpreter::InstructionResult, state::AccountInfo};
     use tempo_primitives::TempoHeader;
 

@@ -3,6 +3,30 @@
 //! This module provides high-performance parallel execution of mutation tests.
 //! Each mutant is tested in an isolated temporary workspace to enable concurrent execution.
 
+use crate::{
+    MultiContractRunnerBuilder,
+    cmd::test::{FilterArgs, RerunFailure},
+    mutation::{
+        SurvivedSpans,
+        mutant::{Mutant, MutationResult},
+        progress::MutationProgress,
+    },
+    result::SuiteResult,
+    workspace,
+};
+use eyre::Result;
+use foundry_common::{compile::ProjectCompiler, sh_eprintln, sh_println};
+use foundry_compilers::compilers::multi::MultiCompiler;
+use foundry_config::{Config, InlineConfig};
+use foundry_evm::{
+    core::evm::{
+        BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
+    },
+    executors::ExecutorBuilder,
+    fork::ResolvedFork,
+    opts::EvmOpts,
+};
+use rayon::prelude::*;
 use std::{
     collections::BTreeMap,
     fs,
@@ -16,37 +40,13 @@ use std::{
     thread::JoinHandle,
     time::Duration,
 };
-
-use eyre::Result;
-use foundry_common::{compile::ProjectCompiler, sh_eprintln, sh_println};
-use foundry_compilers::compilers::multi::MultiCompiler;
-use foundry_config::{Config, InlineConfig};
-#[cfg(feature = "monad")]
-use foundry_evm::core::evm::MonadEvmNetwork;
-#[cfg(feature = "optimism")]
-use foundry_evm::core::evm::OpEvmNetwork;
-use foundry_evm::{
-    core::evm::{
-        BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
-    },
-    executors::ExecutorBuilder,
-    fork::ResolvedFork,
-    opts::EvmOpts,
-};
-use rayon::prelude::*;
 use tempfile::TempDir;
 
-use crate::{
-    MultiContractRunnerBuilder,
-    cmd::test::{FilterArgs, RerunFailure},
-    mutation::{
-        SurvivedSpans,
-        mutant::{Mutant, MutationResult},
-        progress::MutationProgress,
-    },
-    result::SuiteResult,
-    workspace,
-};
+#[cfg(feature = "monad")]
+use foundry_evm::core::evm::MonadEvmNetwork;
+
+#[cfg(feature = "optimism")]
+use foundry_evm::core::evm::OpEvmNetwork;
 
 /// Result of testing a single mutant.
 #[derive(Debug, Clone)]
