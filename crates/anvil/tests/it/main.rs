@@ -6,6 +6,7 @@ mod beacon_api;
 mod block_index;
 mod eip2935;
 mod eip4844;
+mod eip6110;
 mod eip7702;
 mod eip7928;
 mod filter;

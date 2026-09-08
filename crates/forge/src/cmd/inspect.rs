@@ -5,7 +5,10 @@ use comfy_table::{
     presets::{ASCII_FULL, ASCII_MARKDOWN},
 };
 use eyre::{Result, eyre};
-use foundry_cli::opts::{BuildOpts, CompilerOpts};
+use foundry_cli::{
+    opts::{BuildOpts, CompilerOpts},
+    utils::LoadConfig,
+};
 use foundry_common::{
     compile::{PathOrContractInfo, ProjectCompiler},
     find_matching_contract_artifact, find_target_path, shell,
@@ -83,7 +86,8 @@ impl InspectArgs {
         };
 
         // Build the project
-        let mut project = modified_build_args.project()?;
+        let config = modified_build_args.load_config_with_dependencies()?;
+        let mut project = config.project()?;
         if !user_extra_output
             && !project.build_info
             && let Some(selection) = field.inspect_output_selection()

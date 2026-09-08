@@ -353,7 +353,10 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
         new_session.source.build()?;
         self.session = new_session;
         self.last_result = None;
-        sh_println!("Loaded Chisel session! (ID = {})", self.session.id.as_ref().unwrap())
+        sh_println!(
+            "Loaded Chisel session! (ID = {})",
+            self.session.id.as_deref().unwrap_or("<unknown>")
+        )
     }
 
     pub(crate) fn list_sessions(&self) -> Result<()> {
