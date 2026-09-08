@@ -1803,33 +1803,8 @@ Warning: Key `deny_warnings` is being deprecated in favor of `deny = warnings`. 
 
 // ------------------------------------------------------------------------------------------------
 
-/// Check the documentation shipped with this revision without depending on Book deployment.
-#[test]
-fn ensure_lint_rule_docs() {
-    let docs_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../lint/docs");
-    for lint in registered_lints() {
-        let path = docs_dir.join(format!("{}.md", lint.id()));
-        let content = std::fs::read_to_string(&path)
-            .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
-        assert!(
-            content.lines().any(|line| line == format!("**ID**: `{}`", lint.id())),
-            "{} does not document lint `{}`",
-            path.display(),
-            lint.id()
-        );
-        assert_eq!(
-            lint.help(),
-            format!("https://getfoundry.sh/forge/linting/{}", lint.id()),
-            "lint `{}` has a non-canonical help URL",
-            lint.id()
-        );
-    }
-}
-
-/// Audit the published Book separately: new lint pages can land after their implementation.
 #[tokio::test]
-#[ignore = "requires lint documentation to be published on getfoundry.sh"]
-async fn ensure_published_lint_rule_docs() {
+async fn ensure_lint_rule_docs() {
     let client = reqwest::Client::new();
     let mut failures = Vec::new();
 
