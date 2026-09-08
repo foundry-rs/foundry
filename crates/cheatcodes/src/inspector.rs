@@ -193,7 +193,8 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         #[cfg(feature = "monad")]
         let mut reserve_balance = None;
         with_cloned_context(ecx, |db, evm_env, journaled_state| {
-            let mut evm = factory.create_foundry_nested_evm(db, evm_env, chain_context, cheats);
+            let mut evm = factory.create_nested_evm_with_inspector(db, evm_env, cheats);
+            *evm.chain_mut() = chain_context;
             *evm.journal_inner_mut() = journaled_state;
             #[cfg(feature = "monad")]
             {
@@ -230,12 +231,9 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         chain_context: ChainFor<FEN>,
         f: NestedEvmClosureFor<'_, FEN>,
     ) -> Result<EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>, EVMError<DatabaseError>> {
-        let mut evm = FEN::EvmFactory::default().create_foundry_nested_evm(
-            db,
-            evm_env,
-            chain_context,
-            cheats,
-        );
+        let mut evm =
+            FEN::EvmFactory::default().create_nested_evm_with_inspector(db, evm_env, cheats);
+        *evm.chain_mut() = chain_context;
         f(&mut *evm)?;
         Ok(evm.to_evm_env())
     }
@@ -884,6 +882,8 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
 
     /// Deprecated cheatcodes mapped to the reason. Used to report warnings on test results.
     pub deprecated: HashMap<&'static str, Option<&'static str>>,
+    /// Main script contract, when script execution protection is enabled.
+    pub script_address: Option<Address>,
     /// Unlocked wallets used in scripts and testing of scripts.
     pub wallets: Option<Wallets>,
     /// Parsed secp256k1 private-key signers for repeated `vm.addr` / `vm.sign` calls.
@@ -1008,6 +1008,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             pending_storage_hook: Default::default(),
             active_storage_hook: Default::default(),
             deprecated: Default::default(),
+            script_address: Default::default(),
             wallets: Default::default(),
             private_key_signers: Default::default(),
             signatures_identifier: Default::default(),
@@ -2184,6 +2185,32 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
 
         if self.broadcast.is_some() {
             self.set_gas_limit_type(interpreter);
+        }
+
+        // Broadcasting changes outgoing calls, not the caller of the script's current frame.
+        // Only protect the broadcasting frame; callbacks into the script have their own caller.
+        if interpreter.bytecode.opcode() == op::CALLER
+            && let Some(broadcast) = &self.broadcast
+            && let Some(script_address) = self.script_address
+            && ecx.journal().depth() == broadcast.depth
+            && interpreter.input.target_address == script_address
+            && interpreter.input.bytecode_address == Some(script_address)
+            && interpreter.input.caller_address != broadcast.new_origin
+        {
+            interpreter.bytecode.set_action(InterpreterAction::new_return(
+                InstructionResult::Revert,
+                Bytes::from(
+                    format!(
+                        "Usage of `msg.sender` inside a `broadcast` in script contract detected. \
+                         `msg.sender` is `{:#x}`, not the broadcast sender `{:#x}`. \
+                         Use the `--sender` flag or pass the deployer address directly instead.",
+                        interpreter.input.caller_address, broadcast.new_origin,
+                    )
+                    .into_bytes(),
+                ),
+                interpreter.gas,
+            ));
+            return;
         }
 
         // `pauseGasMetering`: pause / resume interpreter gas.

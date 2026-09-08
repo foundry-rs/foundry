@@ -633,9 +633,10 @@ impl CallArgs {
             let input = tx.input().cloned().unwrap_or_default();
             let tx_kind = tx.kind().expect("set by builder");
 
-            // Apply a user-provided `--gas-limit` to the executor. `build_test_env` propagates the
-            // executor's gas limit to the executed call/deploy, so setting it here is what takes
-            // effect; writing it onto the tx env directly would be overwritten.
+            // Apply a user-provided `--gas-limit` to the executor. `prepare_call_env` propagates
+            // the executor's gas limit to the executed call/deploy, so setting it here
+            // is what takes effect; writing it onto the tx env directly would be
+            // overwritten.
             if let Some(gas_limit) = tx.gas_limit() {
                 executor.set_gas_limit(gas_limit);
             }

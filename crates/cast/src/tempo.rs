@@ -340,6 +340,15 @@ mod tests {
     use alloy_provider::{ProviderBuilder as AlloyProviderBuilder, mock::Asserter};
     use alloy_rpc_client::RpcClient;
 
+    #[tokio::test]
+    async fn tempo_fork_schedule_detects_t13_as_t3_active() {
+        let asserter = Asserter::new();
+        asserter.push_success(&serde_json::json!({ "active": "T13" }));
+        let provider =
+            AlloyProviderBuilder::new().network::<TempoNetwork>().connect_mocked_client(asserter);
+        assert!(is_tempo_hardfork_active(&provider, TempoHardfork::T3).await.unwrap());
+    }
+
     #[test]
     fn active_from_anvil_node_info_requires_tempo_network() {
         let info = |network: &str, hard_fork: &str| AnvilNodeInfo {

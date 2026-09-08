@@ -47,7 +47,7 @@ impl Display for Eip712Output {
 
 impl Eip712Args {
     pub fn run(self) -> Result<()> {
-        let config = self.build.load_config()?;
+        let config = self.build.load_config_with_dependencies()?;
         let project = config.solar_project()?;
         let mut output = ProjectCompiler::new().files([self.target_path]).compile(&project)?;
         let compiler = output.parser_mut().solc_mut().compiler_mut();
