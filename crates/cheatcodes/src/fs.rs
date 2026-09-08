@@ -52,7 +52,16 @@ struct ParsedArtifactPath<'a> {
 /// - `ContractName:0.8.23`
 /// - `ContractName:profile`
 fn parse_artifact_path(path: &str) -> std::result::Result<ParsedArtifactPath<'_>, String> {
-    let mut parts = path.split(':');
+    // A Windows drive separator belongs to the file, not the artifact's suffix fields.
+    // Recognize it on every host so parsing does not depend on the current platform.
+    let unprefixed = path.strip_prefix(r"\\?\").unwrap_or(path);
+    let drive_prefix_len = match unprefixed.as_bytes() {
+        [drive, b':', b'/' | b'\\', ..] if drive.is_ascii_alphabetic() => {
+            path.len() - unprefixed.len() + 2
+        }
+        _ => 0,
+    };
+    let mut parts = path[drive_prefix_len..].split(':');
 
     let mut file = None;
     let mut contract_name = None;
@@ -60,6 +69,7 @@ fn parse_artifact_path(path: &str) -> std::result::Result<ParsedArtifactPath<'_>
     let mut profile = None;
 
     let path_or_name = parts.next().unwrap();
+    let path_or_name = &path[..drive_prefix_len + path_or_name.len()];
     if path_or_name.contains('.') {
         file = Some(PathBuf::from(path_or_name));
         if let Some(name_or_version_or_profile) = parts.next() {
@@ -1251,6 +1261,40 @@ mod tests {
         assert_eq!(parsed.contract_name, None);
         assert_eq!(parsed.version, None);
         assert_eq!(parsed.profile, None);
+    }
+
+    #[test]
+    fn test_parse_artifact_path_windows_drive() {
+        for file in [
+            "C:/project/src/Contract.sol",
+            r"C:\project\src\Contract.sol",
+            r"\\?\C:\project\src\Contract.sol",
+            r"\\server\share\Contract.sol",
+        ] {
+            for (suffix, contract_name, version, profile) in [
+                ("", None, None, None),
+                (":MyContract", Some("MyContract"), None, None),
+                (":0.8.23", None, Some(Version::new(0, 8, 23)), None),
+                (":MyContract:0.8.23", Some("MyContract"), Some(Version::new(0, 8, 23)), None),
+                (":MyContract:optimized", Some("MyContract"), None, Some("optimized")),
+            ] {
+                let input = format!("{file}{suffix}");
+                assert_eq!(
+                    parse_artifact_path(&input).unwrap(),
+                    ParsedArtifactPath {
+                        file: Some(PathBuf::from(file)),
+                        contract_name,
+                        version,
+                        profile,
+                    },
+                    "{input}"
+                );
+            }
+        }
+
+        // A one-letter contract name must still allow version and profile suffixes.
+        assert_eq!(parse_artifact_path("C:0.8.23").unwrap().version, Some(Version::new(0, 8, 23)));
+        assert_eq!(parse_artifact_path("C:optimized").unwrap().profile, Some("optimized"));
     }
 
     #[test]

@@ -169,7 +169,8 @@ impl SelectorsSubcommands {
                 // Compile the project with the two contracts included
                 let user_extra_output = !build.compiler.extra_output.is_empty()
                     || !build.compiler.extra_output_files.is_empty();
-                let mut project = build.project()?;
+                let config = build.load_config_with_dependencies()?;
+                let mut project = config.project()?;
                 if !user_extra_output && !project.build_info {
                     project.no_artifacts = true;
                     project.update_output_selection(|selection| {
@@ -459,7 +460,8 @@ impl SelectorsSubcommands {
 fn project_from_paths(
     project_paths: ProjectPathOpts,
 ) -> Result<(Project<MultiCompiler>, ProjectCompiler)> {
-    let config = BuildOpts { project_paths, ..Default::default() }.load_config()?;
+    let build = BuildOpts { project_paths, ..Default::default() };
+    let config = build.load_config_with_dependencies()?;
     let compiler = ProjectCompiler::new().dynamic_test_linking(config.dynamic_test_linking);
     let mut project = config.project()?;
     if !project.build_info {

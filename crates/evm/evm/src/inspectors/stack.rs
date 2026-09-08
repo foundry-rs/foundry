@@ -89,7 +89,8 @@ pub struct InspectorStackBuilder<BLOCK: Clone> {
     /// EVM context, enabling more precise gas accounting and transaction state changes.
     pub enable_isolation: bool,
     /// Configuration retained for Celo precompile support.
-    // TODO(monad-fen-dispatch): Replace this residual with a concrete Celo execution owner.
+    // TODO(celo-execution-owner): Replace this residual with concrete Celo precompile
+    // configuration. This is independent of the Monad lifecycle migration.
     pub networks: NetworkConfigs,
     /// Concrete Tempo label inspector selected by the Tempo executor builder.
     tempo_labels: Option<Box<TempoLabels>>,
@@ -513,8 +514,8 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         #[cfg(feature = "monad")]
         let mut reserve_balance = None;
         with_cloned_context(ecx, |db, evm_env, journaled_state| {
-            let mut evm =
-                factory.create_foundry_nested_evm(db, evm_env, chain_context, &mut inspector);
+            let mut evm = factory.create_nested_evm_with_inspector(db, evm_env, &mut inspector);
+            *evm.chain_mut() = chain_context;
             *evm.journal_inner_mut() = journaled_state;
             #[cfg(feature = "monad")]
             {
@@ -552,12 +553,12 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         f: NestedEvmClosureFor<'_, FEN>,
     ) -> Result<EvmEnvFor<FEN>, EVMError<DatabaseError>> {
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
-        let mut evm = FEN::EvmFactory::default().create_foundry_nested_evm(
+        let mut evm = FEN::EvmFactory::default().create_nested_evm_with_inspector(
             db,
             evm_env,
-            chain_context,
             &mut inspector,
         );
+        *evm.chain_mut() = chain_context;
         f(&mut *evm)?;
         Ok(evm.to_evm_env())
     }
@@ -821,6 +822,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
     pub fn script(&mut self, script_address: Address) {
         self.script_execution_inspector.get_or_insert_with(Default::default).script_address =
             script_address;
+        if let Some(cheatcodes) = &mut self.cheatcodes {
+            cheatcodes.script_address = Some(script_address);
+        }
         self.refresh_static_step_dispatch();
     }
 
@@ -1108,8 +1112,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let res = self.with_inspector(|mut inspector| {
             let (res, nested_env) = {
                 let (db, _) = ecx.db_journal_inner_mut();
-                let mut evm =
-                    factory.create_foundry_nested_evm(db, evm_env, chain_context, &mut inspector);
+                let mut evm = factory.create_nested_evm_with_inspector(db, evm_env, &mut inspector);
+                *evm.chain_mut() = chain_context;
                 evm.journal_inner_mut().state = isolated_state;
                 #[cfg(feature = "monad")]
                 {
