@@ -513,8 +513,8 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         #[cfg(feature = "monad")]
         let mut reserve_balance = None;
         with_cloned_context(ecx, |db, evm_env, journaled_state| {
-            let mut evm =
-                factory.create_foundry_nested_evm(db, evm_env, chain_context, &mut inspector);
+            let mut evm = factory.create_foundry_nested_evm(db, evm_env, &mut inspector);
+            *evm.chain_mut() = chain_context;
             *evm.journal_inner_mut() = journaled_state;
             #[cfg(feature = "monad")]
             {
@@ -552,12 +552,9 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         f: NestedEvmClosureFor<'_, FEN>,
     ) -> Result<EvmEnvFor<FEN>, EVMError<DatabaseError>> {
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
-        let mut evm = FEN::EvmFactory::default().create_foundry_nested_evm(
-            db,
-            evm_env,
-            chain_context,
-            &mut inspector,
-        );
+        let mut evm =
+            FEN::EvmFactory::default().create_foundry_nested_evm(db, evm_env, &mut inspector);
+        *evm.chain_mut() = chain_context;
         f(&mut *evm)?;
         Ok(evm.to_evm_env())
     }
@@ -1108,8 +1105,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let res = self.with_inspector(|mut inspector| {
             let (res, nested_env) = {
                 let (db, _) = ecx.db_journal_inner_mut();
-                let mut evm =
-                    factory.create_foundry_nested_evm(db, evm_env, chain_context, &mut inspector);
+                let mut evm = factory.create_foundry_nested_evm(db, evm_env, &mut inspector);
+                *evm.chain_mut() = chain_context;
                 evm.journal_inner_mut().state = isolated_state;
                 #[cfg(feature = "monad")]
                 {

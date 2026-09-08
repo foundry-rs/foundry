@@ -1595,6 +1595,12 @@ mod tests {
     #[test]
     fn returndata_copy_range_preserves_valid_and_invalid_paths() {
         let mut executor = SymbolicExecutor::new(SymbolicConfig::default());
+        if let Err(err) = executor.solver.check_available() {
+            let _ = foundry_common::sh_eprintln!(
+                "skipping returndata_copy_range_preserves_valid_and_invalid_paths: {err}"
+            );
+            return;
+        }
         let mut state = empty_state(&mut executor);
         state.return_data = SymReturnData::from_concrete_bytes(&mut executor.cx, vec![0; 64]);
         let offset = state.fresh_word(&mut executor.cx, "offset");

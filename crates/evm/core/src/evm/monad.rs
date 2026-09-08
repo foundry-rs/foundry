@@ -382,11 +382,9 @@ impl FoundryEvmFactory for MonadEvmFactory {
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        chain_context: Self::Chain,
         inspector: I,
     ) -> Self::FoundryEvm<'db, I> {
         let mut monad_evm = self.create_evm_with_inspector(db, evm_env, inspector);
-        monad_evm.ctx_mut().chain = chain_context;
         monad_evm.cfg.tx_chain_id_check = true;
         monad_evm
     }
@@ -407,7 +405,6 @@ impl FoundryEvmFactory for MonadEvmFactory {
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        chain_context: Self::Chain,
         inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
     ) -> NestedEvmFor<'db, Self> {
         let spec = evm_env.cfg_env.spec;
@@ -418,7 +415,6 @@ impl FoundryEvmFactory for MonadEvmFactory {
             .build_monad_with_inspector(inspector)
             .with_precompiles(MonadPrecompilesMap::new_with_spec(spec));
 
-        evm.0.ctx.chain = chain_context;
         evm.0.ctx.cfg.tx_chain_id_check = true;
         Box::new(evm)
     }
@@ -498,7 +494,11 @@ impl<'db, I: FoundryInspectorExt<MonadContext<&'db mut dyn DatabaseExt<MonadEvmF
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::evm::{BlockContext, MonadEvmNetwork};
+    use crate::{
+        backend::Backend,
+        evm::{BlockContext, EthEvmNetwork, MonadEvmNetwork},
+    };
+    use alloy_evm::EthEvmFactory;
     use alloy_sol_types::SolEvent;
     use monad_revm::{
         reserve_balance::tracker::ReserveBalanceInit,
@@ -524,6 +524,22 @@ mod tests {
         primitives::{B256, TxKind, address},
         state::{Account, AccountInfo, EvmState},
     };
+
+    #[test]
+    fn ethereum_system_replay_hook_and_nested_execution_are_not_equivalent() {
+        let tx = system_transaction(syscallSnapshotCall {}.abi_encode(), U256::ZERO);
+        let factory = EthEvmFactory::default();
+        let evm_env = EvmEnv::default();
+        let mut regular = factory.create_evm(InMemoryDB::default(), evm_env.clone());
+        assert!(factory.try_transact_system_replay(&mut regular, &tx).unwrap().is_none());
+
+        let mut db = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        db.set_networks(foundry_evm_networks::NetworkConfigs::with_monad());
+        let mut inspector = revm::inspector::NoOpInspector;
+        let mut nested = factory.create_foundry_nested_evm(&mut db, evm_env, &mut inspector);
+        let error = nested.transact_raw(tx).unwrap_err();
+        assert!(format!("{error:?}").contains("gas"), "{error:?}");
+    }
 
     #[derive(Default)]
     struct ProtocolPrestateInspector {
