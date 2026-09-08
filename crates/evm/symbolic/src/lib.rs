@@ -51,14 +51,13 @@ use tracing::{debug, trace, trace_span, warn};
 #[cfg(test)]
 use std::collections::BTreeMap;
 
-mod consts;
-pub use consts::BUILTIN_SYMBOLIC_SOLVERS;
-pub(crate) use consts::*;
-
 mod abi;
+mod consts;
 mod executor;
 mod runtime;
 
+pub use consts::BUILTIN_SYMBOLIC_SOLVERS;
+pub(crate) use consts::*;
 pub use runtime::{PortfolioDiagnostics, SymbolicBranchTarget, SymbolicError, SymbolicRunInput};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

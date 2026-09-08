@@ -6,6 +6,10 @@ pub(super) mod hashcons;
 #[path = "expr.rs"]
 mod word;
 
+pub(crate) use bool::*;
+pub(crate) use cx::*;
+pub(crate) use word::*;
+
 struct NoopModel;
 
 impl SymbolicModelLookup for NoopModel {
@@ -13,10 +17,6 @@ impl SymbolicModelLookup for NoopModel {
         None
     }
 }
-
-pub(crate) use bool::*;
-pub(crate) use cx::*;
-pub(crate) use word::*;
 
 /// Evaluates hash-consed expressions once per model.
 ///
