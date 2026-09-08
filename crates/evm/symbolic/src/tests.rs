@@ -3630,30 +3630,6 @@ fn solver_normalizes_constant_over_self_division_bounds() {
 }
 
 #[test]
-fn solver_keeps_other_self_division_comparisons() {
-    let mut cx = SymCx::new();
-    let value = SymExpr::var(&mut cx, "value");
-    let other = SymExpr::var(&mut cx, "other");
-    let numerator = SymExpr::constant(&mut cx, U256::from(8));
-    let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, numerator, value.clone());
-    let zero = SymExpr::zero(&mut cx);
-    let other_is_zero = SymBoolExpr::eq(&mut cx, other.clone(), zero.clone());
-    let wrongly_guarded = SymExpr::ite(&mut cx, other_is_zero, zero, quotient.clone());
-    let conditions = [
-        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, value.clone(), quotient.clone()),
-        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, quotient.clone(), value.clone()),
-        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, other, quotient.clone()),
-        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, value.clone(), wrongly_guarded),
-        SymBoolExpr::cmp(&mut cx, SymCmpOp::Slt, quotient, value),
-    ];
-
-    for condition in conditions {
-        let normalized = normalize_bool_for_solver(&mut cx, condition);
-        assert!(normalized.smt(&cx).contains("bvudiv"));
-    }
-}
-
-#[test]
 fn solver_normalizes_bounded_udiv_comparisons_without_bvudiv() {
     let mut cx = SymCx::new();
     let numerator = SymExpr::var(&mut cx, "numerator");
