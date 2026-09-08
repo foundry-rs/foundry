@@ -3,7 +3,7 @@ use alloy_primitives::{Address, Bytes, FixedBytes, I256, U256};
 use comfy_table::{ContentLineStyle, LineStyle, Table, TableStyle};
 use std::fmt::{self, Write};
 
-/// Maximum exact `%<n>e` precision; larger values produce a bounded placeholder.
+/// Maximum accepted `%<n>e` precision.
 const MAX_EXPONENTIAL_PRECISION: usize = 1024;
 
 /// A piece is a portion of the format string which represents the next part to emit.
@@ -112,7 +112,10 @@ impl<'a> Parser<'a> {
             let n = self.integer(start);
             if let Some((_, 'e')) = self.peek() {
                 self.chars.next();
-                return Ok(FormatSpec::Exponential(n));
+                return n
+                    .filter(|&precision| precision <= MAX_EXPONENTIAL_PRECISION)
+                    .map(|precision| FormatSpec::Exponential(Some(precision)))
+                    .ok_or(ParseArgError::Err);
             }
         }
 
@@ -232,33 +235,7 @@ impl ConsoleFmt for U256 {
                     format!("{integer}.{decimal}e{log}")
                 }
             }
-            FormatSpec::Exponential(Some(precision)) => {
-                let amount = *self;
-                match Self::from(10).checked_pow(Self::from(precision)) {
-                    Some(exp10) => {
-                        let integer = amount / exp10;
-                        let decimal = (amount % exp10).to_string();
-                        let decimal =
-                            format!("{decimal:0>precision$}").trim_end_matches('0').to_string();
-                        if decimal.is_empty() {
-                            format!("{integer}")
-                        } else {
-                            format!("{integer}.{decimal}")
-                        }
-                    }
-                    // Overflow implies an integer part of zero. Bound padding without changing the
-                    // value.
-                    None if precision > MAX_EXPONENTIAL_PRECISION => {
-                        format!("<precision {precision} too large to format exactly>")
-                    }
-                    None => {
-                        let decimal = amount.to_string();
-                        let decimal =
-                            format!("{decimal:0>precision$}").trim_end_matches('0').to_string();
-                        if decimal.is_empty() { "0".to_string() } else { format!("0.{decimal}") }
-                    }
-                }
-            }
+            FormatSpec::Exponential(Some(precision)) => format_fixed(*self, "", precision),
         }
     }
 }
@@ -294,39 +271,22 @@ impl ConsoleFmt for I256 {
             FormatSpec::Exponential(Some(precision)) => {
                 let amount = *self;
                 let sign = if amount.is_negative() { "-" } else { "" };
-                // Compute the power without panicking on signed overflow.
-                let checked_exp10: Option<Self> = U256::from(10)
-                    .checked_pow(U256::from(precision))
-                    .and_then(|v| v.try_into().ok());
-                match checked_exp10 {
-                    Some(exp10) => {
-                        let integer = (amount / exp10).twos_complement();
-                        let decimal = (amount % exp10).twos_complement().to_string();
-                        let decimal =
-                            format!("{decimal:0>precision$}").trim_end_matches('0').to_string();
-                        if decimal.is_empty() {
-                            format!("{sign}{integer}")
-                        } else {
-                            format!("{sign}{integer}.{decimal}")
-                        }
-                    }
-                    // Even I256::MIN has magnitude below an overflowing power of ten.
-                    None if precision > MAX_EXPONENTIAL_PRECISION => {
-                        format!("<precision {precision} too large to format exactly>")
-                    }
-                    None => {
-                        let decimal = amount.unsigned_abs().to_string();
-                        let decimal =
-                            format!("{decimal:0>precision$}").trim_end_matches('0').to_string();
-                        if decimal.is_empty() {
-                            format!("{sign}0")
-                        } else {
-                            format!("{sign}0.{decimal}")
-                        }
-                    }
-                }
+                format_fixed(amount.unsigned_abs(), sign, precision)
             }
         }
+    }
+}
+
+fn format_fixed(amount: U256, sign: &str, precision: usize) -> String {
+    let (integer, decimal) = U256::from(10)
+        .checked_pow(U256::from(precision))
+        .map_or((U256::ZERO, amount), |exp10| (amount / exp10, amount % exp10));
+    let decimal = decimal.to_string();
+    let decimal = format!("{decimal:0>precision$}").trim_end_matches('0').to_string();
+    if decimal.is_empty() {
+        format!("{sign}{integer}")
+    } else {
+        format!("{sign}{integer}.{decimal}")
     }
 }
 
@@ -651,13 +611,12 @@ mod tests {
         assert_eq!(format!("0.{}1", "0".repeat(76)), fmt_1("%77e", &I256::try_from(1).unwrap()));
         assert_eq!(format!("-0.{}1", "0".repeat(76)), fmt_1("%77e", &I256::try_from(-1).unwrap()));
 
-        // Preserve the value at the maximum supported precision.
+        // Preserve the value at the maximum accepted precision.
         assert_eq!(format!("0.{}1", "0".repeat(1023)), fmt_1("%1024e", &U256::from(1)));
 
-        // Reject larger output instead of truncating significant leading zeros.
-        let huge = fmt_1("%1025e", &U256::from(1));
-        assert_eq!("<precision 1025 too large to format exactly>", huge);
-        assert!(huge.len() < 100, "the refusal message itself must stay bounded");
+        // Invalid precisions remain literal and do not consume the value.
+        assert_eq!("%1025e 1", fmt_1("%1025e", &U256::from(1)));
+        assert_eq!("%99999999999999999999e 1", fmt_1("%99999999999999999999e", &U256::from(1)));
 
         assert_eq!("1", fmt_1("%18e", &U256::from(1_000_000_000_000_000_000u64)));
 
