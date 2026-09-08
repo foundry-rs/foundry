@@ -23,6 +23,7 @@ use foundry_compilers::{
         },
     },
     solc::SolcLanguage,
+    storage_layout::StorageNamespace,
 };
 use path_slash::PathExt;
 use regex::Regex;
@@ -136,7 +137,18 @@ impl InspectArgs {
                 print_json(&artifact.gas_estimates)?;
             }
             ContractArtifactField::StorageLayout => {
-                print_storage_layout(artifact.storage_layout.as_ref(), "storage layout", wrap)?;
+                let mut layout = artifact
+                    .storage_layout
+                    .clone()
+                    .ok_or_else(|| missing_error("storage layout"))?;
+                if is_solidity_source(&target_path) {
+                    let namespaces = output
+                        .parser_mut()
+                        .solc_mut()
+                        .erc7201_storage_layouts(&target_path, contract.name())?;
+                    merge_storage_namespaces(&mut layout, namespaces)?;
+                }
+                print_storage_layout(Some(&layout), "storage layout", wrap)?;
             }
             ContractArtifactField::TransientStorageLayout => {
                 print_storage_layout(
@@ -347,6 +359,39 @@ fn internal_ty(ty: &InternalType) -> String {
         InternalType::Struct { contract, ty } => contract_ty(contract.as_deref(), ty),
         InternalType::Other { contract, ty } => contract_ty(contract.as_deref(), ty),
     }
+}
+
+/// Merges namespaces without allowing duplicate declarations or conflicting type definitions.
+fn merge_storage_namespaces(
+    layout: &mut StorageLayout,
+    namespaces: Vec<StorageNamespace>,
+) -> Result<()> {
+    let mut declarations = BTreeMap::new();
+    for namespace in namespaces {
+        if let Some(previous) = declarations.insert(namespace.root, namespace.declaration.clone()) {
+            eyre::bail!(
+                "Duplicate ERC-7201 namespace `{}` in `{previous}` and `{}`",
+                namespace.id,
+                namespace.declaration
+            );
+        }
+        for (id, ty) in namespace.layout.types {
+            if let Some(existing) = layout.types.get(&id) {
+                eyre::ensure!(
+                    existing == &ty,
+                    "Conflicting storage type `{id}` in namespace `{}`",
+                    namespace.id
+                );
+            } else {
+                layout.types.insert(id, ty);
+            }
+        }
+        for mut entry in namespace.layout.storage {
+            entry.label = format!("{}.{}", namespace.id, entry.label);
+            layout.storage.push(entry);
+        }
+    }
+    Ok(())
 }
 
 pub fn print_storage_layout(
@@ -838,6 +883,44 @@ fn missing_error(field: &str) -> eyre::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::U256;
+
+    #[test]
+    fn namespace_type_collisions() {
+        let layout: StorageLayout = serde_json::from_value(serde_json::json!({
+            "storage": [],
+            "types": {"erc7201(example)::t_uint256": {
+                "encoding": "inplace", "label": "uint256", "numberOfBytes": "32"
+            }}
+        }))
+        .unwrap();
+        let namespace = StorageNamespace {
+            id: "example".into(),
+            declaration: "test.sol:C.Data".into(),
+            root: U256::ZERO,
+            layout: layout.clone(),
+        };
+        let mut merged = layout.clone();
+        merge_storage_namespaces(&mut merged, vec![namespace.clone()]).unwrap();
+        assert_eq!(merged, layout);
+
+        let mut conflicting = namespace.clone();
+        conflicting.layout.types.values_mut().next().unwrap().number_of_bytes = "16".into();
+        assert_eq!(
+            merge_storage_namespaces(&mut merged, vec![conflicting]).unwrap_err().to_string(),
+            "Conflicting storage type `erc7201(example)::t_uint256` in namespace `example`"
+        );
+        assert_eq!(merged, layout);
+        assert_eq!(
+            merge_storage_namespaces(
+                &mut StorageLayout::default(),
+                vec![namespace.clone(), namespace]
+            )
+            .unwrap_err()
+            .to_string(),
+            "Duplicate ERC-7201 namespace `example` in `test.sol:C.Data` and `test.sol:C.Data`"
+        );
+    }
 
     #[test]
     fn contract_output_selection() {
