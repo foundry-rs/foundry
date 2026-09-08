@@ -95,7 +95,8 @@ The source upstream `main` was checked at
 snapshot. Checking upstream used a remote ref in Foundry, leaving the source
 checkout unchanged. No source checkout is needed to build or run these clients.
 
-Solar authorship and MIT/Apache-2.0 licenses are preserved in each extension.
+Solar authorship is preserved in each extension. Its MIT/Apache-2.0 license
+files link to the repository root licenses.
 The VS Code TextMate grammar retains its original license and attribution;
 Zed's tree-sitter grammar remains pinned in `extension.toml`.
 

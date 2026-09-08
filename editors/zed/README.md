@@ -101,13 +101,14 @@ be created without copying the Cargo target directory or grammar checkout:
 
 ```sh
 mkdir -p target/editor-dev
-tar -czf target/editor-dev/zed-solar-local.tar.gz -C editors/zed \
+tar -chzf target/editor-dev/zed-solar-local.tar.gz -C editors/zed \
   extension.toml extension.wasm languages grammars/solidity.wasm \
   LICENSE-MIT LICENSE-APACHE GRAMMAR-LICENSE README.md
 ```
 
 This archive is for local inspection/distribution; store release and registration
-are separate maintainer tasks.
+are separate maintainer tasks. The `-h` option includes the root license texts
+referenced by the extension's license symlinks.
 
 1. Launch Zed with a new `--user-data-dir`; its settings live in `config/` under
    that directory. On macOS, the normal CLI can forward to an existing instance
@@ -145,7 +146,8 @@ or separately installed `solar` is needed.
 
 Migrated from `paradigmxyz/solar`'s `editors/zed` at source revision
 `bba703a34e0fabc8587ae7eb794e017e31c5e7ca`. Original authorship is retained in
-`extension.toml` and the bundled MIT and Apache-2.0 licenses. The grammar remains
+`extension.toml`; the MIT and Apache-2.0 license files link to the repository
+root. The grammar remains
 pinned to `JoranHonig/tree-sitter-solidity` commit
 `048fe686cb1fde267243739b8bdbec8fc3a55272`. Its MIT copyright notice is retained
 in [GRAMMAR-LICENSE](GRAMMAR-LICENSE), including in local archives.

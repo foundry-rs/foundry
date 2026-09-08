@@ -162,7 +162,8 @@ code --install-extension bundle/solar-lsp.vsix --force
 ```
 
 Packaging runs the compiler and includes runtime dependencies, grammars,
-language configuration and original licenses. The VSIX is local and ignored by
+language configuration and license texts from the repository root. The VSIX is
+local and ignored by
 Git. To preserve a normal profile, supply isolated `--user-data-dir` and
 `--extensions-dir` arguments when installing or opening VS Code. No automated
 Marketplace publishing is configured.

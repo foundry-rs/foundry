@@ -6,9 +6,9 @@ from `paradigmxyz/solar`, `editors/vscode`, revision
 
 Original source: https://github.com/paradigmxyz/solar/tree/bba703a34e0fabc8587ae7eb794e017e31c5e7ca/editors/vscode
 
-The client is dual licensed under MIT or Apache-2.0; both original license
-texts are included. The Solidity grammar originates from Juan Blanco's VS Code
-Solidity extension; see `syntaxes/README.md` and `syntaxes/LICENSE`.
+The client is dual licensed under MIT or Apache-2.0; the license files link to
+the repository root texts. The Solidity grammar originates from Juan Blanco's
+VS Code Solidity extension; see `syntaxes/README.md` and `syntaxes/LICENSE`.
 
 The package name `solar-lsp`, language and command IDs, `solarLsp.*` settings and
 initialization protocol remain unchanged. The source manifest had no publisher;
