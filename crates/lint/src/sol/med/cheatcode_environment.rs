@@ -6,6 +6,8 @@
 //! compiler may reuse the earlier read. Branches retain separate states, and return, revert,
 //! break, and continue stop the corresponding path. External calls are not inlined: the callee
 //! has a separate EVM frame and its return data is already materialized.
+//! Differing helper return values and conditional-expression values are discarded instead of
+//! combining components from mutually exclusive outcomes.
 //!
 //! This analysis runs before optimization and never changes executable code. Cheatcodes are
 //! recognized by their resolved signature and constant receiver address, including local aliases
@@ -27,7 +29,7 @@ use crate::{
 };
 use alloy_primitives::{U256, keccak256, uint};
 use solar::{
-    ast::{BinOpKind, ElementaryType, FunctionKind},
+    ast::{BinOpKind, ElementaryType, FunctionKind, UnOpKind},
     interface::Span,
     sema::{
         Gcx,
@@ -81,15 +83,54 @@ struct Read {
     changed: bool,
 }
 
-#[derive(Clone, Default)]
+/// Exact unsigned and boolean locals used to prune exhausted loops and constant branches.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Scalar {
+    Uint(U256),
+    Bool(bool),
+}
+
+impl Scalar {
+    const fn as_bool(self) -> Option<bool> {
+        if let Self::Bool(value) = self { Some(value) } else { None }
+    }
+
+    fn binary(self, op: BinOpKind, rhs: Self) -> Option<Self> {
+        Some(match (self, rhs) {
+            (Self::Uint(lhs), Self::Uint(rhs)) => match op {
+                BinOpKind::Lt => Self::Bool(lhs < rhs),
+                BinOpKind::Le => Self::Bool(lhs <= rhs),
+                BinOpKind::Gt => Self::Bool(lhs > rhs),
+                BinOpKind::Ge => Self::Bool(lhs >= rhs),
+                BinOpKind::Eq => Self::Bool(lhs == rhs),
+                BinOpKind::Ne => Self::Bool(lhs != rhs),
+                _ => return None,
+            },
+            (Self::Bool(lhs), Self::Bool(rhs)) => Self::Bool(match op {
+                BinOpKind::And => lhs && rhs,
+                BinOpKind::Or => lhs || rhs,
+                BinOpKind::Eq => lhs == rhs,
+                BinOpKind::Ne => lhs != rhs,
+                _ => return None,
+            }),
+            _ => return None,
+        })
+    }
+}
+
+#[derive(Clone, Default, PartialEq, Eq)]
 struct Value {
     reads: Vec<Read>,
     cheatcode: bool,
     tuple: Vec<Self>,
+    scalar: Option<Scalar>,
 }
 
 impl Value {
     fn merge(&mut self, other: &Self) {
+        if self.scalar != other.scalar {
+            self.scalar = None;
+        }
         for read in &other.reads {
             if !self.reads.contains(read) {
                 self.reads.push(*read);
@@ -132,6 +173,7 @@ struct State {
     seen: Value,
     return_parameters: Vec<VariableId>,
     flow: Flow,
+    unchecked: bool,
 }
 
 impl State {
@@ -280,8 +322,16 @@ impl<'gcx> Checker<'_, '_, '_, 'gcx> {
             return Vec::new();
         }
         match &stmt.kind {
-            StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
+            StmtKind::Block(block) => {
                 return self.block(block.stmts, vec![state], continuation);
+            }
+            StmtKind::UncheckedBlock(block) => {
+                let previous = std::mem::replace(&mut state.unchecked, true);
+                let mut states = self.block(block.stmts, vec![state], continuation);
+                for state in &mut states {
+                    state.unchecked = previous;
+                }
+                return states;
             }
             StmtKind::DeclSingle(var) => {
                 let value = self
@@ -290,7 +340,7 @@ impl<'gcx> Checker<'_, '_, '_, 'gcx> {
                     .variable(*var)
                     .initializer
                     .map(|expr| self.expr(expr, &mut state))
-                    .unwrap_or_default();
+                    .unwrap_or_else(|| self.default_value(*var));
                 state.locals.insert(*var, value);
             }
             StmtKind::DeclMulti(vars, expr) => {
@@ -302,8 +352,7 @@ impl<'gcx> Checker<'_, '_, '_, 'gcx> {
                 }
             }
             StmtKind::If(cond, then, otherwise) => {
-                self.expr(cond, &mut state);
-                let known = self.gcx.try_eval_const_value(cond).ok().and_then(|v| v.as_bool());
+                let known = self.expr(cond, &mut state).scalar.and_then(Scalar::as_bool);
                 let mut states = Vec::new();
                 if known != Some(false) {
                     states.extend(self.stmt(then, state.clone(), continuation));
@@ -341,6 +390,21 @@ impl<'gcx> Checker<'_, '_, '_, 'gcx> {
                         }
                     }
                     active.truncate(MAX_PATHS);
+                    exits.truncate(MAX_PATHS);
+                }
+                // Check the final for/while condition without executing another body. A loop
+                // exhausted exactly at the iteration budget still reaches following statements.
+                if !matches!(source, hir::LoopSource::DoWhile)
+                    && let [stmt] = body.stmts
+                    && let StmtKind::If(cond, _, Some(otherwise)) = &stmt.kind
+                    && matches!(otherwise.kind, StmtKind::Break)
+                {
+                    for mut state in active {
+                        let known = self.expr(cond, &mut state).scalar.and_then(Scalar::as_bool);
+                        if known != Some(true) && state.flow == Flow::Next {
+                            exits.push(state);
+                        }
+                    }
                     exits.truncate(MAX_PATHS);
                 }
                 // Only observed exit edges reach following statements. Do not manufacture an
@@ -435,6 +499,31 @@ impl<'gcx> Checker<'_, '_, '_, 'gcx> {
     }
 
     fn expr(&mut self, expr: &'gcx Expr<'gcx>, state: &mut State) -> Value {
+        let mut value = self.expr_inner(expr, state);
+        value.scalar = value.scalar.or_else(|| {
+            self.gcx.try_eval_const_value(expr).ok().and_then(|value| {
+                value.as_bool().map(Scalar::Bool).or_else(|| value.as_u256().map(Scalar::Uint))
+            })
+        });
+        // Only exact unsigned and boolean values participate in branch pruning.
+        value.scalar =
+            value.scalar.filter(|scalar| match (scalar, self.gcx.type_of_expr(expr.id)) {
+                (Scalar::Uint(value), Some(ty)) => match ty.kind {
+                    TyKind::Elementary(ElementaryType::UInt(size)) => {
+                        value.bit_len() <= size.bits() as usize
+                    }
+                    TyKind::IntLiteral(false, ..) => true,
+                    _ => false,
+                },
+                (Scalar::Bool(_), Some(ty)) => {
+                    matches!(ty.kind, TyKind::Elementary(ElementaryType::Bool))
+                }
+                _ => false,
+            });
+        value
+    }
+
+    fn expr_inner(&mut self, expr: &'gcx Expr<'gcx>, state: &mut State) -> Value {
         if !self.step() || state.flow == Flow::Halt {
             return Value::default();
         }
@@ -469,21 +558,48 @@ impl<'gcx> Checker<'_, '_, '_, 'gcx> {
         match &expr.kind {
             ExprKind::Assign(lhs, op, rhs) => {
                 let mut value = self.expr(rhs, state);
-                if op.is_some() {
-                    value.merge(&self.expr(lhs, state));
+                if let Some(op) = op {
+                    let left = self.expr(lhs, state);
+                    let scalar = self.binary_scalar(lhs, op.kind, left.scalar, value.scalar, state);
+                    value.merge(&left);
+                    value.scalar = scalar;
                     value.cheatcode = false;
                 }
                 self.bind(lhs, value.clone(), state);
                 value
             }
             ExprKind::Delete(lhs) => {
-                self.bind(lhs, Value::default(), state);
+                let value =
+                    lhs.as_variable().map(|var| self.default_value(var)).unwrap_or_default();
+                self.bind(lhs, value, state);
                 Value::default()
             }
             ExprKind::Unary(op, inner) if is_inc_dec(op.kind) => {
-                let mut value = self.expr(inner, state);
+                let before = self.expr(inner, state);
+                let mut value = before.clone();
+                let binary = if matches!(op.kind, UnOpKind::PreInc | UnOpKind::PostInc) {
+                    BinOpKind::Add
+                } else {
+                    BinOpKind::Sub
+                };
+                value.scalar = self.binary_scalar(
+                    inner,
+                    binary,
+                    value.scalar,
+                    Some(Scalar::Uint(U256::from(1))),
+                    state,
+                );
                 value.cheatcode = false;
                 self.bind(inner, value.clone(), state);
+                if op.kind.is_prefix() { value } else { before }
+            }
+            ExprKind::Unary(op, inner) => {
+                let mut value = self.expr(inner, state);
+                value.scalar = match (op.kind, value.scalar) {
+                    (UnOpKind::Not, Some(Scalar::Bool(value))) => Some(Scalar::Bool(!value)),
+                    _ => None,
+                };
+                value.cheatcode = false;
                 value
             }
             ExprKind::Payable(inner) => self.expr(inner, state),
@@ -495,8 +611,7 @@ impl<'gcx> Checker<'_, '_, '_, 'gcx> {
                 ..Value::default()
             },
             ExprKind::Ternary(cond, yes, no) => {
-                self.expr(cond, state);
-                match self.gcx.try_eval_const_value(cond).ok().and_then(|v| v.as_bool()) {
+                match self.expr(cond, state).scalar.and_then(Scalar::as_bool) {
                     Some(true) => self.expr(yes, state),
                     Some(false) => self.expr(no, state),
                     None => {
@@ -507,7 +622,9 @@ impl<'gcx> Checker<'_, '_, '_, 'gcx> {
                             *state = alternate;
                             value = other;
                         } else if alternate.flow != Flow::Halt {
-                            value.merge(&other);
+                            if value != other {
+                                value = Value::default();
+                            }
                             state.merge(&alternate);
                         }
                         value
@@ -516,13 +633,16 @@ impl<'gcx> Checker<'_, '_, '_, 'gcx> {
             }
             ExprKind::Binary(lhs, op, rhs) if matches!(op.kind, BinOpKind::And | BinOpKind::Or) => {
                 let mut value = self.expr(lhs, state);
-                let known = self.gcx.try_eval_const_value(lhs).ok().and_then(|v| v.as_bool());
+                let known = value.scalar.and_then(Scalar::as_bool);
                 let skip = op.kind == BinOpKind::Or;
                 if known == Some(skip) {
                     return value;
                 }
                 let before = state.clone();
-                value.merge(&self.expr(rhs, state));
+                let right = self.expr(rhs, state);
+                let scalar = self.binary_scalar(expr, op.kind, value.scalar, right.scalar, state);
+                value.merge(&right);
+                value.scalar = scalar;
                 if known.is_none() {
                     if state.flow == Flow::Halt {
                         *state = before;
@@ -530,6 +650,15 @@ impl<'gcx> Checker<'_, '_, '_, 'gcx> {
                         state.merge(&before);
                     }
                 }
+                value.cheatcode = false;
+                value
+            }
+            ExprKind::Binary(lhs, op, rhs) => {
+                let mut value = self.expr(lhs, state);
+                let right = self.expr(rhs, state);
+                let scalar = self.binary_scalar(expr, op.kind, value.scalar, right.scalar, state);
+                value.merge(&right);
+                value.scalar = scalar;
                 value.cheatcode = false;
                 value
             }
@@ -567,7 +696,9 @@ impl<'gcx> Checker<'_, '_, '_, 'gcx> {
                 } else {
                     None
                 };
-                if let Some(target) = target {
+                if let Some(target) = target
+                    && matches!(self.gcx.type_of_expr(callee.id).map(|ty| ty.kind), Some(TyKind::Fn(f)) if f.is_internal())
+                {
                     let func = self.gcx.hir.function(target);
                     let bindings = func
                         .parameters
@@ -592,6 +723,43 @@ impl<'gcx> Checker<'_, '_, '_, 'gcx> {
                 value
             }
         }
+    }
+
+    fn default_value(&self, var: VariableId) -> Value {
+        let scalar = match self.gcx.type_of_item(var.into()).kind {
+            TyKind::Elementary(ElementaryType::UInt(_)) => Some(Scalar::Uint(U256::ZERO)),
+            TyKind::Elementary(ElementaryType::Bool) => Some(Scalar::Bool(false)),
+            _ => None,
+        };
+        Value { scalar, ..Value::default() }
+    }
+
+    fn binary_scalar(
+        &self,
+        expr: &Expr<'_>,
+        op: BinOpKind,
+        lhs: Option<Scalar>,
+        rhs: Option<Scalar>,
+        state: &mut State,
+    ) -> Option<Scalar> {
+        let (lhs, rhs) = (lhs?, rhs?);
+        if matches!(op, BinOpKind::Add | BinOpKind::Sub)
+            && let (Scalar::Uint(lhs), Scalar::Uint(rhs)) = (lhs, rhs)
+            && let TyKind::Elementary(ElementaryType::UInt(size)) =
+                self.gcx.type_of_expr(expr.id)?.kind
+        {
+            let (value, overflow) = if op == BinOpKind::Add {
+                lhs.overflowing_add(rhs)
+            } else {
+                lhs.overflowing_sub(rhs)
+            };
+            if !state.unchecked && (overflow || value.bit_len() > size.bits() as usize) {
+                state.flow = Flow::Halt;
+                return None;
+            }
+            return Some(Scalar::Uint(value & (U256::MAX >> (256 - size.bits() as usize))));
+        }
+        lhs.binary(op, rhs)
     }
 
     fn mutation(&self, callee: &Expr<'_>) -> Option<Environment> {
@@ -672,10 +840,12 @@ impl<'gcx> Checker<'_, '_, '_, 'gcx> {
         }
         self.stack.push(func.span);
         let mut input = state.clone();
+        // An unchecked block does not change arithmetic in a called function.
+        input.unchecked = false;
         let caller_returns = std::mem::replace(&mut input.return_parameters, func.returns.to_vec());
         input.locals.extend(bindings);
         for var in func.returns {
-            input.locals.insert(*var, Value::default());
+            input.locals.insert(*var, self.default_value(*var));
         }
         let mut output = self
             .layer(func, 0, input)
@@ -683,19 +853,28 @@ impl<'gcx> Checker<'_, '_, '_, 'gcx> {
             .filter(|s| matches!(s.flow, Flow::Next | Flow::Return));
         let mut value = Value::default();
         if let Some(mut first) = output.next() {
-            value.merge(&self.return_values(func, &first));
+            value = self.return_values(func, &first);
+            self.use_value(&value);
+            let mut ambiguous = false;
             for other in output {
-                value.merge(&self.return_values(func, &other));
+                let returned = self.return_values(func, &other);
+                self.use_value(&returned);
+                ambiguous |= value != returned;
                 first.merge(&other);
             }
+            // Component-wise joins can invent tuples that no execution returns, e.g.
+            // `(block.number, nonVm)` and `(0, vm)`. Keep only an unambiguous return value.
+            if ambiguous {
+                value = Value::default();
+            }
             first.flow = Flow::Next;
+            first.unchecked = state.unchecked;
             first.return_parameters = caller_returns;
             *state = first;
         } else {
             state.flow = Flow::Halt;
         }
         self.stack.pop();
-        self.use_value(&value);
         value
     }
 }

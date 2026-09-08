@@ -54,14 +54,18 @@ The analysis follows scalar local aliases, arithmetic, tuples, internal helper a
 returns, inherited helpers, and modifier bodies. It recognizes the constant cheatcode address
 and the resolved `warp(uint256)` signature, even when the receiver is not named `vm`.
 Unrelated methods named `warp` and changes to the block number do not trigger this rule.
-External call results are treated as materialized values from a separate call frame.
+External call results, including public and external library calls through `delegatecall`,
+are treated as materialized values from a separate call frame.
 
 This is a bounded warning, not a complete execution analysis: it visits up to 16,384 nodes,
 retains at most 32 paths at statement boundaries, follows at most eight function frames, and
 visits at most two loop iterations. It does not prove relationships between runtime conditions
 or analyze recursive/indirect calls, low-level cheatcode calls, assembly, or heap/storage aliases.
-Internal call outcomes and conditional expressions can be joined conservatively. Absence of a
-warning does not establish that every test capture is safe.
+Known unsigned and boolean locals prune exhausted loops and constant branches. Internal-call
+state effects can be joined conservatively, but differing return values and conditional-expression
+values are discarded to avoid combining mutually exclusive outcomes. This can miss captures
+returned by branching helpers. Absence of a warning does not establish that every test capture
+is safe.
 
 Existing severity filters, `exclude_lints`, and inline suppressions apply. Suppress at the raw
 capture when its behavior is intentional:
