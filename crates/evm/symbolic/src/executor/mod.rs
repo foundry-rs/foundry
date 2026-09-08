@@ -47,6 +47,13 @@ struct SequencePath {
     steps: Vec<SequenceStepTemplate>,
 }
 
+#[derive(Debug)]
+struct SequenceCall {
+    code: SymCode,
+    worklist: VecDeque<PathState>,
+    deferred_worklist: VecDeque<PathState>,
+}
+
 #[derive(Clone, Debug)]
 struct SequenceStepTemplate {
     sender: Address,
@@ -73,16 +80,58 @@ impl SymbolicExecutor {
     pub(super) fn pop_next_feasible_path(
         &mut self,
         paths: &mut VecDeque<PathState>,
+        deferred_paths: &mut VecDeque<PathState>,
+        escalate_deferred: bool,
     ) -> Result<Option<PathState>, SymbolicError> {
-        while let Some(mut state) = self.pop_next_path(paths) {
-            if state.take_deferred_feasibility_check()
-                && !self.branch_is_sat_or_defer(&state, &state.constraints)?
-            {
-                continue;
+        loop {
+            while let Some(mut state) = self.pop_next_path(paths) {
+                if state.take_deferred_feasibility_check() {
+                    let replayable_storage = state.world.replay_storage_symbols();
+                    match self.solver.branch_feasibility_with_replayable_storage(
+                        &mut self.cx,
+                        &state.constraints,
+                        &replayable_storage,
+                    ) {
+                        Ok(BranchFeasibility::Sat) => {}
+                        Ok(BranchFeasibility::Unsat) => continue,
+                        Ok(BranchFeasibility::NeedsSolver) => {
+                            if !escalate_deferred {
+                                self.defer_hard_arithmetic();
+                                continue;
+                            }
+                            trace!("queued hard arithmetic branch for deferred SMT solving");
+                            deferred_paths.push_back(state);
+                            continue;
+                        }
+                        Err(SymbolicError::SolverUnknown) => {
+                            self.defer_solver_unknown();
+                            continue;
+                        }
+                        Err(err) => return Err(err),
+                    }
+                }
+                return Ok(Some(state));
             }
-            return Ok(Some(state));
+
+            let Some(state) = self.pop_next_path(deferred_paths) else {
+                return Ok(None);
+            };
+            if self.deadline.is_none() {
+                self.deadline = self
+                    .config
+                    .timeout
+                    .filter(|seconds| *seconds > 0)
+                    .map(|seconds| Instant::now() + Duration::from_secs(seconds.into()));
+            }
+            self.check_timeout()?;
+            trace!("escalating deferred hard arithmetic branch to SMT solver");
+            match self.is_sat_with_state(&state, &state.constraints) {
+                Ok(true) => return Ok(Some(state)),
+                Ok(false) => {}
+                Err(SymbolicError::SolverUnknown) => self.defer_solver_unknown(),
+                Err(err) => return Err(err),
+            }
         }
-        Ok(None)
     }
 
     fn join_call_outcome(
@@ -149,20 +198,34 @@ impl SymbolicExecutor {
         StepOutcome::Continue
     }
 
-    fn execute_call_paths<FEN: FoundryEvmNetwork>(
+    fn execute_call_path_batch<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
-        initial: PathState,
         code: &SymCode,
+        worklist: &mut VecDeque<PathState>,
+        deferred_worklist: &mut VecDeque<PathState>,
         completed_paths: &mut usize,
         kind: CallPathKind,
     ) -> Result<Vec<CallOutcome>, SymbolicError> {
-        let mut worklist = VecDeque::from([initial]);
         let mut outcomes = Vec::new();
         let path_limit = self.config.path_width() as usize;
         let depth_limit = self.config.execution_depth() as usize;
 
-        while let Some(mut state) = self.pop_next_feasible_path(&mut worklist)? {
+        loop {
+            // Let invariant execution inspect each completed sequence outcome before escalating a
+            // deferred hard-arithmetic sibling. External calls still return all outcomes together
+            // because their parent frame must join them before it can continue.
+            if matches!(kind, CallPathKind::Sequence) && !outcomes.is_empty() {
+                break;
+            }
+            let Some(mut state) = self.pop_next_feasible_path(
+                worklist,
+                deferred_worklist,
+                matches!(kind, CallPathKind::Sequence),
+            )?
+            else {
+                break;
+            };
             if *completed_paths >= path_limit {
                 return Err(SymbolicError::Unsupported("symbolic path limit exceeded"));
             }
@@ -237,7 +300,7 @@ impl SymbolicExecutor {
                     code,
                     code.jump_table(),
                     &mut state,
-                    &mut worklist,
+                    &mut *worklist,
                     completed_paths,
                     op,
                 )? {

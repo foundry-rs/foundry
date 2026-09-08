@@ -128,7 +128,11 @@ impl BindArgs {
             eyre::bail!("`--ethers` bindings have been removed. Use `--alloy` (default) instead.");
         }
 
-        let config = self.load_config()?;
+        let config = if self.skip_build {
+            self.load_config()?
+        } else {
+            self.load_config_with_dependencies()?
+        };
         let artifacts = config.out.clone();
         let enum_definitions = if self.skip_build {
             let paths = config.project_paths();

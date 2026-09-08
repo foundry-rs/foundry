@@ -1,4 +1,3 @@
-use crate::cmd::install;
 use alloy_chains::Chain;
 use alloy_consensus::{SignableTransaction, Signed};
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
@@ -185,11 +184,7 @@ impl CreateArgs {
         let resolve_unknown_fee_token_symbol = !config.eth_rpc_curl;
 
         // Install missing dependencies.
-        if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
-        {
-            // need to re-configure here to also catch additional remappings
-            config = self.load_config()?;
-        }
+        self.install_missing_dependencies(&mut config)?;
 
         // Find Project & Compile
         let project = config.project()?;

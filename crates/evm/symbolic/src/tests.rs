@@ -3693,8 +3693,9 @@ fn solver_normalizes_udiv_comparisons_only_at_safe_product_boundaries() {
     let threshold_is_max = SymBoolExpr::eq(&mut cx, symbolic_threshold.clone(), max);
     let comparison = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, quotient, symbolic_threshold);
     let normalized =
-        normalize_constraints_for_solver(&mut cx, &[threshold_is_max, comparison.clone()]);
-    assert!(normalized.contains(&comparison));
+        normalize_constraints_for_solver(&mut cx, &[threshold_is_max.clone(), comparison.clone()]);
+    assert_eq!(normalized, vec![threshold_is_max]);
+    assert!(!normalized.contains(&comparison));
 
     let symbolic_divisor = SymExpr::var(&mut cx, "divisor");
     let numerator = SymExpr::var(&mut cx, "other_numerator");
@@ -4046,14 +4047,15 @@ fn solver_does_not_use_mul_div_identity_to_bound_itself() {
     let y_is_zero = SymBoolExpr::eq(&mut cx, y, zero);
     let four = SymExpr::constant(&mut cx, U256::from(4));
     let x_is_four = SymBoolExpr::eq(&mut cx, x, four);
-    let constraints = vec![identity.clone(), quotient_matches_y, y_is_zero, x_is_four];
+    let constraints = vec![identity, quotient_matches_y, y_is_zero, x_is_four];
     let model =
         symbolic_model(&mut cx, [("x".to_string(), U256::from(4)), ("y".to_string(), U256::ZERO)]);
 
     assert!(constraints.iter().any(|constraint| !constraint.eval_model(&model).unwrap()));
 
     let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
-    assert!(normalized.contains(&identity));
+    // The independent `x == 4` fact may reduce the wrapping identity to `false`, but the
+    // identity itself must not supply the bound that proves it.
     assert!(normalized.iter().any(|constraint| !constraint.eval_model(&model).unwrap()));
 }
 
@@ -4077,8 +4079,8 @@ fn solver_does_not_use_mul_div_identities_to_bound_each_other() {
     let four = SymExpr::constant(&mut cx, U256::from(4));
     let a_is_four = SymBoolExpr::eq(&mut cx, a, four);
     let constraints = vec![
-        a_identity.clone(),
-        b_identity.clone(),
+        a_identity,
+        b_identity,
         a_matches_b,
         a_quotient_is_zero,
         b_quotient_is_zero,
@@ -4092,8 +4094,8 @@ fn solver_does_not_use_mul_div_identities_to_bound_each_other() {
     assert!(constraints.iter().any(|constraint| !constraint.eval_model(&model).unwrap()));
 
     let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
-    assert!(normalized.contains(&a_identity));
-    assert!(normalized.contains(&b_identity));
+    // Independent exact values may reduce these wrapping identities to `false`; neither
+    // identity may contribute bounds that make the batch satisfiable.
     assert!(normalized.iter().any(|constraint| !constraint.eval_model(&model).unwrap()));
 }
 
@@ -5409,30 +5411,162 @@ fn model_uses_validated_hard_arithmetic_fallback_cache() {
 
 #[cfg(unix)]
 #[test]
-fn is_sat_hard_arithmetic_without_witness_still_honors_solver_unsat() {
+fn ousd_shaped_division_normalizes_before_smt() {
+    let mut cx = SymCx::new();
+    let marker = portfolio_test_marker("ousd-hard-arith-is-sat-unsat");
+    let commands = vec![counted_solver_command(&marker, "unsat")];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
+    let credits = SymExpr::var(&mut cx, "credit_balances_account");
+    let scale = SymExpr::constant(&mut cx, U256::from(1_000_000_000_000_000_000u64));
+    let credits_per_token = SymExpr::constant(&mut cx, U256::from(2_000_000_000_000_000_000u64));
+    let uint128_max = SymExpr::constant(&mut cx, U256::from(u128::MAX));
+    let scaled = SymExpr::binop(&mut cx, SymBinOp::Mul, credits.clone(), scale);
+    let balance = SymExpr::binop(&mut cx, SymBinOp::UDiv, scaled, credits_per_token);
+    let constraints = vec![
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, credits.clone(), uint128_max),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, balance, credits),
+    ];
+    let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
+
+    assert!(hard_arith_fallback_model(&cx, &normalized).is_none());
+    assert!(normalized.iter().all(|constraint| !constraint.contains_hard_arith()));
+    assert_eq!(
+        solver
+            .branch_feasibility_with_replayable_storage(
+                &mut cx,
+                &constraints,
+                &SymbolicVars::default(),
+            )
+            .unwrap(),
+        BranchFeasibility::Unsat
+    );
+    assert_eq!(solver.stats().smt_queries, 1);
+    assert_eq!(counted_solver_invocations(&marker), 1);
+    assert!(!solver.is_sat(&mut cx, &constraints).unwrap());
+
+    let stats = solver.stats();
+    assert_eq!(stats.solver_queries, 1);
+    assert_eq!(stats.sat_queries, 2);
+    assert_eq!(stats.sat_cache_hits, 1);
+    assert_eq!(solver.heuristic_witnesses(), 0);
+    assert_eq!(counted_solver_invocations(&marker), 1);
+    let _ = std::fs::remove_file(&marker);
+}
+
+#[cfg(unix)]
+#[test]
+fn hard_arithmetic_without_witness_defers_then_honors_solver_unsat() {
     let mut cx = SymCx::new();
     let marker = portfolio_test_marker("hard-arith-is-sat-unsat");
     let commands = vec![counted_solver_command(&marker, "unsat")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
     let x = SymExpr::var(&mut cx, "x");
-    let y = SymExpr::var(&mut cx, "y");
-    let zero = SymExpr::zero(&mut cx);
-    let x_is_zero = SymBoolExpr::eq(&mut cx, x.clone(), zero);
-    let product = SymExpr::binop(&mut cx, SymBinOp::Mul, x, y);
-    let one = SymExpr::one(&mut cx);
-    let product_eq_one = SymBoolExpr::eq(&mut cx, product, one);
-    let constraints = vec![x_is_zero, product_eq_one];
+    let square = SymExpr::binop(&mut cx, SymBinOp::Mul, x.clone(), x);
+    let two = SymExpr::constant(&mut cx, U256::from(2));
+    let constraints = vec![SymBoolExpr::eq(&mut cx, square, two)];
     let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
 
     assert!(hard_arith_fallback_model(&cx, &normalized).is_none());
+    assert_eq!(
+        solver
+            .branch_feasibility_with_replayable_storage(
+                &mut cx,
+                &constraints,
+                &SymbolicVars::default(),
+            )
+            .unwrap(),
+        BranchFeasibility::NeedsSolver
+    );
+    assert_eq!(solver.stats().smt_queries, 0);
+    assert_eq!(counted_solver_invocations(&marker), 0);
     assert!(!solver.is_sat(&mut cx, &constraints).unwrap());
 
     let stats = solver.stats();
-    assert_eq!(stats.solver_queries, 1);
-    assert_eq!(stats.sat_queries, 1);
+    assert_eq!(stats.solver_queries, 2);
+    assert_eq!(stats.sat_queries, 2);
     assert_eq!(stats.sat_cache_hits, 0);
     assert_eq!(solver.heuristic_witnesses(), 0);
     assert_eq!(counted_solver_invocations(&marker), 1);
+    let _ = std::fs::remove_file(&marker);
+}
+
+#[cfg(unix)]
+#[test]
+fn feasible_path_selection_drains_easy_paths_before_deferred_hard_arithmetic() {
+    let marker = portfolio_test_marker("hard-arith-deferred-path");
+    let commands = vec![counted_solver_command(&marker, "unsat")];
+    let mut executor = SymbolicExecutor::new(SymbolicConfig::default());
+    executor.solver = SmtLibSubprocessSolver::new(Ok(commands), None, 3, false);
+
+    let x = SymExpr::var(&mut executor.cx, "x");
+    let y = SymExpr::var(&mut executor.cx, "y");
+    let mut hard = empty_state(&mut executor.cx);
+    let product = SymExpr::binop(&mut executor.cx, SymBinOp::Mul, x, y);
+    let zero = SymExpr::zero(&mut executor.cx);
+    hard.constraints.push(SymBoolExpr::eq(&mut executor.cx, product.clone(), zero));
+    let one = SymExpr::one(&mut executor.cx);
+    hard.constraints.push(SymBoolExpr::eq(&mut executor.cx, product, one));
+    hard.defer_feasibility_check();
+
+    let mut easy = empty_state(&mut executor.cx);
+    easy.constraints.push(SymBoolExpr::constant(&mut executor.cx, true));
+    easy.defer_feasibility_check();
+    let mut paths = VecDeque::from([hard, easy]);
+    let mut deferred_paths = VecDeque::new();
+
+    assert!(
+        executor.pop_next_feasible_path(&mut paths, &mut deferred_paths, true).unwrap().is_some()
+    );
+    assert_eq!(deferred_paths.len(), 1);
+    assert!(executor.deadline.is_none());
+    assert_eq!(counted_solver_invocations(&marker), 0);
+    assert!(
+        executor.pop_next_feasible_path(&mut paths, &mut deferred_paths, true).unwrap().is_none()
+    );
+    assert!(executor.deadline.is_some());
+    assert_eq!(counted_solver_invocations(&marker), 1);
+    let _ = std::fs::remove_file(&marker);
+}
+
+#[cfg(unix)]
+#[test]
+fn nested_feasible_path_selection_skips_hard_arithmetic_without_escalating() {
+    let marker = portfolio_test_marker("hard-arith-root-owned-path");
+    let commands = vec![counted_solver_command(&marker, "unsat")];
+    let mut executor = SymbolicExecutor::new(SymbolicConfig::default());
+    executor.solver = SmtLibSubprocessSolver::new(Ok(commands), None, 3, false);
+
+    let x = SymExpr::var(&mut executor.cx, "x");
+    let y = SymExpr::var(&mut executor.cx, "y");
+    let mut hard = empty_state(&mut executor.cx);
+    let product = SymExpr::binop(&mut executor.cx, SymBinOp::Mul, x, y);
+    let zero = SymExpr::zero(&mut executor.cx);
+    hard.constraints.push(SymBoolExpr::eq(&mut executor.cx, product.clone(), zero));
+    let one = SymExpr::one(&mut executor.cx);
+    hard.constraints.push(SymBoolExpr::eq(&mut executor.cx, product, one));
+    hard.defer_feasibility_check();
+
+    let mut easy = empty_state(&mut executor.cx);
+    easy.constraints.push(SymBoolExpr::constant(&mut executor.cx, true));
+    easy.defer_feasibility_check();
+    let mut nested_paths = VecDeque::from([hard, easy]);
+    let mut deferred_paths = VecDeque::new();
+    assert!(
+        executor
+            .pop_next_feasible_path(&mut nested_paths, &mut deferred_paths, false)
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        executor
+            .pop_next_feasible_path(&mut nested_paths, &mut deferred_paths, false)
+            .unwrap()
+            .is_none()
+    );
+
+    assert!(executor.deadline.is_none());
+    assert_eq!(counted_solver_invocations(&marker), 0);
+    assert!(matches!(executor.deferred_incomplete, Some(DeferredIncomplete::HardArithmetic)));
     let _ = std::fs::remove_file(&marker);
 }
 
@@ -5676,7 +5810,9 @@ fn sat_cache_does_not_reuse_unsat_branch_complement_with_unsat_base() {
     assert_eq!(stats.solver_queries, 2);
     assert_eq!(stats.sat_queries, 2);
     assert_eq!(stats.sat_cache_hits, 0);
-    assert_eq!(counted_solver_invocations(&marker), 2);
+    // Exact-value propagation makes one contradictory branch local; the other still exercises
+    // the solver without reusing the unsatisfiable complement cache entry.
+    assert_eq!(counted_solver_invocations(&marker), 1);
     let _ = std::fs::remove_file(&marker);
 }
 
