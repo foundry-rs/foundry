@@ -21,8 +21,6 @@ use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
-struct Stop;
-
 pub struct LspClient {
     child: Option<Child>,
     pub(crate) runtime: tokio::runtime::Runtime,
@@ -64,12 +62,10 @@ impl LspClient {
                 let _ = diagnostic_sender.send(params);
                 std::ops::ControlFlow::Continue(())
             });
-            router
-                .unhandled_notification(move |_, notification| {
-                    let _ = notification_sender.send(notification.method);
-                    std::ops::ControlFlow::Continue(())
-                })
-                .event::<Stop>(|_, _| std::ops::ControlFlow::Break(Ok(())));
+            router.unhandled_notification(move |_, notification| {
+                let _ = notification_sender.send(notification.method);
+                std::ops::ControlFlow::Continue(())
+            });
             router
         });
 
@@ -139,11 +135,14 @@ impl LspClient {
         let future = self.server.shutdown(());
         request(&self.runtime, future);
         self.server.exit(()).unwrap();
-        self.server.emit(Stop).unwrap();
 
+        // The server closes stdout after exit; let EOF finish the transport.
         let main_loop = self.main_loop.take().unwrap();
         let result = main_loop.join().unwrap();
-        assert!(result.is_ok(), "LSP client transport failed: {result:?}");
+        assert!(
+            matches!(result, Err(async_lsp::Error::Eof)),
+            "LSP client transport failed: {result:?}"
+        );
 
         let mut child = self.child.take().unwrap();
         let status = child.wait().unwrap();
