@@ -136,14 +136,6 @@ impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
         }
         self.backend.to_mut()
     }
-
-    /// Returns a mutable instance of the Backend if it is initialized.
-    fn initialized_backend_mut(&mut self) -> Option<&mut Backend<FEN>> {
-        if self.pending_init.is_none() {
-            return Some(self.backend.to_mut());
-        }
-        None
-    }
 }
 
 #[cfg(feature = "monad")]
@@ -207,17 +199,19 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for CowBackend<'_, FEN
     }
 
     fn delete_state_snapshot(&mut self, id: U256) -> bool {
-        // delete state snapshot requires a previous snapshot to be initialized
-        if let Some(backend) = self.initialized_backend_mut() {
-            return backend.delete_state_snapshot(id);
+        // Snapshots can predate initialization; avoid cloning when the snapshot is missing.
+        if self.backend.state_snapshots().get(id).is_none() {
+            return false;
         }
-        false
+        self.backend_mut().delete_state_snapshot(id)
     }
 
     fn delete_state_snapshots(&mut self) {
-        if let Some(backend) = self.initialized_backend_mut() {
-            backend.delete_state_snapshots()
+        // Avoid cloning when there are no snapshots.
+        if self.backend.state_snapshots().is_empty() {
+            return;
         }
+        self.backend_mut().delete_state_snapshots()
     }
 
     fn create_fork(&mut self, fork: CreateFork) -> eyre::Result<LocalForkId> {
