@@ -17,6 +17,7 @@ async function eventually(check, description) {
 async function run() {
   const extensionPath = process.env.FOUNDRY_EDITOR_TEST_EXTENSION;
   const forgePath = process.env.FOUNDRY_EDITOR_TEST_FORGE;
+  const launcher = process.env.FOUNDRY_EDITOR_TEST_LAUNCHER === "1";
   const extension = vscode.extensions.all.find((candidate) => candidate.extensionPath === extensionPath);
   assert.ok(extension, `Development extension must load from ${extensionPath}`);
   await extension.activate();
@@ -68,19 +69,22 @@ async function run() {
     "editor.defaultFormatter": extension.id,
   }, vscode.ConfigurationTarget.Workspace);
   let formattingRequests = 0;
-  const languageClient = require("vscode-languageclient/node");
-  const originalSendRequest = languageClient.LanguageClient.prototype.sendRequest;
-  languageClient.LanguageClient.prototype.sendRequest = function (type, ...args) {
-    if (type === "textDocument/formatting" || type?.method === "textDocument/formatting") formattingRequests++;
-    return originalSendRequest.call(this, type, ...args);
-  };
+  // The embedded client has its own bundled class; source-only instrumentation cannot observe it.
+  const prototype = launcher ? undefined : require("vscode-languageclient/node").LanguageClient.prototype;
+  const originalSendRequest = prototype?.sendRequest;
+  if (prototype) {
+    prototype.sendRequest = function (type, ...args) {
+      if (type === "textDocument/formatting" || type?.method === "textDocument/formatting") formattingRequests++;
+      return originalSendRequest.call(this, type, ...args);
+    };
+  }
   try {
     await replaceSource();
     await document.save();
     assert.equal(await readFile(sourcePath, "utf8"), expected);
-    assert.equal(formattingRequests, 1, "language-scoped formatOnSave must issue exactly one formatting request");
+    if (!launcher) assert.equal(formattingRequests, 1, "language-scoped formatOnSave must issue exactly one formatting request");
   } finally {
-    languageClient.LanguageClient.prototype.sendRequest = originalSendRequest;
+    if (prototype) prototype.sendRequest = originalSendRequest;
   }
 
   const commands = await vscode.commands.getCommands(true);
@@ -104,11 +108,12 @@ async function run() {
   await writeFile(process.env.FOUNDRY_EDITOR_TEST_REPORT, JSON.stringify({
     extensionPath: extension.extensionPath,
     extensionId: extension.id,
+    clientMode: launcher ? "embedded client extracted by standalone Forge" : "source client",
     forgePath,
     forgeVersion: execFileSync(forgePath, ["--version"], { encoding: "utf8" }).trim(),
     vscodeVersion: vscode.version,
     serverProcesses,
-    checks: ["development extension path", "initialize", "syntax diagnostics", "unsaved document symbols", "hover", "LSP formatting", "nested foundry.toml tab_width = 2", "legacy formatting command", "legacy format on save", "language-scoped save formats exactly once", "solar.* command compatibility", "actual Forge child process"],
+    checks: ["development extension path", "initialize", "syntax diagnostics", "unsaved document symbols", "hover", "LSP formatting", "nested foundry.toml tab_width = 2", "legacy formatting command", "legacy format on save", launcher ? "language-scoped save formatting output" : "language-scoped save formats exactly once", "solar.* command compatibility", "actual Forge child process", ...(launcher ? ["launcher overrides conflicting workspace Forge path", "no runtime node_modules"] : [])],
     hoverCount: hovers.length,
     isolatedProfile: process.env.FOUNDRY_EDITOR_TEST_ROOT,
   }, null, 2) + "\n");

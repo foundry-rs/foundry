@@ -10,3 +10,4 @@ tsconfig.json
 package-lock.json
 out/**/*.map
 bundle/**
+dist/**

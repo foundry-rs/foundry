@@ -7,10 +7,38 @@ needed or searched for.
 
 ## Installation and configuration
 
-Install or upgrade [Foundry](https://getfoundry.sh) to a build that supports
-`forge lsp`. Check `forge lsp --stdio --help`; `forge --version` alone does not
-establish LSP support. Source builds use `cargo build --locked -p forge --bin forge`.
-The extension resolves `forge` from `PATH`, or uses an explicit executable:
+Install [VS Code](https://code.visualstudio.com/) and a recent
+[Foundry](https://getfoundry.sh), then run this in your Solidity project's
+terminal:
+
+```sh
+forge lsp
+```
+
+The project opens in a VS Code Extension Development Host with the bundled
+Solidity extension ready to use. Open a `.sol` file to activate language support.
+No Foundry checkout, Node/npm installation or F5 step is needed.
+
+`forge lsp /path/to/project` opens another directory. The launcher uses `code`
+on PATH, with a fallback to the installed VS Code app in `/Applications` on
+macOS. Use `forge lsp --code-path /path/to/code` to select another VS Code CLI.
+Check `forge lsp --help` for `--vscode` to confirm your Foundry build supports
+the launcher. Source builds use `cargo build --locked -p forge --bin forge`.
+
+When standard input is redirected, bare `forge lsp` runs the language server.
+Use `forge lsp --vscode` to force an editor window. Supplying a project path or
+`--code-path` also opens VS Code. Editor clients should use `forge lsp --stdio`,
+which always selects the server and cannot be combined with launcher options.
+
+The launcher caches the bundled extension under
+`~/.foundry/cache/lsp/extensions/<asset-hash>` and creates a persistent VS Code
+profile under `~/.foundry/cache/lsp/vscode/<session-hash>`. Sessions are keyed by
+project directory, Forge executable path and selected Foundry profile. Normal
+VS Code settings are untouched. The launched client always uses the Forge
+executable that opened it, including for formatting and background checks.
+
+A separately installed extension resolves `forge` from `PATH`, or uses an
+explicit executable:
 
 ```json
 {
@@ -31,7 +59,8 @@ ignored, with a migration warning when explicitly configured. Remove it and set
 are never reinterpreted as Forge paths. The package name `solar-lsp`, language
 ID `solidity`, `solarLsp.*` setting keys and `solar.*` commands remain unchanged.
 The original manifest has no publisher; local packaging retains that state.
-Marketplace ownership and publishing require separate maintainer decisions.
+Marketplace ownership and publishing require separate maintainer decisions;
+`forge lsp` does not require a Marketplace installation.
 
 ## Formatting
 
@@ -45,9 +74,10 @@ The legacy `solarLsp.formatOnSave` defaults to `true`. When VS Code's
 `editor.formatOnSave` is enabled, the legacy save hook yields to it, avoiding
 duplicate formatting. To disable all save formatting, disable both settings.
 
-## Local development
+## Client development
 
-From the **Foundry repository root**:
+To debug changes to the extension itself, run these commands from the
+**Foundry repository root**:
 
 ```bash
 cargo build --locked -p forge --bin forge
@@ -70,6 +100,28 @@ setup with paths relative to that directory.
 
 Node dependencies and build output remain local to this directory. Normal
 Foundry Cargo builds do not run Node tooling.
+
+### Updating the embedded client
+
+After changing client source or runtime dependencies, regenerate the bundle
+before rebuilding Forge:
+
+```sh
+cd editors/vscode
+npm ci
+npm run bundle
+npm run bundle:check
+```
+
+Commit `dist/extension.js.gz` and `dist/THIRD_PARTY_NOTICES.txt` with the source
+change. Cargo embeds this compressed runtime together with the extension
+manifest, grammars, language configuration and licenses. The bundle includes
+its JavaScript dependencies; the installed Forge binary needs only VS Code to
+launch it. Editor CI uses `npm run bundle:check` to detect stale artifacts.
+
+The launcher passes `FOUNDRY_LSP_FORGE` to select the invoking Forge executable.
+The client honors it only in Extension Development Host mode; normally installed
+extensions continue to honor `solarLsp.forgePath`.
 
 ### Real Extension Development Host tests
 

@@ -11,6 +11,8 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "crates/forge/src/cmd/lsp.rs"
+      - "crates/forge/src/cmd/lsp/**"
+      - "crates/forge/src/opts.rs"
       - "crates/forge/tests/cli/lsp.rs"
       - "crates/forge/tests/support/lsp_client.rs"
   push:
@@ -21,6 +23,8 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "crates/forge/src/cmd/lsp.rs"
+      - "crates/forge/src/cmd/lsp/**"
+      - "crates/forge/src/opts.rs"
   workflow_dispatch:
 
 concurrency:
@@ -55,7 +59,7 @@ jobs:
           prefix-key: v2-editor-forge
       - run: npm ci
         working-directory: editors/vscode
-      - run: npm run check && npm test && npm run package
+      - run: npm run check && npm test && npm run bundle:check && npm run package
         working-directory: editors/vscode
       - run: cargo build --locked -p forge --bin forge
       - run: cargo test --locked -p forge --test cli 'lsp::'

@@ -16,11 +16,145 @@ use std::{
 };
 
 #[cfg(unix)]
-use std::os::unix::fs::symlink;
+use std::{
+    os::unix::fs::{PermissionsExt, symlink},
+    path::Path,
+    process::Command,
+};
 
 use super::lsp_client::{LspClient, request};
 
+#[cfg(unix)]
+use foundry_test_utils::snapbox::{IntoData, data::DataFormat};
+#[cfg(unix)]
+use rexpect::{Encoding, process::wait::WaitStatus, reader::Options, spawn_with_options};
+
 const SYMBOL_TIMEOUT: Duration = Duration::from_secs(10);
+
+#[cfg(unix)]
+forgetest!(lsp_vscode_opens_current_project_with_bundled_extension, |prj, cmd| {
+    let home = tempfile::tempdir().unwrap();
+    let executables = tempfile::tempdir().unwrap();
+    let project = dunce::canonicalize(prj.root()).unwrap();
+    let forge = executables.path().join("standalone forge");
+    fs::hard_link(env!("CARGO_BIN_EXE_forge"), &forge).unwrap();
+    let forge = dunce::canonicalize(forge).unwrap();
+    let code = executables.path().join("mock code");
+    fs::write(
+        &code,
+        r#"#!/bin/sh
+printf '%s\n' "$@" > "$FORGE_LSP_TEST_ARGS"
+printf '%s\n' "$FOUNDRY_PROFILE" "$FOUNDRY_LSP_FORGE" > "$FORGE_LSP_TEST_PROFILE"
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(&code, fs::Permissions::from_mode(0o755)).unwrap();
+    let captured_args = executables.path().join("args");
+    let captured_profile = executables.path().join("profile");
+    let mut standalone = Command::new(&forge);
+    standalone.current_dir(&project).env("NO_COLOR", "1");
+    cmd.set_cmd(standalone);
+    cmd.env("HOME", home.path());
+    cmd.env("PATH", executables.path());
+    cmd.env("FORGE_LSP_TEST_ARGS", &captured_args);
+    cmd.env("FORGE_LSP_TEST_PROFILE", &captured_profile);
+    cmd.args(["lsp", "--vscode", "--profile", "editor", "--code-path"]).arg(&code);
+    cmd.assert_empty_stdout();
+
+    let captured = fs::read_to_string(&captured_args).unwrap();
+    let arguments = captured.lines().collect::<Vec<_>>();
+    assert_eq!(arguments.last().copied(), project.to_str());
+    assert!(arguments.contains(&"--new-window"));
+    let extension = arguments
+        .windows(2)
+        .find(|pair| pair[0] == "--extensionDevelopmentPath")
+        .map(|pair| pair[1])
+        .expect("VS Code must load the bundled extension");
+    assert!(Path::new(extension).is_absolute());
+    assert!(Path::new(extension).join("package.json").is_file());
+    assert!(Path::new(extension).join("out/extension.js").is_file());
+    assert!(Path::new(extension).join("syntaxes/solidity.json").is_file());
+    let user_data = arguments
+        .windows(2)
+        .find(|pair| pair[0] == "--user-data-dir")
+        .map(|pair| Path::new(pair[1]))
+        .expect("VS Code must use a dedicated profile");
+    assert_data_eq!(
+        fs::read_to_string(user_data.join("User/settings.json"))
+            .unwrap()
+            .into_data()
+            .is(DataFormat::Json),
+        serde_json::to_string(&serde_json::json!({
+            "solarLsp.forgePath": forge,
+            "workbench.startupEditor": "none",
+        }))
+        .unwrap()
+        .into_data()
+        .is(DataFormat::Json),
+    );
+    assert_eq!(
+        fs::read_to_string(&captured_profile).unwrap(),
+        format!("editor\n{}\n", forge.display())
+    );
+    assert!(!project.join(".vscode").exists());
+
+    // A terminal needs only `forge lsp`, and reopening preserves the managed profile's settings.
+    let settings = user_data.join("User/settings.json");
+    let custom_settings = "{\"editor.fontSize\":17}\n";
+    fs::write(&settings, custom_settings).unwrap();
+    symlink(&code, executables.path().join("code")).unwrap();
+    let mut terminal = Command::new(&forge);
+    terminal
+        .current_dir(&project)
+        .env("HOME", home.path())
+        .env("PATH", executables.path())
+        .env("FOUNDRY_PROFILE", "editor")
+        .env("FORGE_LSP_TEST_ARGS", &captured_args)
+        .env("FORGE_LSP_TEST_PROFILE", &captured_profile)
+        .arg("lsp");
+    let mut terminal = spawn_with_options(
+        terminal,
+        Options {
+            timeout_ms: Some(30_000),
+            strip_ansi_escape_codes: true,
+            encoding: Encoding::UTF8,
+        },
+    )
+    .unwrap();
+    terminal.exp_eof().unwrap();
+    assert!(matches!(terminal.process.wait().unwrap(), WaitStatus::Exited(_, 0)));
+    assert_eq!(fs::read_to_string(captured_args).unwrap(), captured);
+    assert_eq!(fs::read_to_string(settings).unwrap(), custom_settings);
+});
+
+forgetest!(lsp_stdio_rejects_editor_launch_options, |_prj, cmd| {
+    cmd.args(["lsp", "--stdio", "--vscode"]).assert_code(2).stdout_eq(str![""]).stderr_eq(str![[
+        r#"
+error: the argument '--stdio' cannot be used with '--vscode'
+
+Usage: forge lsp --stdio [PATH]
+
+For more information, try '--help'.
+
+"#
+    ]]);
+});
+
+#[cfg(unix)]
+forgetest!(lsp_code_path_reports_missing_editor, |prj, cmd| {
+    let home = tempfile::tempdir().unwrap();
+    cmd.env("HOME", home.path());
+    cmd.args(["lsp", "--code-path"]).arg(prj.root().join("missing-vscode"));
+    cmd.assert_failure().stdout_eq(str![""]).stderr_eq(str![[r#"
+Opening VS Code with Forge Solidity support: [..]
+Error: Could not launch VS Code using [..]/missing-vscode. Install VS Code and its `code` command, or pass --code-path <PATH> to the VS Code CLI. Use `forge lsp --stdio` for another editor.
+
+Context:
+- No such file or directory (os error 2)
+
+"#]]);
+    assert!(!prj.root().join(".vscode").exists());
+});
 
 fn wait_for_workspace_symbols(client: &mut LspClient, expected: &str, unexpected: &str) {
     let deadline = Instant::now() + SYMBOL_TIMEOUT;

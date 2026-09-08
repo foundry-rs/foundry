@@ -195,7 +195,7 @@ pub enum ForgeSubcommand {
     #[command(visible_alias = "l")]
     Lint(LintArgs),
 
-    /// Start the Solar language server.
+    /// Open Solidity in VS Code or start the language server.
     Lsp(LspArgs),
 
     /// Get specialized information about a smart contract
@@ -256,5 +256,37 @@ mod tests {
             panic!("expected lsp subcommand");
         };
         assert!(args.stdio);
+    }
+
+    #[test]
+    fn parse_lsp_editor_args() {
+        let args = Forge::try_parse_from([
+            "forge",
+            "lsp",
+            "--vscode",
+            "--code-path",
+            "code-insiders",
+            "project",
+        ])
+        .unwrap();
+        let ForgeSubcommand::Lsp(args) = args.cmd else {
+            panic!("expected lsp subcommand");
+        };
+        assert!(!args.stdio);
+        assert!(args.vscode);
+        assert_eq!(args.path, Some(PathBuf::from("project")));
+        assert_eq!(args.code_path, Some(PathBuf::from("code-insiders")));
+    }
+
+    #[test]
+    fn lsp_stdio_conflicts_with_editor_args() {
+        for options in [&["--vscode"][..], &["--code-path", "code"], &["project"]] {
+            let error = Forge::try_parse_from(
+                ["forge", "lsp", "--stdio"].into_iter().chain(options.iter().copied()),
+            )
+            .err()
+            .expect("stdio must reject editor launch options");
+            assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+        }
     }
 }

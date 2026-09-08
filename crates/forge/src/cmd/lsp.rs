@@ -1,14 +1,47 @@
+use clap::Parser;
 use eyre::Result;
 use foundry_compilers::compilers::multi::MultiCompilerLanguage;
 use foundry_config::{Config, load_config_with_root};
 use solar::config::ImportRemapping;
 use solar_lsp::FoundryWorkspaceConfig;
-use std::path::{MAIN_SEPARATOR, Path, PathBuf};
+use std::{
+    io::IsTerminal,
+    path::{MAIN_SEPARATOR, Path, PathBuf},
+};
 
-pub use solar::config::LspArgs;
+mod editor;
+
+/// Open a Solidity project in VS Code or run its language server.
+#[derive(Debug, Default, Parser)]
+pub struct LspArgs {
+    /// Run the language server over standard input/output.
+    #[arg(long, conflicts_with_all = ["vscode", "path", "code_path"])]
+    pub stdio: bool,
+
+    /// Open a VS Code Extension Development Host even when input is redirected.
+    #[arg(long)]
+    pub vscode: bool,
+
+    /// Project directory to open in VS Code. Defaults to the current directory.
+    #[arg(value_hint = clap::ValueHint::DirPath)]
+    pub path: Option<PathBuf>,
+
+    /// VS Code executable or command. Defaults to `code` on PATH.
+    #[arg(long, value_hint = clap::ValueHint::ExecutablePath)]
+    pub code_path: Option<PathBuf>,
+}
 
 pub async fn run(args: LspArgs) -> Result<()> {
-    let config = solar_lsp::LaunchConfig::from(args)
+    if !args.stdio
+        && (args.vscode
+            || args.path.is_some()
+            || args.code_path.is_some()
+            || std::io::stdin().is_terminal())
+    {
+        return editor::launch(args.path.as_deref(), args.code_path.as_deref());
+    }
+
+    let config = solar_lsp::LaunchConfig::from(solar::config::LspArgs { stdio: args.stdio })
         .with_default_forge_path(std::env::current_exe()?)
         .with_selected_profile(Config::selected_profile().to_string())
         .with_foundry_workspace_config_loader(|root| {

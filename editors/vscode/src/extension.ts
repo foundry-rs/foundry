@@ -13,6 +13,7 @@ import { formatterRoot, resolveForge, shouldFormatOnSave, validateForgeLsp } fro
 let client: LanguageClient | undefined;
 let clientLifecycle: Promise<void> = Promise.resolve();
 let activeForgePath: string | undefined;
+let launcherForgePath: string | undefined;
 let fallbackFormatter: vscode.Disposable | undefined;
 
 const restartSettings = [
@@ -28,6 +29,11 @@ const restartSettings = [
 ];
 
 export function activate(context: vscode.ExtensionContext) {
+  // Only a development host launched by Forge may override workspace binary settings.
+  launcherForgePath = (context.extensionMode === vscode.ExtensionMode.Development ||
+    context.extensionMode === vscode.ExtensionMode.Test)
+    ? process.env.FOUNDRY_LSP_FORGE
+    : undefined;
   // Start the LSP server.
   void restartLanguageServer();
 
@@ -137,7 +143,7 @@ async function startLanguageServer() {
     );
   }
   const forgePath = await resolveForge(
-    config.get<string>("forgePath", "forge"),
+    launcherForgePath || config.get<string>("forgePath", "forge"),
     vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
   );
   await validateForgeLsp(forgePath);
@@ -180,12 +186,16 @@ async function startLanguageServer() {
     serverOptions,
     clientOptions,
   );
+  // Keep the compatibility channel visible and record the executable that backs it.
+  const outputChannel = nextClient.outputChannel;
+  outputChannel.appendLine(`Starting Forge LSP: ${forgePath} lsp --stdio`);
   client = nextClient;
   activeForgePath = forgePath;
 
   // Start the client. This also launches the server.
   try {
     await nextClient.start();
+    outputChannel.appendLine(`Forge LSP started: ${forgePath} lsp --stdio`);
     console.log(`Forge LSP client started: ${forgePath} lsp --stdio`);
     if (!serverSupportsDocumentFormatting()) {
       fallbackFormatter = vscode.languages.registerDocumentFormattingEditProvider(

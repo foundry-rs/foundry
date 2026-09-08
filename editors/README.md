@@ -1,38 +1,68 @@
 # Foundry editor integrations
 
-These thin clients use `forge lsp` for Solidity language support. The server is
-the `solar_lsp` dependency already embedded in Forge; its formatting handler
-delegates to the same Forge executable's `fmt` command. Installing a Foundry
-version that supports `forge lsp` is sufficient. No standalone Solar binary is
-required or downloaded.
+Install [VS Code](https://code.visualstudio.com/) and a recent
+[Foundry](https://getfoundry.sh/introduction/installation), then run this from
+your Solidity project in a terminal:
+
+```sh
+forge lsp
+```
+
+Forge opens the current project in a VS Code Extension Development Host with
+the Solidity extension included in the Forge binary. Open a `.sol` file to use
+diagnostics, Go to Definition, hover and formatting. There is no Foundry checkout
+or Node/npm requirement. The server is the `solar_lsp` dependency embedded in
+Forge; formatting uses the same Forge executable's `fmt` command.
+
+To select a project or VS Code installation explicitly:
+
+```sh
+forge lsp /path/to/project
+forge lsp --code-path /path/to/code
+```
+
+The launcher finds `code` on PATH. On macOS, it also checks the VS Code app in
+`/Applications`. If standard input is redirected, use `forge lsp --vscode` to
+open VS Code. A project path or `--code-path` also selects the launcher.
+`forge lsp --stdio` always runs the language server for an editor client; bare
+`forge lsp` with redirected input preserves that behavior.
+
+The launcher uses dedicated persistent VS Code profiles under
+`~/.foundry/cache/lsp/vscode`, leaving normal VS Code settings untouched.
+Each project, Forge executable path and selected Foundry profile gets its own
+profile. Bundled extension assets are cached by content under
+`~/.foundry/cache/lsp/extensions`. No extension store installation or standalone
+Solar binary is required.
 
 - [VS Code: install, configure, build and package](vscode/README.md).
 - [Zed: configure, build and install locally](zed/README.md).
 
-Check `forge lsp --stdio --help`, not just `forge --version`. If the subcommand
-is unavailable, upgrade Foundry using [the installation guide](https://getfoundry.sh/introduction/installation)
-(`foundryup`, or a newer/nightly build if necessary). To use this checkout:
+Check `forge lsp --help` for `--vscode` to confirm launcher support. If it is
+unavailable, upgrade Foundry (`foundryup`, or a newer/nightly build if necessary).
+To use this checkout:
 
 ```sh
 cargo build --locked -p forge --bin forge
-./target/debug/forge lsp --stdio --help
+./target/debug/forge lsp /path/to/project
 ```
 
-Both extensions resolve Forge from their explicit Forge setting or from the
-editor's PATH. That resolved executable also handles formatting and background
-Forge checks. Foundry profiles, remappings, workspace discovery, and file
-watching remain owned by the existing server. LSP formatting uses the open
-document's unsaved contents and the owning project's `foundry.toml`.
+The launched VS Code client uses the Forge executable that opened it, including
+for formatting and background checks. Separately installed VS Code and Zed
+extensions resolve Forge from their explicit Forge setting or the editor's PATH.
+Foundry profiles, remappings, workspace discovery, and file watching remain
+owned by the existing server. LSP formatting uses the open document's unsaved
+contents and the owning project's `foundry.toml`.
 
-Editor builds are independent: Node is only needed for the VS Code client, and
-the Zed crate declares its own workspace and lockfile. Ordinary Foundry Cargo
-builds do not compile either client. The editor CI checks both clients and
-packages VS Code locally; it does not publish to an extension store.
+Node is needed only to develop or rebuild the VS Code client. Its committed
+runtime bundle is embedded during ordinary Cargo builds without Node tooling.
+The Zed crate declares its own workspace and lockfile. Editor CI checks both
+clients, verifies the embedded bundle matches its source and packages VS Code
+locally; it does not publish to an extension store.
 
-## Extension Development Host
+## Debugging extension changes
 
-Open the **Foundry repository root** in VS Code, select **Foundry Solidity
-Extension** in Run and Debug, and press F5. The root
+To develop the client itself, open the **Foundry repository root** in VS Code,
+select **Foundry Solidity Extension** in Run and Debug, and press F5. The root
 [`launch.json`](../.vscode/launch.json) loads `editors/vscode`; its
 [`tasks.json`](../.vscode/tasks.json) builds this checkout's Forge, installs the
 locked Node dependencies, compiles the client, and prepares a disposable profile.
