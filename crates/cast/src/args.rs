@@ -49,8 +49,6 @@ use foundry_common::{
 use foundry_config::Chain;
 use foundry_evm_networks::NetworkVariant;
 use foundry_primitives::{FoundryNetwork, FoundryTxEnvelope};
-#[cfg(feature = "optimism")]
-use op_alloy_network::Optimism;
 use rayon::prelude::*;
 use serde::Serialize;
 use std::{
@@ -60,6 +58,9 @@ use std::{
 };
 use tempo_alloy::TempoNetwork;
 use tempo_contracts::precompiles::{ITIP20ChannelReserve, TIP20_CHANNEL_RESERVE_ADDRESS};
+
+#[cfg(feature = "optimism")]
+use op_alloy_network::Optimism;
 
 /// Runs `$body` with `$provider` bound to a provider for the selected `--network`.
 ///

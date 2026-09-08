@@ -3317,17 +3317,18 @@ mod tests {
         SharedBackend,
         cache::{BlockchainDb, BlockchainDbMeta},
     };
-    #[cfg(feature = "monad")]
-    use monad_revm::{
-        MonadHardfork,
-        api::block::syscall_snapshot_calldata,
-        staking::{STAKING_ADDRESS, constants::SYSTEM_ADDRESS},
-    };
     use revm::{
         context::{BlockEnv, JournalInner, TxEnv},
         database::{AccountState, CacheDB, DatabaseRef, DbAccount},
         primitives::{KECCAK_EMPTY, hardfork::SpecId},
         state::{Account, AccountInfo, EvmState, EvmStorageSlot, TransactionId},
+    };
+
+    #[cfg(feature = "monad")]
+    use monad_revm::{
+        MonadHardfork,
+        api::block::syscall_snapshot_calldata,
+        staking::{STAKING_ADDRESS, constants::SYSTEM_ADDRESS},
     };
 
     fn fork_with_closed_backend() -> Fork<AnyNetwork, BlockEnv> {

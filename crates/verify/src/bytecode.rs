@@ -30,10 +30,6 @@ use foundry_common::{
 };
 use foundry_compilers::info::ContractInfo;
 use foundry_config::{Chain, Config, figment, impl_figment_convert};
-#[cfg(feature = "optimism")]
-use foundry_evm::core::evm::OpEvmNetwork;
-#[cfg(feature = "monad")]
-use foundry_evm::core::evm::{BlockContext, MonadEvmNetwork};
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
     core::{
@@ -48,6 +44,12 @@ use foundry_evm::{
 use foundry_evm_networks::NetworkVariant;
 use revm::{context::Block as _, state::AccountInfo};
 use std::{path::PathBuf, pin::Pin};
+
+#[cfg(feature = "monad")]
+use foundry_evm::core::evm::{BlockContext, MonadEvmNetwork};
+
+#[cfg(feature = "optimism")]
+use foundry_evm::core::evm::OpEvmNetwork;
 
 impl_figment_convert!(VerifyBytecodeArgs);
 

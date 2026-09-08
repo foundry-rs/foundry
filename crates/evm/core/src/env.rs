@@ -1,14 +1,10 @@
-use std::fmt::Debug;
-
+use crate::backend::JournaledState;
 use alloy_chains::NamedChain;
 use alloy_consensus::{Transaction as _, Typed2718};
-pub use alloy_evm::EvmEnv;
 use alloy_evm::FromRecoveredTx;
 use alloy_network::{AnyRpcTransaction, AnyTxEnvelope, TransactionResponse};
 use alloy_primitives::{Address, B256, Bytes, U256};
 use foundry_evm_networks::celo::CELO_DYNAMIC_FEE_TX_TYPE;
-#[cfg(feature = "optimism")]
-use op_revm::transaction::deposit::DEPOSIT_TRANSACTION_TYPE;
 use revm::{
     Context, Database, Journal,
     context::{Block, BlockEnv, Cfg, CfgEnv, Transaction, TxEnv},
@@ -20,9 +16,13 @@ use revm::{
     inspector::JournalExt,
     primitives::{TxKind, hardfork::SpecId},
 };
+use std::fmt::Debug;
 use tempo_revm::{TempoBlockEnv, TempoTxEnv};
 
-use crate::backend::JournaledState;
+#[cfg(feature = "optimism")]
+use op_revm::transaction::deposit::DEPOSIT_TRANSACTION_TYPE;
+
+pub use alloy_evm::EvmEnv;
 
 /// Extension of [`Block`] with mutable setters, allowing EVM-agnostic mutation of block fields.
 pub trait FoundryBlock: Block {

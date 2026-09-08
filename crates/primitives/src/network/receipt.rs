@@ -1,3 +1,4 @@
+use crate::FoundryReceiptEnvelope;
 use alloy_network::{AnyReceiptEnvelope, AnyTransactionReceipt, ReceiptResponse};
 use alloy_primitives::{Address, B256, BlockHash, TxHash};
 use alloy_rpc_types::{ConversionError, Log, TransactionReceipt};
@@ -8,7 +9,6 @@ use tempo_primitives::TEMPO_TX_TYPE_ID;
 
 #[cfg(feature = "optimism")]
 use super::optimism::build_deposit_receipt_envelope;
-use crate::FoundryReceiptEnvelope;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, AsRef)]
 pub struct FoundryTxReceipt(pub WithOtherFields<TransactionReceipt<FoundryReceiptEnvelope<Log>>>);

@@ -1,6 +1,5 @@
 //! In-memory blockchain backend.
 use self::{in_memory_db::StateRootDb, state::trie_storage};
-
 use crate::{
     ForkChoice, NodeConfig, PrecompileFactory,
     config::{ForkTransactionReplay, PruneStateHistoryConfig},
@@ -75,8 +74,6 @@ use alloy_network::{
     BlockResponse, Network, NetworkTransactionBuilder, ReceiptResponse, UnknownTxEnvelope,
     UnknownTypedTransaction,
 };
-#[cfg(feature = "optimism")]
-use alloy_op_evm::{OpEvmContext, OpEvmFactory, OpTx};
 use alloy_primitives::{
     Address, B256, Bloom, Bytes, Signature, TxKind, U64, U256, address, hex, keccak256,
     map::{AddressMap, B256Set, HashMap, HashSet},
@@ -122,8 +119,6 @@ use anvil_rpc::error::{ErrorCode, RpcError};
 use chrono::Datelike;
 use eyre::{Context, Result};
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
-#[cfg(feature = "optimism")]
-use foundry_evm::hardfork::OpHardfork;
 use foundry_evm::{
     backend::{BlockchainDb, DatabaseError, DatabaseResult, RevertStateSnapshotAction},
     constants::{DEFAULT_CREATE2_DEPLOYER, DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE},
@@ -145,17 +140,11 @@ use foundry_evm::{
     },
 };
 use foundry_evm_networks::{NetworkConfigs, apply_bsc_p256_precompile, arbitrum};
-#[cfg(feature = "optimism")]
-use foundry_primitives::get_deposit_tx_parts;
 use foundry_primitives::{
     FoundryHeader, FoundryNetwork, FoundryReceiptEnvelope, FoundryTransactionRequest,
     FoundryTxEnvelope, FoundryTxReceipt, TempoTransactionRequest,
 };
 use futures::channel::mpsc::{UnboundedSender, unbounded};
-#[cfg(feature = "optimism")]
-use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, POST_EXEC_TX_TYPE_ID};
-#[cfg(feature = "optimism")]
-use op_revm::{OpTransaction, transaction::deposit::DepositTransactionParts};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use revm::{
     Database as RevmDatabase, DatabaseCommit, Inspector,
@@ -216,6 +205,17 @@ use tempo_revm::{
     evm::TempoContext, gas_params::tempo_gas_params,
 };
 use tokio::{sync::RwLock as AsyncRwLock, task::JoinSet};
+
+#[cfg(feature = "optimism")]
+use alloy_op_evm::{OpEvmContext, OpEvmFactory, OpTx};
+#[cfg(feature = "optimism")]
+use foundry_evm::hardfork::OpHardfork;
+#[cfg(feature = "optimism")]
+use foundry_primitives::get_deposit_tx_parts;
+#[cfg(feature = "optimism")]
+use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, POST_EXEC_TX_TYPE_ID};
+#[cfg(feature = "optimism")]
+use op_revm::{OpTransaction, transaction::deposit::DepositTransactionParts};
 
 /// Side-channel container for OP-specific deposit info produced by
 /// [`Backend::build_call_env_with_base`] and consumed by the OP transact path.

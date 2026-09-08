@@ -46,10 +46,6 @@ use foundry_config::{
     },
 };
 use foundry_debugger::DebuggerLayout;
-#[cfg(feature = "monad")]
-use foundry_evm::core::evm::MonadEvmNetwork;
-#[cfg(feature = "optimism")]
-use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     backend::Backend,
     core::{
@@ -70,6 +66,12 @@ use foundry_evm_networks::NetworkConfigs;
 use foundry_wallets::MultiWalletOpts;
 use serde::Serialize;
 use std::path::PathBuf;
+
+#[cfg(feature = "monad")]
+use foundry_evm::core::evm::MonadEvmNetwork;
+
+#[cfg(feature = "optimism")]
+use foundry_evm::core::evm::OpEvmNetwork;
 
 mod broadcast;
 mod build;

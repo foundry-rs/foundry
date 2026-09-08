@@ -16,12 +16,6 @@ use alloy_primitives::{
 };
 use alloy_sol_types::{SolCall, sol};
 use eyre::WrapErr;
-#[cfg(feature = "monad")]
-use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender};
-#[cfg(feature = "monad")]
-use foundry_evm_core::evm::{MonadEvmNetwork, try_transact_monad_system_replay};
-#[cfg(feature = "monad")]
-use foundry_evm_core::refresh_chain_journal;
 use foundry_evm_core::{
     EvmEnv, FoundryBlock, FoundryChain, FoundryTransaction,
     backend::{
@@ -67,6 +61,14 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     time::{Duration, Instant},
+};
+
+#[cfg(feature = "monad")]
+use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender};
+#[cfg(feature = "monad")]
+use foundry_evm_core::{
+    evm::{MonadEvmNetwork, try_transact_monad_system_replay},
+    refresh_chain_journal,
 };
 
 mod builder;
@@ -1962,12 +1964,13 @@ mod tests {
         Vm::{blobhashesCall, mockCallRevert_1Call, revertToStateCall, snapshotStateCall},
     };
     use foundry_config::Config;
-    #[cfg(feature = "monad")]
-    use foundry_evm_core::constants::MONAD_CHEATCODE_ADDRESS;
     use foundry_evm_core::{constants::MAGIC_SKIP, evm::TempoEvmNetwork, opts::EvmOpts};
     use foundry_evm_traces::InternalTraceMode;
     use revm::context::{CfgEnv, TxEnv};
     use std::{sync::mpsc, thread};
+
+    #[cfg(feature = "monad")]
+    use foundry_evm_core::constants::MONAD_CHEATCODE_ADDRESS;
 
     fn dense_call(edge: EdgeKey) -> RawCallResult {
         RawCallResult {

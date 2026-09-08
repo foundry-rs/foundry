@@ -282,9 +282,10 @@ mod tests {
     use super::*;
     use foundry_config::{Config, SolcReq};
     use foundry_evm::core::evm::EthEvmNetwork;
+    use semver::Version;
+
     #[cfg(feature = "monad")]
     use foundry_evm::core::{constants::MONAD_CHEATCODE_ADDRESS, evm::MonadEvmNetwork};
-    use semver::Version;
 
     #[test]
     fn deserialized_sessions_do_not_restore_force() {

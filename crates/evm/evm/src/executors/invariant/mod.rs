@@ -43,14 +43,11 @@ use foundry_evm_fuzz::{
 use foundry_evm_traces::{CallTraceArena, SparsedTraceArena};
 use indicatif::ProgressBar;
 use parking_lot::RwLock;
-#[cfg(test)]
-use proptest::strategy::Strategy;
 use proptest::{
     prelude::Rng,
     test_runner::{RngAlgorithm, TestRng, TestRunner},
 };
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
-pub(crate) use result::did_fail_on_assert;
 use result::{assert_after_invariant, can_continue, invariant_preflight_check};
 use revm::state::Account;
 use serde::{Deserialize, Serialize};
@@ -60,6 +57,8 @@ use std::{
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+
+pub(crate) use result::did_fail_on_assert;
 
 mod error;
 pub(crate) use error::snapshot_edge_fingerprint;
@@ -2286,7 +2285,11 @@ mod tests {
         evm::{EthEvmNetwork, EvmEnvFor, TxEnvFor},
     };
     use foundry_evm_fuzz::CallDetails;
-    use proptest::{prelude::any, strategy::ValueTree, test_runner::Config};
+    use proptest::{
+        prelude::any,
+        strategy::{Strategy, ValueTree},
+        test_runner::Config,
+    };
     use revm::{
         bytecode::Bytecode,
         context::Block,

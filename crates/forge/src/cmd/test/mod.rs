@@ -64,10 +64,6 @@ use foundry_config::{
     fs_permissions::FsAccessPermission,
 };
 use foundry_debugger::{Debugger, DebuggerLayout};
-#[cfg(feature = "monad")]
-use foundry_evm::core::evm::MonadEvmNetwork;
-#[cfg(feature = "optimism")]
-use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::evm::{
         BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
@@ -96,6 +92,12 @@ use std::{
 };
 use tempfile::TempDir;
 use yansi::Paint;
+
+#[cfg(feature = "monad")]
+use foundry_evm::core::evm::MonadEvmNetwork;
+
+#[cfg(feature = "optimism")]
+use foundry_evm::core::evm::OpEvmNetwork;
 
 mod evm_profile_server;
 mod filter;

@@ -43,10 +43,6 @@ use foundry_config::{
         value::{Dict, Map},
     },
 };
-#[cfg(feature = "optimism")]
-use foundry_evm::core::evm::OpEvmNetwork;
-#[cfg(feature = "monad")]
-use foundry_evm::core::evm::{BlockContext, ChainFor, MonadEvmNetwork};
 use foundry_evm::{
     core::{
         FoundryBlock as _,
@@ -61,6 +57,12 @@ use foundry_evm::{
 use foundry_evm_networks::NetworkConfigs;
 use futures::TryFutureExt;
 use revm::{DatabaseRef, context::Block, primitives::hardfork::SpecId};
+
+#[cfg(feature = "monad")]
+use foundry_evm::core::evm::{BlockContext, ChainFor, MonadEvmNetwork};
+
+#[cfg(feature = "optimism")]
+use foundry_evm::core::evm::OpEvmNetwork;
 
 /// CLI arguments for `cast run`.
 #[derive(Clone, Debug, Parser)]
