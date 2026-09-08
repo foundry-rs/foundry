@@ -19,15 +19,8 @@ env:
   RUSTC_WRAPPER: "sccache"
 
 jobs:
-  socket-dependencies:
-    permissions:
-      id-token: write
-      contents: read
-    uses: ./.github/workflows/socket-dependencies.yml
-
   run-benchmarks:
     name: Run All Benchmarks
-    needs: socket-dependencies
     runs-on: depot-ubuntu-24.04-32
     permissions:
       id-token: write
@@ -93,12 +86,6 @@ jobs:
             echo "versions=$REQUESTED_VERSIONS" >> "$GITHUB_OUTPUT"
             echo "is_source_comparison=false" >> "$GITHUB_OUTPUT"
           fi
-
-      - name: Check baseline dependencies through Socket with an empty cache
-        if: steps.prep.outputs.is_source_comparison == 'true'
-        env:
-          RUSTC_WRAPPER: ""
-        run: bash .github/scripts/socket-dependencies.sh ../foundry-baseline
 
       - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
 

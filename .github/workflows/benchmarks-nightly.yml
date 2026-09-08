@@ -11,16 +11,8 @@ env:
   RUSTC_WRAPPER: "sccache"
 
 jobs:
-  socket-dependencies:
-    if: github.event_name != 'schedule' || github.repository == 'foundry-rs/foundry'
-    permissions:
-      id-token: write
-      contents: read
-    uses: ./.github/workflows/socket-dependencies.yml
-
   run-benchmarks:
     name: Run Nightly Benchmarks
-    needs: socket-dependencies
     if: github.event_name != 'schedule' || github.repository == 'foundry-rs/foundry'
     runs-on: depot-ubuntu-24.04-32
     permissions:

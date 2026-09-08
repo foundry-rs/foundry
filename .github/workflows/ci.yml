@@ -17,14 +17,7 @@ env:
   RUSTC_WRAPPER: "sccache"
 
 jobs:
-  socket-dependencies:
-    permissions:
-      id-token: write
-      contents: read
-    uses: ./.github/workflows/socket-dependencies.yml
-
   test:
-    needs: socket-dependencies
     uses: ./.github/workflows/test.yml
     permissions:
       id-token: write
@@ -37,7 +30,6 @@ jobs:
       ETH_SEPOLIA_RPC: ${{ secrets.ETH_SEPOLIA_RPC }}
 
   docs:
-    needs: socket-dependencies
     uses: ./.github/workflows/docs.yml
     permissions:
       contents: read
@@ -45,7 +37,6 @@ jobs:
       id-token: write
 
   doctest:
-    needs: socket-dependencies
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -71,7 +62,6 @@ jobs:
       - run: cargo test --workspace --doc --locked
 
   no-default-features:
-    needs: socket-dependencies
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -99,7 +89,6 @@ jobs:
   touch-id-link:
     name: touch-id link (macOS)
     if: github.event_name == 'push'
-    needs: socket-dependencies
     runs-on: depot-macos-latest
     timeout-minutes: 45
     permissions:
@@ -191,7 +180,6 @@ jobs:
           node --test .github/scripts/tests/test-create-tag.js
 
   clippy:
-    needs: socket-dependencies
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -237,7 +225,6 @@ jobs:
       - run: cargo fmt --all --check
 
   forge-fmt:
-    needs: socket-dependencies
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -265,7 +252,6 @@ jobs:
         run: ./.github/scripts/format.sh --check
 
   deny:
-    needs: socket-dependencies
     uses: tempoxyz/gh-actions/.github/workflows/rust-lint.yml@5aecd9fd9dca5935851b94f7cb853465e7f9158f # main
     permissions:
       contents: read
@@ -327,7 +313,6 @@ jobs:
     permissions:
       id-token: write
     needs:
-      - socket-dependencies
       - test
       - docs
       - doctest

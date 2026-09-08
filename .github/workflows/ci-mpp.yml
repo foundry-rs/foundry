@@ -27,18 +27,11 @@ env:
   RUSTC_WRAPPER: "sccache"
 
 jobs:
-  socket-dependencies:
-    permissions:
-      id-token: write
-      contents: read
-    uses: ./.github/workflows/socket-dependencies.yml
-
   mpp-check:
     # Skip on PRs from forks (only run for branches in foundry-rs/foundry, i.e. maintainer PRs).
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository
-    needs: socket-dependencies
     runs-on: depot-ubuntu-latest
     timeout-minutes: 60
     permissions:
