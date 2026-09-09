@@ -1,0 +1,56 @@
+name: Set up an approved Cargo build
+description: Install CI tools and use only the dependency gate's source bundle
+
+inputs:
+  artifact-id:
+    description: Artifact ID from the dependency gate
+    required: true
+  sha256:
+    description: Bundle checksum from the dependency gate
+    required: true
+  toolchain:
+    description: Rust toolchain
+    default: stable
+  components:
+    description: Additional Rust components
+    default: ""
+  targets:
+    description: Additional Rust targets
+    default: ""
+  svm-platform:
+    description: Override the host solc metadata platform
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+      with:
+        toolchain: ${{ inputs.toolchain }}
+        components: ${{ inputs.components }}
+        targets: ${{ inputs.targets }}
+    - uses: ./.github/actions/use-dependencies
+      with:
+        artifact-id: ${{ inputs.artifact-id }}
+        sha256: ${{ inputs.sha256 }}
+        svm-platform: ${{ inputs.svm-platform }}
+    - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
+      if: runner.os == 'Linux'
+    - name: Install Linux system dependencies
+      if: runner.os == 'Linux'
+      shell: bash
+      run: sudo apt-get update && sudo apt-get install --yes libudev-dev
+    - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      with:
+        version: v0.17.0
+    - name: Configure compiler-only cache
+      shell: bash
+      env:
+        CACHE_NAMESPACE: approved-v1-${{ github.event_name == 'pull_request' && 'pr' || 'trusted' }}-${{ runner.os }}-${{ runner.arch }}-${{ inputs.toolchain }}-${{ inputs.targets }}
+      run: |
+        node --input-type=module -e '
+          import { createHash } from "node:crypto";
+          import { appendFileSync } from "node:fs";
+          const key = createHash("sha256").update(process.env.CACHE_NAMESPACE).digest("hex");
+          appendFileSync(process.env.GITHUB_ENV, `SCCACHE_GHA_ENABLED=on\nSCCACHE_GHA_VERSION=approved-v1-${key}\n`);
+        '

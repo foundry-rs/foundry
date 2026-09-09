@@ -1,0 +1,56 @@
+name: Approved Cargo dependencies
+
+on:
+  workflow_call:
+    outputs:
+      artifact-id:
+        description: Immutable source artifact from this run
+        value: ${{ jobs.prepare.outputs.artifact-id }}
+      sha256:
+        description: SHA256 of dependencies.tar.gz (not the artifact service ZIP)
+        value: ${{ jobs.prepare.outputs.sha256 }}
+
+permissions: {}
+
+jobs:
+  cooldown:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/cargo-cooldown.yml
+
+  prepare:
+    needs: cooldown
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      sha256: ${{ steps.bundle.outputs.sha256 }}
+    steps:
+      - name: Secure runner
+        id: security
+        uses: tempoxyz/gh-actions/actions/secure-runner@2794671f2a6e696217c8128ad4553a75bbba2709
+        with:
+          shims: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
+      - name: Prepare approved sources without compiling them
+        id: bundle
+        env:
+          SFW: ${{ steps.security.outputs.firewall-path-binary }}
+        run: node .github/scripts/dependencies.mjs prepare
+      - name: Upload this run's dependency bundle
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cargo-dependencies-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.bundle.outputs.archive }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1

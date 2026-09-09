@@ -4,6 +4,13 @@ permissions: {}
 
 on:
   workflow_call:
+    inputs:
+      artifact-id:
+        required: true
+        type: string
+      sha256:
+        required: true
+        type: string
 
 concurrency:
   group: docs-${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -15,29 +22,28 @@ env:
   RUSTC_WRAPPER: "sccache"
 
 jobs:
-  cargo-cooldown:
-    permissions:
-      contents: read
-    uses: ./.github/workflows/cargo-cooldown.yml
-
   docs:
-    needs: cargo-cooldown
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
+      id-token: write
     steps:
+      - name: Secure runner
+        id: security
+        uses: tempoxyz/gh-actions/actions/secure-runner@2794671f2a6e696217c8128ad4553a75bbba2709
+        with:
+          shims: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+      - uses: ./.github/actions/setup-build
         with:
+          artifact-id: ${{ inputs.artifact-id }}
+          sha256: ${{ inputs.sha256 }}
           toolchain: nightly
-      - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
-      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Build documentation
-        run: cargo doc --workspace --all-features --no-deps --document-private-items --locked
+        run: cargo doc --workspace --all-features --no-deps --document-private-items --frozen
         env:
           RUSTDOCFLAGS: --cfg docsrs -D warnings --show-type-layout --generate-link-to-definition --enable-index-page -Zunstable-options
       - name: Setup Pages

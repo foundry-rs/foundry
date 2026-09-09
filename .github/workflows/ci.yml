@@ -17,107 +17,116 @@ env:
   RUSTC_WRAPPER: "sccache"
 
 jobs:
-  cargo-cooldown:
+  dependencies:
     permissions:
       contents: read
-    uses: ./.github/workflows/cargo-cooldown.yml
+      id-token: write
+    uses: ./.github/workflows/dependencies.yml
 
   test:
+    needs: dependencies
     uses: ./.github/workflows/test.yml
     permissions:
       contents: read
+      id-token: write
     with:
       profile: default
+      artifact-id: ${{ needs.dependencies.outputs.artifact-id }}
+      sha256: ${{ needs.dependencies.outputs.sha256 }}
     secrets:
       ETHERSCAN_API_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
       ARBITRUM_RPC: ${{ secrets.ARBITRUM_RPC }}
       ETH_SEPOLIA_RPC: ${{ secrets.ETH_SEPOLIA_RPC }}
 
   docs:
+    needs: dependencies
     uses: ./.github/workflows/docs.yml
     permissions:
       contents: read
       pages: write
       id-token: write
+    with:
+      artifact-id: ${{ needs.dependencies.outputs.artifact-id }}
+      sha256: ${{ needs.dependencies.outputs.sha256 }}
 
   doctest:
-    needs: cargo-cooldown
+    needs: dependencies
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
+      id-token: write
     steps:
+      - name: Secure runner
+        id: security
+        uses: tempoxyz/gh-actions/actions/secure-runner@2794671f2a6e696217c8128ad4553a75bbba2709
+        with:
+          shims: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+      - uses: ./.github/actions/setup-build
         with:
-          toolchain: stable
-      - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
-      - name: Install Linux system dependencies
-        run: sudo apt-get update && sudo apt-get install --yes libudev-dev
-      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          cache-bin: false
-          prefix-key: v2-rust-doctest
-      - run: cargo test --workspace --doc --locked
+          artifact-id: ${{ needs.dependencies.outputs.artifact-id }}
+          sha256: ${{ needs.dependencies.outputs.sha256 }}
+      - run: cargo test --workspace --doc --frozen
 
   no-default-features:
-    needs: cargo-cooldown
+    needs: dependencies
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
+      id-token: write
     steps:
+      - name: Secure runner
+        id: security
+        uses: tempoxyz/gh-actions/actions/secure-runner@2794671f2a6e696217c8128ad4553a75bbba2709
+        with:
+          shims: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+      - uses: ./.github/actions/setup-build
         with:
-          toolchain: stable
-      - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
-      - name: Install Linux system dependencies
-        run: sudo apt-get update && sudo apt-get install --yes libudev-dev
-      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          cache-bin: false
-          prefix-key: v1-rust-no-default-features
-      - run: cargo build --workspace --no-default-features --locked
+          artifact-id: ${{ needs.dependencies.outputs.artifact-id }}
+          sha256: ${{ needs.dependencies.outputs.sha256 }}
+      - run: cargo build --workspace --no-default-features --frozen
 
   touch-id-link:
     name: touch-id link (macOS)
     if: github.event_name == 'push'
-    needs: cargo-cooldown
+    needs: dependencies
     runs-on: depot-macos-latest
     timeout-minutes: 45
     permissions:
       contents: read
+      id-token: write
     env:
       MACOSX_DEPLOYMENT_TARGET: "11.0"
     steps:
+      - name: Secure runner
+        id: security
+        uses: tempoxyz/gh-actions/actions/secure-runner@2794671f2a6e696217c8128ad4553a75bbba2709
+        with:
+          shims: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+      - uses: ./.github/actions/setup-build
         with:
-          toolchain: stable
+          artifact-id: ${{ needs.dependencies.outputs.artifact-id }}
+          sha256: ${{ needs.dependencies.outputs.sha256 }}
           targets: aarch64-apple-darwin,x86_64-apple-darwin
-      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          cache-bin: false
-          prefix-key: v1-rust-touch-id-macos
       - name: Run native Touch ID regressions
         run: |
-          cargo test --manifest-path crates/cast/Cargo.toml --lib --features touch-id --target aarch64-apple-darwin --locked cmd::wallet::tests
-          cargo test --manifest-path crates/cast/Cargo.toml --test cli --features touch-id --target aarch64-apple-darwin --locked wallet_change_password
+          cargo test --manifest-path crates/cast/Cargo.toml --lib --features touch-id --target aarch64-apple-darwin --frozen cmd::wallet::tests
+          cargo test --manifest-path crates/cast/Cargo.toml --test cli --features touch-id --target aarch64-apple-darwin --frozen wallet_change_password
       - name: Check Intel Touch ID linking
         run: |
-          cargo test --manifest-path crates/cast/Cargo.toml --test cli --features touch-id --target x86_64-apple-darwin --locked --no-run
-          cargo build --manifest-path crates/forge/Cargo.toml --features touch-id --target x86_64-apple-darwin --locked
-      - run: cargo build --manifest-path crates/forge/Cargo.toml --features touch-id --target aarch64-apple-darwin --locked
+          cargo test --manifest-path crates/cast/Cargo.toml --test cli --features touch-id --target x86_64-apple-darwin --frozen --no-run
+          cargo build --manifest-path crates/forge/Cargo.toml --features touch-id --target x86_64-apple-darwin --frozen
+      - run: cargo build --manifest-path crates/forge/Cargo.toml --features touch-id --target aarch64-apple-darwin --frozen
 
   typos:
     runs-on: depot-ubuntu-latest
@@ -158,26 +167,31 @@ jobs:
       - name: Test GitHub scripts
         run: |
           python3 -m unittest discover -s .github/scripts/tests -p 'test_*.py'
-          node --test .github/scripts/tests/test-create-tag.js
+          node --test .github/scripts/tests/test-create-tag.js .github/scripts/tests/test-dependencies.mjs .github/scripts/tests/test-solc-releases.mjs
 
   clippy:
-    needs: cargo-cooldown
+    needs: dependencies
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
+      id-token: write
     steps:
+      - name: Secure runner
+        id: security
+        uses: tempoxyz/gh-actions/actions/secure-runner@2794671f2a6e696217c8128ad4553a75bbba2709
+        with:
+          shims: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+      - uses: ./.github/actions/setup-build
         with:
+          artifact-id: ${{ needs.dependencies.outputs.artifact-id }}
+          sha256: ${{ needs.dependencies.outputs.sha256 }}
           toolchain: nightly
           components: clippy
-      - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
-      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - run: cargo clippy --workspace --all-targets --all-features --locked
+      - run: cargo +nightly clippy --workspace --all-targets --all-features --frozen
         env:
           RUSTFLAGS: -Dwarnings
 
@@ -194,35 +208,34 @@ jobs:
         with:
           toolchain: nightly
           components: rustfmt
-      - run: cargo fmt --all --check
+      - run: cargo +nightly fmt --all --check
 
   forge-fmt:
-    needs: cargo-cooldown
+    needs: dependencies
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
+      id-token: write
     steps:
+      - name: Secure runner
+        id: security
+        uses: tempoxyz/gh-actions/actions/secure-runner@2794671f2a6e696217c8128ad4553a75bbba2709
+        with:
+          shims: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+      - uses: ./.github/actions/setup-build
         with:
-          toolchain: stable
-      - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
-      - name: Install Linux system dependencies
-        run: sudo apt-get update && sudo apt-get install --yes libudev-dev
-      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          cache-bin: false
-          prefix-key: v2-rust-forge-fmt
+          artifact-id: ${{ needs.dependencies.outputs.artifact-id }}
+          sha256: ${{ needs.dependencies.outputs.sha256 }}
       - name: forge fmt
         shell: bash
         run: ./.github/scripts/format.sh --check
 
   deny:
-    needs: cargo-cooldown
+    needs: dependencies
     uses: tempoxyz/gh-actions/.github/workflows/rust-lint.yml@5aecd9fd9dca5935851b94f7cb853465e7f9158f # main
     permissions:
       contents: read
@@ -278,7 +291,7 @@ jobs:
     if: always()
     permissions: {}
     needs:
-      - cargo-cooldown
+      - dependencies
       - test
       - docs
       - doctest

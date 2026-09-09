@@ -16,38 +16,43 @@ env:
   RUSTC_WRAPPER: "sccache"
 
 jobs:
-  cargo-cooldown:
+  dependencies:
     if: github.event_name != 'schedule' || github.repository == 'foundry-rs/foundry'
     permissions:
       contents: read
-    uses: ./.github/workflows/cargo-cooldown.yml
+      id-token: write
+    uses: ./.github/workflows/dependencies.yml
 
   crate-checks:
-    needs: cargo-cooldown
+    needs: dependencies
     if: github.event_name != 'schedule' || github.repository == 'foundry-rs/foundry'
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
+      id-token: write
     steps:
+      - name: Secure runner
+        id: security
+        uses: tempoxyz/gh-actions/actions/secure-runner@2794671f2a6e696217c8128ad4553a75bbba2709
+        with:
+          shims: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+      - uses: ./.github/actions/setup-build
         with:
-          toolchain: stable
-      - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
+          artifact-id: ${{ needs.dependencies.outputs.artifact-id }}
+          sha256: ${{ needs.dependencies.outputs.sha256 }}
       - uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
         with:
-          tool: cargo-hack
-      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - run: cargo hack check --locked
+          tool: cargo-hack@0.6.45
+      - run: cargo hack check --frozen
 
   issue:
     name: Open an issue
     runs-on: ubuntu-latest
-    needs: [cargo-cooldown, crate-checks]
+    needs: [dependencies, crate-checks]
     if: failure()
     permissions:
       contents: read

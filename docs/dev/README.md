@@ -36,6 +36,7 @@ use forking must contain `fork` in their name. Forge and Cast CLI tests live und
 
 ## Maintained guides
 
+- [CI dependency boundary](./ci-dependencies.md) describes source bundles and the staged CI hardening rollout.
 - [Cheatcodes](./cheatcodes.md) explains cheatcode generation, dispatch, and implementation.
 - [Debugging](./debugging.md) collects contributor debugging techniques.
 - [Lint rules](./lintrules.md) covers the lint registry, UI fixtures, and documentation contract.
