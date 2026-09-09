@@ -1,48 +1,14 @@
-use alloy_primitives::{Address, U256};
-use alloy_sol_types::SolValue;
-use foundry_evm_core::{
-    backend::DatabaseError,
-    constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
-};
+use alloy_primitives::{Address, U256, map::HashMap};
+use foundry_evm_core::constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS};
+use foundry_evm_traces::RevertDiagnostic as DetailedRevertReason;
 use revm::{
-    Database, Inspector,
+    Inspector,
     bytecode::opcode,
     context::{ContextTr, JournalTr},
-    inspector::JournalExt,
-    interpreter::{
-        CallInputs, CallOutcome, CallScheme, InstructionResult, Interpreter, InterpreterAction,
-        interpreter::EthInterpreter,
-        interpreter_types::{Jumps, LoopControl},
-    },
+    interpreter::{CallInputs, CallOutcome, CallScheme, Interpreter, interpreter_types::Jumps},
 };
-use std::fmt;
 
 const IGNORE: [Address; 2] = [HARDHAT_CONSOLE_ADDRESS, CHEATCODE_ADDRESS];
-
-/// Checks if the call scheme corresponds to any sort of delegate call
-pub fn is_delegatecall(scheme: CallScheme) -> bool {
-    matches!(scheme, CallScheme::DelegateCall | CallScheme::CallCode)
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum DetailedRevertReason {
-    CallToNonContract(Address),
-    DelegateCallToNonContract(Address),
-}
-
-impl fmt::Display for DetailedRevertReason {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::CallToNonContract(addr) => {
-                write!(f, "call to non-contract address {addr}")
-            }
-            Self::DelegateCallToNonContract(addr) => write!(
-                f,
-                "delegatecall to non-contract address {addr} (usually an unliked library)"
-            ),
-        }
-    }
-}
 
 /// An inspector that tracks call context to enhances revert diagnostics.
 /// Useful for understanding reverts that are not linked to custom errors or revert strings.
@@ -68,17 +34,17 @@ pub struct RevertDiagnostic {
     non_contract_size_check: Option<(Address, usize)>,
     /// Whether the step opcode is EXTCODESIZE or not.
     is_extcodesize_step: bool,
+    /// Diagnostic detected for the currently executing frame.
+    pending: Option<DetailedRevertReason>,
+    /// Trace nodes for active frames. `None` means the tracer did not create a node.
+    active_trace_nodes: Vec<Option<usize>>,
+    /// Presentation-only revert diagnostics keyed by trace node.
+    diagnostics: HashMap<usize, DetailedRevertReason>,
 }
 
 impl RevertDiagnostic {
-    /// Returns the effective target address whose code would be executed.
-    /// For delegate calls, this is the `bytecode_address`. Otherwise, it's the `target_address`.
-    fn code_target_address(&self, inputs: &mut CallInputs) -> Address {
-        if is_delegatecall(inputs.scheme) { inputs.bytecode_address } else { inputs.target_address }
-    }
-
     /// Derives the revert reason based on the cached data. Should only be called after a revert.
-    fn reason(&self) -> Option<DetailedRevertReason> {
+    const fn reason(&self) -> Option<DetailedRevertReason> {
         if let Some((addr, scheme, _)) = self.non_contract_call {
             let reason = if is_delegatecall(scheme) {
                 DetailedRevertReason::DelegateCallToNonContract(addr)
@@ -97,29 +63,43 @@ impl RevertDiagnostic {
         None
     }
 
-    /// Injects the revert diagnostic into the debug traces. Should only be called after a revert.
-    fn broadcast_diagnostic(&self, interpreter: &mut Interpreter) {
-        if let Some(reason) = self.reason() {
-            interpreter.bytecode.set_action(InterpreterAction::new_return(
-                InstructionResult::Revert,
-                reason.to_string().abi_encode().into(),
-                interpreter.gas,
-            ));
+    /// Starts tracking a frame before its inspectors can short-circuit execution.
+    pub fn frame_start(&mut self) {
+        self.active_trace_nodes.push(None);
+    }
+
+    /// Associates the active frame with the node created by the tracer.
+    pub fn set_trace_node(&mut self, trace_node: usize) {
+        let frame = self.active_trace_nodes.last_mut();
+        debug_assert!(frame.is_some(), "missing active revert diagnostic frame");
+        if let Some(frame) = frame {
+            *frame = Some(trace_node);
         }
     }
 
-    /// When a `REVERT` opcode with zero data size occurs:
-    ///  - if `non_contract_call` was set at the current depth, `broadcast_diagnostic` is called.
-    ///    Otherwise, it is cleared.
-    ///  - if `non_contract_size_check` was set at the current depth, `broadcast_diagnostic` is
-    ///    called. Otherwise, it is cleared.
+    /// Finishes tracking a frame and associates any pending diagnostic with its trace node.
+    pub fn frame_end(&mut self) {
+        let frame = self.active_trace_nodes.pop();
+        debug_assert!(frame.is_some(), "revert diagnostic frame stack underflow");
+        let diagnostic = self.pending.take();
+        if let Some(node_idx) = frame.flatten()
+            && let Some(diagnostic) = diagnostic
+        {
+            self.diagnostics.insert(node_idx, diagnostic);
+        }
+    }
+
+    /// Consumes the inspector and returns its presentation-only diagnostics.
+    pub fn into_diagnostics(self) -> HashMap<usize, DetailedRevertReason> {
+        debug_assert!(self.active_trace_nodes.is_empty(), "unclosed revert diagnostic frames");
+        self.diagnostics
+    }
+
+    /// When a `REVERT` opcode with zero data size occurs, records a diagnostic if a matching
+    /// non-contract call or size check was observed at the current depth. Stale observations from
+    /// other depths are cleared.
     #[cold]
-    fn handle_revert<CTX, D>(&mut self, interp: &mut Interpreter, ctx: &mut CTX)
-    where
-        D: Database<Error = DatabaseError>,
-        CTX: ContextTr<Db = D>,
-        CTX::Journal: JournalExt,
-    {
+    fn handle_revert<CTX: ContextTr>(&mut self, interp: &mut Interpreter, ctx: &mut CTX) {
         // REVERT (offset, size)
         if let Ok(size) = interp.stack.peek(1)
             && size.is_zero()
@@ -127,7 +107,7 @@ impl RevertDiagnostic {
             // Check empty revert with same depth as a non-contract call
             if let Some((_, _, depth)) = self.non_contract_call {
                 if ctx.journal_ref().depth() == depth {
-                    self.broadcast_diagnostic(interp);
+                    self.pending = self.reason();
                 } else {
                     self.non_contract_call = None;
                 }
@@ -137,7 +117,7 @@ impl RevertDiagnostic {
             // Check empty revert with same depth as a non-contract size check
             if let Some((_, depth)) = self.non_contract_size_check {
                 if depth == ctx.journal_ref().depth() {
-                    self.broadcast_diagnostic(interp);
+                    self.pending = self.reason();
                 } else {
                     self.non_contract_size_check = None;
                 }
@@ -149,12 +129,7 @@ impl RevertDiagnostic {
     ///  - Optimistically caches the target address and current depth in `non_contract_size_check`,
     ///    pending later validation.
     #[cold]
-    fn handle_extcodesize<CTX, D>(&mut self, interp: &mut Interpreter, ctx: &mut CTX)
-    where
-        D: Database<Error = DatabaseError>,
-        CTX: ContextTr<Db = D>,
-        CTX::Journal: JournalExt,
-    {
+    fn handle_extcodesize<CTX: ContextTr>(&mut self, interp: &mut Interpreter, ctx: &mut CTX) {
         // EXTCODESIZE (address)
         if let Ok(word) = interp.stack.peek(0) {
             let addr = Address::from_word(word.into());
@@ -182,16 +157,20 @@ impl RevertDiagnostic {
     }
 }
 
-impl<CTX, D> Inspector<CTX, EthInterpreter> for RevertDiagnostic
-where
-    D: Database<Error = DatabaseError>,
-    CTX: ContextTr<Db = D>,
-    CTX::Journal: JournalExt,
-{
+impl<CTX: ContextTr> Inspector<CTX> for RevertDiagnostic {
     /// Tracks the first call with non-zero calldata that targets a non-contract address. Excludes
     /// precompiles and test addresses.
     fn call(&mut self, ctx: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
-        let target = self.code_target_address(inputs);
+        if inputs.input.is_empty() {
+            return None;
+        }
+
+        // Delegate calls execute the callee's code in the caller's storage context.
+        let target = if is_delegatecall(inputs.scheme) {
+            inputs.bytecode_address
+        } else {
+            inputs.target_address
+        };
 
         if IGNORE.contains(&target) || ctx.journal_ref().precompile_addresses().contains(&target) {
             return None;
@@ -199,7 +178,6 @@ where
 
         if let Ok(state) = ctx.journal_mut().code(target)
             && state.is_empty()
-            && !inputs.input.is_empty()
         {
             self.non_contract_call = Some((target, inputs.scheme, ctx.journal_ref().depth()));
         }
@@ -220,4 +198,9 @@ where
             self.handle_extcodesize_output(interp);
         }
     }
+}
+
+/// Checks if the call scheme corresponds to any sort of delegate call
+pub const fn is_delegatecall(scheme: CallScheme) -> bool {
+    matches!(scheme, CallScheme::DelegateCall | CallScheme::CallCode)
 }

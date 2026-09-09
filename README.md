@@ -41,6 +41,8 @@ foundryup
 
 See the [installation guide](https://getfoundry.sh/getting-started/installation) for more details.
 
+To verify a downloaded release archive or container image, see [Verifying Releases](./SECURITY.md#verifying-releases).
+
 ## Getting Started
 
 Initialize a new project, build and test:
@@ -65,6 +67,21 @@ anvil --fork-url https://eth.merkle.io
 ```
 
 Read the [Foundry Docs][foundry-docs] to learn more.
+
+### Solidity editor integration
+
+Configure your editor's Solidity language server command as `forge lsp`. The
+server is embedded in Forge, so the standalone `solar` executable is not
+required. Solar uses `foundry.toml`, workspace folders, remappings, and
+`evm_version` from the project automatically.
+
+Solar's default flycheck runs `forge lint --json` with the same Forge executable
+that started the server. Solar's existing `initializationOptions.forgePath`
+option overrides that executable.
+
+`forge lsp` follows Forge's normal environment setup, global-option parsing, and
+command dispatch. Project dotenv warnings use stderr, leaving stdout reserved
+for the LSP transport.
 
 ## Contributing
 

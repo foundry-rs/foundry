@@ -1,25 +1,53 @@
-use crate::EnvMut;
+use crate::{EvmEnv, FoundryBlock, hardfork::FoundryHardfork};
 use alloy_chains::Chain;
 use alloy_consensus::{BlockHeader, private::alloy_eips::eip7840::BlobParams};
 use alloy_hardforks::EthereumHardfork;
 use alloy_json_abi::{Function, JsonAbi};
-use alloy_network::{AnyTxEnvelope, TransactionResponse};
-use alloy_primitives::{Address, B256, ChainId, Selector, TxKind, U256};
+use alloy_primitives::{B256, ChainId, Selector, U256};
 use alloy_provider::{Network, network::BlockResponse};
-use alloy_rpc_types::{Transaction, TransactionRequest};
 use foundry_config::NamedChain;
 use foundry_evm_networks::NetworkConfigs;
-use revm::primitives::{
-    eip4844::{BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE},
-    hardfork::SpecId,
-};
+use revm::primitives::hardfork::SpecId;
 pub use revm::state::EvmState as StateChangeset;
 
 /// Hints to the compiler that this is a cold path, i.e. unlikely to be taken.
 #[cold]
 #[inline(always)]
-pub fn cold_path() {
+pub const fn cold_path() {
     // TODO: remove `#[cold]` and call `std::hint::cold_path` once stable.
+}
+
+/// Constructs a generic [`FoundryBlock`] from a block header.
+pub fn block_env_from_header<BLOCK: FoundryBlock + Default>(header: &impl BlockHeader) -> BLOCK {
+    let mut block = BLOCK::default();
+    block.set_number(U256::from(header.number()));
+    block.set_beneficiary(header.beneficiary());
+    block.set_timestamp(U256::from(header.timestamp()));
+    block.set_difficulty(header.difficulty());
+    block.set_prevrandao(header.mix_hash());
+    block.set_basefee(header.base_fee_per_gas().unwrap_or_default());
+    block.set_gas_limit(header.gas_limit());
+    block
+}
+
+/// Applies chain-specific changes required to replay transactions accepted on-chain.
+pub fn apply_chain_specific_tx_replay_env_changes<SPEC, BLOCK>(evm_env: &mut EvmEnv<SPEC, BLOCK>) {
+    let chain_id = evm_env.cfg_env.chain_id;
+    apply_chain_specific_tx_replay_env_changes_for_chain(evm_env, chain_id);
+}
+
+/// Applies replay normalization for the provided source chain.
+///
+/// This keeps fork-specific transaction validation independent from an execution `CHAINID`
+/// override.
+pub fn apply_chain_specific_tx_replay_env_changes_for_chain<SPEC, BLOCK>(
+    evm_env: &mut EvmEnv<SPEC, BLOCK>,
+    source_chain_id: ChainId,
+) {
+    if NamedChain::try_from(source_chain_id).is_ok_and(|chain| chain.is_arbitrum()) {
+        // Arbitrum does not enforce the EIP-1559 priority fee ordering constraint.
+        evm_env.cfg_env.disable_priority_fee_check = true;
+    }
 }
 
 /// Depending on the configured chain id and block number this should apply any specific changes
@@ -27,34 +55,68 @@ pub fn cold_path() {
 /// - checks for prevrandao mixhash after merge
 /// - applies chain specifics: on Arbitrum `block.number` is the L1 block
 ///
-/// Should be called with proper chain id (retrieved from provider if not provided).
-pub fn apply_chain_and_block_specific_env_changes<N: Network>(
-    env: EnvMut<'_>,
+/// Should be called with proper chain id (retrieved from provider if not provided), works with any
+/// [`FoundryBlock`] type.
+pub fn apply_chain_and_block_specific_env_changes<
+    N: Network,
+    SPEC: Into<SpecId> + Copy,
+    BLOCK: FoundryBlock,
+>(
+    evm_env: &mut EvmEnv<SPEC, BLOCK>,
     block: &N::BlockResponse,
     configs: NetworkConfigs,
 ) {
-    use NamedChain::*;
+    let chain_id = evm_env.cfg_env.chain_id;
+    apply_chain_and_block_specific_env_changes_for_chain::<N, _, _>(
+        evm_env, block, chain_id, configs,
+    );
+}
 
-    if let Ok(chain) = NamedChain::try_from(env.cfg.chain_id) {
+/// Applies block normalization for the provided source chain.
+///
+/// This keeps fork-specific header handling independent from an execution `CHAINID` override.
+pub fn apply_chain_and_block_specific_env_changes_for_chain<
+    N: Network,
+    SPEC: Into<SpecId> + Copy,
+    BLOCK: FoundryBlock,
+>(
+    evm_env: &mut EvmEnv<SPEC, BLOCK>,
+    block: &N::BlockResponse,
+    source_chain_id: ChainId,
+    configs: NetworkConfigs,
+) {
+    use NamedChain::{
+        Avalanche, AvalancheFuji, BinanceSmartChain, BinanceSmartChainTestnet, Mainnet, Polygon,
+        PolygonAmoy,
+    };
+
+    if let Ok(chain) = NamedChain::try_from(source_chain_id) {
         let block_number = block.header().number();
 
         match chain {
             Mainnet => {
                 // after merge difficulty is supplanted with prevrandao EIP-4399
                 if block_number >= 15_537_351u64 {
-                    env.block.difficulty = env.block.prevrandao.unwrap_or_default().into();
+                    evm_env
+                        .block_env
+                        .set_difficulty(evm_env.block_env.prevrandao().unwrap_or_default().into());
                 }
 
                 return;
             }
-            BinanceSmartChain | BinanceSmartChainTestnet => {
+            BinanceSmartChain
+            | BinanceSmartChainTestnet
+            | Polygon
+            | PolygonAmoy
+            | Avalanche
+            | AvalancheFuji => {
                 // https://github.com/foundry-rs/foundry/issues/9942
                 // As far as observed from the source code of bnb-chain/bsc, the `difficulty` field
                 // is still in use and returned by the corresponding opcode but `prevrandao`
                 // (`mixHash`) is always zero, even though bsc adopts the newer EVM
                 // specification. This will confuse revm and causes emulation
-                // failure.
-                env.block.prevrandao = Some(env.block.difficulty.into());
+                // failure. Polygon and Avalanche behave the same way.
+                evm_env.block_env.set_prevrandao(Some(evm_env.block_env.difficulty().into()));
                 return;
             }
             c if c.is_arbitrum() => {
@@ -67,21 +129,25 @@ pub fn apply_chain_and_block_specific_env_changes<N: Network>(
                         serde_json::from_value::<U256>(l1_block_number).ok()
                     })
                 {
-                    env.block.number = l1_block_number.to();
+                    evm_env.block_env.set_number(l1_block_number);
                 }
+
+                // `mixHash` carries L1 metadata rather than randomness here, while the
+                // `PREVRANDAO` opcode returns `difficulty` like it does on the chains above.
+                evm_env.block_env.set_prevrandao(Some(evm_env.block_env.difficulty().into()));
             }
             _ => {}
         }
     }
 
-    if configs.bypass_prevrandao(env.cfg.chain_id) && env.block.prevrandao.is_none() {
+    if configs.bypass_prevrandao(source_chain_id) && evm_env.block_env.prevrandao().is_none() {
         // <https://github.com/foundry-rs/foundry/issues/4232>
-        env.block.prevrandao = Some(B256::random());
+        evm_env.block_env.set_prevrandao(Some(B256::random()));
     }
 
     // if difficulty is `0` we assume it's past merge
     if block.header().difficulty().is_zero() {
-        env.block.difficulty = env.block.prevrandao.unwrap_or_default().into();
+        evm_env.block_env.set_difficulty(evm_env.block_env.prevrandao().unwrap_or_default().into());
     }
 }
 
@@ -116,13 +182,39 @@ pub fn get_blob_base_fee_update_fraction(chain_id: ChainId, timestamp: u64) -> u
     get_blob_params(chain_id, timestamp).update_fraction as u64
 }
 
+/// Returns the blob params based on the spec id.
+pub fn get_blob_params_by_spec_id(spec: SpecId) -> BlobParams {
+    if spec >= SpecId::AMSTERDAM {
+        BlobParams::bpo2()
+    } else if spec >= SpecId::OSAKA {
+        BlobParams::osaka()
+    } else if spec >= SpecId::PRAGUE {
+        BlobParams::prague()
+    } else {
+        BlobParams::cancun()
+    }
+}
+
+/// Returns the blob parameters selected by an explicit Foundry hardfork.
+pub fn get_blob_params_by_hardfork(hardfork: FoundryHardfork) -> BlobParams {
+    match hardfork {
+        FoundryHardfork::Ethereum(EthereumHardfork::Prague) => BlobParams::prague(),
+        FoundryHardfork::Ethereum(EthereumHardfork::Osaka) => BlobParams::osaka(),
+        FoundryHardfork::Ethereum(EthereumHardfork::Bpo1) => BlobParams::bpo1(),
+        FoundryHardfork::Ethereum(EthereumHardfork::Bpo2) => BlobParams::bpo2(),
+        FoundryHardfork::Ethereum(
+            EthereumHardfork::Bpo3
+            | EthereumHardfork::Bpo4
+            | EthereumHardfork::Bpo5
+            | EthereumHardfork::Amsterdam,
+        ) => BlobParams::bpo2(),
+        _ => get_blob_params_by_spec_id(hardfork.into()),
+    }
+}
+
 /// Returns the blob base fee update fraction based on the spec id.
 pub fn get_blob_base_fee_update_fraction_by_spec_id(spec: SpecId) -> u64 {
-    if spec >= SpecId::PRAGUE {
-        BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE
-    } else {
-        BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN
-    }
+    get_blob_params_by_spec_id(spec).update_fraction as u64
 }
 
 /// Given an ABI and selector, it tries to find the respective function.
@@ -136,79 +228,176 @@ pub fn get_function<'a>(
         .ok_or_else(|| eyre::eyre!("{contract_name} does not have the selector {selector}"))
 }
 
-/// Configures the env for the given RPC transaction.
-/// Accounts for an impersonated transaction by resetting the `env.tx.caller` field to `tx.from`.
-pub fn configure_tx_env(env: &mut EnvMut<'_>, tx: &Transaction<AnyTxEnvelope>) {
-    let from = tx.from();
-    if let AnyTxEnvelope::Ethereum(tx) = &tx.inner.inner() {
-        configure_tx_req_env(
-            env,
-            &TransactionRequest::from_transaction_with_sender(tx.clone(), from),
-            Some(from),
-        )
-        .expect("cannot fail");
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_network::{AnyHeader, AnyNetwork, AnyRpcBlock, AnyRpcHeader};
+    use alloy_rpc_types::{Block, BlockTransactions};
+    use revm::context::{BlockEnv, CfgEnv};
+
+    #[test]
+    fn block_normalization_uses_source_chain() {
+        let header = AnyHeader { number: 500, ..Default::default() };
+        let mut block = AnyRpcBlock::new(
+            Block::new(
+                AnyRpcHeader::from_sealed(header.seal(B256::ZERO)),
+                BlockTransactions::Full(Vec::new()),
+            )
+            .into(),
+        );
+        block.other.insert("l1BlockNumber".to_string(), serde_json::json!("0x64"));
+
+        let mut cfg_env = CfgEnv::<SpecId>::default();
+        cfg_env.chain_id = NamedChain::Mainnet as u64;
+        let mut evm_env = EvmEnv {
+            cfg_env,
+            block_env: BlockEnv { number: U256::from(500), ..Default::default() },
+        };
+
+        apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork, _, _>(
+            &mut evm_env,
+            &block,
+            NamedChain::Arbitrum as u64,
+            NetworkConfigs::default(),
+        );
+
+        assert_eq!(evm_env.cfg_env.chain_id, NamedChain::Mainnet as u64);
+        assert_eq!(evm_env.block_env.number, U256::from(100));
     }
-}
 
-/// Configures the env for the given RPC transaction request.
-/// `impersonated_from` is the address of the impersonated account. This helps account for an
-/// impersonated transaction by resetting the `env.tx.caller` field to `impersonated_from`.
-pub fn configure_tx_req_env(
-    env: &mut EnvMut<'_>,
-    tx: &TransactionRequest,
-    impersonated_from: Option<Address>,
-) -> eyre::Result<()> {
-    // If no transaction type is provided, we need to infer it from the other fields.
-    let tx_type = tx.transaction_type.unwrap_or_else(|| tx.minimal_tx_type() as u8);
-    env.tx.tx_type = tx_type;
+    #[test]
+    fn block_normalization_sets_prevrandao_for_moonbeam() {
+        let header = AnyHeader { difficulty: U256::from(1), ..Default::default() };
+        let block = AnyRpcBlock::new(
+            Block::new(
+                AnyRpcHeader::from_sealed(header.seal(B256::ZERO)),
+                BlockTransactions::Full(Vec::new()),
+            )
+            .into(),
+        );
+        let mut evm_env = EvmEnv::new(
+            CfgEnv::<SpecId>::default(),
+            BlockEnv { prevrandao: None, ..Default::default() },
+        );
 
-    let TransactionRequest {
-        nonce,
-        from,
-        to,
-        value,
-        gas_price,
-        gas,
-        max_fee_per_gas,
-        max_priority_fee_per_gas,
-        max_fee_per_blob_gas,
-        ref input,
-        chain_id,
-        ref blob_versioned_hashes,
-        ref access_list,
-        ref authorization_list,
-        transaction_type: _,
-        sidecar: _,
-    } = *tx;
+        apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork, _, _>(
+            &mut evm_env,
+            &block,
+            NamedChain::Moonbeam as u64,
+            NetworkConfigs::default(),
+        );
 
-    // If no `to` field then set create kind: https://eips.ethereum.org/EIPS/eip-2470#deployment-transaction
-    env.tx.kind = to.unwrap_or(TxKind::Create);
-    // If the transaction is impersonated, we need to set the caller to the from
-    // address Ref: https://github.com/foundry-rs/foundry/issues/9541
-    env.tx.caller = if let Some(caller) = impersonated_from {
-        caller
-    } else {
-        from.ok_or_else(|| eyre::eyre!("missing `from` field"))?
-    };
-    env.tx.gas_limit = gas.ok_or_else(|| eyre::eyre!("missing `gas` field"))?;
-    env.tx.nonce = nonce.unwrap_or_default();
-    env.tx.value = value.unwrap_or_default();
-    env.tx.data = input.input().cloned().unwrap_or_default();
-    env.tx.chain_id = chain_id;
+        assert!(evm_env.block_env.prevrandao.is_some());
+    }
 
-    // Type 1, EIP-2930
-    env.tx.access_list = access_list.clone().unwrap_or_default();
+    #[test]
+    fn block_normalization_uses_difficulty_as_prevrandao() {
+        // These chains keep using `difficulty` and return it from `PREVRANDAO`, so a header
+        // `mixHash` of zero (or, on Arbitrum, packed L1 metadata) must not reach the block env.
+        for (chain, mix_hash) in [
+            (NamedChain::BinanceSmartChain, B256::ZERO),
+            (NamedChain::Polygon, B256::ZERO),
+            (NamedChain::PolygonAmoy, B256::ZERO),
+            (NamedChain::Avalanche, B256::ZERO),
+            (NamedChain::AvalancheFuji, B256::ZERO),
+            (NamedChain::Arbitrum, B256::repeat_byte(0xab)),
+            (NamedChain::ArbitrumNova, B256::repeat_byte(0xab)),
+            (NamedChain::ArbitrumSepolia, B256::repeat_byte(0xab)),
+        ] {
+            let header = AnyHeader {
+                difficulty: U256::from(1),
+                mix_hash: Some(mix_hash),
+                ..Default::default()
+            };
+            let block = AnyRpcBlock::new(
+                Block::new(
+                    AnyRpcHeader::from_sealed(header.seal(B256::ZERO)),
+                    BlockTransactions::Full(Vec::new()),
+                )
+                .into(),
+            );
+            let mut evm_env = EvmEnv::new(
+                CfgEnv::<SpecId>::default(),
+                BlockEnv {
+                    difficulty: U256::from(1),
+                    prevrandao: Some(mix_hash),
+                    ..Default::default()
+                },
+            );
 
-    // Type 2, EIP-1559
-    env.tx.gas_price = gas_price.or(max_fee_per_gas).unwrap_or_default();
-    env.tx.gas_priority_fee = max_priority_fee_per_gas;
+            apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork, _, _>(
+                &mut evm_env,
+                &block,
+                chain as u64,
+                NetworkConfigs::default(),
+            );
 
-    // Type 3, EIP-4844
-    env.tx.blob_hashes = blob_versioned_hashes.clone().unwrap_or_default();
-    env.tx.max_fee_per_blob_gas = max_fee_per_blob_gas.unwrap_or_default();
+            assert_eq!(
+                evm_env.block_env.prevrandao,
+                Some(B256::from(U256::from(1))),
+                "{chain:?} should expose `difficulty` as `PREVRANDAO`"
+            );
+        }
+    }
 
-    // Type 4, EIP-7702
-    env.tx.set_signed_authorization(authorization_list.clone().unwrap_or_default());
+    #[test]
+    fn tx_replay_env_changes_disable_priority_fee_check_only_for_arbitrum() {
+        let mut evm_env = EvmEnv::new(
+            revm::context::CfgEnv::<SpecId>::default(),
+            revm::context::BlockEnv::default(),
+        );
+        evm_env.cfg_env.chain_id = NamedChain::Arbitrum as u64;
 
-    Ok(())
+        apply_chain_specific_tx_replay_env_changes(&mut evm_env);
+        assert!(evm_env.cfg_env.disable_priority_fee_check);
+
+        evm_env.cfg_env.chain_id = NamedChain::Mainnet as u64;
+        evm_env.cfg_env.disable_priority_fee_check = false;
+
+        apply_chain_specific_tx_replay_env_changes(&mut evm_env);
+        assert!(!evm_env.cfg_env.disable_priority_fee_check);
+    }
+
+    #[test]
+    fn tx_replay_env_changes_use_source_chain() {
+        let mut evm_env = EvmEnv::new(
+            revm::context::CfgEnv::<SpecId>::default(),
+            revm::context::BlockEnv::default(),
+        );
+        evm_env.cfg_env.chain_id = NamedChain::Mainnet as u64;
+
+        apply_chain_specific_tx_replay_env_changes_for_chain(
+            &mut evm_env,
+            NamedChain::Arbitrum as u64,
+        );
+
+        assert_eq!(evm_env.cfg_env.chain_id, NamedChain::Mainnet as u64);
+        assert!(evm_env.cfg_env.disable_priority_fee_check);
+    }
+
+    #[test]
+    fn blob_params_by_spec_id_tracks_latest_known_blob_schedule() {
+        assert_eq!(get_blob_params_by_spec_id(SpecId::CANCUN), BlobParams::cancun());
+        assert_eq!(get_blob_params_by_spec_id(SpecId::PRAGUE), BlobParams::prague());
+        assert_eq!(get_blob_params_by_spec_id(SpecId::OSAKA), BlobParams::osaka());
+        assert_eq!(get_blob_params_by_spec_id(SpecId::AMSTERDAM), BlobParams::bpo2());
+        assert_eq!(
+            get_blob_base_fee_update_fraction_by_spec_id(SpecId::AMSTERDAM),
+            BlobParams::bpo2().update_fraction as u64
+        );
+    }
+
+    #[test]
+    fn blob_params_by_explicit_hardfork() {
+        for (hardfork, expected) in [
+            (EthereumHardfork::Cancun, BlobParams::cancun()),
+            (EthereumHardfork::Prague, BlobParams::prague()),
+            (EthereumHardfork::Osaka, BlobParams::osaka()),
+            (EthereumHardfork::Bpo1, BlobParams::bpo1()),
+            (EthereumHardfork::Bpo2, BlobParams::bpo2()),
+            (EthereumHardfork::Amsterdam, BlobParams::bpo2()),
+        ] {
+            assert_eq!(get_blob_params_by_hardfork(hardfork.into()), expected);
+        }
+    }
 }

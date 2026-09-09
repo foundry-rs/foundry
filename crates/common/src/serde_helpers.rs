@@ -1,6 +1,6 @@
 //! Misc Serde helpers for foundry crates.
 
-use alloy_primitives::U256;
+use alloy_primitives::{U64, U256};
 use serde::{Deserialize, Deserializer, de};
 use std::str::FromStr;
 
@@ -33,6 +33,25 @@ impl FromStr for Numeric {
             U256::from_str_radix(s, 16).map(Numeric::U256).map_err(|err| err.to_string())
         } else {
             U256::from_str(s).map(Numeric::U256).map_err(|err| err.to_string())
+        }
+    }
+}
+
+/// Helper type to parse a `u64` from a JSON number or a hex/decimal string.
+#[derive(Copy, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum Numeric64 {
+    /// A JSON number.
+    Num(u64),
+    /// A hex or decimal string.
+    U64(U64),
+}
+
+impl From<Numeric64> for u64 {
+    fn from(n: Numeric64) -> Self {
+        match n {
+            Numeric64::Num(n) => n,
+            Numeric64::U64(n) => n.to::<Self>(),
         }
     }
 }
@@ -78,6 +97,16 @@ pub enum NumericSeq {
     Num(u64),
 }
 
+/// Helper type to deserialize a single `u64` from either a direct value or a one-element sequence.
+#[derive(Deserialize)]
+#[serde(untagged)]
+pub enum Numeric64ValueOrSeq {
+    /// Single parameter sequence (e.g `[1]`).
+    Seq([Numeric64; 1]),
+    /// Single value.
+    Value(Numeric64),
+}
+
 /// Deserializes a number from hex or int
 pub fn deserialize_number<'de, D>(deserializer: D) -> Result<U256, D::Error>
 where
@@ -114,6 +143,35 @@ where
     Ok(num)
 }
 
+/// Deserializes single `u64` params: `1, [1], ["0x01"]`.
+pub fn deserialize_u64_seq<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let num = match Numeric64ValueOrSeq::deserialize(deserializer)? {
+        Numeric64ValueOrSeq::Seq(seq) => seq[0].into(),
+        Numeric64ValueOrSeq::Value(num) => num.into(),
+    };
+
+    Ok(num)
+}
+
+/// Deserializes an optional integer from a single-element params sequence.
+/// Accepts `[]`, `[null]`, `[n]`, `["0x.."]`.
+pub fn deserialize_u64_seq_opt<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let seq = Vec::<Option<Numeric64>>::deserialize(deserializer)?;
+    if seq.len() > 1 {
+        return Err(de::Error::custom(format!(
+            "expected params sequence with length 0 or 1 but got {}",
+            seq.len()
+        )));
+    }
+    Ok(seq.into_iter().next().flatten().map(Into::into))
+}
+
 pub mod duration {
     use serde::{Deserialize, Deserializer};
     use std::time::Duration;
@@ -133,5 +191,84 @@ pub mod duration {
         let s = String::deserialize(deserializer)?;
         let d = s.parse::<jiff::SignedDuration>().map_err(serde::de::Error::custom)?;
         d.try_into().map_err(serde::de::Error::custom)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde::de::IntoDeserializer;
+    use serde_json::json;
+
+    fn parse_u64_param(value: serde_json::Value) -> Result<u64, serde_json::Error> {
+        deserialize_u64_seq(value.into_deserializer())
+    }
+
+    fn parse_optional_u64_param(
+        value: serde_json::Value,
+    ) -> Result<Option<u64>, serde_json::Error> {
+        deserialize_u64_seq_opt(value.into_deserializer())
+    }
+
+    #[test]
+    fn deserialize_u64_seq_accepts_single_param_sequence_and_direct_value() {
+        let valid_values = [
+            json!([100]),
+            json!(100),
+            json!(["0x64"]),
+            json!("0x64"),
+            json!(["100"]),
+            json!("100"),
+        ];
+        for value in valid_values {
+            assert_eq!(parse_u64_param(value).unwrap(), 100);
+        }
+
+        for value in [json!([u64::MAX]), json!(u64::MAX)] {
+            assert_eq!(parse_u64_param(value).unwrap(), u64::MAX);
+        }
+    }
+
+    #[test]
+    fn deserialize_u64_seq_rejects_invalid_shape_and_overflow() {
+        for value in [
+            json!([]),
+            json!([1, 2]),
+            json!([null]),
+            json!(null),
+            json!(["0x10000000000000000"]),
+            json!("0x10000000000000000"),
+            json!(["18446744073709551616"]),
+            json!("18446744073709551616"),
+        ] {
+            assert!(parse_u64_param(value).is_err());
+        }
+    }
+
+    #[test]
+    fn deserialize_u64_seq_opt_accepts_empty_null_and_single_param_sequence() {
+        for value in [json!([]), json!([null])] {
+            assert_eq!(parse_optional_u64_param(value).unwrap(), None);
+        }
+
+        for value in [json!([100]), json!(["0x64"]), json!(["100"])] {
+            assert_eq!(parse_optional_u64_param(value).unwrap(), Some(100));
+        }
+
+        assert_eq!(parse_optional_u64_param(json!([u64::MAX])).unwrap(), Some(u64::MAX));
+    }
+
+    #[test]
+    fn deserialize_u64_seq_opt_rejects_invalid_shape_and_overflow() {
+        for value in [
+            json!([1, 2]),
+            json!(100),
+            json!("0x64"),
+            json!([["0x64"]]),
+            json!(["0x10000000000000000"]),
+            json!(["18446744073709551616"]),
+        ] {
+            assert!(parse_optional_u64_param(value).is_err());
+        }
     }
 }

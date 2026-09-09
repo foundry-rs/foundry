@@ -5,13 +5,12 @@ use crate::eth::{
             MaybeFullDatabase, SerializableBlock, SerializableHistoricalStates,
             SerializableTransaction, StateDb,
         },
-        env::Env,
         mem::cache::DiskStateCache,
     },
     pool::transactions::PoolTransaction,
 };
-use alloy_consensus::{Header, constants::EMPTY_WITHDRAWALS};
-use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
+use alloy_consensus::BlockHeader;
+use alloy_network::Network;
 use alloy_primitives::{
     B256, Bytes, U256,
     map::{B256HashMap, HashMap},
@@ -31,10 +30,10 @@ use foundry_evm::{
     backend::MemDb,
     traces::{CallKind, ParityTraceBuilder, TracingInspectorConfig},
 };
-use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxReceipt};
+use foundry_primitives::{FoundryHeader, FoundryReceiptEnvelope, FoundryTxEnvelope};
 use parking_lot::RwLock;
-use revm::{context::Block as RevmBlock, primitives::hardfork::SpecId};
 use std::{collections::VecDeque, fmt, path::PathBuf, sync::Arc, time::Duration};
+
 // use yansi::Paint;
 
 // === various limits in number of blocks ===
@@ -48,7 +47,10 @@ const MAX_ON_DISK_HISTORY_LIMIT: usize = 3_600;
 pub struct InMemoryBlockStates {
     /// The states at a certain block
     states: B256HashMap<StateDb>,
-    /// states which data is moved to disk
+    /// Older states in the secondary history tier.
+    ///
+    /// Structurally shared states remain here directly; other database types move their data to
+    /// disk and keep an empty state object here for loading it.
     on_disk_states: B256HashMap<StateDb>,
     /// How many states to store at most
     in_memory_limit: usize,
@@ -69,6 +71,7 @@ pub struct InMemoryBlockStates {
 impl InMemoryBlockStates {
     /// Creates a new instance with limited slots
     pub fn new(in_memory_limit: usize, on_disk_limit: usize) -> Self {
+        let in_memory_limit = in_memory_limit.max(1);
         Self {
             states: Default::default(),
             on_disk_states: Default::default(),
@@ -82,7 +85,7 @@ impl InMemoryBlockStates {
     }
 
     /// Configures no disk caching
-    pub fn memory_only(mut self) -> Self {
+    pub const fn memory_only(mut self) -> Self {
         self.max_on_disk_limit = 0;
         self
     }
@@ -109,7 +112,7 @@ impl InMemoryBlockStates {
     }
 
     /// Returns true if only memory caching is supported.
-    fn is_memory_only(&self) -> bool {
+    const fn is_memory_only(&self) -> bool {
         self.max_on_disk_limit == 0
     }
 
@@ -118,9 +121,8 @@ impl InMemoryBlockStates {
     /// When the configured limit for the number of states that can be stored in memory is reached,
     /// the oldest state is removed.
     ///
-    /// Since we keep a snapshot of the entire state as history, the size of the state will increase
-    /// with the transactions processed. To counter this, we gradually decrease the cache limit with
-    /// the number of states/blocks until we reached the `min_limit`.
+    /// Database types without structural sharing gradually move snapshots to disk as the chain
+    /// grows. Structurally shared snapshots move into the secondary tier without serialization.
     ///
     /// When a state that was previously written to disk is requested, it is simply read from disk.
     pub fn insert(&mut self, hash: B256, state: StateDb) {
@@ -148,10 +150,26 @@ impl InMemoryBlockStates {
             {
                 // only write to disk if supported
                 if !self.is_memory_only() {
+                    if state.is_persistent() {
+                        self.on_disk_states.insert(hash, state);
+                        self.oldest_on_disk.push_back(hash);
+                        continue;
+                    }
+
                     let state_snapshot = state.0.clear_into_state_snapshot();
-                    self.disk_cache.write(hash, state_snapshot);
-                    self.on_disk_states.insert(hash, state);
-                    self.oldest_on_disk.push_back(hash);
+                    if self.disk_cache.write(hash, &state_snapshot) {
+                        // Write succeeded, move state to on-disk tracking
+                        self.on_disk_states.insert(hash, state);
+                        self.oldest_on_disk.push_back(hash);
+                    } else {
+                        // Write failed, restore state to memory to avoid data loss
+                        state.init_from_state_snapshot(state_snapshot);
+                        self.states.insert(hash, state);
+                        self.present.push_front(hash);
+                        // Increase limit temporarily to prevent infinite retry loop
+                        self.in_memory_limit = self.in_memory_limit.saturating_add(1);
+                        break;
+                    }
                 }
             }
         }
@@ -159,8 +177,9 @@ impl InMemoryBlockStates {
         // enforce on disk limit and purge the oldest state cached on disk
         while !self.is_memory_only() && self.oldest_on_disk.len() >= self.max_on_disk_limit {
             // evict the oldest block
-            if let Some(hash) = self.oldest_on_disk.pop_front() {
-                self.on_disk_states.remove(&hash);
+            if let Some(hash) = self.oldest_on_disk.pop_front()
+                && self.on_disk_states.remove(&hash).is_some_and(|state| !state.is_persistent())
+            {
                 self.disk_cache.remove(hash);
             }
         }
@@ -173,9 +192,12 @@ impl InMemoryBlockStates {
 
     /// Returns on-disk state for the given `hash` if present
     pub fn get_on_disk_state(&mut self, hash: &B256) -> Option<&StateDb> {
-        if let Some(state) = self.on_disk_states.get_mut(hash)
-            && let Some(cached) = self.disk_cache.read(*hash)
-        {
+        if let Some(state) = self.on_disk_states.get_mut(hash) {
+            if state.is_persistent() {
+                return Some(state);
+            }
+
+            let cached = self.disk_cache.read(*hash)?;
             state.init_from_state_snapshot(cached);
             return Some(state);
         }
@@ -184,18 +206,38 @@ impl InMemoryBlockStates {
     }
 
     /// Sets the maximum number of stats we keep in memory
-    pub fn set_cache_limit(&mut self, limit: usize) {
+    pub const fn set_cache_limit(&mut self, limit: usize) {
+        let limit = if limit == 0 { 1 } else { limit };
         self.in_memory_limit = limit;
+        self.min_in_memory_limit =
+            if limit < MIN_HISTORY_LIMIT { limit } else { MIN_HISTORY_LIMIT };
     }
 
     /// Clears all entries
     pub fn clear(&mut self) {
         self.states.clear();
-        self.on_disk_states.clear();
         self.present.clear();
-        for on_disk in std::mem::take(&mut self.oldest_on_disk) {
-            self.disk_cache.remove(on_disk)
+        self.oldest_on_disk.clear();
+        for (hash, state) in std::mem::take(&mut self.on_disk_states) {
+            if !state.is_persistent() {
+                self.disk_cache.remove(hash);
+            }
         }
+    }
+
+    /// Removes states for the given block hashes.
+    ///
+    /// This is used during chain rollback to clean up states for blocks that are no longer part
+    /// of the canonical chain.
+    pub fn remove_block_states(&mut self, hashes: &[B256]) {
+        for hash in hashes {
+            self.states.remove(hash);
+            if self.on_disk_states.remove(hash).is_some_and(|state| !state.is_persistent()) {
+                self.disk_cache.remove(*hash);
+            }
+        }
+        self.present.retain(|h| !hashes.contains(h));
+        self.oldest_on_disk.retain(|h| !hashes.contains(h));
     }
 
     /// Serialize all states to a list of serializable historical states
@@ -208,11 +250,14 @@ impl InMemoryBlockStates {
             .collect::<Vec<_>>();
 
         // Get on-disk state snapshots
-        self.on_disk_states.iter().for_each(|(hash, _)| {
-            if let Some(state_snapshot) = self.disk_cache.read(*hash) {
+        for (hash, state) in &mut self.on_disk_states {
+            if state.is_persistent() {
+                states.push((*hash, state.serialize_state()));
+            } else if let Some(state_snapshot) = self.disk_cache.read(*hash) {
                 states.push((*hash, state_snapshot));
             }
-        });
+        }
+        states.sort_unstable_by_key(|(hash, _)| *hash);
 
         SerializableHistoricalStates::new(states)
     }
@@ -248,7 +293,7 @@ impl Default for InMemoryBlockStates {
 
 /// Stores the blockchain data (blocks, transactions)
 #[derive(Clone, Debug)]
-pub struct BlockchainStorage {
+pub struct BlockchainStorage<N: Network> {
     /// all stored blocks (block hash -> block)
     pub blocks: B256HashMap<Block>,
     /// mapping from block number -> block hash
@@ -259,45 +304,36 @@ pub struct BlockchainStorage {
     pub best_number: u64,
     /// genesis hash of the chain
     pub genesis_hash: B256,
+    /// genesis block number of the chain
+    pub genesis_number: u64,
     /// Mapping from the transaction hash to a tuple containing the transaction as well as the
     /// transaction receipt
-    pub transactions: B256HashMap<MinedTransaction>,
+    pub transactions: B256HashMap<MinedTransaction<N>>,
     /// The total difficulty of the chain until this block
     pub total_difficulty: U256,
+    /// Monad senders and authorities retained even when old transaction bodies are pruned.
+    #[cfg(feature = "monad")]
+    pub monad_block_participants: B256HashMap<foundry_evm::core::evm::MonadBlockParticipants>,
+    /// Execution profile used when each locally stored Monad block was created.
+    #[cfg(feature = "monad")]
+    pub monad_block_replay_profiles: B256HashMap<crate::eth::backend::db::MonadBlockReplayProfile>,
 }
 
-impl BlockchainStorage {
-    /// Creates a new storage with a genesis block
-    pub fn new(
-        env: &Env,
-        spec_id: SpecId,
-        base_fee: Option<u64>,
-        timestamp: u64,
-        genesis_number: u64,
-    ) -> Self {
-        let is_shanghai = spec_id >= SpecId::SHANGHAI;
-        let is_cancun = spec_id >= SpecId::CANCUN;
-        let is_prague = spec_id >= SpecId::PRAGUE;
+impl<N: Network> BlockchainStorage<N> {
+    /// Removes all metadata associated with a locally stored Monad block.
+    #[cfg(feature = "monad")]
+    fn remove_monad_block_metadata(&mut self, block_hash: &B256) {
+        self.monad_block_participants.remove(block_hash);
+        self.monad_block_replay_profiles.remove(block_hash);
+    }
 
-        // create a dummy genesis block
-        let header = Header {
-            timestamp,
-            base_fee_per_gas: base_fee,
-            gas_limit: env.evm_env.block_env.gas_limit,
-            beneficiary: env.evm_env.block_env.beneficiary,
-            difficulty: env.evm_env.block_env.difficulty,
-            blob_gas_used: env.evm_env.block_env.blob_excess_gas_and_price.as_ref().map(|_| 0),
-            excess_blob_gas: env.evm_env.block_env.blob_excess_gas(),
-            number: genesis_number,
-            parent_beacon_block_root: is_cancun.then_some(Default::default()),
-            withdrawals_root: is_shanghai.then_some(EMPTY_WITHDRAWALS),
-            requests_hash: is_prague.then_some(EMPTY_REQUESTS_HASH),
-            ..Default::default()
-        };
-        let block = create_block(header, Vec::<MaybeImpersonatedTransaction>::new());
+    /// Creates a new storage with a genesis block.
+    pub fn new(header: FoundryHeader) -> Self {
+        let block =
+            create_block(header, Vec::<MaybeImpersonatedTransaction<FoundryTxEnvelope>>::new());
         let genesis_hash = block.header.hash_slow();
         let best_hash = genesis_hash;
-        let best_number = genesis_number;
+        let best_number = block.header.number();
 
         let mut blocks = B256HashMap::default();
         blocks.insert(genesis_hash, block);
@@ -310,8 +346,13 @@ impl BlockchainStorage {
             best_hash,
             best_number,
             genesis_hash,
+            genesis_number: best_number,
             transactions: Default::default(),
             total_difficulty: Default::default(),
+            #[cfg(feature = "monad")]
+            monad_block_participants: Default::default(),
+            #[cfg(feature = "monad")]
+            monad_block_replay_profiles: Default::default(),
         }
     }
 
@@ -325,8 +366,13 @@ impl BlockchainStorage {
             best_hash: block_hash,
             best_number: block_number,
             genesis_hash: Default::default(),
+            genesis_number: 0,
             transactions: Default::default(),
             total_difficulty,
+            #[cfg(feature = "monad")]
+            monad_block_participants: Default::default(),
+            #[cfg(feature = "monad")]
+            monad_block_replay_profiles: Default::default(),
         }
     }
 
@@ -346,6 +392,8 @@ impl BlockchainStorage {
                 if let Some(block) = self.blocks.remove(&hash) {
                     removed.push(block);
                 }
+                #[cfg(feature = "monad")]
+                self.remove_monad_block_metadata(&hash);
                 self.hashes.remove(&i);
             }
         }
@@ -361,8 +409,13 @@ impl BlockchainStorage {
             best_hash: Default::default(),
             best_number: Default::default(),
             genesis_hash: Default::default(),
+            genesis_number: Default::default(),
             transactions: Default::default(),
             total_difficulty: Default::default(),
+            #[cfg(feature = "monad")]
+            monad_block_participants: Default::default(),
+            #[cfg(feature = "monad")]
+            monad_block_replay_profiles: Default::default(),
         }
     }
 
@@ -382,64 +435,103 @@ impl BlockchainStorage {
             block.body.transactions.clear();
         }
     }
-}
 
-impl BlockchainStorage {
+    /// Serialize all blocks in storage
+    pub fn serialized_blocks(&self) -> Vec<SerializableBlock> {
+        let mut blocks = self.blocks.iter().collect::<Vec<_>>();
+        blocks.sort_unstable_by_key(|(hash, block)| {
+            let hash = **hash;
+            let number = block.header.number();
+            let is_canonical = self.hashes.get(&number).is_some_and(|canonical| *canonical == hash);
+            (number, is_canonical, hash)
+        });
+        blocks.into_iter().map(|(_, block)| block.clone().into()).collect()
+    }
+
+    /// Adds a block to storage and returns its hash.
+    pub fn insert_block(&mut self, block: Block) -> B256 {
+        let block_hash = block.header.hash_slow();
+        let block_number = block.header.number();
+        self.blocks.insert(block_hash, block);
+        self.hashes.insert(block_number, block_hash);
+
+        // Update genesis_hash if we are loading the genesis block, so that
+        // Finalized/Safe/Earliest block tag lookups return the correct hash. The genesis
+        // number can be non-zero when configured via `--block-number`.
+        // See: https://github.com/foundry-rs/foundry/issues/12645
+        if block_number == self.genesis_number {
+            self.genesis_hash = block_hash;
+        }
+
+        block_hash
+    }
+
+    /// Deserialize and add blocks above the fork boundary to the backend storage.
+    pub fn load_blocks(
+        &mut self,
+        serializable_blocks: Vec<SerializableBlock>,
+        fork_boundary: Option<u64>,
+    ) {
+        for serializable_block in serializable_blocks {
+            let block: Block = serializable_block.into();
+            if fork_boundary.is_some_and(|boundary| block.header.number() <= boundary) {
+                continue;
+            }
+            self.insert_block(block);
+        }
+    }
+
     /// Returns the hash for [BlockNumberOrTag]
-    pub fn hash(&self, number: BlockNumberOrTag) -> Option<B256> {
-        let slots_in_an_epoch = 32;
+    pub fn hash(&self, number: BlockNumberOrTag, slots_in_an_epoch: u64) -> Option<B256> {
         match number {
             BlockNumberOrTag::Latest => Some(self.best_hash),
             BlockNumberOrTag::Earliest => Some(self.genesis_hash),
             BlockNumberOrTag::Pending => None,
             BlockNumberOrTag::Number(num) => self.hashes.get(&num).copied(),
             BlockNumberOrTag::Safe => {
-                if self.best_number > (slots_in_an_epoch) {
-                    self.hashes.get(&(self.best_number - (slots_in_an_epoch))).copied()
+                if self.best_number > slots_in_an_epoch {
+                    self.hashes.get(&(self.best_number - slots_in_an_epoch)).copied()
                 } else {
-                    Some(self.genesis_hash) // treat the genesis block as safe "by definition"
+                    Some(self.genesis_hash)
                 }
             }
             BlockNumberOrTag::Finalized => {
-                if self.best_number > (slots_in_an_epoch * 2) {
-                    self.hashes.get(&(self.best_number - (slots_in_an_epoch * 2))).copied()
+                if self.best_number > slots_in_an_epoch * 2 {
+                    self.hashes.get(&(self.best_number - slots_in_an_epoch * 2)).copied()
                 } else {
                     Some(self.genesis_hash)
                 }
             }
         }
     }
+}
 
-    pub fn serialized_blocks(&self) -> Vec<SerializableBlock> {
-        self.blocks.values().map(|block| block.clone().into()).collect()
-    }
-
+impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> BlockchainStorage<N> {
     pub fn serialized_transactions(&self) -> Vec<SerializableTransaction> {
-        self.transactions.values().map(|tx: &MinedTransaction| tx.clone().into()).collect()
+        let mut transactions = self
+            .transactions
+            .values()
+            .map(|tx: &MinedTransaction<N>| SerializableTransaction::from(tx.clone()))
+            .collect::<Vec<_>>();
+        transactions.sort_unstable_by_key(|tx| {
+            (tx.block_number, tx.info.transaction_index, tx.info.transaction_hash)
+        });
+        transactions
     }
 
-    /// Deserialize and add all blocks data to the backend storage
-    pub fn load_blocks(&mut self, serializable_blocks: Vec<SerializableBlock>) {
-        for serializable_block in &serializable_blocks {
-            let block: Block = serializable_block.clone().into();
-            let block_hash = block.header.hash_slow();
-            let block_number = block.header.number;
-            self.blocks.insert(block_hash, block);
-            self.hashes.insert(block_number, block_hash);
-
-            // Update genesis_hash if we are loading block 0, so that Finalized/Safe/Earliest
-            // block tag lookups return the correct hash.
-            // See: https://github.com/foundry-rs/foundry/issues/12645
-            if block_number == 0 {
-                self.genesis_hash = block_hash;
+    /// Deserialize and add transactions above the fork boundary to the backend storage.
+    pub fn load_transactions(
+        &mut self,
+        serializable_transactions: Vec<SerializableTransaction>,
+        fork_boundary: Option<u64>,
+    ) {
+        for serializable_transaction in serializable_transactions {
+            if fork_boundary
+                .is_some_and(|boundary| serializable_transaction.block_number <= boundary)
+            {
+                continue;
             }
-        }
-    }
-
-    /// Deserialize and add all blocks data to the backend storage
-    pub fn load_transactions(&mut self, serializable_transactions: Vec<SerializableTransaction>) {
-        for serializable_transaction in &serializable_transactions {
-            let transaction: MinedTransaction = serializable_transaction.clone().into();
+            let transaction: MinedTransaction<N> = serializable_transaction.into();
             self.transactions.insert(transaction.info.transaction_hash, transaction);
         }
     }
@@ -447,29 +539,15 @@ impl BlockchainStorage {
 
 /// A simple in-memory blockchain
 #[derive(Clone, Debug)]
-pub struct Blockchain {
+pub struct Blockchain<N: Network> {
     /// underlying storage that supports concurrent reads
-    pub storage: Arc<RwLock<BlockchainStorage>>,
+    pub storage: Arc<RwLock<BlockchainStorage<N>>>,
 }
 
-impl Blockchain {
-    /// Creates a new storage with a genesis block
-    pub fn new(
-        env: &Env,
-        spec_id: SpecId,
-        base_fee: Option<u64>,
-        timestamp: u64,
-        genesis_number: u64,
-    ) -> Self {
-        Self {
-            storage: Arc::new(RwLock::new(BlockchainStorage::new(
-                env,
-                spec_id,
-                base_fee,
-                timestamp,
-                genesis_number,
-            ))),
-        }
+impl<N: Network> Blockchain<N> {
+    /// Creates a new storage with a genesis block.
+    pub fn new(header: FoundryHeader) -> Self {
+        Self { storage: Arc::new(RwLock::new(BlockchainStorage::new(header))) }
     }
 
     pub fn forked(block_number: u64, block_hash: B256, total_difficulty: U256) -> Self {
@@ -483,10 +561,10 @@ impl Blockchain {
     }
 
     /// returns the header hash of given block
-    pub fn hash(&self, id: BlockId) -> Option<B256> {
+    pub fn hash(&self, id: BlockId, slots_in_an_epoch: u64) -> Option<B256> {
         match id {
             BlockId::Hash(h) => Some(h.block_hash),
-            BlockId::Number(num) => self.storage.read().hash(num),
+            BlockId::Number(num) => self.storage.read().hash(num, slots_in_an_epoch),
         }
     }
 
@@ -494,7 +572,7 @@ impl Blockchain {
         self.storage.read().blocks.get(hash).cloned()
     }
 
-    pub fn get_transaction_by_hash(&self, hash: &B256) -> Option<MinedTransaction> {
+    pub fn get_transaction_by_hash(&self, hash: &B256) -> Option<MinedTransaction<N>> {
         self.storage.read().transactions.get(hash).cloned()
     }
 
@@ -505,27 +583,51 @@ impl Blockchain {
 }
 
 /// Represents the outcome of mining a new block
-#[derive(Clone, Debug)]
-pub struct MinedBlockOutcome {
+pub struct MinedBlockOutcome<T> {
     /// The block that was mined
     pub block_number: u64,
     /// All transactions included in the block
-    pub included: Vec<Arc<PoolTransaction>>,
+    pub included: Vec<Arc<PoolTransaction<T>>>,
     /// All transactions that were attempted to be included but were invalid at the time of
     /// execution
-    pub invalid: Vec<Arc<PoolTransaction>>,
+    pub invalid: Vec<Arc<PoolTransaction<T>>>,
+    /// Transactions skipped because they're not yet valid (e.g., valid_after in the future).
+    /// These remain in the pool and should be retried later.
+    pub not_yet_valid: Vec<Arc<PoolTransaction<T>>>,
+}
+
+impl<T> Clone for MinedBlockOutcome<T> {
+    fn clone(&self) -> Self {
+        Self {
+            block_number: self.block_number,
+            included: self.included.clone(),
+            invalid: self.invalid.clone(),
+            not_yet_valid: self.not_yet_valid.clone(),
+        }
+    }
+}
+
+impl<T> fmt::Debug for MinedBlockOutcome<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MinedBlockOutcome")
+            .field("block_number", &self.block_number)
+            .field("included", &self.included.len())
+            .field("invalid", &self.invalid.len())
+            .field("not_yet_valid", &self.not_yet_valid.len())
+            .finish()
+    }
 }
 
 /// Container type for a mined transaction
 #[derive(Clone, Debug)]
-pub struct MinedTransaction {
+pub struct MinedTransaction<N: Network> {
     pub info: TransactionInfo,
-    pub receipt: FoundryReceiptEnvelope,
+    pub receipt: N::ReceiptEnvelope,
     pub block_hash: B256,
     pub block_number: u64,
 }
 
-impl MinedTransaction {
+impl<N: Network> MinedTransaction<N> {
     /// Returns the traces of the transaction for `trace_transaction`
     pub fn parity_traces(&self) -> Vec<LocalizedTransactionTrace> {
         ParityTraceBuilder::new(
@@ -539,6 +641,7 @@ impl MinedTransaction {
             block_hash: Some(self.block_hash),
             block_number: Some(self.block_number),
             base_fee: None,
+            block_timestamp: None,
         })
     }
 
@@ -554,14 +657,15 @@ impl MinedTransaction {
                     CallKind::Create2 => OperationType::OpCreate2,
                     _ => return None,
                 };
-                let mut from = node.trace.caller;
-                let mut to = node.trace.address;
-                let mut value = node.trace.value;
-                if node.is_selfdestruct() {
-                    from = node.trace.address;
-                    to = node.trace.selfdestruct_refund_target.unwrap_or_default();
-                    value = node.trace.selfdestruct_transferred_value.unwrap_or_default();
-                }
+                let (from, to, value) = if node.is_selfdestruct() {
+                    (
+                        node.trace.address,
+                        node.trace.selfdestruct_refund_target.unwrap_or_default(),
+                        node.trace.selfdestruct_transferred_value.unwrap_or_default(),
+                    )
+                } else {
+                    (node.trace.caller, node.trace.address, node.trace.value)
+                };
                 Some(InternalOperation { r#type, from, to, value })
             })
             .collect()
@@ -570,9 +674,9 @@ impl MinedTransaction {
 
 /// Intermediary Anvil representation of a receipt
 #[derive(Clone, Debug)]
-pub struct MinedTransactionReceipt {
+pub struct MinedTransactionReceipt<N: Network> {
     /// The actual json rpc receipt object
-    pub inner: FoundryTxReceipt,
+    pub inner: N::ReceiptResponse,
     /// Output data for the transaction
     pub out: Option<Bytes>,
 }
@@ -580,11 +684,13 @@ pub struct MinedTransactionReceipt {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::eth::backend::db::Db;
+    use crate::eth::backend::{db::Db, mem::in_memory_db::StateRootDb};
+    use alloy_consensus::Header;
     use alloy_primitives::{Address, hex};
     use alloy_rlp::Decodable;
-    use foundry_primitives::FoundryTxEnvelope;
-    use revm::{database::DatabaseRef, state::AccountInfo};
+    use foundry_primitives::FoundryNetwork;
+    use revm::{database::DatabaseRef, interpreter::InstructionResult, state::AccountInfo};
+    use tempo_primitives::TempoHeader;
 
     #[test]
     fn test_interval_update() {
@@ -614,6 +720,16 @@ mod tests {
         assert_eq!(storage.in_memory_limit, 1);
         assert_eq!(storage.min_in_memory_limit, 1);
         assert_eq!(storage.max_on_disk_limit, 2);
+
+        storage = InMemoryBlockStates::new(0, 0);
+        assert!(storage.is_memory_only());
+        assert_eq!(storage.in_memory_limit, 1);
+        assert_eq!(storage.min_in_memory_limit, 1);
+        assert_eq!(storage.max_on_disk_limit, 0);
+
+        storage.set_cache_limit(0);
+        assert_eq!(storage.in_memory_limit, 1);
+        assert_eq!(storage.min_in_memory_limit, 1);
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -639,6 +755,29 @@ mod tests {
 
         let acc = loaded.basic_ref(addr).unwrap().unwrap();
         assert_eq!(acc.balance, U256::from(1337u64));
+    }
+
+    #[test]
+    fn persistent_states_do_not_use_disk_cache() {
+        let mut storage = InMemoryBlockStates::new(1, MAX_ON_DISK_HISTORY_LIMIT);
+        let one = B256::from(U256::from(1));
+        let two = B256::from(U256::from(2));
+        let address = Address::random();
+        let mut db = StateRootDb::default();
+
+        db.insert_account(address, AccountInfo::from_balance(U256::from(1)));
+        storage.insert(one, db.current_state());
+        db.set_balance(address, U256::from(2)).unwrap();
+        storage.insert(two, db.current_state());
+
+        assert!(storage.disk_cache.temp_dir.is_none());
+        assert!(storage.on_disk_states.get(&one).unwrap().is_persistent());
+        assert_eq!(
+            storage.get_on_disk_state(&one).unwrap().basic_ref(address).unwrap().unwrap().balance,
+            U256::from(1)
+        );
+        storage.remove_block_states(&[one]);
+        assert!(storage.disk_cache.temp_dir.is_none());
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -681,31 +820,244 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_remove_block_states_on_rollback() {
+        let mut storage = InMemoryBlockStates::new(10, MAX_ON_DISK_HISTORY_LIMIT);
+
+        // Insert 5 states
+        let hashes: Vec<B256> = (0..5)
+            .map(|i| {
+                let hash = B256::from(U256::from(i));
+                let mut state = MemDb::default();
+                let addr = Address::from_word(hash);
+                state.insert_account(addr, AccountInfo::from_balance(U256::from(i * 100)));
+                storage.insert(hash, StateDb::new(state));
+                hash
+            })
+            .collect();
+
+        assert_eq!(storage.present.len(), 5);
+
+        // Simulate rollback: remove the last 3 blocks
+        let removed_hashes = &hashes[2..];
+        storage.remove_block_states(removed_hashes);
+
+        // Only the first 2 states should remain
+        assert_eq!(storage.present.len(), 2);
+        assert!(storage.get_state(&hashes[0]).is_some());
+        assert!(storage.get_state(&hashes[1]).is_some());
+        for h in removed_hashes {
+            assert!(storage.get_state(h).is_none());
+            assert!(!storage.present.contains(h));
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_remove_block_states_cleans_disk_cache() {
+        // Use limit=1 to force states to disk
+        let mut storage = InMemoryBlockStates::new(1, MAX_ON_DISK_HISTORY_LIMIT);
+
+        let hash_a = B256::from(U256::from(1));
+        let hash_b = B256::from(U256::from(2));
+
+        storage.insert(hash_a, StateDb::new(MemDb::default()));
+        storage.insert(hash_b, StateDb::new(MemDb::default()));
+
+        // Wait for disk flush
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+        assert!(storage.on_disk_states.contains_key(&hash_a));
+
+        // Remove hash_a (on disk)
+        storage.remove_block_states(&[hash_a]);
+
+        assert!(!storage.on_disk_states.contains_key(&hash_a));
+        assert!(!storage.oldest_on_disk.contains(&hash_a));
+        assert!(storage.get_on_disk_state(&hash_a).is_none());
+    }
+
     // verifies that blocks and transactions in BlockchainStorage remain the same when dumped and
     // reloaded
     #[test]
     fn test_storage_dump_reload_cycle() {
-        let mut dump_storage = BlockchainStorage::empty();
+        let mut dump_storage = BlockchainStorage::<FoundryNetwork>::empty();
 
         let header = Header { gas_limit: 123456, ..Default::default() };
         let bytes_first = &mut &hex::decode("f86b02843b9aca00830186a094d3e8763675e4c425df46cc3b5c0f6cbdac39604687038d7ea4c68000802ba00eb96ca19e8a77102767a41fc85a36afd5c61ccb09911cec5d3e86e193d9c5aea03a456401896b1b6055311536bf00a718568c744d8c1f9df59879e8350220ca18").unwrap()[..];
-        let tx: MaybeImpersonatedTransaction =
+        let tx: MaybeImpersonatedTransaction<FoundryTxEnvelope> =
             FoundryTxEnvelope::decode(&mut &bytes_first[..]).unwrap().into();
-        let block = create_block(header.clone(), vec![tx.clone()]);
+        let block = create_block(header.clone().into(), vec![tx.clone()]);
         let block_hash = block.header.hash_slow();
         dump_storage.blocks.insert(block_hash, block);
 
         let serialized_blocks = dump_storage.serialized_blocks();
         let serialized_transactions = dump_storage.serialized_transactions();
 
-        let mut load_storage = BlockchainStorage::empty();
+        let mut load_storage = BlockchainStorage::<FoundryNetwork>::empty();
 
-        load_storage.load_blocks(serialized_blocks);
-        load_storage.load_transactions(serialized_transactions);
+        load_storage.load_blocks(serialized_blocks, None);
+        load_storage.load_transactions(serialized_transactions, None);
 
         let loaded_block = load_storage.blocks.get(&block_hash).unwrap();
-        assert_eq!(loaded_block.header.gas_limit, { header.gas_limit });
+        assert_eq!(loaded_block.header.gas_limit(), header.gas_limit());
         let loaded_tx = loaded_block.body.transactions.first().unwrap();
         assert_eq!(loaded_tx, &tx);
+    }
+
+    #[test]
+    fn serialized_blocks_puts_canonical_block_last() {
+        let block = |timestamp| {
+            create_block(
+                Header { number: 1, timestamp, ..Default::default() }.into(),
+                Vec::<MaybeImpersonatedTransaction<FoundryTxEnvelope>>::new(),
+            )
+        };
+        let block_a = block(1);
+        let block_b = block(2);
+        let (canonical, stale) = if block_a.header.hash_slow() < block_b.header.hash_slow() {
+            (block_a, block_b)
+        } else {
+            (block_b, block_a)
+        };
+
+        let mut storage = BlockchainStorage::<FoundryNetwork>::empty();
+        let stale_hash = storage.insert_block(stale);
+        let canonical_hash = storage.insert_block(canonical);
+        assert!(canonical_hash < stale_hash);
+
+        let mut loaded = BlockchainStorage::<FoundryNetwork>::empty();
+        loaded.load_blocks(storage.serialized_blocks(), None);
+        assert_eq!(loaded.hashes.get(&1), Some(&canonical_hash));
+    }
+
+    #[test]
+    fn serialized_transactions_are_sorted() {
+        let transaction = |block_number, transaction_index, transaction_hash| MinedTransaction::<
+            FoundryNetwork,
+        > {
+            info: TransactionInfo {
+                transaction_hash,
+                transaction_index,
+                from: Address::ZERO,
+                to: None,
+                contract_address: None,
+                traces: Vec::new(),
+                exit: InstructionResult::Stop,
+                out: None,
+                nonce: 0,
+                gas_used: 0,
+            },
+            receipt: FoundryReceiptEnvelope::Legacy(Default::default()),
+            block_hash: B256::ZERO,
+            block_number,
+        };
+        let first = B256::from(U256::from(1));
+        let second = B256::from(U256::from(2));
+        let third = B256::from(U256::from(3));
+        let fourth = B256::from(U256::from(4));
+        let mut storage = BlockchainStorage::<FoundryNetwork>::empty();
+        for transaction in [
+            transaction(2, 0, fourth),
+            transaction(1, 1, third),
+            transaction(1, 0, second),
+            transaction(1, 0, first),
+        ] {
+            storage.transactions.insert(transaction.info.transaction_hash, transaction);
+        }
+
+        let hashes = storage
+            .serialized_transactions()
+            .into_iter()
+            .map(|transaction| transaction.info.transaction_hash)
+            .collect::<Vec<_>>();
+        assert_eq!(hashes, [first, second, third, fourth]);
+    }
+
+    #[test]
+    fn serialized_historical_states_are_sorted() {
+        let hashes = [3, 1, 2].map(|number| B256::from(U256::from(number)));
+        let mut states = InMemoryBlockStates::default();
+        for hash in hashes {
+            states.insert(hash, StateDb::new(MemDb::default()));
+        }
+
+        let serialized_hashes =
+            states.serialized_states().into_iter().map(|(hash, _)| hash).collect::<Vec<_>>();
+        assert_eq!(serialized_hashes, [hashes[1], hashes[2], hashes[0]]);
+    }
+
+    #[test]
+    fn test_tempo_storage_dump_reload_cycle() {
+        let mut dump_storage = BlockchainStorage::<FoundryNetwork>::empty();
+        let header = TempoHeader {
+            general_gas_limit: 30_000_000,
+            shared_gas_limit: 1_000_000,
+            timestamp_millis_part: 123,
+            inner: Header { number: 7, gas_limit: 30_000_000, timestamp: 42, ..Default::default() },
+            consensus_context: None,
+        };
+        let block = create_block(
+            header.into(),
+            Vec::<MaybeImpersonatedTransaction<FoundryTxEnvelope>>::new(),
+        );
+        let expected_header = block.header.clone();
+        let block_hash = block.header.hash_slow();
+        dump_storage.blocks.insert(block_hash, block);
+
+        let serialized = serde_json::to_string(&dump_storage.serialized_blocks()).unwrap();
+        let blocks: Vec<SerializableBlock> = serde_json::from_str(&serialized).unwrap();
+        let mut load_storage = BlockchainStorage::<FoundryNetwork>::empty();
+        load_storage.load_blocks(blocks, None);
+
+        let loaded_block = load_storage.blocks.get(&block_hash).unwrap();
+        assert_eq!(loaded_block.header, expected_header);
+        assert_eq!(loaded_block.header.as_tempo().unwrap().shared_gas_limit, 1_000_000);
+        assert_eq!(load_storage.hashes.get(&7), Some(&block_hash));
+    }
+
+    // Regression test for https://github.com/foundry-rs/foundry/issues/12645:
+    // when a non-zero genesis number is configured (e.g. `--block-number 73 --load-state ...`),
+    // `load_blocks` must set `genesis_hash` to the loaded block matching `genesis_number`,
+    // not the hardcoded block 0.
+    #[test]
+    fn test_load_blocks_sets_genesis_hash_with_non_zero_genesis_number() {
+        const GENESIS_NUMBER: u64 = 73;
+
+        // Build a serialized block at the configured genesis number.
+        let header = Header { number: GENESIS_NUMBER, gas_limit: 123456, ..Default::default() };
+        let block = create_block(
+            header.into(),
+            Vec::<MaybeImpersonatedTransaction<FoundryTxEnvelope>>::new(),
+        );
+        let block_hash = block.header.hash_slow();
+        let serialized_blocks: Vec<SerializableBlock> = vec![block.into()];
+
+        // Simulate a fresh storage started with `--block-number 73`: the dummy block created by
+        // `new()` is hash X, and `genesis_number` is 73. Loading a state snapshot whose genesis
+        // is also 73 must rewrite `genesis_hash` to the loaded block's hash.
+        let mut load_storage = BlockchainStorage::<FoundryNetwork>::empty();
+        load_storage.genesis_number = GENESIS_NUMBER;
+        let dummy_genesis_hash = B256::repeat_byte(0xab);
+        load_storage.genesis_hash = dummy_genesis_hash;
+
+        load_storage.load_blocks(serialized_blocks, None);
+
+        assert_eq!(load_storage.genesis_hash, block_hash);
+        assert_ne!(load_storage.genesis_hash, dummy_genesis_hash);
+
+        // Sanity check: with the old hardcoded `block_number == 0` logic, `genesis_hash` would
+        // never be updated when no block 0 is present, so the dummy hash would leak through.
+        let mut sanity_storage = BlockchainStorage::<FoundryNetwork>::empty();
+        sanity_storage.genesis_number = 0;
+        sanity_storage.genesis_hash = dummy_genesis_hash;
+
+        let header_only_73 =
+            Header { number: GENESIS_NUMBER, gas_limit: 123456, ..Default::default() };
+        let block_73 = create_block(
+            header_only_73.into(),
+            Vec::<MaybeImpersonatedTransaction<FoundryTxEnvelope>>::new(),
+        );
+        sanity_storage.load_blocks(vec![block_73.into()], None);
+        assert_eq!(sanity_storage.genesis_hash, dummy_genesis_hash);
     }
 }

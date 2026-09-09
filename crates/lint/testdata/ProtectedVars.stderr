@@ -1,0 +1,232 @@
+warning[protected-vars]: protected variable `owner` is written without `onlyOwner()`
+   ╭▸ ROOT/testdata/ProtectedVars.sol:LL:CC
+   │
+LL │     function setOwner(address newOwner) external {
+   │              ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `owner` is written without `checkOwner()`
+   ╭▸ ROOT/testdata/ProtectedVars.sol:LL:CC
+   │
+LL │     function setThroughHelper(address newOwner) external {
+   │              ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `owner` is written without `onlyOwner()`
+   ╭▸ ROOT/testdata/ProtectedVars.sol:LL:CC
+   │
+LL │     function writeInUnprotectedModifier(address newOwner)
+   │              ━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `role` is written without `onlyRole(bytes32)`
+   ╭▸ ROOT/testdata/ProtectedVars.sol:LL:CC
+   │
+LL │     function setRoleUnprotected(bytes32 newRole) external {
+   │              ━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `owner` is written without `checkOwner()`
+   ╭▸ ROOT/testdata/ProtectedVars.sol:LL:CC
+   │
+LL │     function setOwner(address newOwner) external {
+   │              ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `members` is written without `onlyOwner()`
+   ╭▸ ROOT/testdata/ProtectedVars.sol:LL:CC
+   │
+LL │     function addMember(address member) external {
+   │              ━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `allowed` is written without `onlyOwner()`
+   ╭▸ ROOT/testdata/ProtectedVars.sol:LL:CC
+   │
+LL │     function clearMember(address member) external {
+   │              ━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `settings` is written without `onlyOwner()`
+   ╭▸ ROOT/testdata/ProtectedVars.sol:LL:CC
+   │
+LL │     function setOperator(address operator) external {
+   │              ━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `settings` is written without `onlyOwner()`
+   ╭▸ ROOT/testdata/ProtectedVars.sol:LL:CC
+   │
+LL │     function setOperatorThroughParameter(address operator) external {
+   │              ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `owner` is written without `checkOwner()`
+   ╭▸ ROOT/testdata/ProtectedVars.sol:LL:CC
+   │
+LL │     function branchGuard(bool guard, address newOwner) external {
+   │              ━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `owner` is written without `checkOwner()`
+   ╭▸ ROOT/testdata/ProtectedVars.sol:LL:CC
+   │
+LL │     function guardAfterWrite(address newOwner) external {
+   │              ━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `owner` is written without `checkOwner()`
+   ╭▸ ROOT/testdata/ProtectedVars.sol:LL:CC
+   │
+LL │     function guardOnOneReturnPath(bool skip, address newOwner) external {
+   │              ━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `owner` is written without `checkOwner()`
+   ╭▸ ROOT/testdata/ProtectedVars.sol:LL:CC
+   │
+LL │     function ternaryGuard(bool guard, address newOwner) external {
+   │              ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `owner` is written without `checkOwner()`
+   ╭▸ ROOT/testdata/ProtectedVars.sol:LL:CC
+   │
+LL │     function shortCircuitGuard(bool guard, address newOwner) external {
+   │              ━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `owner` is written without `checkOwner()`
+   ╭▸ ROOT/testdata/ProtectedVars.sol:LL:CC
+   │
+LL │     function writeAfterMutualRecursion(address newOwner) external {
+   │              ━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `owner` is written without `checkOwner()`
+   ╭▸ ROOT/testdata/ProtectedVars.sol:LL:CC
+   │
+LL │     function writeAfterConditionalRecursion(bool stop, address newOwner) external {
+   │              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `owner` is written without `checkOwner()`
+   ╭▸ ROOT/testdata/ProtectedVars.sol:LL:CC
+   │
+LL │     function writeAfterDoWhileContinue(bool repeat, address newOwner) external {
+   │              ━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `owner` is written without `onlyOwner()`
+   ╭▸ ROOT/testdata/ProtectedVars.sol:LL:CC
+   │
+LL │     function derivedUnsafe(address newOwner) external {
+   │              ━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `owner` is written without `onlyOwner()` in most-derived contract `DerivedProtection`
+   ╭▸ ROOT/testdata/ProtectedVars.sol:LL:CC
+   │
+LL │     function inheritedUnsafe(address newOwner) public {
+   │              ━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `owner` is written without `notDeclared()`
+   ╭▸ ROOT/testdata/ProtectedVars.sol:LL:CC
+   │
+LL │     function setOwner(address newOwner) external {
+   │              ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `owner` has a malformed write-protection annotation
+   ╭▸ ROOT/testdata/ProtectedVars.sol:LL:CC
+   │
+LL │     function setOwner(address newOwner) external {
+   │              ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `owner` is written without `checkOwner()`
+   ╭▸ ROOT/testdata/ProtectedVars.sol:LL:CC
+   │
+LL │     function reachableWrite(address newOwner) external passthrough {
+   │              ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `owner` is written without `checkOwner()`
+   ╭▸ ROOT/testdata/ProtectedVars.sol:LL:CC
+   │
+LL │     function guardAfterBody(address newOwner) external checkAfter {
+   │              ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `owner` is written without `checkOwner()`
+   ╭▸ ROOT/testdata/ProtectedVars.sol:LL:CC
+   │
+LL │     function reachableOuterPost(address newOwner) external writeAfter(newOwner) passthrough {}
+   │              ━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `owner` is written without `checkOwner()`
+   ╭▸ ROOT/testdata/ProtectedVars.sol:LL:CC
+   │
+LL │     function returnBeforeOuterPost(address newOwner) external writeAfter(newOwner) {
+   │              ━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `owner` is written without `checkOwner()`
+   ╭▸ ROOT/testdata/ProtectedVars.sol:LL:CC
+   │
+LL │     function conditionalReturnBeforeOuterPost(bool skip, address newOwner)
+   │              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `protectedValues` is written without `onlyOwner()`
+   ╭▸ ROOT/testdata/ProtectedVars.sol:LL:CC
+   │
+LL │     function retargetToProtected() external {
+   │              ━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `protectedValue` is written without `onlyOwner()`
+   ╭▸ ROOT/testdata/ProtectedVars.sol:LL:CC
+   │
+LL │     function writePersistentStorage() external {
+   │              ━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `protectedValue` is written without `onlyOwner()`
+   ╭▸ ROOT/testdata/ProtectedVars.sol:LL:CC
+   │
+LL │     function storeAtFirstArgument() external {
+   │              ━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+

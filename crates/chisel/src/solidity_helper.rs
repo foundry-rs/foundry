@@ -147,8 +147,8 @@ impl SolidityHelper {
 
     /// Validate that a source snippet is closed (i.e., all braces and parenthesis are matched).
     fn validate_closed(&self, input: &str) -> ValidationResult {
-        use RawLiteralKind::*;
-        use RawTokenKind::*;
+        use RawLiteralKind::Str;
+        use RawTokenKind::{BlockComment, CloseDelim, Literal, OpenDelim};
         let mut stack = vec![];
         for token in Cursor::new(input) {
             match token.kind {
@@ -169,16 +169,12 @@ impl SolidityHelper {
                     }
                 },
 
-                Literal { kind: Str { terminated, .. } } => {
-                    if !terminated {
-                        return ValidationResult::Incomplete;
-                    }
+                Literal { kind: Str { terminated, .. } } if !terminated => {
+                    return ValidationResult::Incomplete;
                 }
 
-                BlockComment { terminated, .. } => {
-                    if !terminated {
-                        return ValidationResult::Incomplete;
-                    }
+                BlockComment { terminated, .. } if !terminated => {
+                    return ValidationResult::Incomplete;
                 }
 
                 _ => {}
@@ -286,7 +282,10 @@ impl Helper for SolidityHelper {}
 fn token_style(token: &Token) -> Style {
     use solar::parse::{
         interface::kw::*,
-        token::{TokenKind::*, TokenLitKind::*},
+        token::{
+            TokenKind::{Arrow, Comment, FatArrow, Ident, Literal},
+            TokenLitKind::{HexStr, Str, UnicodeStr},
+        },
     };
 
     match token.kind {

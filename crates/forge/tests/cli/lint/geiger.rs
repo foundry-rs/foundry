@@ -21,7 +21,7 @@ note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous op
 9 │                 vm.ffi(inputs);
   │                    ━━━
   │
-  ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
+  ╰ help: https://getfoundry.sh/forge/linting/unsafe-cheatcode
 
 Error: aborting due to 1 linter note(s)
 ...
@@ -52,7 +52,7 @@ note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous op
 9 │                 bytes memory stuff = vm.ffi(inputs);
   │                                         ━━━
   │
-  ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
+  ╰ help: https://getfoundry.sh/forge/linting/unsafe-cheatcode
 
 Error: aborting due to 1 linter note(s)
 ...
@@ -84,7 +84,7 @@ note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous op
 9 │                 vm.ffi(inputs);
   │                    ━━━
   │
-  ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
+  ╰ help: https://getfoundry.sh/forge/linting/unsafe-cheatcode
 
 note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous operations
    [FILE]:10:20
@@ -92,7 +92,7 @@ note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous op
 10 │                 vm.ffi(inputs);
    │                    ━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
+   ╰ help: https://getfoundry.sh/forge/linting/unsafe-cheatcode
 
 note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous operations
    [FILE]:11:20
@@ -100,7 +100,7 @@ note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous op
 11 │                 vm.ffi(inputs);
    │                    ━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
+   ╰ help: https://getfoundry.sh/forge/linting/unsafe-cheatcode
 
 Error: aborting due to 3 linter note(s)
 ...

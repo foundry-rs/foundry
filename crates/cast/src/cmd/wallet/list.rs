@@ -1,10 +1,11 @@
 use clap::Parser;
 use eyre::Result;
-use std::env;
-
-use foundry_common::{fs, sh_err, sh_println};
+use foundry_cli::json::print_json_success;
+use foundry_common::{fs, sh_err, sh_println, shell};
 use foundry_config::Config;
 use foundry_wallets::wallet_multi::MultiWalletOptsBuilder;
+use serde::Serialize;
+use std::{borrow::Cow, env};
 
 /// CLI arguments for `cast wallet list`.
 #[derive(Clone, Debug, Parser)]
@@ -48,23 +49,25 @@ pub struct ListArgs {
 
     /// Max number of addresses to display from hardware wallets.
     #[arg(long, short, default_value = "3", requires = "hw-wallets")]
-    max_senders: Option<usize>,
+    max_senders: usize,
 }
 
 impl ListArgs {
     pub async fn run(self) -> Result<()> {
+        let format_json = shell::is_json();
+        let mut accounts: Vec<WalletAccount> = Vec::new();
+
         // list local accounts as files in keystore dir, no need to unlock / provide password
         if self.dir.is_some()
             || self.all
             || (!self.ledger && !self.trezor && !self.aws && !self.gcp)
         {
             match self.list_local_senders() {
-                Ok(()) => {}
-                Err(e) => {
-                    if !self.all {
-                        sh_err!("{}", e)?;
-                    }
+                Ok(local) => accounts.extend(local),
+                Err(e) if !self.all => {
+                    sh_err!("{}", e)?;
                 }
+                _ => {}
             }
         }
 
@@ -78,33 +81,32 @@ impl ListArgs {
             .turnkey(self.turnkey || self.all)
             .interactives(0)
             .interactive(false)
-            .browser(false)
-            .browser_port(Default::default())
-            .browser_disable_open(Default::default())
-            .browser_development(Default::default())
+            .browser(Default::default())
             .build()
             .expect("build multi wallet");
 
-        // macro to print senders for a list of signers
+        // macro to collect or print senders for a list of signers
         macro_rules! list_senders {
             ($signers:expr, $label:literal) => {
                 match $signers.await {
                     Ok(signers) => {
                         for signer in signers.unwrap_or_default().iter() {
-                            signer
-                                .available_senders(self.max_senders.unwrap())
-                                .await?
-                                .iter()
-                                .for_each(|sender| {
+                            for sender in signer.available_senders(self.max_senders).await? {
+                                if format_json {
+                                    accounts.push(WalletAccount {
+                                        address: sender.to_string(),
+                                        source: $label,
+                                    });
+                                } else {
                                     let _ = sh_println!("{} ({})", sender, $label);
-                                })
+                                }
+                            }
                         }
                     }
-                    Err(e) => {
-                        if !self.all {
-                            sh_err!("{}", e)?;
-                        }
+                    Err(e) if !self.all => {
+                        sh_err!("{}", e)?;
                     }
+                    _ => {}
                 }
             };
         }
@@ -114,10 +116,14 @@ impl ListArgs {
         list_senders!(list_opts.aws_signers(), "AWS");
         list_senders!(list_opts.gcp_signers(), "GCP");
 
+        if format_json {
+            print_json_success(accounts)?;
+        }
+
         Ok(())
     }
 
-    fn list_local_senders(&self) -> Result<()> {
+    fn list_local_senders(&self) -> Result<Vec<WalletAccount>> {
         let keystore_path = self.dir.as_deref().unwrap_or_default();
         let keystore_dir = if keystore_path.is_empty() {
             // Create the keystore default directory if it doesn't exist
@@ -128,22 +134,51 @@ impl ListArgs {
             dunce::canonicalize(keystore_path)?
         };
 
+        let mut accounts = Vec::new();
+
         // List all files within the keystore directory.
-        for entry in std::fs::read_dir(keystore_dir)? {
-            let path = entry?.path();
+        let mut paths = std::fs::read_dir(keystore_dir)?
+            .map(|entry| entry.map(|entry| entry.path()))
+            .collect::<Result<Vec<_>, _>>()?;
+        paths.sort();
+        for path in paths {
             if path.is_file()
                 && let Some(file_name) = path.file_name()
                 && let Some(name) = file_name.to_str()
+                // Skip recognized Touch ID sidecars while retaining ambiguous files.
+                && !matches!(super::is_touch_id_sidecar(&path), Ok(true))
             {
-                // Extract address from keystore filename format: UTC--{timestamp}--{address}
-                if let Some(address) = name.split("--").last() {
-                    sh_println!("0x{} (Local)", address)?;
+                let account = local_account_name(name);
+                if shell::is_json() {
+                    accounts.push(WalletAccount { address: account.into_owned(), source: "Local" });
+                } else {
+                    sh_println!("{} (Local)", account)?;
                 }
             }
         }
 
-        Ok(())
+        Ok(accounts)
     }
+}
+
+/// Extracts the address from a Geth-style keystore filename, preserving custom names.
+fn local_account_name(name: &str) -> Cow<'_, str> {
+    if let Some((timestamp, address)) =
+        name.strip_prefix("UTC--").and_then(|suffix| suffix.rsplit_once("--"))
+        && !timestamp.is_empty()
+        && address.len() == 40
+        && address.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        Cow::Owned(format!("0x{address}"))
+    } else {
+        Cow::Borrowed(name)
+    }
+}
+
+#[derive(Serialize)]
+struct WalletAccount {
+    address: String,
+    source: &'static str,
 }
 
 fn gcp_env_vars_set() -> bool {

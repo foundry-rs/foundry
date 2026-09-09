@@ -1,18 +1,20 @@
 use crate::{
     AccountGenerator, CHAIN_ID, NodeConfig,
-    config::{DEFAULT_MNEMONIC, ForkChoice},
+    config::{DEFAULT_MNEMONIC, DEFAULT_SLOTS_IN_AN_EPOCH, ForkChoice},
     eth::{EthApi, backend::db::SerializableState, pool::transactions::TransactionOrder},
 };
 use alloy_genesis::Genesis;
-use alloy_primitives::{B256, U256, utils::Unit};
+use alloy_network::Network;
+use alloy_primitives::{Address, B256, U256, map::HashMap, utils::Unit};
 use alloy_signer_local::coins_bip39::{English, Mnemonic};
 use anvil_server::ServerConfig;
 use clap::Parser;
 use core::fmt;
 use foundry_common::shell;
 use foundry_config::{Chain, Config, FigmentProviders};
-use foundry_evm::hardfork::{EthereumHardfork, OpHardfork};
+use foundry_evm::hardfork::FoundryHardfork;
 use foundry_evm_networks::NetworkConfigs;
+use foundry_primitives::FoundryReceiptEnvelope;
 use futures::FutureExt;
 use rand_08::{SeedableRng, rngs::StdRng};
 use std::{
@@ -77,6 +79,14 @@ pub struct NodeArgs {
     #[arg(long)]
     pub derivation_path: Option<String>,
 
+    /// The account used to sponsor Tempo fee-payer requests (`eth_signRawTransaction` and raw
+    /// transactions carrying the sponsorship placeholder).
+    ///
+    /// Must be an unlocked account. Only used on Tempo networks; defaults to the last dev
+    /// account.
+    #[arg(long = "tempo.fee-payer", value_name = "ADDRESS")]
+    pub tempo_fee_payer: Option<Address>,
+
     /// The EVM hardfork to use.
     ///
     /// Choose the hardfork by name, e.g. `prague`, `cancun`, `shanghai`, `paris`, `london`, etc...
@@ -89,7 +99,7 @@ pub struct NodeArgs {
     pub block_time: Option<Duration>,
 
     /// Slots in an epoch
-    #[arg(long, value_name = "SLOTS_IN_AN_EPOCH", default_value_t = 32)]
+    #[arg(long, value_name = "SLOTS_IN_AN_EPOCH", default_value_t = DEFAULT_SLOTS_IN_AN_EPOCH)]
     pub slots_in_an_epoch: u64,
 
     /// Writes output of `anvil` as json to user-specified file.
@@ -100,6 +110,8 @@ pub struct NodeArgs {
     #[arg(long, visible_alias = "no-mine", conflicts_with = "block_time")]
     pub no_mining: bool,
 
+    /// Enable mixed mining mode. Blocks are mined on a timer (set by `--block-time`),
+    /// but also whenever a transaction is submitted. Requires `--block-time` to be set.
     #[arg(long, requires = "block_time")]
     pub mixed_mining: bool,
 
@@ -168,6 +180,13 @@ pub struct NodeArgs {
     )]
     pub load_state: Option<SerializableState>,
 
+    /// Fund specific accounts with custom balances on startup.
+    ///
+    /// Accepts multiple address:balance pairs where balance is in ETH.
+    /// Example: --fund-accounts 0x1234...5678:1000 0xabcd...ef01:5000
+    #[arg(long, value_name = "ADDRESS:AMOUNT", value_delimiter = ' ', num_args = 1..)]
+    pub fund_accounts: Vec<String>,
+
     #[arg(long, help = IPC_HELP, value_name = "PATH", visible_alias = "ipcpath")]
     pub ipc: Option<Option<String>>,
 
@@ -188,6 +207,10 @@ pub struct NodeArgs {
     #[arg(long)]
     pub transaction_block_keeper: Option<usize>,
 
+    /// Maximum number of transactions in a block.
+    #[arg(long)]
+    pub max_transactions: Option<usize>,
+
     #[command(flatten)]
     pub evm: AnvilEvmArgs,
 
@@ -197,8 +220,8 @@ pub struct NodeArgs {
     /// Path to the cache directory where persisted states are stored (see
     /// `--max-persisted-states`).
     ///
-    /// Note: This does not affect the fork RPC cache location (`storage.json`), which is stored in
-    /// `~/.foundry/cache/rpc/<chain>/<block>/`.
+    /// Note: This does not affect the fork RPC cache location, which uses endpoint-specific files
+    /// under `~/.foundry/cache/rpc/<chain>/<block>/`.
     #[arg(long, value_name = "PATH")]
     pub cache_path: Option<PathBuf>,
 }
@@ -220,15 +243,44 @@ impl NodeArgs {
         let compute_units_per_second =
             if self.evm.no_rate_limit { Some(u64::MAX) } else { self.evm.compute_units_per_second };
 
-        let hardfork = match &self.hardfork {
-            Some(hf) => {
-                if self.evm.networks.is_optimism() {
-                    Some(OpHardfork::from_str(hf)?.into())
-                } else {
-                    Some(EthereumHardfork::from_str(hf)?.into())
+        // Validate that secondary fork URLs don't have conflicting block number suffixes
+        if self.evm.fork_url.len() > 1 {
+            for fork in &self.evm.fork_url[1..] {
+                if fork.block.is_some() {
+                    eyre::bail!(
+                        "Block number suffixes (@block) on secondary --fork-url values are not supported. \
+                         Use --fork-block-number to set the fork block for all endpoints."
+                    );
                 }
             }
+        }
+
+        let funded_accounts = self.parse_funded_accounts()?;
+
+        let local_chain_id = self
+            .evm
+            .chain_id
+            .map(u64::from)
+            .or_else(|| self.init.as_ref().map(|genesis| genesis.config.chain_id));
+        let inferred_network_chain_id = self
+            .evm
+            .fork_chain_id
+            .map(u64::from)
+            .or(if self.evm.fork_url.is_empty() { local_chain_id } else { None });
+        let networks = if let Some(chain_id) = inferred_network_chain_id {
+            self.evm.networks.try_with_chain_id(chain_id).map_err(eyre::Report::msg)?
+        } else {
+            self.evm.networks
+        };
+
+        let hardfork = match &self.hardfork {
+            Some(hf) => Some(parse_hardfork(hf, &networks)?),
             None => None,
+        };
+        let networks = if let Some(hardfork) = hardfork {
+            networks.normalize_for_hardfork(hardfork).map_err(eyre::Report::msg)?
+        } else {
+            networks
         };
 
         Ok(NodeConfig::default()
@@ -251,7 +303,7 @@ impl NodeArgs {
                 _ => self
                     .evm
                     .fork_url
-                    .as_ref()
+                    .first()
                     .and_then(|f| f.block)
                     .map(|num| ForkChoice::Block(num as i128)),
             })
@@ -261,15 +313,14 @@ impl NodeArgs {
             .fork_request_retries(self.evm.fork_request_retries)
             .fork_retry_backoff(self.evm.fork_retry_backoff.map(Duration::from_millis))
             .fork_compute_units_per_second(compute_units_per_second)
-            .with_eth_rpc_url(self.evm.fork_url.map(|fork| fork.url))
+            .with_fork_urls(self.evm.fork_url.into_iter().map(|f| f.url).collect())
             .with_base_fee(self.evm.block_base_fee_per_gas)
             .disable_min_priority_fee(self.evm.disable_min_priority_fee)
-            .with_storage_caching(self.evm.no_storage_caching)
+            .with_no_storage_caching(self.evm.no_storage_caching)
             .with_server_config(self.server_config)
             .with_host(self.host)
             .set_silent(shell::is_quiet())
             .set_config_out(self.config_out)
-            .with_chain_id(self.evm.chain_id)
             .with_transaction_order(self.order)
             .with_genesis(self.init)
             .with_steps_tracing(self.evm.steps_tracing)
@@ -282,13 +333,41 @@ impl NodeArgs {
             .set_pruned_history(self.prune_history)
             .with_init_state(self.load_state.or_else(|| self.state.and_then(|s| s.state)))
             .with_transaction_block_keeper(self.transaction_block_keeper)
+            .with_max_transactions(self.max_transactions)
             .with_max_persisted_states(self.max_persisted_states)
-            .with_networks(self.evm.networks)
+            .with_chain_id(self.evm.chain_id)
+            // Restore the source-derived or explicitly selected network after applying the
+            // execution chain ID. Fork source discovery can refine an unresolved network later.
+            .with_networks(networks)
+            .with_tempo_fee_payer(self.tempo_fee_payer)
             .with_disable_default_create2_deployer(self.evm.disable_default_create2_deployer)
             .with_disable_pool_balance_checks(self.evm.disable_pool_balance_checks)
             .with_slots_in_an_epoch(self.slots_in_an_epoch)
             .with_memory_limit(self.evm.memory_limit)
-            .with_cache_path(self.cache_path))
+            .with_cache_path(self.cache_path)
+            .with_funded_accounts(funded_accounts))
+    }
+
+    fn parse_funded_accounts(&self) -> eyre::Result<HashMap<Address, U256>> {
+        let mut accounts = HashMap::default();
+        for entry in &self.fund_accounts {
+            let parts: Vec<&str> = entry.split(':').collect();
+            if parts.len() != 2 {
+                eyre::bail!(
+                    "Invalid fund-accounts entry '{}'. Expected format: ADDRESS:AMOUNT",
+                    entry
+                );
+            }
+            let address = parts[0]
+                .parse::<Address>()
+                .map_err(|e| eyre::eyre!("Invalid address '{}': {}", parts[0], e))?;
+            let amount: u64 = parts[1]
+                .parse()
+                .map_err(|e| eyre::eyre!("Invalid amount '{}': {}", parts[1], e))?;
+            let balance = Unit::ETHER.wei().saturating_mul(U256::from(amount));
+            accounts.insert(address, balance);
+        }
+        Ok(accounts)
     }
 
     fn account_generator(&self) -> AccountGenerator {
@@ -322,16 +401,12 @@ impl NodeArgs {
         generator
     }
 
-    /// Returns the location where to dump the state to.
-    fn dump_state_path(&self) -> Option<PathBuf> {
-        self.dump_state.as_ref().or_else(|| self.state.as_ref().map(|s| &s.path)).cloned()
-    }
-
     /// Starts the node
     ///
     /// See also [crate::spawn()]
     pub async fn run(self) -> eyre::Result<()> {
-        let dump_state = self.dump_state_path();
+        let dump_state =
+            self.dump_state.as_ref().or_else(|| self.state.as_ref().map(|s| &s.path)).cloned();
         let dump_interval =
             self.state_interval.map(Duration::from_secs).unwrap_or(DEFAULT_DUMP_INTERVAL);
         let preserve_historical_states = self.preserve_historical_states;
@@ -416,6 +491,10 @@ pub struct AnvilEvmArgs {
     /// Fetch state over a remote endpoint instead of starting from an empty state.
     ///
     /// If you want to fetch state from a specific block number, add a block number like `http://localhost:8545@1400000` or use the `--fork-block-number` argument.
+    ///
+    /// Multiple `--fork-url` flags can be provided to distribute requests across endpoints
+    /// using round-robin load balancing. On failure, the retry layer rotates to the next
+    /// endpoint.
     #[arg(
         long,
         short,
@@ -423,7 +502,7 @@ pub struct AnvilEvmArgs {
         value_name = "URL",
         help_heading = "Fork config"
     )]
-    pub fork_url: Option<ForkUrl>,
+    pub fork_url: Vec<ForkUrl>,
 
     /// Headers to use for the rpc client, e.g. "User-Agent: test-agent"
     ///
@@ -620,29 +699,61 @@ pub struct AnvilEvmArgs {
 /// Resolves an alias passed as fork-url to the matching url defined in the rpc_endpoints section
 /// of the project configuration file.
 /// Does nothing if the fork-url is not a configured alias.
+///
+/// When an alias maps to an `RpcEndpoint` with multiple `endpoints`, all URLs are expanded
+/// into additional `--fork-url` entries for multi-endpoint load balancing.
 impl AnvilEvmArgs {
     pub fn resolve_rpc_alias(&mut self) {
-        if let Some(fork_url) = &self.fork_url
-            && let Ok(config) = Config::load_with_providers(FigmentProviders::Anvil)
-            && let Some(Ok(url)) = config.get_rpc_url_with_alias(&fork_url.url)
-        {
-            self.fork_url = Some(ForkUrl { url: url.to_string(), block: fork_url.block });
+        if let Ok(config) = Config::load_with_providers(FigmentProviders::Anvil) {
+            let mut resolved_urls = Vec::new();
+            for fork_url in &self.fork_url {
+                let mut endpoints = config.rpc_endpoints.clone().resolved();
+                if let Some(endpoint) = endpoints.remove(&fork_url.url) {
+                    // Alias matched — expand all URLs from the endpoint config
+                    match endpoint.all_urls() {
+                        Ok(urls) => {
+                            for (i, url) in urls.into_iter().enumerate() {
+                                resolved_urls.push(ForkUrl {
+                                    url,
+                                    // Only the first URL inherits the block suffix
+                                    block: if i == 0 { fork_url.block } else { None },
+                                });
+                            }
+                        }
+                        Err(e) => {
+                            warn!(target: "node", alias=%fork_url.url, %e, "could not resolve all endpoints, using primary endpoint only");
+                            if let Ok(url) = endpoint.url() {
+                                resolved_urls.push(ForkUrl { url, block: fork_url.block });
+                            } else {
+                                resolved_urls.push(fork_url.clone());
+                            }
+                        }
+                    }
+                } else if let Some(Ok(url)) = config.get_rpc_url_with_alias(&fork_url.url) {
+                    // Try mesc or other resolution
+                    resolved_urls.push(ForkUrl { url: url.to_string(), block: fork_url.block });
+                } else {
+                    // Not an alias — keep as-is
+                    resolved_urls.push(fork_url.clone());
+                }
+            }
+            self.fork_url = resolved_urls;
         }
     }
 }
 
 /// Helper type to periodically dump the state of the chain to disk
-struct PeriodicStateDumper {
+struct PeriodicStateDumper<N: Network> {
     in_progress_dump: Option<Pin<Box<dyn Future<Output = ()> + Send + Sync + 'static>>>,
-    api: EthApi,
+    api: EthApi<N>,
     dump_state: Option<PathBuf>,
     preserve_historical_states: bool,
     interval: Interval,
 }
 
-impl PeriodicStateDumper {
+impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> PeriodicStateDumper<N> {
     fn new(
-        api: EthApi,
+        api: EthApi<N>,
         dump_state: Option<PathBuf>,
         interval: Duration,
         preserve_historical_states: bool,
@@ -666,7 +777,7 @@ impl PeriodicStateDumper {
     }
 
     /// Infallible state dump
-    async fn dump_state(api: EthApi, dump_state: PathBuf, preserve_historical_states: bool) {
+    async fn dump_state(api: EthApi<N>, dump_state: PathBuf, preserve_historical_states: bool) {
         trace!(path=?dump_state, "Dumping state on shutdown");
         match api.serialized_state(preserve_historical_states).await {
             Ok(state) => {
@@ -684,7 +795,7 @@ impl PeriodicStateDumper {
 }
 
 // An endless future that periodically dumps the state to disk if configured.
-impl Future for PeriodicStateDumper {
+impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Future for PeriodicStateDumper<N> {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -791,6 +902,16 @@ impl FromStr for ForkUrl {
     }
 }
 
+/// Parses a hardfork string against the active network configuration.
+fn parse_hardfork(hf: &str, networks: &NetworkConfigs) -> eyre::Result<FoundryHardfork> {
+    if let Ok(hardfork) = FoundryHardfork::from_str(hf) {
+        networks.normalize_for_hardfork(hardfork).map_err(eyre::Report::msg)?;
+        return Ok(hardfork);
+    }
+
+    networks.execution_network().parse_hardfork(hf).map_err(eyre::Report::msg)
+}
+
 /// Clap's value parser for genesis. Loads a genesis.json file.
 fn read_genesis_file(path: &str) -> Result<Genesis, String> {
     foundry_common::fs::read_json_file(path.as_ref()).map_err(|err| err.to_string())
@@ -807,7 +928,12 @@ fn duration_from_secs_f64(s: &str) -> Result<Duration, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use foundry_evm::hardfork::EthereumHardfork;
     use std::{env, net::Ipv4Addr};
+    use tempo_hardfork::TempoHardfork;
+
+    #[cfg(feature = "optimism")]
+    use foundry_evm::hardfork::OpHardfork;
 
     #[test]
     fn test_parse_fork_url() {
@@ -846,12 +972,249 @@ mod tests {
         assert_eq!(config.hardfork, Some(EthereumHardfork::Berlin.into()));
     }
 
+    #[cfg(feature = "optimism")]
     #[test]
     fn can_parse_optimism_hardfork() {
         let args: NodeArgs =
             NodeArgs::parse_from(["anvil", "--optimism", "--hardfork", "Regolith"]);
         let config = args.into_node_config().unwrap();
         assert_eq!(config.hardfork, Some(OpHardfork::Regolith.into()));
+    }
+
+    #[test]
+    fn can_parse_tempo_hardfork_from_network() {
+        let args: NodeArgs =
+            NodeArgs::parse_from(["anvil", "--network", "tempo", "--hardfork", "T5"]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(config.networks.is_tempo());
+        assert_eq!(config.hardfork, Some(TempoHardfork::T5.into()));
+    }
+
+    #[test]
+    fn can_parse_namespaced_tempo_hardfork() {
+        let args = NodeArgs::parse_from(["anvil", "--hardfork", "tempo:T5"]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(config.networks.is_tempo());
+        assert_eq!(config.hardfork, Some(TempoHardfork::T5.into()));
+    }
+
+    #[cfg(feature = "optimism")]
+    #[test]
+    fn chain_id_infers_optimism_network_in_node_config() {
+        let args: NodeArgs = NodeArgs::parse_from(["anvil", "--chain-id", "10"]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(config.networks.is_optimism());
+    }
+
+    #[test]
+    #[cfg(not(feature = "optimism"))]
+    fn chain_id_rejects_disabled_optimism_network() {
+        let args = NodeArgs::parse_from(["anvil", "--chain-id", "10"]);
+        let error = args.into_node_config().unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "cannot infer execution network from chain ID 10: network family `optimism` is not \
+             enabled in this build"
+        );
+    }
+
+    #[test]
+    #[cfg(not(feature = "monad"))]
+    fn chain_id_rejects_disabled_monad_network() {
+        for chain_id in ["143", "10143"] {
+            let args = NodeArgs::parse_from(["anvil", "--chain-id", chain_id]);
+            let error = args.into_node_config().unwrap_err();
+
+            assert_eq!(
+                error.to_string(),
+                format!(
+                    "cannot infer execution network from chain ID {chain_id}: network family \
+                     `monad` is not enabled in this build"
+                )
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(not(feature = "monad"))]
+    fn explicit_ethereum_allows_monad_chain_id() {
+        let args = NodeArgs::parse_from(["anvil", "--network", "ethereum", "--chain-id", "143"]);
+        let config = args.into_node_config().unwrap();
+
+        assert_eq!(config.networks, NetworkConfigs::with_ethereum());
+        assert_eq!(config.get_chain_id(), 143);
+    }
+
+    #[test]
+    #[cfg(not(feature = "monad"))]
+    fn genesis_chain_id_rejects_disabled_monad_network() {
+        let mut args = NodeArgs::parse_from(["anvil"]);
+        let mut genesis = Genesis::default();
+        genesis.config.chain_id = 143;
+        args.init = Some(genesis);
+
+        let error = args.into_node_config().unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "cannot infer execution network from chain ID 143: network family `monad` is not \
+             enabled in this build"
+        );
+    }
+
+    #[test]
+    #[cfg(not(feature = "monad"))]
+    fn explicit_network_overrides_genesis_chain_id_inference() {
+        let mut args = NodeArgs::parse_from(["anvil", "--network", "ethereum"]);
+        let mut genesis = Genesis::default();
+        genesis.config.chain_id = 143;
+        args.init = Some(genesis);
+
+        let config = args.into_node_config().unwrap();
+
+        assert_eq!(config.networks, NetworkConfigs::with_ethereum());
+        assert_eq!(config.get_chain_id(), 143);
+    }
+
+    #[test]
+    #[cfg(not(feature = "monad"))]
+    fn explicit_chain_id_precedes_genesis_network_inference() {
+        let mut args = NodeArgs::parse_from(["anvil", "--chain-id", "1"]);
+        let mut genesis = Genesis::default();
+        genesis.config.chain_id = 143;
+        args.init = Some(genesis);
+
+        let config = args.into_node_config().unwrap();
+
+        assert!(!config.networks.has_network_selection());
+        assert_eq!(config.get_chain_id(), 1);
+    }
+
+    #[test]
+    #[cfg(not(feature = "monad"))]
+    fn disabled_fork_chain_id_precedes_execution_chain_id() {
+        let args = NodeArgs::parse_from([
+            "anvil",
+            "--fork-url",
+            "http://localhost:8545",
+            "--fork-block-number",
+            "1",
+            "--fork-chain-id",
+            "10143",
+            "--chain-id",
+            "1",
+        ]);
+        let error = args.into_node_config().unwrap_err();
+
+        assert!(error.to_string().contains(
+            "cannot infer execution network from chain ID 10143: network family `monad` is not \
+             enabled in this build"
+        ));
+    }
+
+    #[test]
+    fn unknown_chain_id_preserves_ethereum_fallback() {
+        let args = NodeArgs::parse_from(["anvil", "--chain-id", "98765432"]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(!config.networks.has_network_selection());
+        assert_eq!(config.get_chain_id(), 98_765_432);
+    }
+
+    #[test]
+    fn chain_id_infers_tempo_network_for_hardfork() {
+        let args = NodeArgs::parse_from(["anvil", "--chain-id", "4217", "--hardfork", "T5"]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(config.networks.is_tempo());
+        assert_eq!(config.hardfork, Some(TempoHardfork::T5.into()));
+    }
+
+    #[test]
+    fn fork_chain_id_infers_tempo_network_for_hardfork() {
+        let args = NodeArgs::parse_from([
+            "anvil",
+            "--fork-url",
+            "http://localhost:8545",
+            "--fork-block-number",
+            "1",
+            "--fork-chain-id",
+            "4217",
+            "--hardfork",
+            "T5",
+        ]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(config.networks.is_tempo());
+        assert_eq!(config.hardfork, Some(TempoHardfork::T5.into()));
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn chain_id_infers_monad_network_in_node_config() {
+        let args = NodeArgs::parse_from(["anvil", "--chain-id", "143"]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(config.networks.is_monad());
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn fork_chain_id_precedes_execution_chain_id_for_network() {
+        let args = NodeArgs::parse_from([
+            "anvil",
+            "--fork-url",
+            "http://localhost:8545",
+            "--fork-block-number",
+            "1",
+            "--fork-chain-id",
+            "10143",
+            "--chain-id",
+            "1",
+        ]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(config.networks.is_monad());
+        assert_eq!(config.get_chain_id(), 1);
+    }
+
+    #[test]
+    fn fork_execution_chain_id_does_not_infer_source_network() {
+        let args = NodeArgs::parse_from([
+            "anvil",
+            "--fork-url",
+            "http://localhost:8545",
+            "--chain-id",
+            "4217",
+        ]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(config.networks.resolved_network().is_none());
+        assert_eq!(config.get_chain_id(), 4217);
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn can_parse_monad_hardfork() {
+        let args: NodeArgs =
+            NodeArgs::parse_from(["anvil", "--network", "monad", "--hardfork", "MonadNine"]);
+        let config = args.into_node_config().unwrap();
+        assert_eq!(config.hardfork, Some(foundry_evm::hardfork::MonadHardfork::MonadNine.into()));
+        assert!(config.networks.is_monad());
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn monad_uses_monad_default_hardfork() {
+        let args: NodeArgs = NodeArgs::parse_from(["anvil", "--network", "monad"]);
+        let config = args.into_node_config().unwrap();
+        assert_eq!(config.hardfork, None);
+        assert_eq!(config.get_hardfork(), foundry_evm::hardfork::MonadHardfork::default().into());
+        assert!(config.networks.is_monad());
     }
 
     #[test]
@@ -954,5 +1317,66 @@ mod tests {
             args.host,
             ["::1", "1.1.1.1", "2.2.2.2"].map(|ip| ip.parse::<IpAddr>().unwrap()).to_vec()
         );
+    }
+
+    #[test]
+    fn can_parse_multiple_fork_urls() {
+        let args: NodeArgs = NodeArgs::parse_from([
+            "anvil",
+            "--fork-url",
+            "http://localhost:8545",
+            "--fork-url",
+            "http://localhost:8546",
+            "--fork-url",
+            "http://localhost:8547",
+        ]);
+        assert_eq!(args.evm.fork_url.len(), 3);
+        assert_eq!(args.evm.fork_url[0].url, "http://localhost:8545");
+        assert_eq!(args.evm.fork_url[1].url, "http://localhost:8546");
+        assert_eq!(args.evm.fork_url[2].url, "http://localhost:8547");
+
+        // Block suffix on first URL should work
+        let args: NodeArgs = NodeArgs::parse_from([
+            "anvil",
+            "--fork-url",
+            "http://localhost:8545@1000000",
+            "--fork-url",
+            "http://localhost:8546",
+        ]);
+        assert_eq!(args.evm.fork_url[0].block, Some(1000000));
+        assert_eq!(args.evm.fork_url[1].block, None);
+    }
+
+    #[test]
+    fn rejects_block_suffix_on_secondary_fork_urls() {
+        let args: NodeArgs = NodeArgs::parse_from([
+            "anvil",
+            "--fork-url",
+            "http://localhost:8545@1000000",
+            "--fork-url",
+            "http://localhost:8546@2000000",
+        ]);
+        let result = args.into_node_config();
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().to_string().contains("Block number suffixes"),
+            "should reject block suffix on secondary fork URL"
+        );
+    }
+
+    #[test]
+    fn fork_dependent_args_require_fork_url() {
+        // All these args have `requires = "fork_url"` — they should fail without --fork-url
+        let cases = [
+            vec!["anvil", "--fork-header", "X-Api-Key: test"],
+            vec!["anvil", "--timeout", "5000"],
+            vec!["anvil", "--retries", "3"],
+            vec!["anvil", "--fork-block-number", "100"],
+            vec!["anvil", "--fork-retry-backoff", "500"],
+        ];
+        for args in &cases {
+            let result = NodeArgs::try_parse_from(args);
+            assert!(result.is_err(), "expected error when using {:?} without --fork-url", args[1]);
+        }
     }
 }

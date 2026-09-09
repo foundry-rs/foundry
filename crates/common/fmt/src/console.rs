@@ -1,6 +1,10 @@
 use super::UIfmt;
 use alloy_primitives::{Address, Bytes, FixedBytes, I256, U256};
+use comfy_table::{ContentLineStyle, LineStyle, Table, TableStyle};
 use std::fmt::{self, Write};
+
+/// Maximum accepted `%<n>e` precision.
+const MAX_EXPONENTIAL_PRECISION: usize = 1024;
 
 /// A piece is a portion of the format string which represents the next part to emit.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -108,7 +112,10 @@ impl<'a> Parser<'a> {
             let n = self.integer(start);
             if let Some((_, 'e')) = self.peek() {
                 self.chars.next();
-                return Ok(FormatSpec::Exponential(n));
+                return n
+                    .filter(|&precision| precision <= MAX_EXPONENTIAL_PRECISION)
+                    .map(|precision| FormatSpec::Exponential(Some(precision)))
+                    .ok_or(ParseArgError::Err);
             }
         }
 
@@ -222,24 +229,13 @@ impl ConsoleFmt for U256 {
                 let integer = amount / exp10;
                 let decimal = (amount % exp10).to_string();
                 let decimal = format!("{decimal:0>log$}").trim_end_matches('0').to_string();
-                if !decimal.is_empty() {
-                    format!("{integer}.{decimal}e{log}")
-                } else {
+                if decimal.is_empty() {
                     format!("{integer}e{log}")
-                }
-            }
-            FormatSpec::Exponential(Some(precision)) => {
-                let exp10 = Self::from(10).pow(Self::from(precision));
-                let amount = *self;
-                let integer = amount / exp10;
-                let decimal = (amount % exp10).to_string();
-                let decimal = format!("{decimal:0>precision$}").trim_end_matches('0').to_string();
-                if !decimal.is_empty() {
-                    format!("{integer}.{decimal}")
                 } else {
-                    format!("{integer}")
+                    format!("{integer}.{decimal}e{log}")
                 }
             }
+            FormatSpec::Exponential(Some(precision)) => format_fixed(*self, "", precision),
         }
     }
 }
@@ -266,26 +262,31 @@ impl ConsoleFmt for I256 {
                 let integer = (amount / exp10).twos_complement();
                 let decimal = (amount % exp10).twos_complement().to_string();
                 let decimal = format!("{decimal:0>log$}").trim_end_matches('0').to_string();
-                if !decimal.is_empty() {
-                    format!("{sign}{integer}.{decimal}e{log}")
-                } else {
+                if decimal.is_empty() {
                     format!("{sign}{integer}e{log}")
+                } else {
+                    format!("{sign}{integer}.{decimal}e{log}")
                 }
             }
             FormatSpec::Exponential(Some(precision)) => {
                 let amount = *self;
                 let sign = if amount.is_negative() { "-" } else { "" };
-                let exp10 = Self::exp10(precision);
-                let integer = (amount / exp10).twos_complement();
-                let decimal = (amount % exp10).twos_complement().to_string();
-                let decimal = format!("{decimal:0>precision$}").trim_end_matches('0').to_string();
-                if !decimal.is_empty() {
-                    format!("{sign}{integer}.{decimal}")
-                } else {
-                    format!("{sign}{integer}")
-                }
+                format_fixed(amount.unsigned_abs(), sign, precision)
             }
         }
+    }
+}
+
+fn format_fixed(amount: U256, sign: &str, precision: usize) -> String {
+    let (integer, decimal) = U256::from(10)
+        .checked_pow(U256::from(precision))
+        .map_or((U256::ZERO, amount), |exp10| (amount / exp10, amount % exp10));
+    let decimal = decimal.to_string();
+    let decimal = format!("{decimal:0>precision$}").trim_end_matches('0').to_string();
+    if decimal.is_empty() {
+        format!("{sign}{integer}")
+    } else {
+        format!("{sign}{integer}.{decimal}")
     }
 }
 
@@ -405,6 +406,34 @@ fn format_spec<'a>(
             }
         }
     }
+}
+
+pub fn console_table_format(
+    keys: Option<&[&dyn ConsoleFmt]>,
+    values: &[&dyn ConsoleFmt],
+) -> String {
+    let keys_strings: Vec<String> = match keys {
+        Some(keys) => keys.iter().map(|k| k.fmt(FormatSpec::String)).collect(),
+        None => (0..values.len()).map(|i| i.to_string()).collect(),
+    };
+    let values_strings: Vec<String> = values.iter().map(|v| v.fmt(FormatSpec::String)).collect();
+
+    const STYLE: TableStyle = TableStyle::new()
+        .top_border(LineStyle::new('┌', '─', '┬', '┐'))
+        .header_lines(ContentLineStyle::new('│', '│', '│'))
+        .header_separator(LineStyle::new('├', '─', '┼', '┤'))
+        .content_lines(ContentLineStyle::new('│', '│', '│'))
+        .bottom_border(LineStyle::new('└', '─', '┴', '┘'));
+
+    let mut table = Table::new();
+    table.load_style(STYLE);
+    table.set_header(vec!["(index)", "Values"]);
+    for i in 0..keys_strings.len().max(values_strings.len()) {
+        let key = keys_strings.get(i).map(String::as_str).unwrap_or("");
+        let value = values_strings.get(i).map(String::as_str).unwrap_or("");
+        table.add_row(vec![key, value]);
+    }
+    table.to_string()
 }
 
 #[cfg(test)]
@@ -564,6 +593,53 @@ mod tests {
         );
     }
 
+    // Overflow used to panic or silently produce incorrect digits.
+    #[test]
+    fn test_console_log_exponential_precision_overflow() {
+        let fmt_1 = |spec: &str, arg: &dyn ConsoleFmt| console_format(spec, &[arg]);
+
+        // 10^256 wraps to zero with unchecked exponentiation.
+        assert_eq!(format!("0.{}1", "0".repeat(255)), fmt_1("%256e", &U256::from(1)));
+
+        // 10^78 overflows U256; 10^77 still fits.
+        let ten_pow_77 = U256::from(10).pow(U256::from(77u64));
+        assert_eq!("0.1", fmt_1("%78e", &ten_pow_77));
+
+        assert_eq!("1", fmt_1("%77e", &ten_pow_77));
+
+        // 10^77 exceeds I256::MAX.
+        assert_eq!(format!("0.{}1", "0".repeat(76)), fmt_1("%77e", &I256::try_from(1).unwrap()));
+        assert_eq!(format!("-0.{}1", "0".repeat(76)), fmt_1("%77e", &I256::try_from(-1).unwrap()));
+
+        // Preserve the value at the maximum accepted precision.
+        assert_eq!(format!("0.{}1", "0".repeat(1023)), fmt_1("%1024e", &U256::from(1)));
+
+        // Invalid precisions remain literal and do not consume the value.
+        assert_eq!("%1025e 1", fmt_1("%1025e", &U256::from(1)));
+        assert_eq!("%99999999999999999999e 1", fmt_1("%99999999999999999999e", &U256::from(1)));
+
+        assert_eq!("1", fmt_1("%18e", &U256::from(1_000_000_000_000_000_000u64)));
+
+        assert_eq!("0", fmt_1("%0e", &U256::from(0)));
+        assert_eq!("0", fmt_1("%256e", &U256::from(0)));
+
+        // Check signed and unsigned extrema at their overflow boundaries.
+        let expect_fallback = |digits: String, precision: usize, sign: &str| {
+            let padded = format!("{digits:0>precision$}");
+            let trimmed = padded.trim_end_matches('0');
+            if trimmed.is_empty() { format!("{sign}0") } else { format!("{sign}0.{trimmed}") }
+        };
+        assert_eq!(expect_fallback(U256::MAX.to_string(), 78, ""), fmt_1("%78e", &U256::MAX));
+        assert_eq!(
+            expect_fallback(I256::MIN.unsigned_abs().to_string(), 77, "-"),
+            fmt_1("%77e", &I256::MIN)
+        );
+        assert_eq!(
+            expect_fallback(I256::MAX.unsigned_abs().to_string(), 77, ""),
+            fmt_1("%77e", &I256::MAX)
+        );
+    }
+
     #[test]
     fn test_console_log_format() {
         let mut log1 = Log1 { p_0: "foo %s".to_string(), p_1: U256::from(100) };
@@ -609,5 +685,81 @@ mod tests {
         assert_eq!(log1.fmt(Default::default()), "foo 42 bar");
         let call = Logs::Log1(log1);
         assert_eq!(call.fmt(Default::default()), "foo 42 bar");
+    }
+
+    #[test]
+    fn test_console_table_format() {
+        // auto-indexed, uint256 values
+        let values: &[&dyn ConsoleFmt] = &[&U256::from(100), &U256::from(200), &U256::from(300)];
+        assert_eq!(
+            console_table_format(None, values),
+            "┌─────────┬────────┐\n\
+             │ (index) │ Values │\n\
+             ├─────────┼────────┤\n\
+             │ 0       │ 100    │\n\
+             │ 1       │ 200    │\n\
+             │ 2       │ 300    │\n\
+             └─────────┴────────┘"
+        );
+
+        // string keys, uint256 values
+        // key col expands to fit "charlie123" and value col expands to fit "20000000000000000"
+        let keys: &[&dyn ConsoleFmt] =
+            &[&String::from("alice"), &String::from("bob"), &String::from("charlie123")];
+        let values: &[&dyn ConsoleFmt] = &[
+            &U256::from(1),
+            &U256::from_str("20000000000000000").unwrap(),
+            &U256::from_str("30000000000").unwrap(),
+        ];
+        assert_eq!(
+            console_table_format(Some(keys), values),
+            "┌────────────┬───────────────────┐\n\
+             │ (index)    │ Values            │\n\
+             ├────────────┼───────────────────┤\n\
+             │ alice      │ 1                 │\n\
+             │ bob        │ 20000000000000000 │\n\
+             │ charlie123 │ 30000000000       │\n\
+             └────────────┴───────────────────┘"
+        );
+
+        // empty table
+        assert_eq!(
+            console_table_format(None, &[]),
+            "┌─────────┬────────┐\n\
+             │ (index) │ Values │\n\
+             ├─────────┼────────┤\n\
+             └─────────┴────────┘"
+        );
+
+        // more keys than values
+        let keys: &[&dyn ConsoleFmt] =
+            &[&String::from("alice"), &String::from("bob"), &String::from("charlie")];
+        let values: &[&dyn ConsoleFmt] = &[&U256::from(1), &U256::from(2)];
+        assert_eq!(
+            console_table_format(Some(keys), values),
+            "┌─────────┬────────┐\n\
+             │ (index) │ Values │\n\
+             ├─────────┼────────┤\n\
+             │ alice   │ 1      │\n\
+             │ bob     │ 2      │\n\
+             │ charlie │        │\n\
+             └─────────┴────────┘"
+        );
+
+        // more values than keys
+        let keys: &[&dyn ConsoleFmt] = &[&String::from("alice"), &String::from("bob")];
+        let values: &[&dyn ConsoleFmt] =
+            &[&U256::from(1), &U256::from(2), &U256::from(3), &U256::from(4)];
+        assert_eq!(
+            console_table_format(Some(keys), values),
+            "┌─────────┬────────┐\n\
+             │ (index) │ Values │\n\
+             ├─────────┼────────┤\n\
+             │ alice   │ 1      │\n\
+             │ bob     │ 2      │\n\
+             │         │ 3      │\n\
+             │         │ 4      │\n\
+             └─────────┴────────┘"
+        );
     }
 }

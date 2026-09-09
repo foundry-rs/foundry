@@ -1,0 +1,24 @@
+// config: wrap_comments = true
+contract EnumDefinitions {
+    enum Empty {}
+    enum ActionChoices {
+        GoLeft,
+        GoRight,
+        GoStraight,
+        SitStill
+    }
+    enum TrailingComments {
+        GoLeft
+        /* one */ /* two */ }
+    enum States {
+        State1,
+        State2,
+        State3,
+        State4,
+        State5,
+        State6,
+        State7,
+        State8,
+        State9
+    }
+}

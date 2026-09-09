@@ -1,9 +1,13 @@
-use super::PascalCaseStruct;
 use crate::{
-    linter::{EarlyLintPass, LintContext, Suggestion},
-    sol::{Severity, SolLint},
+    linter::{EarlyLintPass, LintContext},
+    sol::{
+        Severity, SolLint,
+        naming::{check_pascal_case, emit_rename, has_acronym_exception},
+    },
 };
+use foundry_config::lint::LintSpecificConfig;
 use solar::ast::ItemStruct;
+use std::sync::Arc;
 
 declare_forge_lint!(
     PASCAL_CASE_STRUCT,
@@ -12,30 +16,28 @@ declare_forge_lint!(
     "structs should use PascalCase"
 );
 
-impl<'ast> EarlyLintPass<'ast> for PascalCaseStruct {
-    fn check_item_struct(&mut self, ctx: &LintContext, strukt: &'ast ItemStruct<'ast>) {
-        let name = strukt.name.as_str();
-        if let Some(expected) = check_pascal_case(name) {
-            ctx.emit_with_suggestion(
-                &PASCAL_CASE_STRUCT,
-                strukt.name.span,
-                Suggestion::fix(
-                    expected,
-                    solar::interface::diagnostics::Applicability::MachineApplicable,
-                )
-                .with_desc("consider using"),
-            );
-        }
+#[derive(Debug)]
+pub(super) struct PascalCaseStructPass {
+    config: Arc<LintSpecificConfig>,
+}
+
+impl PascalCaseStructPass {
+    pub(super) const fn new(config: Arc<LintSpecificConfig>) -> Self {
+        Self { config }
     }
 }
 
-/// If the string `s` is not PascalCase, returns a `Some(String)` with the
-/// suggested conversion. Otherwise, returns `None`.
-pub fn check_pascal_case(s: &str) -> Option<String> {
-    if s.len() <= 1 {
-        return None;
+impl<'ast> EarlyLintPass<'ast> for PascalCaseStructPass {
+    fn check_item_struct(&mut self, ctx: &LintContext, strukt: &'ast ItemStruct<'ast>) {
+        let name = strukt.name.as_str();
+        // The acronym exceptions shared with the `mixed-case-*` lints keep `ERC20Data` valid.
+        if has_acronym_exception(name, &self.config.mixed_case_exceptions, |pre| {
+            pre == heck::AsUpperCamelCase(pre).to_string()
+        }) {
+            return;
+        }
+        if let Some(expected) = check_pascal_case(name) {
+            emit_rename(ctx, &PASCAL_CASE_STRUCT, strukt.name.span, expected);
+        }
     }
-
-    let expected = heck::AsPascalCase(s).to_string();
-    if s == expected.as_str() { None } else { Some(expected) }
 }

@@ -1,12 +1,23 @@
+use alloy_json_abi::ToSolConfig;
 use alloy_primitives::map::HashSet;
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use forge_sol_macro_gen::{MultiSolMacroGen, SolMacroGen};
 use foundry_cli::{opts::BuildOpts, utils::LoadConfig};
-use foundry_common::{compile::ProjectCompiler, fs::json_files};
+use foundry_common::{
+    compile::{ProjectCompiler, compile_abi_project},
+    fs::json_files,
+};
+use foundry_compilers::{
+    Graph, ProjectPathsConfig,
+    cache::CompilerCache,
+    multi::{MultiCompilerParser, MultiCompilerSettings},
+};
 use foundry_config::impl_figment_convert;
 use regex::Regex;
+use solar::ast::{Item, ItemKind};
 use std::{
+    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
 };
@@ -117,28 +128,39 @@ impl BindArgs {
             eyre::bail!("`--ethers` bindings have been removed. Use `--alloy` (default) instead.");
         }
 
-        if !self.skip_build {
-            let project = self.build.project()?;
-            let _ = ProjectCompiler::new().compile(&project)?;
-        }
+        let config = if self.skip_build {
+            self.load_config()?
+        } else {
+            self.load_config_with_dependencies()?
+        };
+        let artifacts = config.out.clone();
+        let enum_definitions = if self.skip_build {
+            let paths = config.project_paths();
+            cached_enum_definitions(&paths, self.get_json_files(&artifacts)?.map(|(_, path)| path))
+        } else {
+            let mut project = config.project()?;
+            let output = compile_abi_project(&mut project, ProjectCompiler::new())?;
+            enum_definitions(output.parser())
+        };
 
-        let config = self.load_config()?;
-        let artifacts = config.out;
         let bindings_root = self.bindings.clone().unwrap_or_else(|| artifacts.join("bindings"));
+        let sol_config = ToSolConfig::new().enum_definitions(enum_definitions);
 
         if bindings_root.exists() {
             if !self.overwrite {
-                sh_println!("Bindings found. Checking for consistency.")?;
-                return self.check_existing_bindings(&artifacts, &bindings_root);
+                sh_status!("Bindings found. Checking for consistency.")?;
+                let mut bindings = self.get_solmacrogen(&artifacts)?;
+                bindings.generate_bindings(!self.skip_extra_derives, &sol_config)?;
+                return self.check_existing_bindings(&bindings, &bindings_root);
             }
 
             trace!(?artifacts, "Removing existing bindings");
             fs::remove_dir_all(&bindings_root)?;
         }
 
-        self.generate_bindings(&artifacts, &bindings_root)?;
+        self.generate_bindings(&artifacts, &bindings_root, &sol_config)?;
 
-        sh_println!("Bindings have been generated to {}", bindings_root.display())?;
+        sh_status!("Bindings have been generated to {}", bindings_root.display())?;
         Ok(())
     }
 
@@ -189,7 +211,7 @@ impl BindArgs {
                 let name = stem.split('.').next().unwrap();
 
                 // Best effort identifier cleanup.
-                let name = name.replace(char::is_whitespace, "").replace('-', "_");
+                let name = name.replace(char::is_whitespace, "").replace(['-', '$'], "_");
 
                 Some((name, path))
             })
@@ -202,7 +224,7 @@ impl BindArgs {
             .get_json_files(artifacts)?
             .filter_map(|(name, path)| {
                 trace!(?path, "parsing SolMacroGen from file");
-                if dup.insert(name.clone()) { Some(SolMacroGen::new(path, name)) } else { None }
+                dup.insert(name.clone()).then(|| SolMacroGen::new(path, name))
             })
             .collect::<Vec<_>>();
 
@@ -212,10 +234,12 @@ impl BindArgs {
     }
 
     /// Check that the existing bindings match the expected abigen output
-    fn check_existing_bindings(&self, artifacts: &Path, bindings_root: &Path) -> Result<()> {
-        let mut bindings = self.get_solmacrogen(artifacts)?;
-        bindings.generate_bindings(!self.skip_extra_derives)?;
-        sh_println!("Checking bindings for {} contracts", bindings.instances.len())?;
+    fn check_existing_bindings(
+        &self,
+        bindings: &MultiSolMacroGen,
+        bindings_root: &Path,
+    ) -> Result<()> {
+        sh_status!("Checking bindings for {} contracts", bindings.instances.len())?;
         bindings.check_consistency(
             &self.crate_name,
             &self.crate_version,
@@ -226,18 +250,31 @@ impl BindArgs {
             self.alloy_version.clone(),
             self.alloy_rev.clone(),
         )?;
-        sh_println!("OK.")?;
+        sh_status!("OK.")?;
         Ok(())
     }
 
     /// Generate the bindings
-    fn generate_bindings(&self, artifacts: &Path, bindings_root: &Path) -> Result<()> {
-        let mut solmacrogen = self.get_solmacrogen(artifacts)?;
-        sh_println!("Generating bindings for {} contracts", solmacrogen.instances.len())?;
+    fn generate_bindings(
+        &self,
+        artifacts: &Path,
+        bindings_root: &Path,
+        sol_config: &ToSolConfig,
+    ) -> Result<()> {
+        let mut bindings = self.get_solmacrogen(artifacts)?;
+        sh_status!("Generating bindings for {} contracts", bindings.instances.len())?;
 
-        if !self.module {
+        if self.module {
+            trace!(single_file = self.single_file, "generating module");
+            bindings.write_to_module(
+                bindings_root,
+                self.single_file,
+                !self.skip_extra_derives,
+                sol_config,
+            )?;
+        } else {
             trace!(single_file = self.single_file, "generating crate");
-            solmacrogen.write_to_crate(
+            bindings.write_to_crate(
                 &self.crate_name,
                 &self.crate_version,
                 &self.crate_description,
@@ -247,17 +284,88 @@ impl BindArgs {
                 self.alloy_version.clone(),
                 self.alloy_rev.clone(),
                 !self.skip_extra_derives,
-            )?;
-        } else {
-            trace!(single_file = self.single_file, "generating module");
-            solmacrogen.write_to_module(
-                bindings_root,
-                self.single_file,
-                !self.skip_extra_derives,
+                sol_config,
             )?;
         }
 
         Ok(())
+    }
+}
+
+fn cached_enum_definitions(
+    paths: &ProjectPathsConfig,
+    artifacts: impl Iterator<Item = PathBuf>,
+) -> BTreeMap<String, Vec<String>> {
+    let Ok(graph) = Graph::<MultiCompilerParser>::resolve(paths) else {
+        return BTreeMap::default();
+    };
+    let Ok(cache) = CompilerCache::<MultiCompilerSettings>::read_joined(paths) else {
+        return BTreeMap::default();
+    };
+    let sources_are_fresh = graph.nodes.iter().all(|node| {
+        cache
+            .entry(node.path())
+            .is_some_and(|entry| entry.content_hash == node.unpack().1.content_hash())
+    });
+    if !sources_are_fresh || !cache.all_artifacts_exist() {
+        return BTreeMap::default();
+    }
+    let cached_artifacts = cache
+        .entries()
+        .flat_map(|entry| entry.artifacts.values())
+        .flat_map(|versions| versions.values())
+        .flat_map(|profiles| profiles.values())
+        .map(|artifact| artifact.path.clone())
+        .collect::<HashSet<_>>();
+    if artifacts.into_iter().any(|artifact| !cached_artifacts.contains(&artifact)) {
+        return BTreeMap::default();
+    }
+    enum_definitions(graph.parser())
+}
+
+fn enum_definitions(parser: &MultiCompilerParser) -> BTreeMap<String, Vec<String>> {
+    parser.solc().compiler().enter(|compiler| {
+        let mut definitions = BTreeMap::default();
+        let mut ambiguous = HashSet::default();
+        for source in compiler.sources().iter() {
+            if let Some(ast) = &source.ast {
+                collect_enum_definitions(ast.items.iter(), None, &mut definitions, &mut ambiguous);
+            }
+        }
+        definitions
+    })
+}
+
+fn collect_enum_definitions<'ast>(
+    items: impl Iterator<Item = &'ast Item<'ast>>,
+    owner: Option<&str>,
+    definitions: &mut BTreeMap<String, Vec<String>>,
+    ambiguous: &mut HashSet<String>,
+) {
+    for item in items {
+        match &item.kind {
+            ItemKind::Enum(enum_item) => {
+                let name = enum_item.name.to_string();
+                let key = owner.map_or_else(|| name.clone(), |owner| format!("{owner}.{name}"));
+                let variants = enum_item.variants.iter().map(ToString::to_string).collect();
+                if definitions.get(&key).is_some_and(|existing| existing != &variants) {
+                    definitions.remove(&key);
+                    ambiguous.insert(key);
+                } else if !ambiguous.contains(&key) {
+                    definitions.insert(key, variants);
+                }
+            }
+            ItemKind::Contract(contract) => {
+                let owner = contract.name.to_string();
+                collect_enum_definitions(
+                    contract.body.iter(),
+                    Some(&owner),
+                    definitions,
+                    ambiguous,
+                );
+            }
+            _ => {}
+        }
     }
 }
 

@@ -7,8 +7,9 @@ use foundry_compilers::{
     solc::Solc,
 };
 use foundry_config::{
-    CompilationRestrictions, Config, FsPermissions, FuzzConfig, FuzzCorpusConfig, InvariantConfig,
-    SettingsOverrides, SolcReq,
+    CompilationRestrictions, Config, Eip1559FeeEstimatePreset, FsPermissions, FuzzConfig,
+    FuzzCorpusConfig, InvariantConfig, SettingsOverrides, SolcReq, SymbolicConfig,
+    SymbolicExplorationOrder, SymbolicStorageLayout, TracingConfig,
     cache::{CachedChains, CachedEndpoints, StorageCachingConfig},
     filter::GlobMatcher,
     fs_permissions::{FsAccessPermission, PathPermission},
@@ -40,7 +41,7 @@ auto_detect_remappings = true
 libraries = []
 cache = true
 cache_path = "cache"
-dynamic_test_linking = false
+dynamic_test_linking = true
 snapshots = "snapshots"
 gas_snapshot_check = false
 gas_snapshot_emit = true
@@ -60,6 +61,7 @@ optimizer_runs = 200
 verbosity = 0
 eth_rpc_accept_invalid_certs = false
 eth_rpc_no_proxy = false
+eth_rpc_curl = false
 ignored_error_codes = [
     "license",
     "code-size",
@@ -68,13 +70,17 @@ ignored_error_codes = [
     "transfer-deprecated",
     "natspec-memory-safe-assembly-deprecated",
 ]
+ignored_error_codes_from = []
 ignored_warnings_from = []
 deny = "never"
 test_failures_file = "cache/test-failures"
+mutation_dir = "cache/mutation"
 show_progress = false
 ffi = false
+live_logs = false
 allow_internal_expect_revert = false
 always_use_create_2_factory = false
+eip1559_fee_estimate = "market"
 prompt_timeout = 120
 sender = "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38"
 tx_origin = "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38"
@@ -92,6 +98,8 @@ extra_output_files = []
 names = false
 sizes = false
 via_ir = false
+via_ssa_cfg = false
+experimental = false
 ast = false
 no_storage_caching = false
 no_rpc_rate_limit = false
@@ -100,7 +108,7 @@ bytecode_hash = "ipfs"
 cbor_metadata = true
 sparse_mode = false
 build_info = false
-isolate = false
+isolate = true
 disable_block_gas_limit = false
 enable_tx_gas_limit = false
 unchecked_cheatcode_artifacts = false
@@ -155,6 +163,8 @@ severity = [
 exclude_lints = []
 ignore = []
 lint_on_build = true
+
+[lint.lint_specific]
 mixed_case_exceptions = [
     "ERC",
     "URI",
@@ -167,6 +177,7 @@ mixed_case_exceptions = [
     "HTTP",
     "HTTPS",
 ]
+multi_contract_file_exceptions = []
 
 [doc]
 out = "docs"
@@ -186,16 +197,33 @@ max_fuzz_dictionary_addresses = 15728640
 max_fuzz_dictionary_values = 9830400
 max_fuzz_dictionary_literals = 6553600
 gas_report_samples = 256
+frontier_limit = 256
 corpus_gzip = true
 corpus_min_mutations = 5
 corpus_min_size = 0
 show_edge_coverage = false
+evm_edge_coverage_collision_free = true
+evm_edge_coverage_include_call_depth = false
+sancov_edges = false
+sancov_trace_cmp = false
+corpus_random_sequence_weight = 10
+payable_value_weight = 0
+mutation_weight_splice = 1
+mutation_weight_repeat = 1
+mutation_weight_interleave = 1
+mutation_weight_prefix = 1
+mutation_weight_suffix = 1
+mutation_weight_abi = 1
+mutation_weight_cmp = 1
 failure_persist_dir = "cache/fuzz"
 show_logs = false
 
 [invariant]
 runs = 256
 depth = 500
+min_depth = 1
+depth_mode = "fixed"
+workers = "auto"
 fail_on_revert = false
 call_override = false
 dictionary_weight = 80
@@ -207,16 +235,70 @@ max_fuzz_dictionary_literals = 6553600
 shrink_run_limit = 5000
 max_assume_rejects = 65536
 gas_report_samples = 256
+frontier_limit = 256
 corpus_gzip = true
 corpus_min_mutations = 5
 corpus_min_size = 0
 show_edge_coverage = false
+evm_edge_coverage_collision_free = true
+evm_edge_coverage_include_call_depth = false
+sancov_edges = false
+sancov_trace_cmp = false
+corpus_random_sequence_weight = 10
+payable_value_weight = 15
+mutation_weight_splice = 1
+mutation_weight_repeat = 1
+mutation_weight_interleave = 1
+mutation_weight_prefix = 1
+mutation_weight_suffix = 1
+mutation_weight_abi = 1
+mutation_weight_cmp = 1
 failure_persist_dir = "cache/invariant"
 show_metrics = true
 show_solidity = false
 check_interval = 1
 
-[labels]
+[symbolic]
+enabled = false
+seed_corpus = false
+use_fuzz_corpus = false
+corpus_seed_limit = 32
+use_fuzz_frontiers = false
+check_invariant_frontiers = false
+frontier_limit = 256
+solver = "z3"
+timeout = 30
+max_depth = 10000
+max_paths = 1024
+invariant_depth = 10
+exploration_order = "bfs"
+max_solver_queries = 10000
+default_dynamic_length = 2
+max_dynamic_length = 256
+array_lengths = []
+max_calldata_bytes = 4096
+symbolic_call_targets = false
+dump_smt = false
+storage_layout = "solidity"
+
+[coverage]
+report = ["summary"]
+lcov_version = "1.0.0"
+ir_minimum = false
+include_libs = false
+exclude_tests = false
+skip_files = []
+
+[mutation]
+include_operators = []
+exclude_operators = []
+
+[tracing]
+verbosity = 0
+disable_labels = false
+compact_labels = false
+decode_internal = false
+external_identification_timeout = 5
 
 [vyper]
 
@@ -242,7 +324,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         out: "out-test".into(),
         libs: vec!["lib-test".into()],
         cache: true,
-        dynamic_test_linking: false,
+        dynamic_test_linking: true,
         cache_path: "test-cache".into(),
         snapshots: "snapshots".into(),
         gas_snapshot_check: false,
@@ -250,6 +332,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         broadcast: "broadcast".into(),
         force: true,
         evm_version: EvmVersion::Byzantium,
+        hardfork: None,
         gas_reports: vec!["Contract".to_string()],
         gas_reports_ignore: vec![],
         gas_reports_include_tests: false,
@@ -277,6 +360,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         path_pattern_inverse: None,
         coverage_pattern_inverse: None,
         test_failures_file: "test-cache/test-failures".into(),
+        mutation_dir: "test-cache/mutation".into(),
         threads: None,
         show_progress: false,
         fuzz: FuzzConfig {
@@ -296,9 +380,48 @@ forgetest!(can_extract_config_values, |prj, cmd| {
             },
             ..Default::default()
         },
+        symbolic: SymbolicConfig {
+            enabled: true,
+            seed_corpus: true,
+            use_fuzz_corpus: true,
+            corpus_seed_limit: 17,
+            use_fuzz_frontiers: true,
+            check_invariant_frontiers: true,
+            frontier_limit: 11,
+            frontier_ids: vec![4, 9],
+            frontier_pcs: vec![123, 456],
+            frontier_selectors: vec!["0x12345678".to_string(), "deadbeef".to_string()],
+            solver: "custom-z3".to_string(),
+            solver_command: None,
+            solver_portfolio: Vec::new(),
+            timeout: Some(7),
+            loop_bound: Some(64),
+            depth: Some(222),
+            width: Some(33),
+            max_depth: 123,
+            max_paths: 456,
+            invariant_depth: 5,
+            exploration_order: SymbolicExplorationOrder::Dfs,
+            max_solver_queries: 789,
+            default_dynamic_length: 3,
+            max_dynamic_length: 99,
+            array_lengths: vec![1, 2, 3],
+            dynamic_lengths: std::collections::BTreeMap::from([("data".to_string(), vec![4, 5])]),
+            default_array_lengths: vec![6, 7],
+            default_bytes_lengths: vec![8, 9],
+            max_calldata_bytes: 2048,
+            symbolic_call_targets: true,
+            dump_smt: true,
+            storage_layout: SymbolicStorageLayout::Generic,
+        },
+        coverage: Default::default(),
+        mutation: Default::default(),
+        tracing: TracingConfig { verbosity: 2, compact_labels: true, ..Default::default() },
         ffi: true,
+        live_logs: true,
         allow_internal_expect_revert: false,
         always_use_create_2_factory: false,
+        eip1559_fee_estimate: Eip1559FeeEstimatePreset::Market,
         prompt_timeout: 0,
         sender: "00a329c0648769A73afAc7F9381D08FB43dBEA72".parse().unwrap(),
         tx_origin: "00a329c0648769A73afAc7F9F81E08FB43dBEA72".parse().unwrap(),
@@ -324,6 +447,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         eth_rpc_jwt: None,
         eth_rpc_timeout: None,
         eth_rpc_headers: None,
+        eth_rpc_curl: false,
         etherscan_api_key: None,
         etherscan: Default::default(),
         verbosity: 4,
@@ -332,6 +456,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
             "src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6".to_string(),
         ],
         ignored_error_codes: vec![],
+        ignored_error_codes_from: vec![],
         ignored_file_paths: vec![],
         deny: foundry_config::DenyLevel::Never,
         deny_warnings: false,
@@ -372,6 +497,8 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         assertions_revert: true,
         legacy_assertions: false,
         extra_args: vec![],
+        experimental: false,
+        via_ssa_cfg: false,
         networks: Default::default(),
         transaction_timeout: 120,
         additional_compiler_profiles: Default::default(),
@@ -390,6 +517,27 @@ forgetest!(can_show_config, |prj, cmd| {
         Config::load_with_root(prj.root()).unwrap().to_string_pretty().unwrap().trim().to_string();
     let output = cmd.arg("config").assert_success().get_output().stdout_lossy().trim().to_string();
     assert_eq!(expected, output);
+});
+
+forgetest!(can_select_profile_with_cli, |prj, cmd| {
+    prj.create_file(
+        Config::FILE_NAME,
+        r#"
+[profile.default]
+optimizer = false
+optimizer_runs = 200
+
+[profile.ci]
+optimizer = true
+optimizer_runs = 1
+"#,
+    );
+    cmd.env("foundry_profile", "default");
+
+    let config = cmd.args(["--profile", "ci"]).config();
+
+    assert_eq!(config.optimizer, Some(true));
+    assert_eq!(config.optimizer_runs, Some(1));
 });
 
 // checks that config works
@@ -483,11 +631,14 @@ forgetest_init!(can_parse_remappings_correctly, |prj, cmd| {
     assert_eq!(expected, output);
 
     let install = |cmd: &mut TestCommand, dep: &str| {
-        cmd.forge_fuse().args(["install", dep]).assert_success().stdout_eq(str![[r#"
+        cmd.forge_fuse().args(["install", dep]).assert_success().stdout_eq(str![""]).stderr_eq(
+            str![[r#"
 Installing solmate in [..] (url: https://github.com/transmissions11/solmate, tag: None)
+...
     Installed solmate[..]
 
-"#]]);
+"#]],
+        );
     };
 
     install(&mut cmd, "transmissions11/solmate");
@@ -565,11 +716,40 @@ forgetest_init!(can_get_evm_opts, |prj, _cmd| {
     }
 });
 
+// Regression test for <https://github.com/foundry-rs/foundry/issues/14538>:
+// the bare `ETH_RPC_URL` env var must NOT cause `forge` commands to set
+// `eth_rpc_url` (which would silently fork all `forge test` runs).
+// Only `--rpc-url`, `foundry.toml`, the `FOUNDRY_ETH_RPC_URL` env var, or
+// cheatcodes should configure forking.
+forgetest_init!(eth_rpc_url_env_does_not_set_fork_url, |prj, _cmd| {
+    prj.initialize_default_contracts();
+    let url = "http://127.0.0.1:8545";
+
+    let mut cmd = prj.forge_bin();
+    cmd.arg("config")
+        .arg("--root")
+        .arg(prj.root())
+        .arg("--json")
+        .env("ETH_RPC_URL", url)
+        // Make sure the figment-style env var is not set in the test environment.
+        .env_remove("FOUNDRY_ETH_RPC_URL");
+    let output = cmd.output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let config: Config = serde_json::from_str(stdout.as_ref()).unwrap();
+    assert_eq!(
+        config.eth_rpc_url, None,
+        "bare ETH_RPC_URL must not propagate to forge config (regression #14538)"
+    );
+});
+
 // checks that we can set various config values
 forgetest_init!(can_set_config_values, |prj, _cmd| {
     prj.initialize_default_contracts();
-    let config = prj.config_from_output(["--via-ir", "--no-metadata"]);
+    let config =
+        prj.config_from_output(["--via-ir", "--experimental", "--via-ssa-cfg", "--no-metadata"]);
     assert!(config.via_ir);
+    assert!(config.experimental);
+    assert!(config.via_ssa_cfg);
     assert_eq!(config.cbor_metadata, false);
     assert_eq!(config.bytecode_hash, BytecodeHash::None);
 });
@@ -627,7 +807,7 @@ Compiler run successful!
     // fails to use solc that does not exist
     cmd.forge_fuse().args(["build", "--use", "this/solc/does/not/exist"]);
     cmd.assert_failure().stderr_eq(str![[r#"
-Error: `solc` this/solc/does/not/exist does not exist
+Error: `solc` "this/solc/does/not/exist" does not exist
 
 "#]]);
 
@@ -635,7 +815,7 @@ Error: `solc` this/solc/does/not/exist does not exist
     let local_solc = Solc::find_or_install(&OTHER_SOLC_VERSION.parse().unwrap()).unwrap();
     cmd.forge_fuse()
         .args(["build", "--force", "--use"])
-        .arg(local_solc.solc)
+        .arg(&local_solc.solc)
         .root_arg()
         .assert_success()
         .stdout_eq(str![[r#"
@@ -644,6 +824,20 @@ Error: `solc` this/solc/does/not/exist does not exist
 Compiler run successful!
 
 "#]]);
+
+    let bin_dir = prj.root().join("bin");
+    fs::create_dir(&bin_dir).unwrap();
+    let path_solc = bin_dir.join(format!("custom-solc{}", std::env::consts::EXE_SUFFIX));
+    fs::copy(local_solc.solc, path_solc).unwrap();
+
+    cmd.forge_fuse();
+    cmd.env("PATH", &bin_dir);
+    cmd.args(["build", "--force", "--use", "custom-solc"]).root_arg().assert_success();
+
+    prj.update_config(|config| config.solc = Some(SolcReq::Local("custom-solc".into())));
+    cmd.forge_fuse();
+    cmd.env("PATH", bin_dir);
+    cmd.args(["build", "--force"]).root_arg().assert_success();
 });
 
 // test to ensure yul optimizer can be set as intended
@@ -910,14 +1104,729 @@ forgetest_init!(can_prioritise_project_remappings, |prj, cmd| {
     let lib_toml_file = nested.join("foundry.toml");
     pretty_err(&lib_toml_file, fs::write(&lib_toml_file, lib_config.to_string_pretty().unwrap()));
 
-    cmd.args(["remappings", "--pretty"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["remappings", "--pretty"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+@utils/libraries/Contract.sol=src/Contract.sol
+@utils/=src/
+@openzeppelin/contracts/=lib/openzeppelin-contracts/
+@openzeppelin/contracts-upgradeable/=lib/dep1/lib/openzeppelin-upgradeable/
+dep1/=lib/dep1/src/
+forge-std/=lib/forge-std/src/
+
+"#]])
+        .stderr_eq(str![[r#"
 Global:
-- @utils/libraries/Contract.sol=src/Contract.sol
-- @utils/=src/
-- @openzeppelin/contracts/=lib/openzeppelin-contracts/
-- @openzeppelin/contracts-upgradeable/=lib/dep1/lib/openzeppelin-upgradeable/
-- dep1/=lib/dep1/src/
-- forge-std/=lib/forge-std/src/
+
+
+"#]]);
+});
+
+forgetest!(narrow_project_remapping_preserves_broad_dependency_fallback, |prj, cmd| {
+    prj.update_config(|config| {
+        config.remappings = vec![Remapping::from_str("pkg/sub/=src/local/").unwrap().into()];
+    });
+    prj.add_source(
+        "Root.sol",
+        r#"
+import {Dep} from "pkg/Dep.sol";
+import {Local} from "pkg/sub/Local.sol";
+
+contract Root is Dep, Local {}
+"#,
+    );
+    prj.add_source(
+        "local/Local.sol",
+        r#"
+contract Local {
+    function localValue() public pure returns (uint256) {
+        return 1;
+    }
+}
+"#,
+    );
+    let dependency = prj.root().join("lib/pkg/src");
+    pretty_err(&dependency, fs::create_dir_all(&dependency));
+    pretty_err(
+        dependency.join("Dep.sol"),
+        fs::write(
+            dependency.join("Dep.sol"),
+            r#"
+contract Dep {
+    function dependencyValue() public pure returns (uint256) {
+        return 2;
+    }
+}
+"#,
+        ),
+    );
+
+    cmd.args(["remappings"]).assert_success().stdout_eq(str![[r#"
+pkg/sub/=src/local/
+pkg/=lib/pkg/src/
+
+"#]]);
+    cmd.forge_fuse().args(["build"]).assert_success();
+    // Forge lint resolves imports through Solar independently of the solc build.
+    cmd.forge_fuse().args(["lint"]).assert_success();
+});
+
+forgetest!(nested_config_remapping_refines_auto_detected_package_root, |prj, cmd| {
+    let outer = prj.paths().libraries[0].join("outer");
+    let outer_other = prj.paths().libraries[0].join("outer-other");
+    let inner = outer.join("lib/inner");
+    prj.update_config(|config| {
+        config.remappings =
+            vec![Remapping::from_str("test/:inner/=src/unrelated/").unwrap().into()];
+    });
+    pretty_err(&outer, fs::create_dir_all(outer.join("src")));
+    pretty_err(&outer_other, fs::create_dir_all(outer_other.join("src")));
+    pretty_err(&inner, fs::create_dir_all(inner.join("contracts")));
+    pretty_err(&outer, fs::write(outer.join("foundry.toml"), "[profile.default]\n"));
+    pretty_err(&outer, fs::write(outer.join("remappings.txt"), "inner/=lib/inner/contracts/\n"));
+    pretty_err(&inner, fs::write(inner.join("Marker.sol"), "contract Marker {}\n"));
+    pretty_err(&inner, fs::write(inner.join("contracts/I.sol"), "interface I {}\n"));
+    pretty_err(
+        &outer,
+        fs::write(
+            outer.join("src/Outer.sol"),
+            "import {I} from \"inner/I.sol\"; contract Outer is I {}\n",
+        ),
+    );
+    pretty_err(
+        &outer_other,
+        fs::write(
+            outer_other.join("src/Other.sol"),
+            "import {Marker} from \"inner/Marker.sol\"; contract Other is Marker {}\n",
+        ),
+    );
+    prj.add_source(
+        "UsesOuter.sol",
+        "import {Outer} from \"outer/Outer.sol\"; import {Other} from \"outer-other/Other.sol\"; import {Marker} from \"inner/Marker.sol\"; contract UsesOuter is Outer, Other {}\n",
+    );
+
+    cmd.args(["remappings"]).assert_success().stdout_eq(str![[r#"
+test/:inner/=src/unrelated/
+lib/outer/:inner/=lib/outer/lib/inner/contracts/
+inner/=lib/outer/lib/inner/
+outer-other/=lib/outer-other/src/
+outer/=lib/outer/src/
+
+"#]]);
+    cmd.forge_fuse().arg("build").assert_success();
+    cmd.forge_fuse().arg("lint").assert_success();
+});
+
+forgetest!(duplicate_transitive_remappings_are_scoped_to_their_owners, |prj, cmd| {
+    let a = prj.root().join("deps-a/a");
+    let b = prj.root().join("deps-b/b");
+    pretty_err(&a, fs::create_dir_all(a.join("src")));
+    pretty_err(&a, fs::create_dir_all(a.join("lib/shared/src")));
+    pretty_err(&b, fs::create_dir_all(b.join("src")));
+    pretty_err(&b, fs::create_dir_all(b.join("lib/shared/src")));
+    prj.update_config(|config| config.libs = vec!["deps-b".into(), "deps-a".into()]);
+    pretty_err(
+        &a,
+        fs::write(
+            a.join("src/A.sol"),
+            "import {VersionA} from \"shared/Version.sol\"; contract A is VersionA {}\n",
+        ),
+    );
+    pretty_err(&a, fs::write(a.join("lib/shared/src/Version.sol"), "contract VersionA {}\n"));
+    pretty_err(
+        &b,
+        fs::write(
+            b.join("src/B.sol"),
+            "import {VersionB} from \"shared/Version.sol\"; contract B is VersionB {}\n",
+        ),
+    );
+    pretty_err(&b, fs::write(b.join("lib/shared/src/Version.sol"), "contract VersionB {}\n"));
+    prj.add_source("UsesDependencies.sol", "import {A} from \"a/A.sol\"; import {B} from \"b/B.sol\"; import {VersionA} from \"shared/Version.sol\"; contract UsesDependencies { A a; B b; VersionA version; }\n");
+
+    let expected = str![[r#"
+deps-a/a/:shared/=deps-a/a/lib/shared/src/
+deps-b/b/:shared/=deps-b/b/lib/shared/src/
+a/=deps-a/a/src/
+b/=deps-b/b/src/
+shared/=deps-a/a/lib/shared/src/
+
+"#]];
+    cmd.arg("remappings").assert_success().stdout_eq(expected.clone());
+    cmd.forge_fuse().arg("build").assert_success();
+    cmd.forge_fuse().arg("lint").assert_success();
+    prj.update_config(|config| config.libs = vec!["deps-a".into(), "deps-b".into()]);
+    cmd.forge_fuse().arg("remappings").assert_success().stdout_eq(expected);
+});
+
+forgetest!(scoped_npm_context_preserves_hoisted_sibling_fallback, |prj, cmd| {
+    let owner = prj.root().join("node_modules/@bananapus/router-terminal-v6");
+    let nested_v3 = owner.join("node_modules/@uniswap/v3-core/src");
+    let hoisted_v3 = prj.root().join("node_modules/@uniswap/v3-core/src");
+    let hoisted_v4 = prj.root().join("node_modules/@uniswap/v4-core/src");
+    for dependency in [&owner.join("src"), &nested_v3, &hoisted_v3, &hoisted_v4] {
+        pretty_err(dependency, fs::create_dir_all(dependency));
+    }
+    prj.update_config(|config| config.libs = vec!["node_modules".into()]);
+    pretty_err(
+        &owner,
+        fs::write(
+            owner.join("src/RouterTerminal.sol"),
+            "import {NestedV3} from \"@uniswap/v3-core/src/Version.sol\"; import {HoistedV4} from \"@uniswap/v4-core/src/Version.sol\"; contract RouterTerminal is NestedV3, HoistedV4 {}\n",
+        ),
+    );
+    pretty_err(&nested_v3, fs::write(nested_v3.join("Version.sol"), "contract NestedV3 {}\n"));
+    pretty_err(&hoisted_v3, fs::write(hoisted_v3.join("Version.sol"), "contract HoistedV3 {}\n"));
+    pretty_err(&hoisted_v4, fs::write(hoisted_v4.join("Version.sol"), "contract HoistedV4 {}\n"));
+    prj.add_source(
+        "UsesRouterTerminal.sol",
+        "import {RouterTerminal} from \"@bananapus/router-terminal-v6/src/RouterTerminal.sol\"; import {HoistedV3} from \"@uniswap/v3-core/src/Version.sol\"; contract UsesRouterTerminal is RouterTerminal, HoistedV3 {}\n",
+    );
+
+    cmd.arg("remappings").assert_success().stdout_eq(str![[r#"
+node_modules/@bananapus/router-terminal-v6/:@uniswap/v3-core/=node_modules/@bananapus/router-terminal-v6/node_modules/@uniswap/v3-core/
+@bananapus/=node_modules/@bananapus/
+@uniswap/=node_modules/@uniswap/
+
+"#]]);
+    cmd.forge_fuse().arg("build").assert_success();
+    cmd.forge_fuse().arg("lint").assert_success();
+});
+
+forgetest!(contextual_remapping_dedup_uses_context_and_name, |prj, cmd| {
+    let a = prj.root().join("lib/a");
+    let z = prj.root().join("lib/z");
+    for dependency in [&a, &z] {
+        pretty_err(dependency, fs::create_dir_all(dependency.join("src")));
+        pretty_err(dependency, fs::create_dir_all(dependency.join("lib/shared/src")));
+    }
+    pretty_err(prj.root(), fs::create_dir_all(prj.root().join("src/collision")));
+    prj.update_config(|config| {
+        config.remappings =
+            vec![Remapping::from_str("lib/z/shared/=src/collision/").unwrap().into()];
+    });
+    pretty_err(
+        &a,
+        fs::write(
+            a.join("src/A.sol"),
+            "import {VersionA} from \"shared/Version.sol\"; contract A is VersionA {}\n",
+        ),
+    );
+    pretty_err(
+        &z,
+        fs::write(
+            z.join("src/Z.sol"),
+            "import {VersionZ} from \"shared/Version.sol\"; contract Z is VersionZ {}\n",
+        ),
+    );
+    pretty_err(&a, fs::write(a.join("lib/shared/src/Version.sol"), "contract VersionA {}\n"));
+    pretty_err(&z, fs::write(z.join("lib/shared/src/Version.sol"), "contract VersionZ {}\n"));
+    prj.add_source(
+        "UsesDependencies.sol",
+        "import {A} from \"a/A.sol\"; import {Z} from \"z/Z.sol\"; contract UsesDependencies is A, Z {}\n",
+    );
+
+    cmd.arg("remappings").assert_success().stdout_eq(str![[r#"
+lib/z/shared/=src/collision/
+lib/a/:shared/=lib/a/lib/shared/src/
+lib/z/:shared/=lib/z/lib/shared/src/
+a/=lib/a/src/
+shared/=lib/a/lib/shared/src/
+z/=lib/z/src/
+
+"#]]);
+    cmd.forge_fuse().arg("build").assert_success();
+    cmd.forge_fuse().arg("lint").assert_success();
+});
+
+forgetest!(contextual_auto_remapping_uses_configured_dependency_source, |prj, cmd| {
+    let a = prj.root().join("lib/a");
+    let b = prj.root().join("lib/b");
+    let shared_a = a.join("lib/shared");
+    let shared_b = b.join("lib/shared");
+    pretty_err(&a, fs::create_dir_all(a.join("src")));
+    pretty_err(&b, fs::create_dir_all(b.join("src")));
+    pretty_err(&shared_a, fs::create_dir_all(shared_a.join("custom-source")));
+    pretty_err(&shared_b, fs::create_dir_all(shared_b.join("src")));
+    pretty_err(&a, fs::write(a.join("foundry.toml"), "[profile.default]\nlibs = [\"lib\"]\n"));
+    pretty_err(
+        &shared_a,
+        fs::write(shared_a.join("foundry.toml"), "[profile.default]\nsrc = \"custom-source\"\n"),
+    );
+    pretty_err(
+        &a,
+        fs::write(
+            a.join("src/A.sol"),
+            "import {VersionA} from \"shared/Version.sol\"; contract A is VersionA {}\n",
+        ),
+    );
+    pretty_err(
+        &shared_a,
+        fs::write(shared_a.join("custom-source/Version.sol"), "contract VersionA {}\n"),
+    );
+    pretty_err(
+        &b,
+        fs::write(
+            b.join("src/B.sol"),
+            "import {VersionB} from \"shared/Version.sol\"; contract B is VersionB {}\n",
+        ),
+    );
+    pretty_err(&shared_b, fs::write(shared_b.join("src/Version.sol"), "contract VersionB {}\n"));
+    prj.add_source("UsesDependencies.sol", "import {A} from \"a/A.sol\"; import {B} from \"b/B.sol\"; contract UsesDependencies { A a; B b; }\n");
+
+    cmd.arg("remappings").assert_success().stdout_eq(str![[r#"
+lib/a/:shared/=lib/a/lib/shared/custom-source/
+lib/b/:shared/=lib/b/lib/shared/src/
+a/=lib/a/src/
+b/=lib/b/src/
+shared/=lib/b/lib/shared/src/
+
+"#]]);
+    cmd.forge_fuse().arg("build").assert_success();
+    cmd.forge_fuse().arg("lint").assert_success();
+});
+
+forgetest!(explicit_context_precedes_nested_auto_remapping, |prj, cmd| {
+    let a = prj.root().join("lib/a");
+    let shared_a = a.join("lib/shared/src");
+    let x = a.join("lib/x");
+    let shared_x = x.join("lib/shared/src");
+    pretty_err(&a, fs::create_dir_all(a.join("src")));
+    pretty_err(&shared_a, fs::create_dir_all(&shared_a));
+    pretty_err(&x, fs::create_dir_all(x.join("src")));
+    pretty_err(&shared_x, fs::create_dir_all(&shared_x));
+    pretty_err(prj.root(), fs::create_dir_all(prj.root().join("src/override")));
+    prj.update_config(|config| {
+        config.remappings =
+            vec![Remapping::from_str("lib/a/:shared/=src/override/").unwrap().into()];
+    });
+    pretty_err(
+        prj.root(),
+        fs::write(prj.root().join("src/override/Version.sol"), "contract Selected {}\n"),
+    );
+    pretty_err(&shared_a, fs::write(shared_a.join("Version.sol"), "contract ShadowedA {}\n"));
+    pretty_err(&shared_x, fs::write(shared_x.join("Version.sol"), "contract ShadowedX {}\n"));
+    pretty_err(
+        &a,
+        fs::write(
+            a.join("src/A.sol"),
+            "import {Selected} from \"shared/Version.sol\"; import {X} from \"x/X.sol\"; contract A is Selected, X {}\n",
+        ),
+    );
+    pretty_err(
+        &x,
+        fs::write(
+            x.join("src/X.sol"),
+            "import {Selected} from \"shared/Version.sol\"; contract X is Selected {}\n",
+        ),
+    );
+    prj.add_source("UsesA.sol", "import {A} from \"a/A.sol\"; contract UsesA is A {}\n");
+    cmd.arg("build").assert_success();
+    cmd.forge_fuse().arg("lint").assert_success();
+
+    prj.update_config(|config| config.remappings.clear());
+    let remapping = "lib/a/:shared/=src/override/";
+    cmd.forge_fuse().args(["build", "--force", "--remappings", remapping]).assert_success();
+    cmd.forge_fuse().args(["lint", "--remappings", remapping]).assert_success();
+
+    #[cfg(unix)]
+    {
+        let linked_parent = tempfile::tempdir().unwrap();
+        let linked_root = linked_parent.path().join("linked-root");
+        std::os::unix::fs::symlink(prj.root(), &linked_root).unwrap();
+        let linked_context = linked_root.join("lib/a");
+        let remapping = format!("{}:shared/=src/override/", linked_context.display());
+        let root = linked_root.to_str().unwrap();
+        cmd.forge_fuse()
+            .args(["build", "--force", "--root", root, "--remappings", &remapping])
+            .assert_success();
+        cmd.forge_fuse()
+            .args(["lint", "--root", root, "--remappings", &remapping])
+            .assert_success();
+    }
+});
+
+forgetest!(slashless_context_is_a_lexical_prefix, |prj, cmd| {
+    let abc = prj.root().join("lib/abc");
+    let shared = abc.join("lib/shared/src");
+    pretty_err(&abc, fs::create_dir_all(abc.join("src")));
+    pretty_err(&shared, fs::create_dir_all(&shared));
+    pretty_err(prj.root(), fs::create_dir_all(prj.root().join("src/override")));
+    pretty_err(
+        prj.root(),
+        fs::write(prj.root().join("src/override/Version.sol"), "contract Selected {}\n"),
+    );
+    pretty_err(&shared, fs::write(shared.join("Version.sol"), "contract Shadowed {}\n"));
+    pretty_err(
+        &abc,
+        fs::write(
+            abc.join("src/Abc.sol"),
+            "import {Selected} from \"shared/Version.sol\"; contract Abc is Selected {}\n",
+        ),
+    );
+    prj.add_source(
+        "UsesAbc.sol",
+        "import {Abc} from \"abc/Abc.sol\"; contract UsesAbc is Abc {}\n",
+    );
+
+    let remapping = "lib/a:shared/=src/override/";
+    prj.update_config(|config| {
+        config.remappings = vec![Remapping::from_str(remapping).unwrap().into()];
+    });
+    cmd.arg("build").assert_success();
+    cmd.forge_fuse().arg("lint").assert_success();
+
+    prj.update_config(|config| config.remappings.clear());
+    cmd.forge_fuse().args(["build", "--force", "--remappings", remapping]).assert_success();
+    cmd.forge_fuse().args(["lint", "--remappings", remapping]).assert_success();
+});
+
+forgetest!(nested_auto_remapping_preserves_declared_precedence, |prj, cmd| {
+    let a = prj.root().join("lib/a");
+    let pinned_a = a.join("src/pinned");
+    let shared_a = a.join("lib/shared/src");
+    let x = a.join("lib/x");
+    let shared_x = x.join("lib/shared");
+    pretty_err(&a, fs::create_dir_all(a.join("src")));
+    pretty_err(&pinned_a, fs::create_dir_all(&pinned_a));
+    pretty_err(&shared_a, fs::create_dir_all(&shared_a));
+    pretty_err(&x, fs::create_dir_all(x.join("src")));
+    pretty_err(&shared_x, fs::create_dir_all(shared_x.join("src")));
+    pretty_err(&a, fs::write(a.join("foundry.toml"), "[profile.default]\nlibs = [\"lib\"]\n"));
+    pretty_err(&a, fs::write(a.join("remappings.txt"), "shared/=src/pinned/\n"));
+    pretty_err(&pinned_a, fs::write(pinned_a.join("Marker.sol"), "contract Marker {}\n"));
+    pretty_err(&pinned_a, fs::write(pinned_a.join("Version.sol"), "contract VersionA {}\n"));
+    pretty_err(&shared_a, fs::write(shared_a.join("Version.sol"), "contract ShadowedA {}\n"));
+    pretty_err(
+        &a,
+        fs::write(
+            a.join("src/A.sol"),
+            "import {VersionA} from \"shared/Version.sol\"; import {X} from \"x/X.sol\"; contract A is VersionA, X {}\n",
+        ),
+    );
+    pretty_err(
+        &x,
+        fs::write(
+            x.join("src/X.sol"),
+            "import {VersionX} from \"shared/Version.sol\"; contract X is VersionX {}\n",
+        ),
+    );
+    pretty_err(&shared_x, fs::write(shared_x.join("src/Version.sol"), "contract VersionX {}\n"));
+    prj.add_source("UsesA.sol", "import {A} from \"a/A.sol\"; import {Marker} from \"shared/Marker.sol\"; contract UsesA is A, Marker {}\n");
+
+    cmd.arg("remappings").assert_success().stdout_eq(str![[r#"
+lib/a/lib/x/:shared/=lib/a/lib/x/lib/shared/src/
+lib/a/:shared/=lib/a/src/pinned/
+a/=lib/a/src/
+shared/=lib/a/src/pinned/
+x/=lib/a/lib/x/src/
+
+"#]]);
+    cmd.forge_fuse().arg("build").assert_success();
+    cmd.forge_fuse().arg("lint").assert_success();
+});
+
+forgetest!(nested_contextual_remapping_precedes_auto_detection, |prj, cmd| {
+    let a = prj.root().join("lib/a");
+    let b = prj.root().join("lib/b");
+    pretty_err(&a, fs::create_dir_all(a.join("src/pinned")));
+    pretty_err(&a, fs::create_dir_all(a.join("lib/shared/src")));
+    pretty_err(&b, fs::create_dir_all(b.join("src")));
+    pretty_err(&b, fs::create_dir_all(b.join("lib/shared/src")));
+    pretty_err(
+        &a,
+        fs::write(
+            a.join("foundry.toml"),
+            "[profile.default]\nremappings = [\"src/../src/:shared/=src/pinned/\"]\n",
+        ),
+    );
+    pretty_err(
+        &a,
+        fs::write(
+            a.join("src/A.sol"),
+            "import {Selected} from \"shared/Version.sol\"; contract A is Selected {}\n",
+        ),
+    );
+    pretty_err(&a, fs::write(a.join("src/pinned/Version.sol"), "contract Selected {}\n"));
+    pretty_err(&a, fs::write(a.join("lib/shared/src/Version.sol"), "contract ShadowedA {}\n"));
+    pretty_err(
+        &b,
+        fs::write(
+            b.join("src/B.sol"),
+            "import {VersionB} from \"shared/Version.sol\"; contract B is VersionB {}\n",
+        ),
+    );
+    pretty_err(&b, fs::write(b.join("lib/shared/src/Version.sol"), "contract VersionB {}\n"));
+    prj.add_source(
+        "UsesDependencies.sol",
+        "import {A} from \"a/A.sol\"; import {B} from \"b/B.sol\"; contract UsesDependencies is A, B {}\n",
+    );
+
+    cmd.arg("remappings").assert_success().stdout_eq(str![[r#"
+lib/a/src/:shared/=lib/a/src/pinned/
+lib/a/:shared/=lib/a/lib/shared/src/
+lib/b/:shared/=lib/b/lib/shared/src/
+a/=lib/a/src/
+b/=lib/b/src/
+shared/=lib/a/lib/shared/src/
+
+"#]]);
+    cmd.forge_fuse().arg("build").assert_success();
+    cmd.forge_fuse().arg("lint").assert_success();
+});
+
+forgetest!(external_dependency_uses_contextual_remapping, |prj, cmd| {
+    let project = prj.root().join("utils");
+    let dependency = prj.root().join("node_modules/dependency");
+    let library = prj.root().join("node_modules/library/src");
+    pretty_err(&project, fs::create_dir_all(project.join("src")));
+    pretty_err(&dependency, fs::create_dir_all(dependency.join("src/internal")));
+    pretty_err(&library, fs::create_dir_all(&library));
+    pretty_err(
+        &project,
+        fs::write(
+            project.join("foundry.toml"),
+            r#"
+[profile.default]
+src = "src"
+allow_paths = ["../"]
+auto_detect_remappings = false
+remappings = [
+    "dependency/=../node_modules/dependency/src/",
+    "../node_modules/dependency/:library/=../node_modules/library/src/",
+    "library/=../node_modules/library/",
+]
+"#,
+        ),
+    );
+    pretty_err(
+        &project,
+        fs::write(
+            project.join("src/Root.sol"),
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity >=0.8.0;
+
+import {Dep} from "dependency/Dep.sol";
+import {RootLibrary} from "library/src/RootLibrary.sol";
+
+contract Root is Dep, RootLibrary {}
+"#,
+        ),
+    );
+    pretty_err(
+        &dependency,
+        fs::write(
+            dependency.join("src/Dep.sol"),
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity >=0.8.0;
+
+import {Core} from "./internal/Core.sol";
+
+contract Dep is Core {}
+"#,
+        ),
+    );
+    pretty_err(
+        &dependency,
+        fs::write(
+            dependency.join("src/internal/Core.sol"),
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity >=0.8.0;
+
+import {DependencyLibrary} from "library/DependencyLibrary.sol";
+
+contract Core is DependencyLibrary {}
+"#,
+        ),
+    );
+    pretty_err(
+        &library,
+        fs::write(
+            library.join("RootLibrary.sol"),
+            "// SPDX-License-Identifier: UNLICENSED\npragma solidity >=0.8.0;\ncontract RootLibrary {}\n",
+        ),
+    );
+    pretty_err(
+        &library,
+        fs::write(
+            library.join("DependencyLibrary.sol"),
+            "// SPDX-License-Identifier: UNLICENSED\npragma solidity >=0.8.0;\ncontract DependencyLibrary {}\n",
+        ),
+    );
+
+    cmd.current_dir(project).args(["build", "--no-lint"]).assert_success();
+});
+
+forgetest!(cli_preserves_explicit_contextual_remapping_pair, |prj, cmd| {
+    let dependency = prj.paths().libraries[0].join("dep");
+    pretty_err(&dependency, fs::create_dir_all(dependency.join("src")));
+    pretty_err(&dependency, fs::create_dir_all(dependency.join("pkg/contracts")));
+    prj.update_config(|config| {
+        config.auto_detect_remappings = false;
+        config.remappings =
+            ["dep/=lib/dep/src/", "lib/dep/:pkg/=lib/dep/pkg/contracts/", "pkg/=lib/dep/pkg/"]
+                .map(|remapping| Remapping::from_str(remapping).unwrap().into())
+                .into();
+    });
+    pretty_err(
+        &dependency,
+        fs::write(
+            dependency.join("src/Dep.sol"),
+            "import {Other} from \"pkg/Other.sol\"; contract Dep is Other {}\n",
+        ),
+    );
+    pretty_err(
+        &dependency,
+        fs::write(dependency.join("pkg/contracts/Other.sol"), "contract Other {}\n"),
+    );
+    prj.add_source(
+        "UsesDep.sol",
+        "import {Dep} from \"dep/Dep.sol\"; contract UsesDep is Dep {}\n",
+    );
+
+    cmd.args(["build", "--remappings", "pkg/sub/=src/local/"]).assert_success();
+
+    // A generated candidate that normalizes to the explicit contextual mapping must not cause the
+    // explicit mapping to be tagged as generated and removed by the CLI merge.
+    pretty_err(&dependency, fs::write(dependency.join("foundry.toml"), "[profile.default]\n"));
+    pretty_err(&dependency, fs::write(dependency.join("remappings.txt"), "pkg/=pkg/contracts/\n"));
+    prj.update_config(|config| config.auto_detect_remappings = true);
+    cmd.forge_fuse()
+        .args(["build", "--force", "--remappings", "pkg/sub/=src/local/"])
+        .assert_success();
+});
+
+forgetest!(root_remapping_precedes_nested_refinement, |prj, cmd| {
+    let outer = prj.paths().libraries[0].join("outer");
+    let inner = outer.join("lib/inner");
+    pretty_err(&outer, fs::create_dir_all(outer.join("src")));
+    pretty_err(&inner, fs::create_dir_all(inner.join("contracts/sub")));
+    pretty_err(prj.root(), fs::create_dir_all(prj.root().join("src/local")));
+    prj.update_config(|config| {
+        config.remappings = vec![Remapping::from_str("inner/sub/=src/local/").unwrap().into()];
+    });
+    pretty_err(&outer, fs::write(outer.join("foundry.toml"), "[profile.default]\n"));
+    pretty_err(&outer, fs::write(outer.join("remappings.txt"), "inner/=lib/inner/contracts/\n"));
+    pretty_err(&inner, fs::write(inner.join("Marker.sol"), "contract Marker {}\n"));
+    pretty_err(&inner, fs::write(inner.join("contracts/I.sol"), "contract I {}\n"));
+    pretty_err(
+        prj.root(),
+        fs::write(prj.root().join("src/local/Selected.sol"), "contract Selected {}\n"),
+    );
+    pretty_err(
+        &inner,
+        fs::write(inner.join("contracts/sub/Selected.sol"), "contract Shadowed {}\n"),
+    );
+    pretty_err(
+        &outer,
+        fs::write(
+            outer.join("src/Outer.sol"),
+            "import {I} from \"inner/I.sol\"; import {Selected} from \"inner/sub/Selected.sol\"; contract Outer is I, Selected {}\n",
+        ),
+    );
+    prj.add_source(
+        "UsesOuter.sol",
+        "import {Outer} from \"outer/Outer.sol\"; import {Marker} from \"inner/Marker.sol\"; contract UsesOuter is Outer, Marker {}\n",
+    );
+
+    cmd.arg("build").assert_success();
+
+    // CLI remappings are merged after dependency refinements are generated and must still retain
+    // root precedence.
+    prj.update_config(|config| config.remappings.clear());
+    cmd.forge_fuse()
+        .args(["build", "--force", "--remappings", "inner/sub/=src/local/"])
+        .assert_success();
+});
+
+forgetest!(broad_project_remapping_suppresses_narrow_dependency_override, |prj, cmd| {
+    prj.update_config(|config| {
+        config.remappings = vec![Remapping::from_str("pkg/=src/local/").unwrap().into()];
+    });
+    prj.add_source(
+        "Root.sol",
+        r#"
+import {Selected} from "pkg/sub/Selected.sol";
+
+contract Root is Selected {}
+"#,
+    );
+    prj.add_source(
+        "local/sub/Selected.sol",
+        r#"
+contract Selected {
+    function selectedValue() public pure returns (uint256) {
+        return 1;
+    }
+}
+"#,
+    );
+
+    let dependency = prj.root().join("lib/dep1");
+    pretty_err(dependency.join("src/decoy"), fs::create_dir_all(dependency.join("src/decoy")));
+    let mut dependency_config = Config::load_with_root(&dependency).unwrap();
+    dependency_config.remappings = vec![Remapping::from_str("pkg/sub/=src/decoy/").unwrap().into()];
+    pretty_err(
+        dependency.join("foundry.toml"),
+        fs::write(dependency.join("foundry.toml"), dependency_config.to_string_pretty().unwrap()),
+    );
+    pretty_err(
+        dependency.join("src/decoy/Selected.sol"),
+        fs::write(
+            dependency.join("src/decoy/Selected.sol"),
+            r#"
+contract DependencyDecoy {}
+"#,
+        ),
+    );
+
+    cmd.args(["remappings"]).assert_success().stdout_eq(str![[r#"
+pkg/=src/local/
+dep1/=lib/dep1/src/
+
+"#]]);
+    cmd.forge_fuse().args(["build"]).assert_success();
+    // Solar prefers the longest matching prefix, so this fails if the dependency override leaks.
+    cmd.forge_fuse().args(["lint"]).assert_success();
+});
+
+// Verifies the contract invariant: `forge remappings` and `forge remappings --pretty` emit
+// identical stdout, even when remappings have contexts. The context prefix is part of the
+// machine-readable value and must survive `--pretty` mode.
+forgetest!(remappings_pretty_keeps_context_on_stdout, |prj, cmd| {
+    prj.update_config(|config| {
+        config.auto_detect_remappings = false;
+        config.remappings = vec![
+            Remapping::from_str("@global/=lib/global/").unwrap().into(),
+            Remapping::from_str("ctx-a:@scoped/=lib/a/").unwrap().into(),
+            Remapping::from_str("ctx-b:@scoped/=lib/b/").unwrap().into(),
+        ];
+    });
+
+    cmd.args(["remappings"]).assert_success().stdout_eq(str![[r#"
+@global/=lib/global/
+ctx-a:@scoped/=lib/a/
+ctx-b:@scoped/=lib/b/
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["remappings", "--pretty"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+@global/=lib/global/
+ctx-a:@scoped/=lib/a/
+ctx-b:@scoped/=lib/b/
+
+"#]])
+        .stderr_eq(str![[r#"
+Global:
+
+Context: ctx-a
+
+Context: ctx-b
 
 
 "#]]);
@@ -930,11 +1839,14 @@ forgetest!(can_update_libs_section, |prj, cmd| {
     // explicitly set gas_price
     prj.update_config(|config| config.libs = vec!["node_modules".into()]);
 
-    cmd.args(["install", "foundry-rs/forge-std"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["install", "foundry-rs/forge-std"]).assert_success().stdout_eq(str![""]).stderr_eq(
+        str![[r#"
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
+...
     Installed forge-std[..]
 
-"#]]);
+"#]],
+    );
 
     let config = cmd.forge_fuse().config();
     // `lib` was added automatically
@@ -942,8 +1854,13 @@ Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag:
     assert_eq!(config.libs, expected);
 
     // additional install don't edit `libs`
-    cmd.forge_fuse().args(["install", "dapphub/ds-test"]).assert_success().stdout_eq(str![[r#"
+    cmd.forge_fuse()
+        .args(["install", "dapphub/ds-test"])
+        .assert_success()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
 Installing ds-test in [..] (url: https://github.com/dapphub/ds-test, tag: None)
+...
     Installed ds-test
 
 "#]]);
@@ -957,11 +1874,14 @@ Installing ds-test in [..] (url: https://github.com/dapphub/ds-test, tag: None)
 forgetest!(config_emit_warnings, |prj, cmd| {
     cmd.git_init();
 
-    cmd.args(["install", "foundry-rs/forge-std"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["install", "foundry-rs/forge-std"]).assert_success().stdout_eq(str![""]).stderr_eq(
+        str![[r#"
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
+...
     Installed forge-std[..]
 
-"#]]);
+"#]],
+    );
 
     let faulty_toml = r"[default]
     src = 'src'
@@ -1114,6 +2034,24 @@ forgetest!(normalize_config_evm_version, |_prj, cmd| {
         .stdout_lossy();
     let config: Config = serde_json::from_str(&output).unwrap();
     assert_eq!(config.evm_version, EvmVersion::Cancun);
+
+    let output = cmd
+        .forge_fuse()
+        .args(["config", "--use", "0.8.35", "--evm-version", "amsterdam", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let config: Config = serde_json::from_str(&output).unwrap();
+    assert_eq!(config.evm_version, EvmVersion::Osaka);
+
+    let output = cmd
+        .forge_fuse()
+        .args(["config", "--use", "0.8.36", "--evm-version", "amsterdam", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let config: Config = serde_json::from_str(&output).unwrap();
+    assert_eq!(config.evm_version, EvmVersion::Amsterdam);
 });
 
 // Tests that root paths are properly resolved even if submodule specifies remappings for them.
@@ -1181,7 +2119,6 @@ contract CounterTest {
     cmd.forge_fuse().args(["build"]).assert_success();
 });
 
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(test_default_config, |prj, cmd| {
     prj.write_config(Config::default());
     cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(DEFAULT_CONFIG);
@@ -1202,7 +2139,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "libraries": [],
   "cache": true,
   "cache_path": "cache",
-  "dynamic_test_linking": false,
+  "dynamic_test_linking": true,
   "snapshots": "snapshots",
   "gas_snapshot_check": false,
   "gas_snapshot_emit": true,
@@ -1212,6 +2149,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "skip": [],
   "force": false,
   "evm_version": "osaka",
+  "hardfork": null,
   "gas_reports": [
     "*"
   ],
@@ -1231,6 +2169,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "eth_rpc_jwt": null,
   "eth_rpc_timeout": null,
   "eth_rpc_headers": null,
+  "eth_rpc_curl": false,
   "etherscan_api_key": null,
   "ignored_error_codes": [
     "license",
@@ -1240,6 +2179,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "transfer-deprecated",
     "natspec-memory-safe-assembly-deprecated"
   ],
+  "ignored_error_codes_from": [],
   "ignored_warnings_from": [],
   "deny": "never",
   "match_test": null,
@@ -1250,10 +2190,13 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "no_match_path": null,
   "no_match_coverage": null,
   "test_failures_file": "cache/test-failures",
+  "mutation_dir": "cache/mutation",
   "threads": null,
   "show_progress": false,
   "fuzz": {
     "runs": 256,
+    "run": null,
+    "worker": null,
     "fail_on_revert": true,
     "max_test_rejects": 65536,
     "seed": null,
@@ -1265,10 +2208,25 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "max_fuzz_dictionary_literals": 6553600,
     "gas_report_samples": 256,
     "corpus_dir": null,
+    "frontier_dir": null,
+    "frontier_limit": 256,
     "corpus_gzip": true,
     "corpus_min_mutations": 5,
     "corpus_min_size": 0,
     "show_edge_coverage": false,
+    "evm_edge_coverage_collision_free": true,
+    "evm_edge_coverage_include_call_depth": false,
+    "sancov_edges": false,
+    "sancov_trace_cmp": false,
+    "corpus_random_sequence_weight": 10,
+    "payable_value_weight": 0,
+    "mutation_weight_splice": 1,
+    "mutation_weight_repeat": 1,
+    "mutation_weight_interleave": 1,
+    "mutation_weight_prefix": 1,
+    "mutation_weight_suffix": 1,
+    "mutation_weight_abi": 1,
+    "mutation_weight_cmp": 1,
     "failure_persist_dir": "cache/fuzz",
     "show_logs": false,
     "timeout": null
@@ -1276,6 +2234,9 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "invariant": {
     "runs": 256,
     "depth": 500,
+    "min_depth": 1,
+    "depth_mode": "fixed",
+    "workers": "auto",
     "fail_on_revert": false,
     "call_override": false,
     "dictionary_weight": 80,
@@ -1288,10 +2249,25 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "max_assume_rejects": 65536,
     "gas_report_samples": 256,
     "corpus_dir": null,
+    "frontier_dir": null,
+    "frontier_limit": 256,
     "corpus_gzip": true,
     "corpus_min_mutations": 5,
     "corpus_min_size": 0,
     "show_edge_coverage": false,
+    "evm_edge_coverage_collision_free": true,
+    "evm_edge_coverage_include_call_depth": false,
+    "sancov_edges": false,
+    "sancov_trace_cmp": false,
+    "corpus_random_sequence_weight": 10,
+    "payable_value_weight": 15,
+    "mutation_weight_splice": 1,
+    "mutation_weight_repeat": 1,
+    "mutation_weight_interleave": 1,
+    "mutation_weight_prefix": 1,
+    "mutation_weight_suffix": 1,
+    "mutation_weight_abi": 1,
+    "mutation_weight_cmp": 1,
     "failure_persist_dir": "cache/invariant",
     "show_metrics": true,
     "timeout": null,
@@ -1300,9 +2276,59 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "max_block_delay": null,
     "check_interval": 1
   },
+  "symbolic": {
+    "enabled": false,
+    "seed_corpus": false,
+    "use_fuzz_corpus": false,
+    "corpus_seed_limit": 32,
+    "use_fuzz_frontiers": false,
+    "check_invariant_frontiers": false,
+    "frontier_limit": 256,
+    "solver": "z3",
+    "timeout": 30,
+    "max_depth": 10000,
+    "max_paths": 1024,
+    "invariant_depth": 10,
+    "exploration_order": "bfs",
+    "max_solver_queries": 10000,
+    "default_dynamic_length": 2,
+    "max_dynamic_length": 256,
+    "array_lengths": [],
+    "max_calldata_bytes": 4096,
+    "symbolic_call_targets": false,
+    "dump_smt": false,
+    "storage_layout": "solidity"
+  },
+  "coverage": {
+    "report": [
+      "summary"
+    ],
+    "lcov_version": "1.0.0",
+    "ir_minimum": false,
+    "report_file": null,
+    "include_libs": false,
+    "exclude_tests": false,
+    "skip_files": []
+  },
+  "mutation": {
+    "include_operators": [],
+    "exclude_operators": [],
+    "timeout": null,
+    "optimizer_runs": null,
+    "via_ir": null
+  },
+  "tracing": {
+    "verbosity": 0,
+    "disable_labels": false,
+    "compact_labels": false,
+    "decode_internal": false,
+    "external_identification_timeout": 5
+  },
   "ffi": false,
+  "live_logs": false,
   "allow_internal_expect_revert": false,
   "always_use_create_2_factory": false,
+  "eip1559_fee_estimate": "market",
   "prompt_timeout": 120,
   "sender": "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38",
   "tx_origin": "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38",
@@ -1325,6 +2351,8 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "names": false,
   "sizes": false,
   "via_ir": false,
+  "via_ssa_cfg": false,
+  "experimental": false,
   "ast": false,
   "rpc_storage_caching": {
     "chains": "all",
@@ -1370,18 +2398,21 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "exclude_lints": [],
     "ignore": [],
     "lint_on_build": true,
-    "mixed_case_exceptions": [
-      "ERC",
-      "URI",
-      "ID",
-      "URL",
-      "API",
-      "JSON",
-      "XML",
-      "HTML",
-      "HTTP",
-      "HTTPS"
-    ]
+    "lint_specific": {
+      "mixed_case_exceptions": [
+        "ERC",
+        "URI",
+        "ID",
+        "URL",
+        "API",
+        "JSON",
+        "XML",
+        "HTML",
+        "HTTP",
+        "HTTPS"
+      ],
+      "multi_contract_file_exceptions": []
+    }
   },
   "doc": {
     "out": "docs",
@@ -1401,10 +2432,9 @@ forgetest_init!(test_default_config, |prj, cmd| {
       "path": "out"
     }
   ],
-  "isolate": false,
+  "isolate": true,
   "disable_block_gas_limit": false,
   "enable_tx_gas_limit": false,
-  "labels": {},
   "unchecked_cheatcode_artifacts": false,
   "decode_external_storage": false,
   "create2_library_salt": "0x0000000000000000000000000000000000000000000000000000000000000000",
@@ -1414,6 +2444,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "soldeer": null,
   "assertions_revert": true,
   "legacy_assertions": false,
+  "network": null,
   "celo": false,
   "bypass_prevrandao": false,
   "transaction_timeout": 120,
@@ -1944,12 +2975,7 @@ forgetest_init!(test_exclude_lints_config, |prj, cmd| {
             "unwrapped-modifier-logic".to_string(),
         ]
     });
-    cmd.args(["lint"]).assert_success().stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
-"#]]);
+    cmd.args(["lint"]).assert_success().stdout_eq("");
 });
 
 // <https://github.com/foundry-rs/foundry/issues/6529>
@@ -1990,6 +3016,23 @@ forgetest!(config_deny_warnings_is_deprecated, |prj, cmd| {
     fs::write(prj.root().join("foundry.toml"), faulty_toml).unwrap();
     cmd.forge_fuse().args(["config"]).assert_success().stderr_eq(str![[r#"
 Warning: Key `deny_warnings` is being deprecated in favor of `deny = warnings`. It will be removed in future versions.
+
+"#]]);
+});
+
+forgetest!(config_labels_is_deprecated, |prj, cmd| {
+    cmd.git_init();
+
+    fs::write(
+        prj.root().join("foundry.toml"),
+        r#"
+[labels]
+0x0000000000000000000000000000000000000001 = "Alice"
+"#,
+    )
+    .unwrap();
+    cmd.forge_fuse().args(["config"]).assert_success().stderr_eq(str![[r#"
+Warning: Key `[labels]` is being deprecated in favor of `[tracing.labels]`. It will be removed in future versions.
 
 "#]]);
 });

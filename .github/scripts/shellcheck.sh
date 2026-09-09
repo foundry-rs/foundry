@@ -13,7 +13,10 @@ for dir in "${IGNORE_DIRS[@]}"; do
   ignore_args+=(-not -path "$dir")
 done
 
-find . -name "*.sh" "${ignore_args[@]}" -exec shellcheck -f gcc {} + | \
+# Also lint the extensionless foundryup scripts, which `*.sh` would miss.
+find . \
+  \( -name "*.sh" -o -path "./foundryup/foundryup" -o -path "./foundryup/install" \) \
+  "${ignore_args[@]}" -exec shellcheck -f gcc {} + | \
   while IFS=: read -r file line col severity msg; do
     level="warning"
     [[ "$severity" == *error* ]] && level="error"

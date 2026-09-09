@@ -3,8 +3,9 @@ name: CI
 permissions: {}
 
 on:
+  push:
+    branches: [master]
   pull_request:
-  merge_group:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -16,13 +17,21 @@ env:
   RUSTC_WRAPPER: "sccache"
 
 jobs:
+  cargo-cooldown:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/cargo-cooldown.yml
+
   test:
     uses: ./.github/workflows/test.yml
     permissions:
       contents: read
     with:
       profile: default
-    secrets: inherit
+    secrets:
+      ETHERSCAN_API_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
+      ARBITRUM_RPC: ${{ secrets.ARBITRUM_RPC }}
+      ETH_SEPOLIA_RPC: ${{ secrets.ETH_SEPOLIA_RPC }}
 
   docs:
     uses: ./.github/workflows/docs.yml
@@ -30,24 +39,85 @@ jobs:
       contents: read
       pages: write
       id-token: write
-    secrets: inherit
 
   doctest:
+    needs: cargo-cooldown
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
           toolchain: stable
-      - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
-      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
-      - run: cargo test --workspace --doc
+      - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
+      - name: Install Linux system dependencies
+        run: sudo apt-get update && sudo apt-get install --yes libudev-dev
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          cache-bin: false
+          prefix-key: v2-rust-doctest
+      - run: cargo test --workspace --doc --locked
+
+  no-default-features:
+    needs: cargo-cooldown
+    runs-on: depot-ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
+      - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
+      - name: Install Linux system dependencies
+        run: sudo apt-get update && sudo apt-get install --yes libudev-dev
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          cache-bin: false
+          prefix-key: v1-rust-no-default-features
+      - run: cargo build --workspace --no-default-features --locked
+
+  touch-id-link:
+    name: touch-id link (macOS)
+    if: github.event_name == 'push'
+    needs: cargo-cooldown
+    runs-on: depot-macos-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          cache-bin: false
+          prefix-key: v1-rust-touch-id-macos
+      - name: Run native Touch ID regressions
+        run: |
+          cargo test --manifest-path crates/cast/Cargo.toml --lib --features touch-id --target aarch64-apple-darwin --locked cmd::wallet::tests
+          cargo test --manifest-path crates/cast/Cargo.toml --test cli --features touch-id --target aarch64-apple-darwin --locked wallet_change_password
+      - name: Check Intel Touch ID linking
+        run: |
+          cargo test --manifest-path crates/cast/Cargo.toml --test cli --features touch-id --target x86_64-apple-darwin --locked --no-run
+          cargo build --manifest-path crates/forge/Cargo.toml --features touch-id --target x86_64-apple-darwin --locked
+      - run: cargo build --manifest-path crates/forge/Cargo.toml --features touch-id --target aarch64-apple-darwin --locked
 
   typos:
     runs-on: depot-ubuntu-latest
@@ -55,10 +125,10 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: crate-ci/typos@78bc6fb2c0d734235d57a2d6b9de923cc325ebdd # v1
+      - uses: crate-ci/typos@4d9c206a77c041268485162b8e2579ad7a5cb9a3 # v1.50.0
 
   shellcheck:
     runs-on: depot-ubuntu-latest
@@ -66,30 +136,48 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Shellcheck
         shell: bash
         run: ./.github/scripts/shellcheck.sh
+      - name: foundryup tests
+        shell: bash
+        run: ./foundryup/test.sh
+
+  github-scripts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Test GitHub scripts
+        run: |
+          python3 -m unittest discover -s .github/scripts/tests -p 'test_*.py'
+          node --test .github/scripts/tests/test-create-tag.js
 
   clippy:
+    needs: cargo-cooldown
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
           toolchain: nightly
           components: clippy
-      - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
-      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
-      - run: cargo clippy --workspace --all-targets --all-features
+      - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo clippy --workspace --all-targets --all-features --locked
         env:
           RUSTFLAGS: -Dwarnings
 
@@ -99,58 +187,52 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
           toolchain: nightly
           components: rustfmt
       - run: cargo fmt --all --check
 
   forge-fmt:
+    needs: cargo-cooldown
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
           toolchain: stable
-      - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
-      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+      - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
+      - name: Install Linux system dependencies
+        run: sudo apt-get update && sudo apt-get install --yes libudev-dev
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          cache-bin: false
+          prefix-key: v2-rust-forge-fmt
       - name: forge fmt
         shell: bash
         run: ./.github/scripts/format.sh --check
 
-  crate-checks:
-    runs-on: depot-ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
-        with:
-          toolchain: stable
-      - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
-      - uses: taiki-e/install-action@1e67dedb5e3c590e1c9d9272ace46ef689da250d # v2
-        with:
-          tool: cargo-hack
-      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
-      - run: cargo hack check
-
   deny:
-    uses: tempoxyz/ci/.github/workflows/deny.yml@268b3ce142717ff86c58fbbcc3abc3f109f0fb8d # main
+    needs: cargo-cooldown
+    uses: tempoxyz/gh-actions/.github/workflows/rust-lint.yml@5aecd9fd9dca5935851b94f7cb853465e7f9158f # main
     permissions:
       contents: read
+    secrets:
+      STEP_SECURITY_API_KEY: ${{ secrets.STEP_SECURITY_API_KEY }}
+    with:
+      run-clippy: false
+      run-fmt: false
+      run-typos: false
+      deny-rust-toolchain: nightly
 
   codeql:
     name: analyze (${{ matrix.language }})
@@ -167,37 +249,54 @@ jobs:
             build-mode: none
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v4
+        uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v4
+        uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
         with:
           category: "/language:${{matrix.language}}"
+
+  workflow-validation:
+    name: Workflow Validation
+    uses: tempoxyz/gh-actions/.github/workflows/scan-github-actions.yml@5aecd9fd9dca5935851b94f7cb853465e7f9158f # main
+    permissions:
+      actions: read
+      contents: read
+    secrets:
+      STEP_SECURITY_API_KEY: ${{ secrets.STEP_SECURITY_API_KEY }}
+    with:
+      pinact: true
 
   ci-success:
     runs-on: ubuntu-latest
     if: always()
     permissions: {}
     needs:
+      - cargo-cooldown
       - test
       - docs
       - doctest
+      - no-default-features
+      - touch-id-link
       - typos
+      - shellcheck
+      - github-scripts
       - clippy
       - rustfmt
       - forge-fmt
-      - crate-checks
       - deny
       - codeql
+      - workflow-validation
     timeout-minutes: 30
     steps:
       - name: Decide whether the needed jobs succeeded or failed
-        uses: re-actors/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe # release/v1
+        uses: re-actors/alls-green@b5b5b37504aa4183270bd3d855c52a67f212be35 # v1.3.0
         with:
+          allowed-skips: touch-id-link
           jobs: ${{ toJSON(needs) }}

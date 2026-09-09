@@ -752,3 +752,145 @@ Ran 1 test suite [ELAPSED]: 52 tests passed, 0 failed, 0 skipped (52 total tests
 
 "#]]);
 });
+
+forgetest_init!(test_can_run_with_live_logs_flag, |prj, cmd| {
+    prj.add_test(
+        "Foo.t.sol",
+        r#"
+import {Test, console} from "forge-std/Test.sol";
+
+contract Foo is Test {
+    function setUp() pure public {
+        console.log("Setup");
+    }
+
+    function test1() pure public {
+        console.log("Test 1");
+    }
+}
+    "#,
+    );
+
+    cmd.forge_fuse()
+        .args(["test", "--live-logs", "--match-test", "test1"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Setup
+Test 1
+
+Ran 1 test for test/Foo.t.sol:Foo
+[PASS] test1() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+});
+
+forgetest_init!(test_can_run_with_live_logs_config, |prj, cmd| {
+    prj.update_config(|config| {
+        config.live_logs = true;
+    });
+
+    prj.add_test(
+        "Foo.t.sol",
+        r#"
+import {Test, console} from "forge-std/Test.sol";
+
+contract Foo is Test {
+    function setUp() pure public {
+        console.log("Setup");
+    }
+
+    function test1() pure public {
+        console.log("Test 1");
+    }
+}
+    "#,
+    );
+
+    cmd.forge_fuse().args(["test", "--match-test", "test1"]).assert_success().stdout_eq(str![[
+        r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Setup
+Test 1
+
+Ran 1 test for test/Foo.t.sol:Foo
+[PASS] test1() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#
+    ]]);
+});
+
+forgetest_init!(test_can_run_with_live_logs_flag_race_condition, |prj, cmd| {
+    prj.add_test(
+        "Foo.t.sol",
+        r#"
+import {Test, console} from "forge-std/Test.sol";
+
+contract Foo is Test {
+    function setUp() pure public {
+        console.log("Setup");
+    }
+
+    function test1() pure public {
+        console.log("Test 1");
+    }
+
+    function test2() pure public {
+        console.log("Test 2");
+    }
+}
+    "#,
+    );
+
+    // Two threads. Inconsistent printing order.
+    cmd.forge_fuse().args(["test", "--live-logs", "--threads", "2"]).assert_success().stdout_eq(
+        str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Setup
+Test [..]
+Test [..]
+
+Ran 2 tests for test/Foo.t.sol:Foo
+[PASS] test1() ([GAS])
+[PASS] test2() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]],
+    );
+
+    // Single thread. Deterministic printing order.
+
+    for _ in 0..10 {
+        cmd.forge_fuse()
+            .args(["test", "--live-logs", "--threads", "1"])
+            .assert_success()
+            .stdout_eq(str![[r#"
+No files changed, compilation skipped
+Setup
+Test 1
+Test 2
+
+Ran 2 tests for test/Foo.t.sol:Foo
+[PASS] test1() ([GAS])
+[PASS] test2() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]]);
+    }
+});

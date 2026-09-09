@@ -11,24 +11,13 @@ if [ -z "$RESULTS_FILE" ] || [ ! -f "$RESULTS_FILE" ]; then
     exit 1
 fi
 
-# Read the file content
-CONTENT=$(cat "$RESULTS_FILE")
-
-# Find where "## Forge Build" starts and split the content
-# Extract everything before "## Forge Build"
-BEFORE_FORGE_BUILD=$(echo "$CONTENT" | awk '/^## Forge Build$/ {exit} {print}')
-
-# Extract everything from "## Forge Build" onwards
-FROM_FORGE_BUILD=$(echo "$CONTENT" | awk '/^## Forge Build$/ {found=1} found {print}')
-
-# Output the formatted comment with dropdown
-cat << EOF
-${BEFORE_FORGE_BUILD}
-
+# Keep the headline comparison compact; the generated absolute-time report is
+# still available for auditing without dominating the PR conversation.
+cat <<EOF
 <details>
-<summary>📈 View all benchmark results</summary>
+<summary>Full benchmark results</summary>
 
-${FROM_FORGE_BUILD}
+$(cat "$RESULTS_FILE")
 
 </details>
 EOF

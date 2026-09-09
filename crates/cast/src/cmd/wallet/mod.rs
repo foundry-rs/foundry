@@ -1,3 +1,4 @@
+use crate::cmd::{confirm_continue, rpc_provider};
 use alloy_chains::Chain;
 use alloy_dyn_abi::TypedData;
 use alloy_primitives::{Address, B256, Signature, U256, hex};
@@ -10,13 +11,19 @@ use alloy_signer_local::{
 };
 use clap::Parser;
 use eyre::{Context, Result};
-use foundry_cli::{opts::RpcOpts, utils, utils::LoadConfig};
-use foundry_common::{fs, sh_println, shell};
+use foundry_cli::{
+    json::{print_json_success, print_scalar},
+    opts::RpcOpts,
+};
+use foundry_common::{errors::FsPathError, fs, sh_println, shell};
 use foundry_config::Config;
-use foundry_wallets::{RawWalletOpts, WalletOpts, WalletSigner};
+use foundry_wallets::{BrowserWalletOpts, RawWalletOpts, WalletOpts, WalletSigner};
 use rand_08::thread_rng;
-use serde_json::json;
-use std::path::Path;
+use serde_json::{Value, json};
+use std::{
+    ffi::OsString,
+    path::{Path, PathBuf},
+};
 use yansi::Paint;
 
 pub mod vanity;
@@ -25,13 +32,30 @@ use vanity::VanityArgs;
 pub mod list;
 use list::ListArgs;
 
+mod process_tree;
+
+pub mod session;
+use session::SessionArgs;
+
+mod touch_id;
+use touch_id::TouchIdArgs;
+
 /// CLI arguments for `cast wallet`.
 #[derive(Debug, Parser)]
 pub enum WalletSubcommands {
-    /// Create a new random keypair.
-    #[command(visible_alias = "n")]
+    /// Create a new random keypair
+    ///
+    /// Examples:
+    /// - cast wallet new (print a new private key and address)
+    /// - cast wallet new my-wallet (save to the default keystore directory)
+    /// - cast wallet new ~/.foundry/keystores dev (save to an encrypted keystore)
+    #[command(verbatim_doc_comment, visible_alias = "n")]
     New {
         /// If provided, then keypair will be written to an encrypted JSON keystore.
+        ///
+        /// A single bare argument that is not an existing directory is treated as ACCOUNT_NAME and
+        /// saved under the default keystore directory (`~/.foundry/keystores`), matching
+        /// `cast wallet import <name>`.
         path: Option<String>,
 
         /// Account name for the keystore file. If provided, the keystore file
@@ -54,6 +78,16 @@ pub enum WalletSubcommands {
         /// Number of wallets to generate.
         #[arg(long, short, default_value = "1")]
         number: u32,
+
+        /// Overwrite existing keystore files without prompting.
+        #[arg(long)]
+        force: bool,
+
+        /// Enroll the keystore for Touch ID-assisted authentication on macOS.
+        ///
+        /// The macOS login password and explicit keystore passwords remain available.
+        #[arg(long, hide = !cfg!(all(target_os = "macos", feature = "touch-id")))]
+        touch_id: bool,
     },
 
     /// Generates a random BIP39 mnemonic phrase
@@ -85,10 +119,17 @@ pub enum WalletSubcommands {
 
         #[command(flatten)]
         wallet: WalletOpts,
+
+        #[command(flatten)]
+        browser: BrowserWalletOpts,
     },
 
     /// Derive accounts from a mnemonic
-    #[command(visible_alias = "d")]
+    ///
+    /// Examples:
+    /// - cast wallet derive "test test test test test test test test test test test junk"
+    /// - cast wallet derive "$MNEMONIC" --accounts 5
+    #[command(verbatim_doc_comment, visible_alias = "d")]
     Derive {
         /// The accounts will be derived from the specified mnemonic phrase.
         #[arg(value_name = "MNEMONIC")]
@@ -103,8 +144,13 @@ pub enum WalletSubcommands {
         insecure: bool,
     },
 
-    /// Sign a message or typed data.
-    #[command(visible_alias = "s")]
+    /// Sign a message or typed data
+    ///
+    /// Examples:
+    /// - cast wallet sign "hello" --account dev
+    /// - cast wallet sign "hello" --private-key $PK
+    /// - cast wallet sign --data --from-file typed_data.json --ledger
+    #[command(verbatim_doc_comment, visible_alias = "s")]
     Sign {
         /// The message, typed data, or hash to sign.
         ///
@@ -135,6 +181,9 @@ pub enum WalletSubcommands {
 
         #[command(flatten)]
         wallet: WalletOpts,
+
+        #[command(flatten)]
+        browser: BrowserWalletOpts,
     },
 
     /// EIP-7702 sign authorization.
@@ -152,6 +201,10 @@ pub enum WalletSubcommands {
         #[arg(long)]
         chain: Option<Chain>,
 
+        /// Skip the confirmation prompt for wildcard chain authorizations.
+        #[arg(long)]
+        force: bool,
+
         /// If set, indicates the authorization will be broadcast by the signing account itself.
         /// This means the nonce used will be the current nonce + 1 (to account for the
         /// transaction that will include this authorization).
@@ -162,8 +215,12 @@ pub enum WalletSubcommands {
         wallet: WalletOpts,
     },
 
-    /// Verify the signature of a message.
-    #[command(visible_alias = "v")]
+    /// Verify the signature of a message
+    ///
+    /// Examples:
+    /// - cast wallet verify --address $ADDRESS "hello" $SIGNATURE
+    /// - cast wallet verify --address $ADDRESS --no-hash $HASH $SIGNATURE
+    #[command(verbatim_doc_comment, visible_alias = "v")]
     Verify {
         /// The original message.
         ///
@@ -200,8 +257,13 @@ pub enum WalletSubcommands {
         no_hash: bool,
     },
 
-    /// Import a private key into an encrypted keystore.
-    #[command(visible_alias = "i")]
+    /// Import a private key into an encrypted keystore
+    ///
+    /// Examples:
+    /// - cast wallet import dev --interactive (prompt for the private key)
+    /// - cast wallet import dev --private-key $PK
+    /// - cast wallet import dev --mnemonic "$MNEMONIC" --mnemonic-index 1
+    #[command(verbatim_doc_comment, visible_alias = "i")]
     Import {
         /// The name for the account in the keystore.
         #[arg(value_name = "ACCOUNT_NAME")]
@@ -214,6 +276,11 @@ pub enum WalletSubcommands {
         /// This is unsafe, we recommend using the default hidden password prompt
         #[arg(long, env = "CAST_UNSAFE_PASSWORD", value_name = "PASSWORD")]
         unsafe_password: Option<String>,
+        /// Enroll the keystore for Touch ID-assisted authentication on macOS.
+        ///
+        /// The macOS login password and explicit keystore passwords remain available.
+        #[arg(long, hide = !cfg!(all(target_os = "macos", feature = "touch-id")))]
+        touch_id: bool,
         #[command(flatten)]
         raw_wallet_options: RawWalletOpts,
     },
@@ -221,6 +288,12 @@ pub enum WalletSubcommands {
     /// List all the accounts in the keystore default directory
     #[command(visible_alias = "ls")]
     List(ListArgs),
+
+    /// Manage temporary Tempo wallet sessions.
+    Session(SessionArgs),
+
+    /// Manage Touch ID enrollment for encrypted keystores.
+    TouchId(TouchIdArgs),
 
     /// Remove a wallet from the keystore.
     ///
@@ -242,7 +315,12 @@ pub enum WalletSubcommands {
     },
 
     /// Derives private key from mnemonic
-    #[command(name = "private-key", visible_alias = "pk", aliases = &["derive-private-key", "--derive-private-key"])]
+    ///
+    /// Examples:
+    /// - cast wallet private-key "test test test test test test test test test test test junk"
+    /// - cast wallet private-key "$MNEMONIC" 1 (derive the key at index 1)
+    /// - cast wallet private-key "$MNEMONIC" "m/44'/60'/0'/0/1" (use a custom path)
+    #[command(verbatim_doc_comment, name = "private-key", visible_alias = "pk", aliases = &["derive-private-key", "--derive-private-key"])]
     PrivateKey {
         /// If provided, the private key will be derived from the specified mnemonic phrase.
         #[arg(value_name = "MNEMONIC")]
@@ -306,126 +384,44 @@ pub enum WalletSubcommands {
 impl WalletSubcommands {
     pub async fn run(self) -> Result<()> {
         match self {
-            Self::New { path, account_name, unsafe_password, number, password } => {
-                let mut rng = thread_rng();
+            Self::New {
+                path,
+                mut account_name,
+                unsafe_password,
+                number,
+                password,
+                force,
+                touch_id,
+            } => {
+                ensure_touch_id_available(touch_id)?;
 
-                let mut json_values = if shell::is_json() { Some(vec![]) } else { None };
-
-                let path = if let Some(path) = path {
-                    match dunce::canonicalize(&path) {
-                        Ok(path) => {
-                            if !path.is_dir() {
-                                // we require path to be an existing directory
-                                eyre::bail!("`{}` is not a directory", path.display());
-                            }
-                            Some(path)
-                        }
-                        Err(e) => {
-                            eyre::bail!(
-                                "If you specified a directory, please make sure it exists, or create it before running `cast wallet new <DIR>`.\n{path} is not a directory.\nError: {}",
-                                e
-                            );
-                        }
+                let path = match path {
+                    Some(path) => Some(resolve_new_dir(path, &mut account_name)?),
+                    None if unsafe_password.is_some() || password || touch_id => {
+                        let path = resolve_keystore_dir(None)?;
+                        fs::create_dir_all(&path)?;
+                        Some(path)
                     }
-                } else if unsafe_password.is_some() || password {
-                    let path = Config::foundry_keystores_dir().ok_or_else(|| {
-                        eyre::eyre!("Could not find the default keystore directory.")
-                    })?;
-                    fs::create_dir_all(&path)?;
-                    Some(path)
-                } else {
-                    None
+                    None => None,
                 };
 
-                match path {
-                    Some(path) => {
-                        let password = if let Some(password) = unsafe_password {
-                            password
-                        } else {
-                            // if no --unsafe-password was provided read via stdin
-                            rpassword::prompt_password("Enter secret: ")?
-                        };
-
-                        for i in 0..number {
-                            let account_name_ref =
-                                account_name.as_deref().map(|name| match number {
-                                    1 => name.to_string(),
-                                    _ => format!("{}_{}", name, i + 1),
-                                });
-
-                            let (wallet, uuid) = PrivateKeySigner::new_keystore(
-                                &path,
-                                &mut rng,
-                                password.clone(),
-                                account_name_ref.as_deref(),
-                            )?;
-                            let identifier = account_name_ref.as_deref().unwrap_or(&uuid);
-
-                            if let Some(json) = json_values.as_mut() {
-                                json.push(if shell::verbosity() > 0 {
-                                json!({
-                                    "address": wallet.address().to_checksum(None),
-                                    "public_key": format!("0x{}", hex::encode(wallet.public_key())),
-                                    "path": format!("{}", path.join(identifier).display()),
-                                })
-                            } else {
-                                json!({
-                                    "address": wallet.address().to_checksum(None),
-                                    "path": format!("{}", path.join(identifier).display()),
-                                })
-                            });
-                            } else {
-                                sh_println!(
-                                    "Created new encrypted keystore file: {}",
-                                    path.join(identifier).display()
-                                )?;
-                                sh_println!("Address:    {}", wallet.address().to_checksum(None))?;
-                                if shell::verbosity() > 0 {
-                                    sh_println!(
-                                        "Public key: 0x{}",
-                                        hex::encode(wallet.public_key())
-                                    )?;
-                                }
-                            }
-                        }
-                    }
-                    None => {
-                        for _ in 0..number {
-                            let wallet = PrivateKeySigner::random_with(&mut rng);
-
-                            if let Some(json) = json_values.as_mut() {
-                                json.push(if shell::verbosity() > 0 {
-                                json!({
-                                    "address": wallet.address().to_checksum(None),
-                                    "public_key": format!("0x{}", hex::encode(wallet.public_key())),
-                                    "private_key": format!("0x{}", hex::encode(wallet.credential().to_bytes())),
-                                })
-                            } else {
-                                json!({
-                                    "address": wallet.address().to_checksum(None),
-                                    "private_key": format!("0x{}", hex::encode(wallet.credential().to_bytes())),
-                                })
-                            });
-                            } else {
-                                sh_println!("Successfully created new keypair.")?;
-                                sh_println!("Address:     {}", wallet.address().to_checksum(None))?;
-                                if shell::verbosity() > 0 {
-                                    sh_println!(
-                                        "Public key:  0x{}",
-                                        hex::encode(wallet.public_key())
-                                    )?;
-                                }
-                                sh_println!(
-                                    "Private key: 0x{}",
-                                    hex::encode(wallet.credential().to_bytes())
-                                )?;
-                            }
-                        }
-                    }
+                if let Some(name) = &account_name {
+                    ensure_account_name_available(name)?;
                 }
 
-                if let Some(json) = json_values.as_ref() {
-                    sh_println!("{}", serde_json::to_string_pretty(json)?)?;
+                let json = match path {
+                    Some(path) => new_keystores(
+                        &path,
+                        account_name.as_deref(),
+                        unsafe_password,
+                        number,
+                        force,
+                        touch_id,
+                    )?,
+                    None => new_keypairs(number)?,
+                };
+                if shell::is_json() {
+                    print_json_success(json)?;
                 }
             }
             Self::NewMnemonic { words, accounts, entropy } => {
@@ -433,23 +429,23 @@ impl WalletSubcommands {
                     let entropy = Entropy::from_slice(hex::decode(entropy)?)?;
                     Mnemonic::<English>::new_from_entropy(entropy).to_phrase()
                 } else {
-                    let mut rng = thread_rng();
-                    Mnemonic::<English>::new_with_count(&mut rng, words)?.to_phrase()
+                    Mnemonic::<English>::new_with_count(&mut thread_rng(), words)?.to_phrase()
                 };
 
                 let format_json = shell::is_json();
-
                 if !format_json {
                     sh_println!("{}", "Generating mnemonic from provided entropy...".yellow())?;
                 }
 
                 let builder = MnemonicBuilder::<English>::default().phrase(phrase.as_str());
-                let derivation_path = "m/44'/60'/0'/0/";
                 let wallets = (0..accounts)
-                    .map(|i| builder.clone().derivation_path(format!("{derivation_path}{i}")))
-                    .collect::<Result<Vec<_>, _>>()?;
-                let wallets =
-                    wallets.into_iter().map(|b| b.build()).collect::<Result<Vec<_>, _>>()?;
+                    .map(|i| -> Result<_> {
+                        Ok(builder
+                            .clone()
+                            .derivation_path(format!("m/44'/60'/0'/0/{i}"))?
+                            .build()?)
+                    })
+                    .collect::<Result<Vec<_>>>()?;
 
                 if !format_json {
                     sh_println!("{}", "Successfully generated a new mnemonic.".green())?;
@@ -457,326 +453,294 @@ impl WalletSubcommands {
                     sh_println!("\nAccounts:")?;
                 }
 
-                let mut accounts = json!([]);
+                let mut accounts = Vec::new();
                 for (i, wallet) in wallets.iter().enumerate() {
-                    let public_key = hex::encode(wallet.public_key());
-                    let private_key = hex::encode(wallet.credential().to_bytes());
+                    let public_key = format!("0x{}", hex::encode(wallet.public_key()));
+                    let private_key = format!("0x{}", hex::encode(wallet.credential().to_bytes()));
                     if format_json {
-                        accounts.as_array_mut().unwrap().push(if shell::verbosity() > 0 {
-                            json!({
-                                "address": format!("{}", wallet.address()),
-                                "public_key": format!("0x{}", public_key),
-                                "private_key": format!("0x{}", private_key),
-                            })
-                        } else {
-                            json!({
-                                "address": format!("{}", wallet.address()),
-                                "private_key": format!("0x{}", private_key),
-                            })
-                        });
+                        let mut account = serde_json::Map::new();
+                        account.insert("address".into(), json!(wallet.address().to_string()));
+                        if shell::verbosity() > 0 {
+                            account.insert("public_key".into(), json!(public_key));
+                        }
+                        account.insert("private_key".into(), json!(private_key));
+                        accounts.push(Value::Object(account));
                     } else {
                         sh_println!("- Account {i}:")?;
                         sh_println!("Address:     {}", wallet.address())?;
                         if shell::verbosity() > 0 {
-                            sh_println!("Public key:  0x{}", public_key)?;
+                            sh_println!("Public key:  {public_key}")?;
                         }
-                        sh_println!("Private key: 0x{}\n", private_key)?;
+                        sh_println!("Private key: {private_key}\n")?;
                     }
                 }
 
                 if format_json {
-                    let obj = json!({
-                        "mnemonic": phrase,
-                        "accounts": accounts,
-                    });
-                    sh_println!("{}", serde_json::to_string_pretty(&obj)?)?;
+                    print_json_success(json!({ "mnemonic": phrase, "accounts": accounts }))?;
                 }
             }
             Self::Vanity(cmd) => {
                 cmd.run()?;
             }
-            Self::Address { wallet, private_key_override } => {
-                let wallet = private_key_override
-                    .map(|pk| WalletOpts {
-                        raw: RawWalletOpts { private_key: Some(pk), ..Default::default() },
-                        ..Default::default()
-                    })
-                    .unwrap_or(wallet)
-                    .signer()
-                    .await?;
-                let addr = wallet.address();
-                sh_println!("{}", addr.to_checksum(None))?;
+            Self::Address { wallet, browser, private_key_override } => {
+                let addr = if let Some(pk) = private_key_override {
+                    raw_wallet(RawWalletOpts { private_key: Some(pk), ..Default::default() })
+                        .signer()
+                        .await?
+                        .address()
+                } else if let Some(browser) = browser.run::<alloy_network::Ethereum>().await? {
+                    browser.address()
+                } else {
+                    wallet.signer().await?.address()
+                };
+                print_scalar(addr.to_checksum(None))?;
             }
             Self::Derive { mnemonic, accounts, insecure } => {
                 let format_json = shell::is_json();
-                let mut accounts_json = json!([]);
+                let mut accounts_json = Vec::new();
                 for i in 0..accounts.unwrap_or(1) {
-                    let wallet = WalletOpts {
-                        raw: RawWalletOpts {
-                            mnemonic: Some(mnemonic.clone()),
-                            mnemonic_index: i as u32,
-                            ..Default::default()
-                        },
+                    let wallet = raw_wallet(RawWalletOpts {
+                        mnemonic: Some(mnemonic.clone()),
+                        mnemonic_index: i as u32,
                         ..Default::default()
-                    }
+                    })
                     .signer()
                     .await?;
+                    let WalletSigner::Local(wallet) = wallet else {
+                        eyre::bail!("Only local wallets are supported by this command");
+                    };
 
-                    match wallet {
-                        WalletSigner::Local(local_wallet) => {
-                            let address = local_wallet.address().to_checksum(None);
-                            let private_key = hex::encode(local_wallet.credential().to_bytes());
-                            if format_json {
-                                if insecure {
-                                    accounts_json.as_array_mut().unwrap().push(json!({
-                                        "address": format!("{}", address),
-                                        "private_key": format!("0x{}", private_key),
-                                    }));
-                                } else {
-                                    accounts_json.as_array_mut().unwrap().push(json!({
-                                        "address": format!("{}", address)
-                                    }));
-                                }
-                            } else {
-                                sh_println!("- Account {i}:")?;
-                                if insecure {
-                                    sh_println!("Address:     {}", address)?;
-                                    sh_println!("Private key: 0x{}\n", private_key)?;
-                                } else {
-                                    sh_println!("Address:     {}\n", address)?;
-                                }
-                            }
+                    let address = wallet.address().to_checksum(None);
+                    let private_key = format!("0x{}", hex::encode(wallet.credential().to_bytes()));
+                    if format_json {
+                        accounts_json.push(if insecure {
+                            json!({ "address": address, "private_key": private_key })
+                        } else {
+                            json!({ "address": address })
+                        });
+                    } else {
+                        sh_println!("- Account {i}:")?;
+                        if insecure {
+                            sh_println!("Address:     {address}")?;
+                            sh_println!("Private key: {private_key}\n")?;
+                        } else {
+                            sh_println!("Address:     {address}\n")?;
                         }
-                        _ => eyre::bail!("Only local wallets are supported by this command"),
                     }
                 }
 
                 if format_json {
-                    sh_println!("{}", serde_json::to_string_pretty(&accounts_json)?)?;
+                    print_json_success(accounts_json)?;
                 }
             }
             Self::PublicKey { wallet, private_key_override } => {
                 let wallet = private_key_override
-                    .map(|pk| WalletOpts {
-                        raw: RawWalletOpts { private_key: Some(pk), ..Default::default() },
-                        ..Default::default()
+                    .map(|pk| {
+                        raw_wallet(RawWalletOpts { private_key: Some(pk), ..Default::default() })
                     })
                     .unwrap_or(wallet)
                     .signer()
                     .await?;
-
-                let public_key = match wallet {
-                    WalletSigner::Local(wallet) => wallet.public_key(),
-                    _ => eyre::bail!("Only local wallets are supported by this command"),
+                let WalletSigner::Local(wallet) = wallet else {
+                    eyre::bail!("Only local wallets are supported by this command");
                 };
-
-                sh_println!("0x{}", hex::encode(public_key))?;
+                print_scalar(format!("0x{}", hex::encode(wallet.public_key())))?;
             }
-            Self::Sign { message, data, from_file, no_hash, wallet } => {
-                let wallet = wallet.signer().await?;
-                let sig = if data {
-                    let typed_data: TypedData = if from_file {
-                        // data is a file name, read json from file
-                        foundry_common::fs::read_json_file(message.as_ref())?
-                    } else {
-                        // data is a json string
-                        serde_json::from_str(&message)?
-                    };
-                    wallet.sign_dynamic_typed_data(&typed_data).await?
-                } else if no_hash {
-                    wallet.sign_hash(&hex::decode(&message)?[..].try_into()?).await?
-                } else {
-                    wallet.sign_message(&Self::hex_str_to_bytes(&message)?).await?
-                };
+            Self::Sign { message, data, from_file, no_hash, wallet, browser } => {
+                if browser.browser && no_hash {
+                    eyre::bail!("Raw hash signing is not supported with a browser wallet");
+                }
 
-                if shell::verbosity() > 0 {
-                    if shell::is_json() {
-                        sh_println!(
-                            "{}",
-                            serde_json::to_string_pretty(&json!({
-                                "message": message,
-                                "address": wallet.address(),
-                                "signature": hex::encode(sig.as_bytes()),
-                            }))?
-                        )?;
+                let typed_data = data.then(|| parse_typed_data(&message, from_file)).transpose()?;
+
+                let (sig, address) =
+                    if let Some(browser) = browser.run::<alloy_network::Ethereum>().await? {
+                        let sig = if let Some(typed_data) = &typed_data {
+                            browser.sign_dynamic_typed_data(typed_data).await?
+                        } else {
+                            browser.sign_message(&hex_str_to_bytes(&message)?).await?
+                        };
+                        (sig, browser.address())
                     } else {
-                        sh_println!(
-                            "Successfully signed!\n   Message: {}\n   Address: {}\n   Signature: 0x{}",
-                            message,
-                            wallet.address(),
-                            hex::encode(sig.as_bytes()),
-                        )?;
-                    }
+                        let wallet = wallet.signer().await?;
+                        let sig = if let Some(typed_data) = &typed_data {
+                            wallet.sign_dynamic_typed_data(typed_data).await?
+                        } else if no_hash {
+                            wallet.sign_hash(&hex::decode(&message)?[..].try_into()?).await?
+                        } else {
+                            wallet.sign_message(&hex_str_to_bytes(&message)?).await?
+                        };
+                        (sig, wallet.address())
+                    };
+
+                let signature = hex::encode(sig.as_bytes());
+                if shell::verbosity() == 0 {
+                    print_scalar(format!("0x{signature}"))?;
+                } else if shell::is_json() {
+                    print_json_success(json!({
+                        "message": message,
+                        "address": address,
+                        "signature": signature,
+                    }))?;
                 } else {
-                    // Pipe friendly output
-                    sh_println!("0x{}", hex::encode(sig.as_bytes()))?;
+                    sh_status!("Successfully signed!")?;
+                    sh_status!("   Message: {message}")?;
+                    sh_status!("   Address: {address}")?;
+                    sh_println!("0x{signature}")?;
                 }
             }
-            Self::SignAuth { rpc, nonce, chain, wallet, address, self_broadcast } => {
-                let wallet = wallet.signer().await?;
-                let provider = utils::get_provider(&rpc.load_config()?)?;
-                let nonce = if let Some(nonce) = nonce {
-                    nonce
-                } else {
-                    let current_nonce = provider.get_transaction_count(wallet.address()).await?;
-                    if self_broadcast {
-                        // When self-broadcasting, the authorization nonce needs to be +1
-                        // because the transaction itself will consume the current nonce
-                        current_nonce + 1
-                    } else {
-                        current_nonce
-                    }
+            Self::SignAuth { rpc, nonce, chain, force, wallet, address, self_broadcast } => {
+                let provider = rpc_provider(&rpc)?;
+                let chain_id = match chain {
+                    Some(chain) => chain.id(),
+                    None => provider.get_chain_id().await?,
                 };
-                let chain_id = if let Some(chain) = chain {
-                    chain.id()
-                } else {
-                    provider.get_chain_id().await?
+                if chain_id == 0 && !force {
+                    sh_warn!(
+                        "Chain ID 0 creates an EIP-7702 authorization that is valid on every chain."
+                    )?;
+                    if !confirm_continue()? {
+                        return Ok(());
+                    }
+                }
+
+                let wallet = wallet.signer().await?;
+                let nonce = match nonce {
+                    Some(nonce) => nonce,
+                    // When self-broadcasting, the authorization nonce needs to be +1 because the
+                    // transaction itself will consume the current nonce.
+                    None => {
+                        provider.get_transaction_count(wallet.address()).await?
+                            + u64::from(self_broadcast)
+                    }
                 };
                 let auth = Authorization { chain_id: U256::from(chain_id), address, nonce };
                 let signature = wallet.sign_hash(&auth.signature_hash()).await?;
-                let auth = auth.into_signed(signature);
+                let signed = hex::encode_prefixed(alloy_rlp::encode(auth.into_signed(signature)));
 
-                if shell::verbosity() > 0 {
-                    if shell::is_json() {
-                        sh_println!(
-                            "{}",
-                            serde_json::to_string_pretty(&json!({
-                                "nonce": nonce,
-                                "chain_id": chain_id,
-                                "address": wallet.address(),
-                                "signature": hex::encode_prefixed(alloy_rlp::encode(&auth)),
-                            }))?
-                        )?;
-                    } else {
-                        sh_println!(
-                            "Successfully signed!\n   Nonce: {}\n   Chain ID: {}\n   Address: {}\n   Signature: 0x{}",
-                            nonce,
-                            chain_id,
-                            wallet.address(),
-                            hex::encode_prefixed(alloy_rlp::encode(&auth)),
-                        )?;
-                    }
+                if shell::verbosity() == 0 {
+                    print_scalar(signed)?;
+                } else if shell::is_json() {
+                    print_json_success(json!({
+                        "nonce": nonce,
+                        "chain_id": chain_id,
+                        "address": wallet.address(),
+                        "signature": signed,
+                    }))?;
                 } else {
-                    // Pipe friendly output
-                    sh_println!("{}", hex::encode_prefixed(alloy_rlp::encode(&auth)))?;
+                    sh_status!("Successfully signed!")?;
+                    sh_status!("   Nonce: {nonce}")?;
+                    sh_status!("   Chain ID: {chain_id}")?;
+                    sh_status!("   Address: {}", wallet.address())?;
+                    sh_println!("{signed}")?;
                 }
             }
             Self::Verify { message, signature, address, data, from_file, no_hash } => {
-                let recovered_address = if data {
-                    let typed_data: TypedData = if from_file {
-                        // data is a file name, read json from file
-                        foundry_common::fs::read_json_file(message.as_ref())?
-                    } else {
-                        // data is a json string
-                        serde_json::from_str(&message)?
-                    };
-                    Self::recover_address_from_typed_data(&typed_data, &signature)?
-                } else if no_hash {
-                    Self::recover_address_from_message_no_hash(
-                        &hex::decode(&message)?[..].try_into()?,
-                        &signature,
-                    )?
-                } else {
-                    Self::recover_address_from_message(&message, &signature)?
-                };
+                let recovered_address =
+                    recover_signer(&message, &signature, data, from_file, no_hash)?;
 
-                if address == recovered_address {
-                    sh_println!("Validation succeeded. Address {address} signed this message.")?;
-                } else {
+                if address != recovered_address {
                     eyre::bail!("Validation failed. Address {address} did not sign this message.");
                 }
-            }
-            Self::Import { account_name, keystore_dir, unsafe_password, raw_wallet_options } => {
-                // Set up keystore directory
-                let dir = if let Some(path) = keystore_dir {
-                    Path::new(&path).to_path_buf()
+                if shell::is_json() {
+                    print_json_success(json!({"address": address, "result": true}))?;
                 } else {
-                    Config::foundry_keystores_dir().ok_or_else(|| {
-                        eyre::eyre!("Could not find the default keystore directory.")
-                    })?
-                };
-
+                    sh_println!("Validation succeeded. Address {address} signed this message.")?;
+                }
+            }
+            Self::Import {
+                account_name,
+                keystore_dir,
+                unsafe_password,
+                touch_id,
+                raw_wallet_options,
+            } => {
+                ensure_touch_id_available(touch_id)?;
+                ensure_account_name_available(&account_name)?;
+                let dir = resolve_keystore_dir(keystore_dir)?;
                 fs::create_dir_all(&dir)?;
 
-                // check if account exists already
-                let keystore_path = Path::new(&dir).join(&account_name);
+                let keystore_path = dir.join(&account_name);
                 if keystore_path.exists() {
                     eyre::bail!("Keystore file already exists at {}", keystore_path.display());
                 }
+                if touch_id {
+                    ensure_touch_id_sidecar_available(&keystore_path)?;
+                }
 
-                // get wallet
-                let wallet = raw_wallet_options
-                    .signer()?
-                    .and_then(|s| match s {
-                        WalletSigner::Local(s) => Some(s),
-                        _ => None,
-                    })
-                    .ok_or_else(|| {
-                        eyre::eyre!(
-                            "\
+                let Some(WalletSigner::Local(wallet)) = raw_wallet_options.signer()? else {
+                    eyre::bail!(
+                        "\
 Did you set a private key or mnemonic?
 Run `cast wallet import --help` and use the corresponding CLI
 flag to set your key via:
 --private-key, --mnemonic-path or --interactive."
-                        )
-                    })?;
-
-                let private_key = wallet.credential().to_bytes();
-                let password = if let Some(password) = unsafe_password {
-                    password
-                } else {
-                    // if no --unsafe-password was provided read via stdin
-                    rpassword::prompt_password("Enter password: ")?
+                    );
                 };
 
-                let mut rng = thread_rng();
+                let password = password_or_prompt(unsafe_password, "Enter password: ")?;
                 let (wallet, _) = PrivateKeySigner::encrypt_keystore(
                     dir,
-                    &mut rng,
-                    private_key,
-                    password,
+                    &mut thread_rng(),
+                    wallet.credential().to_bytes(),
+                    &password,
                     Some(&account_name),
                 )?;
                 let address = wallet.address();
-                let success_message = format!(
-                    "`{}` keystore was saved successfully. Address: {:?}",
-                    &account_name, address,
-                );
-                sh_println!("{}", success_message.green())?;
+
+                if touch_id {
+                    let action = format!("keystore was imported at {}", keystore_path.display());
+                    enroll_new_keystore(&keystore_path, &password, &action, 0)?;
+                }
+
+                if shell::is_json() {
+                    let mut result = json!({"account": account_name, "address": address});
+                    if touch_id {
+                        result["touch_id"] = json!(true);
+                    }
+                    print_json_success(result)?;
+                } else {
+                    sh_println!(
+                        "{}",
+                        format!(
+                            "`{account_name}` keystore was saved successfully. Address: {address:?}"
+                        )
+                        .green()
+                    )?;
+                    if touch_id {
+                        sh_status!("{TOUCH_ID_ENROLLED_STATUS}")?;
+                    }
+                }
             }
             Self::List(cmd) => {
                 cmd.run().await?;
             }
+            Self::Session(args) => {
+                args.run().await?;
+            }
+            Self::TouchId(args) => {
+                args.run()?;
+            }
             Self::Remove { name, dir, unsafe_password } => {
-                let dir = if let Some(path) = dir {
-                    Path::new(&path).to_path_buf()
-                } else {
-                    Config::foundry_keystores_dir().ok_or_else(|| {
-                        eyre::eyre!("Could not find the default keystore directory.")
-                    })?
-                };
-
-                let keystore_path = Path::new(&dir).join(&name);
-                if !keystore_path.exists() {
-                    eyre::bail!("Keystore file does not exist at {}", keystore_path.display());
-                }
-
-                let password = if let Some(pwd) = unsafe_password {
-                    pwd
-                } else {
-                    rpassword::prompt_password("Enter password: ")?
-                };
-
+                let keystore_path = existing_keystore_path(&name, dir)?;
+                let password = password_or_prompt(unsafe_password, "Enter password: ")?;
                 if PrivateKeySigner::decrypt_keystore(&keystore_path, password).is_err() {
                     eyre::bail!("Invalid password - wallet removal cancelled");
                 }
 
+                remove_touch_id_sidecar(&keystore_path)?;
                 std::fs::remove_file(&keystore_path).wrap_err_with(|| {
                     format!("Failed to remove keystore file at {}", keystore_path.display())
                 })?;
 
-                let success_message = format!("`{}` keystore was removed successfully.", &name);
-                sh_println!("{}", success_message.green())?;
+                if shell::is_json() {
+                    print_json_success(json!({"account": name, "removed": true}))?;
+                } else {
+                    sh_println!(
+                        "{}",
+                        format!("`{name}` keystore was removed successfully.").green()
+                    )?;
+                }
             }
             Self::PrivateKey {
                 wallet,
@@ -802,54 +766,39 @@ flag to set your key via:
                 }
                 .signer()
                 .await?;
-                match wallet {
-                    WalletSigner::Local(wallet) => {
-                        if shell::verbosity() > 0 {
-                            sh_println!("Address:     {}", wallet.address())?;
-                            sh_println!(
-                                "Private key: 0x{}",
-                                hex::encode(wallet.credential().to_bytes())
-                            )?;
-                        } else {
-                            sh_println!("0x{}", hex::encode(wallet.credential().to_bytes()))?;
-                        }
-                    }
-                    _ => {
-                        eyre::bail!("Only local wallets are supported by this command.");
-                    }
+                let WalletSigner::Local(wallet) = wallet else {
+                    eyre::bail!("Only local wallets are supported by this command.");
+                };
+
+                let private_key = format!("0x{}", hex::encode(wallet.credential().to_bytes()));
+                if shell::verbosity() == 0 {
+                    print_scalar(private_key)?;
+                } else if shell::is_json() {
+                    print_json_success(json!({
+                        "address": wallet.address(),
+                        "private_key": private_key,
+                    }))?;
+                } else {
+                    sh_println!("Address:     {}", wallet.address())?;
+                    sh_println!("Private key: {private_key}")?;
                 }
             }
             Self::DecryptKeystore { account_name, keystore_dir, unsafe_password } => {
-                // Set up keystore directory
-                let dir = if let Some(path) = keystore_dir {
-                    Path::new(&path).to_path_buf()
-                } else {
-                    Config::foundry_keystores_dir().ok_or_else(|| {
-                        eyre::eyre!("Could not find the default keystore directory.")
-                    })?
-                };
-
-                let keypath = dir.join(&account_name);
-
-                if !keypath.exists() {
-                    eyre::bail!("Keystore file does not exist at {}", keypath.display());
-                }
-
-                let password = if let Some(password) = unsafe_password {
-                    password
-                } else {
-                    // if no --unsafe-password was provided read via stdin
-                    rpassword::prompt_password("Enter password: ")?
-                };
-
+                let keypath = existing_keystore_path(&account_name, keystore_dir)?;
+                let password = password_or_prompt(unsafe_password, "Enter password: ")?;
                 let wallet = PrivateKeySigner::decrypt_keystore(keypath, password)?;
 
                 let private_key = B256::from_slice(&wallet.credential().to_bytes());
-
-                let success_message =
-                    format!("{}'s private key is: {}", &account_name, private_key);
-
-                sh_println!("{}", success_message.green())?;
+                if shell::is_json() {
+                    print_json_success(
+                        json!({"account": account_name, "private_key": private_key}),
+                    )?;
+                } else {
+                    sh_println!(
+                        "{}",
+                        format!("{account_name}'s private key is: {private_key}").green()
+                    )?;
+                }
             }
             Self::ChangePassword {
                 account_name,
@@ -857,223 +806,754 @@ flag to set your key via:
                 unsafe_password,
                 unsafe_new_password,
             } => {
-                // Set up keystore directory
-                let dir = if let Some(path) = keystore_dir {
-                    Path::new(&path).to_path_buf()
-                } else {
-                    Config::foundry_keystores_dir().ok_or_else(|| {
-                        eyre::eyre!("Could not find the default keystore directory.")
-                    })?
+                let keypath = existing_keystore_path(&account_name, keystore_dir)?;
+                let sidecar = touch_id_sidecar_path(&keypath);
+
+                let touch_id_enrolled = match touch_id_sidecar_state(&sidecar)? {
+                    TouchIdSidecarState::Missing => false,
+                    TouchIdSidecarState::Recognized => true,
+                    TouchIdSidecarState::Keystore => {
+                        eyre::bail!(
+                            "refusing to change the password because {} is an existing keystore",
+                            sidecar.display()
+                        );
+                    }
+                    TouchIdSidecarState::Unknown => {
+                        // Preserve useful structured errors such as UnsupportedVersion.
+                        #[cfg(all(target_os = "macos", feature = "touch-id"))]
+                        foundry_wallets::touch_id::policy(&keypath)?;
+
+                        // Never continue after an Unknown classification, even if another
+                        // parser happens to accept the file.
+                        eyre::bail!(
+                            "refusing to change the password because {} exists and is not a recognized Touch ID sidecar",
+                            sidecar.display()
+                        );
+                    }
                 };
 
-                let keypath = dir.join(&account_name);
+                #[cfg(all(target_os = "macos", feature = "touch-id"))]
+                let touch_id_policy = touch_id_enrolled
+                    .then(|| foundry_wallets::touch_id::policy(&keypath))
+                    .transpose()?;
 
-                if !keypath.exists() {
-                    eyre::bail!("Keystore file does not exist at {}", keypath.display());
-                }
-
-                let current_password = if let Some(password) = unsafe_password {
-                    password
-                } else {
-                    // if no --unsafe-password was provided read via stdin
-                    rpassword::prompt_password("Enter current password: ")?
-                };
-
+                let current_password =
+                    password_or_prompt(unsafe_password, "Enter current password: ")?;
                 // decrypt the keystore to verify the current password and get the private key
                 let wallet = PrivateKeySigner::decrypt_keystore(&keypath, current_password.clone())
                     .map_err(|_| eyre::eyre!("Invalid password - password change cancelled"))?;
 
-                let new_password = if let Some(password) = unsafe_new_password {
-                    password
-                } else {
-                    // if no --unsafe-new-password was provided read via stdin
-                    rpassword::prompt_password("Enter new password: ")?
-                };
-
+                let new_password = password_or_prompt(unsafe_new_password, "Enter new password: ")?;
                 if current_password == new_password {
                     eyre::bail!("New password cannot be the same as the current password");
                 }
 
-                // Create a new keystore with the new password
-                let private_key = wallet.credential().to_bytes();
-                let mut rng = thread_rng();
                 let (wallet, _) = PrivateKeySigner::encrypt_keystore(
-                    dir,
-                    &mut rng,
-                    private_key,
-                    new_password,
+                    keypath.parent().unwrap_or(Path::new("")),
+                    &mut thread_rng(),
+                    wallet.credential().to_bytes(),
+                    &new_password,
                     Some(&account_name),
                 )?;
 
-                let success_message = format!(
-                    "Password for keystore `{}` was changed successfully. Address: {:?}",
-                    &account_name,
-                    wallet.address(),
-                );
-                sh_println!("{}", success_message.green())?;
+                #[cfg(all(target_os = "macos", feature = "touch-id"))]
+                if let Some(policy) = touch_id_policy {
+                    foundry_wallets::touch_id::enroll(&keypath, &new_password, policy).map_err(
+                        |error| {
+                            touch_id_enrollment_failure(
+                                &keypath,
+                                &format!(
+                                    "password for keystore `{account_name}` was changed at {}",
+                                    keypath.display()
+                                ),
+                                error,
+                            )
+                        },
+                    )?;
+                }
+
+                #[cfg(not(all(target_os = "macos", feature = "touch-id")))]
+                if touch_id_enrolled {
+                    match remove_touch_id_sidecar(&keypath) {
+                        Ok(true) => {
+                            sh_warn!(
+                                "Removed the stale Touch ID enrollment after changing the password"
+                            )?;
+                        }
+                        Ok(false) => {}
+                        Err(cleanup_error) => {
+                            eyre::bail!(
+                                "password changed, but Touch ID sidecar cleanup failed: {cleanup_error}. The new password is valid; remove {} manually",
+                                sidecar.display()
+                            );
+                        }
+                    }
+                }
+
+                let address = wallet.address();
+                if shell::is_json() {
+                    print_json_success(json!({"account": account_name, "address": address}))?;
+                } else {
+                    sh_println!(
+                        "{}",
+                        format!(
+                            "Password for keystore `{account_name}` was changed successfully. Address: {address:?}"
+                        )
+                        .green()
+                    )?;
+                }
             }
         };
 
         Ok(())
     }
+}
 
-    /// Recovers an address from the specified message and signature.
-    ///
-    /// Note: This attempts to decode the message as hex if it starts with 0x.
-    fn recover_address_from_message(message: &str, signature: &Signature) -> Result<Address> {
-        let message = Self::hex_str_to_bytes(message)?;
-        Ok(signature.recover_address_from_msg(message)?)
+const TOUCH_ID_ENROLLED_STATUS: &str =
+    "Touch ID-assisted unlock enrolled; password-based unlock remains available.";
+
+/// Creates `number` encrypted keystores in `dir`, returning their JSON records in JSON mode.
+fn new_keystores(
+    dir: &Path,
+    account_name: Option<&str>,
+    unsafe_password: Option<String>,
+    number: u32,
+    force: bool,
+    touch_id: bool,
+) -> Result<Vec<Value>> {
+    let password = password_or_prompt(unsafe_password, "Enter secret: ")?;
+    let names = (0..number)
+        .map(|i| account_name.map(|name| indexed_account_name(name, number, i)))
+        .collect::<Vec<_>>();
+
+    if touch_id {
+        for name in names.iter().flatten() {
+            ensure_touch_id_sidecar_available(&dir.join(name))?;
+        }
     }
 
-    /// Recovers an address from the specified message and signature.
-    fn recover_address_from_message_no_hash(
-        prehash: &B256,
-        signature: &Signature,
-    ) -> Result<Address> {
-        Ok(signature.recover_address_from_prehash(prehash)?)
+    // Prevent accidental overwriting: check all target files upfront.
+    if !force {
+        let existing =
+            names.iter().flatten().filter(|name| dir.join(name).exists()).collect::<Vec<_>>();
+        if !existing.is_empty() {
+            sh_eprintln!("The following keystore file(s) already exist:")?;
+            for file in &existing {
+                sh_eprintln!("   - {file}")?;
+            }
+            let input: String = foundry_common::prompt!(
+                "\nDo you want to overwrite all {} file(s)? [y/N]: ",
+                existing.len()
+            )?;
+            if !input.trim().eq_ignore_ascii_case("y") {
+                eyre::bail!("Operation cancelled. No keystores were modified.");
+            }
+        }
     }
 
-    /// Recovers an address from the specified EIP-712 typed data and signature.
-    fn recover_address_from_typed_data(
-        typed_data: &TypedData,
-        signature: &Signature,
-    ) -> Result<Address> {
-        Ok(signature.recover_address_from_prehash(&typed_data.eip712_signing_hash()?)?)
+    let mut rng = thread_rng();
+    let mut json_values = Vec::new();
+    for (i, name) in names.iter().enumerate() {
+        let (wallet, uuid) =
+            PrivateKeySigner::new_keystore(dir, &mut rng, &password, name.as_deref())?;
+        let keystore_path = dir.join(name.as_deref().unwrap_or(&uuid));
+
+        if touch_id {
+            let action = format!("keystore was created at {}", keystore_path.display());
+            enroll_new_keystore(&keystore_path, &password, &action, i)?;
+        }
+
+        let address = wallet.address().to_checksum(None);
+        if shell::is_json() {
+            let mut result = json!({
+                "address": address,
+                "public_key": format!("0x{}", hex::encode(wallet.public_key())),
+                "path": format!("{}", keystore_path.display()),
+            });
+            if touch_id {
+                result["touch_id"] = json!(true);
+            }
+            json_values.push(result);
+        } else {
+            sh_status!("Created new encrypted keystore file: {}", keystore_path.display())?;
+            if touch_id {
+                sh_status!("{TOUCH_ID_ENROLLED_STATUS}")?;
+            }
+            sh_status!("Address:    {address}")?;
+            if shell::verbosity() > 0 {
+                sh_status!("Public key: 0x{}", hex::encode(wallet.public_key()))?;
+            }
+            // The machine-readable stdout record duplicates the prose above when stdout is an
+            // interactive terminal.
+            if !shell::is_out_tty() {
+                sh_println!("{address}")?;
+            }
+        }
+    }
+    Ok(json_values)
+}
+
+/// Generates `number` random keypairs, returning their JSON records in JSON mode.
+fn new_keypairs(number: u32) -> Result<Vec<Value>> {
+    let mut rng = thread_rng();
+    let mut json_values = Vec::new();
+    for _ in 0..number {
+        let wallet = PrivateKeySigner::random_with(&mut rng);
+        let address = wallet.address().to_checksum(None);
+        let private_key = format!("0x{}", hex::encode(wallet.credential().to_bytes()));
+        if shell::is_json() {
+            json_values.push(json!({
+                "address": address,
+                "public_key": format!("0x{}", hex::encode(wallet.public_key())),
+                "private_key": private_key,
+            }));
+        } else {
+            sh_status!("Successfully created new keypair.")?;
+            sh_status!("Address:     {address}")?;
+            if shell::verbosity() > 0 {
+                sh_status!("Public key:  0x{}", hex::encode(wallet.public_key()))?;
+            }
+            sh_status!("Private key: {private_key}")?;
+            // The machine-readable stdout record duplicates the prose above when stdout is an
+            // interactive terminal.
+            if !shell::is_out_tty() {
+                sh_println!("{address}\t{private_key}")?;
+            }
+        }
+    }
+    Ok(json_values)
+}
+
+fn raw_wallet(raw: RawWalletOpts) -> WalletOpts {
+    WalletOpts { raw, ..Default::default() }
+}
+
+/// Parses EIP-712 typed data from a JSON string, or from the file it names when `from_file`.
+fn parse_typed_data(message: &str, from_file: bool) -> Result<TypedData> {
+    if from_file {
+        Ok(fs::read_json_file(Path::new(message))?)
+    } else {
+        Ok(serde_json::from_str(message)?)
+    }
+}
+
+/// Strips the 0x prefix from a hex string and decodes it to bytes.
+///
+/// Treats the string as raw bytes if it doesn't start with 0x.
+fn hex_str_to_bytes(s: &str) -> Result<Vec<u8>> {
+    Ok(match s.strip_prefix("0x") {
+        Some(data) => hex::decode(data).wrap_err("Could not decode 0x-prefixed string.")?,
+        None => s.as_bytes().to_vec(),
+    })
+}
+
+/// Returns `password` when given, otherwise prompts for it on the terminal.
+fn password_or_prompt(password: Option<String>, prompt: &str) -> Result<String> {
+    match password {
+        Some(password) => Ok(password),
+        None => Ok(rpassword::prompt_password(prompt)?),
+    }
+}
+
+/// Resolves the directory for `cast wallet new`.
+///
+/// A missing bare name is rewritten into `account_name` and stored in the default keystore
+/// directory, matching `cast wallet import <name>`. Path-like values and resolution failures
+/// other than `NotFound` still error.
+fn resolve_new_dir(path: String, account_name: &mut Option<String>) -> Result<PathBuf> {
+    match dunce::canonicalize(&path) {
+        Ok(dir) if dir.is_dir() => Ok(dir),
+        Ok(dir) => eyre::bail!("`{}` is not a directory", dir.display()),
+        Err(e)
+            if e.kind() == std::io::ErrorKind::NotFound
+                && account_name.is_none()
+                && is_bare_account_name(&path) =>
+        {
+            *account_name = Some(path);
+            let dir = resolve_keystore_dir(None)?;
+            fs::create_dir_all(&dir)?;
+            Ok(dir)
+        }
+        Err(e) => eyre::bail!(
+            "If you specified a directory, please make sure it exists, or create it before running `cast wallet new <DIR>`.\n{path} is not a directory.\nError: {e}"
+        ),
+    }
+}
+
+/// Returns true when `value` is a bare keystore account name rather than a filesystem path.
+///
+/// Path-like values (`.`, `..`, anything containing a separator or `:`, including Windows
+/// prefixes such as `C:foo` and ADS names such as `foo:bar`) stay on the existing
+/// directory-resolution path for `cast wallet new`.
+fn is_bare_account_name(value: &str) -> bool {
+    !value.is_empty()
+        && value != "."
+        && value != ".."
+        && !value.contains('/')
+        && !value.contains('\\')
+        // `C:foo` is a drive-relative path; `foo:bar` is an alternate data stream on
+        // Windows. Joining either can write outside the default keystore directory
+        // or hide the keystore in a stream so listing/loading miss it.
+        && !value.contains(':')
+}
+
+/// Resolves the keystore directory, defaulting to `~/.foundry/keystores`.
+fn resolve_keystore_dir(dir: Option<String>) -> Result<PathBuf> {
+    match dir {
+        Some(dir) => Ok(PathBuf::from(dir)),
+        None => Config::foundry_keystores_dir()
+            .ok_or_else(|| eyre::eyre!("Could not find the default keystore directory.")),
+    }
+}
+
+/// Validates `account_name` and resolves its existing keystore file in `dir`.
+fn existing_keystore_path(account_name: &str, dir: Option<String>) -> Result<PathBuf> {
+    ensure_account_name_available(account_name)?;
+    let keystore_path = resolve_keystore_dir(dir)?.join(account_name);
+    if !keystore_path.exists() {
+        eyre::bail!("Keystore file does not exist at {}", keystore_path.display());
+    }
+    Ok(keystore_path)
+}
+
+fn ensure_touch_id_available(touch_id: bool) -> Result<()> {
+    if !touch_id {
+        return Ok(());
     }
 
-    /// Strips the 0x prefix from a hex string and decodes it to bytes.
-    ///
-    /// Treats the string as raw bytes if it doesn't start with 0x.
-    fn hex_str_to_bytes(s: &str) -> Result<Vec<u8>> {
-        Ok(match s.strip_prefix("0x") {
-            Some(data) => hex::decode(data).wrap_err("Could not decode 0x-prefixed string.")?,
-            None => s.as_bytes().to_vec(),
-        })
+    #[cfg(all(target_os = "macos", feature = "touch-id"))]
+    {
+        if !foundry_wallets::touch_id::is_available() {
+            eyre::bail!("Touch ID is unavailable on this Mac");
+        }
+        Ok(())
+    }
+
+    #[cfg(not(all(target_os = "macos", feature = "touch-id")))]
+    eyre::bail!("`--touch-id` requires macOS and a cast build with the `touch-id` feature");
+}
+
+const TOUCH_ID_SIDECAR_SUFFIX: &str = ".touchid";
+
+fn ensure_account_name_available(name: &str) -> Result<()> {
+    let file_name = Path::new(name).file_name().and_then(|s| s.to_str());
+    if name.is_empty() || name.contains('\\') || file_name != Some(name) {
+        eyre::bail!("account name must be a single path segment");
+    }
+    if name.ends_with(TOUCH_ID_SIDECAR_SUFFIX) {
+        eyre::bail!("account names ending in `{TOUCH_ID_SIDECAR_SUFFIX}` are reserved");
+    }
+    Ok(())
+}
+
+fn touch_id_sidecar_path(keystore_path: &Path) -> PathBuf {
+    let mut path = OsString::from(keystore_path.as_os_str());
+    path.push(TOUCH_ID_SIDECAR_SUFFIX);
+    path.into()
+}
+
+/// Classification of a file at a `.touchid` path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TouchIdSidecarState {
+    /// No filesystem entry exists at the path.
+    Missing,
+    /// The file strictly matches the currently supported Touch ID sidecar schema.
+    Recognized,
+    /// The file is an Ethereum keystore.
+    Keystore,
+    /// Anything else: malformed JSON, empty object, array, unrelated object,
+    /// unsupported sidecar version, unknown policy, invalid hex, empty payload,
+    /// truncated sealed payload, invalid X9.63 prefix, or future sidecar format.
+    Unknown,
+}
+
+/// The only sidecar version this Cast release understands.
+const TOUCH_ID_SIDECAR_VERSION: u32 = 1;
+
+/// Minimum encoded ciphertext payload:
+/// 65-byte P-256 X9.63 public key + 12-byte ChaChaPoly nonce + 16-byte tag.
+///
+/// The encrypted password itself may be empty, so 93 bytes is the true minimum.
+const TOUCH_ID_SEALED_PASSWORD_MIN_LEN: usize = 65 + 12 + 16;
+
+/// X9.63 prefix for an uncompressed P-256 public key.
+const TOUCH_ID_X963_UNCOMPRESSED_PREFIX: u8 = 0x04;
+
+/// Strict deserialization-only representation of the persisted sidecar format.
+///
+/// Uses `deny_unknown_fields` so that any unrecognized field (e.g. from a
+/// future sidecar version) causes a parse failure, which maps to `Unknown`.
+///
+/// This duplicates `foundry_wallets::touch_id` on purpose: that module only exists on macOS
+/// builds with the `touch-id` feature, while sidecar files must be classified everywhere.
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TouchIdSidecarWire {
+    version: u32,
+    policy: TouchIdPolicyWire,
+    se_key: String,
+    sealed_password: String,
+}
+
+impl TouchIdSidecarWire {
+    /// Whether this is a supported sidecar with plausible payload bytes: `se_key` is non-empty
+    /// hex and `sealed_password` is hex of at least 93 bytes starting with 0x04.
+    fn is_recognized(&self) -> bool {
+        self.version == TOUCH_ID_SIDECAR_VERSION
+            && hex::decode(&self.se_key).is_ok_and(|se_key| !se_key.is_empty())
+            && hex::decode(&self.sealed_password).is_ok_and(|sealed| {
+                sealed.len() >= TOUCH_ID_SEALED_PASSWORD_MIN_LEN
+                    && sealed.first() == Some(&TOUCH_ID_X963_UNCOMPRESSED_PREFIX)
+            })
+    }
+}
+
+/// The policy values currently recognised by this Cast release.
+#[derive(Clone, Copy, Debug, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum TouchIdPolicyWire {
+    UserPresence,
+    CurrentBiometry,
+}
+
+impl TouchIdPolicyWire {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::UserPresence => "user-presence",
+            Self::CurrentBiometry => "current-biometry",
+        }
+    }
+}
+
+/// Returns the state of the file at `path` with respect to the Touch ID sidecar schema.
+///
+/// Classification order:
+/// 1. Not found → `Missing`
+/// 2. Has both `version` and `crypto`/`Crypto` fields → `Keystore`
+/// 3. Parses strictly as a v1 Touch ID sidecar + plausible payload → `Recognized`
+/// 4. Everything else → `Unknown`
+fn touch_id_sidecar_state(path: &Path) -> Result<TouchIdSidecarState> {
+    let value = match fs::read_json_file::<Value>(path) {
+        Ok(v) => v,
+        Err(FsPathError::Read { source, .. }) if source.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(TouchIdSidecarState::Missing);
+        }
+        Err(e) => return Err(e.into()),
+    };
+
+    if value.get("version").is_some()
+        && (value.get("crypto").is_some() || value.get("Crypto").is_some())
+    {
+        return Ok(TouchIdSidecarState::Keystore);
+    }
+
+    Ok(match serde_json::from_value::<TouchIdSidecarWire>(value) {
+        Ok(wire) if wire.is_recognized() => TouchIdSidecarState::Recognized,
+        _ => TouchIdSidecarState::Unknown,
+    })
+}
+
+fn touch_id_sidecar_policy(path: &Path) -> Result<TouchIdPolicyWire> {
+    let value = fs::read_json_file::<Value>(path)?;
+    let wire = serde_json::from_value::<TouchIdSidecarWire>(value)
+        .wrap_err_with(|| format!("failed to parse Touch ID sidecar at {}", path.display()))?;
+    if !wire.is_recognized() {
+        eyre::bail!("{} is not a recognized Touch ID sidecar", path.display());
+    }
+    Ok(wire.policy)
+}
+
+fn is_touch_id_sidecar(path: &Path) -> Result<bool> {
+    let is_sidecar_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.ends_with(TOUCH_ID_SIDECAR_SUFFIX));
+    Ok(is_sidecar_name && touch_id_sidecar_state(path)? == TouchIdSidecarState::Recognized)
+}
+
+fn ensure_touch_id_sidecar_available(keystore_path: &Path) -> Result<()> {
+    let sidecar = touch_id_sidecar_path(keystore_path);
+    match touch_id_sidecar_state(&sidecar)? {
+        TouchIdSidecarState::Missing | TouchIdSidecarState::Recognized => Ok(()),
+        TouchIdSidecarState::Keystore => {
+            eyre::bail!(
+                "refusing Touch ID enrollment because {} is an existing keystore",
+                sidecar.display()
+            );
+        }
+        TouchIdSidecarState::Unknown => {
+            eyre::bail!(
+                "refusing Touch ID enrollment because {} already exists and is not a recognized Touch ID sidecar",
+                sidecar.display()
+            );
+        }
+    }
+}
+
+/// Recovers the signer of `message`, interpreted as EIP-712 typed data (`data`), a prehashed
+/// digest (`no_hash`) or a plain message.
+fn recover_signer(
+    message: &str,
+    signature: &Signature,
+    data: bool,
+    from_file: bool,
+    no_hash: bool,
+) -> Result<Address> {
+    Ok(if data {
+        let typed_data = parse_typed_data(message, from_file)?;
+        signature.recover_address_from_prehash(&typed_data.eip712_signing_hash()?)?
+    } else if no_hash {
+        signature.recover_address_from_prehash(&hex::decode(message)?[..].try_into()?)?
+    } else {
+        signature.recover_address_from_msg(hex_str_to_bytes(message)?)?
+    })
+}
+
+fn indexed_account_name(base: &str, number: u32, index: u32) -> String {
+    if number == 1 { base.to_string() } else { format!("{base}_{}", index + 1) }
+}
+
+fn remove_touch_id_sidecar(keystore_path: &Path) -> Result<bool> {
+    let sidecar = touch_id_sidecar_path(keystore_path);
+    match touch_id_sidecar_state(&sidecar)? {
+        TouchIdSidecarState::Missing => Ok(false),
+        TouchIdSidecarState::Recognized => match std::fs::remove_file(&sidecar) {
+            Ok(()) => Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error).wrap_err_with(|| {
+                format!("Failed to remove Touch ID sidecar at {}", sidecar.display())
+            }),
+        },
+        TouchIdSidecarState::Keystore => {
+            eyre::bail!("refusing to remove existing keystore at {}", sidecar.display());
+        }
+        TouchIdSidecarState::Unknown => {
+            eyre::bail!(
+                "refusing to remove {} because it is not a recognized Touch ID sidecar",
+                sidecar.display()
+            );
+        }
+    }
+}
+
+/// Enrolls a freshly written keystore for Touch ID with the default policy.
+///
+/// `completed_action` describes the keystore write that already succeeded; `index` is the
+/// keystore's position in a `cast wallet new --number` batch.
+#[cfg(all(target_os = "macos", feature = "touch-id"))]
+fn enroll_new_keystore(
+    keystore_path: &Path,
+    password: &str,
+    completed_action: &str,
+    index: usize,
+) -> Result<()> {
+    ensure_touch_id_sidecar_available(keystore_path).map_err(|e| {
+        eyre::eyre!(
+            "{completed_action}, but Touch ID enrollment preflight failed: {e}. The sidecar was left untouched and must be resolved manually before password-prompt fallback is reliable"
+        )
+    })?;
+    foundry_wallets::touch_id::enroll(
+        keystore_path,
+        password,
+        foundry_wallets::touch_id::Policy::default(),
+    )
+    .map_err(|error| {
+        let note = if index == 0 { "" } else { " (earlier batch keystores were not rolled back)" };
+        touch_id_enrollment_failure(keystore_path, &format!("{completed_action}{note}"), error)
+    })
+}
+
+/// Unreachable in practice: [`ensure_touch_id_available`] rejects `--touch-id` on this platform.
+#[cfg(not(all(target_os = "macos", feature = "touch-id")))]
+const fn enroll_new_keystore(_: &Path, _: &str, _: &str, _: usize) -> Result<()> {
+    Ok(())
+}
+
+#[cfg(all(target_os = "macos", feature = "touch-id"))]
+fn touch_id_enrollment_failure(
+    keystore_path: &Path,
+    completed_action: &str,
+    enrollment_error: impl std::fmt::Display,
+) -> eyre::Report {
+    match remove_touch_id_sidecar(keystore_path) {
+        Ok(true) => eyre::eyre!(
+            "{completed_action}, but Touch ID enrollment failed: {enrollment_error}. The stale Touch ID sidecar was removed; password-prompt fallback remains available"
+        ),
+        Ok(false) => eyre::eyre!(
+            "{completed_action}, but Touch ID enrollment failed: {enrollment_error}. No stale Touch ID sidecar remained; password-prompt fallback remains available"
+        ),
+        Err(cleanup_error) => eyre::eyre!(
+            "{completed_action}, but Touch ID enrollment failed: {enrollment_error}. The stale sidecar could not be removed: {cleanup_error}. Remove {} manually before password-prompt fallback is possible",
+            touch_id_sidecar_path(keystore_path).display()
+        ),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{address, keccak256};
+    use alloy_primitives::address;
     use std::str::FromStr;
 
-    #[test]
-    fn can_parse_wallet_sign_message() {
-        let args = WalletSubcommands::parse_from(["foundry-cli", "sign", "deadbeef"]);
-        match args {
-            WalletSubcommands::Sign { message, data, from_file, .. } => {
-                assert_eq!(message, "deadbeef".to_string());
-                assert!(!data);
-                assert!(!from_file);
-            }
-            _ => panic!("expected WalletSubcommands::Sign"),
-        }
+    fn sidecar_json(version: u32, policy: &str, se_key: &str, sealed_password: &str) -> String {
+        json!({
+            "version": version,
+            "policy": policy,
+            "se_key": se_key,
+            "sealed_password": sealed_password,
+        })
+        .to_string()
+    }
+
+    fn sealed_password(prefix: &str, len: usize) -> String {
+        format!("{prefix}{}", "00".repeat(len - 1))
     }
 
     #[test]
-    fn can_parse_wallet_sign_hex_message() {
-        let args = WalletSubcommands::parse_from(["foundry-cli", "sign", "0xdeadbeef"]);
-        match args {
-            WalletSubcommands::Sign { message, data, from_file, .. } => {
-                assert_eq!(message, "0xdeadbeef".to_string());
-                assert!(!data);
-                assert!(!from_file);
-            }
-            _ => panic!("expected WalletSubcommands::Sign"),
-        }
-    }
+    fn recovers_signer_for_each_message_kind() {
+        let address = address!("0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf"); // private key = 1
 
-    #[test]
-    fn can_verify_signed_hex_message() {
-        let message = "hello";
-        let signature = Signature::from_str("f2dd00eac33840c04b6fc8a5ec8c4a47eff63575c2bc7312ecb269383de0c668045309c423484c8d097df306e690c653f8e1ec92f7f6f45d1f517027771c3e801c").unwrap();
-        let address = address!("0x28A4F420a619974a2393365BCe5a7b560078Cc13");
-        let recovered_address =
-            WalletSubcommands::recover_address_from_message(message, &signature);
-        assert!(recovered_address.is_ok());
-        assert_eq!(address, recovered_address.unwrap());
-    }
-
-    #[test]
-    fn can_verify_signed_hex_message_no_hash() {
-        let prehash = keccak256("hello");
+        let prehash = alloy_primitives::keccak256("hello");
         let signature = Signature::from_str("433ec3d37e4f1253df15e2dea412fed8e915737730f74b3dfb1353268f932ef5557c9158e0b34bce39de28d11797b42e9b1acb2749230885fe075aedc3e491a41b").unwrap();
-        let address = address!("0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf"); // private key = 1
-        let recovered_address =
-            WalletSubcommands::recover_address_from_message_no_hash(&prehash, &signature);
-        assert!(recovered_address.is_ok());
-        assert_eq!(address, recovered_address.unwrap());
-    }
+        assert_eq!(
+            recover_signer(&hex::encode(prehash), &signature, false, false, true).unwrap(),
+            address
+        );
 
-    #[test]
-    fn can_verify_signed_typed_data() {
-        let typed_data: TypedData = serde_json::from_str(r#"{"domain":{"name":"Test","version":"1","chainId":1,"verifyingContract":"0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF"},"message":{"value":123},"primaryType":"Data","types":{"Data":[{"name":"value","type":"uint256"}]}}"#).unwrap();
+        let typed_data = r#"{"domain":{"name":"Test","version":"1","chainId":1,"verifyingContract":"0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF"},"message":{"value":123},"primaryType":"Data","types":{"Data":[{"name":"value","type":"uint256"}]}}"#;
         let signature = Signature::from_str("0285ff83b93bd01c14e201943af7454fe2bc6c98be707a73888c397d6ae3b0b92f73ca559f81cbb19fe4e0f1dc4105bd7b647c6a84b033057977cf2ec982daf71b").unwrap();
-        let address = address!("0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf"); // private key = 1
-        let recovered_address =
-            WalletSubcommands::recover_address_from_typed_data(&typed_data, &signature);
-        assert!(recovered_address.is_ok());
-        assert_eq!(address, recovered_address.unwrap());
+        assert_eq!(recover_signer(typed_data, &signature, true, false, false).unwrap(), address);
     }
 
     #[test]
-    fn can_parse_wallet_sign_data() {
-        let args = WalletSubcommands::parse_from(["foundry-cli", "sign", "--data", "{ ... }"]);
-        match args {
-            WalletSubcommands::Sign { message, data, from_file, .. } => {
-                assert_eq!(message, "{ ... }".to_string());
-                assert!(data);
-                assert!(!from_file);
+    fn new_keystores_preflight_every_touch_id_sidecar() {
+        let dir = tempfile::tempdir().unwrap();
+        let sidecar = dir.path().join("batch_2.touchid");
+        std::fs::write(&sidecar, r#"{"version":3,"crypto":{}}"#).unwrap();
+
+        let error = new_keystores(dir.path(), Some("batch"), Some("pw".into()), 2, false, true)
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "refusing Touch ID enrollment because {} is an existing keystore",
+                sidecar.display()
+            )
+        );
+        assert!(!dir.path().join("batch_1").exists());
+    }
+
+    #[test]
+    fn classifies_touch_id_sidecars() {
+        use TouchIdSidecarState::*;
+
+        let valid_sealed = sealed_password("04", TOUCH_ID_SEALED_PASSWORD_MIN_LEN);
+        let cases = [
+            (None, Missing),
+            (Some(sidecar_json(1, "user-presence", "aa", &valid_sealed)), Recognized),
+            (Some(sidecar_json(1, "current-biometry", "aa", &valid_sealed)), Recognized),
+            (Some(r#"{"version":3,"crypto":{}}"#.to_string()), Keystore),
+            (Some(r#"{"version":3,"Crypto":{}}"#.to_string()), Keystore),
+            (Some("{}".to_string()), Unknown),
+            (Some("[]".to_string()), Unknown),
+            (Some(r#"{"application":"unrelated"}"#.to_string()), Unknown),
+            // unsupported version
+            (Some(sidecar_json(2, "user-presence", "aa", &valid_sealed)), Unknown),
+            // unknown field is rejected by `deny_unknown_fields`
+            (
+                Some(
+                    json!({
+                        "version": 1,
+                        "policy": "user-presence",
+                        "se_key": "aa",
+                        "sealed_password": valid_sealed,
+                        "future_field": true
+                    })
+                    .to_string(),
+                ),
+                Unknown,
+            ),
+            (Some(sidecar_json(1, "future-policy", "aa", &valid_sealed)), Unknown),
+            // invalid payloads
+            (Some(sidecar_json(1, "user-presence", "", &valid_sealed)), Unknown),
+            (Some(sidecar_json(1, "user-presence", "zz", &valid_sealed)), Unknown),
+            (Some(sidecar_json(1, "user-presence", "aa", "")), Unknown),
+            (Some(sidecar_json(1, "user-presence", "aa", "zz")), Unknown),
+            (
+                Some(sidecar_json(
+                    1,
+                    "user-presence",
+                    "aa",
+                    &sealed_password("04", TOUCH_ID_SEALED_PASSWORD_MIN_LEN - 1),
+                )),
+                Unknown,
+            ),
+            (
+                Some(sidecar_json(
+                    1,
+                    "user-presence",
+                    "aa",
+                    &sealed_password("03", TOUCH_ID_SEALED_PASSWORD_MIN_LEN),
+                )),
+                Unknown,
+            ),
+        ];
+
+        for (content, expected) in cases {
+            let dir = tempfile::tempdir().unwrap();
+            let keystore = dir.path().join("account");
+            let sidecar = touch_id_sidecar_path(&keystore);
+            if let Some(content) = &content {
+                std::fs::write(&sidecar, content).unwrap();
             }
-            _ => panic!("expected WalletSubcommands::Sign"),
+
+            assert_eq!(touch_id_sidecar_state(&sidecar).unwrap(), expected, "{content:?}");
+            assert_eq!(is_touch_id_sidecar(&sidecar).unwrap(), expected == Recognized);
+
+            // Enrollment preflight and removal only ever touch recognized sidecars.
+            let preflight = ensure_touch_id_sidecar_available(&keystore);
+            let removal = remove_touch_id_sidecar(&keystore);
+            match expected {
+                Missing => {
+                    preflight.unwrap();
+                    assert!(!removal.unwrap());
+                }
+                Recognized => {
+                    preflight.unwrap();
+                    assert!(removal.unwrap());
+                    assert!(!sidecar.exists());
+                }
+                Keystore => {
+                    let err = preflight.unwrap_err().to_string();
+                    assert!(err.contains("is an existing keystore"), "{err}");
+                    let err = removal.unwrap_err().to_string();
+                    assert!(err.contains("refusing to remove existing keystore"), "{err}");
+                }
+                Unknown => {
+                    for err in [preflight.unwrap_err(), removal.unwrap_err()] {
+                        let err = err.to_string();
+                        assert!(err.contains("is not a recognized Touch ID sidecar"), "{err}");
+                    }
+                }
+            }
+            if expected != Recognized {
+                assert_eq!(
+                    std::fs::read_to_string(&sidecar).ok(),
+                    content,
+                    "file must be untouched"
+                );
+            }
         }
     }
 
     #[test]
-    fn can_parse_wallet_sign_data_file() {
-        let args = WalletSubcommands::parse_from([
-            "foundry-cli",
-            "sign",
-            "--data",
-            "--from-file",
-            "tests/data/typed_data.json",
-        ]);
-        match args {
-            WalletSubcommands::Sign { message, data, from_file, .. } => {
-                assert_eq!(message, "tests/data/typed_data.json".to_string());
-                assert!(data);
-                assert!(from_file);
-            }
-            _ => panic!("expected WalletSubcommands::Sign"),
-        }
-    }
-
-    #[test]
-    fn can_parse_wallet_change_password() {
-        let args = WalletSubcommands::parse_from([
-            "foundry-cli",
-            "change-password",
-            "my_account",
-            "--unsafe-password",
-            "old_password",
-            "--unsafe-new-password",
-            "new_password",
-        ]);
-        match args {
-            WalletSubcommands::ChangePassword {
-                account_name,
-                keystore_dir,
-                unsafe_password,
-                unsafe_new_password,
-            } => {
-                assert_eq!(account_name, "my_account".to_string());
-                assert_eq!(unsafe_password, Some("old_password".to_string()));
-                assert_eq!(unsafe_new_password, Some("new_password".to_string()));
-                assert!(keystore_dir.is_none());
-            }
-            _ => panic!("expected WalletSubcommands::ChangePassword"),
-        }
+    fn malformed_json_propagates_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let sidecar = dir.path().join("account.touchid");
+        std::fs::write(&sidecar, "not json").unwrap();
+        // Malformed JSON is an I/O/parse error, not Unknown.
+        assert!(is_touch_id_sidecar(&sidecar).is_err());
+        assert!(touch_id_sidecar_state(&sidecar).is_err());
     }
 
     #[test]
@@ -1090,5 +1570,41 @@ mod tests {
             result.is_err(),
             "expected error when both --nonce and --self-broadcast are provided"
         );
+    }
+
+    #[test]
+    fn rejects_path_keystore_account_name() {
+        assert!(ensure_account_name_available("dev").is_ok());
+        assert!(ensure_account_name_available("testAccount").is_ok());
+        for invalid in ["../pwned", "nested/alias", "foo/../bar", "..", ".", "", "foo\\bar"] {
+            assert!(ensure_account_name_available(invalid).is_err(), "{invalid:?}");
+        }
+    }
+
+    #[test]
+    fn can_parse_wallet_new_bare_account_name() {
+        let args = WalletSubcommands::parse_from(["foundry-cli", "new", "my-wallet"]);
+        match args {
+            WalletSubcommands::New { path, account_name, .. } => {
+                assert_eq!(path.as_deref(), Some("my-wallet"));
+                assert_eq!(account_name, None);
+            }
+            _ => panic!("expected WalletSubcommands::New"),
+        }
+    }
+
+    #[test]
+    fn bare_account_name_heuristic() {
+        assert!(is_bare_account_name("my-wallet"));
+        assert!(is_bare_account_name("dev"));
+        assert!(!is_bare_account_name(""));
+        assert!(!is_bare_account_name("."));
+        assert!(!is_bare_account_name(".."));
+        assert!(!is_bare_account_name("./missing-dir"));
+        assert!(!is_bare_account_name("missing-dir/"));
+        assert!(!is_bare_account_name("/tmp/keystores"));
+        assert!(!is_bare_account_name(r"C:\keystores"));
+        assert!(!is_bare_account_name("C:foo"));
+        assert!(!is_bare_account_name("foo:bar"));
     }
 }

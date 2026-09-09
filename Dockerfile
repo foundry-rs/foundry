@@ -1,11 +1,24 @@
 # syntax=docker/dockerfile:1
 
-FROM rust:1-bookworm AS chef
+FROM rust:1-bookworm@sha256:13c186980fa33cc12759b429662a1322939dbe697484b7c33b47dd2698d28460 AS chef
 WORKDIR /app
 
 RUN apt update && apt install -y build-essential libssl-dev git pkg-config curl perl
-RUN curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | sh
-RUN cargo binstall cargo-chef sccache
+RUN set -eux; \
+    BINSTALL_VERSION="v1.18.1"; \
+    case "$(dpkg --print-architecture)" in \
+      amd64) ARCH="x86_64-unknown-linux-musl"; SHA256="cf2a4b54494ea8555d6349685e9a301efc1051d9fba6308c76914b2486f8700f" ;; \
+      arm64) ARCH="aarch64-unknown-linux-musl"; SHA256="c55962a0115f9716b709216de7f8bdd59d6ba8738779e60b051b4593f677717a" ;; \
+      *) echo "unsupported architecture" >&2; exit 1 ;; \
+    esac; \
+    curl -L --proto '=https' --tlsv1.2 -sSf \
+      "https://github.com/cargo-bins/cargo-binstall/releases/download/${BINSTALL_VERSION}/cargo-binstall-${ARCH}.tgz" \
+      -o /tmp/cargo-binstall.tgz; \
+    echo "${SHA256}  /tmp/cargo-binstall.tgz" | sha256sum -c -; \
+    tar -xzf /tmp/cargo-binstall.tgz -C /usr/local/cargo/bin cargo-binstall; \
+    rm /tmp/cargo-binstall.tgz
+RUN cargo binstall --locked --disable-telemetry --disable-strategies quick-install -y \
+    cargo-chef@0.1.78 sccache@0.17.0
 
 # Prepare the cargo-chef recipe.
 FROM chef AS planner
@@ -27,7 +40,7 @@ ENV CARGO_INCREMENTAL=0 \
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=shared \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=shared \
     --mount=type=cache,target=$SCCACHE_DIR,sharing=shared \
-    cargo chef cook --recipe-path recipe.json --profile ${RUST_PROFILE} --no-default-features --features "${RUST_FEATURES}"
+    cargo chef cook --locked --recipe-path recipe.json --profile ${RUST_PROFILE} --no-default-features --features "${RUST_FEATURES}"
 
 ARG TAG_NAME="dev"
 ENV TAG_NAME=$TAG_NAME
@@ -39,7 +52,8 @@ COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=shared \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=shared \
     --mount=type=cache,target=$SCCACHE_DIR,sharing=shared \
-    cargo build --profile ${RUST_PROFILE} --no-default-features --features "${RUST_FEATURES}"
+    cargo build --locked --profile ${RUST_PROFILE} --no-default-features --features "${RUST_FEATURES}" \
+    && sccache --show-stats || true
 
 # `dev` profile outputs to the `target/debug` directory.
 RUN ln -s /app/target/debug /app/target/dev \
@@ -49,11 +63,10 @@ RUN ln -s /app/target/debug /app/target/dev \
     /app/target/${RUST_PROFILE}/cast \
     /app/target/${RUST_PROFILE}/anvil \
     /app/target/${RUST_PROFILE}/chisel \
+    /app/target/${RUST_PROFILE}/solar \
     /app/output/
 
-RUN sccache --show-stats || true
-
-FROM ubuntu:22.04 AS runtime
+FROM ubuntu:22.04@sha256:eb29ed27b0821dca09c2e28b39135e185fc1302036427d5f4d70a41ce8fd7659 AS runtime
 
 # Install runtime dependencies.
 RUN apt update && apt install -y git

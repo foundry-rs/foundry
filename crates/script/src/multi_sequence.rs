@@ -1,3 +1,4 @@
+use alloy_network::Network;
 use eyre::{ContextCompat, Result, WrapErr};
 use forge_script_sequence::{
     DRY_RUN_DIR, ScriptSequence, SensitiveScriptSequence, now, sig_to_file_name,
@@ -6,15 +7,16 @@ use foundry_common::{fs, shell};
 use foundry_compilers::ArtifactId;
 use foundry_config::Config;
 use serde::{Deserialize, Serialize};
-use std::{
-    io::{BufWriter, Write},
-    path::PathBuf,
-};
+use std::path::PathBuf;
 
 /// Holds the sequences of multiple chain deployments.
 #[derive(Clone, Default, Serialize, Deserialize)]
-pub struct MultiChainSequence {
-    pub deployments: Vec<ScriptSequence>,
+#[serde(bound(
+    serialize = "N::TransactionRequest: Serialize, N::TxEnvelope: Serialize",
+    deserialize = "N::TransactionRequest: for<'de2> Deserialize<'de2>, N::TxEnvelope: for<'de2> Deserialize<'de2>"
+))]
+pub struct MultiChainSequence<N: Network> {
+    pub deployments: Vec<ScriptSequence<N>>,
     #[serde(skip)]
     pub path: PathBuf,
     #[serde(skip)]
@@ -29,16 +31,16 @@ pub struct SensitiveMultiChainSequence {
 }
 
 impl SensitiveMultiChainSequence {
-    fn from_multi_sequence(sequence: &MultiChainSequence) -> Self {
+    fn from_multi_sequence<N: Network>(sequence: &MultiChainSequence<N>) -> Self {
         Self {
             deployments: sequence.deployments.iter().map(SensitiveScriptSequence::from).collect(),
         }
     }
 }
 
-impl MultiChainSequence {
+impl<N: Network> MultiChainSequence<N> {
     pub fn new(
-        deployments: Vec<ScriptSequence>,
+        deployments: Vec<ScriptSequence<N>>,
         sig: &str,
         target: &ArtifactId,
         config: &Config,
@@ -58,8 +60,8 @@ impl MultiChainSequence {
         target: &ArtifactId,
         dry_run: bool,
     ) -> Result<(PathBuf, PathBuf)> {
-        let mut broadcast = config.broadcast.to_path_buf();
-        let mut cache = config.cache_path.to_path_buf();
+        let mut broadcast = config.broadcast.clone();
+        let mut cache = config.cache_path.clone();
         let mut common = PathBuf::new();
 
         common.push("multi");
@@ -91,7 +93,10 @@ impl MultiChainSequence {
     }
 
     /// Loads the sequences for the multi chain deployment.
-    pub fn load(config: &Config, sig: &str, target: &ArtifactId, dry_run: bool) -> Result<Self> {
+    pub fn load(config: &Config, sig: &str, target: &ArtifactId, dry_run: bool) -> Result<Self>
+    where
+        N::TxEnvelope: for<'d> Deserialize<'d>,
+    {
         let (path, sensitive_path) = Self::get_paths(config, sig, target, dry_run)?;
         let mut sequence: Self = foundry_compilers::utils::read_json_file(&path)
             .wrap_err("Multi-chain deployment not found.")?;
@@ -99,9 +104,18 @@ impl MultiChainSequence {
             foundry_compilers::utils::read_json_file(&sensitive_path)
                 .wrap_err("Multi-chain deployment sensitive details not found.")?;
 
-        sequence.deployments.iter_mut().enumerate().for_each(|(i, sequence)| {
-            sequence.fill_sensitive(&sensitive_sequence.deployments[i]);
-        });
+        let deployments_len = sequence.deployments.len();
+        let sensitive_deployments_len = sensitive_sequence.deployments.len();
+        if deployments_len != sensitive_deployments_len {
+            eyre::bail!(
+                "sensitive-cache deployment count ({sensitive_deployments_len}) does not match \
+                 deployment count ({deployments_len}); the multi-chain deployment and its \
+                 sensitive-cache counterpart are out of sync"
+            );
+        }
+        for (i, deployment) in sequence.deployments.iter_mut().enumerate() {
+            deployment.fill_sensitive(&sensitive_sequence.deployments[i])?;
+        }
 
         sequence.path = path;
         sequence.sensitive_path = sensitive_path;
@@ -110,7 +124,10 @@ impl MultiChainSequence {
     }
 
     /// Saves the transactions as file if it's a standalone deployment.
-    pub fn save(&mut self, silent: bool, save_ts: bool) -> Result<()> {
+    pub fn save(&mut self, silent: bool, save_ts: bool) -> Result<()>
+    where
+        N::TxEnvelope: Serialize,
+    {
         self.deployments.iter_mut().for_each(|sequence| sequence.sort_receipts());
 
         self.timestamp = now().as_millis();
@@ -119,9 +136,7 @@ impl MultiChainSequence {
 
         // broadcast writes
         //../Contract-latest/run.json
-        let mut writer = BufWriter::new(fs::create_file(&self.path)?);
-        serde_json::to_writer_pretty(&mut writer, &self)?;
-        writer.flush()?;
+        fs::write_pretty_json_file(&self.path, self)?;
 
         if save_ts {
             //../Contract-[timestamp]/run.json
@@ -133,9 +148,7 @@ impl MultiChainSequence {
 
         // cache writes
         //../Contract-latest/run.json
-        let mut writer = BufWriter::new(fs::create_file(&self.sensitive_path)?);
-        serde_json::to_writer_pretty(&mut writer, &sensitive_sequence)?;
-        writer.flush()?;
+        fs::write_sensitive_json_file(&self.sensitive_path, &sensitive_sequence)?;
 
         if save_ts {
             //../Contract-[timestamp]/run.json
@@ -162,5 +175,54 @@ impl MultiChainSequence {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_network::Ethereum;
+
+    #[test]
+    fn load_rejects_mismatched_deployment_counts() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = Config {
+            broadcast: dir.path().join("broadcast"),
+            cache_path: dir.path().join("cache"),
+            ..Default::default()
+        };
+        let target = ArtifactId {
+            path: PathBuf::from("Script.json"),
+            name: "Script".to_string(),
+            source: PathBuf::from("Script.sol"),
+            version: "0.8.30".parse().unwrap(),
+            build_id: String::new(),
+            profile: "default".to_string(),
+        };
+        let (path, sensitive_path) =
+            MultiChainSequence::<Ethereum>::get_paths(&config, "run()", &target, false).unwrap();
+        let sequence = MultiChainSequence::<Ethereum> {
+            deployments: vec![ScriptSequence::default()],
+            path: PathBuf::new(),
+            sensitive_path: PathBuf::new(),
+            timestamp: 0,
+        };
+        fs::write_pretty_json_file(&path, &sequence).unwrap();
+        for count in [0, 2] {
+            let sensitive = SensitiveMultiChainSequence {
+                deployments: vec![SensitiveScriptSequence::default(); count],
+            };
+            fs::write_sensitive_json_file(&sensitive_path, &sensitive).unwrap();
+            let err = MultiChainSequence::<Ethereum>::load(&config, "run()", &target, false)
+                .err()
+                .expect("mismatched counts must fail");
+            assert_eq!(
+                err.to_string(),
+                format!(
+                    "sensitive-cache deployment count ({count}) does not match deployment count (1); \
+                     the multi-chain deployment and its sensitive-cache counterpart are out of sync"
+                )
+            );
+        }
     }
 }

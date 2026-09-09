@@ -2,29 +2,55 @@
 //! WebSocket, or IPC transport. Retries are handled by a client layer (e.g.,
 //! `RetryBackoffLayer`) when used.
 
-use crate::{DEFAULT_USER_AGENT, REQUEST_TIMEOUT};
+use crate::{
+    DEFAULT_USER_AGENT, REQUEST_TIMEOUT,
+    provider::{
+        mpp::transport::{LazyMppHttpTransport, lazy_mpp_ws_connect},
+        redact_url,
+    },
+};
 use alloy_json_rpc::{RequestPacket, ResponsePacket};
 use alloy_pubsub::{PubSubConnect, PubSubFrontend};
-use alloy_rpc_types::engine::{Claims, JwtSecret};
+use alloy_rpc_types_engine::{Claims, JwtSecret};
 use alloy_transport::{
     Authorization, BoxTransport, TransportError, TransportErrorKind, TransportFut,
+    utils::guess_local_url,
 };
-use alloy_transport_http::Http;
 use alloy_transport_ipc::IpcConnect;
 use alloy_transport_ws::WsConnect;
+use regex::{Captures, Regex};
 use reqwest::header::{HeaderName, HeaderValue};
-use std::{fmt, path::PathBuf, str::FromStr, sync::Arc};
+use std::{
+    error::Error as StdError,
+    fmt,
+    path::PathBuf,
+    str::FromStr,
+    sync::{Arc, LazyLock},
+};
 use thiserror::Error;
 use tokio::sync::RwLock;
 use tower::Service;
 use url::Url;
 
+/// Known MPP-enabled RPC host suffixes.
+///
+/// Endpoints matching these patterns always use the MPP WebSocket transport,
+/// regardless of whether local MPP keys have been discovered.
+const KNOWN_MPP_HOSTS: &[&str] = &[".mpp.tempo.xyz", ".mpp.moderato.tempo.xyz"];
+
+static HTTP_URL_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"(?i)https?://[^\s<>"']+"#).expect("valid URL regex"));
+
 /// An enum representing the different transports that can be used to connect to a runtime.
 /// Only meant to be used internally by [RuntimeTransport].
 #[derive(Clone, Debug)]
 pub enum InnerTransport {
-    /// HTTP transport
-    Http(Http<reqwest::Client>),
+    /// HTTP transport with lazy MPP 402 handling.
+    ///
+    /// For known Tempo endpoints, the MPP layer additionally runs the
+    /// `wallet.tempo.xyz` device-code flow on a 402 when no local access key
+    /// is configured (see [`crate::tempo::ensure_access_key`]).
+    Http(LazyMppHttpTransport),
     /// WebSocket transport
     Ws(PubSubFrontend),
     /// IPC transport
@@ -97,7 +123,7 @@ pub struct RuntimeTransportBuilder {
 
 impl RuntimeTransportBuilder {
     /// Create a new builder with the given URL.
-    pub fn new(url: Url) -> Self {
+    pub const fn new(url: Url) -> Self {
         Self {
             url,
             headers: vec![],
@@ -121,13 +147,13 @@ impl RuntimeTransportBuilder {
     }
 
     /// Set the timeout for the transport.
-    pub fn with_timeout(mut self, timeout: std::time::Duration) -> Self {
+    pub const fn with_timeout(mut self, timeout: std::time::Duration) -> Self {
         self.timeout = timeout;
         self
     }
 
     /// Set whether to accept invalid certificates.
-    pub fn accept_invalid_certs(mut self, accept_invalid_certs: bool) -> Self {
+    pub const fn accept_invalid_certs(mut self, accept_invalid_certs: bool) -> Self {
         self.accept_invalid_certs = accept_invalid_certs;
         self
     }
@@ -136,7 +162,7 @@ impl RuntimeTransportBuilder {
     ///
     /// This can help in sandboxed environments (e.g., Cursor IDE sandbox, macOS App Sandbox)
     /// where system proxy detection via SCDynamicStore causes crashes.
-    pub fn no_proxy(mut self, no_proxy: bool) -> Self {
+    pub const fn no_proxy(mut self, no_proxy: bool) -> Self {
         self.no_proxy = no_proxy;
         self
     }
@@ -158,7 +184,7 @@ impl RuntimeTransportBuilder {
 
 impl fmt::Display for RuntimeTransport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "RuntimeTransport {}", self.url)
+        write!(f, "RuntimeTransport {}", redact_url(self.url.as_str()))
     }
 }
 
@@ -173,20 +199,7 @@ impl RuntimeTransport {
         }
     }
 
-    /// Creates a new reqwest client from this transport.
-    pub fn reqwest_client(&self) -> Result<reqwest::Client, RuntimeTransportError> {
-        let mut client_builder = reqwest::Client::builder()
-            .timeout(self.timeout)
-            .tls_built_in_root_certs(self.url.scheme() == "https")
-            .danger_accept_invalid_certs(self.accept_invalid_certs);
-
-        // Disable automatic proxy detection if requested. This helps in sandboxed environments
-        // (e.g., Cursor IDE sandbox, macOS App Sandbox) where system proxy detection via
-        // SCDynamicStore causes crashes. See: https://github.com/foundry-rs/foundry/issues/12733
-        if self.no_proxy {
-            client_builder = client_builder.no_proxy();
-        }
-
+    fn reqwest_headers(&self) -> Result<reqwest::header::HeaderMap, RuntimeTransportError> {
         let mut headers = reqwest::header::HeaderMap::new();
 
         // If there's a JWT, add it to the headers if we can decode it.
@@ -203,7 +216,7 @@ impl RuntimeTransport {
 
         // Add any custom headers.
         for header in &self.headers {
-            let make_err = || RuntimeTransportError::BadHeader(header.to_string());
+            let make_err = || RuntimeTransportError::BadHeader(header.clone());
 
             let (key, val) = header.split_once(':').ok_or_else(make_err)?;
 
@@ -221,28 +234,81 @@ impl RuntimeTransport {
             );
         }
 
+        // If MPP_API_KEY is set, attach it as x-api-key for gated MPP proxies.
+        // Does not override an explicit x-api-key header from the user.
+        if !headers.contains_key(HeaderName::from_static("x-api-key"))
+            && let Ok(api_key) = std::env::var("MPP_API_KEY")
+        {
+            let api_key = api_key.trim();
+            if !api_key.is_empty() {
+                let mut value = HeaderValue::from_str(api_key)
+                    .map_err(|_| RuntimeTransportError::BadHeader("MPP_API_KEY".to_string()))?;
+                value.set_sensitive(true);
+                headers.insert(HeaderName::from_static("x-api-key"), value);
+            }
+        }
+
+        Ok(headers)
+    }
+
+    fn reqwest_client_with_headers(
+        &self,
+        headers: reqwest::header::HeaderMap,
+    ) -> Result<reqwest::Client, RuntimeTransportError> {
+        let mut client_builder = reqwest::Client::builder()
+            .timeout(self.timeout)
+            .danger_accept_invalid_certs(self.accept_invalid_certs);
+
+        // Disable automatic proxy detection if requested. This helps in sandboxed environments
+        // (e.g., Cursor IDE sandbox, macOS App Sandbox) where system proxy detection via
+        // SCDynamicStore causes crashes. See: https://github.com/foundry-rs/foundry/issues/12733
+        if self.no_proxy || guess_local_url(self.url.as_str()) {
+            client_builder = client_builder.no_proxy();
+        }
+
         client_builder = client_builder.default_headers(headers);
 
         Ok(client_builder.build()?)
     }
 
-    /// Connects to an HTTP [alloy_transport_http::Http] transport.
+    /// Creates a new reqwest client from this transport.
+    pub fn reqwest_client(&self) -> Result<reqwest::Client, RuntimeTransportError> {
+        self.reqwest_client_with_headers(self.reqwest_headers()?)
+    }
+
+    /// Connects to an HTTP transport with lazy MPP 402 handling.
     fn connect_http(&self) -> Result<InnerTransport, RuntimeTransportError> {
-        let client = self.reqwest_client()?;
-        Ok(InnerTransport::Http(Http::with_client(client, self.url.clone())))
+        let headers = self.reqwest_headers()?;
+        let client = self.reqwest_client_with_headers(headers.clone())?;
+        Ok(InnerTransport::Http(LazyMppHttpTransport::lazy(client, self.url.clone(), headers)))
     }
 
     /// Connects to a WS transport.
+    ///
+    /// Uses the canonical Alloy MPP WebSocket transport when the endpoint is a
+    /// known MPP service.
+    /// Otherwise falls back to alloy's plain [`WsConnect`] with zero overhead.
     async fn connect_ws(&self) -> Result<InnerTransport, RuntimeTransportError> {
         let auth = self.jwt.as_ref().and_then(|jwt| build_auth(jwt.clone()).ok());
-        let mut ws = WsConnect::new(self.url.to_string());
-        if let Some(auth) = auth {
-            ws = ws.with_auth(auth);
+
+        let service = if is_known_mpp_endpoint(&self.url) {
+            let mut ws = lazy_mpp_ws_connect(&self.url);
+            if let Some(auth) = auth {
+                ws = ws.with_auth(auth);
+            }
+            ws.into_service().await.map_err(|e| {
+                RuntimeTransportError::TransportError(e, redact_url(self.url.as_str()))
+            })?
+        } else {
+            let mut ws = WsConnect::new(self.url.to_string());
+            if let Some(auth) = auth {
+                ws = ws.with_auth(auth);
+            }
+            ws.into_service().await.map_err(|e| {
+                RuntimeTransportError::TransportError(e, redact_url(self.url.as_str()))
+            })?
         };
-        let service = ws
-            .into_service()
-            .await
-            .map_err(|e| RuntimeTransportError::TransportError(e, self.url.to_string()))?;
+
         Ok(InnerTransport::Ws(service))
     }
 
@@ -282,11 +348,13 @@ impl RuntimeTransport {
 
             // SAFETY: We just checked that the inner transport exists.
             match inner.clone().expect("must've been initialized") {
-                InnerTransport::Http(mut http) => http.call(req),
-                InnerTransport::Ws(mut ws) => ws.call(req),
-                InnerTransport::Ipc(mut ipc) => ipc.call(req),
+                InnerTransport::Http(mut http) => http
+                    .call(req)
+                    .await
+                    .map_err(|error| redact_http_transport_error(error, &this.url)),
+                InnerTransport::Ws(mut ws) => ws.call(req).await,
+                InnerTransport::Ipc(mut ipc) => ipc.call(req).await,
             }
-            .await
         })
     }
 
@@ -297,6 +365,40 @@ impl RuntimeTransport {
     {
         BoxTransport::new(self)
     }
+}
+
+/// Returns `true` if `url` points to a known MPP-enabled RPC service.
+fn is_known_mpp_endpoint(url: &Url) -> bool {
+    url.host_str().is_some_and(|host| KNOWN_MPP_HOSTS.iter().any(|suffix| host.ends_with(suffix)))
+}
+
+fn redact_http_transport_error(error: TransportError, endpoint: &Url) -> TransportError {
+    let alloy_json_rpc::RpcError::Transport(TransportErrorKind::Custom(source)) = &error else {
+        return error;
+    };
+    let safe_endpoint = redact_url(endpoint.as_str());
+
+    let mut message = String::new();
+    let mut error: Option<&(dyn StdError + 'static)> = Some(source.as_ref());
+    while let Some(source) = error {
+        if !message.is_empty() {
+            message.push_str(": ");
+        }
+        message.push_str(&source.to_string());
+        error = source.source();
+    }
+    let message = HTTP_URL_RE.replace_all(&message, |captures: &Captures<'_>| {
+        let candidate = &captures[0];
+        let Ok(url) = Url::parse(candidate) else { return candidate.to_owned() };
+        if url.host() == endpoint.host()
+            && url.port_or_known_default() == endpoint.port_or_known_default()
+        {
+            safe_endpoint.clone()
+        } else {
+            candidate.to_owned()
+        }
+    });
+    TransportErrorKind::custom_str(&message)
 }
 
 impl tower::Service<RequestPacket> for RuntimeTransport {
@@ -371,6 +473,89 @@ fn url_to_file_path(url: &Url) -> Result<PathBuf, ()> {
 mod tests {
     use super::*;
     use reqwest::header::HeaderMap;
+    use std::io;
+
+    #[derive(Debug, Error)]
+    #[error("request to https://example.com/private-api-key failed")]
+    struct ProviderError {
+        #[source]
+        source: io::Error,
+    }
+
+    #[test]
+    fn http_transport_errors_preserve_provider_guidance() {
+        let endpoint =
+            Url::parse("https://user:password@example.com/private-api-key?token=secret").unwrap();
+        let error = TransportErrorKind::custom(ProviderError {
+            source: io::Error::other(
+                "Authorize an access key with:\n  cast tempo login --no-browser",
+            ),
+        });
+
+        let report = redact_http_transport_error(error, &endpoint).to_string();
+
+        assert!(report.contains("https://example.com/"));
+        assert!(report.contains("cast tempo login --no-browser"));
+        assert!(!report.contains("password"));
+        assert!(!report.contains("private-api-key"));
+        assert!(!report.contains("secret"));
+    }
+
+    #[test]
+    fn http_transport_errors_redact_endpoint_paths() {
+        let endpoint =
+            Url::parse("https://user:password@example.com/private-api-key?token=secret").unwrap();
+        let error = TransportErrorKind::custom_str(concat!(
+            "request to https://example.com/private-api-key failed: connection refused\n\n",
+            "Authorize an access key with:\n  cast tempo login"
+        ));
+
+        let error = redact_http_transport_error(error, &endpoint);
+        let report = error.to_string();
+
+        assert!(report.contains("https://example.com/"));
+        assert!(!report.contains("password"));
+        assert!(!report.contains("private-api-key"));
+        assert!(!report.contains("secret"));
+        assert!(report.to_lowercase().contains("connection refused"));
+        assert!(report.contains("cast tempo login"));
+    }
+
+    #[test]
+    fn http_transport_errors_redact_normalized_endpoint_variants() {
+        let endpoint =
+            Url::parse("https://user:password@example.com/private-api-key?token=secret").unwrap();
+        let error = TransportErrorKind::custom_str(
+            "request to https://USER:normalized@example.com:443/different%2Fpath?key=other failed",
+        );
+
+        let report = redact_http_transport_error(error, &endpoint).to_string();
+
+        assert!(report.contains("https://example.com/"));
+        assert!(!report.contains("normalized"));
+        assert!(!report.contains("different"));
+        assert!(!report.contains("other"));
+    }
+
+    #[tokio::test]
+    async fn websocket_error_redacts_url_credentials() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+        let url = Url::parse(&format!(
+            "ws://user:password@{address}/private-api-key?token=secret#fragment"
+        ))
+        .unwrap();
+        let transport = RuntimeTransportBuilder::new(url).build();
+
+        let error = transport.connect_ws().await.unwrap_err().to_string();
+
+        assert!(error.contains(&format!("ws://{address}/")));
+        assert!(!error.contains("user"));
+        assert!(!error.contains("password"));
+        assert!(!error.contains("private-api-key"));
+        assert!(!error.contains("secret"));
+    }
 
     #[tokio::test]
     async fn test_user_agent_header() {

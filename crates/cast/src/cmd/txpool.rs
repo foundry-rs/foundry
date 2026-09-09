@@ -1,10 +1,8 @@
+use crate::cmd::rpc_provider;
 use alloy_primitives::Address;
 use alloy_provider::ext::TxPoolApi;
 use clap::Parser;
-use foundry_cli::{
-    opts::RpcOpts,
-    utils::{self, LoadConfig},
-};
+use foundry_cli::{json::print_json_object, opts::RpcOpts};
 
 /// CLI arguments for `cast tx-pool`.
 #[derive(Debug, Parser, Clone)]
@@ -36,33 +34,20 @@ pub enum TxPoolSubcommands {
 
 impl TxPoolSubcommands {
     pub async fn run(self) -> eyre::Result<()> {
-        match self {
-            Self::Content { args } => {
-                let config = args.load_config()?;
-                let provider = utils::get_provider(&config)?;
-                let content = provider.txpool_content().await?;
-                sh_println!("{}", serde_json::to_string_pretty(&content)?)?;
-            }
-            Self::ContentFrom { from, args } => {
-                let config = args.load_config()?;
-                let provider = utils::get_provider(&config)?;
-                let content = provider.txpool_content_from(from).await?;
-                sh_println!("{}", serde_json::to_string_pretty(&content)?)?;
-            }
-            Self::Inspect { args } => {
-                let config = args.load_config()?;
-                let provider = utils::get_provider(&config)?;
-                let inspect = provider.txpool_inspect().await?;
-                sh_println!("{}", serde_json::to_string_pretty(&inspect)?)?;
-            }
-            Self::Status { args } => {
-                let config = args.load_config()?;
-                let provider = utils::get_provider(&config)?;
-                let status = provider.txpool_status().await?;
-                sh_println!("{}", serde_json::to_string_pretty(&status)?)?;
-            }
+        let args = match &self {
+            Self::Content { args }
+            | Self::ContentFrom { args, .. }
+            | Self::Inspect { args }
+            | Self::Status { args } => args,
         };
-
-        Ok(())
+        let provider = rpc_provider(args)?;
+        match self {
+            Self::Content { .. } => print_json_object(provider.txpool_content().await?),
+            Self::ContentFrom { from, .. } => {
+                print_json_object(provider.txpool_content_from(from).await?)
+            }
+            Self::Inspect { .. } => print_json_object(provider.txpool_inspect().await?),
+            Self::Status { .. } => print_json_object(provider.txpool_status().await?),
+        }
     }
 }

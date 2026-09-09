@@ -153,12 +153,12 @@ impl Error {
     }
 
     /// Returns the raw data of this error.
-    pub fn data(&self) -> &[u8] {
+    pub const fn data(&self) -> &[u8] {
         unsafe { &*self.data }
     }
 
     /// Returns `true` if this error is a human-readable string.
-    pub fn is_str(&self) -> bool {
+    pub const fn is_str(&self) -> bool {
         self.is_str
     }
 

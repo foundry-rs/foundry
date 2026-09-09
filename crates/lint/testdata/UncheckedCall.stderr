@@ -4,7 +4,7 @@ warning[unchecked-call]: Low-level calls should check the success return value
 LL │         target.call(data);
    │         ━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#unchecked-call
+   ╰ help: https://getfoundry.sh/forge/linting/unchecked-call
 
 warning[unchecked-call]: Low-level calls should check the success return value
    ╭▸ ROOT/testdata/UncheckedCall.sol:LL:CC
@@ -12,7 +12,7 @@ warning[unchecked-call]: Low-level calls should check the success return value
 LL │         target.call{value: value}("");
    │         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#unchecked-call
+   ╰ help: https://getfoundry.sh/forge/linting/unchecked-call
 
 warning[unchecked-call]: Low-level calls should check the success return value
    ╭▸ ROOT/testdata/UncheckedCall.sol:LL:CC
@@ -20,7 +20,7 @@ warning[unchecked-call]: Low-level calls should check the success return value
 LL │         target.delegatecall(data);
    │         ━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#unchecked-call
+   ╰ help: https://getfoundry.sh/forge/linting/unchecked-call
 
 warning[unchecked-call]: Low-level calls should check the success return value
    ╭▸ ROOT/testdata/UncheckedCall.sol:LL:CC
@@ -28,7 +28,7 @@ warning[unchecked-call]: Low-level calls should check the success return value
 LL │         target.staticcall(data);
    │         ━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#unchecked-call
+   ╰ help: https://getfoundry.sh/forge/linting/unchecked-call
 
 warning[unchecked-call]: Low-level calls should check the success return value
    ╭▸ ROOT/testdata/UncheckedCall.sol:LL:CC
@@ -36,7 +36,7 @@ warning[unchecked-call]: Low-level calls should check the success return value
 LL │         target1.call("");
    │         ━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#unchecked-call
+   ╰ help: https://getfoundry.sh/forge/linting/unchecked-call
 
 warning[unchecked-call]: Low-level calls should check the success return value
    ╭▸ ROOT/testdata/UncheckedCall.sol:LL:CC
@@ -44,7 +44,7 @@ warning[unchecked-call]: Low-level calls should check the success return value
 LL │         target2.delegatecall("");
    │         ━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#unchecked-call
+   ╰ help: https://getfoundry.sh/forge/linting/unchecked-call
 
 warning[unchecked-call]: Low-level calls should check the success return value
    ╭▸ ROOT/testdata/UncheckedCall.sol:LL:CC
@@ -52,7 +52,7 @@ warning[unchecked-call]: Low-level calls should check the success return value
 LL │         (, bytes memory data) = target.call("");
    │         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#unchecked-call
+   ╰ help: https://getfoundry.sh/forge/linting/unchecked-call
 
 warning[unchecked-call]: Low-level calls should check the success return value
    ╭▸ ROOT/testdata/UncheckedCall.sol:LL:CC
@@ -60,5 +60,5 @@ warning[unchecked-call]: Low-level calls should check the success return value
 LL │         (, existingData) = target.call("");
    │         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#unchecked-call
+   ╰ help: https://getfoundry.sh/forge/linting/unchecked-call
 

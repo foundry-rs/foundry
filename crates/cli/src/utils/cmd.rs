@@ -1,16 +1,24 @@
-use alloy_json_abi::JsonAbi;
+use alloy_dyn_abi::{DynSolValue, Specifier};
+use alloy_json_abi::{Constructor, JsonAbi};
 use eyre::{Result, WrapErr};
-use foundry_common::{TestFunctionExt, fs, fs::json_files, selectors::SelectorKind, shell};
+use foundry_common::{
+    TestFunctionExt, fmt::parse_tokens, fs, fs::json_files, selectors::SelectorKind, shell,
+};
 use foundry_compilers::{
     Artifact, ArtifactId, ProjectCompileOutput, artifacts::CompactBytecode, utils::read_json_file,
 };
-use foundry_config::{Chain, Config, NamedChain, error::ExtractConfigError, figment::Figment};
+use foundry_config::{
+    Chain, Config, NamedChain,
+    error::ExtractConfigError,
+    figment::{Figment, Provider},
+};
 use foundry_evm::{
+    core::evm::FoundryEvmNetwork,
     executors::{DeployResult, EvmError, RawCallResult},
     opts::EvmOpts,
     traces::{
         CallTraceDecoder, TraceKind, Traces, decode_trace_arena, identifier::SignaturesCache,
-        prune_trace_depth, render_trace_arena_inner,
+        prune_trace_depth, render_trace_arena_inner, trace_arena_at_depth,
     },
 };
 use std::{
@@ -46,7 +54,7 @@ pub fn find_contract_artifacts(
         Did you mean `{suggestion}`?"#
             );
         }
-        eyre::bail!(err)
+        eyre::bail!(err);
     };
 
     let abi = contract
@@ -111,8 +119,10 @@ pub fn init_progress(len: u64, label: &str) -> indicatif::ProgressBar {
 
 /// True if the network calculates gas costs differently.
 pub fn has_different_gas_calc(chain_id: u64) -> bool {
-    if let Some(chain) = Chain::from(chain_id).named() {
-        return chain.is_arbitrum()
+    let chain = Chain::from(chain_id);
+    if let Some(chain) = chain.named() {
+        return chain.is_tempo()
+            || chain.is_arbitrum()
             || chain.is_elastic()
             || matches!(
                 chain,
@@ -120,11 +130,14 @@ pub fn has_different_gas_calc(chain_id: u64) -> bool {
                     | NamedChain::AcalaMandalaTestnet
                     | NamedChain::AcalaTestnet
                     | NamedChain::Etherlink
-                    | NamedChain::EtherlinkTestnet
+                    | NamedChain::EtherlinkShadownet
                     | NamedChain::Karura
                     | NamedChain::KaruraTestnet
+                    | NamedChain::Kusama
                     | NamedChain::Mantle
                     | NamedChain::MantleSepolia
+                    | NamedChain::MegaEth
+                    | NamedChain::MegaEthTestnet
                     | NamedChain::Metis
                     | NamedChain::Monad
                     | NamedChain::MonadTestnet
@@ -132,9 +145,10 @@ pub fn has_different_gas_calc(chain_id: u64) -> bool {
                     | NamedChain::Moonbeam
                     | NamedChain::MoonbeamDev
                     | NamedChain::Moonriver
-                    | NamedChain::PolkadotTestnet
-                    | NamedChain::Kusama
+                    | NamedChain::Plume
+                    | NamedChain::PlumeTestnet
                     | NamedChain::Polkadot
+                    | NamedChain::PolkadotTestnet
             );
     }
     false
@@ -161,7 +175,19 @@ pub trait LoadConfig {
 
     /// Load and sanitize the [`Config`] based on the options provided in self.
     fn load_config(&self) -> Result<Config, ExtractConfigError> {
-        self.load_config_no_warnings().inspect(emit_warnings)
+        load_config_from_provider(self.figment())
+    }
+
+    /// Loads config and installs missing project dependencies.
+    fn load_config_with_dependencies(&self) -> Result<Config, ExtractConfigError> {
+        let mut config = self.load_config()?;
+        self.install_missing_dependencies(&mut config)?;
+        Ok(config)
+    }
+
+    /// Installs missing dependencies, reloading config only for automatic remapping discovery.
+    fn install_missing_dependencies(&self, config: &mut Config) -> Result<(), ExtractConfigError> {
+        crate::install::install_missing_dependencies(config, || self.load_config())
     }
 
     /// Same as [`LoadConfig::load_config`] but does not emit warnings.
@@ -191,6 +217,10 @@ pub trait LoadConfig {
         let mut evm_opts = figment.extract::<EvmOpts>().map_err(ExtractConfigError::new)?;
         let config = Config::from_provider(figment)?.sanitized();
 
+        if config.networks != Default::default() {
+            evm_opts.networks = config.networks;
+        }
+
         // update the fork url if it was an alias
         if let Some(fork_url) = config.get_rpc_url() {
             trace!(target: "forge::config", ?fork_url, "Update EvmOpts fork url");
@@ -199,6 +229,11 @@ pub trait LoadConfig {
 
         Ok((config, evm_opts))
     }
+}
+
+/// Loads and sanitizes [`Config`] from a provider and emits generated warnings.
+pub fn load_config_from_provider<T: Provider>(provider: T) -> Result<Config, ExtractConfigError> {
+    Config::from_provider(provider).map(Config::sanitized).inspect(emit_warnings)
 }
 
 impl<T> LoadConfig for T
@@ -232,6 +267,30 @@ pub fn read_constructor_args_file(constructor_args_path: PathBuf) -> Result<Vec<
     Ok(args)
 }
 
+/// Parses constructor arguments by matching them against the constructor's input parameters.
+pub fn parse_constructor_args(
+    constructor: &Constructor,
+    constructor_args: &[String],
+) -> Result<Vec<DynSolValue>> {
+    if constructor.inputs.len() != constructor_args.len() {
+        eyre::bail!(
+            "Constructor argument count mismatch: expected {} but got {}",
+            constructor.inputs.len(),
+            constructor_args.len()
+        );
+    }
+
+    let mut params = Vec::with_capacity(constructor.inputs.len());
+    for (input, arg) in constructor.inputs.iter().zip(constructor_args) {
+        let ty = input
+            .resolve()
+            .wrap_err_with(|| format!("Could not resolve constructor arg: input={input}"))?;
+        params.push((ty, arg));
+    }
+    let params = params.iter().map(|(ty, arg)| (ty, arg.as_str()));
+    parse_tokens(params).map_err(Into::into)
+}
+
 /// A slimmed down return from the executor used for returning minimal trace + gas metering info
 #[derive(Debug)]
 pub struct TraceResult {
@@ -242,22 +301,25 @@ pub struct TraceResult {
 
 impl TraceResult {
     /// Create a new [`TraceResult`] from a [`RawCallResult`].
-    pub fn from_raw(raw: RawCallResult, trace_kind: TraceKind) -> Self {
+    pub fn from_raw<FEN: FoundryEvmNetwork>(
+        raw: RawCallResult<FEN>,
+        trace_kind: TraceKind,
+    ) -> Self {
         let RawCallResult { gas_used, traces, reverted, .. } = raw;
         Self { success: !reverted, traces: traces.map(|arena| vec![(trace_kind, arena)]), gas_used }
     }
 }
 
-impl From<DeployResult> for TraceResult {
-    fn from(result: DeployResult) -> Self {
+impl<FEN: FoundryEvmNetwork> From<DeployResult<FEN>> for TraceResult {
+    fn from(result: DeployResult<FEN>) -> Self {
         Self::from_raw(result.raw, TraceKind::Deployment)
     }
 }
 
-impl TryFrom<Result<DeployResult, EvmError>> for TraceResult {
-    type Error = EvmError;
+impl<FEN: FoundryEvmNetwork> TryFrom<Result<DeployResult<FEN>, EvmError<FEN>>> for TraceResult {
+    type Error = EvmError<FEN>;
 
-    fn try_from(value: Result<DeployResult, EvmError>) -> Result<Self, Self::Error> {
+    fn try_from(value: Result<DeployResult<FEN>, EvmError<FEN>>) -> Result<Self, Self::Error> {
         match value {
             Ok(result) => Ok(Self::from(result)),
             Err(EvmError::Execution(err)) => Ok(Self::from_raw(err.raw, TraceKind::Deployment)),
@@ -266,20 +328,9 @@ impl TryFrom<Result<DeployResult, EvmError>> for TraceResult {
     }
 }
 
-impl From<RawCallResult> for TraceResult {
-    fn from(result: RawCallResult) -> Self {
+impl<FEN: FoundryEvmNetwork> From<RawCallResult<FEN>> for TraceResult {
+    fn from(result: RawCallResult<FEN>) -> Self {
         Self::from_raw(result, TraceKind::Execution)
-    }
-}
-
-impl TryFrom<Result<RawCallResult>> for TraceResult {
-    type Error = EvmError;
-
-    fn try_from(value: Result<RawCallResult>) -> Result<Self, Self::Error> {
-        match value {
-            Ok(result) => Ok(Self::from(result)),
-            Err(err) => Err(EvmError::from(err)),
-        }
     }
 }
 
@@ -299,11 +350,17 @@ pub async fn print_traces(
     for (_, arena) in traces {
         decode_trace_arena(arena, decoder).await;
 
-        if let Some(trace_depth) = trace_depth {
-            prune_trace_depth(arena, trace_depth);
+        if shell::is_json()
+            && let Some(trace_depth) = trace_depth
+        {
+            let arena = trace_arena_at_depth(arena, trace_depth);
+            sh_println!("{}", render_trace_arena_inner(&arena, verbose, state_changes))?;
+        } else {
+            if let Some(trace_depth) = trace_depth {
+                prune_trace_depth(arena, trace_depth);
+            }
+            sh_println!("{}", render_trace_arena_inner(arena, verbose, state_changes))?;
         }
-
-        sh_println!("{}", render_trace_arena_inner(arena, verbose, state_changes))?;
     }
 
     if shell::is_json() {
@@ -366,8 +423,28 @@ pub fn cache_signatures_from_abis(folder_path: impl AsRef<Path>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use foundry_config::TracingConfig;
     use std::fs;
     use tempfile::tempdir;
+
+    struct TracingConfigArgs;
+
+    impl LoadConfig for TracingConfigArgs {
+        fn figment(&self) -> Figment {
+            Config::figment()
+                .merge(("verbosity", 2u8))
+                .merge(("tracing", TracingConfig { verbosity: 4, ..Default::default() }))
+        }
+    }
+
+    #[test]
+    fn tracing_verbosity_is_independent_from_evm_opts() {
+        let (config, evm_opts) = TracingConfigArgs.load_config_and_evm_opts_no_warnings().unwrap();
+
+        assert_eq!(config.verbosity, 2);
+        assert_eq!(config.tracing.verbosity, 4);
+        assert_eq!(evm_opts.verbosity, 2);
+    }
 
     #[test]
     fn test_cache_signatures_from_abis() {

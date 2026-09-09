@@ -93,6 +93,13 @@ contract IfStatement {
         }
 
         if (condition) {
+            if (anotherLongCondition) {
+                execute();
+                executeElse();
+            }
+        }
+
+        if (condition) {
             execute(); // comment18
         }
 
@@ -166,6 +173,125 @@ contract IfStatement {
             execute();
         } else {
             executeElse();
+        }
+
+        if (condition) {
+            execute();
+            execute();
+        }
+
+        if (condition) {
+            if (condition) {
+                execute();
+                execute();
+            }
+        }
+
+        if (condition) {
+            if (condition) {
+                if (condition) {
+                    execute();
+                    execute();
+                }
+            }
+        }
+
+        while (condition) {
+            if (condition) {
+                execute();
+                execute();
+            }
+        }
+
+        if (true) {
+            if (true) {
+                doIt();
+                doIt();
+            }
+        }
+
+        if (condition) {
+            if (condition) {
+                execute(); /* comment */
+            }
+        }
+
+        if (condition) {
+            if (condition) {
+                /* comment */
+                execute();
+            }
+        }
+
+        if (condition) {
+            if (
+                condition /* comment */
+            ) {
+                execute();
+            }
+        }
+
+        if (condition) {
+            if ( /* comment */
+                condition
+            ) {
+                execute();
+            }
+        }
+
+        if (condition) {
+            if (condition) { /* comment */ }
+        }
+
+        if (condition) {
+            if (condition) {
+                if (condition) {
+                    execute(); /* comment */
+                }
+            }
+        }
+
+        if (condition) {
+            if (condition) {
+                if (condition) {
+                    /* comment */
+                    execute();
+                }
+            }
+        }
+
+        if (condition) {
+            if (condition) {
+                if (
+                    condition /* comment */
+                ) {
+                    execute();
+                }
+            }
+        }
+
+        if (condition) {
+            if (condition) {
+                if (condition) { /* comment */ }
+            }
+        }
+
+        if (a) {
+            while ( /* comment */
+                b
+            ) {
+                x();
+            }
+        }
+
+        if (a) {
+            if (a) {
+                while ( /* comment */
+                    b
+                ) {
+                    x();
+                }
+            }
         }
     }
 

@@ -1,0 +1,96 @@
+note[inline-assembly]: inline assembly used; review for memory safety and side effects
+   ╭▸ ROOT/testdata/InlineAssembly.sol:LL:CC
+   │
+LL │         assembly {
+   │         ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/inline-assembly
+
+note[inline-assembly]: inline assembly (declared memory-safe); review business logic and side effects
+   ╭▸ ROOT/testdata/InlineAssembly.sol:LL:CC
+   │
+LL │         assembly ("memory-safe") {
+   │         ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/inline-assembly
+
+note[inline-assembly]: inline assembly (declared memory-safe); review business logic and side effects
+   ╭▸ ROOT/testdata/InlineAssembly.sol:LL:CC
+   │
+LL │         assembly "evmasm" ("memory-safe") {
+   │         ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/inline-assembly
+
+note[inline-assembly]: inline assembly (declared memory-safe); review business logic and side effects
+   ╭▸ ROOT/testdata/InlineAssembly.sol:LL:CC
+   │
+LL │         assembly {
+   │         ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/inline-assembly
+
+note[inline-assembly]: inline assembly (declared memory-safe); review business logic and side effects
+   ╭▸ ROOT/testdata/InlineAssembly.sol:LL:CC
+   │
+LL │         assembly {
+   │         ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/inline-assembly
+
+note[inline-assembly]: inline assembly used; review for memory safety and side effects
+   ╭▸ ROOT/testdata/InlineAssembly.sol:LL:CC
+   │
+LL │         assembly {
+   │         ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/inline-assembly
+
+note[inline-assembly]: inline assembly used; review for memory safety and side effects
+   ╭▸ ROOT/testdata/InlineAssembly.sol:LL:CC
+   │
+LL │             assembly {
+   │             ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/inline-assembly
+
+note[inline-assembly]: inline assembly used; review for memory safety and side effects
+   ╭▸ ROOT/testdata/InlineAssembly.sol:LL:CC
+   │
+LL │             assembly {
+   │             ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/inline-assembly
+
+note[inline-assembly]: inline assembly used; review for memory safety and side effects
+   ╭▸ ROOT/testdata/InlineAssembly.sol:LL:CC
+   │
+LL │             assembly {
+   │             ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/inline-assembly
+
+note[inline-assembly]: inline assembly used; review for memory safety and side effects
+   ╭▸ ROOT/testdata/InlineAssembly.sol:LL:CC
+   │
+LL │             assembly {
+   │             ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/inline-assembly
+
+note[inline-assembly]: inline assembly used; review for memory safety and side effects
+   ╭▸ ROOT/testdata/InlineAssembly.sol:LL:CC
+   │
+LL │             assembly {
+   │             ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/inline-assembly
+
+note[inline-assembly]: inline assembly used; review for memory safety and side effects
+   ╭▸ ROOT/testdata/InlineAssembly.sol:LL:CC
+   │
+LL │         assembly {
+   │         ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/inline-assembly
+

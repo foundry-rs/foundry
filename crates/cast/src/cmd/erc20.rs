@@ -1,32 +1,30 @@
+use foundry_common::fmt::format_uint_exp;
 use std::str::FromStr;
 
 use crate::{
-    cmd::send::cast_send,
-    format_uint_exp,
-    tx::{CastTxSender, SendTxOpts, signing_provider_with_curl},
+    cmd::{call_overrides::CallOverrideOpts, rpc_provider, send::SendTxArgs},
+    tx::{SendTxOpts, TxParams},
 };
-use alloy_eips::{BlockId, Encodable2718};
+use alloy_eips::BlockId;
 use alloy_ens::NameOrAddress;
-use alloy_network::{AnyNetwork, EthereumWallet, TransactionBuilder};
-use alloy_primitives::{U64, U256};
-use alloy_provider::Provider;
-use alloy_rpc_types::TransactionRequest;
-use alloy_serde::WithOtherFields;
-use alloy_sol_types::sol;
-use clap::{Args, Parser};
+use alloy_network::AnyNetwork;
+use alloy_primitives::{Address, U256};
+use alloy_sol_types::{SolCall, sol};
+use clap::Parser;
+use eyre::Result;
 use foundry_cli::{
-    opts::{RpcOpts, TempoOpts},
-    utils::{LoadConfig, get_chain, get_provider_with_curl},
+    json::{print_json_success, print_scalar},
+    opts::RpcOpts,
 };
-use foundry_common::shell;
-#[doc(hidden)]
-pub use foundry_config::{Chain, utils::*};
-use foundry_primitives::FoundryTransactionRequest;
+use foundry_common::{provider::RetryProvider, shell};
+
+mod permit;
 
 sol! {
     #[sol(rpc)]
     interface IERC20 {
-        #[derive(Debug)]
+        event Transfer(address indexed from, address indexed to, uint256 value);
+
         function name() external view returns (string);
         function symbol() external view returns (string);
         function decimals() external view returns (uint8);
@@ -40,114 +38,37 @@ sol! {
     }
 }
 
-/// Transaction options for ERC20 operations.
-///
-/// This struct contains only the transaction options relevant to ERC20 token interactions
-#[derive(Debug, Clone, Args)]
-pub struct Erc20TxOpts {
-    /// Gas limit for the transaction.
-    #[arg(long, env = "ETH_GAS_LIMIT")]
-    pub gas_limit: Option<U256>,
-
-    /// Gas price for legacy transactions, or max fee per gas for EIP1559 transactions.
-    #[arg(long, env = "ETH_GAS_PRICE")]
-    pub gas_price: Option<U256>,
-
-    /// Max priority fee per gas for EIP1559 transactions.
-    #[arg(long, env = "ETH_PRIORITY_GAS_PRICE")]
-    pub priority_gas_price: Option<U256>,
-
-    /// Nonce for the transaction.
-    #[arg(long)]
-    pub nonce: Option<U64>,
-
-    #[command(flatten)]
-    pub tempo: TempoOpts,
-}
-
-/// Apply transaction options to a transaction request for ERC20 operations.
-fn apply_tx_opts(
-    tx: &mut WithOtherFields<TransactionRequest>,
-    tx_opts: &Erc20TxOpts,
-    is_legacy: bool,
-) {
-    if let Some(gas_limit) = tx_opts.gas_limit {
-        tx.set_gas_limit(gas_limit.to());
-    }
-
-    if let Some(gas_price) = tx_opts.gas_price {
-        if is_legacy {
-            tx.set_gas_price(gas_price.to());
-        } else {
-            tx.set_max_fee_per_gas(gas_price.to());
-        }
-    }
-
-    if !is_legacy && let Some(priority_fee) = tx_opts.priority_gas_price {
-        tx.set_max_priority_fee_per_gas(priority_fee.to());
-    }
-
-    if let Some(nonce) = tx_opts.nonce {
-        tx.set_nonce(nonce.to());
-    }
-
-    // Apply Tempo-specific options
-    if let Some(fee_token) = tx_opts.tempo.fee_token {
-        tx.other.insert("feeToken".to_string(), serde_json::to_value(fee_token).unwrap());
-    }
-
-    if let Some(nonce_key) = tx_opts.tempo.sequence_key {
-        tx.other.insert("nonceKey".to_string(), serde_json::to_value(nonce_key).unwrap());
-    }
-}
-
-/// Send an ERC20 transaction, handling Tempo transactions specially if needed
-///
-/// TODO: Remove this temporary helper when we migrate to FoundryNetwork/FoundryTransactionRequest.
-async fn send_erc20_tx<P: Provider<AnyNetwork>>(
-    provider: P,
-    tx: WithOtherFields<TransactionRequest>,
-    send_tx: &SendTxOpts,
-    timeout: u64,
-) -> eyre::Result<()> {
-    // Same as in SendTxArgs::run(), Tempo transactions need to be signed locally and sent as raw
-    // transactions
-    if tx.other.contains_key("feeToken") || tx.other.contains_key("nonceKey") {
-        let signer = send_tx.eth.wallet.signer().await?;
-        let mut ftx = FoundryTransactionRequest::new(tx);
-        if ftx.chain_id().is_none() {
-            ftx.set_chain_id(provider.get_chain_id().await?);
-        }
-
-        let signed_tx = ftx.build(&EthereumWallet::new(signer)).await?;
-
-        // Encode and send raw
-        let mut raw_tx = Vec::with_capacity(signed_tx.encode_2718_len());
-        signed_tx.encode_2718(&mut raw_tx);
-
-        let cast = CastTxSender::new(&provider);
-        let pending_tx = cast.send_raw(&raw_tx).await?;
-        let tx_hash = pending_tx.inner().tx_hash();
-
-        if send_tx.cast_async {
-            sh_println!("{tx_hash:#x}")?;
-        } else {
-            // For sync mode, we already have the hash, just wait for receipt
-            let receipt = cast
-                .receipt(format!("{tx_hash:#x}"), None, send_tx.confirmations, Some(timeout), false)
-                .await?;
-            sh_println!("{receipt}")?;
-        }
-
-        return Ok(());
-    }
-
-    // Use the normal cast_send path for non-Tempo transactions
-    cast_send(provider, tx, send_tx.cast_async, send_tx.sync, send_tx.confirmations, timeout).await
-}
 /// Interact with ERC20 tokens.
 #[derive(Debug, Parser, Clone)]
 pub enum Erc20Subcommand {
+    /// Sign an ERC-2612 approval without sending a transaction, or submit it with --broadcast.
+    ///
+    /// The owner is the signing wallet. Amounts are in raw token units and the deadline is an
+    /// absolute Unix timestamp in seconds. This does not transfer tokens or deposit into a vault.
+    /// For deposits, the permit must target the underlying asset, not the vault's share token.
+    ///
+    /// By default stdout contains the 65-byte signature (r, s, v). With --json, it contains the
+    /// signature, permit calldata, owner, spender, value, nonce, deadline, token, and typed data.
+    /// With --broadcast, output follows cast send: a receipt, or a transaction hash with --async.
+    /// Anyone can submit the generated calldata to the token before the deadline.
+    /// Transaction options require --broadcast; --nonce selects the transaction nonce, while the
+    /// permit nonce is always read from the token.
+    ///
+    /// Uses EIP-5267 domain discovery when available. Otherwise uses name(), version "1", the
+    /// RPC chain ID, and the token address. --domain-name and --domain-version override the name
+    /// and version. The resulting domain must match DOMAIN_SEPARATOR() before signing.
+    /// DAI-style permits and Permit2 are not supported.
+    ///
+    /// Example:
+    /// ```text
+    /// cast erc20 permit $TOKEN $SPENDER 1000000 --deadline $DEADLINE \
+    ///     --account owner --rpc-url $RPC_URL --json
+    /// cast erc20 permit $TOKEN $SPENDER 1000000 --deadline $DEADLINE \
+    ///     --account owner --rpc-url $RPC_URL --broadcast --async
+    /// ```
+    #[command(verbatim_doc_comment)]
+    Permit(permit::PermitArgs),
+
     /// Query ERC20 token balance.
     #[command(visible_alias = "b")]
     Balance {
@@ -165,6 +86,9 @@ pub enum Erc20Subcommand {
 
         #[command(flatten)]
         rpc: RpcOpts,
+
+        #[command(flatten)]
+        overrides: CallOverrideOpts,
     },
 
     /// Transfer ERC20 tokens.
@@ -185,7 +109,7 @@ pub enum Erc20Subcommand {
         send_tx: SendTxOpts,
 
         #[command(flatten)]
-        tx: Erc20TxOpts,
+        tx: TxParams,
     },
 
     /// Approve ERC20 token spending.
@@ -206,7 +130,7 @@ pub enum Erc20Subcommand {
         send_tx: SendTxOpts,
 
         #[command(flatten)]
-        tx: Erc20TxOpts,
+        tx: TxParams,
     },
 
     /// Query ERC20 token allowance.
@@ -310,7 +234,7 @@ pub enum Erc20Subcommand {
         send_tx: SendTxOpts,
 
         #[command(flatten)]
-        tx: Erc20TxOpts,
+        tx: TxParams,
     },
 
     /// Burn ERC20 tokens.
@@ -327,211 +251,96 @@ pub enum Erc20Subcommand {
         send_tx: SendTxOpts,
 
         #[command(flatten)]
-        tx: Erc20TxOpts,
+        tx: TxParams,
     },
 }
 
 impl Erc20Subcommand {
-    fn rpc(&self) -> &RpcOpts {
+    pub async fn run(self) -> Result<()> {
         match self {
-            Self::Allowance { rpc, .. } => rpc,
-            Self::Approve { send_tx, .. } => &send_tx.eth.rpc,
-            Self::Balance { rpc, .. } => rpc,
-            Self::Transfer { send_tx, .. } => &send_tx.eth.rpc,
-            Self::Name { rpc, .. } => rpc,
-            Self::Symbol { rpc, .. } => rpc,
-            Self::Decimals { rpc, .. } => rpc,
-            Self::TotalSupply { rpc, .. } => rpc,
-            Self::Mint { send_tx, .. } => &send_tx.eth.rpc,
-            Self::Burn { send_tx, .. } => &send_tx.eth.rpc,
-        }
-    }
-
-    pub async fn run(self) -> eyre::Result<()> {
-        let config = self.rpc().load_config()?;
-
-        match self {
-            // Read-only
-            Self::Allowance { token, owner, spender, block, rpc, .. } => {
-                let provider = get_provider_with_curl(&config, rpc.curl)?;
-                let token = token.resolve(&provider).await?;
+            Self::Permit(args) => args.run().await,
+            Self::Allowance { token, owner, spender, block, rpc } => {
+                let (provider, erc20) = token_at(&rpc, token).await?;
                 let owner = owner.resolve(&provider).await?;
                 let spender = spender.resolve(&provider).await?;
-
-                let allowance = IERC20::new(token, &provider)
-                    .allowance(owner, spender)
-                    .block(block.unwrap_or_default())
-                    .call()
-                    .await?;
-
-                if shell::is_json() {
-                    sh_println!("{}", serde_json::to_string(&allowance.to_string())?)?
-                } else {
-                    sh_println!("{}", format_uint_exp(allowance))?
-                }
+                let allowance =
+                    erc20.allowance(owner, spender).block(block.unwrap_or_default()).call().await?;
+                print_amount(allowance)
             }
-            Self::Balance { token, owner, block, rpc, .. } => {
-                let provider = get_provider_with_curl(&config, rpc.curl)?;
-                let token = token.resolve(&provider).await?;
+            Self::Balance { token, owner, block, rpc, overrides } => {
+                let (provider, erc20) = token_at(&rpc, token).await?;
                 let owner = owner.resolve(&provider).await?;
-
-                let balance = IERC20::new(token, &provider)
-                    .balanceOf(owner)
-                    .block(block.unwrap_or_default())
-                    .call()
-                    .await?;
-
-                if shell::is_json() {
-                    sh_println!("{}", serde_json::to_string(&balance.to_string())?)?
-                } else {
-                    sh_println!("{}", format_uint_exp(balance))?
-                }
+                let call = erc20.balanceOf(owner).block(block.unwrap_or_default());
+                let balance = overrides.apply(call.call())?.await?;
+                print_scalar(balance.to_string())
             }
-            Self::Name { token, block, rpc, .. } => {
-                let provider = get_provider_with_curl(&config, rpc.curl)?;
-                let token = token.resolve(&provider).await?;
-
-                let name = IERC20::new(token, &provider)
-                    .name()
-                    .block(block.unwrap_or_default())
-                    .call()
-                    .await?;
-
-                if shell::is_json() {
-                    sh_println!("{}", serde_json::to_string(&name)?)?
-                } else {
-                    sh_println!("{}", name)?
-                }
+            Self::Name { token, block, rpc } => {
+                let (_, erc20) = token_at(&rpc, token).await?;
+                print_scalar(erc20.name().block(block.unwrap_or_default()).call().await?)
             }
-            Self::Symbol { token, block, rpc, .. } => {
-                let provider = get_provider_with_curl(&config, rpc.curl)?;
-                let token = token.resolve(&provider).await?;
-
-                let symbol = IERC20::new(token, &provider)
-                    .symbol()
-                    .block(block.unwrap_or_default())
-                    .call()
-                    .await?;
-
-                if shell::is_json() {
-                    sh_println!("{}", serde_json::to_string(&symbol)?)?
-                } else {
-                    sh_println!("{}", symbol)?
-                }
+            Self::Symbol { token, block, rpc } => {
+                let (_, erc20) = token_at(&rpc, token).await?;
+                print_scalar(erc20.symbol().block(block.unwrap_or_default()).call().await?)
             }
-            Self::Decimals { token, block, rpc, .. } => {
-                let provider = get_provider_with_curl(&config, rpc.curl)?;
-                let token = token.resolve(&provider).await?;
-
-                let decimals = IERC20::new(token, &provider)
-                    .decimals()
-                    .block(block.unwrap_or_default())
-                    .call()
-                    .await?;
-                sh_println!("{}", decimals)?
+            Self::Decimals { token, block, rpc } => {
+                let (_, erc20) = token_at(&rpc, token).await?;
+                print_scalar(erc20.decimals().block(block.unwrap_or_default()).call().await?)
             }
-            Self::TotalSupply { token, block, rpc, .. } => {
-                let provider = get_provider_with_curl(&config, rpc.curl)?;
-                let token = token.resolve(&provider).await?;
-
-                let total_supply = IERC20::new(token, &provider)
-                    .totalSupply()
-                    .block(block.unwrap_or_default())
-                    .call()
-                    .await?;
-
-                if shell::is_json() {
-                    sh_println!("{}", serde_json::to_string(&total_supply.to_string())?)?
-                } else {
-                    sh_println!("{}", format_uint_exp(total_supply))?
-                }
+            Self::TotalSupply { token, block, rpc } => {
+                let (_, erc20) = token_at(&rpc, token).await?;
+                print_amount(erc20.totalSupply().block(block.unwrap_or_default()).call().await?)
             }
-            // State-changing
-            Self::Transfer { token, to, amount, send_tx, tx: tx_opts, .. } => {
-                let provider = signing_provider_with_curl(&send_tx, send_tx.eth.rpc.curl).await?;
-                let mut tx = IERC20::new(token.resolve(&provider).await?, &provider)
-                    .transfer(to.resolve(&provider).await?, U256::from_str(&amount)?)
-                    .into_transaction_request();
-
-                // Apply transaction options using helper
-                apply_tx_opts(
-                    &mut tx,
-                    &tx_opts,
-                    get_chain(config.chain, &provider).await?.is_legacy(),
-                );
-
-                send_erc20_tx(
-                    provider,
-                    tx,
-                    &send_tx,
-                    send_tx.timeout.unwrap_or(config.transaction_timeout),
-                )
-                .await?
+            Self::Transfer { token, to, amount, send_tx, tx } => {
+                let to = resolve(&send_tx.eth.rpc, to).await?;
+                let call = IERC20::transferCall { to, amount: U256::from_str(&amount)? };
+                send(token, call, send_tx, tx).await
             }
-            Self::Approve { token, spender, amount, send_tx, tx: tx_opts, .. } => {
-                let provider = signing_provider_with_curl(&send_tx, send_tx.eth.rpc.curl).await?;
-                let mut tx = IERC20::new(token.resolve(&provider).await?, &provider)
-                    .approve(spender.resolve(&provider).await?, U256::from_str(&amount)?)
-                    .into_transaction_request();
-
-                // Apply transaction options using helper
-                apply_tx_opts(
-                    &mut tx,
-                    &tx_opts,
-                    get_chain(config.chain, &provider).await?.is_legacy(),
-                );
-
-                send_erc20_tx(
-                    provider,
-                    tx,
-                    &send_tx,
-                    send_tx.timeout.unwrap_or(config.transaction_timeout),
-                )
-                .await?
+            Self::Approve { token, spender, amount, send_tx, tx } => {
+                let spender = resolve(&send_tx.eth.rpc, spender).await?;
+                let call = IERC20::approveCall { spender, amount: U256::from_str(&amount)? };
+                send(token, call, send_tx, tx).await
             }
-            Self::Mint { token, to, amount, send_tx, tx: tx_opts, .. } => {
-                let provider = signing_provider_with_curl(&send_tx, send_tx.eth.rpc.curl).await?;
-                let mut tx = IERC20::new(token.resolve(&provider).await?, &provider)
-                    .mint(to.resolve(&provider).await?, U256::from_str(&amount)?)
-                    .into_transaction_request();
-
-                // Apply transaction options using helper
-                apply_tx_opts(
-                    &mut tx,
-                    &tx_opts,
-                    get_chain(config.chain, &provider).await?.is_legacy(),
-                );
-
-                send_erc20_tx(
-                    provider,
-                    tx,
-                    &send_tx,
-                    send_tx.timeout.unwrap_or(config.transaction_timeout),
-                )
-                .await?
+            Self::Mint { token, to, amount, send_tx, tx } => {
+                let to = resolve(&send_tx.eth.rpc, to).await?;
+                let call = IERC20::mintCall { to, amount: U256::from_str(&amount)? };
+                send(token, call, send_tx, tx).await
             }
-            Self::Burn { token, amount, send_tx, tx: tx_opts, .. } => {
-                let provider = signing_provider_with_curl(&send_tx, send_tx.eth.rpc.curl).await?;
-                let mut tx = IERC20::new(token.resolve(&provider).await?, &provider)
-                    .burn(U256::from_str(&amount)?)
-                    .into_transaction_request();
-
-                // Apply transaction options using helper
-                apply_tx_opts(
-                    &mut tx,
-                    &tx_opts,
-                    get_chain(config.chain, &provider).await?.is_legacy(),
-                );
-
-                send_erc20_tx(
-                    provider,
-                    tx,
-                    &send_tx,
-                    send_tx.timeout.unwrap_or(config.transaction_timeout),
-                )
-                .await?
+            Self::Burn { token, amount, send_tx, tx } => {
+                send(token, IERC20::burnCall { amount: U256::from_str(&amount)? }, send_tx, tx)
+                    .await
             }
-        };
-        Ok(())
+        }
+    }
+}
+
+async fn token_at(
+    rpc: &RpcOpts,
+    token: NameOrAddress,
+) -> Result<(RetryProvider, IERC20::IERC20Instance<RetryProvider, AnyNetwork>)> {
+    let provider = rpc_provider(rpc)?;
+    let token = token.resolve(&provider).await?;
+    Ok((provider.clone(), IERC20::new(token, provider)))
+}
+
+async fn resolve(rpc: &RpcOpts, account: NameOrAddress) -> Result<Address> {
+    Ok(account.resolve(&rpc_provider(rpc)?).await?)
+}
+
+async fn send(
+    token: NameOrAddress,
+    call: impl SolCall,
+    send_tx: SendTxOpts,
+    tx: TxParams,
+) -> Result<()> {
+    // Boxed to keep the large `cast send` future off this command's stack frame.
+    Box::pin(SendTxArgs::contract_call(token, call.abi_encode(), send_tx, tx).run()).await
+}
+
+/// Prints a token amount: the raw decimal string in JSON mode, exponent-annotated otherwise.
+pub(crate) fn print_amount(amount: U256) -> Result<()> {
+    if shell::is_json() {
+        print_json_success(amount.to_string())
+    } else {
+        sh_println!("{}", format_uint_exp(amount))
     }
 }

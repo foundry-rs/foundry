@@ -3,6 +3,7 @@
 use alloy_chains::NamedChain;
 use alloy_primitives::Address;
 use alloy_signer_local::PrivateKeySigner;
+use std::path::Path;
 
 /// Returns the current millis since unix epoch.
 ///
@@ -29,9 +30,20 @@ pub fn network_rpc_key(chain: &str) -> Option<String> {
     std::env::var(key).ok()
 }
 
+/// Resolves the deployer key for `chain`, most specific first:
+///
+/// 1. `<NETWORK>_PRIVATE_KEY`, to point one network at its own account.
+/// 2. `TESTNET_DEPLOYER_PRIVATE_KEY`, the shared throwaway deployer these tests fund.
+/// 3. `TEST_PRIVATE_KEY`, kept for existing local setups.
+///
+/// Prefer the dedicated name over `TEST_PRIVATE_KEY`: it is generic enough that an unrelated value
+/// left in the environment would otherwise deploy from an account the caller did not intend.
 pub fn network_private_key(chain: &str) -> Option<String> {
     let key = format!("{}_PRIVATE_KEY", chain.to_uppercase().replace('-', "_"));
-    std::env::var(key).or_else(|_| std::env::var("TEST_PRIVATE_KEY")).ok()
+    std::env::var(key)
+        .or_else(|_| std::env::var("TESTNET_DEPLOYER_PRIVATE_KEY"))
+        .or_else(|_| std::env::var("TEST_PRIVATE_KEY"))
+        .ok()
 }
 
 /// Represents external input required for executing verification requests
@@ -41,12 +53,38 @@ pub struct EnvExternalities {
     pub pk: String,
     pub etherscan: String,
     pub verifier: String,
+    pub verifier_url: Option<String>,
 }
 
 impl EnvExternalities {
     pub fn address(&self) -> Option<Address> {
         let pk: PrivateKeySigner = self.pk.parse().ok()?;
         Some(pk.address())
+    }
+
+    /// Externalities for a deploy + verify run of `chain` against `verifier`.
+    ///
+    /// `network` is the name used to look up `<NETWORK>_RPC_URL` and `<NETWORK>_PRIVATE_KEY`, and
+    /// matches the canonical `NamedChain::as_str` spelling. Blockscout instances have no shared
+    /// registry, so they must be given an explicit `verifier_url`.
+    ///
+    /// Returns `None` when the network is not configured, which is how these tests stay inert
+    /// outside of the nightly workflow that supplies the funded deployer key.
+    pub fn deploy_verify(
+        chain: NamedChain,
+        network: &str,
+        verifier: &str,
+        verifier_url: Option<&str>,
+    ) -> Option<Self> {
+        Some(Self {
+            chain,
+            rpc: network_rpc_key(network)?,
+            pk: network_private_key(network)?,
+            // Only Etherscan authenticates; Sourcify and Blockscout take no key.
+            etherscan: if verifier == "etherscan" { etherscan_key(chain)? } else { String::new() },
+            verifier: verifier.to_string(),
+            verifier_url: verifier_url.map(str::to_string),
+        })
     }
 
     pub fn goerli() -> Option<Self> {
@@ -56,6 +94,7 @@ impl EnvExternalities {
             pk: network_private_key("goerli")?,
             etherscan: etherscan_key(NamedChain::Goerli)?,
             verifier: "etherscan".to_string(),
+            verifier_url: None,
         })
     }
 
@@ -66,6 +105,7 @@ impl EnvExternalities {
             pk: network_private_key("ftm_testnet")?,
             etherscan: etherscan_key(NamedChain::FantomTestnet)?,
             verifier: "etherscan".to_string(),
+            verifier_url: None,
         })
     }
 
@@ -76,6 +116,7 @@ impl EnvExternalities {
             pk: network_private_key("op_kovan")?,
             etherscan: etherscan_key(NamedChain::OptimismKovan)?,
             verifier: "etherscan".to_string(),
+            verifier_url: None,
         })
     }
 
@@ -86,6 +127,7 @@ impl EnvExternalities {
             pk: network_private_key("arbitrum-goerli")?,
             etherscan: etherscan_key(NamedChain::ArbitrumGoerli)?,
             verifier: "blockscout".to_string(),
+            verifier_url: None,
         })
     }
 
@@ -96,6 +138,7 @@ impl EnvExternalities {
             pk: network_private_key("amoy")?,
             etherscan: etherscan_key(NamedChain::PolygonAmoy)?,
             verifier: "etherscan".to_string(),
+            verifier_url: None,
         })
     }
 
@@ -106,6 +149,7 @@ impl EnvExternalities {
             pk: network_private_key("sepolia")?,
             etherscan: etherscan_key(NamedChain::Sepolia)?,
             verifier: "etherscan".to_string(),
+            verifier_url: None,
         })
     }
 
@@ -116,6 +160,7 @@ impl EnvExternalities {
             pk: network_private_key("sepolia")?,
             etherscan: String::new(),
             verifier: "sourcify".to_string(),
+            verifier_url: None,
         })
     }
 
@@ -126,6 +171,7 @@ impl EnvExternalities {
             pk: network_private_key("sepolia")?,
             etherscan: etherscan_key(NamedChain::Sepolia)?,
             verifier: "sourcify".to_string(),
+            verifier_url: None,
         })
     }
 
@@ -136,6 +182,7 @@ impl EnvExternalities {
             pk: network_private_key("sepolia")?,
             etherscan: String::new(),
             verifier: "blockscout".to_string(),
+            verifier_url: None,
         })
     }
 
@@ -146,6 +193,7 @@ impl EnvExternalities {
             pk: network_private_key("sepolia")?,
             etherscan: etherscan_key(NamedChain::Sepolia)?,
             verifier: "blockscout".to_string(),
+            verifier_url: None,
         })
     }
 
@@ -156,6 +204,7 @@ impl EnvExternalities {
             pk: network_private_key("sepolia")?,
             etherscan: String::new(),
             verifier: String::new(),
+            verifier_url: None,
         })
     }
 
@@ -182,13 +231,33 @@ pub fn parse_deployed_address(out: &str) -> Option<String> {
     None
 }
 
+pub fn assert_debug_dump_identifies_contract(dump_path: &Path, address: &str, contract_name: &str) {
+    let dump: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dump_path).unwrap()).unwrap();
+    let identified = dump["contracts"]["identified_contracts"].as_object().unwrap();
+    let target_identified = identified.iter().any(|(identified_address, name)| {
+        identified_address.eq_ignore_ascii_case(address)
+            && name.as_str().is_some_and(|name| name == contract_name)
+    });
+    assert!(target_identified, "forked target was not identified in debugger dump: {identified:?}");
+}
+
 pub fn parse_verification_guid(out: &str) -> Option<String> {
-    for line in out.lines() {
-        if line.contains("GUID") {
-            return Some(line.replace("GUID:", "").replace('`', "").trim().to_string());
-        }
+    let mut lines = out.lines().map(str::trim).filter(|line| !line.is_empty());
+    let line = lines.next()?;
+    if lines.next().is_some() {
+        return None;
     }
-    None
+    let mut parts = line.split('\t').map(str::trim);
+    let id = parts.next()?;
+    let url = parts.next()?;
+    if parts.next().is_some() || id.is_empty() || url.is_empty() {
+        return None;
+    }
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return None;
+    }
+    Some(id.to_string())
 }
 
 /// Generates a string containing the code of a Solidity contract.
@@ -207,6 +276,23 @@ contract LargeContract {{
         }}
     }}
 }}    
+"
+    )
+}
+
+/// Generates a Solidity contract with both runtime and initcode bytecode at
+/// least `n` bytes long, by embedding an `n`-byte hex constant returned from
+/// an external `pure` function.
+pub fn generate_large_runtime_contract(n: usize) -> String {
+    let data = vec![0xff; n];
+    let hex = alloy_primitives::hex::encode(data);
+    format!(
+        "\
+contract LargeRuntime {{
+    function data() external pure returns (bytes memory) {{
+        return hex\"{hex}\";
+    }}
+}}
 "
     )
 }

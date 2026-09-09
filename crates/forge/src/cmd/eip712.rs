@@ -47,7 +47,7 @@ impl Display for Eip712Output {
 
 impl Eip712Args {
     pub fn run(self) -> Result<()> {
-        let config = self.build.load_config()?;
+        let config = self.build.load_config_with_dependencies()?;
         let project = config.solar_project()?;
         let mut output = ProjectCompiler::new().files([self.target_path]).compile(&project)?;
         let compiler = output.parser_mut().solc_mut().compiler_mut();
@@ -72,7 +72,7 @@ impl Eip712Args {
                 sh_println!("{json}", json = serde_json::to_string_pretty(&outputs)?)?;
             } else {
                 for output in &outputs {
-                    sh_println!("{output}")?;
+                    sh_eprintln!("{output}")?;
                 }
             }
 
@@ -83,9 +83,8 @@ impl Eip712Args {
         let diags = compiler.sess().dcx.emitted_diagnostics().unwrap();
         if compiler.sess().dcx.has_errors().is_err() {
             eyre::bail!("{diags}");
-        } else {
-            let _ = sh_eprint!("{diags}");
         }
+        let _ = sh_eprint!("{diags}");
 
         Ok(())
     }
@@ -100,7 +99,7 @@ pub struct Resolver<'gcx> {
 
 impl<'gcx> Resolver<'gcx> {
     /// Constructs a new [`Resolver`] for the supplied [`Hir`] instance.
-    pub fn new(gcx: Gcx<'gcx>) -> Self {
+    pub const fn new(gcx: Gcx<'gcx>) -> Self {
         Self { gcx }
     }
 
@@ -206,7 +205,7 @@ impl<'gcx> Resolver<'gcx> {
             TyKind::Struct(id) => {
                 let def = self.hir().strukt(id);
                 let name = match subtypes.iter().find(|(_, cached_id)| id == **cached_id) {
-                    Some((name, _)) => name.to_string(),
+                    Some((name, _)) => name.clone(),
                     None => {
                         // Otherwise, assign new name
                         let mut i = 0;

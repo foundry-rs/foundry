@@ -130,6 +130,58 @@ casttest!(flaky_upload_signatures, |_prj, cmd| {
     );
 });
 
+casttest!(selectors_json_envelope, |_prj, cmd| {
+    // bytecode with one function: 0x2125b65b / uint32,address,uint224 / pure
+    let bytecode = "6080604052348015600e575f80fd5b50600436106026575f3560e01c80632125b65b14602a575b5f80fd5b603a6035366004603c565b505050565b005b5f805f60608486031215604d575f80fd5b833563ffffffff81168114605f575f80fd5b925060208401356001600160a01b03811681146079575f80fd5b915060408401356001600160e01b03811681146093575f80fd5b80915050925092509256";
+
+    cmd.args(["selectors", bytecode]).assert_success().stdout_eq(str![[r#"
+0x2125b65b	uint32,address,uint224	pure
+
+"#]]);
+
+    cmd.args(["--json"]).assert_success().stdout_eq(str![[r#"
+{"schema_version":1,"success":true,"data":[{"selector":"0x2125b65b","arguments":"uint32,address,uint224","state_mutability":"pure"}],"errors":[],"warnings":[]}
+
+"#]]);
+});
+
+casttest!(selectors_exclude_fallback_dispatch, |_prj, cmd| {
+    // Bytecode with ABI-dispatched selector 0x11111111 and fallback-dispatched selector 0x22222222.
+    let bytecode = "5f3560e01c806322222222146025576004361060215780631111111114602357005b005b005b00";
+
+    cmd.args(["selectors", bytecode]).assert_success().stdout_eq(str![[r#"
+0x11111111		payable
+
+"#]]);
+});
+
+casttest!(abi_encode_event_json_envelope, |_prj, cmd| {
+    cmd.args([
+        "abi-encode-event",
+        "Transfer(address indexed,address indexed,uint256)",
+        "0x0000000000000000000000000000000000000001",
+        "0x0000000000000000000000000000000000000002",
+        "1000",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+[topic0]: 0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef
+[topic1]: 0x0000000000000000000000000000000000000000000000000000000000000001
+[topic2]: 0x0000000000000000000000000000000000000000000000000000000000000002
+[data]: 0x00000000000000000000000000000000000000000000000000000000000003e8
+
+"#]]);
+
+    // --json must precede the subcommand because `args` uses allow_hyphen_values
+    cmd.cast_fuse()
+        .args(["--json", "abi-encode-event", "Transfer(address indexed,address indexed,uint256)", "0x0000000000000000000000000000000000000001", "0x0000000000000000000000000000000000000002", "1000"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{"schema_version":1,"success":true,"data":{"topics":["0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef","0x0000000000000000000000000000000000000000000000000000000000000001","0x0000000000000000000000000000000000000000000000000000000000000002"],"data":"0x00000000000000000000000000000000000000000000000000000000000003e8"},"errors":[],"warnings":[]}
+
+"#]]);
+});
+
 // tests cast can decode event with provided signature
 casttest!(event_decode_with_sig, |_prj, cmd| {
     cmd.args(["decode-event", "--sig", "MyEvent(uint256,address)", "0x000000000000000000000000000000000000000000000000000000000000004e0000000000000000000000000000000000000000000000000000000000d0004f"]).assert_success().stdout_eq(str![[r#"
@@ -139,12 +191,31 @@ casttest!(event_decode_with_sig, |_prj, cmd| {
 "#]]);
 
     cmd.args(["--json"]).assert_success().stdout_eq(str![[r#"
-[
-  78,
-  "0x0000000000000000000000000000000000D0004F"
-]
+{"schema_version":1,"success":true,"data":["78","0x0000000000000000000000000000000000D0004F"],"errors":[],"warnings":[]}
 
 "#]]);
+});
+
+casttest!(function_pointer_in_event_tuple, |_prj, cmd| {
+    let signature = "ActionLogged((uint256,function))";
+    let function = "0x29088eeb3082c897bebd16bbafc162322cbb1bf47cfdab90";
+    let action = format!("(1337,{function})");
+    let data = "0x000000000000000000000000000000000000000000000000000000000000053929088eeb3082c897bebd16bbafc162322cbb1bf47cfdab900000000000000000";
+
+    cmd.args(["abi-encode-event", signature, &action])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[topic0]: 0x413ec73c547fcf364943e3f9182965c6662c9bb75c94568d39ebb9f66d2cff4b
+[data]: 0x000000000000000000000000000000000000000000000000000000000000053929088eeb3082c897bebd16bbafc162322cbb1bf47cfdab900000000000000000
+
+"#]]);
+
+    cmd.cast_fuse().args(["decode-event", "--sig", signature, data]).assert_success().stdout_eq(
+        str![[r#"
+(1337, 0x29088eeb3082c897bebd16bbafc162322cbb1bf47cfdab90)
+
+"#]],
+    );
 });
 
 // tests cast can decode event with Openchain API
@@ -167,10 +238,7 @@ casttest!(error_decode_with_sig, |_prj, cmd| {
 "#]]);
 
     cmd.args(["--json"]).assert_success().stdout_eq(str![[r#"
-[
-  101,
-  "0x0000000000000000000000000000000000D0004F"
-]
+{"schema_version":1,"success":true,"data":["101","0x0000000000000000000000000000000000D0004F"],"errors":[],"warnings":[]}
 
 "#]]);
 });
@@ -245,4 +313,12 @@ MyUniqueExtraAbiError(uint256,bool)
 true
 
 "#]]);
+});
+
+casttest!(signature_selector, |_prj, cmd| {
+    cmd.cast_fuse().args(["sig", "foo()"]).assert_success().stdout_eq("0xc2985578\n");
+    cmd.cast_fuse()
+        .args(["sig", "foo(address,uint256)"])
+        .assert_success()
+        .stdout_eq("0xbd0d639f\n");
 });

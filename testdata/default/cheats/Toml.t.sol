@@ -240,6 +240,19 @@ contract ParseTomlTest is Test {
         assertEq(bytesArray[1], hex"02");
     }
 
+    function test_parseTomlDefaults() public {
+        assertEq(vm.parseTomlUint("", ".missing", 42), 42);
+        assertEq(vm.parseTomlUint("value = 7", ".value", 42), 7);
+
+        uint256[] memory defaultValue = new uint256[](1);
+        defaultValue[0] = 42;
+        assertEq(abi.encode(vm.parseTomlUintArray("", ".missing", defaultValue)), abi.encode(defaultValue));
+
+        bytes[] memory dynamicDefault = new bytes[](1);
+        dynamicDefault[0] = hex"deadbeef";
+        assertEq(abi.encode(vm.parseTomlBytesArray("", ".missing", dynamicDefault)), abi.encode(dynamicDefault));
+    }
+
     struct NestedStruct {
         uint256 number;
         string str;

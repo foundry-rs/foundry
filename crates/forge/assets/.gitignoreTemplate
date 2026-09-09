@@ -2,6 +2,10 @@
 cache/
 out/
 
+# Commonly ignored directories
+.logs/
+.ignore/
+
 # Ignores development broadcast logs
 !/broadcast
 /broadcast/*/31337/
@@ -12,3 +16,5 @@ docs/
 
 # Dotenv file
 .env
+.env.*
+!.env.example

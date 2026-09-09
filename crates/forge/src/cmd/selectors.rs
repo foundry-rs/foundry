@@ -1,17 +1,25 @@
 use alloy_primitives::hex;
 use clap::Parser;
-use comfy_table::{Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN};
+use comfy_table::{
+    Table,
+    presets::{ASCII_FULL, ASCII_MARKDOWN},
+};
 use eyre::Result;
 use foundry_cli::{
-    opts::{BuildOpts, CompilerOpts, ProjectPathOpts},
-    utils::{FoundryPathExt, cache_local_signatures, cache_signatures_from_abis},
+    opts::{BuildOpts, ProjectPathOpts},
+    utils::{FoundryPathExt, LoadConfig, cache_local_signatures, cache_signatures_from_abis},
 };
 use foundry_common::{
-    compile::{PathOrContractInfo, ProjectCompiler, compile_target},
+    compile::{PathOrContractInfo, ProjectCompiler, compile_abi_project},
     selectors::{SelectorImportData, import_selectors},
     shell,
 };
-use foundry_compilers::{artifacts::output_selection::ContractOutputSelection, info::ContractInfo};
+use foundry_compilers::{
+    Project,
+    artifacts::output_selection::{ContractOutputSelection, EvmOutputSelection, OutputSelection},
+    info::ContractInfo,
+    multi::MultiCompiler,
+};
 use std::{collections::BTreeMap, fs::canonicalize};
 
 /// CLI arguments for `forge selectors`.
@@ -88,48 +96,29 @@ impl SelectorsSubcommands {
         match self {
             Self::Cache { project_paths, extra_abis_path } => {
                 if let Some(extra_abis_path) = extra_abis_path {
-                    sh_println!("Caching selectors for ABIs at {extra_abis_path}")?;
+                    sh_status!("Caching selectors for ABIs at {extra_abis_path}")?;
                     cache_signatures_from_abis(extra_abis_path)?;
                 }
 
-                sh_println!("Caching selectors for contracts in the project...")?;
-                let build_args = BuildOpts {
-                    project_paths,
-                    compiler: CompilerOpts {
-                        extra_output: vec![ContractOutputSelection::Abi],
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                };
-
-                // compile the project to get the artifacts/abis
-                let project = build_args.project()?;
-                let outcome = ProjectCompiler::new().quiet(true).compile(&project)?;
+                sh_status!("Caching selectors for contracts in the project...")?;
+                let (mut project, compiler) = project_from_paths(project_paths)?;
+                let outcome = compile_abi_project(&mut project, compiler.quiet(true))?;
                 cache_local_signatures(&outcome)?;
             }
             Self::Upload { contract, all, project_paths } => {
-                let build_args = BuildOpts {
-                    project_paths: project_paths.clone(),
-                    compiler: CompilerOpts {
-                        extra_output: vec![ContractOutputSelection::Abi],
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                };
-
-                let project = build_args.project()?;
+                let (mut project, compiler) = project_from_paths(project_paths)?;
                 let output = if let Some(contract_info) = &contract {
                     let Some(contract_name) = contract_info.name() else {
-                        eyre::bail!("No contract name provided.")
+                        eyre::bail!("No contract name provided.");
                     };
 
                     let target_path = contract_info
                         .path()
                         .map(Ok)
                         .unwrap_or_else(|| project.find_contract_path(contract_name))?;
-                    compile_target(&target_path, &project, false)?
+                    compile_abi_project(&mut project, compiler.files([target_path]))?
                 } else {
-                    ProjectCompiler::new().compile(&project)?
+                    compile_abi_project(&mut project, compiler)?
                 };
                 let artifacts = if all {
                     output
@@ -162,26 +151,35 @@ impl SelectorsSubcommands {
                     vec![(contract, artifact)]
                 };
 
-                let mut artifacts = artifacts.into_iter().peekable();
-                while let Some((contract, artifact)) = artifacts.next() {
+                let mut abis = Vec::with_capacity(artifacts.len());
+                for (contract, artifact) in artifacts {
                     let abi = artifact.abi.ok_or_else(|| eyre::eyre!("Unable to fetch abi"))?;
                     if abi.functions.is_empty() && abi.events.is_empty() && abi.errors.is_empty() {
                         continue;
                     }
 
-                    sh_println!("Uploading selectors for {contract}...")?;
-
-                    // upload abi to selector database
-                    import_selectors(SelectorImportData::Abi(vec![abi])).await?.describe();
-
-                    if artifacts.peek().is_some() {
-                        sh_println!()?
-                    }
+                    sh_status!("Uploading selectors for {contract}...")?;
+                    abis.push(abi);
+                }
+                if !abis.is_empty() {
+                    import_selectors(SelectorImportData::Abi(abis)).await?.describe();
                 }
             }
             Self::Collision { mut first_contract, mut second_contract, build } => {
                 // Compile the project with the two contracts included
-                let project = build.project()?;
+                let user_extra_output = !build.compiler.extra_output.is_empty()
+                    || !build.compiler.extra_output_files.is_empty();
+                let config = build.load_config_with_dependencies()?;
+                let mut project = config.project()?;
+                if !user_extra_output && !project.build_info {
+                    project.no_artifacts = true;
+                    project.update_output_selection(|selection| {
+                        *selection = OutputSelection::common_output_selection([
+                            ContractOutputSelection::Evm(EvmOutputSelection::MethodIdentifiers)
+                                .to_string(),
+                        ]);
+                    });
+                }
                 let mut compiler = ProjectCompiler::new().quiet(true);
 
                 if let Some(contract_path) = &mut first_contract.path {
@@ -214,7 +212,7 @@ impl SelectorsSubcommands {
                     .filter_map(|(k1, v1)| {
                         second_method_map
                             .iter()
-                            .find_map(|(k2, v2)| if **v2 == *v1 { Some((k2, v2)) } else { None })
+                            .find_map(|(k2, v2)| (**v2 == *v1).then_some((k2, v2)))
                             .map(|(k2, v2)| (v2, k1, k2))
                     })
                     .collect();
@@ -224,9 +222,9 @@ impl SelectorsSubcommands {
                 } else {
                     let mut table = Table::new();
                     if shell::is_markdown() {
-                        table.load_preset(ASCII_MARKDOWN);
+                        table.load_style(ASCII_MARKDOWN);
                     } else {
-                        table.apply_modifier(UTF8_ROUND_CORNERS);
+                        table.load_style(ASCII_FULL.with_rounded_corners());
                     }
                     table.set_header([
                         String::from("Selector"),
@@ -234,26 +232,26 @@ impl SelectorsSubcommands {
                         second_contract.name,
                     ]);
                     for method in &colliding_methods {
-                        table.add_row([method.0, method.1, method.2]);
+                        #[allow(clippy::tuple_array_conversions)]
+                        table.add_row(<[_; 3]>::from(*method));
                     }
                     sh_println!("{} collisions found:", colliding_methods.len())?;
                     sh_println!("\n{table}\n")?;
                 }
             }
             Self::List { contract, project_paths, no_group } => {
-                sh_println!("Listing selectors for contracts in the project...")?;
-                let build_args = BuildOpts {
-                    project_paths,
-                    compiler: CompilerOpts {
-                        extra_output: vec![ContractOutputSelection::Abi],
-                        ..Default::default()
-                    },
-                    ..Default::default()
+                sh_status!("Listing selectors for contracts in the project...")?;
+                let (mut project, compiler) = project_from_paths(project_paths)?;
+                let target_path = contract
+                    .as_ref()
+                    .filter(|_| project.no_artifacts)
+                    .and_then(|contract| project.find_contract_path(contract).ok());
+                let compiler = if let Some(target_path) = target_path {
+                    compiler.files([target_path])
+                } else {
+                    compiler
                 };
-
-                // compile the project to get the artifacts/abis
-                let project = build_args.project()?;
-                let outcome = ProjectCompiler::new().quiet(true).compile(&project)?;
+                let outcome = compile_abi_project(&mut project, compiler.quiet(true))?;
                 let artifacts = if let Some(contract) = contract {
                     let found_artifact = outcome.find_first(&contract);
                     let artifact = found_artifact
@@ -286,7 +284,7 @@ impl SelectorsSubcommands {
                         .collect()
                 };
 
-                let mut artifacts = artifacts.into_iter().peekable();
+                let mut artifacts = artifacts.into_iter();
 
                 #[derive(PartialEq, PartialOrd, Eq, Ord)]
                 enum SelectorType {
@@ -310,7 +308,7 @@ impl SelectorsSubcommands {
                 for (contract, artifact) in artifacts.by_ref() {
                     let abi = artifact.abi.ok_or_else(|| eyre::eyre!("Unable to fetch abi"))?;
 
-                    let contract_selectors = selectors.entry(contract.clone()).or_default();
+                    let contract_selectors = selectors.entry(contract).or_default();
 
                     for func in abi.functions() {
                         let sig = func.signature();
@@ -343,9 +341,9 @@ impl SelectorsSubcommands {
                 if no_group {
                     let mut table = Table::new();
                     if shell::is_markdown() {
-                        table.load_preset(ASCII_MARKDOWN);
+                        table.load_style(ASCII_MARKDOWN);
                     } else {
-                        table.apply_modifier(UTF8_ROUND_CORNERS);
+                        table.load_style(ASCII_FULL.with_rounded_corners());
                     }
                     table.set_header(["Type", "Signature", "Selector", "Contract"]);
 
@@ -356,7 +354,7 @@ impl SelectorsSubcommands {
                                     selector_type.to_string(),
                                     sig,
                                     selector,
-                                    contract.to_string(),
+                                    contract.clone(),
                                 ]);
                             }
                         }
@@ -368,9 +366,9 @@ impl SelectorsSubcommands {
                         sh_println!("{}{contract}", if idx == 0 { "" } else { "\n" })?;
                         let mut table = Table::new();
                         if shell::is_markdown() {
-                            table.load_preset(ASCII_MARKDOWN);
+                            table.load_style(ASCII_MARKDOWN);
                         } else {
-                            table.apply_modifier(UTF8_ROUND_CORNERS);
+                            table.load_style(ASCII_FULL.with_rounded_corners());
                         }
                         table.set_header(["Type", "Signature", "Selector"]);
 
@@ -385,19 +383,10 @@ impl SelectorsSubcommands {
             }
 
             Self::Find { selector, project_paths } => {
-                sh_println!("Searching for selector {selector:?} in the project...")?;
+                sh_status!("Searching for selector {selector:?} in the project...")?;
 
-                let build_args = BuildOpts {
-                    project_paths,
-                    compiler: CompilerOpts {
-                        extra_output: vec![ContractOutputSelection::Abi],
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                };
-
-                let project = build_args.project()?;
-                let outcome = ProjectCompiler::new().quiet(true).compile(&project)?;
+                let (mut project, compiler) = project_from_paths(project_paths)?;
+                let outcome = compile_abi_project(&mut project, compiler.quiet(true))?;
                 let artifacts = outcome
                     .into_artifacts_with_files()
                     .filter(|(file, _, _)| {
@@ -409,18 +398,18 @@ impl SelectorsSubcommands {
 
                 let mut table = Table::new();
                 if shell::is_markdown() {
-                    table.load_preset(ASCII_MARKDOWN);
+                    table.load_style(ASCII_MARKDOWN);
                 } else {
-                    table.apply_modifier(UTF8_ROUND_CORNERS);
+                    table.load_style(ASCII_FULL.with_rounded_corners());
                 }
 
                 table.set_header(["Type", "Signature", "Selector", "Contract"]);
 
+                let selector_str = selector.strip_prefix("0x").unwrap_or(selector.as_str());
+                let selector_bytes = hex::decode(selector_str)?;
+
                 for (_file, contract, artifact) in artifacts {
                     let abi = artifact.abi.ok_or_else(|| eyre::eyre!("Unable to fetch abi"))?;
-
-                    let selector_bytes =
-                        hex::decode(selector.strip_prefix("0x").unwrap_or(&selector))?;
 
                     for func in abi.functions() {
                         if func.selector().as_slice().starts_with(selector_bytes.as_slice()) {
@@ -457,7 +446,7 @@ impl SelectorsSubcommands {
                 }
 
                 if table.row_count() > 0 {
-                    sh_println!("\nFound {} instance(s)...", table.row_count())?;
+                    sh_status!("Found {} instance(s)...", table.row_count())?;
                     sh_println!("\n{table}\n")?;
                 } else {
                     return Err(eyre::eyre!("\nSelector not found in the project."));
@@ -466,4 +455,17 @@ impl SelectorsSubcommands {
         }
         Ok(())
     }
+}
+
+fn project_from_paths(
+    project_paths: ProjectPathOpts,
+) -> Result<(Project<MultiCompiler>, ProjectCompiler)> {
+    let build = BuildOpts { project_paths, ..Default::default() };
+    let config = build.load_config_with_dependencies()?;
+    let compiler = ProjectCompiler::new().dynamic_test_linking(config.dynamic_test_linking);
+    let mut project = config.project()?;
+    if !project.build_info {
+        project.no_artifacts = true;
+    }
+    Ok((project, compiler))
 }

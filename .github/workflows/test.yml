@@ -10,6 +10,13 @@ on:
       profile:
         required: true
         type: string
+    secrets:
+      ETHERSCAN_API_KEY:
+        required: false
+      ARBITRUM_RPC:
+        required: false
+      ETH_SEPOLIA_RPC:
+        required: false
 
 concurrency:
   group: tests-${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -22,6 +29,11 @@ env:
   RUST_MIN_STACK: 4194304 # 2 * the default (2 * 1024 * 1024)
 
 jobs:
+  cargo-cooldown:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/cargo-cooldown.yml
+
   matrices:
     name: build matrices
     runs-on: ubuntu-latest
@@ -30,10 +42,10 @@ jobs:
     outputs:
       test-matrix: ${{ steps.gen.outputs.test-matrix }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.14"
       - name: Generate matrices
@@ -53,44 +65,47 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
-    needs: matrices
+    needs: [cargo-cooldown, matrices]
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.matrices.outputs.test-matrix) }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
           toolchain: stable
           target: ${{ matrix.target }}
-      - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
-      - uses: taiki-e/install-action@1e67dedb5e3c590e1c9d9272ace46ef689da250d # v2
-        with:
-          tool: nextest
-
+      - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes libudev-dev
       # External tests dependencies
       - name: Setup Node.js
         if: contains(matrix.name, 'external')
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
       - name: Install Bun
         if: contains(matrix.name, 'external')
-        uses: oven-sh/setup-bun@3d267786b128fe76c2f16a390aa2448b815359f3 # v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: latest
       - name: Setup Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.14"
       - name: Install Vyper
         # Also update vyper version in .devcontainer/Dockerfile.dev
         run: pip --version && pip install vyper==0.4.3
+      - name: Install Z3
+        # Pinned so the `forge test --symbolic` snapshot tests stay stable across solver versions.
+        if: runner.os == 'Linux'
+        run: pip install z3-solver==5.1.0.0 && z3 --version
 
       - name: Foundry test cache
-        uses: actions/cache@v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.foundry/cache
@@ -101,8 +116,13 @@ jobs:
           key: ${{ runner.os }}-foundry-${{ matrix.name }}-${{ github.run_id }}
           restore-keys: |
             ${{ runner.os }}-foundry-${{ matrix.name }}-
-      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          cache-bin: false
+      - uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
+        with:
+          tool: nextest
       - name: Setup Git config
         run: |
           git config --global user.name "GitHub Actions Bot"
@@ -111,9 +131,16 @@ jobs:
       - name: Test
         env:
           SVM_TARGET_PLATFORM: ${{ matrix.svm_target_platform }}
-          HTTP_ARCHIVE_URLS: ${{ secrets.HTTP_ARCHIVE_URLS }}
-          WS_ARCHIVE_URLS: ${{ secrets.WS_ARCHIVE_URLS }}
           ETHERSCAN_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
           ARBITRUM_RPC: ${{ secrets.ARBITRUM_RPC }}
           ETH_SEPOLIA_RPC: ${{ secrets.ETH_SEPOLIA_RPC }}
-        run: cargo nextest run ${{ matrix.flags }}
+          NEXTEST_FILTER: ${{ matrix.filter }}
+          NEXTEST_PARTITION: ${{ matrix.partition_arg }}
+        shell: bash
+        run: |
+          args=(-E "$NEXTEST_FILTER")
+          if [[ -n "$NEXTEST_PARTITION" ]]; then
+            args+=(--partition "$NEXTEST_PARTITION")
+          fi
+          args+=(--no-fail-fast)
+          cargo nextest run --locked --features monad "${args[@]}"

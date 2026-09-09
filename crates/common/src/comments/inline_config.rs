@@ -15,6 +15,8 @@ struct DisabledRange<T = BytePos> {
     lo: T,
     /// End position, inclusive.
     hi: T,
+    /// Whether the range stems from a `disable-start`/`disable-end` block.
+    block: bool,
 }
 
 impl DisabledRange<BytePos> {
@@ -46,7 +48,7 @@ impl InlineConfigItem<Vec<String>> {
             vec!["all".to_string()]
         } else {
             match relevant.split_once(')') {
-                Some((id_str, _)) => id_str.split(",").map(|s| s.trim().to_string()).collect(),
+                Some((id_str, _)) => id_str.split(',').map(|s| s.trim().to_string()).collect(),
                 None => return Err(InvalidInlineConfigItem::Syntax(s.into())),
             }
         };
@@ -172,7 +174,7 @@ impl<I: ItemIdIterator> InlineConfig<I> {
         }
 
         for (id, (_, lo, hi)) in disabled_blocks {
-            cfg.disable(id, DisabledRange { lo, hi });
+            cfg.disable(id, DisabledRange { lo, hi, block: true });
         }
 
         cfg
@@ -205,17 +207,18 @@ impl<I: ItemIdIterator> InlineConfig<I> {
         let comment_range = result.data;
         let src = file.src.as_str();
 
+        #[allow(clippy::collapsible_match)]
         match item {
             InlineConfigItem::DisableNextItem(ids) => {
                 if let Some(next_item) = find_next_item(span.hi()) {
                     self.disable_many(
                         ids,
-                        DisabledRange { lo: next_item.lo(), hi: next_item.hi() },
+                        DisabledRange { lo: next_item.lo(), hi: next_item.hi(), block: false },
                     );
                 }
             }
             InlineConfigItem::DisableLine(ids) => {
-                let start = src[..comment_range.start].rfind('\n').map_or(0, |i| i);
+                let start = src[..comment_range.start].rfind('\n').unwrap_or(0);
                 let end = src[comment_range.end..]
                     .find('\n')
                     .map_or(src.len(), |i| comment_range.end + i);
@@ -224,6 +227,7 @@ impl<I: ItemIdIterator> InlineConfig<I> {
                     DisabledRange {
                         lo: file.absolute_position(RelativeBytePos::from_usize(start)),
                         hi: file.absolute_position(RelativeBytePos::from_usize(end)),
+                        block: false,
                     },
                 );
             }
@@ -239,6 +243,7 @@ impl<I: ItemIdIterator> InlineConfig<I> {
                                     comment_range.start,
                                 )),
                                 hi: file.absolute_position(RelativeBytePos::from_usize(end)),
+                                block: false,
                             },
                         );
                     }
@@ -265,7 +270,7 @@ impl<I: ItemIdIterator> InlineConfig<I> {
                             let lo = *lo;
                             let (id, _) = entry.remove_entry();
 
-                            self.disable(id, DisabledRange { lo, hi: span.hi() });
+                            self.disable(id, DisabledRange { lo, hi: span.hi(), block: true });
                         }
                     }
                 }
@@ -279,6 +284,15 @@ impl InlineConfig<()> {
     pub fn is_disabled(&self, span: Span) -> bool {
         if let Some(ranges) = self.disabled_ranges.get(&()) {
             return ranges.iter().any(|range| range.includes(span));
+        }
+        false
+    }
+
+    /// Checks if a span is disabled by a `disable-start`/`disable-end` block, as opposed to a
+    /// line-based directive such as `disable-line`.
+    pub fn is_disabled_block(&self, span: Span) -> bool {
+        if let Some(ranges) = self.disabled_ranges.get(&()) {
+            return ranges.iter().any(|range| range.block && range.includes(span));
         }
         false
     }
@@ -330,7 +344,7 @@ struct NextItemFinder {
 }
 
 impl NextItemFinder {
-    fn new(offset: BytePos) -> Self {
+    const fn new(offset: BytePos) -> Self {
         Self { offset }
     }
 
@@ -371,6 +385,7 @@ mod tests {
             DisabledRange::<BytePos> {
                 lo: BytePos::from_usize(self.lo),
                 hi: BytePos::from_usize(self.hi),
+                block: self.block,
             }
         }
 
@@ -384,7 +399,7 @@ mod tests {
 
     #[test]
     fn test_disabled_range_includes() {
-        let strict = DisabledRange { lo: 10, hi: 20 };
+        let strict = DisabledRange { lo: 10, hi: 20, block: false };
         assert!(strict.includes(10..20));
         assert!(strict.includes(12..18));
         assert!(!strict.includes(5..15)); // Partial overlap fails

@@ -514,7 +514,7 @@
     },
     {
       "name": "Gas",
-      "description": "Gas used. Returned by `lastCallGas`.",
+      "description": "Gas used. Returned by `lastCallGas` and `lastFrameGas`.",
       "fields": [
         {
           "name": "gasLimit",
@@ -524,7 +524,7 @@
         {
           "name": "gasTotalUsed",
           "ty": "uint64",
-          "description": "The total gas used."
+          "description": "The total regular gas used."
         },
         {
           "name": "gasMemoryUsed",
@@ -540,6 +540,11 @@
           "name": "gasRemaining",
           "ty": "uint64",
           "description": "The amount of gas remaining."
+        },
+        {
+          "name": "gasStateUsed",
+          "ty": "int64",
+          "description": "The net state gas used. Zero for reverted or halted frames; may be negative within a nested frame when state gas is refunded."
         }
       ]
     },
@@ -653,7 +658,7 @@
         {
           "name": "partialMatch",
           "ty": "bool",
-          "description": "When true, only matches on the beginning of the revert data, otherwise, matches on entire revert data"
+          "description": "When true, only matches on the first 4 bytes (usually the selector) of the revert data, otherwise, matches on entire revert data"
         },
         {
           "name": "revertData",
@@ -723,7 +728,7 @@
     {
       "func": {
         "id": "_expectCheatcodeRevert_2",
-        "description": "Expects an error on next cheatcode call that exactly matches the revert data.",
+        "description": "Expects an error on next cheatcode call that contains the revert data.",
         "declaration": "function _expectCheatcodeRevert(bytes calldata revertData) external;",
         "visibility": "external",
         "mutability": "",
@@ -864,7 +869,7 @@
       "func": {
         "id": "assertApproxEqAbsDecimal_1",
         "description": "Compares two `uint256` values. Expects difference to be less than or equal to `maxDelta`.\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
-        "declaration": "function assertApproxEqAbsDecimal(uint256 left, uint256 right, uint256 maxDelta, uint256 decimals, string calldata error) external pure;",
+        "declaration": "function assertApproxEqAbsDecimal(uint256 left, uint256 right, uint256 maxDelta, uint256 decimals, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertApproxEqAbsDecimal(uint256,uint256,uint256,uint256,string)",
@@ -904,7 +909,7 @@
       "func": {
         "id": "assertApproxEqAbsDecimal_3",
         "description": "Compares two `int256` values. Expects difference to be less than or equal to `maxDelta`.\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
-        "declaration": "function assertApproxEqAbsDecimal(int256 left, int256 right, uint256 maxDelta, uint256 decimals, string calldata error) external pure;",
+        "declaration": "function assertApproxEqAbsDecimal(int256 left, int256 right, uint256 maxDelta, uint256 decimals, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertApproxEqAbsDecimal(int256,int256,uint256,uint256,string)",
@@ -944,7 +949,7 @@
       "func": {
         "id": "assertApproxEqAbs_1",
         "description": "Compares two `uint256` values. Expects difference to be less than or equal to `maxDelta`.\nIncludes error message into revert string on failure.",
-        "declaration": "function assertApproxEqAbs(uint256 left, uint256 right, uint256 maxDelta, string calldata error) external pure;",
+        "declaration": "function assertApproxEqAbs(uint256 left, uint256 right, uint256 maxDelta, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertApproxEqAbs(uint256,uint256,uint256,string)",
@@ -984,7 +989,7 @@
       "func": {
         "id": "assertApproxEqAbs_3",
         "description": "Compares two `int256` values. Expects difference to be less than or equal to `maxDelta`.\nIncludes error message into revert string on failure.",
-        "declaration": "function assertApproxEqAbs(int256 left, int256 right, uint256 maxDelta, string calldata error) external pure;",
+        "declaration": "function assertApproxEqAbs(int256 left, int256 right, uint256 maxDelta, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertApproxEqAbs(int256,int256,uint256,string)",
@@ -1024,7 +1029,7 @@
       "func": {
         "id": "assertApproxEqRelDecimal_1",
         "description": "Compares two `uint256` values. Expects relative difference in percents to be less than or equal to `maxPercentDelta`.\n`maxPercentDelta` is an 18 decimal fixed point number, where 1e18 == 100%\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
-        "declaration": "function assertApproxEqRelDecimal(uint256 left, uint256 right, uint256 maxPercentDelta, uint256 decimals, string calldata error) external pure;",
+        "declaration": "function assertApproxEqRelDecimal(uint256 left, uint256 right, uint256 maxPercentDelta, uint256 decimals, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertApproxEqRelDecimal(uint256,uint256,uint256,uint256,string)",
@@ -1064,7 +1069,7 @@
       "func": {
         "id": "assertApproxEqRelDecimal_3",
         "description": "Compares two `int256` values. Expects relative difference in percents to be less than or equal to `maxPercentDelta`.\n`maxPercentDelta` is an 18 decimal fixed point number, where 1e18 == 100%\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
-        "declaration": "function assertApproxEqRelDecimal(int256 left, int256 right, uint256 maxPercentDelta, uint256 decimals, string calldata error) external pure;",
+        "declaration": "function assertApproxEqRelDecimal(int256 left, int256 right, uint256 maxPercentDelta, uint256 decimals, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertApproxEqRelDecimal(int256,int256,uint256,uint256,string)",
@@ -1104,7 +1109,7 @@
       "func": {
         "id": "assertApproxEqRel_1",
         "description": "Compares two `uint256` values. Expects relative difference in percents to be less than or equal to `maxPercentDelta`.\n`maxPercentDelta` is an 18 decimal fixed point number, where 1e18 == 100%\nIncludes error message into revert string on failure.",
-        "declaration": "function assertApproxEqRel(uint256 left, uint256 right, uint256 maxPercentDelta, string calldata error) external pure;",
+        "declaration": "function assertApproxEqRel(uint256 left, uint256 right, uint256 maxPercentDelta, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertApproxEqRel(uint256,uint256,uint256,string)",
@@ -1144,7 +1149,7 @@
       "func": {
         "id": "assertApproxEqRel_3",
         "description": "Compares two `int256` values. Expects relative difference in percents to be less than or equal to `maxPercentDelta`.\n`maxPercentDelta` is an 18 decimal fixed point number, where 1e18 == 100%\nIncludes error message into revert string on failure.",
-        "declaration": "function assertApproxEqRel(int256 left, int256 right, uint256 maxPercentDelta, string calldata error) external pure;",
+        "declaration": "function assertApproxEqRel(int256 left, int256 right, uint256 maxPercentDelta, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertApproxEqRel(int256,int256,uint256,string)",
@@ -1184,7 +1189,7 @@
       "func": {
         "id": "assertEqDecimal_1",
         "description": "Asserts that two `uint256` values are equal, formatting them with decimals in failure message.\nIncludes error message into revert string on failure.",
-        "declaration": "function assertEqDecimal(uint256 left, uint256 right, uint256 decimals, string calldata error) external pure;",
+        "declaration": "function assertEqDecimal(uint256 left, uint256 right, uint256 decimals, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertEqDecimal(uint256,uint256,uint256,string)",
@@ -1224,7 +1229,7 @@
       "func": {
         "id": "assertEqDecimal_3",
         "description": "Asserts that two `int256` values are equal, formatting them with decimals in failure message.\nIncludes error message into revert string on failure.",
-        "declaration": "function assertEqDecimal(int256 left, int256 right, uint256 decimals, string calldata error) external pure;",
+        "declaration": "function assertEqDecimal(int256 left, int256 right, uint256 decimals, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertEqDecimal(int256,int256,uint256,string)",
@@ -1264,7 +1269,7 @@
       "func": {
         "id": "assertEq_1",
         "description": "Asserts that two `bool` values are equal and includes error message into revert string on failure.",
-        "declaration": "function assertEq(bool left, bool right, string calldata error) external pure;",
+        "declaration": "function assertEq(bool left, bool right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertEq(bool,bool,string)",
@@ -1304,7 +1309,7 @@
       "func": {
         "id": "assertEq_11",
         "description": "Asserts that two `string` values are equal and includes error message into revert string on failure.",
-        "declaration": "function assertEq(string calldata left, string calldata right, string calldata error) external pure;",
+        "declaration": "function assertEq(string calldata left, string calldata right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertEq(string,string,string)",
@@ -1344,7 +1349,7 @@
       "func": {
         "id": "assertEq_13",
         "description": "Asserts that two `bytes` values are equal and includes error message into revert string on failure.",
-        "declaration": "function assertEq(bytes calldata left, bytes calldata right, string calldata error) external pure;",
+        "declaration": "function assertEq(bytes calldata left, bytes calldata right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertEq(bytes,bytes,string)",
@@ -1384,7 +1389,7 @@
       "func": {
         "id": "assertEq_15",
         "description": "Asserts that two arrays of `bool` values are equal and includes error message into revert string on failure.",
-        "declaration": "function assertEq(bool[] calldata left, bool[] calldata right, string calldata error) external pure;",
+        "declaration": "function assertEq(bool[] calldata left, bool[] calldata right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertEq(bool[],bool[],string)",
@@ -1424,7 +1429,7 @@
       "func": {
         "id": "assertEq_17",
         "description": "Asserts that two arrays of `uint256` values are equal and includes error message into revert string on failure.",
-        "declaration": "function assertEq(uint256[] calldata left, uint256[] calldata right, string calldata error) external pure;",
+        "declaration": "function assertEq(uint256[] calldata left, uint256[] calldata right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertEq(uint256[],uint256[],string)",
@@ -1464,7 +1469,7 @@
       "func": {
         "id": "assertEq_19",
         "description": "Asserts that two arrays of `int256` values are equal and includes error message into revert string on failure.",
-        "declaration": "function assertEq(int256[] calldata left, int256[] calldata right, string calldata error) external pure;",
+        "declaration": "function assertEq(int256[] calldata left, int256[] calldata right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertEq(int256[],int256[],string)",
@@ -1524,7 +1529,7 @@
       "func": {
         "id": "assertEq_21",
         "description": "Asserts that two arrays of `address` values are equal and includes error message into revert string on failure.",
-        "declaration": "function assertEq(address[] calldata left, address[] calldata right, string calldata error) external pure;",
+        "declaration": "function assertEq(address[] calldata left, address[] calldata right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertEq(address[],address[],string)",
@@ -1564,7 +1569,7 @@
       "func": {
         "id": "assertEq_23",
         "description": "Asserts that two arrays of `bytes32` values are equal and includes error message into revert string on failure.",
-        "declaration": "function assertEq(bytes32[] calldata left, bytes32[] calldata right, string calldata error) external pure;",
+        "declaration": "function assertEq(bytes32[] calldata left, bytes32[] calldata right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertEq(bytes32[],bytes32[],string)",
@@ -1604,7 +1609,7 @@
       "func": {
         "id": "assertEq_25",
         "description": "Asserts that two arrays of `string` values are equal and includes error message into revert string on failure.",
-        "declaration": "function assertEq(string[] calldata left, string[] calldata right, string calldata error) external pure;",
+        "declaration": "function assertEq(string[] calldata left, string[] calldata right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertEq(string[],string[],string)",
@@ -1644,7 +1649,7 @@
       "func": {
         "id": "assertEq_27",
         "description": "Asserts that two arrays of `bytes` values are equal and includes error message into revert string on failure.",
-        "declaration": "function assertEq(bytes[] calldata left, bytes[] calldata right, string calldata error) external pure;",
+        "declaration": "function assertEq(bytes[] calldata left, bytes[] calldata right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertEq(bytes[],bytes[],string)",
@@ -1664,7 +1669,7 @@
       "func": {
         "id": "assertEq_3",
         "description": "Asserts that two `uint256` values are equal and includes error message into revert string on failure.",
-        "declaration": "function assertEq(uint256 left, uint256 right, string calldata error) external pure;",
+        "declaration": "function assertEq(uint256 left, uint256 right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertEq(uint256,uint256,string)",
@@ -1704,7 +1709,7 @@
       "func": {
         "id": "assertEq_5",
         "description": "Asserts that two `int256` values are equal and includes error message into revert string on failure.",
-        "declaration": "function assertEq(int256 left, int256 right, string calldata error) external pure;",
+        "declaration": "function assertEq(int256 left, int256 right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertEq(int256,int256,string)",
@@ -1744,7 +1749,7 @@
       "func": {
         "id": "assertEq_7",
         "description": "Asserts that two `address` values are equal and includes error message into revert string on failure.",
-        "declaration": "function assertEq(address left, address right, string calldata error) external pure;",
+        "declaration": "function assertEq(address left, address right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertEq(address,address,string)",
@@ -1784,7 +1789,7 @@
       "func": {
         "id": "assertEq_9",
         "description": "Asserts that two `bytes32` values are equal and includes error message into revert string on failure.",
-        "declaration": "function assertEq(bytes32 left, bytes32 right, string calldata error) external pure;",
+        "declaration": "function assertEq(bytes32 left, bytes32 right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertEq(bytes32,bytes32,string)",
@@ -1824,7 +1829,7 @@
       "func": {
         "id": "assertFalse_1",
         "description": "Asserts that the given condition is false and includes error message into revert string on failure.",
-        "declaration": "function assertFalse(bool condition, string calldata error) external pure;",
+        "declaration": "function assertFalse(bool condition, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertFalse(bool,string)",
@@ -1864,7 +1869,7 @@
       "func": {
         "id": "assertGeDecimal_1",
         "description": "Compares two `uint256` values. Expects first value to be greater than or equal to second.\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
-        "declaration": "function assertGeDecimal(uint256 left, uint256 right, uint256 decimals, string calldata error) external pure;",
+        "declaration": "function assertGeDecimal(uint256 left, uint256 right, uint256 decimals, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertGeDecimal(uint256,uint256,uint256,string)",
@@ -1904,7 +1909,7 @@
       "func": {
         "id": "assertGeDecimal_3",
         "description": "Compares two `int256` values. Expects first value to be greater than or equal to second.\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
-        "declaration": "function assertGeDecimal(int256 left, int256 right, uint256 decimals, string calldata error) external pure;",
+        "declaration": "function assertGeDecimal(int256 left, int256 right, uint256 decimals, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertGeDecimal(int256,int256,uint256,string)",
@@ -1944,7 +1949,7 @@
       "func": {
         "id": "assertGe_1",
         "description": "Compares two `uint256` values. Expects first value to be greater than or equal to second.\nIncludes error message into revert string on failure.",
-        "declaration": "function assertGe(uint256 left, uint256 right, string calldata error) external pure;",
+        "declaration": "function assertGe(uint256 left, uint256 right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertGe(uint256,uint256,string)",
@@ -1984,7 +1989,7 @@
       "func": {
         "id": "assertGe_3",
         "description": "Compares two `int256` values. Expects first value to be greater than or equal to second.\nIncludes error message into revert string on failure.",
-        "declaration": "function assertGe(int256 left, int256 right, string calldata error) external pure;",
+        "declaration": "function assertGe(int256 left, int256 right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertGe(int256,int256,string)",
@@ -2024,7 +2029,7 @@
       "func": {
         "id": "assertGtDecimal_1",
         "description": "Compares two `uint256` values. Expects first value to be greater than second.\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
-        "declaration": "function assertGtDecimal(uint256 left, uint256 right, uint256 decimals, string calldata error) external pure;",
+        "declaration": "function assertGtDecimal(uint256 left, uint256 right, uint256 decimals, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertGtDecimal(uint256,uint256,uint256,string)",
@@ -2064,7 +2069,7 @@
       "func": {
         "id": "assertGtDecimal_3",
         "description": "Compares two `int256` values. Expects first value to be greater than second.\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
-        "declaration": "function assertGtDecimal(int256 left, int256 right, uint256 decimals, string calldata error) external pure;",
+        "declaration": "function assertGtDecimal(int256 left, int256 right, uint256 decimals, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertGtDecimal(int256,int256,uint256,string)",
@@ -2104,7 +2109,7 @@
       "func": {
         "id": "assertGt_1",
         "description": "Compares two `uint256` values. Expects first value to be greater than second.\nIncludes error message into revert string on failure.",
-        "declaration": "function assertGt(uint256 left, uint256 right, string calldata error) external pure;",
+        "declaration": "function assertGt(uint256 left, uint256 right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertGt(uint256,uint256,string)",
@@ -2144,7 +2149,7 @@
       "func": {
         "id": "assertGt_3",
         "description": "Compares two `int256` values. Expects first value to be greater than second.\nIncludes error message into revert string on failure.",
-        "declaration": "function assertGt(int256 left, int256 right, string calldata error) external pure;",
+        "declaration": "function assertGt(int256 left, int256 right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertGt(int256,int256,string)",
@@ -2184,7 +2189,7 @@
       "func": {
         "id": "assertLeDecimal_1",
         "description": "Compares two `uint256` values. Expects first value to be less than or equal to second.\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
-        "declaration": "function assertLeDecimal(uint256 left, uint256 right, uint256 decimals, string calldata error) external pure;",
+        "declaration": "function assertLeDecimal(uint256 left, uint256 right, uint256 decimals, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertLeDecimal(uint256,uint256,uint256,string)",
@@ -2224,7 +2229,7 @@
       "func": {
         "id": "assertLeDecimal_3",
         "description": "Compares two `int256` values. Expects first value to be less than or equal to second.\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
-        "declaration": "function assertLeDecimal(int256 left, int256 right, uint256 decimals, string calldata error) external pure;",
+        "declaration": "function assertLeDecimal(int256 left, int256 right, uint256 decimals, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertLeDecimal(int256,int256,uint256,string)",
@@ -2264,7 +2269,7 @@
       "func": {
         "id": "assertLe_1",
         "description": "Compares two `uint256` values. Expects first value to be less than or equal to second.\nIncludes error message into revert string on failure.",
-        "declaration": "function assertLe(uint256 left, uint256 right, string calldata error) external pure;",
+        "declaration": "function assertLe(uint256 left, uint256 right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertLe(uint256,uint256,string)",
@@ -2304,7 +2309,7 @@
       "func": {
         "id": "assertLe_3",
         "description": "Compares two `int256` values. Expects first value to be less than or equal to second.\nIncludes error message into revert string on failure.",
-        "declaration": "function assertLe(int256 left, int256 right, string calldata error) external pure;",
+        "declaration": "function assertLe(int256 left, int256 right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertLe(int256,int256,string)",
@@ -2344,7 +2349,7 @@
       "func": {
         "id": "assertLtDecimal_1",
         "description": "Compares two `uint256` values. Expects first value to be less than second.\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
-        "declaration": "function assertLtDecimal(uint256 left, uint256 right, uint256 decimals, string calldata error) external pure;",
+        "declaration": "function assertLtDecimal(uint256 left, uint256 right, uint256 decimals, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertLtDecimal(uint256,uint256,uint256,string)",
@@ -2384,7 +2389,7 @@
       "func": {
         "id": "assertLtDecimal_3",
         "description": "Compares two `int256` values. Expects first value to be less than second.\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
-        "declaration": "function assertLtDecimal(int256 left, int256 right, uint256 decimals, string calldata error) external pure;",
+        "declaration": "function assertLtDecimal(int256 left, int256 right, uint256 decimals, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertLtDecimal(int256,int256,uint256,string)",
@@ -2424,7 +2429,7 @@
       "func": {
         "id": "assertLt_1",
         "description": "Compares two `uint256` values. Expects first value to be less than second.\nIncludes error message into revert string on failure.",
-        "declaration": "function assertLt(uint256 left, uint256 right, string calldata error) external pure;",
+        "declaration": "function assertLt(uint256 left, uint256 right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertLt(uint256,uint256,string)",
@@ -2464,7 +2469,7 @@
       "func": {
         "id": "assertLt_3",
         "description": "Compares two `int256` values. Expects first value to be less than second.\nIncludes error message into revert string on failure.",
-        "declaration": "function assertLt(int256 left, int256 right, string calldata error) external pure;",
+        "declaration": "function assertLt(int256 left, int256 right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertLt(int256,int256,string)",
@@ -2504,7 +2509,7 @@
       "func": {
         "id": "assertNotEqDecimal_1",
         "description": "Asserts that two `uint256` values are not equal, formatting them with decimals in failure message.\nIncludes error message into revert string on failure.",
-        "declaration": "function assertNotEqDecimal(uint256 left, uint256 right, uint256 decimals, string calldata error) external pure;",
+        "declaration": "function assertNotEqDecimal(uint256 left, uint256 right, uint256 decimals, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertNotEqDecimal(uint256,uint256,uint256,string)",
@@ -2544,7 +2549,7 @@
       "func": {
         "id": "assertNotEqDecimal_3",
         "description": "Asserts that two `int256` values are not equal, formatting them with decimals in failure message.\nIncludes error message into revert string on failure.",
-        "declaration": "function assertNotEqDecimal(int256 left, int256 right, uint256 decimals, string calldata error) external pure;",
+        "declaration": "function assertNotEqDecimal(int256 left, int256 right, uint256 decimals, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertNotEqDecimal(int256,int256,uint256,string)",
@@ -2584,7 +2589,7 @@
       "func": {
         "id": "assertNotEq_1",
         "description": "Asserts that two `bool` values are not equal and includes error message into revert string on failure.",
-        "declaration": "function assertNotEq(bool left, bool right, string calldata error) external pure;",
+        "declaration": "function assertNotEq(bool left, bool right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertNotEq(bool,bool,string)",
@@ -2624,7 +2629,7 @@
       "func": {
         "id": "assertNotEq_11",
         "description": "Asserts that two `string` values are not equal and includes error message into revert string on failure.",
-        "declaration": "function assertNotEq(string calldata left, string calldata right, string calldata error) external pure;",
+        "declaration": "function assertNotEq(string calldata left, string calldata right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertNotEq(string,string,string)",
@@ -2664,7 +2669,7 @@
       "func": {
         "id": "assertNotEq_13",
         "description": "Asserts that two `bytes` values are not equal and includes error message into revert string on failure.",
-        "declaration": "function assertNotEq(bytes calldata left, bytes calldata right, string calldata error) external pure;",
+        "declaration": "function assertNotEq(bytes calldata left, bytes calldata right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertNotEq(bytes,bytes,string)",
@@ -2704,7 +2709,7 @@
       "func": {
         "id": "assertNotEq_15",
         "description": "Asserts that two arrays of `bool` values are not equal and includes error message into revert string on failure.",
-        "declaration": "function assertNotEq(bool[] calldata left, bool[] calldata right, string calldata error) external pure;",
+        "declaration": "function assertNotEq(bool[] calldata left, bool[] calldata right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertNotEq(bool[],bool[],string)",
@@ -2744,7 +2749,7 @@
       "func": {
         "id": "assertNotEq_17",
         "description": "Asserts that two arrays of `uint256` values are not equal and includes error message into revert string on failure.",
-        "declaration": "function assertNotEq(uint256[] calldata left, uint256[] calldata right, string calldata error) external pure;",
+        "declaration": "function assertNotEq(uint256[] calldata left, uint256[] calldata right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertNotEq(uint256[],uint256[],string)",
@@ -2784,7 +2789,7 @@
       "func": {
         "id": "assertNotEq_19",
         "description": "Asserts that two arrays of `int256` values are not equal and includes error message into revert string on failure.",
-        "declaration": "function assertNotEq(int256[] calldata left, int256[] calldata right, string calldata error) external pure;",
+        "declaration": "function assertNotEq(int256[] calldata left, int256[] calldata right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertNotEq(int256[],int256[],string)",
@@ -2844,7 +2849,7 @@
       "func": {
         "id": "assertNotEq_21",
         "description": "Asserts that two arrays of `address` values are not equal and includes error message into revert string on failure.",
-        "declaration": "function assertNotEq(address[] calldata left, address[] calldata right, string calldata error) external pure;",
+        "declaration": "function assertNotEq(address[] calldata left, address[] calldata right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertNotEq(address[],address[],string)",
@@ -2884,7 +2889,7 @@
       "func": {
         "id": "assertNotEq_23",
         "description": "Asserts that two arrays of `bytes32` values are not equal and includes error message into revert string on failure.",
-        "declaration": "function assertNotEq(bytes32[] calldata left, bytes32[] calldata right, string calldata error) external pure;",
+        "declaration": "function assertNotEq(bytes32[] calldata left, bytes32[] calldata right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertNotEq(bytes32[],bytes32[],string)",
@@ -2924,7 +2929,7 @@
       "func": {
         "id": "assertNotEq_25",
         "description": "Asserts that two arrays of `string` values are not equal and includes error message into revert string on failure.",
-        "declaration": "function assertNotEq(string[] calldata left, string[] calldata right, string calldata error) external pure;",
+        "declaration": "function assertNotEq(string[] calldata left, string[] calldata right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertNotEq(string[],string[],string)",
@@ -2964,7 +2969,7 @@
       "func": {
         "id": "assertNotEq_27",
         "description": "Asserts that two arrays of `bytes` values are not equal and includes error message into revert string on failure.",
-        "declaration": "function assertNotEq(bytes[] calldata left, bytes[] calldata right, string calldata error) external pure;",
+        "declaration": "function assertNotEq(bytes[] calldata left, bytes[] calldata right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertNotEq(bytes[],bytes[],string)",
@@ -2984,7 +2989,7 @@
       "func": {
         "id": "assertNotEq_3",
         "description": "Asserts that two `uint256` values are not equal and includes error message into revert string on failure.",
-        "declaration": "function assertNotEq(uint256 left, uint256 right, string calldata error) external pure;",
+        "declaration": "function assertNotEq(uint256 left, uint256 right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertNotEq(uint256,uint256,string)",
@@ -3024,7 +3029,7 @@
       "func": {
         "id": "assertNotEq_5",
         "description": "Asserts that two `int256` values are not equal and includes error message into revert string on failure.",
-        "declaration": "function assertNotEq(int256 left, int256 right, string calldata error) external pure;",
+        "declaration": "function assertNotEq(int256 left, int256 right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertNotEq(int256,int256,string)",
@@ -3064,7 +3069,7 @@
       "func": {
         "id": "assertNotEq_7",
         "description": "Asserts that two `address` values are not equal and includes error message into revert string on failure.",
-        "declaration": "function assertNotEq(address left, address right, string calldata error) external pure;",
+        "declaration": "function assertNotEq(address left, address right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertNotEq(address,address,string)",
@@ -3104,7 +3109,7 @@
       "func": {
         "id": "assertNotEq_9",
         "description": "Asserts that two `bytes32` values are not equal and includes error message into revert string on failure.",
-        "declaration": "function assertNotEq(bytes32 left, bytes32 right, string calldata error) external pure;",
+        "declaration": "function assertNotEq(bytes32 left, bytes32 right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertNotEq(bytes32,bytes32,string)",
@@ -3144,7 +3149,7 @@
       "func": {
         "id": "assertTrue_1",
         "description": "Asserts that the given condition is true and includes error message into revert string on failure.",
-        "declaration": "function assertTrue(bool condition, string calldata error) external pure;",
+        "declaration": "function assertTrue(bool condition, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertTrue(bool,string)",
@@ -3174,6 +3179,26 @@
           99,
           229,
           98
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assumeImplicitApproval",
+        "description": "Skips a fuzz/invariant input unless `spender` is implicitly approved.",
+        "declaration": "function assumeImplicitApproval(address spender) external view;",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "assumeImplicitApproval(address)",
+        "selector": "0x7c8cd6d2",
+        "selectorBytes": [
+          124,
+          140,
+          214,
+          210
         ]
       },
       "group": "testing",
@@ -3758,7 +3783,7 @@
       },
       "group": "utilities",
       "status": "stable",
-      "safety": "safe"
+      "safety": "unsafe"
     },
     {
       "func": {
@@ -3777,6 +3802,26 @@
         ]
       },
       "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "createEd25519Key",
+        "description": "Generates an Ed25519 key pair from a deterministic salt.\nReturns (publicKey, privateKey) as 32-byte values.",
+        "declaration": "function createEd25519Key(bytes32 salt) external pure returns (bytes32 publicKey, bytes32 privateKey);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "createEd25519Key(bytes32)",
+        "selector": "0x1ef3f27a",
+        "selectorBytes": [
+          30,
+          243,
+          242,
+          122
+        ]
+      },
+      "group": "crypto",
       "status": "stable",
       "safety": "safe"
     },
@@ -3962,6 +4007,26 @@
     },
     {
       "func": {
+        "id": "currentFilePath",
+        "description": "Get the source file path of the currently running test or script contract,\nrelative to the project root.",
+        "declaration": "function currentFilePath() external view returns (string memory path);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "currentFilePath()",
+        "selector": "0x9b45555c",
+        "selectorBytes": [
+          155,
+          69,
+          85,
+          92
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "deal",
         "description": "Sets an address' balance.",
         "declaration": "function deal(address account, uint256 newBalance) external;",
@@ -4067,7 +4132,7 @@
     {
       "func": {
         "id": "deployCode_0",
-        "description": "Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.",
+        "description": "Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and\n<version>/<profile> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.",
         "declaration": "function deployCode(string calldata artifactPath) external returns (address deployedAddress);",
         "visibility": "external",
         "mutability": "",
@@ -4087,7 +4152,7 @@
     {
       "func": {
         "id": "deployCode_1",
-        "description": "Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.\nAdditionally accepts abi-encoded constructor arguments.",
+        "description": "Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and\n<version>/<profile> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.\nAdditionally accepts abi-encoded constructor arguments.",
         "declaration": "function deployCode(string calldata artifactPath, bytes calldata constructorArgs) external returns (address deployedAddress);",
         "visibility": "external",
         "mutability": "",
@@ -4107,7 +4172,7 @@
     {
       "func": {
         "id": "deployCode_2",
-        "description": "Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.\nAdditionally accepts `msg.value`.",
+        "description": "Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and\n<version>/<profile> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.\nAdditionally accepts `msg.value`.",
         "declaration": "function deployCode(string calldata artifactPath, uint256 value) external returns (address deployedAddress);",
         "visibility": "external",
         "mutability": "",
@@ -4127,7 +4192,7 @@
     {
       "func": {
         "id": "deployCode_3",
-        "description": "Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.\nAdditionally accepts abi-encoded constructor arguments and `msg.value`.",
+        "description": "Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and\n<version>/<profile> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.\nAdditionally accepts abi-encoded constructor arguments and `msg.value`.",
         "declaration": "function deployCode(string calldata artifactPath, bytes calldata constructorArgs, uint256 value) external returns (address deployedAddress);",
         "visibility": "external",
         "mutability": "",
@@ -4147,7 +4212,7 @@
     {
       "func": {
         "id": "deployCode_4",
-        "description": "Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.",
+        "description": "Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and\n<version>/<profile> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.",
         "declaration": "function deployCode(string calldata artifactPath, bytes32 salt) external returns (address deployedAddress);",
         "visibility": "external",
         "mutability": "",
@@ -4167,7 +4232,7 @@
     {
       "func": {
         "id": "deployCode_5",
-        "description": "Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.\nAdditionally accepts abi-encoded constructor arguments.",
+        "description": "Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and\n<version>/<profile> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.\nAdditionally accepts abi-encoded constructor arguments.",
         "declaration": "function deployCode(string calldata artifactPath, bytes calldata constructorArgs, bytes32 salt) external returns (address deployedAddress);",
         "visibility": "external",
         "mutability": "",
@@ -4187,7 +4252,7 @@
     {
       "func": {
         "id": "deployCode_6",
-        "description": "Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.\nAdditionally accepts `msg.value`.",
+        "description": "Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and\n<version>/<profile> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.\nAdditionally accepts `msg.value`.",
         "declaration": "function deployCode(string calldata artifactPath, uint256 value, bytes32 salt) external returns (address deployedAddress);",
         "visibility": "external",
         "mutability": "",
@@ -4207,7 +4272,7 @@
     {
       "func": {
         "id": "deployCode_7",
-        "description": "Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.\nAdditionally accepts abi-encoded constructor arguments and `msg.value`.",
+        "description": "Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and\n<version>/<profile> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.\nAdditionally accepts abi-encoded constructor arguments and `msg.value`.",
         "declaration": "function deployCode(string calldata artifactPath, bytes calldata constructorArgs, uint256 value, bytes32 salt) external returns (address deployedAddress);",
         "visibility": "external",
         "mutability": "",
@@ -4327,7 +4392,7 @@
     {
       "func": {
         "id": "dumpState",
-        "description": "Dump a genesis JSON file's `allocs` to disk.",
+        "description": "Dumps a genesis JSON file's `allocs` to disk. Accounts created in the current transaction\nare ordered by deployment, followed by the remaining accounts in ascending address order.",
         "declaration": "function dumpState(string calldata pathToStateJson) external;",
         "visibility": "external",
         "mutability": "",
@@ -4346,8 +4411,128 @@
     },
     {
       "func": {
+        "id": "ecAddAffine",
+        "description": "Adds the secp256k1 affine points `point1 = (pointX1, pointY1)` and\n`point2 = (pointX2, pointY2)`.\nThe point at infinity is represented as `(0, 0)`.",
+        "declaration": "function ecAddAffine(uint256 pointX1, uint256 pointY1, uint256 pointX2, uint256 pointY2) external pure returns (uint256 resultX, uint256 resultY);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "ecAddAffine(uint256,uint256,uint256,uint256)",
+        "selector": "0x1af9eefc",
+        "selectorBytes": [
+          26,
+          249,
+          238,
+          252
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "ecAddProjective",
+        "description": "Adds the secp256k1 projective points `point1 = (pointX1, pointY1, pointZ1)` and\n`point2 = (pointX2, pointY2, pointZ2)`.\nThe point at infinity is accepted as `(0, y, 0)` for any non-zero `y` and returned as\n`(0, 1, 0)`. Any other result is normalized to `(x, y, 1)`.",
+        "declaration": "function ecAddProjective(uint256 pointX1, uint256 pointY1, uint256 pointZ1, uint256 pointX2, uint256 pointY2, uint256 pointZ2) external pure returns (uint256 resultX, uint256 resultY, uint256 resultZ);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "ecAddProjective(uint256,uint256,uint256,uint256,uint256,uint256)",
+        "selector": "0x45b12879",
+        "selectorBytes": [
+          69,
+          177,
+          40,
+          121
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "ecAffineToProjective",
+        "description": "Converts the secp256k1 affine point `(pointX, pointY)` to projective coordinates.\nThe point at infinity is converted from `(0, 0)` to `(0, 1, 0)`.",
+        "declaration": "function ecAffineToProjective(uint256 pointX, uint256 pointY) external pure returns (uint256 resultX, uint256 resultY, uint256 resultZ);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "ecAffineToProjective(uint256,uint256)",
+        "selector": "0xc1290181",
+        "selectorBytes": [
+          193,
+          41,
+          1,
+          129
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "ecMulAffine",
+        "description": "Multiplies the secp256k1 affine point `(pointX, pointY)` by `scalar`.\nThe scalar is reduced modulo the secp256k1 group order.\nThe point at infinity is represented as `(0, 0)`.",
+        "declaration": "function ecMulAffine(uint256 pointX, uint256 pointY, uint256 scalar) external pure returns (uint256 resultX, uint256 resultY);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "ecMulAffine(uint256,uint256,uint256)",
+        "selector": "0xc74ca094",
+        "selectorBytes": [
+          199,
+          76,
+          160,
+          148
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "ecMulProjective",
+        "description": "Multiplies the secp256k1 projective point `(pointX, pointY, pointZ)` by `scalar`.\nThe scalar is reduced modulo the secp256k1 group order.\nThe point at infinity is accepted as `(0, y, 0)` for any non-zero `y` and returned as\n`(0, 1, 0)`. Any other result is normalized to `(x, y, 1)`.",
+        "declaration": "function ecMulProjective(uint256 pointX, uint256 pointY, uint256 pointZ, uint256 scalar) external pure returns (uint256 resultX, uint256 resultY, uint256 resultZ);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "ecMulProjective(uint256,uint256,uint256,uint256)",
+        "selector": "0x031661fc",
+        "selectorBytes": [
+          3,
+          22,
+          97,
+          252
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "ecProjectiveToAffine",
+        "description": "Converts the secp256k1 projective point `(pointX, pointY, pointZ)` to affine coordinates.\nThe point at infinity is converted from `(0, y, 0)` for any non-zero `y` to `(0, 0)`.",
+        "declaration": "function ecProjectiveToAffine(uint256 pointX, uint256 pointY, uint256 pointZ) external pure returns (uint256 resultX, uint256 resultY);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "ecProjectiveToAffine(uint256,uint256,uint256)",
+        "selector": "0xe6be5995",
+        "selectorBytes": [
+          230,
+          190,
+          89,
+          149
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "eip712HashStruct_0",
-        "description": "Generates the struct hash of the canonical EIP-712 type representation and its abi-encoded data.\nSupports 2 different inputs:\n 1. Name of the type (i.e. \"PermitSingle\"):\n    * requires previous binding generation with `forge bind-json`.\n    * bindings will be retrieved from the path configured in `foundry.toml`.\n 2. String representation of the type (i.e. \"Foo(Bar bar) Bar(uint256 baz)\").\n    * Note: the cheatcode will use the canonical type even if the input is malformated\n            with the wrong order of elements or with extra whitespaces.",
+        "description": "Generates the struct hash of the canonical EIP-712 type representation and its abi-encoded data.\nSupports 2 different inputs:\n 1. Name of the type (i.e. \"PermitSingle\"):\n    * requires previous binding generation with `forge bind-json`.\n    * bindings will be retrieved from the path configured in `foundry.toml`.\n 2. String representation of the type (i.e. \"Foo(Bar bar) Bar(uint256 baz)\").\n    * Note: the cheatcode will use the canonical type even if the input is malformed\n            with the wrong order of elements or with extra whitespaces.",
         "declaration": "function eip712HashStruct(string calldata typeNameOrDefinition, bytes calldata abiEncodedData) external pure returns (bytes32 typeHash);",
         "visibility": "external",
         "mutability": "pure",
@@ -4387,7 +4572,7 @@
     {
       "func": {
         "id": "eip712HashType_0",
-        "description": "Generates the hash of the canonical EIP-712 type representation.\nSupports 2 different inputs:\n 1. Name of the type (i.e. \"Transaction\"):\n    * requires previous binding generation with `forge bind-json`.\n    * bindings will be retrieved from the path configured in `foundry.toml`.\n 2. String representation of the type (i.e. \"Foo(Bar bar) Bar(uint256 baz)\").\n    * Note: the cheatcode will output the canonical type even if the input is malformated\n            with the wrong order of elements or with extra whitespaces.",
+        "description": "Generates the hash of the canonical EIP-712 type representation.\nSupports 2 different inputs:\n 1. Name of the type (i.e. \"Transaction\"):\n    * requires previous binding generation with `forge bind-json`.\n    * bindings will be retrieved from the path configured in `foundry.toml`.\n 2. String representation of the type (i.e. \"Foo(Bar bar) Bar(uint256 baz)\").\n    * Note: the cheatcode will output the canonical type even if the input is malformed\n            with the wrong order of elements or with extra whitespaces.",
         "declaration": "function eip712HashType(string calldata typeNameOrDefinition) external pure returns (bytes32 typeHash);",
         "visibility": "external",
         "mutability": "pure",
@@ -5086,6 +5271,26 @@
     },
     {
       "func": {
+        "id": "executeTransaction",
+        "description": "Executes an RLP-encoded signed transaction with full EVM semantics (like `--isolate` mode).\nThe transaction is decoded from EIP-2718 format (type byte prefix + RLP payload) or legacy RLP.\nReturns the execution output bytes.\nThis cheatcode is not allowed in `forge script` contexts.",
+        "declaration": "function executeTransaction(bytes calldata rawTx) external returns (bytes memory);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "executeTransaction(bytes)",
+        "selector": "0x943d7209",
+        "selectorBytes": [
+          148,
+          61,
+          114,
+          9
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "exists",
         "description": "Returns true if the given path points to an existing entity, else returns false.",
         "declaration": "function exists(string calldata path) external view returns (bool result);",
@@ -5306,6 +5511,26 @@
     },
     {
       "func": {
+        "id": "expectDelegateCall",
+        "description": "Expects a delegate call to an address with the specified calldata.\nCalldata can either be a strict or a partial match.",
+        "declaration": "function expectDelegateCall(address callee, bytes calldata data) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectDelegateCall(address,bytes)",
+        "selector": "0x3d6ac1e7",
+        "selectorBytes": [
+          61,
+          106,
+          193,
+          231
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "expectEmitAnonymous_0",
         "description": "Prepare an expected anonymous log with (bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData.).\nCall this function, then emit an anonymous event, then call a function. Internally after the call, we check if\nlogs were emitted in the expected order with the expected topics and data (as specified by the booleans).",
         "declaration": "function expectEmitAnonymous(bool checkTopic0, bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData) external;",
@@ -5387,7 +5612,7 @@
     {
       "func": {
         "id": "expectEmit_0",
-        "description": "Prepare an expected log with (bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData.).\nCall this function, then emit an event, then call a function. Internally after the call, we check if\nlogs were emitted in the expected order with the expected topics and data (as specified by the booleans).",
+        "description": "Prepare an expected log with (bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData.).\nCall this function, then emit an event, then call a function. Internally after the call, we check if\nlogs were emitted in the expected order with the expected topics and data (as specified by the booleans).\nMust be placed immediately before the call you want to assert on. If the next call reverts and the\nrevert is caught by the caller (low-level call or try/catch), the expectation remains active and may\nbe satisfied by a log emitted from a later call.",
         "declaration": "function expectEmit(bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData) external;",
         "visibility": "external",
         "mutability": "",
@@ -5427,7 +5652,7 @@
     {
       "func": {
         "id": "expectEmit_2",
-        "description": "Prepare an expected log with all topic and data checks enabled.\nCall this function, then emit an event, then call a function. Internally after the call, we check if\nlogs were emitted in the expected order with the expected topics and data.",
+        "description": "Prepare an expected log with all topic and data checks enabled.\nCall this function, then emit an event, then call a function. Internally after the call, we check if\nlogs were emitted in the expected order with the expected topics and data.\nMust be placed immediately before the call you want to assert on. If the next call reverts and the\nrevert is caught by the caller (low-level call or try/catch), the expectation remains active and may\nbe satisfied by a log emitted from a later call.",
         "declaration": "function expectEmit() external;",
         "visibility": "external",
         "mutability": "",
@@ -5546,6 +5771,66 @@
     },
     {
       "func": {
+        "id": "expectKeychainAdminVerified",
+        "description": "Expects a call to `SignatureVerifier.verifyKeychainAdmin(account, digest, signature)`.\nThe supplied `digest` should already be domain-separated with chain ID, contract address,\nand account address.",
+        "declaration": "function expectKeychainAdminVerified(address account, bytes32 digest, bytes calldata signature) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectKeychainAdminVerified(address,bytes32,bytes)",
+        "selector": "0xcbe45e4f",
+        "selectorBytes": [
+          203,
+          228,
+          94,
+          79
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "expectKeychainVerified",
+        "description": "Expects a call to `SignatureVerifier.verifyKeychain(account, digest, signature)`.",
+        "declaration": "function expectKeychainVerified(address account, bytes32 digest, bytes calldata signature) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectKeychainVerified(address,bytes32,bytes)",
+        "selector": "0x3040e515",
+        "selectorBytes": [
+          48,
+          64,
+          229,
+          21
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "expectLogoURIUpdated",
+        "description": "Expects a TIP-20 `LogoURIUpdated(address indexed updater, string newLogoURI)` event.",
+        "declaration": "function expectLogoURIUpdated(address token, address updater, string calldata newLogoURI) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectLogoURIUpdated(address,address,string)",
+        "selector": "0xd450e23a",
+        "selectorBytes": [
+          212,
+          80,
+          226,
+          58
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "expectPartialRevert_0",
         "description": "Expects an error on next call that starts with the revert data.",
         "declaration": "function expectPartialRevert(bytes4 revertData) external;",
@@ -5567,7 +5852,7 @@
     {
       "func": {
         "id": "expectPartialRevert_1",
-        "description": "Expects an error on next call to reverter address, that starts with the revert data.",
+        "description": "Expects an error on next call to reverter address, that starts with the revert data.\nSee `expectRevert(address)` for `reverter` matching semantics.",
         "declaration": "function expectPartialRevert(bytes4 revertData, address reverter) external;",
         "visibility": "external",
         "mutability": "",
@@ -5627,7 +5912,7 @@
     {
       "func": {
         "id": "expectRevert_10",
-        "description": "Expects a `count` number of reverts from the upcoming calls from the reverter address that match the revert data.",
+        "description": "Expects a `count` number of reverts from the upcoming calls from the reverter address that match the revert data.\nSee `expectRevert(address)` for `reverter` matching semantics.",
         "declaration": "function expectRevert(bytes4 revertData, address reverter, uint64 count) external;",
         "visibility": "external",
         "mutability": "",
@@ -5647,7 +5932,7 @@
     {
       "func": {
         "id": "expectRevert_11",
-        "description": "Expects a `count` number of reverts from the upcoming calls from the reverter address that exactly match the revert data.",
+        "description": "Expects a `count` number of reverts from the upcoming calls from the reverter address that exactly match the revert data.\nSee `expectRevert(address)` for `reverter` matching semantics.",
         "declaration": "function expectRevert(bytes calldata revertData, address reverter, uint64 count) external;",
         "visibility": "external",
         "mutability": "",
@@ -5687,7 +5972,7 @@
     {
       "func": {
         "id": "expectRevert_3",
-        "description": "Expects an error with any revert data on next call to reverter address.",
+        "description": "Expects an error with any revert data on next call to reverter address.\nThe `reverter` argument is matched against the address associated with\nthe frame that produced the revert:\n  - For a CALL: the address that was called.\n  - For a CREATE / CREATE2: the would-be deployed address of the failed\n    deployment (computed from the deployer + nonce, or salt + initcode).\nFor a single expected revert, the innermost reverting frame wins in\nnested CALL, CREATE, or mixed chains. With `count > 1`, nested\nCREATE / CREATE2 chains apply the same rule independently to each\niteration; nested CALL chains keep their existing\noutermost-call-per-iteration behavior.",
         "declaration": "function expectRevert(address reverter) external;",
         "visibility": "external",
         "mutability": "",
@@ -5707,7 +5992,7 @@
     {
       "func": {
         "id": "expectRevert_4",
-        "description": "Expects an error from reverter address on next call, with any revert data.",
+        "description": "Expects an error from reverter address on next call, with any revert data.\nSee `expectRevert(address)` for `reverter` matching semantics.",
         "declaration": "function expectRevert(bytes4 revertData, address reverter) external;",
         "visibility": "external",
         "mutability": "",
@@ -5727,7 +6012,7 @@
     {
       "func": {
         "id": "expectRevert_5",
-        "description": "Expects an error from reverter address on next call, that exactly matches the revert data.",
+        "description": "Expects an error from reverter address on next call, that exactly matches the revert data.\nSee `expectRevert(address)` for `reverter` matching semantics.",
         "declaration": "function expectRevert(bytes calldata revertData, address reverter) external;",
         "visibility": "external",
         "mutability": "",
@@ -5807,7 +6092,7 @@
     {
       "func": {
         "id": "expectRevert_9",
-        "description": "Expects a `count` number of reverts from the upcoming calls from the reverter address.",
+        "description": "Expects a `count` number of reverts from the upcoming calls from the reverter address.\nSee `expectRevert(address)` for `reverter` matching semantics.",
         "declaration": "function expectRevert(address reverter, uint64 count) external;",
         "visibility": "external",
         "mutability": "",
@@ -5866,6 +6151,26 @@
     },
     {
       "func": {
+        "id": "expectTip20LogoURIUpdated",
+        "description": "Expects a TIP-20 `LogoURIUpdated(address indexed updater, string newLogoURI)` event.",
+        "declaration": "function expectTip20LogoURIUpdated(address token, address updater, string calldata newLogoURI) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectTip20LogoURIUpdated(address,address,string)",
+        "selector": "0x4e134a2c",
+        "selectorBytes": [
+          78,
+          19,
+          74,
+          44
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "fee",
         "description": "Sets `block.basefee`.",
         "declaration": "function fee(uint256 newBasefee) external;",
@@ -5898,6 +6203,66 @@
           22,
           4,
           103
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "ffiBytes",
+        "description": "Performs a foreign function call via the terminal and decodes the output as hex bytes.",
+        "declaration": "function ffiBytes(string[] calldata commandInput) external returns (bytes memory result);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "ffiBytes(string[])",
+        "selector": "0x32730d81",
+        "selectorBytes": [
+          50,
+          115,
+          13,
+          129
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "ffiString",
+        "description": "Performs a foreign function call via the terminal and returns the output as a string.",
+        "declaration": "function ffiString(string[] calldata commandInput) external returns (string memory result);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "ffiString(string[])",
+        "selector": "0x0d0d2f41",
+        "selectorBytes": [
+          13,
+          13,
+          47,
+          65
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "ffiUint",
+        "description": "Performs a foreign function call via the terminal and parses the output as a `uint256`.",
+        "declaration": "function ffiUint(string[] calldata commandInput) external returns (uint256 result);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "ffiUint(string[])",
+        "selector": "0xcdf7c6c4",
+        "selectorBytes": [
+          205,
+          247,
+          198,
+          196
         ]
       },
       "group": "filesystem",
@@ -6227,7 +6592,7 @@
     {
       "func": {
         "id": "getCode",
-        "description": "Gets the creation bytecode from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.",
+        "description": "Gets the creation bytecode from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and\n<version>/<profile> parts are optional. Use <profile> to select artifacts compiled with a specific profile\nfrom foundry.toml.",
         "declaration": "function getCode(string calldata artifactPath) external view returns (bytes memory creationBytecode);",
         "visibility": "external",
         "mutability": "view",
@@ -6247,7 +6612,7 @@
     {
       "func": {
         "id": "getDeployedCode",
-        "description": "Gets the deployed bytecode from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.",
+        "description": "Gets the deployed bytecode from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and\n<version>/<profile> parts are optional.",
         "declaration": "function getDeployedCode(string calldata artifactPath) external view returns (bytes memory runtimeBytecode);",
         "visibility": "external",
         "mutability": "view",
@@ -6546,6 +6911,26 @@
     },
     {
       "func": {
+        "id": "getSelectors",
+        "description": "Gets all function selectors from a contract artifact. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.",
+        "declaration": "function getSelectors(string calldata artifactPath) external view returns (bytes4[] memory selectors);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getSelectors(string)",
+        "selector": "0x13d5a709",
+        "selectorBytes": [
+          19,
+          213,
+          167,
+          9
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "getStateDiff",
         "description": "Returns state diffs from current `vm.startStateDiffRecording` session.",
         "declaration": "function getStateDiff() external view returns (string memory diff);",
@@ -6746,6 +7131,46 @@
     },
     {
       "func": {
+        "id": "isImplicitlyApproved",
+        "description": "Returns `true` if `spender` is on the active Tempo hardfork's implicit-approval list,\nmeaning it can pull TIP-20 tokens from `msg.sender` without a prior `approve()`.\nReturns `false` on non-Tempo networks.",
+        "declaration": "function isImplicitlyApproved(address spender) external view returns (bool implicitlyApproved);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "isImplicitlyApproved(address)",
+        "selector": "0xa8da6aa7",
+        "selectorBytes": [
+          168,
+          218,
+          106,
+          167
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "isIsolateMode",
+        "description": "Returns true if isolated test execution is enabled.",
+        "declaration": "function isIsolateMode() external view returns (bool result);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "isIsolateMode()",
+        "selector": "0x17a5dbab",
+        "selectorBytes": [
+          23,
+          165,
+          219,
+          171
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "isPersistent",
         "description": "Returns true if the account is marked as persistent.",
         "declaration": "function isPersistent(address account) external view returns (bool persistent);",
@@ -6849,7 +7274,7 @@
     {
       "func": {
         "id": "lastCallGas",
-        "description": "Gets the gas used in the last call from the callee perspective.",
+        "description": "DEPRECATED: use `lastFrameGas` instead.\nGets the gas used in the last call from the callee perspective.",
         "declaration": "function lastCallGas() external view returns (Gas memory gas);",
         "visibility": "external",
         "mutability": "view",
@@ -6860,6 +7285,28 @@
           88,
           155,
           40
+        ]
+      },
+      "group": "evm",
+      "status": {
+        "deprecated": "replaced by `lastFrameGas`"
+      },
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "lastFrameGas",
+        "description": "Gets the gas used in the last call or create from the callee perspective.",
+        "declaration": "function lastFrameGas() external view returns (Gas memory gas);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "lastFrameGas()",
+        "selector": "0x995d5b03",
+        "selectorBytes": [
+          153,
+          93,
+          91,
+          3
         ]
       },
       "group": "evm",
@@ -7148,6 +7595,26 @@
     },
     {
       "func": {
+        "id": "mockCall_4",
+        "description": "Mocks a call to an address, returning specified data.\nCalldata can either be strict or a partial match, e.g. if you only\npass a Solidity selector to the expected calldata, then the entire Solidity\nfunction will be mocked.\nOverload to control whether code is injected into `callee`. The other overloads etch a\nsingle byte into an empty account to circumvent Solidity's `extcodesize` check, with the\nside effect that unmocked calls to it no longer revert; `injectCode = false` leaves the\naccount codeless, so unmocked calls to it revert in the caller. Mocked calls that return\ndata still succeed, as Solidity checks `returndatasize()` instead of `extcodesize()` when\nreturn data is expected, but mocked calls to functions without return values may still\nrevert in the caller due to the `extcodesize` check.",
+        "declaration": "function mockCall(address callee, bytes calldata data, bytes calldata returnData, bool injectCode) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "mockCall(address,bytes,bytes,bool)",
+        "selector": "0xb4bc5617",
+        "selectorBytes": [
+          180,
+          188,
+          86,
+          23
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "mockCalls_0",
         "description": "Mocks multiple calls to an address, returning specified data for each call.",
         "declaration": "function mockCalls(address callee, bytes calldata data, bytes[] calldata returnData) external;",
@@ -7328,27 +7795,7 @@
     },
     {
       "func": {
-        "id": "parseJsonAddress",
-        "description": "Parses a string of JSON data at `key` and coerces it to `address`.",
-        "declaration": "function parseJsonAddress(string calldata json, string calldata key) external pure returns (address);",
-        "visibility": "external",
-        "mutability": "pure",
-        "signature": "parseJsonAddress(string,string)",
-        "selector": "0x1e19e657",
-        "selectorBytes": [
-          30,
-          25,
-          230,
-          87
-        ]
-      },
-      "group": "json",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "parseJsonAddressArray",
+        "id": "parseJsonAddressArray_0",
         "description": "Parses a string of JSON data at `key` and coerces it to `address[]`.",
         "declaration": "function parseJsonAddressArray(string calldata json, string calldata key) external pure returns (address[] memory);",
         "visibility": "external",
@@ -7368,18 +7815,18 @@
     },
     {
       "func": {
-        "id": "parseJsonBool",
-        "description": "Parses a string of JSON data at `key` and coerces it to `bool`.",
-        "declaration": "function parseJsonBool(string calldata json, string calldata key) external pure returns (bool);",
+        "id": "parseJsonAddressArray_1",
+        "description": "Parses a string of JSON data at `key` and coerces it to `address[]`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseJsonAddressArray(string calldata json, string calldata key, address[] calldata defaultValue) external pure returns (address[] memory);",
         "visibility": "external",
         "mutability": "pure",
-        "signature": "parseJsonBool(string,string)",
-        "selector": "0x9f86dc91",
+        "signature": "parseJsonAddressArray(string,string,address[])",
+        "selector": "0x586afa51",
         "selectorBytes": [
-          159,
-          134,
-          220,
-          145
+          88,
+          106,
+          250,
+          81
         ]
       },
       "group": "json",
@@ -7388,7 +7835,67 @@
     },
     {
       "func": {
-        "id": "parseJsonBoolArray",
+        "id": "parseJsonAddress_0",
+        "description": "Parses a string of JSON data at `key` and coerces it to `address`.",
+        "declaration": "function parseJsonAddress(string calldata json, string calldata key) external pure returns (address);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseJsonAddress(string,string)",
+        "selector": "0x1e19e657",
+        "selectorBytes": [
+          30,
+          25,
+          230,
+          87
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseJsonAddress_1",
+        "description": "Parses a string of JSON data at `key` and coerces it to `address`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseJsonAddress(string calldata json, string calldata key, address defaultValue) external pure returns (address);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseJsonAddress(string,string,address)",
+        "selector": "0xddeecb75",
+        "selectorBytes": [
+          221,
+          238,
+          203,
+          117
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseJsonArrayLength",
+        "description": "Returns the length of the JSON array at `key`.",
+        "declaration": "function parseJsonArrayLength(string calldata json, string calldata key) external pure returns (uint256 length);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseJsonArrayLength(string,string)",
+        "selector": "0xcdb6e4ac",
+        "selectorBytes": [
+          205,
+          182,
+          228,
+          172
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseJsonBoolArray_0",
         "description": "Parses a string of JSON data at `key` and coerces it to `bool[]`.",
         "declaration": "function parseJsonBoolArray(string calldata json, string calldata key) external pure returns (bool[] memory);",
         "visibility": "external",
@@ -7408,18 +7915,18 @@
     },
     {
       "func": {
-        "id": "parseJsonBytes",
-        "description": "Parses a string of JSON data at `key` and coerces it to `bytes`.",
-        "declaration": "function parseJsonBytes(string calldata json, string calldata key) external pure returns (bytes memory);",
+        "id": "parseJsonBoolArray_1",
+        "description": "Parses a string of JSON data at `key` and coerces it to `bool[]`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseJsonBoolArray(string calldata json, string calldata key, bool[] calldata defaultValue) external pure returns (bool[] memory);",
         "visibility": "external",
         "mutability": "pure",
-        "signature": "parseJsonBytes(string,string)",
-        "selector": "0xfd921be8",
+        "signature": "parseJsonBoolArray(string,string,bool[])",
+        "selector": "0xcc9d6da5",
         "selectorBytes": [
-          253,
-          146,
-          27,
-          232
+          204,
+          157,
+          109,
+          165
         ]
       },
       "group": "json",
@@ -7428,18 +7935,18 @@
     },
     {
       "func": {
-        "id": "parseJsonBytes32",
-        "description": "Parses a string of JSON data at `key` and coerces it to `bytes32`.",
-        "declaration": "function parseJsonBytes32(string calldata json, string calldata key) external pure returns (bytes32);",
+        "id": "parseJsonBool_0",
+        "description": "Parses a string of JSON data at `key` and coerces it to `bool`.",
+        "declaration": "function parseJsonBool(string calldata json, string calldata key) external pure returns (bool);",
         "visibility": "external",
         "mutability": "pure",
-        "signature": "parseJsonBytes32(string,string)",
-        "selector": "0x1777e59d",
+        "signature": "parseJsonBool(string,string)",
+        "selector": "0x9f86dc91",
         "selectorBytes": [
-          23,
-          119,
-          229,
-          157
+          159,
+          134,
+          220,
+          145
         ]
       },
       "group": "json",
@@ -7448,7 +7955,27 @@
     },
     {
       "func": {
-        "id": "parseJsonBytes32Array",
+        "id": "parseJsonBool_1",
+        "description": "Parses a string of JSON data at `key` and coerces it to `bool`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseJsonBool(string calldata json, string calldata key, bool defaultValue) external pure returns (bool);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseJsonBool(string,string,bool)",
+        "selector": "0xf147484e",
+        "selectorBytes": [
+          241,
+          71,
+          72,
+          78
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseJsonBytes32Array_0",
         "description": "Parses a string of JSON data at `key` and coerces it to `bytes32[]`.",
         "declaration": "function parseJsonBytes32Array(string calldata json, string calldata key) external pure returns (bytes32[] memory);",
         "visibility": "external",
@@ -7468,7 +7995,67 @@
     },
     {
       "func": {
-        "id": "parseJsonBytesArray",
+        "id": "parseJsonBytes32Array_1",
+        "description": "Parses a string of JSON data at `key` and coerces it to `bytes32[]`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseJsonBytes32Array(string calldata json, string calldata key, bytes32[] calldata defaultValue) external pure returns (bytes32[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseJsonBytes32Array(string,string,bytes32[])",
+        "selector": "0xd503fb9e",
+        "selectorBytes": [
+          213,
+          3,
+          251,
+          158
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseJsonBytes32_0",
+        "description": "Parses a string of JSON data at `key` and coerces it to `bytes32`.",
+        "declaration": "function parseJsonBytes32(string calldata json, string calldata key) external pure returns (bytes32);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseJsonBytes32(string,string)",
+        "selector": "0x1777e59d",
+        "selectorBytes": [
+          23,
+          119,
+          229,
+          157
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseJsonBytes32_1",
+        "description": "Parses a string of JSON data at `key` and coerces it to `bytes32`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseJsonBytes32(string calldata json, string calldata key, bytes32 defaultValue) external pure returns (bytes32);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseJsonBytes32(string,string,bytes32)",
+        "selector": "0x8d792033",
+        "selectorBytes": [
+          141,
+          121,
+          32,
+          51
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseJsonBytesArray_0",
         "description": "Parses a string of JSON data at `key` and coerces it to `bytes[]`.",
         "declaration": "function parseJsonBytesArray(string calldata json, string calldata key) external pure returns (bytes[] memory);",
         "visibility": "external",
@@ -7488,7 +8075,107 @@
     },
     {
       "func": {
-        "id": "parseJsonInt",
+        "id": "parseJsonBytesArray_1",
+        "description": "Parses a string of JSON data at `key` and coerces it to `bytes[]`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseJsonBytesArray(string calldata json, string calldata key, bytes[] calldata defaultValue) external pure returns (bytes[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseJsonBytesArray(string,string,bytes[])",
+        "selector": "0xd1422c93",
+        "selectorBytes": [
+          209,
+          66,
+          44,
+          147
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseJsonBytes_0",
+        "description": "Parses a string of JSON data at `key` and coerces it to `bytes`.",
+        "declaration": "function parseJsonBytes(string calldata json, string calldata key) external pure returns (bytes memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseJsonBytes(string,string)",
+        "selector": "0xfd921be8",
+        "selectorBytes": [
+          253,
+          146,
+          27,
+          232
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseJsonBytes_1",
+        "description": "Parses a string of JSON data at `key` and coerces it to `bytes`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseJsonBytes(string calldata json, string calldata key, bytes calldata defaultValue) external pure returns (bytes memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseJsonBytes(string,string,bytes)",
+        "selector": "0xb3d931af",
+        "selectorBytes": [
+          179,
+          217,
+          49,
+          175
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseJsonIntArray_0",
+        "description": "Parses a string of JSON data at `key` and coerces it to `int256[]`.",
+        "declaration": "function parseJsonIntArray(string calldata json, string calldata key) external pure returns (int256[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseJsonIntArray(string,string)",
+        "selector": "0x9983c28a",
+        "selectorBytes": [
+          153,
+          131,
+          194,
+          138
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseJsonIntArray_1",
+        "description": "Parses a string of JSON data at `key` and coerces it to `int256[]`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseJsonIntArray(string calldata json, string calldata key, int256[] calldata defaultValue) external pure returns (int256[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseJsonIntArray(string,string,int256[])",
+        "selector": "0xea1f44aa",
+        "selectorBytes": [
+          234,
+          31,
+          68,
+          170
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseJsonInt_0",
         "description": "Parses a string of JSON data at `key` and coerces it to `int256`.",
         "declaration": "function parseJsonInt(string calldata json, string calldata key) external pure returns (int256);",
         "visibility": "external",
@@ -7508,18 +8195,18 @@
     },
     {
       "func": {
-        "id": "parseJsonIntArray",
-        "description": "Parses a string of JSON data at `key` and coerces it to `int256[]`.",
-        "declaration": "function parseJsonIntArray(string calldata json, string calldata key) external pure returns (int256[] memory);",
+        "id": "parseJsonInt_1",
+        "description": "Parses a string of JSON data at `key` and coerces it to `int256`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseJsonInt(string calldata json, string calldata key, int256 defaultValue) external pure returns (int256);",
         "visibility": "external",
         "mutability": "pure",
-        "signature": "parseJsonIntArray(string,string)",
-        "selector": "0x9983c28a",
+        "signature": "parseJsonInt(string,string,int256)",
+        "selector": "0xfa78931b",
         "selectorBytes": [
-          153,
-          131,
-          194,
-          138
+          250,
+          120,
+          147,
+          27
         ]
       },
       "group": "json",
@@ -7548,7 +8235,47 @@
     },
     {
       "func": {
-        "id": "parseJsonString",
+        "id": "parseJsonStringArray_0",
+        "description": "Parses a string of JSON data at `key` and coerces it to `string[]`.",
+        "declaration": "function parseJsonStringArray(string calldata json, string calldata key) external pure returns (string[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseJsonStringArray(string,string)",
+        "selector": "0x498fdcf4",
+        "selectorBytes": [
+          73,
+          143,
+          220,
+          244
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseJsonStringArray_1",
+        "description": "Parses a string of JSON data at `key` and coerces it to `string[]`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseJsonStringArray(string calldata json, string calldata key, string[] calldata defaultValue) external pure returns (string[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseJsonStringArray(string,string,string[])",
+        "selector": "0x88b70aff",
+        "selectorBytes": [
+          136,
+          183,
+          10,
+          255
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseJsonString_0",
         "description": "Parses a string of JSON data at `key` and coerces it to `string`.",
         "declaration": "function parseJsonString(string calldata json, string calldata key) external pure returns (string memory);",
         "visibility": "external",
@@ -7568,18 +8295,18 @@
     },
     {
       "func": {
-        "id": "parseJsonStringArray",
-        "description": "Parses a string of JSON data at `key` and coerces it to `string[]`.",
-        "declaration": "function parseJsonStringArray(string calldata json, string calldata key) external pure returns (string[] memory);",
+        "id": "parseJsonString_1",
+        "description": "Parses a string of JSON data at `key` and coerces it to `string`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseJsonString(string calldata json, string calldata key, string calldata defaultValue) external pure returns (string memory);",
         "visibility": "external",
         "mutability": "pure",
-        "signature": "parseJsonStringArray(string,string)",
-        "selector": "0x498fdcf4",
+        "signature": "parseJsonString(string,string,string)",
+        "selector": "0x9d7824a8",
         "selectorBytes": [
-          73,
-          143,
-          220,
-          244
+          157,
+          120,
+          36,
+          168
         ]
       },
       "group": "json",
@@ -7648,7 +8375,47 @@
     },
     {
       "func": {
-        "id": "parseJsonUint",
+        "id": "parseJsonUintArray_0",
+        "description": "Parses a string of JSON data at `key` and coerces it to `uint256[]`.",
+        "declaration": "function parseJsonUintArray(string calldata json, string calldata key) external pure returns (uint256[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseJsonUintArray(string,string)",
+        "selector": "0x522074ab",
+        "selectorBytes": [
+          82,
+          32,
+          116,
+          171
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseJsonUintArray_1",
+        "description": "Parses a string of JSON data at `key` and coerces it to `uint256[]`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseJsonUintArray(string calldata json, string calldata key, uint256[] calldata defaultValue) external pure returns (uint256[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseJsonUintArray(string,string,uint256[])",
+        "selector": "0xa7b8152a",
+        "selectorBytes": [
+          167,
+          184,
+          21,
+          42
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseJsonUint_0",
         "description": "Parses a string of JSON data at `key` and coerces it to `uint256`.",
         "declaration": "function parseJsonUint(string calldata json, string calldata key) external pure returns (uint256);",
         "visibility": "external",
@@ -7668,18 +8435,18 @@
     },
     {
       "func": {
-        "id": "parseJsonUintArray",
-        "description": "Parses a string of JSON data at `key` and coerces it to `uint256[]`.",
-        "declaration": "function parseJsonUintArray(string calldata json, string calldata key) external pure returns (uint256[] memory);",
+        "id": "parseJsonUint_1",
+        "description": "Parses a string of JSON data at `key` and coerces it to `uint256`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseJsonUint(string calldata json, string calldata key, uint256 defaultValue) external pure returns (uint256);",
         "visibility": "external",
         "mutability": "pure",
-        "signature": "parseJsonUintArray(string,string)",
-        "selector": "0x522074ab",
+        "signature": "parseJsonUint(string,string,uint256)",
+        "selector": "0xbeb87f44",
         "selectorBytes": [
-          82,
-          32,
-          116,
-          171
+          190,
+          184,
+          127,
+          68
         ]
       },
       "group": "json",
@@ -7728,27 +8495,7 @@
     },
     {
       "func": {
-        "id": "parseTomlAddress",
-        "description": "Parses a string of TOML data at `key` and coerces it to `address`.",
-        "declaration": "function parseTomlAddress(string calldata toml, string calldata key) external pure returns (address);",
-        "visibility": "external",
-        "mutability": "pure",
-        "signature": "parseTomlAddress(string,string)",
-        "selector": "0x65e7c844",
-        "selectorBytes": [
-          101,
-          231,
-          200,
-          68
-        ]
-      },
-      "group": "toml",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "parseTomlAddressArray",
+        "id": "parseTomlAddressArray_0",
         "description": "Parses a string of TOML data at `key` and coerces it to `address[]`.",
         "declaration": "function parseTomlAddressArray(string calldata toml, string calldata key) external pure returns (address[] memory);",
         "visibility": "external",
@@ -7768,18 +8515,18 @@
     },
     {
       "func": {
-        "id": "parseTomlBool",
-        "description": "Parses a string of TOML data at `key` and coerces it to `bool`.",
-        "declaration": "function parseTomlBool(string calldata toml, string calldata key) external pure returns (bool);",
+        "id": "parseTomlAddressArray_1",
+        "description": "Parses a string of TOML data at `key` and coerces it to `address[]`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseTomlAddressArray(string calldata toml, string calldata key, address[] calldata defaultValue) external pure returns (address[] memory);",
         "visibility": "external",
         "mutability": "pure",
-        "signature": "parseTomlBool(string,string)",
-        "selector": "0xd30dced6",
+        "signature": "parseTomlAddressArray(string,string,address[])",
+        "selector": "0xcbfdcaa6",
         "selectorBytes": [
-          211,
-          13,
-          206,
-          214
+          203,
+          253,
+          202,
+          166
         ]
       },
       "group": "toml",
@@ -7788,7 +8535,47 @@
     },
     {
       "func": {
-        "id": "parseTomlBoolArray",
+        "id": "parseTomlAddress_0",
+        "description": "Parses a string of TOML data at `key` and coerces it to `address`.",
+        "declaration": "function parseTomlAddress(string calldata toml, string calldata key) external pure returns (address);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlAddress(string,string)",
+        "selector": "0x65e7c844",
+        "selectorBytes": [
+          101,
+          231,
+          200,
+          68
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlAddress_1",
+        "description": "Parses a string of TOML data at `key` and coerces it to `address`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseTomlAddress(string calldata toml, string calldata key, address defaultValue) external pure returns (address);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlAddress(string,string,address)",
+        "selector": "0x80db71c1",
+        "selectorBytes": [
+          128,
+          219,
+          113,
+          193
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlBoolArray_0",
         "description": "Parses a string of TOML data at `key` and coerces it to `bool[]`.",
         "declaration": "function parseTomlBoolArray(string calldata toml, string calldata key) external pure returns (bool[] memory);",
         "visibility": "external",
@@ -7808,18 +8595,18 @@
     },
     {
       "func": {
-        "id": "parseTomlBytes",
-        "description": "Parses a string of TOML data at `key` and coerces it to `bytes`.",
-        "declaration": "function parseTomlBytes(string calldata toml, string calldata key) external pure returns (bytes memory);",
+        "id": "parseTomlBoolArray_1",
+        "description": "Parses a string of TOML data at `key` and coerces it to `bool[]`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseTomlBoolArray(string calldata toml, string calldata key, bool[] calldata defaultValue) external pure returns (bool[] memory);",
         "visibility": "external",
         "mutability": "pure",
-        "signature": "parseTomlBytes(string,string)",
-        "selector": "0xd77bfdb9",
+        "signature": "parseTomlBoolArray(string,string,bool[])",
+        "selector": "0x50ddbb4e",
         "selectorBytes": [
-          215,
-          123,
-          253,
-          185
+          80,
+          221,
+          187,
+          78
         ]
       },
       "group": "toml",
@@ -7828,18 +8615,18 @@
     },
     {
       "func": {
-        "id": "parseTomlBytes32",
-        "description": "Parses a string of TOML data at `key` and coerces it to `bytes32`.",
-        "declaration": "function parseTomlBytes32(string calldata toml, string calldata key) external pure returns (bytes32);",
+        "id": "parseTomlBool_0",
+        "description": "Parses a string of TOML data at `key` and coerces it to `bool`.",
+        "declaration": "function parseTomlBool(string calldata toml, string calldata key) external pure returns (bool);",
         "visibility": "external",
         "mutability": "pure",
-        "signature": "parseTomlBytes32(string,string)",
-        "selector": "0x8e214810",
+        "signature": "parseTomlBool(string,string)",
+        "selector": "0xd30dced6",
         "selectorBytes": [
-          142,
-          33,
-          72,
-          16
+          211,
+          13,
+          206,
+          214
         ]
       },
       "group": "toml",
@@ -7848,7 +8635,27 @@
     },
     {
       "func": {
-        "id": "parseTomlBytes32Array",
+        "id": "parseTomlBool_1",
+        "description": "Parses a string of TOML data at `key` and coerces it to `bool`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseTomlBool(string calldata toml, string calldata key, bool defaultValue) external pure returns (bool);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlBool(string,string,bool)",
+        "selector": "0x6c254276",
+        "selectorBytes": [
+          108,
+          37,
+          66,
+          118
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlBytes32Array_0",
         "description": "Parses a string of TOML data at `key` and coerces it to `bytes32[]`.",
         "declaration": "function parseTomlBytes32Array(string calldata toml, string calldata key) external pure returns (bytes32[] memory);",
         "visibility": "external",
@@ -7868,7 +8675,67 @@
     },
     {
       "func": {
-        "id": "parseTomlBytesArray",
+        "id": "parseTomlBytes32Array_1",
+        "description": "Parses a string of TOML data at `key` and coerces it to `bytes32[]`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseTomlBytes32Array(string calldata toml, string calldata key, bytes32[] calldata defaultValue) external pure returns (bytes32[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlBytes32Array(string,string,bytes32[])",
+        "selector": "0x36ad14a2",
+        "selectorBytes": [
+          54,
+          173,
+          20,
+          162
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlBytes32_0",
+        "description": "Parses a string of TOML data at `key` and coerces it to `bytes32`.",
+        "declaration": "function parseTomlBytes32(string calldata toml, string calldata key) external pure returns (bytes32);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlBytes32(string,string)",
+        "selector": "0x8e214810",
+        "selectorBytes": [
+          142,
+          33,
+          72,
+          16
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlBytes32_1",
+        "description": "Parses a string of TOML data at `key` and coerces it to `bytes32`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseTomlBytes32(string calldata toml, string calldata key, bytes32 defaultValue) external pure returns (bytes32);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlBytes32(string,string,bytes32)",
+        "selector": "0x88d60faa",
+        "selectorBytes": [
+          136,
+          214,
+          15,
+          170
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlBytesArray_0",
         "description": "Parses a string of TOML data at `key` and coerces it to `bytes[]`.",
         "declaration": "function parseTomlBytesArray(string calldata toml, string calldata key) external pure returns (bytes[] memory);",
         "visibility": "external",
@@ -7888,7 +8755,107 @@
     },
     {
       "func": {
-        "id": "parseTomlInt",
+        "id": "parseTomlBytesArray_1",
+        "description": "Parses a string of TOML data at `key` and coerces it to `bytes[]`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseTomlBytesArray(string calldata toml, string calldata key, bytes[] calldata defaultValue) external pure returns (bytes[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlBytesArray(string,string,bytes[])",
+        "selector": "0x7daa5e28",
+        "selectorBytes": [
+          125,
+          170,
+          94,
+          40
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlBytes_0",
+        "description": "Parses a string of TOML data at `key` and coerces it to `bytes`.",
+        "declaration": "function parseTomlBytes(string calldata toml, string calldata key) external pure returns (bytes memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlBytes(string,string)",
+        "selector": "0xd77bfdb9",
+        "selectorBytes": [
+          215,
+          123,
+          253,
+          185
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlBytes_1",
+        "description": "Parses a string of TOML data at `key` and coerces it to `bytes`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseTomlBytes(string calldata toml, string calldata key, bytes calldata defaultValue) external pure returns (bytes memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlBytes(string,string,bytes)",
+        "selector": "0xc37b8f00",
+        "selectorBytes": [
+          195,
+          123,
+          143,
+          0
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlIntArray_0",
+        "description": "Parses a string of TOML data at `key` and coerces it to `int256[]`.",
+        "declaration": "function parseTomlIntArray(string calldata toml, string calldata key) external pure returns (int256[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlIntArray(string,string)",
+        "selector": "0xd3522ae6",
+        "selectorBytes": [
+          211,
+          82,
+          42,
+          230
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlIntArray_1",
+        "description": "Parses a string of TOML data at `key` and coerces it to `int256[]`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseTomlIntArray(string calldata toml, string calldata key, int256[] calldata defaultValue) external pure returns (int256[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlIntArray(string,string,int256[])",
+        "selector": "0xfcc0379f",
+        "selectorBytes": [
+          252,
+          192,
+          55,
+          159
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlInt_0",
         "description": "Parses a string of TOML data at `key` and coerces it to `int256`.",
         "declaration": "function parseTomlInt(string calldata toml, string calldata key) external pure returns (int256);",
         "visibility": "external",
@@ -7908,18 +8875,18 @@
     },
     {
       "func": {
-        "id": "parseTomlIntArray",
-        "description": "Parses a string of TOML data at `key` and coerces it to `int256[]`.",
-        "declaration": "function parseTomlIntArray(string calldata toml, string calldata key) external pure returns (int256[] memory);",
+        "id": "parseTomlInt_1",
+        "description": "Parses a string of TOML data at `key` and coerces it to `int256`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseTomlInt(string calldata toml, string calldata key, int256 defaultValue) external pure returns (int256);",
         "visibility": "external",
         "mutability": "pure",
-        "signature": "parseTomlIntArray(string,string)",
-        "selector": "0xd3522ae6",
+        "signature": "parseTomlInt(string,string,int256)",
+        "selector": "0x887da112",
         "selectorBytes": [
-          211,
-          82,
-          42,
-          230
+          136,
+          125,
+          161,
+          18
         ]
       },
       "group": "toml",
@@ -7948,7 +8915,47 @@
     },
     {
       "func": {
-        "id": "parseTomlString",
+        "id": "parseTomlStringArray_0",
+        "description": "Parses a string of TOML data at `key` and coerces it to `string[]`.",
+        "declaration": "function parseTomlStringArray(string calldata toml, string calldata key) external pure returns (string[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlStringArray(string,string)",
+        "selector": "0x9f629281",
+        "selectorBytes": [
+          159,
+          98,
+          146,
+          129
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlStringArray_1",
+        "description": "Parses a string of TOML data at `key` and coerces it to `string[]`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseTomlStringArray(string calldata toml, string calldata key, string[] calldata defaultValue) external pure returns (string[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlStringArray(string,string,string[])",
+        "selector": "0x6be16ce7",
+        "selectorBytes": [
+          107,
+          225,
+          108,
+          231
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlString_0",
         "description": "Parses a string of TOML data at `key` and coerces it to `string`.",
         "declaration": "function parseTomlString(string calldata toml, string calldata key) external pure returns (string memory);",
         "visibility": "external",
@@ -7968,18 +8975,18 @@
     },
     {
       "func": {
-        "id": "parseTomlStringArray",
-        "description": "Parses a string of TOML data at `key` and coerces it to `string[]`.",
-        "declaration": "function parseTomlStringArray(string calldata toml, string calldata key) external pure returns (string[] memory);",
+        "id": "parseTomlString_1",
+        "description": "Parses a string of TOML data at `key` and coerces it to `string`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseTomlString(string calldata toml, string calldata key, string calldata defaultValue) external pure returns (string memory);",
         "visibility": "external",
         "mutability": "pure",
-        "signature": "parseTomlStringArray(string,string)",
-        "selector": "0x9f629281",
+        "signature": "parseTomlString(string,string,string)",
+        "selector": "0xc32ef60d",
         "selectorBytes": [
-          159,
-          98,
-          146,
-          129
+          195,
+          46,
+          246,
+          13
         ]
       },
       "group": "toml",
@@ -8048,7 +9055,47 @@
     },
     {
       "func": {
-        "id": "parseTomlUint",
+        "id": "parseTomlUintArray_0",
+        "description": "Parses a string of TOML data at `key` and coerces it to `uint256[]`.",
+        "declaration": "function parseTomlUintArray(string calldata toml, string calldata key) external pure returns (uint256[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlUintArray(string,string)",
+        "selector": "0xb5df27c8",
+        "selectorBytes": [
+          181,
+          223,
+          39,
+          200
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlUintArray_1",
+        "description": "Parses a string of TOML data at `key` and coerces it to `uint256[]`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseTomlUintArray(string calldata toml, string calldata key, uint256[] calldata defaultValue) external pure returns (uint256[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlUintArray(string,string,uint256[])",
+        "selector": "0x5fc56675",
+        "selectorBytes": [
+          95,
+          197,
+          102,
+          117
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlUint_0",
         "description": "Parses a string of TOML data at `key` and coerces it to `uint256`.",
         "declaration": "function parseTomlUint(string calldata toml, string calldata key) external pure returns (uint256);",
         "visibility": "external",
@@ -8068,18 +9115,18 @@
     },
     {
       "func": {
-        "id": "parseTomlUintArray",
-        "description": "Parses a string of TOML data at `key` and coerces it to `uint256[]`.",
-        "declaration": "function parseTomlUintArray(string calldata toml, string calldata key) external pure returns (uint256[] memory);",
+        "id": "parseTomlUint_1",
+        "description": "Parses a string of TOML data at `key` and coerces it to `uint256`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseTomlUint(string calldata toml, string calldata key, uint256 defaultValue) external pure returns (uint256);",
         "visibility": "external",
         "mutability": "pure",
-        "signature": "parseTomlUintArray(string,string)",
-        "selector": "0xb5df27c8",
+        "signature": "parseTomlUint(string,string,uint256)",
+        "selector": "0x73317cb5",
         "selectorBytes": [
-          181,
-          223,
-          39,
-          200
+          115,
+          49,
+          124,
+          181
         ]
       },
       "group": "toml",
@@ -8423,6 +9470,26 @@
         ]
       },
       "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "publicKeyEd25519",
+        "description": "Derives the Ed25519 public key from a private key.",
+        "declaration": "function publicKeyEd25519(bytes32 privateKey) external pure returns (bytes32 publicKey);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "publicKeyEd25519(bytes32)",
+        "selector": "0x27f44236",
+        "selectorBytes": [
+          39,
+          244,
+          66,
+          54
+        ]
+      },
+      "group": "crypto",
       "status": "stable",
       "safety": "safe"
     },
@@ -8845,6 +9912,66 @@
       "group": "evm",
       "status": "stable",
       "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "registerMappingSstoreHook",
+        "description": "Registers a callback after exact mapping-element SSTOREs rooted at `rootSlot` in `target`'s effective storage account.\nThe callback signature is `function(address account, bytes32 computedSlot, bytes32 rootSlot,\nbytes32[] keys, bytes32 oldValue, bytes32 newValue) external`; keys are raw words in\nroot-to-leaf order. Only complete 64-byte Keccak chains observed after the latest mapping\nhook registration for `target` in the current top-level execution match; provenance is\ncleared between top-level executions. Resolution follows the complete chain to its terminal\nroot and ignores registered intermediate hashes. Offsets, incomplete or unknown chains,\nhashes computed before registration or in an earlier top-level execution, and source layouts\ndo not match. The contract that calls this cheatcode receives the callback. Registration\npersists across reverts and replaces the same target/root callback; callback state rolls back\nwith its enclosing context, callback reverts propagate, and hooks are suppressed throughout\ncallback subtrees. The callback must authenticate `msg.sender == address(vm)` to prevent\nexternal spoofing. Raw and mapping SSTORE hooks conflict per target, while multiple mapping\nroots may be registered.",
+        "declaration": "function registerMappingSstoreHook(address target, bytes32 rootSlot, bytes4 callback) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "registerMappingSstoreHook(address,bytes32,bytes4)",
+        "selector": "0x12d14123",
+        "selectorBytes": [
+          18,
+          209,
+          65,
+          35
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "registerSloadHook",
+        "description": "Registers a callback invoked after each SLOAD against `target`'s effective storage account,\nincluding when its code runs by delegatecall.\nThe callback must have the signature `function(address,bytes32,bytes32) external`.\nRegistering another callback for the same target and access kind replaces it. Registration\nsurvives EVM reverts, while callback state follows the enclosing EVM context and rolls back\nwith it. Callback reverts propagate through the storage operation. Hooks are suppressed in\nthe callback and its entire call subtree. The callback must authenticate\n`msg.sender == address(vm)` to prevent external spoofing. Callback execution is hidden from\nmocks, expectations, log recording, and storage-access recording. It does not inherit\nstaticness. The callback runs as an ordinary call frame and consumes one of the 1024\nprotocol call-depth slots; a load at the maximum legal call depth can have its callback\nrejected as too deep, propagating as a failure of the load.",
+        "declaration": "function registerSloadHook(address target, bytes4 callback) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "registerSloadHook(address,bytes4)",
+        "selector": "0x37c7cf5e",
+        "selectorBytes": [
+          55,
+          199,
+          207,
+          94
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "registerSstoreHook",
+        "description": "Registers a callback invoked after each SSTORE against `target`'s effective storage account,\nincluding when its code runs by delegatecall.\nThe callback must have the signature `function(address,bytes32,bytes32,bytes32) external`.\nRegistering another callback for the same target and access kind replaces it. Registration\nsurvives EVM reverts, while callback state follows the enclosing EVM context and rolls back\nwith it. Callback reverts propagate through the storage operation. Hooks are suppressed in\nthe callback and its entire call subtree. The callback must authenticate\n`msg.sender == address(vm)` to prevent external spoofing. Callback execution is hidden from\nmocks, expectations, log recording, and storage-access recording. It does not inherit\nstaticness. The callback runs as an ordinary call frame and consumes one of the 1024\nprotocol call-depth slots; a store at the maximum legal call depth can have its callback\nrejected as too deep, propagating as a failure of the store.",
+        "declaration": "function registerSstoreHook(address target, bytes4 callback) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "registerSstoreHook(address,bytes4)",
+        "selector": "0xe0c3bdd9",
+        "selectorBytes": [
+          224,
+          195,
+          189,
+          217
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
     },
     {
       "func": {
@@ -9289,6 +10416,46 @@
       "group": "evm",
       "status": "stable",
       "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "rpcJson_0",
+        "description": "Performs an Ethereum JSON-RPC request to the current fork URL and returns the JSON result.",
+        "declaration": "function rpcJson(string calldata method, string calldata params) external returns (string memory data);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "rpcJson(string,string)",
+        "selector": "0x9519f228",
+        "selectorBytes": [
+          149,
+          25,
+          242,
+          40
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "rpcJson_1",
+        "description": "Performs an Ethereum JSON-RPC request to the given endpoint and returns the JSON result.",
+        "declaration": "function rpcJson(string calldata urlOrAlias, string calldata method, string calldata params) external returns (string memory data);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "rpcJson(string,string,string)",
+        "selector": "0x273b74f8",
+        "selectorBytes": [
+          39,
+          59,
+          116,
+          248
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
     },
     {
       "func": {
@@ -9788,7 +10955,7 @@
       },
       "group": "utilities",
       "status": "stable",
-      "safety": "safe"
+      "safety": "unsafe"
     },
     {
       "func": {
@@ -9808,7 +10975,7 @@
       },
       "group": "utilities",
       "status": "stable",
-      "safety": "safe"
+      "safety": "unsafe"
     },
     {
       "func": {
@@ -9872,6 +11039,26 @@
     },
     {
       "func": {
+        "id": "setLogoURI",
+        "description": "Sets a TIP-20 token's logo URI directly in storage.\nThis bypasses the token admin check, but still validates the URI against T5 constraints.",
+        "declaration": "function setLogoURI(address token, string calldata newLogoURI) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "setLogoURI(address,string)",
+        "selector": "0x256edb36",
+        "selectorBytes": [
+          37,
+          110,
+          219,
+          54
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "setNonce",
         "description": "Sets the nonce of an account. Must be higher than the current nonce of the account.",
         "declaration": "function setNonce(address account, uint64 newNonce) external;",
@@ -9929,6 +11116,26 @@
       "group": "utilities",
       "status": "stable",
       "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "setTip20LogoURI",
+        "description": "Sets a TIP-20 token's logo URI directly in storage.\nThis bypasses the token admin check, but still validates the URI against T5 constraints.",
+        "declaration": "function setTip20LogoURI(address token, string calldata newLogoURI) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "setTip20LogoURI(address,string)",
+        "selector": "0xb452dc23",
+        "selectorBytes": [
+          180,
+          82,
+          220,
+          35
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
     },
     {
       "func": {
@@ -10152,6 +11359,66 @@
     },
     {
       "func": {
+        "id": "signEd25519",
+        "description": "Signs a message with namespace using Ed25519.\nThe signature covers namespace || message for domain separation.\nReturns a 64-byte Ed25519 signature.",
+        "declaration": "function signEd25519(bytes calldata namespace, bytes calldata message, bytes32 privateKey) external pure returns (bytes memory signature);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "signEd25519(bytes,bytes,bytes32)",
+        "selector": "0xef609c65",
+        "selectorBytes": [
+          239,
+          96,
+          156,
+          101
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "signKeychain",
+        "description": "Signs `digest` as a Tempo V2 keychain signature for `account` using a secp256k1 access key.\nReturns the encoded signature bytes accepted by `SignatureVerifier.verifyKeychain`.",
+        "declaration": "function signKeychain(uint256 privateKey, address account, bytes32 digest) external pure returns (bytes memory signature);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "signKeychain(uint256,address,bytes32)",
+        "selector": "0x5804c690",
+        "selectorBytes": [
+          88,
+          4,
+          198,
+          144
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "signKeychainAdmin",
+        "description": "Signs `digest` as a Tempo V2 keychain signature for `account` using a root or admin secp256k1 key.\nReturns the encoded signature bytes accepted by `SignatureVerifier.verifyKeychainAdmin`.\nThe supplied `digest` should already be domain-separated with chain ID, contract address,\nand account address.",
+        "declaration": "function signKeychainAdmin(uint256 privateKey, address account, bytes32 digest) external pure returns (bytes memory signature);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "signKeychainAdmin(uint256,address,bytes32)",
+        "selector": "0xbc5fb2f7",
+        "selectorBytes": [
+          188,
+          95,
+          178,
+          247
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "signP256",
         "description": "Signs `digest` with `privateKey` using the secp256r1 curve.",
         "declaration": "function signP256(uint256 privateKey, bytes32 digest) external pure returns (bytes32 r, bytes32 s);",
@@ -10355,7 +11622,7 @@
     {
       "func": {
         "id": "snapshotGasLastCall_0",
-        "description": "Snapshot capture the gas usage of the last call by name from the callee perspective.",
+        "description": "DEPRECATED: use `snapshotGasLastFrame` instead.\nSnapshot capture the gas usage of the last call by name from the callee perspective.",
         "declaration": "function snapshotGasLastCall(string calldata name) external returns (uint256 gasUsed);",
         "visibility": "external",
         "mutability": "",
@@ -10369,13 +11636,15 @@
         ]
       },
       "group": "evm",
-      "status": "stable",
+      "status": {
+        "deprecated": "replaced by `snapshotGasLastFrame`"
+      },
       "safety": "unsafe"
     },
     {
       "func": {
         "id": "snapshotGasLastCall_1",
-        "description": "Snapshot capture the gas usage of the last call by name in a group from the callee perspective.",
+        "description": "DEPRECATED: use `snapshotGasLastFrame` instead.\nSnapshot capture the gas usage of the last call by name in a group from the callee perspective.",
         "declaration": "function snapshotGasLastCall(string calldata group, string calldata name) external returns (uint256 gasUsed);",
         "visibility": "external",
         "mutability": "",
@@ -10386,6 +11655,48 @@
           12,
           103,
           114
+        ]
+      },
+      "group": "evm",
+      "status": {
+        "deprecated": "replaced by `snapshotGasLastFrame`"
+      },
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "snapshotGasLastFrame_0",
+        "description": "Snapshot capture the gas usage of the last call or create by name from the callee perspective.",
+        "declaration": "function snapshotGasLastFrame(string calldata name) external returns (uint256 gasUsed);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "snapshotGasLastFrame(string)",
+        "selector": "0xb95207cc",
+        "selectorBytes": [
+          185,
+          82,
+          7,
+          204
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "snapshotGasLastFrame_1",
+        "description": "Snapshot capture the gas usage of the last call or create by name in a group from the callee perspective.",
+        "declaration": "function snapshotGasLastFrame(string calldata group, string calldata name) external returns (uint256 gasUsed);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "snapshotGasLastFrame(string,string)",
+        "selector": "0x04eedcdf",
+        "selectorBytes": [
+          4,
+          238,
+          220,
+          223
         ]
       },
       "group": "evm",
@@ -10575,7 +11886,7 @@
     {
       "func": {
         "id": "startMappingRecording",
-        "description": "Starts recording all map SSTOREs for later retrieval.",
+        "description": "Starts recording mapping SSTOREs for later retrieval.",
         "declaration": "function startMappingRecording() external;",
         "visibility": "external",
         "mutability": "",
@@ -10815,7 +12126,7 @@
     {
       "func": {
         "id": "stopMappingRecording",
-        "description": "Stops recording all map SSTOREs for later retrieval and clears the recorded data.",
+        "description": "Stops recording mapping SSTOREs and clears the recorded data.",
         "declaration": "function stopMappingRecording() external;",
         "visibility": "external",
         "mutability": "",
@@ -11329,6 +12640,26 @@
         ]
       },
       "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "verifyEd25519",
+        "description": "Verifies an Ed25519 signature over namespace || message.\nReturns true if signature is valid, false otherwise.",
+        "declaration": "function verifyEd25519(bytes calldata signature, bytes calldata namespace, bytes calldata message, bytes32 publicKey) external pure returns (bool valid);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "verifyEd25519(bytes,bytes,bytes,bytes32)",
+        "selector": "0xd08c2888",
+        "selectorBytes": [
+          208,
+          140,
+          40,
+          136
+        ]
+      },
+      "group": "crypto",
       "status": "stable",
       "safety": "safe"
     },

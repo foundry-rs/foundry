@@ -19,9 +19,11 @@ foundry-cli.workspace = true
 foundry-config.workspace = true
 foundry-common.workspace = true
 foundry-evm.workspace = true
+foundry-evm-networks.workspace = true
+alloy-evm.workspace = true
 foundry-debugger.workspace = true
 foundry-cheatcodes.workspace = true
-foundry-wallets.workspace = true
+foundry-wallets = { workspace = true, features = ["browser", "tempo"] }
 foundry-linking.workspace = true
 forge-script-sequence.workspace = true
 
@@ -30,11 +32,13 @@ eyre.workspace = true
 serde_json.workspace = true
 dunce.workspace = true
 foundry-compilers.workspace = true
+reqwest = { workspace = true, features = ["stream"] }
 tracing.workspace = true
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 semver.workspace = true
 futures.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["io-util", "process", "time"] }
+tempfile.workspace = true
 
 itertools.workspace = true
 parking_lot.workspace = true
@@ -46,7 +50,6 @@ dialoguer.workspace = true
 indicatif.workspace = true
 
 alloy-signer.workspace = true
-alloy-serde.workspace = true
 alloy-network.workspace = true
 alloy-provider.workspace = true
 alloy-chains.workspace = true
@@ -56,5 +59,32 @@ alloy-eips.workspace = true
 alloy-consensus.workspace = true
 thiserror.workspace = true
 
+tempo-alloy.workspace = true
+tempo-primitives.workspace = true
+
 [dev-dependencies]
-tempfile.workspace = true
+anvil.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+
+[features]
+default = ["optimism"]
+monad = [
+    "anvil/monad",
+    "foundry-config/monad",
+    "foundry-evm/monad",
+    "foundry-evm-networks/monad",
+    "foundry-common/monad",
+    "foundry-cheatcodes/monad",
+    "foundry-cli/monad",
+    "forge-script-sequence/monad",
+    "forge-verify/monad",
+]
+optimism = [
+    "foundry-evm/optimism",
+    "foundry-evm-networks/optimism",
+    "foundry-common/optimism",
+    "foundry-cheatcodes/optimism",
+    "foundry-cli/optimism",
+    "forge-script-sequence/optimism",
+    "forge-verify/optimism",
+]

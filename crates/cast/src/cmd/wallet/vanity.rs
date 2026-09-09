@@ -1,21 +1,22 @@
 use alloy_primitives::{Address, hex};
-use alloy_signer::{k256::ecdsa::SigningKey, utils::secret_key_to_address};
 use alloy_signer_local::PrivateKeySigner;
 use clap::Parser;
-use eyre::Result;
-use foundry_common::sh_println;
-use itertools::Either;
+use eyre::{Result, WrapErr};
+use foundry_cli::json::print_json_success;
+use foundry_common::{sh_println, shell};
 use rayon::iter::{self, ParallelIterator};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::{
     fs,
+    io::Write,
     path::{Path, PathBuf},
     time::Instant,
 };
 
-/// Type alias for the result of [generate_wallet].
-pub type GeneratedWallet = (SigningKey, Address);
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 /// CLI arguments for `cast wallet vanity`.
 #[derive(Clone, Debug, Parser)]
@@ -60,7 +61,7 @@ struct Wallets {
 }
 
 impl WalletData {
-    pub fn new(wallet: &PrivateKeySigner) -> Self {
+    fn new(wallet: &PrivateKeySigner) -> Self {
         Self {
             address: wallet.address().to_checksum(None),
             private_key: format!("0x{}", hex::encode(wallet.credential().to_bytes())),
@@ -72,91 +73,38 @@ impl VanityArgs {
     pub fn run(self) -> Result<PrivateKeySigner> {
         let Self { starts_with, ends_with, nonce, save_path } = self;
 
-        let mut left_exact_hex = None;
-        let mut left_regex = None;
-        if let Some(prefix) = starts_with {
-            match parse_pattern(&prefix, true)? {
-                Either::Left(left) => left_exact_hex = Some(left),
-                Either::Right(re) => left_regex = Some(re),
-            }
-        }
+        let matcher = Matcher {
+            left: starts_with.as_deref().map(|p| parse_pattern(p, true)).transpose()?,
+            right: ends_with.as_deref().map(|p| parse_pattern(p, false)).transpose()?,
+        };
 
-        let mut right_exact_hex = None;
-        let mut right_regex = None;
-        if let Some(suffix) = ends_with {
-            match parse_pattern(&suffix, false)? {
-                Either::Left(right) => right_exact_hex = Some(right),
-                Either::Right(re) => right_regex = Some(re),
-            }
-        }
-
-        macro_rules! find_vanity {
-            ($m:ident, $nonce:ident) => {
-                if let Some(nonce) = $nonce {
-                    find_vanity_address_with_nonce($m, nonce)
-                } else {
-                    find_vanity_address($m)
-                }
-            };
-        }
-
-        sh_println!("Starting to generate vanity address...")?;
+        sh_status!("Starting to generate vanity address...")?;
         let timer = Instant::now();
+        let wallet = find_vanity(&matcher, nonce);
 
-        let wallet = match (left_exact_hex, left_regex, right_exact_hex, right_regex) {
-            (Some(left), _, Some(right), _) => {
-                let matcher = HexMatcher { left, right };
-                find_vanity!(matcher, nonce)
-            }
-            (Some(left), _, _, Some(right)) => {
-                let matcher = LeftExactRightRegexMatcher { left, right };
-                find_vanity!(matcher, nonce)
-            }
-            (_, Some(left), _, Some(right)) => {
-                let matcher = RegexMatcher { left, right };
-                find_vanity!(matcher, nonce)
-            }
-            (_, Some(left), Some(right), _) => {
-                let matcher = LeftRegexRightExactMatcher { left, right };
-                find_vanity!(matcher, nonce)
-            }
-            (Some(left), None, None, None) => {
-                let matcher = LeftHexMatcher { left };
-                find_vanity!(matcher, nonce)
-            }
-            (None, None, Some(right), None) => {
-                let matcher = RightHexMatcher { right };
-                find_vanity!(matcher, nonce)
-            }
-            (None, Some(re), None, None) => {
-                let matcher = SingleRegexMatcher { re };
-                find_vanity!(matcher, nonce)
-            }
-            (None, None, None, Some(re)) => {
-                let matcher = SingleRegexMatcher { re };
-                find_vanity!(matcher, nonce)
-            }
-            _ => unreachable!(),
-        }
-        .expect("failed to generate vanity wallet");
-
-        // If a save path is provided, save the generated vanity wallet to the specified path.
         if let Some(save_path) = save_path {
             save_wallet_to_file(&wallet, &save_path)?;
         }
 
-        sh_println!(
-            "Successfully found vanity address in {:.3} seconds.{}{}\nAddress: {}\nPrivate Key: 0x{}",
-            timer.elapsed().as_secs_f64(),
-            if nonce.is_some() { "\nContract address: " } else { "" },
-            if let Some(nonce_val) = nonce {
-                wallet.address().create(nonce_val).to_checksum(None)
-            } else {
-                String::new()
-            },
-            wallet.address().to_checksum(None),
-            hex::encode(wallet.credential().to_bytes()),
-        )?;
+        let contract_address = nonce.map(|nonce| wallet.address().create(nonce).to_checksum(None));
+        let WalletData { address, private_key } = WalletData::new(&wallet);
+
+        if shell::is_json() {
+            print_json_success(json!({
+                "address": address,
+                "private_key": private_key,
+                "contract_address": contract_address,
+            }))?;
+        } else {
+            sh_println!(
+                "Successfully found vanity address in {:.3} seconds.{}{}\nAddress: {}\nPrivate Key: {}",
+                timer.elapsed().as_secs_f64(),
+                if contract_address.is_some() { "\nContract address: " } else { "" },
+                contract_address.unwrap_or_default(),
+                address,
+                private_key,
+            )?;
+        }
 
         Ok(wallet)
     }
@@ -168,206 +116,111 @@ impl VanityArgs {
 fn save_wallet_to_file(wallet: &PrivateKeySigner, path: &Path) -> Result<()> {
     let mut wallets = if path.exists() {
         let data = fs::read_to_string(path)?;
-        serde_json::from_str::<Wallets>(&data).unwrap_or_default()
+        if data.trim().is_empty() {
+            Wallets::default()
+        } else {
+            serde_json::from_str::<Wallets>(&data)
+                .wrap_err_with(|| format!("failed to parse wallet file {}", path.display()))?
+        }
     } else {
         Wallets::default()
     };
 
     wallets.wallets.push(WalletData::new(wallet));
 
-    fs::write(path, serde_json::to_string_pretty(&wallets)?)?;
+    let contents = serde_json::to_string_pretty(&wallets)?;
+    let mut options = fs::File::options();
+    options.write(true).create(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+
+    let mut file = options.open(path)?;
+    #[cfg(unix)]
+    file.set_permissions(fs::Permissions::from_mode(0o600))?;
+    file.set_len(0)?;
+    file.write_all(contents.as_bytes())?;
     Ok(())
 }
 
-/// Generates random wallets until `matcher` matches the wallet address, returning the wallet.
-pub fn find_vanity_address<T: VanityMatcher>(matcher: T) -> Option<PrivateKeySigner> {
-    wallet_generator().find_any(create_matcher(matcher)).map(|(key, _)| key.into())
+/// Generates random wallets in parallel until `matcher` matches the wallet address, or the
+/// contract address it creates at `nonce` when one is given.
+fn find_vanity(matcher: &Matcher, nonce: Option<u64>) -> PrivateKeySigner {
+    iter::repeat(())
+        .map(|()| PrivateKeySigner::random())
+        .find_any(|wallet| {
+            let address = wallet.address();
+            matcher.is_match(&nonce.map_or(address, |nonce| address.create(nonce)))
+        })
+        .expect("infinite iterator")
 }
 
-/// Generates random wallets until `matcher` matches the contract address created at `nonce`,
-/// returning the wallet.
-pub fn find_vanity_address_with_nonce<T: VanityMatcher>(
-    matcher: T,
-    nonce: u64,
-) -> Option<PrivateKeySigner> {
-    wallet_generator().find_any(create_nonce_matcher(matcher, nonce)).map(|(key, _)| key.into())
+/// A vanity pattern: an exact byte prefix/suffix, or a regex over the lowercase hex address.
+#[derive(Debug)]
+enum Pattern {
+    Exact(Vec<u8>),
+    Re(Regex),
 }
 
-/// Creates a matcher function, which takes a reference to a [GeneratedWallet] and returns
-/// whether it found a match or not by using `matcher`.
-#[inline]
-pub fn create_matcher<T: VanityMatcher>(matcher: T) -> impl Fn(&GeneratedWallet) -> bool {
-    move |(_, addr)| matcher.is_match(addr)
+/// Optional start and end patterns an address must satisfy.
+struct Matcher {
+    left: Option<Pattern>,
+    right: Option<Pattern>,
 }
 
-/// Creates a contract address matcher function that uses the specified nonce.
-/// The returned function takes a reference to a [GeneratedWallet] and returns
-/// whether the contract address created with the nonce matches using `matcher`.
-#[inline]
-pub fn create_nonce_matcher<T: VanityMatcher>(
-    matcher: T,
-    nonce: u64,
-) -> impl Fn(&GeneratedWallet) -> bool {
-    move |(_, addr)| {
-        let contract_addr = addr.create(nonce);
-        matcher.is_match(&contract_addr)
-    }
-}
-
-/// Returns an infinite parallel iterator which yields a [GeneratedWallet].
-#[inline]
-pub fn wallet_generator() -> iter::Map<iter::Repeat<()>, impl Fn(()) -> GeneratedWallet> {
-    iter::repeat(()).map(|()| generate_wallet())
-}
-
-/// Generates a random K-256 signing key and derives its Ethereum address.
-pub fn generate_wallet() -> GeneratedWallet {
-    let key = SigningKey::random(&mut rand_08::thread_rng());
-    let address = secret_key_to_address(&key);
-    (key, address)
-}
-
-/// A trait to match vanity addresses.
-pub trait VanityMatcher: Send + Sync {
-    fn is_match(&self, addr: &Address) -> bool;
-}
-
-/// Matches start and end hex.
-pub struct HexMatcher {
-    pub left: Vec<u8>,
-    pub right: Vec<u8>,
-}
-
-impl VanityMatcher for HexMatcher {
-    #[inline]
+impl Matcher {
     fn is_match(&self, addr: &Address) -> bool {
         let bytes = addr.as_slice();
-        bytes.starts_with(&self.left) && bytes.ends_with(&self.right)
+        let mut encoded = None;
+        let mut matches = |pattern: &Pattern, exact: fn(&[u8], &[u8]) -> bool| match pattern {
+            Pattern::Exact(hex) => exact(bytes, hex),
+            Pattern::Re(re) => re.is_match(encoded.get_or_insert_with(|| hex::encode(bytes))),
+        };
+        self.left.as_ref().is_none_or(|p| matches(p, <[u8]>::starts_with))
+            && self.right.as_ref().is_none_or(|p| matches(p, <[u8]>::ends_with))
     }
 }
 
-/// Matches only start hex.
-pub struct LeftHexMatcher {
-    pub left: Vec<u8>,
-}
-
-impl VanityMatcher for LeftHexMatcher {
-    #[inline]
-    fn is_match(&self, addr: &Address) -> bool {
-        let bytes = addr.as_slice();
-        bytes.starts_with(&self.left)
+fn parse_pattern(pattern: &str, is_start: bool) -> Result<Pattern> {
+    let pattern =
+        pattern.strip_prefix("0x").or_else(|| pattern.strip_prefix("0X")).unwrap_or(pattern);
+    if pattern.is_empty() {
+        return Err(eyre::eyre!("Vanity pattern cannot be empty"));
     }
-}
 
-/// Matches only end hex.
-pub struct RightHexMatcher {
-    pub right: Vec<u8>,
-}
-
-impl VanityMatcher for RightHexMatcher {
-    #[inline]
-    fn is_match(&self, addr: &Address) -> bool {
-        let bytes = addr.as_slice();
-        bytes.ends_with(&self.right)
+    let is_hex = pattern.bytes().all(|byte| byte.is_ascii_hexdigit());
+    if is_hex && pattern.len() > 40 {
+        return Err(eyre::eyre!("Hex pattern must be less than 20 bytes"));
     }
-}
 
-/// Matches start hex and end regex.
-pub struct LeftExactRightRegexMatcher {
-    pub left: Vec<u8>,
-    pub right: Regex,
-}
-
-impl VanityMatcher for LeftExactRightRegexMatcher {
-    #[inline]
-    fn is_match(&self, addr: &Address) -> bool {
-        let bytes = addr.as_slice();
-        bytes.starts_with(&self.left) && self.right.is_match(&hex::encode(bytes))
-    }
-}
-
-/// Matches start regex and end hex.
-pub struct LeftRegexRightExactMatcher {
-    pub left: Regex,
-    pub right: Vec<u8>,
-}
-
-impl VanityMatcher for LeftRegexRightExactMatcher {
-    #[inline]
-    fn is_match(&self, addr: &Address) -> bool {
-        let bytes = addr.as_slice();
-        bytes.ends_with(&self.right) && self.left.is_match(&hex::encode(bytes))
-    }
-}
-
-/// Matches a single regex.
-pub struct SingleRegexMatcher {
-    pub re: Regex,
-}
-
-impl VanityMatcher for SingleRegexMatcher {
-    #[inline]
-    fn is_match(&self, addr: &Address) -> bool {
-        let addr = hex::encode(addr);
-        self.re.is_match(&addr)
-    }
-}
-
-/// Matches start and end regex.
-pub struct RegexMatcher {
-    pub left: Regex,
-    pub right: Regex,
-}
-
-impl VanityMatcher for RegexMatcher {
-    #[inline]
-    fn is_match(&self, addr: &Address) -> bool {
-        let addr = hex::encode(addr);
-        self.left.is_match(&addr) && self.right.is_match(&addr)
-    }
-}
-
-fn parse_pattern(pattern: &str, is_start: bool) -> Result<Either<Vec<u8>, Regex>> {
     if let Ok(decoded) = hex::decode(pattern) {
-        if decoded.len() > 20 {
-            return Err(eyre::eyre!("Hex pattern must be less than 20 bytes"));
-        }
-        Ok(Either::Left(decoded))
-    } else {
-        let (prefix, suffix) = if is_start { ("^", "") } else { ("", "$") };
-        Ok(Either::Right(Regex::new(&format!("{prefix}{pattern}{suffix}"))?))
+        return Ok(Pattern::Exact(decoded));
     }
+    // a non regex literal containing non-hex characters can never match
+    if !is_hex && pattern.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
+        return Err(eyre::eyre!("Pattern contains non-hex characters and can never match"));
+    }
+    let (prefix, suffix) = if is_start { ("^", "") } else { ("", "$") };
+    let pattern = if is_hex { pattern.to_ascii_lowercase() } else { pattern.to_string() };
+    Ok(Pattern::Re(Regex::new(&format!("{prefix}{pattern}{suffix}"))?))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn find_simple_vanity_start() {
-        let args: VanityArgs = VanityArgs::parse_from(["foundry-cli", "--starts-with", "00"]);
-        let wallet = args.run().unwrap();
-        let addr = wallet.address();
-        let addr = format!("{addr:x}");
-        assert!(addr.starts_with("00"));
+    fn single(pattern: &str, is_start: bool) -> Matcher {
+        let pattern = parse_pattern(pattern, is_start).unwrap();
+        if is_start {
+            Matcher { left: Some(pattern), right: None }
+        } else {
+            Matcher { left: None, right: Some(pattern) }
+        }
     }
 
-    #[test]
-    fn find_simple_vanity_start2() {
-        let args: VanityArgs = VanityArgs::parse_from(["foundry-cli", "--starts-with", "9"]);
-        let wallet = args.run().unwrap();
-        let addr = wallet.address();
-        let addr = format!("{addr:x}");
-        assert!(addr.starts_with('9'));
-    }
-
-    #[test]
-    fn find_simple_vanity_end() {
-        let args: VanityArgs = VanityArgs::parse_from(["foundry-cli", "--ends-with", "00"]);
-        let wallet = args.run().unwrap();
-        let addr = wallet.address();
-        let addr = format!("{addr:x}");
-        assert!(addr.ends_with("00"));
+    fn address(index: usize, byte: u8) -> Address {
+        let mut bytes = [0; 20];
+        bytes[index] = byte;
+        Address::from(bytes)
     }
 
     #[test]
@@ -380,10 +233,77 @@ mod tests {
             "--save-path",
             tmp.path().to_str().unwrap(),
         ]);
-        args.run().unwrap();
-        assert!(tmp.path().exists());
+        let wallet = args.run().unwrap();
+        assert!(wallet.address().as_slice().starts_with(&[0]));
         let s = fs::read_to_string(tmp.path()).unwrap();
         let wallets: Wallets = serde_json::from_str(&s).unwrap();
         assert!(!wallets.wallets.is_empty());
+    }
+
+    #[test]
+    fn malformed_wallet_file_is_not_overwritten() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let original = "{\"wallets\":[";
+        fs::write(tmp.path(), original).unwrap();
+
+        let err = save_wallet_to_file(&PrivateKeySigner::random(), tmp.path()).unwrap_err();
+
+        assert!(err.to_string().contains("failed to parse wallet file"));
+        assert_eq!(fs::read_to_string(tmp.path()).unwrap(), original);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn wallet_file_is_owner_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("wallets.json");
+        save_wallet_to_file(&PrivateKeySigner::random(), &path).unwrap();
+        assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        save_wallet_to_file(&PrivateKeySigner::random(), &path).unwrap();
+        assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+    }
+
+    #[test]
+    fn parse_patterns() {
+        // odd-length hex is matched case-insensitively as a regex
+        assert!(matches!(parse_pattern("A", true).unwrap(), Pattern::Re(_)));
+        assert!(single("A", true).is_match(&address(0, 0xa0)));
+        assert!(single("A", false).is_match(&address(19, 0x0a)));
+        assert!(single("0x9", true).is_match(&address(0, 0x90)));
+
+        // 0x/0X prefixes are stripped from exact hex patterns
+        for prefixed in ["0xdead", "0Xdead"] {
+            let Pattern::Exact(bytes) = parse_pattern(prefixed, true).unwrap() else {
+                panic!("expected an exact hex pattern");
+            };
+            assert_eq!(bytes, hex::decode("dead").unwrap());
+        }
+        let mut matching = [0; 20];
+        matching[..2].copy_from_slice(&[0xde, 0xad]);
+        assert!(single("0xdead", true).is_match(&Address::from(matching)));
+
+        // regex patterns stay supported
+        assert!(parse_pattern("a.c", true).is_ok());
+
+        // exact suffixes match the end of the address only
+        assert!(matches!(parse_pattern("00", false).unwrap(), Pattern::Exact(_)));
+        assert!(single("00", false).is_match(&address(0, 0xff)));
+        assert!(!single("00", false).is_match(&address(19, 0x01)));
+        assert!(!single("dead", true).is_match(&address(19, 0xde)));
+    }
+
+    #[test]
+    fn reject_invalid_patterns() {
+        for (pattern, err) in [
+            (&*"1".repeat(41), "Hex pattern must be less than 20 bytes"),
+            ("0x", "Vanity pattern cannot be empty"),
+            // non-hex chars can never appear in a hex address
+            ("zzz", "Pattern contains non-hex characters and can never match"),
+            ("foobar", "Pattern contains non-hex characters and can never match"),
+        ] {
+            assert_eq!(parse_pattern(pattern, true).unwrap_err().to_string(), err);
+        }
     }
 }

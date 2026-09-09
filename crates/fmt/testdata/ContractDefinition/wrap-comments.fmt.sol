@@ -1,0 +1,106 @@
+// config: wrap_comments = true
+contract ContractDefinition is
+    Contract1,
+    Contract2,
+    Contract3,
+    Contract4,
+    Contract5
+{}
+
+contract EmptyBodyWithComment { /* body */ }
+
+contract EmptyBodyWithComments { /* one */ /* two */ }
+
+contract NonEmptyBodyTrailingComments {
+    uint256 x;
+    /* one */ /* two */ }
+
+// comment 7
+contract SampleContract {
+    // spaced comment 1
+
+    // spaced comment 2
+    // that spans multiple lines
+
+    // comment 8
+    constructor() { /* comment 9 */ } // comment 10
+
+    // comment 11
+    function max( /* comment 13 */
+        uint256 arg1,
+        uint256 /* comment 14 */ arg2,
+        uint256 /* comment 15 */
+    )
+        // comment 16
+        external /* comment 17 */
+        pure
+        returns (uint256)
+    // comment 18
+    {
+        // comment 19
+        return arg1 > arg2 ? arg1 : arg2;
+    }
+}
+
+// comment 20
+contract /* comment 21 */ ExampleContract is /* comment 22 */ SampleContract {}
+
+contract ERC20DecimalsMock is ERC20 {
+    uint8 private immutable _decimals;
+
+    constructor(string memory name_, string memory symbol_, uint8 decimals_)
+        ERC20(name_, symbol_)
+    {
+        _decimals = decimals_;
+    }
+}
+
+contract SomeContract is
+    ERC165Upgradeable, // 1 inherited component
+    ISomeContract // 4 inherited components
+{}
+
+contract AnotherContract is
+    Adminable, /* 1 inherited components */
+    UUPSUpgradeable /* 1 inherited component */
+{}
+
+contract WithLayoutAndBase layout at 69 is Base {}
+
+contract ERC7201Short layout at erc7201("s") is Base {}
+
+contract ERC7201Mid layout at erc7201("openzeppelin.med") is Base {}
+
+contract ERC7201OverMax layout at erc7201("openzeppelin.storage.exceeds.max")
+    is
+    Base
+{}
+
+interface IERC721 /* is IERC165 */ {
+    function balanceOf(address owner) external view returns (uint256);
+}
+
+interface IERC721Empty /* is IERC165 */ {}
+
+contract WithBaseAndHeaderComment is Base /* base */ {
+    uint256 x;
+}
+
+contract WithLayoutAndHeaderComment layout at 69 /* layout */ {}
+
+contract WithLayoutAfterBase layout at erc7201("x{y") is Base /* layout */ {
+    uint256 x;
+}
+
+contract MultipleHeaderComments /* one */ /* two */ {}
+
+contract VeryLongContractNameThatForcesTheHeaderToBreak is
+    BaseOne,
+    BaseTwo /* base */ {
+    uint256 x;
+}
+
+contract HeaderCommentOnItsOwnLine {
+    // isolated
+    uint256 x;
+}

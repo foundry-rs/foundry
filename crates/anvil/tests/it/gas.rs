@@ -1,12 +1,14 @@
 //! Gas related tests
 
 use crate::utils::http_provider_with_signer;
+use alloy_genesis::Genesis;
 use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{Address, U64, U256, uint};
 use alloy_provider::Provider;
-use alloy_rpc_types::{BlockId, TransactionRequest};
+use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest};
 use alloy_serde::WithOtherFields;
-use anvil::{NodeConfig, eth::fees::INITIAL_BASE_FEE, spawn};
+use anvil::{EthereumHardfork, NodeConfig, eth::fees::INITIAL_BASE_FEE, spawn};
+use revm::context_interface::block::BlobExcessGasAndPrice;
 
 const GAS_TRANSFER: u64 = 21_000;
 
@@ -129,7 +131,7 @@ async fn test_basefee_empty_block() {
         .unwrap();
 
     // mine empty block
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let next_base_fee = provider
         .get_block(BlockId::latest())
@@ -189,6 +191,20 @@ async fn test_tip_above_fee_cap() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_zero_block_fee_history_is_empty() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+
+    let history = api.fee_history(U256::ZERO, BlockNumberOrTag::Latest, vec![50.0]).await.unwrap();
+
+    assert_eq!(history.oldest_block, 0);
+    assert!(history.base_fee_per_gas.is_empty());
+    assert!(history.gas_used_ratio.is_empty());
+    assert!(history.reward.is_none());
+    assert!(history.base_fee_per_blob_gas.is_empty());
+    assert!(history.blob_gas_used_ratio.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_can_use_fee_history() {
     let base_fee = 50u128;
     let (_api, handle) = spawn(NodeConfig::test().with_base_fee(Some(base_fee as u64))).await;
@@ -215,6 +231,112 @@ async fn test_can_use_fee_history() {
         assert_eq!(latest_block.header.base_fee_per_gas.unwrap(), latest_fee_history_fee);
         assert_eq!(latest_fee_history_fee, next_base_fee as u64);
     }
+}
+
+// `base_fee_per_gas` includes one entry for the block after the requested range. For a
+// historical range, that entry must come from the historical child rather than the current
+// chain head's next-block fee.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fee_history_historical_next_block_fee() {
+    let (api, handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Cancun.into()))).await;
+    let provider = handle.http_provider();
+    let blob_params = api.backend.blob_params();
+    let blob_update_fraction = u64::try_from(blob_params.update_fraction).unwrap();
+
+    for (base_fee, excess_blob_gas) in [(100, 0), (200, 10_000_000), (300, 20_000_000)] {
+        api.anvil_set_next_block_base_fee_per_gas(U256::from(base_fee)).await.unwrap();
+        api.backend.fees().set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
+            excess_blob_gas,
+            blob_update_fraction,
+        ));
+        api.mine_one().await.unwrap();
+    }
+    api.anvil_set_next_block_base_fee_per_gas(U256::from(400)).await.unwrap();
+    api.backend.fees().set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
+        30_000_000,
+        blob_update_fraction,
+    ));
+
+    let history =
+        api.fee_history(U256::from(1), BlockNumberOrTag::Number(1), vec![]).await.unwrap();
+    let historical = provider.get_block(BlockId::number(1)).await.unwrap().unwrap();
+    let historical_child = provider.get_block(BlockId::number(2)).await.unwrap().unwrap();
+    let historical_next_fee = historical_child.header.base_fee_per_gas.unwrap() as u128;
+    let historical_blob_fee = historical.header.blob_fee().unwrap();
+    let historical_next_blob_fee = historical_child.header.blob_fee().unwrap();
+
+    assert_eq!(history.base_fee_per_gas, vec![100, historical_next_fee]);
+    assert_ne!(historical_next_fee, api.base_fee().unwrap().unwrap().to::<u128>());
+    assert_eq!(history.base_fee_per_blob_gas, vec![historical_blob_fee, historical_next_blob_fee]);
+    assert_ne!(historical_next_blob_fee, api.backend.fees().base_fee_per_blob_gas());
+}
+
+// Cache entries from the previous chain must not survive `anvil_reset` merely because the new
+// chain reuses the same block number.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fee_history_ignores_stale_cache_after_reset() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let old_history =
+        api.fee_history(U256::from(1), BlockNumberOrTag::Number(0), vec![]).await.unwrap();
+    api.anvil_set_next_block_base_fee_per_gas(U256::from(123)).await.unwrap();
+    api.anvil_reset(None).await.unwrap();
+
+    let genesis = provider.get_block(BlockId::number(0)).await.unwrap().unwrap();
+    let genesis_base_fee = genesis.header.base_fee_per_gas.unwrap() as u128;
+    let new_history =
+        api.fee_history(U256::from(1), BlockNumberOrTag::Number(0), vec![]).await.unwrap();
+
+    assert_eq!(genesis_base_fee, 123);
+    assert_ne!(old_history.base_fee_per_gas[0], genesis_base_fee);
+    assert_eq!(new_history.base_fee_per_gas[0], genesis_base_fee);
+    assert_eq!(api.base_fee().unwrap(), Some(U256::from(INITIAL_BASE_FEE)));
+
+    api.mine_one().await.unwrap();
+    let first = provider.get_block(BlockId::number(1)).await.unwrap().unwrap();
+    assert_eq!(first.header.base_fee_per_gas, Some(INITIAL_BASE_FEE));
+}
+
+// Zero gas limits must not serialize gasUsedRatio as null.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fee_history_zero_gas_limit_does_not_produce_null_ratio() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    assert!(api.evm_set_block_gas_limit(U256::ZERO).unwrap());
+    api.mine_one().await.unwrap();
+
+    // Use HTTP to exercise JSON serialization and client deserialization.
+    let fee_history = provider
+        .get_fee_history(1, BlockNumberOrTag::Latest, &[])
+        .await
+        .expect("gasUsedRatio must deserialize as a finite f64, not null");
+
+    let ratio = *fee_history.gas_used_ratio.last().unwrap();
+    assert_eq!(ratio, 0.0, "a zero-gas-limit block used none of its (zero) capacity");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_memory_reset_restores_explicit_genesis_base_fee() {
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_hardfork(Some(EthereumHardfork::default().into()))
+            .with_genesis(Some(Genesis { base_fee_per_gas: Some(0), ..Default::default() })),
+    )
+    .await;
+    let provider = handle.http_provider();
+
+    api.anvil_set_next_block_base_fee_per_gas(U256::from(999)).await.unwrap();
+    api.anvil_reset(None).await.unwrap();
+
+    let genesis = provider.get_block(BlockId::number(0)).await.unwrap().unwrap();
+    assert_eq!(genesis.header.base_fee_per_gas, Some(0));
+    assert_eq!(api.base_fee().unwrap(), Some(U256::ZERO));
+    api.mine_one().await.unwrap();
+    let first = provider.get_block(BlockId::number(1)).await.unwrap().unwrap();
+    assert_eq!(first.header.base_fee_per_gas, Some(0));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -258,4 +380,59 @@ async fn test_estimate_gas_empty_data() {
     assert_eq!(gas_with_empty_data, U256::from(GAS_TRANSFER));
     assert!(gas_with_data > U256::from(GAS_TRANSFER));
     assert_eq!(gas_without_data, gas_with_empty_data);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_estimate_gas_simple_transfer_checks_funds() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let to = handle.dev_accounts().next().unwrap();
+    let from = Address::random();
+
+    let tx = TransactionRequest::default().with_from(from).with_to(to).with_value(U256::from(1));
+    let err =
+        api.estimate_gas(WithOtherFields::new(tx), None, Default::default()).await.unwrap_err();
+
+    assert!(err.to_string().contains("Insufficient funds for gas * price + value"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_estimate_gas_simple_transfer_without_from_uses_transfer_fast_path() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let to = handle.dev_accounts().next().unwrap();
+
+    let tx = TransactionRequest::default().with_to(to).with_value(U256::from(1));
+    let gas = api.estimate_gas(WithOtherFields::new(tx), None, Default::default()).await.unwrap();
+
+    assert_eq!(gas, U256::from(GAS_TRANSFER));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_estimate_gas_without_from_with_gas_price_uses_transfer_fast_path() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let to = handle.dev_accounts().next().unwrap();
+
+    let tx = TransactionRequest::default().with_to(to).with_gas_price(INITIAL_BASE_FEE as u128);
+    let gas = api.estimate_gas(WithOtherFields::new(tx), None, Default::default()).await.unwrap();
+
+    assert_eq!(gas, U256::from(GAS_TRANSFER));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_estimate_gas_fee_token_does_not_skip_funds_check_outside_tempo() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let to = handle.dev_accounts().next().unwrap();
+    let from = Address::random();
+
+    let tx: WithOtherFields<TransactionRequest> = WithOtherFields {
+        inner: TransactionRequest::default().with_from(from).with_to(to).with_value(U256::from(1)),
+        other: [(
+            "feeToken".to_string(),
+            serde_json::json!("0x20c0000000000000000000000000000000000001"),
+        )]
+        .into_iter()
+        .collect(),
+    };
+    let err = api.estimate_gas(tx, None, Default::default()).await.unwrap_err();
+
+    assert!(err.to_string().contains("Insufficient funds for gas * price + value"));
 }

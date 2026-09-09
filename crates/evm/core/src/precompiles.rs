@@ -54,6 +54,11 @@ pub const BLS12_MAP_FP2_TO_G2: Address = address!("0x000000000000000000000000000
 /// The P256VERIFY precompile address.
 pub const P256_VERIFY: Address = address!("0x0000000000000000000000000000000000000100");
 
+/// The Celo transfer precompile address.
+///
+/// See <https://specs.celo.org/token_duality.html#the-transfer-precompile>
+pub const CELO_TRANSFER: Address = address!("0x00000000000000000000000000000000000000fd");
+
 /// Precompile addresses.
 pub const PRECOMPILES: &[Address] = &[
     EC_RECOVER,

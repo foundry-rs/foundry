@@ -20,33 +20,41 @@ required-features = ["cli"]
 
 [dependencies]
 # foundry internal
-anvil-core = { path = "core" }
+anvil-core = { path = "core", default-features = false }
 anvil-rpc = { path = "rpc" }
 anvil-server = { path = "server" }
-foundry-cli.workspace = true
+foundry-cli = { workspace = true, optional = true }
 foundry-common.workspace = true
 foundry-config.workspace = true
 foundry-evm.workspace = true
 foundry-evm-networks.workspace = true
-foundry-primitives.workspace = true
+alloy-monad-evm = { workspace = true, optional = true }
+monad-revm = { workspace = true, optional = true }
+foundry-primitives = { workspace = true, default-features = false }
+tempo-hardfork.workspace = true
 tempo-primitives.workspace = true
+tempo-precompiles.workspace = true
+tempo-evm.workspace = true
+tempo-revm.workspace = true
 
 # alloy
 alloy-evm = { workspace = true, features = ["call-util"] }
-alloy-op-evm.workspace = true
+alloy-op-evm = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-consensus = { workspace = true, features = ["k256", "kzg"] }
 alloy-contract = { workspace = true, features = ["pubsub"] }
 alloy-network.workspace = true
 alloy-eips.workspace = true
+alloy-hardforks.workspace = true
 alloy-rlp.workspace = true
 alloy-signer = { workspace = true, features = ["eip712"] }
 alloy-signer-local = { workspace = true, features = ["mnemonic"] }
 alloy-sol-types = { workspace = true, features = ["std"] }
 alloy-dyn-abi = { workspace = true, features = ["std", "eip712"] }
-alloy-rpc-types = { workspace = true, features = ["anvil", "trace", "txpool"] }
+alloy-rpc-types = { workspace = true, features = ["anvil", "debug", "trace", "txpool"] }
 alloy-rpc-types-beacon.workspace = true
 alloy-rpc-types-eth.workspace = true
+alloy-rpc-types-mev.workspace = true
 alloy-serde.workspace = true
 alloy-provider = { workspace = true, features = [
     "reqwest",
@@ -59,7 +67,8 @@ alloy-transport.workspace = true
 alloy-chains.workspace = true
 alloy-genesis.workspace = true
 alloy-trie.workspace = true
-op-alloy-consensus = { workspace = true, features = ["serde"] }
+op-alloy-consensus = { workspace = true, features = ["serde"], optional = true }
+op-alloy-rpc-types = { workspace = true, optional = true }
 
 # revm
 revm = { workspace = true, features = [
@@ -69,7 +78,7 @@ revm = { workspace = true, features = [
     "c-kzg",
 ] }
 revm-inspectors.workspace = true
-op-revm.workspace = true
+op-revm = { workspace = true, optional = true }
 
 # axum related
 axum.workspace = true
@@ -93,6 +102,7 @@ thiserror.workspace = true
 yansi.workspace = true
 tempfile.workspace = true
 itertools.workspace = true
+imbl.workspace = true
 rand_08.workspace = true
 eyre.workspace = true
 ethereum_ssz.workspace = true
@@ -111,22 +121,41 @@ fdlimit = { version = "0.3", optional = true }
 [dev-dependencies]
 alloy-provider = { workspace = true, features = ["txpool-api"] }
 alloy-pubsub.workspace = true
-alloy-eip5792.workspace = true
 rand.workspace = true
 reqwest.workspace = true
 foundry-test-utils.workspace = true
 tokio = { workspace = true, features = ["full"] }
 
-op-alloy-rpc-types.workspace = true
+tempo-alloy.workspace = true
 
 [features]
-default = ["cli", "jemalloc"]
-asm-keccak = ["alloy-primitives/asm-keccak"]
-jemalloc = ["foundry-cli/jemalloc"]
-mimalloc = ["foundry-cli/mimalloc"]
-tracy-allocator = ["foundry-cli/tracy-allocator"]
+default = ["cli", "jemalloc", "asm-keccak", "optimism", "js-tracer"]
+monad = [
+    "dep:alloy-monad-evm",
+    "dep:monad-revm",
+    "foundry-config/monad",
+    "foundry-evm/monad",
+    "foundry-evm-networks/monad",
+    "foundry-cli?/monad",
+]
+optimism = [
+    "dep:op-alloy-consensus",
+    "dep:op-alloy-rpc-types",
+    "dep:alloy-op-evm",
+    "dep:op-revm",
+    "anvil-core/optimism",
+    "foundry-primitives/optimism",
+    "foundry-common/optimism",
+    "foundry-evm/optimism",
+    "foundry-cli?/optimism",
+]
+asm-keccak = ["alloy-primitives/asm-keccak", "revm/asm-keccak"]
+jemalloc = ["foundry-cli?/jemalloc"]
+mimalloc = ["foundry-cli?/mimalloc"]
+tracy-allocator = ["foundry-cli?/tracy-allocator"]
 cli = ["tokio/full", "cmd"]
 cmd = [
+    "dep:foundry-cli",
     "clap",
     "clap_complete",
     "dep:fdlimit",

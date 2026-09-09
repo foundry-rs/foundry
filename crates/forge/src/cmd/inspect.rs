@@ -1,26 +1,34 @@
-use alloy_json_abi::{EventParam, InternalType, JsonAbi, Param};
-use alloy_primitives::{hex, keccak256};
+use alloy_json_abi::{Event, EventParam, InternalType, JsonAbi, Param};
 use clap::Parser;
-use comfy_table::{Cell, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN};
+use comfy_table::{
+    Cell, Table,
+    presets::{ASCII_FULL, ASCII_MARKDOWN},
+};
 use eyre::{Result, eyre};
-use foundry_cli::opts::{BuildOpts, CompilerOpts};
+use foundry_cli::{
+    opts::{BuildOpts, CompilerOpts},
+    utils::LoadConfig,
+};
 use foundry_common::{
     compile::{PathOrContractInfo, ProjectCompiler},
     find_matching_contract_artifact, find_target_path, shell,
 };
 use foundry_compilers::{
+    ProjectCompileOutput,
     artifacts::{
         StorageLayout,
         output_selection::{
             BytecodeOutputSelection, ContractOutputSelection, DeployedBytecodeOutputSelection,
-            EvmOutputSelection, EwasmOutputSelection,
+            EvmOutputSelection, EwasmOutputSelection, OutputSelection,
         },
     },
     solc::SolcLanguage,
 };
+use path_slash::PathExt;
 use regex::Regex;
 use serde_json::{Map, Value};
-use std::{collections::BTreeMap, fmt, str::FromStr, sync::LazyLock};
+use solar::sema::interface::source_map::FileName;
+use std::{collections::BTreeMap, fmt, ops::ControlFlow, path::Path, str::FromStr, sync::LazyLock};
 
 /// CLI arguments for `forge inspect`.
 #[derive(Clone, Debug, Parser)]
@@ -52,6 +60,9 @@ impl InspectArgs {
 
         trace!(target: "forge", ?field, ?contract, "running forge inspect");
 
+        let user_extra_output = !build.compiler.extra_output.is_empty()
+            || !build.compiler.extra_output_files.is_empty();
+
         // Map field to ContractOutputSelection
         let mut cos = build.compiler.extra_output;
         if !field.can_skip_field() && !cos.iter().any(|selected| field == *selected) {
@@ -75,9 +86,23 @@ impl InspectArgs {
         };
 
         // Build the project
-        let project = modified_build_args.project()?;
-        let compiler = ProjectCompiler::new().quiet(true);
+        let config = modified_build_args.load_config_with_dependencies()?;
+        let mut project = config.project()?;
+        if !user_extra_output
+            && !project.build_info
+            && let Some(selection) = field.inspect_output_selection()
+        {
+            project.no_artifacts = true;
+            project
+                .update_output_selection(|output_selection| *output_selection = selection.clone());
+        }
         let target_path = find_target_path(&project, &contract)?;
+        if field == ContractArtifactField::Linearization && !is_solidity_source(&target_path) {
+            eyre::bail!(
+                "linearization inspection is only supported for Solidity contracts (.sol targets)"
+            );
+        }
+        let compiler = ProjectCompiler::new().quiet(true);
         let mut output = compiler.files([target_path.clone()]).compile(&project)?;
 
         // Find the artifact
@@ -85,6 +110,9 @@ impl InspectArgs {
 
         // Match on ContractArtifactFields and pretty-print
         match field {
+            ContractArtifactField::Artifact => {
+                print_json(&artifact)?;
+            }
             ContractArtifactField::Abi => {
                 let abi = artifact.abi.as_ref().ok_or_else(|| missing_error("ABI"))?;
                 print_abi(abi, wrap)?;
@@ -108,7 +136,14 @@ impl InspectArgs {
                 print_json(&artifact.gas_estimates)?;
             }
             ContractArtifactField::StorageLayout => {
-                print_storage_layout(artifact.storage_layout.as_ref(), wrap)?;
+                print_storage_layout(artifact.storage_layout.as_ref(), "storage layout", wrap)?;
+            }
+            ContractArtifactField::TransientStorageLayout => {
+                print_storage_layout(
+                    artifact.transient_storage_layout.as_ref(),
+                    "transient storage layout",
+                    wrap,
+                )?;
             }
             ContractArtifactField::DevDoc => {
                 print_json(&artifact.devdoc)?;
@@ -158,16 +193,20 @@ impl InspectArgs {
                     .collect();
                 if shell::is_json() {
                     return print_json(&all_libs);
-                } else {
-                    sh_println!(
-                        "Dynamically linked libraries:\n{}",
-                        all_libs
-                            .iter()
-                            .map(|v| format!("  {v}"))
-                            .collect::<Vec<String>>()
-                            .join("\n")
-                    )?;
                 }
+                sh_status!("Dynamically linked libraries:")?;
+                for lib in &all_libs {
+                    sh_println!("{lib}")?;
+                }
+            }
+            ContractArtifactField::Linearization => {
+                print_linearization(
+                    &mut output,
+                    project.root(),
+                    &target_path,
+                    contract.name(),
+                    wrap,
+                )?;
             }
         };
 
@@ -177,7 +216,7 @@ impl InspectArgs {
 
 fn parse_errors(abi: &JsonAbi) -> Map<String, Value> {
     let mut out = serde_json::Map::new();
-    for er in abi.errors.iter().flat_map(|(_, errors)| errors) {
+    for er in abi.errors.values().flatten() {
         let types = get_ty_sig(&er.inputs);
         let sig = format!("{:x}", er.selector());
         let sig_trimmed = &sig[0..8];
@@ -188,12 +227,17 @@ fn parse_errors(abi: &JsonAbi) -> Map<String, Value> {
 
 fn parse_events(abi: &JsonAbi) -> Map<String, Value> {
     let mut out = serde_json::Map::new();
-    for ev in abi.events.iter().flat_map(|(_, events)| events) {
+    for ev in abi.events.values().flatten() {
         let types = parse_event_params(&ev.inputs);
-        let topic = hex::encode(keccak256(ev.signature()));
-        out.insert(format!("{}({})", ev.name, types), format!("0x{topic}").into());
+        let topic = event_topic(ev).map_or(Value::Null, Into::into);
+        out.insert(format!("{}({})", ev.name, types), topic);
     }
     out
+}
+
+/// Returns topic0 for non-anonymous events. Anonymous events have no signature topic.
+fn event_topic(ev: &Event) -> Option<String> {
+    (!ev.anonymous).then(|| ev.selector().to_string())
 }
 
 fn parse_event_params(ev_params: &[EventParam]) -> String {
@@ -219,14 +263,19 @@ fn print_abi(abi: &JsonAbi, should_wrap: bool) -> Result<()> {
         headers,
         |table| {
             // Print events
-            for ev in abi.events.iter().flat_map(|(_, events)| events) {
+            for ev in abi.events.values().flatten() {
                 let types = parse_event_params(&ev.inputs);
-                let selector = ev.selector().to_string();
-                table.add_row(["event", &format!("{}({})", ev.name, types), &selector]);
+                let signature = if ev.anonymous {
+                    format!("{}({}) anonymous", ev.name, types)
+                } else {
+                    format!("{}({})", ev.name, types)
+                };
+                let selector = event_topic(ev).unwrap_or_default();
+                table.add_row(["event", &signature, &selector]);
             }
 
             // Print errors
-            for er in abi.errors.iter().flat_map(|(_, errors)| errors) {
+            for er in abi.errors.values().flatten() {
                 let selector = er.selector().to_string();
                 table.add_row([
                     "error",
@@ -236,18 +285,18 @@ fn print_abi(abi: &JsonAbi, should_wrap: bool) -> Result<()> {
             }
 
             // Print functions
-            for func in abi.functions.iter().flat_map(|(_, f)| f) {
+            for func in abi.functions.values().flatten() {
                 let selector = func.selector().to_string();
                 let state_mut = func.state_mutability.as_json_str();
-                let func_sig = if !func.outputs.is_empty() {
+                let func_sig = if func.outputs.is_empty() {
+                    format!("{}({}) {state_mut}", func.name, get_ty_sig(&func.inputs))
+                } else {
                     format!(
                         "{}({}) {state_mut} returns ({})",
                         func.name,
                         get_ty_sig(&func.inputs),
                         get_ty_sig(&func.outputs)
                     )
-                } else {
-                    format!("{}({}) {state_mut}", func.name, get_ty_sig(&func.inputs))
                 };
                 table.add_row(["function", &func_sig, &selector]);
             }
@@ -302,10 +351,11 @@ fn internal_ty(ty: &InternalType) -> String {
 
 pub fn print_storage_layout(
     storage_layout: Option<&StorageLayout>,
+    field: &str,
     should_wrap: bool,
 ) -> Result<()> {
     let Some(storage_layout) = storage_layout else {
-        return Err(missing_error("storage layout"));
+        return Err(missing_error(field));
     };
 
     if shell::is_json() {
@@ -358,7 +408,7 @@ fn print_method_identifiers(
         headers,
         |table| {
             for (method, identifier) in method_identifiers {
-                table.add_row([method, identifier]);
+                table.add_row([method.as_str(), identifier.as_str()]);
             }
         },
         should_wrap,
@@ -379,7 +429,7 @@ fn print_errors_events(map: &Map<String, Value>, is_err: bool, should_wrap: bool
         headers,
         |table| {
             for (method, selector) in map {
-                table.add_row([method, selector.as_str().unwrap()]);
+                table.add_row([method.as_str(), selector.as_str().unwrap_or("")]);
             }
         },
         should_wrap,
@@ -393,9 +443,9 @@ fn print_table(
 ) -> Result<()> {
     let mut table = Table::new();
     if shell::is_markdown() {
-        table.load_preset(ASCII_MARKDOWN);
+        table.load_style(ASCII_MARKDOWN);
     } else {
-        table.apply_modifier(UTF8_ROUND_CORNERS);
+        table.load_style(ASCII_FULL.with_rounded_corners());
     }
     table.set_header(headers);
     if should_wrap {
@@ -406,9 +456,114 @@ fn print_table(
     Ok(())
 }
 
+fn print_linearization(
+    output: &mut ProjectCompileOutput,
+    root: &Path,
+    target_path: &Path,
+    target_name: Option<&str>,
+    should_wrap: bool,
+) -> Result<()> {
+    let mut chain = Vec::new();
+    let mut lowered = false;
+    let compiler = output.parser_mut().solc_mut().compiler_mut();
+    compiler.enter_mut(|compiler| -> Result<()> {
+        let Ok(ControlFlow::Continue(())) = compiler.lower_asts() else { return Ok(()) };
+        lowered = true;
+
+        let hir = &compiler.gcx().hir;
+        let matching_contracts = hir
+            .contract_ids()
+            .filter(|id| {
+                let contract = hir.contract(*id);
+                if let Some(target_name) = target_name
+                    && contract.name.as_str() != target_name
+                {
+                    return false;
+                }
+
+                matches!(
+                    &hir.source(contract.source).file.name,
+                    FileName::Real(path) if path == target_path
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let target_contract = match matching_contracts.as_slice() {
+            [id] => *id,
+            [] => {
+                if let Some(target_name) = target_name {
+                    eyre::bail!(
+                        "Could not find contract `{target_name}` in `{}`",
+                        target_path.display()
+                    );
+                }
+                eyre::bail!("Could not find contract in `{}`", target_path.display());
+            }
+            _ => {
+                eyre::bail!(
+                    "Multiple contracts found in the same file, please specify the target <path>:<contract> or <contract>"
+                );
+            }
+        };
+
+        for (order, base_id) in hir.contract(target_contract).linearized_bases.iter().enumerate() {
+            let contract = hir.contract(*base_id);
+            let source = hir.source(contract.source);
+            let FileName::Real(path) = &source.file.name else { continue };
+            let path = path.strip_prefix(root).unwrap_or(path);
+            chain.push((
+                order,
+                path.to_slash_lossy().into_owned(),
+                contract.name.as_str().to_string(),
+            ));
+        }
+
+        Ok(())
+    })?;
+
+    // `compiler.sess()` inside of `ProjectCompileOutput` is built with `with_buffer_emitter`.
+    let diags = compiler.sess().dcx.emitted_diagnostics().unwrap();
+    if compiler.sess().dcx.has_errors().is_err() {
+        eyre::bail!("{diags}");
+    }
+    let _ = sh_eprint!("{diags}");
+    if !lowered {
+        eyre::bail!(
+            "unable to inspect linearization: failed to lower Solidity ASTs for `{}`",
+            target_path.display()
+        );
+    }
+
+    if shell::is_json() {
+        let contracts = chain
+            .into_iter()
+            .map(|(order, source, contract)| {
+                serde_json::json!({
+                    "order": order,
+                    "source": source,
+                    "contract": contract,
+                })
+            })
+            .collect::<Vec<_>>();
+        return print_json(&contracts);
+    }
+
+    let headers = vec![Cell::new("Order"), Cell::new("Source"), Cell::new("Contract")];
+    print_table(
+        headers,
+        |table| {
+            for (order, source, contract) in &chain {
+                table.add_row([order.to_string(), source.clone(), contract.clone()]);
+            }
+        },
+        should_wrap,
+    )
+}
+
 /// Contract level output selection
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ContractArtifactField {
+    Artifact,
     Abi,
     Bytecode,
     DeployedBytecode,
@@ -418,6 +573,7 @@ pub enum ContractArtifactField {
     MethodIdentifiers,
     GasEstimates,
     StorageLayout,
+    TransientStorageLayout,
     DevDoc,
     Ir,
     IrOptimized,
@@ -428,6 +584,7 @@ pub enum ContractArtifactField {
     Events,
     StandardJson,
     Libraries,
+    Linearization,
 }
 
 macro_rules! impl_value_enum {
@@ -487,6 +644,8 @@ macro_rules! impl_value_enum {
 
 impl_value_enum! {
     enum ContractArtifactField {
+        Artifact          => "artifact" | "artifactJson" | "artifact-json" | "artifact_json"
+                             | "output",
         Abi               => "abi",
         Bytecode          => "bytecode" | "bytes" | "b",
         DeployedBytecode  => "deployedBytecode" | "deployed_bytecode" | "deployed-bytecode"
@@ -502,6 +661,10 @@ impl_value_enum! {
                              | "gasestimates",
         StorageLayout     => "storageLayout" | "storage_layout" | "storage-layout"
                              | "storagelayout" | "storage",
+        TransientStorageLayout => "transientStorageLayout" | "transient_storage_layout"
+                             | "transient-storage-layout" | "transientstoragelayout"
+                             | "transientStorage" | "transient-storage" | "transient_storage"
+                             | "transientstorage" | "transient" | "tsl",
         DevDoc            => "devdoc" | "dev-doc" | "devDoc",
         Ir                => "ir" | "iR" | "IR",
         IrOptimized       => "irOptimized" | "ir-optimized" | "iroptimized" | "iro" | "iropt",
@@ -512,6 +675,9 @@ impl_value_enum! {
         Events            => "events" | "ev",
         StandardJson      => "standardJson" | "standard-json" | "standard_json",
         Libraries         => "libraries" | "lib" | "libs",
+        Linearization     => "linearization" | "linearizedInheritance"
+                             | "linearized-inheritance" | "linearized_inheritance"
+                             | "linearizedBases" | "linearized-bases" | "linearized_bases",
     }
 }
 
@@ -521,6 +687,7 @@ impl TryFrom<ContractArtifactField> for ContractOutputSelection {
     fn try_from(field: ContractArtifactField) -> Result<Self, Self::Error> {
         type Caf = ContractArtifactField;
         match field {
+            Caf::Artifact => Err(eyre!("Artifact is not supported for ContractOutputSelection")),
             Caf::Abi => Ok(Self::Abi),
             Caf::Bytecode => {
                 Ok(Self::Evm(EvmOutputSelection::ByteCode(BytecodeOutputSelection::All)))
@@ -533,6 +700,7 @@ impl TryFrom<ContractArtifactField> for ContractOutputSelection {
             Caf::MethodIdentifiers => Ok(Self::Evm(EvmOutputSelection::MethodIdentifiers)),
             Caf::GasEstimates => Ok(Self::Evm(EvmOutputSelection::GasEstimates)),
             Caf::StorageLayout => Ok(Self::StorageLayout),
+            Caf::TransientStorageLayout => Ok(Self::TransientStorageLayout),
             Caf::DevDoc => Ok(Self::DevDoc),
             Caf::Ir => Ok(Self::Ir),
             Caf::IrOptimized => Ok(Self::IrOptimized),
@@ -545,6 +713,9 @@ impl TryFrom<ContractArtifactField> for ContractOutputSelection {
                 Err(eyre!("StandardJson is not supported for ContractOutputSelection"))
             }
             Caf::Libraries => Err(eyre!("Libraries is not supported for ContractOutputSelection")),
+            Caf::Linearization => {
+                Err(eyre!("Linearization is not supported for ContractOutputSelection"))
+            }
         }
     }
 }
@@ -555,8 +726,7 @@ impl PartialEq<ContractOutputSelection> for ContractArtifactField {
         type Eos = EvmOutputSelection;
         matches!(
             (self, other),
-            (Self::Abi | Self::Events, Cos::Abi)
-                | (Self::Errors, Cos::Abi)
+            (Self::Abi | Self::Events | Self::Errors, Cos::Abi)
                 | (Self::Bytecode, Cos::Evm(Eos::ByteCode(_)))
                 | (Self::DeployedBytecode, Cos::Evm(Eos::DeployedByteCode(_)))
                 | (Self::Assembly | Self::AssemblyOptimized, Cos::Evm(Eos::Assembly))
@@ -564,6 +734,7 @@ impl PartialEq<ContractOutputSelection> for ContractArtifactField {
                 | (Self::MethodIdentifiers, Cos::Evm(Eos::MethodIdentifiers))
                 | (Self::GasEstimates, Cos::Evm(Eos::GasEstimates))
                 | (Self::StorageLayout, Cos::StorageLayout)
+                | (Self::TransientStorageLayout, Cos::TransientStorageLayout)
                 | (Self::DevDoc, Cos::DevDoc)
                 | (Self::Ir, Cos::Ir)
                 | (Self::IrOptimized, Cos::IrOptimized)
@@ -585,8 +756,28 @@ impl ContractArtifactField {
     pub const fn can_skip_field(&self) -> bool {
         matches!(
             self,
-            Self::Bytecode | Self::DeployedBytecode | Self::StandardJson | Self::Libraries
+            Self::Artifact
+                | Self::Bytecode
+                | Self::DeployedBytecode
+                | Self::StandardJson
+                | Self::Libraries
+                | Self::Linearization
         )
+    }
+
+    fn inspect_output_selection(&self) -> Option<OutputSelection> {
+        match self {
+            Self::Artifact
+            | Self::Bytecode
+            | Self::DeployedBytecode
+            | Self::StandardJson
+            | Self::Libraries
+            | Self::Linearization => None,
+            _ => {
+                let selection: ContractOutputSelection = (*self).try_into().ok()?;
+                Some(OutputSelection::common_output_selection([selection.to_string()]))
+            }
+        }
     }
 }
 
@@ -596,7 +787,17 @@ fn print_json(obj: &impl serde::Serialize) -> Result<()> {
 }
 
 fn print_json_str(obj: &impl serde::Serialize, key: Option<&str>) -> Result<()> {
-    sh_println!("{}", get_json_str(obj, key)?)?;
+    let value = serde_json::to_value(obj)?;
+    let value = key.and_then(|k| value.get(k)).unwrap_or(&value);
+    if shell::is_json() {
+        sh_println!("{}", serde_json::to_string_pretty(value)?)?;
+    } else {
+        let s = match value.as_str() {
+            Some(s) => s.to_string(),
+            None => format!("{value:#}"),
+        };
+        sh_println!("{s}")?;
+    }
     Ok(())
 }
 
@@ -608,28 +809,23 @@ fn print_yul(yul: Option<&str>, strip_comments: bool) -> Result<()> {
     static YUL_COMMENTS: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"(///.*\n\s*)|(\s*/\*\*.*?\*/)").unwrap());
 
-    if strip_comments {
-        sh_println!("{}", YUL_COMMENTS.replace_all(yul, ""))?;
+    let out = if strip_comments {
+        YUL_COMMENTS.replace_all(yul, "").into_owned()
     } else {
-        sh_println!("{yul}")?;
+        yul.to_string()
+    };
+
+    if shell::is_json() {
+        sh_println!("{}", serde_json::to_string(&out)?)?;
+    } else {
+        sh_println!("{out}")?;
     }
 
     Ok(())
 }
 
-fn get_json_str(obj: &impl serde::Serialize, key: Option<&str>) -> Result<String> {
-    let value = serde_json::to_value(obj)?;
-    let value = if let Some(key) = key
-        && let Some(value) = value.get(key)
-    {
-        value
-    } else {
-        &value
-    };
-    Ok(match value.as_str() {
-        Some(s) => s.to_string(),
-        None => format!("{value:#}"),
-    })
+fn is_solidity_source(path: &Path) -> bool {
+    path.extension().and_then(|ext| ext.to_str()).is_some_and(|ext| ext.eq_ignore_ascii_case("sol"))
 }
 
 fn missing_error(field: &str) -> eyre::Error {
@@ -646,7 +842,15 @@ mod tests {
     #[test]
     fn contract_output_selection() {
         for &field in ContractArtifactField::ALL {
-            if field == ContractArtifactField::StandardJson {
+            if field == ContractArtifactField::Artifact {
+                let selection: Result<ContractOutputSelection, _> = field.try_into();
+                assert!(
+                    selection
+                        .unwrap_err()
+                        .to_string()
+                        .eq("Artifact is not supported for ContractOutputSelection")
+                );
+            } else if field == ContractArtifactField::StandardJson {
                 let selection: Result<ContractOutputSelection, _> = field.try_into();
                 assert!(
                     selection
@@ -661,6 +865,14 @@ mod tests {
                         .unwrap_err()
                         .to_string()
                         .eq("Libraries is not supported for ContractOutputSelection")
+                );
+            } else if field == ContractArtifactField::Linearization {
+                let selection: Result<ContractOutputSelection, _> = field.try_into();
+                assert!(
+                    selection
+                        .unwrap_err()
+                        .to_string()
+                        .eq("Linearization is not supported for ContractOutputSelection")
                 );
             } else {
                 let selection: ContractOutputSelection = field.try_into().unwrap();

@@ -15,40 +15,6 @@ use std::{
 /// Contract id -> Contract data definition mapping.
 pub type PreprocessorData = BTreeMap<ContractId, ContractData>;
 
-/// Collects preprocessor data from referenced contracts.
-pub(crate) fn collect_preprocessor_data(
-    gcx: Gcx<'_>,
-    referenced_contracts: &HashSet<ContractId>,
-) -> PreprocessorData {
-    let mut data = PreprocessorData::default();
-    for contract_id in referenced_contracts {
-        let contract = gcx.hir.contract(*contract_id);
-        let source = gcx.hir.source(contract.source);
-
-        let FileName::Real(path) = &source.file.name else {
-            continue;
-        };
-
-        let contract_data = ContractData::new(gcx, *contract_id, contract, path, source);
-        data.insert(*contract_id, contract_data);
-    }
-    data
-}
-
-/// Creates helper libraries for contracts with a non-empty constructor.
-///
-/// See [`ContractData::build_helper`] for more details.
-pub(crate) fn create_deploy_helpers(data: &BTreeMap<ContractId, ContractData>) -> Sources {
-    let mut deploy_helpers = Sources::new();
-    for (contract_id, contract) in data {
-        if let Some(code) = contract.build_helper() {
-            let path = format!("foundry-pp/DeployHelper{}.sol", contract_id.get());
-            deploy_helpers.insert(path.into(), Source::new(code));
-        }
-    }
-    deploy_helpers
-}
-
 /// Keeps data about a contract constructor.
 #[derive(Debug)]
 pub struct ContractConstructorData {
@@ -170,7 +136,7 @@ impl ContractData {
         let Self { contract_id, path, name, constructor_data, artifact: _ } = self;
 
         let Some(constructor_details) = constructor_data else { return None };
-        let contract_id = contract_id.get();
+        let contract_id = contract_id.index();
         let struct_fields = &constructor_details.struct_fields;
         let abi_encode_args = &constructor_details.abi_encode_args;
 
@@ -196,4 +162,41 @@ function encodeArgs{contract_id}(DeployHelper{contract_id}.FoundryPpConstructorA
 
         Some(helper)
     }
+}
+
+/// Collects preprocessor data from referenced contracts.
+pub(crate) fn collect_preprocessor_data(
+    gcx: Gcx<'_>,
+    referenced_contracts: &HashSet<ContractId>,
+    root_dir: &Path,
+) -> PreprocessorData {
+    let mut data = PreprocessorData::default();
+    for contract_id in referenced_contracts {
+        let contract = gcx.hir.contract(*contract_id);
+        let source = gcx.hir.source(contract.source);
+
+        let FileName::Real(path) = &source.file.name else {
+            continue;
+        };
+
+        // Match the compiler input paths in generated imports and artifact references.
+        let path = path.strip_prefix(root_dir).unwrap_or(path);
+        let contract_data = ContractData::new(gcx, *contract_id, contract, path, source);
+        data.insert(*contract_id, contract_data);
+    }
+    data
+}
+
+/// Creates helper libraries for contracts with a non-empty constructor.
+///
+/// See [`ContractData::build_helper`] for more details.
+pub(crate) fn create_deploy_helpers(data: &BTreeMap<ContractId, ContractData>) -> Sources {
+    let mut deploy_helpers = Sources::new();
+    for (contract_id, contract) in data {
+        if let Some(code) = contract.build_helper() {
+            let path = format!("foundry-pp/DeployHelper{}.sol", contract_id.index());
+            deploy_helpers.insert(path.into(), Source::new(code));
+        }
+    }
+    deploy_helpers
 }

@@ -1,0 +1,226 @@
+name: Nightly Benchmarks
+
+permissions: {}
+
+on:
+  schedule:
+    - cron: "0 2 * * *" # 2am UTC nightly
+  workflow_dispatch: # allow manual triggering for testing
+
+env:
+  RUSTC_WRAPPER: "sccache"
+
+jobs:
+  cargo-cooldown:
+    if: github.event_name != 'schedule' || github.repository == 'foundry-rs/foundry'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/cargo-cooldown.yml
+
+  run-benchmarks:
+    name: Run Nightly Benchmarks
+    needs: cargo-cooldown
+    if: github.event_name != 'schedule' || github.repository == 'foundry-rs/foundry'
+    runs-on: depot-ubuntu-24.04-32
+    permissions:
+      contents: read
+    outputs:
+      has_regression: ${{ steps.compare.outputs.has_regression }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config z3
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
+
+      - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
+
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+
+      - name: Setup Foundry
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+          GITHUB_WORKSPACE: ${{ github.workspace }}
+        run: |
+          ./.github/scripts/setup-foundryup.sh
+          printf '%s\n' "$GITHUB_WORKSPACE/.foundry/bin" >> "$GITHUB_PATH"
+
+      - name: Build benchmark binary
+        run: cargo build --locked --release --bin foundry-bench
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+
+      - name: Install hyperfine
+        run: |
+          curl -L https://github.com/sharkdp/hyperfine/releases/download/v1.19.0/hyperfine-v1.19.0-x86_64-unknown-linux-gnu.tar.gz | tar xz
+          sudo mv hyperfine-v1.19.0-x86_64-unknown-linux-gnu/hyperfine /usr/local/bin/
+          rm -rf hyperfine-v1.19.0-x86_64-unknown-linux-gnu
+
+      # --- Stable benchmarks ---
+
+      - name: Run forge test benchmarks (stable)
+        continue-on-error: true
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+        run: benches/scripts/run-benchmark-suite.sh nightly test --versions stable --output-dir ./benches
+
+      - name: Run forge fuzz test benchmarks (stable)
+        continue-on-error: true
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+        run: benches/scripts/run-benchmark-suite.sh nightly fuzz --versions stable --output-dir ./benches
+
+      - name: Run forge build benchmarks (stable)
+        continue-on-error: true
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+        run: benches/scripts/run-benchmark-suite.sh nightly build --versions stable --output-dir ./benches
+
+      - name: Run forge coverage benchmarks (stable)
+        continue-on-error: true
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+        run: benches/scripts/run-benchmark-suite.sh nightly coverage --versions stable --output-dir ./benches
+
+      - name: Run forge symbolic benchmarks (stable)
+        continue-on-error: true
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+        run: benches/scripts/run-benchmark-suite.sh nightly symbolic --versions stable --output-dir ./benches
+
+      # --- Nightly benchmarks ---
+
+      - name: Run forge test benchmarks (nightly)
+        continue-on-error: true
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+        run: benches/scripts/run-benchmark-suite.sh nightly test --versions nightly --output-dir ./benches
+
+      - name: Run forge fuzz test benchmarks (nightly)
+        continue-on-error: true
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+        run: benches/scripts/run-benchmark-suite.sh nightly fuzz --versions nightly --output-dir ./benches
+
+      - name: Run forge build benchmarks (nightly)
+        continue-on-error: true
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+        run: benches/scripts/run-benchmark-suite.sh nightly build --versions nightly --output-dir ./benches
+
+      - name: Run forge coverage benchmarks (nightly)
+        continue-on-error: true
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+        run: benches/scripts/run-benchmark-suite.sh nightly coverage --versions nightly --output-dir ./benches
+
+      - name: Run forge symbolic benchmarks (nightly)
+        continue-on-error: true
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+        run: benches/scripts/run-benchmark-suite.sh nightly symbolic --versions nightly --output-dir ./benches
+
+      - name: Merge benchmark JSON results
+        run: |
+          DATE=$(date -u +%Y-%m-%d)
+          shopt -s nullglob
+
+          stable_parts=( "benches/stable-${DATE}-"*.json )
+          nightly_parts=( "benches/nightly-${DATE}-"*.json )
+
+          if [[ ${#stable_parts[@]} -eq 0 && ${#nightly_parts[@]} -eq 0 ]]; then
+            echo "No benchmark results produced — all steps failed."
+            exit 1
+          fi
+
+          if [[ ${#stable_parts[@]} -gt 0 ]]; then
+            jq -s 'add' "${stable_parts[@]}" > "benches/stable-${DATE}.json"
+            echo "Merged ${#stable_parts[@]} stable result file(s) into stable-${DATE}.json"
+          fi
+
+          if [[ ${#nightly_parts[@]} -gt 0 ]]; then
+            jq -s 'add' "${nightly_parts[@]}" > "benches/nightly-${DATE}.json"
+            echo "Merged ${#nightly_parts[@]} nightly result file(s) into nightly-${DATE}.json"
+          fi
+
+      - name: Compare stable vs nightly results
+        id: compare
+        run: |
+          DATE=$(date -u +%Y-%m-%d)
+          STABLE_JSON="benches/stable-${DATE}.json"
+          NIGHTLY_JSON="benches/nightly-${DATE}.json"
+          set +e
+          python3 ./.github/scripts/compare-benchmark-thresholds.py \
+            "$STABLE_JSON" "$NIGHTLY_JSON" \
+            .github/benchmark-regression-thresholds.json > regression.md 2>&1
+          status=$?
+          set -e
+          if [[ $status -eq 0 ]]; then
+            echo "has_regression=false" >> "$GITHUB_OUTPUT"
+          elif [[ $status -eq 1 ]]; then
+            echo "has_regression=true" >> "$GITHUB_OUTPUT"
+          else
+            cat regression.md
+            exit "$status"
+          fi
+          cat regression.md
+          cat regression.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bench-results
+          retention-days: 45
+          path: |
+            benches/stable-*.json
+            benches/nightly-*.json
+            benches/common/
+            regression.md
+
+  report-regression:
+    name: Report Regression
+    needs: run-benchmarks
+    if: needs.run-benchmarks.outputs.has_regression == 'true' && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Download benchmark results
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: bench-results
+          path: results/
+
+      - name: Open regression issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          LABEL: T-perf
+        run: |
+          DATE=$(date -u +%Y-%m-%d)
+          BODY="$(cat results/regression.md)
+
+          ---
+
+          **Run**: [${{ github.run_id }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          **Date**: ${DATE}
+          **Repo benchmarked**: \`aave/aave-v4\` (pinned commit)
+          **Threshold**: Per-benchmark calibrated thresholds from \`.github/benchmark-regression-thresholds.json\`"
+
+          # `gh issue create` resolves labels before it creates anything, so a label that does not
+          # exist fails the whole step and the regression goes unreported. That silently dropped
+          # four consecutive nightly alerts, so fall back to filing the issue without the label.
+          ARGS=(--title "[Nightly Regression] ${DATE}" --body "$BODY" --repo "$GH_REPO")
+          gh issue create "${ARGS[@]}" --label "$LABEL" || gh issue create "${ARGS[@]}"

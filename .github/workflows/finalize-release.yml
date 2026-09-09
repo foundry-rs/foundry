@@ -1,0 +1,55 @@
+name: finalize release
+
+permissions: {}
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: Strict stable or RC tag to finalize
+        required: true
+        type: string
+
+concurrency:
+  group: release-stable-promotion
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  validate-ref:
+    name: Validate trusted ref
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require master
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          if [[ "$REF" != "refs/heads/master" ]]; then
+            echo "::error::Release finalization must run from refs/heads/master, not $REF."
+            exit 1
+          fi
+
+  finalize:
+    needs: validate-ref
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      actions: read
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Finalize release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ inputs.tag_name }}
+        run: python3 .github/scripts/finalize-release.py stable --tag "$TAG_NAME"

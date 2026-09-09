@@ -24,9 +24,8 @@ contract LoadTest is Test {
         assertEq(val, 20, "load failed");
     }
 
-    function testLoadNotAvailableOnPrecompiles() public {
-        vm._expectCheatcodeRevert("cannot use precompile 0x0000000000000000000000000000000000000001 as an argument");
-        vm.load(address(1), bytes32(0));
+    function testLoadAvailableOnPrecompiles() public {
+        assertEq(vm.load(address(1), bytes32(0)), bytes32(0));
     }
 
     function testLoadOtherStorage() public {

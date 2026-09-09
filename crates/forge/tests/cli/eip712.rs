@@ -59,11 +59,16 @@ contract DummyTest {
 "#,
     );
 
-    cmd.forge_fuse().args(["eip712", path.to_string_lossy().as_ref()]).assert_success().stdout_eq(
-        str![[r#"
+    cmd.forge_fuse()
+        .args(["eip712", path.to_string_lossy().as_ref()])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
+
+"#]])
+        .stderr_eq(str![[r#"
 Structs.sol > Structs > Foo:
  - type: Foo(Bar bar)Art(uint256 id)Bar(Art art)
  - hash: 0x6d9b732373bd999fde4072274c752e03f7437067dd75521eb406d8edf1d30f7d
@@ -101,8 +106,7 @@ Structs.sol > Structs2 > FooBar:
  - hash: 0xce88f333fe5b5d4901ceb2569922ffe741cda3afc383a63d34ed2c3d565e42d8
 
 
-"#]],
-    );
+"#]]);
 
     cmd.forge_fuse().args(["eip712", path.to_string_lossy().as_ref(), "--json"]).assert_success().stdout_eq(
         str![[r#"
@@ -176,6 +180,7 @@ Encountered 1 failing test in test/Structs.sol:DummyTest
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
 });
@@ -204,11 +209,16 @@ library InsideLibrary {
 "#,
     );
 
-    cmd.forge_fuse().args(["eip712", path.to_string_lossy().as_ref()]).assert_success().stdout_eq(
-        str![[r#"
+    cmd.forge_fuse()
+        .args(["eip712", path.to_string_lossy().as_ref()])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
+
+"#]])
+        .stderr_eq(str![[r#"
 FreeStanding:
  - type: FreeStanding(uint256 id,string name)
  - hash: 0xfb3c934b2382873277133498bde6eb3914ab323e3bef8b373ebcd423969bf1a2
@@ -222,8 +232,7 @@ FreeStandingStructs.sol > InsideLibrary > LibraryStruct:
  - hash: 0x81d6d25f4d37549244d76a68f23ecdcbf3ae81e5a361ed6c492b6a2e126a2843
 
 
-"#]],
-    );
+"#]]);
 });
 
 forgetest!(test_eip712_cheatcode_simple, |prj, cmd| {
@@ -396,6 +405,7 @@ Encountered 1 failing test in src/Eip712Cheat.sol:Eip712Test
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
 
@@ -442,6 +452,7 @@ Encountered 1 failing test in src/Eip712Cheat.sol:Eip712Test
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
 

@@ -31,6 +31,26 @@ pub mod sequence {
     }
 }
 
+/// A module that deserializes an optional single-item sequence.
+pub mod optional_sequence {
+    use serde::{Deserialize, Deserializer, de::DeserializeOwned};
+
+    pub fn deserialize<'de, T, D>(d: D) -> Result<Option<T>, D::Error>
+    where
+        D: Deserializer<'de>,
+        T: DeserializeOwned,
+    {
+        let mut seq = Option::<Vec<Option<T>>>::deserialize(d)?.unwrap_or_default();
+        if seq.len() > 1 {
+            return Err(serde::de::Error::custom(format!(
+                "expected params sequence with length 0 or 1 but got {}",
+                seq.len()
+            )));
+        }
+        Ok(seq.pop().flatten())
+    }
+}
+
 /// A module that deserializes `[]` optionally
 pub mod empty_params {
     use serde::{Deserialize, Deserializer};

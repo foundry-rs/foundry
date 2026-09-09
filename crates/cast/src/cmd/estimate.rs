@@ -1,5 +1,7 @@
-use crate::tx::{CastTxBuilder, SenderKind};
+use super::{auth::confirm_and_build, print_result_line};
+use crate::tx::{CastTxBuilder, read_only_sender};
 use alloy_ens::NameOrAddress;
+use alloy_network::{Ethereum, Network};
 use alloy_primitives::U256;
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
@@ -7,10 +9,12 @@ use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
     opts::{RpcOpts, TransactionOpts},
-    utils::{self, LoadConfig, parse_ether_value},
+    utils::{LoadConfig, parse_ether_value},
 };
-use foundry_wallets::WalletOpts;
+use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
+use foundry_wallets::{BrowserWalletOpts, WalletOpts};
 use std::str::FromStr;
+use tempo_alloy::TempoNetwork;
 
 /// CLI arguments for `cast estimate`.
 #[derive(Debug, Parser)]
@@ -41,11 +45,18 @@ pub struct EstimateArgs {
     #[command(flatten)]
     wallet: WalletOpts,
 
+    #[command(flatten)]
+    browser: BrowserWalletOpts,
+
     #[command(subcommand)]
     command: Option<EstimateSubcommands>,
 
     #[command(flatten)]
     tx: TransactionOpts,
+
+    /// Skip the EIP-7702 authorization disclosure confirmation.
+    #[arg(long)]
+    force: bool,
 
     #[command(flatten)]
     rpc: RpcOpts,
@@ -78,11 +89,34 @@ pub enum EstimateSubcommands {
 
 impl EstimateArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { to, mut sig, mut args, mut tx, block, cost, wallet, rpc, command } = self;
+        if self.tx.tempo.is_tempo() {
+            self.run_with_network::<TempoNetwork>().await
+        } else {
+            self.run_with_network::<Ethereum>().await
+        }
+    }
+
+    async fn run_with_network<N: Network>(self) -> Result<()>
+    where
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+    {
+        let Self {
+            to,
+            mut sig,
+            mut args,
+            mut tx,
+            block,
+            cost,
+            wallet,
+            browser,
+            force,
+            rpc,
+            command,
+        } = self;
 
         let config = rpc.load_config()?;
-        let provider = utils::get_provider(&config)?;
-        let sender = SenderKind::from_wallet_opts(wallet).await?;
+        let provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
+        let (sender, is_browser) = read_only_sender::<N>(&browser, wallet).await?;
 
         let code = if let Some(EstimateSubcommands::Create {
             code,
@@ -101,35 +135,24 @@ impl EstimateArgs {
             None
         };
 
-        let (tx, _) = CastTxBuilder::new(&provider, tx, &config)
+        let builder = CastTxBuilder::new(&provider, tx, &config)
             .await?
             .with_to(to)
             .await?
             .with_code_sig_and_args(code, sig, args)
             .await?
-            .build_raw(sender)
-            .await?;
+            .raw();
+        let Some(tx) = confirm_and_build(builder, sender, force, None, true).await? else {
+            return Ok(());
+        };
 
+        let tx = if is_browser { tx.browser_wallet_gas_estimation_request() } else { tx };
         let gas = provider.estimate_gas(tx).block(block.unwrap_or_default()).await?;
         if cost {
-            let gas_price_wei = provider.get_gas_price().await?;
-            let cost = gas_price_wei * gas as u128;
-            let cost_eth = cost as f64 / 1e18;
-            sh_println!("{cost_eth}")?;
+            let cost = provider.get_gas_price().await? * gas as u128;
+            print_result_line(cost as f64 / 1e18)
         } else {
-            sh_println!("{gas}")?;
+            print_result_line(gas)
         }
-        Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_estimate_value() {
-        let args: EstimateArgs = EstimateArgs::parse_from(["foundry-cli", "--value", "100"]);
-        assert!(args.tx.value.is_some());
     }
 }

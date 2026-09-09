@@ -24,7 +24,7 @@ pub struct MarkdownOptions {
 
 impl MarkdownOptions {
     /// Construct a default instance of `MarkdownOptions`.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { title: None, show_footer: true, show_table_of_contents: true, show_aliases: true }
     }
 
@@ -35,19 +35,19 @@ impl MarkdownOptions {
     }
 
     /// Whether to show the default footer advertising `clap-markdown`.
-    pub fn show_footer(mut self, show: bool) -> Self {
+    pub const fn show_footer(mut self, show: bool) -> Self {
         self.show_footer = show;
         self
     }
 
     /// Whether to show the default table of contents.
-    pub fn show_table_of_contents(mut self, show: bool) -> Self {
+    pub const fn show_table_of_contents(mut self, show: bool) -> Self {
         self.show_table_of_contents = show;
         self
     }
 
     /// Whether to show aliases for arguments and commands.
-    pub fn show_aliases(mut self, show: bool) -> Self {
+    pub const fn show_aliases(mut self, show: bool) -> Self {
         self.show_aliases = show;
         self
     }
@@ -456,7 +456,7 @@ fn get_alias_string(aliases: &[&str]) -> Option<String> {
     Some(aliases.iter().map(|alias| format!("`{alias}`")).collect::<Vec<_>>().join(", "))
 }
 
-fn pluralize<'a>(count: usize, singular: &'a str, plural: &'a str) -> &'a str {
+const fn pluralize<'a>(count: usize, singular: &'a str, plural: &'a str) -> &'a str {
     if count == 1 { singular } else { plural }
 }
 

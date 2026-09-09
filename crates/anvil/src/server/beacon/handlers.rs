@@ -1,6 +1,7 @@
 use super::{error::BeaconError, utils::must_be_ssz};
 use crate::eth::EthApi;
 use alloy_eips::BlockId;
+use alloy_network::Network;
 use alloy_primitives::{B256, aliases::B32};
 use alloy_rpc_types_beacon::{
     genesis::{GenesisData, GenesisResponse},
@@ -20,8 +21,8 @@ use std::{collections::HashMap, str::FromStr as _};
 /// This endpoint is deprecated. Use `GET /eth/v1/beacon/blobs/{block_id}` instead.
 ///
 /// GET /eth/v1/beacon/blob_sidecars/{block_id}
-pub async fn handle_get_blob_sidecars(
-    State(_api): State<EthApi>,
+pub async fn handle_get_blob_sidecars<N: Network>(
+    State(_api): State<EthApi<N>>,
     Path(_block_id): Path<String>,
     Query(_params): Query<HashMap<String, String>>,
 ) -> Response {
@@ -32,9 +33,9 @@ pub async fn handle_get_blob_sidecars(
 /// Handles incoming Beacon API requests for blobs
 ///
 /// GET /eth/v1/beacon/blobs/{block_id}
-pub async fn handle_get_blobs(
+pub async fn handle_get_blobs<N: Network>(
     headers: HeaderMap,
-    State(api): State<EthApi>,
+    State(api): State<EthApi<N>>,
     Path(block_id): Path<String>,
     Query(versioned_hashes): Query<HashMap<String, String>>,
 ) -> Response {
@@ -43,12 +44,31 @@ pub async fn handle_get_blobs(
         return BeaconError::invalid_block_id(block_id).into_response();
     };
 
-    // Parse indices from query parameters
-    // Supports both comma-separated (?indices=1,2,3) and repeated parameters (?indices=1&indices=2)
-    let versioned_hashes: Vec<B256> = versioned_hashes
-        .get("versioned_hashes")
-        .map(|s| s.split(',').filter_map(|hash| B256::from_str(hash.trim()).ok()).collect())
-        .unwrap_or_default();
+    // Parse versioned hashes from query parameters
+    // Supports comma-separated format: ?versioned_hashes=0x...,0x...
+    let versioned_hashes: Vec<B256> = match versioned_hashes.get("versioned_hashes") {
+        Some(s) => {
+            let mut hashes = Vec::new();
+            for hash in s.split(',') {
+                let hash = hash.trim();
+                if hash.is_empty() {
+                    continue;
+                }
+                match B256::from_str(hash) {
+                    Ok(h) => hashes.push(h),
+                    Err(_) => {
+                        return BeaconError::new(
+                            super::error::BeaconErrorCode::BadRequest,
+                            format!("Invalid versioned hash: {hash}"),
+                        )
+                        .into_response();
+                    }
+                }
+            }
+            hashes
+        }
+        None => Vec::new(),
+    };
 
     // Get the blob sidecars using existing EthApi logic
     match api.anvil_get_blobs_by_block_id(block_id, versioned_hashes) {
@@ -74,7 +94,7 @@ pub async fn handle_get_blobs(
 /// Only returns the `genesis_time`, other fields are set to zero.
 ///
 /// GET /eth/v1/beacon/genesis
-pub async fn handle_get_genesis(State(api): State<EthApi>) -> Response {
+pub async fn handle_get_genesis<N: Network>(State(api): State<EthApi<N>>) -> Response {
     match api.anvil_get_genesis_time() {
         Ok(genesis_time) => Json(GenesisResponse {
             data: GenesisData {

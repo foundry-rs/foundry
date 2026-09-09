@@ -1,0 +1,88 @@
+warning[deprecated-oz-function]: OpenZeppelin deprecated this function: `_grantRole` replaces `_setupRole`, `safeIncreaseAllowance` / `safeDecreaseAllowance` replace `safeApprove`
+   ╭▸ ROOT/testdata/DeprecatedOzFunction.sol:LL:CC
+   │
+LL │         token.safeApprove(spender, amount);
+   │         ━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/deprecated-oz-function
+
+warning[deprecated-oz-function]: OpenZeppelin deprecated this function: `_grantRole` replaces `_setupRole`, `safeIncreaseAllowance` / `safeDecreaseAllowance` replace `safeApprove`
+   ╭▸ ROOT/testdata/DeprecatedOzFunction.sol:LL:CC
+   │
+LL │         SafeERC20.safeApprove(token, spender, amount);
+   │         ━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/deprecated-oz-function
+
+warning[deprecated-oz-function]: OpenZeppelin deprecated this function: `_grantRole` replaces `_setupRole`, `safeIncreaseAllowance` / `safeDecreaseAllowance` replace `safeApprove`
+   ╭▸ ROOT/testdata/DeprecatedOzFunction.sol:LL:CC
+   │
+LL │         S.safeApprove(token, spender, amount);
+   │         ━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/deprecated-oz-function
+
+warning[deprecated-oz-function]: OpenZeppelin deprecated this function: `_grantRole` replaces `_setupRole`, `safeIncreaseAllowance` / `safeDecreaseAllowance` replace `safeApprove`
+   ╭▸ ROOT/testdata/DeprecatedOzFunction.sol:LL:CC
+   │
+LL │         token.safeApprove(spender, amount);
+   │         ━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/deprecated-oz-function
+
+warning[deprecated-oz-function]: OpenZeppelin deprecated this function: `_grantRole` replaces `_setupRole`, `safeIncreaseAllowance` / `safeDecreaseAllowance` replace `safeApprove`
+   ╭▸ ROOT/testdata/DeprecatedOzFunction.sol:LL:CC
+   │
+LL │         _setupRole(bytes32(0), admin);
+   │         ━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/deprecated-oz-function
+
+warning[deprecated-oz-function]: OpenZeppelin deprecated this function: `_grantRole` replaces `_setupRole`, `safeIncreaseAllowance` / `safeDecreaseAllowance` replace `safeApprove`
+   ╭▸ ROOT/testdata/DeprecatedOzFunction.sol:LL:CC
+   │
+LL │         AccessControl._setupRole(role, account);
+   │         ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/deprecated-oz-function
+
+warning[deprecated-oz-function]: OpenZeppelin deprecated this function: `_grantRole` replaces `_setupRole`, `safeIncreaseAllowance` / `safeDecreaseAllowance` replace `safeApprove`
+   ╭▸ ROOT/testdata/DeprecatedOzFunction.sol:LL:CC
+   │
+LL │         _setupRole(role, account);
+   │         ━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/deprecated-oz-function
+
+warning[deprecated-oz-function]: OpenZeppelin deprecated this function: `_grantRole` replaces `_setupRole`, `safeIncreaseAllowance` / `safeDecreaseAllowance` replace `safeApprove`
+   ╭▸ ROOT/testdata/DeprecatedOzFunction.sol:LL:CC
+   │
+LL │         super._setupRole(role, account);
+   │         ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/deprecated-oz-function
+
+warning[deprecated-oz-function]: OpenZeppelin deprecated this function: `_grantRole` replaces `_setupRole`, `safeIncreaseAllowance` / `safeDecreaseAllowance` replace `safeApprove`
+   ╭▸ ROOT/testdata/DeprecatedOzFunction.sol:LL:CC
+   │
+LL │         _setupRole(role, account);
+   │         ━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/deprecated-oz-function
+
+warning[deprecated-oz-function]: OpenZeppelin deprecated this function: `_grantRole` replaces `_setupRole`, `safeIncreaseAllowance` / `safeDecreaseAllowance` replace `safeApprove`
+   ╭▸ ROOT/testdata/DeprecatedOzFunction.sol:LL:CC
+   │
+LL │         return SafeERC20.safeApprove;
+   │                ━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/deprecated-oz-function
+
+warning[deprecated-oz-function]: OpenZeppelin deprecated this function: `_grantRole` replaces `_setupRole`, `safeIncreaseAllowance` / `safeDecreaseAllowance` replace `safeApprove`
+   ╭▸ ROOT/testdata/DeprecatedOzFunction.sol:LL:CC
+   │
+LL │         runs(SafeERC20.safeApprove)
+   │              ━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/deprecated-oz-function
+

@@ -41,9 +41,7 @@ pub fn clone_remote(repo_url: &str, target_dir: &str, recursive: bool) {
     cmd.args([repo_url, target_dir]);
     test_debug!("{cmd:?}");
     let status = cmd.status().unwrap();
-    if !status.success() {
-        panic!("git clone failed: {status}");
-    }
+    assert!(status.success(), "git clone failed: {status}")
 }
 
 /// Setup an empty test project and return a command pointing to the forge
@@ -81,13 +79,13 @@ impl RemoteProject {
     }
 
     /// Whether to run `forge build`
-    pub fn set_build(mut self, run_build: bool) -> Self {
+    pub const fn set_build(mut self, run_build: bool) -> Self {
         self.run_build = run_build;
         self
     }
 
     /// Configures the project's pathstyle
-    pub fn path_style(mut self, path_style: PathStyle) -> Self {
+    pub const fn path_style(mut self, path_style: PathStyle) -> Self {
         self.path_style = path_style;
         self
     }
@@ -167,8 +165,9 @@ pub fn setup_cast_project(test: TestProject) -> (TestProject, TestCommand) {
 pub struct TestProject<
     T: ArtifactOutput<CompilerContract = Contract> + Default = ConfigurableArtifacts,
 > {
-    /// The directory in which this test executable is running.
-    exe_root: PathBuf,
+    /// The Cargo profile directory (`target/<profile>`) containing the Foundry binaries built
+    /// alongside this test executable.
+    profile_dir: PathBuf,
     /// The project in which the test should run.
     pub(crate) inner: Arc<TempProject<MultiCompiler, T>>,
 }
@@ -185,9 +184,7 @@ impl TestProject {
 
     pub fn with_project(project: TempProject) -> Self {
         init_tracing();
-        let this = env::current_exe().unwrap();
-        let exe_root = canonicalize(this.parent().expect("executable's directory"));
-        Self { exe_root, inner: Arc::new(project) }
+        Self { profile_dir: cargo_profile_dir(), inner: Arc::new(project) }
     }
 
     /// Returns the root path of the project's workspace.
@@ -365,9 +362,7 @@ impl TestProject {
     /// file will be deleted when the project is dropped.
     pub fn create_file(&self, path: impl AsRef<Path>, contents: &str) -> PathBuf {
         let path = path.as_ref();
-        if !path.is_relative() {
-            panic!("create_file(): file path is absolute");
-        }
+        assert!(path.is_relative(), "create_file(): file path is absolute");
         let path = self.root().join(path);
         if let Some(parent) = path.parent() {
             pretty_err(parent, std::fs::create_dir_all(parent));
@@ -452,21 +447,50 @@ impl TestProject {
 
     /// Returns the path to the forge executable.
     pub fn forge_bin(&self) -> Command {
-        let mut cmd = Command::new(self.forge_path());
+        let mut cmd = Command::new(self.foundry_bin_path("forge"));
         cmd.current_dir(self.inner.root());
         // Disable color output for comparisons; can be overridden with `--color always`.
         cmd.env("NO_COLOR", "1");
         cmd
     }
 
-    pub(crate) fn forge_path(&self) -> PathBuf {
-        canonicalize(self.exe_root.join(format!("../forge{}", env::consts::EXE_SUFFIX)))
+    /// Returns the path to a sibling Foundry executable in the current test target directory.
+    pub fn foundry_bin_path(&self, name: &str) -> PathBuf {
+        canonicalize(self.profile_dir.join(format!("{name}{}", env::consts::EXE_SUFFIX)))
+    }
+
+    /// Returns the path to a sibling Foundry executable, building it when cargo did not.
+    pub fn ensure_foundry_bin(&self, name: &str) -> PathBuf {
+        let bin = self.foundry_bin_path(name);
+        if bin.exists() {
+            return bin;
+        }
+
+        let package = format!("{name}@{}", env!("CARGO_PKG_VERSION"));
+        let (target_dir, profile) = cargo_build_target_dir_and_profile(&self.profile_dir);
+        let mut cmd = Command::new(env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
+        cmd.args(["build", "-p", &package, "--bin", name, "--manifest-path"])
+            .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.toml"))
+            .arg("--target-dir")
+            .arg(target_dir);
+        if let Some(profile) = profile {
+            cmd.arg("--profile").arg(profile);
+        }
+
+        let output = cmd.output().expect("build Foundry sibling binary");
+        assert!(
+            output.status.success(),
+            "failed to build {name} for CLI test\nstdout:\n{}\nstderr:\n{}",
+            output.stdout_lossy(),
+            output.stderr_lossy(),
+        );
+
+        bin
     }
 
     /// Returns the path to the cast executable.
     pub fn cast_bin(&self) -> Command {
-        let cast = canonicalize(self.exe_root.join(format!("../cast{}", env::consts::EXE_SUFFIX)));
-        let mut cmd = Command::new(cast);
+        let mut cmd = Command::new(self.foundry_bin_path("cast"));
         // disable color output for comparisons
         cmd.env("NO_COLOR", "1");
         cmd
@@ -549,7 +573,7 @@ pub struct TestCommand {
 
 impl TestCommand {
     /// Returns a mutable reference to the underlying command.
-    pub fn cmd(&mut self) -> &mut Command {
+    pub const fn cmd(&mut self) -> &mut Command {
         &mut self.cmd
     }
 
@@ -713,10 +737,23 @@ impl TestCommand {
     /// Runs the command and asserts that it resulted in success, with expected JSON data.
     #[track_caller]
     pub fn assert_json_stdout(&mut self, expected: impl IntoData) {
+        self.assert_json_stdout_with_status(true, expected);
+    }
+
+    /// Runs the command, asserts that it resulted in the expected outcome and JSON stdout, and
+    /// returns the output assertion.
+    #[track_caller]
+    pub fn assert_json_stdout_with_status(
+        &mut self,
+        success: bool,
+        expected: impl IntoData,
+    ) -> OutputAssert {
         let expected = expected.is(snapbox::data::DataFormat::Json).unordered();
-        let stdout = self.assert_success().get_output().stdout.clone();
+        let assert = if success { self.assert_success() } else { self.assert_failure() };
+        let stdout = assert.get_output().stdout.clone();
         let actual = stdout.into_data().is(snapbox::data::DataFormat::Json).unordered();
         assert_data_eq!(actual, expected);
+        assert
     }
 
     /// Runs the command and asserts that it resulted in the expected outcome and JSON data.
@@ -772,7 +809,7 @@ impl TestCommand {
     }
 
     /// Does not apply [`snapbox`] redactions to the command output.
-    pub fn with_no_redact(&mut self) -> &mut Self {
+    pub const fn with_no_redact(&mut self) -> &mut Self {
         self.redact_output = false;
         self
     }
@@ -812,7 +849,7 @@ fn test_redactions() -> snapbox::Redactions {
     static REDACTIONS: LazyLock<snapbox::Redactions> = LazyLock::new(|| {
         make_redactions(&[
             ("[SOLC_VERSION]", r"Solc( version)? \d+.\d+.\d+"),
-            ("[ELAPSED]", r"(finished )?in \d+(\.\d+)?\w?s( \(.*?s CPU time\))?"),
+            ("[ELAPSED]", r"(finished )?in (\d+m )?\d+(\.\d+)?\w?s( \(.*?s CPU time\))?"),
             ("[GAS]", r"[Gg]as( used)?: \d+"),
             ("[GAS_COST]", r"[Gg]as cost\s*\(\d+\)"),
             ("[GAS_LIMIT]", r"[Gg]as limit\s*\(\d+\)"),
@@ -828,6 +865,12 @@ fn test_redactions() -> snapbox::Redactions {
             ("[SAVED_TRANSACTIONS]", r"Transactions saved to: .*\.json"),
             ("[SAVED_SENSITIVE_VALUES]", r"Sensitive values saved to: .*\.json"),
             ("[ESTIMATED_GAS_PRICE]", r"Estimated gas price:\s*(\d+(\.\d+)?)\s*gwei"),
+            ("[ESTIMATED_MAX_FEE_PER_GAS]", r"Estimated max fee per gas:\s*(\d+(\.\d+)?)\s*gwei"),
+            ("[ESTIMATED_BASE_FEE_PER_GAS]", r"Estimated base fee per gas:\s*(\d+(\.\d+)?)\s*gwei"),
+            (
+                "[ESTIMATED_PRIORITY_FEE_PER_GAS]",
+                r"Estimated max priority fee per gas:\s*(\d+(\.\d+)?)\s*gwei",
+            ),
             ("[ESTIMATED_TOTAL_GAS_USED]", r"Estimated total gas used for script: \d+"),
             (
                 "[ESTIMATED_AMOUNT_REQUIRED]",
@@ -881,4 +924,35 @@ pub fn lossy_string(bytes: &[u8]) -> String {
 fn canonicalize(path: impl AsRef<Path>) -> PathBuf {
     foundry_common::fs::canonicalize_path(path.as_ref())
         .unwrap_or_else(|_| path.as_ref().to_path_buf())
+}
+
+fn cargo_build_target_dir_and_profile(profile_dir: &Path) -> (&Path, Option<&str>) {
+    let target_dir = profile_dir.parent().expect("Cargo target directory");
+    let profile = match profile_dir.file_name().and_then(OsStr::to_str) {
+        // Cargo's dev profile writes to `debug`, so the default `cargo build` profile is correct.
+        Some("debug") => None,
+        Some(profile) => Some(profile),
+        None => panic!("test executable profile directory must be UTF-8"),
+    };
+    (target_dir, profile)
+}
+
+/// Returns the Cargo profile directory (`target/<profile>`) for the currently running test
+/// executable.
+///
+/// Final binaries like `forge` and `cast` are uplifted into `target/<profile>` itself, while test
+/// executables are compiled into `target/<profile>/deps/`, or under `target/<profile>/build/` with
+/// Cargo's new build-dir layout, so walk up from the executable's directory until the parent of
+/// the `deps` or `build` component.
+pub fn cargo_profile_dir() -> PathBuf {
+    let exe = env::current_exe().expect("test executable path");
+    let exe_dir = canonicalize(exe.parent().expect("executable's directory"));
+    let mut dir = exe_dir.as_path();
+    while let Some(parent) = dir.parent() {
+        if matches!(dir.file_name().and_then(OsStr::to_str), Some("deps" | "build")) {
+            return parent.to_path_buf();
+        }
+        dir = parent;
+    }
+    exe_dir
 }

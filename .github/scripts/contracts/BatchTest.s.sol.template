@@ -1,0 +1,25 @@
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.13;
+
+import {Script} from "forge-std/Script.sol";
+
+interface ICounter {
+    function increment() external;
+    function setNumber(uint256 newNumber) external;
+    function number() external view returns (uint256);
+}
+
+contract BatchTestScript is Script {
+    function run() public {
+        address counter = ${REQUIRE_COUNTER};
+        vm.startBroadcast();
+        
+        // Multiple calls that will be batched into a single transaction
+        ICounter(counter).setNumber(500);
+        ICounter(counter).increment();
+        ICounter(counter).increment();
+        ICounter(counter).increment();
+        
+        vm.stopBroadcast();
+    }
+}

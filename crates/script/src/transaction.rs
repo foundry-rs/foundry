@@ -1,7 +1,8 @@
 use super::ScriptResult;
 use crate::build::LinkedBuildData;
 use alloy_dyn_abi::JsonAbiExt;
-use alloy_primitives::{Address, B256, TxKind, hex};
+use alloy_network::{Network, TransactionBuilder};
+use alloy_primitives::{Address, B256, Selector, hex};
 use eyre::Result;
 use forge_script_sequence::TransactionWithMetadata;
 use foundry_common::{ContractData, SELECTOR_LEN, TransactionMaybeSigned, fmt::format_token_raw};
@@ -11,12 +12,12 @@ use revm_inspectors::tracing::types::CallKind;
 use std::collections::BTreeMap;
 
 #[derive(Debug)]
-pub struct ScriptTransactionBuilder {
-    transaction: TransactionWithMetadata,
+pub struct ScriptTransactionBuilder<N: Network> {
+    transaction: TransactionWithMetadata<N>,
 }
 
-impl ScriptTransactionBuilder {
-    pub fn new(transaction: TransactionMaybeSigned, rpc: String) -> Self {
+impl<N: Network> ScriptTransactionBuilder<N> {
+    pub fn new(transaction: TransactionMaybeSigned<N>, rpc: String) -> Self {
         let mut transaction = TransactionWithMetadata::from_tx_request(transaction);
         transaction.rpc = rpc;
         // If tx.gas is already set that means it was specified in script
@@ -32,9 +33,14 @@ impl ScriptTransactionBuilder {
         decoder: &CallTraceDecoder,
         create2_deployer: Address,
     ) -> Result<()> {
-        if let Some(TxKind::Call(to)) = self.transaction.transaction.to() {
+        if let Some(to) = self.transaction.transaction.to() {
+            self.transaction.call_kind = CallKind::Call;
+            self.transaction.contract_address = Some(to);
+
             if to == create2_deployer {
-                if let Some(input) = self.transaction.transaction.input() {
+                if let Some(input) = self.transaction.transaction.input()
+                    && input.len() >= 32
+                {
                     let (salt, init_code) = input.split_at(32);
 
                     self.set_create(
@@ -42,11 +48,14 @@ impl ScriptTransactionBuilder {
                         create2_deployer.create2_from_code(B256::from_slice(salt), init_code),
                         local_contracts,
                     )?;
+                } else {
+                    let input_len =
+                        self.transaction.transaction.input().map_or(0, |input| input.len());
+                    sh_warn!(
+                        "Skipping CREATE2 decoding for call to deployer {create2_deployer}: input length {input_len} is shorter than the 32-byte salt prefix"
+                    )?;
                 }
             } else {
-                self.transaction.opcode = CallKind::Call;
-                self.transaction.contract_address = Some(to);
-
                 let Some(data) = self.transaction.transaction.input() else { return Ok(()) };
 
                 if data.len() < SELECTOR_LEN {
@@ -54,6 +63,7 @@ impl ScriptTransactionBuilder {
                 }
 
                 let (selector, data) = data.split_at(SELECTOR_LEN);
+                let selector = Selector::from_slice(selector);
 
                 let function = if let Some(info) = local_contracts.get(&to) {
                     // This CALL is made to a local contract.
@@ -62,11 +72,15 @@ impl ScriptTransactionBuilder {
                 } else {
                     // This CALL is made to an external contract; try to decode it from the given
                     // decoder.
-                    decoder.functions.get(selector).and_then(|v| v.first())
+                    decoder
+                        .functions_for_selector(to, &selector)
+                        .and_then(|functions| functions.first())
                 };
 
                 if let Some(function) = function {
                     self.transaction.function = Some(function.signature());
+                    self.transaction.function_abi = Some(function.full_signature());
+                    self.transaction.display_function = Some(function.name.clone());
 
                     let values = function.abi_decode_input(data).inspect_err(|_| {
                         error!(
@@ -96,9 +110,9 @@ impl ScriptTransactionBuilder {
         contracts: &BTreeMap<Address, &ContractData>,
     ) -> Result<()> {
         if is_create2 {
-            self.transaction.opcode = CallKind::Create2;
+            self.transaction.call_kind = CallKind::Create2;
         } else {
-            self.transaction.opcode = CallKind::Create;
+            self.transaction.call_kind = CallKind::Create;
         }
 
         let info = contracts.get(&address);
@@ -145,7 +159,7 @@ impl ScriptTransactionBuilder {
     /// Populates additional data from the transaction execution result.
     pub fn with_execution_result(
         mut self,
-        result: &ScriptResult,
+        result: &ScriptResult<N>,
         gas_estimate_multiplier: u64,
         linked_build_data: &LinkedBuildData,
     ) -> Self {
@@ -164,19 +178,135 @@ impl ScriptTransactionBuilder {
             && let Some(unsigned) = self.transaction.transaction.as_unsigned_mut()
         {
             // We inflate the gas used by the user specified percentage
-            unsigned.gas = Some(result.gas_used * gas_estimate_multiplier / 100);
+            unsigned.set_gas_limit(result.gas_used * gas_estimate_multiplier / 100);
         }
 
         self
     }
 
-    pub fn build(self) -> TransactionWithMetadata {
+    pub fn build(self) -> TransactionWithMetadata<N> {
         self.transaction
     }
 }
 
-impl From<TransactionWithMetadata> for ScriptTransactionBuilder {
-    fn from(transaction: TransactionWithMetadata) -> Self {
+impl<N: Network> From<TransactionWithMetadata<N>> for ScriptTransactionBuilder<N> {
+    fn from(transaction: TransactionWithMetadata<N>) -> Self {
         Self { transaction }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_network::Ethereum;
+    use alloy_primitives::{Bytes, address};
+    use alloy_rpc_types::TransactionRequest;
+
+    fn call_to_create2_deployer(input: Option<Bytes>) -> TransactionWithMetadata<Ethereum> {
+        let create2_deployer = address!("0000000000000000000000000000000000001234");
+        let mut transaction = TransactionRequest::default()
+            .with_from(Address::repeat_byte(0x11))
+            .with_to(create2_deployer)
+            .with_nonce(0);
+        if let Some(input) = input {
+            transaction = transaction.with_input(input);
+        }
+        let mut builder = ScriptTransactionBuilder::<Ethereum>::new(
+            TransactionMaybeSigned::new(transaction),
+            "http://localhost:8545".to_string(),
+        );
+        let decoder = CallTraceDecoder::new();
+        builder.set_call(&BTreeMap::new(), decoder, create2_deployer).unwrap();
+        builder.build()
+    }
+
+    #[test]
+    fn short_create2_input_is_classified_as_call() {
+        let create2_deployer = address!("0000000000000000000000000000000000001234");
+        for input in [None, Some(Bytes::new()), Some(Bytes::from(vec![0xab; 31]))] {
+            let transaction = call_to_create2_deployer(input);
+            assert_eq!(transaction.call_kind, CallKind::Call);
+            assert_eq!(transaction.contract_address, Some(create2_deployer));
+        }
+    }
+
+    #[test]
+    fn valid_create2_input_is_classified_as_create2() {
+        let create2_deployer = address!("0000000000000000000000000000000000001234");
+        for input in [Bytes::from(vec![0xab; 32]), Bytes::from(vec![0xab; 33])] {
+            let expected = create2_deployer
+                .create2_from_code(B256::repeat_byte(0xab), input.get(32..).unwrap());
+            let transaction = call_to_create2_deployer(Some(input));
+            assert_eq!(transaction.call_kind, CallKind::Create2);
+            assert_eq!(transaction.contract_address, Some(expected));
+        }
+    }
+}
+
+#[cfg(all(test, feature = "monad"))]
+mod monad_tests {
+    use super::*;
+    use alloy_network::Ethereum;
+    use alloy_primitives::{Bytes, address, keccak256};
+    use alloy_rpc_types::TransactionRequest;
+    use foundry_evm::{hardforks::MonadHardfork, traces::CallTraceDecoderBuilder};
+    use foundry_evm_networks::NetworkConfigs;
+
+    const STAKING_ADDRESS: Address = address!("0000000000000000000000000000000000001000");
+    const RESERVE_BALANCE_ADDRESS: Address = address!("0000000000000000000000000000000000001001");
+
+    fn monad_decoder(hardfork: MonadHardfork) -> CallTraceDecoder {
+        CallTraceDecoderBuilder::new()
+            .with_networks(NetworkConfigs::with_monad())
+            .with_chain_id(Some(143))
+            .with_hardfork(Some(hardfork.into()))
+            .build()
+    }
+
+    fn call_metadata(
+        address: Address,
+        signature: &str,
+        hardfork: MonadHardfork,
+    ) -> TransactionWithMetadata<Ethereum> {
+        let input = Bytes::copy_from_slice(&keccak256(signature)[..SELECTOR_LEN]);
+        let selector = Selector::from_slice(&input);
+        let decoder = monad_decoder(hardfork);
+
+        assert!(!decoder.functions.contains_key(&selector));
+        assert!(decoder.functions_for_selector(address, &selector).is_some());
+
+        let transaction = TransactionRequest::default()
+            .with_from(Address::repeat_byte(0x11))
+            .with_to(address)
+            .with_nonce(0)
+            .with_input(input);
+        let mut builder = ScriptTransactionBuilder::new(
+            TransactionMaybeSigned::new(transaction),
+            "http://localhost:8545".to_string(),
+        );
+        builder.set_call(&BTreeMap::new(), &decoder, Address::ZERO).unwrap();
+        builder.build()
+    }
+
+    #[test]
+    fn address_scoped_monad_calls_populate_metadata() {
+        let staking = call_metadata(STAKING_ADDRESS, "getEpoch()", MonadHardfork::MonadEight);
+        assert_eq!(staking.function.as_deref(), Some("getEpoch()"));
+        assert_eq!(
+            staking.function_abi.as_deref(),
+            Some("function getEpoch() returns (uint64 epoch, bool inEpochDelayPeriod)")
+        );
+        assert_eq!(staking.display_function.as_deref(), Some("getEpoch"));
+        assert_eq!(staking.arguments, Some(Vec::new()));
+
+        let reserve =
+            call_metadata(RESERVE_BALANCE_ADDRESS, "dippedIntoReserve()", MonadHardfork::MonadNine);
+        assert_eq!(reserve.function.as_deref(), Some("dippedIntoReserve()"));
+        assert_eq!(
+            reserve.function_abi.as_deref(),
+            Some("function dippedIntoReserve() returns (bool dipped)")
+        );
+        assert_eq!(reserve.display_function.as_deref(), Some("dippedIntoReserve"));
+        assert_eq!(reserve.arguments, Some(Vec::new()));
     }
 }

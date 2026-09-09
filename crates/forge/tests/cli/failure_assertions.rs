@@ -34,6 +34,7 @@ Encountered 2 failing tests in src/DeprecationTestFail.t.sol:DeprecationTestFail
 Encountered a total of 2 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 2 failed tests
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
 });
@@ -70,8 +71,13 @@ Suite result: FAILED. 0 passed; 7 failed; 0 skipped; [ELAPSED]
         .stdout_eq(
             r#"No files changed, compilation skipped
 ...
+[FAIL: Reverter != expected reverter: [..] != 0x000000000000000000000000000000000000dEaD] testShouldFailExpectPartialRevertWrongReverterTopLevelCreate() ([GAS])
+[FAIL: Reverter != expected reverter: [..] != [..]] testShouldFailExpectRevertNestedCreateOuterAddress() ([GAS])
+[FAIL: Reverter != expected reverter: [..] != 0x000000000000000000000000000000000000dEaD] testShouldFailExpectRevertWithBytesWrongReverterTopLevelCreate() ([GAS])
+[FAIL: Reverter != expected reverter: [..] != 0x000000000000000000000000000000000000dEaD] testShouldFailExpectRevertWrongReverterNestedCreate() ([GAS])
+[FAIL: Reverter != expected reverter: [..] != 0x000000000000000000000000000000000000dEaD] testShouldFailExpectRevertWrongReverterTopLevelCreate() ([GAS])
 [FAIL: next call did not revert as expected] testShouldFailExpectRevertsNotOnImmediateNextCall() ([GAS])
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 6 failed; 0 skipped; [ELAPSED]
 ...
 "#,
         );
@@ -127,10 +133,11 @@ forgetest!(expect_call_tests_should_fail, |prj, cmd| {
 [FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x771602f700000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000001, value 0, gas 25000 to be called 1 time, but was called 0 times] testShouldFailExpectCallWithNoValueAndWrongGas() ([GAS])
 [FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x771602f700000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000001, value 0, minimum gas 50001 to be called 1 time, but was called 0 times] testShouldFailExpectCallWithNoValueAndWrongMinGas() ([GAS])
 [FAIL: next call did not revert as expected] testShouldFailExpectCallWithRevertDisallowed() ([GAS])
+[FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x771602f700000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002, call type DelegateCall to be called 1 time, but was called 0 times] testShouldFailExpectDelegateCallWithCall() ([GAS])
 [FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x3fc7c698 to be called 1 time, but was called 0 times] testShouldFailExpectInnerCall() ([GAS])
 [FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x771602f700000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002 to be called 3 times, but was called 2 times] testShouldFailExpectMultipleCallsWithDataAdditive() ([GAS])
 [FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x771602f7 to be called 1 time, but was called 0 times] testShouldFailExpectSelectorCall() ([GAS])
-Suite result: FAILED. 0 passed; 9 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 10 failed; 0 skipped; [ELAPSED]
 ...
 "#,
     );
@@ -204,7 +211,7 @@ forgetest!(flaky_expect_emit_tests_should_fail, |prj, cmd| {
     cmd.forge_fuse().args(["test", "--mc", "ExpectEmitFailureTest"]).assert_failure().stdout_eq(str![[r#"No files changed, compilation skipped
 ...
 [FAIL: E != expected A] testShouldFailCanMatchConsecutiveEvents() ([GAS])
-[FAIL: log != expected SomethingElse] testShouldFailDifferentIndexedParameters() ([GAS])
+[FAIL: SomethingElse indexed topic count mismatch: expected 1, got 0] testShouldFailDifferentIndexedParameters() ([GAS])
 [FAIL: log != expected log] testShouldFailEmitOnlyAppliesToNextCall() ([GAS])
 [FAIL: next call did not revert as expected] testShouldFailEmitWindowWithRevertDisallowed() ([GAS])
 [FAIL: E != expected A] testShouldFailEventsOnTwoCalls() ([GAS])
@@ -230,7 +237,7 @@ Suite result: FAILED. 0 passed; 15 failed; 0 skipped; [ELAPSED]
 ...
 [FAIL: log != expected log] testShouldFailCountEmitsFromAddress() ([GAS])
 [FAIL: log != expected log] testShouldFailCountLessEmits() ([GAS])
-[FAIL: log != expected Something] testShouldFailEmitSomethingElse() ([GAS])
+[FAIL: SomethingElse != expected Something] testShouldFailEmitSomethingElse() ([GAS])
 [FAIL: log emitted but expected 0 times] testShouldFailNoEmit() ([GAS])
 [FAIL: log emitted but expected 0 times] testShouldFailNoEmitFromAddress() ([GAS])
 Suite result: FAILED. 0 passed; 5 failed; 0 skipped; [ELAPSED]
@@ -275,6 +282,95 @@ Encountered a total of 8 failing tests, 1 tests succeeded
     );
 });
 
+forgetest!(expect_emit_params_decode_project_abi_without_selector_cache, |prj, cmd| {
+    prj.insert_vm();
+
+    prj.add_source(
+        "ExpectEmitProjectAbiFailure.sol",
+        r#"
+import "./Vm.sol";
+
+contract CodexProjectAbiEmitter10342 {
+    event CodexExpectEmitProjectAbi10342(uint256 indexed topicValue, uint256 dataValue);
+
+    function emitEvent(uint256 topicValue, uint256 dataValue) external {
+        emit CodexExpectEmitProjectAbi10342(topicValue, dataValue);
+    }
+}
+
+contract ExpectEmitProjectAbiFailureTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    CodexProjectAbiEmitter10342 emitter = new CodexProjectAbiEmitter10342();
+
+    event CodexExpectEmitProjectAbi10342(uint256 indexed topicValue, uint256 dataValue);
+
+    function testMismatch() public {
+        vm.expectEmit(true, true, true, true);
+        emit CodexExpectEmitProjectAbi10342(1, 2);
+        emitter.emitEvent(1, 3);
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args(["test", "--mc", "ExpectEmitProjectAbiFailureTest"])
+        .assert_failure()
+        .stdout_eq(str![[r#"[COMPILING_FILES] with [SOLC_VERSION]
+...
+[FAIL: CodexExpectEmitProjectAbi10342 param mismatch at dataValue: expected=2, got=3] testMismatch() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+});
+
+forgetest!(expect_emit_decodes_stable_project_abi_collision, |prj, cmd| {
+    prj.insert_vm();
+
+    prj.add_source(
+        "AExpectEmitIndexedCollision.t.sol",
+        r#"
+import "./Vm.sol";
+import "./ZIndexedCollisionEmitter.sol";
+
+contract AExpectEmitIndexedCollisionTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    ZIndexedCollisionEmitter emitter = new ZIndexedCollisionEmitter();
+
+    event CodexExpectEmitIndexedCollision(uint256 indexed marker, uint256 value);
+
+    function testMismatch() public {
+        vm.expectEmit(true, true, false, true);
+        emit CodexExpectEmitIndexedCollision(69, 420);
+        emitter.emitEvent(421, 69);
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "ZIndexedCollisionEmitter.sol",
+        r#"
+contract ZIndexedCollisionEmitter {
+    event CodexExpectEmitIndexedCollision(uint256 value, uint256 indexed marker);
+
+    function emitEvent(uint256 value, uint256 marker) external {
+        emit CodexExpectEmitIndexedCollision(value, marker);
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args(["test", "--mc", "AExpectEmitIndexedCollisionTest"])
+        .assert_failure()
+        .stdout_eq(str![[r#"[COMPILING_FILES] with [SOLC_VERSION]
+...
+[FAIL: CodexExpectEmitIndexedCollision param mismatch at value: expected=420, got=421] testMismatch() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+});
+
 forgetest!(mem_safety_test_should_fail, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_vm();
@@ -288,26 +384,26 @@ forgetest!(mem_safety_test_should_fail, |prj, cmd| {
 [SOLC_VERSION] [ELAPSED]
 ...
 [FAIL: Expected call to fail] testShouldFailExpectSafeMemoryCall() ([GAS])
-[FAIL: memory write at offset 0x100 of size 0x60 not allowed; safe range: (0x00, 0x60] U (0x80, 0x100]] testShouldFailExpectSafeMemory_CALL() ([GAS])
-[FAIL: memory write at offset 0x100 of size 0x60 not allowed; safe range: (0x00, 0x60] U (0x80, 0x100]] testShouldFailExpectSafeMemory_CALLCODE() ([GAS])
-[FAIL: memory write at offset 0xA0 of size 0x20 not allowed; safe range: (0x00, 0x60] U (0x80, 0xA0]; counterexample: calldata=[..] args=[..]] testShouldFailExpectSafeMemory_CALLDATACOPY(uint256) (runs: 0, [AVG_GAS])
-[FAIL: memory write at offset 0x80 of size [..] not allowed; safe range: (0x00, 0x60] U (0x80, 0xA0]] testShouldFailExpectSafeMemory_CODECOPY() ([GAS])
-[FAIL: memory write at offset 0x100 of size 0x20 not allowed; safe range: (0x00, 0x60] U (0x80, 0x100]] testShouldFailExpectSafeMemory_CREATE() ([GAS])
-[FAIL: memory write at offset 0x100 of size 0x20 not allowed; safe range: (0x00, 0x60] U (0x80, 0x100]] testShouldFailExpectSafeMemory_CREATE2() ([GAS])
-[FAIL: memory write at offset 0x100 of size 0x60 not allowed; safe range: (0x00, 0x60] U (0x80, 0x100]] testShouldFailExpectSafeMemory_DELEGATECALL() ([GAS])
-[FAIL: memory write at offset 0xA0 of size 0x20 not allowed; safe range: (0x00, 0x60] U (0x80, 0xA0]] testShouldFailExpectSafeMemory_EXTCODECOPY() ([GAS])
-[FAIL: memory write at offset 0x100 of size 0x20 not allowed; safe range: (0x00, 0x60] U (0x80, 0x100]] testShouldFailExpectSafeMemory_LOG0() ([GAS])
-[FAIL: memory write at offset 0x100 of size 0x20 not allowed; safe range: (0x00, 0x60] U (0x80, 0x100]] testShouldFailExpectSafeMemory_MLOAD() ([GAS])
-[FAIL: memory write at offset 0x81 of size 0x01 not allowed; safe range: (0x00, 0x60] U (0x80, 0x81]] testShouldFailExpectSafeMemory_MSTORE8_High() ([GAS])
-[FAIL: memory write at offset 0x60 of size 0x01 not allowed; safe range: (0x00, 0x60] U (0x80, 0x81]] testShouldFailExpectSafeMemory_MSTORE8_Low() ([GAS])
-[FAIL: memory write at offset 0xA0 of size 0x20 not allowed; safe range: (0x00, 0x60] U (0x80, 0xA0]] testShouldFailExpectSafeMemory_MSTORE_High() ([GAS])
-[FAIL: memory write at offset 0x60 of size 0x20 not allowed; safe range: (0x00, 0x60] U (0x80, 0xA0]] testShouldFailExpectSafeMemory_MSTORE_Low() ([GAS])
-[FAIL: memory write at offset 0x100 of size 0x20 not allowed; safe range: (0x00, 0x60] U (0x80, 0x100]] testShouldFailExpectSafeMemory_RETURN() ([GAS])
-[FAIL: memory write at offset 0x100 of size 0x60 not allowed; safe range: (0x00, 0x60] U (0x80, 0x100]] testShouldFailExpectSafeMemory_RETURNDATACOPY() ([GAS])
+[FAIL: memory write at offset 0x100 of size 0x60 not allowed; safe range: [0x00, 0x60) U [0x80, 0x100)] testShouldFailExpectSafeMemory_CALL() ([GAS])
+[FAIL: memory write at offset 0x100 of size 0x60 not allowed; safe range: [0x00, 0x60) U [0x80, 0x100)] testShouldFailExpectSafeMemory_CALLCODE() ([GAS])
+[FAIL: memory write at offset 0xA0 of size 0x20 not allowed; safe range: [0x00, 0x60) U [0x80, 0xA0); counterexample: calldata=[..] args=[..]] testShouldFailExpectSafeMemory_CALLDATACOPY(uint256) (runs: 0, [AVG_GAS])
+[FAIL: memory write at offset 0x80 of size [..] not allowed; safe range: [0x00, 0x60) U [0x80, 0xA0)] testShouldFailExpectSafeMemory_CODECOPY() ([GAS])
+[FAIL: memory write at offset 0x100 of size 0x20 not allowed; safe range: [0x00, 0x60) U [0x80, 0x100)] testShouldFailExpectSafeMemory_CREATE() ([GAS])
+[FAIL: memory write at offset 0x100 of size 0x20 not allowed; safe range: [0x00, 0x60) U [0x80, 0x100)] testShouldFailExpectSafeMemory_CREATE2() ([GAS])
+[FAIL: memory write at offset 0x100 of size 0x60 not allowed; safe range: [0x00, 0x60) U [0x80, 0x100)] testShouldFailExpectSafeMemory_DELEGATECALL() ([GAS])
+[FAIL: memory write at offset 0xA0 of size 0x20 not allowed; safe range: [0x00, 0x60) U [0x80, 0xA0)] testShouldFailExpectSafeMemory_EXTCODECOPY() ([GAS])
+[FAIL: memory write at offset 0x100 of size 0x20 not allowed; safe range: [0x00, 0x60) U [0x80, 0x100)] testShouldFailExpectSafeMemory_LOG0() ([GAS])
+[FAIL: memory write at offset 0x100 of size 0x20 not allowed; safe range: [0x00, 0x60) U [0x80, 0x100)] testShouldFailExpectSafeMemory_MLOAD() ([GAS])
+[FAIL: memory write at offset 0x81 of size 0x01 not allowed; safe range: [0x00, 0x60) U [0x80, 0x81)] testShouldFailExpectSafeMemory_MSTORE8_High() ([GAS])
+[FAIL: memory write at offset 0x60 of size 0x01 not allowed; safe range: [0x00, 0x60) U [0x80, 0x81)] testShouldFailExpectSafeMemory_MSTORE8_Low() ([GAS])
+[FAIL: memory write at offset 0xA0 of size 0x20 not allowed; safe range: [0x00, 0x60) U [0x80, 0xA0)] testShouldFailExpectSafeMemory_MSTORE_High() ([GAS])
+[FAIL: memory write at offset 0x60 of size 0x20 not allowed; safe range: [0x00, 0x60) U [0x80, 0xA0)] testShouldFailExpectSafeMemory_MSTORE_Low() ([GAS])
+[FAIL: memory write at offset 0x100 of size 0x20 not allowed; safe range: [0x00, 0x60) U [0x80, 0x100)] testShouldFailExpectSafeMemory_RETURN() ([GAS])
+[FAIL: memory write at offset 0x100 of size 0x60 not allowed; safe range: [0x00, 0x60) U [0x80, 0x100)] testShouldFailExpectSafeMemory_RETURNDATACOPY() ([GAS])
 [FAIL: EvmError: Revert] testShouldFailExpectSafeMemory_REVERT() ([GAS])
-[FAIL: memory write at offset 0x100 of size 0x20 not allowed; safe range: (0x00, 0x60] U (0x80, 0x100]] testShouldFailExpectSafeMemory_SHA3() ([GAS])
-[FAIL: memory write at offset 0x100 of size 0x60 not allowed; safe range: (0x00, 0x60] U (0x80, 0x100]] testShouldFailExpectSafeMemory_STATICCALL() ([GAS])
-[FAIL: memory write at offset 0xA0 of size 0x20 not allowed; safe range: (0x00, 0x60] U (0x80, 0xA0]] testShouldFailStopExpectSafeMemory() ([GAS])
+[FAIL: memory write at offset 0x100 of size 0x20 not allowed; safe range: [0x00, 0x60) U [0x80, 0x100)] testShouldFailExpectSafeMemory_SHA3() ([GAS])
+[FAIL: memory write at offset 0x100 of size 0x60 not allowed; safe range: [0x00, 0x60) U [0x80, 0x100)] testShouldFailExpectSafeMemory_STATICCALL() ([GAS])
+[FAIL: memory write at offset 0xA0 of size 0x20 not allowed; safe range: [0x00, 0x60) U [0x80, 0xA0)] testShouldFailStopExpectSafeMemory() ([GAS])
 Suite result: FAILED. 0 passed; 21 failed; 0 skipped; [ELAPSED]
 ...
 "#,
@@ -496,6 +592,52 @@ forgetest!(emit_diff_anonymous, |prj, cmd| {
 [SOLC_VERSION] [ELAPSED]
 ...
 [FAIL: log != expected log] testShouldFailEmitDifferentEventNonIndexed() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]],
+    );
+});
+
+// An `assumeNoRevert` partial-match reason shorter than a selector must not match revert data
+// that is also shorter than 4 bytes; the revert should surface as a failure instead of being
+// discarded as anticipated.
+forgetest_init!(assume_no_revert_short_partial_should_fail, |prj, cmd| {
+    prj.add_test(
+        "AssumeShortPartial.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {VmSafe} from "forge-std/Vm.sol";
+
+contract ShortReverter {
+    function revertShort() external pure {
+        assembly {
+            mstore(0x00, shl(240, 0xffff))
+            revert(0x00, 0x02)
+        }
+    }
+}
+
+contract AssumeShortPartialTest is Test {
+    ShortReverter reverter;
+
+    function setUp() public {
+        reverter = new ShortReverter();
+    }
+
+    function testShortPartialDoesNotMatch(uint256) public view {
+        vm.assumeNoRevert(
+            VmSafe.PotentialRevert({revertData: hex"ff", partialMatch: true, reverter: address(0)})
+        );
+        reverter.revertShort();
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--match-contract", "AssumeShortPartialTest"]).assert_failure().stdout_eq(
+        str![[r#"
+...
+[FAIL: EvmError: Revert; counterexample: calldata=[..] args=[..]] testShortPartialDoesNotMatch(uint256) (runs: 0, [AVG_GAS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]],

@@ -45,8 +45,12 @@ function repros() public {
         })
     );
 
-    return someFunction().getValue().modifyValue().negate()
-        .scaleBySomeFactor(1000).transformToTuple();
+    return someFunction()
+        .getValue()
+        .modifyValue()
+        .negate()
+        .scaleBySomeFactor(1000)
+        .transformToTuple();
 
     SnapshotRegistry(adapterRegistry)
         .add(

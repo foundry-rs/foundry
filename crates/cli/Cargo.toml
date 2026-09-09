@@ -13,18 +13,22 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-foundry-block-explorers.workspace = true
 foundry-cli-markdown.workspace = true
 foundry-common.workspace = true
 foundry-config.workspace = true
 foundry-evm.workspace = true
-foundry-wallets.workspace = true
+foundry-evm-networks.workspace = true
+foundry-wallets = { workspace = true, features = ["browser", "tempo"] }
+
+tempo-primitives.workspace = true
 
 foundry-compilers.workspace = true
 solar.workspace = true
 
 alloy-eips.workspace = true
 alloy-dyn-abi.workspace = true
+alloy-network.workspace = true
+alloy-signer.workspace = true
 alloy-json-abi.workspace = true
 alloy-primitives.workspace = true
 alloy-provider.workspace = true
@@ -48,8 +52,10 @@ rayon.workspace = true
 regex = { workspace = true, default-features = false }
 serde_json.workspace = true
 serde.workspace = true
+semver.workspace = true
+soldeer-commands.workspace = true
+toml.workspace = true
 strsim = "0.11"
-strum = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["macros"] }
 tracing-subscriber = { workspace = true, features = ["registry", "env-filter"] }
 tracing.workspace = true
@@ -57,7 +63,7 @@ yansi.workspace = true
 rustls = { workspace = true, features = ["ring"] }
 dunce.workspace = true
 
-tracing-tracy = { version = "0.11", optional = true, features = ["demangle"] }
+tracing-tracy = { version = "0.12", optional = true, features = ["demangle"] }
 
 [dev-dependencies]
 tempfile.workspace = true
@@ -66,7 +72,19 @@ tempfile.workspace = true
 tikv-jemallocator = { workspace = true, optional = true }
 
 [features]
+default = ["optimism"]
 tracy = ["dep:tracing-tracy"]
 tracy-allocator = ["tracy"]
 jemalloc = ["dep:tikv-jemallocator"]
 mimalloc = ["dep:mimalloc"]
+monad = [
+    "foundry-common/monad",
+    "foundry-config/monad",
+    "foundry-evm-networks/monad",
+    "foundry-evm/monad",
+]
+optimism = [
+    "foundry-evm-networks/optimism",
+    "foundry-common/optimism",
+    "foundry-evm/optimism",
+]

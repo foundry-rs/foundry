@@ -1,14 +1,9 @@
-use alloy_evm::Database;
 use alloy_primitives::{Address, Bytes};
-use foundry_evm_core::backend::DatabaseError;
 use revm::{
     Inspector,
     bytecode::opcode::ADDRESS,
-    context::ContextTr,
-    inspector::JournalExt,
     interpreter::{
         InstructionResult, Interpreter, InterpreterAction,
-        interpreter::EthInterpreter,
         interpreter_types::{Jumps, LoopControl},
     },
 };
@@ -22,12 +17,7 @@ pub struct ScriptExecutionInspector {
     pub script_address: Address,
 }
 
-impl<CTX, D> Inspector<CTX, EthInterpreter> for ScriptExecutionInspector
-where
-    D: Database<Error = DatabaseError>,
-    CTX: ContextTr<Db = D>,
-    CTX::Journal: JournalExt,
-{
+impl<CTX> Inspector<CTX> for ScriptExecutionInspector {
     fn step(&mut self, interpreter: &mut Interpreter, _ecx: &mut CTX) {
         // Check if both target and bytecode address are the same as script contract address
         // (allow calling external libraries when bytecode address is different).

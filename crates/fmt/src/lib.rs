@@ -62,7 +62,7 @@ impl<T, E> DiagnosticsResult<T, E> {
     }
 
     /// Returns any result produced.
-    pub fn ok_ref(&self) -> Option<&T> {
+    pub const fn ok_ref(&self) -> Option<&T> {
         match self {
             Self::Ok(s) | Self::OkWithDiagnostics(s, _) | Self::ErrRecovered(s, _) => Some(s),
             Self::Err(_) => None,
@@ -70,7 +70,7 @@ impl<T, E> DiagnosticsResult<T, E> {
     }
 
     /// Returns any diagnostics emitted.
-    pub fn err_ref(&self) -> Option<&E> {
+    pub const fn err_ref(&self) -> Option<&E> {
         match self {
             Self::Ok(_) => None,
             Self::OkWithDiagnostics(_, d) | Self::ErrRecovered(_, d) | Self::Err(d) => Some(d),
@@ -78,12 +78,12 @@ impl<T, E> DiagnosticsResult<T, E> {
     }
 
     /// Returns `true` if the result is `Ok`.
-    pub fn is_ok(&self) -> bool {
+    pub const fn is_ok(&self) -> bool {
         matches!(self, Self::Ok(_) | Self::OkWithDiagnostics(_, _))
     }
 
     /// Returns `true` if the result is `Err`.
-    pub fn is_err(&self) -> bool {
+    pub const fn is_err(&self) -> bool {
         !self.is_ok()
     }
 }
@@ -166,14 +166,11 @@ fn format_inner(
         _ => {}
     }
 
-    if first_result.is_ok() && second_result.is_err() && !DEBUG {
-        panic!(
-            "failed to format a second time:\nfirst_result={first_result:#?}\nsecond_result={second_result:#?}"
-        );
-        // second_result
-    } else {
-        first_result
-    }
+    assert!(
+        !(first_result.is_ok() && second_result.is_err() && !DEBUG),
+        "failed to format a second time:\nfirst_result={first_result:#?}\nsecond_result={second_result:#?}"
+    );
+    first_result
 }
 
 fn diff(first: &str, second: &str) -> impl std::fmt::Display {
@@ -234,12 +231,18 @@ pub fn format_ast<'ast>(
         gcx.sess.source_map(),
         true,
         config.wrap_comments,
-        if matches!(config.style, IndentStyle::Tab) { Some(config.tab_width) } else { None },
+        matches!(config.style, IndentStyle::Tab).then(|| config.tab_width),
     );
     let ast = source.ast.as_ref()?;
     let inline_config = parse_inline_config(gcx.sess, &comments, ast);
 
-    let mut state = state::State::new(gcx.sess.source_map(), config, inline_config, comments);
+    let mut state = state::State::new(
+        gcx.sess.source_map(),
+        source.file.start_pos,
+        config,
+        inline_config,
+        comments,
+    );
     state.print_source_unit(ast);
     Some(state.s.eof())
 }
@@ -258,6 +261,9 @@ fn parse_inline_config<'ast>(
         }
         let item = item.trim_start().strip_prefix("forgefmt:")?.trim();
         match item.parse::<InlineConfigItem<()>>() {
+            Ok(InlineConfigItem::DisableLine(())) if cmnt.style.is_isolated() => {
+                Some((cmnt.span, InlineConfigItem::DisableNextItem(())))
+            }
             Ok(item) => Some((cmnt.span, item)),
             Err(e) => {
                 sess.dcx.warn(e.to_string()).span(cmnt.span).emit();

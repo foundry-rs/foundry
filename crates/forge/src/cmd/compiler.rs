@@ -1,7 +1,15 @@
 use clap::{Parser, Subcommand, ValueHint};
 use eyre::Result;
+use foundry_cli::install;
 use foundry_common::shell;
-use foundry_compilers::{Graph, artifacts::EvmVersion};
+use foundry_compilers::{
+    Graph, Project,
+    artifacts::EvmVersion,
+    compilers::{
+        multi::{MultiCompiler, MultiCompilerLanguage},
+        solc::{Solc, SolcCompiler},
+    },
+};
 use foundry_config::Config;
 use semver::Version;
 use serde::Serialize;
@@ -32,6 +40,9 @@ pub enum CompilerSubcommands {
 /// Resolved compiler within the project.
 #[derive(Serialize)]
 struct ResolvedCompiler {
+    /// Compiler language.
+    #[serde(skip)]
+    language: MultiCompilerLanguage,
     /// Compiler version.
     version: Version,
     /// Max supported EVM version of compiler.
@@ -52,14 +63,19 @@ pub struct ResolveArgs {
     /// Skip files that match the given regex pattern.
     #[arg(long, short, value_name = "REGEX")]
     skip: Option<regex::Regex>,
+
+    /// Print only the executable path for a single resolved compiler.
+    #[arg(long)]
+    path: bool,
 }
 
 impl ResolveArgs {
     pub fn run(self) -> Result<()> {
-        let Self { root, skip } = self;
+        let Self { root, skip, path } = self;
 
         let root = root.unwrap_or_else(|| PathBuf::from("."));
-        let config = Config::load_with_root(&root)?;
+        let mut config = Config::load_with_root(&root)?;
+        install::install_missing_dependencies(&mut config, || Config::load_with_root(&root))?;
         let project = config.project()?;
 
         let graph = Graph::resolve(&project.paths)?;
@@ -72,8 +88,8 @@ impl ResolveArgs {
                 .iter()
                 .map(|(version, sources, _)| {
                     let paths: Vec<String> = sources
-                        .iter()
-                        .filter_map(|(path_file, _)| {
+                        .keys()
+                        .filter_map(|path_file| {
                             let path_str = path_file
                                 .strip_prefix(&project.paths.root)
                                 .unwrap_or(path_file)
@@ -92,17 +108,11 @@ impl ResolveArgs {
                         })
                         .collect();
 
-                    let evm_version = if shell::verbosity() > 1 {
-                        let evm = EvmVersion::default()
-                            .normalize_version_solc(version)
-                            .unwrap_or_default();
+                    let evm_version = (shell::verbosity() > 1).then(|| {
+                        EvmVersion::default().normalize_version_solc(version).unwrap_or_default()
+                    });
 
-                        Some(evm)
-                    } else {
-                        None
-                    };
-
-                    ResolvedCompiler { version: version.clone(), evm_version, paths }
+                    ResolvedCompiler { language, version: version.clone(), evm_version, paths }
                 })
                 .filter(|version| !version.paths.is_empty())
                 .collect();
@@ -115,11 +125,32 @@ impl ResolveArgs {
                 // Clear paths if verbosity is 0, performed only after filtering to avoid being
                 // skipped.
                 if shell::verbosity() == 0 {
-                    versions_with_paths.iter_mut().for_each(|version| version.paths.clear());
+                    for version in &mut versions_with_paths {
+                        version.paths.clear();
+                    }
                 }
 
                 output.insert(language.to_string(), versions_with_paths);
             }
+        }
+
+        if path {
+            let mut compilers = output.values().flatten();
+            let Some(compiler) = compilers.next() else {
+                eyre::bail!("no compiler resolved");
+            };
+            eyre::ensure!(
+                compilers.next().is_none(),
+                "multiple compilers resolved; use `forge compiler resolve` to inspect them"
+            );
+
+            let path = resolved_compiler_path(&project, compiler)?;
+            if shell::is_json() {
+                sh_println!("{}", serde_json::to_string(&path)?)?;
+            } else {
+                sh_println!("{}", path.display())?;
+            }
+            return Ok(());
         }
 
         if shell::is_json() {
@@ -164,5 +195,34 @@ impl ResolveArgs {
         }
 
         Ok(())
+    }
+}
+
+fn resolved_compiler_path(
+    project: &Project<MultiCompiler>,
+    compiler: &ResolvedCompiler,
+) -> Result<PathBuf> {
+    match compiler.language {
+        MultiCompilerLanguage::Solc(_) => {
+            let solc = project
+                .compiler
+                .solc
+                .as_ref()
+                .ok_or_else(|| eyre::eyre!("Solidity compiler is not available"))?;
+            match solc {
+                SolcCompiler::AutoDetect => Solc::find_svm_installed_version(&compiler.version)?
+                    .map(|solc| solc.solc)
+                    .ok_or_else(|| {
+                        eyre::eyre!("Solidity compiler {} is not installed", compiler.version)
+                    }),
+                SolcCompiler::Specific(solc) => Ok(solc.solc.clone()),
+            }
+        }
+        MultiCompilerLanguage::Vyper(_) => project
+            .compiler
+            .vyper
+            .as_ref()
+            .map(|vyper| vyper.path.clone())
+            .ok_or_else(|| eyre::eyre!("Vyper compiler is not available")),
     }
 }

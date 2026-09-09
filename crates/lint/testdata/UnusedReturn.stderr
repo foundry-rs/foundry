@@ -1,0 +1,64 @@
+warning[unused-return]: Return value of an external call is not used
+   ╭▸ ROOT/testdata/UnusedReturn.sol:LL:CC
+   │
+LL │         oracle.getPrice(t);
+   │         ━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/unused-return
+
+warning[unused-return]: Return value of an external call is not used
+   ╭▸ ROOT/testdata/UnusedReturn.sol:LL:CC
+   │
+LL │         oracle.update();
+   │         ━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/unused-return
+
+warning[unused-return]: Return value of an external call is not used
+   ╭▸ ROOT/testdata/UnusedReturn.sol:LL:CC
+   │
+LL │         IOracle(oracleAddr).getPrice(t);
+   │         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/unused-return
+
+warning[unused-return]: Return value of an external call is not used
+   ╭▸ ROOT/testdata/UnusedReturn.sol:LL:CC
+   │
+LL │         oracle.getPrice({token: t});
+   │         ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/unused-return
+
+warning[unused-return]: Return value of an external call is not used
+   ╭▸ ROOT/testdata/UnusedReturn.sol:LL:CC
+   │
+LL │         (oracle).getPrice(t);
+   │         ━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/unused-return
+
+warning[unused-return]: Return value of an external call is not used
+   ╭▸ ROOT/testdata/UnusedReturn.sol:LL:CC
+   │
+LL │         (IOracle(oracleAddr)).getPrice(t);
+   │         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/unused-return
+
+warning[unused-return]: Return value of an external call is not used
+   ╭▸ ROOT/testdata/UnusedReturn.sol:LL:CC
+   │
+LL │         (uint256 price, ) = oracle.latest(t);
+   │                             ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/unused-return
+
+warning[unused-return]: Return value of an external call is not used
+   ╭▸ ROOT/testdata/UnusedReturn.sol:LL:CC
+   │
+LL │         (price, ) = oracle.latest(t);
+   │         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/unused-return
+

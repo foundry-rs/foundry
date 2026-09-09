@@ -3,15 +3,17 @@
 use alloy_primitives::{Address, B256, U256};
 use clap::Parser;
 use foundry_config::{
-    Chain, Config,
+    Chain, Config, FoundryHardfork,
     figment::{
         self, Metadata, Profile, Provider,
         error::Kind::InvalidType,
         value::{Dict, Map, Value},
     },
 };
+use foundry_evm_networks::NetworkConfigs;
 use serde::Serialize;
 
+use crate::opts::RpcCommonOpts;
 use foundry_common::shell;
 
 /// `EvmArgs` and `EnvArgs` take the highest precedence in the Config/Figment hierarchy.
@@ -39,31 +41,29 @@ use foundry_common::shell;
 #[derive(Clone, Debug, Default, Serialize, Parser)]
 #[command(next_help_heading = "EVM options", about = None, long_about = None)] // override doc
 pub struct EvmArgs {
-    /// Fetch state over a remote endpoint instead of starting from an empty state.
-    ///
-    /// If you want to fetch state from a specific block number, see --fork-block-number.
-    #[arg(long, short, visible_alias = "rpc-url", value_name = "URL")]
-    #[serde(rename = "eth_rpc_url", skip_serializing_if = "Option::is_none")]
-    pub fork_url: Option<String>,
+    /// Common RPC options (URL, timeout, rate limiting, etc.).
+    #[command(flatten)]
+    #[serde(flatten)]
+    pub rpc: RpcCommonOpts,
 
     /// Fetch state from a specific block number over a remote endpoint.
     ///
-    /// See --fork-url.
-    #[arg(long, requires = "fork_url", value_name = "BLOCK")]
+    /// See --rpc-url.
+    #[arg(long, requires = "rpc_url", value_name = "BLOCK")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_block_number: Option<u64>,
 
     /// Number of retries.
     ///
-    /// See --fork-url.
-    #[arg(long, requires = "fork_url", value_name = "RETRIES")]
+    /// See --rpc-url.
+    #[arg(long, requires = "rpc_url", value_name = "RETRIES")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_retries: Option<u32>,
 
     /// Initial retry backoff on encountering errors.
     ///
-    /// See --fork-url.
-    #[arg(long, requires = "fork_url", value_name = "BACKOFF")]
+    /// See --rpc-url.
+    #[arg(long, requires = "rpc_url", value_name = "BACKOFF")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_retry_backoff: Option<u64>,
 
@@ -73,7 +73,7 @@ pub struct EvmArgs {
     ///
     /// This flag overrides the project's configuration file.
     ///
-    /// See --fork-url.
+    /// See --rpc-url.
     #[arg(long)]
     #[serde(skip)]
     pub no_storage_caching: bool,
@@ -93,6 +93,11 @@ pub struct EvmArgs {
     #[serde(skip)]
     pub ffi: bool,
 
+    /// Whether to show `console.log` outputs in realtime during script/test execution
+    #[arg(long)]
+    #[serde(skip)]
+    pub live_logs: bool,
+
     /// Use the create 2 factory in all cases including tests and non-broadcasting scripts.
     #[arg(long)]
     #[serde(skip)]
@@ -102,27 +107,6 @@ pub struct EvmArgs {
     #[arg(long, value_name = "ADDRESS")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub create2_deployer: Option<Address>,
-
-    /// Sets the number of assumed available compute units per second for this provider
-    ///
-    /// default value: 330
-    ///
-    /// See also --fork-url and <https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second>
-    #[arg(long, alias = "cups", value_name = "CUPS", help_heading = "Fork config")]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub compute_units_per_second: Option<u64>,
-
-    /// Disables rate limiting for this node's provider.
-    ///
-    /// See also --fork-url and <https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second>
-    #[arg(
-        long,
-        value_name = "NO_RATE_LIMITS",
-        help_heading = "Fork config",
-        visible_alias = "no-rate-limit"
-    )]
-    #[serde(skip)]
-    pub no_rpc_rate_limit: bool,
 
     /// All ethereum environment related arguments
     #[command(flatten)]
@@ -135,6 +119,23 @@ pub struct EvmArgs {
     #[arg(long)]
     #[serde(skip)]
     pub isolate: bool,
+
+    /// Whether to disable isolation of calls.
+    #[arg(long, conflicts_with = "isolate")]
+    #[serde(skip)]
+    pub no_isolate: bool,
+
+    /// The runtime EVM hardfork to use.
+    ///
+    /// Network-specific hardforks must be namespaced, for example `tempo:T5`.
+    #[arg(long, value_name = "HARDFORK")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hardfork: Option<FoundryHardfork>,
+
+    /// Network selection.
+    #[command(flatten)]
+    #[serde(skip)]
+    pub networks: NetworkConfigs,
 }
 
 // Make this set of options a `figment::Provider` so that it can be merged into the `Config`
@@ -150,14 +151,21 @@ impl Provider for EvmArgs {
 
         if shell::verbosity() > 0 {
             // need to merge that manually otherwise `from_occurrences` does not work
-            dict.insert("verbosity".to_string(), shell::verbosity().into());
+            let verbosity = shell::verbosity();
+            dict.insert("verbosity".to_string(), verbosity.into());
         }
 
         if self.ffi {
             dict.insert("ffi".to_string(), self.ffi.into());
         }
 
-        if self.isolate {
+        if self.live_logs {
+            dict.insert("live_logs".to_string(), self.live_logs.into());
+        }
+
+        if self.no_isolate {
+            dict.insert("isolate".to_string(), false.into());
+        } else if self.isolate {
             dict.insert("isolate".to_string(), self.isolate.into());
         }
 
@@ -172,8 +180,24 @@ impl Provider for EvmArgs {
             dict.insert("no_storage_caching".to_string(), self.no_storage_caching.into());
         }
 
-        if self.no_rpc_rate_limit {
-            dict.insert("no_rpc_rate_limit".to_string(), self.no_rpc_rate_limit.into());
+        // Merge serde-skipped fields from the common RPC options.
+        if self.rpc.no_rpc_rate_limit {
+            dict.insert("no_rpc_rate_limit".to_string(), true.into());
+        }
+        if self.rpc.accept_invalid_certs {
+            dict.insert("eth_rpc_accept_invalid_certs".to_string(), true.into());
+        }
+        if self.rpc.no_proxy {
+            dict.insert("eth_rpc_no_proxy".to_string(), true.into());
+        }
+
+        // Only insert network flags when explicitly set via CLI to avoid overriding
+        // values from foundry.toml (NetworkConfigs is flattened in Config).
+        if let Some(network) = self.networks.resolved_network() {
+            dict.insert("network".to_string(), network.name().into());
+        }
+        if self.networks.is_celo() {
+            dict.insert("celo".to_string(), true.into());
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
@@ -288,11 +312,45 @@ mod tests {
 
     #[test]
     fn compute_units_per_second_present_when_some() {
-        let args = EvmArgs { compute_units_per_second: Some(1000), ..Default::default() };
+        let args = EvmArgs {
+            rpc: RpcCommonOpts { compute_units_per_second: Some(1000), ..Default::default() },
+            ..Default::default()
+        };
         let data = args.data().expect("provider data");
         let dict = data.get(&Config::selected_profile()).expect("profile dict");
         let val = dict.get("compute_units_per_second").expect("cups present");
         assert_eq!(val, &Value::from(1000u64));
+    }
+
+    #[test]
+    fn celo_network_is_included_in_provider_data() {
+        let args = EvmArgs { networks: NetworkConfigs::with_celo(), ..Default::default() };
+        let data = args.data().expect("provider data");
+        let dict = data.get(&Config::selected_profile()).expect("profile dict");
+
+        assert_eq!(dict.get("celo"), Some(&Value::from(true)));
+        assert!(!dict.contains_key("network"));
+    }
+
+    #[test]
+    fn explicit_ethereum_network_is_included_in_provider_data() {
+        let args = EvmArgs { networks: NetworkConfigs::with_ethereum(), ..Default::default() };
+        let data = args.data().expect("provider data");
+        let dict = data.get(&Config::selected_profile()).expect("profile dict");
+
+        assert_eq!(dict.get("network"), Some(&Value::from("ethereum")));
+        assert!(!dict.contains_key("celo"));
+    }
+
+    #[test]
+    fn rpc_url_arg_does_not_read_eth_rpc_url_env() {
+        use clap::CommandFactory;
+
+        let command = EvmArgs::command();
+        let rpc_url =
+            command.get_arguments().find(|arg| arg.get_id() == "rpc_url").expect("rpc_url arg");
+
+        assert!(rpc_url.get_env().is_none());
     }
 
     #[test]
@@ -306,6 +364,17 @@ mod tests {
 
         let env = EnvArgs::parse_from(["foundry-cli", "--chain-id", "goerli"]);
         assert_eq!(env.chain, Some(NamedChain::Goerli.into()));
+    }
+
+    #[test]
+    fn hardfork_arg_selects_network() {
+        let args = EvmArgs::parse_from(["foundry-cli", "--hardfork", "tempo:T5"]);
+        let hardfork = "tempo:T5".parse::<FoundryHardfork>().unwrap();
+        assert_eq!(args.hardfork, Some(hardfork));
+
+        let config = Config::from_provider(Config::figment().merge(args)).unwrap();
+        assert_eq!(config.hardfork, Some(hardfork));
+        assert!(config.networks.is_tempo());
     }
 
     #[test]

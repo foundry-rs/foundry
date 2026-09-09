@@ -1,0 +1,626 @@
+//! Tempo wallet device-code authorization flow.
+//!
+//! Implements the CLI side of the tempoxyz/accounts `cli-auth` device-code
+//! protocol: generates a local secp256k1 access key, creates a PKCE-protected
+//! device code, opens `wallet.tempo.xyz/cli-auth?code=<CODE>` in the browser,
+//! polls until the user authorizes the key on their passkey wallet, and writes
+//! the resulting access key to the Tempo Accounts `store.json`.
+
+use crate::tempo::decode_key_authorization;
+use alloy_primitives::{Address, B256, hex};
+use alloy_signer_local::PrivateKeySigner;
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use eyre::Result;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::{
+    env,
+    sync::LazyLock,
+    time::{Duration, Instant},
+};
+use tempo_alloy::accounts::{TempoAccountsKeyAuthorization, TempoAccountsStore};
+use tempo_primitives::transaction::{SignatureType, SignedKeyAuthorization};
+use tokio::sync::Mutex;
+
+#[cfg(any(unix, windows))]
+use std::process::Command;
+
+/// Default device-code service URL (production wallet.tempo.xyz).
+const DEFAULT_CLI_AUTH_URL: &str = "https://wallet.tempo.xyz/cli-auth";
+
+/// Env var to override the device-code service URL (for tests / staging).
+const TEMPO_CLI_AUTH_URL_ENV: &str = "TEMPO_CLI_AUTH_URL";
+
+const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(2);
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Per-process serialization of concurrent `ensure_access_key` calls.
+///
+/// Prevents two `cast` invocations in the same process from racing two browser
+/// popups for the same chain.
+static AUTH_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+/// Configuration for [`ensure_access_key`].
+#[derive(Clone, Debug)]
+pub struct EnsureAccessKeyConfig {
+    /// Chain ID the access key is being authorized for.
+    pub chain_id: u64,
+    /// Device-code service base URL. Defaults to [`DEFAULT_CLI_AUTH_URL`].
+    pub(crate) service_url: String,
+    /// Poll interval.
+    pub(crate) poll_interval: Duration,
+    /// Total timeout for the authorization flow.
+    pub(crate) timeout: Duration,
+    /// If `true`, print the authorization URL to stderr instead of opening a
+    /// browser.
+    pub no_browser: bool,
+}
+
+impl EnsureAccessKeyConfig {
+    /// Build a config from the environment for the given chain.
+    ///
+    /// `no_browser` defaults to `true` under `CI`; callers (e.g. `cast tempo
+    /// login --no-browser`) may override it.
+    pub fn from_env(chain_id: u64) -> Self {
+        Self {
+            chain_id,
+            service_url: env::var(TEMPO_CLI_AUTH_URL_ENV)
+                .unwrap_or_else(|_| DEFAULT_CLI_AUTH_URL.to_string()),
+            poll_interval: DEFAULT_POLL_INTERVAL,
+            timeout: DEFAULT_TIMEOUT,
+            no_browser: env::var_os("CI").is_some(),
+        }
+    }
+}
+
+/// Open `url` via the OS default browser handler. On platforms without a known
+/// opener, this is a no-op (the URL is still printed by [`ensure_access_key`]).
+fn open_browser(_url: &str) {
+    #[cfg(target_os = "macos")]
+    let _ = Command::new("open").arg(_url).spawn();
+    #[cfg(target_os = "windows")]
+    let _ = Command::new("cmd").args(["/c", "start", "", _url]).spawn();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let _ = Command::new("xdg-open").arg(_url).spawn();
+}
+
+/// Result of [`ensure_access_key`].
+#[derive(Debug, Clone)]
+pub struct AccessKeyOutcome {
+    pub wallet_address: Address,
+    pub key_address: Address,
+    pub chain_id: u64,
+}
+
+/// Run the device-code flow, persist the resulting key to `store.json`, and
+/// return the new entry's identifying fields.
+pub async fn ensure_access_key(cfg: EnsureAccessKeyConfig) -> Result<AccessKeyOutcome> {
+    let _guard = AUTH_LOCK.lock().await;
+
+    let signer = PrivateKeySigner::random();
+    let key_address = signer.address();
+    // The server requires uncompressed SEC1 (65-byte `0x04 || X || Y`); the
+    // default `to_sec1_bytes()` would emit the compressed 33-byte form.
+    let pub_key_hex = format!(
+        "0x{}",
+        hex::encode(signer.credential().verifying_key().to_encoded_point(false).as_bytes()),
+    );
+
+    let code_verifier = random_code_verifier();
+    let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
+    let service = cfg.service_url.trim_end_matches('/');
+
+    let create_req = CreateCodeRequest {
+        chain_id: cfg.chain_id,
+        code_challenge: sha256_b64url(&code_verifier),
+        key_type: "secp256k1",
+        pub_key: pub_key_hex,
+    };
+    let code = create_code_with_retry(&client, service, &create_req, cfg.timeout).await?;
+
+    let browser_url = format!("{service}?code={code}");
+    if cfg.no_browser {
+        let _ = crate::sh_eprintln!("Open this URL to authorize: {browser_url}");
+    } else {
+        let _ = crate::sh_eprintln!(
+            "Opening wallet.tempo to authorize an access key…\n  {browser_url}"
+        );
+        open_browser(&browser_url);
+    }
+
+    let poll = PollRequest { code_verifier };
+    let started = Instant::now();
+    loop {
+        // Retry transient network/5xx/429 failures within `cfg.timeout`.
+        let send_res = client.post(format!("{service}/poll/{code}")).json(&poll).send().await;
+
+        let resp = match send_res {
+            Ok(r) => r,
+            Err(e) if is_transient_error(&e) && started.elapsed() < cfg.timeout => {
+                tracing::debug!(error = %e, "transient error polling device code, retrying");
+                tokio::time::sleep(cfg.poll_interval).await;
+                continue;
+            }
+            Err(e) => return Err(e.into()),
+        };
+
+        let status = resp.status();
+        if !status.is_success() {
+            if is_transient_status(status) && started.elapsed() < cfg.timeout {
+                tracing::debug!(%status, "transient HTTP status polling device code, retrying");
+                tokio::time::sleep(cfg.poll_interval).await;
+                continue;
+            }
+            let body = resp.text().await.unwrap_or_default();
+            eyre::bail!("device-code poll failed ({status}): {body}");
+        }
+
+        let body: PollResponse = resp.json().await?;
+        match body {
+            PollResponse::Pending => {
+                if started.elapsed() > cfg.timeout {
+                    eyre::bail!("timed out waiting for wallet authorization (code {code})");
+                }
+                tokio::time::sleep(cfg.poll_interval).await;
+            }
+            PollResponse::Expired => {
+                eyre::bail!("device code {code} expired before authorization");
+            }
+            PollResponse::Authorized { account_address, key_authorization } => {
+                let key_authorization = key_authorization.ok_or_else(|| {
+                    eyre::eyre!("wallet authorized response missing key_authorization")
+                })?;
+                let signed = key_authorization.into_signed()?;
+                // Reject mismatches before persisting — an unusable store
+                // entry would silently break the next 402 retry.
+                if signed.authorization.key_id != key_address {
+                    eyre::bail!(
+                        "wallet authorized key {} but the locally generated key is {}",
+                        signed.authorization.key_id,
+                        key_address,
+                    );
+                }
+                if signed.authorization.chain_id != cfg.chain_id {
+                    eyre::bail!(
+                        "wallet authorized chain {} but {} was requested",
+                        signed.authorization.chain_id,
+                        cfg.chain_id,
+                    );
+                }
+                if signed.authorization.key_type != SignatureType::Secp256k1 {
+                    eyre::bail!(
+                        "wallet returned keyType {:?} but secp256k1 was requested",
+                        signed.authorization.key_type,
+                    );
+                }
+                // A 402 access key is a limited key; an admin key is never valid here.
+                if signed.authorization.is_admin() {
+                    eyre::bail!(
+                        "wallet returned an admin key authorization, expected a limited access key"
+                    );
+                }
+                // A T6 account-bound authorization must target the authorizing account.
+                if let Some(account) = signed.authorization.account
+                    && account != account_address
+                {
+                    eyre::bail!(
+                        "wallet authorized account {account} but the authorizing account is {account_address}",
+                    );
+                }
+                let chain_id = signed.authorization.chain_id;
+                TempoAccountsStore::default_path()?.upsert_secp256k1_access_key(
+                    account_address,
+                    &signer,
+                    &signed,
+                )?;
+                return Ok(AccessKeyOutcome {
+                    wallet_address: account_address,
+                    key_address,
+                    chain_id,
+                });
+            }
+        }
+    }
+}
+
+fn is_transient_error(err: &reqwest::Error) -> bool {
+    err.is_timeout() || err.is_connect() || err.is_request()
+}
+
+fn is_transient_status(status: reqwest::StatusCode) -> bool {
+    status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+}
+
+/// POST `/code` with exponential backoff on transient errors, bounded by `timeout`.
+async fn create_code_with_retry(
+    client: &reqwest::Client,
+    service: &str,
+    req: &CreateCodeRequest,
+    timeout: Duration,
+) -> Result<String> {
+    let started = Instant::now();
+    let mut backoff = Duration::from_millis(500);
+    loop {
+        let send_res = client.post(format!("{service}/code")).json(req).send().await;
+
+        match send_res {
+            Ok(resp) => {
+                let status = resp.status();
+                if status.is_success() {
+                    let CreateCodeResponse { code } = resp.json().await?;
+                    return Ok(code);
+                }
+                if is_transient_status(status) && started.elapsed() < timeout {
+                    tracing::debug!(%status, "transient HTTP status creating device code, retrying");
+                    tokio::time::sleep(backoff).await;
+                    backoff = (backoff * 2).min(Duration::from_secs(5));
+                    continue;
+                }
+                let body = resp.text().await.unwrap_or_default();
+                eyre::bail!("device-code create failed ({status}): {body}");
+            }
+            Err(e) if is_transient_error(&e) && started.elapsed() < timeout => {
+                tracing::debug!(error = %e, "transient error creating device code, retrying");
+                tokio::time::sleep(backoff).await;
+                backoff = (backoff * 2).min(Duration::from_secs(5));
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+}
+
+fn random_code_verifier() -> String {
+    let bytes = B256::random();
+    URL_SAFE_NO_PAD.encode(bytes.as_slice())
+}
+
+fn sha256_b64url(input: &str) -> String {
+    let digest = Sha256::digest(input.as_bytes());
+    URL_SAFE_NO_PAD.encode(digest)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateCodeRequest {
+    /// `0x`-hex per the SDK schema (server accepts hex string or bigint, not a plain JSON number).
+    #[serde(serialize_with = "serialize_u64_hex")]
+    chain_id: u64,
+    code_challenge: String,
+    key_type: &'static str,
+    pub_key: String,
+}
+
+fn serialize_u64_hex<S: serde::Serializer>(v: &u64, s: S) -> std::result::Result<S::Ok, S::Error> {
+    s.serialize_str(&format!("0x{v:x}"))
+}
+
+#[derive(Deserialize)]
+struct CreateCodeResponse {
+    code: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PollRequest {
+    code_verifier: String,
+}
+
+/// Matches `tempoxyz/wallet` poll response shape.
+#[derive(Deserialize)]
+#[serde(tag = "status", rename_all = "lowercase")]
+enum PollResponse {
+    Pending,
+    Expired,
+    Authorized {
+        #[serde(rename = "accountAddress", alias = "account_address")]
+        account_address: Address,
+        #[serde(rename = "keyAuthorization", alias = "key_authorization", default)]
+        key_authorization: Option<PollKeyAuthorization>,
+    },
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum PollKeyAuthorization {
+    Accounts(Box<TempoAccountsKeyAuthorization>),
+    Legacy(String),
+}
+
+impl PollKeyAuthorization {
+    fn into_signed(self) -> Result<SignedKeyAuthorization> {
+        match self {
+            Self::Accounts(authorization) => Ok(authorization.into_signed()),
+            Self::Legacy(encoded) => decode_key_authorization(&encoded),
+        }
+    }
+}
+
+/// Returns `true` if `url`'s host is `tempo.xyz` or a subdomain of it.
+pub(crate) fn is_known_tempo_endpoint(url: &url::Url) -> bool {
+    url.host_str().is_some_and(|host| host == "tempo.xyz" || host.ends_with(".tempo.xyz"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tempo::{TEMPO_HOME_ENV, read_tempo_accounts_store, test_env_mutex};
+    use axum::{Json, Router, extract::State, routing::post};
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn pkce_challenge_matches_sdk_format() {
+        // Vector from RFC 7636 §4.2.
+        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        let challenge = sha256_b64url(verifier);
+        assert_eq!(challenge, "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
+    }
+
+    /// Recover the EOA from a SEC1-encoded public key (compressed or
+    /// uncompressed).
+    fn address_from_sec1_hex(s: &str) -> Address {
+        let stripped = s.strip_prefix("0x").unwrap_or(s);
+        let bytes = hex::decode(stripped).expect("valid hex");
+        let vk = k256::ecdsa::VerifyingKey::from_sec1_bytes(&bytes).expect("valid SEC1 pubkey");
+        Address::from_public_key(&vk)
+    }
+
+    /// Shape of the `keyAuthorization` the mock `/poll` returns.
+    #[derive(Clone, Copy, Default)]
+    struct MockAuthShape {
+        /// Return a T6 admin key authorization.
+        admin: bool,
+        /// Bind the authorization to this account.
+        account: Option<Address>,
+    }
+
+    #[derive(Clone)]
+    struct MockState {
+        wallet: Arc<Mutex<Option<Address>>>,
+        /// Derived from the `pubKey` posted to `/code` so `/poll` can echo
+        /// back a matching `keyId`, like a real wallet would.
+        key_id: Arc<Mutex<Option<Address>>>,
+        /// Chain ID the mock `/poll` returns in `keyAuthorization`.
+        poll_chain_id: u64,
+        /// Shape of the returned authorization, for exercising rejection paths.
+        shape: MockAuthShape,
+        /// Emit the current Tempo Accounts SDK response instead of the legacy
+        /// RLP compatibility response.
+        current_wire: bool,
+    }
+
+    async fn create_code_handler(
+        State(state): State<MockState>,
+        Json(body): Json<serde_json::Value>,
+    ) -> Json<serde_json::Value> {
+        // Sanity: required fields present and chainId is a 0x-hex string,
+        // matching the SDK wire format the live server enforces.
+        let pub_key = body
+            .get("pubKey")
+            .and_then(|v| v.as_str())
+            .unwrap_or_else(|| panic!("pubKey missing: {body}"));
+        assert!(body.get("codeChallenge").is_some(), "codeChallenge missing: {body}");
+        let chain_id = body.get("chainId").unwrap_or_else(|| panic!("chainId missing: {body}"));
+        let chain_str = chain_id
+            .as_str()
+            .unwrap_or_else(|| panic!("chainId must be string, got {chain_id}: {body}"));
+        assert!(chain_str.starts_with("0x"), "chainId must be 0x-hex, got {chain_str}");
+        let wallet: Address = "0x0000000000000000000000000000000000000042".parse().unwrap();
+        *state.wallet.lock().unwrap() = Some(wallet);
+        *state.key_id.lock().unwrap() = Some(address_from_sec1_hex(pub_key));
+        Json(serde_json::json!({ "code": "ABCDEFGH" }))
+    }
+
+    /// Build the RLP-hex `SignedKeyAuthorization` blob the live server returns
+    /// in the `key_authorization` field.
+    fn signed_key_auth_hex(
+        chain_id: u64,
+        key_id: Address,
+        expiry: u64,
+        shape: MockAuthShape,
+    ) -> String {
+        use alloy_rlp::Encodable;
+        use tempo_primitives::transaction::{KeyAuthorization, PrimitiveSignature};
+        let mut auth = KeyAuthorization::unrestricted(chain_id, SignatureType::Secp256k1, key_id);
+        if shape.admin {
+            // An admin authorization carries no expiry; bind it to its account (or zero, which the
+            // `is_admin` check rejects before the account is even inspected).
+            auth = auth.into_admin(shape.account.unwrap_or(Address::ZERO));
+        } else {
+            auth = auth.with_expiry(expiry);
+            if let Some(account) = shape.account {
+                auth = auth.with_account(account);
+            }
+        }
+        let sig: PrimitiveSignature = serde_json::from_value(serde_json::json!({
+            "type": "secp256k1", "r": "0x0", "s": "0x0", "yParity": 0
+        }))
+        .unwrap();
+        let signed = auth.into_signed(sig);
+        let mut buf = Vec::new();
+        signed.encode(&mut buf);
+        format!("0x{}", hex::encode(buf))
+    }
+
+    async fn poll_handler(State(state): State<MockState>) -> Json<serde_json::Value> {
+        let wallet = state.wallet.lock().unwrap().expect("create_code must be called first");
+        let key_id = state.key_id.lock().unwrap().expect("create_code must be called first");
+        if state.current_wire {
+            Json(serde_json::json!({
+                "status": "authorized",
+                "accountAddress": wallet,
+                "keyAuthorization": {
+                    "address": key_id,
+                    "chainId": state.poll_chain_id,
+                    "expiry": 9_999_999_999u64,
+                    "keyId": key_id,
+                    "keyType": "secp256k1",
+                    "limits": [],
+                    "signature": {
+                        "type": "secp256k1",
+                        "r": "0x0",
+                        "s": "0x0",
+                        "yParity": 0,
+                    },
+                },
+            }))
+        } else {
+            Json(serde_json::json!({
+                "status": "authorized",
+                "account_address": wallet,
+                "key_authorization":
+                    signed_key_auth_hex(state.poll_chain_id, key_id, 9_999_999_999, state.shape),
+            }))
+        }
+    }
+
+    /// Spawn a mock wallet.tempo server whose `/poll` echoes `poll_chain_id`.
+    async fn spawn_mock_wallet(poll_chain_id: u64) -> (String, tokio::task::JoinHandle<()>) {
+        spawn_mock_wallet_inner(poll_chain_id, MockAuthShape::default(), true).await
+    }
+
+    /// Spawn a mock wallet.tempo server with a custom authorization shape.
+    async fn spawn_mock_wallet_with(
+        poll_chain_id: u64,
+        shape: MockAuthShape,
+    ) -> (String, tokio::task::JoinHandle<()>) {
+        spawn_mock_wallet_inner(poll_chain_id, shape, false).await
+    }
+
+    async fn spawn_mock_wallet_inner(
+        poll_chain_id: u64,
+        shape: MockAuthShape,
+        current_wire: bool,
+    ) -> (String, tokio::task::JoinHandle<()>) {
+        let app = Router::new()
+            .route("/code", post(create_code_handler))
+            .route("/poll/{code}", post(poll_handler))
+            .with_state(MockState {
+                wallet: Arc::default(),
+                key_id: Arc::default(),
+                poll_chain_id,
+                shape,
+                current_wire,
+            });
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (format!("http://{addr}"), handle)
+    }
+
+    fn test_cfg(service_url: String) -> EnsureAccessKeyConfig {
+        EnsureAccessKeyConfig {
+            chain_id: 4217,
+            service_url,
+            poll_interval: Duration::from_millis(10),
+            timeout: Duration::from_secs(2),
+            no_browser: true,
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn ensure_access_key_happy_path_writes_accounts_store() {
+        // SAFETY: serialized with other tests that mutate TEMPO_HOME.
+        let _g = test_env_mutex().lock().await;
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var(TEMPO_HOME_ENV, tmp.path()) };
+
+        let (service_url, server) = spawn_mock_wallet(4217).await;
+        let outcome = ensure_access_key(test_cfg(service_url)).await.unwrap();
+
+        let expected_wallet: Address =
+            "0x0000000000000000000000000000000000000042".parse().unwrap();
+        assert_eq!(outcome.chain_id, 4217);
+        assert_eq!(outcome.wallet_address, expected_wallet);
+
+        let file = read_tempo_accounts_store().expect("store.json written");
+        assert_eq!(file.keys.len(), 1);
+        let entry = &file.keys[0];
+        assert_eq!(entry.wallet_address, outcome.wallet_address);
+        assert_eq!(entry.key_address, outcome.key_address);
+        assert_eq!(entry.chain_id, 4217);
+        assert_eq!(entry.expiry, Some(9_999_999_999));
+        let decoded = entry.key_authorization.as_ref().expect("pending authorization");
+        assert_eq!(decoded.authorization.chain_id, 4217);
+
+        server.abort();
+        unsafe { std::env::remove_var(TEMPO_HOME_ENV) };
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn ensure_access_key_rejects_wrong_chain_id() {
+        // Wallet returns chain 99999 but client requested 4217 → must reject
+        // and persist nothing, else discovery would later fail to find a key
+        // for the requested chain.
+        let _g = test_env_mutex().lock().await;
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var(TEMPO_HOME_ENV, tmp.path()) };
+
+        let (service_url, server) = spawn_mock_wallet(99999).await;
+        let err = ensure_access_key(test_cfg(service_url)).await.unwrap_err();
+        assert!(
+            err.to_string().contains("wallet authorized chain 99999 but 4217 was requested"),
+            "expected chain mismatch error, got: {err}"
+        );
+        assert!(read_tempo_accounts_store().is_none_or(|f| f.keys.is_empty()));
+
+        server.abort();
+        unsafe { std::env::remove_var(TEMPO_HOME_ENV) };
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn ensure_access_key_rejects_admin_authorization() {
+        // An admin key authorization from the wallet must be rejected before store.json is written.
+        let _g = test_env_mutex().lock().await;
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var(TEMPO_HOME_ENV, tmp.path()) };
+
+        // Bind the admin auth to the mock wallet account (0x..42) so it is rejected purely for
+        // being an admin key, not for an account mismatch.
+        let account: Address = "0x0000000000000000000000000000000000000042".parse().unwrap();
+        let shape = MockAuthShape { admin: true, account: Some(account) };
+        let (service_url, server) = spawn_mock_wallet_with(4217, shape).await;
+
+        let err = ensure_access_key(test_cfg(service_url)).await.unwrap_err();
+        assert!(
+            err.to_string().contains("admin key authorization"),
+            "expected admin-key rejection, got: {err}"
+        );
+        assert!(
+            read_tempo_accounts_store().is_none_or(|f| f.keys.is_empty()),
+            "an admin authorization must not be persisted to store.json"
+        );
+
+        server.abort();
+        unsafe { std::env::remove_var(TEMPO_HOME_ENV) };
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn ensure_access_key_rejects_cross_account_binding() {
+        // An authorization bound to an account other than the authorizing one must be rejected
+        // before store.json is written.
+        let _g = test_env_mutex().lock().await;
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var(TEMPO_HOME_ENV, tmp.path()) };
+
+        // The mock authorizes account 0x..42 but binds the authorization to 0x..dead.
+        let other: Address = "0x000000000000000000000000000000000000dead".parse().unwrap();
+        let shape = MockAuthShape { admin: false, account: Some(other) };
+        let (service_url, server) = spawn_mock_wallet_with(4217, shape).await;
+
+        let err = ensure_access_key(test_cfg(service_url)).await.unwrap_err();
+        assert!(
+            err.to_string().contains("wallet authorized account"),
+            "expected cross-account rejection, got: {err}"
+        );
+        assert!(
+            read_tempo_accounts_store().is_none_or(|f| f.keys.is_empty()),
+            "a cross-account authorization must not be persisted to store.json"
+        );
+
+        server.abort();
+        unsafe { std::env::remove_var(TEMPO_HOME_ENV) };
+    }
+}

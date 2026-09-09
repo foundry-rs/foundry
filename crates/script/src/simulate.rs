@@ -6,20 +6,32 @@ use crate::{
     ScriptArgs, ScriptConfig, ScriptResult,
     broadcast::{BundledState, estimate_gas},
     build::LinkedBuildData,
-    execute::{ExecutionArtifacts, ExecutionData},
+    execute::{ExecutionArtifacts, ExecutionData, build_trace_decoder_for_context},
     sequence::get_commit_hash,
 };
-use alloy_chains::NamedChain;
+use alloy_chains::{Chain, NamedChain};
+use alloy_evm::revm::context::Block;
 use alloy_network::TransactionBuilder;
-use alloy_primitives::{Address, TxKind, U256, map::HashMap, utils::format_units};
+use alloy_primitives::{Address, U256, map::HashMap, utils::format_units};
+use alloy_provider::Provider;
 use dialoguer::Confirm;
 use eyre::{Context, Result};
 use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
 use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{has_different_gas_calc, now};
-use foundry_common::{ContractData, shell};
-use foundry_evm::traces::{decode_trace_arena, render_trace_arena};
-use futures::future::{join_all, try_join_all};
+use foundry_common::{
+    ContractData, ContractsByArtifact, provider::fee::resolve_broadcast_eip1559_fees, shell,
+    tempo::known_fee_token_symbol,
+};
+use foundry_evm::{
+    core::{FoundryBlock, evm::FoundryEvmNetwork},
+    traces::{
+        CallTraceDecoder, Traces, debug::ContractSources, decode_trace_arena, prune_trace_depth,
+        render_trace_arena_inner,
+    },
+};
+use foundry_wallets::wallet_browser::signer::BrowserSigner;
+use futures::future::join_all;
 use parking_lot::RwLock;
 use std::{
     collections::{BTreeMap, VecDeque},
@@ -27,31 +39,129 @@ use std::{
     sync::Arc,
 };
 
+#[cfg(feature = "monad")]
+mod monad;
+
 /// Same as [ExecutedState](crate::execute::ExecutedState), but also contains [ExecutionArtifacts]
 /// which are obtained from [ScriptResult].
 ///
 /// Can be either converted directly to [BundledState] or driven to it through
 /// [FilledTransactionsState].
-pub struct PreSimulationState {
+pub struct PreSimulationState<FEN: FoundryEvmNetwork> {
     pub args: ScriptArgs,
-    pub script_config: ScriptConfig,
+    pub script_config: ScriptConfig<FEN>,
     pub script_wallets: Wallets,
+    pub browser_wallet: Option<BrowserSigner<FEN::Network>>,
     pub build_data: LinkedBuildData,
     pub execution_data: ExecutionData,
-    pub execution_result: ScriptResult,
+    pub execution_result: ScriptResult<FEN::Network>,
     pub execution_artifacts: ExecutionArtifacts,
 }
 
-impl PreSimulationState {
-    /// If simulation is enabled, simulates transactions against fork and fills gas estimation and
-    /// metadata. Otherwise, metadata (e.g. additional contracts, created contract names) is
-    /// left empty.
-    ///
-    /// Both modes will panic if any of the transactions have None for the `rpc` field.
-    pub async fn fill_metadata(self) -> Result<FilledTransactionsState> {
-        let address_to_abi = self.build_address_to_abi_map();
+type SimulationOutcome<N> = (String, Option<TransactionWithMetadata<N>>, bool, Traces);
 
-        let mut transactions = self
+struct RpcSimulationContext<R> {
+    runner: RwLock<R>,
+    decoder: CallTraceDecoder,
+}
+
+enum RpcContexts<R> {
+    Simulation(Arc<HashMap<String, RpcSimulationContext<R>>>),
+    Decoding(HashMap<String, CallTraceDecoder>),
+}
+
+impl<R> RpcContexts<R> {
+    fn decoder(&self, rpc: &str) -> &CallTraceDecoder {
+        match self {
+            Self::Simulation(contexts) => &context_for_rpc(contexts, rpc).decoder,
+            Self::Decoding(decoders) => decoders.get(rpc).expect("invalid rpc url"),
+        }
+    }
+}
+
+fn context_for_rpc<'a, R>(
+    contexts: &'a HashMap<String, RpcSimulationContext<R>>,
+    rpc: &str,
+) -> &'a RpcSimulationContext<R> {
+    contexts.get(rpc).expect("invalid rpc url")
+}
+
+async fn build_rpc_simulation_context<FEN: FoundryEvmNetwork>(
+    rpc: String,
+    args: &ScriptArgs,
+    script_config: &ScriptConfig<FEN>,
+    known_contracts: &ContractsByArtifact,
+    sources: &ContractSources,
+    execution_result: &ScriptResult<FEN::Network>,
+) -> Result<(String, RpcSimulationContext<ScriptRunner<FEN>>)> {
+    let mut script_config = script_config.clone();
+    script_config.set_fork_url(rpc.clone());
+    let runner = script_config._get_runner(None, false, false).await?;
+    let decoder = build_trace_decoder_for_context(
+        args,
+        &script_config,
+        known_contracts,
+        sources,
+        execution_result,
+        script_config.source_chain_id.map(Chain::from),
+    )?;
+    Ok((rpc, RpcSimulationContext { runner: RwLock::new(runner), decoder }))
+}
+
+async fn build_rpc_decoder<FEN: FoundryEvmNetwork>(
+    rpc: String,
+    args: &ScriptArgs,
+    script_config: &ScriptConfig<FEN>,
+    known_contracts: &ContractsByArtifact,
+    sources: &ContractSources,
+    execution_result: &ScriptResult<FEN::Network>,
+) -> Result<(String, CallTraceDecoder)> {
+    let mut script_config = script_config.clone();
+    script_config.set_fork_url(rpc.clone());
+    let _ = script_config.resolve_execution_env().await?;
+    let decoder = build_trace_decoder_for_context(
+        args,
+        &script_config,
+        known_contracts,
+        sources,
+        execution_result,
+        script_config.source_chain_id.map(Chain::from),
+    )?;
+    Ok((rpc, decoder))
+}
+
+impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
+    /// Simulates ordinary transactions against the fork and fills gas estimation and execution
+    /// metadata.
+    ///
+    /// Panics if any transaction has no `rpc` field. Monad simulation has a concrete owner and
+    /// must not use this entry point.
+    pub(crate) async fn fill_ordinary_metadata(self) -> Result<FilledTransactionsState<FEN>> {
+        if self.args.skip_simulation {
+            return self.fill_without_simulation().await;
+        }
+
+        let contexts = Arc::new(self.build_runners().await?.into_iter().collect::<HashMap<_, _>>());
+        let transactions =
+            self.transaction_metadata(&RpcContexts::Simulation(Arc::clone(&contexts)))?;
+        let transactions = self.simulate_and_fill_with_contexts(transactions, contexts).await?;
+        Ok(self.into_filled(transactions))
+    }
+
+    /// Fills metadata derived without transaction simulation using each RPC's resolved context.
+    pub(crate) async fn fill_without_simulation(self) -> Result<FilledTransactionsState<FEN>> {
+        let contexts = RpcContexts::<ScriptRunner<FEN>>::Decoding(self.build_rpc_decoders().await?);
+        let transactions = self.transaction_metadata(&contexts)?;
+        sh_println!("\nSKIPPING ON CHAIN SIMULATION.")?;
+        Ok(self.into_filled(transactions))
+    }
+
+    fn transaction_metadata<R>(
+        &self,
+        contexts: &RpcContexts<R>,
+    ) -> Result<VecDeque<TransactionWithMetadata<FEN::Network>>> {
+        let address_to_abi = self.build_address_to_abi_map();
+        let transactions = self
             .execution_result
             .transactions
             .clone()
@@ -62,13 +172,14 @@ impl PreSimulationState {
                 let sender = tx.transaction.from().expect("all transactions should have a sender");
                 let nonce = tx.transaction.nonce().expect("all transactions should have a nonce");
                 let to = tx.transaction.to();
+                let decoder = contexts.decoder(&rpc);
 
                 let mut builder = ScriptTransactionBuilder::new(tx.transaction, rpc);
 
-                if let Some(TxKind::Call(_)) = to {
+                if to.is_some() {
                     builder.set_call(
                         &address_to_abi,
-                        &self.execution_artifacts.decoder,
+                        decoder,
                         self.script_config.evm_opts.create2_deployer,
                     )?;
                 } else {
@@ -79,50 +190,43 @@ impl PreSimulationState {
             })
             .collect::<Result<VecDeque<_>>>()?;
 
-        if self.args.skip_simulation {
-            sh_println!("\nSKIPPING ON CHAIN SIMULATION.")?;
-        } else {
-            transactions = self.simulate_and_fill(transactions).await?;
-        }
+        Ok(transactions)
+    }
 
-        Ok(FilledTransactionsState {
+    fn into_filled(
+        self,
+        transactions: VecDeque<TransactionWithMetadata<FEN::Network>>,
+    ) -> FilledTransactionsState<FEN> {
+        FilledTransactionsState {
             args: self.args,
             script_config: self.script_config,
             script_wallets: self.script_wallets,
+            browser_wallet: self.browser_wallet,
             build_data: self.build_data,
             execution_artifacts: self.execution_artifacts,
             transactions,
-        })
+        }
     }
 
-    /// Builds separate runners and environments for each RPC used in script and executes all
-    /// transactions in those environments.
-    ///
-    /// Collects gas usage and metadata for each transaction.
-    pub async fn simulate_and_fill(
+    /// Executes every transaction in its RPC-specific simulation context and collects gas usage
+    /// and metadata.
+    async fn simulate_and_fill_with_contexts(
         &self,
-        transactions: VecDeque<TransactionWithMetadata>,
-    ) -> Result<VecDeque<TransactionWithMetadata>> {
+        transactions: VecDeque<TransactionWithMetadata<FEN::Network>>,
+        contexts: Arc<HashMap<String, RpcSimulationContext<ScriptRunner<FEN>>>>,
+    ) -> Result<VecDeque<TransactionWithMetadata<FEN::Network>>> {
         trace!(target: "script", "executing onchain simulation");
-
-        let runners = Arc::new(
-            self.build_runners()
-                .await?
-                .into_iter()
-                .map(|(rpc, runner)| (rpc, Arc::new(RwLock::new(runner))))
-                .collect::<HashMap<_, _>>(),
-        );
-
-        let mut final_txs = VecDeque::new();
 
         // Executes all transactions from the different forks concurrently.
         let futs = transactions
             .into_iter()
             .map(|mut transaction| async {
-                let mut runner = runners.get(&transaction.rpc).expect("invalid rpc url").write();
+                let rpc = transaction.rpc.clone();
+                let context = context_for_rpc(&contexts, &rpc);
+                let mut runner = context.runner.write();
                 let tx = transaction.tx_mut();
 
-                let to = if let Some(TxKind::Call(to)) = tx.to() { Some(to) } else { None };
+                let to = tx.to();
                 let result = runner
                     .simulate(
                         tx.from()
@@ -135,12 +239,13 @@ impl PreSimulationState {
                     .wrap_err("Internal EVM error during simulation")?;
 
                 if !result.success {
-                    return Ok((None, false, result.traces));
+                    return Ok((rpc, None, false, result.traces));
                 }
 
                 // Simulate mining the transaction if the user passes `--slow`.
                 if self.args.slow {
-                    runner.executor.env_mut().evm_env.block_env.number += U256::from(1);
+                    let block_number = runner.executor.evm_env().block_env.number() + U256::from(1);
+                    runner.executor.evm_env_mut().block_env.set_number(block_number);
                 }
 
                 let is_noop_tx = if let Some(to) = to {
@@ -157,24 +262,46 @@ impl PreSimulationState {
                     )
                     .build();
 
-                eyre::Ok((Some(transaction), is_noop_tx, result.traces))
+                eyre::Ok((rpc, Some(transaction), is_noop_tx, result.traces))
             })
             .collect::<Vec<_>>();
 
-        if !shell::is_json() && self.script_config.evm_opts.verbosity > 3 {
+        self.show_simulation_header()?;
+        self.collect_simulation_results(join_all(futs).await, &contexts).await
+    }
+
+    fn show_simulation_header(&self) -> Result<()> {
+        if !shell::is_json() && self.script_config.config.tracing.verbosity > 3 {
             sh_println!("==========================")?;
             sh_println!("Simulated On-chain Traces:\n")?;
         }
+        Ok(())
+    }
+
+    async fn collect_simulation_results<R>(
+        &self,
+        results: Vec<Result<SimulationOutcome<FEN::Network>>>,
+        contexts: &HashMap<String, RpcSimulationContext<R>>,
+    ) -> Result<VecDeque<TransactionWithMetadata<FEN::Network>>> {
+        let mut final_txs = VecDeque::new();
+        let tracing = &self.script_config.config.tracing;
 
         let mut abort = false;
-        for res in join_all(futs).await {
-            let (tx, is_noop_tx, mut traces) = res?;
+        for res in results {
+            let (rpc, tx, is_noop_tx, mut traces) = res?;
 
             // Transaction will be `None`, if execution didn't pass.
-            if tx.is_none() || self.script_config.evm_opts.verbosity > 3 {
+            if !shell::is_json() && (tx.is_none() || tracing.verbosity > 3) {
+                let decoder = &context_for_rpc(contexts, &rpc).decoder;
                 for (_, trace) in &mut traces {
-                    decode_trace_arena(trace, &self.execution_artifacts.decoder).await;
-                    sh_println!("{}", render_trace_arena(trace))?;
+                    decode_trace_arena(trace, decoder).await;
+                    if let Some(trace_depth) = tracing.trace_depth {
+                        prune_trace_depth(trace, trace_depth);
+                    }
+                    sh_println!(
+                        "{}",
+                        render_trace_arena_inner(trace, false, tracing.verbosity > 4)
+                    )?;
                 }
             }
 
@@ -203,7 +330,7 @@ impl PreSimulationState {
         }
 
         if abort {
-            eyre::bail!("Simulated execution failed.")
+            eyre::bail!("Simulated execution failed.");
         }
 
         Ok(final_txs)
@@ -227,44 +354,316 @@ impl PreSimulationState {
     }
 
     /// Build [ScriptRunner] forking given RPC for each RPC used in the script.
-    async fn build_runners(&self) -> Result<Vec<(String, ScriptRunner)>> {
-        let rpcs = self.execution_artifacts.rpc_data.total_rpcs.clone();
+    async fn build_runners(
+        &self,
+    ) -> Result<Vec<(String, RpcSimulationContext<ScriptRunner<FEN>>)>> {
+        let rpcs = &self.execution_artifacts.rpc_data.total_rpcs;
 
         if !shell::is_json() {
             let n = rpcs.len();
-            let s = if n != 1 { "s" } else { "" };
+            let s = if n == 1 { "" } else { "s" };
             sh_println!("\n## Setting up {n} EVM{s}.")?;
         }
 
-        let futs = rpcs.into_iter().map(|rpc| async move {
-            let mut script_config = self.script_config.clone();
-            script_config.evm_opts.fork_url = Some(rpc.clone());
-            let runner = script_config.get_runner().await?;
-            Ok((rpc, runner))
-        });
-        try_join_all(futs).await
+        // Context construction performs several identity and block probes per endpoint. Resolve
+        // endpoints serially so setup does not create an unbounded cross-endpoint request burst.
+        let mut contexts = Vec::with_capacity(rpcs.len());
+        for rpc in rpcs.iter().cloned() {
+            contexts.push(
+                build_rpc_simulation_context(
+                    rpc,
+                    &self.args,
+                    &self.script_config,
+                    &self.build_data.known_contracts,
+                    &self.build_data.sources,
+                    &self.execution_result,
+                )
+                .await?,
+            );
+        }
+        Ok(contexts)
+    }
+
+    /// Builds one trace decoder for every RPC without constructing simulation runners.
+    async fn build_rpc_decoders(&self) -> Result<HashMap<String, CallTraceDecoder>> {
+        let rpcs = &self.execution_artifacts.rpc_data.total_rpcs;
+        // Decoder construction resolves the same endpoint context as a simulation runner.
+        let mut decoders = HashMap::default();
+        for rpc in rpcs.iter().cloned() {
+            let (rpc, decoder) = build_rpc_decoder(
+                rpc,
+                &self.args,
+                &self.script_config,
+                &self.build_data.known_contracts,
+                &self.build_data.sources,
+                &self.execution_result,
+            )
+            .await?;
+            decoders.insert(rpc, decoder);
+        }
+        Ok(decoders)
+    }
+}
+
+#[cfg(all(test, feature = "monad"))]
+mod tests {
+    use super::*;
+    use alloy_primitives::address;
+    use anvil::{NodeConfig, spawn};
+    use foundry_cli::opts::TempoOpts;
+    use foundry_config::Config;
+    use foundry_evm::{
+        core::{evm::MonadEvmNetwork, opts::EvmOpts},
+        executors::ExecutorBuilder,
+        hardforks::MonadHardfork,
+    };
+    use foundry_evm_networks::NetworkConfigs;
+
+    const RESERVE_BALANCE_ADDRESS: Address = address!("0000000000000000000000000000000000001001");
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn multi_rpc_fork_selects_trace_decoder_for_source_hardfork() {
+        let (monad_eight_api, monad_eight) = spawn(
+            NodeConfig::test_monad()
+                .with_chain_id(Some(NamedChain::Monad as u64))
+                .with_hardfork(Some(MonadHardfork::MonadEight.into())),
+        )
+        .await;
+        let (monad_nine_api, monad_nine) = spawn(
+            NodeConfig::test_monad()
+                .with_chain_id(Some(NamedChain::Monad as u64))
+                .with_hardfork(Some(MonadHardfork::MonadNine.into())),
+        )
+        .await;
+        monad_eight_api.mine_one().await.unwrap();
+        monad_nine_api.mine_one().await.unwrap();
+        let monad_eight_rpc = monad_eight.http_endpoint();
+        let monad_nine_rpc = monad_nine.http_endpoint();
+
+        let mut evm_opts = EvmOpts {
+            fork_url: Some(monad_eight_rpc.clone()),
+            fork_block_number: Some(0),
+            networks: NetworkConfigs::with_monad(),
+            ..Default::default()
+        };
+        evm_opts.env.chain_id = Some(42);
+        let script_config = ScriptConfig::<MonadEvmNetwork>::new(
+            Config::default(),
+            evm_opts,
+            ExecutorBuilder::<MonadEvmNetwork>::new(),
+            false,
+            TempoOpts::default(),
+            Some(0),
+        )
+        .await
+        .unwrap();
+        let args = ScriptArgs::default();
+        let known_contracts = ContractsByArtifact::default();
+        let sources = ContractSources::default();
+        let execution_result = ScriptResult::default();
+        let contexts = [
+            build_rpc_simulation_context(
+                monad_eight_rpc.clone(),
+                &args,
+                &script_config,
+                &known_contracts,
+                &sources,
+                &execution_result,
+            )
+            .await
+            .unwrap(),
+            build_rpc_simulation_context(
+                monad_nine_rpc.clone(),
+                &args,
+                &script_config,
+                &known_contracts,
+                &sources,
+                &execution_result,
+            )
+            .await
+            .unwrap(),
+        ]
+        .into_iter()
+        .collect::<HashMap<_, _>>();
+
+        let monad_eight = context_for_rpc(&contexts, &monad_eight_rpc);
+        let monad_eight_runner = monad_eight.runner.read();
+        assert_eq!(monad_eight_runner.executor.evm_env().cfg_env.chain_id, 42);
+        assert_eq!(monad_eight_runner.executor.evm_env().block_env.number(), U256::ZERO);
+        assert_eq!(monad_eight_runner.evm_opts.fork_block_number, Some(0));
+        assert!(!monad_eight_runner.evm_opts.fork_block_number_is_inferred);
+        assert_eq!(monad_eight_runner.evm_opts.networks, NetworkConfigs::with_monad());
+        assert!(!monad_eight_runner.evm_opts.fork_network_is_inferred);
+        assert_eq!(monad_eight.decoder.chain_id, Some(NamedChain::Monad as u64));
+        assert_eq!(monad_eight.decoder.hardfork(), Some(MonadHardfork::MonadEight.into()));
+        assert!(!monad_eight.decoder.precompile_labels().contains_key(&RESERVE_BALANCE_ADDRESS));
+
+        let monad_nine = context_for_rpc(&contexts, &monad_nine_rpc);
+        let monad_nine_runner = monad_nine.runner.read();
+        assert_eq!(monad_nine_runner.executor.evm_env().cfg_env.chain_id, 42);
+        assert_eq!(monad_nine_runner.executor.evm_env().block_env.number(), U256::ZERO);
+        assert_eq!(monad_nine_runner.evm_opts.fork_block_number, Some(0));
+        assert!(!monad_nine_runner.evm_opts.fork_block_number_is_inferred);
+        assert_eq!(monad_nine_runner.evm_opts.networks, NetworkConfigs::with_monad());
+        assert!(!monad_nine_runner.evm_opts.fork_network_is_inferred);
+        assert_eq!(monad_nine.decoder.chain_id, Some(NamedChain::Monad as u64));
+        assert_eq!(monad_nine.decoder.hardfork(), Some(MonadHardfork::MonadNine.into()));
+        assert_eq!(
+            monad_nine.decoder.precompile_labels().get(&RESERVE_BALANCE_ADDRESS),
+            Some(&"ReserveBalance".to_string())
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn skip_simulation_fork_builds_per_rpc_trace_decoders() {
+        let (monad_eight_api, monad_eight) = spawn(
+            NodeConfig::test_monad()
+                .with_chain_id(Some(NamedChain::Monad as u64))
+                .with_hardfork(Some(MonadHardfork::MonadEight.into())),
+        )
+        .await;
+        let (monad_nine_api, monad_nine) = spawn(
+            NodeConfig::test_monad()
+                .with_chain_id(Some(NamedChain::Monad as u64))
+                .with_hardfork(Some(MonadHardfork::MonadNine.into())),
+        )
+        .await;
+        monad_eight_api.mine_one().await.unwrap();
+        monad_nine_api.mine_one().await.unwrap();
+        let monad_eight_rpc = monad_eight.http_endpoint();
+        let monad_nine_rpc = monad_nine.http_endpoint();
+
+        let script_config = ScriptConfig::<MonadEvmNetwork>::new(
+            Config::default(),
+            EvmOpts {
+                fork_url: Some(monad_eight_rpc.clone()),
+                fork_block_number: Some(0),
+                networks: NetworkConfigs::with_monad(),
+                ..Default::default()
+            },
+            ExecutorBuilder::<MonadEvmNetwork>::new(),
+            false,
+            TempoOpts::default(),
+            Some(0),
+        )
+        .await
+        .unwrap();
+        let args = ScriptArgs { skip_simulation: true, ..Default::default() };
+        let known_contracts = ContractsByArtifact::default();
+        let sources = ContractSources::default();
+        let execution_result = ScriptResult::default();
+        let decoders = [
+            build_rpc_decoder(
+                monad_eight_rpc.clone(),
+                &args,
+                &script_config,
+                &known_contracts,
+                &sources,
+                &execution_result,
+            )
+            .await
+            .unwrap(),
+            build_rpc_decoder(
+                monad_nine_rpc.clone(),
+                &args,
+                &script_config,
+                &known_contracts,
+                &sources,
+                &execution_result,
+            )
+            .await
+            .unwrap(),
+        ]
+        .into_iter()
+        .collect::<HashMap<_, _>>();
+
+        let monad_eight = decoders.get(&monad_eight_rpc).unwrap();
+        assert_eq!(monad_eight.hardfork(), Some(MonadHardfork::MonadEight.into()));
+        assert!(!monad_eight.precompile_labels().contains_key(&RESERVE_BALANCE_ADDRESS));
+
+        let monad_nine = decoders.get(&monad_nine_rpc).unwrap();
+        assert_eq!(monad_nine.hardfork(), Some(MonadHardfork::MonadNine.into()));
+        assert_eq!(
+            monad_nine.precompile_labels().get(&RESERVE_BALANCE_ADDRESS),
+            Some(&"ReserveBalance".to_string())
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn multi_rpc_fork_rejects_inferred_network_change() {
+        let (_monad_api, monad) = spawn(NodeConfig::test_monad()).await;
+        let (_ethereum_api, ethereum) = spawn(NodeConfig::test()).await;
+        let ethereum_rpc = ethereum.http_endpoint();
+        let script_config = ScriptConfig::<MonadEvmNetwork>::new(
+            Config::default(),
+            EvmOpts { fork_url: Some(monad.http_endpoint()), ..Default::default() },
+            ExecutorBuilder::<MonadEvmNetwork>::new(),
+            false,
+            TempoOpts::default(),
+            Some(0),
+        )
+        .await
+        .unwrap();
+        assert!(script_config.evm_opts.fork_network_is_inferred);
+
+        let result = build_rpc_simulation_context(
+            ethereum_rpc.clone(),
+            &ScriptArgs::default(),
+            &script_config,
+            &ContractsByArtifact::default(),
+            &ContractSources::default(),
+            &ScriptResult::default(),
+        )
+        .await;
+        let Err(error) = result else { panic!("inferred cross-network fork should be rejected") };
+        assert!(
+            error
+                .to_string()
+                .contains("fork network `ethereum` is incompatible with the active EVM"),
+            "{error}"
+        );
+
+        let result = build_rpc_decoder(
+            ethereum_rpc,
+            &ScriptArgs { skip_simulation: true, ..Default::default() },
+            &script_config,
+            &ContractsByArtifact::default(),
+            &ContractSources::default(),
+            &ScriptResult::default(),
+        )
+        .await;
+        let Err(error) = result else {
+            panic!("skip-simulation decoder should reject an inferred cross-network fork")
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("fork network `ethereum` is incompatible with the active EVM"),
+            "{error}"
+        );
     }
 }
 
 /// At this point we have converted transactions collected during script execution to
 /// [TransactionWithMetadata] objects which contain additional metadata needed for broadcasting and
 /// verification.
-pub struct FilledTransactionsState {
+pub struct FilledTransactionsState<FEN: FoundryEvmNetwork> {
     pub args: ScriptArgs,
-    pub script_config: ScriptConfig,
+    pub script_config: ScriptConfig<FEN>,
     pub script_wallets: Wallets,
+    pub browser_wallet: Option<BrowserSigner<FEN::Network>>,
     pub build_data: LinkedBuildData,
     pub execution_artifacts: ExecutionArtifacts,
-    pub transactions: VecDeque<TransactionWithMetadata>,
+    pub transactions: VecDeque<TransactionWithMetadata<FEN::Network>>,
 }
 
-impl FilledTransactionsState {
+impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
     /// Bundles all transactions of the [`TransactionWithMetadata`] type in a list of
     /// [`ScriptSequence`]. List length will be higher than 1, if we're dealing with a multi
     /// chain deployment.
     ///
     /// Each transaction will be added with the correct transaction type and gas estimation.
-    pub async fn bundle(mut self) -> Result<BundledState> {
+    pub async fn bundle(mut self) -> Result<BundledState<FEN>> {
         let is_multi_deployment = self.execution_artifacts.rpc_data.total_rpcs.len() > 1;
 
         if is_multi_deployment && !self.build_data.libraries.is_empty() {
@@ -275,7 +674,7 @@ impl FilledTransactionsState {
 
         // Batches sequence of transactions from different rpcs.
         let mut new_sequence = VecDeque::new();
-        let mut manager = ProvidersManager::default();
+        let mut manager = ProvidersManager::<FEN::Network>::default();
         let mut sequences = vec![];
 
         // Peeking is used to check if the next rpc url is different. If so, it creates a
@@ -283,8 +682,16 @@ impl FilledTransactionsState {
         let mut txes_iter = mem::take(&mut self.transactions).into_iter().peekable();
 
         while let Some(mut tx) = txes_iter.next() {
-            let tx_rpc = tx.rpc.to_owned();
-            let provider_info = manager.get_or_init_provider(&tx.rpc, self.args.legacy).await?;
+            let tx_rpc = tx.rpc.clone();
+            let provider_info = manager
+                .get_or_init_provider(
+                    &tx.rpc,
+                    self.execution_artifacts.rpc_data.chain_ids.get(&tx.rpc).copied(),
+                    self.args.legacy,
+                    self.script_config.config.eip1559_fee_estimate,
+                    &self.script_config.config,
+                )
+                .await?;
 
             if let Some(tx) = tx.tx_mut().as_unsigned_mut() {
                 // Handles chain specific requirements for unsigned transactions.
@@ -298,7 +705,7 @@ impl FilledTransactionsState {
                     // only estimate gas for unsigned transactions
                     if let Some(tx) = tx.as_unsigned_mut() {
                         trace!("estimating with different gas calculation");
-                        let gas = tx.gas.expect("gas is set by simulation.");
+                        let gas = tx.gas_limit().expect("gas is set by simulation.");
 
                         // We are trying to show the user an estimation of the total gas usage.
                         //
@@ -315,6 +722,7 @@ impl FilledTransactionsState {
                             tx,
                             &provider_info.provider,
                             self.args.gas_estimate_multiplier,
+                            false,
                         )
                         .await
                         {
@@ -352,48 +760,112 @@ impl FilledTransactionsState {
             for (rpc, total_gas) in total_gas_per_rpc {
                 let provider_info = manager.get(&rpc).expect("provider is set.");
 
-                // Get the native token symbol for the chain using NamedChain
-                let token_symbol = NamedChain::try_from(provider_info.chain)
-                    .unwrap_or_default()
-                    .native_currency_symbol()
-                    .unwrap_or("ETH");
+                let token_symbol = if self.script_config.evm_opts.networks.is_tempo() {
+                    self.args.tempo.fee_token.map_or_else(
+                        || "TIP-20".to_string(),
+                        |fee_token| {
+                            known_fee_token_symbol(fee_token)
+                                .map(str::to_string)
+                                .unwrap_or_else(|| fee_token.to_string())
+                        },
+                    )
+                } else {
+                    NamedChain::try_from(provider_info.chain)
+                        .unwrap_or_default()
+                        .native_currency_symbol()
+                        .unwrap_or("ETH")
+                        .to_string()
+                };
 
                 // We don't store it in the transactions, since we want the most updated value.
                 // Right before broadcasting.
+                //
+                // Resolve the fees with the same overrides as the broadcast path so the
+                // displayed values match what is sent. Skipped when `--with-gas-price` pins
+                // the max fee directly.
+                let resolved_eip1559_fees = if self.args.with_gas_price.is_none() {
+                    if let Some(fees) = provider_info.eip1559_fees().copied() {
+                        // `--batch` broadcasts via `broadcast_batch`, which applies no
+                        // browser tip, so skip it here too. Best-effort.
+                        let browser_suggested_tip =
+                            if !self.args.batch && self.browser_wallet.is_some() {
+                                provider_info.provider.get_max_priority_fee_per_gas().await.ok()
+                            } else {
+                                None
+                            };
+                        Some(resolve_broadcast_eip1559_fees(
+                            fees,
+                            None,
+                            self.args.priority_gas_price.map(|p| p.to()),
+                            browser_suggested_tip,
+                        )?)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                // `per_gas` is the legacy gas price or, for EIP-1559, the `maxFeePerGas`
+                // (a base-fee buffer plus the priority fee), which is what the transaction
+                // can pay at most -- not the spot base fee shown by block explorers.
                 let per_gas = if let Some(gas_price) = self.args.with_gas_price {
                     gas_price.to()
+                } else if let Some(fees) = &resolved_eip1559_fees {
+                    fees.max_fee_per_gas
                 } else {
                     provider_info.gas_price()?
                 };
 
-                let estimated_gas_price_raw = format_units(per_gas, 9)
-                    .unwrap_or_else(|_| "[Could not calculate]".to_string());
-                let estimated_gas_price =
-                    estimated_gas_price_raw.trim_end_matches('0').trim_end_matches('.');
+                // Format a wei value as a trimmed gwei string.
+                let fmt_gwei = |wei: u128| {
+                    let raw = format_units(wei, 9)
+                        .unwrap_or_else(|_| "[Could not calculate]".to_string());
+                    raw.trim_end_matches('0').trim_end_matches('.').to_string()
+                };
+
+                let estimated_gas_price = fmt_gwei(per_gas);
+
+                // (base fee, max priority fee) for the EIP-1559 breakdown.
+                let fee_breakdown = resolved_eip1559_fees.as_ref().map(|fees| {
+                    (fmt_gwei(fees.base_fee_per_gas), fmt_gwei(fees.max_priority_fee_per_gas))
+                });
 
                 let estimated_amount_raw = format_units(total_gas.saturating_mul(per_gas), 18)
                     .unwrap_or_else(|_| "[Could not calculate]".to_string());
                 let estimated_amount = estimated_amount_raw.trim_end_matches('0');
 
-                if !shell::is_json() {
+                if shell::is_json() {
+                    let mut json = serde_json::json!({
+                        "chain": provider_info.chain,
+                        "estimated_gas_price": estimated_gas_price,
+                        "estimated_total_gas_used": total_gas,
+                        "estimated_amount_required": estimated_amount,
+                        "token_symbol": token_symbol,
+                    });
+                    if let Some((base_fee, priority_fee)) = &fee_breakdown {
+                        json["estimated_max_fee_per_gas"] =
+                            serde_json::Value::from(estimated_gas_price);
+                        json["estimated_base_fee_per_gas"] =
+                            serde_json::Value::from(base_fee.clone());
+                        json["estimated_max_priority_fee_per_gas"] =
+                            serde_json::Value::from(priority_fee.clone());
+                    }
+                    sh_println!("{}", json)?;
+                } else {
                     sh_println!("\n==========================")?;
                     sh_println!("\nChain {}", provider_info.chain)?;
 
-                    sh_println!("\nEstimated gas price: {} gwei", estimated_gas_price)?;
+                    if let Some((base_fee, priority_fee)) = &fee_breakdown {
+                        sh_println!("\nEstimated max fee per gas: {estimated_gas_price} gwei")?;
+                        sh_println!("Estimated base fee per gas: {base_fee} gwei")?;
+                        sh_println!("Estimated max priority fee per gas: {priority_fee} gwei")?;
+                    } else {
+                        sh_println!("\nEstimated gas price: {estimated_gas_price} gwei")?;
+                    }
                     sh_println!("\nEstimated total gas used for script: {total_gas}")?;
                     sh_println!("\nEstimated amount required: {estimated_amount} {token_symbol}")?;
                     sh_println!("\n==========================")?;
-                } else {
-                    sh_println!(
-                        "{}",
-                        serde_json::json!({
-                            "chain": provider_info.chain,
-                            "estimated_gas_price": estimated_gas_price,
-                            "estimated_total_gas_used": total_gas,
-                            "estimated_amount_required": estimated_amount,
-                            "token_symbol": token_symbol,
-                        })
-                    )?;
                 }
             }
         }
@@ -414,6 +886,7 @@ impl FilledTransactionsState {
             args: self.args,
             script_config: self.script_config,
             script_wallets: self.script_wallets,
+            browser_wallet: self.browser_wallet,
             build_data: self.build_data,
             sequence,
         })
@@ -424,14 +897,14 @@ impl FilledTransactionsState {
         &self,
         multi: bool,
         chain: u64,
-        transactions: VecDeque<TransactionWithMetadata>,
-    ) -> Result<ScriptSequence> {
+        transactions: VecDeque<TransactionWithMetadata<FEN::Network>>,
+    ) -> Result<ScriptSequence<FEN::Network>> {
         // Paths are set to None for multi-chain sequences parts, because they don't need to be
         // saved to a separate file.
         let paths = if multi {
             None
         } else {
-            Some(ScriptSequence::get_paths(
+            Some(ScriptSequence::<FEN::Network>::get_paths(
                 &self.script_config.config,
                 &self.args.sig,
                 &self.build_data.build_data.target,
@@ -442,6 +915,14 @@ impl FilledTransactionsState {
 
         let commit = get_commit_hash(&self.script_config.config.root);
 
+        let local_addresses = match &self.build_data.predeploy_libraries {
+            crate::build::ScriptPredeployLibraries::Default { local, .. }
+            | crate::build::ScriptPredeployLibraries::Create2 { local, .. } => local.as_slice(),
+        };
+        let local_addresses = local_addresses
+            .iter()
+            .map(|library| library.address.to_checksum(None))
+            .collect::<Vec<_>>();
         let libraries = self
             .build_data
             .libraries
@@ -449,6 +930,7 @@ impl FilledTransactionsState {
             .iter()
             .flat_map(|(file, libs)| {
                 libs.iter()
+                    .filter(|(_, address)| !local_addresses.contains(address))
                     .map(|(name, address)| format!("{}:{name}:{address}", file.to_string_lossy()))
             })
             .collect();

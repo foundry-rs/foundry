@@ -20,6 +20,8 @@ foundry-common.workspace = true
 foundry-evm.workspace = true
 foundry-evm-networks.workspace = true
 serde_json.workspace = true
+alloy-consensus.workspace = true
+alloy-network.workspace = true
 alloy-json-abi.workspace = true
 alloy-primitives.workspace = true
 alloy-rpc-types = { workspace = true, features = ["eth", "trace"] }
@@ -34,6 +36,7 @@ revm.workspace = true
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 reqwest = { workspace = true, features = ["json"] }
+tokio = { workspace = true, features = ["time"] }
 async-trait.workspace = true
 futures.workspace = true
 semver.workspace = true
@@ -46,3 +49,19 @@ url.workspace = true
 tokio = { workspace = true, features = ["macros"] }
 foundry-test-utils.workspace = true
 tempfile.workspace = true
+
+[features]
+default = ["optimism"]
+monad = [
+    "foundry-common/monad",
+    "foundry-config/monad",
+    "foundry-evm/monad",
+    "foundry-evm-networks/monad",
+    "foundry-cli/monad",
+]
+optimism = [
+    "foundry-common/optimism",
+    "foundry-evm/optimism",
+    "foundry-evm-networks/optimism",
+    "foundry-cli/optimism",
+]

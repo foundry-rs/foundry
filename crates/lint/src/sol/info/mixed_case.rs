@@ -1,9 +1,16 @@
-use super::{MixedCaseFunction, MixedCaseVariable};
 use crate::{
-    linter::{EarlyLintPass, LintContext, Suggestion},
-    sol::{Severity, SolLint, info::screaming_snake_case::check_screaming_snake_case},
+    linter::{EarlyLintPass, LintContext},
+    sol::{
+        Severity, SolLint,
+        naming::{
+            check_mixed_case as check_mixed_case_pure, check_screaming_snake_case, emit_rename,
+            has_acronym_exception,
+        },
+    },
 };
+use foundry_config::lint::LintSpecificConfig;
 use solar::ast::{FunctionHeader, ItemFunction, VariableDefinition, Visibility};
+use std::sync::Arc;
 
 declare_forge_lint!(
     MIXED_CASE_FUNCTION,
@@ -12,26 +19,6 @@ declare_forge_lint!(
     "function names should use mixedCase"
 );
 
-impl<'ast> EarlyLintPass<'ast> for MixedCaseFunction {
-    fn check_item_function(&mut self, ctx: &LintContext, func: &'ast ItemFunction<'ast>) {
-        if let Some(name) = func.header.name
-            && let Some(expected) =
-                check_mixed_case(name.as_str(), true, ctx.config.mixed_case_exceptions)
-            && !is_constant_getter(&func.header)
-        {
-            ctx.emit_with_suggestion(
-                &MIXED_CASE_FUNCTION,
-                name.span,
-                Suggestion::fix(
-                    expected,
-                    solar::interface::diagnostics::Applicability::MachineApplicable,
-                )
-                .with_desc("consider using"),
-            );
-        }
-    }
-}
-
 declare_forge_lint!(
     MIXED_CASE_VARIABLE,
     Severity::Info,
@@ -39,94 +26,70 @@ declare_forge_lint!(
     "mutable variables should use mixedCase"
 );
 
-impl<'ast> EarlyLintPass<'ast> for MixedCaseVariable {
+/// Checks function names when `FUNCTIONS` is set, mutable variable names otherwise.
+#[derive(Debug)]
+pub(super) struct MixedCasePass<const FUNCTIONS: bool> {
+    config: Arc<LintSpecificConfig>,
+}
+
+pub(super) type MixedCaseFunctionPass = MixedCasePass<true>;
+pub(super) type MixedCaseVariablePass = MixedCasePass<false>;
+
+impl<const FUNCTIONS: bool> MixedCasePass<FUNCTIONS> {
+    pub(super) const fn new(config: Arc<LintSpecificConfig>) -> Self {
+        Self { config }
+    }
+}
+
+impl<'ast, const FUNCTIONS: bool> EarlyLintPass<'ast> for MixedCasePass<FUNCTIONS> {
+    fn check_item_function(&mut self, ctx: &LintContext, func: &'ast ItemFunction<'ast>) {
+        if FUNCTIONS
+            && let Some(name) = func.header.name
+            && let Some(expected) =
+                check_mixed_case(name.as_str(), true, &self.config.mixed_case_exceptions)
+            && !is_constant_getter(&func.header)
+        {
+            emit_rename(ctx, &MIXED_CASE_FUNCTION, name.span, expected);
+        }
+    }
+
     fn check_variable_definition(
         &mut self,
         ctx: &LintContext,
         var: &'ast VariableDefinition<'ast>,
     ) {
-        if var.mutability.is_none()
+        if !FUNCTIONS
+            && var.mutability.is_none()
             && let Some(name) = var.name
             && let Some(expected) =
-                check_mixed_case(name.as_str(), false, ctx.config.mixed_case_exceptions)
+                check_mixed_case(name.as_str(), false, &self.config.mixed_case_exceptions)
         {
-            ctx.emit_with_suggestion(
-                &MIXED_CASE_VARIABLE,
-                name.span,
-                Suggestion::fix(
-                    expected,
-                    solar::interface::diagnostics::Applicability::MachineApplicable,
-                )
-                .with_desc("consider using"),
-            );
+            emit_rename(ctx, &MIXED_CASE_VARIABLE, name.span, expected);
         }
     }
 }
 
-/// If the string `s` is not mixedCase, returns a `Some(String)` with the
-/// suggested conversion. Otherwise, returns `None`.
-///
-/// To avoid false positives:
-/// - lowercase strings like `fn increment()` or `uint256 counter`, are treated as mixedCase.
-/// - test functions starting with `test`, `invariant_` or `statefulFuzz` are ignored.
-/// - user-defined patterns like `ERC20` are allowed.
+/// Wraps [`check_mixed_case_pure`] with two domain exceptions: foundry test-function prefixes
+/// and user-defined infix patterns, which split the name into a lowerCamelCase prefix and an
+/// UpperCamelCase suffix (allowing leading digits).
 fn check_mixed_case(s: &str, is_fn: bool, allowed_patterns: &[String]) -> Option<String> {
-    if s.len() <= 1 {
+    if is_fn && ["test", "invariant_", "statefulFuzz"].iter().any(|prefix| s.starts_with(prefix)) {
         return None;
     }
-
-    // Exception for test, invariant, and stateful fuzzing functions.
-    if is_fn
-        && (s.starts_with("test") || s.starts_with("invariant_") || s.starts_with("statefulFuzz"))
-    {
+    if has_acronym_exception(s, allowed_patterns, |pre| {
+        pre == heck::AsLowerCamelCase(pre).to_string()
+    }) {
         return None;
     }
-
-    // Exception for user-defined infix patterns.
-    for pattern in allowed_patterns {
-        if let Some(pos) = s.find(pattern.as_str()) {
-            let (pre, post) = s.split_at(pos);
-            let post = &post[pattern.len()..];
-
-            // Check if the part before the pattern is valid lowerCamelCase.
-            let is_pre_valid = pre == heck::AsLowerCamelCase(pre).to_string();
-
-            // Check if the part after is valid UpperCamelCase (allowing leading numbers).
-            let post_trimmed = post.trim_start_matches(|c: char| c.is_numeric());
-            let is_post_valid = post_trimmed == heck::AsUpperCamelCase(post_trimmed).to_string();
-
-            if is_pre_valid && is_post_valid {
-                return None;
-            }
-        }
-    }
-
-    // Generate the expected mixedCase version.
-    let suggestion = format!(
-        "{prefix}{name}{suffix}",
-        prefix = if s.starts_with('_') { "_" } else { "" },
-        name = heck::AsLowerCamelCase(s),
-        suffix = if s.ends_with('_') { "_" } else { "" }
-    );
-
-    // If the original string already matches the suggestion, it's valid.
-    if s == suggestion { None } else { Some(suggestion) }
+    check_mixed_case_pure(s)
 }
 
-/// Checks if a function getter is a valid constant getter with a heuristic:
-///  * name is `SCREAMING_SNAKE_CASE`
-///  * external view visibility and mutability.
-///  * zero parameters.
-///  * exactly one return value.
-///  * return value is an elementary or a custom type
+/// Heuristic for a getter of a constant: `SCREAMING_SNAKE_CASE` name, `public view` or `external
+/// view`, no parameters and exactly one elementary or custom-typed return value.
 fn is_constant_getter(header: &FunctionHeader<'_>) -> bool {
-    header.visibility().is_some_and(|v| matches!(v, Visibility::External))
+    matches!(header.visibility(), Some(Visibility::Public | Visibility::External))
         && header.state_mutability().is_view()
         && header.parameters.is_empty()
-        && header.returns().len() == 1
-        && header
-            .returns()
-            .first()
-            .is_some_and(|ret| ret.ty.kind.is_elementary() || ret.ty.kind.is_custom())
-        && check_screaming_snake_case(header.name.unwrap().as_str()).is_none()
+        && matches!(header.returns(), [ret] if ret.ty.kind.is_elementary() || ret.ty.kind.is_custom())
+        && header.name.is_some_and(|name| check_screaming_snake_case(name.as_str()).is_none())
 }

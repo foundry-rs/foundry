@@ -26,6 +26,72 @@ fn assert_eof(content: &str) {
     assert!(!content.ends_with("\n\n"), "extra trailing newline");
 }
 
+#[test]
+fn chained_named_call_layout_ignores_source_spacing() {
+    let path = Path::new("test.sol");
+
+    for (line_length, bracket_spacing, compact, spaced) in [
+        (
+            40,
+            false,
+            "factory().foo(a,b,c).baz({value: result});",
+            "factory().foo(a, b, c).baz({value: result});",
+        ),
+        (
+            32,
+            false,
+            "factory().foo(a+b).baz({value: result});",
+            "factory().foo(a + b).baz({value: result});",
+        ),
+        (
+            34,
+            false,
+            "factory().foo([a,b]).baz({value: result});",
+            "factory().foo([a, b]).baz({value: result});",
+        ),
+        (38, true, "factory().foo(a,b,c).baz({});", "factory().foo(a, b, c).baz({ });"),
+    ] {
+        let config =
+            Arc::new(FormatterConfig { line_length, bracket_spacing, ..Default::default() });
+        let source = |expr| format!("contract C {{ function f() external {{ {expr} }} }}");
+        assert_eq!(
+            format(&source(compact), path, config.clone()),
+            format(&source(spaced), path, config),
+        );
+    }
+}
+
+// <https://github.com/foundry-rs/foundry/issues/3831>
+#[test]
+fn disable_line_uses_comment_context() {
+    let source = r#"contract  C {
+    function f() public {
+        // forgefmt: disable-line
+        assembly { sstore(   0, 0)
+            sstore(1,    1)
+        }
+
+        assembly { sstore(   2, 2) } // forgefmt: disable-line
+    }
+}
+"#;
+    let expected = r#"contract C {
+    function f() public {
+        // forgefmt: disable-line
+        assembly { sstore(   0, 0)
+            sstore(1,    1)
+        }
+        assembly { sstore(   2, 2) } // forgefmt: disable-line
+    }
+}
+"#;
+
+    assert_eq!(
+        format(source, Path::new("test.sol"), Arc::new(FormatterConfig::default())),
+        expected
+    );
+}
+
 fn tests_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata")
 }
@@ -138,11 +204,10 @@ fn test_all_dirs_are_declared(dirs: &[&str]) {
             undeclared.push(actual_dir_name.to_string());
         }
     }
-    if !undeclared.is_empty() {
-        panic!(
-            "the following test directories are not declared in the test suite macro call: {undeclared:#?}"
-        );
-    }
+    assert!(
+        undeclared.is_empty(),
+        "the following test directories are not declared in the test suite macro call: {undeclared:#?}"
+    )
 }
 
 macro_rules! fmt_tests {
@@ -190,12 +255,17 @@ fmt_tests! {
     HexUnderscore,
     IfStatement,
     IfStatement2,
+    IfStatement3,
     ImportDirective,
     InlineDisable,
     IntTypes,
     LiteralExpression,
     MappingType,
+    MethodChain,
+    MethodChainCallOptions,
     ModifierDefinition,
+    NamedCallArgsInChain,
+    NestedNamedCallArgumentChain,
     NamedFunctionCallExpression,
     NonKeywords,
     NumberLiteralUnderscore,
@@ -249,4 +319,151 @@ contract ProofOfConcept {
     let formatted = format(source, path, fmt_config);
 
     assert_eq!(formatted, expected, "Formatting mismatch");
+}
+
+#[test]
+fn test_override_state_variable_without_initializer_does_not_leak_indent() {
+    init_tracing();
+
+    let cases = [
+        (
+            "top-level items after override variable",
+            r#"pragma solidity ^0.8.28;
+
+contract BaseStorage {
+  uint256 public total;
+}
+
+contract ChildStorage is BaseStorage {
+  uint256 public override total;
+}
+
+struct Info {
+  uint256 a;
+}
+
+function topLevel(uint256 value) pure returns (uint256) {
+  return value;
+}
+"#,
+            r#"pragma solidity ^0.8.28;
+
+contract BaseStorage {
+    uint256 public total;
+}
+
+contract ChildStorage is BaseStorage {
+    uint256 public override total;
+}
+
+struct Info {
+    uint256 a;
+}
+
+function topLevel(uint256 value) pure returns (uint256) {
+    return value;
+}
+"#,
+        ),
+        (
+            "contract member after override variable",
+            r#"pragma solidity ^0.8.28;
+
+contract BaseStorage {
+  uint256 public total;
+}
+
+contract ChildStorage is BaseStorage {
+  uint256 public override total;
+  uint256 public next;
+}
+"#,
+            r#"pragma solidity ^0.8.28;
+
+contract BaseStorage {
+    uint256 public total;
+}
+
+contract ChildStorage is BaseStorage {
+    uint256 public override total;
+    uint256 public next;
+}
+"#,
+        ),
+        (
+            "override path list without initializer",
+            r#"pragma solidity ^0.8.28;
+
+contract BaseA {
+  uint256 public total;
+}
+
+contract BaseB {
+  uint256 public total;
+}
+
+contract ChildStorage is BaseA, BaseB {
+  uint256 public override(BaseA, BaseB) total;
+}
+
+error AfterOverride(uint256 value);
+"#,
+            r#"pragma solidity ^0.8.28;
+
+contract BaseA {
+    uint256 public total;
+}
+
+contract BaseB {
+    uint256 public total;
+}
+
+contract ChildStorage is BaseA, BaseB {
+    uint256 public override(BaseA, BaseB) total;
+}
+
+error AfterOverride(uint256 value);
+"#,
+        ),
+        (
+            "override variable with initializer",
+            r#"pragma solidity ^0.8.28;
+
+contract BaseStorage {
+  uint256 public total;
+}
+
+contract ChildStorage is BaseStorage {
+  uint256 public override total = 0;
+}
+
+struct AfterInitializer {
+  uint256 a;
+}
+"#,
+            r#"pragma solidity ^0.8.28;
+
+contract BaseStorage {
+    uint256 public total;
+}
+
+contract ChildStorage is BaseStorage {
+    uint256 public override total = 0;
+}
+
+struct AfterInitializer {
+    uint256 a;
+}
+"#,
+        ),
+    ];
+
+    let fmt_config = Arc::new(FormatterConfig::default());
+    let path = Path::new("override-indent.sol");
+
+    for (case, source, expected) in cases {
+        let formatted = format(source, path, fmt_config.clone());
+        assert_eq!(formatted, expected, "{case}");
+        assert_eq!(format(&formatted, path, fmt_config.clone()), expected, "{case} idempotency");
+    }
 }

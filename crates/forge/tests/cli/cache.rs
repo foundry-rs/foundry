@@ -15,6 +15,10 @@ forgetest!(can_list_specific_chain, |_prj, cmd| {
     cmd.assert_success();
 });
 
+forgetest!(cache_ls_output_on_stderr, |_prj, cmd| {
+    cmd.args(["cache", "ls", "mainnet"]).assert_success().stdout_eq(str![""]);
+});
+
 forgetest_init!(can_test_no_cache, |prj, cmd| {
     prj.initialize_default_contracts();
     prj.clear_cache();

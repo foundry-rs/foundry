@@ -1,19 +1,21 @@
 //! Implementations of [`Filesystem`](spec::Group::Filesystem) cheatcodes.
 
 use super::string::parse;
-use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
+use crate::{
+    Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*, inspector::exec_create,
+};
 use alloy_dyn_abi::DynSolType;
 use alloy_json_abi::ContractObject;
-use alloy_network::AnyTransactionReceipt;
-use alloy_primitives::{Bytes, U256, hex, map::Entry};
-use alloy_provider::network::ReceiptResponse;
+use alloy_network::{Network, ReceiptResponse};
+use alloy_primitives::{Bytes, FixedBytes, U256, hex, map::Entry};
 use alloy_sol_types::SolValue;
 use dialoguer::{Input, Password};
 use forge_script_sequence::{BroadcastReader, TransactionWithMetadata};
-use foundry_common::fs;
+use foundry_common::{contracts::ContractData, fs};
 use foundry_config::fs_permissions::FsAccessKind;
+use foundry_evm_core::{FoundryTransaction, env::FoundryContextExt, evm::FoundryEvmNetwork};
 use revm::{
-    context::{CreateScheme, JournalTr},
+    context::{Cfg, ContextTr, CreateScheme, JournalTr},
     interpreter::CreateInputs,
 };
 use revm_inspectors::tracing::types::CallKind;
@@ -28,8 +30,88 @@ use std::{
 };
 use walkdir::WalkDir;
 
+/// Parsed artifact path components.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct ParsedArtifactPath<'a> {
+    file: Option<PathBuf>,
+    contract_name: Option<&'a str>,
+    version: Option<Version>,
+    profile: Option<&'a str>,
+}
+
+/// Parses an artifact path string into its components.
+///
+/// Supports the following formats:
+/// - `path/to/contract.sol`
+/// - `path/to/contract.sol:ContractName`
+/// - `path/to/contract.sol:ContractName:0.8.23`
+/// - `path/to/contract.sol:ContractName:profile`
+/// - `path/to/contract.sol:0.8.23`
+/// - `path/to/contract.sol:profile`
+/// - `ContractName`
+/// - `ContractName:0.8.23`
+/// - `ContractName:profile`
+fn parse_artifact_path(path: &str) -> std::result::Result<ParsedArtifactPath<'_>, String> {
+    // A Windows drive separator belongs to the file, not the artifact's suffix fields.
+    // Recognize it on every host so parsing does not depend on the current platform.
+    let unprefixed = path.strip_prefix(r"\\?\").unwrap_or(path);
+    let drive_prefix_len = match unprefixed.as_bytes() {
+        [drive, b':', b'/' | b'\\', ..] if drive.is_ascii_alphabetic() => {
+            path.len() - unprefixed.len() + 2
+        }
+        _ => 0,
+    };
+    let mut parts = path[drive_prefix_len..].split(':');
+
+    let mut file = None;
+    let mut contract_name = None;
+    let mut version = None;
+    let mut profile = None;
+
+    let path_or_name = parts.next().unwrap();
+    let path_or_name = &path[..drive_prefix_len + path_or_name.len()];
+    if path_or_name.contains('.') {
+        file = Some(PathBuf::from(path_or_name));
+        if let Some(name_or_version_or_profile) = parts.next() {
+            if name_or_version_or_profile.contains('.')
+                || Version::parse(name_or_version_or_profile).is_ok()
+            {
+                version = Some(name_or_version_or_profile);
+            } else {
+                contract_name = Some(name_or_version_or_profile);
+                if let Some(version_or_profile) = parts.next() {
+                    if version_or_profile.contains('.')
+                        || Version::parse(version_or_profile).is_ok()
+                    {
+                        version = Some(version_or_profile);
+                    } else {
+                        profile = Some(version_or_profile);
+                    }
+                }
+            }
+        }
+    } else {
+        contract_name = Some(path_or_name);
+        if let Some(version_or_profile) = parts.next() {
+            if version_or_profile.contains('.') || Version::parse(version_or_profile).is_ok() {
+                version = Some(version_or_profile);
+            } else {
+                profile = Some(version_or_profile);
+            }
+        }
+    }
+
+    let version = if let Some(version) = version {
+        Some(Version::parse(version).map_err(|e| format!("failed parsing version: {e}"))?)
+    } else {
+        None
+    };
+
+    Ok(ParsedArtifactPath { file, contract_name, version, profile })
+}
+
 impl Cheatcode for existsCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
         Ok(path.exists().abi_encode())
@@ -37,7 +119,7 @@ impl Cheatcode for existsCall {
 }
 
 impl Cheatcode for fsMetadataCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
 
@@ -63,7 +145,7 @@ impl Cheatcode for fsMetadataCall {
 }
 
 impl Cheatcode for isDirCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
         Ok(path.is_dir().abi_encode())
@@ -71,7 +153,7 @@ impl Cheatcode for isDirCall {
 }
 
 impl Cheatcode for isFileCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
         Ok(path.is_file().abi_encode())
@@ -79,14 +161,27 @@ impl Cheatcode for isFileCall {
 }
 
 impl Cheatcode for projectRootCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self {} = self;
         Ok(state.config.root.display().to_string().abi_encode())
     }
 }
 
+impl Cheatcode for currentFilePathCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+        let Self {} = self;
+        let artifact = state
+            .config
+            .running_artifact
+            .as_ref()
+            .ok_or_else(|| fmt_err!("no running contract found"))?;
+        let relative = artifact.source.strip_prefix(&state.config.root).unwrap_or(&artifact.source);
+        Ok(relative.display().to_string().abi_encode())
+    }
+}
+
 impl Cheatcode for unixTimeCall {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self {} = self;
         let difference = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -96,7 +191,7 @@ impl Cheatcode for unixTimeCall {
 }
 
 impl Cheatcode for closeFileCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
 
@@ -107,7 +202,7 @@ impl Cheatcode for closeFileCall {
 }
 
 impl Cheatcode for copyFileCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { from, to } = self;
         let from = state.config.ensure_path_allowed(from, FsAccessKind::Read)?;
         let to = state.config.ensure_path_allowed(to, FsAccessKind::Write)?;
@@ -119,7 +214,7 @@ impl Cheatcode for copyFileCall {
 }
 
 impl Cheatcode for createDirCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { path, recursive } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Write)?;
         if *recursive { fs::create_dir_all(path) } else { fs::create_dir(path) }?;
@@ -128,28 +223,28 @@ impl Cheatcode for createDirCall {
 }
 
 impl Cheatcode for readDir_0Call {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { path } = self;
         read_dir(state, path.as_ref(), 1, false)
     }
 }
 
 impl Cheatcode for readDir_1Call {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { path, maxDepth } = self;
         read_dir(state, path.as_ref(), *maxDepth, false)
     }
 }
 
 impl Cheatcode for readDir_2Call {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { path, maxDepth, followLinks } = self;
         read_dir(state, path.as_ref(), *maxDepth, *followLinks)
     }
 }
 
 impl Cheatcode for readFileCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
         Ok(fs::locked_read_to_string(path)?.abi_encode())
@@ -157,7 +252,7 @@ impl Cheatcode for readFileCall {
 }
 
 impl Cheatcode for readFileBinaryCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
         Ok(fs::locked_read(path)?.abi_encode())
@@ -165,7 +260,7 @@ impl Cheatcode for readFileBinaryCall {
 }
 
 impl Cheatcode for readLineCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
 
@@ -191,7 +286,7 @@ impl Cheatcode for readLineCall {
 }
 
 impl Cheatcode for readLinkCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { linkPath: path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
         let target = fs::read_link(path)?;
@@ -200,16 +295,17 @@ impl Cheatcode for readLinkCall {
 }
 
 impl Cheatcode for removeDirCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { path, recursive } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Write)?;
+        state.config.ensure_not_foundry_toml(&path)?;
         if *recursive { fs::remove_dir_all(path) } else { fs::remove_dir(path) }?;
         Ok(Default::default())
     }
 }
 
 impl Cheatcode for removeFileCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Write)?;
         state.config.ensure_not_foundry_toml(&path)?;
@@ -226,21 +322,21 @@ impl Cheatcode for removeFileCall {
 }
 
 impl Cheatcode for writeFileCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { path, data } = self;
         write_file(state, path.as_ref(), data.as_bytes())
     }
 }
 
 impl Cheatcode for writeFileBinaryCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { path, data } = self;
         write_file(state, path.as_ref(), data)
     }
 }
 
 impl Cheatcode for writeLineCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { path, data: line } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Write)?;
         state.config.ensure_not_foundry_toml(&path)?;
@@ -254,7 +350,7 @@ impl Cheatcode for writeLineCall {
 }
 
 impl Cheatcode for getArtifactPathByCodeCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { code } = self;
         let (artifact_id, _) = state
             .config
@@ -268,7 +364,7 @@ impl Cheatcode for getArtifactPathByCodeCall {
 }
 
 impl Cheatcode for getArtifactPathByDeployedCodeCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { deployedCode } = self;
         let (artifact_id, _) = state
             .config
@@ -282,70 +378,123 @@ impl Cheatcode for getArtifactPathByDeployedCodeCall {
 }
 
 impl Cheatcode for getCodeCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { artifactPath: path } = self;
         Ok(get_artifact_code(state, path, false)?.abi_encode())
     }
 }
 
 impl Cheatcode for getDeployedCodeCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { artifactPath: path } = self;
         Ok(get_artifact_code(state, path, true)?.abi_encode())
     }
 }
 
+impl Cheatcode for getSelectorsCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { artifactPath: path } = self;
+        let selectors: Vec<FixedBytes<4>> = match get_artifact_source(state, path)? {
+            ArtifactSource::InMemory(data) => data.abi.functions().map(|f| f.selector()).collect(),
+            ArtifactSource::Disk(path) => {
+                let data = read_artifact_file(state, &path)?;
+                // Parse as raw JSON rather than `ContractObject` so we can still read selectors
+                // from artifacts with unlinked bytecode (which `ContractObject` rejects).
+                let json: serde_json::Value = serde_json::from_str(&data)?;
+                let abi =
+                    json.get("abi").ok_or_else(|| fmt_err!("no `abi` field in artifact JSON"))?;
+                let abi: alloy_json_abi::JsonAbi =
+                    serde_json::from_value(abi.clone()).map_err(|e| fmt_err!("{e}"))?;
+                abi.functions().map(|f| f.selector()).collect()
+            }
+        };
+        Ok(selectors.abi_encode())
+    }
+}
+
 impl Cheatcode for deployCode_0Call {
-    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+    fn apply_full<FEN: FoundryEvmNetwork>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, '_, FEN>,
+        executor: &mut dyn CheatcodesExecutor<FEN>,
+    ) -> Result {
         let Self { artifactPath: path } = self;
         deploy_code(ccx, executor, path, None, None, None)
     }
 }
 
 impl Cheatcode for deployCode_1Call {
-    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+    fn apply_full<FEN: FoundryEvmNetwork>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, '_, FEN>,
+        executor: &mut dyn CheatcodesExecutor<FEN>,
+    ) -> Result {
         let Self { artifactPath: path, constructorArgs: args } = self;
         deploy_code(ccx, executor, path, Some(args), None, None)
     }
 }
 
 impl Cheatcode for deployCode_2Call {
-    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+    fn apply_full<FEN: FoundryEvmNetwork>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, '_, FEN>,
+        executor: &mut dyn CheatcodesExecutor<FEN>,
+    ) -> Result {
         let Self { artifactPath: path, value } = self;
         deploy_code(ccx, executor, path, None, Some(*value), None)
     }
 }
 
 impl Cheatcode for deployCode_3Call {
-    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+    fn apply_full<FEN: FoundryEvmNetwork>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, '_, FEN>,
+        executor: &mut dyn CheatcodesExecutor<FEN>,
+    ) -> Result {
         let Self { artifactPath: path, constructorArgs: args, value } = self;
         deploy_code(ccx, executor, path, Some(args), Some(*value), None)
     }
 }
 
 impl Cheatcode for deployCode_4Call {
-    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+    fn apply_full<FEN: FoundryEvmNetwork>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, '_, FEN>,
+        executor: &mut dyn CheatcodesExecutor<FEN>,
+    ) -> Result {
         let Self { artifactPath: path, salt } = self;
         deploy_code(ccx, executor, path, None, None, Some((*salt).into()))
     }
 }
 
 impl Cheatcode for deployCode_5Call {
-    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+    fn apply_full<FEN: FoundryEvmNetwork>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, '_, FEN>,
+        executor: &mut dyn CheatcodesExecutor<FEN>,
+    ) -> Result {
         let Self { artifactPath: path, constructorArgs: args, salt } = self;
         deploy_code(ccx, executor, path, Some(args), None, Some((*salt).into()))
     }
 }
 
 impl Cheatcode for deployCode_6Call {
-    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+    fn apply_full<FEN: FoundryEvmNetwork>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, '_, FEN>,
+        executor: &mut dyn CheatcodesExecutor<FEN>,
+    ) -> Result {
         let Self { artifactPath: path, value, salt } = self;
         deploy_code(ccx, executor, path, None, Some(*value), Some((*salt).into()))
     }
 }
 
 impl Cheatcode for deployCode_7Call {
-    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+    fn apply_full<FEN: FoundryEvmNetwork>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, '_, FEN>,
+        executor: &mut dyn CheatcodesExecutor<FEN>,
+    ) -> Result {
         let Self { artifactPath: path, constructorArgs: args, value, salt } = self;
         deploy_code(ccx, executor, path, Some(args), Some(*value), Some((*salt).into()))
     }
@@ -353,9 +502,9 @@ impl Cheatcode for deployCode_7Call {
 
 /// Helper function to deploy contract from artifact code.
 /// Uses CREATE2 scheme if salt specified.
-fn deploy_code(
-    ccx: &mut CheatsCtxt,
-    executor: &mut dyn CheatcodesExecutor,
+fn deploy_code<FEN: FoundryEvmNetwork>(
+    ccx: &mut CheatsCtxt<'_, '_, FEN>,
+    executor: &mut dyn CheatcodesExecutor<FEN>,
     path: &str,
     constructor_args: Option<&Bytes>,
     value: Option<U256>,
@@ -375,22 +524,56 @@ fn deploy_code(
     let scheme =
         if let Some(salt) = salt { CreateScheme::Create2 { salt } } else { CreateScheme::Create };
 
-    // If prank active at current depth, then use it as caller for create input.
-    let caller = ccx
-        .state
-        .get_prank(ccx.ecx.journaled_state.depth())
-        .map_or(ccx.caller, |prank| prank.new_caller);
+    // The nested EVM executes the synthetic create one level deeper, so apply the prank at the
+    // original depth just as the native create inspector would.
+    let depth = ccx.ecx.journal().depth();
+    let mut caller = ccx.caller;
+    if let Some(prank) = ccx.state.get_prank(depth).copied()
+        && depth >= prank.depth
+        && caller == prank.prank_caller
+    {
+        let prank_applied = if depth == prank.depth {
+            caller = prank.new_caller;
+            true
+        } else {
+            false
+        };
+        let prank_applied = if let Some(new_origin) = prank.new_origin {
+            ccx.ecx.tx_mut().set_caller(new_origin);
+            true
+        } else {
+            prank_applied
+        };
 
-    let outcome = executor.exec_create(
+        if prank_applied && let Some(applied_prank) = prank.first_time_applied() {
+            ccx.state.pranks.insert(depth, applied_prank);
+        }
+    }
+
+    let outcome = exec_create(
+        executor,
         CreateInputs::new(
             caller,
             scheme,
             value.unwrap_or(U256::ZERO),
             bytecode.into(),
             ccx.gas_limit,
+            0,
         ),
         ccx,
-    )?;
+    );
+
+    // Restore the prank state at the original depth as native create cleanup would.
+    if let Some(prank) = ccx.state.get_prank(depth).copied()
+        && depth == prank.depth
+    {
+        ccx.ecx.tx_mut().set_caller(prank.prank_origin);
+        if prank.single_call {
+            std::mem::take(&mut ccx.state.pranks);
+        }
+    }
+
+    let outcome = outcome?;
 
     if !outcome.result.result.is_ok() {
         return Err(crate::Error::from(outcome.result.output));
@@ -401,55 +584,69 @@ fn deploy_code(
     Ok(address.abi_encode())
 }
 
-/// Returns the bytecode from a JSON artifact file.
+/// Resolved location of an artifact referenced by a cheatcode path argument.
+enum ArtifactSource<'a> {
+    /// The artifact was matched in the in-memory `available_artifacts` list.
+    InMemory(&'a ContractData),
+    /// The artifact must be read from the given path on disk.
+    Disk(PathBuf),
+}
+
+/// Resolves a cheatcode artifact reference to its source.
 ///
-/// Can parse following input formats:
+/// Can parse the following input formats:
 /// - `path/to/artifact.json`
 /// - `path/to/contract.sol`
 /// - `path/to/contract.sol:ContractName`
 /// - `path/to/contract.sol:ContractName:0.8.23`
+/// - `path/to/contract.sol:ContractName:profile`
 /// - `path/to/contract.sol:0.8.23`
+/// - `path/to/contract.sol:profile`
 /// - `ContractName`
 /// - `ContractName:0.8.23`
-///
-/// This function is safe to use with contracts that have library dependencies.
-/// `alloy_json_abi::ContractObject` validates bytecode during JSON parsing and will
-/// reject artifacts with unlinked library placeholders.
-fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<Bytes> {
-    let path = if path.ends_with(".json") {
-        PathBuf::from(path)
-    } else {
-        let mut parts = path.split(':');
+/// - `ContractName:profile`
+fn get_artifact_source<'a, FEN: FoundryEvmNetwork>(
+    state: &'a Cheatcodes<FEN>,
+    path: &str,
+) -> Result<ArtifactSource<'a>> {
+    if path.ends_with(".json") {
+        let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
+        return Ok(ArtifactSource::Disk(path));
+    }
 
-        let mut file = None;
-        let mut contract_name = None;
-        let mut version = None;
+    let parsed =
+        parse_artifact_path(path).map_err(|e| fmt_err!("failed to parse artifact path: {e}"))?;
+    let ParsedArtifactPath { file, contract_name, version, profile } = parsed;
+    let file = file.map(|file| {
+        let cwd = state
+            .config
+            .running_artifact
+            .as_ref()
+            .and_then(|artifact| artifact.source.parent())
+            .unwrap_or(&state.config.paths.root);
+        let relative_cwd = cwd.strip_prefix(&state.config.paths.root).unwrap_or(cwd);
+        let has_matching_remapping = state.config.paths.remappings.iter().any(|remapping| {
+            remapping.context.as_ref().is_none_or(|context| relative_cwd.starts_with(context))
+                && file.strip_prefix(&remapping.name).is_ok()
+        });
 
-        let path_or_name = parts.next().unwrap();
-        if path_or_name.contains('.') {
-            file = Some(PathBuf::from(path_or_name));
-            if let Some(name_or_version) = parts.next() {
-                if name_or_version.contains('.') {
-                    version = Some(name_or_version);
-                } else {
-                    contract_name = Some(name_or_version);
-                    version = parts.next();
-                }
-            }
+        if has_matching_remapping {
+            state.config.paths.resolve_library_import(cwd, &file).map_or(file, |resolved| {
+                resolved.strip_prefix(&state.config.paths.root).unwrap_or(&resolved).to_path_buf()
+            })
         } else {
-            contract_name = Some(path_or_name);
-            version = parts.next();
+            file
         }
+    });
 
-        let version = if let Some(version) = version {
-            Some(Version::parse(version).map_err(|e| fmt_err!("failed parsing version: {e}"))?)
-        } else {
-            None
-        };
-
-        // Use available artifacts list if present
-        if let Some(artifacts) = &state.config.available_artifacts {
-            let filtered = artifacts
+    // Use the artifact lookup if present.
+    if let Some(artifacts) =
+        state.config.available_artifacts.as_ref().or(state.config.artifact_lookup.as_ref())
+    {
+        let ambiguous_file_profile =
+            file.is_some() && version.is_none() && profile.is_none() && contract_name.is_some();
+        let filter_artifacts = |treat_ambiguous_as_profile: bool| -> Vec<_> {
+            artifacts
                 .iter()
                 .filter(|(id, _)| {
                     // name might be in the form of "Counter.0.8.23"
@@ -460,11 +657,6 @@ fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<B
                     {
                         return false;
                     }
-                    if let Some(name) = contract_name
-                        && id_name != name
-                    {
-                        return false;
-                    }
                     if let Some(ref version) = version
                         && (id.version.minor != version.minor
                             || id.version.major != version.major
@@ -472,157 +664,207 @@ fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<B
                     {
                         return false;
                     }
+                    if let Some(profile) = profile
+                        && id.profile != profile
+                    {
+                        return false;
+                    }
+                    if let Some(name) = contract_name {
+                        if treat_ambiguous_as_profile && ambiguous_file_profile {
+                            return id.profile == name;
+                        }
+
+                        return id_name == name;
+                    }
+
                     true
                 })
-                .collect::<Vec<_>>();
+                .collect()
+        };
 
-            let artifact = match &filtered[..] {
-                [] => None,
-                [artifact] => Some(Ok(*artifact)),
-                filtered => {
-                    let mut filtered = filtered.to_vec();
-                    // If we know the current script/test contract solc version, try to filter by it
-                    Some(
-                        state
-                            .config
-                            .running_artifact
-                            .as_ref()
-                            .and_then(|running| {
-                                // Firstly filter by version
+        let mut filtered = filter_artifacts(false);
+        if filtered.is_empty() && ambiguous_file_profile {
+            filtered = filter_artifacts(true);
+        }
+
+        let artifact = match &filtered[..] {
+            [] => None,
+            [artifact] => Some(Ok(*artifact)),
+            filtered => {
+                let mut filtered = filtered.to_vec();
+                // If we know the current script/test contract solc version, try to filter by it
+                Some(
+                    state
+                        .config
+                        .running_artifact
+                        .as_ref()
+                        .and_then(|running| {
+                            // Only filter by running version if user did NOT specify a version
+                            if version.is_none() {
                                 filtered.retain(|(id, _)| id.version == running.version);
 
                                 // Return artifact if only one matched
                                 if filtered.len() == 1 {
                                     return Some(filtered[0]);
                                 }
+                            }
 
-                                // Try filtering by profile as well
+                            // Only filter by running profile if user did NOT specify a profile
+                            if profile.is_none() {
                                 filtered.retain(|(id, _)| id.profile == running.profile);
 
-                                if filtered.len() == 1 { Some(filtered[0]) } else { None }
-                            })
-                            .ok_or_else(|| fmt_err!("multiple matching artifacts found")),
-                    )
-                }
-            };
+                                return (filtered.len() == 1).then(|| filtered[0]);
+                            }
 
-            if let Some(artifact) = artifact {
-                let artifact = artifact?;
-                let maybe_bytecode = if deployed {
-                    artifact.1.deployed_bytecode().cloned()
-                } else {
-                    artifact.1.bytecode().cloned()
-                };
-
-                return maybe_bytecode.ok_or_else(|| {
-                    fmt_err!("no bytecode for contract; is it abstract or unlinked?")
-                });
+                            None
+                        })
+                        .ok_or_else(|| fmt_err!("multiple matching artifacts found")),
+                )
             }
-        }
-
-        // Fallback: construct path manually when no artifacts list or no match found
-        let path_in_artifacts = match (file.map(|f| f.to_string_lossy().to_string()), contract_name)
-        {
-            (Some(file), Some(contract_name)) => {
-                PathBuf::from(format!("{file}/{contract_name}.json"))
-            }
-            (None, Some(contract_name)) => {
-                PathBuf::from(format!("{contract_name}.sol/{contract_name}.json"))
-            }
-            (Some(file), None) => {
-                let name = file.replace(".sol", "");
-                PathBuf::from(format!("{file}/{name}.json"))
-            }
-            _ => bail!("invalid artifact path"),
         };
 
-        state.config.paths.artifacts.join(path_in_artifacts)
+        if let Some(artifact) = artifact {
+            return Ok(ArtifactSource::InMemory(artifact?.1));
+        }
+    }
+
+    // Fallback: construct path manually when no artifacts list or no match found
+    let path_in_artifacts = match (file.map(|f| f.to_string_lossy().to_string()), contract_name) {
+        (Some(file), Some(contract_name)) => PathBuf::from(format!("{file}/{contract_name}.json")),
+        (None, Some(contract_name)) => {
+            PathBuf::from(format!("{contract_name}.sol/{contract_name}.json"))
+        }
+        (Some(file), None) => {
+            let name = file.replace(".sol", "");
+            PathBuf::from(format!("{file}/{name}.json"))
+        }
+        _ => bail!("invalid artifact path"),
     };
 
+    let path = state.config.paths.artifacts.join(path_in_artifacts);
     let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
-    let data = fs::read_to_string(path).map_err(|e| {
+    Ok(ArtifactSource::Disk(path))
+}
+
+/// Reads an artifact JSON file, mapping I/O errors to a helpful message when the
+/// lookup fell through the in-memory artifacts list.
+fn read_artifact_file<FEN: FoundryEvmNetwork>(
+    state: &Cheatcodes<FEN>,
+    path: &Path,
+) -> Result<String> {
+    fs::read_to_string(path).map_err(|e| {
         if state.config.available_artifacts.is_some() {
             fmt_err!("no matching artifact found")
         } else {
             e.into()
         }
-    })?;
-    let artifact = serde_json::from_str::<ContractObject>(&data)?;
-    let maybe_bytecode = if deployed { artifact.deployed_bytecode } else { artifact.bytecode };
+    })
+}
+
+/// Returns the bytecode from a JSON artifact file.
+///
+/// See [`get_artifact_source`] for the supported path formats.
+///
+/// This function is safe to use with contracts that have library dependencies.
+/// `alloy_json_abi::ContractObject` validates bytecode during JSON parsing and will
+/// reject artifacts with unlinked library placeholders.
+fn get_artifact_code<FEN: FoundryEvmNetwork>(
+    state: &Cheatcodes<FEN>,
+    path: &str,
+    deployed: bool,
+) -> Result<Bytes> {
+    let maybe_bytecode = match get_artifact_source(state, path)? {
+        ArtifactSource::InMemory(data) => {
+            if deployed { data.deployed_bytecode() } else { data.bytecode() }.cloned()
+        }
+        ArtifactSource::Disk(path) => {
+            let data = read_artifact_file(state, &path)?;
+            let artifact = serde_json::from_str::<ContractObject>(&data)?;
+            if deployed { artifact.deployed_bytecode } else { artifact.bytecode }
+        }
+    };
     maybe_bytecode.ok_or_else(|| fmt_err!("no bytecode for contract; is it abstract or unlinked?"))
 }
 
 impl Cheatcode for ffiCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { commandInput: input } = self;
+        let stdout = ffi_stdout(state, input)?;
+        Ok(decode_ffi_stdout(&stdout).abi_encode())
+    }
+}
 
-        let output = ffi(state, input)?;
+impl Cheatcode for ffiUintCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { commandInput: input } = self;
+        parse(&ffi_stdout(state, input)?, &DynSolType::Uint(256))
+    }
+}
 
-        // Check the exit code of the command.
-        if output.exitCode != 0 {
-            // If the command failed, return an error with the exit code and stderr.
-            return Err(fmt_err!(
-                "ffi command {:?} exited with code {}. stderr: {}",
-                input,
-                output.exitCode,
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
+impl Cheatcode for ffiStringCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { commandInput: input } = self;
+        Ok(ffi_stdout(state, input)?.abi_encode())
+    }
+}
 
-        // If the command succeeded but still wrote to stderr, log it as a warning.
-        if !output.stderr.is_empty() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            warn!(target: "cheatcodes", ?input, ?stderr, "ffi command wrote to stderr");
-        }
-
-        // We already hex-decoded the stdout in the `ffi` helper function.
-        Ok(output.stdout.abi_encode())
+impl Cheatcode for ffiBytesCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { commandInput: input } = self;
+        let stdout = ffi_stdout(state, input)?;
+        Ok(hex::decode(&stdout)
+            .map_err(|err| fmt_err!("failed parsing ffi stdout as bytes: {err}"))?
+            .abi_encode())
     }
 }
 
 impl Cheatcode for tryFfiCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { commandInput: input } = self;
         ffi(state, input).map(|res| res.abi_encode())
     }
 }
 
 impl Cheatcode for promptCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { promptText: text } = self;
         prompt(state, text, prompt_input).map(|res| res.abi_encode())
     }
 }
 
 impl Cheatcode for promptSecretCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { promptText: text } = self;
         prompt(state, text, prompt_password).map(|res| res.abi_encode())
     }
 }
 
 impl Cheatcode for promptSecretUintCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { promptText: text } = self;
         parse(&prompt(state, text, prompt_password)?, &DynSolType::Uint(256))
     }
 }
 
 impl Cheatcode for promptAddressCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { promptText: text } = self;
         parse(&prompt(state, text, prompt_input)?, &DynSolType::Address)
     }
 }
 
 impl Cheatcode for promptUintCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { promptText: text } = self;
         parse(&prompt(state, text, prompt_input)?, &DynSolType::Uint(256))
     }
 }
 
-pub(super) fn write_file(state: &Cheatcodes, path: &Path, contents: &[u8]) -> Result {
+pub(super) fn write_file<FEN: FoundryEvmNetwork>(
+    state: &Cheatcodes<FEN>,
+    path: &Path,
+    contents: &[u8],
+) -> Result {
     let path = state.config.ensure_path_allowed(path, FsAccessKind::Write)?;
     // write access to foundry.toml is not allowed
     state.config.ensure_not_foundry_toml(&path)?;
@@ -634,7 +876,12 @@ pub(super) fn write_file(state: &Cheatcodes, path: &Path, contents: &[u8]) -> Re
     Ok(Default::default())
 }
 
-fn read_dir(state: &Cheatcodes, path: &Path, max_depth: u64, follow_links: bool) -> Result {
+fn read_dir<FEN: FoundryEvmNetwork>(
+    state: &Cheatcodes<FEN>,
+    path: &Path,
+    max_depth: u64,
+    follow_links: bool,
+) -> Result {
     let root = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
     let paths: Vec<DirEntry> = WalkDir::new(root)
         .min_depth(1)
@@ -664,7 +911,44 @@ fn read_dir(state: &Cheatcodes, path: &Path, max_depth: u64, follow_links: bool)
     Ok(paths.abi_encode())
 }
 
-fn ffi(state: &Cheatcodes, input: &[String]) -> Result<FfiResult> {
+fn ffi<FEN: FoundryEvmNetwork>(state: &Cheatcodes<FEN>, input: &[String]) -> Result<FfiResult> {
+    let output = ffi_command(state, input)?;
+
+    let stdout = String::from_utf8(output.stdout)?;
+    let stdout = stdout.trim();
+    Ok(FfiResult {
+        exitCode: output.status.code().unwrap_or(69),
+        stdout: decode_ffi_stdout(stdout),
+        stderr: output.stderr.into(),
+    })
+}
+
+fn ffi_stdout<FEN: FoundryEvmNetwork>(state: &Cheatcodes<FEN>, input: &[String]) -> Result<String> {
+    let output = ffi_command(state, input)?;
+    let stdout = String::from_utf8(output.stdout)?;
+    if !output.status.success() {
+        return Err(fmt_err!(
+            "ffi command {:?} exited with code {}. stderr: {}",
+            input,
+            output.status.code().unwrap_or(69),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    if !output.stderr.is_empty() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        warn!(target: "cheatcodes", ?input, ?stderr, "ffi command wrote to stderr");
+    }
+    Ok(stdout.trim().to_string())
+}
+
+fn decode_ffi_stdout(stdout: &str) -> Bytes {
+    hex::decode(stdout).unwrap_or_else(|_| stdout.as_bytes().to_vec()).into()
+}
+
+fn ffi_command<FEN: FoundryEvmNetwork>(
+    state: &Cheatcodes<FEN>,
+    input: &[String],
+) -> Result<std::process::Output> {
     ensure!(
         state.config.ffi,
         "FFI is disabled; add the `--ffi` flag to allow tests to call external commands"
@@ -675,25 +959,9 @@ fn ffi(state: &Cheatcodes, input: &[String]) -> Result<FfiResult> {
 
     debug!(target: "cheatcodes", ?cmd, "invoking ffi");
 
-    let output = cmd
-        .current_dir(&state.config.root)
+    cmd.current_dir(&state.config.root)
         .output()
-        .map_err(|err| fmt_err!("failed to execute command {cmd:?}: {err}"))?;
-
-    // The stdout might be encoded on valid hex, or it might just be a string,
-    // so we need to determine which it is to avoid improperly encoding later.
-    let trimmed_stdout = String::from_utf8(output.stdout)?;
-    let trimmed_stdout = trimmed_stdout.trim();
-    let encoded_stdout = if let Ok(hex) = hex::decode(trimmed_stdout) {
-        hex
-    } else {
-        trimmed_stdout.as_bytes().to_vec()
-    };
-    Ok(FfiResult {
-        exitCode: output.status.code().unwrap_or(69),
-        stdout: encoded_stdout.into(),
-        stderr: output.stderr.into(),
-    })
+        .map_err(|err| fmt_err!("failed to execute command {cmd:?}: {err}"))
 }
 
 fn prompt_input(prompt_text: &str) -> Result<String, dialoguer::Error> {
@@ -704,8 +972,8 @@ fn prompt_password(prompt_text: &str) -> Result<String, dialoguer::Error> {
     Password::new().with_prompt(prompt_text).interact()
 }
 
-fn prompt(
-    state: &Cheatcodes,
+fn prompt<FEN: FoundryEvmNetwork>(
+    state: &Cheatcodes<FEN>,
     prompt_text: &str,
     input: fn(&str) -> Result<String, dialoguer::Error>,
 ) -> Result<String> {
@@ -730,10 +998,10 @@ fn prompt(
 }
 
 impl Cheatcode for getBroadcastCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { contractName, chainId, txType } = self;
 
-        let latest_broadcast = latest_broadcast(
+        let latest_broadcast = latest_broadcast::<<FEN as FoundryEvmNetwork>::Network>(
             contractName,
             *chainId,
             &state.config.broadcast,
@@ -745,13 +1013,13 @@ impl Cheatcode for getBroadcastCall {
 }
 
 impl Cheatcode for getBroadcasts_0Call {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { contractName, chainId, txType } = self;
 
         let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?
             .with_tx_type(map_broadcast_tx_type(*txType));
 
-        let broadcasts = reader.read()?;
+        let broadcasts = reader.read::<<FEN as FoundryEvmNetwork>::Network>()?;
 
         let summaries = broadcasts
             .into_iter()
@@ -766,12 +1034,12 @@ impl Cheatcode for getBroadcasts_0Call {
 }
 
 impl Cheatcode for getBroadcasts_1Call {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { contractName, chainId } = self;
 
         let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?;
 
-        let broadcasts = reader.read()?;
+        let broadcasts = reader.read::<<FEN as FoundryEvmNetwork>::Network>()?;
 
         let summaries = broadcasts
             .into_iter()
@@ -786,11 +1054,11 @@ impl Cheatcode for getBroadcasts_1Call {
 }
 
 impl Cheatcode for getDeployment_0Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { contractName } = self;
-        let chain_id = ccx.ecx.cfg.chain_id;
+        let chain_id = ccx.ecx.cfg().chain_id();
 
-        let latest_broadcast = latest_broadcast(
+        let latest_broadcast = latest_broadcast::<<FEN as FoundryEvmNetwork>::Network>(
             contractName,
             chain_id,
             &ccx.state.config.broadcast,
@@ -802,10 +1070,10 @@ impl Cheatcode for getDeployment_0Call {
 }
 
 impl Cheatcode for getDeployment_1Call {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { contractName, chainId } = self;
 
-        let latest_broadcast = latest_broadcast(
+        let latest_broadcast = latest_broadcast::<<FEN as FoundryEvmNetwork>::Network>(
             contractName,
             *chainId,
             &state.config.broadcast,
@@ -817,14 +1085,14 @@ impl Cheatcode for getDeployment_1Call {
 }
 
 impl Cheatcode for getDeploymentsCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { contractName, chainId } = self;
 
         let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?
             .with_tx_type(CallKind::Create)
             .with_tx_type(CallKind::Create2);
 
-        let broadcasts = reader.read()?;
+        let broadcasts = reader.read::<<FEN as FoundryEvmNetwork>::Network>()?;
 
         let summaries = broadcasts
             .into_iter()
@@ -850,15 +1118,15 @@ fn map_broadcast_tx_type(tx_type: BroadcastTxType) -> CallKind {
     }
 }
 
-fn parse_broadcast_results(
-    results: Vec<(TransactionWithMetadata, AnyTransactionReceipt)>,
+fn parse_broadcast_results<N: Network>(
+    results: Vec<(TransactionWithMetadata<N>, N::ReceiptResponse)>,
 ) -> Vec<BroadcastTxSummary> {
     results
         .into_iter()
         .map(|(tx, receipt)| BroadcastTxSummary {
-            txHash: receipt.transaction_hash,
-            blockNumber: receipt.block_number.unwrap_or_default(),
-            txType: match tx.opcode {
+            txHash: receipt.transaction_hash(),
+            blockNumber: receipt.block_number().unwrap_or_default(),
+            txType: match tx.call_kind {
                 CallKind::Call => BroadcastTxType::Call,
                 CallKind::Create => BroadcastTxType::Create,
                 CallKind::Create2 => BroadcastTxType::Create2,
@@ -870,19 +1138,22 @@ fn parse_broadcast_results(
         .collect()
 }
 
-fn latest_broadcast(
+fn latest_broadcast<N: Network>(
     contract_name: &String,
     chain_id: u64,
     broadcast_path: &Path,
     filters: Vec<CallKind>,
-) -> Result<BroadcastTxSummary> {
+) -> Result<BroadcastTxSummary>
+where
+    N::TxEnvelope: for<'d> serde::Deserialize<'d>,
+{
     let mut reader = BroadcastReader::new(contract_name.clone(), chain_id, broadcast_path)?;
 
     for filter in filters {
         reader = reader.with_tx_type(filter);
     }
 
-    let broadcast = reader.read_latest()?;
+    let broadcast = reader.read_latest::<N>()?;
 
     let results = reader.into_tx_receipts(broadcast);
 
@@ -898,7 +1169,17 @@ fn latest_broadcast(
 mod tests {
     use super::*;
     use crate::CheatsConfig;
-    use std::sync::Arc;
+    use alloy_primitives::{address, b256};
+    use foundry_common::ContractsByArtifact;
+    use foundry_compilers::{
+        ArtifactId,
+        artifacts::{
+            BytecodeObject, CompactBytecode, CompactContractBytecode, remappings::Remapping,
+        },
+    };
+    use foundry_evm_core::evm::TempoEvmNetwork;
+    use std::{env, fs as stdfs, str::FromStr, sync::Arc};
+    use tempfile::TempDir;
 
     fn cheats() -> Cheatcodes {
         let config = CheatsConfig {
@@ -937,7 +1218,7 @@ mod tests {
         #[cfg(windows)]
         let args = vec!["cmd".to_string(), "/c".to_string(), "exit 1".to_string()];
 
-        let result = ffiCall { commandInput: args }.apply(&mut cheats);
+        let result = Cheatcode::apply(&ffiCall { commandInput: args }, &mut cheats);
 
         // Assert that the cheatcode returned an error.
         assert!(result.is_err(), "Expected ffi cheatcode to fail, but it succeeded");
@@ -971,5 +1252,366 @@ mod tests {
         assert!(result.is_err(), "should reject unlinked bytecode with placeholders");
         let err = result.unwrap_err().to_string();
         assert!(err.contains("expected bytecode, found unlinked bytecode with placeholder"));
+    }
+
+    #[test]
+    fn test_parse_artifact_path_file_only() {
+        let parsed = super::parse_artifact_path("path/to/Contract.sol").unwrap();
+        assert_eq!(parsed.file, Some(PathBuf::from("path/to/Contract.sol")));
+        assert_eq!(parsed.contract_name, None);
+        assert_eq!(parsed.version, None);
+        assert_eq!(parsed.profile, None);
+    }
+
+    #[test]
+    fn test_parse_artifact_path_windows_drive() {
+        for file in [
+            "C:/project/src/Contract.sol",
+            r"C:\project\src\Contract.sol",
+            r"\\?\C:\project\src\Contract.sol",
+            r"\\server\share\Contract.sol",
+        ] {
+            for (suffix, contract_name, version, profile) in [
+                ("", None, None, None),
+                (":MyContract", Some("MyContract"), None, None),
+                (":0.8.23", None, Some(Version::new(0, 8, 23)), None),
+                (":MyContract:0.8.23", Some("MyContract"), Some(Version::new(0, 8, 23)), None),
+                (":MyContract:optimized", Some("MyContract"), None, Some("optimized")),
+            ] {
+                let input = format!("{file}{suffix}");
+                assert_eq!(
+                    parse_artifact_path(&input).unwrap(),
+                    ParsedArtifactPath {
+                        file: Some(PathBuf::from(file)),
+                        contract_name,
+                        version,
+                        profile,
+                    },
+                    "{input}"
+                );
+            }
+        }
+
+        // A one-letter contract name must still allow version and profile suffixes.
+        assert_eq!(parse_artifact_path("C:0.8.23").unwrap().version, Some(Version::new(0, 8, 23)));
+        assert_eq!(parse_artifact_path("C:optimized").unwrap().profile, Some("optimized"));
+    }
+
+    #[test]
+    fn test_parse_artifact_path_file_and_contract() {
+        let parsed = super::parse_artifact_path("path/to/Contract.sol:MyContract").unwrap();
+        assert_eq!(parsed.file, Some(PathBuf::from("path/to/Contract.sol")));
+        assert_eq!(parsed.contract_name, Some("MyContract"));
+        assert_eq!(parsed.version, None);
+        assert_eq!(parsed.profile, None);
+    }
+
+    #[test]
+    fn test_parse_artifact_path_file_contract_version() {
+        let parsed = super::parse_artifact_path("path/to/Contract.sol:MyContract:0.8.23").unwrap();
+        assert_eq!(parsed.file, Some(PathBuf::from("path/to/Contract.sol")));
+        assert_eq!(parsed.contract_name, Some("MyContract"));
+        assert_eq!(parsed.version, Some(semver::Version::new(0, 8, 23)));
+        assert_eq!(parsed.profile, None);
+    }
+
+    #[test]
+    fn test_parse_artifact_path_file_contract_profile() {
+        let parsed =
+            super::parse_artifact_path("path/to/Contract.sol:MyContract:optimized").unwrap();
+        assert_eq!(parsed.file, Some(PathBuf::from("path/to/Contract.sol")));
+        assert_eq!(parsed.contract_name, Some("MyContract"));
+        assert_eq!(parsed.version, None);
+        assert_eq!(parsed.profile, Some("optimized"));
+    }
+
+    #[test]
+    fn test_parse_artifact_path_file_and_version() {
+        let parsed = super::parse_artifact_path("path/to/Contract.sol:0.8.18").unwrap();
+        assert_eq!(parsed.file, Some(PathBuf::from("path/to/Contract.sol")));
+        assert_eq!(parsed.contract_name, None);
+        assert_eq!(parsed.version, Some(semver::Version::new(0, 8, 18)));
+        assert_eq!(parsed.profile, None);
+    }
+
+    #[test]
+    fn test_parse_artifact_path_file_and_profile() {
+        // The parser keeps the two-part file form ambiguous. Artifact lookup can resolve this
+        // segment as a profile when no contract name matches.
+        let parsed = super::parse_artifact_path("Contract.sol:paris").unwrap();
+        assert_eq!(parsed.file, Some(PathBuf::from("Contract.sol")));
+        assert_eq!(parsed.contract_name, Some("paris"));
+        assert_eq!(parsed.version, None);
+        assert_eq!(parsed.profile, None);
+    }
+
+    fn test_artifact(
+        source: &str,
+        name: &str,
+        profile: &str,
+        bytecode: Bytes,
+    ) -> (ArtifactId, CompactContractBytecode) {
+        (
+            ArtifactId {
+                path: PathBuf::from(format!("{source}/{name}.json")),
+                name: name.to_owned(),
+                source: PathBuf::from(source),
+                version: Version::new(0, 8, 30),
+                build_id: String::new(),
+                profile: profile.to_owned(),
+            },
+            CompactContractBytecode {
+                abi: Some(Default::default()),
+                bytecode: Some(CompactBytecode {
+                    object: BytecodeObject::Bytecode(bytecode),
+                    source_map: None,
+                    link_references: Default::default(),
+                }),
+                deployed_bytecode: None,
+            },
+        )
+    }
+
+    #[test]
+    fn test_get_artifact_code_resolves_file_profile_ambiguity() {
+        let default_bytecode = Bytes::from_static(&[0x60, 0x01]);
+        let paris_bytecode = Bytes::from_static(&[0x60, 0x02]);
+        let source = "src/GetCodeProfile.t.sol";
+        let artifacts = ContractsByArtifact::new([
+            test_artifact(source, "GetCodeProfile", "default", default_bytecode),
+            test_artifact(source, "GetCodeProfile", "paris", paris_bytecode.clone()),
+        ]);
+        let config = CheatsConfig {
+            available_artifacts: Some(artifacts),
+            root: PathBuf::from(&env!("CARGO_MANIFEST_DIR")),
+            ..Default::default()
+        };
+        let cheats: Cheatcodes = Cheatcodes::new(Arc::new(config));
+
+        let bytecode =
+            super::get_artifact_code(&cheats, "src/GetCodeProfile.t.sol:paris", false).unwrap();
+
+        assert_eq!(bytecode, paris_bytecode);
+    }
+
+    #[test]
+    fn test_get_artifact_code_prefers_contract_name_over_file_profile_ambiguity() {
+        let profile_bytecode = Bytes::from_static(&[0x60, 0x02]);
+        let contract_bytecode = Bytes::from_static(&[0x60, 0x03]);
+        let source = "src/GetCodeProfile.t.sol";
+        let artifacts = ContractsByArtifact::new([
+            test_artifact(source, "GetCodeProfile", "paris", profile_bytecode),
+            test_artifact(source, "paris", "default", contract_bytecode.clone()),
+        ]);
+        let config = CheatsConfig {
+            available_artifacts: Some(artifacts),
+            root: PathBuf::from(&env!("CARGO_MANIFEST_DIR")),
+            ..Default::default()
+        };
+        let cheats: Cheatcodes = Cheatcodes::new(Arc::new(config));
+
+        let bytecode =
+            super::get_artifact_code(&cheats, "src/GetCodeProfile.t.sol:paris", false).unwrap();
+
+        assert_eq!(bytecode, contract_bytecode);
+    }
+
+    #[test]
+    fn test_get_artifact_code_resolves_remapping() {
+        let bytecode = Bytes::from_static(&[0x60, 0x01]);
+        let artifacts = ContractsByArtifact::new([test_artifact(
+            "src/Something.sol",
+            "Something",
+            "default",
+            bytecode.clone(),
+        )]);
+        let root = PathBuf::from(&env!("CARGO_MANIFEST_DIR"));
+        let paths = foundry_compilers::ProjectPathsConfig::builder()
+            .remapping(Remapping::from_str("@example/=src/").unwrap())
+            .build_with_root(&root);
+        let config = CheatsConfig {
+            available_artifacts: Some(artifacts),
+            root,
+            paths,
+            ..Default::default()
+        };
+        let cheats: Cheatcodes = Cheatcodes::new(Arc::new(config));
+
+        let resolved =
+            super::get_artifact_code(&cheats, "@example/Something.sol:Something", false).unwrap();
+
+        assert_eq!(resolved, bytecode);
+    }
+
+    #[test]
+    fn test_get_artifact_code_preserves_project_path_on_library_collision() {
+        let root_bytecode = Bytes::from_static(&[0x60, 0x01]);
+        let library_bytecode = Bytes::from_static(&[0x60, 0x02]);
+        let artifacts = ContractsByArtifact::new([
+            test_artifact("src/Thing.sol", "RootThing", "default", root_bytecode.clone()),
+            test_artifact("lib/src/Thing.sol", "LibThing", "default", library_bytecode),
+        ]);
+        let temp = TempDir::new().unwrap();
+        let library = temp.path().join("lib");
+        stdfs::create_dir_all(library.join("src")).unwrap();
+        stdfs::write(library.join("src/Thing.sol"), "").unwrap();
+        let paths = foundry_compilers::ProjectPathsConfig::builder()
+            .remappings([])
+            .lib(library)
+            .build_with_root(temp.path());
+        let config = CheatsConfig {
+            available_artifacts: Some(artifacts),
+            root: temp.path().to_path_buf(),
+            paths,
+            ..Default::default()
+        };
+        let cheats: Cheatcodes = Cheatcodes::new(Arc::new(config));
+
+        let resolved = super::get_artifact_code(&cheats, "src/Thing.sol:RootThing", false).unwrap();
+
+        assert_eq!(resolved, root_bytecode);
+    }
+
+    #[test]
+    fn test_parse_artifact_path_contract_only() {
+        let parsed = super::parse_artifact_path("MyContract").unwrap();
+        assert_eq!(parsed.file, None);
+        assert_eq!(parsed.contract_name, Some("MyContract"));
+        assert_eq!(parsed.version, None);
+        assert_eq!(parsed.profile, None);
+    }
+
+    #[test]
+    fn test_parse_artifact_path_contract_and_version() {
+        let parsed = super::parse_artifact_path("MyContract:0.8.23").unwrap();
+        assert_eq!(parsed.file, None);
+        assert_eq!(parsed.contract_name, Some("MyContract"));
+        assert_eq!(parsed.version, Some(semver::Version::new(0, 8, 23)));
+        assert_eq!(parsed.profile, None);
+    }
+
+    #[test]
+    fn test_parse_artifact_path_contract_and_profile() {
+        let parsed = super::parse_artifact_path("MyContract:optimized").unwrap();
+        assert_eq!(parsed.file, None);
+        assert_eq!(parsed.contract_name, Some("MyContract"));
+        assert_eq!(parsed.version, None);
+        assert_eq!(parsed.profile, Some("optimized"));
+    }
+
+    #[test]
+    fn test_parse_artifact_path_profile_names() {
+        // Test various profile name patterns
+        for profile in ["v1", "v2", "paris", "optimized", "default", "prod", "dev"] {
+            let path = format!("MyContract:{profile}");
+            let parsed = super::parse_artifact_path(&path).unwrap();
+            assert_eq!(parsed.contract_name, Some("MyContract"));
+            assert_eq!(parsed.profile, Some(profile));
+            assert_eq!(parsed.version, None);
+        }
+    }
+
+    #[test]
+    fn test_parse_artifact_path_invalid_version() {
+        // Invalid semver should be treated as profile
+        let parsed = super::parse_artifact_path("MyContract:invalid").unwrap();
+        assert_eq!(parsed.contract_name, Some("MyContract"));
+        assert_eq!(parsed.profile, Some("invalid"));
+        assert_eq!(parsed.version, None);
+    }
+
+    fn unique_temp_dir(prefix: &str) -> PathBuf {
+        env::temp_dir().join(format!(
+            "foundry-cheatcodes-{prefix}-{}",
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ))
+    }
+
+    #[test]
+    fn test_latest_broadcast_reads_tempo_sequences() {
+        let root = unique_temp_dir("tempo-broadcast");
+        let broadcast_path = root.join("broadcast");
+        let sequence_dir = broadcast_path.join("Counter.s.sol").join("31337");
+        stdfs::create_dir_all(&sequence_dir).unwrap();
+
+        let tx_hash = "0x04548a0ea27e2cccc1479af3c2ff02da4d4d3ea46af8e8d7edaa49f6ea27073f";
+        let block_hash = "0x860f788b251ece768e63b0d3906d156f652d843848b71c7fe81faacd49139d66";
+        let from = "0xa70ab0448e66cd77995bfbba5c5b64b41a85f3fd";
+        let contract_address = "0x20c0000000000000000000000000000000000000";
+        let zero_bloom = format!("0x{}", "0".repeat(512));
+
+        let sequence = serde_json::json!({
+            "transactions": [{
+                "hash": tx_hash,
+                "transactionType": "CREATE",
+                "contractName": "Counter",
+                "contractAddress": contract_address,
+                "function": serde_json::Value::Null,
+                "arguments": serde_json::Value::Null,
+                "transaction": {
+                    "type": "0x76",
+                    "from": from,
+                    "to": serde_json::Value::Null,
+                    "data": "0x",
+                    "value": "0x0",
+                    "gas": "0x5208",
+                    "nonce": "0x0",
+                    "accessList": [],
+                    "calls": [],
+                    "nonceKey": "0x0",
+                    "feePayerSignature": serde_json::Value::Null,
+                    "validBefore": serde_json::Value::Null,
+                    "validAfter": serde_json::Value::Null,
+                    "keyAuthorization": serde_json::Value::Null,
+                    "aaAuthorizationList": []
+                },
+                "additionalContracts": [],
+                "isFixedGasLimit": false
+            }],
+            "receipts": [{
+                "type": "0x76",
+                "status": "0x1",
+                "cumulativeGasUsed": "0x5208",
+                "logs": [],
+                "logsBloom": zero_bloom,
+                "transactionHash": tx_hash,
+                "transactionIndex": "0x0",
+                "blockHash": block_hash,
+                "blockNumber": "0x7",
+                "gasUsed": "0x5208",
+                "effectiveGasPrice": "0x1",
+                "from": from,
+                "to": serde_json::Value::Null,
+                "contractAddress": contract_address,
+                "feePayer": from
+            }],
+            "libraries": [],
+            "pending": [],
+            "returns": {},
+            "timestamp": 1,
+            "chain": 31337,
+            "commit": serde_json::Value::Null
+        });
+
+        fs::write_json_file(&sequence_dir.join("run-1.json"), &sequence).unwrap();
+
+        let latest = latest_broadcast::<<TempoEvmNetwork as FoundryEvmNetwork>::Network>(
+            &"Counter".to_owned(),
+            31337,
+            &broadcast_path,
+            vec![CallKind::Create],
+        )
+        .unwrap();
+
+        assert_eq!(
+            latest.txHash,
+            b256!("04548a0ea27e2cccc1479af3c2ff02da4d4d3ea46af8e8d7edaa49f6ea27073f")
+        );
+        assert_eq!(latest.blockNumber, 7);
+        assert!(matches!(latest.txType, BroadcastTxType::Create));
+        assert_eq!(latest.contractAddress, address!("20c0000000000000000000000000000000000000"));
+        assert!(latest.success);
+
+        stdfs::remove_dir_all(root).unwrap();
     }
 }

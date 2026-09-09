@@ -52,6 +52,7 @@ contract AsmKeccak256 {
 
     function assemblyHash(uint256 a, uint256 b) public pure returns (bytes32) {
         //optimized
+        // forge-lint: disable-next-line(inline-assembly)
         assembly {
             mstore(0x00, a)
             mstore(0x20, b)

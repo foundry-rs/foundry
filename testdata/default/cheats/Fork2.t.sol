@@ -7,6 +7,8 @@ struct MyStruct {
     uint256 value;
 }
 
+error ExplicitRollCompleted();
+
 contract MyContract {
     uint256 forkId;
     bytes32 blockHash;
@@ -28,6 +30,7 @@ contract MyContract {
 contract ForkTest is Test {
     uint256 mainnetFork;
     uint256 optimismFork;
+    address createdBeforeSwitch;
 
     // this will create two _different_ forks during setup
     function setUp() public {
@@ -146,6 +149,246 @@ contract ForkTest is Test {
         assertEq(dummy.val(), expectedValue);
     }
 
+    function testForkDumpStatePreservesPersistentDeploymentOrder() public {
+        string memory path =
+            string.concat(vm.projectRoot(), "/fixtures/Json/test_dump_state_persistent_deployment_order.json");
+
+        vm.selectFork(mainnetFork);
+        DummyContract first = new DummyContract();
+        vm.makePersistent(address(first));
+
+        vm.selectFork(optimismFork);
+        DummyContract second = new DummyContract();
+        vm.dumpState(path);
+
+        string memory json = vm.readFile(path);
+        uint256 firstIndex = vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(address(first))), '"'));
+        uint256 secondIndex = vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(address(second))), '"'));
+        assertTrue(firstIndex != type(uint256).max);
+        assertTrue(secondIndex != type(uint256).max);
+        assertLt(firstIndex, secondIndex);
+
+        vm.removeFile(path);
+    }
+
+    function testForkDumpStatePreservesRevokedPersistentDeploymentOrder() public {
+        string memory path =
+            string.concat(vm.projectRoot(), "/fixtures/Json/test_dump_state_revoked_persistent_deployment_order.json");
+
+        vm.selectFork(mainnetFork);
+        DummyContract first = new DummyContract();
+        vm.makePersistent(address(first));
+
+        vm.selectFork(optimismFork);
+        vm.revokePersistent(address(first));
+        assert(!vm.isPersistent(address(first)));
+        DummyContract second = new DummyContract();
+        vm.dumpState(path);
+
+        string memory json = vm.readFile(path);
+        uint256 firstIndex = vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(address(first))), '"'));
+        uint256 secondIndex = vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(address(second))), '"'));
+        assertTrue(firstIndex != type(uint256).max);
+        assertTrue(secondIndex != type(uint256).max);
+        assertLt(firstIndex, secondIndex);
+
+        vm.removeFile(path);
+    }
+
+    function testForkDumpStateUsesActiveForkCreationForSameAddress() public {
+        string memory path =
+            string.concat(vm.projectRoot(), "/fixtures/Json/test_dump_state_same_address_creation.json");
+
+        vm.selectFork(mainnetFork);
+        DummyContract first = new DummyContract{salt: bytes32(uint256(1))}();
+
+        vm.selectFork(optimismFork);
+        DummyContract second = new DummyContract();
+        DummyContract recreated = new DummyContract{salt: bytes32(uint256(1))}();
+        assertEq(address(first), address(recreated));
+        vm.dumpState(path);
+
+        string memory json = vm.readFile(path);
+        uint256 secondIndex = vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(address(second))), '"'));
+        uint256 recreatedIndex =
+            vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(address(recreated))), '"'));
+        assertTrue(secondIndex != type(uint256).max);
+        assertTrue(recreatedIndex != type(uint256).max);
+        assertLt(secondIndex, recreatedIndex);
+
+        vm.removeFile(path);
+    }
+
+    function testForkDumpStatePreservesPropagationAfterSnapshotRevert() public {
+        string memory path = string.concat(vm.projectRoot(), "/fixtures/Json/test_dump_state_snapshot_propagation.json");
+
+        vm.selectFork(mainnetFork);
+        DummyContract first = new DummyContract();
+        vm.makePersistent(address(first));
+        uint256 snapshot = vm.snapshotState();
+
+        vm.selectFork(optimismFork);
+        vm.revokePersistent(address(first));
+        assert(vm.revertToState(snapshot));
+        vm.selectFork(optimismFork);
+        DummyContract second = new DummyContract();
+        vm.dumpState(path);
+
+        string memory json = vm.readFile(path);
+        uint256 firstIndex = vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(address(first))), '"'));
+        uint256 secondIndex = vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(address(second))), '"'));
+        assertTrue(firstIndex != type(uint256).max);
+        assertTrue(secondIndex != type(uint256).max);
+        assertLt(firstIndex, secondIndex);
+
+        vm.removeFile(path);
+    }
+
+    function testForkDumpStatePreservesInitialDeploymentOrder() public {
+        string memory path = string.concat(vm.projectRoot(), "/fixtures/Json/test_dump_state_initial_order.json");
+
+        DummyContract first = new DummyContract();
+        vm.selectFork(mainnetFork);
+        DummyContract second = new DummyContract();
+        vm.dumpState(path);
+
+        string memory json = vm.readFile(path);
+        uint256 firstIndex = vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(address(first))), '"'));
+        uint256 secondIndex = vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(address(second))), '"'));
+        assertTrue(firstIndex != type(uint256).max);
+        assertTrue(secondIndex != type(uint256).max);
+        assertLt(firstIndex, secondIndex);
+
+        vm.removeFile(path);
+    }
+
+    function testForkDumpStatePreservesSourceOrderAfterRevertedSwitch() public {
+        string memory path = string.concat(vm.projectRoot(), "/fixtures/Json/test_dump_state_reverted_switch.json");
+
+        vm.selectFork(mainnetFork);
+        try this.createSwitchAndRevert(optimismFork) {} catch {}
+
+        vm.selectFork(mainnetFork);
+        address first = createdBeforeSwitch;
+        assertTrue(first != address(0));
+        DummyContract second = new DummyContract();
+        vm.dumpState(path);
+
+        string memory json = vm.readFile(path);
+        uint256 firstIndex = vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(first)), '"'));
+        uint256 secondIndex = vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(address(second))), '"'));
+        assertTrue(firstIndex != type(uint256).max);
+        assertTrue(secondIndex != type(uint256).max);
+        assertLt(firstIndex, secondIndex);
+
+        vm.removeFile(path);
+    }
+
+    function testForkDumpStatePreservesOrderAfterRevertedRoll() public {
+        string memory path = string.concat(vm.projectRoot(), "/fixtures/Json/test_dump_state_reverted_roll.json");
+
+        vm.selectFork(mainnetFork);
+        address first =
+            vm.computeCreate2Address(bytes32(uint256(1)), keccak256(type(DummyContract).creationCode), address(this));
+        try this.createRollAndRevert(block.number) {} catch {}
+
+        DummyContract second = new DummyContract();
+        vm.dumpState(path);
+
+        string memory json = vm.readFile(path);
+        uint256 firstIndex = vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(first)), '"'));
+        uint256 secondIndex = vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(address(second))), '"'));
+        assertTrue(firstIndex != type(uint256).max);
+        assertTrue(secondIndex != type(uint256).max);
+        assertLt(firstIndex, secondIndex);
+
+        vm.removeFile(path);
+    }
+
+    function createSwitchAndRevert(uint256 forkId) external {
+        createdBeforeSwitch = address(new DummyContract());
+        vm.selectFork(forkId);
+        revert();
+    }
+
+    function createRollAndRevert(uint256 blockNumber) external {
+        new DummyContract{salt: bytes32(uint256(1))}();
+        vm.rollFork(blockNumber);
+        revert();
+    }
+
+    function testForkDumpStatePreservesOrderAfterCreateSelectForkAtBlock() public {
+        string memory path =
+            string.concat(vm.projectRoot(), "/fixtures/Json/test_dump_state_create_select_fork_block.json");
+
+        DummyContract first = new DummyContract();
+        vm.createSelectFork("mainnet", 16_261_703);
+        DummyContract second = new DummyContract();
+
+        assertDumpStateOrder(path, address(first), address(second));
+    }
+
+    function testForkDumpStatePreservesOrderAfterCreateSelectForkAtTransaction() public {
+        string memory path =
+            string.concat(vm.projectRoot(), "/fixtures/Json/test_dump_state_create_select_fork_transaction.json");
+
+        DummyContract first = new DummyContract();
+        vm.createSelectFork("mainnet", bytes32(0x67cbad73764049e228495a3f90144aab4a37cb4b5fd697dffc234aa5ed811ace));
+        DummyContract second = new DummyContract();
+
+        assertDumpStateOrder(path, address(first), address(second));
+    }
+
+    function testForkDumpStatePreservesOrderAfterExplicitActiveRoll() public {
+        string memory path = string.concat(vm.projectRoot(), "/fixtures/Json/test_dump_state_explicit_active_roll.json");
+
+        vm.selectFork(mainnetFork);
+        address first =
+            vm.computeCreate2Address(bytes32(uint256(2)), keccak256(type(DummyContract).creationCode), address(this));
+        try this.createExplicitRollAndRevert(mainnetFork, block.number) {
+            assertTrue(false);
+        } catch (bytes memory reason) {
+            assertEq(bytes4(reason), ExplicitRollCompleted.selector);
+        }
+        DummyContract second = new DummyContract();
+
+        assertDumpStateOrder(path, first, address(second));
+    }
+
+    function testForkDumpStatePreservesOrderAfterInactiveRoll() public {
+        string memory path = string.concat(vm.projectRoot(), "/fixtures/Json/test_dump_state_inactive_roll.json");
+
+        vm.selectFork(mainnetFork);
+        DummyContract first = new DummyContract();
+        uint256 mainnetBlock = block.number;
+
+        vm.selectFork(optimismFork);
+        vm.rollFork(mainnetFork, mainnetBlock);
+        vm.selectFork(mainnetFork);
+        DummyContract second = new DummyContract();
+
+        assertDumpStateOrder(path, address(first), address(second));
+    }
+
+    function createExplicitRollAndRevert(uint256 forkId, uint256 blockNumber) external {
+        new DummyContract{salt: bytes32(uint256(2))}();
+        vm.rollFork(forkId, blockNumber);
+        revert ExplicitRollCompleted();
+    }
+
+    function assertDumpStateOrder(string memory path, address first, address second) private {
+        vm.dumpState(path);
+
+        string memory json = vm.readFile(path);
+        uint256 firstIndex = vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(first)), '"'));
+        uint256 secondIndex = vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(second)), '"'));
+        assertTrue(firstIndex != type(uint256).max);
+        assertTrue(secondIndex != type(uint256).max);
+        assertLt(firstIndex, secondIndex);
+
+        vm.removeFile(path);
+    }
+
     /// forge-config: default.allow_internal_expect_revert = true
     function testNonExistingContractRevert() public {
         vm.selectFork(mainnetFork);
@@ -232,10 +475,162 @@ contract ForkTest is Test {
         assertGt(decodedResult, 20_000_000);
     }
 
+    function testRpcJson() public {
+        vm.selectFork(mainnetFork);
+        string memory path = "fixtures/Rpc/balance_params.json";
+        string memory file = vm.readFile(path);
+        string memory result = vm.rpcJson("eth_getBalance", file);
+        assertEq(result, '"0x10b7c11bcb51e6"');
+    }
+
+    function testRpcJsonWithUrl() public {
+        string memory result = vm.rpcJson("mainnet", "eth_blockNumber", "[]");
+        uint256 decodedResult = vm.parseUint(vm.parseJsonString(result, "$"));
+        assertGt(decodedResult, 20_000_000);
+    }
+
+    struct Withdrawal {
+        address addr;
+        bytes amount;
+        bytes index;
+        bytes validatorIndex;
+    }
+
+    struct BlockResult {
+        bytes baseFeePerGas;
+        bytes blobGasUsed;
+        bytes difficulty;
+        bytes excessBlobGas;
+        bytes extraData;
+        bytes gasLimit;
+        bytes gasUsed;
+        bytes32 hash;
+        bytes logsBloom;
+        address miner;
+        bytes32 mixHash;
+        bytes nonce;
+        bytes number;
+        bytes32 parentBeaconBlockRoot;
+        bytes32 parentHash;
+        bytes32 receiptsRoot;
+        bytes32 sha3Uncles;
+        bytes size;
+        bytes32 stateRoot;
+        bytes timestamp;
+        bytes32[] transactions;
+        bytes32 transactionsRoot;
+        bytes32[] uncles;
+        Withdrawal[] withdrawals;
+        bytes32 withdrawalsRoot;
+    }
+
+    function testRpcBlockByNumberFullReturndata() public {
+        bytes memory data = vm.rpc("sepolia", "eth_getBlockByNumber", '["0x588b24", false]');
+        BlockResult memory blockResult = abi.decode(data, (BlockResult));
+        // Verify block hash
+        assertEq(
+            blockResult.hash,
+            bytes32(hex"50b08560cfeef4a4005333a78bef1190f3d8708a074c549e0e5d834c6d7eab3f"),
+            "hash mismatch"
+        );
+        // Verify parent hash
+        assertEq(
+            blockResult.parentHash,
+            bytes32(hex"ee012f100cea384420e993e4eab8c3cf0ed35a49f75769eb8a37c9e0c93ea235"),
+            "parentHash mismatch"
+        );
+        // Verify block number (0x588b24)
+        assertEq(blockResult.number, hex"588b24", "number mismatch");
+        // Verify nested struct arrays
+        assertEq(blockResult.withdrawals.length, 16, "withdrawals length mismatch");
+        assertEq(
+            blockResult.withdrawals[0].addr, 0x25c4a76E7d118705e7Ea2e9b7d8C59930d8aCD3b, "withdrawal address mismatch"
+        );
+        // Verify transaction hashes array
+        assertEq(blockResult.transactions.length, 133, "transactions length mismatch");
+        // Verify uncles array (should be empty for this block)
+        assertEq(blockResult.uncles.length, 0, "uncles should be empty");
+    }
+
+    function testRpcClientVersion() public {
+        bytes memory data = vm.rpc("sepolia", "web3_clientVersion", "[]");
+        string memory clientVersion = abi.decode(data, (string));
+        assertGt(bytes(clientVersion).length, 0, "clientVersion should not be empty");
+    }
+
+    function testRpcNetListening() public {
+        bytes memory data = vm.rpc("sepolia", "net_listening", "[]");
+        bool listening = abi.decode(data, (bool));
+        assertTrue(listening, "net_listening should return true");
+    }
+
+    // Verify abi.decode works for eth_chainId (simple hex scalar to uint).
+    function testRpcChainId() public {
+        bytes memory data = vm.rpc("sepolia", "eth_chainId", "[]");
+        // Sepolia chain ID is 11155111 (0xaa36a7)
+        assertEq(data, hex"aa36a7", "chain ID mismatch");
+    }
+
+    // Verify null response handling (eth_getBlockByNumber for a non-existent future block).
+    function testRpcNullResponse() public {
+        bytes memory data = vm.rpc("sepolia", "eth_getBlockByNumber", '["0xffffffffffffff", false]');
+        // Null responses are encoded as zero bytes32
+        assertEq(data.length, 32, "null should encode as bytes32");
+    }
+
+    // Struct matching a legacy (type 0) transaction fields sorted alphabetically.
+    struct LegacyTransactionResult {
+        bytes32 blockHash;
+        bytes blockNumber;
+        bytes blockTimestamp;
+        bytes chainId;
+        address from;
+        bytes gas;
+        bytes gasPrice;
+        bytes32 hash;
+        bytes input;
+        bytes nonce;
+        bytes32 r;
+        bytes32 s;
+        address to;
+        bytes transactionIndex;
+        bytes type_;
+        bytes v;
+        bytes value;
+    }
+
+    // Verify struct decoding for transaction objects (original issue #7858).
     // <https://github.com/foundry-rs/foundry/issues/7858>
     function testRpcTransactionByHash() public {
-        string memory param = string.concat('["0xe1a0fba63292976050b2fbf4379a1901691355ed138784b4e0d1854b4cf9193e"]');
-        vm.rpc("sepolia", "eth_getTransactionByHash", param);
+        bytes memory data = vm.rpc(
+            "sepolia",
+            "eth_getTransactionByHash",
+            '["0xe1a0fba63292976050b2fbf4379a1901691355ed138784b4e0d1854b4cf9193e"]'
+        );
+        LegacyTransactionResult memory txn = abi.decode(data, (LegacyTransactionResult));
+        assertEq(
+            txn.hash, bytes32(hex"e1a0fba63292976050b2fbf4379a1901691355ed138784b4e0d1854b4cf9193e"), "tx hash mismatch"
+        );
+        assertEq(txn.from, 0x8Be6209bC9BD1a8e6e015ADe090F6BE7BE6f032A, "tx from mismatch");
+        assertEq(txn.to, 0xF04fd9a66DE511BC389D3b830C1F850a4A4A8c61, "tx to mismatch");
+        assertEq(txn.blockNumber, hex"588b24", "tx blockNumber mismatch");
+    }
+
+    function testRpcJsonTransactionByHashPreservesKeys() public {
+        string memory data = vm.rpcJson(
+            "mainnet",
+            "eth_getTransactionByHash",
+            '["0x67cbad73764049e228495a3f90144aab4a37cb4b5fd697dffc234aa5ed811ace"]'
+        );
+
+        assertEq(
+            vm.parseJsonBytes32(data, ".hash"),
+            bytes32(hex"67cbad73764049e228495a3f90144aab4a37cb4b5fd697dffc234aa5ed811ace"),
+            "tx hash mismatch"
+        );
+        assertEq(vm.parseJsonAddress(data, ".from"), 0x106aEe384Db47379b38f4212eB512b9c327e5F56, "tx from mismatch");
+        assertEq(vm.parseJsonAddress(data, ".to"), 0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D, "tx to mismatch");
+        assertEq(vm.parseJsonBytes(data, ".blockNumber"), hex"f82248", "tx blockNumber mismatch");
     }
 }
 

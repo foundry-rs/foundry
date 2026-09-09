@@ -1,7 +1,7 @@
 //! Contains various tests for `forge test` with precompiles.
 
 use foundry_evm_networks::NetworkConfigs;
-use foundry_test_utils::str;
+use foundry_test_utils::{str, util::OutputExt};
 
 forgetest_init!(precompile_trace_decoding, |prj, cmd| {
     prj.add_test(
@@ -114,9 +114,61 @@ contract PrecompileCaller {
     }
 }
 
+contract OrdinaryCode {
+    function ordinaryCode() external pure returns (bool) {
+        return true;
+    }
+}
+
 contract PrecompileTraceTest is Test {
     function test_precompile_traces() public {
         new PrecompileCaller();
+    }
+
+    function test_inactive_p256_address() public {
+        OrdinaryCode implementation = new OrdinaryCode();
+        vm.etch(address(0x100), address(implementation).code);
+        assertTrue(OrdinaryCode(address(0x100)).ordinaryCode());
+    }
+
+    function test_mocked_p256_address() public {
+        OrdinaryCode implementation = new OrdinaryCode();
+        vm.mockFunction(
+            address(0x100),
+            address(implementation),
+            abi.encodeCall(OrdinaryCode.ordinaryCode, ())
+        );
+        assertTrue(OrdinaryCode(address(0x100)).ordinaryCode());
+    }
+
+    function test_p256_redirected_to_other_precompile() public {
+        bytes memory callData = abi.encodeCall(OrdinaryCode.ordinaryCode, ());
+        vm.mockFunction(address(0x100), address(0x02), callData);
+        (bool success, bytes memory result) = address(0x100).call(callData);
+        assertTrue(success);
+        assertEq(result.length, 0);
+    }
+
+    function test_mocked_p256_call() public {
+        bytes memory callData = abi.encodeCall(OrdinaryCode.ordinaryCode, ());
+        vm.mockCall(address(0x100), callData, abi.encode(true));
+        (bool success, bytes memory result) = address(0x100).call(callData);
+        assertTrue(success);
+        assertTrue(abi.decode(result, (bool)));
+    }
+
+    function test_isolated_p256_call() public {
+        (bool success,) = address(0x100).call(new bytes(160));
+        assertTrue(success);
+    }
+
+    function test_isolated_inactive_p256_address() public {
+        OrdinaryCode implementation = new OrdinaryCode();
+        vm.etch(address(0x100), address(implementation).code);
+        (bool success, bytes memory result) =
+            address(0x100).call(abi.encodeCall(OrdinaryCode.ordinaryCode, ()));
+        assertTrue(success);
+        assertTrue(abi.decode(result, (bool)));
     }
 }
    "#,
@@ -163,8 +215,8 @@ Traces:
     │   │   └─ ← [Return] 0x0000000000000000000000000000000011a9a0372b8f332d5c30de9ad14e50372a73fa4c45d5f2fa5097f2d6fb93bcac592f2e1711ac43db0519870c7d0ea41500000000000000000000000000000000092c0f994164a0719f51c24ba3788de240ff926b55f58c445116e8bc6a47cd63392fd4e8e22bdf9feaa96ee773222133
     │   ├─ [..] PRECOMPILES::bls12MapFp2ToG2(0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000) [staticcall]
     │   │   └─ ← [Return] 0x00000000000000000000000000000000018320896ec9eef9d5e619848dc29ce266f413d02dd31d9b9d44ec0c79cd61f18b075ddba6d7bd20b7ff27a4b324bfce000000000000000000000000000000000a67d12118b5a35bb02d2e86b3ebfa7e23410db93de39fb06d7025fa95e96ffa428a7a27c3ae4dd4b40bd251ac658892000000000000000000000000000000000260e03644d1a2c321256b3246bad2b895cad13890cbe6f85df55106a0d334604fb143c7a042d878006271865bc359410000000000000000000000000000000004c69777a43f0bda07679d5805e63f18cf4e0e7c6112ac7f70266d199b4f76ae27c6269a3ceebdae30806e9a76aadf5c
-    │   ├─ [..] P256VERIFY::fulfillBasicOrder_efficient_6GL6yc() [staticcall]
-    │   │   └─ ← [Return]
+    │   ├─ [..] PRECOMPILES::p256Verify(0x0000000000000000000000000000000000000000000000000000000000000000, 0, 0, 0, 0) [staticcall]
+    │   │   └─ ← [Return] 0x
     │   └─ ← [Return] 62 bytes of code
     └─ ← [Stop]
 
@@ -173,6 +225,415 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
+
+    cmd.forge_fuse()
+        .args(["test", "--mt", "test_inactive_p256_address", "-vvvv", "--evm-version", "prague"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Traces:
+  [..] PrecompileTraceTest::test_inactive_p256_address()
+    ├─ [..] → new OrdinaryCode@[..]
+    │   └─ ← [Return] 177 bytes of code
+    ├─ [0] VM::etch(0x0000000000000000000000000000000000000100, 0x[..])
+    │   └─ ← [Return]
+    ├─ [..] 0x0000000000000000000000000000000000000100::ordinaryCode() [staticcall]
+    │   └─ ← [Return] true
+    └─ ← [Stop]
+
+...
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["test", "--mt", "test_mocked_p256_address", "-vvvv", "--evm-version", "osaka"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Traces:
+  [..] PrecompileTraceTest::test_mocked_p256_address()
+    ├─ [..] → new OrdinaryCode@[..]
+    │   └─ ← [Return] 177 bytes of code
+    ├─ [0] VM::mockFunction(0x0000000000000000000000000000000000000100, OrdinaryCode: [0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f], 0xf4eb3bbd)
+    │   └─ ← [Return]
+    ├─ [..] 0x0000000000000000000000000000000000000100::ordinaryCode() [staticcall]
+    │   └─ ← [Return] true
+    └─ ← [Stop]
+
+...
+"#]]);
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--mt",
+            "test_p256_redirected_to_other_precompile",
+            "-vvvv",
+            "--evm-version",
+            "osaka",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+    ├─ [..] 0x0000000000000000000000000000000000000100::ordinaryCode()
+    │   └─ ← [Return]
+...
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["test", "--mt", "test_mocked_p256_call", "-vvvv", "--evm-version", "osaka"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+    ├─ [..] 0x0000000000000000000000000000000000000100::ordinaryCode()
+    │   └─ ← [Return] true
+...
+"#]]);
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--mt",
+            "test_isolated_p256_call",
+            "-vvvv",
+            "--evm-version",
+            "osaka",
+            "--isolate",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Traces:
+  [..] PrecompileTraceTest::test_isolated_p256_call()
+    ├─ [..] PRECOMPILES::p256Verify(0x0000000000000000000000000000000000000000000000000000000000000000, 0, 0, 0, 0)
+    │   └─ ← [Return] 0x
+    └─ ← [Stop]
+
+...
+"#]]);
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--mt",
+            "test_isolated_inactive_p256_address",
+            "-vvvv",
+            "--evm-version",
+            "prague",
+            "--isolate",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+    ├─ [..] 0x0000000000000000000000000000000000000100::ordinaryCode()
+    │   └─ ← [Return] true
+...
+"#]]);
+});
+
+forgetest_init!(precompile_cheatcode_load_is_read_only, |prj, cmd| {
+    prj.add_test(
+        "PrecompileCheatcodeLoad.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "forge-std/Test.sol";
+
+contract PrecompileCheatcodeLoadTest is Test {
+    address constant ECRECOVER = address(0x01);
+    bytes32 constant SLOT = bytes32(uint256(1));
+
+    function test_load_allows_precompile_target() public view {
+        assertEq(vm.load(ECRECOVER, SLOT), bytes32(0));
+    }
+
+    function test_mutation_cheatcodes_reject_precompile_target() public {
+        (bool storeSuccess,) = address(this).call(abi.encodeCall(this.storePrecompileSlot, ()));
+        assertFalse(storeSuccess);
+
+        (bool etchSuccess,) = address(this).call(abi.encodeCall(this.etchPrecompile, ()));
+        assertFalse(etchSuccess);
+    }
+
+    function storePrecompileSlot() external {
+        vm.store(ECRECOVER, SLOT, bytes32(uint256(1)));
+    }
+
+    function etchPrecompile() external {
+        vm.etch(ECRECOVER, hex"00");
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--match-contract", "PrecompileCheatcodeLoadTest"]).assert_success();
+});
+
+forgetest_init!(tempo_t5_hardfork_precompile_smoke, |prj, cmd| {
+    prj.update_config(|config| {
+        config.networks = NetworkConfigs::with_tempo();
+        config.hardfork = Some("tempo:T5".parse::<foundry_config::FoundryHardfork>().unwrap());
+    });
+
+    prj.add_test(
+        "TempoT5PrecompileSmoke.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "forge-std/Test.sol";
+
+interface IAddressRegistry {
+    function isImplicitlyApproved(address precompile) external view returns (bool);
+}
+
+interface ITIP20ChannelReserve {
+    function domainSeparator() external view returns (bytes32);
+}
+
+contract TempoT5PrecompileSmokeTest is Test {
+    address constant ADDRESS_REGISTRY = address(bytes20(hex"FDC0000000000000000000000000000000000000"));
+    address constant FEE_MANAGER = address(bytes20(hex"feec000000000000000000000000000000000000"));
+    address constant STABLECOIN_DEX = address(bytes20(hex"dec0000000000000000000000000000000000000"));
+    address constant TIP20_CHANNEL_RESERVE = address(bytes20(hex"4D50500000000000000000000000000000000000"));
+
+    function test_t5_hardfork_precompile_smoke() public {
+        assertGt(TIP20_CHANNEL_RESERVE.code.length, 0);
+
+        IAddressRegistry registry = IAddressRegistry(ADDRESS_REGISTRY);
+        assertTrue(registry.isImplicitlyApproved(FEE_MANAGER));
+        assertTrue(registry.isImplicitlyApproved(STABLECOIN_DEX));
+        assertTrue(registry.isImplicitlyApproved(TIP20_CHANNEL_RESERVE));
+
+        bytes32 separator = ITIP20ChannelReserve(TIP20_CHANNEL_RESERVE).domainSeparator();
+        assertTrue(separator != bytes32(0));
+    }
+}
+   "#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--mt", "test_t5_hardfork_precompile_smoke", "-vvvv"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(stdout.contains("AddressRegistry::isImplicitlyApproved"), "{stdout}");
+    assert!(stdout.contains("TIP20ChannelReserve::domainSeparator"), "{stdout}");
+});
+
+forgetest_init!(tempo_t6_keychain_helpers_and_decoding, |prj, cmd| {
+    prj.update_config(|config| {
+        config.networks = NetworkConfigs::with_tempo();
+        config.hardfork = Some("tempo:T6".parse::<foundry_config::FoundryHardfork>().unwrap());
+    });
+
+    prj.add_test(
+        "TempoT6KeychainHelpers.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "forge-std/Test.sol";
+
+interface IAccountKeychain {
+    function isAdminKey(address account, address keyId) external view returns (bool);
+}
+
+interface ISignatureVerifier {
+    function verifyKeychain(address account, bytes32 hash, bytes calldata signature) external view returns (bool);
+    function verifyKeychainAdmin(address account, bytes32 hash, bytes calldata signature) external view returns (bool);
+}
+
+interface ITIP403Registry {
+    function validateReceivePolicy(
+        address token,
+        address sender,
+        address receiver
+    ) external view returns (bool authorized, uint8 blockedReason);
+}
+
+interface IReceivePolicyGuard {
+    function balanceOf(bytes calldata receipt) external view returns (uint256 amount);
+}
+
+interface TempoVm {
+    function signKeychain(uint256 privateKey, address account, bytes32 digest)
+        external
+        pure
+        returns (bytes memory signature);
+    function signKeychainAdmin(uint256 privateKey, address account, bytes32 digest)
+        external
+        pure
+        returns (bytes memory signature);
+    function expectKeychainVerified(address account, bytes32 digest, bytes calldata signature) external;
+    function expectKeychainAdminVerified(address account, bytes32 digest, bytes calldata signature) external;
+}
+
+contract TempoT6KeychainHelpersTest is Test {
+    TempoVm constant tempoVm = TempoVm(address(bytes20(uint160(uint256(keccak256("hevm cheat code"))))));
+
+    address constant ACCOUNT_KEYCHAIN = address(bytes20(hex"aaaaaaaa00000000000000000000000000000000"));
+    address constant SIGNATURE_VERIFIER = address(bytes20(hex"5165300000000000000000000000000000000000"));
+    address constant TIP403_REGISTRY = address(bytes20(hex"403c000000000000000000000000000000000000"));
+    address constant RECEIVE_POLICY_GUARD = address(bytes20(hex"b10c000000000000000000000000000000000000"));
+    address constant PATH_USD = address(bytes20(hex"20c0000000000000000000000000000000000000"));
+
+    uint256 constant ROOT_PK = 0xA11CE;
+    uint256 constant ACCESS_PK = 0xB0B;
+
+    IAccountKeychain constant keychain = IAccountKeychain(ACCOUNT_KEYCHAIN);
+    ISignatureVerifier constant verifier = ISignatureVerifier(SIGNATURE_VERIFIER);
+    ITIP403Registry constant registry = ITIP403Registry(TIP403_REGISTRY);
+    IReceivePolicyGuard constant guard = IReceivePolicyGuard(RECEIVE_POLICY_GUARD);
+
+    address root;
+    address accessKey;
+    bytes32 digest;
+
+    function setUp() public {
+        root = vm.addr(ROOT_PK);
+        accessKey = vm.addr(ACCESS_PK);
+        digest = keccak256("tempo t6 forge keychain");
+    }
+
+    function test_sign_keychain_signature_shape_and_missing_key_fails() public {
+        bytes memory signature = tempoVm.signKeychain(ACCESS_PK, root, digest);
+
+        assertEq(signature.length, 86);
+        assertEq(uint8(signature[0]), 4);
+        assertEq(_embeddedAccount(signature), root);
+        assertFalse(verifier.verifyKeychain(root, digest, signature));
+        assertFalse(verifier.verifyKeychain(address(0xbeef), digest, signature));
+    }
+
+    function test_keychain_admin_signature_verifies_root_key_and_rejects_non_admin() public {
+        bytes32 adminDigest = _adminDigest("admin");
+        bytes memory rootSignature = tempoVm.signKeychainAdmin(ROOT_PK, root, adminDigest);
+        bytes memory nonAdminSignature = tempoVm.signKeychainAdmin(ACCESS_PK, root, adminDigest);
+
+        assertTrue(keychain.isAdminKey(root, root));
+        assertFalse(keychain.isAdminKey(root, accessKey));
+        assertTrue(verifier.verifyKeychainAdmin(root, adminDigest, rootSignature));
+        assertFalse(verifier.verifyKeychainAdmin(root, adminDigest, nonAdminSignature));
+        assertFalse(verifier.verifyKeychainAdmin(address(0xbeef), adminDigest, rootSignature));
+    }
+
+    function test_expect_helpers_match_signature_verifier_calls() public {
+        bytes memory signature = tempoVm.signKeychain(ACCESS_PK, root, digest);
+        tempoVm.expectKeychainVerified(root, digest, signature);
+        verifier.verifyKeychain(root, digest, signature);
+
+        bytes32 adminDigest = _adminDigest("expect-admin");
+        bytes memory rootSignature = tempoVm.signKeychainAdmin(ROOT_PK, root, adminDigest);
+        tempoVm.expectKeychainAdminVerified(root, adminDigest, rootSignature);
+        verifier.verifyKeychainAdmin(root, adminDigest, rootSignature);
+    }
+
+    function test_malformed_keychain_signature_reverts() public {
+        vm.expectRevert();
+        verifier.verifyKeychain(root, digest, hex"04");
+    }
+
+    function test_receive_policy_interfaces_are_callable() public {
+        (bool authorized, uint8 blockedReason) = registry.validateReceivePolicy(PATH_USD, root, address(0xbeef));
+        assertTrue(authorized);
+        assertEq(blockedReason, 0);
+
+        bytes memory receipt = abi.encode(
+            uint8(1),
+            PATH_USD,
+            address(0),
+            root,
+            address(0xbeef),
+            uint64(block.timestamp),
+            uint64(1),
+            uint8(1),
+            uint8(0),
+            bytes32("forge")
+        );
+        assertEq(guard.balanceOf(receipt), 0);
+    }
+
+    function _adminDigest(string memory label) internal view returns (bytes32) {
+        return keccak256(abi.encode(block.chainid, address(this), root, label));
+    }
+
+    function _embeddedAccount(bytes memory signature) internal pure returns (address account) {
+        assembly {
+            account := shr(96, mload(add(signature, 0x21)))
+        }
+    }
+}
+   "#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--mc", "TempoT6KeychainHelpersTest", "-vvvv"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(stdout.contains("AccountKeychain::isAdminKey"), "{stdout}");
+    assert!(stdout.contains("SignatureVerifier::verifyKeychain"), "{stdout}");
+    assert!(stdout.contains("SignatureVerifier::verifyKeychainAdmin"), "{stdout}");
+    assert!(stdout.contains("TIP403Registry::validateReceivePolicy"), "{stdout}");
+    assert!(stdout.contains("ReceivePolicyGuard::balanceOf"), "{stdout}");
+});
+
+forgetest_init!(tempo_t8_current_committee_decoding, |prj, cmd| {
+    prj.update_config(|config| {
+        config.networks = NetworkConfigs::with_tempo();
+        config.hardfork = Some("tempo:T8".parse::<foundry_config::FoundryHardfork>().unwrap());
+    });
+
+    prj.add_test(
+        "TempoT8CurrentCommittee.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "forge-std/Test.sol";
+
+interface ICurrentCommittee {
+    error Unauthorized();
+
+    function getCommitteeMembers()
+        external
+        view
+        returns (uint64 epoch, bytes32[] memory publicKeys);
+
+    function setCommitteeMembers(uint64 epoch, bytes32[] calldata publicKeys) external;
+}
+
+contract TempoT8CurrentCommitteeTest is Test {
+    ICurrentCommittee constant committee =
+        ICurrentCommittee(0xC077e00000000000000000000000000000000000);
+
+    function test_get_current_committee() public view {
+        (uint64 epoch, bytes32[] memory publicKeys) = committee.getCommitteeMembers();
+        assertEq(epoch, 0);
+        assertEq(publicKeys.length, 0);
+    }
+
+    function test_set_current_committee_is_system_only() public {
+        bytes32[] memory publicKeys = new bytes32[](1);
+        publicKeys[0] = bytes32(uint256(0x11));
+
+        vm.expectRevert(ICurrentCommittee.Unauthorized.selector);
+        committee.setCommitteeMembers(1, publicKeys);
+    }
+}
+   "#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--mc", "TempoT8CurrentCommitteeTest", "-vvvv"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(stdout.contains("CurrentCommittee::getCommitteeMembers"), "{stdout}");
+    assert!(stdout.contains("← [Return] 0, []"), "{stdout}");
+    assert!(stdout.contains("CurrentCommittee::setCommitteeMembers(1"), "{stdout}");
+    assert!(stdout.contains("← [Revert] Unauthorized()"), "{stdout}");
 });
 
 // tests transfer using celo precompile.
@@ -232,3 +693,39 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
 });
+
+forgetest_init!(
+    #[ignore]
+    arbitrum_fork_arbsys_arb_block_number,
+    |prj, cmd| {
+        prj.add_test(
+            "ArbitrumArbSys.t.sol",
+            r#"
+import "forge-std/Test.sol";
+
+interface ArbSys {
+    function arbBlockNumber() external view returns (uint256);
+}
+
+contract ArbitrumArbSysTest is Test {
+    function test_arbitrum_fork_arbsys_arb_block_number() public {
+        vm.createSelectFork("https://arbitrum-one.public.blastapi.io", 75219831);
+
+        assertEq(ArbSys(address(0x64)).arbBlockNumber(), 75219831);
+        assertLt(block.number, 75219831);
+
+        (bool success,) = address(0x64).staticcall{gas: 2}(
+            abi.encodeWithSelector(ArbSys.arbBlockNumber.selector)
+        );
+        assertFalse(success);
+
+        vm.rollFork(75219832);
+        assertEq(ArbSys(address(0x64)).arbBlockNumber(), 75219832);
+    }
+}
+   "#,
+        );
+
+        cmd.args(["test", "--mt", "test_arbitrum_fork_arbsys_arb_block_number"]).assert_success();
+    }
+);

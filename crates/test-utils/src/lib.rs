@@ -26,7 +26,7 @@ mod ext;
 pub use ext::ExtTester;
 
 mod prj;
-pub use prj::{TestCommand, TestProject};
+pub use prj::{TestCommand, TestProject, cargo_profile_dir};
 
 // Utilities for making it easier to handle tests.
 pub mod util;

@@ -1,6 +1,46 @@
 version: 2
 updates:
-  - package-ecosystem: "github-actions"
-    directory: "/"
+  - package-ecosystem: github-actions
+    directory: /
+    labels:
+      - dependencies
+      - github_actions
+      - L-ignore
     schedule:
-      interval: "weekly"
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: UTC
+    cooldown:
+      default-days: 7
+    groups:
+      ci-weekly:
+        patterns:
+          - '*'
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: UTC
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: syn
+        update-types:
+          - version-update:semver-major
+      - dependency-name: prettyplease
+        update-types:
+          - version-update:semver-minor
+      - dependency-name: p256
+        update-types:
+          - version-update:semver-minor
+      - dependency-name: ecdsa
+        update-types:
+          - version-update:semver-minor
+    groups:
+      cargo-weekly:
+        patterns:
+          - '*'
