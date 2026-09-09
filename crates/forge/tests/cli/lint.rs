@@ -1976,56 +1976,6 @@ Warning: Key `deny_warnings` is being deprecated in favor of `deny = warnings`. 
     cmd.forge_fuse().args(["lint", "--deny notes"]).assert_failure();
 });
 
-// ------------------------------------------------------------------------------------------------
-
-#[tokio::test]
-async fn ensure_lint_rule_docs() {
-    let client = reqwest::Client::new();
-    let mut failures = Vec::new();
-
-    for lint in registered_lints() {
-        let url = lint.help();
-        let response = match client.get(url).send().await {
-            Ok(response) => response,
-            Err(err) => {
-                failures.push(format!("{} ({url}) could not be fetched: {err}", lint.id()));
-                continue;
-            }
-        };
-
-        if !response.status().is_success() {
-            failures.push(format!("{} ({url}) returned HTTP {}", lint.id(), response.status()));
-            continue;
-        }
-
-        let content = match response.text().await {
-            Ok(content) => content.to_lowercase(),
-            Err(err) => {
-                failures
-                    .push(format!("{} ({url}) response body could not be read: {err}", lint.id()));
-                continue;
-            }
-        };
-
-        let selector = lint.id().to_lowercase();
-        let selector_with_space = selector.replace('-', " ");
-        if !content.contains(&selector) && !content.contains(&selector_with_space) {
-            failures.push(format!("{} ({url}) did not mention the lint id", lint.id()));
-        }
-    }
-
-    if !failures.is_empty() {
-        let mut msg = String::from(
-            "Foundry Book lint validation failed. The following lint pages are missing or invalid:\n",
-        );
-        for failure in failures {
-            msg.push_str(&format!("  - {failure}\n"));
-        }
-        msg.push_str("Please open a PR: https://github.com/foundry-rs/book");
-        panic!("{msg}");
-    }
-}
-
 #[test]
 fn ensure_no_privileged_lint_id() {
     for lint in registered_lints() {

@@ -7,7 +7,7 @@
 /// - `help = $help`: optional advice emitted as a separate help message.
 ///
 /// Each lint must have a markdown page at `crates/lint/docs/<str_id>.md`; the `help` URL is
-/// derived from `$str_id` and validated by a unit test in `crates/lint/src/sol/mod.rs`.
+/// derived from `$str_id`.
 #[macro_export]
 macro_rules! declare_forge_lint {
     ($id:ident, $severity:expr, $str_id:expr, $desc:expr $(, help = $help:expr)? $(,)?) => {

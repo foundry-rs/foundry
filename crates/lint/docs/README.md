@@ -9,9 +9,8 @@ the published page at `https://getfoundry.sh/forge/linting/<id>`.
 ## Adding a new lint
 
 When you add a new lint with `declare_forge_lint!`, you **must** also add a documentation file at
-`crates/lint/docs/<str_id>.md`. The `registered_lints_have_docs` unit test in
-[`crates/lint/src/sol/mod.rs`](../src/sol/mod.rs) enforces the file's presence, registered ID and
-severity, required section order, and paired examples.
+`crates/lint/docs/<str_id>.md`. The Book's `check:lints` command validates the documentation,
+registered metadata, and navigation.
 
 Use [`_template.md`](./_template.md) as a starting point.
 
