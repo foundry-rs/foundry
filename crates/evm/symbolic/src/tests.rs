@@ -1430,7 +1430,8 @@ fn memory_return_data_accepts_symbolic_offsets() {
     memory.store_word(&mut cx, 7, value);
     let offset = SymExpr::var(&mut cx, "offset");
     let return_data = memory.return_data(&mut cx, offset, 32).unwrap();
-    let loaded = return_data.load_word(&mut cx, 0).unwrap();
+    let zero = SymExpr::zero(&mut cx);
+    let loaded = return_data.read_bytes_offset(&mut cx, zero, 32).word_at(&mut cx, 0);
 
     let model = symbolic_model(
         &mut cx,
