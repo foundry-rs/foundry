@@ -461,7 +461,7 @@ fn normalized_natspec_content(gcx: Gcx<'_>, item: &NatSpecItem) -> String {
         .to_string()
 }
 
-/// Returns the original tagged parent of a synthetic line-comment notice. The outer `Option`
+/// Returns the original tagged parent of a synthetic comment notice. The outer `Option`
 /// distinguishes a continuation from a standalone untagged notice; the inner value is `None` when
 /// Solar's resolved view omitted the parent because a local section replaced it.
 fn continuation_parent(
@@ -469,14 +469,37 @@ fn continuation_parent(
     all_items: &[NatSpecItem],
     item: &NatSpecItem,
 ) -> Option<Option<Span>> {
-    if !matches!(item.kind, NatSpecKind::Notice)
-        || !gcx.sess.source_map().span_to_snippet(item.span).ok()?.starts_with("///")
-    {
+    if !matches!(item.kind, NatSpecKind::Notice) {
         return None;
     }
 
     let source_map = gcx.sess.source_map();
+    let snippet = source_map.span_to_snippet(item.span).ok()?;
     let location = source_map.lookup_char_pos(item.span.lo());
+    if snippet.starts_with("/**") {
+        let index = all_items.iter().position(|candidate| candidate.span == item.span)?;
+        let previous = all_items.get(index.checked_sub(1)?)?;
+        if !matches!(
+            previous.kind,
+            NatSpecKind::Notice
+                | NatSpecKind::Dev
+                | NatSpecKind::Param { .. }
+                | NatSpecKind::Return { .. }
+        ) {
+            return None;
+        }
+        let previous_location = source_map.lookup_char_pos(previous.span.lo());
+        if location.line != previous_location.line + 1
+            || !std::sync::Arc::ptr_eq(&location.file, &previous_location.file)
+        {
+            return None;
+        }
+        return Some(continuation_parent(gcx, all_items, previous).unwrap_or(Some(previous.span)));
+    }
+    if !snippet.starts_with("///") {
+        return None;
+    }
+
     let mut previous_line = location.line.checked_sub(2)?;
     loop {
         let line = location.file.get_line(previous_line)?.trim_start();

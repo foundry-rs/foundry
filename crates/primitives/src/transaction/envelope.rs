@@ -1,7 +1,3 @@
-#[cfg(any(feature = "base", feature = "optimism"))]
-use alloy_consensus::Sealed;
-#[cfg(feature = "optimism")]
-use alloy_consensus::Transaction as _;
 use alloy_consensus::{
     SignableTransaction, Signed, TransactionEnvelope, TxEip1559, TxEip2930, TxEnvelope, TxLegacy,
     TxType, Typed2718,
@@ -17,19 +13,27 @@ use alloy_network::{
 };
 use alloy_primitives::{Address, B256, Bytes, Signature, TxHash};
 use alloy_rpc_types::ConversionError;
+use revm::context::TxEnv;
+use tempo_primitives::{AASigned, TEMPO_TX_TYPE_ID, TempoSignature, TempoTransaction};
+use tempo_revm::TempoTxEnv;
+
+#[cfg(all(feature = "base", not(feature = "optimism")))]
+use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, TxDeposit};
+
+#[cfg(any(feature = "base", feature = "optimism"))]
+use alloy_consensus::Sealed;
+
 #[cfg(feature = "base")]
 use base_common_consensus::{BaseTxEnvelope, Eip8130Signed, TxEip8130};
 #[cfg(feature = "base")]
 use base_common_evm::EIP8130_TRANSACTION_TYPE;
 #[cfg(feature = "base")]
 use base_common_rpc_types::Transaction as BaseRpcTransaction;
+
+#[cfg(feature = "optimism")]
+use alloy_consensus::Transaction as _;
 #[cfg(feature = "optimism")]
 use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, POST_EXEC_TX_TYPE_ID, TxDeposit, TxPostExec};
-#[cfg(all(feature = "base", not(feature = "optimism")))]
-use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, TxDeposit};
-use revm::context::TxEnv;
-use tempo_primitives::{AASigned, TEMPO_TX_TYPE_ID, TempoSignature, TempoTransaction};
-use tempo_revm::TempoTxEnv;
 
 //
 /// Container type for signed, typed transactions.

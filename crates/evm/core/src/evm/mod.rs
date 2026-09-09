@@ -44,17 +44,17 @@ pub mod monad;
 pub mod op;
 pub mod tempo;
 
-mod block_context;
-pub use block_context::*;
+pub use eth::*;
+pub use tempo::*;
 
 #[cfg(feature = "base")]
 pub use base::*;
-pub use eth::*;
+
 #[cfg(feature = "monad")]
 pub use monad::*;
+
 #[cfg(feature = "optimism")]
 pub use op::*;
-pub use tempo::*;
 
 /// Foundry's compatibility trait associating a [`Network`] with a [`FoundryEvmFactory`].
 pub trait FoundryEvmNetwork: Copy + Debug + Default + 'static {

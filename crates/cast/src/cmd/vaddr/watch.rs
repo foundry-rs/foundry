@@ -10,6 +10,14 @@ use serde_json::json;
 use std::time::Duration;
 use tempo_primitives::TempoAddressExt;
 
+fn historical_filter(filter: &Filter, anchor: u64) -> Filter {
+    filter.clone().from_block(filter.get_from_block().unwrap_or(anchor)).to_block(anchor)
+}
+
+fn poll_filter(filter: &Filter, last_block: u64, current: u64) -> Option<Filter> {
+    (current > last_block).then(|| filter.clone().from_block(last_block + 1).to_block(current))
+}
+
 pub(super) async fn run(
     addr: Address,
     token: Option<Address>,
@@ -37,16 +45,15 @@ pub(super) async fn run(
     }
 
     // Historical logs from the requested start block, then poll for new ones.
-    for log in provider.get_logs(&filter).await? {
+    let mut last_block = provider.get_block_number().await?;
+    for log in provider.get_logs(&historical_filter(&filter, last_block)).await? {
         print_transfer_log(&log)?;
     }
-    let mut last_block = provider.get_block_number().await?;
     loop {
         tokio::time::sleep(Duration::from_secs(2)).await;
         let current = provider.get_block_number().await?;
-        if current > last_block {
-            let poll_filter = filter.clone().from_block(last_block + 1).to_block(current);
-            for log in provider.get_logs(&poll_filter).await? {
+        if let Some(filter) = poll_filter(&filter, last_block, current) {
+            for log in provider.get_logs(&filter).await? {
                 print_transfer_log(&log)?;
             }
             last_block = current;
@@ -73,5 +80,26 @@ fn print_transfer_log(log: &Log) -> Result<()> {
         sh_println!("{payload}")
     } else {
         sh_println!("block={block} tx={tx} token={token} from={from} amount={amount}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn history_and_poll_ranges_are_contiguous() {
+        for start in [BlockNumberOrTag::Number(0), BlockNumberOrTag::Latest] {
+            let filter = Filter::new().from_block(start);
+            let historical = historical_filter(&filter, 100);
+            let poll = poll_filter(&filter, 100, 106).unwrap();
+
+            assert_eq!(historical.get_from_block(), start.as_number().or(Some(100)));
+            assert_eq!(historical.get_to_block(), Some(100));
+            assert_eq!(poll.get_from_block(), Some(101));
+            assert_eq!(poll.get_to_block(), Some(106));
+        }
+
+        assert!(poll_filter(&Filter::new(), 100, 100).is_none());
     }
 }

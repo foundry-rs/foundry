@@ -48,10 +48,6 @@ use eyre::{Result, eyre};
 use foundry_common::{ContractsByAddress, ContractsByArtifact, TestFunctionExt, sh_warn};
 use foundry_config::FuzzCorpusConfig;
 use foundry_evm_core::{constants::CALLER, evm::FoundryEvmNetwork, utils::StateChangeset};
-#[cfg(test)]
-use foundry_evm_fuzz::strategies::EvmFuzzState;
-#[cfg(test)]
-use foundry_evm_fuzz::strategies::TxGenerator;
 use foundry_evm_fuzz::{
     BasicTxDetails, CallDetails, ObservedCall,
     invariant::{
@@ -59,8 +55,6 @@ use foundry_evm_fuzz::{
     },
     sequence::{ComparisonHint, CorpusEntryView, SequenceGenerator, SequencePlan},
 };
-#[cfg(test)]
-use proptest::prelude::Strategy;
 use proptest::test_runner::TestRunner;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -1815,7 +1809,8 @@ mod tests {
         backend::Backend,
         evm::{EthEvmNetwork, EvmEnvFor, TxEnvFor},
     };
-    use proptest::prelude::Just;
+    use foundry_evm_fuzz::strategies::{EvmFuzzState, TxGenerator};
+    use proptest::prelude::{Just, Strategy};
     use rayon::prelude::*;
     use revm::{
         bytecode::Bytecode,

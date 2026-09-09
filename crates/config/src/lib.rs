@@ -39,8 +39,6 @@ use foundry_compilers::{
     multi::{MultiCompilerParser, MultiCompilerRestrictions},
     solc::{CliSettings, SolcLanguage, SolcSettings},
 };
-#[cfg(windows)]
-use path_slash::PathBufExt as _;
 use regex::Regex;
 use semver::Version;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
@@ -51,6 +49,9 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
 };
+
+#[cfg(windows)]
+use path_slash::PathBufExt as _;
 
 mod macros;
 
@@ -3203,9 +3204,10 @@ impl BasicConfig {
 
 mod remappings_serde {
     use foundry_compilers::artifacts::remappings::RelativeRemapping;
+    use serde::{Serialize, Serializer};
+
     #[cfg(windows)]
     use path_slash::PathExt as _;
-    use serde::{Serialize, Serializer};
     #[cfg(windows)]
     use std::path::Path;
 

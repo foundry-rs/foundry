@@ -1,6 +1,5 @@
 //! In-memory blockchain backend.
 use self::{in_memory_db::StateRootDb, state::trie_storage};
-
 use crate::{
     ForkChoice, NodeConfig, PrecompileFactory,
     config::{ForkTransactionReplay, PruneStateHistoryConfig},
@@ -70,15 +69,12 @@ use alloy_evm::{
     precompiles::{DynPrecompile, MovePrecompileError, Precompile, PrecompilesMap},
 };
 use alloy_genesis::Genesis;
-#[cfg(feature = "base")]
-use alloy_hardforks::ForkCondition;
+
 use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType,
     BlockResponse, Network, NetworkTransactionBuilder, ReceiptResponse, UnknownTxEnvelope,
     UnknownTypedTransaction,
 };
-#[cfg(feature = "optimism")]
-use alloy_op_evm::{OpEvmContext, OpEvmFactory, OpTx};
 use alloy_primitives::{
     Address, B256, Bloom, Bytes, Signature, TxKind, U64, U256, address, hex, keccak256,
     map::{AddressMap, B256Set, HashMap, HashSet},
@@ -121,37 +117,9 @@ use anvil_core::eth::{
     transaction::{MaybeImpersonatedTransaction, PendingTransaction, TransactionInfo},
 };
 use anvil_rpc::error::{ErrorCode, RpcError};
-#[cfg(feature = "base")]
-use base_common_chains::{ChainConfig, ChainUpgrades};
-#[cfg(feature = "base")]
-use base_common_consensus::{
-    BaseTransactionInfo, BaseTxEnvelope, EIP8130_REJECTION_MSG, Eip8130Constants, Predeploys,
-};
-#[cfg(feature = "base")]
-use base_common_evm::{
-    BaseContext, BaseEvmFactory, BaseSpecId, BaseTransaction,
-    DEPOSIT_TRANSACTION_TYPE as BASE_DEPOSIT_TRANSACTION_TYPE,
-    DepositTransactionParts as BaseDepositTransactionParts, EIP8130_TRANSACTION_TYPE,
-    Eip8130PhaseStatuses, L1BlockInfo, ensure_create2_deployer, ensure_eip8130_system_accounts,
-};
-#[cfg(feature = "base")]
-use base_common_precompiles::NonceManagerStorage;
-#[cfg(feature = "base")]
-use base_common_rpc_types::{
-    EIP8130_PRE_COBALT_RPC_ERROR, Eip8130Nonce, Eip8130ReceiptFields,
-    Transaction as BaseRpcTransaction,
-};
-#[cfg(feature = "base")]
-use base_execution_eip8130::{FeeCheck, IntrinsicGas, IntrinsicGasInput};
 use chrono::Datelike;
 use eyre::{Context, Result};
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
-#[cfg(feature = "base")]
-use foundry_evm::core::constants::SYSTEM_PRECOMPILE_STUB;
-#[cfg(feature = "base")]
-use foundry_evm::hardfork::BaseUpgrade;
-#[cfg(feature = "optimism")]
-use foundry_evm::hardfork::OpHardfork;
 use foundry_evm::{
     backend::{BlockchainDb, DatabaseError, DatabaseResult, RevertStateSnapshotAction},
     constants::{DEFAULT_CREATE2_DEPLOYER, DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE},
@@ -173,24 +141,12 @@ use foundry_evm::{
     },
 };
 use foundry_evm_networks::{NetworkConfigs, apply_bsc_p256_precompile, arbitrum};
-#[cfg(any(feature = "base", feature = "optimism"))]
-use foundry_primitives::get_deposit_tx_parts;
 use foundry_primitives::{
     FoundryHeader, FoundryNetwork, FoundryReceiptEnvelope, FoundryTransactionRequest,
     FoundryTxEnvelope, FoundryTxReceipt, TempoTransactionRequest,
 };
 use futures::channel::mpsc::{UnboundedSender, unbounded};
-#[cfg(any(feature = "base", feature = "optimism"))]
-use op_alloy_consensus::DEPOSIT_TX_TYPE_ID;
-#[cfg(feature = "optimism")]
-use op_alloy_consensus::POST_EXEC_TX_TYPE_ID;
-#[cfg(feature = "optimism")]
-use op_revm::OpTransaction;
-#[cfg(any(feature = "base", feature = "optimism"))]
-use op_revm::transaction::deposit::DepositTransactionParts;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
-#[cfg(feature = "base")]
-use revm::inspector::NoOpInspector;
 use revm::{
     Database as RevmDatabase, DatabaseCommit, Inspector,
     context::{Block as RevmBlock, BlockEnv, Cfg, CfgEnv, ContextSetters, ContextTr, TxEnv},
@@ -250,6 +206,53 @@ use tempo_revm::{
     evm::TempoContext, gas_params::tempo_gas_params,
 };
 use tokio::{sync::RwLock as AsyncRwLock, task::JoinSet};
+
+#[cfg(any(feature = "base", feature = "optimism"))]
+use foundry_primitives::get_deposit_tx_parts;
+#[cfg(any(feature = "base", feature = "optimism"))]
+use op_alloy_consensus::DEPOSIT_TX_TYPE_ID;
+#[cfg(any(feature = "base", feature = "optimism"))]
+use op_revm::transaction::deposit::DepositTransactionParts;
+
+#[cfg(feature = "base")]
+use alloy_hardforks::ForkCondition;
+#[cfg(feature = "base")]
+use base_common_chains::{ChainConfig, ChainUpgrades};
+#[cfg(feature = "base")]
+use base_common_consensus::{
+    BaseTransactionInfo, BaseTxEnvelope, EIP8130_REJECTION_MSG, Eip8130Constants, Predeploys,
+};
+#[cfg(feature = "base")]
+use base_common_evm::{
+    BaseContext, BaseEvmFactory, BaseSpecId, BaseTransaction,
+    DEPOSIT_TRANSACTION_TYPE as BASE_DEPOSIT_TRANSACTION_TYPE,
+    DepositTransactionParts as BaseDepositTransactionParts, EIP8130_TRANSACTION_TYPE,
+    Eip8130PhaseStatuses, L1BlockInfo, ensure_create2_deployer, ensure_eip8130_system_accounts,
+};
+#[cfg(feature = "base")]
+use base_common_precompiles::NonceManagerStorage;
+#[cfg(feature = "base")]
+use base_common_rpc_types::{
+    EIP8130_PRE_COBALT_RPC_ERROR, Eip8130Nonce, Eip8130ReceiptFields,
+    Transaction as BaseRpcTransaction,
+};
+#[cfg(feature = "base")]
+use base_execution_eip8130::{FeeCheck, IntrinsicGas, IntrinsicGasInput};
+#[cfg(feature = "base")]
+use foundry_evm::core::constants::SYSTEM_PRECOMPILE_STUB;
+#[cfg(feature = "base")]
+use foundry_evm::hardfork::BaseUpgrade;
+#[cfg(feature = "base")]
+use revm::inspector::NoOpInspector;
+
+#[cfg(feature = "optimism")]
+use alloy_op_evm::{OpEvmContext, OpEvmFactory, OpTx};
+#[cfg(feature = "optimism")]
+use foundry_evm::hardfork::OpHardfork;
+#[cfg(feature = "optimism")]
+use op_alloy_consensus::POST_EXEC_TX_TYPE_ID;
+#[cfg(feature = "optimism")]
+use op_revm::OpTransaction;
 
 /// Network-specific transaction data produced by [`Backend::build_call_env_with_base`].
 #[derive(Default, Clone, Debug)]

@@ -24,14 +24,15 @@ use foundry_test_utils::{
     str,
     util::OutputExt,
 };
-#[cfg(unix)]
-use rexpect::{Encoding, process::wait::WaitStatus, reader::Options, spawn_with_options};
 use serde_json::json;
 use std::{fs, io::ErrorKind, net::TcpListener, path::Path, process::Command, str::FromStr};
 use tempo_primitives::{
     TempoTxEnvelope,
     transaction::{KeychainVersion, TempoSignature},
 };
+
+#[cfg(unix)]
+use rexpect::{Encoding, process::wait::WaitStatus, reader::Options, spawn_with_options};
 
 #[macro_use]
 extern crate foundry_test_utils;

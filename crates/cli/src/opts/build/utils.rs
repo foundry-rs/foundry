@@ -6,16 +6,17 @@ use foundry_compilers::{
     solc::{SOLC_EXTENSIONS, SolcLanguage, SolcVersionedInput},
 };
 use foundry_config::Config;
-#[cfg(windows)]
-use path_slash::PathExt as _;
 use rayon::prelude::*;
 use solar::{interface::MIN_SOLIDITY_VERSION, sema::ParsingContext};
-#[cfg(windows)]
-use std::os::windows::ffi::OsStrExt as _;
 use std::{
     collections::HashSet,
     path::{Path, PathBuf},
 };
+
+#[cfg(windows)]
+use path_slash::PathExt as _;
+#[cfg(windows)]
+use std::os::windows::ffi::OsStrExt as _;
 
 /// Configures a [`ParsingContext`] from [`Config`].
 ///

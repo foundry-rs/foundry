@@ -86,11 +86,9 @@ impl FuzzCampaign {
             let last_call = current_depth == run_depth - 1;
             let (mut result, block_snapshot) = {
                 let (executor, tx) = parts(state);
-                let has_delay = tx.warp.is_some_and(|delay| !delay.is_zero())
-                    || tx.roll.is_some_and(|delay| !delay.is_zero());
-                let snapshot = (matches!(self.mode, FuzzCampaignMode::Invariant { .. })
-                    && has_delay)
-                    .then(|| BlockSnapshot::new(executor));
+                let snapshot = matches!(self.mode, FuzzCampaignMode::Invariant { .. })
+                    .then(|| BlockSnapshot::for_delayed_call(executor, tx))
+                    .flatten();
                 let result = match self.mode {
                     FuzzCampaignMode::Stateless => executor.call_raw(
                         tx.sender,
@@ -110,20 +108,20 @@ impl FuzzCampaign {
                 return Ok(CampaignSequenceOutcome::Cancelled);
             }
             on_event(state, CampaignEvent::Feedback(&mut result))?;
-            let discarded = result.result.as_ref() == MAGIC_ASSUME;
-            let kind = if discarded {
-                if let Some(snapshot) = block_snapshot {
+            let kind = match self.mode {
+                FuzzCampaignMode::Invariant { .. } => {
                     let (executor, _) = parts(state);
-                    snapshot.restore(executor);
+                    transition_invariant_call(executor, &mut result, block_snapshot)
                 }
-                CampaignCallKind::AssumptionRejected
-            } else {
-                if matches!(self.mode, FuzzCampaignMode::Invariant { .. }) {
-                    let (executor, _) = parts(state);
-                    executor.commit(&mut result);
+                FuzzCampaignMode::Stateless => {
+                    if result.result.as_ref() == MAGIC_ASSUME {
+                        CampaignCallKind::AssumptionRejected
+                    } else {
+                        CampaignCallKind::Accepted
+                    }
                 }
-                CampaignCallKind::Accepted
             };
+            let discarded = kind == CampaignCallKind::AssumptionRejected;
             let should_check = match self.mode {
                 FuzzCampaignMode::Stateless => true,
                 FuzzCampaignMode::Invariant { optimization: true, .. } => true,
@@ -157,6 +155,12 @@ struct BlockSnapshot<FEN: FoundryEvmNetwork> {
 }
 
 impl<FEN: FoundryEvmNetwork> BlockSnapshot<FEN> {
+    fn for_delayed_call(executor: &Executor<FEN>, tx: &BasicTxDetails) -> Option<Self> {
+        let has_delay = tx.warp.is_some_and(|delay| !delay.is_zero())
+            || tx.roll.is_some_and(|delay| !delay.is_zero());
+        has_delay.then(|| Self::new(executor))
+    }
+
     fn new(executor: &Executor<FEN>) -> Self {
         Self {
             env: executor.evm_env().block_env.clone(),
@@ -170,6 +174,39 @@ impl<FEN: FoundryEvmNetwork> BlockSnapshot<FEN> {
             cheatcodes.block = self.cheatcode;
         }
     }
+}
+
+fn transition_invariant_call<FEN: FoundryEvmNetwork>(
+    executor: &mut Executor<FEN>,
+    result: &mut RawCallResult<FEN>,
+    block_snapshot: Option<BlockSnapshot<FEN>>,
+) -> CampaignCallKind {
+    if result.result.as_ref() == MAGIC_ASSUME {
+        if let Some(snapshot) = block_snapshot {
+            snapshot.restore(executor);
+        }
+        CampaignCallKind::AssumptionRejected
+    } else {
+        executor.commit(result);
+        CampaignCallKind::Accepted
+    }
+}
+
+/// Executes and commits one invariant replay call with live campaign semantics.
+pub(super) fn execute_invariant_replay_tx<FEN: FoundryEvmNetwork>(
+    executor: &mut Executor<FEN>,
+    tx: &BasicTxDetails,
+) -> Result<(CampaignCallKind, RawCallResult<FEN>)> {
+    let block_snapshot = BlockSnapshot::for_delayed_call(executor, tx);
+    let mut result = execute_invariant_tx(executor, &mut tx.clone())?;
+    if result.execution_cancelled {
+        if let Some(snapshot) = block_snapshot {
+            snapshot.restore(executor);
+        }
+        return Err(eyre!("invariant replay call was cancelled"));
+    }
+    let kind = transition_invariant_call(executor, &mut result, block_snapshot);
+    Ok((kind, result))
 }
 
 pub(super) fn execute_invariant_tx<FEN: FoundryEvmNetwork>(

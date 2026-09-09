@@ -32,8 +32,6 @@ use clap::Parser;
 use foundry_evm_hardforks::{BaseSpecId, BaseUpgrade};
 #[cfg(feature = "monad")]
 type MonadHardfork = foundry_evm_hardforks::MonadHardfork;
-#[cfg(feature = "optimism")]
-use foundry_evm_hardforks::OpHardfork;
 use foundry_evm_hardforks::{
     EthereumHardfork, ExecutionSpec, FoundryHardfork, TempoHardfork, latest_active_tempo_hardfork,
 };
@@ -50,6 +48,9 @@ use tempo_contracts::precompiles::{
     TIP20_CHANNEL_RESERVE_ADDRESS, TIP20_FACTORY_ADDRESS, TIP403_REGISTRY_ADDRESS,
     VALIDATOR_CONFIG_ADDRESS, VALIDATOR_CONFIG_V2_ADDRESS,
 };
+
+#[cfg(feature = "optimism")]
+use foundry_evm_hardforks::OpHardfork;
 
 /// The Monad cheatcode handler address.
 pub const MONAD_CHEATCODE_ADDRESS: Address = address!("0xc0FFeeCD43A10e1C2b0De63c6CDCFe5B7d0e0CEA");

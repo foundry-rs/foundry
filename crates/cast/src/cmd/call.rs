@@ -49,10 +49,6 @@ use foundry_config::{
         value::{Dict, Map},
     },
 };
-#[cfg(feature = "monad")]
-use foundry_evm::core::evm::MonadEvmNetwork;
-#[cfg(feature = "optimism")]
-use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::{
         FoundryBlock, FoundryTransaction,
@@ -66,6 +62,12 @@ use foundry_evm::{
 use foundry_evm_networks::NetworkConfigs;
 use foundry_wallets::{BrowserWalletOpts, WalletOpts};
 use std::str::FromStr;
+
+#[cfg(feature = "monad")]
+use foundry_evm::core::evm::MonadEvmNetwork;
+
+#[cfg(feature = "optimism")]
+use foundry_evm::core::evm::OpEvmNetwork;
 
 /// CLI arguments for `cast call`.
 ///

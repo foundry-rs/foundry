@@ -1,12 +1,12 @@
 // CLI integration tests for `forge test --brutalize`
 
-#[cfg(unix)]
-use std::os::unix::fs::symlink;
-use std::{fs, str::FromStr};
-
 use foundry_compilers::artifacts::remappings::Remapping;
 use foundry_config::fs_permissions::PathPermission;
 use foundry_test_utils::{str, util::OutputExt};
+use std::{fs, str::FromStr};
+
+#[cfg(unix)]
+use std::os::unix::fs::symlink;
 
 // Robust contract with casts + assembly passes under brutalization
 forgetest_init!(brutalize_robust_contract_passes, |prj, cmd| {

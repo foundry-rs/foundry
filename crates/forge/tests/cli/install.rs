@@ -8,14 +8,15 @@ use foundry_test_utils::util::{
     ExtTester, FORGE_STD_REVISION, OutputExt, TestCommand, pretty_err, read_string,
 };
 use semver::Version;
-#[cfg(unix)]
-use std::os::unix::fs::symlink;
 use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
     str::FromStr,
 };
+
+#[cfg(unix)]
+use std::os::unix::fs::symlink;
 
 fn lockfile_get(root: &Path, dep_path: &Path) -> Option<DepIdentifier> {
     let mut l = Lockfile::new(root);

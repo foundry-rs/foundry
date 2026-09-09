@@ -3,10 +3,6 @@ use crate::{
     inspectors::{InspectorStackBuilder, TempoLabels},
 };
 use alloy_primitives::Address;
-#[cfg(feature = "base")]
-use foundry_evm_core::evm::BaseEvmNetwork;
-#[cfg(feature = "optimism")]
-use foundry_evm_core::evm::OpEvmNetwork;
 use foundry_evm_core::{
     backend::Backend,
     evm::{
@@ -14,10 +10,17 @@ use foundry_evm_core::{
         TxEnvFor,
     },
 };
-#[cfg(feature = "monad")]
-use foundry_evm_core::{constants::MONAD_CHEATCODE_ADDRESS, evm::MonadEvmNetwork};
 use foundry_evm_networks::NetworkConfigs;
 use revm::context::{Block, Transaction};
+
+#[cfg(feature = "base")]
+use foundry_evm_core::evm::BaseEvmNetwork;
+
+#[cfg(feature = "monad")]
+use foundry_evm_core::{constants::MONAD_CHEATCODE_ADDRESS, evm::MonadEvmNetwork};
+
+#[cfg(feature = "optimism")]
+use foundry_evm_core::evm::OpEvmNetwork;
 
 /// The builder that allows to configure an evm [`Executor`] which a stack of optional
 /// [`revm::Inspector`]s, such as [`Cheatcodes`].

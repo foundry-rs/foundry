@@ -1,3 +1,4 @@
+use super::lsp_client::{LspClient, request};
 use async_lsp::{
     LanguageServer,
     lsp_types::{
@@ -13,8 +14,6 @@ use std::{
 
 #[cfg(unix)]
 use std::os::unix::fs::symlink;
-
-use super::lsp_client::{LspClient, request};
 
 const SYMBOL_TIMEOUT: Duration = Duration::from_secs(10);
 

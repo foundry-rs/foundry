@@ -1,5 +1,3 @@
-#[cfg(any(feature = "base", feature = "optimism"))]
-use crate::cmd::da_estimate::DAEstimateArgs;
 use crate::cmd::{
     access_list::AccessListArgs,
     artifact::ArtifactArgs,
@@ -45,6 +43,10 @@ use foundry_cli::opts::{EtherscanOpts, GlobalArgs, RpcOpts};
 use foundry_common::version::{LONG_VERSION, SHORT_VERSION};
 use foundry_evm_networks::NetworkVariant;
 use std::{path::PathBuf, str::FromStr};
+
+#[cfg(any(feature = "base", feature = "optimism"))]
+use crate::cmd::da_estimate::DAEstimateArgs;
+
 /// A Swiss Army knife for interacting with Ethereum applications from the command line.
 #[derive(Parser)]
 #[command(

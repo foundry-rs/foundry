@@ -1,7 +1,8 @@
 use super::{hashcons::HashConsed, *};
+use foundry_evm::revm::interpreter::instructions::i256::i256_cmp;
 
 /// Bounds both the number of distinct word nodes inspected by constant-ITE equality expansion and
-/// the size of the Boolean tree that a later non-memoized fold could observe.
+/// the unfolded size of the Boolean expression it could produce.
 const MAX_CONSTANT_ITE_EQ_NODES: usize = 128;
 const MAX_CONSTANT_ITE_EQ_UNFOLDED_NODES: usize = 8 * 1024;
 
@@ -32,10 +33,6 @@ impl SymBoolExpr {
 
     pub(in crate::runtime) fn kind(&self) -> &SymBoolExprKind {
         self.kind.value()
-    }
-
-    pub(in crate::runtime) fn into_kind(self) -> SymBoolExprKind {
-        self.kind.into_value()
     }
 
     pub(in crate::runtime) fn from_kind(cx: &mut SymCx, kind: SymBoolExprKind) -> Self {
@@ -627,56 +624,152 @@ impl SymBoolExpr {
         .is_break()
     }
 
+    /// Visits each distinct word node at most once.
+    pub(crate) fn visit_unique_bool(&self, mut visitor: impl FnMut(&SymExpr) -> bool) -> bool {
+        let mut pending_bools = vec![self.clone()];
+        let mut pending_words = Vec::new();
+        let mut visited_bools = HashSet::<Self>::default();
+        let mut visited_words = HashSet::<SymExpr>::default();
+
+        loop {
+            if let Some(expr) = pending_bools.pop() {
+                if !visited_bools.insert(expr.clone()) {
+                    continue;
+                }
+                match expr.kind() {
+                    SymBoolExprKind::Const(_) => {}
+                    SymBoolExprKind::Not(value) => pending_bools.push(value.clone()),
+                    SymBoolExprKind::And(values) => {
+                        pending_bools.extend(values.iter().cloned());
+                    }
+                    SymBoolExprKind::Cmp(_, left, right) => {
+                        pending_words.push(left.clone());
+                        pending_words.push(right.clone());
+                    }
+                }
+                continue;
+            }
+
+            let Some(expr) = pending_words.pop() else { return false };
+            if !visited_words.insert(expr.clone()) {
+                continue;
+            }
+            if visitor(&expr) {
+                return true;
+            }
+            match expr.kind() {
+                SymExprKind::Const(_) | SymExprKind::Var(_) | SymExprKind::GasLeft(_) => {}
+                SymExprKind::Keccak { len, bytes, .. } => {
+                    pending_words.push(len.clone());
+                    pending_words.extend(bytes.iter().cloned());
+                }
+                SymExprKind::Hash { bytes, .. } => {
+                    pending_words.extend(bytes.iter().cloned());
+                }
+                SymExprKind::Not(value) => pending_words.push(value.clone()),
+                SymExprKind::BinOp(_, left, right) => {
+                    pending_words.push(left.clone());
+                    pending_words.push(right.clone());
+                }
+                SymExprKind::TernOp(_, left, right, modulus) => {
+                    pending_words.push(left.clone());
+                    pending_words.push(right.clone());
+                    pending_words.push(modulus.clone());
+                }
+                SymExprKind::Ite(condition, left, right) => {
+                    pending_bools.push(condition.clone());
+                    pending_words.push(left.clone());
+                    pending_words.push(right.clone());
+                }
+            }
+        }
+    }
+
+    /// Rewrites each distinct Boolean node once in bottom-up order.
+    ///
+    /// The folder must return the same result for every occurrence of one hash-consed node.
     pub(crate) fn fold(
-        self,
+        &self,
         cx: &mut SymCx,
         folder: &mut impl FnMut(&mut SymCx, Self) -> Self,
     ) -> Self {
-        if matches!(self.kind(), SymBoolExprKind::Const(_)) {
-            return folder(cx, self);
-        }
-
-        let expr = match self.into_kind() {
-            SymBoolExprKind::Not(value) => {
-                let value = value.fold(cx, folder);
-                Self::not_bool(cx, value)
-            }
-            SymBoolExprKind::And(values) => {
-                let values = values.iter().cloned().map(|value| value.fold(cx, folder)).collect();
-                Self::and(cx, values)
-            }
-            SymBoolExprKind::Cmp(op, left, right) => Self::cmp(cx, op, left, right),
-            SymBoolExprKind::Const(_) => unreachable!("leaf boolean returned before folding"),
-        };
-        folder(cx, expr)
+        let mut folded = HashMap::default();
+        self.fold_cached(cx, folder, &mut folded)
     }
 
-    pub(crate) fn fold_exprs(
-        self,
+    fn fold_cached<'a>(
+        &'a self,
         cx: &mut SymCx,
-        folder: &mut impl FnMut(&mut SymCx, SymExpr) -> SymExpr,
+        folder: &mut impl FnMut(&mut SymCx, Self) -> Self,
+        folded: &mut HashMap<&'a Self, Self>,
     ) -> Self {
-        if matches!(self.kind(), SymBoolExprKind::Const(_)) {
-            return self;
+        if let Some(expr) = folded.get(self) {
+            return expr.clone();
         }
 
-        match self.into_kind() {
+        let expr = match self.kind() {
+            SymBoolExprKind::Const(_) => self.clone(),
             SymBoolExprKind::Not(value) => {
-                let value = value.fold_exprs(cx, folder);
+                let value = value.fold_cached(cx, folder, folded);
                 Self::not_bool(cx, value)
             }
             SymBoolExprKind::And(values) => {
                 let values =
-                    values.iter().cloned().map(|value| value.fold_exprs(cx, folder)).collect();
+                    values.iter().map(|value| value.fold_cached(cx, folder, folded)).collect();
                 Self::and(cx, values)
             }
             SymBoolExprKind::Cmp(op, left, right) => {
-                let left = left.fold(cx, folder);
-                let right = right.fold(cx, folder);
-                Self::cmp(cx, op, left, right)
+                Self::cmp(cx, *op, left.clone(), right.clone())
             }
-            SymBoolExprKind::Const(_) => unreachable!("leaf boolean returned before folding exprs"),
+        };
+        let expr = folder(cx, expr);
+        folded.insert(self, expr.clone());
+        expr
+    }
+
+    /// Rewrites each distinct word node once while rebuilding this Boolean expression.
+    ///
+    /// The folder must return the same result for every occurrence of one hash-consed node.
+    pub(crate) fn fold_exprs(
+        &self,
+        cx: &mut SymCx,
+        folder: &mut impl FnMut(&mut SymCx, SymExpr) -> SymExpr,
+    ) -> Self {
+        let mut folded = ExpressionFoldCache::default();
+        self.fold_exprs_cached(cx, folder, &mut folded)
+    }
+
+    pub(in crate::runtime::expr) fn fold_exprs_cached<'a>(
+        &'a self,
+        cx: &mut SymCx,
+        folder: &mut impl FnMut(&mut SymCx, SymExpr) -> SymExpr,
+        folded: &mut ExpressionFoldCache<'a>,
+    ) -> Self {
+        if let Some(expr) = folded.bools.get(self) {
+            return expr.clone();
         }
+
+        let expr = match self.kind() {
+            SymBoolExprKind::Const(_) => self.clone(),
+            SymBoolExprKind::Not(value) => {
+                let value = value.fold_exprs_cached(cx, folder, folded);
+                Self::not_bool(cx, value)
+            }
+            SymBoolExprKind::And(values) => {
+                let values = values
+                    .iter()
+                    .map(|value| value.fold_exprs_cached(cx, folder, folded))
+                    .collect();
+                Self::and(cx, values)
+            }
+            SymBoolExprKind::Cmp(op, left, right) => {
+                let left = left.fold_cached(cx, folder, folded);
+                let right = right.fold_cached(cx, folder, folded);
+                Self::cmp(cx, *op, left, right)
+            }
+        };
+        folded.bools.insert(self, expr.clone());
+        expr
     }
 
     #[cfg(test)]
@@ -779,8 +872,8 @@ impl SymCmpOp {
             Self::Ugt => left > right,
             Self::Ule => left <= right,
             Self::Uge => left >= right,
-            Self::Slt => slt(left, right),
-            Self::Sgt => slt(right, left),
+            Self::Slt => i256_cmp(&left, &right).is_lt(),
+            Self::Sgt => i256_cmp(&left, &right).is_gt(),
         }
     }
 }
@@ -788,6 +881,24 @@ impl SymCmpOp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unique_word_visitor_deduplicates_shared_dag() {
+        let mut cx = SymCx::new();
+        let mut shared = SymExpr::var(&mut cx, "shared");
+        for _ in 0..16 {
+            shared = SymExpr::binop(&mut cx, SymBinOp::Add, shared.clone(), shared);
+        }
+        let zero = SymExpr::zero(&mut cx);
+        let condition = SymBoolExpr::eq(&mut cx, shared, zero);
+        let mut visits = 0;
+
+        assert!(!condition.visit_unique_bool(|_| {
+            visits += 1;
+            false
+        }));
+        assert_eq!(visits, 18);
+    }
 
     #[test]
     fn constant_ite_equality_rejects_exponential_shared_dag() {

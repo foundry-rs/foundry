@@ -939,12 +939,14 @@ fn duration_from_secs_f64(s: &str) -> Result<Duration, String> {
 mod tests {
     use super::*;
     use foundry_evm::hardfork::EthereumHardfork;
-    #[cfg(feature = "optimism")]
-    use foundry_evm::hardfork::OpHardfork;
-    #[cfg(feature = "base")]
-    use foundry_evm::hardforks::BaseUpgrade;
     use std::{env, net::Ipv4Addr};
     use tempo_hardfork::TempoHardfork;
+
+    #[cfg(feature = "base")]
+    use foundry_evm::hardforks::BaseUpgrade;
+
+    #[cfg(feature = "optimism")]
+    use foundry_evm::hardfork::OpHardfork;
 
     #[test]
     fn test_parse_fork_url() {

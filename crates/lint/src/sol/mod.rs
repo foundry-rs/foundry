@@ -130,7 +130,13 @@ impl ForgeLintSuite {
             .filter(|lint| {
                 self.include_lint(**lint)
                     && path.is_none_or(|path| {
-                        !self.path_config.is_test_or_script(path) || lint.id == "unsafe-cheatcode"
+                        !self.path_config.is_test_or_script(path)
+                            || matches!(
+                                lint.id,
+                                "unsafe-cheatcode"
+                                    | "block-number-across-roll"
+                                    | "block-timestamp-across-warp"
+                            )
                     })
             })
             .map(|lint| lint.id)

@@ -1,8 +1,6 @@
 //! A wrapper around `Backend` that is clone-on-write used for fuzzing.
 
 use super::BackendError;
-#[cfg(feature = "monad")]
-use crate::evm::MonadEvmNetwork;
 use crate::{
     FoundryInspectorExt,
     backend::{
@@ -30,6 +28,9 @@ use revm::{
     state::{Account, AccountInfo, EvmState},
 };
 use std::{borrow::Cow, collections::BTreeMap, fmt::Debug};
+
+#[cfg(feature = "monad")]
+use crate::evm::MonadEvmNetwork;
 
 /// A wrapper around `Backend` that ensures only `revm::DatabaseRef` functions are called.
 ///

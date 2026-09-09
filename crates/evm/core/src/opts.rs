@@ -4,8 +4,6 @@ use crate::{
     fork::{CreateFork, ResolvedFork},
     utils::{apply_chain_and_block_specific_env_changes_for_chain, block_env_from_header},
 };
-#[cfg(test)]
-use alloy_chains::NamedChain;
 use alloy_consensus::BlockHeader;
 use alloy_eips::BlockNumHash;
 use alloy_network::{AnyNetwork, BlockResponse, Network, primitives::HeaderResponse};
@@ -1616,6 +1614,8 @@ async fn option_try_or_else<T, E>(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use alloy_chains::NamedChain;
     use alloy_network::TransactionBuilder;
     use alloy_primitives::bytes;
     use alloy_rpc_types::TransactionRequest;
@@ -1626,11 +1626,10 @@ mod tests {
         spawn_rpc_proxy_internal_error_after, spawn_rpc_proxy_method_not_found_before,
         spawn_rpc_proxy_rejecting_method_after,
     };
-    #[cfg(feature = "optimism")]
-    use op_revm::OpSpecId;
     use revm::context::{BlockEnv, TxEnv};
 
-    use super::*;
+    #[cfg(feature = "optimism")]
+    use op_revm::OpSpecId;
 
     fn resolved_context(block_number: BlockNumber) -> ForkContext {
         ForkContext {

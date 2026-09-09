@@ -1,7 +1,5 @@
 //! Helper trait and functions to format Ethereum types.
 
-use std::num::NonZeroU64;
-
 use alloy_consensus::{
     BlockHeader, Eip658Value, Signed, Transaction as TxTrait, TxEip1559, TxEip2930,
     TxEip4844Variant, TxEip7702, TxEnvelope, TxLegacy, TxReceipt, Typed2718,
@@ -18,16 +16,9 @@ use alloy_rpc_types::{
     AccessListItem, Block, BlockTransactions, Header, Log, Transaction, TransactionReceipt,
 };
 use alloy_serde::{OtherFields, WithOtherFields};
-#[cfg(feature = "base")]
-use base_common_consensus::{
-    BaseReceipt, BaseTxEnvelope, Eip8130Signed, TxDeposit as BaseTxDeposit,
-};
-#[cfg(feature = "base")]
-use base_common_rpc_types::{BaseTransactionReceipt, Transaction as BaseRpcTransaction};
-#[cfg(feature = "optimism")]
-use op_alloy_consensus::{OpTxEnvelope, TxDeposit, TxPostExec};
 use revm::context_interface::transaction::SignedAuthorization;
 use serde::Deserialize;
+use std::num::NonZeroU64;
 use tempo_alloy::{
     primitives::{
         AASigned, TempoSignature, TempoTransaction, TempoTxEnvelope,
@@ -35,6 +26,16 @@ use tempo_alloy::{
     },
     rpc::{TempoHeaderResponse, TempoTransactionReceipt},
 };
+
+#[cfg(feature = "base")]
+use base_common_consensus::{
+    BaseReceipt, BaseTxEnvelope, Eip8130Signed, TxDeposit as BaseTxDeposit,
+};
+#[cfg(feature = "base")]
+use base_common_rpc_types::{BaseTransactionReceipt, Transaction as BaseRpcTransaction};
+
+#[cfg(feature = "optimism")]
+use op_alloy_consensus::{OpTxEnvelope, TxDeposit, TxPostExec};
 
 /// length of the name column for pretty formatting `{:>20}{value}`
 const NAME_COLUMN_LEN: usize = 20usize;

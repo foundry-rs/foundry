@@ -1,3 +1,5 @@
+use super::{FoundryTxEnvelope, FoundryTxType, FoundryTypedTx};
+use crate::FoundryNetwork;
 use alloy_consensus::{BlobTransactionSidecarVariant, EthereumTypedTransaction};
 use alloy_network::{
     BuildResult, NetworkTransactionBuilder, NetworkWallet, TransactionBuilder,
@@ -5,30 +7,32 @@ use alloy_network::{
 };
 use alloy_primitives::{Address, ChainId, TxKind, U256};
 use alloy_rpc_types::{AccessList, TransactionInputKind, TransactionRequest};
-#[cfg(any(test, feature = "base", feature = "optimism"))]
-use alloy_serde::OtherFields;
 use alloy_serde::WithOtherFields;
-#[cfg(feature = "base")]
-use base_common_rpc_types::BaseTransactionRequest;
 use core::num::NonZeroU64;
-#[cfg(feature = "optimism")]
-use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, POST_EXEC_TX_TYPE_ID, TxDeposit};
-#[cfg(all(feature = "base", not(feature = "optimism")))]
-use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, TxDeposit};
-#[cfg(any(feature = "base", feature = "optimism"))]
-use op_revm::transaction::deposit::DepositTransactionParts;
 use serde::{Deserialize, Serialize};
 use tempo_primitives::{
     SignatureType, TEMPO_TX_TYPE_ID, TempoTxType,
     transaction::{Call, SignedKeyAuthorization, TempoSignedAuthorization},
 };
 
-pub use tempo_alloy::rpc::TempoTransactionRequest;
+#[cfg(all(feature = "base", not(feature = "optimism")))]
+use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, TxDeposit};
 
 #[cfg(any(feature = "base", feature = "optimism"))]
 use super::get_deposit_tx_parts;
-use super::{FoundryTxEnvelope, FoundryTxType, FoundryTypedTx};
-use crate::FoundryNetwork;
+#[cfg(any(feature = "base", feature = "optimism"))]
+use op_revm::transaction::deposit::DepositTransactionParts;
+
+#[cfg(any(test, feature = "base", feature = "optimism"))]
+use alloy_serde::OtherFields;
+
+#[cfg(feature = "base")]
+use base_common_rpc_types::BaseTransactionRequest;
+
+#[cfg(feature = "optimism")]
+use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, POST_EXEC_TX_TYPE_ID, TxDeposit};
+
+pub use tempo_alloy::rpc::TempoTransactionRequest;
 
 /// Foundry transaction request builder.
 ///

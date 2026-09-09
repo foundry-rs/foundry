@@ -161,8 +161,10 @@ fn render_contract<'ast, 'gcx>(
                 });
                 let sanitize =
                     |s: &str| hir_ext::replace_inline_links(s, name_to_page, page_path, local);
+                let sanitize_description =
+                    |s: &str| replace_description_links(s, name_to_page, page_path, local);
                 if let Some(base_doc) = &inherited {
-                    c.inherit_descriptions(base_doc, &sanitize);
+                    c.inherit_descriptions(base_doc, &sanitize_description);
                 }
                 write_comment_block(out, &c);
                 write_code_block(out, &ctx.dedented_snippet(*span));
@@ -480,7 +482,9 @@ fn render_function_section(
     // Merge inherited natspec for missing tags.
     if let Some(inherited) = inherited {
         let sanitize = |s: &str| hir_ext::replace_inline_links(s, name_to_page, page_path, local);
-        c.inherit_descriptions(inherited, &sanitize);
+        let sanitize_description =
+            |s: &str| replace_description_links(s, name_to_page, page_path, local);
+        c.inherit_descriptions(inherited, &sanitize_description);
         if c.params.is_empty() {
             let params = inherited.params.iter().map(|desc| sanitize(desc)).collect::<Vec<_>>();
             for (index, desc) in params.iter().enumerate() {
@@ -610,9 +614,8 @@ impl CommentData {
 /// Collect natspec from doc comments, applying inline link replacement.
 ///
 /// Solar emits each `///` line as a separate `DocComment`. Lines without a `@` tag become
-/// synthetic `@notice` items with leading whitespace in their raw content. We detect these
-/// continuation lines and join them to the previous description paragraph so that multi-line
-/// natspec tags appear as a single coherent block in the right source order.
+/// synthetic `@notice` items. We join adjacent synthetic items to the previous rendered section
+/// so multi-line natspec tags form a single coherent block in source order.
 fn collect_comments(
     docs: &DocComments<'_>,
     name_to_page: &NameToPage,
@@ -646,7 +649,6 @@ fn collect_comments(
         Return,
     }
     let mut last_section: Option<LastSection> = None;
-
     for doc in docs.iter() {
         if doc.natspec.is_empty() {
             prev_doc_was_blank = true;
@@ -660,11 +662,10 @@ fn collect_comments(
             let raw: &str =
                 if doc.kind == CommentKind::Block { &clean_block_doc_content(raw) } else { raw };
 
-            // Detect a solar "synthetic" @notice: a continuation line with no `@` tag.
-            // Solar produces these when a `///` line has no tag; the raw content starts
-            // with whitespace (the indentation after `///`).
-            let is_continuation = matches!(item.kind, NatSpecKind::Notice)
-                && raw.starts_with(|c: char| c.is_whitespace());
+            // Solar represents an untagged doc comment as a synthetic notice whose span is the
+            // whole comment. Treat it as a continuation when it follows a rendered section;
+            // this also joins adjacent line and block doc comments before fence detection.
+            let is_continuation = matches!(item.kind, NatSpecKind::Notice) && item.span == doc.span;
 
             let trimmed = raw.trim();
             if trimmed.is_empty() {
@@ -672,8 +673,9 @@ fn collect_comments(
                 continue;
             }
 
-            // Apply inline {Ident} -> markdown link replacement.
-            let content = hir_ext::replace_inline_links(trimmed, name_to_page, page_path, local);
+            // Keep descriptions raw until continuation lines have been joined. Only complete,
+            // standalone descriptions can safely identify fenced code blocks.
+            let content = trimmed.to_string();
 
             if is_continuation && !prev_doc_was_blank {
                 let appended = match last_section {
@@ -723,6 +725,8 @@ fn collect_comments(
                         // Silently ignored.
                     } else if tag == "name" {
                         // `@custom:name <name>` -> unnamed param name (legacy parity).
+                        let content =
+                            hir_ext::replace_inline_links(&content, name_to_page, page_path, local);
                         if let Some(first) = content.split_whitespace().next() {
                             data.unnamed_param_names.push(first.to_string());
                         }
@@ -737,6 +741,27 @@ fn collect_comments(
                 NatSpecKind::Internal { .. } => {}
             }
         }
+    }
+
+    let sanitize = |s: &str| hir_ext::replace_inline_links(s, name_to_page, page_path, local);
+    for content in &mut data.titles {
+        *content = sanitize_description_prose(content, name_to_page, page_path, local);
+    }
+    for content in &mut data.authors {
+        *content = sanitize_description_prose(content, name_to_page, page_path, local);
+    }
+    for (_, content) in &mut data.params {
+        *content = sanitize(content);
+    }
+    for (_, content) in &mut data.returns {
+        *content = sanitize(content);
+    }
+    for (_, content) in &mut data.customs {
+        *content = sanitize_description_prose(content, name_to_page, page_path, local);
+    }
+    for description in &mut data.descriptions {
+        description.content =
+            replace_description_links(&description.content, name_to_page, page_path, local);
     }
 
     data
@@ -875,6 +900,120 @@ fn collect_code_regions(node: &Node, regions: &mut Vec<Range<usize>>) {
             collect_code_regions(child, regions);
         }
     }
+}
+
+/// Replace inline links in a standalone notice or dev description while preserving complete,
+/// top-level fenced code blocks. Other NatSpec fields use `replace_inline_links` directly because
+/// their rendering context (notably table cells) cannot contain block-level Markdown.
+fn replace_description_links(
+    text: &str,
+    name_to_page: &NameToPage,
+    current_page: &Path,
+    local: Option<&hir_ext::LocalMembers>,
+) -> String {
+    let regions = fenced_description_regions(text);
+    let mut out = String::with_capacity(text.len());
+    let mut rendered_regions = Vec::with_capacity(regions.len());
+    let mut copied = 0;
+    for region in regions {
+        out.push_str(&sanitize_description_prose(
+            &text[copied..region.start],
+            name_to_page,
+            current_page,
+            local,
+        ));
+        let start = out.len();
+        out.push_str(&text[region.clone()]);
+        rendered_regions.push(start..out.len());
+        copied = region.end;
+    }
+    out.push_str(&sanitize_description_prose(&text[copied..], name_to_page, current_page, local));
+    let mdx_regions = code_regions(&out, &ParseOptions::mdx());
+    if rendered_regions.iter().all(|region| mdx_regions.contains(region)) {
+        out
+    } else {
+        sanitize_description_prose(text, name_to_page, current_page, local)
+    }
+}
+
+fn sanitize_description_prose(
+    text: &str,
+    name_to_page: &NameToPage,
+    current_page: &Path,
+    local: Option<&hir_ext::LocalMembers>,
+) -> String {
+    let text = hir_ext::replace_inline_links(text, name_to_page, current_page, local);
+    neutralize_fence_markers(&text)
+}
+
+/// Keep rejected or incomplete fence markers from changing the Markdown context of subsequent
+/// descriptions. Entities render as the original marker characters without acting as syntax.
+fn neutralize_fence_markers(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if let marker @ (b'`' | b'~') = bytes[i] {
+            let length = bytes[i..].iter().take_while(|&&byte| byte == marker).count();
+            if length >= 3 {
+                out.push_str(if marker == b'`' { "&#96;" } else { "&#126;" });
+                out.push_str(&text[i + 1..i + length]);
+                i += length;
+                continue;
+            }
+        }
+        let ch = text[i..].chars().next().unwrap();
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
+}
+
+/// Complete fenced code blocks that are direct children of the description document. Restricting
+/// preservation to root-level blocks keeps list, quote, table, and unclosed-fence behavior on the
+/// conservative escaping path.
+fn fenced_description_regions(text: &str) -> Vec<Range<usize>> {
+    let Ok(Node::Root(root)) = to_mdast(text, &ParseOptions::gfm()) else {
+        return Vec::new();
+    };
+    root.children
+        .iter()
+        .filter_map(|node| {
+            let Node::Code(_) = node else { return None };
+            let position = node.position()?;
+            let range = position.start.offset..position.end.offset;
+            is_complete_fence(&text[range.clone()]).then_some(range)
+        })
+        .collect()
+}
+
+fn is_complete_fence(text: &str) -> bool {
+    let mut lines = logical_lines(text);
+    let Some((_, first)) = lines.next() else { return false };
+    let Some((marker, length)) = fence_marker(first) else { return false };
+    let mut last = None;
+    for (_, line) in lines {
+        last = Some(line);
+    }
+    let Some(last) = last else { return false };
+    let indent = last.len() - last.trim_start_matches(' ').len();
+    if indent > 3 {
+        return false;
+    }
+    let last = &last[indent..];
+    let closing_length = last.chars().take_while(|&ch| ch == marker).count();
+    closing_length >= length && last[closing_length..].trim().is_empty()
+}
+
+fn fence_marker(line: &str) -> Option<(char, usize)> {
+    let indent = line.len() - line.trim_start_matches(' ').len();
+    if indent > 3 {
+        return None;
+    }
+    let line = &line[indent..];
+    let marker @ ('`' | '~') = line.chars().next()? else { return None };
+    let length = line.chars().take_while(|&ch| ch == marker).count();
+    (length >= 3).then_some((marker, length))
 }
 
 /// Logical lines and their byte offsets in the original text. CRLF is one separator; lone CR and
@@ -1343,8 +1482,10 @@ pub fn source<'ast, 'gcx>(
 
 #[cfg(test)]
 mod tests {
-    use super::neutralize_esm;
+    use super::{neutralize_esm, replace_description_links, sanitize_description_prose};
+    use crate::hir_ext::NameToPage;
     use markdown::{MdxSignal, ParseOptions, mdast::Node, to_mdast};
+    use std::path::Path;
 
     fn parse_mdx(text: &str) -> Node {
         let mut options = ParseOptions::mdx();
@@ -1355,6 +1496,71 @@ mod tests {
     fn contains_mdx_esm(node: &Node) -> bool {
         matches!(node, Node::MdxjsEsm(_))
             || node.children().is_some_and(|children| children.iter().any(contains_mdx_esm))
+    }
+
+    fn contains_mdx_expression(node: &Node) -> bool {
+        matches!(node, Node::MdxFlowExpression(_) | Node::MdxTextExpression(_))
+            || node.children().is_some_and(|children| children.iter().any(contains_mdx_expression))
+    }
+
+    #[test]
+    fn preserves_complete_top_level_description_fences() {
+        let input = "Before < and {\n~~~solidity\nif (a < b) { revert(); }\n~~~\nAfter < and {";
+        let output = replace_description_links(
+            input,
+            &NameToPage::new(),
+            Path::new("src/contract.Foo.mdx"),
+            None,
+        );
+
+        assert_eq!(
+            output,
+            "Before &lt; and &#123;\n~~~solidity\nif (a < b) { revert(); }\n~~~\nAfter &lt; and &#123;"
+        );
+    }
+
+    #[test]
+    fn conservatively_escapes_non_standalone_fences() {
+        for (input, expected) in [
+            (
+                "- ~~~\n  example <\n  ~~~\nOutside < and {",
+                "- &#126;~~\n  example &lt;\n  &#126;~~\nOutside &lt; and &#123;",
+            ),
+            ("~~~\nexample < and {", "&#126;~~\nexample &lt; and &#123;"),
+        ] {
+            assert_eq!(
+                replace_description_links(
+                    input,
+                    &NameToPage::new(),
+                    Path::new("src/contract.Foo.mdx"),
+                    None,
+                ),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn rejected_fences_cannot_change_later_mdx_context() {
+        let name_to_page = NameToPage::new();
+        let path = Path::new("src/contract.Foo.mdx");
+        let first = replace_description_links("~~~", &name_to_page, path, None);
+        let second = replace_description_links("~~~\n{1+1}\n~~~", &name_to_page, path, None);
+        let output = format!("{first}\n\n{second}");
+        assert_eq!(output, "&#126;~~\n\n~~~\n{1+1}\n~~~");
+        assert!(!contains_mdx_expression(&parse_mdx(&output)));
+
+        let output =
+            replace_description_links("~~~\n    ~~~\n{1+1}\n~~~", &name_to_page, path, None);
+        assert_eq!(output, "&#126;~~\n    &#126;~~\n`1+1`\n&#126;~~");
+        assert!(!contains_mdx_expression(&parse_mdx(&output)));
+
+        let notice = replace_description_links("~~~\n{1+1}\n~~~", &name_to_page, path, None);
+        for prefix in ["**Title:**", "**Author:**", "- **note:**"] {
+            let metadata = sanitize_description_prose("metadata\n~~~", &name_to_page, path, None);
+            let output = format!("{prefix} {metadata}\n\n{notice}");
+            assert!(!contains_mdx_expression(&parse_mdx(&output)), "{output}");
+        }
     }
 
     #[test]
