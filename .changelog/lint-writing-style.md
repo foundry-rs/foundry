@@ -7,3 +7,4 @@ Standardized lint diagnostics and reference examples, focused explanations on us
 guidance, and removed repetitive reference text. Preserved modifier
 signatures in suggested rewrites, required review for potentially unsafe refactorings, and
 focused diagnostics on the relevant source spans.
+Added a lightweight Markdown structure check for lint references, enforced in CI.

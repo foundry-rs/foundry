@@ -9,8 +9,10 @@ the published page at `https://getfoundry.sh/forge/linting/<id>`.
 ## Adding a new lint
 
 When you add a new lint with `declare_forge_lint!`, you **must** also add a documentation file at
-`crates/lint/docs/<str_id>.md`. The Book's `check:lints` command validates the documentation,
-registered metadata, and navigation.
+`crates/lint/docs/<str_id>.md`. Run `node .github/scripts/check-lint-docs.js` to check the
+Markdown structure locally; CI runs the same script. Pass file paths to check individual docs.
+The Book's `import:lints` command validates registered metadata and generates navigation;
+`import:lints -- --check` validates its committed import.
 
 Use [`_template.md`](./_template.md) as a starting point.
 
@@ -36,6 +38,12 @@ diagnostics, and examples. This documentation format follows
   and extra sections that repeat the problem or remedy.
 
 ## File structure
+
+The checker requires one title, severity and filename-matching ID, then `What it does`, exactly
+one rationale section, and `Example` in that order. Both explanations must contain prose, and
+`Example` must contain nonempty `solidity` fences separated by `Use instead:`. Optional
+`Configuration`, `Notes`, `Limitations`, and `Known limitations` sections must be nonempty.
+It checks structure only, not whether the explanations or Solidity examples are correct.
 
 Each lint doc file should follow this structure:
 
