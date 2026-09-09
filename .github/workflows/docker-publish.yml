@@ -11,10 +11,14 @@ on:
         type: string
   workflow_call:
     inputs:
-      dependencies-checked:
-        description: Caller already passed the Socket gate for this commit
-        default: false
-        type: boolean
+      dependency-artifact-id:
+        description: Approved source artifact from the caller's dependency gate
+        default: ""
+        type: string
+      dependency-sha256:
+        description: Approved source bundle checksum from the caller's dependency gate
+        default: ""
+        type: string
       tag_name:
         required: true
         type: string
@@ -37,7 +41,7 @@ env:
 
 jobs:
   socket-dependencies:
-    if: ${{ !inputs.dependencies-checked }}
+    if: ${{ inputs.dependency-artifact-id == '' }}
     permissions:
       id-token: write
       contents: read
@@ -45,7 +49,7 @@ jobs:
 
   build:
     needs: socket-dependencies
-    if: ${{ !cancelled() && (needs.socket-dependencies.result == 'success' || (inputs.dependencies-checked && needs.socket-dependencies.result == 'skipped')) }}
+    if: ${{ !cancelled() && (needs.socket-dependencies.result == 'success' || (inputs.dependency-artifact-id != '' && needs.socket-dependencies.result == 'skipped')) }}
     name: build, sign, and stage
     runs-on: depot-ubuntu-latest
     permissions:
@@ -66,6 +70,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Restore exact approved sources into the build context
+        uses: ./.github/actions/restore-dependencies
+        with:
+          artifact-id: ${{ inputs.dependency-artifact-id || needs.socket-dependencies.outputs.artifact-id }}
+          sha256: ${{ inputs.dependency-sha256 || needs.socket-dependencies.outputs.sha256 }}
 
       # Login against a Docker registry except on PR
       # https://github.com/docker/login-action
@@ -120,6 +129,7 @@ jobs:
         uses: depot/build-push-action@98e78adca7817480b8185f474a400b451d74e287 # v1.18.0
         with:
           build-args: |
+            FOUNDRY_BUILD_STAGE=builder-approved
             RUST_PROFILE=${{ env.RUST_PROFILE }}
             RUST_FEATURES=${{ env.RUST_FEATURES }}
             TAG_NAME=${{ inputs.tag_name }}

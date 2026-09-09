@@ -3,14 +3,30 @@ name: Socket dependency policy
 on:
   workflow_call:
     inputs:
+      scope:
+        description: Cargo dependency graph (workspace or bindings)
+        default: workspace
+        type: string
       check-master:
         description: Also check and pin the source-built benchmark baseline
         default: false
         type: boolean
     outputs:
+      artifact-id:
+        description: Immutable approved-source artifact from this run
+        value: ${{ jobs.check.outputs.artifact-id }}
+      sha256:
+        description: SHA256 of the approved source archive
+        value: ${{ jobs.check.outputs.sha256 }}
       baseline-sha:
         description: Exact master commit whose dependencies passed the gate
         value: ${{ jobs.check.outputs.baseline-sha }}
+      baseline-artifact-id:
+        description: Immutable approved-source artifact for the benchmark baseline
+        value: ${{ jobs.check.outputs.baseline-artifact-id }}
+      baseline-sha256:
+        description: SHA256 of the benchmark baseline source archive
+        value: ${{ jobs.check.outputs.baseline-sha256 }}
 
 permissions:
   contents: read
@@ -20,11 +36,15 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    name: Check locked dependencies through Socket
+    name: Prepare approved ${{ inputs.scope }} dependencies
     runs-on: ubuntu-latest
     timeout-minutes: 30
     outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      sha256: ${{ steps.bundle.outputs.sha256 }}
       baseline-sha: ${{ steps.baseline.outputs.sha }}
+      baseline-artifact-id: ${{ steps.upload-baseline.outputs.artifact-id }}
+      baseline-sha256: ${{ steps.baseline.outputs.sha256 }}
     env:
       RUSTC_WRAPPER: ""
     steps:
@@ -40,9 +60,21 @@ jobs:
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
           toolchain: stable
-      - name: Fetch locked dependencies through Socket with an empty cache
+      - name: Prepare approved sources with an empty cache
+        id: bundle
         shell: bash
-        run: bash .github/scripts/socket-dependencies.sh
+        env:
+          DEPENDENCY_SCOPE: ${{ inputs.scope }}
+        run: SFW_CARGO="$SFW_SHIM_DIR/cargo" node .github/scripts/dependencies.mjs prepare
+      - name: Upload this run's approved sources
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cargo-${{ inputs.scope }}-dependencies-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.bundle.outputs.archive }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
       - name: Checkout benchmark baseline
         if: inputs.check-master
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -50,10 +82,21 @@ jobs:
           ref: master
           path: socket-baseline
           persist-credentials: false
-      - name: Check baseline dependencies through Socket with an empty cache
+      - name: Prepare approved baseline sources with an empty cache
         if: inputs.check-master
         id: baseline
         shell: bash
         run: |
-          bash .github/scripts/socket-dependencies.sh socket-baseline
+          DEPENDENCY_ROOT=socket-baseline SFW_CARGO="$SFW_SHIM_DIR/cargo" \
+            node .github/scripts/dependencies.mjs prepare
           echo "sha=$(git -C socket-baseline rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Upload approved baseline sources
+        if: inputs.check-master
+        id: upload-baseline
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cargo-baseline-dependencies-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.baseline.outputs.archive }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1

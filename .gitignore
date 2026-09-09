@@ -1,5 +1,6 @@
 .DS_STORE
 /target*
+/.approved-dependencies/
 /*.sol
 CLAUDE.md
 

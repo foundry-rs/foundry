@@ -45,6 +45,8 @@ jobs:
       id-token: write
       contents: read
     with:
+      artifact-id: ${{ needs.socket-dependencies.outputs.artifact-id }}
+      sha256: ${{ needs.socket-dependencies.outputs.sha256 }}
       network: ${{ inputs.network }}
       scripts: ${{ inputs.scripts || 'both' }}
     secrets:

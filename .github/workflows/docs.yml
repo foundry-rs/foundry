@@ -4,6 +4,15 @@ permissions: {}
 
 on:
   workflow_call:
+    inputs:
+      artifact-id:
+        description: Approved source artifact from the caller's dependency gate
+        required: true
+        type: string
+      sha256:
+        description: Approved source bundle checksum
+        required: true
+        type: string
 
 concurrency:
   group: docs-${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -30,15 +39,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+      - uses: ./.github/actions/setup-build
         with:
+          artifact-id: ${{ inputs.artifact-id }}
+          sha256: ${{ inputs.sha256 }}
           toolchain: nightly
-      - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
-      - uses: ./.github/actions/setup-sccache
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - uses: ./.github/actions/setup-cargo
       - name: Build documentation
-        run: rustup run nightly cargo doc --workspace --all-features --no-deps --document-private-items --locked --offline
+        run: rustup run nightly cargo doc --workspace --all-features --no-deps --document-private-items --frozen
         env:
           RUSTDOCFLAGS: --cfg docsrs -D warnings --show-type-layout --generate-link-to-definition --enable-index-page -Zunstable-options
       - name: Setup Pages

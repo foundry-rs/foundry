@@ -1,8 +1,8 @@
 # Bind test dependency lock
 
 This fixture pins the dependency graph used when Forge's integration tests compile generated Rust
-bindings. Its manifest contains the union of dependencies emitted by `forge bind`; tests add the
-unused `serde_with` dependency when necessary so every generated crate can share this lockfile.
+bindings. Its manifest contains the union of dependencies emitted by `forge bind`. Tests preserve
+the generated manifest and prune only unused direct dependencies from the copied root lock entry.
 
 Seed updates from the workspace lock so all compatible dependencies retain their already-vetted
 versions, then let Cargo resolve the Alloy 1.x-specific portion:

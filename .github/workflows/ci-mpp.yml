@@ -33,6 +33,8 @@ jobs:
       id-token: write
       contents: read
     with:
+      artifact-id: ${{ needs.socket-dependencies.outputs.artifact-id }}
+      sha256: ${{ needs.socket-dependencies.outputs.sha256 }}
       network: ${{ inputs.network }}
     secrets:
       MPP_API_KEY: ${{ secrets.MPP_API_KEY }}

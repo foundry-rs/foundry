@@ -53,15 +53,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+      - uses: ./.github/actions/setup-build
         with:
-          toolchain: stable
-      - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
+          artifact-id: ${{ needs.socket-dependencies.outputs.artifact-id }}
+          sha256: ${{ needs.socket-dependencies.outputs.sha256 }}
       - uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
         with:
           tool: nextest
-      - uses: ./.github/actions/setup-sccache
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       # Fatal and cheap: without the key every test below would quietly pass as a no-op, which
       # is the exact failure mode this workflow exists to avoid.
@@ -92,7 +90,7 @@ jobs:
           TESTNET_DEPLOYER_PRIVATE_KEY: ${{ secrets.FUNDED_TESTNET_PKEY }}
         shell: bash
         run: |
-          cargo build --locked --bin cast
+          cargo build --frozen --bin cast
           cast=./target/debug/cast
           addr=$("$cast" wallet address "$TESTNET_DEPLOYER_PRIVATE_KEY")
           echo "Deployer: $addr"
@@ -136,7 +134,7 @@ jobs:
           # `etherscan_key` reads ETHERSCAN_API_KEY, which is a different variable from the
           # ETHERSCAN_KEY that the regular test workflow exports for `foundry_test_utils::rpc`.
           ETHERSCAN_API_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
-        run: cargo nextest run --locked --profile deploy-verify --no-fail-fast
+        run: cargo nextest run --frozen --profile deploy-verify --no-fail-fast
 
   # Raised before the account actually runs dry, so the tests keep passing while someone tops it
   # up. Independent of whether the tests passed - a low balance is worth reporting either way.

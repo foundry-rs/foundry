@@ -292,7 +292,8 @@ jobs:
       packages: write
     with:
       tag_name: ${{ needs.prepare.outputs.tag_name }}
-      dependencies-checked: true
+      dependency-artifact-id: ${{ needs.socket-dependencies.outputs.artifact-id }}
+      dependency-sha256: ${{ needs.socket-dependencies.outputs.sha256 }}
 
   release-docker-metadata:
     name: Record Docker digest
@@ -390,11 +391,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+      - uses: ./.github/actions/setup-build
         with:
-          toolchain: stable
+          artifact-id: ${{ needs.socket-dependencies.outputs.artifact-id }}
+          sha256: ${{ needs.socket-dependencies.outputs.sha256 }}
           targets: ${{ matrix.target }}
-      - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
+          svm-platform: ${{ matrix.svm_target_platform }}
 
       - name: Install LLVM profiling tools
         if: matrix.target == 'x86_64-unknown-linux-gnu'
@@ -410,12 +412,21 @@ jobs:
       - name: cross setup
         if: contains(matrix.target, 'musl')
         run: |
-          cargo install cross --locked \
-            --git https://github.com/cross-rs/cross \
-            --rev 64b5bb4d3d34de062552b9a2093affe77b4ad16a
+          cross_home=$(mktemp -d "${RUNNER_TEMP}/cross.XXXXXX")
+          (
+            cd "$RUNNER_TEMP"
+            CARGO_HOME="$cross_home" CARGO_NET_OFFLINE=false CARGO_NET_GIT_FETCH_WITH_CLI=true \
+              "$SFW_SHIM_DIR/cargo" install cross --locked \
+                --git https://github.com/cross-rs/cross \
+                --rev 64b5bb4d3d34de062552b9a2093affe77b4ad16a \
+                --root "$cross_home"
+          )
+          echo "$cross_home/bin" >> "$GITHUB_PATH"
 
       - name: Build binaries
         env:
+          CROSS_CONTAINER_OPTS: ${{ contains(matrix.target, 'musl') && '--network=none' || '' }}
+          RUSTC_WRAPPER: ${{ contains(matrix.target, 'musl') && '' || 'sccache' }}
           TAG_NAME: ${{ (env.IS_NIGHTLY == 'true' && 'nightly') || needs.prepare.outputs.tag_name }}
           SVM_TARGET_PLATFORM: ${{ matrix.svm_target_platform }}
           PLATFORM_NAME: ${{ matrix.platform }}
@@ -434,7 +445,7 @@ jobs:
           fi
 
           echo "Building $TARGET with features: $features"
-          flags=(--locked --target "$TARGET" --profile "$RUST_PROFILE"
+          flags=(--frozen --target "$TARGET" --profile "$RUST_PROFILE"
             --no-default-features --features "$features")
 
           # `jemalloc` is not fully supported on MSVC or aarch64 Linux.

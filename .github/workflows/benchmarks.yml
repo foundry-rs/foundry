@@ -58,10 +58,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config z3
 
-      - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+      - uses: ./.github/actions/setup-build
         with:
-          toolchain: stable
+          artifact-id: ${{ needs.socket-dependencies.outputs.artifact-id }}
+          sha256: ${{ needs.socket-dependencies.outputs.sha256 }}
 
       # When 'local' is requested, build origin/master from source in a separate
       # worktree and benchmark it as the baseline (labelled 'master') against
@@ -98,10 +98,14 @@ jobs:
             echo "versions=$REQUESTED_VERSIONS" >> "$GITHUB_OUTPUT"
             echo "is_source_comparison=false" >> "$GITHUB_OUTPUT"
           fi
-
-      - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
-
-      - uses: ./.github/actions/setup-sccache
+      - name: Restore approved baseline sources
+        if: steps.prep.outputs.is_source_comparison == 'true'
+        uses: ./.github/actions/restore-dependencies
+        with:
+          artifact-id: ${{ needs.socket-dependencies.outputs.baseline-artifact-id }}
+          sha256: ${{ needs.socket-dependencies.outputs.baseline-sha256 }}
+          root: ../foundry-baseline
+          qualifier: baseline
 
       - name: Setup Foundry
         env:
@@ -112,11 +116,16 @@ jobs:
           printf '%s\n' "$GITHUB_WORKSPACE/.foundry/bin" >> "$GITHUB_PATH"
 
       - name: Build benchmark binary
-        run: cargo build --locked --release --bin foundry-bench
+        run: cargo build --frozen --release --bin foundry-bench
 
       - name: Install hyperfine
         run: |
-          curl -L https://github.com/sharkdp/hyperfine/releases/download/v1.19.0/hyperfine-v1.19.0-x86_64-unknown-linux-gnu.tar.gz | tar xz
+          archive="$RUNNER_TEMP/hyperfine-v1.19.0-x86_64-unknown-linux-gnu.tar.gz"
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
+            https://github.com/sharkdp/hyperfine/releases/download/v1.19.0/hyperfine-v1.19.0-x86_64-unknown-linux-gnu.tar.gz \
+            --output "$archive"
+          echo "d5550bbdc240d2aaa8f43ea2dc8b03a306afb30ea8464cd8b2faa9486ed1019e  $archive" | sha256sum --check
+          tar xzf "$archive"
           sudo mv hyperfine-v1.19.0-x86_64-unknown-linux-gnu/hyperfine /usr/local/bin/
           rm -rf hyperfine-v1.19.0-x86_64-unknown-linux-gnu
 

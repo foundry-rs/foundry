@@ -6,6 +6,14 @@ permissions: {}
 on:
   workflow_call:
     inputs:
+      artifact-id:
+        description: Approved source artifact from the caller's dependency gate
+        required: true
+        type: string
+      sha256:
+        description: Approved source bundle checksum
+        required: true
+        type: string
       network:
         type: string
         default: ""
@@ -51,19 +59,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+      - uses: ./.github/actions/setup-build
         with:
-          toolchain: stable
-
-      - uses: ./.github/actions/setup-sccache
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-
-      - uses: ./.github/actions/setup-cargo
+          artifact-id: ${{ inputs.artifact-id }}
+          sha256: ${{ inputs.sha256 }}
 
       # Build and install binaries
       - name: Build and install Foundry binaries
         run: |
-          rustup run stable cargo build --profile dev --locked --offline --bin forge --bin cast --bin anvil --bin chisel
+          rustup run stable cargo build --profile dev --frozen --bin forge --bin cast --bin anvil --bin chisel
           echo "${{ github.workspace }}/target/debug" >> "$GITHUB_PATH"
 
       - name: Check Tempo fork schedule compatibility
@@ -72,7 +76,7 @@ jobs:
           TEMPO_TESTNET_RPC_URL: ${{ secrets.TEMPO_TESTNET_RPC_URL }}
           TEMPO_DEVNET_RPC_URL: ${{ vars.TEMPO_DEVNET_CI != 'false' && secrets.TEMPO_DEVNET_RPC_URL || '' }}
         run: |
-          rustup run stable cargo test --locked --offline -p foundry-common --lib tempo::tests::test_fork_schedule_parses_configured_rpcs -- --exact --nocapture
+          rustup run stable cargo test --frozen -p foundry-common --lib tempo::tests::test_fork_schedule_parses_configured_rpcs -- --exact --nocapture
 
       - name: Run Tempo check on mainnet
         if: |

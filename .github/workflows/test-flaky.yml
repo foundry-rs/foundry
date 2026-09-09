@@ -44,10 +44,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+      - uses: ./.github/actions/setup-build
         with:
-          toolchain: stable
-      - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
+          artifact-id: ${{ needs.socket-dependencies.outputs.artifact-id }}
+          sha256: ${{ needs.socket-dependencies.outputs.sha256 }}
       - uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
         with:
           tool: nextest
@@ -57,8 +57,6 @@ jobs:
       - name: Install Vyper
         # Also update vyper version in .devcontainer/Dockerfile.dev
         run: pip --version && pip install vyper==0.4.3
-      - uses: ./.github/actions/setup-sccache
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Test flaky tests
         env:
           SVM_TARGET_PLATFORM: linux-amd64
@@ -69,7 +67,7 @@ jobs:
           GNOSIS_RPC: ${{ secrets.GNOSIS_RPC }}
           HYPERLIQUID_RPC: ${{ secrets.HYPERLIQUID_RPC }}
           ROBINHOOD_RPC: ${{ secrets.ROBINHOOD_RPC }}
-        run: cargo nextest run --locked --profile flaky --no-fail-fast
+        run: cargo nextest run --frozen --profile flaky --no-fail-fast
 
   # If any of the jobs fail, this will create a normal-priority issue to signal so.
   issue:

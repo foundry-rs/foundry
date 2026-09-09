@@ -32,6 +32,9 @@ jobs:
     permissions:
       id-token: write
       contents: read
+    with:
+      artifact-id: ${{ needs.socket-dependencies.outputs.artifact-id }}
+      sha256: ${{ needs.socket-dependencies.outputs.sha256 }}
     secrets:
       MPP_API_KEY: ${{ secrets.MPP_API_KEY }}
 
@@ -46,6 +49,9 @@ jobs:
     permissions:
       id-token: write
       contents: read
+    with:
+      artifact-id: ${{ needs.socket-dependencies.outputs.artifact-id }}
+      sha256: ${{ needs.socket-dependencies.outputs.sha256 }}
     secrets:
       TEMPO_MAINNET_RPC_URL: ${{ secrets.TEMPO_MAINNET_RPC_URL }}
       TEMPO_TESTNET_RPC_URL: ${{ secrets.TEMPO_TESTNET_RPC_URL }}
@@ -60,6 +66,8 @@ jobs:
       contents: read
     with:
       profile: default
+      artifact-id: ${{ needs.socket-dependencies.outputs.artifact-id }}
+      sha256: ${{ needs.socket-dependencies.outputs.sha256 }}
     secrets:
       ETHERSCAN_API_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
       ARBITRUM_RPC: ${{ secrets.ARBITRUM_RPC }}
@@ -72,6 +80,9 @@ jobs:
       contents: read
       pages: write
       id-token: write
+    with:
+      artifact-id: ${{ needs.socket-dependencies.outputs.artifact-id }}
+      sha256: ${{ needs.socket-dependencies.outputs.sha256 }}
 
   doctest:
     needs: socket-dependencies
@@ -88,19 +99,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+      - uses: ./.github/actions/setup-build
         with:
-          toolchain: stable
-      - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
-      - name: Install Linux system dependencies
-        run: sudo apt-get update && sudo apt-get install --yes libudev-dev
-      - uses: ./.github/actions/setup-sccache
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          cache-bin: false
-          prefix-key: v2-rust-doctest
-      - uses: ./.github/actions/setup-cargo
-      - run: rustup run stable cargo test --workspace --doc --locked --offline
+          artifact-id: ${{ needs.socket-dependencies.outputs.artifact-id }}
+          sha256: ${{ needs.socket-dependencies.outputs.sha256 }}
+      - run: rustup run stable cargo test --workspace --doc --frozen
 
   no-default-features:
     needs: socket-dependencies
@@ -117,19 +120,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+      - uses: ./.github/actions/setup-build
         with:
-          toolchain: stable
-      - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
-      - name: Install Linux system dependencies
-        run: sudo apt-get update && sudo apt-get install --yes libudev-dev
-      - uses: ./.github/actions/setup-sccache
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          cache-bin: false
-          prefix-key: v1-rust-no-default-features
-      - uses: ./.github/actions/setup-cargo
-      - run: rustup run stable cargo build --workspace --no-default-features --locked --offline
+          artifact-id: ${{ needs.socket-dependencies.outputs.artifact-id }}
+          sha256: ${{ needs.socket-dependencies.outputs.sha256 }}
+      - run: rustup run stable cargo build --workspace --no-default-features --frozen
 
   touch-id-link:
     needs: socket-dependencies
@@ -150,25 +145,20 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+      - uses: ./.github/actions/setup-build
         with:
-          toolchain: stable
+          artifact-id: ${{ needs.socket-dependencies.outputs.artifact-id }}
+          sha256: ${{ needs.socket-dependencies.outputs.sha256 }}
           targets: aarch64-apple-darwin,x86_64-apple-darwin
-      - uses: ./.github/actions/setup-sccache
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          cache-bin: false
-          prefix-key: v1-rust-touch-id-macos
-      - uses: ./.github/actions/setup-cargo
       - name: Run native Touch ID regressions
         run: |
-          rustup run stable cargo test --manifest-path crates/cast/Cargo.toml --lib --features touch-id --target aarch64-apple-darwin --locked --offline cmd::wallet::tests
-          rustup run stable cargo test --manifest-path crates/cast/Cargo.toml --test cli --features touch-id --target aarch64-apple-darwin --locked --offline wallet_change_password
+          rustup run stable cargo test --manifest-path crates/cast/Cargo.toml --lib --features touch-id --target aarch64-apple-darwin --frozen cmd::wallet::tests
+          rustup run stable cargo test --manifest-path crates/cast/Cargo.toml --test cli --features touch-id --target aarch64-apple-darwin --frozen wallet_change_password
       - name: Check Intel Touch ID linking
         run: |
-          rustup run stable cargo test --manifest-path crates/cast/Cargo.toml --test cli --features touch-id --target x86_64-apple-darwin --locked --offline --no-run
-          rustup run stable cargo build --manifest-path crates/forge/Cargo.toml --features touch-id --target x86_64-apple-darwin --locked --offline
-      - run: rustup run stable cargo build --manifest-path crates/forge/Cargo.toml --features touch-id --target aarch64-apple-darwin --locked --offline
+          rustup run stable cargo test --manifest-path crates/cast/Cargo.toml --test cli --features touch-id --target x86_64-apple-darwin --frozen --no-run
+          rustup run stable cargo build --manifest-path crates/forge/Cargo.toml --features touch-id --target x86_64-apple-darwin --frozen
+      - run: rustup run stable cargo build --manifest-path crates/forge/Cargo.toml --features touch-id --target aarch64-apple-darwin --frozen
 
   typos:
     runs-on: depot-ubuntu-latest
@@ -241,20 +231,17 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+      - uses: ./.github/actions/setup-build
         with:
+          artifact-id: ${{ needs.socket-dependencies.outputs.artifact-id }}
+          sha256: ${{ needs.socket-dependencies.outputs.sha256 }}
           toolchain: nightly
           components: clippy
-      - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
-      - uses: ./.github/actions/setup-sccache
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - uses: ./.github/actions/setup-cargo
-      - run: rustup run nightly cargo clippy --workspace --all-targets --all-features --locked --offline
+      - run: rustup run nightly cargo clippy --workspace --all-targets --all-features --frozen
         env:
           RUSTFLAGS: -Dwarnings
 
   rustfmt:
-    needs: socket-dependencies
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -289,25 +276,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+      - uses: ./.github/actions/setup-build
         with:
-          toolchain: stable
-      - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
-      - name: Install Linux system dependencies
-        run: sudo apt-get update && sudo apt-get install --yes libudev-dev
-      - uses: ./.github/actions/setup-sccache
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          cache-bin: false
-          prefix-key: v2-rust-forge-fmt
-      - uses: ./.github/actions/setup-cargo
+          artifact-id: ${{ needs.socket-dependencies.outputs.artifact-id }}
+          sha256: ${{ needs.socket-dependencies.outputs.sha256 }}
       - name: forge fmt
         shell: bash
         run: |
           export RUSTUP_TOOLCHAIN=stable
           cargo_path="$(rustup which cargo)"
           export CARGO="$cargo_path"
-          export CARGO_NET_OFFLINE=true
           ./.github/scripts/format.sh --check
 
   deny:

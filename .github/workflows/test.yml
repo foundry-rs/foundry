@@ -10,6 +10,14 @@ on:
       profile:
         required: true
         type: string
+      artifact-id:
+        description: Approved workspace source artifact from the caller's dependency gate
+        required: true
+        type: string
+      sha256:
+        description: Approved workspace source bundle checksum
+        required: true
+        type: string
     secrets:
       ETHERSCAN_API_KEY:
         required: false
@@ -30,6 +38,15 @@ env:
   RUST_MIN_STACK: 4194304 # 2 * the default (2 * 1024 * 1024)
 
 jobs:
+  bindings-dependencies:
+    name: Approve binding test dependencies
+    permissions:
+      id-token: write
+      contents: read
+    uses: ./.github/workflows/socket-dependencies.yml
+    with:
+      scope: bindings
+
   matrices:
     name: build matrices
     runs-on: ubuntu-latest
@@ -67,7 +84,7 @@ jobs:
     permissions:
       id-token: write
       contents: read
-    needs: matrices
+    needs: [matrices, bindings-dependencies]
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.matrices.outputs.test-matrix) }}
@@ -79,14 +96,18 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+      - uses: ./.github/actions/setup-build
         with:
-          toolchain: stable
-          target: ${{ matrix.target }}
-      - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
-      - name: Install Linux system dependencies
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install --yes libudev-dev
+          artifact-id: ${{ inputs.artifact-id }}
+          sha256: ${{ inputs.sha256 }}
+          targets: ${{ matrix.target }}
+          svm-platform: ${{ matrix.svm_target_platform }}
+      - uses: ./.github/actions/restore-dependencies
+        if: startsWith(matrix.name, 'all')
+        with:
+          artifact-id: ${{ needs.bindings-dependencies.outputs.artifact-id }}
+          sha256: ${{ needs.bindings-dependencies.outputs.sha256 }}
+          scope: bindings
       # External tests dependencies
       - name: Setup Node.js
         if: contains(matrix.name, 'external')
@@ -122,18 +143,6 @@ jobs:
           key: ${{ runner.os }}-foundry-${{ matrix.name }}-${{ github.run_id }}
           restore-keys: |
             ${{ runner.os }}-foundry-${{ matrix.name }}-
-      - uses: ./.github/actions/setup-sccache
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          cache-bin: false
-      - uses: ./.github/actions/setup-cargo
-      - name: Fetch bind test dependencies through Socket
-        if: startsWith(matrix.name, 'all')
-        shell: bash
-        run: |
-          : "${SFW_SHIM_DIR:?Secure runner must install Socket Firewall first}"
-          CARGO_NET_GIT_FETCH_WITH_CLI=true "$SFW_SHIM_DIR/cargo" fetch --locked \
-            --manifest-path crates/forge/tests/fixtures/bind-lock/Cargo.toml
       - uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
         with:
           tool: nextest
@@ -157,6 +166,4 @@ jobs:
             args+=(--partition "$NEXTEST_PARTITION")
           fi
           args+=(--no-fail-fast)
-          # Keep offline mode scoped to the workspace build. Tests that compile generated crates
-          # invoke Cargo through the Socket shim and remain subject to package policy.
-          rustup run stable cargo nextest run --offline --locked --features monad "${args[@]}"
+          rustup run stable cargo nextest run --frozen --features monad "${args[@]}"

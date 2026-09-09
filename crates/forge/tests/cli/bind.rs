@@ -2,36 +2,43 @@ use foundry_compilers::utils::read_json_file;
 use foundry_config::SolcReq;
 use foundry_test_utils::{TestProject, cargo_profile_dir};
 use std::{fs, path::Path, process::Command};
-
-const BINDINGS_LOCKFILE: &[u8] = include_bytes!("../fixtures/bind-lock/Cargo.lock");
-const SERDE_WITH_DEP: &str =
-    r#"serde_with = { version = "3.15", default-features = false, features = ["std"] }"#;
+use toml_edit::DocumentMut;
 
 // Keep each generated crate isolated while reusing its dependencies across binding tests.
 // Cargo locks the shared target directory across nextest processes and fingerprints each crate.
-pub(super) fn bindings_cargo(bindings_path: &Path) -> Command {
-    let manifest_path = bindings_path.join("Cargo.toml");
-    let mut manifest =
-        fs::read_to_string(&manifest_path).expect("failed to read bindings manifest");
-    if !manifest.contains("\nserde_with =") {
-        manifest.push('\n');
-        manifest.push_str(SERDE_WITH_DEP);
-        manifest.push('\n');
-        fs::write(manifest_path, manifest).expect("failed to normalize bindings manifest");
-    }
-    fs::write(bindings_path.join("Cargo.lock"), BINDINGS_LOCKFILE)
-        .expect("failed to write bindings lockfile");
-
+pub(super) fn bindings_cargo(bindings_path: &Path, command: &str) -> Command {
+    let manifest = fs::read_to_string(bindings_path.join("Cargo.toml"))
+        .unwrap()
+        .parse::<DocumentMut>()
+        .unwrap();
+    let mut lock = include_str!("../fixtures/bind-lock/Cargo.lock").parse::<DocumentMut>().unwrap();
+    // Some generated crates do not need serde_with. Only prune their direct dependency list;
+    // preserve every approved version and checksum, then let --locked enforce the resolution.
+    let package = lock["package"]
+        .as_array_of_tables_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|package| package["name"].as_str() == Some("foundry-contracts"))
+        .unwrap();
+    package["dependencies"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|dependency| manifest["dependencies"].get(dependency.as_str().unwrap()).is_some());
+    fs::write(bindings_path.join("Cargo.lock"), lock.to_string()).unwrap();
     let mut cmd = Command::new("cargo");
-    cmd.arg("--locked")
+    cmd.args([command, "--locked"])
         .current_dir(bindings_path)
         .env("CARGO_TARGET_DIR", cargo_profile_dir().join("bind-test-target"));
+    // CI supplies a test-only bundle, separate from the main workspace dependencies.
+    if let Some(cargo_home) = std::env::var_os("FOUNDRY_BINDINGS_CARGO_HOME") {
+        cmd.env("CARGO_HOME", cargo_home).env("CARGO_NET_OFFLINE", "true");
+    }
     cmd
 }
 
 fn assert_bindings_compile(bindings_path: &Path) {
-    let out = bindings_cargo(bindings_path)
-        .args(["check", "--tests"])
+    let out = bindings_cargo(bindings_path, "check")
+        .arg("--tests")
         .output()
         .expect("failed to run cargo check");
 
