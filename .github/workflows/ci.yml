@@ -49,6 +49,34 @@ jobs:
       artifact-id: ${{ needs.dependencies.outputs.artifact-id }}
       sha256: ${{ needs.dependencies.outputs.sha256 }}
 
+  tempo:
+    needs: dependencies
+    uses: ./.github/workflows/tempo.yml
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      artifact-id: ${{ needs.dependencies.outputs.artifact-id }}
+      sha256: ${{ needs.dependencies.outputs.sha256 }}
+      network: devnet
+    secrets:
+      TEMPO_MAINNET_RPC_URL: ${{ secrets.TEMPO_MAINNET_RPC_URL }}
+      TEMPO_TESTNET_RPC_URL: ${{ secrets.TEMPO_TESTNET_RPC_URL }}
+      TEMPO_DEVNET_RPC_URL: ${{ secrets.TEMPO_DEVNET_RPC_URL }}
+
+  mpp:
+    needs: dependencies
+    uses: ./.github/workflows/mpp.yml
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      artifact-id: ${{ needs.dependencies.outputs.artifact-id }}
+      sha256: ${{ needs.dependencies.outputs.sha256 }}
+      network: moderato
+    secrets:
+      MPP_API_KEY: ${{ secrets.MPP_API_KEY }}
+
   doctest:
     needs: dependencies
     runs-on: depot-ubuntu-latest
@@ -294,6 +322,8 @@ jobs:
       - dependencies
       - test
       - docs
+      - tempo
+      - mpp
       - doctest
       - no-default-features
       - touch-id-link
@@ -311,5 +341,6 @@ jobs:
       - name: Decide whether the needed jobs succeeded or failed
         uses: re-actors/alls-green@b5b5b37504aa4183270bd3d855c52a67f212be35 # v1.3.0
         with:
-          allowed-skips: touch-id-link
+          # Network checks retain their fork/Dependabot secret guards.
+          allowed-skips: touch-id-link, tempo, mpp
           jobs: ${{ toJSON(needs) }}
