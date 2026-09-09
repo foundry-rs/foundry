@@ -548,7 +548,7 @@ contract EnvironmentCapture {
 forgetest!(block_environment_lints_tests_and_scripts, |prj, cmd| {
     prj.add_test("EnvironmentCapture.t.sol", BLOCK_ENVIRONMENT_CAPTURE);
     let expected = str![[r#"
-warning[environment-read-across-mutation]: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
+warning[environment-read-across-mutation]: `block.number` may be reused across `vm.roll`
    [FILE]:11:26
    │
 11 │         uint256 height = block.number;
@@ -557,9 +557,10 @@ warning[environment-read-across-mutation]: `block.number` may be reused across `
 13 │         vm.roll(200);
    │         ──────────── `vm.roll` changes this environment here
    │
+   ├ help: capture it with `vm.getBlockNumber()` instead
    ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
 
-warning[environment-read-across-mutation]: `block.timestamp` may be reused across `vm.warp`; capture it with `vm.getBlockTimestamp()` instead
+warning[environment-read-across-mutation]: `block.timestamp` may be reused across `vm.warp`
    [FILE]:12:24
    │
 12 │         uint256 time = block.timestamp;
@@ -568,6 +569,7 @@ warning[environment-read-across-mutation]: `block.timestamp` may be reused acros
 14 │         vm.warp(200);
    │         ──────────── `vm.warp` changes this environment here
    │
+   ├ help: capture it with `vm.getBlockTimestamp()` instead
    ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
 
 
@@ -600,7 +602,7 @@ forgetest!(block_environment_build_is_bytecode_neutral, |prj, cmd| {
     let without_lints = std::fs::read(&artifact).unwrap();
 
     cmd.forge_fuse().args(["build", "--force"]).assert_success().stderr_eq(str![[r#"
-warning[environment-read-across-mutation]: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
+warning[environment-read-across-mutation]: `block.number` may be reused across `vm.roll`
    [FILE]:11:26
    │
 11 │         uint256 height = block.number;
@@ -609,9 +611,10 @@ warning[environment-read-across-mutation]: `block.number` may be reused across `
 13 │         vm.roll(200);
    │         ──────────── `vm.roll` changes this environment here
    │
+   ├ help: capture it with `vm.getBlockNumber()` instead
    ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
 
-warning[environment-read-across-mutation]: `block.timestamp` may be reused across `vm.warp`; capture it with `vm.getBlockTimestamp()` instead
+warning[environment-read-across-mutation]: `block.timestamp` may be reused across `vm.warp`
    [FILE]:12:24
    │
 12 │         uint256 time = block.timestamp;
@@ -620,6 +623,7 @@ warning[environment-read-across-mutation]: `block.timestamp` may be reused acros
 14 │         vm.warp(200);
    │         ──────────── `vm.warp` changes this environment here
    │
+   ├ help: capture it with `vm.getBlockTimestamp()` instead
    ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
 
 
@@ -669,16 +673,17 @@ contract SecondarySpan is Capture, Clock {
     let output = cmd
         .args(["lint", "--only-lint", "environment-read-across-mutation", "--json"])
         .assert_success();
-    let diagnostics: Vec<serde_json::Value> =
-        serde_json::Deserializer::from_slice(&output.get_output().stdout)
-            .into_iter()
-            .map(Result::unwrap)
-            .collect();
+    let diagnostics = serde_json::Deserializer::from_slice(&output.get_output().stdout)
+        .into_iter::<serde_json::Value>()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
     assert_eq!(diagnostics.len(), 1);
     let diagnostic = &diagnostics[0];
+    assert_eq!(diagnostic["message"], "`block.timestamp` may be reused across `vm.warp`");
+    assert_eq!(diagnostic["children"][0]["level"], "help");
     assert_eq!(
-        diagnostic["message"],
-        "`block.timestamp` may be reused across `vm.warp`; capture it with `vm.getBlockTimestamp()` instead"
+        diagnostic["children"][0]["message"],
+        "capture it with `vm.getBlockTimestamp()` instead"
     );
     let spans = diagnostic["spans"].as_array().unwrap();
     assert_eq!(spans.len(), 2);

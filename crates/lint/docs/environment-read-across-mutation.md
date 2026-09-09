@@ -6,59 +6,24 @@
 ## What it does
 
 Warns when a raw environment value can be used after a Foundry cheatcode changes that
-environment, or when matching raw reads occur on both sides of a mutation in the same
-call frame. The diagnostic points to the original read, names the mutation (for example,
-"across `vm.warp`"), and highlights the mutation call with a secondary span. It recommends
-a getter when one exists. For aliases and internal helpers, the secondary span identifies
-the actual cheatcode call, not the helper invocation.
-
-This rule replaces `block-number-across-roll` and `block-timestamp-across-warp`. Update
-`--only-lint`, `exclude_lints`, and inline suppressions to the new ID.
+environment, or when matching raw reads occur on both sides of a mutation in the same call
+frame. Reads without a matching mutation are not flagged.
 
 ## Why is this bad?
 
 Solidity compilers can reuse, move, or defer environment reads that are invariant during
-normal EVM execution. Foundry can change these values within a test. Assigning a raw read
+normal EVM execution. Foundry can change these values inside a test, so assigning a raw read
 to a local does not guarantee that the compiler captures its value before a cheatcode call.
 This affects optimized via-IR compilation as well as other compiler optimizations.
 
-The rule recognizes the following reads and direct setters by their resolved ABI signature
-and the constant cheatcode address, even when the receiver is an alias or helper argument:
-
-| Read | Direct setter | Materialized getter |
-| --- | --- | --- |
-| `block.number` | `roll(uint256)` | `vm.getBlockNumber()` |
-| `block.timestamp` | `warp(uint256)` | `vm.getBlockTimestamp()` |
-| `block.chainid` | `chainId(uint256)` | `vm.getChainId()` |
-| `block.coinbase` | `coinbase(address)` | External helper |
-| `block.difficulty`, `block.prevrandao` | `difficulty(uint256)`, `prevrandao(bytes32)`, `prevrandao(uint256)` | External helper |
-| `block.basefee` | `fee(uint256)` | External helper |
-| `block.blobbasefee` | `blobBaseFee(uint256)` | `vm.getBlobBaseFee()` |
-| `tx.gasprice` | `txGasPrice(uint256)` | External helper |
-| `blockhash(n)` | `setBlockhash(uint256,bytes32)`, `roll(uint256)` | External helper |
-| `blobhash(i)` | `blobhashes(bytes32[])` | `vm.getBlobhashes()[i]` |
-| `block.gaslimit`, `block.slotnum` (Amsterdam) | Fork changes and snapshot restoration | External helper |
-
-`roll` also affects `blockhash` because its valid history window depends on the current
-block number. Both difficulty names read the same opcode, whose meaning depends on the
-EVM version. `blockhash` and `blobhash` results retain dependencies on their index arguments.
-
-All overloads of `selectFork`, `createSelectFork`, and `rollFork` are recognized. Fork
-changes replace block/configuration fields and blockhash history; switching forks also
-switches fork-scoped gas-price and blob-hash overrides. `revertToState` and
-`revertToStateAndDelete`, plus their deprecated `revertTo` and `revertToAndDelete` aliases,
-can restore all listed environments. These operations are treated conservatively: the rule
-does not prove that a snapshot exists, a fork differs, or an explicitly rolled fork is active.
-Creating a fork without selecting it is not a mutation of the current environment.
-
-`prank` and `broadcast` affect subsequent call frames; they do not change the current frame's
-`msg.sender`, `msg.value`, or `tx.origin` across the setter call. Balance, code, storage,
-return-data, and gas reads are not in this invariant-environment class: the compiler already
-accounts for their changes across calls. Inline assembly is outside this rule's analysis.
+Use a getter or an external helper call to capture the value at the time of the call.
+An internal helper can be inlined and does not provide this guarantee. For before/after
+comparisons, use getters or external helpers on both sides of the mutation. Keep normal
+compiler optimizations enabled.
 
 ## Example
 
-### Bad
+In a test with the `vm` cheatcode interface:
 
 ```solidity
 uint256 saved = block.chainid;
@@ -66,7 +31,7 @@ vm.chainId(2);
 vm.chainId(saved); // The compiler need not have captured the original chain ID.
 ```
 
-### Good
+Use instead:
 
 ```solidity
 uint256 saved = vm.getChainId();
@@ -74,7 +39,36 @@ vm.chainId(2);
 vm.chainId(saved);
 ```
 
-For fields without a getter, use a public/external helper and call it externally:
+## Affected reads and mutations
+
+| Read | Direct setter | Getter or alternative |
+| --- | --- | --- |
+| `block.number` | `vm.roll` | `vm.getBlockNumber()` |
+| `block.timestamp` | `vm.warp` | `vm.getBlockTimestamp()` |
+| `block.chainid` | `vm.chainId` | `vm.getChainId()` |
+| `block.coinbase` | `vm.coinbase` | External helper |
+| `block.difficulty`, `block.prevrandao` | `vm.difficulty`, `vm.prevrandao` (both overloads) | External helper |
+| `block.basefee` | `vm.fee` | External helper |
+| `block.blobbasefee` | `vm.blobBaseFee` | `vm.getBlobBaseFee()` |
+| `tx.gasprice` | `vm.txGasPrice` | External helper |
+| `blockhash(n)` | `vm.setBlockhash`, `vm.roll` | External helper |
+| `blobhash(i)` | `vm.blobhashes` | `vm.getBlobhashes()[i]` |
+| `block.gaslimit`, `block.slotnum` (Amsterdam) | Fork changes and snapshot restoration | External helper |
+
+`vm.roll` also affects `blockhash` because its valid history window depends on the current
+block number. When replacing `blobhash(i)` with array indexing, handle out-of-range indices
+if needed: the opcode returns zero, whereas indexing the getter's returned array reverts.
+
+All overloads of `vm.selectFork`, `vm.createSelectFork`, and `vm.rollFork` are covered.
+Fork changes replace block/configuration fields and blockhash history; switching forks also
+switches fork-scoped gas-price and blob-hash overrides. `vm.revertToState` and
+`vm.revertToStateAndDelete`, plus their deprecated `vm.revertTo` and `vm.revertToAndDelete`
+aliases, can restore all listed environments. A warning does not establish that a particular
+fork or snapshot operation changed the saved value; use a getter or external helper when
+you need to retain it regardless of the selected fork or snapshot. Creating a fork without
+selecting it does not change the current environment.
+
+For fields without a getter, call a public/external helper externally:
 
 ```solidity
 function baseFee() external view returns (uint256) {
@@ -88,37 +82,27 @@ function example() public {
 }
 ```
 
-An internal helper can be inlined and does not provide this guarantee. Use getters or
-external helpers on both sides of before/after comparisons. Keep compiler optimizations enabled.
-When replacing `blobhash(i)` with array indexing, handle out-of-range indices if needed:
-the opcode returns zero, whereas indexing the getter's returned array reverts.
+`vm.prank` and `vm.broadcast` affect subsequent call frames, not the current frame's
+`msg.sender`, `msg.value`, or `tx.origin` across the setter call. Balance, code, storage,
+return-data, and gas reads are not in this invariant-environment class: the compiler already
+accounts for their changes across calls.
 
 ## Scope and controls
 
-The rule runs in `forge lint` and the normal build lint stage, including configured test
-and script directories. It does not change compiler output or automatically insert cheatcodes.
-Reads without a recognized matching mutation remain quiet.
+The rule applies to tests and scripts, regardless of optimizer settings. Use getters or
+external helpers whenever a test needs to save an environment value across a matching
+mutation; the absence of a warning does not guarantee that a raw capture is reliable,
+including in assembly or when calling cheatcodes through low-level calls.
 
-The analysis follows scalar locals, arithmetic, tuples, internal helper arguments and
-returns, inherited helpers, and modifiers. External call results, including public and
-external library calls, are materialized values from separate call frames.
-
-This is a bounded warning, not a complete execution analysis: it uses a 16,384-step budget,
-retains at most 32 paths at statement boundaries, follows at most eight function frames, and
-visits at most two loop iterations. It does not prove relationships between runtime conditions
-or analyze recursive/indirect calls, low-level cheatcode calls, assembly, or heap/storage aliases.
-Known unsigned and boolean locals prune exhausted loops and constant branches. Differing
-helper return values and conditional-expression values are discarded rather than combining
-mutually exclusive outcomes, which can miss captures returned by branching helpers. Hash
-indices and fork/snapshot identities are not tracked precisely. Absence of a warning does not
-establish that every test capture is safe.
-
-Severity filters, `exclude_lints`, and inline suppressions apply. Suppress at the raw capture:
+This rule replaces `block-number-across-roll` and `block-timestamp-across-warp`. Update
+`--only-lint`, `exclude_lints`, and inline suppressions to the new ID. Existing severity
+filters and suppressions apply. Suppress at the raw capture when its behavior is intentional:
 
 ```solidity
 // forge-lint: disable-next-line(environment-read-across-mutation)
 uint256 saved = block.chainid;
 ```
 
-This is separate from `block-timestamp`, which warns about validator-influenced comparisons
-in production code.
+This is separate from `block-timestamp`, which asks you to review timestamp comparisons
+against the target chain's timing guarantees. This rule concerns saved environment values
+in tests and scripts.

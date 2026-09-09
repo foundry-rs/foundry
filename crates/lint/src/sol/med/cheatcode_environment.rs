@@ -304,14 +304,14 @@ impl<'ast> ProjectLintPass<'ast> for CheatcodeEnvironment {
             return;
         }
         let gcx = ctx.gcx();
-        let input_sources: HashMap<_, _> = gcx
+        let input_sources = gcx
             .hir
             .sources_enumerated()
             .filter_map(|(id, source)| {
                 let FileName::Real(path) = &source.file.name else { return None };
                 Some((id, sources.iter().find(|source| &source.path == path)?))
             })
-            .collect();
+            .collect::<HashMap<_, _>>();
         for func in gcx.hir.functions() {
             if func.body.is_none()
                 || func.kind == FunctionKind::Modifier
@@ -387,13 +387,11 @@ impl<'gcx> Checker<'_, '_, 'gcx> {
         self.gcx
             .sess
             .dcx
-            .diag::<()>(
-                lint.level(),
-                format!("`{name}` may be reused across `vm.{setter}`; {advice}"),
-            )
+            .diag::<()>(lint.level(), format!("`{name}` may be reused across `vm.{setter}`"))
             .code(DiagId::new_str(lint.id))
             .span(read.span)
             .span_label(mutation.span, format!("`vm.{setter}` changes this environment here"))
+            .help(advice)
             .help(lint.help)
             .emit();
     }

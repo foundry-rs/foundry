@@ -29,7 +29,7 @@ contract ClockHelpers {
     function virtualModifier() internal optionalWarp {}
 
     function inheritedRead() internal view returns (uint256) {
-        return block.number; //~WARN: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
+        return block.number; //~WARN: `block.number` may be reused across `vm.roll`
     }
 }
 
@@ -39,20 +39,20 @@ contract CheatcodeEnvironment is ClockHelpers {
     function explicitModifier() internal ClockHelpers.optionalWarp {}
     function restoreNumber() public {
         clock.roll(100);
-        uint256 saved = block.number; //~WARN: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
+        uint256 saved = block.number; //~WARN: `block.number` may be reused across `vm.roll`
         clock.roll(200);
         clock.roll(saved);
     }
 
     function restoreTimestamp() public {
         clock.warp(100);
-        uint256 saved = block.timestamp; //~WARN: `block.timestamp` may be reused across `vm.warp`; capture it with `vm.getBlockTimestamp()` instead
+        uint256 saved = block.timestamp; //~WARN: `block.timestamp` may be reused across `vm.warp`
         clock.warp(200);
         clock.warp(saved);
     }
 
     function aliasesAndArithmetic() public returns (uint256) {
-        uint256 saved = block.number; //~WARN: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
+        uint256 saved = block.number; //~WARN: `block.number` may be reused across `vm.roll`
         uint256 derived = identity(saved + 10);
         Clock alias_ = clock;
         alias_.roll(200);
@@ -60,7 +60,7 @@ contract CheatcodeEnvironment is ClockHelpers {
     }
 
     function readsOnBothSides() public returns (uint256, uint256) {
-        uint256 before_ = block.timestamp; //~WARN: `block.timestamp` may be reused across `vm.warp`; capture it with `vm.getBlockTimestamp()` instead
+        uint256 before_ = block.timestamp; //~WARN: `block.timestamp` may be reused across `vm.warp`
         skip(20);
         return (before_, block.timestamp);
     }
@@ -72,19 +72,19 @@ contract CheatcodeEnvironment is ClockHelpers {
     }
 
     function receiverParameter() public returns (uint256) {
-        uint256 saved = block.number; //~WARN: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
+        uint256 saved = block.number; //~WARN: `block.number` may be reused across `vm.roll`
         advanceReceiver(clock);
         return saved;
     }
 
     function namedArgument() public returns (uint256) {
-        uint256 saved = block.number; //~WARN: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
+        uint256 saved = block.number; //~WARN: `block.number` may be reused across `vm.roll`
         advanceReceiver({receiver: clock});
         return saved;
     }
 
     function rewindHelper() public returns (uint256) {
-        uint256 saved = block.timestamp; //~WARN: `block.timestamp` may be reused across `vm.warp`; capture it with `vm.getBlockTimestamp()` instead
+        uint256 saved = block.timestamp; //~WARN: `block.timestamp` may be reused across `vm.warp`
         rewind(1);
         return saved;
     }
@@ -92,30 +92,30 @@ contract CheatcodeEnvironment is ClockHelpers {
     function mutateInModifier() internal warpFirst {}
 
     function modifierCall() public returns (uint256) {
-        uint256 saved = block.timestamp; //~WARN: `block.timestamp` may be reused across `vm.warp`; capture it with `vm.getBlockTimestamp()` instead
+        uint256 saved = block.timestamp; //~WARN: `block.timestamp` may be reused across `vm.warp`
         mutateInModifier();
         return saved;
     }
 
     function modifierSuffix() public warpLast returns (uint256) {
-        return block.timestamp; //~WARN: `block.timestamp` may be reused across `vm.warp`; capture it with `vm.getBlockTimestamp()` instead
+        return block.timestamp; //~WARN: `block.timestamp` may be reused across `vm.warp`
     }
 
     function tupleAlias() public returns (uint256) {
-        (uint256 saved, uint256 other) = (block.number, 7); //~WARN: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
+        (uint256 saved, uint256 other) = (block.number, 7); //~WARN: `block.number` may be reused across `vm.roll`
         (other, saved) = (saved, other);
         clock.roll(200);
         return other;
     }
 
     function reachableBranch(bool choose) public returns (uint256) {
-        uint256 saved = block.number; //~WARN: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
+        uint256 saved = block.number; //~WARN: `block.number` may be reused across `vm.roll`
         if (choose) clock.roll(200);
         return saved;
     }
 
     function loopCarried(bool choose) public {
-        uint256 saved = block.timestamp; //~WARN: `block.timestamp` may be reused across `vm.warp`; capture it with `vm.getBlockTimestamp()` instead
+        uint256 saved = block.timestamp; //~WARN: `block.timestamp` may be reused across `vm.warp`
         while (choose) {
             clock.warp(saved + 1);
         }
@@ -237,18 +237,18 @@ contract CheatcodeEnvironment is ClockHelpers {
     }
 
     function namedReturn() public returns (uint256 saved) {
-        saved = block.timestamp; //~WARN: `block.timestamp` may be reused across `vm.warp`; capture it with `vm.getBlockTimestamp()` instead
+        saved = block.timestamp; //~WARN: `block.timestamp` may be reused across `vm.warp`
         clock.warp(200);
         return;
     }
 
     function implicitReturn() public returns (uint256 saved) {
-        saved = block.number; //~WARN: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
+        saved = block.number; //~WARN: `block.number` may be reused across `vm.roll`
         clock.roll(200);
     }
 
     function helperTuple() internal view returns (uint256, uint256) {
-        return (block.number, 7); //~WARN: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
+        return (block.number, 7); //~WARN: `block.number` may be reused across `vm.roll`
     }
 
     function returnedTuple() public returns (uint256) {
@@ -313,7 +313,7 @@ contract CheatcodeEnvironment is ClockHelpers {
     }
 
     function successfulWarp() public returns (uint256) {
-        uint256 saved = block.timestamp; //~WARN: `block.timestamp` may be reused across `vm.warp`; capture it with `vm.getBlockTimestamp()` instead
+        uint256 saved = block.timestamp; //~WARN: `block.timestamp` may be reused across `vm.warp`
         try clock.warp(200) {
             return saved;
         } catch {
@@ -322,7 +322,7 @@ contract CheatcodeEnvironment is ClockHelpers {
     }
 
     function compoundOverwrite() public returns (uint256) {
-        uint256 saved = block.number; //~WARN: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
+        uint256 saved = block.number; //~WARN: `block.number` may be reused across `vm.roll`
         saved += 1;
         clock.roll(200);
         return saved;
@@ -336,7 +336,7 @@ contract CheatcodeEnvironment is ClockHelpers {
     }
 
     function qualifiedModifier() public returns (uint256) {
-        uint256 saved = block.timestamp; //~WARN: `block.timestamp` may be reused across `vm.warp`; capture it with `vm.getBlockTimestamp()` instead
+        uint256 saved = block.timestamp; //~WARN: `block.timestamp` may be reused across `vm.warp`
         explicitModifier();
         return saved;
     }

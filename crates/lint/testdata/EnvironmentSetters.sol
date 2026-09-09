@@ -51,163 +51,163 @@ contract EnvironmentSetters {
     VmEnvironment constant vm = VmEnvironment(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
 
     function captureChainId() public returns (uint256) {
-        uint256 saved = block.chainid; //~WARN: `block.chainid` may be reused across `vm.chainId`; capture it with `vm.getChainId()` instead
+        uint256 saved = block.chainid; //~WARN: `block.chainid` may be reused across `vm.chainId`
         vm.chainId(2);
         return saved;
     }
 
     function captureCoinbase() public returns (address) {
-        address saved = block.coinbase; //~WARN: `block.coinbase` may be reused across `vm.coinbase`; capture it through an external helper call instead
+        address saved = block.coinbase; //~WARN: `block.coinbase` may be reused across `vm.coinbase`
         vm.coinbase(address(2));
         return saved;
     }
 
     function captureDifficulty() public returns (uint256) {
-        uint256 saved = block.difficulty; //~WARN: `block.difficulty` may be reused across `vm.difficulty`; capture it through an external helper call instead
+        uint256 saved = block.difficulty; //~WARN: `block.difficulty` may be reused across `vm.difficulty`
         vm.difficulty(2);
         return saved;
     }
 
     function capturePrevrandao() public returns (uint256) {
-        uint256 saved = block.prevrandao; //~WARN: `block.prevrandao` may be reused across `vm.prevrandao`; capture it through an external helper call instead
+        uint256 saved = block.prevrandao; //~WARN: `block.prevrandao` may be reused across `vm.prevrandao`
         vm.prevrandao(bytes32(uint256(2)));
         return saved;
     }
 
     function capturePrevrandaoUint() public returns (uint256) {
-        uint256 saved = block.prevrandao; //~WARN: `block.prevrandao` may be reused across `vm.prevrandao`; capture it through an external helper call instead
+        uint256 saved = block.prevrandao; //~WARN: `block.prevrandao` may be reused across `vm.prevrandao`
         vm.prevrandao(uint256(2));
         return saved;
     }
 
     function captureBaseFee() public returns (uint256) {
-        uint256 saved = block.basefee; //~WARN: `block.basefee` may be reused across `vm.fee`; capture it through an external helper call instead
+        uint256 saved = block.basefee; //~WARN: `block.basefee` may be reused across `vm.fee`
         vm.fee(2);
         return saved;
     }
 
     function captureBlobBaseFee() public returns (uint256) {
-        uint256 saved = block.blobbasefee; //~WARN: `block.blobbasefee` may be reused across `vm.blobBaseFee`; capture it with `vm.getBlobBaseFee()` instead
+        uint256 saved = block.blobbasefee; //~WARN: `block.blobbasefee` may be reused across `vm.blobBaseFee`
         vm.blobBaseFee(2);
         return saved;
     }
 
     function captureGasPrice() public returns (uint256) {
-        uint256 saved = tx.gasprice; //~WARN: `tx.gasprice` may be reused across `vm.txGasPrice`; capture it through an external helper call instead
+        uint256 saved = tx.gasprice; //~WARN: `tx.gasprice` may be reused across `vm.txGasPrice`
         vm.txGasPrice(2);
         return saved;
     }
 
     function captureBlockHash() public returns (bytes32) {
-        bytes32 saved = blockhash(1); //~WARN: `blockhash(...)` may be reused across `vm.setBlockhash`; capture it through an external helper call instead
+        bytes32 saved = blockhash(1); //~WARN: `blockhash(...)` may be reused across `vm.setBlockhash`
         vm.setBlockhash(1, bytes32(uint256(2)));
         return saved;
     }
 
     function captureBlobHash() public returns (bytes32) {
-        bytes32 saved = blobhash(0); //~WARN: `blobhash(...)` may be reused across `vm.blobhashes`; capture it with `vm.getBlobhashes()` instead
+        bytes32 saved = blobhash(0); //~WARN: `blobhash(...)` may be reused across `vm.blobhashes`
         vm.blobhashes(new bytes32[](1));
         return saved;
     }
 
     function captureSelectFork() public returns (uint256) {
-        uint256 saved = block.gaslimit; //~WARN: `block.gaslimit` may be reused across `vm.selectFork`; capture it through an external helper call instead
+        uint256 saved = block.gaslimit; //~WARN: `block.gaslimit` may be reused across `vm.selectFork`
         vm.selectFork(1);
         return saved;
     }
 
     function captureCreateSelectFork() public returns (uint256) {
-        uint256 saved = block.gaslimit; //~WARN: `block.gaslimit` may be reused across `vm.createSelectFork`; capture it through an external helper call instead
+        uint256 saved = block.gaslimit; //~WARN: `block.gaslimit` may be reused across `vm.createSelectFork`
         vm.createSelectFork("rpc");
         return saved;
     }
 
     function captureCreateSelectForkHeight() public returns (uint256) {
-        uint256 saved = block.gaslimit; //~WARN: `block.gaslimit` may be reused across `vm.createSelectFork`; capture it through an external helper call instead
+        uint256 saved = block.gaslimit; //~WARN: `block.gaslimit` may be reused across `vm.createSelectFork`
         vm.createSelectFork("rpc", uint256(2));
         return saved;
     }
 
     function captureCreateSelectForkTransaction() public returns (uint256) {
-        uint256 saved = block.gaslimit; //~WARN: `block.gaslimit` may be reused across `vm.createSelectFork`; capture it through an external helper call instead
+        uint256 saved = block.gaslimit; //~WARN: `block.gaslimit` may be reused across `vm.createSelectFork`
         vm.createSelectFork("rpc", bytes32(uint256(2)));
         return saved;
     }
 
     function captureRollFork() public returns (uint256) {
-        uint256 saved = block.gaslimit; //~WARN: `block.gaslimit` may be reused across `vm.rollFork`; capture it through an external helper call instead
+        uint256 saved = block.gaslimit; //~WARN: `block.gaslimit` may be reused across `vm.rollFork`
         vm.rollFork(uint256(2));
         return saved;
     }
 
     function captureRollForkTransaction() public returns (uint256) {
-        uint256 saved = block.gaslimit; //~WARN: `block.gaslimit` may be reused across `vm.rollFork`; capture it through an external helper call instead
+        uint256 saved = block.gaslimit; //~WARN: `block.gaslimit` may be reused across `vm.rollFork`
         vm.rollFork(bytes32(uint256(2)));
         return saved;
     }
 
     function captureRollNamedFork() public returns (uint256) {
-        uint256 saved = block.gaslimit; //~WARN: `block.gaslimit` may be reused across `vm.rollFork`; capture it through an external helper call instead
+        uint256 saved = block.gaslimit; //~WARN: `block.gaslimit` may be reused across `vm.rollFork`
         vm.rollFork(1, uint256(2));
         return saved;
     }
 
     function captureRollNamedForkTransaction() public returns (uint256) {
-        uint256 saved = block.gaslimit; //~WARN: `block.gaslimit` may be reused across `vm.rollFork`; capture it through an external helper call instead
+        uint256 saved = block.gaslimit; //~WARN: `block.gaslimit` may be reused across `vm.rollFork`
         vm.rollFork(1, bytes32(uint256(2)));
         return saved;
     }
 
     function captureRevertTo() public returns (uint256) {
-        uint256 saved = block.gaslimit; //~WARN: `block.gaslimit` may be reused across `vm.revertTo`; capture it through an external helper call instead
+        uint256 saved = block.gaslimit; //~WARN: `block.gaslimit` may be reused across `vm.revertTo`
         vm.revertTo(1);
         return saved;
     }
 
     function captureRevertToState() public returns (uint256) {
-        uint256 saved = block.gaslimit; //~WARN: `block.gaslimit` may be reused across `vm.revertToState`; capture it through an external helper call instead
+        uint256 saved = block.gaslimit; //~WARN: `block.gaslimit` may be reused across `vm.revertToState`
         vm.revertToState(1);
         return saved;
     }
 
     function captureRevertToAndDelete() public returns (uint256) {
-        uint256 saved = block.gaslimit; //~WARN: `block.gaslimit` may be reused across `vm.revertToAndDelete`; capture it through an external helper call instead
+        uint256 saved = block.gaslimit; //~WARN: `block.gaslimit` may be reused across `vm.revertToAndDelete`
         vm.revertToAndDelete(1);
         return saved;
     }
 
     function captureRevertToStateAndDelete() public returns (uint256) {
-        uint256 saved = block.gaslimit; //~WARN: `block.gaslimit` may be reused across `vm.revertToStateAndDelete`; capture it through an external helper call instead
+        uint256 saved = block.gaslimit; //~WARN: `block.gaslimit` may be reused across `vm.revertToStateAndDelete`
         vm.revertToStateAndDelete(1);
         return saved;
     }
 
     function forkFields() public returns (uint256, uint256, uint256, address, uint256, uint256, uint256, uint256, uint256, bytes32) {
-        uint256 height = block.number; //~WARN: `block.number` may be reused across `vm.selectFork`; capture it with `vm.getBlockNumber()` instead
-        uint256 time = block.timestamp; //~WARN: `block.timestamp` may be reused across `vm.selectFork`; capture it with `vm.getBlockTimestamp()` instead
-        uint256 chain = block.chainid; //~WARN: `block.chainid` may be reused across `vm.selectFork`; capture it with `vm.getChainId()` instead
-        address beneficiary = block.coinbase; //~WARN: `block.coinbase` may be reused across `vm.selectFork`; capture it through an external helper call instead
-        uint256 difficulty = block.difficulty; //~WARN: `block.difficulty` may be reused across `vm.selectFork`; capture it through an external helper call instead
-        uint256 random = block.prevrandao; //~WARN: `block.prevrandao` may be reused across `vm.selectFork`; capture it through an external helper call instead
-        uint256 base = block.basefee; //~WARN: `block.basefee` may be reused across `vm.selectFork`; capture it through an external helper call instead
-        uint256 blobBase = block.blobbasefee; //~WARN: `block.blobbasefee` may be reused across `vm.selectFork`; capture it with `vm.getBlobBaseFee()` instead
-        uint256 limit = block.gaslimit; //~WARN: `block.gaslimit` may be reused across `vm.selectFork`; capture it through an external helper call instead
-        bytes32 hash = blockhash(1); //~WARN: `blockhash(...)` may be reused across `vm.selectFork`; capture it through an external helper call instead
+        uint256 height = block.number; //~WARN: `block.number` may be reused across `vm.selectFork`
+        uint256 time = block.timestamp; //~WARN: `block.timestamp` may be reused across `vm.selectFork`
+        uint256 chain = block.chainid; //~WARN: `block.chainid` may be reused across `vm.selectFork`
+        address beneficiary = block.coinbase; //~WARN: `block.coinbase` may be reused across `vm.selectFork`
+        uint256 difficulty = block.difficulty; //~WARN: `block.difficulty` may be reused across `vm.selectFork`
+        uint256 random = block.prevrandao; //~WARN: `block.prevrandao` may be reused across `vm.selectFork`
+        uint256 base = block.basefee; //~WARN: `block.basefee` may be reused across `vm.selectFork`
+        uint256 blobBase = block.blobbasefee; //~WARN: `block.blobbasefee` may be reused across `vm.selectFork`
+        uint256 limit = block.gaslimit; //~WARN: `block.gaslimit` may be reused across `vm.selectFork`
+        bytes32 hash = blockhash(1); //~WARN: `blockhash(...)` may be reused across `vm.selectFork`
         vm.selectFork(1);
         return (height, time, chain, beneficiary, difficulty, random, base, blobBase, limit, hash);
     }
 
     function snapshotFields() public returns (uint256, uint256, uint256, address, uint256, uint256, uint256, uint256, uint256, bytes32) {
-        uint256 height = block.number; //~WARN: `block.number` may be reused across `vm.revertToState`; capture it with `vm.getBlockNumber()` instead
-        uint256 time = block.timestamp; //~WARN: `block.timestamp` may be reused across `vm.revertToState`; capture it with `vm.getBlockTimestamp()` instead
-        uint256 chain = block.chainid; //~WARN: `block.chainid` may be reused across `vm.revertToState`; capture it with `vm.getChainId()` instead
-        address beneficiary = block.coinbase; //~WARN: `block.coinbase` may be reused across `vm.revertToState`; capture it through an external helper call instead
-        uint256 difficulty = block.difficulty; //~WARN: `block.difficulty` may be reused across `vm.revertToState`; capture it through an external helper call instead
-        uint256 random = block.prevrandao; //~WARN: `block.prevrandao` may be reused across `vm.revertToState`; capture it through an external helper call instead
-        uint256 base = block.basefee; //~WARN: `block.basefee` may be reused across `vm.revertToState`; capture it through an external helper call instead
-        uint256 blobBase = block.blobbasefee; //~WARN: `block.blobbasefee` may be reused across `vm.revertToState`; capture it with `vm.getBlobBaseFee()` instead
-        uint256 limit = block.gaslimit; //~WARN: `block.gaslimit` may be reused across `vm.revertToState`; capture it through an external helper call instead
-        bytes32 hash = blockhash(1); //~WARN: `blockhash(...)` may be reused across `vm.revertToState`; capture it through an external helper call instead
+        uint256 height = block.number; //~WARN: `block.number` may be reused across `vm.revertToState`
+        uint256 time = block.timestamp; //~WARN: `block.timestamp` may be reused across `vm.revertToState`
+        uint256 chain = block.chainid; //~WARN: `block.chainid` may be reused across `vm.revertToState`
+        address beneficiary = block.coinbase; //~WARN: `block.coinbase` may be reused across `vm.revertToState`
+        uint256 difficulty = block.difficulty; //~WARN: `block.difficulty` may be reused across `vm.revertToState`
+        uint256 random = block.prevrandao; //~WARN: `block.prevrandao` may be reused across `vm.revertToState`
+        uint256 base = block.basefee; //~WARN: `block.basefee` may be reused across `vm.revertToState`
+        uint256 blobBase = block.blobbasefee; //~WARN: `block.blobbasefee` may be reused across `vm.revertToState`
+        uint256 limit = block.gaslimit; //~WARN: `block.gaslimit` may be reused across `vm.revertToState`
+        bytes32 hash = blockhash(1); //~WARN: `blockhash(...)` may be reused across `vm.revertToState`
         vm.revertToState(1);
         return (height, time, chain, beneficiary, difficulty, random, base, blobBase, limit, hash);
     }
@@ -220,13 +220,13 @@ contract EnvironmentSetters {
     }
 
     function forkSlotNumber() public returns (uint64) {
-        uint64 slot = block.slotnum; //~WARN: `block.slotnum` may be reused across `vm.selectFork`; capture it through an external helper call instead
+        uint64 slot = block.slotnum; //~WARN: `block.slotnum` may be reused across `vm.selectFork`
         vm.selectFork(1);
         return slot;
     }
 
     function snapshotSlotNumber() public returns (uint64) {
-        uint64 slot = block.slotnum; //~WARN: `block.slotnum` may be reused across `vm.revertToState`; capture it through an external helper call instead
+        uint64 slot = block.slotnum; //~WARN: `block.slotnum` may be reused across `vm.revertToState`
         vm.revertToState(1);
         return slot;
     }
@@ -238,46 +238,46 @@ contract EnvironmentSetters {
     }
 
     function hashWindow() public returns (bytes32) {
-        bytes32 saved = blockhash(1); //~WARN: `blockhash(...)` may be reused across `vm.roll`; capture it through an external helper call instead
+        bytes32 saved = blockhash(1); //~WARN: `blockhash(...)` may be reused across `vm.roll`
         vm.roll(300);
         return saved;
     }
 
     function hashArgument() public returns (bytes32) {
-        bytes32 saved = blobhash(block.chainid); //~WARN: `block.chainid` may be reused across `vm.chainId`; capture it with `vm.getChainId()` instead
+        bytes32 saved = blobhash(block.chainid); //~WARN: `block.chainid` may be reused across `vm.chainId`
         vm.chainId(2);
         return saved;
     }
 
     function forkTransactionOverrides() public returns (uint256, bytes32) {
-        uint256 price = tx.gasprice; //~WARN: `tx.gasprice` may be reused across `vm.selectFork`; capture it through an external helper call instead
-        bytes32 hash = blobhash(0); //~WARN: `blobhash(...)` may be reused across `vm.selectFork`; capture it with `vm.getBlobhashes()` instead
+        uint256 price = tx.gasprice; //~WARN: `tx.gasprice` may be reused across `vm.selectFork`
+        bytes32 hash = blobhash(0); //~WARN: `blobhash(...)` may be reused across `vm.selectFork`
         vm.selectFork(2);
         return (price, hash);
     }
 
     function snapshotTransactionOverrides() public returns (uint256, bytes32) {
-        uint256 price = tx.gasprice; //~WARN: `tx.gasprice` may be reused across `vm.revertToState`; capture it through an external helper call instead
-        bytes32 hash = blobhash(0); //~WARN: `blobhash(...)` may be reused across `vm.revertToState`; capture it with `vm.getBlobhashes()` instead
+        uint256 price = tx.gasprice; //~WARN: `tx.gasprice` may be reused across `vm.revertToState`
+        bytes32 hash = blobhash(0); //~WARN: `blobhash(...)` may be reused across `vm.revertToState`
         vm.revertToState(2);
         return (price, hash);
     }
 
     function secondRead() public returns (uint256) {
-        block.basefee; //~WARN: `block.basefee` may be reused across `vm.fee`; capture it through an external helper call instead
+        block.basefee; //~WARN: `block.basefee` may be reused across `vm.fee`
         vm.fee(2);
         return block.basefee;
     }
 
     function hashSecondRead() public returns (bytes32) {
-        blobhash(0); //~WARN: `blobhash(...)` may be reused across `vm.blobhashes`; capture it with `vm.getBlobhashes()` instead
+        blobhash(0); //~WARN: `blobhash(...)` may be reused across `vm.blobhashes`
         vm.blobhashes(new bytes32[](1));
         return blobhash(0);
     }
 
     function aliasAndNamedArguments() public returns (bytes32) {
         VmEnvironment alias_ = vm;
-        bytes32 saved = blockhash(1); //~WARN: `blockhash(...)` may be reused across `vm.setBlockhash`; capture it through an external helper call instead
+        bytes32 saved = blockhash(1); //~WARN: `blockhash(...)` may be reused across `vm.setBlockhash`
         alias_.setBlockhash({value: bytes32(uint256(2)), height: 1});
         return saved;
     }
@@ -369,7 +369,7 @@ contract EnvironmentSetters {
     }
 
     function firstMatchingMutation() public returns (uint256) {
-        uint256 saved = block.timestamp; //~WARN: `block.timestamp` may be reused across `vm.warp`; capture it with `vm.getBlockTimestamp()` instead
+        uint256 saved = block.timestamp; //~WARN: `block.timestamp` may be reused across `vm.warp`
         vm.roll(100); // Does not change the timestamp.
         vm.warp(200); // This is the secondary span, not the later matching call.
         vm.selectFork(1);
