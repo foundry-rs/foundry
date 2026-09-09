@@ -39,7 +39,7 @@ use solar::{
         ty::TyKind,
     },
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 declare_forge_lint!(
     BLOCK_NUMBER_ACROSS_ROLL,
@@ -81,6 +81,7 @@ struct Read {
     environment: Environment,
     span: Span,
     changed: bool,
+    origin: usize,
 }
 
 /// Exact unsigned and boolean locals used to prune exhausted loops and constant branches.
@@ -152,6 +153,16 @@ impl Value {
         }
     }
 
+    /// Refresh origins held outside locals while sibling expressions execute.
+    fn refresh(&mut self, state: &State) {
+        for read in &mut self.reads {
+            read.changed |= state.changed.contains(&read.origin);
+        }
+        for part in &mut self.tuple {
+            part.refresh(state);
+        }
+    }
+
     fn part(&self, index: usize) -> Self {
         self.tuple.get(index).cloned().unwrap_or_default()
     }
@@ -171,6 +182,7 @@ enum Flow {
 struct State {
     locals: HashMap<VariableId, Value>,
     seen: Value,
+    changed: HashSet<usize>,
     return_parameters: Vec<VariableId>,
     flow: Flow,
     unchecked: bool,
@@ -178,6 +190,13 @@ struct State {
 
 impl State {
     fn change(&mut self, environment: Environment) {
+        self.changed.extend(
+            self.seen
+                .reads
+                .iter()
+                .filter(|read| read.environment == environment)
+                .map(|read| read.origin),
+        );
         self.seen.change(environment);
         for value in self.locals.values_mut() {
             value.change(environment);
@@ -185,6 +204,7 @@ impl State {
     }
 
     fn merge(&mut self, other: &Self) {
+        self.changed.extend(&other.changed);
         self.seen.merge(&other.seen);
         for (var, value) in &other.locals {
             self.locals.entry(*var).or_default().merge(value);
@@ -498,8 +518,24 @@ impl<'gcx> Checker<'_, '_, '_, 'gcx> {
         }
     }
 
+    /// Evaluate destination components without reading an overwritten local.
+    fn destination(&mut self, expr: &'gcx Expr<'gcx>, state: &mut State) {
+        let expr = expr.peel_parens();
+        if let ExprKind::Tuple(parts) = &expr.kind {
+            for part in parts.iter().flatten() {
+                self.destination(part, state);
+            }
+        } else if expr.as_variable().is_none() {
+            for_each_child(expr, &mut |child| {
+                self.expr(child, state);
+            });
+        }
+    }
+
     fn expr(&mut self, expr: &'gcx Expr<'gcx>, state: &mut State) -> Value {
         let mut value = self.expr_inner(expr, state);
+        value.refresh(state);
+        self.use_value(&value);
         value.scalar = value.scalar.or_else(|| {
             self.gcx.try_eval_const_value(expr).ok().and_then(|value| {
                 value.as_bool().map(Scalar::Bool).or_else(|| value.as_u256().map(Scalar::Uint))
@@ -540,7 +576,14 @@ impl<'gcx> Checker<'_, '_, '_, 'gcx> {
                 }
             }
             let value = Value {
-                reads: vec![Read { environment, span: expr.span, changed: false }],
+                reads: vec![Read {
+                    environment,
+                    span: expr.span,
+                    changed: false,
+                    // The step budget decreases across calls and branches, giving each
+                    // evaluated read a distinct identity even when its span is repeated.
+                    origin: self.remaining,
+                }],
                 ..Value::default()
             };
             state.seen.merge(&value);
@@ -565,10 +608,15 @@ impl<'gcx> Checker<'_, '_, '_, 'gcx> {
                     value.scalar = scalar;
                     value.cheatcode = false;
                 }
+                if op.is_none() {
+                    self.destination(lhs, state);
+                }
+                value.refresh(state);
                 self.bind(lhs, value.clone(), state);
                 value
             }
             ExprKind::Delete(lhs) => {
+                self.destination(lhs, state);
                 let value =
                     lhs.as_variable().map(|var| self.default_value(var)).unwrap_or_default();
                 self.bind(lhs, value, state);
@@ -663,7 +711,8 @@ impl<'gcx> Checker<'_, '_, '_, 'gcx> {
                 value
             }
             ExprKind::Call(callee, args, opts) => {
-                let receiver = if let ExprKind::Member(receiver, _) = &callee.peel_parens().kind {
+                let mut receiver = if let ExprKind::Member(receiver, _) = &callee.peel_parens().kind
+                {
                     self.expr(receiver, state)
                 } else {
                     Value::default()
@@ -671,8 +720,14 @@ impl<'gcx> Checker<'_, '_, '_, 'gcx> {
                 for option in opts.iter().flat_map(|opts| opts.args) {
                     self.expr(&option.value, state);
                 }
-                let arguments: Vec<_> =
+                let mut arguments: Vec<_> =
                     args.exprs().map(|arg| (arg.id, self.expr(arg, state))).collect();
+                receiver.refresh(state);
+                self.use_value(&receiver);
+                for (_, value) in &mut arguments {
+                    value.refresh(state);
+                    self.use_value(value);
+                }
                 if receiver.cheatcode
                     && let Some(environment) = self.mutation(callee)
                 {
