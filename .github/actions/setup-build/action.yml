@@ -21,6 +21,11 @@ inputs:
     description: Override the host solc metadata platform
     default: ""
 
+outputs:
+  cache-key:
+    description: Cache namespace scoped to this PR or trusted build, job, and compiler
+    value: ${{ steps.compiler-cache.outputs.key }}
+
 runs:
   using: composite
   steps:
@@ -44,19 +49,36 @@ runs:
       with:
         version: v0.17.0
     - name: Configure compiler-only cache
+      id: compiler-cache
       shell: bash
       env:
-        CACHE_NAMESPACE: approved-v1-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'trusted' }}-${{ runner.os }}-${{ runner.arch }}-${{ inputs.toolchain }}-${{ inputs.targets }}
+        CACHE_NAMESPACE: approved-v2-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'trusted' }}-${{ runner.os }}-${{ runner.arch }}-${{ inputs.toolchain }}-${{ inputs.targets }}-${{ github.job }}
       run: |
         node --input-type=module -e '
           import { createHash } from "node:crypto";
+          import { execFileSync } from "node:child_process";
           import { appendFileSync } from "node:fs";
-          const key = createHash("sha256").update(process.env.CACHE_NAMESPACE).digest("hex");
+          import { join } from "node:path";
+          const key = createHash("sha256")
+            .update(process.env.CACHE_NAMESPACE)
+            .update(execFileSync("rustc", ["-vV"]))
+            .digest("hex");
           appendFileSync(process.env.GITHUB_ENV, [
-            "SCCACHE_GHA_ENABLED=on",
-            `SCCACHE_GHA_VERSION=approved-v1-${key}`,
+            "SCCACHE_GHA_ENABLED=off",
+            "SCCACHE_GHA_VERSION=",
             "SCCACHE_WEBDAV_ENDPOINT=",
             "SCCACHE_WEBDAV_TOKEN=",
+            `SCCACHE_DIR=${join(process.env.RUNNER_TEMP, "sccache")}`,
+            "SCCACHE_CACHE_SIZE=2G",
             "",
           ].join("\n"));
+          appendFileSync(process.env.GITHUB_OUTPUT, `key=approved-compiler-v2-${key}\n`);
         '
+    # Store only compiler outputs; dependency sources always come from the gate.
+    # The Actions cache transport works on Depot as well as GitHub-hosted runners.
+    - name: Restore compiler cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ env.SCCACHE_DIR }}
+        key: ${{ steps.compiler-cache.outputs.key }}-${{ github.sha }}
+        restore-keys: ${{ steps.compiler-cache.outputs.key }}-

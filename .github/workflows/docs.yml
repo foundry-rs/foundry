@@ -40,10 +40,20 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-build
+        id: setup-build
         with:
           artifact-id: ${{ inputs.artifact-id }}
           sha256: ${{ inputs.sha256 }}
           toolchain: nightly
+      # Restore only build outputs, after verifying this run's approved sources.
+      - name: Restore docs build cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        env:
+          DOCS_CACHE_KEY: docs-v1-${{ steps.setup-build.outputs.cache-key }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'benches/**/Cargo.toml', '.cargo/**', '.github/actions/setup-build/**', '.github/actions/restore-dependencies/**', '.github/scripts/dependencies.mjs', '.github/scripts/solc-releases.mjs', '.github/workflows/docs.yml') }}
+        with:
+          path: target
+          key: ${{ env.DOCS_CACHE_KEY }}-${{ github.sha }}
+          restore-keys: ${{ env.DOCS_CACHE_KEY }}-
       - name: Build documentation
         run: rustup run nightly cargo doc --workspace --all-features --no-deps --document-private-items --frozen
         env:
