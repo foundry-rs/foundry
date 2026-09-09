@@ -11,6 +11,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
   RUST_BACKTRACE: full
   RUSTC_WRAPPER: "sccache"
 

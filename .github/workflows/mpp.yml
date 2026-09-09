@@ -17,6 +17,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
   RUSTC_WRAPPER: "sccache"
 
 jobs:
