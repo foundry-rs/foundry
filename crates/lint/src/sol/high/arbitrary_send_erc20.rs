@@ -42,7 +42,7 @@ declare_forge_lint!(
     ARBITRARY_SEND_ERC20_PERMIT,
     Severity::High,
     "arbitrary-send-erc20-permit",
-    "`transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens"
+    "`transferFrom` uses an arbitrary `from` after `permit`"
 );
 
 /// Recursion budget for `_msgSender()`-style helper chains.

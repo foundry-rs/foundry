@@ -32,7 +32,7 @@ impl<'ast> EarlyLintPass<'ast> for EventFields {
                 let name =
                     param.name.map_or_else(|| format!("parameter #{}", idx + 1), |n| n.to_string());
                 let ty = if *payable { "address payable" } else { "address" };
-                Some(format!("{name} (`{ty}`)"))
+                Some(format!("`{name}` (`{ty}`)"))
             })
             .take(slots_available)
             .collect();

@@ -19,7 +19,7 @@ declare_forge_lint!(
     RETURN_BOMB,
     Severity::Low,
     "return-bomb",
-    "external call with a gas limit consumes unbounded return data"
+    "external call with a gas limit may copy unbounded return data"
 );
 
 impl<'gcx> LateLintPass<'gcx> for ReturnBomb {

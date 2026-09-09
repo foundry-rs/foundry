@@ -17,7 +17,7 @@ declare_forge_lint!(
     VAR_READ_USING_THIS,
     Severity::Gas,
     "var-read-using-this",
-    "reading a state variable via `this` causes an unnecessary `STATICCALL`; access it directly"
+    "call through `this` to a `view` or `pure` function incurs a `STATICCALL`"
 );
 
 impl<'gcx> LateLintPass<'gcx> for VarReadUsingThis {
