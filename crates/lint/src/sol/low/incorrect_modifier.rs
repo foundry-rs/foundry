@@ -20,7 +20,7 @@ impl<'gcx> LateLintPass<'gcx> for IncorrectModifier {
         if func.kind == FunctionKind::Modifier
             && func.body.is_some_and(|body| block_outcome(body).can_skip_placeholder())
         {
-            ctx.emit(&INCORRECT_MODIFIER, func.span);
+            ctx.emit(&INCORRECT_MODIFIER, func.keyword_span());
         }
     }
 }

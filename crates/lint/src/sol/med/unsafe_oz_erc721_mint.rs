@@ -210,8 +210,8 @@ impl<'gcx> Cx<'gcx> {
                 targets_preserve_token &= target.preserves_token;
             }
         }
-        let delegations: Vec<_> =
-            calls.iter().filter(|(callee, ..)| unsafe_targets.contains(callee)).collect();
+        let delegations =
+            calls.iter().filter(|(callee, ..)| unsafe_targets.contains(callee)).collect::<Vec<_>>();
         if delegations.is_empty() {
             return None;
         }
@@ -390,8 +390,10 @@ impl<'gcx> Cx<'gcx> {
     /// contract without any external call.
     fn is_receiver_hook(self, function_id: FunctionId) -> bool {
         let function = self.gcx.hir.function(function_id);
-        let Some(contract) = function.contract else { return false };
-        let &[from, to, id, data] = function.parameters else { return false };
+        let (Some(contract), &[from, to, id, data]) = (function.contract, function.parameters)
+        else {
+            return false;
+        };
         let kind = |vid: VariableId| &self.gcx.hir.variable(vid).ty.kind;
         named(function, "onERC721Received")
             && !self.gcx.hir.contract(contract).kind.is_library()
@@ -771,8 +773,13 @@ impl<'gcx> Cx<'gcx> {
                     .exprs()
                     .any(|arg| self.expr_may_change_account_code(arg, &[], &[], &mut Vec::new()))
             });
-            let ItemId::Function(modifier_id) = modifier.id else { continue };
-            let Some(body) = &self.gcx.hir.function(modifier_id).body else { continue };
+            let (modifier_id, body) = if let ItemId::Function(modifier_id) = modifier.id
+                && let Some(body) = &self.gcx.hir.function(modifier_id).body
+            {
+                (modifier_id, body)
+            } else {
+                continue;
+            };
             let Some((prefix, suffix)) = modifier_body_sides(body.stmts) else {
                 // Without a single top-level placeholder, the precise prefix is unknown. Still
                 // retire an inherited snapshot when any path through the modifier may change
@@ -1213,12 +1220,16 @@ impl<'gcx> GuardWalker<'_, 'gcx> {
     /// minted one.
     fn is_hook_call_on(&self, expr: &'gcx Expr<'gcx>) -> bool {
         let expr = expr.peel_parens();
-        let ExprKind::Call(callee, args, _) = &expr.kind else { return false };
-        let ExprKind::Member(receiver, _) = &callee.peel_parens().kind else { return false };
-        let Some(function_id) = self.cx.resolved_callee(expr) else { return false };
-        self.cx.is_receiver_hook(function_id)
-            && underlying_var(receiver) == Some(self.recipient)
-            && self.cx.arg(function_id, args, 2).and_then(underlying_var) == Some(self.token)
+        if let ExprKind::Call(callee, args, _) = &expr.kind
+            && let ExprKind::Member(receiver, _) = &callee.peel_parens().kind
+            && let Some(function_id) = self.cx.resolved_callee(expr)
+        {
+            self.cx.is_receiver_hook(function_id)
+                && underlying_var(receiver) == Some(self.recipient)
+                && self.cx.arg(function_id, args, 2).and_then(underlying_var) == Some(self.token)
+        } else {
+            false
+        }
     }
 
     /// `recipient.onERC721Received(...) <op> x`, and nothing else. The comparison must be the
@@ -1241,11 +1252,15 @@ impl<'gcx> GuardWalker<'_, 'gcx> {
     fn is_code_length_test(&self, expr: &'gcx Expr<'gcx>, has_code: bool) -> bool {
         let ExprKind::Binary(lhs, op, rhs) = &expr.peel_parens().kind else { return false };
         let is_code_length = |expr: &Expr<'_>| {
-            let ExprKind::Member(code, length) = &expr.peel_parens().kind else { return false };
-            let ExprKind::Member(base, member) = &code.peel_parens().kind else { return false };
-            length.as_str() == "length"
-                && member.as_str() == "code"
-                && underlying_var(base) == Some(self.recipient)
+            if let ExprKind::Member(code, length) = &expr.peel_parens().kind
+                && let ExprKind::Member(base, member) = &code.peel_parens().kind
+            {
+                length.as_str() == "length"
+                    && member.as_str() == "code"
+                    && underlying_var(base) == Some(self.recipient)
+            } else {
+                false
+            }
         };
         let literal = |expr: &Expr<'_>| match &expr.peel_parens().kind {
             ExprKind::Lit(lit) => match &lit.kind {

@@ -23,14 +23,14 @@ impl<'ast> ProjectLintPass<'ast> for InconsistentTypeNames {
         }
         let gcx = ctx.gcx();
         let source_map = gcx.sess.source_map();
-        let input_sources: HashMap<_, _> = gcx
+        let input_sources = gcx
             .hir
             .sources_enumerated()
             .filter_map(|(sid, src)| {
                 let FileName::Real(path) = &src.file.name else { return None };
                 Some((sid, sources.iter().position(|s| &s.path == path)?))
             })
-            .collect();
+            .collect::<HashMap<_, _>>();
 
         // The spellings each contract uses across all of its variables.
         let mut contracts = HashMap::<hir::ContractId, Vec<&str>>::new();
@@ -44,15 +44,17 @@ impl<'ast> ProjectLintPass<'ast> for InconsistentTypeNames {
 
         // HIR variable order is stable, so diagnostics remain deterministic across runs.
         for variable in gcx.hir.variables() {
-            let Some(contract_id) = variable.contract else { continue };
-            let Some(&source_idx) = input_sources.get(&variable.source) else { continue };
-            let Some(contract_names) = contracts.get(&contract_id) else { continue };
-            let mut names = Vec::new();
-            int_spellings(source_map, &variable.ty, &mut names);
-            if (names.contains(&"uint") && contract_names.contains(&"uint256"))
-                || (names.contains(&"int") && contract_names.contains(&"int256"))
+            if let Some(contract_id) = variable.contract
+                && let Some(&source_idx) = input_sources.get(&variable.source)
+                && let Some(contract_names) = contracts.get(&contract_id)
             {
-                ctx.emit(&sources[source_idx], &INCONSISTENT_TYPE_NAMES, variable.span);
+                let mut names = Vec::new();
+                int_spellings(source_map, &variable.ty, &mut names);
+                if (names.contains(&"uint") && contract_names.contains(&"uint256"))
+                    || (names.contains(&"int") && contract_names.contains(&"int256"))
+                {
+                    ctx.emit(&sources[source_idx], &INCONSISTENT_TYPE_NAMES, variable.ty.span);
+                }
             }
         }
     }

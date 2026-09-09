@@ -34,7 +34,7 @@ impl<'ast> EarlyLintPass<'ast> for MultiContractFilePass {
             return;
         }
         // Every non-exempted contract-like item is flagged when there is more than one.
-        let spans: Vec<_> = unit
+        let spans = unit
             .items
             .iter()
             .filter_map(|item| match &item.kind {
@@ -43,7 +43,7 @@ impl<'ast> EarlyLintPass<'ast> for MultiContractFilePass {
                 }
                 _ => None,
             })
-            .collect();
+            .collect::<Vec<_>>();
         if spans.len() > 1 {
             for span in spans {
                 ctx.emit(&MULTI_CONTRACT_FILE, span);

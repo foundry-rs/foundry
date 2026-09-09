@@ -31,10 +31,8 @@ impl<'gcx> LateLintPass<'gcx> for FunctionInitState {
         // time, so both constant declarations and references to constants are fine.
         let contract = gcx.hir.contract(id);
         for item_id in contract.items {
-            let Some(variable) = item_id.as_variable().map(|v| gcx.hir.variable(v)) else {
-                continue;
-            };
-            if variable.is_state_variable()
+            if let Some(variable) = item_id.as_variable().map(|v| gcx.hir.variable(v))
+                && variable.is_state_variable()
                 && !variable.is_constant()
                 && let Some(initializer) = variable.initializer
             {
@@ -47,7 +45,7 @@ impl<'gcx> LateLintPass<'gcx> for FunctionInitState {
                 };
                 let _ = finder.visit_expr(initializer);
                 if finder.found {
-                    ctx.emit(&FUNCTION_INIT_STATE, variable.span);
+                    ctx.emit(&FUNCTION_INIT_STATE, initializer.span);
                 }
             }
         }

@@ -70,7 +70,10 @@ impl<'gcx> LateLintPass<'gcx> for UninitializedStateVariables {
                 && collector.read.contains(&var_id)
                 && !collector.written.contains(&var_id)
             {
-                ctx.emit(&UNINITIALIZED_STATE_VARIABLES, var.span);
+                ctx.emit(
+                    &UNINITIALIZED_STATE_VARIABLES,
+                    var.name.map_or(var.span, |name| name.span),
+                );
             }
         }
     }

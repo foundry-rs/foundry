@@ -74,7 +74,7 @@ impl<'gcx> LateLintPass<'gcx> for ProtectedVars {
             } else {
                 format!(" in most-derived contract `{}`", contract.name)
             };
-            let mut writes: Vec<_> = analyze_entry(gcx, bases, entry_id).into_iter().collect();
+            let mut writes = analyze_entry(gcx, bases, entry_id).into_iter().collect::<Vec<_>>();
             writes.sort_unstable_by_key(|(var_id, _)| *var_id);
             for (var_id, guards) in writes {
                 let Some(requirements) = protected.get(&var_id) else { continue };
@@ -302,13 +302,13 @@ impl CallContext {
                 .parameters
                 .iter()
                 .filter_map(|&parameter| {
-                    let mut roots: Vec<_> = aliases.get(&parameter)?.iter().copied().collect();
+                    let mut roots = aliases.get(&parameter)?.iter().copied().collect::<Vec<_>>();
                     roots.sort_unstable();
                     Some((parameter, roots))
                 })
                 .collect()
         };
-        let mut guards: Vec<_> = guards.iter().copied().collect();
+        let mut guards = guards.iter().copied().collect::<Vec<_>>();
         guards.sort_unstable();
         Self { function_id, storage: roots(&aliases.storage), slots: roots(&aliases.slots), guards }
     }
@@ -935,7 +935,7 @@ impl<'gcx> EntryAnalyzer<'gcx> {
     fn set_return_aliases(&mut self, expression: &'gcx hir::Expr<'gcx>) {
         let Some(&function_id) = self.stack.last() else { return };
         let outputs = self.gcx.hir.function(function_id).returns.len();
-        let roots: Vec<_> = (0..outputs)
+        let roots = (0..outputs)
             .map(|index| self.storage_roots_for_output(expression, index, outputs))
             .collect();
         self.extend_returns(roots);
@@ -945,7 +945,7 @@ impl<'gcx> EntryAnalyzer<'gcx> {
         let Some(&function_id) = self.stack.last() else { return };
         let function = self.gcx.hir.function(function_id);
         let aliases = if function.is_yul { &self.aliases.slots } else { &self.aliases.storage };
-        let roots: Vec<_> = function
+        let roots = function
             .returns
             .iter()
             .map(|return_id| aliases.get(return_id).cloned().unwrap_or_default())
@@ -1008,10 +1008,10 @@ impl<'gcx> EntryAnalyzer<'gcx> {
     ) -> Vec<&'gcx hir::Expr<'gcx>> {
         let parameters = self.gcx.hir.function(declared_id).parameters;
         let parameters = &parameters[usize::from(receiver.is_some())..];
-        let names: Vec<_> = parameters
+        let names = parameters
             .iter()
             .map(|&parameter| self.gcx.hir.variable(parameter).name.map(|name| name.name))
-            .collect();
+            .collect::<Vec<_>>();
         let arguments = (0..parameters.len())
             .filter_map(|index| arguments.argument_for_parameter(index, Some(&names)));
         receiver.into_iter().chain(arguments).collect()

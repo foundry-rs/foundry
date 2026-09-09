@@ -45,8 +45,12 @@ impl<'gcx> LateLintPass<'gcx> for MissingZeroCheck {
                 && matches!(func.visibility, ast::Visibility::Public | ast::Visibility::External)));
         let Some(body) = func.body.filter(|_| is_entry_point) else { return };
 
-        let params: HashSet<_> =
-            func.parameters.iter().copied().filter(|&id| is_address_type(&gcx.hir, id)).collect();
+        let params = func
+            .parameters
+            .iter()
+            .copied()
+            .filter(|&id| is_address_type(&gcx.hir, id))
+            .collect::<HashSet<_>>();
         if params.is_empty() {
             return;
         }
@@ -57,7 +61,7 @@ impl<'gcx> LateLintPass<'gcx> for MissingZeroCheck {
             let modifier = gcx.hir.function(modifier_id);
             // Map each direct-ident argument back to the caller's parameter and analyze the
             // modifier body as if it were a prefix of the function.
-            let mapping: HashMap<_, _> = modifier
+            let mapping = modifier
                 .parameters
                 .iter()
                 .zip(m.args.exprs())
@@ -65,7 +69,7 @@ impl<'gcx> LateLintPass<'gcx> for MissingZeroCheck {
                     let caller = underlying_var(arg).filter(|v| params.contains(v))?;
                     Some((mp, caller))
                 })
-                .collect();
+                .collect::<HashMap<_, _>>();
             if let Some(body) = modifier.body.filter(|_| !mapping.is_empty()) {
                 let mut ma = Analyzer::new(gcx, &mapping.keys().copied().collect());
                 ma.visit_stmts(body.stmts);

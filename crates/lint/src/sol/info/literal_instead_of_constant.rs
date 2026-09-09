@@ -41,8 +41,12 @@ impl<'gcx> LateLintPass<'gcx> for LiteralInsteadOfConstant {
         }
         // A value used in one single place is fine: only repetitions report. Emissions are
         // sorted by position so the output does not depend on the map's iteration order.
-        let mut repeated: Vec<Span> =
-            collector.groups.into_values().filter(|spans| spans.len() > 1).flatten().collect();
+        let mut repeated = collector
+            .groups
+            .into_values()
+            .filter(|spans| spans.len() > 1)
+            .flatten()
+            .collect::<Vec<Span>>();
         repeated.sort_by_key(|span| span.lo());
         for span in repeated {
             ctx.emit(&LITERAL_INSTEAD_OF_CONSTANT, span);

@@ -93,33 +93,32 @@ impl ThisReadFinder<'_, '_> {
     /// Flags `this.<name>(args)` when `<name>` resolves to a `view`/`pure` function of the
     /// current contract.
     fn check_call(&self, expr: &Expr<'_>) {
-        let ExprKind::Call(callee, args, opts) = &expr.kind else { return };
-        let ExprKind::Member(base, member) = &callee.peel_parens().kind else { return };
-        if !is_builtin(base, sym::this) {
-            return;
-        }
-        let Some(candidates) = self.callable.get(&member.name) else { return };
-        // Solar's HIR `Member` is name-based, so overloads are resolved by arity. When same-arity
-        // overloads mix mutability (`f(uint256) view` vs `f(address)`), bail to avoid flagging
-        // the mutating one.
-        let same_arity: Vec<_> =
-            candidates.iter().filter(|f| f.parameters.len() == args.len()).collect();
-        let Some(func) = same_arity.first() else { return };
-        if !same_arity
-            .iter()
-            .all(|f| matches!(f.state_mutability, StateMutability::View | StateMutability::Pure))
+        if let ExprKind::Call(callee, args, opts) = &expr.kind
+            && let ExprKind::Member(base, member) = &callee.peel_parens().kind
+            && is_builtin(base, sym::this)
+            && let Some(candidates) = self.callable.get(&member.name)
         {
-            return;
-        }
-        // With call options like `{gas: ...}` the external call is deliberate: flag the gas waste
-        // without an auto-fix.
-        let suggestion =
-            if opts.is_some() { None } else { suggestion(self.ctx, func, member.name, args) };
-        match suggestion {
-            Some(suggestion) => {
-                self.ctx.emit_with_suggestion(&VAR_READ_USING_THIS, expr.span, suggestion);
+            // Solar's HIR `Member` is name-based, so overloads are resolved by arity. When
+            // same-arity overloads mix mutability (`f(uint256) view` vs `f(address)`),
+            // bail to avoid flagging the mutating one.
+            let same_arity =
+                candidates.iter().filter(|f| f.parameters.len() == args.len()).collect::<Vec<_>>();
+            let Some(func) = same_arity.first() else { return };
+            if !same_arity.iter().all(|f| {
+                matches!(f.state_mutability, StateMutability::View | StateMutability::Pure)
+            }) {
+                return;
             }
-            None => self.ctx.emit(&VAR_READ_USING_THIS, expr.span),
+            // With call options like `{gas: ...}` the external call is deliberate: flag the gas
+            // waste without an auto-fix.
+            let suggestion =
+                if opts.is_some() { None } else { suggestion(self.ctx, func, member.name, args) };
+            match suggestion {
+                Some(suggestion) => {
+                    self.ctx.emit_with_suggestion(&VAR_READ_USING_THIS, expr.span, suggestion);
+                }
+                None => self.ctx.emit(&VAR_READ_USING_THIS, expr.span),
+            }
         }
     }
 }
@@ -146,7 +145,8 @@ fn suggestion(
     }
     if args.is_empty() {
         return Some(
-            Suggestion::fix(name.to_string(), Applicability::MachineApplicable)
+            // A local may shadow this state variable, so removing `this` needs review.
+            Suggestion::fix(name.to_string(), Applicability::MaybeIncorrect)
                 .with_desc("consider reading the state variable directly"),
         );
     }

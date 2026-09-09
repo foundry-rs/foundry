@@ -21,7 +21,7 @@ impl<'ast> EarlyLintPass<'ast> for EventFields {
         // The EVM allows 3 indexed parameters in a non-anonymous event and 4 in an anonymous one.
         let slots_available = if event.anonymous { 4 } else { 3 };
         // The offending `address` parameters, rendered as `name (type)` in declaration order.
-        let names: Vec<String> = event
+        let names = event
             .parameters
             .iter()
             .enumerate()
@@ -36,7 +36,7 @@ impl<'ast> EarlyLintPass<'ast> for EventFields {
                 Some(format!("{name} (`{ty}`)"))
             })
             .take(slots_available)
-            .collect();
+            .collect::<Vec<String>>();
         if !names.is_empty() {
             let msg = format!(
                 "event has unindexed fields that may benefit from being indexed: {}",

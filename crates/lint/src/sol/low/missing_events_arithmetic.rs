@@ -47,7 +47,7 @@ impl<'gcx> LateLintPass<'gcx> for MissingEventsArithmetic {
 
         // State variables and their entry points are commonly split across a base/derived pair,
         // so candidates come from the whole inheritance chain.
-        let candidates: HashSet<_> = contract
+        let candidates = contract
             .linearized_bases
             .iter()
             .flat_map(|&cid| gcx.hir.contract(cid).variables())
@@ -61,7 +61,7 @@ impl<'gcx> LateLintPass<'gcx> for MissingEventsArithmetic {
                         TypeKind::Elementary(ElementaryType::Int(_) | ElementaryType::UInt(_))
                     )
             })
-            .collect();
+            .collect::<HashSet<_>>();
         if candidates.is_empty() {
             return;
         }
@@ -74,7 +74,7 @@ impl<'gcx> LateLintPass<'gcx> for MissingEventsArithmetic {
             .iter()
             .map(|func| func.id)
             .partition(|&id| is_protected(&gcx.hir, id));
-        let entry_points: Vec<_> = protected
+        let entry_points = protected
             .into_iter()
             .filter(|&id| {
                 !matches!(
@@ -82,7 +82,7 @@ impl<'gcx> LateLintPass<'gcx> for MissingEventsArithmetic {
                     StateMutability::Pure | StateMutability::View
                 )
             })
-            .collect();
+            .collect::<Vec<_>>();
         if entry_points.is_empty() {
             return;
         }
@@ -376,17 +376,14 @@ impl<'gcx> WriteAnalyzer<'_, 'gcx> {
         // Modifier code after `_` runs once the body finished, innermost modifier first, and may
         // still emit for the body's writes.
         for modifier in func.modifiers.iter().rev() {
-            let Some(body) =
+            if let Some(body) =
                 modifier.id.as_function().and_then(|id| self.gcx.hir.function(id).body)
-            else {
-                continue;
-            };
-            let Some(pos) = body.stmts.iter().position(|s| matches!(s.kind, StmtKind::Placeholder))
-            else {
-                continue;
-            };
-            let suffix = &body.stmts[pos + 1..];
-            state = state.and_then(|state| self.analyze_stmts(suffix, state).merged());
+                && let Some(pos) =
+                    body.stmts.iter().position(|s| matches!(s.kind, StmtKind::Placeholder))
+            {
+                let suffix = &body.stmts[pos + 1..];
+                state = state.and_then(|state| self.analyze_stmts(suffix, state).merged());
+            }
         }
         state.map(|state| state.writes).unwrap_or_default()
     }

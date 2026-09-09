@@ -520,8 +520,11 @@ fn set_path(
             Some(path)
         }
         ExprKind::Index(base, Some(index)) => {
-            let ExprKind::Lit(lit) = &index.peel_parens().kind else { return None };
-            let LitKind::Number(key) = &lit.kind else { return None };
+            let ExprKind::Lit(hir::Lit { kind: LitKind::Number(key), .. }) =
+                &index.peel_parens().kind
+            else {
+                return None;
+            };
             let mut path = set_path(hir, base, bindings, seen)?;
             path.steps.push(Step::Key(*key));
             Some(path)
@@ -553,10 +556,14 @@ fn nth_argument<'gcx>(
 /// Whether `receiver` is a value of a struct declared in a library (or contract) named
 /// `EnumerableSet`, which tells the bound method form apart from the library-qualified form.
 fn is_enumerable_set_value(gcx: Gcx<'_>, receiver: &Expr<'_>) -> bool {
-    let Some(ty) = gcx.type_of_expr(receiver.peel_parens().id) else { return false };
-    let TyKind::Struct(id) = ty.peel_refs().kind else { return false };
-    gcx.hir
-        .strukt(id)
-        .contract
-        .is_some_and(|c| gcx.hir.contract(c).name.as_str() == "EnumerableSet")
+    if let Some(ty) = gcx.type_of_expr(receiver.peel_parens().id)
+        && let TyKind::Struct(id) = ty.peel_refs().kind
+    {
+        gcx.hir
+            .strukt(id)
+            .contract
+            .is_some_and(|c| gcx.hir.contract(c).name.as_str() == "EnumerableSet")
+    } else {
+        false
+    }
 }

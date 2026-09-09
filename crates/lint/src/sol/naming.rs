@@ -38,10 +38,12 @@ pub fn has_acronym_exception(s: &str, patterns: &[String], pre_is_valid: fn(&str
     })
 }
 
-/// Emits `lint` at `span` with a machine-applicable rename to `expected`.
+/// Emits `lint` at `span` with a suggested rename to `expected`.
 pub fn emit_rename(ctx: &LintContext, lint: &'static SolLint, span: Span, expected: String) {
+    // Renaming only the declaration can break references, collide with another name, or change
+    // a public selector. Applying the rename requires a project-wide refactor.
     let suggestion =
-        Suggestion::fix(expected, Applicability::MachineApplicable).with_desc("consider using");
+        Suggestion::fix(expected, Applicability::MaybeIncorrect).with_desc("consider using");
     ctx.emit_with_suggestion(lint, span, suggestion);
 }
 

@@ -23,14 +23,14 @@ impl<'ast> ProjectLintPass<'ast> for MissingInheritance {
         let gcx = ctx.gcx();
 
         // Only user-provided files are analyzed (and emitted against).
-        let input_source_idx: HashMap<_, _> = gcx
+        let input_source_idx = gcx
             .hir
             .sources_enumerated()
             .filter_map(|(sid, src)| {
                 let FileName::Real(path) = &src.file.name else { return None };
                 Some((sid, sources.iter().position(|s| &s.path == path)?))
             })
-            .collect();
+            .collect::<HashMap<_, _>>();
         if input_source_idx.is_empty() {
             return;
         }
@@ -45,8 +45,12 @@ impl<'ast> ProjectLintPass<'ast> for MissingInheritance {
             if contract.linearization_failed() {
                 continue;
             }
-            let sels: BTreeSet<_> =
-                gcx.interface_functions(cid).all().iter().map(|f| f.selector.0).collect();
+            let sels = gcx
+                .interface_functions(cid)
+                .all()
+                .iter()
+                .map(|f| f.selector.0)
+                .collect::<BTreeSet<_>>();
             let interface_like = match contract.kind {
                 ContractKind::Interface => true,
                 ContractKind::AbstractContract => is_signature_only(&gcx.hir, cid),
@@ -76,7 +80,7 @@ impl<'ast> ProjectLintPass<'ast> for MissingInheritance {
             }
             // The target must implement every selector of the candidate, without already
             // inheriting it (transitively) or an inherited base covering the candidate.
-            let mut intended: Vec<ContractId> = candidates
+            let mut intended = candidates
                 .iter()
                 .copied()
                 .filter(|&iid| {
@@ -88,7 +92,7 @@ impl<'ast> ProjectLintPass<'ast> for MissingInheritance {
                             *b != tid && selectors.get(b).is_some_and(|bsel| isel.is_subset(bsel))
                         })
                 })
-                .collect();
+                .collect::<Vec<ContractId>>();
             // Deterministic dedupe by maximal selector set: sort by descending selector count,
             // tie-break by (span, name), then drop any candidate whose selector set is a
             // subset/superset of a kept one.
@@ -98,7 +102,7 @@ impl<'ast> ProjectLintPass<'ast> for MissingInheritance {
                     .cmp(&selectors[&a].len())
                     .then_with(|| sort_key(a).cmp(&sort_key(b)))
             });
-            let mut kept: Vec<ContractId> = Vec::new();
+            let mut kept = Vec::<ContractId>::new();
             for iid in intended {
                 let isel = &selectors[&iid];
                 if !kept.iter().any(|kid| {

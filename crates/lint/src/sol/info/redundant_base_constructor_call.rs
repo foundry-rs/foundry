@@ -59,7 +59,9 @@ fn try_emit(ctx: &LintContext, hir: &hir::Hir<'_>, m: &hir::Modifier<'_>, fix_sp
     }
     // Only emit a machine-applicable fix if the args span really is just `()` (no comments,
     // whitespace, etc. that would silently be dropped).
-    if ctx.span_to_snippet(m.args.span).is_some_and(|s| s.trim() == "()") {
+    if ctx.span_to_snippet(m.args.span).is_some_and(|s| s.trim() == "()")
+        && ctx.span_to_snippet(fix_span).is_some_and(|s| !s.contains("//") && !s.contains("/*"))
+    {
         ctx.emit_with_suggestion(
             &REDUNDANT_BASE_CONSTRUCTOR_CALL,
             m.args.span,

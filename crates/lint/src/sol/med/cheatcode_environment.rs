@@ -275,7 +275,7 @@ impl<'gcx> Checker<'_, '_, '_, 'gcx> {
             };
             let definition = self.gcx.hir.function(id);
             let Some(body) = definition.body else { return Vec::new() };
-            let values: Vec<_> = definition
+            let values = definition
                 .parameters
                 .iter()
                 .map(|&param| {
@@ -284,7 +284,7 @@ impl<'gcx> Checker<'_, '_, '_, 'gcx> {
                         .unwrap_or_default();
                     (param, value)
                 })
-                .collect();
+                .collect::<Vec<_>>();
             state.locals.extend(values);
             self.block(body.stmts, vec![state], Some((func, index + 1)))
         } else if let Some(body) = func.body {
@@ -295,11 +295,11 @@ impl<'gcx> Checker<'_, '_, '_, 'gcx> {
     }
 
     fn return_values(&self, func: &Function<'_>, state: &State) -> Value {
-        let values: Vec<_> = func
+        let values = func
             .returns
             .iter()
             .map(|var| state.locals.get(var).cloned().unwrap_or_default())
-            .collect();
+            .collect::<Vec<_>>();
         if values.len() == 1 {
             values.into_iter().next().unwrap_or_default()
         } else {
@@ -719,8 +719,8 @@ impl<'gcx> Checker<'_, '_, '_, 'gcx> {
                 for option in opts.iter().flat_map(|opts| opts.args) {
                     self.expr(&option.value, state);
                 }
-                let mut arguments: Vec<_> =
-                    args.exprs().map(|arg| (arg.id, self.expr(arg, state))).collect();
+                let mut arguments =
+                    args.exprs().map(|arg| (arg.id, self.expr(arg, state))).collect::<Vec<_>>();
                 receiver.refresh(state);
                 self.use_value(&receiver);
                 for (_, value) in &mut arguments {

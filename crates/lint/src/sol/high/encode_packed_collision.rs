@@ -24,18 +24,19 @@ declare_forge_lint!(
 
 impl<'gcx> LateLintPass<'gcx> for EncodedPackedCollision {
     fn check_expr(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, expr: &'gcx Expr<'gcx>) {
-        let ExprKind::Call(callee, args, _) = &expr.kind else { return };
-        let ExprKind::Member(base, member) = &callee.peel_parens().kind else { return };
-        if member.name != sym::encodePacked || !is_builtin(base, sym::abi) {
-            return;
-        }
-        // Only non-literal dynamic args count: a top-level string/hex/unicode literal is a
-        // compile-time constant. With at most one non-literal dynamic arg the packed encoding
-        // is still injective, so there is no collision risk.
-        let dynamic_count =
-            args.exprs().filter(|arg| !is_str_lit(arg) && is_dynamic_arg(gcx, arg)).count();
-        if dynamic_count >= 2 {
-            ctx.emit(&ENCODE_PACKED_COLLISION, expr.span);
+        if let ExprKind::Call(callee, args, _) = &expr.kind
+            && let ExprKind::Member(base, member) = &callee.peel_parens().kind
+            && member.name == sym::encodePacked
+            && is_builtin(base, sym::abi)
+        {
+            // Only non-literal dynamic args count: a top-level string/hex/unicode literal is a
+            // compile-time constant. With at most one non-literal dynamic arg the packed encoding
+            // is still injective, so there is no collision risk.
+            let dynamic_count =
+                args.exprs().filter(|arg| !is_str_lit(arg) && is_dynamic_arg(gcx, arg)).count();
+            if dynamic_count >= 2 {
+                ctx.emit(&ENCODE_PACKED_COLLISION, expr.span);
+            }
         }
     }
 }

@@ -28,14 +28,14 @@ impl<'ast> ProjectLintPass<'ast> for UnusedError {
         // Only errors declared in user-provided files are reported, while uses are collected
         // across the whole unit, so an error declared here and reverted in a dependency (or the
         // other way around) is attributed correctly.
-        let input_source_idx: HashMap<_, _> = gcx
+        let input_source_idx = gcx
             .hir
             .sources_enumerated()
             .filter_map(|(sid, src)| {
                 let FileName::Real(path) = &src.file.name else { return None };
                 Some((sid, sources.iter().position(|s| &s.path == path)?))
             })
-            .collect();
+            .collect::<HashMap<_, _>>();
         if input_source_idx.is_empty() {
             return;
         }
@@ -58,7 +58,7 @@ impl<'ast> ProjectLintPass<'ast> for UnusedError {
                 )
             });
             if !abi_surface && !collector.used.contains(&error_id) {
-                ctx.emit(&sources[src_idx], &UNUSED_ERROR, error.span);
+                ctx.emit(&sources[src_idx], &UNUSED_ERROR, error.name.span);
             }
         }
     }

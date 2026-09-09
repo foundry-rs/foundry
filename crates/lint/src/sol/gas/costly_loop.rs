@@ -1,7 +1,7 @@
 use super::CostlyLoop;
 use crate::{
     linter::{LateLintPass, LintContext},
-    sol::{Severity, SolLint},
+    sol::{Severity, SolLint, analysis::write_target},
 };
 use solar::{
     ast::DataLocation,
@@ -45,15 +45,11 @@ impl<'gcx> hir::Visit<'gcx> for LoopWriteFinder<'_, 'gcx> {
     }
 
     fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
-        if self.loop_depth > 0 {
-            let lvalue = match &expr.kind {
-                ExprKind::Assign(lhs, ..) | ExprKind::Delete(lhs) => Some(lhs),
-                ExprKind::Unary(op, inner) if op.kind.has_side_effects() => Some(inner),
-                _ => None,
-            };
-            if lvalue.is_some_and(|lvalue| lvalue_is_state_var(self.gcx, lvalue)) {
-                self.ctx.emit(&COSTLY_LOOP, expr.span);
-            }
+        if self.loop_depth > 0
+            && let Some(lvalue) = write_target(expr)
+            && lvalue_is_state_var(self.gcx, lvalue)
+        {
+            self.ctx.emit(&COSTLY_LOOP, expr.span);
         }
         self.walk_expr(expr)
     }

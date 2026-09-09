@@ -62,3 +62,13 @@ contract Ok4 is WithArgs {
 
 contract Mid is NoCtor {}
 contract Ok5 is Mid {}
+
+// Keep warnings, but do not suggest deleting comments with the invocation.
+contract CommentedBase is NoCtor {
+    constructor() NoCtor /* keep this explanation */ () {} //~NOTE: explicit empty base-constructor arguments are redundant
+}
+
+contract LineCommentedBase is NoCtor {
+    constructor() NoCtor // keep this explanation too
+        () {} //~NOTE: explicit empty base-constructor arguments are redundant
+}

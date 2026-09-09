@@ -163,11 +163,15 @@ impl<'gcx> Analyzer<'gcx> {
     }
 
     fn is_controlled_delegatecall(&self, expr: &'gcx Expr<'gcx>) -> bool {
-        let ExprKind::Call(callee, ..) = &expr.peel_parens().kind else { return false };
-        let ExprKind::Member(receiver, member) = &callee.peel_parens().kind else { return false };
-        member.name == kw::Delegatecall
-            && expr_is_address(self.gcx, receiver)
-            && !self.is_trusted_target(receiver)
+        if let ExprKind::Call(callee, ..) = &expr.peel_parens().kind
+            && let ExprKind::Member(receiver, member) = &callee.peel_parens().kind
+        {
+            member.name == kw::Delegatecall
+                && expr_is_address(self.gcx, receiver)
+                && !self.is_trusted_target(receiver)
+        } else {
+            false
+        }
     }
 
     /// Learns which variables are trusted when `pred` evaluates to `!negate`.
@@ -466,14 +470,14 @@ fn modifier_safe_vars<'gcx>(
     {
         return Vec::new();
     }
-    let bindings: Vec<_> = modifier
+    let bindings = modifier
         .parameters
         .iter()
         .filter_map(|&param| {
             let arg = arg_for_param(&gcx.hir, modifier, param, &invocation.args)?;
             Some((param, underlying_var(arg)?))
         })
-        .collect();
+        .collect::<Vec<_>>();
     if bindings.is_empty() {
         return Vec::new();
     }

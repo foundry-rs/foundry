@@ -29,13 +29,13 @@ impl<'ast> EarlyLintPass<'ast> for Rtlo {
         let Some(file) = ctx.source_file() else { return };
 
         for (offset, ch) in file.src.char_indices() {
-            let Some(name) = bidi_char_name(ch) else { continue };
+            if let Some(name) = bidi_char_name(ch) {
+                let lo = file.start_pos + BytePos::from_usize(offset);
+                let hi = lo + BytePos::from_usize(ch.len_utf8());
+                let span = Span::new(lo, hi);
 
-            let lo = file.start_pos + BytePos::from_usize(offset);
-            let hi = lo + BytePos::from_usize(ch.len_utf8());
-            let span = Span::new(lo, hi);
-
-            ctx.emit_with_msg(&RTLO, span, format!("`U+{:04X}` ({name}) detected", ch as u32));
+                ctx.emit_with_msg(&RTLO, span, format!("`U+{:04X}` ({name}) detected", ch as u32));
+            }
         }
     }
 }

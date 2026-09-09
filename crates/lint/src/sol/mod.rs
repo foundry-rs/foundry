@@ -525,11 +525,11 @@ mod tests {
             return false;
         }
 
-        let rationales: Vec<_> = lines
+        let rationales = lines
             .iter()
             .filter(|line| matches!(**line, "## Why is this bad?" | "## Why restrict this?"))
             .copied()
-            .collect();
+            .collect::<Vec<_>>();
         if rationales.len() != 1 {
             return false;
         }
@@ -607,10 +607,10 @@ mod tests {
         let docs_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("docs");
         assert!(docs_dir.is_dir(), "missing docs directory at {}", docs_dir.display());
 
-        let all_lints: Vec<_> = all_lints().collect();
+        let all_lints = all_lints().collect::<Vec<_>>();
 
-        let registered_ids: std::collections::HashSet<_> =
-            all_lints.iter().map(|lint| lint.id()).collect();
+        let registered_ids =
+            all_lints.iter().map(|lint| lint.id()).collect::<std::collections::HashSet<_>>();
         let mut missing = Vec::new();
         let mut invalid = Vec::new();
         for lint in &all_lints {
