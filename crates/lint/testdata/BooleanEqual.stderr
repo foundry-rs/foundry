@@ -1,4 +1,4 @@
-note[boolean-equal]: boolean comparison to a constant is redundant
+note[boolean-equal]: boolean comparison to a constant can be simplified
    ╭▸ ROOT/testdata/BooleanEqual.sol:LL:CC
    │
 LL │         if (enabled == true) {}
@@ -6,7 +6,7 @@ LL │         if (enabled == true) {}
    │
    ╰ help: https://getfoundry.sh/forge/linting/boolean-equal
 
-note[boolean-equal]: boolean comparison to a constant is redundant
+note[boolean-equal]: boolean comparison to a constant can be simplified
    ╭▸ ROOT/testdata/BooleanEqual.sol:LL:CC
    │
 LL │         if (paused == false) {}
@@ -14,7 +14,7 @@ LL │         if (paused == false) {}
    │
    ╰ help: https://getfoundry.sh/forge/linting/boolean-equal
 
-note[boolean-equal]: boolean comparison to a constant is redundant
+note[boolean-equal]: boolean comparison to a constant can be simplified
    ╭▸ ROOT/testdata/BooleanEqual.sol:LL:CC
    │
 LL │         if (true != ready) {}
@@ -22,7 +22,7 @@ LL │         if (true != ready) {}
    │
    ╰ help: https://getfoundry.sh/forge/linting/boolean-equal
 
-note[boolean-equal]: boolean comparison to a constant is redundant
+note[boolean-equal]: boolean comparison to a constant can be simplified
    ╭▸ ROOT/testdata/BooleanEqual.sol:LL:CC
    │
 LL │         while (done != false) {
@@ -30,7 +30,7 @@ LL │         while (done != false) {
    │
    ╰ help: https://getfoundry.sh/forge/linting/boolean-equal
 
-note[boolean-equal]: boolean comparison to a constant is redundant
+note[boolean-equal]: boolean comparison to a constant can be simplified
    ╭▸ ROOT/testdata/BooleanEqual.sol:LL:CC
    │
 LL │         for (; enabled == true && paused != false;) {
@@ -38,7 +38,7 @@ LL │         for (; enabled == true && paused != false;) {
    │
    ╰ help: https://getfoundry.sh/forge/linting/boolean-equal
 
-note[boolean-equal]: boolean comparison to a constant is redundant
+note[boolean-equal]: boolean comparison to a constant can be simplified
    ╭▸ ROOT/testdata/BooleanEqual.sol:LL:CC
    │
 LL │         for (; enabled == true && paused != false;) {
@@ -46,7 +46,7 @@ LL │         for (; enabled == true && paused != false;) {
    │
    ╰ help: https://getfoundry.sh/forge/linting/boolean-equal
 
-note[boolean-equal]: boolean comparison to a constant is redundant
+note[boolean-equal]: boolean comparison to a constant can be simplified
    ╭▸ ROOT/testdata/BooleanEqual.sol:LL:CC
    │
 LL │         return enabled == true;

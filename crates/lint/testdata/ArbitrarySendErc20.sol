@@ -91,39 +91,39 @@ contract ArbitrarySendErc20 {
     // -- POSITIVE CASES (should warn) --
 
     function badPlain(address from, address to, uint256 a) public {
-        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     function badSafeMember(address from, address to, uint256 a) public {
-        token.safeTransferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`
+        token.safeTransferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     function badLibrary(address from, address to, uint256 a) public {
-        SafeERC20.safeTransferFrom(token, from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`
+        SafeERC20.safeTransferFrom(token, from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     // Reassignment kills earlier safety.
     function badReassign(address from, address to, uint256 a) public {
         address x = msg.sender;
         x = from;
-        token.transferFrom(x, to, a); //~WARN: `transferFrom` uses an arbitrary `from`
+        token.transferFrom(x, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     // Ternary with one unsafe branch.
     function badTernary(bool flag, address from, address to, uint256 a) public {
         address x = flag ? msg.sender : from;
-        token.transferFrom(x, to, a); //~WARN: `transferFrom` uses an arbitrary `from`
+        token.transferFrom(x, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     // Tuple destructuring picks the unsafe slot.
     function badTuple(address from, address to, uint256 a) public {
         (, address x) = (msg.sender, from);
-        token.transferFrom(x, to, a); //~WARN: `transferFrom` uses an arbitrary `from`
+        token.transferFrom(x, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     // Index reads are opaque.
     function badIndex(address[] calldata senders, address to, uint256 a) public {
-        token.transferFrom(senders[0], to, a); //~WARN: `transferFrom` uses an arbitrary `from`
+        token.transferFrom(senders[0], to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     function badPermitWrongToken(
@@ -136,7 +136,7 @@ contract ArbitrarySendErc20 {
         bytes32 s
     ) public {
         other.permit(from, address(this), a, deadline, v, r, s);
-        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     function badPermitWrongSpender(
@@ -150,7 +150,7 @@ contract ArbitrarySendErc20 {
         bytes32 s
     ) public {
         token.permit(from, spender, a, deadline, v, r, s);
-        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     function badPermitAfter(
@@ -162,7 +162,7 @@ contract ArbitrarySendErc20 {
         bytes32 r,
         bytes32 s
     ) public {
-        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
         token.permit(from, address(this), a, deadline, v, r, s);
     }
 
@@ -180,7 +180,7 @@ contract ArbitrarySendErc20 {
         if (flag) {
             token.permit(from, address(this), a, deadline, v, r, s);
         }
-        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     // Token reassigned after permit invalidates the record.
@@ -196,7 +196,7 @@ contract ArbitrarySendErc20 {
     ) public {
         t.permit(from, address(this), a, deadline, v, r, s);
         t = other;
-        t.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`
+        t.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     // Owner reassigned after permit invalidates the record.
@@ -212,13 +212,13 @@ contract ArbitrarySendErc20 {
         address x = from;
         token.permit(x, address(this), a, deadline, v, r, s);
         x = to;
-        token.transferFrom(x, to, a); //~WARN: `transferFrom` uses an arbitrary `from`
+        token.transferFrom(x, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     // Disjunction does not establish equality.
     function badDisjunction(address from, address to, uint256 a) public {
         require(from == msg.sender || to == msg.sender, "weak");
-        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     // Guard scoped to one branch must not leak.
@@ -226,28 +226,28 @@ contract ArbitrarySendErc20 {
         if (flag) {
             require(from == msg.sender, "ok in this branch");
         }
-        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     function badInterfaceCast(address rawToken, address from, address to, uint256 a) public {
-        IERC20(rawToken).transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`
+        IERC20(rawToken).transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     // Sink runs before the equality short-circuits — the guard cannot retroactively
     // sanitize `from`.
     function badRequireGuardOrder(address from, address to, uint256 a) public {
-        require(token.transferFrom(from, to, a) && from == msg.sender); //~WARN: `transferFrom` uses an arbitrary `from`
+        require(token.transferFrom(from, to, a) && from == msg.sender); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     function badAssertGuardOrder(address from, address to, uint256 a) public {
-        assert(token.transferFrom(from, to, a) && from == msg.sender); //~WARN: `transferFrom` uses an arbitrary `from`
+        assert(token.transferFrom(from, to, a) && from == msg.sender); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     function badShortCircuitReassignKillsSafe(bool flag, address from, address to, uint256 a) public {
         address x = msg.sender;
         bool ok = flag && ((x = from) != address(0));
         ok;
-        token.transferFrom(x, to, a); //~WARN: `transferFrom` uses an arbitrary `from`
+        token.transferFrom(x, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     // Modifier guard placed *after* `_;` cannot be hoisted.
@@ -261,7 +261,7 @@ contract ArbitrarySendErc20 {
         address to,
         uint256 a
     ) public lateCheck(from) {
-        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     // Multi-`_;` modifier is skipped (placeholder ordering can't be assumed sound).
@@ -276,7 +276,7 @@ contract ArbitrarySendErc20 {
         address to,
         uint256 a
     ) public multiPlaceholder(from) {
-        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     // Loop body kills a previously-safe local.
@@ -285,7 +285,7 @@ contract ArbitrarySendErc20 {
         for (uint256 i = 0; i < 1; i++) {
             x = from;
         }
-        token.transferFrom(x, to, a); //~WARN: `transferFrom` uses an arbitrary `from`
+        token.transferFrom(x, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     // Try clause kills a previously-safe local.
@@ -299,14 +299,14 @@ contract ArbitrarySendErc20 {
         try t.transfer(to, a) returns (bool) {
             x = from;
         } catch {}
-        token.transferFrom(x, to, a); //~WARN: `transferFrom` uses an arbitrary `from`
+        token.transferFrom(x, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     // Mutable state vars are not transitive: storage may be rewritten before the sink.
     function badViaStateVarGuard(address from, address to, uint256 a) public {
         require(owner == msg.sender, "owner check");
         require(from == owner, "from check");
-        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     // State-var token reassigned after permit must invalidate the record.
@@ -321,7 +321,7 @@ contract ArbitrarySendErc20 {
     ) public {
         token.permit(from, address(this), a, deadline, v, r, s);
         token = other;
-        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     // State-var owner reassigned after permit must invalidate the record.
@@ -337,7 +337,7 @@ contract ArbitrarySendErc20 {
         owner = from;
         token.permit(owner, address(this), a, deadline, v, r, s);
         owner = to;
-        token.transferFrom(owner, to, a); //~WARN: `transferFrom` uses an arbitrary `from`
+        token.transferFrom(owner, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     // State-var token reassigned on only one branch: post-`if` intersection drops the permit.
@@ -355,7 +355,7 @@ contract ArbitrarySendErc20 {
         if (flag) {
             token = other;
         }
-        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     // -- NEGATIVE CASES (should NOT warn) --
@@ -428,7 +428,7 @@ contract ArbitrarySendErc20 {
     // Mutable storage modifier-arg reassigned before the sink.
     function badModifierMutableState(address from, address to, uint256 a) public onlySelf(owner) {
         owner = from;
-        token.transferFrom(owner, to, a); //~WARN: `transferFrom` uses an arbitrary `from`
+        token.transferFrom(owner, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     // OpenZeppelin's `_msgSender()` resolves to `msg.sender`.
@@ -527,7 +527,7 @@ contract ArbitrarySendErc20 {
         address x = msg.sender;
         address y;
         (x, y) = (from, to);
-        token.transferFrom(x, to, a); //~WARN: `transferFrom` uses an arbitrary `from`
+        token.transferFrom(x, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     function badFlashLoanInBranch(
@@ -540,7 +540,7 @@ contract ArbitrarySendErc20 {
         if (flag) {
             receiver.onFlashLoan(msg.sender, address(token), amount, fee, data);
         }
-        token.transferFrom(address(receiver), address(this), amount + fee); //~WARN: `transferFrom` uses an arbitrary `from`
+        token.transferFrom(address(receiver), address(this), amount + fee); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     function badFlashLoanReceiverReassigned(
@@ -552,7 +552,7 @@ contract ArbitrarySendErc20 {
     ) public {
         receiver.onFlashLoan(msg.sender, address(token), amount, fee, data);
         receiver = untrusted;
-        token.transferFrom(address(receiver), address(this), amount + fee); //~WARN: `transferFrom` uses an arbitrary `from`
+        token.transferFrom(address(receiver), address(this), amount + fee); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     function badFakeFlashLoan(
@@ -562,7 +562,7 @@ contract ArbitrarySendErc20 {
         bytes calldata data
     ) public {
         fake.onFlashLoan(data);
-        token.transferFrom(address(fake), to, a); //~WARN: `transferFrom` uses an arbitrary `from`
+        token.transferFrom(address(fake), to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     // Pull-back token differs from the one passed to the hook.
@@ -573,7 +573,7 @@ contract ArbitrarySendErc20 {
         bytes calldata data
     ) public {
         receiver.onFlashLoan(msg.sender, address(token), amount, fee, data);
-        other.transferFrom(address(receiver), address(this), amount + fee); //~WARN: `transferFrom` uses an arbitrary `from`
+        other.transferFrom(address(receiver), address(this), amount + fee); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     // Pull-back recipient isn't the lender.
@@ -585,7 +585,7 @@ contract ArbitrarySendErc20 {
         bytes calldata data
     ) public {
         receiver.onFlashLoan(msg.sender, address(token), amount, fee, data);
-        token.transferFrom(address(receiver), attacker, amount + fee); //~WARN: `transferFrom` uses an arbitrary `from`
+        token.transferFrom(address(receiver), attacker, amount + fee); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     // Pull-back amount isn't `amount + fee`.
@@ -597,7 +597,7 @@ contract ArbitrarySendErc20 {
         bytes calldata data
     ) public {
         receiver.onFlashLoan(msg.sender, address(token), amount, fee, data);
-        token.transferFrom(address(receiver), address(this), other); //~WARN: `transferFrom` uses an arbitrary `from`
+        token.transferFrom(address(receiver), address(this), other); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     // Second pull-back after the obligation has been consumed.
@@ -609,7 +609,7 @@ contract ArbitrarySendErc20 {
     ) public {
         receiver.onFlashLoan(msg.sender, address(token), amount, fee, data);
         token.transferFrom(address(receiver), address(this), amount + fee);
-        token.transferFrom(address(receiver), address(this), amount + fee); //~WARN: `transferFrom` uses an arbitrary `from`
+        token.transferFrom(address(receiver), address(this), amount + fee); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     // `fee + amount` (commuted) still matches.
@@ -624,11 +624,11 @@ contract ArbitrarySendErc20 {
     }
 
     function badNamedMember(address from, address to, uint256 a) public {
-        token.transferFrom({from: from, to: to, amount: a}); //~WARN: `transferFrom` uses an arbitrary `from`
+        token.transferFrom({from: from, to: to, amount: a}); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     function badNamedLibrary(address from, address to, uint256 a) public {
-        SafeERC20.safeTransferFrom({token: token, from: from, to: to, value: a}); //~WARN: `transferFrom` uses an arbitrary `from`
+        SafeERC20.safeTransferFrom({token: token, from: from, to: to, value: a}); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     function okNamedMemberSender(address to, uint256 a) public {
@@ -665,7 +665,7 @@ contract ArbitrarySendErc20 {
         address x = msg.sender;
         delete x;
         x = from;
-        token.transferFrom(x, to, a); //~WARN: `transferFrom` uses an arbitrary `from`
+        token.transferFrom(x, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     // Flash-loan call on the RHS of `&&` may not execute; its repayment must not leak.
@@ -679,7 +679,7 @@ contract ArbitrarySendErc20 {
     ) public returns (bool) {
         bool ok = flag
             && receiver.onFlashLoan(msg.sender, address(token), amount, fee, data) == MAGIC;
-        token.transferFrom(address(receiver), address(this), amount + fee); //~WARN: `transferFrom` uses an arbitrary `from`
+        token.transferFrom(address(receiver), address(this), amount + fee); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
         return ok;
     }
 
@@ -699,7 +699,7 @@ contract ArbitrarySendErc20 {
             if (flag) break;
             x = msg.sender;
         } while (false);
-        token.transferFrom(x, to, a); //~WARN: `transferFrom` uses an arbitrary `from`
+        token.transferFrom(x, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     function badDoWhileBreakSkipsResafe(address from, address to, uint256 a, bool flag) public {
@@ -709,7 +709,7 @@ contract ArbitrarySendErc20 {
             if (flag) break;
             x = msg.sender;
         } while (false);
-        token.transferFrom(x, to, a); //~WARN: `transferFrom` uses an arbitrary `from`
+        token.transferFrom(x, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     // `continue` may also skip the safe assignment.
@@ -719,7 +719,7 @@ contract ArbitrarySendErc20 {
             if (flag) continue;
             x = msg.sender;
         } while (false);
-        token.transferFrom(x, to, a); //~WARN: `transferFrom` uses an arbitrary `from`
+        token.transferFrom(x, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     // Nested-loop `break` doesn't target the outer do-while.
@@ -737,7 +737,7 @@ contract ArbitrarySendErc20 {
     // -- MODIFIER BODY SINKS --
 
     modifier pullBad(address from, address to, uint256 a) {
-        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
         _;
     }
 
@@ -752,7 +752,7 @@ contract ArbitrarySendErc20 {
     function modifierGuardedSinkOk(address from, address to, uint256 a) public guardedPullOk(from, to, a) {}
 
     modifier pullBeforeGuardBad(address from, address to, uint256 a) {
-        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
         require(from == msg.sender, "auth");
         _;
     }
@@ -774,7 +774,7 @@ contract ArbitrarySendErc20 {
     function modifierSelfInvocationOk(address to, uint256 a) public pullFromCallerOk(address(this), to, a) {}
 
     modifier pullFromMixedCallersBad(address from, address to, uint256 a) {
-        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
         _;
     }
 
@@ -800,7 +800,7 @@ contract ArbitrarySendErc20 {
 
     modifier suffixPullBad(address from, address to, uint256 a) {
         _;
-        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     function modifierSuffixSinkBad(address from, address to, uint256 a) public suffixPullBad(from, to, a) {}
@@ -811,7 +811,7 @@ contract ArbitrarySendErc20 {
 
     fallback(bytes calldata data) external returns (bytes memory) {
         address from = abi.decode(data, (address));
-        token.transferFrom(from, msg.sender, 1); //~WARN: `transferFrom` uses an arbitrary `from`
+        token.transferFrom(from, msg.sender, 1); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
         return "";
     }
 }
@@ -827,15 +827,15 @@ contract ContainerReceivers {
     mapping(uint256 => IERC20) tokenMap;
 
     function badStructFieldReceiver(address from, address to, uint256 a) public {
-        cfg.token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`
+        cfg.token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     function badArrayElementReceiver(address from, address to, uint256 a) public {
-        tokens[0].transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`
+        tokens[0].transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     function badMappingValueReceiver(uint256 id, address from, address to, uint256 a) public {
-        tokenMap[id].transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`
+        tokenMap[id].transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     function okStructFieldSender(address to, uint256 a) public {
@@ -854,7 +854,7 @@ contract SoladyCallSites {
     address token;
 
     function badSolady(address from, address to, uint256 a) public {
-        SafeTransferLib.safeTransferFrom(token, from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`
+        SafeTransferLib.safeTransferFrom(token, from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     function okSoladySender(address to, uint256 a) public {
@@ -890,7 +890,7 @@ contract InternalForwardedPulls {
     }
 
     function _mixedPull(address from, address to, uint256 a) internal {
-        SafeTransferLib.safeTransferFrom(token, from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`
+        SafeTransferLib.safeTransferFrom(token, from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 }
 
@@ -901,7 +901,7 @@ contract SoladyUsingForAddress {
     address token;
 
     function badSoladyMember(address from, address to, uint256 a) public {
-        token.safeTransferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`
+        token.safeTransferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     function okSoladyMemberSender(address to, uint256 a) public {
@@ -918,7 +918,7 @@ contract SoladyUsingForAddress {
     }
 
     function badNamedSolady(address from, address to, uint256 a) public {
-        SafeTransferLib.safeTransferFrom({token: token, from: from, to: to, amount: a}); //~WARN: `transferFrom` uses an arbitrary `from`
+        SafeTransferLib.safeTransferFrom({token: token, from: from, to: to, amount: a}); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     function okNamedSoladySender(address to, uint256 a) public {
@@ -951,7 +951,7 @@ abstract contract PullModifierBase {
     }
 
     modifier pullFromAnyone(address from, uint256 a) {
-        token.transferFrom(from, address(this), a); //~WARN: `transferFrom` uses an arbitrary `from`
+        token.transferFrom(from, address(this), a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
         _;
     }
 }

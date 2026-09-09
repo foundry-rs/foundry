@@ -45,16 +45,14 @@ declare_forge_lint!(
     BLOCK_NUMBER_ACROSS_ROLL,
     Severity::Med,
     "block-number-across-roll",
-    "`block.number` may be reused across `vm.roll`",
-    help = "capture the block number with `vm.getBlockNumber()` instead"
+    "`block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead"
 );
 
 declare_forge_lint!(
     BLOCK_TIMESTAMP_ACROSS_WARP,
     Severity::Med,
     "block-timestamp-across-warp",
-    "`block.timestamp` may be reused across `vm.warp`",
-    help = "capture the timestamp with `vm.getBlockTimestamp()` instead"
+    "`block.timestamp` may be reused across `vm.warp`; capture it with `vm.getBlockTimestamp()` instead"
 );
 
 const CHEATCODE_ADDRESS: U256 = uint!(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D_U256);

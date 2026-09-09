@@ -16,8 +16,7 @@ declare_forge_lint!(
     UNALIASED_PLAIN_IMPORT,
     Severity::Info,
     "unaliased-plain-import",
-    "plain import has no alias",
-    help = "use named imports `{A, B}` or alias `import \"..\" as X`"
+    "plain import has no alias; use named imports `{A, B}` or alias `import \"..\" as X`"
 );
 
 impl<'ast> EarlyLintPass<'ast> for Imports {

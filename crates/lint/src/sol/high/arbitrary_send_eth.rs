@@ -33,8 +33,7 @@ declare_forge_lint!(
     ARBITRARY_SEND_ETH,
     Severity::High,
     "arbitrary-send-eth",
-    "ETH is sent to a user-controlled destination",
-    help = "restrict the destination or the caller"
+    "ETH is sent to a user-controlled destination; restrict the destination or the caller"
 );
 
 /// Recursion budget for `_msgSender()`-style helper chains.

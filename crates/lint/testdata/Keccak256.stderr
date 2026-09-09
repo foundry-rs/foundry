@@ -62,58 +62,52 @@ LL │ contract YetAnotherAsmKeccak256 {
    │
    ╰ help: https://getfoundry.sh/forge/linting/multi-contract-file
 
-note[asm-keccak256]: high-level `keccak256` call
+note[asm-keccak256]: high-level `keccak256` call is a candidate for gas optimization
    ╭▸ ROOT/testdata/Keccak256.sol:LL:CC
    │
 LL │         bytes32 hash = keccak256(abi.encodePacked(a, b, bytes32(bytes20(c))));
    │                        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ├ help: consider inline assembly when it preserves the hashed bytes and reduces measured gas
    ╰ help: https://getfoundry.sh/forge/linting/asm-keccak256
 
-note[asm-keccak256]: high-level `keccak256` call
+note[asm-keccak256]: high-level `keccak256` call is a candidate for gas optimization
    ╭▸ ROOT/testdata/Keccak256.sol:LL:CC
    │
 LL │         bytes32 afterDisabledBlock = keccak256(abi.encode(a, b, c));
    │                                      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ├ help: consider inline assembly when it preserves the hashed bytes and reduces measured gas
    ╰ help: https://getfoundry.sh/forge/linting/asm-keccak256
 
-note[asm-keccak256]: high-level `keccak256` call
+note[asm-keccak256]: high-level `keccak256` call is a candidate for gas optimization
    ╭▸ ROOT/testdata/Keccak256.sol:LL:CC
    │
 LL │         bytes32 loadsFromCalldata = keccak256(z);
    │                                     ━━━━━━━━━━━━
    │
-   ├ help: consider inline assembly when it preserves the hashed bytes and reduces measured gas
    ╰ help: https://getfoundry.sh/forge/linting/asm-keccak256
 
-note[asm-keccak256]: high-level `keccak256` call
+note[asm-keccak256]: high-level `keccak256` call is a candidate for gas optimization
    ╭▸ ROOT/testdata/Keccak256.sol:LL:CC
    │
 LL │         bytes32 loadsFromMemory = keccak256(y);
    │                                   ━━━━━━━━━━━━
    │
-   ├ help: consider inline assembly when it preserves the hashed bytes and reduces measured gas
    ╰ help: https://getfoundry.sh/forge/linting/asm-keccak256
 
-note[asm-keccak256]: high-level `keccak256` call
+note[asm-keccak256]: high-level `keccak256` call is a candidate for gas optimization
    ╭▸ ROOT/testdata/Keccak256.sol:LL:CC
    │
 LL │         bytes32 lintWithoutFix = keccak256(abi.encodePacked(a, b, c));
    │                                  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ├ help: consider inline assembly when it preserves the hashed bytes and reduces measured gas
    ╰ help: https://getfoundry.sh/forge/linting/asm-keccak256
 
-note[asm-keccak256]: high-level `keccak256` call
+note[asm-keccak256]: high-level `keccak256` call is a candidate for gas optimization
    ╭▸ ROOT/testdata/Keccak256.sol:LL:CC
    │
 LL │         return keccak256(abi.encode(a, b, c));
    │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ├ help: consider inline assembly when it preserves the hashed bytes and reduces measured gas
    ╰ help: https://getfoundry.sh/forge/linting/asm-keccak256
 
 note[unused-state-variables]: state variable is never used
@@ -124,30 +118,27 @@ LL │     uint256 Enabled_MixedCase_Variable;
    │
    ╰ help: https://getfoundry.sh/forge/linting/unused-state-variables
 
-note[asm-keccak256]: high-level `keccak256` call
+note[asm-keccak256]: high-level `keccak256` call is a candidate for gas optimization
    ╭▸ ROOT/testdata/Keccak256.sol:LL:CC
    │
 LL │         bytes32 doesNotUseScratchSpace = keccak256(abi.encode(x, y, x, y, x, y));
    │                                          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ├ help: consider inline assembly when it preserves the hashed bytes and reduces measured gas
    ╰ help: https://getfoundry.sh/forge/linting/asm-keccak256
 
-note[asm-keccak256]: high-level `keccak256` call
+note[asm-keccak256]: high-level `keccak256` call is a candidate for gas optimization
    ╭▸ ROOT/testdata/Keccak256.sol:LL:CC
    │
 LL │         bytes32 doesUseScratchSpace = keccak256(abi.encode(x));
    │                                       ━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ├ help: consider inline assembly when it preserves the hashed bytes and reduces measured gas
    ╰ help: https://getfoundry.sh/forge/linting/asm-keccak256
 
-note[asm-keccak256]: high-level `keccak256` call
+note[asm-keccak256]: high-level `keccak256` call is a candidate for gas optimization
    ╭▸ ROOT/testdata/Keccak256.sol:LL:CC
    │
 LL │         return keccak256(abi.encode(doesUseScratchSpace, doesNotUseScratchSpace));
    │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ├ help: consider inline assembly when it preserves the hashed bytes and reduces measured gas
    ╰ help: https://getfoundry.sh/forge/linting/asm-keccak256
 

@@ -19,8 +19,7 @@ declare_forge_lint!(
     LITERAL_INSTEAD_OF_CONSTANT,
     Severity::Info,
     "literal-instead-of-constant",
-    "this literal appears multiple times in the contract",
-    help = "declare a named constant for it"
+    "this literal appears multiple times in the contract; declare a named constant for it"
 );
 
 impl<'gcx> LateLintPass<'gcx> for LiteralInsteadOfConstant {

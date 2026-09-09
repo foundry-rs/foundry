@@ -106,48 +106,48 @@ contract ArbitrarySendEth {
     function payLiteralAddress(uint256 amt) external { payable(0x000000000000000000000000000000000000dEaD).transfer(amt); }
     function payErc20Transfer(address to, uint256 amt) external { token.transfer(to, amt); }
     function selfDestructHere() external { selfdestruct(payable(address(this))); }
-    function badTransfer(address payable to, uint256 amt) external { to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination
+    function badTransfer(address payable to, uint256 amt) external { to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
     function badSend(address payable to, uint256 amt) external {
-        bool ok = to.send(amt); //~WARN: ETH is sent to a user-controlled destination
+        bool ok = to.send(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
         ok;
     }
-    function badCall(address to, uint256 amt, bytes calldata data) external returns (bool ok) { (ok,) = to.call{value: amt}(data); //~WARN: ETH is sent to a user-controlled destination
+    function badCall(address to, uint256 amt, bytes calldata data) external returns (bool ok) { (ok,) = to.call{value: amt}(data); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
-    function badInterfaceCall(IThing t, uint256 amt) external { t.ping{value: amt}(); //~WARN: ETH is sent to a user-controlled destination
+    function badInterfaceCall(IThing t, uint256 amt) external { t.ping{value: amt}(); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
-    function badSelfDestruct(address payable to) external { selfdestruct(to); //~WARN: ETH is sent to a user-controlled destination
+    function badSelfDestruct(address payable to) external { selfdestruct(to); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
-    function badPayMutableStorage(uint256 amt) external { payable(mutableOwner).transfer(amt); //~WARN: ETH is sent to a user-controlled destination
+    function badPayMutableStorage(uint256 amt) external { payable(mutableOwner).transfer(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
     function setOwner(address newOwner) external { mutableOwner = newOwner; }
-    function badTernaryDest(address payable a, address payable b, bool flag, uint256 amt) external { (flag ? a : b).transfer(amt); //~WARN: ETH is sent to a user-controlled destination
+    function badTernaryDest(address payable a, address payable b, bool flag, uint256 amt) external { (flag ? a : b).transfer(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
-    function badArrayDest(uint256 i, uint256 amt) external { recipients[i].transfer(amt); //~WARN: ETH is sent to a user-controlled destination
+    function badArrayDest(uint256 i, uint256 amt) external { recipients[i].transfer(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
-    function badMappingDest(address k, uint256 amt) external { delegates[k].transfer(amt); //~WARN: ETH is sent to a user-controlled destination
+    function badMappingDest(address k, uint256 amt) external { delegates[k].transfer(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
-    function badStructDest(uint256 amt) external { cfg.beneficiary.transfer(amt); //~WARN: ETH is sent to a user-controlled destination
+    function badStructDest(uint256 amt) external { cfg.beneficiary.transfer(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
-    function badSendValueStatic(address payable to, uint256 amt) external { Address.sendValue(to, amt); //~WARN: ETH is sent to a user-controlled destination
+    function badSendValueStatic(address payable to, uint256 amt) external { Address.sendValue(to, amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
-    function badSendValueUsingFor(address payable to, uint256 amt) external { to.sendValue(amt); //~WARN: ETH is sent to a user-controlled destination
+    function badSendValueUsingFor(address payable to, uint256 amt) external { to.sendValue(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
-    function badSafeTransferETH(address to, uint256 amt) external { SafeTransferLib.safeTransferETH(to, amt); //~WARN: ETH is sent to a user-controlled destination
+    function badSafeTransferETH(address to, uint256 amt) external { SafeTransferLib.safeTransferETH(to, amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
-    function badForceSafeTransferETH(address to, uint256 amt) external { to.forceSafeTransferETH(amt); //~WARN: ETH is sent to a user-controlled destination
+    function badForceSafeTransferETH(address to, uint256 amt) external { to.forceSafeTransferETH(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
-    function badSafeTransferAllETHUsingFor(address to) external { to.safeTransferAllETH(); //~WARN: ETH is sent to a user-controlled destination
+    function badSafeTransferAllETHUsingFor(address to) external { to.safeTransferAllETH(); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
-    function badSafeTransferAllETHStatic(address to) external { SafeTransferLib.safeTransferAllETH(to); //~WARN: ETH is sent to a user-controlled destination
+    function badSafeTransferAllETHStatic(address to) external { SafeTransferLib.safeTransferAllETH(to); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
-    function badForceSafeTransferAllETHWithGas(address to, uint256 gasStipend) external { to.forceSafeTransferAllETH(gasStipend); //~WARN: ETH is sent to a user-controlled destination
+    function badForceSafeTransferAllETHWithGas(address to, uint256 gasStipend) external { to.forceSafeTransferAllETH(gasStipend); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
-    function badFunctionCallWithValue(address to, bytes calldata data, uint256 amt) external { to.functionCallWithValue(data, amt); //~WARN: ETH is sent to a user-controlled destination
+    function badFunctionCallWithValue(address to, bytes calldata data, uint256 amt) external { to.functionCallWithValue(data, amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
-    function badFunctionCallWithValueStaticWithErr(address to, bytes calldata data, uint256 amt) external { Address.functionCallWithValue(to, data, amt, "boom"); //~WARN: ETH is sent to a user-controlled destination
+    function badFunctionCallWithValueStaticWithErr(address to, bytes calldata data, uint256 amt) external { Address.functionCallWithValue(to, data, amt, "boom"); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
-    function badFunctionPointer(function() external payable f, uint256 amt) external { f{value: amt}(); //~WARN: ETH is sent to a user-controlled destination
+    function badFunctionPointer(function() external payable f, uint256 amt) external { f{value: amt}(); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
     function aliasedSenderOk(uint256 amt) external { address payable to = payable(msg.sender); to.transfer(amt); }
     function ifGuardedOk(address payable to, uint256 amt) external {
@@ -167,13 +167,13 @@ contract ArbitrarySendEth {
     function reassignedAfterCheckBad(address payable to, address payable other, uint256 amt) external {
         require(to == payable(msg.sender));
         to = other; // kills the safe-fact
-        to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination
+        to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
     function elseBranchBad(address payable to, uint256 amt) external {
         if (to == payable(msg.sender)) {
             to.transfer(amt); // safe via positive fact
         } else {
-            to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination
+            to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
         }
     }
     function unreachableAfterRevertOk(address payable to, uint256 amt) external {
@@ -192,31 +192,31 @@ contract ArbitrarySendEth {
     modifier whenNotPaused() { require(block.timestamp > 0, "paused"); _; }
     function withdrawAnywhere(address payable to, uint256 amt) external onlyOwner { to.transfer(amt); }
     function withdrawAnywhereRevert(address payable to, uint256 amt) external onlyOwnerIfRevert { to.transfer(amt); }
-    function pausedButOpenBad(address payable to, uint256 amt) external whenNotPaused { to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination
+    function pausedButOpenBad(address payable to, uint256 amt) external whenNotPaused { to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
-    function eoaOnlyBad(address payable to, uint256 amt) external onlyEOA { to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination
+    function eoaOnlyBad(address payable to, uint256 amt) external onlyEOA { to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
-    function nonZeroSenderBad(address payable to, uint256 amt) external nonZeroSender { to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination
+    function nonZeroSenderBad(address payable to, uint256 amt) external nonZeroSender { to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
     modifier checkSender(address payable who) { require(who == payable(msg.sender), "not sender"); _; }
     function paramSafeViaModifierOk(address payable to, uint256 amt) external checkSender(to) { to.transfer(amt); }
-    function paramSafeButOtherBad(address payable to, address payable other, uint256 amt) external checkSender(to) { other.transfer(amt); //~WARN: ETH is sent to a user-controlled destination
+    function paramSafeButOtherBad(address payable to, address payable other, uint256 amt) external checkSender(to) { other.transfer(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
     modifier maybeOwner(bool b) { if (b) require(msg.sender == trustedOwner); _; }
-    function maybeOwnerBad(address payable to, uint256 amt, bool b) external maybeOwner(b) { to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination
+    function maybeOwnerBad(address payable to, uint256 amt, bool b) external maybeOwner(b) { to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
     struct Guard {
         address principal;
     }
     modifier fakeGuard(Guard memory g) { require(msg.sender == g.principal, "bad"); _; }
-    function fakeGuardBad(address payable to, uint256 amt, Guard memory g) external fakeGuard(g) { to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination
+    function fakeGuardBad(address payable to, uint256 amt, Guard memory g) external fakeGuard(g) { to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
     function callSiteUnchecked(address payable to, uint256 amt) external { Lib.pay(to, amt); }
     modifier tautologicalSender() { require(msg.sender == msg.sender); _; }
-    function tautologicalSenderBad(address payable to, uint256 amt) external tautologicalSender { to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination
+    function tautologicalSenderBad(address payable to, uint256 amt) external tautologicalSender { to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
     modifier txOriginOnly() { require(msg.sender == tx.origin); _; }
-    function txOriginOnlyBad(address payable to, uint256 amt) external txOriginOnly { to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination
+    function txOriginOnlyBad(address payable to, uint256 amt) external txOriginOnly { to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
     function _msgSender() internal view returns (address) { return msg.sender; }
     modifier onlyOwnerViaHelper() { require(_msgSender() == trustedOwner); _; }
@@ -232,45 +232,45 @@ contract ArbitrarySendEth {
     function withdrawIfEnabled(address payable to, uint256 amt, bool enabled) external ifEnabledElseRevert(enabled) { to.transfer(amt); }
     function payAddressZeroOk(uint256 amt) external { payable(address(0)).transfer(amt); }
     modifier tautologicalSenderMemberCall() { require(msg.sender == msg.sender.self()); _; }
-    function tautologicalSenderMemberCallBad(address payable to, uint256 amt) external tautologicalSenderMemberCall { to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination
+    function tautologicalSenderMemberCallBad(address payable to, uint256 amt) external tautologicalSenderMemberCall { to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
     function _txOrigin() internal view returns (address) { return tx.origin; }
     modifier txOriginHelperOnly() { require(msg.sender == _txOrigin()); _; }
-    function txOriginHelperOnlyBad(address payable to, uint256 amt) external txOriginHelperOnly { to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination
+    function txOriginHelperOnlyBad(address payable to, uint256 amt) external txOriginHelperOnly { to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
     function numericAmountGuardStillBad(address payable to, uint256 amt) external {
         require(amt == 1);
-        to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination
+        to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
     modifier aliasIndexedAdmin(uint256 i) { uint256 j = i; require(msg.sender == admins[j]); _; }
-    function aliasIndexedAdminBad(address payable to, uint256 amt, uint256 i) external aliasIndexedAdmin(i) { to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination
+    function aliasIndexedAdminBad(address payable to, uint256 amt, uint256 i) external aliasIndexedAdmin(i) { to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
     modifier nestedSenderIndexedAdmin() { require(msg.sender == admins[adminIndex[msg.sender]]); _; }
-    function nestedSenderIndexedAdminBad(address payable to, uint256 amt) external nestedSenderIndexedAdmin { to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination
+    function nestedSenderIndexedAdminBad(address payable to, uint256 amt) external nestedSenderIndexedAdmin { to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
     function _senderIndex() internal view returns (uint256) { return adminIndex[msg.sender]; }
     modifier hiddenSenderIndexedAdmin() { require(msg.sender == admins[_senderIndex()]); _; }
-    function hiddenSenderIndexedAdminBad(address payable to, uint256 amt) external hiddenSenderIndexedAdmin { to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination
+    function hiddenSenderIndexedAdminBad(address payable to, uint256 amt) external hiddenSenderIndexedAdmin { to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
     function _calldataIndex() internal pure returns (uint256) { return uint256(uint8(msg.data[4])); }
     modifier pureCalldataIndexedAdmin() { require(msg.sender == admins[_calldataIndex()]); _; }
-    function pureCalldataIndexedAdminBad(address payable to, uint256 amt) external pureCalldataIndexedAdmin { to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination
+    function pureCalldataIndexedAdminBad(address payable to, uint256 amt) external pureCalldataIndexedAdmin { to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
     function _calldataOwner() internal pure returns (address) { return address(uint160(uint256(bytes32(msg.data[4:36])))); }
     modifier calldataOwnerGuard() { require(msg.sender == _calldataOwner()); _; }
-    function calldataOwnerGuardBad(address payable to, uint256 amt) external calldataOwnerGuard { to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination
+    function calldataOwnerGuardBad(address payable to, uint256 amt) external calldataOwnerGuard { to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
     modifier assignedParamGuard(address payable who) { who = payable(msg.sender); _; }
-    function assignedParamGuardBad(address payable to, uint256 amt) external assignedParamGuard(to) { to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination
+    function assignedParamGuardBad(address payable to, uint256 amt) external assignedParamGuard(to) { to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
     modifier assignedParamCondGuard(address payable who) {
         if ((who = payable(msg.sender)) == payable(msg.sender)) {}
         _;
     }
-    function assignedParamCondGuardBad(address payable to, uint256 amt) external assignedParamCondGuard(to) { to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination
+    function assignedParamCondGuardBad(address payable to, uint256 amt) external assignedParamCondGuard(to) { to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
     modifier modifierSends(address payable to, uint256 amt) {
-        to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination
+        to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
         _;
     }
     function modifierSinkOk(address payable to, uint256 amt)
@@ -279,9 +279,9 @@ contract ArbitrarySendEth {
     {}
     function _maybeCheckOwner(bool skip) internal view { if (skip) return; require(msg.sender == trustedOwner); }
     modifier maybeChecked(bool skip) { _maybeCheckOwner(skip); _; }
-    function helperEarlyReturnBad(address payable to, uint256 amt, bool skip) external maybeChecked(skip) { to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination
+    function helperEarlyReturnBad(address payable to, uint256 amt, bool skip) external maybeChecked(skip) { to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
-    function memberReturnTransferBad(IRegistry r, uint256 amt) external { r.recipient().transfer(amt); //~WARN: ETH is sent to a user-controlled destination
+    function memberReturnTransferBad(IRegistry r, uint256 amt) external { r.recipient().transfer(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
     function contractLocalFromImmutableOk(uint256 amt) external { IThing t = trustedThing; t.ping{value: amt}(); }
     function nestedUnreachableOk(address payable to, uint256 amt) external {
@@ -293,7 +293,7 @@ contract ArbitrarySendEth {
     function inlineCallerGuardOk(address payable to, uint256 amt) external { require(msg.sender == trustedOwner); to.transfer(amt); }
     function inlineCallerGuardRevertOk(address payable to, uint256 amt) external { if (msg.sender != trustedOwner) revert(); to.transfer(amt); }
     function inlineCallerGuardOrderBad(address payable to, uint256 amt) external {
-        to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination
+        to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
         require(msg.sender == trustedOwner);
     }
     modifier guardedModifierSendOk(address payable to, uint256 amt) { require(msg.sender == trustedOwner); to.transfer(amt); _; }
@@ -302,7 +302,7 @@ contract ArbitrarySendEth {
         guardedModifierSendOk(to, amt)
     {}
     modifier sinkBeforeGuardBad(address payable to, uint256 amt) {
-        to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination
+        to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
         require(msg.sender == trustedOwner);
         _;
     }
@@ -310,25 +310,25 @@ contract ArbitrarySendEth {
         external
         sinkBeforeGuardBad(to, amt)
     {}
-    function overloadedRecipientBad(IOverloaded r, uint256 amt) external { r.recipient().transfer(amt); //~WARN: ETH is sent to a user-controlled destination
+    function overloadedRecipientBad(IOverloaded r, uint256 amt) external { r.recipient().transfer(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
     function overloadedSameArityRecipientBad(
         IOverloadedSameArity r,
         address who,
         uint256 amt
     ) external {
-        r.recipient(who).transfer(amt); //~WARN: ETH is sent to a user-controlled destination
+        r.recipient(who).transfer(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
     function _consume(bool) internal pure returns (bool) { return true; }
     modifier consumeArg(bool ok) { require(ok); _; }
     function modifierArgSinkBad(address payable to, uint256 amt)
         external
         onlyOwner
-        consumeArg(_consume(to.send(amt))) //~WARN: ETH is sent to a user-controlled destination
+        consumeArg(_consume(to.send(amt))) //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     {}
     function conditionalInlineGuardBad(address payable to, uint256 amt, bool b) external {
         if (b) require(msg.sender == trustedOwner);
-        to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination
+        to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
     modifier guardedSuffixSendOk(address payable to, uint256 amt) { require(msg.sender == trustedOwner); _; to.transfer(amt); }
     function guardedSuffixSendOkCaller(address payable to, uint256 amt)
@@ -337,32 +337,32 @@ contract ArbitrarySendEth {
     {}
     modifier suffixSendBad(address payable to, uint256 amt) {
         _;
-        to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination
+        to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
     function suffixSendBadCaller(address payable to, uint256 amt)
         external
         suffixSendBad(to, amt)
     {}
-    function badForceSafeTransferETHStaticWithGas(address to, uint256 amt, uint256 gasStipend) external { SafeTransferLib.forceSafeTransferETH(to, amt, gasStipend); //~WARN: ETH is sent to a user-controlled destination
+    function badForceSafeTransferETHStaticWithGas(address to, uint256 amt, uint256 gasStipend) external { SafeTransferLib.forceSafeTransferETH(to, amt, gasStipend); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
-    function badForceSafeTransferETHUsingForWithGas(address to, uint256 amt, uint256 gasStipend) external { to.forceSafeTransferETH(amt, gasStipend); //~WARN: ETH is sent to a user-controlled destination
+    function badForceSafeTransferETHUsingForWithGas(address to, uint256 amt, uint256 gasStipend) external { to.forceSafeTransferETH(amt, gasStipend); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
-    function badNamedSafeTransferETHStatic(address to, uint256 amt) external { SafeTransferLib.safeTransferETH({amount: amt, to: to}); //~WARN: ETH is sent to a user-controlled destination
+    function badNamedSafeTransferETHStatic(address to, uint256 amt) external { SafeTransferLib.safeTransferETH({amount: amt, to: to}); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
-    function badNamedFunctionCallWithValueStatic(address to, bytes calldata data, uint256 amt) external { Address.functionCallWithValue({value: amt, target: to, data: data}); //~WARN: ETH is sent to a user-controlled destination
+    function badNamedFunctionCallWithValueStatic(address to, bytes calldata data, uint256 amt) external { Address.functionCallWithValue({value: amt, target: to, data: data}); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
     function okNamedSafeTransferETHStaticZero(address to) external { SafeTransferLib.safeTransferETH({amount: 0, to: to}); }
-    function badTrySafeTransferETHStatic(address to, uint256 amt, uint256 gas_) external { SafeTransferLib.trySafeTransferETH(to, amt, gas_); //~WARN: ETH is sent to a user-controlled destination
+    function badTrySafeTransferETHStatic(address to, uint256 amt, uint256 gas_) external { SafeTransferLib.trySafeTransferETH(to, amt, gas_); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
-    function badTrySafeTransferETHUsingFor(address to, uint256 amt, uint256 gas_) external { to.trySafeTransferETH(amt, gas_); //~WARN: ETH is sent to a user-controlled destination
+    function badTrySafeTransferETHUsingFor(address to, uint256 amt, uint256 gas_) external { to.trySafeTransferETH(amt, gas_); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
-    function badTrySafeTransferAllETHStatic(address to, uint256 gas_) external { SafeTransferLib.trySafeTransferAllETH(to, gas_); //~WARN: ETH is sent to a user-controlled destination
+    function badTrySafeTransferAllETHStatic(address to, uint256 gas_) external { SafeTransferLib.trySafeTransferAllETH(to, gas_); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
-    function badTrySafeTransferAllETHUsingFor(address to, uint256 gas_) external { to.trySafeTransferAllETH(gas_); //~WARN: ETH is sent to a user-controlled destination
+    function badTrySafeTransferAllETHUsingFor(address to, uint256 gas_) external { to.trySafeTransferAllETH(gas_); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
-    function badSafeMoveETHStatic(address to, uint256 amt) external { SafeTransferLib.safeMoveETH(to, amt); //~WARN: ETH is sent to a user-controlled destination
+    function badSafeMoveETHStatic(address to, uint256 amt) external { SafeTransferLib.safeMoveETH(to, amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
-    function badSafeMoveETHUsingFor(address to, uint256 amt) external { to.safeMoveETH(amt); //~WARN: ETH is sent to a user-controlled destination
+    function badSafeMoveETHUsingFor(address to, uint256 amt) external { to.safeMoveETH(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
 }
 
@@ -377,7 +377,7 @@ interface IBaseRecipient {
 interface IChildRecipient is IBaseRecipient {}
 
 contract InheritedRecipient {
-    function inheritedRecipientBad(IChildRecipient r, uint256 amt) external { r.recipient().transfer(amt); //~WARN: ETH is sent to a user-controlled destination
+    function inheritedRecipientBad(IChildRecipient r, uint256 amt) external { r.recipient().transfer(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
 }
 
@@ -400,13 +400,13 @@ contract DisjunctiveCallerRestriction {
     function withdrawIfRevertOk(address payable to, uint256 amount) external onlyOwnerOrGuardianIfRevert { to.transfer(amount); }
     function mixedDisjunctBad(address payable to, uint256 amount) external {
         require(msg.sender == owner || amount < cap);
-        to.transfer(amount); //~WARN: ETH is sent to a user-controlled destination
+        to.transfer(amount); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
     function inlineDestinationDisjunctionOk(address payable to, uint256 amount) external { require(to == payable(msg.sender) || to == payable(address(this))); to.transfer(amount); }
     function inlineDestinationDisjunctionIfRevertOk(address payable to, uint256 amount) external { if (to != payable(msg.sender) && to != payable(address(this))) revert(); to.transfer(amount); }
     function asymmetricDestinationDisjunctionBad(address payable to, uint256 amount) external {
         require(to == payable(msg.sender) || amount > 0);
-        to.transfer(amount); //~WARN: ETH is sent to a user-controlled destination
+        to.transfer(amount); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
 }
 
@@ -416,9 +416,9 @@ contract LiteralAndSelfRestrictedCaller {
     modifier onlyHardcodedAdmin() { require(msg.sender == 0x1234567890123456789012345678901234567890); _; }
     modifier onlyHardcodedAdminCast() { require(msg.sender == payable(0x1234567890123456789012345678901234567890)); _; }
     modifier onlyZeroAddress() { require(msg.sender == address(0)); _; }
-    function selfRestrictedBad(address payable to, uint256 amount) external onlySelf { to.transfer(amount); //~WARN: ETH is sent to a user-controlled destination
+    function selfRestrictedBad(address payable to, uint256 amount) external onlySelf { to.transfer(amount); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
-    function self2RestrictedBad(address payable to, uint256 amount) external onlySelf2 { to.transfer(amount); //~WARN: ETH is sent to a user-controlled destination
+    function self2RestrictedBad(address payable to, uint256 amount) external onlySelf2 { to.transfer(amount); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
     function hardcodedAdminOk(address payable to, uint256 amount) external onlyHardcodedAdmin { to.transfer(amount); }
     function hardcodedAdminCastOk(address payable to, uint256 amount) external onlyHardcodedAdminCast { to.transfer(amount); }
@@ -468,33 +468,33 @@ contract SelfAliasTrampolineMega {
         tSeed = other; SELF_TERNARY = tFlag ? address(this) : tSeed;
         pushArr.push(address(this));
     }
-    function dInline(address payable to, uint256 a) external { require(msg.sender == SELF_INLINE); to.transfer(a); //~WARN: ETH is sent to a user-controlled destination
+    function dInline(address payable to, uint256 a) external { require(msg.sender == SELF_INLINE); to.transfer(a); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
-    function dImmutable(address payable to, uint256 a) external { require(msg.sender == SELF_IMMUTABLE); to.transfer(a); //~WARN: ETH is sent to a user-controlled destination
+    function dImmutable(address payable to, uint256 a) external { require(msg.sender == SELF_IMMUTABLE); to.transfer(a); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
-    function dChain(address payable to, uint256 a) external { require(msg.sender == SELF_CHAIN); to.transfer(a); //~WARN: ETH is sent to a user-controlled destination
+    function dChain(address payable to, uint256 a) external { require(msg.sender == SELF_CHAIN); to.transfer(a); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
-    function dStruct(address payable to, uint256 a) external { require(msg.sender == cfg.self); to.transfer(a); //~WARN: ETH is sent to a user-controlled destination
+    function dStruct(address payable to, uint256 a) external { require(msg.sender == cfg.self); to.transfer(a); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
-    function dMapping(address payable to, uint256 a) external { require(msg.sender == principals[0]); to.transfer(a); //~WARN: ETH is sent to a user-controlled destination
+    function dMapping(address payable to, uint256 a) external { require(msg.sender == principals[0]); to.transfer(a); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
-    function dTuple(address payable to, uint256 a) external { require(msg.sender == tupleSelf); to.transfer(a); //~WARN: ETH is sent to a user-controlled destination
+    function dTuple(address payable to, uint256 a) external { require(msg.sender == tupleSelf); to.transfer(a); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
-    function dDeep(address payable to, uint256 a) external { require(msg.sender == dA); to.transfer(a); //~WARN: ETH is sent to a user-controlled destination
+    function dDeep(address payable to, uint256 a) external { require(msg.sender == dA); to.transfer(a); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
-    function dFiveHop(address payable to, uint256 a) external { require(msg.sender == fA); to.transfer(a); //~WARN: ETH is sent to a user-controlled destination
+    function dFiveHop(address payable to, uint256 a) external { require(msg.sender == fA); to.transfer(a); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
-    function dCtorHelper(address payable to, uint256 a) external { require(msg.sender == SELF_HELPER); to.transfer(a); //~WARN: ETH is sent to a user-controlled destination
+    function dCtorHelper(address payable to, uint256 a) external { require(msg.sender == SELF_HELPER); to.transfer(a); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
-    function dStructLit(address payable to, uint256 a) external { require(msg.sender == cfgLit.self); to.transfer(a); //~WARN: ETH is sent to a user-controlled destination
+    function dStructLit(address payable to, uint256 a) external { require(msg.sender == cfgLit.self); to.transfer(a); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
-    function dCtorLocal(address payable to, uint256 a) external { require(msg.sender == SELF_LOCAL); to.transfer(a); //~WARN: ETH is sent to a user-controlled destination
+    function dCtorLocal(address payable to, uint256 a) external { require(msg.sender == SELF_LOCAL); to.transfer(a); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
-    function dNestedHelper(address payable to, uint256 a) external { require(msg.sender == SELF_NESTED); to.transfer(a); //~WARN: ETH is sent to a user-controlled destination
+    function dNestedHelper(address payable to, uint256 a) external { require(msg.sender == SELF_NESTED); to.transfer(a); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
-    function dTernary(address payable to, uint256 a) external { require(msg.sender == SELF_TERNARY); to.transfer(a); //~WARN: ETH is sent to a user-controlled destination
+    function dTernary(address payable to, uint256 a) external { require(msg.sender == SELF_TERNARY); to.transfer(a); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
-    function dPush(address payable to, uint256 a) external { require(msg.sender == pushArr[0]); to.transfer(a); //~WARN: ETH is sent to a user-controlled destination
+    function dPush(address payable to, uint256 a) external { require(msg.sender == pushArr[0]); to.transfer(a); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
 }
 
@@ -512,7 +512,7 @@ contract GuardShapesAndLiterals {
     }
     function threeWayAsymmetricBad(address payable to, uint256 amt) external {
         require(to == payable(msg.sender) || to == payable(address(this)) || amt > 0);
-        to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination
+        to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
 }
 
@@ -520,9 +520,9 @@ contract FunctionPointerSinks {
     function() external payable[] public callbacks;
     mapping(bytes4 => function() external payable) public handlers;
     function pushCallback(function() external payable cb) external { callbacks.push(cb); }
-    function fireBad(uint256 i) external payable { callbacks[i]{value: msg.value}(); //~WARN: ETH is sent to a user-controlled destination
+    function fireBad(uint256 i) external payable { callbacks[i]{value: msg.value}(); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
-    function fireMappingBad(bytes4 sel) external payable { handlers[sel]{value: msg.value}(); //~WARN: ETH is sent to a user-controlled destination
+    function fireMappingBad(bytes4 sel) external payable { handlers[sel]{value: msg.value}(); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
     function zeroValueFireOk(uint256 i) external { callbacks[i]{value: 0}(); }
 }
@@ -533,7 +533,7 @@ contract InlineAssemblyClobber {
         assembly {
             to := other
         }
-        to.transfer(amount); //~WARN: ETH is sent to a user-controlled destination
+        to.transfer(amount); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
     function asmAfterSinkOk(address payable other, uint256 amount) external {
         address payable to = payable(msg.sender);
@@ -551,7 +551,7 @@ contract DocumentedLimitations {
     function setOwnerUnprotected(address newOwner) external { owner = newOwner; }
     function mutableOwnerSuppressesBad(address payable to, uint256 amount) external onlyOwnerMutable { to.transfer(amount); }
     function externalProtected(address payable to, uint256 amount) external onlyOwnerMutable { _send(to, amount); }
-    function _send(address payable to, uint256 amount) internal { to.transfer(amount); //~WARN: ETH is sent to a user-controlled destination
+    function _send(address payable to, uint256 amount) internal { to.transfer(amount); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
 }
 
@@ -573,7 +573,7 @@ contract TryClauseTests {
     }
     function asymmetricTryClauseBad(ITryProbe p, address payable to, uint256 amt) external {
         try p.ping() { require(msg.sender == owner); } catch {}
-        to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination
+        to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
     function allClausesExitOk(ITryProbe p, address payable to, uint256 amt) external {
         try p.ping() { revert(); } catch { revert(); }
@@ -602,9 +602,9 @@ contract ExitsAndAbiDecode {
         if (b) { selfdestruct(payable(address(this))); } else { revert(); }
         to.transfer(amt); // both branches exit
     }
-    function abiDecodePayableTransferBad(bytes calldata data, uint256 amt) external { payable(abi.decode(data, (address))).transfer(amt); //~WARN: ETH is sent to a user-controlled destination
+    function abiDecodePayableTransferBad(bytes calldata data, uint256 amt) external { payable(abi.decode(data, (address))).transfer(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
-    function abiDecodeCallWithValueBad(bytes calldata data, uint256 amt) external returns (bool ok) { (ok,) = abi.decode(data, (address)).call{value: amt}(""); //~WARN: ETH is sent to a user-controlled destination
+    function abiDecodeCallWithValueBad(bytes calldata data, uint256 amt) external returns (bool ok) { (ok,) = abi.decode(data, (address)).call{value: amt}(""); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
 }
 
@@ -619,11 +619,11 @@ contract SelfAliasRuntimeAndNamedBad {
     function plantSelfAlias() external { selfRuntime = address(this); }
     function dRuntime(address payable to, uint256 a) external {
         require(msg.sender == selfRuntime);
-        to.transfer(a); //~WARN: ETH is sent to a user-controlled destination
+        to.transfer(a); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
     function dNamed(address payable to, uint256 a) external {
         require(msg.sender == selfNamed);
-        to.transfer(a); //~WARN: ETH is sent to a user-controlled destination
+        to.transfer(a); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
 }
 
@@ -638,7 +638,7 @@ contract PlaceholderShapes {
         require(msg.sender == owner);
     }
     function withdrawOk(address payable to, uint256 amt) external onlyOwnerNested { to.transfer(amt); }
-    function notRestrictedBad(address payable to, uint256 amt, bool b) external maybePlaceholderThenGuard(b) { to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination
+    function notRestrictedBad(address payable to, uint256 amt, bool b) external maybePlaceholderThenGuard(b) { to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
 }
 
@@ -650,7 +650,7 @@ contract WrapperPrefixParamReassignmentBad {
             _;
         }
     }
-    function paramReassignedThenWrapperBad(address payable to, uint256 amount) external checkOuterAssign(to) { to.transfer(amount); //~WARN: ETH is sent to a user-controlled destination
+    function paramReassignedThenWrapperBad(address payable to, uint256 amount) external checkOuterAssign(to) { to.transfer(amount); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
 }
 
@@ -658,9 +658,9 @@ contract WrapperPrefixParamReassignmentBad {
 contract TernaryAndAssignBad {
     function ternarySideEffectBad(bool flag, address payable to, uint256 amt) external {
         flag ? true : ((to = payable(msg.sender)) == payable(msg.sender));
-        to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination
+        to.transfer(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
-    function assignmentReceiverBad(address payable to, address payable other, uint256 amt) external { (to = other).transfer(amt); //~WARN: ETH is sent to a user-controlled destination
+    function assignmentReceiverBad(address payable to, address payable other, uint256 amt) external { (to = other).transfer(amt); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
 }
 
@@ -697,35 +697,35 @@ contract SelfAliasLaunderingBad {
     function init() external plant(address(this)) {}
     function payNumeric(address payable to, uint256 a) external {
         require(msg.sender == aNumericCast);
-        to.transfer(a); //~WARN: ETH is sent to a user-controlled destination
+        to.transfer(a); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
     function payIdentity(address payable to, uint256 a) external {
         require(msg.sender == aIdentity);
-        to.transfer(a); //~WARN: ETH is sent to a user-controlled destination
+        to.transfer(a); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
     function payIdentityLib(address payable to, uint256 a) external {
         require(msg.sender == aIdentityLib);
-        to.transfer(a); //~WARN: ETH is sent to a user-controlled destination
+        to.transfer(a); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
     function payIdentityNamed(address payable to, uint256 a) external {
         require(msg.sender == aIdentityNamed);
-        to.transfer(a); //~WARN: ETH is sent to a user-controlled destination
+        to.transfer(a); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
     function payIdentityCast(address payable to, uint256 a) external {
         require(msg.sender == aIdentityCast);
-        to.transfer(a); //~WARN: ETH is sent to a user-controlled destination
+        to.transfer(a); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
     function payAggregateCopy(address payable to, uint256 a) external {
         require(msg.sender == aAggregateCopy);
-        to.transfer(a); //~WARN: ETH is sent to a user-controlled destination
+        to.transfer(a); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
     function payLibraryNoArg(address payable to, uint256 a) external {
         require(msg.sender == aLibraryNoArg);
-        to.transfer(a); //~WARN: ETH is sent to a user-controlled destination
+        to.transfer(a); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
     function payModifierArg(address payable to, uint256 a) external {
         require(msg.sender == aModifierArg);
-        to.transfer(a); //~WARN: ETH is sent to a user-controlled destination
+        to.transfer(a); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
 }
 
@@ -737,7 +737,7 @@ contract InheritedTrustedDerivedBad is InheritedTrustedBase {
     constructor() { inheritedTrusted = address(this); }
     function pay(address payable to, uint256 amount) external {
         require(msg.sender == inheritedTrusted);
-        to.transfer(amount); //~WARN: ETH is sent to a user-controlled destination
+        to.transfer(amount); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
 }
 
@@ -750,7 +750,7 @@ contract DerivedBaseCtorSelfAliasBad is BaseSelfArg {
     constructor() BaseSelfArg(address(this)) {}
     function pay(address payable to, uint256 amount) external {
         require(msg.sender == baseSelf);
-        to.transfer(amount); //~WARN: ETH is sent to a user-controlled destination
+        to.transfer(amount); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
 }
 
@@ -795,7 +795,7 @@ contract LeafSelfChainBad is MidSelfChain {
     constructor() MidSelfChain(address(this)) {}
     function pay(address payable to, uint256 amount) external {
         require(msg.sender == chainSelf);
-        to.transfer(amount); //~WARN: ETH is sent to a user-controlled destination
+        to.transfer(amount); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
 }
 
@@ -815,7 +815,7 @@ contract FnPtrFromSelf {
         cb{value: amt}();
     }
     function paramPtrBad(function() external payable cb, uint256 amt) external payable {
-        cb{value: amt}(); //~WARN: ETH is sent to a user-controlled destination
+        cb{value: amt}(); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
     }
 }
 

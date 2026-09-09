@@ -29,8 +29,7 @@ declare_forge_lint!(
     UNSAFE_OZ_ERC721_MINT,
     Severity::Med,
     "unsafe-oz-erc721-mint",
-    "`ERC721._mint` does not check that the recipient can receive the token",
-    help = "use `_safeMint`"
+    "`ERC721._mint` does not check that the recipient can receive the token; use `_safeMint`"
 );
 
 impl<'gcx> LateLintPass<'gcx> for UnsafeOzErc721Mint {

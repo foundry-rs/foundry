@@ -35,8 +35,7 @@ declare_forge_lint!(
     ARBITRARY_SEND_ERC20,
     Severity::High,
     "arbitrary-send-erc20",
-    "`transferFrom` uses an arbitrary `from`",
-    help = "require `from` to equal `msg.sender` or `address(this)`"
+    "`transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`"
 );
 
 declare_forge_lint!(
