@@ -22,14 +22,14 @@ use crate::{
     fs,
 };
 use alloy_chains::Chain;
-use alloy_primitives::{Address, map::HashMap};
+use alloy_primitives::{Address, map::AddressMap};
 use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::artifacts::StorageLayout;
 use foundry_config::Config;
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
-    sync::{Arc, LazyLock, Mutex},
+    sync::{Arc, LazyLock, Mutex, MutexGuard},
 };
 
 /// First solc release that emits `storageLayout`. Matches the floor `cast storage` enforces.
@@ -50,7 +50,7 @@ type LookupSlot = Arc<Mutex<Option<ExternalStorageLayout>>>;
 /// The outer mutex only guards the map; the work itself happens while holding the inner mutex of a
 /// single entry, so lookups for different addresses still run concurrently while lookups for the
 /// same address wait for the first one to finish and then reuse its result.
-static LOOKUPS: LazyLock<Mutex<HashMap<(u64, Address), LookupSlot>>> =
+static LOOKUPS: LazyLock<Mutex<std::collections::HashMap<(u64, Address), LookupSlot>>> =
     LazyLock::new(Default::default);
 
 /// Resolves the storage layouts of `addresses` on `chain`, compiling verified sources as needed.
@@ -68,8 +68,8 @@ static LOOKUPS: LazyLock<Mutex<HashMap<(u64, Address), LookupSlot>>> =
 pub fn fetch_external_storage_layouts(
     chain: Chain,
     addresses: impl IntoIterator<Item = Address>,
-    fetch_sources: impl FnOnce(&[Address]) -> Vec<(Address, Option<(Address, Metadata)>)>,
-) -> HashMap<Address, (String, Arc<StorageLayout>)> {
+    fetch_sources: impl FnOnce(&[Address]) -> AddressMap<Option<(Address, Metadata)>>,
+) -> AddressMap<(String, Arc<StorageLayout>)> {
     let cache_dir = Config::foundry_etherscan_chain_cache_dir(chain);
     resolve(chain.id(), cache_dir.as_deref(), addresses, fetch_sources)
 }
@@ -80,9 +80,9 @@ fn resolve(
     chain_id: u64,
     cache_dir: Option<&Path>,
     addresses: impl IntoIterator<Item = Address>,
-    fetch_sources: impl FnOnce(&[Address]) -> Vec<(Address, Option<(Address, Metadata)>)>,
-) -> HashMap<Address, (String, Arc<StorageLayout>)> {
-    let mut resolved = HashMap::default();
+    fetch_sources: impl FnOnce(&[Address]) -> AddressMap<Option<(Address, Metadata)>>,
+) -> AddressMap<(String, Arc<StorageLayout>)> {
+    let mut resolved = AddressMap::default();
 
     // Claim a lookup slot per address. Sorting keeps the acquisition order identical in every
     // thread, so holding several slots at once cannot deadlock.
@@ -90,7 +90,7 @@ fn resolve(
     addresses.sort_unstable();
     addresses.dedup();
     let slots = {
-        let mut lookups = LOOKUPS.lock_unpoisoned();
+        let mut lookups = lock(&LOOKUPS);
         addresses
             .into_iter()
             .map(|address| (address, lookups.entry((chain_id, address)).or_default().clone()))
@@ -100,7 +100,7 @@ fn resolve(
     let mut pending = Vec::new();
     for (address, slot) in &slots {
         // Waits for a concurrent lookup of the same address to finish, if any.
-        let guard = slot.lock_unpoisoned();
+        let guard = lock(slot);
         if let Some(cached) = &*guard {
             if let Some((name, layout)) = cached {
                 resolved.insert(*address, (name.clone(), layout.clone()));
@@ -129,9 +129,7 @@ fn resolve(
         return resolved;
     }
 
-    let sources = fetch_sources(&pending.iter().map(|(address, _)| *address).collect::<Vec<_>>())
-        .into_iter()
-        .collect::<HashMap<_, _>>();
+    let sources = fetch_sources(&pending.iter().map(|(address, _)| *address).collect::<Vec<_>>());
 
     for (address, mut guard) in pending {
         let Some(source) = sources.get(&address) else {
@@ -311,17 +309,10 @@ fn write_cached_layout(
     }
 }
 
-/// Extension trait for recovering from a poisoned lookup slot.
-trait LockUnpoisoned<'a, T> {
-    fn lock_unpoisoned(&'a self) -> std::sync::MutexGuard<'a, T>;
-}
-
-impl<'a, T> LockUnpoisoned<'a, T> for Mutex<T> {
-    /// A panic while a lookup is in flight leaves the slot poisoned. The slot only holds a
-    /// memoized result, so recovering it just means redoing the lookup.
-    fn lock_unpoisoned(&'a self) -> std::sync::MutexGuard<'a, T> {
-        self.lock().unwrap_or_else(|err| err.into_inner())
-    }
+/// A panic while a lookup is in flight leaves its slot poisoned. A slot only ever holds a
+/// memoized result, so recovering one just means redoing that lookup.
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|err| err.into_inner())
 }
 
 #[cfg(test)]
@@ -391,7 +382,7 @@ mod tests {
         let mut asked_for = Vec::new();
         let resolved = resolve(chain_id, Some(cache_dir.path()), [cached, fresh], |addresses| {
             asked_for.extend_from_slice(addresses);
-            Vec::new()
+            AddressMap::default()
         });
 
         // Only the uncached address reaches the lookup, and the cached one still comes back.
@@ -409,7 +400,7 @@ mod tests {
         let mut lookups = 0;
         let mut unverified = |addresses: &[Address]| {
             lookups += 1;
-            addresses.iter().map(|address| (*address, None)).collect()
+            addresses.iter().map(|address| (*address, None)).collect::<AddressMap<_>>()
         };
 
         assert!(resolve(chain_id, Some(cache_dir.path()), [address], &mut unverified).is_empty());
@@ -430,7 +421,7 @@ mod tests {
         let mut lookups = 0;
         let mut unavailable = |_: &[Address]| {
             lookups += 1;
-            Vec::new()
+            AddressMap::default()
         };
 
         assert!(resolve(chain_id, Some(cache_dir.path()), [address], &mut unavailable).is_empty());

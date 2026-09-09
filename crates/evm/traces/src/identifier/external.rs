@@ -3,7 +3,7 @@ use crate::debug::ContractSources;
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::{
     Address,
-    map::{AddressSet, Entry, HashMap, HashSet},
+    map::{AddressMap, AddressSet, Entry, HashMap, HashSet},
 };
 use eyre::WrapErr;
 use foundry_block_explorers::{contract::Metadata, errors::EtherscanError};
@@ -377,14 +377,14 @@ impl ExternalIdentifier {
     /// A proxy `delegatecall`s into its implementation, so it is the implementation that
     /// describes the storage living in the proxy's own slots.
     ///
-    /// An address is absent from the result when the lookup reached no conclusion about it: the
-    /// budget ran out, the explorer errored, or a proxy pointed somewhere unresolvable. Callers
-    /// must treat that as "ask again later", not as "this contract has no source" — which is
-    /// what a present [`Implementation::None`] means.
+    /// A `None` entry means nothing has verified source for the address, which stays true until
+    /// someone verifies it. An address **missing** from the map is one the lookup reached no
+    /// conclusion about — the budget ran out, the explorer errored, a proxy pointed nowhere — and
+    /// asking again later may well answer differently.
     pub async fn get_implementations(
         &mut self,
         addresses: &[Address],
-    ) -> Vec<(Address, Implementation)> {
+    ) -> AddressMap<Option<(Address, Metadata)>> {
         self.resolve_proxy_chains(addresses)
             .await
             .into_iter()
@@ -392,12 +392,12 @@ impl ExternalIdentifier {
             .filter_map(|(chain, address)| {
                 let implementation = match chain.stop {
                     // Walked to the end, so the last link is what implements the address.
-                    Stop::End => Implementation::Verified {
-                        address: *chain.links.last()?,
-                        metadata: Box::new(self.metadata(*chain.links.last()?)?.clone()),
-                    },
+                    Stop::End => {
+                        let link = *chain.links.last()?;
+                        Some((link, self.metadata(link)?.clone()))
+                    }
                     // Conclusive: nothing along the chain has verified source.
-                    Stop::Unverified => Implementation::Unverified,
+                    Stop::Unverified => None,
                     // Says nothing about the address, so don't answer for it at all.
                     Stop::Unresolved => return None,
                 };
@@ -410,21 +410,6 @@ impl ExternalIdentifier {
     fn metadata(&self, address: Address) -> Option<&Metadata> {
         self.contracts.get(&address)?.1.as_ref()
     }
-}
-
-/// What an address turned out to be implemented by, once its proxy chain was walked.
-#[derive(Clone, Debug)]
-pub enum Implementation {
-    /// The verified source of the contract implementing the address, and its address — the
-    /// address itself, unless it is a proxy.
-    Verified {
-        /// Where the implementation lives.
-        address: Address,
-        /// Its verified source. Boxed because it dwarfs the other variant.
-        metadata: Box<Metadata>,
-    },
-    /// Nothing has verified source for the address.
-    Unverified,
 }
 
 /// The chain of addresses one address resolves through, from the address itself down to the
@@ -1124,14 +1109,11 @@ mod tests {
         assert!(!complete);
     }
 
-    /// Flattens an [`Implementation`] to something comparable.
-    fn described(implementation: &Implementation) -> Option<(Address, &str)> {
-        match implementation {
-            Implementation::Verified { address, metadata } => {
-                Some((*address, metadata.contract_name.as_str()))
-            }
-            Implementation::Unverified => None,
-        }
+    /// Flattens a resolved implementation to something comparable.
+    fn described(implementation: &Option<(Address, Metadata)>) -> Option<(Address, &str)> {
+        implementation
+            .as_ref()
+            .map(|(address, metadata)| (*address, metadata.contract_name.as_str()))
     }
 
     #[tokio::test]
@@ -1155,22 +1137,14 @@ mod tests {
         identifier.cache_fetched(unverified, (FetcherKind::Etherscan, None));
 
         let results = identifier.get_implementations(&[plain, proxy, unverified]).await;
-        let described = results
-            .iter()
-            .map(|(address, implementation)| (*address, described(implementation)))
-            .collect::<Vec<_>>();
 
-        assert_eq!(
-            described,
-            [
-                // A plain contract implements itself.
-                (plain, Some((plain, "Plain"))),
-                // A proxy resolves to the implementation it delegates to.
-                (proxy, Some((implementation_address, "Implementation"))),
-                // Conclusively not verified, as opposed to absent.
-                (unverified, None),
-            ]
-        );
+        // A plain contract implements itself.
+        assert_eq!(described(&results[&plain]), Some((plain, "Plain")));
+        // A proxy resolves to the implementation it delegates to.
+        assert_eq!(described(&results[&proxy]), Some((implementation_address, "Implementation")));
+        // Present but `None`: conclusively not verified, as opposed to absent.
+        assert!(results[&unverified].is_none());
+        assert_eq!(results.len(), 3);
     }
 
     #[tokio::test]
@@ -1195,6 +1169,6 @@ mod tests {
             (FetcherKind::Etherscan, Some(metadata("Implementation"))),
         );
         let results = identifier.get_implementations(&[proxy]).await;
-        assert_eq!(described(&results[0].1), Some((implementation_address, "Implementation")));
+        assert_eq!(described(&results[&proxy]), Some((implementation_address, "Implementation")));
     }
 }

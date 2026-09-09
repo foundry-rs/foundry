@@ -4,13 +4,14 @@
 //! the result; [`ExternalIdentifier`] finds that source on Sourcify or a block explorer. This
 //! module is the seam between them, and owns the state that has to outlive a single lookup.
 
-use alloy_primitives::{Address, map::HashMap};
+use alloy_primitives::{
+    Address,
+    map::{AddressMap, HashMap},
+};
 use foundry_common::external_storage::fetch_external_storage_layouts;
 use foundry_compilers::artifacts::StorageLayout;
 use foundry_config::Chain;
-use foundry_evm_traces::identifier::{
-    ExternalIdentifier, ExternalIdentifierConfig, Implementation,
-};
+use foundry_evm_traces::identifier::{ExternalIdentifier, ExternalIdentifierConfig};
 use std::sync::{Arc, LazyLock, Mutex};
 
 /// Chain id to the identifier for that chain, or `None` if one couldn't be built.
@@ -31,20 +32,11 @@ pub(crate) fn storage_layouts(
     sources: &ExternalIdentifierConfig,
     chain: Chain,
     addresses: Vec<Address>,
-) -> HashMap<Address, (String, Arc<StorageLayout>)> {
+) -> AddressMap<(String, Arc<StorageLayout>)> {
     fetch_external_storage_layouts(chain, addresses, |unresolved| {
-        let Some(identifier) = identifier(sources, chain) else { return Vec::new() };
+        let Some(identifier) = identifier(sources, chain) else { return Default::default() };
         let mut identifier = identifier.lock().unwrap_or_else(|err| err.into_inner());
         foundry_common::block_on(identifier.get_implementations(unresolved))
-            .into_iter()
-            .map(|(address, implementation)| {
-                let source = match implementation {
-                    Implementation::Verified { address, metadata } => Some((address, *metadata)),
-                    Implementation::Unverified => None,
-                };
-                (address, source)
-            })
-            .collect()
     })
 }
 
