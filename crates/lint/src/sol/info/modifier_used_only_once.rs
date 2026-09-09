@@ -10,7 +10,7 @@ declare_forge_lint!(
     MODIFIER_USED_ONLY_ONCE,
     Severity::Info,
     "modifier-used-only-once",
-    "this modifier is used only once; consider inlining its checks into the function"
+    "this modifier is used only once"
 );
 
 impl<'ast> ProjectLintPass<'ast> for ModifierUsedOnlyOnce {

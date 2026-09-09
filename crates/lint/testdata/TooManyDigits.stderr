@@ -134,7 +134,7 @@ LL │             result := add(result, 0x7fffffe07fffffe03ff000000000000)
    │
    ╰ help: https://getfoundry.sh/forge/linting/too-many-digits
 
-note[inline-assembly]: inline assembly used; review for memory safety and side effects
+note[inline-assembly]: inline assembly used
    ╭▸ ROOT/testdata/TooManyDigits.sol:LL:CC
    │
 LL │         assembly {
