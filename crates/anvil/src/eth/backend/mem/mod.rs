@@ -7992,6 +7992,10 @@ impl Backend<FoundryNetwork> {
                 if let Some(block_overrides) = block_overrides {
                     cache_db.apply_block_overrides(block_overrides, &mut block_env);
                 }
+                // Simulation overrides and RPC results use L2 numbers, while Arbitrum
+                // execution reads the corresponding L1 number through NUMBER.
+                let rpc_block_number = block_env.number.saturating_to();
+                block_env.number = self.evm_block_number(rpc_block_number);
                 let simulation_evm_env =
                     EvmEnv::new(self.evm_env.read().cfg_env.clone(), block_env.clone());
                 let spec_id = *simulation_evm_env.spec_id();
@@ -8384,7 +8388,7 @@ impl Backend<FoundryNetwork> {
                             .into_iter()
                             .map(|(idx, log)| Log {
                                 inner: log,
-                                block_number: Some(block_env.number.saturating_to()),
+                                block_number: Some(rpc_block_number),
                                 block_timestamp: Some(block_env.timestamp.saturating_to()),
                                 transaction_index: Some(req_idx as u64),
                                 log_index: Some(idx + log_index),
@@ -8444,7 +8448,7 @@ impl Backend<FoundryNetwork> {
                     beneficiary: block_env.beneficiary,
                     state_root,
                     difficulty: block_env.difficulty,
-                    number: block_env.number.saturating_to(),
+                    number: rpc_block_number,
                     gas_limit: block_env.gas_limit,
                     gas_used,
                     timestamp: block_env.timestamp.saturating_to(),
@@ -8504,13 +8508,16 @@ impl Backend<FoundryNetwork> {
                     });
                 }
 
-                let simulated_block = SimulatedBlock {
-                    inner: AnyRpcBlock::new(WithOtherFields::new(block)),
-                    calls: call_res,
-                };
+                let mut block = AnyRpcBlock::new(WithOtherFields::new(block));
+                if is_arbitrum(self.protocol_chain_id()) {
+                    block
+                        .other
+                        .insert("l1BlockNumber".to_string(), serde_json::json!(block_env.number));
+                }
+                let simulated_block = SimulatedBlock { inner: block, calls: call_res };
 
                 parent_hash = block_hash;
-                cache_db.cache.block_hashes.insert(block_env.number, block_hash);
+                cache_db.cache.block_hashes.insert(U256::from(rpc_block_number), block_hash);
                 inherited_block_env.beneficiary = block_env.beneficiary;
                 inherited_block_env.difficulty = block_env.difficulty;
                 inherited_block_env.gas_limit = block_env.gas_limit;

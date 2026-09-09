@@ -2508,16 +2508,16 @@ async fn flaky_test_arb_fork_mining() {
     assert_eq!(mined_blk_num, init_blk_num + 1);
 }
 
-// <https://github.com/foundry-rs/foundry/issues/16768>
-#[tokio::test(flavor = "multi_thread")]
-async fn test_arbitrum_fork_preserves_l1_block_number_after_mining() {
-    const L2_BLOCK: u64 = 503_433_721;
-    const L1_BLOCK: u64 = 25_941_231;
-    let target = Address::random();
+/// Serves an Arbitrum fork root with distinct L1 and L2 block numbers.
+async fn spawn_arbitrum_block_number_source(
+    target: Address,
+    l2_block: u64,
+    l1_block: u64,
+) -> (NodeHandle, String, tokio::task::JoinHandle<()>) {
     let (origin_api, origin) = spawn(
         NodeConfig::test()
             .with_chain_id(Some(NamedChain::Arbitrum as u64))
-            .with_genesis_block_number(Some(L2_BLOCK)),
+            .with_genesis_block_number(Some(l2_block)),
     )
     .await;
     // Store NUMBER in slot zero and return it, exercising both calls and mined transactions.
@@ -2546,7 +2546,7 @@ async fn test_arbitrum_fork_preserves_l1_block_number_after_mining() {
                 {
                     block.insert(
                         "l1BlockNumber".to_string(),
-                        Value::String(format!("0x{L1_BLOCK:x}")),
+                        Value::String(format!("0x{l1_block:x}")),
                     );
                 }
                 Json(response)
@@ -2557,11 +2557,23 @@ async fn test_arbitrum_fork_preserves_l1_block_number_after_mining() {
     let address = listener.local_addr().unwrap();
     let proxy = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
 
+    (origin, format!("http://{address}"), proxy)
+}
+
+// <https://github.com/foundry-rs/foundry/issues/16768>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_arbitrum_fork_preserves_l1_block_number_after_mining() {
+    const L2_BLOCK: u64 = 503_433_721;
+    const L1_BLOCK: u64 = 25_941_231;
+    let target = Address::random();
+    let (_origin, endpoint, proxy) =
+        spawn_arbitrum_block_number_source(target, L2_BLOCK, L1_BLOCK).await;
+
     for chain_id in [None, Some(1u64)] {
         let config = NodeConfig::test()
             .with_chain_id(chain_id)
             .with_no_storage_caching(true)
-            .with_eth_rpc_url(Some(format!("http://{address}")))
+            .with_eth_rpc_url(Some(endpoint.clone()))
             .with_fork_block_number(Some(L2_BLOCK));
         let (api, handle) = spawn(config).await;
         let provider = handle.http_provider();
@@ -2674,7 +2686,7 @@ async fn test_arbitrum_fork_preserves_l1_block_number_after_mining() {
             U256::from(L2_BLOCK + 3)
         );
         api.anvil_reset(Some(Forking {
-            json_rpc_url: Some(format!("http://{address}")),
+            json_rpc_url: Some(endpoint.clone()),
             block_number: Some(L2_BLOCK),
         }))
         .await
@@ -2684,6 +2696,83 @@ async fn test_arbitrum_fork_preserves_l1_block_number_after_mining() {
             U256::from_be_slice(&provider.call(request).block(BlockId::latest()).await.unwrap()),
             U256::from(L1_BLOCK + 1)
         );
+    }
+    proxy.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_arbitrum_fork_simulate_preserves_l1_and_l2_block_numbers() {
+    const L2_BLOCK: u64 = 503_433_721;
+    const L1_BLOCK: u64 = 25_941_231;
+    let target = Address::random();
+    let (_origin, endpoint, proxy) =
+        spawn_arbitrum_block_number_source(target, L2_BLOCK, L1_BLOCK).await;
+    let client = reqwest::Client::new();
+
+    for chain_id in [None, Some(1u64)] {
+        let (api, handle) = spawn(
+            NodeConfig::test()
+                .with_chain_id(chain_id)
+                .with_no_storage_caching(true)
+                .with_eth_rpc_url(Some(endpoint.clone()))
+                .with_fork_block_number(Some(L2_BLOCK)),
+        )
+        .await;
+        api.mine_one().await.unwrap();
+        api.mine_one().await.unwrap();
+
+        for (base, offset) in [
+            (serde_json::json!("latest"), 3),
+            (serde_json::json!("pending"), 4),
+            (serde_json::json!(format!("0x{:x}", L2_BLOCK + 1)), 2),
+        ] {
+            // Return and log NUMBER, while also calling ArbSys directly.
+            let calls = serde_json::json!([
+                {"to": target},
+                {"to": arbitrum::ARB_SYS_ADDRESS, "input": "0xa3b1b31d"}
+            ]);
+            let response = client.post(handle.http_endpoint()).json(&serde_json::json!({
+                "jsonrpc": "2.0", "id": 1, "method": "eth_simulateV1",
+                "params": [{
+                    "returnFullTransactions": true,
+                    "blockStateCalls": [
+                        {
+                            "stateOverrides": {target.to_string(): {
+                                "code": "0x4360005260206000a060206000f3"
+                            }},
+                            "calls": calls.clone()
+                        },
+                        {
+                            "blockOverrides": {"number": format!("0x{:x}", L2_BLOCK + offset + 2)},
+                            "calls": calls
+                        }
+                    ]
+                }, base]
+            })).send().await.unwrap().json::<Value>().await.unwrap();
+            assert!(response.get("error").is_none(), "{response}");
+            let blocks = response["result"].as_array().unwrap();
+            assert_eq!(blocks.len(), 3);
+            for (index, block) in blocks.iter().enumerate() {
+                let l2 = L2_BLOCK + offset + index as u64;
+                let l1 = L1_BLOCK + offset + index as u64;
+                assert_eq!(block["number"], serde_json::json!(format!("0x{l2:x}")));
+                assert_eq!(block["l1BlockNumber"], serde_json::json!(format!("0x{l1:x}")));
+                if index == 1 {
+                    assert_eq!(block["calls"], serde_json::json!([]));
+                    continue;
+                }
+                for (call, expected) in block["calls"].as_array().unwrap().iter().zip([l1, l2]) {
+                    assert_eq!(call["status"], "0x1");
+                    assert_eq!(call["returnData"], serde_json::json!(format!("0x{expected:064x}")));
+                }
+                assert_eq!(block["calls"][0]["logs"][0]["blockNumber"], block["number"]);
+                assert_eq!(block["calls"][0]["logs"][0]["data"], block["calls"][0]["returnData"]);
+                for tx in block["transactions"].as_array().unwrap() {
+                    assert_eq!(tx["blockNumber"], block["number"]);
+                }
+            }
+        }
+        assert_eq!(handle.http_provider().get_block_number().await.unwrap(), L2_BLOCK + 2);
     }
     proxy.abort();
 }
