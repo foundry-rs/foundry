@@ -112,28 +112,6 @@ cases in UI tests, update affected expected output when messages change, and che
 match the implemented detector. A structural check cannot establish that a suggested change is
 semantically correct.
 
-### Environment capture analysis
-
-`environment-read-across-mutation` follows scalar locals, arithmetic, tuples, internal helper
-arguments and returns, inherited helpers, and modifiers. It recognizes setters by resolved ABI
-signature and constant cheatcode address, including receiver aliases and helper arguments.
-External call results are treated as materialized values from a separate EVM frame.
-
-The original read is the primary diagnostic span. Each read origin retains the first matching
-mutation on its path; the actual cheatcode call is the secondary span, including when it occurs
-inside a helper or through an alias. The diagnostic names that mutation, such as "across
-`vm.warp`", and puts capture advice in a help message. Project-source policies ensure that
-suppression and ignored-file settings apply to the original read's source, not the mutation's.
-
-The interpreter uses a 16,384-step budget, retains at most 32 paths at statement boundaries,
-follows at most eight function frames, and visits at most two loop iterations. It does not prove
-relationships between runtime conditions or analyze recursive/indirect calls, low-level
-cheatcode calls, assembly, or heap/storage aliases. Known unsigned and boolean locals prune
-exhausted loops and constant branches. Internal-call state effects can be joined conservatively,
-but differing return values and conditional-expression values are discarded rather than
-combining mutually exclusive outcomes. Hash results retain dependencies on index expressions;
-hash indices and fork/snapshot identities are not tracked precisely.
-
 ### Choosing Between Early and Late Passes
 
 - **Use `EarlyLintPass`** for:
