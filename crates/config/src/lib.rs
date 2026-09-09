@@ -69,9 +69,7 @@ pub use endpoints::{
 
 mod etherscan;
 use etherscan::EtherscanEnvProvider;
-pub use etherscan::{
-    EtherscanConfigError, EtherscanConfigs, EtherscanResolver, ResolvedEtherscanConfig,
-};
+pub use etherscan::{EtherscanConfigError, EtherscanConfigs, ResolvedEtherscanConfig};
 
 pub mod resolve;
 pub use resolve::UnresolvedEnvVarError;
@@ -1843,18 +1841,16 @@ impl Config {
         &self,
         chain: Option<Chain>,
     ) -> Result<Option<ResolvedEtherscanConfig>, EtherscanConfigError> {
-        self.etherscan_resolver().resolve(chain)
+        self.etherscan.resolve_for(
+            self.etherscan_alias(),
+            self.etherscan_api_key.as_deref(),
+            chain.or(self.chain),
+        )
     }
 
-    /// Returns the explorer settings detached from this config, so they can be resolved later
-    /// against a chain that isn't known yet — the one a forked test ends up running on, say.
-    pub fn etherscan_resolver(&self) -> EtherscanResolver {
-        EtherscanResolver {
-            configs: self.etherscan.clone(),
-            api_key: self.etherscan_api_key.clone(),
-            alias: self.etherscan_api_key.clone().or_else(|| self.eth_rpc_url.clone()),
-            chain: self.chain,
-        }
+    /// The `[etherscan]` entry to prefer over matching on chain id, if it names one.
+    pub fn etherscan_alias(&self) -> Option<&str> {
+        self.etherscan_api_key.as_deref().or(self.eth_rpc_url.as_deref())
     }
 
     /// Helper function to just get the API key

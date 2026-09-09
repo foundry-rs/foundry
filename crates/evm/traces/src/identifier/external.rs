@@ -8,7 +8,7 @@ use alloy_primitives::{
 use eyre::WrapErr;
 use foundry_block_explorers::{contract::Metadata, errors::EtherscanError};
 use foundry_common::compile::etherscan_project;
-use foundry_config::{Chain, Config, EtherscanResolver};
+use foundry_config::{Chain, Config, EtherscanConfigs};
 use futures::{
     future::join_all,
     stream::{FuturesUnordered, Stream, StreamExt},
@@ -48,8 +48,12 @@ pub struct ExternalIdentifierConfig {
     timeout: u64,
     /// Whether to skip system proxy lookups when building the explorer client.
     no_proxy: bool,
-    /// Explorer settings, resolved against the chain an identifier is built for.
-    etherscan: EtherscanResolver,
+    /// The `[etherscan]` table, and the settings that pick an entry out of it.
+    etherscan: EtherscanConfigs,
+    etherscan_alias: Option<String>,
+    etherscan_api_key: Option<String>,
+    /// The configured chain, used when the caller doesn't name one.
+    chain: Option<Chain>,
 }
 
 impl ExternalIdentifierConfig {
@@ -59,7 +63,10 @@ impl ExternalIdentifierConfig {
             offline: config.offline,
             timeout: config.tracing.external_identification_timeout,
             no_proxy: config.eth_rpc_no_proxy,
-            etherscan: config.etherscan_resolver(),
+            etherscan: config.etherscan.clone(),
+            etherscan_alias: config.etherscan_alias().map(str::to_string),
+            etherscan_api_key: config.etherscan_api_key.clone(),
+            chain: config.chain,
         }
     }
 
@@ -72,7 +79,12 @@ impl ExternalIdentifierConfig {
             return None;
         }
 
-        let etherscan = match self.etherscan.resolve(chain) {
+        let resolved = self.etherscan.resolve_for(
+            self.etherscan_alias.as_deref(),
+            self.etherscan_api_key.as_deref(),
+            chain.or(self.chain),
+        );
+        let etherscan = match resolved {
             Ok(Some(config)) => {
                 chain = config.chain;
                 Some(config)

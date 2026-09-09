@@ -60,65 +60,6 @@ pub enum EtherscanConfigError {
     MissingUrlOrChain(String),
 }
 
-/// The subset of a [`Config`](crate::Config) needed to pick the right block explorer for a chain.
-///
-/// Detached from the config it came from, so that consumers holding only a snapshot of it — the
-/// cheatcode config, in particular — can still resolve against the chain a test ends up running
-/// on, which `vm.createSelectFork` can change long after the snapshot was taken.
-///
-/// Build one with [`Config::etherscan_resolver`](crate::Config::etherscan_resolver).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct EtherscanResolver {
-    /// The `[etherscan]` table.
-    pub configs: EtherscanConfigs,
-    /// The `etherscan_api_key` setting. Overrides the key of whichever entry matches, and is the
-    /// last resort when none does.
-    pub api_key: Option<String>,
-    /// Alias to look up in `configs` before matching on chain id: the `etherscan_api_key` or,
-    /// failing that, the `eth_rpc_url` setting.
-    pub alias: Option<String>,
-    /// The `chain` setting, used when the caller doesn't name one.
-    pub chain: Option<Chain>,
-}
-
-impl EtherscanResolver {
-    /// Resolves the explorer config to use for `chain`, falling back to the configured chain.
-    ///
-    /// An alias match wins outright. Otherwise the first entry whose chain id matches is used,
-    /// with `api_key` — which typically comes from an env var or a CLI flag — overriding its key.
-    /// With no matching entry, an `api_key` alone is enough to build a config for the chain.
-    pub fn resolve(
-        &self,
-        chain: Option<Chain>,
-    ) -> Result<Option<ResolvedEtherscanConfig>, EtherscanConfigError> {
-        if let Some(alias) = &self.alias
-            && self.configs.contains_key(alias)
-        {
-            return self.configs.clone().resolved().remove(alias).transpose();
-        }
-
-        let chain = chain.or(self.chain);
-        if let Some(res) = chain.and_then(|chain| self.configs.clone().resolved().find_chain(chain))
-        {
-            match (res, self.api_key.as_ref()) {
-                (Ok(mut config), Some(key)) => {
-                    config.key.clone_from(key);
-                    return Ok(Some(config));
-                }
-                (Ok(config), None) => return Ok(Some(config)),
-                (Err(err), None) => return Err(err),
-                // Unresolvable entry, but there is a key to fall back on.
-                (Err(_), Some(_)) => {}
-            }
-        }
-
-        if let Some(key) = self.api_key.as_ref() {
-            return Ok(ResolvedEtherscanConfig::create(key, chain.unwrap_or_default()));
-        }
-        Ok(None)
-    }
-}
-
 /// Container type for Etherscan API keys and URLs.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -140,6 +81,47 @@ impl EtherscanConfigs {
     /// Returns the first config that matches the chain
     pub fn find_chain(&self, chain: Chain) -> Option<&EtherscanConfig> {
         self.configs.values().find(|config| config.chain == Some(chain))
+    }
+
+    /// Picks the explorer config to use, given the settings that select between the entries.
+    ///
+    /// `alias` names an entry outright and wins if it matches one. Otherwise the first entry whose
+    /// chain id matches `chain` is used, with `api_key` — which usually comes from an env var or a
+    /// CLI flag — overriding the key that entry carries. With no matching entry, `api_key` alone is
+    /// enough to build a config for `chain`.
+    ///
+    /// Shared by [`Config::get_etherscan_config_with_chain`](crate::Config::
+    /// get_etherscan_config_with_chain) and by consumers that keep only a snapshot of the config
+    /// and resolve later, against a chain they don't learn until runtime.
+    pub fn resolve_for(
+        &self,
+        alias: Option<&str>,
+        api_key: Option<&str>,
+        chain: Option<Chain>,
+    ) -> Result<Option<ResolvedEtherscanConfig>, EtherscanConfigError> {
+        if let Some(alias) = alias
+            && self.contains_key(alias)
+        {
+            return self.clone().resolved().remove(alias).transpose();
+        }
+
+        if let Some(res) = chain.and_then(|chain| self.clone().resolved().find_chain(chain)) {
+            match (res, api_key) {
+                (Ok(mut config), Some(key)) => {
+                    config.key = key.to_string();
+                    return Ok(Some(config));
+                }
+                (Ok(config), None) => return Ok(Some(config)),
+                (Err(err), None) => return Err(err),
+                // Unresolvable entry, but there is a key to fall back on.
+                (Err(_), Some(_)) => {}
+            }
+        }
+
+        if let Some(key) = api_key {
+            return Ok(ResolvedEtherscanConfig::create(key, chain.unwrap_or_default()));
+        }
+        Ok(None)
     }
 
     /// Returns all (alias -> url) pairs
