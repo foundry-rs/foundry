@@ -9,5 +9,3 @@ runs:
       run: |
         : "${SFW_SHIM_DIR:?Secure runner must install Socket Firewall first}"
         CARGO_NET_GIT_FETCH_WITH_CLI=true "$SFW_SHIM_DIR/cargo" fetch --locked
-        CARGO_NET_GIT_FETCH_WITH_CLI=true "$SFW_SHIM_DIR/cargo" fetch --locked \
-          --manifest-path crates/forge/tests/fixtures/bind-lock/Cargo.toml

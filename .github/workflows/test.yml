@@ -127,6 +127,13 @@ jobs:
         with:
           cache-bin: false
       - uses: ./.github/actions/setup-cargo
+      - name: Fetch bind test dependencies through Socket
+        if: startsWith(matrix.name, 'all')
+        shell: bash
+        run: |
+          : "${SFW_SHIM_DIR:?Secure runner must install Socket Firewall first}"
+          CARGO_NET_GIT_FETCH_WITH_CLI=true "$SFW_SHIM_DIR/cargo" fetch --locked \
+            --manifest-path crates/forge/tests/fixtures/bind-lock/Cargo.toml
       - uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
         with:
           tool: nextest
