@@ -14,7 +14,8 @@ operand contains:
 - `<expr>.balance`, the ETH balance of an address, or
 - `<expr>.balanceOf(<args>)`, an ERC-20 token balance call.
 
-Operands are inspected recursively, so `address(this).balance + 1 == target` is also flagged.
+Comparisons involving arithmetic on a balance, such as `address(this).balance + 1 == target`,
+are also flagged.
 
 ## Why is this bad?
 
@@ -63,18 +64,7 @@ function claimWhenEmpty() external {
 
 ## Notes
 
-`.balance` is only flagged when the receiver can be proven to be of type `address` (or
-`address payable`). Recognized receivers include:
-
-- `address(...)` casts and `payable(...)` expressions,
-- variables declared as `address` / `address payable`,
-- built-in members returning an address (`msg.sender`, `tx.origin`, `block.coinbase`),
-- struct fields declared as `address`,
-- elements of `address[]` arrays and values of `mapping(... => address)` mappings,
-- functions returning a single `address` value.
-
-Member accesses with the name `balance` on other types (e.g. user-defined struct fields named
-`balance` whose type is not `address`) are intentionally ignored to avoid false positives.
+Only address balances are checked; unrelated struct fields named `balance` are not.
 
 `msg.value` is **not** covered by this lint. Exact payment validation
 (`require(msg.value == price, ...)`) is a normal pattern and is left to the developer.

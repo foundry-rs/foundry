@@ -64,8 +64,5 @@ contract Vault is Initializable {
 
 ## Notes
 
-The lint is intentionally local: it does not inspect deployment scripts to prove whether a proxy is
-initialized atomically. It focuses on implementation contracts that remain directly initializable
-and can reach code paths that may destroy or replace implementation state.
-
-The `onlyProxy` exemption is a name-based heuristic for common UUPS implementations.
+This rule concerns direct initialization of the implementation. Separately ensure the
+proxy is initialized atomically during deployment.

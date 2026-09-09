@@ -7,11 +7,8 @@ Flags events whose `address` parameters are not declared `indexed`.
 
 ## What it does
 
-For each event, identifies unindexed `address` parameters and reports a single warning
-listing them. The lint respects the EVM cap on indexed parameters (3 for normal events,
-4 for `anonymous`) and does not flag events that are already at capacity. Events that
-already have at least one indexed parameter are left alone: the author has clearly chosen
-what to index, so we stay silent.
+Reports unindexed `address` and `address payable` event parameters when the event has no
+indexed parameters. Contract, interface, and user-defined value types are excluded.
 
 ## Why restrict this?
 
@@ -36,14 +33,3 @@ Use instead:
 event Transfer(address indexed from, address indexed to, uint256 value);
 event Mint(address indexed to, uint256 tokenId);
 ```
-
-## Limitations
-
-This lint is intentionally conservative:
-
-- Explicit `address` and `address payable` parameters are checked. Contract/interface types and
-  user-defined value types are not unwrapped.
-- Only actionable suggestions are reported. If an event has no remaining indexed
-  slots (3 for normal events, 4 for `anonymous`), no warning is emitted. If only
-  some slots remain, only the first parameters that could still be indexed are
-  reported; already-indexed parameters are never suggested for change.

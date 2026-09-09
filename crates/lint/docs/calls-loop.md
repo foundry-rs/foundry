@@ -3,8 +3,7 @@
 **Severity**: `Low`
 **ID**: `calls-loop`
 
-Flags external calls made from inside loops, including calls reached through modifiers or internal
-helper functions.
+Flags external calls made from inside loops.
 
 ## What it does
 

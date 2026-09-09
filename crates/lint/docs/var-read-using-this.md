@@ -9,21 +9,12 @@ address, paying the call overhead for data that could be read directly.
 
 ## What it does
 
-Reports `this.<name>(<args>)` calls where `<name>` resolves (via overload resolution by arity) to
-a function reachable on the contract's external interface (`public` or `external`) whose state
-mutability is `view` or `pure`. This includes:
+Reports calls through `this` to the contract's own public variable getters and `view`
+or `pure` functions, including inherited functions.
 
-- The auto-generated getter for any `public` state variable (simple variables, mappings, arrays).
-- Any inherited `public`/`external` `view`/`pure` function declared in a base contract.
-
-When the offending call is the auto-generated getter for a state variable, the lint emits a code
-fix:
-
-- Simple state variable: `this.foo()` → `foo` (machine-applicable).
-- Mapping/array getter: `this.m(k)` → `m[k]` (`maybe-incorrect`; double-check the rewrite).
-
-Calls that carry call options (e.g. `this.foo{gas: 1000}()`) are still flagged, but no fix is
-suggested — the developer is intentionally reaching for the external-call machinery.
+Read state directly where possible: use `foo` instead of `this.foo()`, or `m[k]` instead
+of `this.m(k)`. Check that the replacement preserves the getter's return value and any
+intentional external-call behavior.
 
 ## Why is this bad?
 

@@ -8,8 +8,7 @@ candidates.
 
 ## What it does
 
-Reports `keccak256(arg)` when the call is the direct expression of a supported statement or
-initializer. It does not estimate gas savings or emit an automatic rewrite.
+Reports direct `keccak256(...)` calls in statements and initializers for gas review.
 
 ## Why is this bad?
 

@@ -8,8 +8,7 @@ entire batch.
 
 ## What it does
 
-Reports Solidity `require`/`revert`, revert statements, and Yul `revert` inside loops. The analysis
-also follows modifiers and internal helper calls reached from a loop.
+Reports `require` calls and Solidity or Yul `revert` operations inside loops.
 
 ## Why restrict this?
 

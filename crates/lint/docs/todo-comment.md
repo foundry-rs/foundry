@@ -8,15 +8,9 @@ bugs that have not been resolved before the code reached production.
 
 ## What it does
 
-Scans every line, block, and NatSpec comment in the source file (`//`, `/* */`, `///`, and
-`/** */`) and reports comments containing a `TODO` or `FIXME` marker.
-
-A marker is recognized when it appears at the start of a whitespace-delimited token and is
-immediately followed by one of `:` `(` `,` `;` `.` `)`. Bare `TODO` and `FIXME` tokens are also
-recognized when they are the first meaningful token on a comment line or immediately follow a
-NatSpec tag such as `@dev`. A period does not count when followed by an alphanumeric character or
-underscore, preventing dotted names such as `todo.md` from matching. Matching is case-insensitive,
-so `todo:`, `ToDo:`, and `FixMe:` all match.
+Reports `TODO` and `FIXME` markers in line, block, and NatSpec comments, regardless of case.
+This includes common forms such as `TODO:`, `FIXME(...)`, and a bare marker at the start
+of a comment line. Ordinary filenames such as `todo.md` are not markers.
 
 ## Why restrict this?
 

@@ -94,6 +94,11 @@ the following Foundry-specific conventions:
   `Use instead:` and a corrected example. For policy or style choices, use `Why restrict this?`
   rather than claiming that the flagged code is inherently bad. Foundry has severity groups,
   not a Clippy `restriction` group, so choose the heading based on the lint's purpose.
+- Keep reference pages user-facing: explain the problem, its impact, and how to address it.
+  Omit lint implementation details such as AST/HIR representation, alias tracking, traversal
+  rules, analysis budgets, diagnostic placement, and comparisons with other detectors.
+  Include a limitation only when it changes how the reader should interpret or address a warning.
+  Implementation explanations belong in developer documentation or source comments.
 
 Review every diagnostic path and the reference page together. Cover triggering and non-triggering
 cases in UI tests, update affected expected output when messages change, and check that examples

@@ -3,22 +3,16 @@
 **Severity**: `Low`
 **ID**: `missing-events-arithmetic`
 
-Flags protected entry-point functions that update tainted integer state used in arithmetic by an
+Flags protected entry-point functions that update integer state used in arithmetic by an
 unprotected function without emitting an event.
 
 ## What it does
 
-This lint looks for scalar `int`/`uint` state variables that are:
+Flags protected public or external functions that update integer parameters used in
+arithmetic by an unprotected entry point without emitting an event. Updates include
+assignments from function input and arithmetic changes.
 
-- written by a public or external state-mutating function with access control,
-- assigned from function input, directly or through local aliases/internal helpers, or changed with
-  an arithmetic assignment or increment/decrement,
-- used in arithmetic by an unprotected public or external function, and
-- changed along a path that does not emit an event.
-
-It intentionally skips fixed-value writes, constructors, unprotected setters, mappings/arrays, and
-update paths that emit an event directly or through an internal helper. Those limits keep the rule
-focused on Slither's low-severity `events-maths` case while avoiding common false positives.
+Constructors, unprotected setters, fixed-value assignments, mappings, and arrays are excluded.
 
 ## Why is this bad?
 

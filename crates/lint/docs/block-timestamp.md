@@ -8,8 +8,7 @@ timestamp and transaction-inclusion guarantees.
 
 ## What it does
 
-Reports any comparison expression (`<`, `<=`, `>`, `>=`, `==`, `!=`) that directly or
-transitively reads `block.timestamp`.
+Reports comparison expressions (`<`, `<=`, `>`, `>=`, `==`, `!=`) involving `block.timestamp`.
 
 ## Why is this bad?
 

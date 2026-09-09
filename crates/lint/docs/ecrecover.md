@@ -8,20 +8,13 @@ to be in the canonical lower half of the secp256k1 curve order.
 
 ## What it does
 
-The lint follows simple local aliases and recognizes low-`s` bounds established by `require`,
-`assert`, conditionals, and early-return or revert branches. It accepts the canonical maximum
-`0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0`, stricter bounds, reversed
-comparisons, and the equivalent strict comparison against that value plus one. Facts are
-invalidated by reassignment, loop-carried writes, and calls that may change mutable state. They are
-retained only when they hold on every path reaching the call.
+Reports direct `ecrecover` calls without a check that `s` is at most
+`0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0` before the recovered
+address is used.
 
-Checks on `v`, the recovered address, nonces, domain separators, or the top bit of an EIP-2098
-signature do not prove that `s` is canonical and do not suppress the warning.
-
-The analysis is intentionally local. A low-`s` guard may be established before the call or after
-assigning the recovered address to a local, provided it dominates the address's first observable
-use. The analysis does not summarize internal helpers or modifiers, recognize bound signature
-schemes that fix one recovery ID, or inspect Yul and low-level calls to precompile address `0x01`.
+Checking `v`, nonces, or the recovered address does not replace this low-`s` check.
+Use a signature-validation library that enforces it. A custom validation helper may
+still produce a warning; review its guarantees before suppressing the lint.
 
 ## Why is this bad?
 

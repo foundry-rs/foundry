@@ -7,9 +7,8 @@ Flags use of Foundry cheatcodes classified as unsafe so their effects can receiv
 
 ## What it does
 
-Reports member calls named `ffi`, `readFile`, `readLine`, `writeFile`, `writeLine`, `removeFile`,
-`closeFile`, `setEnv`, or `deriveKey`. This is a fixed name-based list: it does not resolve the
-receiver to the cheatcode interface or derive its coverage from cheatcode safety metadata.
+Reports calls to `ffi`, `readFile`, `readLine`, `writeFile`, `writeLine`, `removeFile`,
+`closeFile`, `setEnv`, or `deriveKey`. Unrelated methods with these names may also be flagged.
 
 ## Why restrict this?
 

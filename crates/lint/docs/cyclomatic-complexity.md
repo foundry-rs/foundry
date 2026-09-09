@@ -7,7 +7,9 @@ Flags functions whose cyclomatic complexity is strictly above 11.
 
 ## What it does
 
-Reports a function whose cyclomatic complexity exceeds 11, the threshold Slither's detector of the same name uses. The complexity is one plus the number of decision points in the body: each `if` (loop conditions included, since every `for`, `while` and `do while` branches on its condition, and a condition-less `for (;;)` adds nothing), each ternary, each `catch` clause and each additional case of an assembly `switch`. Boolean `&&` and `||` operators add nothing, matching the control-flow graph Slither computes on.
+Reports functions with a complexity score above 11. The score starts at one and increases
+for each decision point: `if`, a loop with a condition, a ternary, a `catch` clause, or
+an additional assembly `switch` case. Boolean `&&` and `||` operators do not add to the score.
 
 ## Why restrict this?
 

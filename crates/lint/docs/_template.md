@@ -7,7 +7,8 @@ One-paragraph summary of what this lint detects and why it matters.
 
 ## What it does
 
-Explain precisely what the lint flags.
+Explain the user-visible pattern the lint flags, not how the detector implements the check.
+Include exclusions only when they help the reader interpret or address a warning.
 
 ## Why is this bad?
 

@@ -26,6 +26,10 @@ diagnostics, and examples. This documentation format follows
   is the appropriate alternative, explain why the flagged code is acceptable before showing it.
 - Use backticks for code in prose. Keep security, correctness, and gas claims specific; explain
   limitations instead of implying every match is a bug or every suggested change is always safe.
+- Write for lint users, not lint implementers. Omit AST/HIR details, alias tracking, traversal
+  rules, analysis budgets, diagnostic placement, and comparisons with other detectors. Keep
+  caveats only when they help the reader interpret or address a warning; put implementation
+  explanations in developer documentation or source comments.
 - Keep matching reference pages in the [Foundry Book](https://github.com/foundry-rs/book) synchronized.
 
 ## File structure

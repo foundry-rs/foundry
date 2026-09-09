@@ -8,9 +8,8 @@ pragmas.
 
 ## What it does
 
-Inspects every `pragma solidity ...;` directive across all input source files and reports once when
-their version requirements are inconsistent (different exact versions, mixed caret/tilde/range
-shapes, etc.). The diagnostic lists the distinct requirements seen in the project.
+Reports inconsistent `pragma solidity ...;` requirements across source files, such as different
+exact versions or mixed caret, tilde, and range constraints.
 
 ## Why is this bad?
 

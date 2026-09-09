@@ -12,8 +12,7 @@ high-impact bugs, so each occurrence should be reviewed deliberately.
 Reports every inline assembly statement, including blocks declared with the `"evmasm"` dialect
 and/or the `("memory-safe")` flag. Blocks declared as memory-safe — either via the modern
 `("memory-safe")` flag or the legacy `/// @solidity memory-safe-assembly` NatSpec marker — are
-still reported, but with a softer message acknowledging the developer attestation: review
-focuses on business logic and side effects rather than memory layout.
+still reported.
 
 ## Why restrict this?
 

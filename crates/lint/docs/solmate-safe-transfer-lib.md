@@ -7,9 +7,9 @@ Flags token operations of solmate's `SafeTransferLib`, which does not check that
 
 ## What it does
 
-Reports a reference, called or used as a value, that resolves to `safeTransfer`, `safeTransferFrom` or `safeApprove` declared in a library named exactly `SafeTransferLib` whose source comes from a solmate package path (`lib/solmate`, `solmate/...`). Resolution goes through the type checker, so the `using for` method form, the library-qualified form and import aliases are all recognized, while same-name functions declared in other libraries (Uniswap's `TransferHelper` style) and same-name libraries from other packages (Solady's `SafeTransferLib` checks token code on the empty-return path) stay out of scope. `safeTransferETH` involves no token code and stays clean. A vendored solmate copy under a path that does not name solmate is not recognized.
-
-Aderyn's detector of the same name flags the import directive whose path contains `solmate` and `SafeTransferLib`; resolving the calls instead anchors the warning where the risk sits and skips files that import the library without using it.
+Reports uses of `safeTransfer`, `safeTransferFrom`, and `safeApprove` from solmate's
+`SafeTransferLib`. ETH transfers and similarly named libraries from other packages are
+excluded.
 
 ## Why is this bad?
 
@@ -35,9 +35,8 @@ function pay(IERC20 token, address to, uint256 amount) internal {
 }
 ```
 
-The lint flags every resolved solmate reference and does not recognize a manual code check
-before the call. A call guarded by `require(address(token).code.length > 0, ...)` mitigates
-the pitfall but still reports; suppress it explicitly:
+A call guarded by `require(address(token).code.length > 0, ...)` mitigates this pitfall but
+still produces a warning. After reviewing the guard, suppress the lint locally:
 
 ```solidity
 require(address(token).code.length > 0, "token has no code");

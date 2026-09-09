@@ -4,13 +4,12 @@
 **ID**: `unused-import`
 
 Flags imported symbols (or whole import statements) whose imported names are not referenced
-anywhere in the source unit.
+anywhere in the source file.
 
 ## What it does
 
 Reports `import "..."`, `import "..." as X`, and `import { A, B } from "..."` statements where one
-or more imported names are never used. Symbols brought in via `import * as X` are tracked through
-`X.member` accesses.
+or more imported names are never used. This includes unused namespace imports (`import * as X`).
 
 ## Why is this bad?
 

@@ -8,8 +8,7 @@ Flags `msg.value` reads inside loops reachable from externally callable payable 
 ## What it does
 
 Reports `msg.value` expressions that execute inside a `for`, `while`, or `do while` loop
-reachable from a `public payable` or `external payable` entry point. This includes loops
-introduced by modifiers and reads inside helpers transitively called from the entry point.
+reachable from a `public payable` or `external payable` entry point.
 
 Payable constructors are ignored. `receive()` and `fallback()` functions are checked when they are
 payable.
@@ -54,5 +53,3 @@ function batch(address[] calldata receivers) external payable {
 
 Review each occurrence manually. Prefer computing the intended per-iteration amount before the
 loop, then use that derived value inside the loop.
-
-Inline assembly is not inspected. Calls through function pointers are not followed.

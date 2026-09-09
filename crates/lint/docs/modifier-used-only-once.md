@@ -7,9 +7,8 @@ Flags modifiers invoked by exactly one function in the whole compilation unit.
 
 ## What it does
 
-Reports a modifier that exactly one function invokes, constructors included. Invocations are taken from the resolved modifier lists, so base-constructor calls sitting in the same syntactic position are never confused with modifier calls, and each invocation is attributed to the declaration the compiler selected. Invocations are counted across dependencies too, while only modifiers declared in the project's own sources report. Aderyn's detector of the same name counts invocations the same way and does not exempt virtual modifiers or overrides.
-
-Out of scope: `virtual` modifiers and overrides (they exist for dynamic dispatch, so inlining them is not an option), and modifiers never invoked, which are dead code rather than an inlining candidate.
+Reports modifiers used by exactly one function or constructor across the compiled sources.
+Virtual modifiers, overrides, and unused modifiers are excluded.
 
 ## Why restrict this?
 

@@ -9,8 +9,8 @@ Flags explicit numeric typecasts that can silently truncate or alter the value.
 
 Reports casts where the source value's type can exceed the target type (for example,
 `uint256 → uint128` or `int256 → uint128`). An unsigned value masked to the target width, such
-as `uint8(value & 0xff)`, is recognized as bounded and is not flagged. The lint does not perform
-control-flow analysis of preceding range checks.
+as `uint8(value & 0xff)`, is not flagged. A preceding manual range check may still produce a
+warning; review that check before suppressing the lint.
 
 ## Why is this bad?
 

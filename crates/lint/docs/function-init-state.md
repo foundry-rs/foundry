@@ -7,9 +7,9 @@ Flags state variables whose initializer depends on a non-pure function or on ano
 
 ## What it does
 
-Reports a state variable whose inline initializer references a non-constant state variable or a non-pure function (called or referenced, including inside the arguments of a nested call). A public variable referenced through its synthesized getter counts as a read of the variable itself, so references to public constants stay clean. This mirrors Slither's `function-init-state` detector.
-
-References to constants, calls to pure functions and plain literal expressions are fine, and assignments made inside the constructor body are out of scope.
+Reports inline state-variable initializers that reference a non-constant state variable
+or a non-pure function. Constants, pure functions, and assignments in the constructor body
+are excluded.
 
 ## Why is this bad?
 

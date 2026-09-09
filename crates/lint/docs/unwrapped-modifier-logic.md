@@ -8,13 +8,8 @@ to reduce contract code size.
 
 ## What it does
 
-Reports modifiers whose body contains statements other than a single placeholder, simple builtin
-calls (`require`/`assert`), or a single library function call. Logic on either side of the
-placeholder is considered independently; a side containing inline assembly is not extracted, but
-complex logic on the other side can still be flagged.
-
-The lint only emits a machine-applicable rewrite when the modifier has exactly one top-level
-placeholder and extracting the logic preserves local-variable and parameter behavior.
+Reports modifiers containing logic beyond a placeholder, simple `require` or `assert`
+checks, or a single library call. Assembly blocks are excluded from suggested extraction.
 
 ## Why is this bad?
 

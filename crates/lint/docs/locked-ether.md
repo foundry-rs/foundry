@@ -19,7 +19,7 @@ the lint looks for an expression that can move Ether out:
 - `addr.delegatecall(...)` / `addr.callcode(...)`.
 - `selfdestruct(addr)`.
 
-If none is found, the contract is reported as locked at the contract's name.
+If the contract has no way to send Ether out, it is reported.
 
 ## Why is this bad?
 

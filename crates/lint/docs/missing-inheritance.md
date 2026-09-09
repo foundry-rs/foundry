@@ -9,17 +9,9 @@ intent for readers and tooling.
 
 ## What it does
 
-For each non-interface contract `C` in the analyzed sources, this lint reports each interface `I`
-where:
-
-- `C` does **not** transitively inherit from `I`,
-- `C` (including its inherited bases) implements every external selector exported by `I`, and
-- no already-inherited base of `C` already covers all of `I`'s selectors.
-
-When several candidate interfaces overlap (e.g. `IERC20` and `IERC20Metadata`), only the maximal
-one is reported. "Interface-like" abstract contracts — those with no state, no constructor, no
-modifier bodies, and no function bodies — are also treated as candidate interfaces, mirroring the
-behavior of Slither's `missing-inheritance` detector.
+Reports contracts that implement an interface's external functions without inheriting it.
+An already-inherited base that provides the interface's functions satisfies the lint.
+Abstract contracts containing only interface declarations are also considered.
 
 ## Why is this bad?
 

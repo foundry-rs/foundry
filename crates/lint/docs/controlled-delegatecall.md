@@ -9,16 +9,12 @@ influenced by users, mutable storage, or constructor-provided values.
 
 ## What it does
 
-This lint flags `delegatecall` where the destination is not provably a trusted literal, constant,
-zero address, or `address(this)`. It tracks local aliases, simple helper returns, local equality
-guards against trusted values, and modifier guards that refine the target argument before `_`.
-Function parameters, `msg.sender`, mutable state variables, mapping and array reads, local aliases of
-those values, and all immutables are treated conservatively as untrusted.
+Flags `delegatecall` targets other than a trusted literal, constant, zero address, or
+`address(this)`.
 
-This lint does not attempt to prove trust through access-control modifiers such as `onlyOwner`,
-role checks, allowlist mappings, implementation-slot reads, assembly, external/library predicate
-helpers, codehash checks, or constructor-initialized immutables. Those patterns may be safe in a
-specific system, but they are intentionally outside this lint's proof model and can still warn.
+Warnings can remain for owner-controlled proxies, allowlisted implementations, and
+constructor-initialized immutable targets. Review how the target is authorized before
+suppressing the lint; these patterns are not automatically unsafe.
 
 ## Why is this bad?
 
@@ -47,7 +43,3 @@ contract Delegatecall {
     }
 }
 ```
-
-## Configuration
-
-This lint has no additional configuration.

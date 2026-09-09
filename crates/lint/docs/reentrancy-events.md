@@ -3,21 +3,13 @@
 **Severity**: `Low`
 **ID**: `reentrancy-events`
 
-Flags `emit` statements that appear after an external call within the same function (or any internal helper it transitively calls). Emitting state-change events only after the external call returns can mislead off-chain consumers — including indexers, subgraphs, monitoring tools, and bridges — that rely on log ordering to reconstruct contract state.
+Flags events emitted after an external interaction. Emitting state-change events only after the external call returns can mislead off-chain consumers — including indexers, subgraphs, monitoring tools, and bridges — that rely on log ordering to reconstruct contract state.
 
 ## What it does
 
-For every function body, the lint performs a control-flow analysis that tracks whether an external call has occurred on the path leading to each statement. Only calls that can plausibly affect log ordering or observable state are considered — `staticcall` and high-level `view` / `pure` external calls are excluded. Tracked calls include:
-
-- Low-level calls: `address.call(...)` and `address.delegatecall(...)` (with or without `{value: ...}` / `{gas: ...}` options).
-- ETH sends: `address.transfer(...)`, `address.send(...)`.
-- `this.method(...)` self-external calls.
-- High-level state-mutating external calls on interface or contract types (e.g. `IERC20(token).transfer(...)`). `view` and `pure` callees are not tracked.
-- Contract deployments via `new Foo(...)` (the constructor runs as an external interaction).
-
-External calls reached through internal/private/public helper functions, modifiers, and `super.f(...)` base-chain dispatch are tracked transitively when the helper is invoked by a bare identifier (e.g. `_helper()`) or via `super.`. Member-form internal dispatch such as `Lib.f(...)` and `using for` syntax is **not** yet followed; external calls hidden behind those forms may go undetected.
-
-When the analysis encounters an `emit` statement reachable from a path that already executed a tracked external call, the statement is flagged.
+Reports events emitted after an external interaction, such as a state-changing contract
+call, low-level `call` or `delegatecall`, ETH `send` or `transfer`, or contract creation.
+Static calls and `view` or `pure` calls are excluded.
 
 ## Why is this bad?
 
