@@ -1064,6 +1064,7 @@ impl SymReturnData {
         self.bytes.read_offset(cx, offset, size)
     }
 
+    #[cfg(test)]
     pub(crate) fn load_word(
         &self,
         cx: &mut SymCx,
