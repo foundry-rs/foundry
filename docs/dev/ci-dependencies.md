@@ -4,7 +4,7 @@ This draft introduces a source-bundle boundary for the ordinary Cargo CI jobs.
 It is not yet complete supply-chain coverage for every Foundry workflow.
 
 ```text
-checkout SHA → cooldown → Socket-protected cargo vendor → immutable source artifact
+checkout SHA → cooldown → Socket-protected fetch → offline vendor → source artifact
                                                               ↓
                           verify SHA + inputs + artifact hash → parallel frozen builds
 ```
@@ -12,7 +12,8 @@ checkout SHA → cooldown → Socket-protected cargo vendor → immutable source
 ## Contract
 
 [`dependencies.yml`](../../.github/workflows/dependencies.yml) runs the existing
-cooldown and then invokes Socket Firewall explicitly around `cargo vendor --locked`.
+cooldown and then invokes Socket Firewall explicitly around `cargo fetch --locked`.
+`cargo vendor --frozen` packages only the sources in that fresh approved cache.
 The acquisition job uses an empty Cargo home and runs no package build scripts. It
 does not restore a previously approved source cache: each run is evaluated against
 the current Socket policy. Failure prevents artifact publication and dependent jobs.

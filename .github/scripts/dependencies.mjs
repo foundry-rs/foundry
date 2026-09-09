@@ -66,12 +66,15 @@ export function prepare(root, parent, firewall) {
   mkdirSync(bundle);
   mkdirSync(cargoHome);
   // Empty CARGO_HOME means a previous cache hit cannot bypass current policy.
-  // cargo vendor downloads all locked target dependencies without compiling them.
-  const config = execFileSync(firewall, [
-    'cargo', 'vendor', '--locked', '--versioned-dirs', join(bundle, 'vendor'),
+  // Fetch all locked target dependencies without compiling them. Vendor only
+  // from that fresh, approved cache, outside the proxy and with networking off.
+  const env = { ...process.env, CARGO_HOME: cargoHome, RUSTC_WRAPPER: '', CARGO_NET_OFFLINE: 'false' };
+  execFileSync(firewall, ['cargo', 'fetch', '--locked'], { cwd: root, env, stdio: 'inherit' });
+  const config = execFileSync('cargo', [
+    'vendor', '--frozen', '--versioned-dirs', join(bundle, 'vendor'),
   ], {
     cwd: root,
-    env: { ...process.env, CARGO_HOME: cargoHome, RUSTC_WRAPPER: '', CARGO_NET_OFFLINE: 'false' },
+    env: { ...env, CARGO_NET_OFFLINE: 'true' },
     encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'], maxBuffer: 16 * 1024 * 1024,
   });
   writeFileSync(join(bundle, 'cargo-config.toml'), sourceConfig(config, 'vendor'));
