@@ -21,7 +21,7 @@ impl<'ast> ProjectLintPass<'ast> for ModifierUsedOnlyOnce {
 
         // Only modifiers declared in user-provided files are reported, while invocations are
         // counted across the whole unit, dependencies included.
-        let input_source_idx = ctx
+        let input_source_idx: HashMap<_, _> = ctx
             .gcx()
             .hir
             .sources_enumerated()
@@ -29,7 +29,7 @@ impl<'ast> ProjectLintPass<'ast> for ModifierUsedOnlyOnce {
                 let FileName::Real(path) = &src.file.name else { return None };
                 Some((sid, sources.iter().position(|s| &s.path == path)?))
             })
-            .collect::<HashMap<_, _>>();
+            .collect();
         if input_source_idx.is_empty() {
             return;
         }

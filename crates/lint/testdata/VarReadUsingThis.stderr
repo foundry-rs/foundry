@@ -60,6 +60,11 @@ note[var-read-using-this]: reading a state variable via `this` causes an unneces
 LL │         return this.info();
    │                ━━━━━━━━━━━
    │
+   ├ note: read the state variable directly instead of via `this.`
+   │       
+   │       read the state variable directly: `info`
+   │       
+   │       
    ╰ help: https://getfoundry.sh/forge/linting/var-read-using-this
 
 note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`; access it directly

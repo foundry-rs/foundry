@@ -3,7 +3,7 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{
         Severity, SolLint,
-        analysis::{builtins, for_each_lhs_var, is_contract_cast, loop_stmts, write_target},
+        analysis::{builtins, for_each_lhs_var, is_contract_cast, loop_stmts},
     },
 };
 use solar::{
@@ -154,7 +154,12 @@ impl<'gcx> hir::Visit<'gcx> for WriteCollector<'gcx> {
     }
 
     fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
-        if let Some(lvalue) = write_target(expr) {
+        let lvalue = match &expr.kind {
+            ExprKind::Assign(lhs, ..) | ExprKind::Delete(lhs) => Some(lhs),
+            ExprKind::Unary(op, inner) if op.kind.has_side_effects() => Some(inner),
+            _ => None,
+        };
+        if let Some(lvalue) = lvalue {
             for_each_lhs_var(lvalue, &mut |v| {
                 self.writes.insert(v);
             });

@@ -158,9 +158,7 @@ jobs:
       - name: Test GitHub scripts
         run: |
           python3 -m unittest discover -s .github/scripts/tests -p 'test_*.py'
-          node --test .github/scripts/tests/test-*.js
-      - name: Check lint documentation structure
-        run: node .github/scripts/check-lint-docs.js
+          node --test .github/scripts/tests/test-create-tag.js
 
   clippy:
     needs: cargo-cooldown

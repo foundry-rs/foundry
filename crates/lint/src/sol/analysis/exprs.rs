@@ -188,11 +188,8 @@ pub fn arg_for_param<'gcx>(
     args: &CallArgs<'gcx>,
 ) -> Option<&'gcx Expr<'gcx>> {
     let idx = function.parameters.iter().position(|p| *p == param)?;
-    let names = function
-        .parameters
-        .iter()
-        .map(|p| hir.variable(*p).name.map(|n| n.name))
-        .collect::<Vec<_>>();
+    let names: Vec<_> =
+        function.parameters.iter().map(|p| hir.variable(*p).name.map(|n| n.name)).collect();
     args.argument_for_parameter(idx, Some(&names))
 }
 
@@ -297,8 +294,8 @@ pub const fn write_target<'gcx>(expr: &'gcx Expr<'gcx>) -> Option<&'gcx Expr<'gc
 /// interface functions plus the inherited `fallback`/`receive`, if any.
 pub fn runtime_entry_points(gcx: Gcx<'_>, contract_id: hir::ContractId) -> Vec<FunctionId> {
     let bases = gcx.hir.contract(contract_id).linearized_bases;
-    let mut entries =
-        gcx.interface_functions(contract_id).all().iter().map(|f| f.id).collect::<Vec<_>>();
+    let mut entries: Vec<_> =
+        gcx.interface_functions(contract_id).all().iter().map(|f| f.id).collect();
     entries.extend(bases.iter().find_map(|&cid| gcx.hir.contract(cid).fallback));
     entries.extend(bases.iter().find_map(|&cid| gcx.hir.contract(cid).receive));
     entries

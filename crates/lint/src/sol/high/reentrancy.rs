@@ -1835,29 +1835,20 @@ fn guard_restoration(hir: &hir::Hir<'_>, stmt: &Stmt<'_>) -> Option<(VariableId,
 
 /// `f();` naming exactly one function.
 fn simple_internal_call(stmt: &Stmt<'_>) -> Option<FunctionId> {
-    if let StmtKind::Expr(expr) = stmt.kind
-        && let ExprKind::Call(callee, args, None) = &expr.peel_parens().kind
-        && args.is_empty()
-    {
-        unique(function_ids(callee))
-    } else {
-        None
-    }
+    let StmtKind::Expr(expr) = stmt.kind else { return None };
+    let ExprKind::Call(callee, args, None) = &expr.peel_parens().kind else { return None };
+    args.is_empty().then(|| unique(function_ids(callee))).flatten()
 }
 
 /// `lock = <constant>;` on a state variable.
 fn state_lock_assignment(hir: &hir::Hir<'_>, stmt: &Stmt<'_>) -> Option<(VariableId, Operand)> {
-    if let StmtKind::Expr(expr) = stmt.kind
-        && let ExprKind::Assign(lhs, None, rhs) = &expr.peel_parens().kind
-        && let ExprKind::Ident(reses) = &lhs.peel_parens().kind
-    {
-        let lock_var = unique(
-            reses.iter().filter_map(Res::as_variable).filter(|v| hir.variable(*v).kind.is_state()),
-        )?;
-        Some((lock_var, const_value(hir, rhs, None, &mut BTreeSet::new())?))
-    } else {
-        None
-    }
+    let StmtKind::Expr(expr) = stmt.kind else { return None };
+    let ExprKind::Assign(lhs, None, rhs) = &expr.peel_parens().kind else { return None };
+    let ExprKind::Ident(reses) = &lhs.peel_parens().kind else { return None };
+    let lock_var = unique(
+        reses.iter().filter_map(Res::as_variable).filter(|v| hir.variable(*v).kind.is_state()),
+    )?;
+    Some((lock_var, const_value(hir, rhs, None, &mut BTreeSet::new())?))
 }
 
 /// True if `stmt` reverts whenever `lock_var` holds `entered`.

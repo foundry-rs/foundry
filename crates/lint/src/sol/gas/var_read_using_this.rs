@@ -93,42 +93,39 @@ impl ThisReadFinder<'_, '_> {
     /// Flags `this.<name>(args)` when `<name>` resolves to a `view`/`pure` function of the
     /// current contract.
     fn check_call(&self, expr: &Expr<'_>) {
-        if let ExprKind::Call(callee, args, opts) = &expr.kind
-            && let ExprKind::Member(base, member) = &callee.peel_parens().kind
-            && is_builtin(base, sym::this)
-            && let Some(candidates) = self.callable.get(&member.name)
+        let ExprKind::Call(callee, args, opts) = &expr.kind else { return };
+        let ExprKind::Member(base, member) = &callee.peel_parens().kind else { return };
+        if !is_builtin(base, sym::this) {
+            return;
+        }
+        let Some(candidates) = self.callable.get(&member.name) else { return };
+        // Solar's HIR `Member` is name-based, so overloads are resolved by arity. When same-arity
+        // overloads mix mutability (`f(uint256) view` vs `f(address)`), bail to avoid flagging
+        // the mutating one.
+        let same_arity: Vec<_> =
+            candidates.iter().filter(|f| f.parameters.len() == args.len()).collect();
+        let Some(func) = same_arity.first() else { return };
+        if !same_arity
+            .iter()
+            .all(|f| matches!(f.state_mutability, StateMutability::View | StateMutability::Pure))
         {
-            // Solar's HIR `Member` is name-based, so overloads are resolved by arity. When
-            // same-arity overloads mix mutability (`f(uint256) view` vs `f(address)`),
-            // bail to avoid flagging the mutating one.
-            let same_arity =
-                candidates.iter().filter(|f| f.parameters.len() == args.len()).collect::<Vec<_>>();
-            let Some(func) = same_arity.first() else { return };
-            if !same_arity.iter().all(|f| {
-                matches!(f.state_mutability, StateMutability::View | StateMutability::Pure)
-            }) {
-                return;
+            return;
+        }
+        // With call options like `{gas: ...}` the external call is deliberate: flag the gas waste
+        // without an auto-fix.
+        let suggestion =
+            if opts.is_some() { None } else { suggestion(self.ctx, func, member.name, args) };
+        match suggestion {
+            Some(suggestion) => {
+                self.ctx.emit_with_suggestion(&VAR_READ_USING_THIS, expr.span, suggestion);
             }
-            // With call options like `{gas: ...}` the external call is deliberate: flag the gas
-            // waste without an auto-fix.
-            let suggestion = if opts.is_some() {
-                None
-            } else {
-                suggestion(self.ctx, self.hir, func, member.name, args)
-            };
-            match suggestion {
-                Some(suggestion) => {
-                    self.ctx.emit_with_suggestion(&VAR_READ_USING_THIS, expr.span, suggestion);
-                }
-                None => self.ctx.emit(&VAR_READ_USING_THIS, expr.span),
-            }
+            None => self.ctx.emit(&VAR_READ_USING_THIS, expr.span),
         }
     }
 }
 
 fn suggestion(
     ctx: &LintContext,
-    hir: &hir::Hir<'_>,
     func: &Function<'_>,
     name: Symbol,
     args: &CallArgs<'_>,
@@ -140,17 +137,7 @@ fn suggestion(
                 .with_desc("avoid the `STATICCALL` by invoking the function directly"),
         );
     }
-    // Even a single-field struct getter returns a field, not the struct itself.
-    let mut ty = &hir.variable(func.gettee?).ty;
-    loop {
-        match &ty.kind {
-            hir::TypeKind::Array(array) => ty = &array.element,
-            hir::TypeKind::Mapping(mapping) => ty = &mapping.value,
-            hir::TypeKind::Custom(hir::ItemId::Struct(_)) => return None,
-            _ => break,
-        }
-    }
-    // Avoid replacements for any other getter that destructures its result.
+    // Struct getters destructure their fields, so a direct read is not equivalent.
     if func.returns.len() != 1 {
         return Some(
             Suggestion::example(format!("read the state variable directly: `{name}`"))
@@ -159,8 +146,7 @@ fn suggestion(
     }
     if args.is_empty() {
         return Some(
-            // A local may shadow this state variable, so removing `this` needs review.
-            Suggestion::fix(name.to_string(), Applicability::MaybeIncorrect)
+            Suggestion::fix(name.to_string(), Applicability::MachineApplicable)
                 .with_desc("consider reading the state variable directly"),
         );
     }

@@ -475,10 +475,10 @@ contract Initializer {
         .assert_success()
         .stderr_eq(str![[r#"
 note[function-init-state]: state variable initializer depends on a non-pure function or another state variable
-  [FILE]:5:19
+  [FILE]:5:5
   │
 5 │     address bob = makeAddr("bob");
-  │                   ━━━━━━━━━━━━━━━
+  │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   │
   ╰ help: https://getfoundry.sh/forge/linting/function-init-state
 
@@ -1527,160 +1527,6 @@ Compiler run successful!
 "#]]);
 });
 
-forgetest!(lint_refactoring_suggestions_require_review, |prj, cmd| {
-    let source = r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.18;
-
-contract Base {
-    uint256 public Stored_Value;
-
-    modifier checked(uint256[] memory values, uint256) virtual {
-        require(values.length > 0);
-        _;
-    }
-
-    modifier checkedStorage(uint256[] storage values) {
-        require(values.length > 0);
-        _;
-    }
-
-    modifier checkedCalldata(bytes calldata data) {
-        require(data.length > 0);
-        _;
-    }
-
-    modifier checkedComment() // Keep this newline.
-    {
-        require(Stored_Value > 0);
-        _;
-    }
-
-    function read(uint256 Stored_Value) public view returns (uint256) {
-        return this.Stored_Value();
-    }
-}
-
-contract Derived is Base {
-    modifier checked(uint256[] memory values, uint256) override {
-        require(values.length > 1);
-        _;
-    }
-}
-"#;
-    prj.add_source("Refactoring", source);
-    let output = cmd
-        .args([
-            "lint",
-            "--json",
-            "--only-lint",
-            "mixed-case-variable",
-            "var-read-using-this",
-            "unwrapped-modifier-logic",
-        ])
-        .assert_success();
-    let diagnostics = serde_json::Deserializer::from_slice(&output.get_output().stdout)
-        .into_iter::<serde_json::Value>()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
-    let mut suggested_lints = Vec::new();
-    let mut modifier_replacements = Vec::new();
-    for diagnostic in &diagnostics {
-        let id = diagnostic["code"]["code"].as_str().unwrap();
-        for child in diagnostic["children"].as_array().unwrap() {
-            for span in child["spans"].as_array().unwrap() {
-                if let Some(replacement) = span["suggested_replacement"].as_str() {
-                    // Renames omit references, direct reads can resolve to a shadowing local,
-                    // and extracted helper names require a project-wide collision check.
-                    assert_eq!(span["suggestion_applicability"], "MaybeIncorrect", "{id}");
-                    suggested_lints.push(id);
-                    if id == "unwrapped-modifier-logic" {
-                        modifier_replacements.push((
-                            span["byte_start"].as_u64().unwrap() as usize,
-                            span["byte_end"].as_u64().unwrap() as usize,
-                            replacement.to_owned(),
-                        ));
-                    }
-                }
-            }
-        }
-    }
-    suggested_lints.sort_unstable();
-    suggested_lints.dedup();
-    assert_eq!(
-        suggested_lints,
-        ["mixed-case-variable", "unwrapped-modifier-logic", "var-read-using-this"]
-    );
-    assert_eq!(modifier_replacements.len(), 5);
-    for (start, end, replacement) in modifier_replacements {
-        // Compile each actual suggested replacement. This exercises data locations, unnamed
-        // parameters, and virtual/override modifiers, not a hand-written expected alternative.
-        let mut fixed = source.to_owned();
-        fixed.replace_range(start..end, &replacement);
-        prj.add_source("Refactoring", &fixed);
-        cmd.forge_fuse().args(["build", "--no-lint"]).assert_success();
-    }
-});
-
-forgetest!(lint_omits_invalid_refactoring_replacements, |prj, cmd| {
-    prj.add_source(
-        "Refactoring",
-        r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.18;
-
-contract Refactoring {
-    struct Box { uint256 value; }
-    Box public box;
-    mapping(uint256 => Box) public boxes;
-    Box[] public entries;
-    uint256 public While;
-
-    function Address() external pure returns (address) { return address(0); }
-    function read() external view returns (uint256) { return this.box(); }
-    function readMapping(uint256 key) external view returns (uint256) { return this.boxes(key); }
-    function readArray(uint256 key) external view returns (uint256) { return this.entries(key); }
-}
-"#,
-    );
-    cmd.args(["build", "--no-lint"]).assert_success();
-    let output = cmd
-        .forge_fuse()
-        .args([
-            "lint",
-            "--json",
-            "--only-lint",
-            "mixed-case-variable",
-            "mixed-case-function",
-            "var-read-using-this",
-        ])
-        .assert_success();
-    let diagnostics = serde_json::Deserializer::from_slice(&output.get_output().stdout)
-        .into_iter::<serde_json::Value>()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
-    let mut ids = Vec::new();
-    for diagnostic in &diagnostics {
-        ids.push(diagnostic["code"]["code"].as_str().unwrap());
-        for child in diagnostic["children"].as_array().unwrap() {
-            for span in child["spans"].as_array().unwrap() {
-                assert!(span["suggested_replacement"].is_null(), "{diagnostic}");
-            }
-        }
-    }
-    ids.sort_unstable();
-    assert_eq!(
-        ids,
-        [
-            "mixed-case-function",
-            "mixed-case-variable",
-            "var-read-using-this",
-            "var-read-using-this",
-            "var-read-using-this",
-        ]
-    );
-});
-
 // <https://github.com/foundry-rs/foundry/issues/11460>
 forgetest!(lint_json_output_no_ansi_escape_codes, |prj, cmd| {
     prj.add_source(
@@ -1822,7 +1668,7 @@ forgetest!(lint_json_output_no_ansi_escape_codes, |prj, cmd| {
           ],
           "label": null,
           "suggested_replacement": "modifier onlyOwner() {\n                _onlyOwner();\n                _;\n            }\n\n            function _onlyOwner() internal {\n                require(isOwner[msg.sender], \"Not owner\");\n                require(msg.sender != address(0), \"Zero address\");\n            }",
-          "suggestion_applicability": "MaybeIncorrect",
+          "suggestion_applicability": "MachineApplicable",
           "expansion": null
         }
       ],
@@ -1830,7 +1676,7 @@ forgetest!(lint_json_output_no_ansi_escape_codes, |prj, cmd| {
       "rendered": null
     }
   ],
-  "rendered": "\nhelp: wrap modifier logic to reduce code size\n 9 +                 _onlyOwner();\n10 +                 _;\n11 +             }\n12 + \n13 +             function _onlyOwner() internal {\n14 +                 require(isOwner[msg.sender], \"Not owner\");\n15 +                 require(msg.sender != address(0), \"Zero address\");\n16 +             }\n   ╭▸ src/UnwrappedModifierTest.sol:8:13\n   │\n 8 │ ┏             modifier onlyOwner() {\n 9 │ ┃                 require(isOwner[msg.sender], \"Not owner\");\n10 │ ┃                 require(msg.sender != address(0), \"Zero address\");\n11 │ ┃                 _;\n12 │ ┃             }\n   │ ┗━━━━━━━━━━━━━┛\n   │\n   ╰ help: https://getfoundry.sh/forge/linting/unwrapped-modifier-logic\n   ╭╴\n 8 ±             modifier onlyOwner() {\n   ╰╴\nnote[unwrapped-modifier-logic]: modifier logic can be wrapped to reduce code size\n"
+  "rendered": "note[unwrapped-modifier-logic]: modifier logic can be wrapped to reduce code size\n\nhelp: wrap modifier logic to reduce code size\n 9 +                 _onlyOwner();\n10 +                 _;\n11 +             }\n12 + \n13 +             function _onlyOwner() internal {\n14 +                 require(isOwner[msg.sender], \"Not owner\");\n15 +                 require(msg.sender != address(0), \"Zero address\");\n16 +             }\n   ╭▸ src/UnwrappedModifierTest.sol:8:13\n   │\n 8 │ ┏             modifier onlyOwner() {\n 9 │ ┃                 require(isOwner[msg.sender], \"Not owner\");\n10 │ ┃                 require(msg.sender != address(0), \"Zero address\");\n11 │ ┃                 _;\n12 │ ┃             }\n   │ ┗━━━━━━━━━━━━━┛\n   │\n   ╰ help: https://getfoundry.sh/forge/linting/unwrapped-modifier-logic\n   ╭╴\n 8 ±             modifier onlyOwner() {\n   ╰╴\n"
 }
 "#]],
         )
@@ -1957,6 +1803,8 @@ Warning: Key `deny_warnings` is being deprecated in favor of `deny = warnings`. 
     });
     cmd.forge_fuse().args(["lint", "--deny notes"]).assert_failure();
 });
+
+// ------------------------------------------------------------------------------------------------
 
 #[test]
 fn ensure_no_privileged_lint_id() {

@@ -494,3 +494,6 @@ impl<'a> TryFrom<&'a str> for SolLint {
             .ok_or_else(|| SolLintError::InvalidId(value.to_string()))
     }
 }
+
+#[cfg(test)]
+mod tests;

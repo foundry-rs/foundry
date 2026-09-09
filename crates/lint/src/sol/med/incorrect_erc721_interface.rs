@@ -52,7 +52,7 @@ impl<'gcx> LateLintPass<'gcx> for IncorrectERC721Interface {
                     && matches(func.parameters, params)
                     && !matches(func.returns, returns)
             }) {
-                ctx.emit(&INCORRECT_ERC721_INTERFACE, name.span);
+                ctx.emit(&INCORRECT_ERC721_INTERFACE, func.span);
             }
         }
     }

@@ -126,13 +126,8 @@ impl<'gcx> Analyzer<'gcx> {
     /// Hoists `require(param == msg.sender)`-style guards from the prefix of modifier `m` onto
     /// the caller's argument variables.
     fn hoist_modifier_facts(&mut self, m: &'gcx Modifier<'gcx>) {
-        let (fid, prefix) = if let ItemId::Function(fid) = m.id
-            && let Some(prefix) = modifier_prefix(&self.gcx.hir, fid)
-        {
-            (fid, prefix)
-        } else {
-            return;
-        };
+        let ItemId::Function(fid) = m.id else { return };
+        let Some(prefix) = modifier_prefix(&self.gcx.hir, fid) else { return };
         let modifier = self.gcx.hir.function(fid);
         let mut a = Self::new(self.gcx);
         for stmt in prefix {
@@ -880,9 +875,8 @@ fn identity_helper_arg<'gcx>(
 ) -> Option<&'gcx Expr<'gcx>> {
     callee_fids(hir, callee).into_iter().find_map(|fid| {
         let f = hir.function(fid);
-        let [Stmt { kind: StmtKind::Return(Some(ret)), .. }] = f.body?.stmts else {
-            return None;
-        };
+        let [stmt] = f.body?.stmts else { return None };
+        let StmtKind::Return(Some(ret)) = &stmt.kind else { return None };
         let param = underlying_var(peel_casts(ret))?;
         (f.parameters.len() == args.len() && f.returns.len() == 1 && f.parameters.contains(&param))
             .then(|| arg_for_param(hir, f, param, args))

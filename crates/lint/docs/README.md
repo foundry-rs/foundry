@@ -9,8 +9,9 @@ the published page at `https://getfoundry.sh/forge/linting/<id>`.
 ## Adding a new lint
 
 When you add a new lint with `declare_forge_lint!`, you **must** also add a documentation file at
-`crates/lint/docs/<str_id>.md`. Run `node .github/scripts/check-lint-docs.js` to check the
-Markdown structure locally; CI runs the same script. Pass file paths to check individual docs.
+`crates/lint/docs/<str_id>.md`. Run `cargo test -p forge-lint --lib sol::tests` to check
+that every registered lint has a page with matching metadata, the expected structure, and a
+canonical help URL. These tests also reject pages for unregistered lints and run in normal CI.
 The Book's `import:lints` command validates registered metadata and generates navigation;
 `import:lints -- --check` validates its committed import.
 

@@ -19,7 +19,7 @@ impl<'ast> ProjectLintPass<'ast> for PragmaDirective {
         }
         // Every `pragma solidity` directive across input sources, with its rendered version
         // requirement for grouping, in a stable (path, position) order for snapshots.
-        let mut entries = sources
+        let mut entries: Vec<(usize, _, String)> = sources
             .iter()
             .enumerate()
             .flat_map(|(idx, source)| {
@@ -31,12 +31,12 @@ impl<'ast> ProjectLintPass<'ast> for PragmaDirective {
                     _ => None,
                 })
             })
-            .collect::<Vec<(usize, _, String)>>();
+            .collect();
         entries.sort_by(|a, b| {
             sources[a.0].path.cmp(&sources[b.0].path).then(a.1.lo().cmp(&b.1.lo()))
         });
 
-        let mut distinct = entries.iter().map(|(_, _, req)| req.as_str()).collect::<Vec<&str>>();
+        let mut distinct: Vec<&str> = entries.iter().map(|(_, _, req)| req.as_str()).collect();
         distinct.sort_unstable();
         distinct.dedup();
         if let [(idx, span, _), ..] = entries.as_slice()

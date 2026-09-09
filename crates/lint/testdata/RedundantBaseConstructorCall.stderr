@@ -68,19 +68,3 @@ LL │     constructor(uint256 v) m() WithArgs(v) NoCtor() {}
    │
    ╰ help: https://getfoundry.sh/forge/linting/redundant-base-constructor-call
 
-note[redundant-base-constructor-call]: explicit empty base-constructor arguments are redundant
-   ╭▸ ROOT/testdata/RedundantBaseConstructorCall.sol:LL:CC
-   │
-LL │     constructor() NoCtor /* keep this explanation */ () {}
-   │                                                      ━━
-   │
-   ╰ help: https://getfoundry.sh/forge/linting/redundant-base-constructor-call
-
-note[redundant-base-constructor-call]: explicit empty base-constructor arguments are redundant
-   ╭▸ ROOT/testdata/RedundantBaseConstructorCall.sol:LL:CC
-   │
-LL │         () {}
-   │         ━━
-   │
-   ╰ help: https://getfoundry.sh/forge/linting/redundant-base-constructor-call
-

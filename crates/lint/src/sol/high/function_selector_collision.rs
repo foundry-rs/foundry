@@ -238,20 +238,20 @@ impl<'gcx> DelegateTargetCollector<'gcx> {
                 && let Some(modifier_body) = self.gcx.hir.function(modifier_id).body
             {
                 let modifier = self.gcx.hir.function(modifier_id);
-                let params = modifier
+                let params: Vec<_> = modifier
                     .parameters
                     .iter()
                     .map(|&var| CalldataInput { var, modifier: Some(cont.index) })
-                    .collect::<Vec<_>>();
+                    .collect();
                 // Parameters bound to a full-calldata argument inherit its provenance.
-                let bindings = params
+                let bindings: Vec<_> = params
                     .iter()
                     .filter_map(|&param| {
                         let arg =
                             arg_for_param(&self.gcx.hir, modifier, param.var, &invocation.args)?;
                         Some((param, full_calldata_source(arg, &self.current_inputs)?))
                     })
-                    .collect::<Vec<_>>();
+                    .collect();
                 for path in &mut self.paths {
                     path.clear_inputs(&params);
                     for &(param, source) in &bindings {
@@ -564,7 +564,7 @@ impl<'gcx> Visit<'gcx> for DelegateTargetCollector<'gcx> {
                 let mut args = args.exprs();
                 if is_require_or_assert(callee) {
                     let Some(condition) = args.next() else { return ControlFlow::Continue(()) };
-                    let args = args.collect::<Vec<_>>();
+                    let args: Vec<_> = args.collect();
                     let (true_paths, false_paths) = self.visit_condition(condition);
                     // Remaining arguments are evaluated before `require`/`assert` decides
                     // whether to revert, so their targets and side effects apply on both paths;
@@ -732,14 +732,8 @@ fn delegated_contract<'gcx>(
     full_calldata_inputs: &[CalldataInput],
     expr: &'gcx Expr<'gcx>,
 ) -> Option<(ContractId, Option<CalldataInput>)> {
-    let (callee, args, receiver, member) = if let ExprKind::Call(callee, args, _) =
-        &expr.peel_parens().kind
-        && let ExprKind::Member(receiver, member) = &callee.peel_parens().kind
-    {
-        (callee, args, receiver, member)
-    } else {
-        return None;
-    };
+    let ExprKind::Call(callee, args, _) = &expr.peel_parens().kind else { return None };
+    let ExprKind::Member(receiver, member) = &callee.peel_parens().kind else { return None };
     let required_input = full_calldata_source(args.exprs().next()?, full_calldata_inputs)?;
     if member.name != kw::Delegatecall
         || gcx.resolved_builtin(callee) != Some(Builtin::AddressDelegatecall)

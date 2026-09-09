@@ -46,11 +46,8 @@ impl<'gcx> LateLintPass<'gcx> for UnsafeTypecast {
 
 /// `x & MASK` where the mask literal fits the unsigned target bounds the value to its range.
 fn is_bounded_by_mask(source: &hir::Expr<'_>, target: ElementaryType) -> bool {
-    let (ElementaryType::UInt(target_size), ExprKind::Binary(lhs, op, rhs)) =
-        (target, &source.peel_parens().kind)
-    else {
-        return false;
-    };
+    let ElementaryType::UInt(target_size) = target else { return false };
+    let ExprKind::Binary(lhs, op, rhs) = &source.peel_parens().kind else { return false };
     op.kind == BinOpKind::BitAnd
         && [lhs, rhs].into_iter().any(|expr| {
             matches!(

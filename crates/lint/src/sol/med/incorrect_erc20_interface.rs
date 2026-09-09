@@ -51,7 +51,7 @@ impl<'gcx> LateLintPass<'gcx> for IncorrectERC20Interface {
                     && matches(func.parameters, params)
                     && !matches(func.returns, returns)
             }) {
-                ctx.emit(&INCORRECT_ERC20_INTERFACE, name.span);
+                ctx.emit(&INCORRECT_ERC20_INTERFACE, func.span);
             }
         }
     }

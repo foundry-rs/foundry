@@ -6,7 +6,7 @@
 /// - `$desc`: a short description.
 ///
 /// Each lint must have a markdown page at `crates/lint/docs/<str_id>.md`; the `help` URL is
-/// derived from `$str_id`.
+/// derived from `$str_id` and validated by a unit test in `crates/lint/src/sol/mod.rs`.
 #[macro_export]
 macro_rules! declare_forge_lint {
     ($id:ident, $severity:expr, $str_id:expr, $desc:expr) => {

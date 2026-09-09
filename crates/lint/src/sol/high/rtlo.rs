@@ -30,6 +30,7 @@ impl<'ast> EarlyLintPass<'ast> for Rtlo {
 
         for (offset, ch) in file.src.char_indices() {
             let Some(name) = bidi_char_name(ch) else { continue };
+
             let lo = file.start_pos + BytePos::from_usize(offset);
             let hi = lo + BytePos::from_usize(ch.len_utf8());
             let span = Span::new(lo, hi);
