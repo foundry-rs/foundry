@@ -34,7 +34,7 @@ contract VarReadUsingThis is Base {
     uint256 private privateVar;
 
     // State-variable initializer is walked too (runs in the synthesized constructor).
-    uint256 public initFromThis = uint256(uint160(address(this))) + this.counter(); //~NOTE: reading a state variable via `this`
+    uint256 public initFromThis = uint256(uint160(address(this))) + this.counter(); //~NOTE: call through `this` to a `view` or `pure` function
 
     event Counted(uint256);
     error BadCount(uint256);
@@ -53,34 +53,34 @@ contract VarReadUsingThis is Base {
 
     constructor() {
         // Reading `this` in the constructor reverts at runtime, but the lint still applies.
-        counter = this.counter(); //~NOTE: reading a state variable via `this`
+        counter = this.counter(); //~NOTE: call through `this` to a `view` or `pure` function
     }
 
     receive() external payable {
-        items.push(this.counter()); //~NOTE: reading a state variable via `this`
+        items.push(this.counter()); //~NOTE: call through `this` to a `view` or `pure` function
     }
 
     // SHOULD FAIL:
 
     function simpleGetter() external view returns (uint256) {
-        return this.counter(); //~NOTE: reading a state variable via `this`
+        return this.counter(); //~NOTE: call through `this` to a `view` or `pure` function
     }
 
     function mappingGetter(uint256 k) external view returns (address) {
-        return this.owners(k); //~NOTE: reading a state variable via `this`
+        return this.owners(k); //~NOTE: call through `this` to a `view` or `pure` function
     }
 
     function arrayGetter(uint256 i) external view returns (uint256) {
-        return this.items(i); //~NOTE: reading a state variable via `this`
+        return this.items(i); //~NOTE: call through `this` to a `view` or `pure` function
     }
 
     function nestedMappingGetter(uint256 a, address b) external view returns (uint256) {
-        return this.balances(a, b); //~NOTE: reading a state variable via `this`
+        return this.balances(a, b); //~NOTE: call through `this` to a `view` or `pure` function
     }
 
     // Edge case: struct getter has multiple returns; emitted without an auto-fix.
     function structGetter() external view returns (uint256, uint256) {
-        return this.info(); //~NOTE: reading a state variable via `this`
+        return this.info(); //~NOTE: call through `this` to a `view` or `pure` function
     }
 
     function publicViewLocal() public view returns (uint256) {
@@ -88,7 +88,7 @@ contract VarReadUsingThis is Base {
     }
 
     function callPublicView() external view returns (uint256) {
-        return this.publicViewLocal(); //~NOTE: reading a state variable via `this`
+        return this.publicViewLocal(); //~NOTE: call through `this` to a `view` or `pure` function
     }
 
     // Improvement over Slither: external view/pure called via `this` is also flagged.
@@ -97,39 +97,39 @@ contract VarReadUsingThis is Base {
     }
 
     function callExternalView() external view returns (uint256) {
-        return this.externalViewLocal(); //~NOTE: reading a state variable via `this`
+        return this.externalViewLocal(); //~NOTE: call through `this` to a `view` or `pure` function
     }
 
     function inheritedStateVar() external view returns (uint256) {
-        return this.baseVar(); //~NOTE: reading a state variable via `this`
+        return this.baseVar(); //~NOTE: call through `this` to a `view` or `pure` function
     }
 
     function inheritedView() external view returns (uint256) {
-        return this.basePublicView(); //~NOTE: reading a state variable via `this`
+        return this.basePublicView(); //~NOTE: call through `this` to a `view` or `pure` function
     }
 
     function parenAroundThis() external view returns (uint256) {
-        return (this).counter(); //~NOTE: reading a state variable via `this`
+        return (this).counter(); //~NOTE: call through `this` to a `view` or `pure` function
     }
 
     function parenAroundCallee() external view returns (uint256) {
-        return (this.counter)(); //~NOTE: reading a state variable via `this`
+        return (this.counter)(); //~NOTE: call through `this` to a `view` or `pure` function
     }
 
     // Edge case: call options like `{gas: ...}` are flagged but no auto-fix is offered.
     function withCallOptions() external view returns (uint256) {
-        return this.publicViewLocal{gas: 10000}(); //~NOTE: reading a state variable via `this`
+        return this.publicViewLocal{gas: 10000}(); //~NOTE: call through `this` to a `view` or `pure` function
     }
 
     modifier checkCounter() {
-        require(this.counter() > 0, "zero"); //~NOTE: reading a state variable via `this`
+        require(this.counter() > 0, "zero"); //~NOTE: call through `this` to a `view` or `pure` function
         _;
     }
 
     function gated() external checkCounter {}
 
     // Modifier-invocation arguments are walked (this would be missed by a body-only walk).
-    function gatedWithArg() external view withArg(this.counter()) returns (uint256) { //~NOTE: reading a state variable via `this`
+    function gatedWithArg() external view withArg(this.counter()) returns (uint256) { //~NOTE: call through `this` to a `view` or `pure` function
         return 0;
     }
 
@@ -139,53 +139,53 @@ contract VarReadUsingThis is Base {
 
     // Both inner and outer `this.X(...)` calls are flagged.
     function nestedCalls() external view returns (uint256) {
-        return this.publicViewLocal() + this.counter(); //~NOTE: reading a state variable via `this`
-        //~^NOTE: reading a state variable via `this`
+        return this.publicViewLocal() + this.counter(); //~NOTE: call through `this` to a `view` or `pure` function
+        //~^NOTE: call through `this` to a `view` or `pure` function
     }
 
     function nestedAsArg() external view returns (uint256) {
-        return this.takesUint(this.counter()); //~NOTE: reading a state variable via `this`
-        //~^NOTE: reading a state variable via `this`
+        return this.takesUint(this.counter()); //~NOTE: call through `this` to a `view` or `pure` function
+        //~^NOTE: call through `this` to a `view` or `pure` function
     }
 
     function inEmit() external {
-        emit Counted(this.counter()); //~NOTE: reading a state variable via `this`
+        emit Counted(this.counter()); //~NOTE: call through `this` to a `view` or `pure` function
     }
 
     function inRevert() external view {
-        revert BadCount(this.counter()); //~NOTE: reading a state variable via `this`
+        revert BadCount(this.counter()); //~NOTE: call through `this` to a `view` or `pure` function
     }
 
     function inIfCondition() external view returns (uint256) {
-        if (this.counter() > 0) { //~NOTE: reading a state variable via `this`
+        if (this.counter() > 0) { //~NOTE: call through `this` to a `view` or `pure` function
             return 1;
         }
         return 0;
     }
 
     function inTernary(bool b) external view returns (uint256) {
-        return b ? this.counter() : this.publicViewLocal(); //~NOTE: reading a state variable via `this`
-        //~^NOTE: reading a state variable via `this`
+        return b ? this.counter() : this.publicViewLocal(); //~NOTE: call through `this` to a `view` or `pure` function
+        //~^NOTE: call through `this` to a `view` or `pure` function
     }
 
     function inLoop(uint256 n) external view returns (uint256) {
         uint256 sum;
         for (uint256 i = 0; i < n; ++i) {
-            sum += this.counter(); //~NOTE: reading a state variable via `this`
+            sum += this.counter(); //~NOTE: call through `this` to a `view` or `pure` function
         }
         return sum;
     }
 
     function inUnchecked() external view returns (uint256) {
         unchecked {
-            return this.counter() + 1; //~NOTE: reading a state variable via `this`
+            return this.counter() + 1; //~NOTE: call through `this` to a `view` or `pure` function
         }
     }
 
     // Inner `this.X(...)` inside a `try` argument is still flagged.
     function tryWithNestedRead() external returns (uint256) {
         try this.externalViewLocal() returns (uint256 v) {
-            return v + this.counter(); //~NOTE: reading a state variable via `this`
+            return v + this.counter(); //~NOTE: call through `this` to a `view` or `pure` function
         } catch {
             return 0;
         }
@@ -281,6 +281,6 @@ abstract contract AbstractCase {
     uint256 public abstractVar;
 
     function readAbstract() external view returns (uint256) {
-        return this.abstractVar(); //~NOTE: reading a state variable via `this`
+        return this.abstractVar(); //~NOTE: call through `this` to a `view` or `pure` function
     }
 }

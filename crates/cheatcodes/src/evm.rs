@@ -10,7 +10,7 @@ use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_network::eip2718::EIP4844_TX_TYPE_ID;
 use alloy_primitives::{
     Address, B256, U256, hex, keccak256,
-    map::{B256Map, HashMap},
+    map::{AddressMap, AddressSet, B256Map, HashMap},
 };
 use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
@@ -44,11 +44,11 @@ use revm::{
     bytecode::Bytecode,
     context::{Block, Cfg, ContextTr, Host, JournalTr, Transaction, result::ExecutionResult},
     inspector::JournalExt,
-    primitives::{KECCAK_EMPTY, eip3860::MAX_INITCODE_SIZE, hardfork::SpecId},
+    primitives::{KECCAK_EMPTY, hardfork::SpecId},
     state::{Account, AccountStatus},
 };
 use std::{
-    collections::{BTreeMap, HashSet, btree_map::Entry},
+    collections::{BTreeMap, btree_map::Entry},
     fmt::Display,
     path::Path,
     str::FromStr,
@@ -56,7 +56,7 @@ use std::{
 
 mod record_debug_step;
 use foundry_common::fmt::format_token_raw;
-use foundry_config::{ExecutionSpec, evm_spec_id_from_str};
+use foundry_config::{ExecutionSpec, evm_spec_id_from_str, fs_permissions::FsAccessKind};
 use record_debug_step::{convert_call_trace_ctx_to_debug_step, flatten_call_trace};
 use serde::{Serialize, Serializer, ser::SerializeMap};
 
@@ -379,7 +379,8 @@ impl Cheatcode for cloneAccountCall {
 impl Cheatcode for dumpStateCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { pathToStateJson } = self;
-        let path = Path::new(pathToStateJson);
+        let path = ccx.state.config.ensure_path_allowed(pathToStateJson, FsAccessKind::Write)?;
+        ccx.state.config.ensure_not_foundry_toml(&path)?;
 
         let fork_id = ccx.ecx.db().active_fork_id();
         let created_accounts = ccx
@@ -419,7 +420,7 @@ impl Cheatcode for dumpStateCall {
         }
         ordered_alloc.extend(alloc);
 
-        write_json_file(path, &StateDump(&ordered_alloc))?;
+        write_json_file(&path, &StateDump(&ordered_alloc))?;
         Ok(Default::default())
     }
 }
@@ -953,50 +954,44 @@ impl Cheatcode for snapshotValue_1Call {
 impl Cheatcode for snapshotGasLastCall_0Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { name } = self;
-        let Some(last_call_gas) = &ccx.state.gas_metering.last_call_gas else {
+        if ccx.state.gas_metering.last_call_gas.is_none() {
             bail!("no external call was made yet");
-        };
-        inner_last_gas_snapshot(ccx, None, Some(name.clone()), last_call_gas.gasTotalUsed)
+        }
+        let gas_used = ccx.state.gas_metering.last_call_snapshot_gas_used;
+        inner_last_gas_snapshot(ccx, None, Some(name.clone()), gas_used)
     }
 }
 
 impl Cheatcode for snapshotGasLastCall_1Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { name, group } = self;
-        let Some(last_call_gas) = &ccx.state.gas_metering.last_call_gas else {
+        if ccx.state.gas_metering.last_call_gas.is_none() {
             bail!("no external call was made yet");
-        };
-        inner_last_gas_snapshot(
-            ccx,
-            Some(group.clone()),
-            Some(name.clone()),
-            last_call_gas.gasTotalUsed,
-        )
+        }
+        let gas_used = ccx.state.gas_metering.last_call_snapshot_gas_used;
+        inner_last_gas_snapshot(ccx, Some(group.clone()), Some(name.clone()), gas_used)
     }
 }
 
 impl Cheatcode for snapshotGasLastFrame_0Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { name } = self;
-        let Some(last_frame_gas) = &ccx.state.gas_metering.last_frame_gas else {
+        if ccx.state.gas_metering.last_frame_gas.is_none() {
             bail!("no external call or create was made yet");
-        };
-        inner_last_gas_snapshot(ccx, None, Some(name.clone()), last_frame_gas.gasTotalUsed)
+        }
+        let gas_used = ccx.state.gas_metering.last_frame_snapshot_gas_used;
+        inner_last_gas_snapshot(ccx, None, Some(name.clone()), gas_used)
     }
 }
 
 impl Cheatcode for snapshotGasLastFrame_1Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { name, group } = self;
-        let Some(last_frame_gas) = &ccx.state.gas_metering.last_frame_gas else {
+        if ccx.state.gas_metering.last_frame_gas.is_none() {
             bail!("no external call or create was made yet");
-        };
-        inner_last_gas_snapshot(
-            ccx,
-            Some(group.clone()),
-            Some(name.clone()),
-            last_frame_gas.gasTotalUsed,
-        )
+        }
+        let gas_used = ccx.state.gas_metering.last_frame_snapshot_gas_used;
+        inner_last_gas_snapshot(ccx, Some(group.clone()), Some(name.clone()), gas_used)
     }
 }
 
@@ -1354,14 +1349,14 @@ impl Cheatcode for executeTransactionCall {
         // Enable nonce checks for realistic simulation.
         ccx.ecx.cfg_env_mut().disable_nonce_check = false;
 
-        // Enforce the active EVM's initcode size limit.
-        let initcode_size_limit = ccx
-            .state
-            .config
-            .evm_opts
-            .networks
-            .contract_size_limits()
-            .map_or(MAX_INITCODE_SIZE, |limits| limits.initcode);
+        // Resolve the limit through the active EVM's concrete `Cfg` implementation. Replace the
+        // unlimited code-size override used for test contracts with the user-configured value so
+        // it does not implicitly make the initcode limit unlimited as well.
+        let code_size_limit = ccx.ecx.cfg_env().limit_contract_code_size;
+        let configured_code_size_limit = ccx.state.config.evm_opts.env.code_size_limit;
+        ccx.ecx.cfg_env_mut().limit_contract_code_size = configured_code_size_limit;
+        let initcode_size_limit = ccx.ecx.cfg().max_initcode_size();
+        ccx.ecx.cfg_env_mut().limit_contract_code_size = code_size_limit;
         ccx.ecx.cfg_env_mut().limit_contract_initcode_size = Some(initcode_size_limit);
 
         // Reset the tx gas limit cap so revm applies the spec-defined default (EIP-7825).
@@ -2143,7 +2138,7 @@ fn get_recorded_state_diffs<FEN: FoundryEvmNetwork>(
     let mut state_diffs: BTreeMap<Address, AccountStateDiffs> = BTreeMap::default();
 
     // First, collect all unique addresses we need to look up
-    let mut addresses_to_lookup = HashSet::new();
+    let mut addresses_to_lookup = AddressSet::default();
     for account_access in ccx.state.recorded_account_diffs() {
         if !account_access.storageAccesses.is_empty()
             || account_access.oldBalance != account_access.newBalance
@@ -2158,8 +2153,8 @@ fn get_recorded_state_diffs<FEN: FoundryEvmNetwork>(
     }
 
     // Look up contract names and storage layouts for all addresses
-    let mut contract_names = HashMap::new();
-    let mut storage_layouts = HashMap::new();
+    let mut contract_names = AddressMap::default();
+    let mut storage_layouts = AddressMap::default();
     for address in addresses_to_lookup {
         if let Some((artifact_id, contract_data)) = get_contract_data(ccx, address) {
             contract_names.insert(address, artifact_id.identifier());

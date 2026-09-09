@@ -1,7 +1,5 @@
 //! Helper trait and functions to format Ethereum types.
 
-use std::num::NonZeroU64;
-
 use alloy_consensus::{
     BlockHeader, Eip658Value, Signed, Transaction as TxTrait, TxEip1559, TxEip2930,
     TxEip4844Variant, TxEip7702, TxEnvelope, TxLegacy, TxReceipt, Typed2718,
@@ -18,10 +16,9 @@ use alloy_rpc_types::{
     AccessListItem, Block, BlockTransactions, Header, Log, Transaction, TransactionReceipt,
 };
 use alloy_serde::{OtherFields, WithOtherFields};
-#[cfg(feature = "optimism")]
-use op_alloy_consensus::{OpTxEnvelope, TxDeposit, TxPostExec};
 use revm::context_interface::transaction::SignedAuthorization;
 use serde::Deserialize;
+use std::num::NonZeroU64;
 use tempo_alloy::{
     primitives::{
         AASigned, TempoSignature, TempoTransaction, TempoTxEnvelope,
@@ -29,6 +26,9 @@ use tempo_alloy::{
     },
     rpc::{TempoHeaderResponse, TempoTransactionReceipt},
 };
+
+#[cfg(feature = "optimism")]
+use op_alloy_consensus::{OpTxEnvelope, TxDeposit, TxPostExec};
 
 /// length of the name column for pretty formatting `{:>20}{value}`
 const NAME_COLUMN_LEN: usize = 20usize;
@@ -776,12 +776,7 @@ pub trait UIfmtSignatureExt {
 
 impl UIfmtSignatureExt for TxEnvelope {
     fn signature_pretty(&self) -> Option<(String, String, String)> {
-        let sig = self.signature();
-        Some((
-            FixedBytes::from(sig.r()).pretty(),
-            FixedBytes::from(sig.s()).pretty(),
-            U8::from_le_slice(&sig.as_bytes()[64..]).pretty(),
-        ))
+        Some(pretty_signature_fields(self.signature()))
     }
 }
 
@@ -794,13 +789,7 @@ impl UIfmtSignatureExt for AnyTxEnvelope {
 #[cfg(feature = "optimism")]
 impl UIfmtSignatureExt for OpTxEnvelope {
     fn signature_pretty(&self) -> Option<(String, String, String)> {
-        self.signature().map(|sig| {
-            (
-                FixedBytes::from(sig.r()).pretty(),
-                FixedBytes::from(sig.s()).pretty(),
-                U8::from_le_slice(&sig.as_bytes()[64..]).pretty(),
-            )
-        })
+        self.signature().map(pretty_signature_fields)
     }
 }
 
@@ -821,12 +810,16 @@ impl UIfmtSignatureExt for TempoTxEnvelope {
                 }
             }
         }?;
-        Some((
-            FixedBytes::from(sig.r()).pretty(),
-            FixedBytes::from(sig.s()).pretty(),
-            U8::from_le_slice(&sig.as_bytes()[64..]).pretty(),
-        ))
+        Some(pretty_signature_fields(sig))
     }
+}
+
+fn pretty_signature_fields(signature: &Signature) -> (String, String, String) {
+    (
+        FixedBytes::from(signature.r()).pretty(),
+        FixedBytes::from(signature.s()).pretty(),
+        U8::from_le_slice(&signature.as_bytes()[64..]).pretty(),
+    )
 }
 
 pub trait UIfmtReceiptExt {

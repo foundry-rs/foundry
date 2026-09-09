@@ -15,6 +15,7 @@ use foundry_config::{Config, FoundryHardfork, SolcReq};
 use foundry_evm::{
     backend::Backend,
     core::{bytecode::InstIter, evm::FoundryEvmNetwork},
+    executors::ExecutorBuilder,
     fork::ResolvedFork,
     opts::EvmOpts,
 };
@@ -288,6 +289,9 @@ pub struct SessionSourceConfig<FEN: FoundryEvmNetwork> {
     pub foundry_config: Config,
     /// EVM Options
     pub evm_opts: EvmOpts,
+    /// Executor tooling selected by the concrete network dispatch.
+    #[serde(skip)]
+    pub executor_builder: ExecutorBuilder<FEN>,
     /// Network family to restore when leaving fork mode.
     #[serde(default)]
     pub local_networks: Option<NetworkConfigs>,

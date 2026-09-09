@@ -39,20 +39,19 @@ use foundry_compilers::{
     multi::{MultiCompilerParser, MultiCompilerRestrictions},
     solc::{CliSettings, SolcLanguage, SolcSettings},
 };
-#[cfg(windows)]
-use path_slash::PathBufExt as _;
 use regex::Regex;
 use semver::Version;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{
     borrow::Cow,
     collections::BTreeMap,
-    fs,
-    io::{self, Write as _},
+    fs, io,
     path::{Path, PathBuf},
     str::FromStr,
-    sync::Mutex,
 };
+
+#[cfg(windows)]
+use path_slash::PathBufExt as _;
 
 mod macros;
 
@@ -155,7 +154,6 @@ pub use semver;
 
 #[cfg(not(test))]
 static SELECTED_PROFILE: std::sync::OnceLock<Profile> = std::sync::OnceLock::new();
-static WARNED_LOCAL_COMPILERS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
 
 /// Foundry configuration
 ///
@@ -1502,13 +1500,7 @@ impl Config {
                         Solc::blocking_install(version)?
                     }
                 }
-                SolcReq::Local(solc) => {
-                    if !solc.is_file() {
-                        return Err(SolcError::msg(format!("`solc` {solc:?} does not exist")));
-                    }
-                    warn_local_compiler(solc);
-                    Solc::new(solc)?
-                }
+                SolcReq::Local(solc) => Solc::new(resolve_solc_path(solc)?)?,
             };
             return Ok(Some(solc));
         }
@@ -1595,7 +1587,6 @@ impl Config {
             return Ok(None);
         }
         let vyper = if let Some(path) = &self.vyper.path {
-            warn_local_compiler(path);
             Some(Vyper::new(path)?)
         } else {
             Vyper::new("vyper").ok()
@@ -3107,8 +3098,16 @@ pub enum SolcReq {
     /// Requires a specific solc version, that's either already installed (via `svm`) or will be
     /// auto installed (via `svm`)
     Version(Version),
-    /// Path to an existing local solc installation
+    /// Path to an existing local solc installation, or an executable name on `PATH`.
     Local(PathBuf),
+}
+
+fn resolve_solc_path(solc: &Path) -> Result<PathBuf, SolcError> {
+    if solc.is_file() {
+        Ok(solc.to_path_buf())
+    } else {
+        which::which(solc).map_err(|_| SolcError::msg(format!("`solc` {solc:?} does not exist")))
+    }
 }
 
 impl SolcReq {
@@ -3119,10 +3118,7 @@ impl SolcReq {
     pub fn try_version(&self) -> Result<Version, SolcError> {
         match self {
             Self::Version(version) => Ok(version.clone()),
-            Self::Local(path) => {
-                warn_local_compiler(path);
-                Solc::new(path).map(|solc| solc.version)
-            }
+            Self::Local(path) => Solc::new(resolve_solc_path(path)?).map(|solc| solc.version),
         }
     }
 }
@@ -3208,9 +3204,10 @@ impl BasicConfig {
 
 mod remappings_serde {
     use foundry_compilers::artifacts::remappings::RelativeRemapping;
+    use serde::{Serialize, Serializer};
+
     #[cfg(windows)]
     use path_slash::PathExt as _;
-    use serde::{Serialize, Serializer};
     #[cfg(windows)]
     use std::path::Path;
 
@@ -3266,21 +3263,6 @@ pub(crate) mod from_str_lowercase {
     {
         String::deserialize(deserializer)?.to_lowercase().parse().map_err(serde::de::Error::custom)
     }
-}
-
-fn warn_local_compiler(path: &Path) {
-    let mut warned = WARNED_LOCAL_COMPILERS.lock().unwrap_or_else(|err| err.into_inner());
-    if warned.iter().any(|warned_path| warned_path == path) {
-        return;
-    }
-    warned.push(path.to_path_buf());
-
-    let mut stderr = io::stderr().lock();
-    let _ = writeln!(
-        stderr,
-        "Warning: this project is configured to use a local compiler executable:\n  {path:?}\n\
-         Running this executable may execute arbitrary code."
-    );
 }
 
 fn canonic(path: impl Into<PathBuf>) -> PathBuf {

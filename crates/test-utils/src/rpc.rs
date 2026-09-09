@@ -4,7 +4,8 @@ use alloy_primitives::B256;
 use axum::{Json, Router, http::StatusCode, response::IntoResponse, routing::post};
 use foundry_config::{
     NamedChain::{
-        self, Arbitrum, Base, BinanceSmartChainTestnet, Celo, Mainnet, Optimism, Polygon, Sepolia,
+        self, Arbitrum, Base, BinanceSmartChainTestnet, Celo, Gnosis, Hyperliquid, Mainnet,
+        Optimism, Polygon, Robinhood, Sepolia,
     },
     RpcEndpointUrl, RpcEndpoints,
 };
@@ -13,8 +14,8 @@ use serde_json::{Value, json};
 use std::{
     env,
     sync::{
-        LazyLock,
-        atomic::{AtomicUsize, Ordering},
+        Arc, LazyLock,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
 
@@ -69,6 +70,21 @@ shuffled_list!(
     vec![
         //
         "ethereum.reth.rs/ws",
+    ],
+);
+
+// Public Arbitrum endpoints, rotated so that a retry reaches a different provider.
+//
+// Every entry must serve archive state: `fork::flaky_test_arb_fork_mining` forks at a pinned block
+// far behind the head, which non-archive endpoints such as `arb1.arbitrum.io` reject with
+// `missing trie node`. The DRPC keys used for the other chains do not qualify: their Arbitrum quota
+// is exhausted and every fork of it fails.
+shuffled_list!(
+    ARBITRUM_URLS,
+    vec![
+        //
+        "https://arb-pokt.nodies.app",
+        "https://arbitrum.gateway.tenderly.co",
     ],
 );
 
@@ -189,22 +205,35 @@ fn next_url_inner(is_ws: bool, chain: NamedChain) -> String {
     }
 
     if matches!(chain, Celo) {
-        return "https://celo.drpc.org".to_string();
+        // Not `celo.drpc.org`: it load balances across upstreams that disagree on the chain head,
+        // so a fork of it regularly fails to fetch the block it just resolved.
+        return env_rpc_url("CELO_RPC").unwrap_or_else(|| "https://forno.celo.org".to_string());
+    }
+
+    if matches!(chain, Gnosis) {
+        return env_rpc_url("GNOSIS_RPC")
+            .unwrap_or_else(|| "https://rpc.gnosischain.com".to_string());
+    }
+
+    if matches!(chain, Hyperliquid) {
+        return env_rpc_url("HYPERLIQUID_RPC")
+            .unwrap_or_else(|| "https://rpc.hyperliquid.xyz/evm".to_string());
+    }
+
+    if matches!(chain, Robinhood) {
+        return env_rpc_url("ROBINHOOD_RPC")
+            .unwrap_or_else(|| "https://rpc.mainnet.chain.robinhood.com".to_string());
     }
 
     if matches!(chain, Sepolia) {
-        let rpc_url = env::var("ETH_SEPOLIA_RPC").unwrap_or_default();
-        if !rpc_url.is_empty() {
+        if let Some(rpc_url) = env_rpc_url("ETH_SEPOLIA_RPC") {
             return rpc_url;
         }
         return "https://ethereum-sepolia-rpc.publicnode.com".to_string();
     }
 
     if matches!(chain, Arbitrum) {
-        let rpc_url = env::var("ARBITRUM_RPC").unwrap_or_default();
-        if !rpc_url.is_empty() {
-            return rpc_url;
-        }
+        return env_rpc_url("ARBITRUM_RPC").unwrap_or_else(|| (*ARBITRUM_URLS.next()).to_string());
     }
 
     let reth_works = true;
@@ -216,7 +245,6 @@ fn next_url_inner(is_ws: bool, chain: NamedChain) -> String {
         let network = match chain {
             Mainnet => "ethereum",
             Polygon => "polygon",
-            Arbitrum => "arbitrum",
             Sepolia => "sepolia",
             _ => "",
         };
@@ -224,6 +252,11 @@ fn next_url_inner(is_ws: bool, chain: NamedChain) -> String {
     };
 
     if is_ws { format!("wss://{domain}") } else { format!("https://{domain}") }
+}
+
+/// Returns the RPC URL configured in the `var` environment variable, if it is set and non-empty.
+fn env_rpc_url(var: &str) -> Option<String> {
+    env::var(var).ok().filter(|url| !url.is_empty())
 }
 
 /// Basic redaction for debugging RPC URLs.
@@ -292,21 +325,22 @@ pub async fn spawn_rpc_proxy_rejecting_method_after(
     .await
 }
 
-/// Spawns an RPC proxy that rejects the first `rejected_calls` requests to `method`.
-pub async fn spawn_rpc_proxy_rejecting_method_before(
+/// Spawns an RPC proxy whose rejection of `method` can be enabled after startup.
+pub async fn spawn_rpc_proxy_rejecting_method_when_enabled(
     endpoint: String,
     method: &'static str,
-    rejected_calls: usize,
-) -> String {
-    spawn_rpc_proxy_rejecting_method(
+) -> (String, Arc<AtomicBool>) {
+    let enabled = Arc::new(AtomicBool::new(false));
+    let proxy = spawn_rpc_proxy_rejecting_method(
         endpoint,
         method,
-        RpcMethodRejection::Before(rejected_calls),
+        RpcMethodRejection::Enabled(enabled.clone()),
         StatusCode::FORBIDDEN,
         -32004,
         "method is not allowed",
     )
-    .await
+    .await;
+    (proxy, enabled)
 }
 
 /// Spawns an RPC proxy that returns method-not-found for the first `unavailable_calls` requests to
@@ -327,9 +361,9 @@ pub async fn spawn_rpc_proxy_method_not_found_before(
     .await
 }
 
-/// Spawns an RPC proxy that returns a vendor-specific JSON-RPC error for `method` after
-/// forwarding `successful_calls` requests.
-pub async fn spawn_rpc_proxy_erroring_method_after(
+/// Spawns an RPC proxy that returns a JSON-RPC internal error for `method` after forwarding
+/// `successful_calls` requests.
+pub async fn spawn_rpc_proxy_internal_error_after(
     endpoint: String,
     method: &'static str,
     successful_calls: usize,
@@ -339,23 +373,123 @@ pub async fn spawn_rpc_proxy_erroring_method_after(
         method,
         RpcMethodRejection::After(successful_calls),
         StatusCode::OK,
-        -32004,
-        "method is not allowed",
+        -32603,
+        "internal error",
     )
     .await
 }
 
-#[derive(Clone, Copy)]
+/// Spawns an RPC proxy that answers `method` with `result` instead of forwarding it upstream.
+///
+/// All other methods are forwarded. The returned counter tracks how many `method` calls reached the
+/// proxy, which lets tests assert that a request was never sent upstream.
+pub async fn spawn_rpc_proxy_canned_method(
+    endpoint: String,
+    method: &'static str,
+    result: Value,
+) -> (String, Arc<AtomicUsize>) {
+    let client = reqwest::Client::new();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let proxy_calls = calls.clone();
+    let router = Router::new().route(
+        "/",
+        post(move |Json(request): Json<Value>| {
+            let client = client.clone();
+            let endpoint = endpoint.clone();
+            let calls = proxy_calls.clone();
+            let result = result.clone();
+            async move {
+                if request.get("method").and_then(Value::as_str) == Some(method) {
+                    calls.fetch_add(1, Ordering::Relaxed);
+                    let id = request.get("id").cloned().unwrap_or(Value::Null);
+                    return Json(json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "result": result,
+                    }));
+                }
+
+                let response = client
+                    .post(endpoint)
+                    .json(&request)
+                    .send()
+                    .await
+                    .unwrap()
+                    .json::<Value>()
+                    .await
+                    .unwrap();
+                Json(response)
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    (format!("http://{address}"), calls)
+}
+
+/// Spawns an RPC proxy that reports the first transaction of every full block under `tx_type`.
+///
+/// Chains anvil can fork but not execute, such as Arbitrum and its Orbit rollups, open their
+/// blocks with a system transaction of a type Foundry does not model. This reproduces that shape
+/// on top of any endpoint, without depending on a public archive node.
+pub async fn spawn_rpc_proxy_retyping_first_block_transaction(
+    endpoint: String,
+    tx_type: &'static str,
+) -> String {
+    let client = reqwest::Client::new();
+    let router = Router::new().route(
+        "/",
+        post(move |Json(request): Json<Value>| {
+            let client = client.clone();
+            let endpoint = endpoint.clone();
+            async move {
+                let mut response = client
+                    .post(endpoint)
+                    .json(&request)
+                    .send()
+                    .await
+                    .unwrap()
+                    .json::<Value>()
+                    .await
+                    .unwrap();
+                let responses = match response.as_array_mut() {
+                    Some(batch) => batch.iter_mut().collect::<Vec<_>>(),
+                    None => vec![&mut response],
+                };
+                for response in responses {
+                    if let Some(transactions) = response
+                        .get_mut("result")
+                        .and_then(|result| result.get_mut("transactions"))
+                        .and_then(Value::as_array_mut)
+                        && let Some(first) = transactions.first_mut().and_then(Value::as_object_mut)
+                    {
+                        first.insert("type".to_string(), Value::from(tx_type));
+                    }
+                }
+                Json(response).into_response()
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    format!("http://{address}")
+}
+
+#[derive(Clone)]
 enum RpcMethodRejection {
     Before(usize),
     After(usize),
+    Enabled(Arc<AtomicBool>),
 }
 
 impl RpcMethodRejection {
-    const fn rejects(self, call: usize) -> bool {
+    fn rejects(&self, call: usize) -> bool {
         match self {
-            Self::Before(rejected_calls) => call < rejected_calls,
-            Self::After(successful_calls) => call >= successful_calls,
+            Self::Before(rejected_calls) => call < *rejected_calls,
+            Self::After(successful_calls) => call >= *successful_calls,
+            Self::Enabled(enabled) => enabled.load(Ordering::SeqCst),
         }
     }
 }
@@ -376,6 +510,7 @@ async fn spawn_rpc_proxy_rejecting_method(
             let client = client.clone();
             let endpoint = endpoint.clone();
             let calls = calls.clone();
+            let rejection = rejection.clone();
             async move {
                 if request.get("method").and_then(Value::as_str) == Some(method)
                     && rejection.rejects(calls.fetch_add(1, Ordering::Relaxed))

@@ -2,7 +2,7 @@
 
 use super::{
     context::{
-        ActiveInternalCallCache, ActiveInternalCallLocation, StatusKind, TUIContext,
+        ActiveInternalCallCache, ActiveInternalCallLocation, Prompt, StatusKind, TUIContext,
         write_pretty_opcode,
     },
     storage::{StorageAccess, StorageSpace, hex_u256, storage_access_at, storage_values},
@@ -255,29 +255,24 @@ impl TUIContext<'_> {
     }
 
     fn footer_height(&self) -> u16 {
-        let status_or_input = if self.command_input.is_some() {
+        let status_or_input = if matches!(self.prompt, Some(Prompt::Command(_))) {
             3
         } else {
-            u16::from(
-                self.pc_input.is_some()
-                    || self.buffer_offset_input.is_some()
-                    || self.opcode_search_input.is_some()
-                    || self.status.is_some(),
-            )
+            u16::from(self.prompt.is_some() || self.status.is_some())
         };
         let shortcuts = if self.show_shortcuts { 3 } else { 0 };
         status_or_input + shortcuts
     }
 
     fn draw_footer(&self, f: &mut Frame<'_>, area: Rect) {
-        if let Some(input) = &self.command_input {
+        if let Some(Prompt::Command(input)) = &self.prompt {
             self.draw_command_prompt(f, area, input);
             return;
         }
 
         let mut lines = Vec::with_capacity(self.footer_height() as usize);
 
-        if let Some(input) = &self.pc_input {
+        if let Some(Prompt::Pc(input)) = &self.prompt {
             lines.push(Line::from(vec![
                 Span::styled(
                     "Goto PC: ",
@@ -290,7 +285,7 @@ impl TUIContext<'_> {
                     Style::new().add_modifier(Modifier::DIM),
                 ),
             ]));
-        } else if let Some(input) = &self.buffer_offset_input {
+        } else if let Some(Prompt::BufferOffset(input)) = &self.prompt {
             lines.push(Line::from(vec![
                 Span::styled(
                     format!("Goto {} offset: ", self.active_buffer_name()),
@@ -303,7 +298,7 @@ impl TUIContext<'_> {
                     Style::new().add_modifier(Modifier::DIM),
                 ),
             ]));
-        } else if let Some(input) = &self.opcode_search_input {
+        } else if let Some(Prompt::OpcodeSearch(input)) = &self.prompt {
             lines.push(Line::from(vec![
                 Span::styled(
                     "Search opcodes: /",
@@ -764,9 +759,10 @@ impl TUIContext<'_> {
                     let mut end = None;
                     let idx = i * 32 + j;
                     if let (Some(offset), Some(len), Some(color)) = (offset, len, color) {
-                        end = Some(offset + len);
-                        if (offset..offset + len).contains(&idx) {
-                            // [offset, offset + len] is the memory region to be colored.
+                        let offset_end = offset.saturating_add(len);
+                        end = Some(offset_end);
+                        if (offset..offset_end).contains(&idx) {
+                            // [offset, offset + len) is the memory region to be colored.
                             // If a byte at row i and column j in the memory panel
                             // falls in this region, set the color.
                             byte_color = color;
@@ -774,7 +770,7 @@ impl TUIContext<'_> {
                     }
                     if let (Some(write_offset), Some(write_size)) = (write_offset, write_size) {
                         // check for overlap with read region
-                        let write_end = write_offset + write_size;
+                        let write_end = write_offset.saturating_add(write_size);
                         if let Some(read_end) = end {
                             let read_start = offset.unwrap();
                             if (write_offset..write_end).contains(&read_end) {
@@ -1449,7 +1445,7 @@ fn hex_digits(n: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::TUIContext;
+    use super::{Prompt, TUIContext};
     use crate::{
         DebugNode, DebuggerLayout,
         debugger::{DebuggerContext, DebuggerStats},
@@ -1457,7 +1453,7 @@ mod tests {
     };
     use alloy_dyn_abi::parser::Parameters;
     use alloy_primitives::{Address, Bytes, U256, address};
-    use foundry_evm_core::Breakpoints;
+    use foundry_evm_core::{Breakpoints, buffer::BufferKind};
     use foundry_evm_traces::debug::{ContractSources, DebugSourceScope, DebugVariable};
     use ratatui::{
         Terminal,
@@ -1598,6 +1594,34 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect::<String>();
         assert!(screen.contains("Memory (max expansion: 0 bytes)"));
+    }
+
+    #[test]
+    fn draw_buffer_does_not_overflow_on_saturated_stack_offsets() {
+        // A stack of all-1s values (as produced by e.g. `not(0)` in inline assembly) saturates to
+        // `usize::MAX` when read via `get_buffer_accesses`. Regression test for the unfixed half
+        // of #6472: `offset + len` and `write_offset + write_size` used raw addition on values
+        // that can legitimately be `usize::MAX`, which panics with "attempt to add with overflow"
+        // in a debug build once a non-empty buffer reaches the affected closure.
+        let stack = vec![U256::MAX, U256::MAX];
+        let mut step = trace_step(stack);
+        step.op = OpCode::LOG1;
+
+        let mut node = debug_node(0, 0, vec![step]);
+        node.calldata = Bytes::from(vec![0u8; 64]);
+        let mut context = context_with_arena(vec![node]);
+        let mut tui = TUIContext::new(&mut context);
+        // Route the non-empty buffer through Calldata (a publicly constructible `Bytes`) rather
+        // than Memory (`RecordedMemory`'s content constructor is crate-private to
+        // revm-inspectors) - the offset/len arithmetic under test doesn't depend on which pane is
+        // active, only on the chunk loop actually running over a non-empty buffer.
+        tui.active_buffer = BufferKind::Calldata;
+
+        let backend = TestBackend::new(80, 6);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        // Must not panic with "attempt to add with overflow".
+        terminal.draw(|f| tui.draw_buffer(f, Rect::new(0, 0, 80, 6))).unwrap();
     }
 
     #[test]
@@ -1816,7 +1840,7 @@ mod tests {
     fn command_prompt_draws_in_bordered_block() {
         let mut context = context_with_arena(vec![debug_node(0, 0, vec![trace_step(Vec::new())])]);
         let mut tui = TUIContext::new(&mut context);
-        tui.command_input = Some("pc 0".to_string());
+        tui.prompt = Some(Prompt::Command("pc 0".to_string()));
         let backend = TestBackend::new(120, 6);
         let mut terminal = Terminal::new(backend).unwrap();
 

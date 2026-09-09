@@ -110,15 +110,8 @@ make build
 make pr
 ```
 
-If you are working in VSCode, we recommend you install the [rust-analyzer](https://rust-analyzer.github.io/) extension, and use the following VSCode user settings:
-
-```json
-"editor.formatOnSave": true,
-"rust-analyzer.rustfmt.extraArgs": ["+nightly"],
-"[rust]": {
-  "editor.defaultFormatter": "rust-lang.rust-analyzer"
-}
-```
+Contributor setup, editor configuration, validation commands, and maintained
+implementation guides are indexed in the [developer documentation](docs/dev/README.md).
 
 If you are working on a larger feature, we encourage you to open up a draft pull request, to make sure that other contributors are not duplicating work.
 
@@ -128,28 +121,15 @@ If you would like to use a debugger with breakpoints to debug a patch you might 
 
 #### Output channels (stdout vs. stderr)
 
-Foundry CLIs follow a strict output-channel contract: **stdout is the command's
-machine-readable result; stderr is everything else** (warnings, errors,
-progress, status prose, prompts). When adding or modifying user-facing output,
-read [`docs/dev/output-channels.md`](docs/dev/output-channels.md) and use the
-`sh_*` macros from `foundry_common::io` (`sh_println!`, `sh_status!`,
-`sh_progress!`, `sh_warn!`, `sh_err!`). A workspace-wide clippy
-`disallowed-macros` lint (see [`clippy.toml`](clippy.toml)) forbids
-`std::print*` and `std::eprint*`; use the `sh_*` macros instead.
+User-facing output must follow the canonical
+[stdout/stderr contract](docs/dev/output-channels.md). It also records the
+required `foundry_common::io` macros and the current per-command migration state.
 
 #### Adding tests
 
-If the change being proposed alters code, it is either adding new functionality to Foundry, or fixing existing, broken functionality.
-In both of these cases, the pull request should include one or more tests to ensure that Foundry does not regress
-in the future.
-
-Types of tests include:
-
-- **Unit tests**: Functions which have very specific tasks should be unit tested.
-- **Integration tests**: For general purpose, far reaching functionality, integration tests should be added.
-  The best way to add a new integration test is to look at existing ones and follow the style.
-
-Tests that use forking must contain "fork" in their name.
+Code changes should include focused unit or integration coverage. The
+[developer documentation](docs/dev/README.md#setup-and-validation) is the
+canonical entry point for test commands and repository-specific test rules.
 
 #### Commits
 

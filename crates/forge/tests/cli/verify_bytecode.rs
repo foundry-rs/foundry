@@ -1,6 +1,9 @@
 use crate::utils;
 use alloy_chains::Chain;
-use alloy_primitives::hex;
+use alloy_network::ReceiptResponse;
+use alloy_primitives::{B256, Bytes, hex};
+use alloy_provider::Provider;
+use axum::{Json, Router, extract::Query};
 use foundry_compilers::artifacts::{BytecodeHash, EvmVersion};
 use foundry_config::Config;
 use foundry_test_utils::{
@@ -10,7 +13,98 @@ use foundry_test_utils::{
     rpc::{next_etherscan_api_key, next_http_archive_rpc_url},
     util::OutputExt,
 };
-use std::fs;
+use std::{collections::HashMap, fs};
+use tokio::net::TcpListener;
+
+forgetest_async!(can_verify_bytecode_with_local_creation_data_fork, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.initialize_default_contracts();
+    cmd.forge_fuse().arg("build").assert_success();
+
+    let artifact: serde_json::Value = serde_json::from_slice(
+        &fs::read(prj.paths().artifacts.join("Counter.sol/Counter.json")).unwrap(),
+    )
+    .unwrap();
+    let bytecode =
+        Bytes::from(hex::decode(artifact["bytecode"]["object"].as_str().unwrap()).unwrap());
+
+    let (api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let accounts = handle.dev_accounts().take(3).collect::<Vec<_>>();
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let gas_price = provider.get_gas_price().await.unwrap();
+    let _: B256 = provider
+        .client()
+        .request(
+            "eth_sendTransaction",
+            [serde_json::json!({
+                "from": accounts[1],
+                "to": accounts[2],
+                "value": "0x1",
+                "gasPrice": format!("0x{:x}", gas_price + 1),
+            })],
+        )
+        .await
+        .unwrap();
+    let transaction_hash: B256 = provider
+        .client()
+        .request(
+            "eth_sendTransaction",
+            [serde_json::json!({
+                "from": accounts[0],
+                "data": bytecode,
+                "gasPrice": format!("0x{gas_price:x}"),
+            })],
+        )
+        .await
+        .unwrap();
+    api.mine_one().await.unwrap();
+    let receipt = provider.get_transaction_receipt(transaction_hash).await.unwrap().unwrap();
+    assert_eq!(receipt.transaction_index(), Some(1));
+    let address = receipt.contract_address().unwrap().to_string();
+
+    // Local explorer data forces a nonempty creation-block replay and shared completion path.
+    let creation_data = serde_json::json!({"status":"1", "message":"OK", "result":[{
+        "contractAddress": address,
+        "contractCreator": accounts[0],
+        "txHash": transaction_hash,
+    }]});
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/api", listener.local_addr().unwrap());
+    let app = Router::new().fallback(move |Query(query): Query<HashMap<String, String>>| {
+        let response = if query.get("action").is_some_and(|action| action == "getcontractcreation")
+        {
+            creation_data.clone()
+        } else {
+            serde_json::json!({"status":"1", "message":"OK", "result":[]})
+        };
+        async move { Json(response) }
+    });
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    cmd.forge_fuse();
+    cmd.args([
+        "verify-bytecode",
+        &address,
+        "src/Counter.sol:Counter",
+        "--rpc-url",
+        &rpc,
+        "--verifier",
+        "etherscan",
+        "--verifier-url",
+        &url,
+        "--etherscan-api-key",
+        "test",
+        "--json",
+    ])
+    .assert_json_stdout(
+        r#"[
+        {"bytecode_type":"creation", "match_type":"full"},
+        {"bytecode_type":"runtime", "match_type":"full"}
+    ]"#,
+    );
+    server.abort();
+});
 
 #[expect(clippy::too_many_arguments)]
 async fn test_verify_bytecode(
@@ -253,6 +347,93 @@ forgetest_async!(flaky_verify_bytecode_with_constructor_args, |prj, cmd| {
         Chain::mainnet(),
     )
     .await;
+});
+
+// Wrong `--constructor-args` used to verify clean, because supplied args that were not the tail
+// of the creation code were silently replaced by the real ones.
+forgetest_async!(flaky_verify_bytecode_warns_on_wrong_constructor_args, |prj, cmd| {
+    let etherscan_key = next_etherscan_api_key();
+    let rpc_url = next_http_archive_rpc_url();
+    let addr = "0x70f44C13944d49a236E3cD7a94f48f5daB6C619b";
+
+    let source_code = fetch_etherscan_source_flattened(addr, &etherscan_key, Chain::mainnet())
+        .await
+        .expect("failed to fetch source code from etherscan");
+    prj.add_source("StrategyManager", &source_code);
+    prj.write_config(Config {
+        evm_version: EvmVersion::London,
+        optimizer: Some(true),
+        optimizer_runs: Some(200),
+        ..Default::default()
+    });
+
+    let etherscan_key = next_etherscan_api_key();
+    let run = cmd
+        .forge_fuse()
+        .args([
+            "verify-bytecode",
+            addr,
+            "StrategyManager",
+            "--etherscan-api-key",
+            &etherscan_key,
+            "--verifier",
+            "etherscan",
+            "--verifier-url",
+            "https://api.etherscan.io/v2/api?chainid=1",
+            "--rpc-url",
+            &rpc_url,
+            // Three zero addresses instead of the real constructor arguments.
+            "--constructor-args",
+            "0x0000000000000000000000000000000000000000",
+            "0x0000000000000000000000000000000000000000",
+            "0x0000000000000000000000000000000000000000",
+        ])
+        .assert_success();
+    let output = run.get_output();
+
+    // The warning goes to stderr, the match verdict to stdout.
+    let stderr = output.stderr_lossy();
+    let stdout = output.stdout_lossy();
+
+    assert!(
+        stderr.contains(
+            "Provided constructor args could not be validated against deployment creation code"
+        ),
+        "expected a warning that the supplied args do not match the deployment, got:\n{stderr}"
+    );
+    assert!(
+        !stdout.contains("Creation code matched"),
+        "wrong constructor args must not produce a creation match, got:\n{stdout}"
+    );
+
+    // Ignoring creation verification must still compare the runtime produced by the supplied
+    // arguments. StrategyManager embeds its constructor arguments as immutables, so they produce
+    // a runtime mismatch.
+    let etherscan_key = next_etherscan_api_key();
+    cmd.forge_fuse()
+        .args([
+            "verify-bytecode",
+            addr,
+            "StrategyManager",
+            "--etherscan-api-key",
+            &etherscan_key,
+            "--verifier",
+            "etherscan",
+            "--verifier-url",
+            "https://api.etherscan.io/v2/api?chainid=1",
+            "--rpc-url",
+            &rpc_url,
+            "--constructor-args",
+            "0x0000000000000000000000000000000000000000",
+            "0x0000000000000000000000000000000000000000",
+            "0x0000000000000000000000000000000000000000",
+            "--ignore",
+            "creation",
+            "--json",
+        ])
+        .assert_json_stdout(
+            r#"[{"bytecode_type":"runtime","match_type":null,"message":"Runtime code did not match - this may be due to varying compiler settings"}]"#,
+        );
 });
 
 // `--ignore` tests

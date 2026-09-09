@@ -1,15 +1,30 @@
-use crate::{executors::Executor, inspectors::InspectorStackBuilder};
+use crate::{
+    executors::Executor,
+    inspectors::{InspectorStackBuilder, TempoLabels},
+};
+use alloy_primitives::Address;
 use foundry_evm_core::{
     backend::Backend,
-    evm::{BlockEnvFor, EvmEnvFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
+    evm::{
+        BlockEnvFor, EthEvmNetwork, EvmEnvFor, FoundryEvmNetwork, SpecFor, TempoEvmNetwork,
+        TxEnvFor,
+    },
 };
 use foundry_evm_networks::NetworkConfigs;
 use revm::context::{Block, Transaction};
 
+#[cfg(feature = "monad")]
+use foundry_evm_core::{constants::MONAD_CHEATCODE_ADDRESS, evm::MonadEvmNetwork};
+
+#[cfg(feature = "optimism")]
+use foundry_evm_core::evm::OpEvmNetwork;
+
 /// The builder that allows to configure an evm [`Executor`] which a stack of optional
 /// [`revm::Inspector`]s, such as [`Cheatcodes`].
 ///
-/// By default, the [`Executor`] will be configured with an empty [`InspectorStack`].
+/// By default, the [`Executor`] will be configured with an empty [`InspectorStack`] and no
+/// network-specific tooling. Command dispatch should use the concrete FEN's inherent `new`
+/// constructor so any required tooling is selected there.
 ///
 /// [`Cheatcodes`]: super::Cheatcodes
 /// [`InspectorStack`]: super::InspectorStack
@@ -29,7 +44,7 @@ impl<FEN: FoundryEvmNetwork> Default for ExecutorBuilder<FEN> {
     #[inline]
     fn default() -> Self {
         Self {
-            stack: InspectorStackBuilder::new(),
+            stack: InspectorStackBuilder::new().extra_cheatcode_addresses(&[]),
             gas_limit: None,
             spec: None,
             legacy_assertions: false,
@@ -38,6 +53,12 @@ impl<FEN: FoundryEvmNetwork> Default for ExecutorBuilder<FEN> {
 }
 
 impl<FEN: FoundryEvmNetwork> ExecutorBuilder<FEN> {
+    /// Returns additional cheatcode addresses selected for this executor.
+    #[inline]
+    pub const fn extra_cheatcode_addresses(&self) -> &'static [Address] {
+        self.stack.extra_cheatcode_addresses
+    }
+
     /// Modify the inspector stack.
     #[inline]
     pub fn inspectors(
@@ -84,6 +105,8 @@ impl<FEN: FoundryEvmNetwork> ExecutorBuilder<FEN> {
         mut evm_env: EvmEnvFor<FEN>,
         tx_env: TxEnvFor<FEN>,
         db: Backend<FEN>,
+        // TODO(monad-fen-lifecycle): Remove this argument after the backend's Monad fork-position
+        // migration and the inspector's separate Celo configuration cleanup are complete.
         networks: NetworkConfigs,
     ) -> Executor<FEN> {
         let Self { mut stack, gas_limit, spec, legacy_assertions, .. } = self;
@@ -99,5 +122,40 @@ impl<FEN: FoundryEvmNetwork> ExecutorBuilder<FEN> {
             evm_env.cfg_env.set_spec_and_mainnet_gas_params(spec);
         }
         Executor::new(db, evm_env, tx_env, stack.build(), networks, gas_limit, legacy_assertions)
+    }
+}
+
+impl ExecutorBuilder<EthEvmNetwork> {
+    /// Creates the default Ethereum executor builder.
+    #[inline]
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+#[cfg(feature = "optimism")]
+impl ExecutorBuilder<OpEvmNetwork> {
+    /// Creates the default OP executor builder.
+    #[inline]
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl ExecutorBuilder<TempoEvmNetwork> {
+    /// Creates a Tempo executor builder with its native label inspector.
+    #[inline]
+    pub fn new() -> Self {
+        Self::default().inspectors(|stack| stack.tempo_labels(TempoLabels::default()))
+    }
+}
+
+#[cfg(feature = "monad")]
+impl ExecutorBuilder<MonadEvmNetwork> {
+    /// Creates a Monad executor builder with MonadVM cheatcode support.
+    #[inline]
+    pub fn new() -> Self {
+        Self::default()
+            .inspectors(|stack| stack.extra_cheatcode_addresses(&[MONAD_CHEATCODE_ADDRESS]))
     }
 }

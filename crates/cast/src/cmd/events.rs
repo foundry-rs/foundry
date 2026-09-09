@@ -1,27 +1,32 @@
-use super::logs::LogQueryArgs;
-use crate::{
-    Cast, MAX_CONCURRENT_RPC_REQUESTS,
-    traces::{
-        CallTraceDecoderBuilder, DecodedEvent,
-        identifier::{ExternalIdentifier, SignaturesIdentifier},
-    },
+use super::{MAX_CONCURRENT_RPC_REQUESTS, fetch_code_via_rpc, logs::LogQueryArgs};
+use crate::traces::{
+    CallTraceDecoderBuilder, DecodedEvent,
+    identifier::{ExternalIdentifier, SignaturesIdentifier},
 };
 use alloy_dyn_abi::DynSolValue;
+use alloy_json_abi::JsonAbi;
+use alloy_network::Network;
 use alloy_primitives::{Address, B256, Bytes, TxHash};
 use alloy_provider::Provider;
-use alloy_rpc_types::Log;
+use alloy_rpc_types::{BlockId, Log};
 use clap::{ArgGroup, Parser};
 use eyre::Result;
 use foundry_cli::{
     json::print_json_object,
     opts::{EtherscanOpts, RpcOpts},
-    utils::{self, LoadConfig},
+    utils::{self, load_config_from_provider},
 };
-use foundry_common::{fmt::serialize_value_as_json, shell};
+use foundry_common::{
+    ContractsByArtifact, compile::ProjectCompiler, fmt::serialize_value_as_json, shell,
+};
 use foundry_config::{Chain, Config};
 use futures::StreamExt;
+use itertools::Itertools;
 use serde::{Serialize, Serializer};
-use std::{collections::BTreeSet, fmt::Write as _};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt::Write as _,
+};
 
 foundry_config::impl_figment_convert!(EventsArgs, etherscan, rpc);
 
@@ -58,30 +63,53 @@ pub struct EventsArgs {
 
     #[command(flatten)]
     rpc: RpcOpts,
+
+    /// Use current project artifacts for event decoding.
+    ///
+    /// Only supported when querying by transaction hash.
+    #[arg(long, visible_alias = "la")]
+    with_local_artifacts: bool,
 }
 
 impl EventsArgs {
     pub async fn run(self) -> Result<()> {
-        let mut config = self.load_config()?;
-        let Self { tx_hash, mut query, etherscan: _, rpc: _ } = self;
+        let figment =
+            self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self.etherscan);
+        let mut config = load_config_from_provider(figment)?;
+        let Self { tx_hash, mut query, with_local_artifacts, .. } = self;
         let tx_hash = tx_hash.or_else(|| query.take_transaction_hash());
+        if with_local_artifacts && tx_hash.is_none() {
+            eyre::bail!("--with-local-artifacts is only supported with a transaction hash");
+        }
         let provider = utils::get_provider(&config)?;
-        let chain_id = provider.get_chain_id().await?;
-        let (rpc_chain, explorer_chain) = resolve_chains(config.chain, Chain::from(chain_id));
-        config.chain = Some(rpc_chain);
+        let rpc_chain = Chain::from(provider.get_chain_id().await?);
+        let (decoder_chain, explorer_chain) = resolve_chains(config.chain, rpc_chain);
+        config.chain = Some(decoder_chain);
 
-        let cast = Cast::new(&provider);
         let logs = if let Some(tx_hash) = tx_hash {
-            cast.get_transaction_logs(tx_hash).await?
+            provider
+                .get_transaction_receipt(tx_hash)
+                .await?
+                .ok_or_else(|| eyre::eyre!("tx receipt not found: {tx_hash}"))?
+                .inner
+                .logs()
+                .to_vec()
         } else {
             let (filter, query_size) = query.resolve(&provider).await?;
             match query_size {
-                Some(chunk_size) => cast.get_logs_chunked(&filter, chunk_size).await?,
-                None => cast.get_logs(&filter).await?,
+                Some(chunk_size) => {
+                    crate::cmd::logs::get_logs_chunked(&provider, &filter, chunk_size).await?
+                }
+                None => provider.get_logs(&filter).await?,
             }
         };
 
-        let events = decode_logs(logs, &config, explorer_chain).await?;
+        let local_abis = if with_local_artifacts {
+            local_event_abis(&provider, &logs, &config).await?
+        } else {
+            BTreeMap::new()
+        };
+        let events = decode_logs(logs, &config, explorer_chain, local_abis).await?;
         if shell::is_json() {
             print_json_object(events)?;
         } else {
@@ -95,14 +123,34 @@ impl EventsArgs {
     }
 }
 
-fn resolve_chains(configured_chain: Option<Chain>, rpc_chain: Chain) -> (Chain, Chain) {
-    (rpc_chain, configured_chain.unwrap_or(rpc_chain))
+async fn local_event_abis<N: Network, P: Provider<N>>(
+    provider: &P,
+    logs: &[Log],
+    config: &Config,
+) -> Result<BTreeMap<Address, JsonAbi>> {
+    let addresses = logs.iter().map(Log::address).collect::<BTreeSet<_>>();
+    let Some(block_number) = logs.first().and_then(|log| log.block_number) else {
+        return Ok(BTreeMap::new());
+    };
+
+    let bytecodes = fetch_code_via_rpc(&provider, addresses, BlockId::number(block_number)).await;
+
+    let output = ProjectCompiler::new().quiet(true).compile(&config.project()?)?;
+    let contracts = ContractsByArtifact::from(output);
+    Ok(bytecodes
+        .iter()
+        .filter_map(|(&address, code)| {
+            let (_, contract) = contracts.find_by_deployed_code_exact_unique(code)?;
+            Some((address, contract.abi.clone()))
+        })
+        .collect())
 }
 
 async fn decode_logs(
     logs: Vec<Log>,
     config: &Config,
     explorer_chain: Chain,
+    local_abis: BTreeMap<Address, JsonAbi>,
 ) -> Result<Vec<EventOutput>> {
     let signature_identifier = SignaturesIdentifier::from_config(config)?;
     let mut builder = CallTraceDecoderBuilder::new()
@@ -110,12 +158,14 @@ async fn decode_logs(
         .with_networks(config.networks)
         .with_chain_id(config.chain.map(|chain| chain.id()));
 
+    let mut externally_resolved = BTreeSet::new();
     if let Some(mut identifier) = ExternalIdentifier::new(config, Some(explorer_chain))? {
         let addresses =
             logs.iter().map(Log::address).collect::<BTreeSet<_>>().into_iter().collect::<Vec<_>>();
         for (address, result) in identifier.get_abis(&addresses).await {
             match result {
                 Ok((abis, complete)) => {
+                    externally_resolved.insert(address);
                     if !complete {
                         sh_warn!("Only partially resolved proxy ABI chain for {address}")?;
                     }
@@ -125,6 +175,12 @@ async fn decode_logs(
                 }
                 Err(err) => sh_warn!("Failed to fetch ABI for {address}: {err}")?,
             }
+        }
+    }
+
+    for (address, abi) in local_abis {
+        if !externally_resolved.contains(&address) {
+            builder = builder.with_address_events(address, &abi);
         }
     }
 
@@ -219,39 +275,21 @@ where
 fn format_events(events: &[EventOutput]) -> String {
     let mut output = String::new();
     for event in events {
-        if event.block_number.is_some()
-            || event.transaction_hash.is_some()
-            || event.log_index.is_some()
-        {
-            output.push('[');
-            if let Some(block_number) = event.block_number {
-                let _ = write!(output, "block {block_number}");
-            }
-            if let Some(transaction_hash) = event.transaction_hash {
-                if event.block_number.is_some() {
-                    output.push_str(", ");
-                }
-                let _ = write!(output, "tx {transaction_hash}");
-            }
-            if let Some(log_index) = event.log_index {
-                if event.block_number.is_some() || event.transaction_hash.is_some() {
-                    output.push_str(", ");
-                }
-                let _ = write!(output, "log {log_index}");
-            }
-            output.push_str("] ");
+        let location = [
+            event.block_number.map(|n| format!("block {n}")),
+            event.transaction_hash.map(|hash| format!("tx {hash}")),
+            event.log_index.map(|i| format!("log {i}")),
+        ];
+        let mut location = location.iter().flatten().peekable();
+        if location.peek().is_some() {
+            let _ = write!(output, "[{}] ", location.format(", "));
         }
         if let Some(name) = &event.event {
             let _ = write!(output, "{}::{name}", event.address);
             if let Some(params) = &event.params {
-                output.push_str(" { ");
-                for (index, param) in params.iter().enumerate() {
-                    if index > 0 {
-                        output.push_str(", ");
-                    }
-                    let _ = write!(output, "{}: {}", param.name, param.display_value);
-                }
-                output.push_str(" }");
+                let params =
+                    params.iter().map(|param| format!("{}: {}", param.name, param.display_value));
+                let _ = write!(output, " {{ {} }}", params.format(", "));
             }
             output.push('\n');
         } else {
@@ -265,10 +303,25 @@ fn format_events(events: &[EventOutput]) -> String {
     output
 }
 
+/// Decodes against the RPC chain, but looks ABIs up on the configured explorer chain.
+fn resolve_chains(configured: Option<Chain>, rpc_chain: Chain) -> (Chain, Chain) {
+    (rpc_chain, configured.unwrap_or(rpc_chain))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use alloy_primitives::{Function, U256};
+
+    #[test]
+    fn configured_chain_controls_explorer_lookup() {
+        let rpc_chain = Chain::from(31337);
+        assert_eq!(
+            resolve_chains(Some(Chain::mainnet()), rpc_chain),
+            (rpc_chain, Chain::mainnet())
+        );
+        assert_eq!(resolve_chains(None, rpc_chain), (rpc_chain, rpc_chain));
+    }
 
     #[test]
     fn validates_event_sources() {
@@ -312,18 +365,7 @@ mod tests {
     }
 
     #[test]
-    fn configured_chain_controls_explorer_lookup() {
-        let rpc_chain = Chain::from(31337);
-        let (decoder_chain, explorer_chain) = resolve_chains(Some(Chain::mainnet()), rpc_chain);
-        assert_eq!(decoder_chain, rpc_chain);
-        assert_eq!(explorer_chain, Chain::mainnet());
-
-        let (_, explorer_chain) = resolve_chains(None, rpc_chain);
-        assert_eq!(explorer_chain, rpc_chain);
-    }
-
-    #[test]
-    fn serializes_abi_values_instead_of_display_values() {
+    fn serializes_abi_values_and_formats_display_values() {
         let output = EventOutput::new(
             Log::default(),
             DecodedEvent {
@@ -335,14 +377,10 @@ mod tests {
                 )]),
             },
         );
-
         let json = serde_json::to_value(&output).unwrap();
         assert_eq!(json["params"][0]["value"], "19705728070");
         assert!(format_events(&[output]).contains("19705728070 [1.97e10]"));
-    }
 
-    #[test]
-    fn formats_function_values_without_json_serialization() {
         let output = EventOutput::new(
             Log::default(),
             DecodedEvent {
@@ -354,7 +392,6 @@ mod tests {
                 )]),
             },
         );
-
         assert!(format_events(&[output]).contains(
             "Callback(function) { callback: 0x111111111111111111111111111111111111111111111111 }"
         ));

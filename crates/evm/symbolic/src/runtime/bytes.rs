@@ -429,6 +429,50 @@ impl SymBytes {
         Some(SymExpr::binop(cx, SymBinOp::Shl, expr, dst_trailing_bits))
     }
 
+    /// Returns `true` if the observable bytes depend on an unresolved `GAS` / `gasleft()` value.
+    ///
+    /// Only the represented byte range is inspected: bytes of a backing value that a slice or a
+    /// `max_size` bound excludes are never reachable and do not taint the result. A gas-dependent
+    /// slice offset or dynamic size always taints, because the byte layout itself would then
+    /// depend on gas.
+    pub(crate) fn contains_gasleft(&self, cx: &mut SymCx) -> bool {
+        if self.shape_depends_on_gasleft() {
+            return true;
+        }
+        // Fast structural pre-check: without a gas-dependent backing value nothing can be tainted.
+        if !self.backing_contains_gasleft() {
+            return false;
+        }
+        (0..self.len()).any(|offset| self.byte(cx, offset).contains_gasleft())
+    }
+
+    /// Returns `true` if a slice offset or dynamic size anywhere in the tree mentions `gasleft()`.
+    fn shape_depends_on_gasleft(&self) -> bool {
+        match self.kind() {
+            SymBytesKind::Concrete(_) | SymBytesKind::Exprs(_) | SymBytesKind::Word(_) => false,
+            SymBytesKind::Concat(parts) => parts.iter().any(Self::shape_depends_on_gasleft),
+            SymBytesKind::Slice { bytes, offset, .. } => {
+                offset.contains_gasleft() || bytes.shape_depends_on_gasleft()
+            }
+            SymBytesKind::Sized { bytes, size, .. } => {
+                size.contains_gasleft() || bytes.shape_depends_on_gasleft()
+            }
+        }
+    }
+
+    /// Returns `true` if any backing value, observable or not, mentions `gasleft()`.
+    fn backing_contains_gasleft(&self) -> bool {
+        match self.kind() {
+            SymBytesKind::Concrete(_) => false,
+            SymBytesKind::Exprs(bytes) => bytes.iter().any(SymExpr::contains_gasleft),
+            SymBytesKind::Word(word) => word.contains_gasleft(),
+            SymBytesKind::Concat(parts) => parts.iter().any(Self::backing_contains_gasleft),
+            SymBytesKind::Slice { bytes, .. } | SymBytesKind::Sized { bytes, .. } => {
+                bytes.backing_contains_gasleft()
+            }
+        }
+    }
+
     pub(crate) fn materialize(&self, cx: &mut SymCx) -> Vec<SymExpr> {
         (0..self.len()).map(|idx| self.byte(cx, idx)).collect()
     }
@@ -566,5 +610,45 @@ impl SymBytes {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bytes_contains_gasleft_inspects_only_observable_range() {
+        let mut cx = SymCx::new();
+        let gas = SymExpr::gas_left(&mut cx, 0);
+        let mask = SymExpr::constant(&mut cx, U256::from(0xff));
+        let low_byte_gas = SymExpr::binop(&mut cx, SymBinOp::And, gas.clone(), mask);
+        let word = SymBytes::word(&mut cx, low_byte_gas);
+        assert!(word.contains_gasleft(&mut cx));
+
+        // The 31 high bytes are provably zero, so slicing them out is gas independent.
+        let high_bytes = word.slice_concrete(&mut cx, 0, 31);
+        assert!(!high_bytes.contains_gasleft(&mut cx));
+        let low_byte = word.slice_concrete(&mut cx, 31, 1);
+        assert!(low_byte.contains_gasleft(&mut cx));
+
+        // A gas-dependent slice offset taints even gas-independent source bytes.
+        let source = SymBytes::concrete(&mut cx, vec![1, 2, 3, 4]);
+        let gas_slice = SymBytes::slice(&mut cx, source, gas.clone(), 2);
+        assert!(gas_slice.contains_gasleft(&mut cx));
+
+        // Bytes beyond `max_size` can never reach the consumer.
+        let zeros = SymBytes::concrete(&mut cx, vec![0; 32]);
+        let gas_word = SymBytes::word(&mut cx, gas.clone());
+        let source = SymBytes::concat(&mut cx, [zeros, gas_word]);
+        let size = SymExpr::var(&mut cx, "size");
+        let sized = SymBytes::sized(&mut cx, source.clone(), size, 32);
+        assert!(!sized.contains_gasleft(&mut cx));
+        // A gas-dependent size taints even when every observable byte is zero.
+        let sized = SymBytes::sized(&mut cx, source.clone(), gas, 32);
+        assert!(sized.contains_gasleft(&mut cx));
+        let size = SymExpr::var(&mut cx, "size");
+        let sized = SymBytes::sized(&mut cx, source, size, 64);
+        assert!(sized.contains_gasleft(&mut cx));
     }
 }

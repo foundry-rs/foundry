@@ -6,20 +6,6 @@ pub(crate) fn failed_slot() -> U256 {
     U256::from_be_bytes(bytes)
 }
 
-pub(crate) fn pow_mod(base: U256, exponent: U256) -> U256 {
-    let mut result = U256::from(1);
-    let mut base = base;
-    let mut exponent = exponent;
-    while !exponent.is_zero() {
-        if exponent & U256::from(1) == U256::from(1) {
-            result = result.wrapping_mul(base);
-        }
-        exponent >>= 1;
-        base = base.wrapping_mul(base);
-    }
-    result
-}
-
 pub(crate) fn exp_expr_for_concrete_exponent(
     cx: &mut SymCx,
     base: SymExpr,
@@ -29,7 +15,7 @@ pub(crate) fn exp_expr_for_concrete_exponent(
         return SymExpr::one(cx);
     }
     if let Some(base) = base.as_const() {
-        return SymExpr::constant(cx, pow_mod(base, U256::from(exponent)));
+        return SymExpr::constant(cx, base.wrapping_pow(U256::from(exponent)));
     }
 
     let mut expr = base.clone();
@@ -37,39 +23,6 @@ pub(crate) fn exp_expr_for_concrete_exponent(
         expr = SymExpr::binop(cx, SymBinOp::Mul, expr, base.clone());
     }
     expr
-}
-
-pub(crate) fn slt(left: U256, right: U256) -> bool {
-    let left_negative = (left >> 255) == U256::from(1);
-    let right_negative = (right >> 255) == U256::from(1);
-    match (left_negative, right_negative) {
-        (true, false) => true,
-        (false, true) => false,
-        _ => left < right,
-    }
-}
-
-pub(crate) fn signed_abs(value: U256) -> U256 {
-    if (value >> 255) == U256::from(1) { (!value).wrapping_add(U256::from(1)) } else { value }
-}
-
-pub(crate) fn sdiv(left: U256, right: U256) -> U256 {
-    if right.is_zero() {
-        return U256::ZERO;
-    }
-    let left_negative = (left >> 255) == U256::from(1);
-    let right_negative = (right >> 255) == U256::from(1);
-    let quotient = signed_abs(left) / signed_abs(right);
-    if left_negative ^ right_negative { (!quotient).wrapping_add(U256::from(1)) } else { quotient }
-}
-
-pub(crate) fn smod(left: U256, right: U256) -> U256 {
-    if right.is_zero() {
-        return U256::ZERO;
-    }
-    let left_negative = (left >> 255) == U256::from(1);
-    let remainder = signed_abs(left) % signed_abs(right);
-    if left_negative { (!remainder).wrapping_add(U256::from(1)) } else { remainder }
 }
 
 pub(crate) fn signextend(byte_index: U256, value: U256) -> U256 {
@@ -168,18 +121,6 @@ pub(crate) fn byte_expr(cx: &mut SymCx, index: usize, expr: &SymExpr) -> SymExpr
     expr.extracted_byte(cx, index)
 }
 
-pub(crate) fn sar(value: U256, shift: usize) -> U256 {
-    if shift >= 256 {
-        if (value >> 255) == U256::from(1) { U256::MAX } else { U256::ZERO }
-    } else if shift == 0 {
-        value
-    } else if (value >> 255) == U256::from(1) {
-        (value >> shift) | (U256::MAX << (256 - shift))
-    } else {
-        value >> shift
-    }
-}
-
 pub(crate) fn shift_left(cx: &mut SymCx, value: SymExpr, bits: usize) -> SymExpr {
     if let Some(value) = value.as_const() {
         SymExpr::constant(cx, value << bits)
@@ -187,10 +128,6 @@ pub(crate) fn shift_left(cx: &mut SymCx, value: SymExpr, bits: usize) -> SymExpr
         let bits = SymExpr::constant(cx, U256::from(bits));
         SymExpr::binop(cx, SymBinOp::Shl, value, bits)
     }
-}
-
-pub(crate) fn ensure_jumpdest(dest: usize, jumpdests: &JumpTable) -> Result<(), SymbolicError> {
-    if jumpdests.is_valid(dest) { Ok(()) } else { Err(SymbolicError::InvalidJump(dest)) }
 }
 
 pub(crate) fn is_assertion_revert(data: &[u8]) -> bool {

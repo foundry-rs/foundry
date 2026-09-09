@@ -1,5 +1,6 @@
 use crate::{bytecode::VerifyBytecodeArgs, types::VerificationType};
-use alloy_dyn_abi::DynSolValue;
+use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
+use alloy_network::{AnyNetwork, AnyRpcBlock};
 use alloy_primitives::{Address, Bytes, ChainId, TxKind, U256};
 use alloy_provider::{Provider, network::BlockResponse};
 use alloy_rpc_types::BlockId;
@@ -22,18 +23,15 @@ use foundry_compilers::{
     multi::{MultiCompilerLanguage, MultiCompilerParser},
     utils::canonicalize,
 };
-use foundry_config::{Config, FoundryHardfork};
+use foundry_config::Config;
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
     core::{
-        FoundryBlock as _, FoundryChain,
+        FoundryBlock as _,
         decode::RevertDecoder,
-        evm::{
-            BlockContext, BlockEnvFor, BlockResponseFor, ChainFor, EvmEnvFor, FoundryEvmNetwork,
-            TxEnvFor,
-        },
+        evm::{BlockEnvFor, ChainFor, EvmEnvFor, FoundryEvmNetwork, TxEnvFor},
     },
-    executors::TracingExecutor,
+    executors::{ExecutorBuilder, TracingExecutor},
     opts::EvmOpts,
     traces::TraceRequirements,
     utils::{apply_chain_and_block_specific_env_changes_for_chain, block_env_from_header},
@@ -44,6 +42,9 @@ use revm::{bytecode::Bytecode, context::Block as _, database::Database};
 use semver::{BuildMetadata, Version};
 use serde::{Deserialize, Serialize};
 use yansi::Paint;
+
+#[cfg(all(test, feature = "monad"))]
+use foundry_config::FoundryHardfork;
 
 /// Enum to represent the type of bytecode being verified
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, ValueEnum)]
@@ -190,6 +191,13 @@ fn is_partial_match(
         return try_extract_and_compare_bytecode(local_bytecode, bytecode);
     }
 
+    // The constructor args are part of what is being verified: the onchain creation code must
+    // actually end with them before they can be stripped, otherwise args of the right length
+    // could never fail the comparison.
+    if !bytecode.ends_with(constructor_args) {
+        return false;
+    }
+
     // If not runtime, extract constructor args from the end of the bytecode
     bytecode = &bytecode[..bytecode.len() - constructor_args.len()];
     local_bytecode = &local_bytecode[..local_bytecode.len() - constructor_args.len()];
@@ -269,18 +277,42 @@ pub fn check_and_encode_args(
     artifact: &CompactContractBytecode,
     args: Vec<String>,
 ) -> Result<Vec<u8>, eyre::ErrReport> {
-    if let Some(constructor) = artifact.abi.as_ref().and_then(|abi| abi.constructor()) {
-        if constructor.inputs.len() != args.len() {
-            eyre::bail!(
-                "Mismatch of constructor arguments length. Expected {}, got {}",
-                constructor.inputs.len(),
-                args.len()
-            );
+    let Some(constructor) = artifact.abi.as_ref().and_then(|abi| abi.constructor()) else {
+        if args.is_empty() {
+            return Ok(Vec::new());
         }
-        encode_args(&constructor.inputs, &args).map(|args| DynSolValue::Tuple(args).abi_encode())
-    } else {
-        Ok(Vec::new())
+        eyre::bail!("Contract has no constructor arguments, but arguments were provided");
+    };
+    if constructor.inputs.len() != args.len() {
+        eyre::bail!(
+            "Mismatch of constructor arguments length. Expected {}, got {}",
+            constructor.inputs.len(),
+            args.len()
+        );
     }
+    encode_args(&constructor.inputs, &args).map(|args| DynSolValue::Tuple(args).abi_encode_params())
+}
+
+pub fn validate_encoded_constructor_args(
+    artifact: &CompactContractBytecode,
+    args: Vec<u8>,
+) -> Result<Vec<u8>, eyre::ErrReport> {
+    let Some(constructor) = artifact.abi.as_ref().and_then(|abi| abi.constructor()) else {
+        if args.is_empty() {
+            return Ok(args);
+        }
+        eyre::bail!("Contract has no constructor arguments, but encoded arguments were provided");
+    };
+    let values = constructor
+        .abi_decode_input(&args)
+        .map_err(|err| eyre::eyre!("Invalid ABI-encoded constructor arguments: {err}"))?;
+    let encoded = constructor
+        .abi_encode_input(&values)
+        .map_err(|err| eyre::eyre!("Invalid ABI-encoded constructor arguments: {err}"))?;
+    if encoded != args {
+        eyre::bail!("Constructor arguments are not canonically ABI-encoded");
+    }
+    Ok(args)
 }
 
 pub fn check_explorer_args(source_code: &ContractMetadata) -> Result<Bytes, eyre::ErrReport> {
@@ -325,8 +357,9 @@ pub async fn get_tracing_executor<FEN>(
     fork_config: &mut Config,
     fork_blk_num: u64,
     execution_blk_num: u64,
-    execution_block: Option<&BlockResponseFor<FEN>>,
+    execution_block: Option<&AnyRpcBlock>,
     evm_opts: EvmOpts,
+    executor_builder: ExecutorBuilder<FEN>,
 ) -> Result<(EvmEnvFor<FEN>, TxEnvFor<FEN>, TracingExecutor<FEN>)>
 where
     FEN: FoundryEvmNetwork,
@@ -334,28 +367,26 @@ where
     fork_config.fork_block_number = Some(fork_blk_num);
 
     let create2_deployer = evm_opts.create2_deployer;
-    let (mut evm_env, tx_env, fork, chain, networks, endpoint_hardfork) =
-        TracingExecutor::<FEN>::get_fork_material(fork_config, evm_opts).await?;
+    let mut fork = TracingExecutor::<FEN>::get_fork(fork_config, evm_opts).await?;
+    let context = fork.context();
 
-    evm_env.block_env.set_number(U256::from(execution_blk_num));
+    fork.evm_env.block_env.set_number(U256::from(execution_blk_num));
     if let Some(block) = execution_block {
-        configure_env_block::<FEN>(&mut evm_env, block, chain.id(), networks);
+        configure_env_block::<FEN>(
+            &mut fork.evm_env,
+            block,
+            context.chain().id(),
+            context.networks(),
+        );
     }
-    let resolved_hardfork = resolve_runtime_spec::<FEN>(
-        fork_config,
-        networks,
-        chain.id(),
-        endpoint_hardfork,
-        &mut evm_env,
-    );
-    TracingExecutor::<FEN>::extend_precompile_labels(fork_config, networks, resolved_hardfork);
+    fork.resolve_spec(fork_config, None);
+    fork.extend_precompile_labels(fork_config);
 
-    let executor = TracingExecutor::<FEN>::new(
-        (evm_env.clone(), tx_env.clone()),
-        fork,
-        None,
+    let evm_env = fork.evm_env.clone();
+    let tx_env = fork.tx_env.clone();
+    let executor = fork.into_executor(
+        executor_builder,
         TraceRequirements::none().with_calls(true),
-        networks,
         create2_deployer,
         None,
     )?;
@@ -363,6 +394,7 @@ where
     Ok((evm_env, tx_env, executor))
 }
 
+#[cfg(all(test, feature = "monad"))]
 fn resolve_runtime_spec<FEN>(
     config: &Config,
     networks: NetworkConfigs,
@@ -385,7 +417,7 @@ where
 
 pub fn configure_env_block<FEN>(
     evm_env: &mut EvmEnvFor<FEN>,
-    block: &BlockResponseFor<FEN>,
+    block: &AnyRpcBlock,
     source_chain_id: ChainId,
     config: NetworkConfigs,
 ) where
@@ -394,7 +426,7 @@ pub fn configure_env_block<FEN>(
     let number = evm_env.block_env.number();
     evm_env.block_env = block_env_from_header::<BlockEnvFor<FEN>>(block.header());
     evm_env.block_env.set_number(number);
-    apply_chain_and_block_specific_env_changes_for_chain::<FEN::Network, _, _>(
+    apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork, _, _>(
         evm_env,
         block,
         source_chain_id,
@@ -463,22 +495,9 @@ where
     }
 }
 
-pub fn synthetic_deployment_context<FEN>(
-    block_context: Option<&BlockContext<FEN>>,
-    tx_env: &TxEnvFor<FEN>,
-) -> ChainFor<FEN>
-where
-    FEN: FoundryEvmNetwork,
-{
-    block_context.map_or_else(
-        || ChainFor::<FEN>::for_transaction(tx_env),
-        |context| context.clone().into_child().next_transaction(tx_env),
-    )
-}
-
 pub async fn get_runtime_codes<FEN>(
     executor: &mut TracingExecutor<FEN>,
-    provider: &impl Provider<FEN::Network>,
+    provider: &impl Provider<AnyNetwork>,
     address: Address,
     fork_address: Address,
     block: Option<u64>,
@@ -586,13 +605,95 @@ mod tests {
         env
     }
 
-    #[cfg(feature = "monad")]
-    fn monad_tx(caller: Address) -> TxEnvFor<foundry_evm::core::evm::MonadEvmNetwork> {
-        use foundry_evm::core::FoundryTransaction as _;
+    #[test]
+    fn encoded_constructor_args_must_be_canonical() {
+        let artifact = CompactContractBytecode {
+            abi: Some(alloy_json_abi::JsonAbi::parse(["constructor(uint256 value)"]).unwrap()),
+            bytecode: None,
+            deployed_bytecode: None,
+        };
+        let args = artifact
+            .abi
+            .as_ref()
+            .unwrap()
+            .constructor()
+            .unwrap()
+            .abi_encode_input(&[DynSolValue::Uint(U256::from(1), 256)])
+            .unwrap();
 
-        let mut tx = TxEnvFor::<foundry_evm::core::evm::MonadEvmNetwork>::default();
-        tx.set_caller(caller);
-        tx
+        assert_eq!(validate_encoded_constructor_args(&artifact, args.clone()).unwrap(), args);
+
+        // Arbitrary bytes prepended to valid arguments can overlap the creation bytecode's
+        // metadata and must not be accepted as part of the constructor arguments.
+        let overlapping = [alloy_primitives::hex!("a1616101").as_slice(), &args].concat();
+        assert!(validate_encoded_constructor_args(&artifact, overlapping).is_err());
+    }
+
+    #[test]
+    fn typed_constructor_args_require_a_constructor() {
+        let artifact = CompactContractBytecode {
+            abi: Some(alloy_json_abi::JsonAbi::default()),
+            bytecode: None,
+            deployed_bytecode: None,
+        };
+
+        assert!(check_and_encode_args(&artifact, vec!["1".to_string()]).is_err());
+        assert_eq!(check_and_encode_args(&artifact, Vec::new()).unwrap(), Vec::<u8>::new());
+    }
+
+    #[test]
+    fn dynamic_constructor_args_are_encoded_as_top_level_params() {
+        let artifact = CompactContractBytecode {
+            abi: Some(alloy_json_abi::JsonAbi::parse(["constructor(string value)"]).unwrap()),
+            bytecode: None,
+            deployed_bytecode: None,
+        };
+
+        let encoded = check_and_encode_args(&artifact, vec!["hi".to_string()]).unwrap();
+
+        // Constructor arguments are encoded as top-level ABI parameters, so the first word is the
+        // offset to the string payload.
+        let expected = alloy_primitives::hex!(
+            "0000000000000000000000000000000000000000000000000000000000000020"
+            "0000000000000000000000000000000000000000000000000000000000000002"
+            "6869000000000000000000000000000000000000000000000000000000000000"
+        );
+        assert_eq!(encoded, expected);
+    }
+
+    #[test]
+    fn creation_code_must_end_with_constructor_args() {
+        let code = alloy_primitives::hex!("6080604052348015600e575f5ffd5b50607b80601a5f395ff3fe");
+        let real_args = [0x11u8; 32];
+        let wrong_args = [0x22u8; 32];
+
+        let onchain = [code.as_slice(), &real_args].concat();
+
+        // Wrong args of the right length used to report a partial match because the tails were
+        // stripped from both sides without comparing them.
+        let local = [code.as_slice(), &wrong_args].concat();
+        assert_eq!(match_bytecodes(&local, &onchain, &wrong_args, false, BytecodeHash::Ipfs), None);
+
+        let local = [code.as_slice(), &real_args].concat();
+        assert_eq!(
+            match_bytecodes(&local, &onchain, &real_args, false, BytecodeHash::Ipfs),
+            Some(VerificationType::Full)
+        );
+
+        // A valid dynamic encoding can end with another valid encoding. The suffix alone must
+        // not establish that the supplied arguments match.
+        let suffix_args =
+            DynSolValue::Tuple(vec![DynSolValue::Bytes(real_args.to_vec())]).abi_encode();
+        let deployment_args =
+            DynSolValue::Tuple(vec![DynSolValue::Bytes(suffix_args.clone())]).abi_encode();
+        assert!(deployment_args.ends_with(&suffix_args));
+
+        let onchain = [code.as_slice(), deployment_args.as_slice()].concat();
+        let local = [code.as_slice(), suffix_args.as_slice()].concat();
+        assert_eq!(
+            match_bytecodes(&local, &onchain, &suffix_args, false, BytecodeHash::Ipfs),
+            None
+        );
     }
 
     #[test]
@@ -734,48 +835,6 @@ contract Broken {
         assert_eq!(env.cfg_env.spec, foundry_evm::hardforks::MonadHardfork::MonadEight);
         assert!(config.labels.values().any(|label| label == "Staking"));
         assert!(!config.labels.values().any(|label| label == "ReserveBalance"));
-    }
-
-    #[test]
-    #[cfg(feature = "monad")]
-    fn synthetic_monad_deployment_uses_child_block_context() {
-        let discarded_grandparent = Address::repeat_byte(0x11);
-        let child_grandparent = Address::repeat_byte(0x22);
-        let child_parent = Address::repeat_byte(0x33);
-        let synthetic_sender = Address::repeat_byte(0x44);
-        let context = BlockContext::<foundry_evm::core::evm::MonadEvmNetwork>::new(
-            vec![monad_tx(discarded_grandparent)],
-            vec![monad_tx(child_grandparent)],
-            vec![monad_tx(child_parent)],
-        );
-        let synthetic_tx = monad_tx(synthetic_sender);
-
-        let chain_context = synthetic_deployment_context::<foundry_evm::core::evm::MonadEvmNetwork>(
-            Some(&context),
-            &synthetic_tx,
-        );
-
-        assert!(chain_context.grandparent_senders_and_authorities.contains(&child_grandparent));
-        assert!(chain_context.parent_senders_and_authorities.contains(&child_parent));
-        assert_eq!(chain_context.current_block_senders, vec![synthetic_sender]);
-        assert_eq!(chain_context.current_tx_index, 0);
-    }
-
-    #[test]
-    #[cfg(feature = "monad")]
-    fn synthetic_monad_deployment_without_history_uses_chain_context() {
-        let synthetic_sender = Address::repeat_byte(0x44);
-        let synthetic_tx = monad_tx(synthetic_sender);
-
-        let chain_context = synthetic_deployment_context::<foundry_evm::core::evm::MonadEvmNetwork>(
-            None,
-            &synthetic_tx,
-        );
-
-        assert!(chain_context.grandparent_senders_and_authorities.is_empty());
-        assert!(chain_context.parent_senders_and_authorities.is_empty());
-        assert_eq!(chain_context.current_block_senders, vec![synthetic_sender]);
-        assert_eq!(chain_context.current_tx_index, 0);
     }
 
     #[test]

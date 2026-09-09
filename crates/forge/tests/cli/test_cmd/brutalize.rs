@@ -1,10 +1,12 @@
 // CLI integration tests for `forge test --brutalize`
 
-use std::{fs, str::FromStr};
-
 use foundry_compilers::artifacts::remappings::Remapping;
 use foundry_config::fs_permissions::PathPermission;
 use foundry_test_utils::{str, util::OutputExt};
+use std::{fs, str::FromStr};
+
+#[cfg(unix)]
+use std::os::unix::fs::symlink;
 
 // Robust contract with casts + assembly passes under brutalization
 forgetest_init!(brutalize_robust_contract_passes, |prj, cmd| {
@@ -899,6 +901,7 @@ contract JUnitTargetTest is Test {
 // Project-local remappings must resolve to the copied/brutalized temp workspace, not the original.
 forgetest_init!(brutalize_rebases_project_local_remappings, |prj, cmd| {
     prj.update_config(|config| {
+        config.dynamic_test_linking = true;
         config.auto_detect_remappings = false;
         config.remappings = vec![Remapping::from_str("@src/=src/").unwrap().into()];
     });
@@ -939,6 +942,19 @@ contract RemappedTargetTest {
 
     cmd.args(["test", "--brutalize", "--mt", "test_remappedImportUsesBrutalizedTempSource"]);
     cmd.assert_success();
+
+    // Exercise macOS-style temporary directory aliases on every Unix host. Only the child
+    // process sees TMPDIR, so concurrent tests retain their own temporary directory settings.
+    #[cfg(unix)]
+    {
+        let temp = tempfile::tempdir().unwrap();
+        let real = temp.path().join("real");
+        let alias = temp.path().join("alias");
+        fs::create_dir(&real).unwrap();
+        symlink(&real, &alias).unwrap();
+        cmd.env("TMPDIR", &alias);
+        cmd.assert_success();
+    }
 });
 
 // Nested casts should not produce overlapping replacements.

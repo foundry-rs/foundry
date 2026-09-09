@@ -1,4 +1,4 @@
-warning[assert-state-change]: assert() argument contains a state-modifying expression; assert() is for invariants, hoist the mutation before the assert, or use require() for validation
+warning[assert-state-change]: `assert()` argument contains a state-modifying expression; `assert()` is for invariants, hoist the mutation before the `assert`, or use `require()` for validation
    ╭▸ ROOT/testdata/AssertStateChange.sol:LL:CC
    │
 LL │         assert(++counter == expected);
@@ -6,7 +6,7 @@ LL │         assert(++counter == expected);
    │
    ╰ help: https://getfoundry.sh/forge/linting/assert-state-change
 
-warning[assert-state-change]: assert() argument contains a state-modifying expression; assert() is for invariants, hoist the mutation before the assert, or use require() for validation
+warning[assert-state-change]: `assert()` argument contains a state-modifying expression; `assert()` is for invariants, hoist the mutation before the `assert`, or use `require()` for validation
    ╭▸ ROOT/testdata/AssertStateChange.sol:LL:CC
    │
 LL │         assert(counter++ == expected);
@@ -14,7 +14,7 @@ LL │         assert(counter++ == expected);
    │
    ╰ help: https://getfoundry.sh/forge/linting/assert-state-change
 
-warning[assert-state-change]: assert() argument contains a state-modifying expression; assert() is for invariants, hoist the mutation before the assert, or use require() for validation
+warning[assert-state-change]: `assert()` argument contains a state-modifying expression; `assert()` is for invariants, hoist the mutation before the `assert`, or use `require()` for validation
    ╭▸ ROOT/testdata/AssertStateChange.sol:LL:CC
    │
 LL │         assert(_toggleFlag());
@@ -22,7 +22,7 @@ LL │         assert(_toggleFlag());
    │
    ╰ help: https://getfoundry.sh/forge/linting/assert-state-change
 
-warning[assert-state-change]: assert() argument contains a state-modifying expression; assert() is for invariants, hoist the mutation before the assert, or use require() for validation
+warning[assert-state-change]: `assert()` argument contains a state-modifying expression; `assert()` is for invariants, hoist the mutation before the `assert`, or use `require()` for validation
    ╭▸ ROOT/testdata/AssertStateChange.sol:LL:CC
    │
 LL │         assert(_deposit());
@@ -30,7 +30,7 @@ LL │         assert(_deposit());
    │
    ╰ help: https://getfoundry.sh/forge/linting/assert-state-change
 
-warning[assert-state-change]: assert() argument contains a state-modifying expression; assert() is for invariants, hoist the mutation before the assert, or use require() for validation
+warning[assert-state-change]: `assert()` argument contains a state-modifying expression; `assert()` is for invariants, hoist the mutation before the `assert`, or use `require()` for validation
    ╭▸ ROOT/testdata/AssertStateChange.sol:LL:CC
    │
 LL │         assert((counter = val) > 0);
@@ -38,7 +38,7 @@ LL │         assert((counter = val) > 0);
    │
    ╰ help: https://getfoundry.sh/forge/linting/assert-state-change
 
-warning[assert-state-change]: assert() argument contains a state-modifying expression; assert() is for invariants, hoist the mutation before the assert, or use require() for validation
+warning[assert-state-change]: `assert()` argument contains a state-modifying expression; `assert()` is for invariants, hoist the mutation before the `assert`, or use `require()` for validation
    ╭▸ ROOT/testdata/AssertStateChange.sol:LL:CC
    │
 LL │         assert((balances[user] = amt) > 0);
@@ -46,7 +46,7 @@ LL │         assert((balances[user] = amt) > 0);
    │
    ╰ help: https://getfoundry.sh/forge/linting/assert-state-change
 
-warning[assert-state-change]: assert() argument contains a state-modifying expression; assert() is for invariants, hoist the mutation before the assert, or use require() for validation
+warning[assert-state-change]: `assert()` argument contains a state-modifying expression; `assert()` is for invariants, hoist the mutation before the `assert`, or use `require()` for validation
    ╭▸ ROOT/testdata/AssertStateChange.sol:LL:CC
    │
 LL │         assert(recipient.send(1 ether));
@@ -54,7 +54,7 @@ LL │         assert(recipient.send(1 ether));
    │
    ╰ help: https://getfoundry.sh/forge/linting/assert-state-change
 
-warning[assert-state-change]: assert() argument contains a state-modifying expression; assert() is for invariants, hoist the mutation before the assert, or use require() for validation
+warning[assert-state-change]: `assert()` argument contains a state-modifying expression; `assert()` is for invariants, hoist the mutation before the `assert`, or use `require()` for validation
    ╭▸ ROOT/testdata/AssertStateChange.sol:LL:CC
    │
 LL │         assert(token.transfer(to, amt));
@@ -62,7 +62,7 @@ LL │         assert(token.transfer(to, amt));
    │
    ╰ help: https://getfoundry.sh/forge/linting/assert-state-change
 
-warning[assert-state-change]: assert() argument contains a state-modifying expression; assert() is for invariants, hoist the mutation before the assert, or use require() for validation
+warning[assert-state-change]: `assert()` argument contains a state-modifying expression; `assert()` is for invariants, hoist the mutation before the `assert`, or use `require()` for validation
    ╭▸ ROOT/testdata/AssertStateChange.sol:LL:CC
    │
 LL │         assert(token.update(target, amt));
@@ -70,7 +70,7 @@ LL │         assert(token.update(target, amt));
    │
    ╰ help: https://getfoundry.sh/forge/linting/assert-state-change
 
-warning[assert-state-change]: assert() argument contains a state-modifying expression; assert() is for invariants, hoist the mutation before the assert, or use require() for validation
+warning[assert-state-change]: `assert()` argument contains a state-modifying expression; `assert()` is for invariants, hoist the mutation before the `assert`, or use `require()` for validation
    ╭▸ ROOT/testdata/AssertStateChange.sol:LL:CC
    │
 LL │         assert(items.bump());
@@ -78,7 +78,15 @@ LL │         assert(items.bump());
    │
    ╰ help: https://getfoundry.sh/forge/linting/assert-state-change
 
-warning[assert-state-change]: assert() argument contains a state-modifying expression; assert() is for invariants, hoist the mutation before the assert, or use require() for validation
+warning[assert-state-change]: `assert()` argument contains a state-modifying expression; `assert()` is for invariants, hoist the mutation before the `assert`, or use `require()` for validation
+   ╭▸ ROOT/testdata/AssertStateChange.sol:LL:CC
+   │
+LL │         assert(getItems().bump());
+   │                ━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/assert-state-change
+
+warning[assert-state-change]: `assert()` argument contains a state-modifying expression; `assert()` is for invariants, hoist the mutation before the `assert`, or use `require()` for validation
    ╭▸ ROOT/testdata/AssertStateChange.sol:LL:CC
    │
 LL │         assert(o.check(n));
@@ -86,7 +94,7 @@ LL │         assert(o.check(n));
    │
    ╰ help: https://getfoundry.sh/forge/linting/assert-state-change
 
-warning[assert-state-change]: assert() argument contains a state-modifying expression; assert() is for invariants, hoist the mutation before the assert, or use require() for validation
+warning[assert-state-change]: `assert()` argument contains a state-modifying expression; `assert()` is for invariants, hoist the mutation before the `assert`, or use `require()` for validation
    ╭▸ ROOT/testdata/AssertStateChange.sol:LL:CC
    │
 LL │         assert(o.check(a));
@@ -94,7 +102,7 @@ LL │         assert(o.check(a));
    │
    ╰ help: https://getfoundry.sh/forge/linting/assert-state-change
 
-warning[assert-state-change]: assert() argument contains a state-modifying expression; assert() is for invariants, hoist the mutation before the assert, or use require() for validation
+warning[assert-state-change]: `assert()` argument contains a state-modifying expression; `assert()` is for invariants, hoist the mutation before the `assert`, or use `require()` for validation
    ╭▸ ROOT/testdata/AssertStateChange.sol:LL:CC
    │
 LL │         assert((xs[0] = 1) > 0);
@@ -102,7 +110,7 @@ LL │         assert((xs[0] = 1) > 0);
    │
    ╰ help: https://getfoundry.sh/forge/linting/assert-state-change
 
-warning[assert-state-change]: assert() argument contains a state-modifying expression; assert() is for invariants, hoist the mutation before the assert, or use require() for validation
+warning[assert-state-change]: `assert()` argument contains a state-modifying expression; `assert()` is for invariants, hoist the mutation before the `assert`, or use `require()` for validation
    ╭▸ ROOT/testdata/AssertStateChange.sol:LL:CC
    │
 LL │         assert((m[user] = amt) > 0);
@@ -110,7 +118,7 @@ LL │         assert((m[user] = amt) > 0);
    │
    ╰ help: https://getfoundry.sh/forge/linting/assert-state-change
 
-warning[assert-state-change]: assert() argument contains a state-modifying expression; assert() is for invariants, hoist the mutation before the assert, or use require() for validation
+warning[assert-state-change]: `assert()` argument contains a state-modifying expression; `assert()` is for invariants, hoist the mutation before the `assert`, or use `require()` for validation
    ╭▸ ROOT/testdata/AssertStateChange.sol:LL:CC
    │
 LL │         assert(tokens[i].mutate());
@@ -118,7 +126,7 @@ LL │         assert(tokens[i].mutate());
    │
    ╰ help: https://getfoundry.sh/forge/linting/assert-state-change
 
-warning[assert-state-change]: assert() argument contains a state-modifying expression; assert() is for invariants, hoist the mutation before the assert, or use require() for validation
+warning[assert-state-change]: `assert()` argument contains a state-modifying expression; `assert()` is for invariants, hoist the mutation before the `assert`, or use `require()` for validation
    ╭▸ ROOT/testdata/AssertStateChange.sol:LL:CC
    │
 LL │         assert(byUser[user].mutate());
@@ -126,7 +134,7 @@ LL │         assert(byUser[user].mutate());
    │
    ╰ help: https://getfoundry.sh/forge/linting/assert-state-change
 
-warning[assert-state-change]: assert() argument contains a state-modifying expression; assert() is for invariants, hoist the mutation before the assert, or use require() for validation
+warning[assert-state-change]: `assert()` argument contains a state-modifying expression; `assert()` is for invariants, hoist the mutation before the `assert`, or use `require()` for validation
    ╭▸ ROOT/testdata/AssertStateChange.sol:LL:CC
    │
 LL │         assert(cfg.token.transfer(to, amt));
@@ -134,7 +142,7 @@ LL │         assert(cfg.token.transfer(to, amt));
    │
    ╰ help: https://getfoundry.sh/forge/linting/assert-state-change
 
-warning[assert-state-change]: assert() argument contains a state-modifying expression; assert() is for invariants, hoist the mutation before the assert, or use require() for validation
+warning[assert-state-change]: `assert()` argument contains a state-modifying expression; `assert()` is for invariants, hoist the mutation before the `assert`, or use `require()` for validation
    ╭▸ ROOT/testdata/AssertStateChange.sol:LL:CC
    │
 LL │         assert(getToken().transfer(to, amt));
@@ -142,7 +150,7 @@ LL │         assert(getToken().transfer(to, amt));
    │
    ╰ help: https://getfoundry.sh/forge/linting/assert-state-change
 
-warning[assert-state-change]: assert() argument contains a state-modifying expression; assert() is for invariants, hoist the mutation before the assert, or use require() for validation
+warning[assert-state-change]: `assert()` argument contains a state-modifying expression; `assert()` is for invariants, hoist the mutation before the `assert`, or use `require()` for validation
    ╭▸ ROOT/testdata/AssertStateChange.sol:LL:CC
    │
 LL │         assert(payees[user].send(1 ether));
@@ -150,7 +158,7 @@ LL │         assert(payees[user].send(1 ether));
    │
    ╰ help: https://getfoundry.sh/forge/linting/assert-state-change
 
-warning[assert-state-change]: assert() argument contains a state-modifying expression; assert() is for invariants, hoist the mutation before the assert, or use require() for validation
+warning[assert-state-change]: `assert()` argument contains a state-modifying expression; `assert()` is for invariants, hoist the mutation before the `assert`, or use `require()` for validation
    ╭▸ ROOT/testdata/AssertStateChange.sol:LL:CC
    │
 LL │         assert(this.mutate());
@@ -158,7 +166,7 @@ LL │         assert(this.mutate());
    │
    ╰ help: https://getfoundry.sh/forge/linting/assert-state-change
 
-warning[assert-state-change]: assert() argument contains a state-modifying expression; assert() is for invariants, hoist the mutation before the assert, or use require() for validation
+warning[assert-state-change]: `assert()` argument contains a state-modifying expression; `assert()` is for invariants, hoist the mutation before the `assert`, or use `require()` for validation
    ╭▸ ROOT/testdata/AssertStateChange.sol:LL:CC
    │
 LL │         assert(factory.token().transfer(to, amt));
@@ -166,7 +174,7 @@ LL │         assert(factory.token().transfer(to, amt));
    │
    ╰ help: https://getfoundry.sh/forge/linting/assert-state-change
 
-warning[assert-state-change]: assert() argument contains a state-modifying expression; assert() is for invariants, hoist the mutation before the assert, or use require() for validation
+warning[assert-state-change]: `assert()` argument contains a state-modifying expression; `assert()` is for invariants, hoist the mutation before the `assert`, or use `require()` for validation
    ╭▸ ROOT/testdata/AssertStateChange.sol:LL:CC
    │
 LL │         assert(payee.recipient.send(1 ether));

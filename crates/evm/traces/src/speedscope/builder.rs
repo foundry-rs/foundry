@@ -4,12 +4,12 @@
 //! Gas consumption is used as the value unit, so flame graph widths represent gas usage.
 
 use super::schema::{EventedProfile, Frame, Profile, SpeedscopeFile, ValueUnit};
-use alloy_primitives::hex::ToHexExt;
+use alloy_primitives::{hex::ToHexExt, map::HashMap};
 use revm_inspectors::tracing::{
     CallTraceArena,
     types::{CallTraceNode, CallTraceStep, DecodedTraceStep, TraceMemberOrder},
 };
-use std::{borrow::Cow, collections::HashMap};
+use std::borrow::Cow;
 
 struct SpeedscopeBuilder<'a> {
     file: SpeedscopeFile<'a>,
@@ -23,7 +23,7 @@ impl<'a> SpeedscopeBuilder<'a> {
         Self {
             file: SpeedscopeFile::new(name.clone()),
             profile: EventedProfile::new(name, ValueUnit::None),
-            frame_cache: HashMap::new(),
+            frame_cache: HashMap::default(),
             cumulative_gas: 0,
         }
     }

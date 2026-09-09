@@ -46,21 +46,71 @@ Next, choose whether you want an [early or late lint pass](#choosing-between-ear
   // Note: The macro automatically generates a help link to the Foundry book
   ```
 
-- Register the pass struct and the lint using `register_lints!` in the `mod.rs` of its corresponding severity category. Specify the pass type (`early`, `late`, or both). Note that a single pass can handle multiple lints:
+- Declare the lint module and register its pass(es) with `register_lints!` in the `mod.rs` of its corresponding severity category. Entries are grouped by module (`module: (PassStruct, early | late | project, (LINTS...)), ...;`); a single pass can handle multiple lints and a module can declare several passes:
   ```rust
+  mod mixed_case;
+  mod pascal_case;
+  mod screaming_snake_case;
+
   register_lints!(
-    (PascalCaseStruct, early, (PASCAL_CASE_STRUCT)),
-    (MixedCaseVariable, early, (MIXED_CASE_VARIABLE)),
-    (MixedCaseFunction, early, (MIXED_CASE_FUNCTION)),
-    (ScreamingSnakeCase, early, (SCREAMING_SNAKE_CASE_CONSTANT, SCREAMING_SNAKE_CASE_IMMUTABLE)),
-    (AsmKeccak256, late, (ASM_KECCAK256))
+      pascal_case: (PascalCaseStruct, early, (PASCAL_CASE_STRUCT));
+      mixed_case:
+          (MixedCaseVariable, early, (MIXED_CASE_VARIABLE)),
+          (MixedCaseFunction, early, (MIXED_CASE_FUNCTION));
+      screaming_snake_case:
+          (ScreamingSnakeCase, early, (SCREAMING_SNAKE_CASE_CONSTANT, SCREAMING_SNAKE_CASE_IMMUTABLE));
   );
-  // The macro automatically generates the pass structs and helper functions
+  // The macro glob-imports each module and generates the pass structs, `REGISTERED_LINTS` and
+  // the registration function.
   ```
+
+- Reuse the shared HIR probes in `crates/lint/src/sol/analysis/` (expression, statement, type and access-control helpers) instead of reimplementing them in the lint.
 
 - Implement the appropriate trait logic (`EarlyLintPass` or `LateLintPass`) for your lint. Do it in a new file within the relevant severity module (e.g., `src/sol/med/my_new_lint.rs`).
 
-- Add a markdown documentation file for the lint at `crates/lint/docs/<str_id>.md`. The file is referenced by the lint's `help` URL (`https://getfoundry.sh/forge/linting/<str_id>`) and is consumed by the [Foundry book](https://github.com/foundry-rs/book) to render the lint reference page. Use [`crates/lint/docs/_template.md`](../../crates/lint/docs/_template.md) as a starting point. The presence of this file is enforced by the `registered_lints_have_docs` unit test in `crates/lint/src/sol/mod.rs`.
+- Add the canonical documentation at `crates/lint/docs/<str_id>.md` in the same Foundry PR.
+  Use [`crates/lint/docs/_template.md`](../../crates/lint/docs/_template.md) as a starting point.
+  The tests in `crates/lint/src/sol/mod.rs` enforce registry coverage, metadata, help URLs,
+  and the page structure. Run them with `cargo test -p forge-lint --lib sol::tests`.
+  The [Foundry Book](https://github.com/foundry-rs/book) validates lint documentation and generates
+  its lint reference pages and navigation from these files with `import:lints`.
+
+### Lint writing style
+
+Follow Clippy's [lint authoring guide](https://doc.rust-lang.org/clippy/development/adding_lints.html),
+[diagnostic conventions](https://rustc-dev-guide.rust-lang.org/diagnostics.html), and
+[lint naming conventions](https://rust-lang.github.io/rfcs/0344-conventions-galore.html#lints), with
+the following Foundry-specific conventions:
+
+- Use `SCREAMING_SNAKE_CASE` for the Rust static and `kebab-case` for its public lint ID. Name new
+  lints after the condition they detect so the name reads naturally when enabled or suppressed.
+  Existing public IDs are configuration and documentation APIs: do not rename them just to adopt
+  Clippy's `snake_case` spelling or a different naming style.
+- Make the primary diagnostic a short, factual description of the detected problem. Use help
+  messages or suggestion labels for detailed corrective instructions. Start diagnostic text with lowercase
+  prose and omit the final period for a single sentence; preserve capitalization inside code and
+  in acronyms. Use normal sentence punctuation for multi-sentence explanations.
+- Enclose code, identifiers, types, operators, and literal values in backticks in descriptions,
+  labels, notes, and help text. Do not add backticks to replacement source code itself.
+- Highlight the relevant code and make suggestions actionable. Use `MachineApplicable` only when
+  the replacement is correct without user intervention; document assumptions and limitations.
+- Write each reference page using the [documentation contract](../../crates/lint/docs/README.md).
+  Explain what is detected, why it matters, and show a minimal triggering example followed by
+  `Use instead:` and a corrected example. For policy or style choices, use `Why restrict this?`
+  rather than claiming that the flagged code is inherently bad. Foundry has severity groups,
+  not a Clippy `restriction` group, so choose the heading based on the lint's purpose.
+- Keep reference pages user-facing: explain the problem, its impact, and how to address it.
+  Omit lint implementation details such as AST/HIR representation, alias tracking, traversal
+  rules, analysis budgets, diagnostic placement, and comparisons with other detectors.
+  Include a limitation only when it changes how the reader should interpret or address a warning.
+  Implementation explanations belong in developer documentation or source comments.
+- Start reference pages with `What it does` instead of a duplicate summary. Keep shared lint
+  controls in the linting guide; omit generic review reminders and repeated explanations.
+
+Review every diagnostic path and the reference page together. Cover triggering and non-triggering
+cases in UI tests, update affected expected output when messages change, and check that examples
+match the implemented detector. A structural check cannot establish that a suggested change is
+semantically correct.
 
 ### Choosing Between Early and Late Passes
 

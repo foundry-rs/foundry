@@ -349,3 +349,115 @@ async fn accepts_spend_after_funding_when_pool_checks_disabled() {
     assert!(receipt1.status());
     assert!(receipt2.status());
 }
+
+/// Queued replacements must remove the previous transaction.
+#[tokio::test(flavor = "multi_thread")]
+async fn queued_tx_replacement_removes_old_tx() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    _api.anvil_set_auto_mine(false).await.unwrap();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let account = accounts[0].address();
+    let recipient = accounts[1].address();
+    let gas_price_base = 221435145689u128;
+
+    // Nonce 5 remains queued until nonces 0 through 4 arrive.
+    let make_tx = |gas_price: u128| {
+        WithOtherFields::new(
+            TransactionRequest::default()
+                .with_to(recipient)
+                .with_from(account)
+                .with_value(U256::from(1))
+                .with_gas_price(gas_price)
+                .with_nonce(5),
+        )
+    };
+
+    let first = provider.send_transaction(make_tx(gas_price_base)).await.unwrap();
+    let first_hash = *first.tx_hash();
+    let status = provider.txpool_status().await.unwrap();
+    assert_eq!(status.queued, 1, "first tx should be queued");
+
+    let second = provider.send_transaction(make_tx(gas_price_base * 2)).await.unwrap();
+    let second_hash = *second.tx_hash();
+
+    let status = provider.txpool_status().await.unwrap();
+    assert_eq!(status.queued, 1, "replacement must remove the old queued tx, not stack it");
+    assert!(provider.get_transaction_by_hash(first_hash).await.unwrap().is_none());
+    assert!(provider.get_transaction_by_hash(second_hash).await.unwrap().is_some());
+
+    // A second replacement checks that marker cleanup preserves replacement tracking.
+    let third = provider.send_transaction(make_tx(gas_price_base * 3)).await.unwrap();
+    let third_hash = *third.tx_hash();
+    let status = provider.txpool_status().await.unwrap();
+    assert_eq!(status.queued, 1);
+    assert!(provider.get_transaction_by_hash(second_hash).await.unwrap().is_none());
+    assert!(provider.get_transaction_by_hash(third_hash).await.unwrap().is_some());
+
+    // Underpriced replacements must still be rejected.
+    let underpriced_err =
+        provider.send_transaction(make_tx(gas_price_base * 2 + 1)).await.unwrap_err();
+    let msg = format!("{underpriced_err:?}").to_lowercase();
+    assert!(msg.contains("underpriced"), "expected underpriced rejection, got: {msg}");
+
+    let status = provider.txpool_status().await.unwrap();
+    assert_eq!(status.queued, 1);
+    assert!(provider.get_transaction_by_hash(third_hash).await.unwrap().is_some());
+
+    // Fill the nonce gap to check marker cleanup also preserves promotion and mining.
+    for nonce in 0..5u64 {
+        let filler = WithOtherFields::new(
+            TransactionRequest::default()
+                .with_to(recipient)
+                .with_from(account)
+                .with_value(U256::from(1))
+                .with_gas_price(gas_price_base)
+                .with_nonce(nonce),
+        );
+        let _ = provider.send_transaction(filler).await.unwrap();
+    }
+    _api.evm_mine(None).await.unwrap();
+    _api.evm_mine(None).await.unwrap();
+
+    let receipt = provider.get_transaction_receipt(third_hash).await.unwrap();
+    assert!(
+        receipt.is_some_and(|r| r.status()),
+        "the surviving replacement tx must mine successfully once its nonce gap is filled"
+    );
+}
+
+/// Dropping a transaction must also search the queued pool.
+#[tokio::test(flavor = "multi_thread")]
+async fn anvil_drop_transaction_removes_queued_tx() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let account = accounts[0].address();
+    let recipient = accounts[1].address();
+
+    let tx = WithOtherFields::new(
+        TransactionRequest::default()
+            .with_to(recipient)
+            .with_from(account)
+            .with_value(U256::from(1))
+            .with_gas_price(221435145689u128)
+            .with_nonce(5),
+    );
+    let sent = provider.send_transaction(tx).await.unwrap();
+    let hash = *sent.tx_hash();
+
+    let status = provider.txpool_status().await.unwrap();
+    assert_eq!(status.queued, 1);
+
+    let dropped = api.anvil_drop_transaction(hash).await.unwrap();
+    assert_eq!(dropped, Some(hash), "anvil_dropTransaction should report the queued tx as dropped");
+
+    let status = provider.txpool_status().await.unwrap();
+    assert_eq!(status.queued, 0, "the queued tx must actually be removed from the pool");
+    assert!(provider.get_transaction_by_hash(hash).await.unwrap().is_none());
+}

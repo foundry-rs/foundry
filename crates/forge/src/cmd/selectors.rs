@@ -169,7 +169,8 @@ impl SelectorsSubcommands {
                 // Compile the project with the two contracts included
                 let user_extra_output = !build.compiler.extra_output.is_empty()
                     || !build.compiler.extra_output_files.is_empty();
-                let mut project = build.project()?;
+                let config = build.load_config_with_dependencies()?;
+                let mut project = config.project()?;
                 if !user_extra_output && !project.build_info {
                     project.no_artifacts = true;
                     project.update_output_selection(|selection| {
@@ -241,6 +242,15 @@ impl SelectorsSubcommands {
             Self::List { contract, project_paths, no_group } => {
                 sh_status!("Listing selectors for contracts in the project...")?;
                 let (mut project, compiler) = project_from_paths(project_paths)?;
+                let target_path = contract
+                    .as_ref()
+                    .filter(|_| project.no_artifacts)
+                    .and_then(|contract| project.find_contract_path(contract).ok());
+                let compiler = if let Some(target_path) = target_path {
+                    compiler.files([target_path])
+                } else {
+                    compiler
+                };
                 let outcome = compile_abi_project(&mut project, compiler.quiet(true))?;
                 let artifacts = if let Some(contract) = contract {
                     let found_artifact = outcome.find_first(&contract);
@@ -298,7 +308,7 @@ impl SelectorsSubcommands {
                 for (contract, artifact) in artifacts.by_ref() {
                     let abi = artifact.abi.ok_or_else(|| eyre::eyre!("Unable to fetch abi"))?;
 
-                    let contract_selectors = selectors.entry(contract.clone()).or_default();
+                    let contract_selectors = selectors.entry(contract).or_default();
 
                     for func in abi.functions() {
                         let sig = func.signature();
@@ -450,7 +460,8 @@ impl SelectorsSubcommands {
 fn project_from_paths(
     project_paths: ProjectPathOpts,
 ) -> Result<(Project<MultiCompiler>, ProjectCompiler)> {
-    let config = BuildOpts { project_paths, ..Default::default() }.load_config()?;
+    let build = BuildOpts { project_paths, ..Default::default() };
+    let config = build.load_config_with_dependencies()?;
     let compiler = ProjectCompiler::new().dynamic_test_linking(config.dynamic_test_linking);
     let mut project = config.project()?;
     if !project.build_info {

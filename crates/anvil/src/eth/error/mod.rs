@@ -43,6 +43,8 @@ pub enum BlockchainError {
     FailedToDecodeTransaction,
     #[error("Failed to decode receipt")]
     FailedToDecodeReceipt,
+    #[error("Cannot EIP-2718 encode transaction type 0x{0:x}")]
+    UnsupportedTransactionEncoding(u8),
     #[error("Failed to decode state")]
     FailedToDecodeStateDump,
     #[error("Prevrandao not in the EVM's environment after merge")]
@@ -228,6 +230,8 @@ pub enum PoolError {
 pub enum FeeHistoryError {
     #[error("requested block range is out of bounds")]
     InvalidBlockRange,
+    #[error("reward percentiles must be strictly increasing and between 0 and 100")]
+    InvalidRewardPercentiles,
     #[error("could not find block number requested: {0}")]
     BlockNotFound(BlockNumberOrTag),
 }
@@ -346,6 +350,11 @@ pub enum InvalidTransactionError {
     /// Tempo transaction valid_before is expired or too close to current time
     #[error("Tempo tx valid_before ({valid_before}) must be > current time + 3s ({min_allowed})")]
     TempoValidBeforeExpired { valid_before: u64, min_allowed: u64 },
+    /// Tempo expiring nonce transaction valid_before is too far in the future.
+    #[error(
+        "Tempo expiring nonce tx valid_before ({valid_before}) must be <= current time + {max_expiry_secs}s ({max_allowed})"
+    )]
+    TempoValidBeforeTooFar { valid_before: u64, max_expiry_secs: u64, max_allowed: u64 },
     /// Tempo transaction valid_after is too far in the future
     #[error("Tempo tx valid_after ({valid_after}) must be <= current time + 1h ({max_allowed})")]
     TempoValidAfterTooFar { valid_after: u64, max_allowed: u64 },
@@ -506,6 +515,9 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 }
                 BlockchainError::FailedToDecodeReceipt => {
                     RpcError::invalid_params("Failed to decode receipt")
+                }
+                BlockchainError::UnsupportedTransactionEncoding(_) => {
+                    RpcError::internal_error_with(err.to_string())
                 }
                 BlockchainError::FailedToDecodeStateDump => {
                     RpcError::invalid_params("Failed to decode state dump")

@@ -5,8 +5,12 @@ use super::symbolic_helpers::{
 use crate::skip_unless_z3;
 use foundry_test_utils::{forgetest_init, str, util::OutputExt};
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 forgetest_init!(symbolic_invariant_runs_before_fuzz_campaign, |prj, cmd| {
     skip_unless_z3!("symbolic_invariant_runs_before_fuzz_campaign");
+    prj.update_config(|config| config.invariant.runs = 0);
 
     prj.add_test(
         "SymbolicInvariantRuns.t.sol",
@@ -42,8 +46,6 @@ contract SymbolicInvariantRuns is Test {
     let stdout = assert_symbolic_engine_witness(cmd.args([
         "test",
         "--symbolic",
-        "--fuzz-runs",
-        "0",
         "--match-test",
         "invariant_counterStaysZero",
     ]))
@@ -61,6 +63,54 @@ calldata=bump(uint8)
 invariant_counterStaysZero()
 "#]],
     );
+});
+
+forgetest_init!(symbolic_invariant_ignores_bool_return, |prj, cmd| {
+    skip_unless_z3!("symbolic_invariant_ignores_bool_return");
+    prj.update_config(|config| config.invariant.runs = 0);
+
+    prj.add_test(
+        "SymbolicInvariantBoolReturn.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicBoolReturnTarget {
+    uint256 public counter;
+
+    function bump() external {
+        counter = 1;
+    }
+}
+
+contract SymbolicInvariantBoolReturn is Test {
+    function setUp() public {
+        targetContract(address(new SymbolicBoolReturnTarget()));
+        targetSender(address(this));
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 1
+    function invariant_alwaysFalseButNeverAsserts() public pure returns (bool) {
+        return false;
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--match-test",
+            "invariant_alwaysFalseButNeverAsserts",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_alwaysFalseButNeverAsserts()");
+    assert_eq!(result["status"], "Success");
+    assert_eq!(result["symbolic"]["status"], "pass", "{}", result["symbolic"]["incomplete"]);
 });
 
 forgetest_init!(symbolic_invariant_safe_still_runs_fuzz_campaign, |prj, cmd| {
@@ -118,6 +168,7 @@ contract SymbolicInvariantSafeRunsFuzz is Test {
 
 forgetest_init!(symbolic_invariant_replays_setup_arbitrary_storage, |prj, cmd| {
     skip_unless_z3!("symbolic_invariant_replays_setup_arbitrary_storage");
+    prj.update_config(|config| config.invariant.runs = 0);
 
     prj.add_test(
         "SymbolicInvariantSetupStorage.t.sol",
@@ -166,15 +217,7 @@ contract SymbolicInvariantSetupStorage is Test {
     );
 
     let output = cmd
-        .args([
-            "test",
-            "--symbolic",
-            "--json",
-            "--fuzz-runs",
-            "0",
-            "--match-test",
-            "invariant_notHit",
-        ])
+        .args(["test", "--symbolic", "--json", "--match-test", "invariant_notHit"])
         .assert_failure()
         .get_output()
         .stdout
@@ -308,15 +351,7 @@ contract SymbolicSecondaryStorage is Test {
     );
 
     let output = cmd
-        .args([
-            "test",
-            "--symbolic",
-            "--json",
-            "--fuzz-runs",
-            "0",
-            "--match-test",
-            "invariant_secondary",
-        ])
+        .args(["test", "--symbolic", "--json", "--match-test", "invariant_secondary"])
         .assert_failure()
         .get_output()
         .stdout
@@ -345,15 +380,7 @@ contract SymbolicSecondaryStorage is Test {
     for _ in 0..2 {
         let output = cmd
             .forge_fuse()
-            .args([
-                "test",
-                "--symbolic",
-                "--json",
-                "--fuzz-runs",
-                "0",
-                "--match-test",
-                "invariant_",
-            ])
+            .args(["test", "--symbolic", "--json", "--match-test", "invariant_"])
             .assert_failure()
             .get_output()
             .stdout
@@ -381,6 +408,7 @@ contract SymbolicSecondaryStorage is Test {
 
 forgetest_init!(symbolic_predicate_artifact_rejects_handler_assertion_replay, |prj, cmd| {
     skip_unless_z3!("symbolic_predicate_artifact_rejects_handler_assertion_replay");
+    prj.update_config(|config| config.invariant.runs = 0);
 
     let test_path = prj.add_test(
         "SymbolicPredicateArtifactOrigin.t.sol",
@@ -413,15 +441,7 @@ contract SymbolicPredicateArtifactOrigin is Test {
     );
 
     let output = cmd
-        .args([
-            "test",
-            "--symbolic",
-            "--json",
-            "--fuzz-runs",
-            "0",
-            "--match-test",
-            "invariant_notHit",
-        ])
+        .args(["test", "--symbolic", "--json", "--match-test", "invariant_notHit"])
         .assert_failure()
         .get_output()
         .stdout
@@ -508,8 +528,8 @@ contract SymbolicPredicateArtifactOrigin is Test {
 
 forgetest_init!(symbolic_invariant_handler_failure_stays_handler, |prj, cmd| {
     skip_unless_z3!("symbolic_invariant_handler_failure_stays_handler");
-
     prj.update_config(|config| {
+        config.invariant.runs = 0;
         config.invariant.fail_on_revert = false;
     });
     prj.add_test(
@@ -562,7 +582,7 @@ contract SymbolicInvariantHandlerFailure is Test {
     );
 
     let output = cmd
-        .args(["test", "--symbolic", "--json", "--fuzz-runs", "0", "--match-test", "invariant_ok"])
+        .args(["test", "--symbolic", "--json", "--match-test", "invariant_ok"])
         .assert_failure()
         .get_output()
         .stdout
@@ -652,6 +672,7 @@ contract SymbolicInvariantHandlerFailure is Test {
 
 forgetest_init!(symbolic_invariant_omits_unchecked_predicate_pass_rows, |prj, cmd| {
     skip_unless_z3!("symbolic_invariant_omits_unchecked_predicate_pass_rows");
+    prj.update_config(|config| config.invariant.runs = 0);
 
     prj.add_test(
         "SymbolicInvariantMultiPredicate.t.sol",
@@ -693,8 +714,6 @@ contract SymbolicInvariantMultiPredicate is Test {
             "test",
             "--symbolic",
             "--json",
-            "--fuzz-runs",
-            "0",
             "--match-contract",
             "SymbolicInvariantMultiPredicate",
         ])
@@ -716,6 +735,7 @@ contract SymbolicInvariantMultiPredicate is Test {
 
 forgetest_init!(symbolic_invariant_replays_copied_arbitrary_storage, |prj, cmd| {
     skip_unless_z3!("symbolic_invariant_replays_copied_arbitrary_storage");
+    prj.update_config(|config| config.invariant.runs = 0);
 
     prj.add_test(
         "SymbolicInvariantCopiedStorage.t.sol",
@@ -770,8 +790,6 @@ contract SymbolicInvariantCopiedStorage is Test {
     let stdout = assert_symbolic_engine_witness(cmd.args([
         "test",
         "--symbolic",
-        "--fuzz-runs",
-        "0",
         "--match-test",
         "invariant_notHit",
     ]))
@@ -796,6 +814,7 @@ calldata=useStore()
 
 forgetest_init!(symbolic_invariant_replays_initial_state_failure, |prj, cmd| {
     skip_unless_z3!("symbolic_invariant_replays_initial_state_failure");
+    prj.update_config(|config| config.invariant.runs = 0);
 
     prj.add_test(
         "SymbolicInvariantInitialState.t.sol",
@@ -827,8 +846,6 @@ contract SymbolicInvariantInitialState is Test {
         "test",
         "--symbolic",
         "--json",
-        "--fuzz-runs",
-        "0",
         "--match-test",
         "invariant_xIsOne",
     ]))
@@ -872,6 +889,7 @@ contract SymbolicInvariantInitialState is Test {
 
 forgetest_init!(symbolic_after_invariant_runs_only_at_terminal_depth, |prj, cmd| {
     skip_unless_z3!("symbolic_after_invariant_runs_only_at_terminal_depth");
+    prj.update_config(|config| config.invariant.runs = 0);
 
     prj.add_test(
         "SymbolicAfterInvariantTerminal.t.sol",
@@ -907,7 +925,7 @@ contract SymbolicAfterInvariantTerminal is Test {
     );
 
     let output = cmd
-        .args(["test", "--symbolic", "--json", "--fuzz-runs", "0", "--match-test", "invariant_ok"])
+        .args(["test", "--symbolic", "--json", "--match-test", "invariant_ok"])
         .assert_success()
         .get_output()
         .stdout
@@ -919,6 +937,7 @@ contract SymbolicAfterInvariantTerminal is Test {
 
 forgetest_init!(symbolic_invariant_checks_preserve_storage_hook_registration, |prj, cmd| {
     skip_unless_z3!("symbolic_invariant_checks_preserve_storage_hook_registration");
+    prj.update_config(|config| config.invariant.runs = 0);
 
     prj.add_test(
         "SymbolicInvariantStorageHookRegistration.t.sol",
@@ -1039,15 +1058,7 @@ contract SymbolicInvariantStorageHookRegistration is Test {
     );
 
     let output = cmd
-        .args([
-            "test",
-            "--symbolic",
-            "--json",
-            "--fuzz-runs",
-            "0",
-            "--match-test",
-            "invariant_hookReplacementPersists",
-        ])
+        .args(["test", "--symbolic", "--json", "--match-test", "invariant_hookReplacementPersists"])
         .assert_success()
         .get_output()
         .stdout
@@ -1059,6 +1070,7 @@ contract SymbolicInvariantStorageHookRegistration is Test {
 
 forgetest_init!(symbolic_invariant_respects_excluded_fallback_sender, |prj, cmd| {
     skip_unless_z3!("symbolic_invariant_respects_excluded_fallback_sender");
+    prj.update_config(|config| config.invariant.runs = 0);
 
     prj.add_test(
         "SymbolicExcludedFallbackSender.t.sol",
@@ -1099,15 +1111,7 @@ contract SymbolicExcludedFallbackSender is Test {
     );
 
     let output = cmd
-        .args([
-            "test",
-            "--symbolic",
-            "--json",
-            "--fuzz-runs",
-            "0",
-            "--match-test",
-            "invariant_notBroken",
-        ])
+        .args(["test", "--symbolic", "--json", "--match-test", "invariant_notBroken"])
         .assert_success()
         .get_output()
         .stdout
@@ -1364,6 +1368,7 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 // state at the configured sequence end.
 forgetest_init!(symbolic_revert_branch_preserves_end_only_invariant_check, |prj, cmd| {
     skip_unless_z3!("symbolic_revert_branch_preserves_end_only_invariant_check");
+    prj.update_config(|config| config.invariant.runs = 0);
 
     prj.add_test(
         "SymbolicTerminalRevertInvariant.t.sol",
@@ -1406,15 +1411,7 @@ contract SymbolicTerminalRevertInvariant is Test {
     );
 
     let output = cmd
-        .args([
-            "test",
-            "--symbolic",
-            "--json",
-            "--fuzz-runs",
-            "0",
-            "--match-test",
-            "invariant_neverBroken",
-        ])
+        .args(["test", "--symbolic", "--json", "--match-test", "invariant_neverBroken"])
         .assert_failure()
         .get_output()
         .stdout
@@ -1427,8 +1424,8 @@ contract SymbolicTerminalRevertInvariant is Test {
 // Foundry cheatcode effects are not journaled with EVM state. A top-level revert
 // therefore rolls back contract storage but keeps effects such as `vm.mockCall`
 // for the next invariant call.
-forgetest_init!(symbolic_reverted_handler_effect_is_not_reported_safe, |prj, cmd| {
-    skip_unless_z3!("symbolic_reverted_handler_effect_is_not_reported_safe");
+forgetest_init!(symbolic_reverted_handler_effect_replays_counterexample, |prj, cmd| {
+    skip_unless_z3!("symbolic_reverted_handler_effect_replays_counterexample");
 
     prj.add_test(
         "SymbolicRevertedCheatcodeEffects.t.sol",
@@ -1472,27 +1469,17 @@ contract SymbolicRevertedCheatcodeEffects is Test {
 "#,
     );
 
+    // Concrete confirmation must preserve the mock installed by the reverted handler call.
     let output = cmd
-        .args([
-            "test",
-            "--symbolic",
-            "--json",
-            "--fuzz-runs",
-            "0",
-            "--match-test",
-            "invariant_notBroken",
-        ])
+        .args(["test", "--symbolic", "--json", "--match-test", "invariant_notBroken"])
         .assert_failure()
         .get_output()
         .stdout
         .clone();
     let result = json_test_result(&output, "invariant_notBroken()");
     assert_eq!(result["status"], "Failure");
-    assert_eq!(result["symbolic"]["status"], "incomplete", "{result}");
-    assert_eq!(
-        result["symbolic"]["incomplete"]["reason"],
-        "symbolic invariant counterexample did not replay"
-    );
+    assert_eq!(result["symbolic"]["status"], "fail_counterexample", "{result}");
+    assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "{result}");
 });
 
 forgetest_init!(symbolic_invariant_does_not_inherit_prank_into_nested_call, |prj, cmd| {
@@ -1587,6 +1574,7 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 forgetest_init!(symbolic_invariant_zeroes_created_account_storage, |prj, cmd| {
     skip_unless_z3!("symbolic_invariant_zeroes_created_account_storage");
+    prj.update_config(|config| config.invariant.runs = 0);
 
     prj.add_test(
         "SymbolicCreatedStorageInvariant.t.sol",
@@ -1643,8 +1631,6 @@ contract SymbolicCreatedStorageInvariant is Test {
             "test",
             "--symbolic",
             "--json",
-            "--fuzz-runs",
-            "0",
             "--match-test",
             "invariant_noImpossibleCreatedStorage",
         ])
@@ -1659,6 +1645,7 @@ contract SymbolicCreatedStorageInvariant is Test {
 
 forgetest_init!(symbolic_invariant_aliases_concrete_mapping_write_to_symbolic_read, |prj, cmd| {
     skip_unless_z3!("symbolic_invariant_aliases_concrete_mapping_write_to_symbolic_read");
+    prj.update_config(|config| config.invariant.runs = 0);
 
     prj.add_test(
         "SymbolicMappingAliasInvariant.t.sol",
@@ -1702,15 +1689,7 @@ contract SymbolicMappingAliasInvariant is Test {
     );
 
     let output = cmd
-        .args([
-            "test",
-            "--symbolic",
-            "--json",
-            "--fuzz-runs",
-            "0",
-            "--match-test",
-            "invariant_notAccepted",
-        ])
+        .args(["test", "--symbolic", "--json", "--match-test", "invariant_notAccepted"])
         .assert_failure()
         .get_output()
         .stdout
@@ -1813,6 +1792,78 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 [SEED] (use `--fuzz-seed` to reproduce)
 
 "#]]);
+});
+
+#[cfg(unix)]
+forgetest_init!(symbolic_invariant_checks_easy_path_before_deferred_sibling, |prj, cmd| {
+    let solver = prj.root().join("slow-solver");
+    std::fs::write(
+        &solver,
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+    printf 'mock solver\n'
+    exit 0
+fi
+cat >"$0.query"
+printf 'unknown\n'
+"#,
+    )
+    .unwrap();
+    let mut permissions = std::fs::metadata(&solver).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&solver, permissions).unwrap();
+
+    prj.update_config(|config| {
+        config.invariant.runs = 0;
+        config.symbolic.solver_command = Some(solver.display().to_string());
+        config.symbolic.timeout = Some(30);
+    });
+    prj.add_test(
+        "SymbolicInvariantDeferredSibling.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicDeferredSiblingTarget {
+    uint256 public marker;
+
+    function handler(uint256 value) external {
+        if (value == 0) {
+            assert(false);
+            return;
+        }
+        if (value * value == 2) {
+            marker = 1;
+        }
+    }
+}
+
+contract SymbolicInvariantDeferredSibling is Test {
+    SymbolicDeferredSiblingTarget target;
+
+    function setUp() public {
+        target = new SymbolicDeferredSiblingTarget();
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = target.handler.selector;
+        targetSelector(FuzzSelector({addr: address(target), selectors: selectors}));
+        targetContract(address(target));
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 1
+    /// forge-config: default.symbolic.exploration_order = "dfs"
+    function invariant_markerIsBounded() public pure {}
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--match-test", "invariant_markerIsBounded"])
+        .assert_failure()
+        .get_output()
+        .clone();
+    let result = json_test_result(&output.stdout, "invariant_markerIsBounded()");
+    assert_eq!(result["symbolic"]["status"], "fail_counterexample");
+    assert_eq!(result["symbolic"]["replay"]["status"], "confirmed");
+    assert!(!solver.with_extension("query").exists());
 });
 
 // Top-level invariant sequence calls must look up code through the symbolic

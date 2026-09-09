@@ -25,7 +25,6 @@ pub struct DAEstimateArgs {
 }
 
 impl DAEstimateArgs {
-    /// Load the RPC URL from the config file.
     pub async fn run(self) -> Result<()> {
         let Self { block, rpc, network } = self;
         let config = rpc.load_config()?;
@@ -39,30 +38,25 @@ impl DAEstimateArgs {
         match network {
             NetworkVariant::Optimism => da_estimate::<Optimism>(&config, block).await,
             NetworkVariant::Ethereum => da_estimate::<Ethereum>(&config, block).await,
-            #[cfg(feature = "monad")]
-            NetworkVariant::Monad => unsupported_da_estimation("Monad"),
-            NetworkVariant::Tempo => unsupported_da_estimation("Tempo"),
+            other => eyre::bail!(
+                "DA estimation is not supported for {other:?}: EIP-4844 blob transactions are not available on this network"
+            ),
         }
     }
 }
 
-fn unsupported_da_estimation(network: &str) -> Result<()> {
-    Err(eyre::eyre!(
-        "DA estimation is not supported for {network}: EIP-4844 blob transactions are not available on this network"
-    ))
-}
-
-pub async fn da_estimate<N: Network>(config: &Config, block_id: BlockId) -> Result<()> {
+async fn da_estimate<N: Network>(config: &Config, block_id: BlockId) -> Result<()> {
     let provider = ProviderBuilder::<N>::from_config(config)?.build()?;
     let block =
         provider.get_block(block_id).full().await?.ok_or_else(|| eyre::eyre!("Block not found"))?;
 
     let block_number = block.header().number();
     let tx_count = block.transactions().len();
-    let mut da_estimate = 0;
-    for tx in block.transactions().txns() {
-        da_estimate += op_alloy_flz::tx_estimated_size_fjord(&tx.as_ref().encoded_2718());
-    }
+    let da_estimate = block
+        .transactions()
+        .txns()
+        .map(|tx| op_alloy_flz::tx_estimated_size_fjord(&tx.as_ref().encoded_2718()))
+        .sum::<u64>();
     sh_status!(
         "Estimated data availability size for block {block_number} with {tx_count} transactions:"
     )?;
@@ -70,21 +64,19 @@ pub async fn da_estimate<N: Network>(config: &Config, block_id: BlockId) -> Resu
     Ok(())
 }
 
-#[cfg(all(test, feature = "monad"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
     #[tokio::test]
-    #[cfg(feature = "monad")]
-    async fn monad_da_estimate_is_unsupported() {
+    async fn rejects_networks_without_blob_transactions() {
         let args = DAEstimateArgs {
             block: BlockId::latest(),
             rpc: RpcOpts::default(),
-            network: Some(NetworkVariant::Monad),
+            network: Some(NetworkVariant::Tempo),
         };
-
         let err = args.run().await.unwrap_err().to_string();
-        assert!(err.contains("Monad"), "{err}");
+        assert!(err.contains("Tempo"), "{err}");
         assert!(err.contains("EIP-4844"), "{err}");
     }
 }

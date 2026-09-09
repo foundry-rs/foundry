@@ -1,6 +1,5 @@
 use super::transaction::TransactionInfo;
-#[cfg(test)]
-use alloy_consensus::Header;
+use crate::eth::transaction::MaybeImpersonatedTransaction;
 use alloy_consensus::{
     BlockBody, EMPTY_OMMER_ROOT_HASH, Typed2718, proofs::ordered_trie_root_with_encoder,
     transaction::RlpEcdsaEncodableTx,
@@ -8,8 +7,6 @@ use alloy_consensus::{
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::Network;
 use foundry_primitives::{FoundryHeader, FoundryTxEnvelope};
-
-use crate::eth::transaction::MaybeImpersonatedTransaction;
 
 /// Type alias for a block containing potentially impersonated transactions.
 pub type Block<T = FoundryTxEnvelope, H = FoundryHeader> =
@@ -79,8 +76,8 @@ where
 #[cfg(test)]
 mod tests {
     use alloy_consensus::{
-        BlobTransactionSidecar, BlobTransactionSidecarVariant, BlockHeader, SignableTransaction,
-        TxEip4844, TxEip4844Variant, proofs::calculate_transaction_root,
+        BlobTransactionSidecar, BlobTransactionSidecarVariant, BlockHeader, Header,
+        SignableTransaction, TxEip4844, TxEip4844Variant, proofs::calculate_transaction_root,
     };
     use alloy_primitives::{
         Address, B64, B256, Bloom, Signature, U256, b256,
