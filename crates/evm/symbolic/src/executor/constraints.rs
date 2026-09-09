@@ -151,9 +151,10 @@ impl SymbolicExecutor {
             return Ok(CheatcodeOutcome::Failure);
         }
         let out_of_range = in_range.not(&mut self.cx);
-        let (_out_of_range_constraints, out_of_range_sat) =
+        let (out_of_range_constraints, out_of_range_sat) =
             self.constraints_with_condition(state, out_of_range)?;
         if out_of_range_sat {
+            state.constraints = out_of_range_constraints;
             return Ok(CheatcodeOutcome::Failure);
         }
 
@@ -213,9 +214,10 @@ impl SymbolicExecutor {
             return Ok(CheatcodeOutcome::Failure);
         }
         let out_of_range = in_range.not(&mut self.cx);
-        let (_out_of_range_constraints, out_of_range_sat) =
+        let (out_of_range_constraints, out_of_range_sat) =
             self.constraints_with_condition(state, out_of_range)?;
         if out_of_range_sat {
+            state.constraints = out_of_range_constraints;
             return Ok(CheatcodeOutcome::Failure);
         }
 
@@ -231,5 +233,72 @@ impl SymbolicExecutor {
         let same_value = SymBoolExpr::eq(&mut self.cx, bounded.clone(), value_expr);
         state.constraints.push(same_value.not(&mut self.cx));
         Ok(CheatcodeOutcome::Continue(vec![bounded]))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_bound_ambiguous_failure_constrains_value(signed: bool) {
+        let mut executor = SymbolicExecutor::new(SymbolicConfig::default());
+        let calldata =
+            SymbolicCalldata::selector_only(&mut executor.cx, &Function::parse("empty()").unwrap())
+                .unwrap();
+        let mut state = PathState::new(
+            &mut executor.cx,
+            Address::ZERO,
+            Address::ZERO,
+            U256::ZERO,
+            calldata,
+            false,
+        );
+        let value = state.fresh_word(&mut executor.cx, "value");
+        let min = SymExpr::constant(&mut executor.cx, U256::from(10));
+        let max = SymExpr::constant(&mut executor.cx, U256::from(20));
+        state.memory.store_word(&mut executor.cx, 0, value.clone());
+        state.memory.store_word(&mut executor.cx, 32, min.clone());
+        state.memory.store_word(&mut executor.cx, 64, max.clone());
+
+        let below_min = SymBoolExpr::cmp(
+            &mut executor.cx,
+            if signed { SymCmpOp::Slt } else { SymCmpOp::Ult },
+            value.clone(),
+            min,
+        );
+        let above_max = SymBoolExpr::cmp(
+            &mut executor.cx,
+            if signed { SymCmpOp::Sgt } else { SymCmpOp::Ugt },
+            value,
+            max,
+        );
+        let min_condition = below_min.clone().not(&mut executor.cx);
+        let max_condition = above_max.clone().not(&mut executor.cx);
+        let in_range = SymBoolExpr::and(&mut executor.cx, vec![min_condition, max_condition]);
+        let out_of_range = in_range.clone().not(&mut executor.cx);
+        assert!(executor.constraints_with_condition(&state, in_range.clone()).unwrap().1);
+        assert!(executor.constraints_with_condition(&state, out_of_range).unwrap().1);
+
+        let outcome = if signed {
+            executor.handle_bound_int(&mut state, 0)
+        } else {
+            executor.handle_bound_uint(&mut state, 0)
+        }
+        .unwrap();
+        assert!(matches!(outcome, CheatcodeOutcome::Failure));
+        assert!(!executor.constraints_with_condition(&state, in_range).unwrap().1);
+        assert!(executor.constraints_with_condition(&state, below_min).unwrap().1);
+        assert!(executor.constraints_with_condition(&state, above_max).unwrap().1);
+        assert!(executor.is_sat_with_state(&state, &state.constraints).unwrap());
+    }
+
+    #[test]
+    fn bound_uint_ambiguous_failure_constrains_value() {
+        assert_bound_ambiguous_failure_constrains_value(false);
+    }
+
+    #[test]
+    fn bound_int_ambiguous_failure_constrains_value() {
+        assert_bound_ambiguous_failure_constrains_value(true);
     }
 }
