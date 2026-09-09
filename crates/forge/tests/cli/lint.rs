@@ -548,19 +548,25 @@ contract EnvironmentCapture {
 forgetest!(block_environment_lints_tests_and_scripts, |prj, cmd| {
     prj.add_test("EnvironmentCapture.t.sol", BLOCK_ENVIRONMENT_CAPTURE);
     let expected = str![[r#"
-warning[environment-read-across-mutation]: `block.number` may be reused across a Foundry environment mutation; capture it with `vm.getBlockNumber()` instead
+warning[environment-read-across-mutation]: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
    [FILE]:11:26
    │
 11 │         uint256 height = block.number;
    │                          ━━━━━━━━━━━━
+12 │         uint256 time = block.timestamp;
+13 │         vm.roll(200);
+   │         ──────────── `vm.roll` changes this environment here
    │
    ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
 
-warning[environment-read-across-mutation]: `block.timestamp` may be reused across a Foundry environment mutation; capture it with `vm.getBlockTimestamp()` instead
+warning[environment-read-across-mutation]: `block.timestamp` may be reused across `vm.warp`; capture it with `vm.getBlockTimestamp()` instead
    [FILE]:12:24
    │
 12 │         uint256 time = block.timestamp;
    │                        ━━━━━━━━━━━━━━━
+13 │         vm.roll(200);
+14 │         vm.warp(200);
+   │         ──────────── `vm.warp` changes this environment here
    │
    ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
 
@@ -594,19 +600,25 @@ forgetest!(block_environment_build_is_bytecode_neutral, |prj, cmd| {
     let without_lints = std::fs::read(&artifact).unwrap();
 
     cmd.forge_fuse().args(["build", "--force"]).assert_success().stderr_eq(str![[r#"
-warning[environment-read-across-mutation]: `block.number` may be reused across a Foundry environment mutation; capture it with `vm.getBlockNumber()` instead
+warning[environment-read-across-mutation]: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
    [FILE]:11:26
    │
 11 │         uint256 height = block.number;
    │                          ━━━━━━━━━━━━
+12 │         uint256 time = block.timestamp;
+13 │         vm.roll(200);
+   │         ──────────── `vm.roll` changes this environment here
    │
    ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
 
-warning[environment-read-across-mutation]: `block.timestamp` may be reused across a Foundry environment mutation; capture it with `vm.getBlockTimestamp()` instead
+warning[environment-read-across-mutation]: `block.timestamp` may be reused across `vm.warp`; capture it with `vm.getBlockTimestamp()` instead
    [FILE]:12:24
    │
 12 │         uint256 time = block.timestamp;
    │                        ━━━━━━━━━━━━━━━
+13 │         vm.roll(200);
+14 │         vm.warp(200);
+   │         ──────────── `vm.warp` changes this environment here
    │
    ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
 
@@ -617,6 +629,85 @@ warning[environment-read-across-mutation]: `block.timestamp` may be reused acros
         std::fs::read(artifact).unwrap(),
         "linting changed the build artifact"
     );
+});
+
+forgetest!(block_environment_mutation_secondary_span, |prj, cmd| {
+    let capture = r#"
+abstract contract Capture {
+    function readTime() internal view returns (uint256) {
+        return block.timestamp;
+    }
+}
+"#;
+    let clock = r#"
+interface ClockVm { function warp(uint256 time) external; }
+abstract contract Clock {
+    ClockVm constant clock = ClockVm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+    function advance() internal {
+        // Suppressions belong on the original read, not this secondary span.
+        // forge-lint: disable-next-line(environment-read-across-mutation)
+        clock.warp(200);
+    }
+}
+"#;
+    prj.add_source("Capture", capture);
+    prj.add_source("Clock", clock);
+    prj.add_test(
+        "SecondarySpan.t.sol",
+        r#"
+import {Capture} from "../src/Capture.sol";
+import {Clock} from "../src/Clock.sol";
+contract SecondarySpan is Capture, Clock {
+    function capture() public returns (uint256) {
+        uint256 saved = readTime();
+        advance();
+        return saved;
+    }
+}
+"#,
+    );
+    let output = cmd
+        .args(["lint", "--only-lint", "environment-read-across-mutation", "--json"])
+        .assert_success();
+    let diagnostics: Vec<serde_json::Value> =
+        serde_json::Deserializer::from_slice(&output.get_output().stdout)
+            .into_iter()
+            .map(Result::unwrap)
+            .collect();
+    assert_eq!(diagnostics.len(), 1);
+    let diagnostic = &diagnostics[0];
+    assert_eq!(
+        diagnostic["message"],
+        "`block.timestamp` may be reused across `vm.warp`; capture it with `vm.getBlockTimestamp()` instead"
+    );
+    let spans = diagnostic["spans"].as_array().unwrap();
+    assert_eq!(spans.len(), 2);
+    for (primary, file, snippet) in
+        [(true, "Capture.sol", "block.timestamp"), (false, "Clock.sol", "clock.warp(200)")]
+    {
+        let span = spans.iter().find(|span| span["is_primary"] == primary).unwrap();
+        assert!(span["file_name"].as_str().unwrap().ends_with(file));
+        let start = span["byte_start"].as_u64().unwrap() as usize;
+        let end = span["byte_end"].as_u64().unwrap() as usize;
+        let source = std::fs::read_to_string(prj.root().join("src").join(file)).unwrap();
+        assert_eq!(&source[start..end], snippet);
+        if !primary {
+            assert_eq!(span["label"], "`vm.warp` changes this environment here");
+        }
+    }
+
+    prj.add_source("Capture", &capture.replace("return block.timestamp;",
+        "// forge-lint: disable-next-line(environment-read-across-mutation)\n        return block.timestamp;"));
+    cmd.forge_fuse()
+        .args(["lint", "--only-lint", "environment-read-across-mutation"])
+        .assert_success()
+        .stderr_eq("");
+    prj.add_source("Capture", capture);
+    prj.update_config(|config| config.lint.ignore = vec!["src/Capture.sol".into()]);
+    cmd.forge_fuse()
+        .args(["lint", "--only-lint", "environment-read-across-mutation"])
+        .assert_success()
+        .stderr_eq("");
 });
 
 forgetest!(block_environment_getters_materialize_captures, |prj, cmd| {

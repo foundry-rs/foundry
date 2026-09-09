@@ -18,7 +18,7 @@
 
 use super::CheatcodeEnvironment;
 use crate::{
-    linter::{LateLintPass, LintContext},
+    linter::{Lint, ProjectLintEmitter, ProjectLintPass, ProjectSource},
     sol::{
         Severity, SolLint,
         analysis::{
@@ -30,7 +30,7 @@ use crate::{
 use alloy_primitives::{U256, keccak256, uint};
 use solar::{
     ast::{BinOpKind, ElementaryType, FunctionKind, UnOpKind},
-    interface::Span,
+    interface::{Span, diagnostics::DiagId, source_map::FileName},
     sema::{
         Gcx,
         builtins::Builtin,
@@ -39,7 +39,7 @@ use solar::{
         ty::TyKind,
     },
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 declare_forge_lint!(
     ENVIRONMENT_READ_ACROSS_MUTATION,
@@ -157,8 +157,14 @@ impl Environment {
 struct Read {
     environment: Environment,
     span: Span,
-    changed: bool,
+    changed: Option<Mutation>,
     origin: usize,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Mutation {
+    span: Span,
+    function: FunctionId,
 }
 
 /// Exact unsigned and boolean locals used to prune exhausted loops and constant branches.
@@ -221,19 +227,22 @@ impl Value {
         }
     }
 
-    fn change(&mut self, environment: Environment) {
+    fn change(&mut self, environment: Environment, mutation: Mutation) {
         for read in &mut self.reads {
-            read.changed |= read.environment == environment;
+            if read.environment == environment {
+                // Keep the first matching call on this path, not an unrelated or later setter.
+                read.changed.get_or_insert(mutation);
+            }
         }
         for part in &mut self.tuple {
-            part.change(environment);
+            part.change(environment, mutation);
         }
     }
 
     /// Refresh origins held outside locals while sibling expressions execute.
     fn refresh(&mut self, state: &State) {
         for read in &mut self.reads {
-            read.changed |= state.changed.contains(&read.origin);
+            read.changed = read.changed.or_else(|| state.changed.get(&read.origin).copied());
         }
         for part in &mut self.tuple {
             part.refresh(state);
@@ -259,29 +268,27 @@ enum Flow {
 struct State {
     locals: HashMap<VariableId, Value>,
     seen: Value,
-    changed: HashSet<usize>,
+    changed: HashMap<usize, Mutation>,
     return_parameters: Vec<VariableId>,
     flow: Flow,
     unchecked: bool,
 }
 
 impl State {
-    fn change(&mut self, environment: Environment) {
-        self.changed.extend(
-            self.seen
-                .reads
-                .iter()
-                .filter(|read| read.environment == environment)
-                .map(|read| read.origin),
-        );
-        self.seen.change(environment);
+    fn change(&mut self, environment: Environment, mutation: Mutation) {
+        for read in self.seen.reads.iter().filter(|read| read.environment == environment) {
+            self.changed.entry(read.origin).or_insert(mutation);
+        }
+        self.seen.change(environment, mutation);
         for value in self.locals.values_mut() {
-            value.change(environment);
+            value.change(environment, mutation);
         }
     }
 
     fn merge(&mut self, other: &Self) {
-        self.changed.extend(&other.changed);
+        for (&origin, &mutation) in &other.changed {
+            self.changed.entry(origin).or_insert(mutation);
+        }
         self.seen.merge(&other.seen);
         for (var, value) in &other.locals {
             self.locals.entry(*var).or_default().merge(value);
@@ -289,36 +296,55 @@ impl State {
     }
 }
 
-impl<'gcx> LateLintPass<'gcx> for CheatcodeEnvironment {
-    fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, func: &'gcx Function<'gcx>) {
-        if func.body.is_none() || func.kind == FunctionKind::Modifier {
+// Project sources expose the span-owner policies needed to emit a multi-span diagnostic.
+// The pinned Solar late-pass context only supports single-span messages and suggestions.
+impl<'ast> ProjectLintPass<'ast> for CheatcodeEnvironment {
+    fn check_project(&mut self, ctx: &ProjectLintEmitter<'_, '_>, sources: &[ProjectSource<'ast>]) {
+        if !ctx.is_lint_enabled(ENVIRONMENT_READ_ACROSS_MUTATION.id) {
             return;
         }
-        let mut checker = Checker {
-            ctx,
-            gcx,
-            contract: func.contract,
-            stack: vec![func.span],
-            remaining: MAX_STEPS,
-        };
-        let initial = State { return_parameters: func.returns.to_vec(), ..State::default() };
-        for state in checker.layer(func, 0, initial) {
-            if matches!(state.flow, Flow::Next | Flow::Return) {
-                checker.use_value(&checker.return_values(func, &state));
+        let gcx = ctx.gcx();
+        let input_sources: HashMap<_, _> = gcx
+            .hir
+            .sources_enumerated()
+            .filter_map(|(id, source)| {
+                let FileName::Real(path) = &source.file.name else { return None };
+                Some((id, sources.iter().find(|source| &source.path == path)?))
+            })
+            .collect();
+        for func in gcx.hir.functions() {
+            if func.body.is_none()
+                || func.kind == FunctionKind::Modifier
+                || !input_sources.contains_key(&func.source)
+            {
+                continue;
+            }
+            let mut checker = Checker {
+                sources,
+                gcx,
+                contract: func.contract,
+                stack: vec![func.span],
+                remaining: MAX_STEPS,
+            };
+            let initial = State { return_parameters: func.returns.to_vec(), ..State::default() };
+            for state in checker.layer(func, 0, initial) {
+                if matches!(state.flow, Flow::Next | Flow::Return) {
+                    checker.use_value(&checker.return_values(func, &state));
+                }
             }
         }
     }
 }
 
-struct Checker<'a, 's, 'p, 'gcx> {
-    ctx: &'a LintContext<'s, 'p>,
+struct Checker<'a, 'ast, 'gcx> {
+    sources: &'a [ProjectSource<'ast>],
     gcx: Gcx<'gcx>,
     contract: Option<hir::ContractId>,
     stack: Vec<Span>,
     remaining: usize,
 }
 
-impl<'gcx> Checker<'_, '_, '_, 'gcx> {
+impl<'gcx> Checker<'_, '_, 'gcx> {
     const fn step(&mut self) -> bool {
         if self.remaining == 0 {
             return false;
@@ -329,7 +355,7 @@ impl<'gcx> Checker<'_, '_, '_, 'gcx> {
 
     fn use_value(&self, value: &Value) {
         for read in &value.reads {
-            if read.changed {
+            if read.changed.is_some() {
                 self.emit(*read);
             }
         }
@@ -339,16 +365,37 @@ impl<'gcx> Checker<'_, '_, '_, 'gcx> {
     }
 
     fn emit(&self, read: Read) {
+        let Some(mutation) = read.changed else { return };
+        let lint = &ENVIRONMENT_READ_ACROSS_MUTATION;
+        // The primary read can belong to an inherited helper in another source. Use its
+        // policy, not the mutation's, and never emit diagnostics for dependency-only files.
+        let Some(source) = self.sources.iter().find(|source| source.file.contains(read.span.lo()))
+        else {
+            return;
+        };
+        if !source.policy.is_lint_enabled(lint.id)
+            || source.policy.is_lint_suppressed(lint.id, read.span)
+        {
+            return;
+        }
         let name = read.environment.name();
+        let setter = self.gcx.hir.function(mutation.function).name.unwrap();
         let advice = read.environment.getter().map_or_else(
             || "capture it through an external helper call instead".to_string(),
             |getter| format!("capture it with `{getter}` instead"),
         );
-        self.ctx.emit_with_msg(
-            &ENVIRONMENT_READ_ACROSS_MUTATION,
-            read.span,
-            format!("`{name}` may be reused across a Foundry environment mutation; {advice}"),
-        );
+        self.gcx
+            .sess
+            .dcx
+            .diag::<()>(
+                lint.level(),
+                format!("`{name}` may be reused across `vm.{setter}`; {advice}"),
+            )
+            .code(DiagId::new_str(lint.id))
+            .span(read.span)
+            .span_label(mutation.span, format!("`vm.{setter}` changes this environment here"))
+            .help(lint.help)
+            .emit();
     }
 
     fn read(&mut self, environment: Environment, span: Span, state: &mut State) -> Value {
@@ -356,7 +403,7 @@ impl<'gcx> Checker<'_, '_, '_, 'gcx> {
             return Value::default();
         }
         for read in &state.seen.reads {
-            if read.environment == environment && read.changed {
+            if read.environment == environment && read.changed.is_some() {
                 self.emit(*read);
             }
         }
@@ -364,7 +411,7 @@ impl<'gcx> Checker<'_, '_, '_, 'gcx> {
             reads: vec![Read {
                 environment,
                 span,
-                changed: false,
+                changed: None,
                 // The decreasing step budget gives repeated evaluations distinct identities.
                 origin: self.remaining,
             }],
@@ -834,10 +881,10 @@ impl<'gcx> Checker<'_, '_, '_, 'gcx> {
                     return value;
                 }
                 if receiver.cheatcode
-                    && let Some(environments) = self.mutation(callee)
+                    && let Some((function, environments)) = self.mutation(callee)
                 {
                     for &environment in environments {
-                        state.change(environment);
+                        state.change(environment, Mutation { span: expr.span, function });
                     }
                     return Value::default();
                 }
@@ -927,10 +974,10 @@ impl<'gcx> Checker<'_, '_, '_, 'gcx> {
         lhs.binary(op, rhs)
     }
 
-    fn mutation(&self, callee: &Expr<'_>) -> Option<&'static [Environment]> {
+    fn mutation(&self, callee: &Expr<'_>) -> Option<(FunctionId, &'static [Environment])> {
         let function = self.gcx.resolved_function(callee)?;
         // Match the ABI signature, including overloads, rather than just the method name.
-        Some(match self.gcx.item_signature(function.into()) {
+        let environments: &'static [Environment] = match self.gcx.item_signature(function.into()) {
             "roll(uint256)" => &[Environment::Number, Environment::BlockHash],
             "warp(uint256)" => &[Environment::Timestamp],
             "chainId(uint256)" => &[Environment::ChainId],
@@ -956,7 +1003,8 @@ impl<'gcx> Checker<'_, '_, '_, 'gcx> {
             | "revertToAndDelete(uint256)"
             | "revertToStateAndDelete(uint256)" => Environment::ALL,
             _ => return None,
-        })
+        };
+        Some((function, environments))
     }
 
     /// Evaluates only the constant-address forms used by cheatcode declarations. The pinned

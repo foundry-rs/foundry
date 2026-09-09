@@ -7,7 +7,10 @@
 
 Warns when a raw environment value can be used after a Foundry cheatcode changes that
 environment, or when matching raw reads occur on both sides of a mutation in the same
-call frame. The diagnostic points to the original read and recommends a getter when one exists.
+call frame. The diagnostic points to the original read, names the mutation (for example,
+"across `vm.warp`"), and highlights the mutation call with a secondary span. It recommends
+a getter when one exists. For aliases and internal helpers, the secondary span identifies
+the actual cheatcode call, not the helper invocation.
 
 This rule replaces `block-number-across-roll` and `block-timestamp-across-warp`. Update
 `--only-lint`, `exclude_lints`, and inline suppressions to the new ID.
