@@ -309,6 +309,7 @@ impl NodeArgs {
             })
             .with_fork_headers(self.evm.fork_headers)
             .with_fork_chain_id(self.evm.fork_chain_id.map(u64::from).map(U256::from))
+            .with_fork_state_by_number(self.evm.fork_state_by_number)
             .fork_request_timeout(self.evm.fork_request_timeout.map(Duration::from_millis))
             .fork_request_retries(self.evm.fork_request_retries)
             .fork_retry_backoff(self.evm.fork_retry_backoff.map(Duration::from_millis))
@@ -571,6 +572,16 @@ pub struct AnvilEvmArgs {
         requires = "fork_block_number"
     )]
     pub fork_chain_id: Option<Chain>,
+
+    /// Read fork state by block number instead of by block hash.
+    ///
+    /// For RPCs that cannot serve `eth_getBalance`, `eth_getCode`, `eth_getStorageAt` and
+    /// `eth_getTransactionCount` for a block hash. Block hash ancestry is still validated against
+    /// the fork block.
+    ///
+    /// See --fork-url.
+    #[arg(long, requires = "fork_url", help_heading = "Fork config")]
+    pub fork_state_by_number: bool,
 
     /// Sets the number of assumed available compute units per second for this provider
     ///
@@ -1114,6 +1125,19 @@ mod tests {
             "cannot infer execution network from chain ID 10143: network family `monad` is not \
              enabled in this build"
         ));
+    }
+
+    #[test]
+    fn fork_state_by_number_flag_sets_config() {
+        let args = NodeArgs::parse_from([
+            "anvil",
+            "--fork-url",
+            "http://localhost:8545",
+            "--fork-state-by-number",
+        ]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(config.fork_state_by_number);
     }
 
     #[test]
