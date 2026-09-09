@@ -1,0 +1,48 @@
+warning[block-number-across-roll]: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
+   ╭▸ ROOT/testdata/CheatcodeEnvironmentPending.sol:LL:CC
+   │
+LL │ …     uint256 saved = block.number;
+   │                       ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/block-number-across-roll
+
+warning[block-number-across-roll]: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
+   ╭▸ ROOT/testdata/CheatcodeEnvironmentPending.sol:LL:CC
+   │
+LL │ …     uint256 saved = block.number;
+   │                       ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/block-number-across-roll
+
+warning[block-number-across-roll]: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
+   ╭▸ ROOT/testdata/CheatcodeEnvironmentPending.sol:LL:CC
+   │
+LL │ …     (uint256 saved, uint256 ignored) = (block.number, advance());
+   │                                           ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/block-number-across-roll
+
+warning[block-number-across-roll]: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
+   ╭▸ ROOT/testdata/CheatcodeEnvironmentPending.sol:LL:CC
+   │
+LL │ …     return block.number + advance();
+   │              ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/block-number-across-roll
+
+warning[block-number-across-roll]: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
+   ╭▸ ROOT/testdata/CheatcodeEnvironmentPending.sol:LL:CC
+   │
+LL │ …     return first(block.number, advance());
+   │                    ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/block-number-across-roll
+
+warning[block-timestamp-across-warp]: `block.timestamp` may be reused across `vm.warp`; capture it with `vm.getBlockTimestamp()` instead
+   ╭▸ ROOT/testdata/CheatcodeEnvironmentPending.sol:LL:CC
+   │
+LL │ …     (uint256 saved, uint256 ignored) = (block.timestamp, advanceTime());
+   │                                           ━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/block-timestamp-across-warp
+
