@@ -42,7 +42,7 @@ use axum::{Json, Router, routing::post};
 use foundry_common::provider::get_http_provider;
 use foundry_config::Config;
 use foundry_evm::hardfork::OpHardfork;
-use foundry_evm_networks::NetworkConfigs;
+use foundry_evm_networks::{NetworkConfigs, arbitrum};
 use foundry_primitives::{FoundryNetwork, FoundryReceiptEnvelope};
 use foundry_test_utils::rpc::{
     self, next_http_rpc_endpoint, next_rpc_endpoint, spawn_rpc_proxy_internal_error_after,
@@ -2506,6 +2506,186 @@ async fn flaky_test_arb_fork_mining() {
     let mined_blk_num = api.block_number().unwrap().to::<u64>();
 
     assert_eq!(mined_blk_num, init_blk_num + 1);
+}
+
+// <https://github.com/foundry-rs/foundry/issues/16768>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_arbitrum_fork_preserves_l1_block_number_after_mining() {
+    const L2_BLOCK: u64 = 503_433_721;
+    const L1_BLOCK: u64 = 25_941_231;
+    let target = Address::random();
+    let (origin_api, origin) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(NamedChain::Arbitrum as u64))
+            .with_genesis_block_number(Some(L2_BLOCK)),
+    )
+    .await;
+    // Store NUMBER in slot zero and return it, exercising both calls and mined transactions.
+    origin_api.anvil_set_code(target, bytes!("436000554360005260206000f3")).await.unwrap();
+    let endpoint = origin.http_endpoint();
+    let client = reqwest::Client::new();
+    let router = Router::new().route(
+        "/",
+        post(move |Json(request): Json<Value>| {
+            let client = client.clone();
+            let endpoint = endpoint.clone();
+            async move {
+                let mut response = client
+                    .post(endpoint)
+                    .json(&request)
+                    .send()
+                    .await
+                    .unwrap()
+                    .json::<Value>()
+                    .await
+                    .unwrap();
+                if matches!(
+                    request.get("method").and_then(Value::as_str),
+                    Some("eth_getBlockByHash" | "eth_getBlockByNumber")
+                ) && let Some(block) = response.get_mut("result").and_then(Value::as_object_mut)
+                {
+                    block.insert(
+                        "l1BlockNumber".to_string(),
+                        Value::String(format!("0x{L1_BLOCK:x}")),
+                    );
+                }
+                Json(response)
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let proxy = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+
+    for chain_id in [None, Some(1u64)] {
+        let config = NodeConfig::test()
+            .with_chain_id(chain_id)
+            .with_no_storage_caching(true)
+            .with_eth_rpc_url(Some(format!("http://{address}")))
+            .with_fork_block_number(Some(L2_BLOCK));
+        let (api, handle) = spawn(config).await;
+        let provider = handle.http_provider();
+        let request = WithOtherFields::new(TransactionRequest::default().with_to(target));
+        assert_eq!(
+            U256::from_be_slice(
+                &provider.call(request.clone()).block(BlockId::latest()).await.unwrap()
+            ),
+            U256::from(L1_BLOCK)
+        );
+        let arb_request = WithOtherFields::new(
+            TransactionRequest::default()
+                .with_to(arbitrum::ARB_SYS_ADDRESS)
+                .with_input(Bytes::copy_from_slice(&arbitrum::ARB_BLOCK_NUMBER_SELECTOR)),
+        );
+        let snapshot = api.evm_snapshot().await.unwrap();
+        api.mine_one().await.unwrap();
+        for offset in 1..=2 {
+            assert_eq!(provider.get_block_number().await.unwrap(), L2_BLOCK + offset);
+            for (block, expected_offset) in [
+                (BlockNumberOrTag::Latest, offset),
+                (BlockNumberOrTag::Pending, offset + 1),
+                (BlockNumberOrTag::Number(L2_BLOCK), 0),
+            ] {
+                assert_eq!(
+                    U256::from_be_slice(
+                        &provider.call(request.clone()).block(block.into()).await.unwrap()
+                    ),
+                    U256::from(L1_BLOCK + expected_offset),
+                    "NUMBER at {block}"
+                );
+                assert_eq!(
+                    U256::from_be_slice(
+                        &provider.call(arb_request.clone()).block(block.into()).await.unwrap()
+                    ),
+                    U256::from(L2_BLOCK + expected_offset),
+                    "ArbSys at {block}"
+                );
+            }
+            let block =
+                provider.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+            assert_eq!(block.header.number, L2_BLOCK + offset);
+            assert_eq!(
+                serde_json::from_value::<U256>(block.other["l1BlockNumber"].clone()).unwrap(),
+                U256::from(L1_BLOCK + offset)
+            );
+            if offset == 1 {
+                let sender = provider.get_accounts().await.unwrap()[0];
+                let receipt = provider
+                    .send_transaction(WithOtherFields::new(
+                        TransactionRequest::default()
+                            .with_from(sender)
+                            .with_to(target)
+                            .with_gas_limit(100_000),
+                    ))
+                    .await
+                    .unwrap()
+                    .get_receipt()
+                    .await
+                    .unwrap();
+                assert!(receipt.status());
+                assert_eq!(receipt.block_number, Some(L2_BLOCK + 2));
+                assert_eq!(
+                    provider.get_storage_at(target, U256::ZERO).await.unwrap(),
+                    U256::from(L1_BLOCK + 2)
+                );
+            }
+        }
+        assert_eq!(
+            U256::from_be_slice(
+                &provider.call(request.clone()).block((L2_BLOCK + 1).into()).await.unwrap()
+            ),
+            U256::from(L1_BLOCK + 1)
+        );
+        let state = api.anvil_dump_state(Some(true)).await.unwrap();
+        assert!(api.evm_revert(snapshot).await.unwrap());
+        assert_eq!(provider.get_block_number().await.unwrap(), L2_BLOCK);
+        assert_eq!(
+            U256::from_be_slice(
+                &provider.call(request.clone()).block(BlockId::latest()).await.unwrap()
+            ),
+            U256::from(L1_BLOCK)
+        );
+        api.mine_one().await.unwrap();
+        assert_eq!(
+            U256::from_be_slice(
+                &provider.call(request.clone()).block(BlockId::latest()).await.unwrap()
+            ),
+            U256::from(L1_BLOCK + 1)
+        );
+        assert!(api.anvil_load_state(state).await.unwrap());
+        assert_eq!(provider.get_block_number().await.unwrap(), L2_BLOCK + 2);
+        assert_eq!(
+            U256::from_be_slice(
+                &provider.call(request.clone()).block(BlockId::latest()).await.unwrap()
+            ),
+            U256::from(L1_BLOCK + 2)
+        );
+        api.mine_one().await.unwrap();
+        assert_eq!(
+            U256::from_be_slice(
+                &provider.call(request.clone()).block(BlockId::latest()).await.unwrap()
+            ),
+            U256::from(L1_BLOCK + 3)
+        );
+        assert_eq!(
+            U256::from_be_slice(
+                &provider.call(arb_request.clone()).block(BlockId::latest()).await.unwrap()
+            ),
+            U256::from(L2_BLOCK + 3)
+        );
+        api.anvil_reset(Some(Forking {
+            json_rpc_url: Some(format!("http://{address}")),
+            block_number: Some(L2_BLOCK),
+        }))
+        .await
+        .unwrap();
+        api.mine_one().await.unwrap();
+        assert_eq!(
+            U256::from_be_slice(&provider.call(request).block(BlockId::latest()).await.unwrap()),
+            U256::from(L1_BLOCK + 1)
+        );
+    }
+    proxy.abort();
 }
 
 // <https://github.com/foundry-rs/foundry/issues/6749>
