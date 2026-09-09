@@ -459,6 +459,7 @@ pub struct DeniedLintDiagnostics(String);
 pub struct SolLint {
     id: &'static str,
     description: &'static str,
+    diagnostic_help: Option<&'static str>,
     help: &'static str,
     severity: Severity,
 }
@@ -478,6 +479,9 @@ impl Lint for SolLint {
     }
     fn description(&self) -> &'static str {
         self.description
+    }
+    fn diagnostic_help(&self) -> Option<&'static str> {
+        self.diagnostic_help
     }
     fn help(&self) -> &'static str {
         self.help

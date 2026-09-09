@@ -17,7 +17,7 @@ declare_forge_lint!(
     VAR_READ_USING_THIS,
     Severity::Gas,
     "var-read-using-this",
-    "reading a state variable via `this` causes an unnecessary `STATICCALL`; access it directly"
+    "reading a state variable via `this` causes an unnecessary `STATICCALL`"
 );
 
 impl<'gcx> LateLintPass<'gcx> for VarReadUsingThis {
@@ -117,7 +117,11 @@ impl ThisReadFinder<'_, '_> {
                 Some(suggestion) => {
                     self.ctx.emit_with_suggestion(&VAR_READ_USING_THIS, expr.span, suggestion);
                 }
-                None => self.ctx.emit(&VAR_READ_USING_THIS, expr.span),
+                None => self.ctx.emit_with_help(
+                    &VAR_READ_USING_THIS,
+                    expr.span,
+                    "consider direct access if the external call semantics and gas limit are not required",
+                ),
             }
         }
     }

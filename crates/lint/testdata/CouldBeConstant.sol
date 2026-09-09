@@ -14,17 +14,17 @@ interface IToken {
 contract CouldBeConstant {
     // --- triggering cases (constant initializer, no writes anywhere) ---
 
-    uint256 public limit = 100; //~NOTE: state variable could be declared `constant`
-    uint256 internal sum = 1 + 2; //~NOTE: state variable could be declared `constant`
-    bytes32 internal salt = keccak256("foundry"); //~NOTE: state variable could be declared `constant`
-    string internal greeting = "hi"; //~NOTE: state variable could be declared `constant`
-    bytes internal payloadPrefix = hex"0a0b"; //~NOTE: state variable could be declared `constant`
-    uint256 internal derived = ALREADY_CONST + 1; //~NOTE: state variable could be declared `constant`
-    IToken internal token = IToken(address(0xCAFE)); //~NOTE: state variable could be declared `constant`
-    address internal nestedCast = address(uint160(0xCAFE)); //~NOTE: state variable could be declared `constant`
-    uint256 internal maxUint = type(uint256).max; //~NOTE: state variable could be declared `constant`
-    int256 internal minInt = type(int256).min; //~NOTE: state variable could be declared `constant`
-    bytes4 internal iid = type(IToken).interfaceId; //~NOTE: state variable could be declared `constant`
+    uint256 public limit = 100; //~NOTE: state variable has a constant initializer and is never written
+    uint256 internal sum = 1 + 2; //~NOTE: state variable has a constant initializer and is never written
+    bytes32 internal salt = keccak256("foundry"); //~NOTE: state variable has a constant initializer and is never written
+    string internal greeting = "hi"; //~NOTE: state variable has a constant initializer and is never written
+    bytes internal payloadPrefix = hex"0a0b"; //~NOTE: state variable has a constant initializer and is never written
+    uint256 internal derived = ALREADY_CONST + 1; //~NOTE: state variable has a constant initializer and is never written
+    IToken internal token = IToken(address(0xCAFE)); //~NOTE: state variable has a constant initializer and is never written
+    address internal nestedCast = address(uint160(0xCAFE)); //~NOTE: state variable has a constant initializer and is never written
+    uint256 internal maxUint = type(uint256).max; //~NOTE: state variable has a constant initializer and is never written
+    int256 internal minInt = type(int256).min; //~NOTE: state variable has a constant initializer and is never written
+    bytes4 internal iid = type(IToken).interfaceId; //~NOTE: state variable has a constant initializer and is never written
 
     // --- non-triggering cases ---
 

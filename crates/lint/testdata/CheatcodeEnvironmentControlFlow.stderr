@@ -1,80 +1,90 @@
-warning[block-number-across-roll]: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
+warning[block-number-across-roll]: `block.number` may be reused across `vm.roll`
    ╭▸ ROOT/testdata/CheatcodeEnvironmentControlFlow.sol:LL:CC
    │
 LL │         return block.number;
    │                ━━━━━━━━━━━━
    │
+   ├ help: capture the block number with `vm.getBlockNumber()` instead
    ╰ help: https://getfoundry.sh/forge/linting/block-number-across-roll
 
-warning[block-timestamp-across-warp]: `block.timestamp` may be reused across `vm.warp`; capture it with `vm.getBlockTimestamp()` instead
+warning[block-timestamp-across-warp]: `block.timestamp` may be reused across `vm.warp`
    ╭▸ ROOT/testdata/CheatcodeEnvironmentControlFlow.sol:LL:CC
    │
-LL │ …     return block.timestamp;
-   │              ━━━━━━━━━━━━━━━
+LL │         return block.timestamp;
+   │                ━━━━━━━━━━━━━━━
    │
+   ├ help: capture the timestamp with `vm.getBlockTimestamp()` instead
    ╰ help: https://getfoundry.sh/forge/linting/block-timestamp-across-warp
 
-warning[block-number-across-roll]: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
+warning[block-number-across-roll]: `block.number` may be reused across `vm.roll`
    ╭▸ ROOT/testdata/CheatcodeEnvironmentControlFlow.sol:LL:CC
    │
-LL │ …     vm.roll(block.number + 1);
-   │               ━━━━━━━━━━━━
+LL │             vm.roll(block.number + 1);
+   │                     ━━━━━━━━━━━━
    │
+   ├ help: capture the block number with `vm.getBlockNumber()` instead
    ╰ help: https://getfoundry.sh/forge/linting/block-number-across-roll
 
-warning[block-timestamp-across-warp]: `block.timestamp` may be reused across `vm.warp`; capture it with `vm.getBlockTimestamp()` instead
+warning[block-timestamp-across-warp]: `block.timestamp` may be reused across `vm.warp`
    ╭▸ ROOT/testdata/CheatcodeEnvironmentControlFlow.sol:LL:CC
    │
-LL │ …     vm.warp(block.timestamp + 1);
-   │               ━━━━━━━━━━━━━━━
+LL │             vm.warp(block.timestamp + 1);
+   │                     ━━━━━━━━━━━━━━━
    │
+   ├ help: capture the timestamp with `vm.getBlockTimestamp()` instead
    ╰ help: https://getfoundry.sh/forge/linting/block-timestamp-across-warp
 
-warning[block-number-across-roll]: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
+warning[block-number-across-roll]: `block.number` may be reused across `vm.roll`
    ╭▸ ROOT/testdata/CheatcodeEnvironmentControlFlow.sol:LL:CC
    │
-LL │ …     uint256 saved = block.number;
-   │                       ━━━━━━━━━━━━
+LL │         uint256 saved = block.number;
+   │                         ━━━━━━━━━━━━
    │
+   ├ help: capture the block number with `vm.getBlockNumber()` instead
    ╰ help: https://getfoundry.sh/forge/linting/block-number-across-roll
 
-warning[block-number-across-roll]: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
+warning[block-number-across-roll]: `block.number` may be reused across `vm.roll`
    ╭▸ ROOT/testdata/CheatcodeEnvironmentControlFlow.sol:LL:CC
    │
-LL │ …     vm.roll(block.number + 1);
-   │               ━━━━━━━━━━━━
+LL │             vm.roll(block.number + 1);
+   │                     ━━━━━━━━━━━━
    │
+   ├ help: capture the block number with `vm.getBlockNumber()` instead
    ╰ help: https://getfoundry.sh/forge/linting/block-number-across-roll
 
-warning[block-number-across-roll]: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
+warning[block-number-across-roll]: `block.number` may be reused across `vm.roll`
    ╭▸ ROOT/testdata/CheatcodeEnvironmentControlFlow.sol:LL:CC
    │
-LL │ …     vm.roll(block.number + 1);
-   │               ━━━━━━━━━━━━
+LL │                 vm.roll(block.number + 1);
+   │                         ━━━━━━━━━━━━
    │
+   ├ help: capture the block number with `vm.getBlockNumber()` instead
    ╰ help: https://getfoundry.sh/forge/linting/block-number-across-roll
 
-warning[block-number-across-roll]: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
+warning[block-number-across-roll]: `block.number` may be reused across `vm.roll`
    ╭▸ ROOT/testdata/CheatcodeEnvironmentControlFlow.sol:LL:CC
    │
-LL │ …     uint256 saved = block.number;
-   │                       ━━━━━━━━━━━━
+LL │         uint256 saved = block.number;
+   │                         ━━━━━━━━━━━━
    │
+   ├ help: capture the block number with `vm.getBlockNumber()` instead
    ╰ help: https://getfoundry.sh/forge/linting/block-number-across-roll
 
-warning[block-number-across-roll]: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
+warning[block-number-across-roll]: `block.number` may be reused across `vm.roll`
    ╭▸ ROOT/testdata/CheatcodeEnvironmentControlFlow.sol:LL:CC
    │
-LL │ …     uint256 saved = block.number;
-   │                       ━━━━━━━━━━━━
+LL │         uint256 saved = block.number;
+   │                         ━━━━━━━━━━━━
    │
+   ├ help: capture the block number with `vm.getBlockNumber()` instead
    ╰ help: https://getfoundry.sh/forge/linting/block-number-across-roll
 
-warning[block-timestamp-across-warp]: `block.timestamp` may be reused across `vm.warp`; capture it with `vm.getBlockTimestamp()` instead
+warning[block-timestamp-across-warp]: `block.timestamp` may be reused across `vm.warp`
    ╭▸ ROOT/testdata/CheatcodeEnvironmentControlFlow.sol:LL:CC
    │
-LL │ …     uint256 saved = block.timestamp;
-   │                       ━━━━━━━━━━━━━━━
+LL │         uint256 saved = block.timestamp;
+   │                         ━━━━━━━━━━━━━━━
    │
+   ├ help: capture the timestamp with `vm.getBlockTimestamp()` instead
    ╰ help: https://getfoundry.sh/forge/linting/block-timestamp-across-warp
 

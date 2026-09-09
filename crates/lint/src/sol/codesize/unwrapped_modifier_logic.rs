@@ -22,7 +22,7 @@ declare_forge_lint!(
     UNWRAPPED_MODIFIER_LOGIC,
     Severity::CodeSize,
     "unwrapped-modifier-logic",
-    "modifier logic can be wrapped to reduce code size"
+    "modifier contains inline logic that may increase code size"
 );
 
 impl<'gcx> LateLintPass<'gcx> for UnwrappedModifierLogic {

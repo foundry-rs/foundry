@@ -86,7 +86,9 @@ the following Foundry-specific conventions:
   Existing public IDs are configuration and documentation APIs: do not rename them just to adopt
   Clippy's `snake_case` spelling or a different naming style.
 - Make the primary diagnostic a short, factual description of the detected problem. Use help
-  messages or suggestion labels for detailed corrective instructions. Start diagnostic text with lowercase
+  messages (`help = "..."` in `declare_forge_lint!`) or suggestion labels for corrective instructions.
+  Use `emit_with_msg_and_help` when the message and advice depend on the detected case.
+  Start diagnostic text with lowercase
   prose and omit the final period for a single sentence; preserve capitalization inside code and
   in acronyms. Use normal sentence punctuation for multi-sentence explanations.
 - Enclose code, identifiers, types, operators, and literal values in backticks in descriptions,

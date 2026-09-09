@@ -13,7 +13,8 @@ declare_forge_lint!(
     CYCLOMATIC_COMPLEXITY,
     Severity::Info,
     "cyclomatic-complexity",
-    "this function has a cyclomatic complexity above 11; consider splitting it into smaller functions"
+    "this function has a cyclomatic complexity above 11",
+    help = "consider splitting it into smaller functions"
 );
 
 /// The threshold Slither's detector of the same name uses: a function reports when its

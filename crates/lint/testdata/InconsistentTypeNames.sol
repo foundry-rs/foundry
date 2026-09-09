@@ -8,26 +8,26 @@ pragma solidity ^0.8.27;
 // excludes expressions, directives, other contracts, and inherited declarations.
 
 contract InconsistentTypeNames {
-    uint internal shorthandUint; //~WARN: contract mixes shorthand and explicit integer type names; use `uint256` and `int256` consistently
+    uint internal shorthandUint; //~WARN: contract mixes shorthand and explicit integer type names
     uint256 internal explicitUint;
 
-    int internal shorthandInt; //~WARN: contract mixes shorthand and explicit integer type names; use `uint256` and `int256` consistently
+    int internal shorthandInt; //~WARN: contract mixes shorthand and explicit integer type names
     int256 internal explicitInt;
 
     struct Record {
-        uint[] values; //~WARN: contract mixes shorthand and explicit integer type names; use `uint256` and `int256` consistently
-        mapping(uint => uint256) indexes; //~WARN: contract mixes shorthand and explicit integer type names; use `uint256` and `int256` consistently
+        uint[] values; //~WARN: contract mixes shorthand and explicit integer type names
+        mapping(uint => uint256) indexes; //~WARN: contract mixes shorthand and explicit integer type names
     }
 
-    event Updated(uint oldValue, uint256 newValue); //~WARN: contract mixes shorthand and explicit integer type names; use `uint256` and `int256` consistently
-    error Difference(int delta, int256 expected); //~WARN: contract mixes shorthand and explicit integer type names; use `uint256` and `int256` consistently
-    function (uint) external returns (uint256) callback; //~WARN: contract mixes shorthand and explicit integer type names; use `uint256` and `int256` consistently
+    event Updated(uint oldValue, uint256 newValue); //~WARN: contract mixes shorthand and explicit integer type names
+    error Difference(int delta, int256 expected); //~WARN: contract mixes shorthand and explicit integer type names
+    function (uint) external returns (uint256) callback; //~WARN: contract mixes shorthand and explicit integer type names
 
     function update(
-        uint amount, //~WARN: contract mixes shorthand and explicit integer type names; use `uint256` and `int256` consistently
+        uint amount, //~WARN: contract mixes shorthand and explicit integer type names
         uint256 limit
-    ) external returns (int result, int256 expected) { //~WARN: contract mixes shorthand and explicit integer type names; use `uint256` and `int256` consistently
-        uint[] memory values = new uint[](amount); //~WARN: contract mixes shorthand and explicit integer type names; use `uint256` and `int256` consistently
+    ) external returns (int result, int256 expected) { //~WARN: contract mixes shorthand and explicit integer type names
+        uint[] memory values = new uint[](amount); //~WARN: contract mixes shorthand and explicit integer type names
         shorthandUint = values.length + limit;
         result = int(shorthandUint);
         expected = explicitInt;

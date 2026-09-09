@@ -16,7 +16,8 @@ declare_forge_lint!(
     INCORRECT_EXP,
     Severity::High,
     "incorrect-exp",
-    "`^` is bitwise xor, not exponentiation; use `**`"
+    "`^` is bitwise xor, not exponentiation",
+    help = "use `**` for exponentiation"
 );
 
 impl<'gcx> LateLintPass<'gcx> for IncorrectExp {

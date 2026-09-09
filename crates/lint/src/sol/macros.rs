@@ -4,19 +4,23 @@
 /// - `$severity`: the `Severity` of the lint.
 /// - `$str_id`: the user-facing lint id used in configuration and diagnostics.
 /// - `$desc`: a short description.
+/// - `help = $help`: optional advice emitted as a separate help message.
 ///
 /// Each lint must have a markdown page at `crates/lint/docs/<str_id>.md`; the `help` URL is
 /// derived from `$str_id` and validated by a unit test in `crates/lint/src/sol/mod.rs`.
 #[macro_export]
 macro_rules! declare_forge_lint {
-    ($id:ident, $severity:expr, $str_id:expr, $desc:expr) => {
+    ($id:ident, $severity:expr, $str_id:expr, $desc:expr $(, help = $help:expr)? $(,)?) => {
         pub static $id: SolLint = SolLint {
             id: $str_id,
             severity: $severity,
             description: $desc,
+            diagnostic_help: $crate::declare_forge_lint!(@help $($help)?),
             help: concat!("https://getfoundry.sh/forge/linting/", $str_id),
         };
     };
+    (@help) => { None };
+    (@help $help:expr) => { Some($help) };
 }
 
 /// Declares the lint modules of a severity group and registers their passes.

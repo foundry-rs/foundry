@@ -548,20 +548,22 @@ contract EnvironmentCapture {
 forgetest!(block_environment_lints_tests_and_scripts, |prj, cmd| {
     prj.add_test("EnvironmentCapture.t.sol", BLOCK_ENVIRONMENT_CAPTURE);
     let expected = str![[r#"
-warning[block-number-across-roll]: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
+warning[block-number-across-roll]: `block.number` may be reused across `vm.roll`
    [FILE]:11:26
    │
 11 │         uint256 height = block.number;
    │                          ━━━━━━━━━━━━
    │
+   ├ help: capture the block number with `vm.getBlockNumber()` instead
    ╰ help: https://getfoundry.sh/forge/linting/block-number-across-roll
 
-warning[block-timestamp-across-warp]: `block.timestamp` may be reused across `vm.warp`; capture it with `vm.getBlockTimestamp()` instead
+warning[block-timestamp-across-warp]: `block.timestamp` may be reused across `vm.warp`
    [FILE]:12:24
    │
 12 │         uint256 time = block.timestamp;
    │                        ━━━━━━━━━━━━━━━
    │
+   ├ help: capture the timestamp with `vm.getBlockTimestamp()` instead
    ╰ help: https://getfoundry.sh/forge/linting/block-timestamp-across-warp
 
 
@@ -595,20 +597,22 @@ forgetest!(block_environment_build_is_bytecode_neutral, |prj, cmd| {
     let without_lints = std::fs::read(&artifact).unwrap();
 
     cmd.forge_fuse().args(["build", "--force"]).assert_success().stderr_eq(str![[r#"
-warning[block-number-across-roll]: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
+warning[block-number-across-roll]: `block.number` may be reused across `vm.roll`
    [FILE]:11:26
    │
 11 │         uint256 height = block.number;
    │                          ━━━━━━━━━━━━
    │
+   ├ help: capture the block number with `vm.getBlockNumber()` instead
    ╰ help: https://getfoundry.sh/forge/linting/block-number-across-roll
 
-warning[block-timestamp-across-warp]: `block.timestamp` may be reused across `vm.warp`; capture it with `vm.getBlockTimestamp()` instead
+warning[block-timestamp-across-warp]: `block.timestamp` may be reused across `vm.warp`
    [FILE]:12:24
    │
 12 │         uint256 time = block.timestamp;
    │                        ━━━━━━━━━━━━━━━
    │
+   ├ help: capture the timestamp with `vm.getBlockTimestamp()` instead
    ╰ help: https://getfoundry.sh/forge/linting/block-timestamp-across-warp
 
 
@@ -1427,7 +1431,7 @@ warning[unsafe-typecast]: typecast can truncate values
 9 │         return uint64(block.chainid);
   │                ━━━━━━━━━━━━━━━━━━━━━
   │
-  ├ note: consider disabling this lint if you're certain the cast is safe
+  ├ help: consider disabling this lint if you're certain the cast is safe
   │ [..]
   │       // casting to 'uint64' is safe because [explain why]
   │       // forge-lint: disable-next-line(unsafe-typecast)
@@ -1656,7 +1660,7 @@ forgetest!(lint_json_output_no_ansi_escape_codes, |prj, cmd| {
             str![[r#"
 {
   "$message_type": "diagnostic",
-  "message": "modifier logic can be wrapped to reduce code size",
+  "message": "modifier contains inline logic that may increase code size",
   "code": {
     "code": "unwrapped-modifier-logic",
     "explanation": null
@@ -1765,10 +1769,89 @@ forgetest!(lint_json_output_no_ansi_escape_codes, |prj, cmd| {
       "rendered": null
     }
   ],
-  "rendered": "\nhelp: wrap modifier logic to reduce code size\n 9 +                 _onlyOwner();\n10 +                 _;\n11 +             }\n12 + \n13 +             function _onlyOwner() internal {\n14 +                 require(isOwner[msg.sender], \"Not owner\");\n15 +                 require(msg.sender != address(0), \"Zero address\");\n16 +             }\n   ╭▸ src/UnwrappedModifierTest.sol:8:13\n   │\n 8 │ ┏             modifier onlyOwner() {\n 9 │ ┃                 require(isOwner[msg.sender], \"Not owner\");\n10 │ ┃                 require(msg.sender != address(0), \"Zero address\");\n11 │ ┃                 _;\n12 │ ┃             }\n   │ ┗━━━━━━━━━━━━━┛\n   │\n   ╰ help: https://getfoundry.sh/forge/linting/unwrapped-modifier-logic\n   ╭╴\n 8 ±             modifier onlyOwner() {\n   ╰╴\nnote[unwrapped-modifier-logic]: modifier logic can be wrapped to reduce code size\n"
+  "rendered": "\nhelp: wrap modifier logic to reduce code size\n 9 +                 _onlyOwner();\n10 +                 _;\n11 +             }\n12 + \n13 +             function _onlyOwner() internal {\n14 +                 require(isOwner[msg.sender], \"Not owner\");\n15 +                 require(msg.sender != address(0), \"Zero address\");\n16 +             }\n   ╭▸ src/UnwrappedModifierTest.sol:8:13\n   │\n 8 │ ┏             modifier onlyOwner() {\n 9 │ ┃                 require(isOwner[msg.sender], \"Not owner\");\n10 │ ┃                 require(msg.sender != address(0), \"Zero address\");\n11 │ ┃                 _;\n12 │ ┃             }\n   │ ┗━━━━━━━━━━━━━┛\n   │\n   ╰ help: https://getfoundry.sh/forge/linting/unwrapped-modifier-logic\n   ╭╴\n 8 ±             modifier onlyOwner() {\n   ╰╴\nnote[unwrapped-modifier-logic]: modifier contains inline logic that may increase code size\n"
 }
 "#]],
         )
+        .stderr_eq("");
+});
+
+forgetest!(lint_json_separates_actionable_help, |prj, cmd| {
+    let source = r#"pragma solidity ^0.8.18;
+contract Exponent {
+    function value() external pure returns (uint256) {
+        return 2 ^ 10;
+    }
+}
+"#;
+    prj.add_source("Exponent", source);
+    cmd.args(["lint", "--json", "--only-lint", "incorrect-exp"])
+        .assert_json_stdout_with_status(true, str![[r#"
+{
+  "$message_type": "diagnostic",
+  "message": "`^` is bitwise xor, not exponentiation",
+  "code": {
+    "code": "incorrect-exp",
+    "explanation": null
+  },
+  "level": "warning",
+  "spans": [
+    {
+      "file_name": "src/Exponent.sol",
+      "byte_start": 161,
+      "byte_end": 167,
+      "line_start": 5,
+      "line_end": 5,
+      "column_start": 16,
+      "column_end": 22,
+      "is_primary": true,
+      "text": [
+        {
+          "text": "        return 2 ^ 10;",
+          "highlight_start": 16,
+          "highlight_end": 22
+        }
+      ],
+      "label": null,
+      "suggested_replacement": null,
+      "suggestion_applicability": null,
+      "expansion": null
+    }
+  ],
+  "children": [
+    {
+      "message": "use `**` for exponentiation",
+      "code": null,
+      "level": "help",
+      "spans": [],
+      "children": [],
+      "rendered": null
+    },
+    {
+      "message": "https://getfoundry.sh/forge/linting/incorrect-exp",
+      "code": null,
+      "level": "help",
+      "spans": [],
+      "children": [],
+      "rendered": null
+    }
+  ],
+  "rendered": "warning[incorrect-exp]: `^` is bitwise xor, not exponentiation\n  ╭▸ src/Exponent.sol:5:16\n  │\n5 │         return 2 ^ 10;\n  │                ━━━━━━\n  │\n  ├ help: use `**` for exponentiation\n  ╰ help: https://getfoundry.sh/forge/linting/incorrect-exp\n\n"
+}
+"#]])
+        .stderr_eq("");
+
+    prj.add_source(
+        "Exponent",
+        &source.replace(
+            "return 2 ^ 10;",
+            "// forge-lint: disable-next-line(incorrect-exp)\n        return 2 ^ 10;",
+        ),
+    );
+    cmd.forge_fuse()
+        .args(["lint", "--json", "--only-lint", "incorrect-exp"])
+        .assert_success()
+        .stdout_eq("")
         .stderr_eq("");
 });
 

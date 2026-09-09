@@ -24,7 +24,8 @@ declare_forge_lint!(
     CACHE_ARRAY_LENGTH,
     Severity::Gas,
     "cache-array-length",
-    "array length is read on every loop iteration; cache it outside the loop"
+    "array length is read on every loop iteration",
+    help = "cache it outside the loop"
 );
 
 impl<'gcx> LateLintPass<'gcx> for CacheArrayLength {

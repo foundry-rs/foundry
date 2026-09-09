@@ -22,14 +22,16 @@ declare_forge_lint!(
     COULD_BE_IMMUTABLE,
     Severity::Gas,
     "could-be-immutable",
-    "state variable could be declared `immutable`"
+    "state variable is initialized but not written at runtime",
+    help = "consider declaring it `immutable`"
 );
 
 declare_forge_lint!(
     COULD_BE_CONSTANT,
     Severity::Gas,
     "could-be-constant",
-    "state variable could be declared `constant`"
+    "state variable has a constant initializer and is never written",
+    help = "consider declaring it `constant`"
 );
 
 impl<'gcx> LateLintPass<'gcx> for UnchangedStateVariables {

@@ -28,7 +28,8 @@ declare_forge_lint!(
     EXTERNAL_FUNCTION,
     Severity::Gas,
     "external-function",
-    "`public` function can be declared `external`"
+    "`public` function with `memory` reference parameters is not referenced internally",
+    help = "consider declaring the function `external` and using `calldata` for read-only reference parameters"
 );
 
 #[derive(Default)]

@@ -12,7 +12,7 @@ declare_forge_lint!(
     BOOLEAN_EQUAL,
     Severity::Info,
     "boolean-equal",
-    "boolean comparison to a constant can be simplified"
+    "boolean comparison to a constant is redundant"
 );
 
 impl<'ast> EarlyLintPass<'ast> for BooleanEqual {

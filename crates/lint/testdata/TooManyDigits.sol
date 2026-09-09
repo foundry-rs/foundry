@@ -6,34 +6,34 @@ pragma solidity ^0.8.18;
 contract TooManyDigits {
     // SHOULD FAIL: plain decimal integer literals with 5+ consecutive zeros.
 
-    uint256 stateA = 1000000000000000000; //~NOTE: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
-    uint256 stateB = 100000; //~NOTE: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
-    uint256 fortyDigitDecimal = 1000000000000000000000000000000000000000; //~NOTE: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
+    uint256 stateA = 1000000000000000000; //~NOTE: numeric literal with many digits is error-prone
+    uint256 stateB = 100000; //~NOTE: numeric literal with many digits is error-prone
+    uint256 fortyDigitDecimal = 1000000000000000000000000000000000000000; //~NOTE: numeric literal with many digits is error-prone
 
     function asReturn() public pure returns (uint256) {
-        return 10000000; //~NOTE: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
+        return 10000000; //~NOTE: numeric literal with many digits is error-prone
     }
 
     function asComparison(uint256 x) public pure returns (bool) {
-        return x == 1000000; //~NOTE: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
+        return x == 1000000; //~NOTE: numeric literal with many digits is error-prone
     }
 
     function asArg(address to) public {
-        _send(to, 50000000000); //~NOTE: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
+        _send(to, 50000000000); //~NOTE: numeric literal with many digits is error-prone
     }
 
     function asArraySize() public pure {
-        uint256[100000] memory _arr; //~NOTE: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
+        uint256[100000] memory _arr; //~NOTE: numeric literal with many digits is error-prone
     }
 
     // Zero-run in the middle (not just trailing).
-    uint256 middleZeros = 123000007; //~NOTE: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
+    uint256 middleZeros = 123000007; //~NOTE: numeric literal with many digits is error-prone
 
     // Underscores that don't actually break up the zero run.
-    uint256 badGrouping = 1_000000; //~NOTE: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
+    uint256 badGrouping = 1_000000; //~NOTE: numeric literal with many digits is error-prone
 
     // Underscore right after a single digit, leaving a 5-zero group.
-    uint256 badGrouping2 = 1_00000; //~NOTE: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
+    uint256 badGrouping2 = 1_00000; //~NOTE: numeric literal with many digits is error-prone
 
     // SHOULD PASS:
 
@@ -58,16 +58,16 @@ contract TooManyDigits {
     address adr = 0x1234567890123456789012345678901234567890;
 
     // Non-address hex literals with long zero runs are flagged for Slither parity.
-    bytes32 mask = 0x0000000000000000000000000000000000000000000000000000000000000001; //~NOTE: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
-    uint256 hexNum = 0x100000; //~NOTE: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
-    uint256 hexWithE = 0x7fffffe07fffffe03ff000000000000; //~NOTE: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
-    uint256 hexWithUpperE = 0x7FFFFFE07FFFFFE03FF000000000000; //~NOTE: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
+    bytes32 mask = 0x0000000000000000000000000000000000000000000000000000000000000001; //~NOTE: numeric literal with many digits is error-prone
+    uint256 hexNum = 0x100000; //~NOTE: numeric literal with many digits is error-prone
+    uint256 hexWithE = 0x7fffffe07fffffe03ff000000000000; //~NOTE: numeric literal with many digits is error-prone
+    uint256 hexWithUpperE = 0x7FFFFFE07FFFFFE03FF000000000000; //~NOTE: numeric literal with many digits is error-prone
 
     function inAssembly() public pure returns (uint256 result) {
         assembly {
-            result := 100000 //~NOTE: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
-            result := add(result, 0x100000) //~NOTE: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
-            result := add(result, 0x7fffffe07fffffe03ff000000000000) //~NOTE: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
+            result := 100000 //~NOTE: numeric literal with many digits is error-prone
+            result := add(result, 0x100000) //~NOTE: numeric literal with many digits is error-prone
+            result := add(result, 0x7fffffe07fffffe03ff000000000000) //~NOTE: numeric literal with many digits is error-prone
             result := add(result, 10000)
             result := add(result, 0x1234567890123456789012345678901234567890)
         }
