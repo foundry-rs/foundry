@@ -174,9 +174,9 @@ fn snippet<'gcx>(
         .collect::<Vec<_>>()
         .join("\n");
     // Keep virtual/override specifiers and unnamed parameters in the modifier declaration.
+    // Preserve whitespace too: trimming can extend a trailing `//` comment over the opening brace.
     let header = ctx.span_to_snippet(func.span.until(func.body_span))?;
-    let header = header.trim_end();
-    let replacement = format!("{header} {{\n{body}\n{mod_indent}}}{before_helper}{after_helper}");
+    let replacement = format!("{header}{{\n{body}\n{mod_indent}}}{before_helper}{after_helper}");
     Some(replacement)
 }
 

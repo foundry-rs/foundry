@@ -1549,7 +1549,8 @@ contract Base {
         _;
     }
 
-    modifier checkedCalldata(bytes calldata data) {
+    modifier checkedCalldata(bytes calldata data) // Keep this explanation on its own line.
+    {
         require(data.length > 0);
         _;
     }
@@ -1567,7 +1568,9 @@ contract Derived is Base {
 }
 "#;
     prj.add_source("Refactoring", source);
+    cmd.forge_fuse().args(["build", "--no-lint"]).assert_success();
     let output = cmd
+        .forge_fuse()
         .args([
             "lint",
             "--json",
@@ -1612,7 +1615,8 @@ contract Derived is Base {
     assert_eq!(modifier_replacements.len(), 4);
     for (start, end, replacement) in modifier_replacements {
         // Compile each actual suggested replacement. This exercises data locations, unnamed
-        // parameters, and virtual/override modifiers, not a hand-written expected alternative.
+        // parameters, virtual/override modifiers, and trailing header comments, not a hand-written
+        // expected alternative.
         let mut fixed = source.to_owned();
         fixed.replace_range(start..end, &replacement);
         prj.add_source("Refactoring", &fixed);
