@@ -1184,4 +1184,79 @@ mod tests {
         }
         assert!(replaced, "crossover replacement never selected a distinct donor");
     }
+    #[test]
+    fn invariant_insert_adds_generated_tx() {
+        let mut config = config();
+        config.mutation_weights = forced_weights(9);
+        let generator = SequenceGenerator::invariant(
+            generator_tx(9),
+            state(),
+            FuzzRunIdentifiedContracts::new(TargetedContracts::new(), false),
+            &config,
+        )
+        .unwrap();
+        let entries = [tx(1), tx(2)];
+        let plan = generator
+            .start(
+                &mut TestRunner::deterministic(),
+                1,
+                |_| CorpusEntryView::new(&entries, &[]),
+                true,
+            )
+            .unwrap();
+        assert_eq!(plan.initial().len(), 3);
+        assert!(plan.initial().iter().any(|call| call.sender == tx(9).sender));
+        assert_eq!(plan.source(), Some(0));
+    }
+
+    #[test]
+    fn invariant_delete_removes_tx() {
+        let mut config = config();
+        config.mutation_weights = forced_weights(10);
+        let generator = SequenceGenerator::invariant(
+            generator_tx(9),
+            state(),
+            FuzzRunIdentifiedContracts::new(TargetedContracts::new(), false),
+            &config,
+        )
+        .unwrap();
+        let entries = [tx(1), tx(2)];
+        let plan = generator
+            .start(
+                &mut TestRunner::deterministic(),
+                1,
+                |_| CorpusEntryView::new(&entries, &[]),
+                true,
+            )
+            .unwrap();
+        assert_eq!(plan.initial().len(), 1);
+        assert!(entries.iter().any(|call| call.sender == plan.initial()[0].sender));
+        assert_eq!(plan.source(), Some(0));
+    }
+
+    #[test]
+    fn invariant_swap_exchanges_txs() {
+        let mut config = config();
+        config.mutation_weights = forced_weights(11);
+        let generator = SequenceGenerator::invariant(
+            generator_tx(9),
+            state(),
+            FuzzRunIdentifiedContracts::new(TargetedContracts::new(), false),
+            &config,
+        )
+        .unwrap();
+        let entries = [tx(1), tx(2)];
+        let plan = generator
+            .start(
+                &mut TestRunner::deterministic(),
+                1,
+                |_| CorpusEntryView::new(&entries, &[]),
+                true,
+            )
+            .unwrap();
+        assert_eq!(plan.initial().len(), 2);
+        assert_eq!(plan.initial()[0].sender, entries[1].sender);
+        assert_eq!(plan.initial()[1].sender, entries[0].sender);
+        assert_eq!(plan.source(), Some(0));
+    }
 }
