@@ -8,7 +8,7 @@ use alloy_primitives::{
 use eyre::WrapErr;
 use foundry_block_explorers::{contract::Metadata, errors::EtherscanError};
 use foundry_common::compile::etherscan_project;
-use foundry_config::{Chain, Config};
+use foundry_config::{Chain, Config, EtherscanResolver};
 use futures::{
     future::join_all,
     stream::{FuturesUnordered, Stream, StreamExt},
@@ -35,16 +35,44 @@ pub struct ExternalIdentifier {
     remaining_budget: Duration,
 }
 
-impl ExternalIdentifier {
-    /// Creates a new external identifier with the given client
-    pub fn new(config: &Config, mut chain: Option<Chain>) -> eyre::Result<Option<Self>> {
-        let timeout = config.tracing.external_identification_timeout;
-        if config.offline || timeout == 0 {
-            return Ok(None);
+/// The [`Config`] settings an [`ExternalIdentifier`] is built from, detached from the config
+/// itself.
+///
+/// Lets a consumer that keeps only a snapshot of the config — the cheatcode config — build an
+/// identifier for a chain it doesn't learn until runtime, when a test selects a fork.
+#[derive(Clone, Debug, Default)]
+pub struct ExternalIdentifierConfig {
+    /// Whether network access is disabled altogether.
+    offline: bool,
+    /// How long identification may block, in seconds. Zero disables it.
+    timeout: u64,
+    /// Whether to skip system proxy lookups when building the explorer client.
+    no_proxy: bool,
+    /// Explorer settings, resolved against the chain an identifier is built for.
+    etherscan: EtherscanResolver,
+}
+
+impl ExternalIdentifierConfig {
+    /// Takes the settings an [`ExternalIdentifier`] needs out of `config`.
+    pub fn new(config: &Config) -> Self {
+        Self {
+            offline: config.offline,
+            timeout: config.tracing.external_identification_timeout,
+            no_proxy: config.eth_rpc_no_proxy,
+            etherscan: config.etherscan_resolver(),
+        }
+    }
+
+    /// Builds an identifier that looks contracts up on `chain`.
+    ///
+    /// Returns `None` when there is nothing to look them up with: identification is off, or
+    /// neither Sourcify nor a block explorer is usable.
+    pub fn identifier(&self, mut chain: Option<Chain>) -> Option<ExternalIdentifier> {
+        if self.offline || self.timeout == 0 {
+            return None;
         }
 
-        let no_proxy = config.eth_rpc_no_proxy;
-        let config = match config.get_etherscan_config_with_chain(chain) {
+        let etherscan = match self.etherscan.resolve(chain) {
             Ok(Some(config)) => {
                 chain = config.chain;
                 Some(config)
@@ -64,9 +92,9 @@ impl ExternalIdentifier {
             debug!(target: "evm::traces::external", ?chain, "using sourcify identifier");
             fetchers.push(Arc::new(SourcifyFetcher::new(chain)));
         }
-        if let Some(config) = config {
+        if let Some(config) = etherscan {
             debug!(target: "evm::traces::external", chain=?config.chain, url=?config.api_url, "using etherscan identifier");
-            match config.into_client_with_no_proxy(no_proxy) {
+            match config.into_client_with_no_proxy(self.no_proxy) {
                 Ok(client) => {
                     fetchers.push(Arc::new(EtherscanFetcher::new(client)));
                 }
@@ -77,14 +105,21 @@ impl ExternalIdentifier {
         }
         if fetchers.is_empty() {
             debug!(target: "evm::traces::external", "no fetchers enabled");
-            return Ok(None);
+            return None;
         }
 
-        Ok(Some(Self {
+        Some(ExternalIdentifier {
             fetchers,
             contracts: Default::default(),
-            remaining_budget: Duration::from_secs(timeout),
-        }))
+            remaining_budget: Duration::from_secs(self.timeout),
+        })
+    }
+}
+
+impl ExternalIdentifier {
+    /// Creates a new external identifier with the given client
+    pub fn new(config: &Config, chain: Option<Chain>) -> eyre::Result<Option<Self>> {
+        Ok(ExternalIdentifierConfig::new(config).identifier(chain))
     }
 
     /// Goes over the list of contracts we have pulled from the traces, clones their source from
@@ -210,34 +245,39 @@ impl ExternalIdentifier {
         }
     }
 
-    /// Fetches all verified ABIs and whether each proxy chain was fully resolved.
-    pub async fn get_abis(
-        &mut self,
-        addresses: &[Address],
-    ) -> Vec<(Address, eyre::Result<(Vec<JsonAbi>, bool)>)> {
+    /// Walks the proxy chain of every address, fetching the metadata of each link as it goes.
+    ///
+    /// Returns one [`ProxyChain`] per input address, in the same order.
+    async fn resolve_proxy_chains(&mut self, addresses: &[Address]) -> Vec<ProxyChain> {
         const MAX_PROXY_DEPTH: usize = 16;
 
-        struct Chain {
+        struct Walk {
+            /// The link to visit next, or `None` once the walk ended.
             current: Option<Address>,
             visited: HashSet<Address>,
-            abis: Vec<JsonAbi>,
-            complete: bool,
+            chain: ProxyChain,
         }
 
-        let mut chains = addresses
+        impl Walk {
+            const fn stop(&mut self, stop: Stop) {
+                self.current = None;
+                self.chain.stop = stop;
+            }
+        }
+
+        let mut walks = addresses
             .iter()
-            .map(|&address| Chain {
+            .map(|&address| Walk {
                 current: Some(address),
                 visited: HashSet::default(),
-                abis: Vec::new(),
-                complete: true,
+                chain: ProxyChain { links: Vec::new(), stop: Stop::Unresolved },
             })
             .collect::<Vec<_>>();
 
         for _ in 0..MAX_PROXY_DEPTH {
-            let to_fetch = chains
+            let to_fetch = walks
                 .iter()
-                .filter_map(|chain| chain.current)
+                .filter_map(|walk| walk.current)
                 .filter(|address| !self.contracts.contains_key(address))
                 .collect::<HashSet<_>>()
                 .into_iter()
@@ -245,48 +285,159 @@ impl ExternalIdentifier {
             self.fetch_addresses_async(&to_fetch).await;
 
             let mut has_next = false;
-            for chain in &mut chains {
-                let Some(current) = chain.current else { continue };
-                if !chain.visited.insert(current) {
-                    chain.current = None;
-                    chain.complete = false;
+            for walk in &mut walks {
+                let Some(current) = walk.current else { continue };
+                // A cycle: stop rather than walk it again.
+                if !walk.visited.insert(current) {
+                    walk.stop(Stop::Unresolved);
                     continue;
                 }
-                let Some((_, Some(metadata))) = self.contracts.get(&current) else {
-                    chain.current = None;
-                    chain.complete = false;
+                let Some(entry) = self.contracts.get(&current) else {
+                    // Never answered: out of budget, or an error the fetchers gave up on.
+                    walk.stop(Stop::Unresolved);
                     continue;
                 };
-                if let Ok(abi) = metadata.abi() {
-                    chain.abis.push(abi);
-                } else {
-                    chain.complete = false;
+                let Some(metadata) = &entry.1 else {
+                    // Answered, and the answer is that nothing has source for it.
+                    walk.stop(Stop::Unverified);
+                    continue;
+                };
+                walk.chain.links.push(current);
+                match (metadata.proxy != 0).then_some(metadata.implementation).flatten() {
+                    Some(implementation) => {
+                        walk.current = Some(implementation);
+                        has_next = true;
+                    }
+                    // A proxy that doesn't say what it points at.
+                    None if metadata.proxy != 0 => walk.stop(Stop::Unresolved),
+                    None => walk.stop(Stop::End),
                 }
-                chain.current = (metadata.proxy != 0).then_some(metadata.implementation).flatten();
-                if metadata.proxy != 0 && chain.current.is_none() {
-                    chain.complete = false;
-                }
-                has_next |= chain.current.is_some();
             }
             if !has_next {
                 break;
             }
         }
 
-        chains
+        walks
+            .into_iter()
+            .map(|mut walk| {
+                // Still walking after `MAX_PROXY_DEPTH`: the chain is longer than we follow.
+                if walk.current.is_some() {
+                    walk.stop(Stop::Unresolved);
+                }
+                walk.chain
+            })
+            .collect()
+    }
+
+    /// Fetches all verified ABIs and whether each proxy chain was fully resolved.
+    pub async fn get_abis(
+        &mut self,
+        addresses: &[Address],
+    ) -> Vec<(Address, eyre::Result<(Vec<JsonAbi>, bool)>)> {
+        self.resolve_proxy_chains(addresses)
+            .await
             .into_iter()
             .zip(addresses.iter().copied())
-            .map(|(mut chain, address)| {
-                chain.complete &= chain.current.is_none();
-                let result = if chain.abis.is_empty() {
+            .map(|(chain, address)| {
+                let mut complete = chain.stop == Stop::End;
+                let mut abis = Vec::new();
+                for metadata in chain.links.iter().filter_map(|link| self.metadata(*link)) {
+                    match metadata.abi() {
+                        Ok(abi) => abis.push(abi),
+                        Err(_) => complete = false,
+                    }
+                }
+                let result = if abis.is_empty() {
                     Err(eyre::eyre!("external ABI lookup failed"))
                 } else {
-                    Ok((chain.abis.into_iter().rev().collect(), chain.complete))
+                    // Innermost implementation first.
+                    Ok((abis.into_iter().rev().collect(), complete))
                 };
                 (address, result)
             })
             .collect()
     }
+
+    /// Resolves each address to the contract that actually implements it — itself, or the last
+    /// link of its proxy chain — along with that contract's verified metadata.
+    ///
+    /// A proxy `delegatecall`s into its implementation, so it is the implementation that
+    /// describes the storage living in the proxy's own slots.
+    ///
+    /// An address is absent from the result when the lookup reached no conclusion about it: the
+    /// budget ran out, the explorer errored, or a proxy pointed somewhere unresolvable. Callers
+    /// must treat that as "ask again later", not as "this contract has no source" — which is
+    /// what a present [`Implementation::None`] means.
+    pub async fn get_implementations(
+        &mut self,
+        addresses: &[Address],
+    ) -> Vec<(Address, Implementation)> {
+        self.resolve_proxy_chains(addresses)
+            .await
+            .into_iter()
+            .zip(addresses.iter().copied())
+            .filter_map(|(chain, address)| {
+                let implementation = match chain.stop {
+                    // Walked to the end, so the last link is what implements the address.
+                    Stop::End => Implementation::Verified {
+                        address: *chain.links.last()?,
+                        metadata: Box::new(self.metadata(*chain.links.last()?)?.clone()),
+                    },
+                    // Conclusive: nothing along the chain has verified source.
+                    Stop::Unverified => Implementation::Unverified,
+                    // Says nothing about the address, so don't answer for it at all.
+                    Stop::Unresolved => return None,
+                };
+                Some((address, implementation))
+            })
+            .collect()
+    }
+
+    /// The metadata fetched for `address`, if it was fetched and is verified.
+    fn metadata(&self, address: Address) -> Option<&Metadata> {
+        self.contracts.get(&address)?.1.as_ref()
+    }
+}
+
+/// What an address turned out to be implemented by, once its proxy chain was walked.
+#[derive(Clone, Debug)]
+pub enum Implementation {
+    /// The verified source of the contract implementing the address, and its address — the
+    /// address itself, unless it is a proxy.
+    Verified {
+        /// Where the implementation lives.
+        address: Address,
+        /// Its verified source. Boxed because it dwarfs the other variant.
+        metadata: Box<Metadata>,
+    },
+    /// Nothing has verified source for the address.
+    Unverified,
+}
+
+/// The chain of addresses one address resolves through, from the address itself down to the
+/// contract that implements it.
+struct ProxyChain {
+    /// Every link that had verified metadata, starting at the address that was asked for.
+    links: Vec<Address>,
+    /// Why the walk stopped.
+    stop: Stop,
+}
+
+/// Why a proxy chain walk stopped.
+///
+/// [`Stop::End`] and [`Stop::Unverified`] are conclusions about the contract that will hold until
+/// someone deploys or verifies something; [`Stop::Unresolved`] is a conclusion about the lookup,
+/// and asking again later may well answer differently.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Stop {
+    /// Reached a contract that isn't a proxy, so the chain is whole.
+    End,
+    /// A link is known to have no verified source.
+    Unverified,
+    /// A link never answered, the chain cycled, a proxy didn't say what it points at, or the
+    /// chain is longer than we follow.
+    Unresolved,
 }
 
 impl TraceIdentifier for ExternalIdentifier {
@@ -959,5 +1110,79 @@ mod tests {
         let (abis, complete) = result.unwrap();
         assert_eq!(abis.len(), 1);
         assert!(!complete);
+    }
+
+    /// Flattens an [`Implementation`] to something comparable.
+    fn described(implementation: &Implementation) -> Option<(Address, &str)> {
+        match implementation {
+            Implementation::Verified { address, metadata } => {
+                Some((*address, metadata.contract_name.as_str()))
+            }
+            Implementation::Unverified => None,
+        }
+    }
+
+    #[tokio::test]
+    async fn get_implementations_follows_proxies_to_the_last_link() {
+        let plain = Address::with_last_byte(1);
+        let proxy = Address::with_last_byte(2);
+        let implementation_address = Address::with_last_byte(3);
+        let unverified = Address::with_last_byte(4);
+
+        let mut proxy_metadata = metadata("Proxy");
+        proxy_metadata.proxy = 1;
+        proxy_metadata.implementation = Some(implementation_address);
+
+        let mut identifier = test_identifier(Vec::new(), Duration::from_secs(1));
+        identifier.cache_fetched(plain, (FetcherKind::Etherscan, Some(metadata("Plain"))));
+        identifier.cache_fetched(proxy, (FetcherKind::Etherscan, Some(proxy_metadata)));
+        identifier.cache_fetched(
+            implementation_address,
+            (FetcherKind::Etherscan, Some(metadata("Implementation"))),
+        );
+        identifier.cache_fetched(unverified, (FetcherKind::Etherscan, None));
+
+        let results = identifier.get_implementations(&[plain, proxy, unverified]).await;
+        let described = results
+            .iter()
+            .map(|(address, implementation)| (*address, described(implementation)))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            described,
+            [
+                // A plain contract implements itself.
+                (plain, Some((plain, "Plain"))),
+                // A proxy resolves to the implementation it delegates to.
+                (proxy, Some((implementation_address, "Implementation"))),
+                // Conclusively not verified, as opposed to absent.
+                (unverified, None),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn get_implementations_omits_addresses_it_could_not_resolve() {
+        let proxy = Address::with_last_byte(1);
+        let implementation_address = Address::with_last_byte(2);
+
+        let mut proxy_metadata = metadata("Proxy");
+        proxy_metadata.proxy = 1;
+        proxy_metadata.implementation = Some(implementation_address);
+
+        // The proxy resolved but its implementation never did — a timed out or errored lookup.
+        // Reporting that as `Unverified` would let a transient outage be cached as a verdict.
+        let mut identifier = test_identifier(Vec::new(), Duration::ZERO);
+        identifier.cache_fetched(proxy, (FetcherKind::Etherscan, Some(proxy_metadata)));
+
+        assert!(identifier.get_implementations(&[proxy]).await.is_empty());
+
+        // Once it does resolve, the answer is conclusive.
+        identifier.cache_fetched(
+            implementation_address,
+            (FetcherKind::Etherscan, Some(metadata("Implementation"))),
+        );
+        let results = identifier.get_implementations(&[proxy]).await;
+        assert_eq!(described(&results[0].1), Some((implementation_address, "Implementation")));
     }
 }

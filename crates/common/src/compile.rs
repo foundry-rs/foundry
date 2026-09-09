@@ -36,7 +36,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fmt::Display,
     io::IsTerminal,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     str::FromStr,
     sync::Arc,
     time::Instant,
@@ -768,8 +768,12 @@ pub fn etherscan_project(metadata: &Metadata, target_path: &Path) -> Result<Proj
     let mut settings = metadata.settings()?;
 
     // make remappings absolute with our root
+    //
+    // The remappings come from the explorer's copy of the contract's compiler settings, which is
+    // attacker controlled: a target of `../../..` would otherwise point the compiler at sources
+    // outside the checkout and let a verified contract pull arbitrary local files into the build.
     for remapping in &mut settings.remappings {
-        let new_path = sources_path.join(remapping.path.trim_start_matches('/'));
+        let new_path = sources_path.join(sanitize_relative_path(remapping.path.as_ref()));
         remapping.path = new_path.display().to_string();
     }
 
@@ -809,6 +813,17 @@ pub fn etherscan_project(metadata: &Metadata, target_path: &Path) -> Result<Proj
         .ephemeral()
         .no_artifacts()
         .build(compiler)?)
+}
+
+/// Strips the components of an untrusted path that would let it escape the directory it is
+/// joined onto: parent directory components, and a leading separator or drive prefix.
+///
+/// Mirrors the sanitization [`foundry_block_explorers::contract::SourceTree`] applies when writing
+/// the sources themselves to disk.
+fn sanitize_relative_path(path: &Path) -> PathBuf {
+    path.components()
+        .filter(|component| matches!(component, Component::Normal(_) | Component::CurDir))
+        .collect()
 }
 
 /// Adds `storageLayout` to the compiler output selection for the given project.
@@ -998,6 +1013,25 @@ mod tests {
         assert_eq!(
             ContractSizeLimits::for_spec_id(SpecId::AMSTERDAM),
             ContractSizeLimits::new(65_536, 131_072)
+        );
+    }
+
+    #[test]
+    fn sanitized_remapping_paths_stay_inside_the_root() {
+        let root = Path::new("/tmp/sources");
+        for path in ["../../../etc", "a/../../../etc", "/etc", "./a/../b"] {
+            let joined = root.join(sanitize_relative_path(Path::new(path)));
+            assert!(
+                joined.starts_with(root) && !joined.components().any(|c| c == Component::ParentDir),
+                "{path} escaped the root: {}",
+                joined.display()
+            );
+        }
+
+        // Ordinary relative paths are left alone.
+        assert_eq!(
+            sanitize_relative_path(Path::new("lib/openzeppelin")),
+            Path::new("lib/openzeppelin")
         );
     }
 }

@@ -2169,30 +2169,19 @@ fn get_recorded_state_diffs<FEN: FoundryEvmNetwork>(
         }
     }
 
-    // For contracts not found locally, try fetching from Etherscan if configured.
-    // Resolve the etherscan config lazily using the runtime chain ID so it works
-    // with forks selected via vm.createSelectFork().
-    if let Some(etherscan_config) = ccx.state.config.get_etherscan_config(ccx.ecx.cfg().chain_id()) {
-        for address in unknown_contracts {
-            // Check in-memory cache first
-            if let Some(cached) = ccx.state.external_storage_layouts.get(&address) {
-                if let Some((name, layout)) = cached {
-                    contract_names.insert(address, name.clone());
-                    storage_layouts.insert(address, layout.clone());
-                }
-                continue;
-            }
-
-            // Fetch, compile, and cache
-            let result = foundry_common::contracts::fetch_external_storage_layout(
-                address,
-                &etherscan_config,
-            );
-            if let Some((ref name, ref layout)) = result {
-                contract_names.insert(address, name.clone());
-                storage_layouts.insert(address, layout.clone());
-            }
-            ccx.state.external_storage_layouts.insert(address, result);
+    // For contracts not found locally, compile a layout out of whatever verified source Sourcify
+    // or a block explorer has. The chain comes from the running EVM rather than the config, so
+    // this also covers forks selected via `vm.createSelectFork()`.
+    if ccx.state.config.decode_external_storage && !unknown_contracts.is_empty() {
+        let chain = foundry_config::Chain::from(ccx.ecx.cfg().chain_id());
+        let external = crate::external_storage::storage_layouts(
+            &ccx.state.config.external_sources,
+            chain,
+            unknown_contracts,
+        );
+        for (address, (name, layout)) in external {
+            contract_names.insert(address, name);
+            storage_layouts.insert(address, layout);
         }
     }
 

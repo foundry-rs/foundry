@@ -4,11 +4,11 @@ use alloy_primitives::{U256, map::AddressHashMap};
 use foundry_common::{ContractsByArtifact, fs::normalize_path};
 use foundry_compilers::{ArtifactId, ProjectPathsConfig, utils::canonicalize};
 use foundry_config::{
-    Config, EtherscanConfigs, FsPermissions, ResolvedEtherscanConfig, ResolvedRpcEndpoint,
-    ResolvedRpcEndpoints, RpcEndpoint, RpcEndpointUrl, cache::StorageCachingConfig,
-    fs_permissions::FsAccessKind,
+    Config, FsPermissions, ResolvedRpcEndpoint, ResolvedRpcEndpoints, RpcEndpoint, RpcEndpointUrl,
+    cache::StorageCachingConfig, fs_permissions::FsAccessKind,
 };
 use foundry_evm_core::opts::EvmOpts;
+use foundry_evm_traces::identifier::ExternalIdentifierConfig;
 use std::{
     path::{Path, PathBuf},
     time::Duration,
@@ -58,13 +58,13 @@ pub struct CheatsConfig {
     /// Artifacts used to resolve cheatcode artifact references.
     /// Unlike `available_artifacts`, this is retained when artifact safety checks are disabled.
     pub artifact_lookup: Option<ContractsByArtifact>,
-    /// Whether to decode external contracts' storage layouts in state diffs by fetching
-    /// verified source code from Etherscan/Sourcify.
+    /// Whether to decode the storage layouts of contracts outside the local project in state
+    /// diffs, by fetching their verified source code from a block explorer.
     pub decode_external_storage: bool,
-    /// Raw etherscan configs from foundry.toml for lazy resolution by chain ID.
-    pub etherscan_configs: EtherscanConfigs,
-    /// Etherscan API key (from CLI flag or config) used as fallback.
-    pub etherscan_api_key: Option<String>,
+    /// Settings for looking contracts up on Sourcify and block explorers, resolved lazily
+    /// against the chain a test is running on: a `vm.createSelectFork` can change it after this
+    /// config was built.
+    pub external_sources: ExternalIdentifierConfig,
     /// Currently running artifact.
     pub running_artifact: Option<ArtifactId>,
     /// Whether to enable legacy (non-reverting) assertions.
@@ -114,8 +114,7 @@ impl CheatsConfig {
             available_artifacts,
             artifact_lookup,
             decode_external_storage: config.decode_external_storage,
-            etherscan_configs: config.etherscan.clone(),
-            etherscan_api_key: config.etherscan_api_key.clone(),
+            external_sources: ExternalIdentifierConfig::new(config),
             running_artifact,
             assertions_revert: config.assertions_revert,
             seed: config.fuzz.seed,
@@ -134,33 +133,6 @@ impl CheatsConfig {
         );
         cloned.blocked_cheatcodes.clone_from(&self.blocked_cheatcodes);
         cloned
-    }
-
-    /// Resolves the etherscan config for the given chain ID.
-    /// Returns `None` if `decode_external_storage` is disabled or no config could be resolved.
-    pub fn get_etherscan_config(&self, chain_id: u64) -> Option<ResolvedEtherscanConfig> {
-        if !self.decode_external_storage {
-            return None;
-        }
-
-        let chain: alloy_chains::Chain = chain_id.into();
-
-        // Try to find a matching config in the etherscan configs by chain ID.
-        if let Some(Ok(mut resolved)) = self.etherscan_configs.clone().resolved().find_chain(chain)
-        {
-            // Override key if CLI key is set.
-            if let Some(key) = &self.etherscan_api_key {
-                resolved.key.clone_from(key);
-            }
-            return Some(resolved);
-        }
-
-        // Fallback: create from API key + chain.
-        if let Some(key) = &self.etherscan_api_key {
-            return ResolvedEtherscanConfig::create(key, chain);
-        }
-
-        None
     }
 
     /// Attempts to canonicalize (see [std::fs::canonicalize]) the path.
@@ -289,8 +261,7 @@ impl Default for CheatsConfig {
             available_artifacts: Default::default(),
             artifact_lookup: Default::default(),
             decode_external_storage: false,
-            etherscan_configs: Default::default(),
-            etherscan_api_key: None,
+            external_sources: Default::default(),
             running_artifact: Default::default(),
             assertions_revert: true,
             seed: None,

@@ -1054,8 +1054,8 @@ pub struct TestArgs {
     )]
     pub showmap_corpus_dir: Option<PathBuf>,
 
-    /// Fetch and decode external contracts' storage layouts in state diffs by
-    /// fetching verified source code from Etherscan.
+    /// Decode the storage layouts of contracts outside the local project in state diffs, by
+    /// compiling the verified source Sourcify or a block explorer has for them.
     #[arg(long)]
     pub decode_external_storage: bool,
 
@@ -1789,11 +1789,6 @@ impl TestArgs {
 
         if config.fuzz.run == Some(0) {
             bail!("`fuzz.run` must be greater than 0");
-        }
-
-        // Enable external storage layout decoding if requested.
-        if self.decode_external_storage {
-            config.decode_external_storage = true;
         }
 
         if self.list {
@@ -3090,6 +3085,7 @@ impl Provider for TestArgs {
             "etherscan_api_key" =>
                 self.etherscan_api_key.as_ref().filter(|s| !s.trim().is_empty()).cloned(),
             "show_progress" => self.show_progress.then_some(true),
+            "decode_external_storage" => self.decode_external_storage.then_some(true),
         };
         // Mutation-testing CLI overrides
         if !mutation.is_empty() {
