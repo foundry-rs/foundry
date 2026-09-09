@@ -23,7 +23,7 @@ mod weak_prng;
 
 register_lints!(
     assert_state_change: (AssertStateChange, late, (ASSERT_STATE_CHANGE));
-    cheatcode_environment: (CheatcodeEnvironment, late, (BLOCK_NUMBER_ACROSS_ROLL, BLOCK_TIMESTAMP_ACROSS_WARP));
+    cheatcode_environment: (CheatcodeEnvironment, late, (ENVIRONMENT_READ_ACROSS_MUTATION));
     dangerous_unary_operator: (DangerousUnaryOperator, early, (DANGEROUS_UNARY_OPERATOR));
     div_mul: (DivideBeforeMultiply, late, (DIVIDE_BEFORE_MULTIPLY));
     ecrecover: (Ecrecover, late, (ECRECOVER));

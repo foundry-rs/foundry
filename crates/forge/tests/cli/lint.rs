@@ -548,21 +548,21 @@ contract EnvironmentCapture {
 forgetest!(block_environment_lints_tests_and_scripts, |prj, cmd| {
     prj.add_test("EnvironmentCapture.t.sol", BLOCK_ENVIRONMENT_CAPTURE);
     let expected = str![[r#"
-warning[block-number-across-roll]: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
+warning[environment-read-across-mutation]: `block.number` may be reused across a Foundry environment mutation; capture it with `vm.getBlockNumber()` instead
    [FILE]:11:26
    │
 11 │         uint256 height = block.number;
    │                          ━━━━━━━━━━━━
    │
-   ╰ help: https://getfoundry.sh/forge/linting/block-number-across-roll
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
 
-warning[block-timestamp-across-warp]: `block.timestamp` may be reused across `vm.warp`; capture it with `vm.getBlockTimestamp()` instead
+warning[environment-read-across-mutation]: `block.timestamp` may be reused across a Foundry environment mutation; capture it with `vm.getBlockTimestamp()` instead
    [FILE]:12:24
    │
 12 │         uint256 time = block.timestamp;
    │                        ━━━━━━━━━━━━━━━
    │
-   ╰ help: https://getfoundry.sh/forge/linting/block-timestamp-across-warp
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
 
 
 "#]];
@@ -573,8 +573,7 @@ warning[block-timestamp-across-warp]: `block.timestamp` may be reused across `vm
     cmd.forge_fuse().arg("lint").arg(script).assert_success().stderr_eq(expected);
 
     prj.update_config(|config| {
-        config.lint.exclude_lints =
-            vec!["block-number-across-roll".into(), "block-timestamp-across-warp".into()];
+        config.lint.exclude_lints = vec!["environment-read-across-mutation".into()];
     });
     cmd.forge_fuse().arg("lint").assert_success().stderr_eq("");
     prj.update_config(|config| {
@@ -595,21 +594,21 @@ forgetest!(block_environment_build_is_bytecode_neutral, |prj, cmd| {
     let without_lints = std::fs::read(&artifact).unwrap();
 
     cmd.forge_fuse().args(["build", "--force"]).assert_success().stderr_eq(str![[r#"
-warning[block-number-across-roll]: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
+warning[environment-read-across-mutation]: `block.number` may be reused across a Foundry environment mutation; capture it with `vm.getBlockNumber()` instead
    [FILE]:11:26
    │
 11 │         uint256 height = block.number;
    │                          ━━━━━━━━━━━━
    │
-   ╰ help: https://getfoundry.sh/forge/linting/block-number-across-roll
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
 
-warning[block-timestamp-across-warp]: `block.timestamp` may be reused across `vm.warp`; capture it with `vm.getBlockTimestamp()` instead
+warning[environment-read-across-mutation]: `block.timestamp` may be reused across a Foundry environment mutation; capture it with `vm.getBlockTimestamp()` instead
    [FILE]:12:24
    │
 12 │         uint256 time = block.timestamp;
    │                        ━━━━━━━━━━━━━━━
    │
-   ╰ help: https://getfoundry.sh/forge/linting/block-timestamp-across-warp
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
 
 
 "#]]);

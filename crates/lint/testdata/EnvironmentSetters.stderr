@@ -1,0 +1,424 @@
+warning[environment-read-across-mutation]: `block.chainid` may be reused across a Foundry environment mutation; capture it with `vm.getChainId()` instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     uint256 saved = block.chainid;
+   │                       ━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.coinbase` may be reused across a Foundry environment mutation; capture it through an external helper call instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     address saved = block.coinbase;
+   │                       ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.difficulty` may be reused across a Foundry environment mutation; capture it through an external helper call instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     uint256 saved = block.difficulty;
+   │                       ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.prevrandao` may be reused across a Foundry environment mutation; capture it through an external helper call instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     uint256 saved = block.prevrandao;
+   │                       ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.prevrandao` may be reused across a Foundry environment mutation; capture it through an external helper call instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     uint256 saved = block.prevrandao;
+   │                       ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.basefee` may be reused across a Foundry environment mutation; capture it through an external helper call instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     uint256 saved = block.basefee;
+   │                       ━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.blobbasefee` may be reused across a Foundry environment mutation; capture it with `vm.getBlobBaseFee()` instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     uint256 saved = block.blobbasefee;
+   │                       ━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `tx.gasprice` may be reused across a Foundry environment mutation; capture it through an external helper call instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     uint256 saved = tx.gasprice;
+   │                       ━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `blockhash(...)` may be reused across a Foundry environment mutation; capture it through an external helper call instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     bytes32 saved = blockhash(1);
+   │                       ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `blobhash(...)` may be reused across a Foundry environment mutation; capture it with `vm.getBlobhashes()` instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     bytes32 saved = blobhash(0);
+   │                       ━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.gaslimit` may be reused across a Foundry environment mutation; capture it through an external helper call instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     uint256 saved = block.gaslimit;
+   │                       ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.gaslimit` may be reused across a Foundry environment mutation; capture it through an external helper call instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     uint256 saved = block.gaslimit;
+   │                       ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.gaslimit` may be reused across a Foundry environment mutation; capture it through an external helper call instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     uint256 saved = block.gaslimit;
+   │                       ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.gaslimit` may be reused across a Foundry environment mutation; capture it through an external helper call instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     uint256 saved = block.gaslimit;
+   │                       ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.gaslimit` may be reused across a Foundry environment mutation; capture it through an external helper call instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     uint256 saved = block.gaslimit;
+   │                       ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.gaslimit` may be reused across a Foundry environment mutation; capture it through an external helper call instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     uint256 saved = block.gaslimit;
+   │                       ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.gaslimit` may be reused across a Foundry environment mutation; capture it through an external helper call instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     uint256 saved = block.gaslimit;
+   │                       ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.gaslimit` may be reused across a Foundry environment mutation; capture it through an external helper call instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     uint256 saved = block.gaslimit;
+   │                       ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.gaslimit` may be reused across a Foundry environment mutation; capture it through an external helper call instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     uint256 saved = block.gaslimit;
+   │                       ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.gaslimit` may be reused across a Foundry environment mutation; capture it through an external helper call instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     uint256 saved = block.gaslimit;
+   │                       ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.gaslimit` may be reused across a Foundry environment mutation; capture it through an external helper call instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     uint256 saved = block.gaslimit;
+   │                       ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.gaslimit` may be reused across a Foundry environment mutation; capture it through an external helper call instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     uint256 saved = block.gaslimit;
+   │                       ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.number` may be reused across a Foundry environment mutation; capture it with `vm.getBlockNumber()` instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     uint256 height = block.number;
+   │                        ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.timestamp` may be reused across a Foundry environment mutation; capture it with `vm.getBlockTimestamp()` instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     uint256 time = block.timestamp;
+   │                      ━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.chainid` may be reused across a Foundry environment mutation; capture it with `vm.getChainId()` instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     uint256 chain = block.chainid;
+   │                       ━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.coinbase` may be reused across a Foundry environment mutation; capture it through an external helper call instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     address beneficiary = block.coinbase;
+   │                             ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.difficulty` may be reused across a Foundry environment mutation; capture it through an external helper call instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     uint256 difficulty = block.difficulty;
+   │                            ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.prevrandao` may be reused across a Foundry environment mutation; capture it through an external helper call instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     uint256 random = block.prevrandao;
+   │                        ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.basefee` may be reused across a Foundry environment mutation; capture it through an external helper call instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     uint256 base = block.basefee;
+   │                      ━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.blobbasefee` may be reused across a Foundry environment mutation; capture it with `vm.getBlobBaseFee()` instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     uint256 blobBase = block.blobbasefee;
+   │                          ━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.gaslimit` may be reused across a Foundry environment mutation; capture it through an external helper call instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     uint256 limit = block.gaslimit;
+   │                       ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `blockhash(...)` may be reused across a Foundry environment mutation; capture it through an external helper call instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     bytes32 hash = blockhash(1);
+   │                      ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.number` may be reused across a Foundry environment mutation; capture it with `vm.getBlockNumber()` instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     uint256 height = block.number;
+   │                        ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.timestamp` may be reused across a Foundry environment mutation; capture it with `vm.getBlockTimestamp()` instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     uint256 time = block.timestamp;
+   │                      ━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.chainid` may be reused across a Foundry environment mutation; capture it with `vm.getChainId()` instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     uint256 chain = block.chainid;
+   │                       ━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.coinbase` may be reused across a Foundry environment mutation; capture it through an external helper call instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     address beneficiary = block.coinbase;
+   │                             ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.difficulty` may be reused across a Foundry environment mutation; capture it through an external helper call instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     uint256 difficulty = block.difficulty;
+   │                            ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.prevrandao` may be reused across a Foundry environment mutation; capture it through an external helper call instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     uint256 random = block.prevrandao;
+   │                        ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.basefee` may be reused across a Foundry environment mutation; capture it through an external helper call instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     uint256 base = block.basefee;
+   │                      ━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.blobbasefee` may be reused across a Foundry environment mutation; capture it with `vm.getBlobBaseFee()` instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     uint256 blobBase = block.blobbasefee;
+   │                          ━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.gaslimit` may be reused across a Foundry environment mutation; capture it through an external helper call instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     uint256 limit = block.gaslimit;
+   │                       ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `blockhash(...)` may be reused across a Foundry environment mutation; capture it through an external helper call instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     bytes32 hash = blockhash(1);
+   │                      ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.slotnum` may be reused across a Foundry environment mutation; capture it through an external helper call instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     uint64 slot = block.slotnum;
+   │                     ━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.slotnum` may be reused across a Foundry environment mutation; capture it through an external helper call instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     uint64 slot = block.slotnum;
+   │                     ━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `blockhash(...)` may be reused across a Foundry environment mutation; capture it through an external helper call instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     bytes32 saved = blockhash(1);
+   │                       ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.chainid` may be reused across a Foundry environment mutation; capture it with `vm.getChainId()` instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     bytes32 saved = blobhash(block.chainid);
+   │                                ━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `tx.gasprice` may be reused across a Foundry environment mutation; capture it through an external helper call instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     uint256 price = tx.gasprice;
+   │                       ━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `blobhash(...)` may be reused across a Foundry environment mutation; capture it with `vm.getBlobhashes()` instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     bytes32 hash = blobhash(0);
+   │                      ━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `tx.gasprice` may be reused across a Foundry environment mutation; capture it through an external helper call instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     uint256 price = tx.gasprice;
+   │                       ━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `blobhash(...)` may be reused across a Foundry environment mutation; capture it with `vm.getBlobhashes()` instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     bytes32 hash = blobhash(0);
+   │                      ━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.basefee` may be reused across a Foundry environment mutation; capture it through an external helper call instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     block.basefee;
+   │       ━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `blobhash(...)` may be reused across a Foundry environment mutation; capture it with `vm.getBlobhashes()` instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     blobhash(0);
+   │       ━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `blockhash(...)` may be reused across a Foundry environment mutation; capture it through an external helper call instead
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │ …     bytes32 saved = blockhash(1);
+   │                       ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+

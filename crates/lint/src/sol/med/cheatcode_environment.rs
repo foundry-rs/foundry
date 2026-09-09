@@ -1,7 +1,7 @@
 //! Finds raw environment reads whose values can cross a Foundry environment mutation.
 //!
 //! A bounded source-level interpreter follows scalar locals, tuple assignments, internal calls,
-//! and modifier placeholders. A roll/warp marks live number/timestamp origins; a subsequent use
+//! and modifier placeholders. An environment setter marks matching live origins; a subsequent use
 //! reports the original read. Reads on both sides of a mutation are also reported because a
 //! compiler may reuse the earlier read. Branches retain separate states, and return, revert,
 //! break, and continue stop the corresponding path. External calls are not inlined: the callee
@@ -42,17 +42,10 @@ use solar::{
 use std::collections::{HashMap, HashSet};
 
 declare_forge_lint!(
-    BLOCK_NUMBER_ACROSS_ROLL,
+    ENVIRONMENT_READ_ACROSS_MUTATION,
     Severity::Med,
-    "block-number-across-roll",
-    "`block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead"
-);
-
-declare_forge_lint!(
-    BLOCK_TIMESTAMP_ACROSS_WARP,
-    Severity::Med,
-    "block-timestamp-across-warp",
-    "`block.timestamp` may be reused across `vm.warp`; capture it with `vm.getBlockTimestamp()` instead"
+    "environment-read-across-mutation",
+    "environment read may be reused across a Foundry environment mutation"
 );
 
 const CHEATCODE_ADDRESS: U256 = uint!(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D_U256);
@@ -65,14 +58,98 @@ const MAX_LOOP_ITERATIONS: usize = 2;
 enum Environment {
     Number,
     Timestamp,
+    ChainId,
+    Coinbase,
+    Difficulty,
+    Prevrandao,
+    BaseFee,
+    BlobBaseFee,
+    GasLimit,
+    SlotNumber,
+    GasPrice,
+    BlockHash,
+    BlobHash,
 }
 
 impl Environment {
-    fn lint(self) -> &'static SolLint {
+    /// Block/configuration fields and blockhash history replaced by fork operations.
+    const BLOCK: &'static [Self] = &[
+        Self::Number,
+        Self::Timestamp,
+        Self::ChainId,
+        Self::Coinbase,
+        Self::Difficulty,
+        Self::Prevrandao,
+        Self::BaseFee,
+        Self::BlobBaseFee,
+        Self::GasLimit,
+        Self::SlotNumber,
+        Self::BlockHash,
+    ];
+
+    /// Snapshots also restore cheatcode overrides of transaction properties.
+    const ALL: &'static [Self] = &[
+        Self::Number,
+        Self::Timestamp,
+        Self::ChainId,
+        Self::Coinbase,
+        Self::Difficulty,
+        Self::Prevrandao,
+        Self::BaseFee,
+        Self::BlobBaseFee,
+        Self::GasLimit,
+        Self::SlotNumber,
+        Self::BlockHash,
+        Self::GasPrice,
+        Self::BlobHash,
+    ];
+
+    const fn from_builtin(builtin: Builtin) -> Option<Self> {
+        Some(match builtin {
+            Builtin::BlockNumber => Self::Number,
+            Builtin::BlockTimestamp => Self::Timestamp,
+            Builtin::BlockChainid => Self::ChainId,
+            Builtin::BlockCoinbase => Self::Coinbase,
+            Builtin::BlockDifficulty => Self::Difficulty,
+            Builtin::BlockPrevrandao => Self::Prevrandao,
+            Builtin::BlockBasefee => Self::BaseFee,
+            Builtin::BlockBlobbasefee => Self::BlobBaseFee,
+            Builtin::BlockGaslimit => Self::GasLimit,
+            Builtin::BlockSlotnum => Self::SlotNumber,
+            Builtin::TxGasPrice => Self::GasPrice,
+            Builtin::Blockhash => Self::BlockHash,
+            Builtin::Blobhash => Self::BlobHash,
+            _ => return None,
+        })
+    }
+
+    const fn name(self) -> &'static str {
         match self {
-            Self::Number => &BLOCK_NUMBER_ACROSS_ROLL,
-            Self::Timestamp => &BLOCK_TIMESTAMP_ACROSS_WARP,
+            Self::Number => "block.number",
+            Self::Timestamp => "block.timestamp",
+            Self::ChainId => "block.chainid",
+            Self::Coinbase => "block.coinbase",
+            Self::Difficulty => "block.difficulty",
+            Self::Prevrandao => "block.prevrandao",
+            Self::BaseFee => "block.basefee",
+            Self::BlobBaseFee => "block.blobbasefee",
+            Self::GasLimit => "block.gaslimit",
+            Self::SlotNumber => "block.slotnum",
+            Self::GasPrice => "tx.gasprice",
+            Self::BlockHash => "blockhash(...)",
+            Self::BlobHash => "blobhash(...)",
         }
+    }
+
+    const fn getter(self) -> Option<&'static str> {
+        Some(match self {
+            Self::Number => "vm.getBlockNumber()",
+            Self::Timestamp => "vm.getBlockTimestamp()",
+            Self::ChainId => "vm.getChainId()",
+            Self::BlobBaseFee => "vm.getBlobBaseFee()",
+            Self::BlobHash => "vm.getBlobhashes()",
+            _ => return None,
+        })
     }
 }
 
@@ -253,12 +330,48 @@ impl<'gcx> Checker<'_, '_, '_, 'gcx> {
     fn use_value(&self, value: &Value) {
         for read in &value.reads {
             if read.changed {
-                self.ctx.emit(read.environment.lint(), read.span);
+                self.emit(*read);
             }
         }
         for part in &value.tuple {
             self.use_value(part);
         }
+    }
+
+    fn emit(&self, read: Read) {
+        let name = read.environment.name();
+        let advice = read.environment.getter().map_or_else(
+            || "capture it through an external helper call instead".to_string(),
+            |getter| format!("capture it with `{getter}` instead"),
+        );
+        self.ctx.emit_with_msg(
+            &ENVIRONMENT_READ_ACROSS_MUTATION,
+            read.span,
+            format!("`{name}` may be reused across a Foundry environment mutation; {advice}"),
+        );
+    }
+
+    fn read(&mut self, environment: Environment, span: Span, state: &mut State) -> Value {
+        if !self.step() || state.flow == Flow::Halt {
+            return Value::default();
+        }
+        for read in &state.seen.reads {
+            if read.environment == environment && read.changed {
+                self.emit(*read);
+            }
+        }
+        let value = Value {
+            reads: vec![Read {
+                environment,
+                span,
+                changed: false,
+                // The decreasing step budget gives repeated evaluations distinct identities.
+                origin: self.remaining,
+            }],
+            ..Value::default()
+        };
+        state.seen.merge(&value);
+        value
     }
 
     /// Runs the next modifier, substituting the remaining function at each placeholder.
@@ -563,30 +676,11 @@ impl<'gcx> Checker<'_, '_, '_, 'gcx> {
             return Value::default();
         }
         let expr = expr.peel_parens();
-        let environment = match self.gcx.resolved_builtin(expr) {
-            Some(Builtin::BlockNumber) => Some(Environment::Number),
-            Some(Builtin::BlockTimestamp) => Some(Environment::Timestamp),
-            _ => None,
-        };
-        if let Some(environment) = environment {
-            for read in &state.seen.reads {
-                if read.environment == environment && read.changed {
-                    self.ctx.emit(environment.lint(), read.span);
-                }
-            }
-            let value = Value {
-                reads: vec![Read {
-                    environment,
-                    span: expr.span,
-                    changed: false,
-                    // The step budget decreases across calls and branches, giving each
-                    // evaluated read a distinct identity even when its span is repeated.
-                    origin: self.remaining,
-                }],
-                ..Value::default()
-            };
-            state.seen.merge(&value);
-            return value;
+        if let Some(environment) =
+            self.gcx.resolved_builtin(expr).and_then(Environment::from_builtin)
+            && !matches!(environment, Environment::BlockHash | Environment::BlobHash)
+        {
+            return self.read(environment, expr.span, state);
         }
         if let Some(var) = expr.as_variable()
             && let Some(value) = state.locals.get(&var)
@@ -727,10 +821,24 @@ impl<'gcx> Checker<'_, '_, '_, 'gcx> {
                     value.refresh(state);
                     self.use_value(value);
                 }
-                if receiver.cheatcode
-                    && let Some(environment) = self.mutation(callee)
+                if let Some(environment) =
+                    self.gcx.resolved_builtin(callee).and_then(Environment::from_builtin)
+                    && matches!(environment, Environment::BlockHash | Environment::BlobHash)
                 {
-                    state.change(environment);
+                    let mut value = self.read(environment, expr.span, state);
+                    // A hash result also depends on its raw environment-derived index.
+                    for (_, argument) in &arguments {
+                        value.merge(argument);
+                    }
+                    value.cheatcode = false;
+                    return value;
+                }
+                if receiver.cheatcode
+                    && let Some(environments) = self.mutation(callee)
+                {
+                    for &environment in environments {
+                        state.change(environment);
+                    }
                     return Value::default();
                 }
                 if matches!(
@@ -819,18 +927,36 @@ impl<'gcx> Checker<'_, '_, '_, 'gcx> {
         lhs.binary(op, rhs)
     }
 
-    fn mutation(&self, callee: &Expr<'_>) -> Option<Environment> {
-        let func = self.gcx.hir.function(self.gcx.resolved_function(callee)?);
-        let [param] = func.parameters else { return None };
-        if !matches!(self.gcx.type_of_item((*param).into()).kind, TyKind::Elementary(ElementaryType::UInt(size)) if size.bits() == 256)
-        {
-            return None;
-        }
-        match func.name?.name.as_str() {
-            "roll" => Some(Environment::Number),
-            "warp" => Some(Environment::Timestamp),
-            _ => None,
-        }
+    fn mutation(&self, callee: &Expr<'_>) -> Option<&'static [Environment]> {
+        let function = self.gcx.resolved_function(callee)?;
+        // Match the ABI signature, including overloads, rather than just the method name.
+        Some(match self.gcx.item_signature(function.into()) {
+            "roll(uint256)" => &[Environment::Number, Environment::BlockHash],
+            "warp(uint256)" => &[Environment::Timestamp],
+            "chainId(uint256)" => &[Environment::ChainId],
+            "coinbase(address)" => &[Environment::Coinbase],
+            "difficulty(uint256)" | "prevrandao(bytes32)" | "prevrandao(uint256)" => {
+                &[Environment::Difficulty, Environment::Prevrandao]
+            }
+            "fee(uint256)" => &[Environment::BaseFee],
+            "blobBaseFee(uint256)" => &[Environment::BlobBaseFee],
+            "txGasPrice(uint256)" => &[Environment::GasPrice],
+            "setBlockhash(uint256,bytes32)" => &[Environment::BlockHash],
+            "blobhashes(bytes32[])" => &[Environment::BlobHash],
+            "selectFork(uint256)"
+            | "createSelectFork(string)"
+            | "createSelectFork(string,uint256)"
+            | "createSelectFork(string,bytes32)" => Environment::ALL,
+            "rollFork(uint256)"
+            | "rollFork(bytes32)"
+            | "rollFork(uint256,uint256)"
+            | "rollFork(uint256,bytes32)" => Environment::BLOCK,
+            "revertTo(uint256)"
+            | "revertToState(uint256)"
+            | "revertToAndDelete(uint256)"
+            | "revertToStateAndDelete(uint256)" => Environment::ALL,
+            _ => return None,
+        })
     }
 
     /// Evaluates only the constant-address forms used by cheatcode declarations. The pinned

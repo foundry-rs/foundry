@@ -133,9 +133,7 @@ impl ForgeLintSuite {
                         !self.path_config.is_test_or_script(path)
                             || matches!(
                                 lint.id,
-                                "unsafe-cheatcode"
-                                    | "block-number-across-roll"
-                                    | "block-timestamp-across-warp"
+                                "unsafe-cheatcode" | "environment-read-across-mutation"
                             )
                     })
             })
