@@ -1,16 +1,7 @@
 //! Helper types for working with [revm]
 
-use std::{
-    collections::BTreeMap,
-    fmt::{self, Debug},
-    fs::File,
-    io::BufReader,
-    path::Path,
-};
-
+use crate::mem::storage::MinedTransaction;
 use alloy_consensus::BlockBody;
-#[cfg(test)]
-use alloy_consensus::Header;
 use alloy_eips::eip4895::Withdrawals;
 use alloy_network::Network;
 use alloy_primitives::{
@@ -42,8 +33,13 @@ use serde::{
     de::{Error as DeError, MapAccess, Visitor},
 };
 use serde_json::Value;
-
-use crate::mem::storage::MinedTransaction;
+use std::{
+    collections::BTreeMap,
+    fmt::{self, Debug},
+    fs::File,
+    io::BufReader,
+    path::Path,
+};
 
 /// Number of preceding block hashes available to the EVM's `BLOCKHASH` opcode.
 pub(crate) const BLOCKHASH_HISTORY: u64 = 256;
@@ -911,6 +907,7 @@ impl IntoIterator for SerializableHistoricalStates {
 #[cfg(test)]
 mod test {
     use super::*;
+    use alloy_consensus::Header;
     use std::fs;
 
     #[test]

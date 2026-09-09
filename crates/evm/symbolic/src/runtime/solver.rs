@@ -14,16 +14,18 @@ mod opt;
 use hard_arith_fallback::{
     checked_mul_guard_branch_model, constraints_prefer_hard_arith_fallback_first,
 };
-pub(crate) use hard_arith_fallback::{
-    fallback_single_var_model, fallback_two_var_model, hard_arith_fallback_model,
-};
-#[cfg(test)]
-pub(crate) use monotonic_product::product_monotonic_unsat;
 use monotonic_product::{product_monotonic_unsat_normalized, remove_implied_monotonic_constraints};
 use opt::{
     constraints_are_directly_unsat, normalize_constraints_for_solver_cached,
     sorted_bool_exprs_are_subset, write_smt_assertions,
 };
+
+pub(crate) use hard_arith_fallback::{
+    fallback_single_var_model, fallback_two_var_model, hard_arith_fallback_model,
+};
+
+#[cfg(test)]
+pub(crate) use monotonic_product::product_monotonic_unsat;
 #[cfg(test)]
 pub(crate) use opt::{
     normalize_bool_for_solver, normalize_constraints_for_solver, normalize_expr_for_solver,
@@ -846,7 +848,7 @@ fn remove_witnessed_isolated_hash_constraints(
             else {
                 return Some(constraint);
             };
-            let abstracted = constraint.clone().fold_exprs(cx, &mut |cx, expr| match expr.kind() {
+            let abstracted = constraint.fold_exprs(cx, &mut |cx, expr| match expr.kind() {
                 SymExprKind::Keccak { name, .. } | SymExprKind::Hash { name, .. }
                     if *name == symbol =>
                 {

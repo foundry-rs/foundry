@@ -24,8 +24,6 @@ use foundry_compilers::{
     utils::canonicalize,
 };
 use foundry_config::Config;
-#[cfg(all(test, feature = "monad"))]
-use foundry_config::FoundryHardfork;
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
     core::{
@@ -44,6 +42,9 @@ use revm::{bytecode::Bytecode, context::Block as _, database::Database};
 use semver::{BuildMetadata, Version};
 use serde::{Deserialize, Serialize};
 use yansi::Paint;
+
+#[cfg(all(test, feature = "monad"))]
+use foundry_config::FoundryHardfork;
 
 /// Enum to represent the type of bytecode being verified
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, ValueEnum)]

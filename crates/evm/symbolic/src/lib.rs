@@ -30,8 +30,6 @@ use foundry_evm::{
     },
 };
 use serde::{Deserialize, Serialize};
-#[cfg(test)]
-use std::collections::BTreeMap;
 use std::{
     collections::VecDeque,
     fmt::{self, Write as _},
@@ -50,14 +48,16 @@ use std::{
 use thiserror::Error;
 use tracing::{debug, trace, trace_span, warn};
 
-mod consts;
-pub use consts::BUILTIN_SYMBOLIC_SOLVERS;
-pub(crate) use consts::*;
+#[cfg(test)]
+use std::collections::BTreeMap;
 
 mod abi;
+mod consts;
 mod executor;
 mod runtime;
 
+pub use consts::BUILTIN_SYMBOLIC_SOLVERS;
+pub(crate) use consts::*;
 pub use runtime::{PortfolioDiagnostics, SymbolicBranchTarget, SymbolicError, SymbolicRunInput};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

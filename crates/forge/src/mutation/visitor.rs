@@ -1,16 +1,15 @@
-use std::{ops::ControlFlow, path::PathBuf};
-
-use eyre::Report;
-use solar::ast::{Expr, ItemContract, VariableDefinition, visit::Visit, yul};
-
-#[cfg(test)]
-use crate::mutation::mutators::Mutator;
 use crate::mutation::{
     mutant::{Mutant, OwnedLiteral},
     mutators::{MutationContext, mutator_registry::MutatorRegistry},
     type_analysis::{AssignmentReplacement, MutationExclusion, MutationExclusionSet},
 };
+use eyre::Report;
 use foundry_config::MutatorType;
+use solar::ast::{Expr, ItemContract, VariableDefinition, visit::Visit, yul};
+use std::{ops::ControlFlow, path::PathBuf};
+
+#[cfg(test)]
+use crate::mutation::mutators::Mutator;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum AssignVarTypes {

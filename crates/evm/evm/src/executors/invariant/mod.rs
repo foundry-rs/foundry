@@ -22,6 +22,10 @@ use alloy_primitives::{
     map::{AddressMap, AddressSet, HashMap, hash_map::Entry as AddressMapEntry},
 };
 use alloy_sol_types::{SolCall, sol};
+use campaign::{
+    InvariantCampaignAggregator, InvariantCampaignSpec, InvariantCampaignState,
+    InvariantWorkerOutput, InvariantWorkerPlan,
+};
 use eyre::{ContextCompat, Result, eyre};
 use foundry_common::{
     TestFunctionExt,
@@ -36,6 +40,7 @@ use foundry_evm_core::{
     evm::FoundryEvmNetwork,
     precompiles::PRECOMPILES,
 };
+use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::{
     BasicTxDetails, FuzzCase, FuzzFixtures, ObservedCall,
     invariant::{
@@ -47,14 +52,11 @@ use foundry_evm_fuzz::{
 use foundry_evm_traces::{CallTraceArena, SparsedTraceArena};
 use indicatif::ProgressBar;
 use parking_lot::RwLock;
-#[cfg(test)]
-use proptest::strategy::Strategy;
 use proptest::{
     prelude::Rng,
     test_runner::{RngAlgorithm, TestRng, TestRunner},
 };
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
-pub use result::did_fail_on_assert;
 use result::{assert_after_invariant, can_continue, invariant_preflight_check};
 use revm::state::Account;
 use serde::{Deserialize, Serialize};
@@ -71,19 +73,13 @@ pub use error::{
     FailureKey, HandlerAssertionFailure, InvariantFailures, InvariantFuzzError,
     handler_site_already_minimal,
 };
-use foundry_evm_coverage::HitMaps;
-
 mod campaign;
-use campaign::{
-    InvariantCampaignAggregator, InvariantCampaignSpec, InvariantCampaignState,
-    InvariantWorkerOutput, InvariantWorkerPlan,
-};
 
 mod replay;
 pub use replay::{ReplayErrorResult, replay_error, replay_run};
 
 mod result;
-pub use result::InvariantFuzzTestResult;
+pub use result::{InvariantFuzzTestResult, did_fail_on_assert};
 
 mod shrink;
 pub use shrink::{
@@ -2351,7 +2347,11 @@ mod tests {
         evm::{EthEvmNetwork, EvmEnvFor, TxEnvFor},
     };
     use foundry_evm_fuzz::CallDetails;
-    use proptest::{prelude::any, strategy::ValueTree, test_runner::Config};
+    use proptest::{
+        prelude::any,
+        strategy::{Strategy, ValueTree},
+        test_runner::Config,
+    };
     use revm::{
         bytecode::Bytecode,
         context::Block,

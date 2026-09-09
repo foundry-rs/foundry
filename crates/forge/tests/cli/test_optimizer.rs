@@ -1,9 +1,10 @@
 //! Tests for commands using the preprocessed cache.
 
 use foundry_compilers::artifacts::{EvmVersion, remappings::Remapping};
+use foundry_config::{CompilationRestrictions, SettingsOverrides};
+
 #[cfg(unix)]
 use foundry_compilers::artifacts::{SolcInput, output_selection::OutputSelection};
-use foundry_config::{CompilationRestrictions, SettingsOverrides};
 
 // <https://github.com/foundry-rs/foundry/issues/16682>
 forgetest!(preprocess_remapped_bytecode_dependencies, |prj, cmd| {

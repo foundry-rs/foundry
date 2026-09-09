@@ -43,17 +43,6 @@ impl<T> HashConsed<T> {
     pub(in crate::runtime) fn value(&self) -> &T {
         &self.inner.value
     }
-
-    #[inline]
-    pub(in crate::runtime) fn into_value(self) -> T
-    where
-        T: Clone,
-    {
-        match Arc::try_unwrap(self.inner) {
-            Ok(inner) => inner.value,
-            Err(inner) => inner.value.clone(),
-        }
-    }
 }
 
 impl<T> Clone for HashConsed<T> {
