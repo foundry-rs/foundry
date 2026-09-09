@@ -3,25 +3,27 @@
 //! Provides [`FoundryHardfork`], a unified enum over Ethereum, Optimism, Tempo, and Monad hardforks
 //! with `FromStr`/`Serialize`/`Deserialize` support for CLI and config usage.
 
+use alloy_chains::Chain;
+use alloy_rpc_types::BlockNumberOrTag;
+use foundry_compilers::artifacts::EvmVersion;
+use revm::primitives::hardfork::SpecId;
+use serde::{Deserialize, Serialize};
 use std::{
     str::FromStr,
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use alloy_chains::Chain;
-use alloy_rpc_types::BlockNumberOrTag;
-use foundry_compilers::artifacts::EvmVersion;
 #[cfg(feature = "optimism")]
 use op_revm::OpSpecId;
-use revm::primitives::hardfork::SpecId;
-use serde::{Deserialize, Serialize};
 
 pub use alloy_hardforks::EthereumHardfork;
-#[cfg(feature = "optimism")]
-pub use alloy_op_hardforks::OpHardfork;
+pub use tempo_hardfork::TempoHardfork;
+
 #[cfg(feature = "monad")]
 pub use monad_revm::MonadHardfork;
-pub use tempo_hardfork::TempoHardfork;
+
+#[cfg(feature = "optimism")]
+pub use alloy_op_hardforks::OpHardfork;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(into = "String")]
@@ -742,6 +744,8 @@ mod tests {
         assert_eq!(evm_spec_id_from_str::<TempoHardfork>("tempo:T2"), Some(TempoHardfork::T2));
         assert_eq!(evm_spec_id_from_str::<TempoHardfork>("tempo:T7"), Some(TempoHardfork::T7));
         assert_eq!(evm_spec_id_from_str::<TempoHardfork>("tempo:T8"), Some(TempoHardfork::T8));
+        assert_eq!(evm_spec_id_from_str::<TempoHardfork>("tempo:T13"), Some(TempoHardfork::T13));
+        assert_eq!(evm_spec_id_from_str::<TempoHardfork>("T13"), Some(TempoHardfork::T13));
         assert_eq!(evm_spec_id_from_str::<TempoHardfork>("ethereum:prague"), None);
 
         #[cfg(feature = "monad")]

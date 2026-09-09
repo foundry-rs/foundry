@@ -8,14 +8,15 @@ use rayon::iter::{self, ParallelIterator};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-#[cfg(unix)]
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::{
     fs,
     io::Write,
     path::{Path, PathBuf},
     time::Instant,
 };
+
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 /// CLI arguments for `cast wallet vanity`.
 #[derive(Clone, Debug, Parser)]

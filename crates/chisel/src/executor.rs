@@ -637,12 +637,13 @@ mod tests {
     use crate::source::SessionSourceConfig;
     use foundry_compilers::{error::SolcError, solc::Solc};
     use foundry_config::Config;
-    #[cfg(feature = "monad")]
-    use foundry_evm::core::{constants::MONAD_CHEATCODE_ADDRESS, evm::MonadEvmNetwork};
     use foundry_evm::{core::evm::EthEvmNetwork, executors::ExecutorBuilder, opts::EvmOpts};
     use foundry_evm_networks::{NetworkConfigs, celo::transfer::CELO_TRANSFER_ADDRESS};
     use solar::sema::Compiler;
     use std::sync::Mutex;
+
+    #[cfg(feature = "monad")]
+    use foundry_evm::core::{constants::MONAD_CHEATCODE_ADDRESS, evm::MonadEvmNetwork};
 
     type TestSessionSource = SessionSource<EthEvmNetwork>;
 

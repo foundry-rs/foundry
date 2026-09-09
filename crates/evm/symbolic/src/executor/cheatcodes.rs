@@ -1,4 +1,5 @@
 use foundry_cheatcodes_spec::Vm::*;
+use foundry_evm::inspectors::cheatcodes::current_execution_context;
 
 use super::*;
 
@@ -33,6 +34,12 @@ impl SymbolicExecutor {
         reverter: Option<SymExpr>,
         remaining: u64,
     ) -> CheatcodeOutcome {
+        if state.expected_revert.is_some() {
+            return CheatcodeOutcome::Revert(error_string_return_data(
+                &mut self.cx,
+                "you must call another function prior to expecting a second revert",
+            ));
+        }
         state.expected_revert = Some(ExpectedRevert::new(data, reverter, remaining));
         CheatcodeOutcome::Continue(Vec::new())
     }
@@ -2386,9 +2393,13 @@ impl SymbolicExecutor {
                     0,
                     "symbolic vm.isContext",
                 )?;
+                let context = u8::try_from(context)
+                    .ok()
+                    .and_then(|context| ForgeContext::try_from(context).ok())
+                    .ok_or(SymbolicError::Unsupported("symbolic vm.isContext invalid context"))?;
                 return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(
                     &mut self.cx,
-                    U256::from(context == U256::ZERO || context == U256::from(1)),
+                    U256::from(current_execution_context() == Some(context)),
                 )]));
             }
             toString_0Call::SELECTOR => {

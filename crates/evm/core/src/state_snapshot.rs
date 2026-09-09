@@ -21,6 +21,11 @@ impl<T> StateSnapshots<T> {
         self.state_snapshots.get(&id)
     }
 
+    /// Returns `true` if there are no state snapshots.
+    pub fn is_empty(&self) -> bool {
+        self.state_snapshots.is_empty()
+    }
+
     /// Removes the state snapshot with the given `id`.
     ///
     /// This will also remove any state snapshots taken after the state snapshot with the `id`.

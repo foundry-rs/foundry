@@ -1,5 +1,3 @@
-#[cfg(feature = "optimism")]
-use alloy_consensus::{Sealed, Transaction as _};
 use alloy_consensus::{
     SignableTransaction, Signed, TransactionEnvelope, TxEip1559, TxEip2930, TxEnvelope, TxLegacy,
     TxType, Typed2718,
@@ -15,11 +13,14 @@ use alloy_network::{
 };
 use alloy_primitives::{Address, B256, Bytes, Signature, TxHash};
 use alloy_rpc_types::ConversionError;
-#[cfg(feature = "optimism")]
-use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, POST_EXEC_TX_TYPE_ID, TxDeposit, TxPostExec};
 use revm::context::TxEnv;
 use tempo_primitives::{AASigned, TEMPO_TX_TYPE_ID, TempoSignature, TempoTransaction};
 use tempo_revm::TempoTxEnv;
+
+#[cfg(feature = "optimism")]
+use alloy_consensus::{Sealed, Transaction as _};
+#[cfg(feature = "optimism")]
+use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, POST_EXEC_TX_TYPE_ID, TxDeposit, TxPostExec};
 
 //
 /// Container type for signed, typed transactions.

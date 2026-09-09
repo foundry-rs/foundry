@@ -46,10 +46,6 @@ use foundry_config::{
     },
 };
 use foundry_debugger::DebuggerLayout;
-#[cfg(feature = "monad")]
-use foundry_evm::core::evm::MonadEvmNetwork;
-#[cfg(feature = "optimism")]
-use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     backend::Backend,
     core::{
@@ -70,6 +66,12 @@ use foundry_evm_networks::NetworkConfigs;
 use foundry_wallets::MultiWalletOpts;
 use serde::Serialize;
 use std::path::PathBuf;
+
+#[cfg(feature = "monad")]
+use foundry_evm::core::evm::MonadEvmNetwork;
+
+#[cfg(feature = "optimism")]
+use foundry_evm::core::evm::OpEvmNetwork;
 
 mod broadcast;
 mod build;
@@ -300,10 +302,12 @@ impl ScriptArgs {
         Ok(self.tempo.session_id()?.is_some())
     }
 
-    /// Loads config, resolves evm_opts (including network inference from fork), and returns them.
-    async fn resolved_evm_opts(&self) -> Result<(Config, EvmOpts)> {
-        let (mut config, mut evm_opts) = self.load_config_and_evm_opts()?;
-
+    /// Resolves evm_opts (including network inference from fork) using the loaded config.
+    async fn resolved_evm_opts(
+        &self,
+        mut config: Config,
+        mut evm_opts: EvmOpts,
+    ) -> Result<(Config, EvmOpts)> {
         if self.tempo.is_tempo() || self.has_tempo_session()? {
             // If Tempo tx options or a session are set, select the Tempo network.
             evm_opts.networks = NetworkConfigs::with_tempo();
@@ -386,7 +390,9 @@ impl ScriptArgs {
             return self.run_wallet_session_wrapper();
         }
 
-        let (config, evm_opts) = self.resolved_evm_opts().await?;
+        let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
+        self.install_missing_dependencies(&mut config)?;
+        let (config, evm_opts) = self.resolved_evm_opts(config, evm_opts).await?;
 
         let is_tempo = evm_opts.networks.is_tempo();
 
@@ -2313,7 +2319,8 @@ mod tests {
         unsafe { std::env::set_var(TEMPO_SESSION_ID_ENV, format!("{session_id:?}")) };
 
         let args = ScriptArgs::parse_from(["foundry-cli", "Contract.sol"]);
-        let (_, evm_opts) = args.resolved_evm_opts().await.unwrap();
+        let (config, evm_opts) = args.load_config_and_evm_opts().unwrap();
+        let (_, evm_opts) = args.resolved_evm_opts(config, evm_opts).await.unwrap();
 
         assert!(evm_opts.networks.is_tempo());
     }

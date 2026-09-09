@@ -7,10 +7,12 @@ use anvil::{NodeConfig, spawn};
 use futures::StreamExt;
 use std::time::Duration;
 use tempfile::TempDir;
+
 #[cfg(unix)]
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-#[cfg(unix)]
-use tokio::net::UnixStream;
+use tokio::{
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    net::UnixStream,
+};
 
 fn ipc_config() -> (Option<TempDir>, NodeConfig) {
     let path;

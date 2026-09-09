@@ -1,3 +1,4 @@
+use crate::FoundryTxType;
 use alloy_consensus::{
     Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom, TxReceipt, Typed2718,
 };
@@ -11,14 +12,13 @@ use alloy_network::{
 use alloy_primitives::{Bloom, Log, TxHash, logs_bloom};
 use alloy_rlp::{BufMut, Decodable, Encodable, bytes};
 use alloy_rpc_types::{BlockNumHash, trace::otterscan::OtsReceipt};
+use serde::{Deserialize, Serialize};
+use tempo_primitives::TEMPO_TX_TYPE_ID;
+
 #[cfg(feature = "optimism")]
 use op_alloy_consensus::{
     DEPOSIT_TX_TYPE_ID, OpDepositReceipt, OpDepositReceiptWithBloom, POST_EXEC_TX_TYPE_ID,
 };
-use serde::{Deserialize, Serialize};
-use tempo_primitives::TEMPO_TX_TYPE_ID;
-
-use crate::FoundryTxType;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type")]
