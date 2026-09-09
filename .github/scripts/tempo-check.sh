@@ -3,6 +3,8 @@ set -euo pipefail
 
 # Get the directory where this script lives
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source-path=SCRIPTDIR
+source "$SCRIPT_DIR/tempo-anvil.sh"
 
 # Non-verification tempo checks: local tests, fork tests, cast commands, DEX operations
 
@@ -901,18 +903,7 @@ ANVIL_PID=$!
 # Ensure anvil is stopped on script exit
 trap 'kill "$ANVIL_PID" 2>/dev/null || true' EXIT
 
-# Wait for anvil to be ready (max 10 seconds)
-for i in {1..10}; do
-  if cast client --rpc-url "http://127.0.0.1:$ANVIL_PORT" 2>/dev/null; then
-    echo "Anvil fork started successfully"
-    break
-  fi
-  if [[ $i -eq 10 ]]; then
-    echo "ERROR: Anvil fork failed to start"
-    exit 1
-  fi
-  sleep 1
-done
+wait_for_anvil "$ANVIL_PID" "$ANVIL_PORT"
 
 ALICE_PK="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 
@@ -976,18 +967,7 @@ ANVIL_PID=$!
 # Ensure anvil is stopped on script exit
 trap 'kill "$ANVIL_PID" 2>/dev/null || true' EXIT
 
-# Wait for anvil to be ready (max 10 seconds)
-for i in {1..10}; do
-  if cast client --rpc-url "http://127.0.0.1:$ANVIL_PORT" 2>/dev/null; then
-    echo "Anvil fork started successfully"
-    break
-  fi
-  if [[ $i -eq 10 ]]; then
-    echo "ERROR: Anvil fork failed to start"
-    exit 1
-  fi
-  sleep 1
-done
+wait_for_anvil "$ANVIL_PID" "$ANVIL_PORT"
 
 echo -e "\n=== ANVIL FORK: CHECK CLIENT VERSION ==="
 cast client --rpc-url http://127.0.0.1:$ANVIL_PORT
