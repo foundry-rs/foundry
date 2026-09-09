@@ -1,0 +1,15 @@
+# Dependency superset for the generated crates compiled by the forge bind tests.
+# Keep these requirements in sync with crates/sol-macro-gen/src/sol_macro_gen.rs.
+[package]
+name = "foundry-contracts"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[workspace]
+
+[dependencies]
+alloy = { version = "1.0", features = ["sol-types", "contract"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_with = { version = "3.15", default-features = false, features = ["std"] }

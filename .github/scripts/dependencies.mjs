@@ -7,11 +7,12 @@ import { dirname, join } from 'node:path';
 import { writeReleases } from './solc-releases.mjs';
 
 const schema = 1;
+const bindingsManifest = 'testdata/forge-bind/Cargo.toml';
 const inputs = [
   ':(glob)**/Cargo.toml', ':(glob)**/Cargo.lock', 'Cargo.toml', 'Cargo.lock',
   '.cargo', 'cooldown.toml', '.github/scripts/dependencies.mjs',
   '.github/scripts/solc-releases.mjs', '.github/workflows/dependencies.yml',
-  '.github/actions/setup-build',
+  '.github/actions/setup-build', 'testdata/forge-bind',
 ];
 
 function git(root, ...args) {
@@ -68,9 +69,12 @@ function prepare(root, parent, firewall) {
     // Git CLI honors Socket's proxy CA; Cargo's built-in Git client does not.
     CARGO_NET_GIT_FETCH_WITH_CLI: 'true',
   };
-  execFileSync(firewall, ['cargo', 'fetch', '--locked'], { cwd: root, env, stdio: 'inherit' });
+  for (const manifest of ['Cargo.toml', bindingsManifest]) {
+    execFileSync(firewall, ['cargo', 'fetch', '--locked', '--manifest-path', manifest],
+      { cwd: root, env, stdio: 'inherit' });
+  }
   const config = execFileSync('cargo', [
-    'vendor', '--frozen', '--versioned-dirs', join(bundle, 'vendor'),
+    'vendor', '--frozen', '--versioned-dirs', '--sync', bindingsManifest, join(bundle, 'vendor'),
   ], {
     cwd: root,
     env: { ...env, CARGO_NET_OFFLINE: 'true' },
