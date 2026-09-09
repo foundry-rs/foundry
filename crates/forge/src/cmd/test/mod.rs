@@ -470,6 +470,14 @@ pub struct CampaignArgs {
     #[arg(long, value_name = "WEIGHT")]
     pub mutation_weight_cmp: Option<u32>,
 
+    /// Corpus mutation weight for inserting corpus transactions.
+    #[arg(long, value_name = "WEIGHT")]
+    pub mutation_weight_crossover_insert: Option<u32>,
+
+    /// Corpus mutation weight for replacing calls with corpus transactions.
+    #[arg(long, value_name = "WEIGHT")]
+    pub mutation_weight_crossover_replace: Option<u32>,
+
     /// Directory for fuzz branch frontier artifacts.
     #[arg(long, value_name = "PATH", value_hint = ValueHint::DirPath)]
     pub frontier_dir: Option<PathBuf>,
@@ -1403,6 +1411,10 @@ impl TestArgs {
             invariant_mutation_weight_abi: campaign.mutation_weight_abi,
             fuzz_mutation_weight_cmp: campaign.mutation_weight_cmp,
             invariant_mutation_weight_cmp: campaign.mutation_weight_cmp,
+            fuzz_mutation_weight_crossover_insert: campaign.mutation_weight_crossover_insert,
+            fuzz_mutation_weight_crossover_replace: campaign.mutation_weight_crossover_replace,
+            invariant_mutation_weight_crossover_insert: campaign.mutation_weight_crossover_insert,
+            invariant_mutation_weight_crossover_replace: campaign.mutation_weight_crossover_replace,
             fuzz_frontier_dir: campaign.frontier_dir.clone(),
             invariant_frontier_dir: campaign.frontier_dir,
             fuzz_frontier_limit: campaign.frontier_limit,

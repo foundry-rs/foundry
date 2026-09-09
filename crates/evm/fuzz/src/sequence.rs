@@ -1084,4 +1084,54 @@ mod tests {
             .unwrap();
         assert_eq!(accesses, 2);
     }
+    #[test]
+    fn invariant_crossover_insert_uses_corpus_transactions() {
+        let mut config = config();
+        config.mutation_weights = forced_weights(7);
+        let generator = SequenceGenerator::invariant(
+            generator_tx(9),
+            state(),
+            FuzzRunIdentifiedContracts::new(TargetedContracts::new(), false),
+            &config,
+        )
+        .unwrap();
+        let base = [tx(1)];
+        let plan = generator
+            .start(&mut TestRunner::deterministic(), 1, |_| CorpusEntryView::new(&base, &[]), true)
+            .unwrap();
+        assert_eq!(plan.initial().len(), 2);
+        assert!(plan.initial().iter().all(|call| call.sender == base[0].sender));
+        assert_eq!(plan.source(), Some(0));
+    }
+
+    #[test]
+    fn invariant_crossover_replace_uses_corpus_transactions() {
+        let mut config = config();
+        config.mutation_weights = forced_weights(8);
+        let generator = SequenceGenerator::invariant(
+            generator_tx(9),
+            state(),
+            FuzzRunIdentifiedContracts::new(TargetedContracts::new(), false),
+            &config,
+        )
+        .unwrap();
+        let entries = [[tx(1)], [tx(2)]];
+        let mut runner = TestRunner::deterministic();
+        let mut replaced = false;
+        for _ in 0..100 {
+            let plan = generator
+                .start(
+                    &mut runner,
+                    entries.len(),
+                    |index| CorpusEntryView::new(&entries[index], &[]),
+                    true,
+                )
+                .unwrap();
+            assert_eq!(plan.initial().len(), 1);
+            let sender = plan.initial()[0].sender;
+            assert!(entries.iter().any(|entry| entry[0].sender == sender));
+            replaced |= sender != entries[plan.source().unwrap()][0].sender;
+        }
+        assert!(replaced, "crossover replacement never selected a distinct donor");
+    }
 }
