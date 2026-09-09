@@ -4,8 +4,8 @@ use crate::{
     FoundryBlock, FoundryChain, FoundryInspectorExt, FoundryTransaction, FromAnyRpcTransaction,
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, TEST_CONTRACT_ADDRESS},
     evm::{
-        BlockContext, BlockEnvFor, ChainFor, EthEvmNetwork, EvmEnvFor, FoundryContextFor,
-        FoundryEvmFactory, FoundryEvmNetwork, HaltReasonFor, SpecFor, TxEnvFor,
+        BlockEnvFor, ChainFor, EthEvmNetwork, EvmEnvFor, FoundryContextFor, FoundryEvmFactory,
+        FoundryEvmNetwork, HaltReasonFor, SpecFor, TxEnvFor,
     },
     fork::{CreateFork, ForkId, ForkResult, MultiFork},
     state_snapshot::StateSnapshots,
@@ -43,6 +43,9 @@ use std::{
     fmt::Debug,
     time::Instant,
 };
+
+#[cfg(feature = "monad")]
+use crate::evm::monad::BlockContext;
 
 mod diagnostic;
 pub use diagnostic::RevertDiagnostic;
@@ -121,6 +124,7 @@ struct TransactionForkTarget {
 #[derive(Clone, Copy)]
 struct TransactionPosition {
     index: usize,
+    #[cfg(feature = "monad")]
     count: usize,
 }
 
@@ -1142,7 +1146,11 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
                         block.header().number()
                     );
                 }
-                index.map(|index| TransactionPosition { index, count: transactions.len() })
+                index.map(|index| TransactionPosition {
+                    index,
+                    #[cfg(feature = "monad")]
+                    count: transactions.len(),
+                })
             } else {
                 if self.networks.is_monad() {
                     eyre::bail!(
@@ -1183,6 +1191,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     }
 
     /// Converts all transactions in a full RPC block into this backend's transaction environment.
+    #[cfg(feature = "monad")]
     fn full_block_tx_envs(block: &AnyRpcBlock) -> eyre::Result<Vec<TxEnvFor<FEN>>> {
         let BlockTransactions::Full(transactions) = block.transactions() else {
             eyre::bail!("block {} does not contain full transactions", block.header().number());
@@ -1205,6 +1214,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     }
 
     /// Returns the transaction environments needed to construct exact block context.
+    #[cfg(feature = "monad")]
     fn block_context_inputs_from_backend(
         backend: &SharedBackend<AnyNetwork, BlockEnvFor<FEN>>,
         block: &AnyRpcBlock,
@@ -1258,6 +1268,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     }
 
     /// Returns the transaction environments needed to construct exact block context for a fork.
+    #[cfg(feature = "monad")]
     fn block_context_inputs(
         &self,
         id: LocalForkId,
@@ -1311,6 +1322,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     }
 
     /// Returns the block cursor matching the active fork's database position.
+    #[cfg(feature = "monad")]
     pub fn block_context_for_synthetic_transaction(
         &self,
     ) -> eyre::Result<Option<BlockContext<FEN>>> {
@@ -1634,6 +1646,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
 
         let TransactionForkTarget { fork_block, block, mined, position, .. } =
             self.get_block_number_and_block_for_transaction(id, transaction)?;
+        #[cfg(feature = "monad")]
         let block_context = if self.networks.is_monad() {
             Some(self.block_context_inputs(id, &block)?)
         } else {
@@ -1678,6 +1691,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
                 fork,
                 ReplayInputs { fork_id, forks, evm_env: replay_env, networks: self.networks },
                 &block,
+                #[cfg(feature = "monad")]
                 block_context.as_ref(),
                 transaction,
                 journaled_state,
@@ -1710,13 +1724,14 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         fork: &mut Fork<AnyNetwork, BlockEnvFor<FEN>>,
         replay: ReplayInputs<FEN>,
         full_block: &AnyRpcBlock,
-        block_context: Option<&BlockContext<FEN>>,
+        #[cfg(feature = "monad")] block_context: Option<&BlockContext<FEN>>,
         tx_hash: B256,
         journaled_state: &mut JournaledState,
         persistent_accounts: &AddressSet,
     ) -> eyre::Result<Option<AnyRpcTransaction>> {
         let ReplayInputs { fork_id, forks, evm_env, networks } = replay;
         trace!(?tx_hash, "replay until transaction");
+        #[cfg(feature = "monad")]
         eyre::ensure!(
             !networks.is_monad() || block_context.is_some(),
             "block context is required to replay transactions for this network"
@@ -1770,6 +1785,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
                 networks,
             )?;
 
+            #[cfg(feature = "monad")]
             if let Some(context) = block_context {
                 for (index, tx, tx_env, is_system) in &txs_to_replay {
                     let mut evm = factory.create_nested_evm(&mut replay_backend, evm_env.clone());
@@ -1784,7 +1800,12 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
                         replay_backend.commit(result.state);
                     }
                 }
-            } else {
+            }
+            #[cfg(feature = "monad")]
+            let replay_without_context = block_context.is_none();
+            #[cfg(not(feature = "monad"))]
+            let replay_without_context = true;
+            if replay_without_context {
                 // Keep one regular Alloy EVM for ordinary transactions. Only system envelopes
                 // need the nested replay operation; it borrows the same staged database.
                 let mut evm = factory.create_evm(&mut replay_backend, evm_env.clone());
@@ -1830,6 +1851,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     }
 }
 
+#[cfg(feature = "monad")]
 fn ensure_block_identity(
     block: &AnyRpcBlock,
     expected: BlockNumHash,
@@ -1851,10 +1873,11 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         &self,
         tx: &TxEnvFor<FEN>,
     ) -> eyre::Result<ChainFor<FEN>> {
-        self.block_context_for_synthetic_transaction()?.map_or_else(
-            || Ok(ChainFor::<FEN>::for_transaction(tx)),
-            |context| Ok(context.next_transaction(tx)),
-        )
+        #[cfg(feature = "monad")]
+        if let Some(context) = self.block_context_for_synthetic_transaction()? {
+            return Ok(context.next_transaction(tx));
+        }
+        Ok(ChainFor::<FEN>::for_transaction(tx))
     }
 
     fn snapshot_state(
@@ -2186,18 +2209,25 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         // transaction in the block and then the transaction is transacted:
         // <https://github.com/foundry-rs/foundry/issues/6538>
         // So we modify the env to match the transaction's block.
-        let TransactionForkTarget { transaction: tx, block, position, .. } =
-            self.get_block_number_and_block_for_transaction(id, transaction)?;
+        let TransactionForkTarget {
+            transaction: tx,
+            block,
+            #[cfg(feature = "monad")]
+            position,
+            ..
+        } = self.get_block_number_and_block_for_transaction(id, transaction)?;
         let tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(&tx)?;
         let source_chain_id = self.inner.get_fork_by_id(id)?.source_chain_id;
         update_env_block::<AnyNetwork, _, _>(&mut evm_env, &block, source_chain_id, self.networks);
         self.apply_fork_tx_replay_env_changes(id, &mut evm_env)?;
 
+        #[cfg(feature = "monad")]
         let block_context = if self.networks.is_monad() {
             Some(self.block_context_inputs(id, &block)?)
         } else {
             None
         };
+        #[cfg(feature = "monad")]
         let chain_context = if let Some(context) = &block_context {
             context.transaction(
                 position.expect("Monad transaction target includes canonical position").index,
@@ -2206,6 +2236,10 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
             ChainFor::<FEN>::for_transaction(&tx_env)
         };
 
+        #[cfg(not(feature = "monad"))]
+        let chain_context = ChainFor::<FEN>::for_transaction(&tx_env);
+
+        #[cfg(feature = "monad")]
         let next_position = if block_context.is_some() {
             let position = position.expect("Monad transaction target includes canonical position");
             Some(
@@ -2260,6 +2294,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
             &persistent_accounts,
             inspector,
         )?;
+        #[cfg(feature = "monad")]
         if let Some(position) = next_position {
             fork.position = position;
         }
@@ -3283,13 +3318,10 @@ fn inject_replay_precompiles(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        Fork, ForkAccountField, ReplayInputs, apply_state_changeset, ensure_block_identity,
-        update_env_block,
-    };
+    use super::{Fork, ForkAccountField, ReplayInputs, apply_state_changeset, update_env_block};
     use crate::{
         backend::{Backend, DatabaseExt, ForkPosition},
-        evm::{BlockContext, EthEvmNetwork},
+        evm::EthEvmNetwork,
         fork::{CreateFork, ForkId, MultiFork},
         opts::EvmOpts,
     };
@@ -3324,6 +3356,10 @@ mod tests {
         state::{Account, AccountInfo, EvmState, EvmStorageSlot, TransactionId},
     };
 
+    #[cfg(feature = "monad")]
+    use super::ensure_block_identity;
+    #[cfg(feature = "monad")]
+    use crate::evm::monad::BlockContext;
     #[cfg(feature = "monad")]
     use monad_revm::{
         MonadHardfork,
@@ -3420,6 +3456,7 @@ mod tests {
                     networks: NetworkConfigs::default(),
                 },
                 &block,
+                #[cfg(feature = "monad")]
                 None,
                 target,
                 &mut JournalInner::new(),
@@ -3443,7 +3480,11 @@ mod tests {
         let system = address!("6f49a8f621353f12378d0046e7d7e4b9b249dc9e");
         let target = B256::with_last_byte(4);
 
-        for with_context in [false, true] {
+        #[cfg(not(feature = "monad"))]
+        let contexts = [false];
+        #[cfg(feature = "monad")]
+        let contexts = [false, true];
+        for _with_context in contexts {
             for invalid_nonce in [false, true] {
                 let mut fork = fork_with_closed_backend();
                 fork.db.insert_account_info(
@@ -3485,8 +3526,9 @@ mod tests {
                 );
                 let networks = NetworkConfigs::default();
                 #[cfg(feature = "monad")]
-                let networks = if with_context { NetworkConfigs::with_monad() } else { networks };
-                let context = with_context.then(|| {
+                let networks = if _with_context { NetworkConfigs::with_monad() } else { networks };
+                #[cfg(feature = "monad")]
+                let context = _with_context.then(|| {
                     BlockContext::<EthEvmNetwork>::new(Vec::new(), Vec::new(), Vec::new())
                 });
                 let result = Backend::<EthEvmNetwork>::replay_until(
@@ -3498,6 +3540,7 @@ mod tests {
                         networks,
                     },
                     &block,
+                    #[cfg(feature = "monad")]
                     context.as_ref(),
                     target,
                     &mut JournalInner::new(),
@@ -3590,6 +3633,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "monad")]
     fn validates_block_identity() {
         let hash = B256::with_last_byte(2);
         let block = rpc_block(2, hash, B256::with_last_byte(1));

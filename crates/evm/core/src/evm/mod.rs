@@ -42,8 +42,6 @@ pub mod monad;
 pub mod op;
 pub mod tempo;
 
-mod block_context;
-pub use block_context::*;
 pub use eth::*;
 pub use tempo::*;
 

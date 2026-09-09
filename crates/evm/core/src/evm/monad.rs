@@ -1,5 +1,9 @@
-use alloy_evm::{Evm, EvmEnv, EvmFactory};
+use alloy_consensus::BlockHeader;
+use alloy_evm::{Evm, EvmEnv, EvmFactory, FromRecoveredTx};
 use alloy_monad_evm::{MonadEvm, MonadEvmFactory, MonadPrecompilesMap};
+use alloy_network::{BlockResponse, TransactionResponse};
+use alloy_provider::Provider;
+use alloy_rpc_types::BlockTransactions;
 use alloy_sol_types::SolCall;
 use eyre::WrapErr;
 use foundry_fork_db::DatabaseError;
@@ -36,8 +40,127 @@ use revm::{
 use crate::{
     FoundryChain, FoundryContextExt, FoundryInspectorExt, FoundryJournal,
     backend::{DatabaseExt, JournaledState},
-    evm::{FoundryEvmFactory, NestedEvm, NestedEvmFor, run_inspected_frame},
+    evm::{
+        BlockResponseFor, ChainFor, FoundryEvmFactory, FoundryEvmNetwork, NestedEvm, NestedEvmFor,
+        TxEnvFor, run_inspected_frame,
+    },
 };
+
+/// Transaction metadata for an exact block and its two ancestors.
+#[derive(Clone, Debug)]
+pub struct BlockContext<FEN: FoundryEvmNetwork> {
+    grandparent: Vec<TxEnvFor<FEN>>,
+    parent: Vec<TxEnvFor<FEN>>,
+    current: Vec<TxEnvFor<FEN>>,
+}
+
+impl<FEN: FoundryEvmNetwork> BlockContext<FEN> {
+    /// Creates block context from grandparent, parent, and current block transactions.
+    pub const fn new(
+        grandparent: Vec<TxEnvFor<FEN>>,
+        parent: Vec<TxEnvFor<FEN>>,
+        current: Vec<TxEnvFor<FEN>>,
+    ) -> Self {
+        Self { grandparent, parent, current }
+    }
+
+    /// Fetches all transaction bodies needed to replay transactions in `block` exactly.
+    pub async fn fetch<P: Provider<FEN::Network>>(
+        provider: &P,
+        block: &BlockResponseFor<FEN>,
+    ) -> eyre::Result<Self> {
+        let current = transaction_envs::<FEN>(block)?;
+        let parent = fetch_parent::<FEN, P>(provider, block).await?;
+        let grandparent = if let Some(parent) = &parent {
+            fetch_parent::<FEN, P>(provider, parent).await?
+        } else {
+            None
+        };
+
+        Ok(Self::new(
+            grandparent.as_ref().map(transaction_envs::<FEN>).transpose()?.unwrap_or_default(),
+            parent.as_ref().map(transaction_envs::<FEN>).transpose()?.unwrap_or_default(),
+            current,
+        ))
+    }
+
+    /// Builds context for the transaction at `index` in the current block.
+    pub fn transaction(&self, index: usize) -> ChainFor<FEN> {
+        ChainFor::<FEN>::for_block(&self.grandparent, &self.parent, &self.current, index)
+    }
+
+    /// Returns a cursor positioned immediately before `index` in the current block.
+    pub fn before_transaction(mut self, index: usize) -> eyre::Result<Self> {
+        if index > self.current.len() {
+            eyre::bail!(
+                "transaction index {index} exceeds block transaction count {}",
+                self.current.len()
+            );
+        }
+        self.current.truncate(index);
+        Ok(self)
+    }
+
+    /// Returns a cursor positioned at the start of a child block.
+    pub fn into_child(mut self) -> Self {
+        self.grandparent = std::mem::take(&mut self.parent);
+        self.parent = std::mem::take(&mut self.current);
+        self
+    }
+
+    /// Builds context for the next transaction at the cursor's current block position.
+    pub fn next_transaction(&self, tx: &TxEnvFor<FEN>) -> ChainFor<FEN> {
+        let mut current = self.current.clone();
+        let index = current.len();
+        current.push(tx.clone());
+        ChainFor::<FEN>::for_block(&self.grandparent, &self.parent, &current, index)
+    }
+
+    /// Records a committed transaction at the cursor's current block position.
+    pub fn record_transaction(&mut self, tx: TxEnvFor<FEN>) {
+        self.current.push(tx);
+    }
+
+    /// Advances the cursor to the start of the next block.
+    pub fn advance_block(&mut self) {
+        self.grandparent = std::mem::take(&mut self.parent);
+        self.parent = std::mem::take(&mut self.current);
+    }
+}
+
+async fn fetch_parent<FEN, P>(
+    provider: &P,
+    block: &BlockResponseFor<FEN>,
+) -> eyre::Result<Option<BlockResponseFor<FEN>>>
+where
+    FEN: FoundryEvmNetwork,
+    P: Provider<FEN::Network>,
+{
+    let parent_hash = block.header().parent_hash();
+    if parent_hash.is_zero() {
+        return Ok(None);
+    }
+
+    provider
+        .get_block_by_hash(parent_hash)
+        .full()
+        .await
+        .wrap_err_with(|| format!("failed to fetch ancestor block {parent_hash}"))?
+        .map(Some)
+        .ok_or_else(|| eyre::eyre!("ancestor block {parent_hash} not found"))
+}
+
+fn transaction_envs<FEN: FoundryEvmNetwork>(
+    block: &BlockResponseFor<FEN>,
+) -> eyre::Result<Vec<TxEnvFor<FEN>>> {
+    let BlockTransactions::Full(transactions) = block.transactions() else {
+        eyre::bail!("block {} does not contain full transactions", block.header().number());
+    };
+    Ok(transactions
+        .iter()
+        .map(|tx| TxEnvFor::<FEN>::from_recovered_tx(tx.as_ref(), tx.from()))
+        .collect())
+}
 
 impl FoundryChain<TxEnv> for MonadChainContext {
     fn for_transaction(tx: &TxEnv) -> Self {
@@ -495,7 +618,7 @@ mod tests {
     use super::*;
     use crate::{
         backend::Backend,
-        evm::{BlockContext, EthEvmNetwork, MonadEvmNetwork},
+        evm::{EthEvmNetwork, MonadEvmNetwork},
     };
     use alloy_evm::EthEvmFactory;
     use alloy_sol_types::SolEvent;
