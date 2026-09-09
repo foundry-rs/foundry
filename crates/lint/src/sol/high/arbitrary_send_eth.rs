@@ -29,7 +29,12 @@ use solar::{
 };
 use std::{collections::HashSet, ops::ControlFlow};
 
-declare_forge_lint!(ARBITRARY_SEND_ETH, Severity::High, "arbitrary-send-eth");
+declare_forge_lint!(
+    ARBITRARY_SEND_ETH,
+    Severity::High,
+    "arbitrary-send-eth",
+    "ETH is sent to a user-controlled destination; restrict the destination or the caller"
+);
 
 /// Recursion budget for `_msgSender()`-style helper chains.
 const HELPER_DEPTH: u8 = 3;
@@ -61,10 +66,7 @@ impl<'gcx> LateLintPass<'gcx> for ArbitrarySendEth {
             let _ = args.visit_expr(arg);
         }
         for span in args.hits {
-            ctx.span_lint(&ARBITRARY_SEND_ETH, span, |diag| {
-                diag.primary_message("ETH is sent to a user-controlled destination");
-                diag.help("restrict the destination or the caller");
-            });
+            ctx.emit(&ARBITRARY_SEND_ETH, span);
         }
 
         let mut a = Analyzer::new(gcx);
@@ -74,10 +76,7 @@ impl<'gcx> LateLintPass<'gcx> for ArbitrarySendEth {
         a.visit_stmts(body.stmts);
         if !a.hits.is_empty() && !func.modifiers.iter().any(|m| a.guards.modifier_restricts(m)) {
             for span in a.hits {
-                ctx.span_lint(&ARBITRARY_SEND_ETH, span, |diag| {
-                    diag.primary_message("ETH is sent to a user-controlled destination");
-                    diag.help("restrict the destination or the caller");
-                });
+                ctx.emit(&ARBITRARY_SEND_ETH, span);
             }
         }
     }

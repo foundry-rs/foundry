@@ -16,7 +16,12 @@ use solar::{
 };
 use std::{convert::Infallible, ops::ControlFlow};
 
-declare_forge_lint!(FUNCTION_INIT_STATE, Severity::Info, "function-init-state");
+declare_forge_lint!(
+    FUNCTION_INIT_STATE,
+    Severity::Info,
+    "function-init-state",
+    "state variable initializer depends on a non-pure function or another state variable"
+);
 
 impl<'gcx> LateLintPass<'gcx> for FunctionInitState {
     fn check_nested_contract(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, id: ContractId) {
@@ -40,11 +45,7 @@ impl<'gcx> LateLintPass<'gcx> for FunctionInitState {
                 };
                 let _ = finder.visit_expr(initializer);
                 if finder.found {
-                    ctx.span_lint(&FUNCTION_INIT_STATE, initializer.span, |diag| {
-                        diag.primary_message(
-                            "state variable initializer depends on a non-pure function or another state variable",
-                        );
-                    });
+                    ctx.emit(&FUNCTION_INIT_STATE, initializer.span);
                 }
             }
         }

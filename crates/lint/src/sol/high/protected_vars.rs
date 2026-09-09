@@ -33,7 +33,12 @@ use std::collections::{HashMap, HashSet};
 type StorageRoots = HashSet<VariableId>;
 type RootMap = HashMap<VariableId, StorageRoots>;
 
-declare_forge_lint!(PROTECTED_VARS, Severity::High, "protected-vars");
+declare_forge_lint!(
+    PROTECTED_VARS,
+    Severity::High,
+    "protected-vars",
+    "protected variable is written without its required protection"
+);
 
 impl<'gcx> LateLintPass<'gcx> for ProtectedVars {
     fn check_nested_contract(
@@ -93,9 +98,7 @@ impl<'gcx> LateLintPass<'gcx> for ProtectedVars {
                             "protected variable `{variable}` has a malformed write-protection annotation{context}"
                         ),
                     };
-                    ctx.span_lint(&PROTECTED_VARS, span, |diag| {
-                        diag.primary_message(msg);
-                    });
+                    ctx.emit_with_msg(&PROTECTED_VARS, span, msg);
                 }
             }
         }

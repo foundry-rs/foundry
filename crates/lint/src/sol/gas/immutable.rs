@@ -18,9 +18,19 @@ use solar::{
 };
 use std::{collections::HashSet, ops::ControlFlow};
 
-declare_forge_lint!(COULD_BE_IMMUTABLE, Severity::Gas, "could-be-immutable");
+declare_forge_lint!(
+    COULD_BE_IMMUTABLE,
+    Severity::Gas,
+    "could-be-immutable",
+    "state variable could be declared `immutable`"
+);
 
-declare_forge_lint!(COULD_BE_CONSTANT, Severity::Gas, "could-be-constant");
+declare_forge_lint!(
+    COULD_BE_CONSTANT,
+    Severity::Gas,
+    "could-be-constant",
+    "state variable could be declared `constant`"
+);
 
 impl<'gcx> LateLintPass<'gcx> for UnchangedStateVariables {
     fn check_nested_contract(
@@ -103,21 +113,11 @@ impl<'gcx> LateLintPass<'gcx> for UnchangedStateVariables {
                 && !written_in_constructor
                 && !initializer_writes.writes.contains(&var_id)
             {
-                ctx.span_lint(&COULD_BE_CONSTANT, span, |diag| {
-                    diag.primary_message(
-                        "state variable has a constant initializer and is never written",
-                    );
-                    diag.help("consider declaring it `constant`");
-                });
+                ctx.emit(&COULD_BE_CONSTANT, span);
             } else if immutable_type
                 && (written_in_constructor || (var.initializer.is_some() && !constant_initializer))
             {
-                ctx.span_lint(&COULD_BE_IMMUTABLE, span, |diag| {
-                    diag.primary_message(
-                        "state variable is initialized but not written at runtime",
-                    );
-                    diag.help("consider declaring it `immutable`");
-                });
+                ctx.emit(&COULD_BE_IMMUTABLE, span);
             }
         }
     }

@@ -3,10 +3,11 @@
 //! Each `check_*` returns `Some(suggestion)` when `s` violates the convention,
 //! `None` when it already matches. Leading/trailing underscores are preserved.
 
-use solar::interface::{
-    Span,
-    diagnostics::{Applicability, Diag},
+use crate::{
+    linter::{LintContext, Suggestion},
+    sol::SolLint,
 };
+use solar::interface::{Span, diagnostics::Applicability};
 
 /// `Some(suggestion)` if `s` is not `PascalCase`.
 pub fn check_pascal_case(s: &str) -> Option<String> {
@@ -37,11 +38,13 @@ pub fn has_acronym_exception(s: &str, patterns: &[String], pre_is_valid: fn(&str
     })
 }
 
-/// Adds a suggested rename of `span` to `expected`.
-pub fn suggest_rename(diag: &mut Diag, span: Span, expected: String) {
+/// Emits `lint` at `span` with a suggested rename to `expected`.
+pub fn emit_rename(ctx: &LintContext, lint: &'static SolLint, span: Span, expected: String) {
     // Renaming only the declaration can break references, collide with another name, or change
     // a public selector. Applying the rename requires a project-wide refactor.
-    diag.span_suggestion(span, "consider using", expected, Applicability::MaybeIncorrect);
+    let suggestion =
+        Suggestion::fix(expected, Applicability::MaybeIncorrect).with_desc("consider using");
+    ctx.emit_with_suggestion(lint, span, suggestion);
 }
 
 /// Single-character names are exempt from every convention.

@@ -25,7 +25,12 @@ use solar::{
 };
 use std::{ops::ControlFlow, slice};
 
-declare_forge_lint!(UNSAFE_OZ_ERC721_MINT, Severity::Med, "unsafe-oz-erc721-mint");
+declare_forge_lint!(
+    UNSAFE_OZ_ERC721_MINT,
+    Severity::Med,
+    "unsafe-oz-erc721-mint",
+    "`ERC721._mint` does not check that the recipient can receive the token; use `_safeMint`"
+);
 
 impl<'gcx> LateLintPass<'gcx> for UnsafeOzErc721Mint {
     fn check_function(
@@ -63,12 +68,7 @@ impl<'gcx> LateLintPass<'gcx> for UnsafeOzErc721Mint {
         for (callee, _, span) in cx.calls(body.stmts) {
             let helper = cx.is_override_delegation_helper(gcx.hir.function(callee));
             if cx.unsafe_mint_target(callee, helper, &mut Vec::new()).is_some() {
-                ctx.span_lint(&UNSAFE_OZ_ERC721_MINT, span, |diag| {
-                    diag.primary_message(
-                        "`ERC721._mint` does not check that the recipient can receive the token",
-                    );
-                    diag.help("use `_safeMint`");
-                });
+                ctx.emit(&UNSAFE_OZ_ERC721_MINT, span);
             }
         }
     }

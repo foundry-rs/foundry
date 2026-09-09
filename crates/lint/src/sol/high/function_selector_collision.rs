@@ -30,7 +30,12 @@ use std::{
 /// Path-state cap above which selector constraints are widened to "any selector".
 const MAX_LOOP_PATH_STATES: usize = 128;
 
-declare_forge_lint!(FUNCTION_SELECTOR_COLLISION, Severity::High, "function-selector-collision");
+declare_forge_lint!(
+    FUNCTION_SELECTOR_COLLISION,
+    Severity::High,
+    "function-selector-collision",
+    "proxy and implementation functions have colliding selectors"
+);
 
 impl<'gcx> LateLintPass<'gcx> for FunctionSelectorCollision {
     fn check_nested_contract(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, proxy_id: ContractId) {
@@ -91,9 +96,7 @@ impl<'gcx> LateLintPass<'gcx> for FunctionSelectorCollision {
                         proxy.name.as_str(),
                         implementation.name.as_str(),
                     );
-                    ctx.span_lint(&FUNCTION_SELECTOR_COLLISION, proxy.name.span, |diag| {
-                        diag.primary_message(msg);
-                    });
+                    ctx.emit_with_msg(&FUNCTION_SELECTOR_COLLISION, proxy.name.span, msg);
                 }
             }
         }

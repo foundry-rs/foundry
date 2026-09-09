@@ -6,7 +6,12 @@ use crate::{
 use solar::{ast::FunctionKind, interface::source_map::FileName, sema::hir};
 use std::collections::HashMap;
 
-declare_forge_lint!(MODIFIER_USED_ONLY_ONCE, Severity::Info, "modifier-used-only-once");
+declare_forge_lint!(
+    MODIFIER_USED_ONLY_ONCE,
+    Severity::Info,
+    "modifier-used-only-once",
+    "this modifier is used only once; consider inlining its checks into the function"
+);
 
 impl<'ast> ProjectLintPass<'ast> for ModifierUsedOnlyOnce {
     fn check_project(&mut self, ctx: &ProjectLintEmitter<'_, '_>, sources: &[ProjectSource<'ast>]) {
@@ -52,15 +57,7 @@ impl<'ast> ProjectLintPass<'ast> for ModifierUsedOnlyOnce {
                 && !function.override_
                 && counts.get(&function_id) == Some(&1)
             {
-                ctx.span_lint(
-                    &sources[src_idx],
-                    &MODIFIER_USED_ONLY_ONCE,
-                    function.keyword_span(),
-                    |diag| {
-                        diag.primary_message("this modifier is used only once");
-                        diag.help("consider inlining its checks into the function");
-                    },
-                );
+                ctx.emit(&sources[src_idx], &MODIFIER_USED_ONLY_ONCE, function.keyword_span());
             }
         }
     }

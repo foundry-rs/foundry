@@ -11,7 +11,12 @@ use solar::{
     },
 };
 
-declare_forge_lint!(ASM_KECCAK256, Severity::Gas, "asm-keccak256");
+declare_forge_lint!(
+    ASM_KECCAK256,
+    Severity::Gas,
+    "asm-keccak256",
+    "high-level `keccak256` call is a candidate for gas optimization"
+);
 
 impl<'gcx> LateLintPass<'gcx> for AsmKeccak256 {
     fn check_stmt(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, stmt: &'gcx hir::Stmt<'gcx>) {
@@ -30,14 +35,7 @@ impl<'gcx> LateLintPass<'gcx> for AsmKeccak256 {
             && args.len() == 1
             && is_builtin(callee, kw::Keccak256)
         {
-            ctx.span_lint(&ASM_KECCAK256, expr.span, |diag| {
-                diag.primary_message(
-                    "high-level `keccak256` call",
-                );
-                diag.help(
-                    "consider inline assembly when it preserves the hashed bytes and reduces measured gas",
-                );
-            });
+            ctx.emit(&ASM_KECCAK256, expr.span);
         }
     }
 }

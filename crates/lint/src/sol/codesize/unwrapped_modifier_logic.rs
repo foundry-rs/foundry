@@ -1,6 +1,6 @@
 use super::UnwrappedModifierLogic;
 use crate::{
-    linter::{LateLintPass, LintContext},
+    linter::{LateLintPass, LintContext, Suggestion},
     sol::{
         Severity, SolLint,
         analysis::{
@@ -18,7 +18,12 @@ use solar::{
 };
 use std::ops::ControlFlow;
 
-declare_forge_lint!(UNWRAPPED_MODIFIER_LOGIC, Severity::CodeSize, "unwrapped-modifier-logic");
+declare_forge_lint!(
+    UNWRAPPED_MODIFIER_LOGIC,
+    Severity::CodeSize,
+    "unwrapped-modifier-logic",
+    "modifier logic can be wrapped to reduce code size"
+);
 
 impl<'gcx> LateLintPass<'gcx> for UnwrappedModifierLogic {
     fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, func: &'gcx Function<'gcx>) {
@@ -39,18 +44,12 @@ impl<'gcx> LateLintPass<'gcx> for UnwrappedModifierLogic {
             return;
         };
         let (before, after) = (&body.stmts[..idx], &body.stmts[idx + 1..]);
-        if let Some(replacement) = snippet(ctx, &gcx.hir, func, name.as_str(), before, after) {
-            ctx.span_lint(&UNWRAPPED_MODIFIER_LOGIC, func.span.to(func.body_span), |diag| {
-                diag.primary_message("modifier contains inline logic that may increase code size");
-                // Helper names can collide with existing or inherited declarations, and extraction
-                // can affect dispatch and reference aliasing. This is a refactoring candidate.
-                diag.span_suggestion(
-                    func.span.to(func.body_span),
-                    "wrap modifier logic to reduce code size",
-                    replacement,
-                    Applicability::MaybeIncorrect,
-                );
-            });
+        if let Some(suggestion) = snippet(ctx, &gcx.hir, func, name.as_str(), before, after) {
+            ctx.emit_with_suggestion(
+                &UNWRAPPED_MODIFIER_LOGIC,
+                func.span.to(func.body_span),
+                suggestion,
+            );
         }
     }
 }
@@ -90,7 +89,7 @@ fn snippet<'gcx>(
     name: &str,
     before: &'gcx [Stmt<'gcx>],
     after: &'gcx [Stmt<'gcx>],
-) -> Option<String> {
+) -> Option<Suggestion> {
     let (wrap_before, wrap_after) = (requires_wrapping(hir, before), requires_wrapping(hir, after));
     if !(wrap_before || wrap_after) {
         return None;
@@ -174,10 +173,15 @@ fn snippet<'gcx>(
         .collect::<Vec<_>>()
         .join("\n");
     // Keep virtual/override specifiers and unnamed parameters in the modifier declaration.
-    // Preserve whitespace too: trimming can extend a trailing `//` comment over the opening brace.
     let header = ctx.span_to_snippet(func.span.until(func.body_span))?;
-    let replacement = format!("{header}{{\n{body}\n{mod_indent}}}{before_helper}{after_helper}");
-    Some(replacement)
+    let header = header.trim_end();
+    let replacement = format!("{header} {{\n{body}\n{mod_indent}}}{before_helper}{after_helper}");
+    Some(
+        // Helper names can collide with existing or inherited declarations, and extraction can
+        // affect dispatch and reference aliasing. This is a refactoring candidate, not an autofix.
+        Suggestion::fix(replacement, Applicability::MaybeIncorrect)
+            .with_desc("wrap modifier logic to reduce code size"),
+    )
 }
 
 /// Visits every expression under `stmts`, stopping as soon as `f` returns `true`.

@@ -2,14 +2,19 @@ use crate::{
     linter::{EarlyLintPass, LintContext},
     sol::{
         Severity, SolLint,
-        naming::{check_pascal_case, has_acronym_exception, suggest_rename},
+        naming::{check_pascal_case, emit_rename, has_acronym_exception},
     },
 };
 use foundry_config::lint::LintSpecificConfig;
 use solar::ast::ItemStruct;
 use std::sync::Arc;
 
-declare_forge_lint!(PASCAL_CASE_STRUCT, Severity::Info, "pascal-case-struct");
+declare_forge_lint!(
+    PASCAL_CASE_STRUCT,
+    Severity::Info,
+    "pascal-case-struct",
+    "struct name is not `PascalCase`"
+);
 
 #[derive(Debug)]
 pub(super) struct PascalCaseStructPass {
@@ -32,10 +37,7 @@ impl<'ast> EarlyLintPass<'ast> for PascalCaseStructPass {
             return;
         }
         if let Some(expected) = check_pascal_case(name) {
-            ctx.span_lint(&PASCAL_CASE_STRUCT, strukt.name.span, |diag| {
-                diag.primary_message("struct name is not `PascalCase`");
-                suggest_rename(diag, strukt.name.span, expected);
-            });
+            emit_rename(ctx, &PASCAL_CASE_STRUCT, strukt.name.span, expected);
         }
     }
 }

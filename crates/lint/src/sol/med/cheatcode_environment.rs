@@ -41,9 +41,19 @@ use solar::{
 };
 use std::collections::{HashMap, HashSet};
 
-declare_forge_lint!(BLOCK_NUMBER_ACROSS_ROLL, Severity::Med, "block-number-across-roll");
+declare_forge_lint!(
+    BLOCK_NUMBER_ACROSS_ROLL,
+    Severity::Med,
+    "block-number-across-roll",
+    "`block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead"
+);
 
-declare_forge_lint!(BLOCK_TIMESTAMP_ACROSS_WARP, Severity::Med, "block-timestamp-across-warp");
+declare_forge_lint!(
+    BLOCK_TIMESTAMP_ACROSS_WARP,
+    Severity::Med,
+    "block-timestamp-across-warp",
+    "`block.timestamp` may be reused across `vm.warp`; capture it with `vm.getBlockTimestamp()` instead"
+);
 
 const CHEATCODE_ADDRESS: U256 = uint!(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D_U256);
 const MAX_STEPS: usize = 16_384;
@@ -243,24 +253,7 @@ impl<'gcx> Checker<'_, '_, '_, 'gcx> {
     fn use_value(&self, value: &Value) {
         for read in &value.reads {
             if read.changed {
-                self.ctx.span_lint(read.environment.lint(), read.span, |diag| {
-                    match read.environment {
-                        Environment::Number => {
-                            diag.primary_message("`block.number` may be reused across `vm.roll`");
-                            diag.help(
-                                "capture the block number with `vm.getBlockNumber()` instead",
-                            );
-                        }
-                        Environment::Timestamp => {
-                            diag.primary_message(
-                                "`block.timestamp` may be reused across `vm.warp`",
-                            );
-                            diag.help(
-                                "capture the timestamp with `vm.getBlockTimestamp()` instead",
-                            );
-                        }
-                    }
-                });
+                self.ctx.emit(read.environment.lint(), read.span);
             }
         }
         for part in &value.tuple {
@@ -578,22 +571,7 @@ impl<'gcx> Checker<'_, '_, '_, 'gcx> {
         if let Some(environment) = environment {
             for read in &state.seen.reads {
                 if read.environment == environment && read.changed {
-                    self.ctx.span_lint(environment.lint(), read.span, |diag| match environment {
-                        Environment::Number => {
-                            diag.primary_message("`block.number` may be reused across `vm.roll`");
-                            diag.help(
-                                "capture the block number with `vm.getBlockNumber()` instead",
-                            );
-                        }
-                        Environment::Timestamp => {
-                            diag.primary_message(
-                                "`block.timestamp` may be reused across `vm.warp`",
-                            );
-                            diag.help(
-                                "capture the timestamp with `vm.getBlockTimestamp()` instead",
-                            );
-                        }
-                    });
+                    self.ctx.emit(environment.lint(), read.span);
                 }
             }
             let value = Value {

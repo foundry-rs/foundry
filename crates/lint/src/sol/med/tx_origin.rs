@@ -9,7 +9,7 @@ use solar::{
 };
 use std::ops::ControlFlow;
 
-declare_forge_lint!(TX_ORIGIN, Severity::Med, "tx-origin");
+declare_forge_lint!(TX_ORIGIN, Severity::Med, "tx-origin", "`tx.origin` is used for authorization");
 
 impl<'ast> EarlyLintPass<'ast> for TxOrigin {
     fn check_stmt(&mut self, ctx: &LintContext, stmt: &'ast Stmt<'ast>) {
@@ -34,9 +34,7 @@ impl<'ast> EarlyLintPass<'ast> for TxOrigin {
 
 fn emit_if_contains_tx_origin<'ast>(ctx: &LintContext, expr: &'ast Expr<'ast>) {
     if let ControlFlow::Break(span) = TxOriginFinder.visit_expr(expr) {
-        ctx.span_lint(&TX_ORIGIN, span, |diag| {
-            diag.primary_message("`tx.origin` is used for authorization");
-        });
+        ctx.emit(&TX_ORIGIN, span);
     }
 }
 

@@ -25,7 +25,12 @@ use std::{
     ops::ControlFlow,
 };
 
-declare_forge_lint!(MISSING_EVENTS_ACCESS_CONTROL, Severity::Low, "missing-events-access-control");
+declare_forge_lint!(
+    MISSING_EVENTS_ACCESS_CONTROL,
+    Severity::Low,
+    "missing-events-access-control",
+    "access control changes without an event"
+);
 
 impl<'gcx> LateLintPass<'gcx> for MissingEventsAccessControl {
     fn check_contract(
@@ -84,11 +89,11 @@ impl<'gcx> LateLintPass<'gcx> for MissingEventsAccessControl {
                     .variable(write.var_id)
                     .name
                     .map_or_else(|| "state variable".to_string(), |name| name.to_string());
-                ctx.span_lint(&MISSING_EVENTS_ACCESS_CONTROL, write.span, |diag| {
-                    diag.primary_message(format!(
-                        "`{name}` is changed without an event but is used for access control"
-                    ));
-                });
+                ctx.emit_with_msg(
+                    &MISSING_EVENTS_ACCESS_CONTROL,
+                    write.span,
+                    format!("`{name}` is changed without an event but is used for access control"),
+                );
             }
         }
     }

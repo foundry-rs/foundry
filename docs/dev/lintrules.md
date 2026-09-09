@@ -11,19 +11,20 @@ The `forge-lint` system operates by analyzing Solidity source code through a dua
 2. **HIR Generation**: The AST is then lowered into a High-level Intermediate Representation (HIR) that includes type information and semantic analysis.
 3. **Early Lint Passes**: The `EarlyLintVisitor` traverses the AST, invoking registered "early lint passes" (`EarlyLintPass` implementations) for syntax-level checks.
 4. **Late Lint Passes**: The `LateLintVisitor` traverses the HIR, invoking registered "late lint passes" (`LateLintPass` implementations) for semantic analysis.
-5. **Emitting Diagnostics**: A lint pass calls `LintContext::span_lint` with a closure that builds the diagnostic using Solar's `Diag` methods. The closure sets the primary message and adds help, notes, labels, and code suggestions. The context handles lint policy, severity, documentation links, and emission.
+5. **Emitting Diagnostics**: If a lint pass identifies a violation, it uses the `LintContext` to emit a diagnostic (either `warning` or `note`) that pinpoints the issue. Lints can also provide code fix suggestions through the `Suggestion` API, which integrates with solar's diagnostic system to support different applicability levels.
 
 ### Key Components
 
 - **`Linter` Trait**: Defines a generic interface for linters. `SolidityLinter` is the concrete implementation tailored for Solidity.
 - **`Lint` Trait & `SolLint` Struct**:
-  - `Lint`: A trait defining a lint's unique ID, severity, and documentation URL.
+  - `Lint`: A trait that defines the essential properties of a lint rule, such as its unique ID, severity, description, and an optional help message/URL.
   - `SolLint`: A struct implementing the `Lint` trait, used to hold the metadata for each specific Solidity lint rule.
 - **`EarlyLintPass<'ast>` Trait**: Lints that operate directly on AST nodes implement this trait. It contains methods (like `check_expr`, `check_item_function`, etc.) called by the AST visitor.
 - **`LateLintPass<'hir>` Trait**: Lints that require type information and semantic analysis implement this trait. It contains methods (like `check_contract`, `check_function`, etc.) called by the HIR visitor.
-- **`LintContext<'s>`**: Provides contextual information and the `span_lint` diagnostic entry point.
+- **`LintContext<'s>`**: Provides contextual information to lint passes during execution, such as access to the session for emitting diagnostics and methods for emitting suggestions.
 - **`EarlyLintVisitor<'a, 's, 'ast>`**: The visitor that traverses the AST and dispatches checks to the registered `EarlyLintPass` instances.
 - **`LateLintVisitor<'a, 's, 'hir>`**: The visitor that traverses the HIR and dispatches checks to the registered `LateLintPass` instances.
+- **`Suggestion` Struct**: Represents code fix suggestions with different kinds (fix or example) and applicability levels, integrated with solar's diagnostic system.
 
 ## Developing a new lint rule
 
@@ -40,6 +41,7 @@ Next, choose whether you want an [early or late lint pass](#choosing-between-ear
       MIXED_CASE_FUNCTION,                      // The Rust identifier for this SolLint static
       Severity::Info,                           // The default severity of the lint
       "mixed-case-function",                    // A unique string ID for configuration/CLI
+      "function names should use mixedCase"     // A brief description
   );
   // Note: The macro automatically generates a help link to the Foundry book
   ```
@@ -82,11 +84,9 @@ the following Foundry-specific conventions:
   lints after the condition they detect so the name reads naturally when enabled or suppressed.
   Existing public IDs are configuration and documentation APIs: do not rename them just to adopt
   Clippy's `snake_case` spelling or a different naming style.
-- Make the primary diagnostic a short, factual description of the detected problem. Set it with
-  `diag.primary_message(...)` inside the `span_lint` closure. Use `diag.help(...)` or suggestion
-  labels for corrective instructions, and `diag.note(...)` for supporting context.
-  Start diagnostic text with lowercase prose and omit the final period for a single sentence;
-  preserve capitalization inside code and
+- Make the primary diagnostic a short, factual description of the detected problem. Use help
+  messages or suggestion labels for detailed corrective instructions. Start diagnostic text with lowercase
+  prose and omit the final period for a single sentence; preserve capitalization inside code and
   in acronyms. Use normal sentence punctuation for multi-sentence explanations.
 - Enclose code, identifiers, types, operators, and literal values in backticks in descriptions,
   labels, notes, and help text. Do not add backticks to replacement source code itself.
@@ -123,26 +123,42 @@ semantically correct.
   - Complex patterns that need to understand the actual behavior
   - Avoiding false positives through type-aware analysis
 
-### Building diagnostics and suggestions
+### Providing Code Fix Suggestions
 
-Use `span_lint` to construct each diagnostic at its callsite. The closure receives `&mut Diag`;
-the context emits the completed diagnostic. A project lint passes its `ProjectSource` before the
-lint metadata. Use `span_suggestion` for replacement code and `help` for advice or examples that
-cannot be applied automatically:
+Lints can provide actionable code fix suggestions using the `emit_with_suggestion` method. The `Suggestion` API integrates with solar's diagnostic system and supports different applicability levels:
 
 ```rust
 use solar::interface::diagnostics::Applicability;
 
-cx.span_lint(&MIXED_CASE_FUNCTION, name.span, |diag| {
-    diag.primary_message("function name is not `mixedCase`");
-    diag.span_suggestion(
-        name.span,
-        "consider using",
+// Example: Suggesting a machine-applicable fix
+cx.emit_with_suggestion(
+    lint,
+    node.span,
+    Suggestion::fix(
         corrected_name,
+        Applicability::MachineApplicable,
+    )
+    .with_desc("consider using")
+);
+
+// Example: Suggesting a fix with a specific span
+cx.emit_with_suggestion(
+    lint,
+    node.span,
+    Suggestion::fix(
+        optimized_code,
         Applicability::MaybeIncorrect,
-    );
-    diag.help("update references to the renamed function");
-});
+    )
+    .with_desc("use inline assembly for gas optimization")
+    .with_span(replacement_span)
+);
+
+// Example: Providing an example (non-applicable suggestion)
+cx.emit_with_suggestion(
+    lint,
+    node.span,
+    Suggestion::example("some example")
+);
 ```
 
 **Applicability Levels:**

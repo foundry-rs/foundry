@@ -8,7 +8,12 @@ use solar::{
     interface::{BytePos, Span},
 };
 
-declare_forge_lint!(RTLO, Severity::High, "rtlo");
+declare_forge_lint!(
+    RTLO,
+    Severity::High,
+    "rtlo",
+    "bidirectional Unicode override character can hide malicious code"
+);
 
 impl<'ast> EarlyLintPass<'ast> for Rtlo {
     fn check_full_source_unit(
@@ -29,9 +34,7 @@ impl<'ast> EarlyLintPass<'ast> for Rtlo {
                 let hi = lo + BytePos::from_usize(ch.len_utf8());
                 let span = Span::new(lo, hi);
 
-                ctx.span_lint(&RTLO, span, |diag| {
-                    diag.primary_message(format!("`U+{:04X}` ({name}) detected", ch as u32));
-                });
+                ctx.emit_with_msg(&RTLO, span, format!("`U+{:04X}` ({name}) detected", ch as u32));
             }
         }
     }

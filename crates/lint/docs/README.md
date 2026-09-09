@@ -9,9 +9,8 @@ the published page at `https://getfoundry.sh/forge/linting/<id>`.
 ## Adding a new lint
 
 When you add a new lint with `declare_forge_lint!`, you **must** also add a documentation file at
-`crates/lint/docs/<str_id>.md`. The Book's `import:lints -- --foundry <checkout>` command
-validates the documentation and registered metadata, then generates pages and navigation.
-Use `import:lints -- --check` in the Book to validate the committed import offline.
+`crates/lint/docs/<str_id>.md`. The Book's `check:lints` command validates the documentation,
+registered metadata, and navigation.
 
 Use [`_template.md`](./_template.md) as a starting point.
 
@@ -37,17 +36,6 @@ diagnostics, and examples. This documentation format follows
   and extra sections that repeat the problem or remedy.
 
 ## File structure
-
-For a self-contained triggering example, put `{{produces}}` on its own line immediately after
-the Solidity code block. The Book importer runs that block as `src/Example.sol` with `forge lint`
-and replaces the marker with the actual diagnostics for this lint, including source spans and
-help. An invalid example or a missing expected diagnostic fails the import. Use a Forge binary
-matching the imported Foundry revision. Normal Book builds use the committed output, not Forge.
-
-Keep fragments unmarked until they include the declarations they need. Do not add `//~ ERROR`
-or `//~ WARN` test annotations to user-facing examples; the generated output shows the actual
-severity and message. Lint behavior remains covered by Foundry's existing tests; documentation
-validation runs in the Book at import time.
 
 Each lint doc file should follow this structure:
 

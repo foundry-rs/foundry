@@ -15,7 +15,12 @@ use std::{
     ops::ControlFlow,
 };
 
-declare_forge_lint!(INTERNAL_FUNCTION_USED_ONCE, Severity::Info, "internal-function-used-once");
+declare_forge_lint!(
+    INTERNAL_FUNCTION_USED_ONCE,
+    Severity::Info,
+    "internal-function-used-once",
+    "this internal function is used only once; consider inlining it into its caller"
+);
 
 impl<'ast> ProjectLintPass<'ast> for InternalFunctionUsedOnce {
     fn check_project(&mut self, ctx: &ProjectLintEmitter<'_, '_>, sources: &[ProjectSource<'ast>]) {
@@ -88,15 +93,7 @@ impl<'ast> ProjectLintPass<'ast> for InternalFunctionUsedOnce {
                 && !info.self_referencing
                 && !only_referenced_within_cycle(&refs, function_id)
             {
-                ctx.span_lint(
-                    &sources[src_idx],
-                    &INTERNAL_FUNCTION_USED_ONCE,
-                    function.keyword_span(),
-                    |diag| {
-                        diag.primary_message("this internal function is used only once");
-                        diag.help("consider inlining it into its caller");
-                    },
-                );
+                ctx.emit(&sources[src_idx], &INTERNAL_FUNCTION_USED_ONCE, function.keyword_span());
             }
         }
     }

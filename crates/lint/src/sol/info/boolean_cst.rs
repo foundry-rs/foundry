@@ -5,7 +5,7 @@ use crate::{
 };
 use solar::ast::{BinOpKind, Expr, ExprKind, Stmt, StmtKind, VariableDefinition};
 
-declare_forge_lint!(BOOLEAN_CST, Severity::Med, "boolean-cst");
+declare_forge_lint!(BOOLEAN_CST, Severity::Med, "boolean-cst", "misuse of a boolean constant");
 
 impl<'ast> EarlyLintPass<'ast> for BooleanCst {
     fn check_stmt(&mut self, ctx: &LintContext, stmt: &'ast Stmt<'ast>) {
@@ -41,9 +41,7 @@ impl<'ast> EarlyLintPass<'ast> for BooleanCst {
 fn check_expr(ctx: &LintContext, expr: &Expr<'_>, allow_bare: bool) {
     if ast_bool_literal(expr).is_some() {
         if !allow_bare {
-            ctx.span_lint(&BOOLEAN_CST, expr.span, |diag| {
-                diag.primary_message("misuse of a boolean constant");
-            });
+            ctx.emit(&BOOLEAN_CST, expr.span);
         }
         return;
     }

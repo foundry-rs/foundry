@@ -8,7 +8,12 @@ use solar::{
     interface::{kw, sym},
 };
 
-declare_forge_lint!(CUSTOM_ERRORS, Severity::Gas, "custom-errors");
+declare_forge_lint!(
+    CUSTOM_ERRORS,
+    Severity::Gas,
+    "custom-errors",
+    "`revert` or `require` call does not use a custom error"
+);
 
 impl<'ast> EarlyLintPass<'ast> for CustomErrors {
     fn check_expr(&mut self, ctx: &LintContext, expr: &'ast Expr<'ast>) {
@@ -26,9 +31,7 @@ impl<'ast> EarlyLintPass<'ast> for CustomErrors {
             _ => false,
         };
         if lint {
-            ctx.span_lint(&CUSTOM_ERRORS, expr.span, |diag| {
-                diag.primary_message("`revert` or `require` call does not use a custom error");
-            });
+            ctx.emit(&CUSTOM_ERRORS, expr.span);
         }
     }
 }

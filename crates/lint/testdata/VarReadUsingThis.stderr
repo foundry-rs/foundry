@@ -1,4 +1,4 @@
-note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`
+note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`; access it directly
    ╭▸ ROOT/testdata/VarReadUsingThis.sol:LL:CC
    │
 LL │     uint256 public initFromThis = uint256(uint160(address(this))) + this.counter();
@@ -6,7 +6,7 @@ LL │     uint256 public initFromThis = uint256(uint160(address(this))) + this.
    │
    ╰ help: https://getfoundry.sh/forge/linting/var-read-using-this
 
-note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`
+note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`; access it directly
    ╭▸ ROOT/testdata/VarReadUsingThis.sol:LL:CC
    │
 LL │         counter = this.counter();
@@ -14,7 +14,7 @@ LL │         counter = this.counter();
    │
    ╰ help: https://getfoundry.sh/forge/linting/var-read-using-this
 
-note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`
+note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`; access it directly
    ╭▸ ROOT/testdata/VarReadUsingThis.sol:LL:CC
    │
 LL │         items.push(this.counter());
@@ -22,7 +22,7 @@ LL │         items.push(this.counter());
    │
    ╰ help: https://getfoundry.sh/forge/linting/var-read-using-this
 
-note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`
+note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`; access it directly
    ╭▸ ROOT/testdata/VarReadUsingThis.sol:LL:CC
    │
 LL │         return this.counter();
@@ -30,7 +30,7 @@ LL │         return this.counter();
    │
    ╰ help: https://getfoundry.sh/forge/linting/var-read-using-this
 
-note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`
+note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`; access it directly
    ╭▸ ROOT/testdata/VarReadUsingThis.sol:LL:CC
    │
 LL │         return this.owners(k);
@@ -38,7 +38,7 @@ LL │         return this.owners(k);
    │
    ╰ help: https://getfoundry.sh/forge/linting/var-read-using-this
 
-note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`
+note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`; access it directly
    ╭▸ ROOT/testdata/VarReadUsingThis.sol:LL:CC
    │
 LL │         return this.items(i);
@@ -46,7 +46,7 @@ LL │         return this.items(i);
    │
    ╰ help: https://getfoundry.sh/forge/linting/var-read-using-this
 
-note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`
+note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`; access it directly
    ╭▸ ROOT/testdata/VarReadUsingThis.sol:LL:CC
    │
 LL │         return this.balances(a, b);
@@ -54,46 +54,46 @@ LL │         return this.balances(a, b);
    │
    ╰ help: https://getfoundry.sh/forge/linting/var-read-using-this
 
-note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`
+note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`; access it directly
    ╭▸ ROOT/testdata/VarReadUsingThis.sol:LL:CC
    │
 LL │         return this.info();
    │                ━━━━━━━━━━━
    │
-   ├ help: read the state variable directly instead of via `this.`
+   ├ note: read the state variable directly instead of via `this.`
    │       
    │       read the state variable directly: `info`
    │       
    │       
    ╰ help: https://getfoundry.sh/forge/linting/var-read-using-this
 
-note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`
+note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`; access it directly
    ╭▸ ROOT/testdata/VarReadUsingThis.sol:LL:CC
    │
 LL │         return this.publicViewLocal();
    │                ━━━━━━━━━━━━━━━━━━━━━━
    │
-   ├ help: avoid the `STATICCALL` by invoking the function directly
+   ├ note: avoid the `STATICCALL` by invoking the function directly
    │       
    │       call directly without `this.`: `publicViewLocal(...)`
    │       
    │       
    ╰ help: https://getfoundry.sh/forge/linting/var-read-using-this
 
-note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`
+note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`; access it directly
    ╭▸ ROOT/testdata/VarReadUsingThis.sol:LL:CC
    │
 LL │         return this.externalViewLocal();
    │                ━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ├ help: avoid the `STATICCALL` by invoking the function directly
+   ├ note: avoid the `STATICCALL` by invoking the function directly
    │       
    │       call directly without `this.`: `externalViewLocal(...)`
    │       
    │       
    ╰ help: https://getfoundry.sh/forge/linting/var-read-using-this
 
-note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`
+note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`; access it directly
    ╭▸ ROOT/testdata/VarReadUsingThis.sol:LL:CC
    │
 LL │         return this.baseVar();
@@ -101,20 +101,20 @@ LL │         return this.baseVar();
    │
    ╰ help: https://getfoundry.sh/forge/linting/var-read-using-this
 
-note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`
+note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`; access it directly
    ╭▸ ROOT/testdata/VarReadUsingThis.sol:LL:CC
    │
 LL │         return this.basePublicView();
    │                ━━━━━━━━━━━━━━━━━━━━━
    │
-   ├ help: avoid the `STATICCALL` by invoking the function directly
+   ├ note: avoid the `STATICCALL` by invoking the function directly
    │       
    │       call directly without `this.`: `basePublicView(...)`
    │       
    │       
    ╰ help: https://getfoundry.sh/forge/linting/var-read-using-this
 
-note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`
+note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`; access it directly
    ╭▸ ROOT/testdata/VarReadUsingThis.sol:LL:CC
    │
 LL │         return (this).counter();
@@ -122,7 +122,7 @@ LL │         return (this).counter();
    │
    ╰ help: https://getfoundry.sh/forge/linting/var-read-using-this
 
-note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`
+note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`; access it directly
    ╭▸ ROOT/testdata/VarReadUsingThis.sol:LL:CC
    │
 LL │         return (this.counter)();
@@ -130,16 +130,15 @@ LL │         return (this.counter)();
    │
    ╰ help: https://getfoundry.sh/forge/linting/var-read-using-this
 
-note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`
+note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`; access it directly
    ╭▸ ROOT/testdata/VarReadUsingThis.sol:LL:CC
    │
 LL │         return this.publicViewLocal{gas: 10000}();
    │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ├ help: consider direct access if the external call semantics and gas limit are not required
    ╰ help: https://getfoundry.sh/forge/linting/var-read-using-this
 
-note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`
+note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`; access it directly
    ╭▸ ROOT/testdata/VarReadUsingThis.sol:LL:CC
    │
 LL │         require(this.counter() > 0, "zero");
@@ -147,7 +146,7 @@ LL │         require(this.counter() > 0, "zero");
    │
    ╰ help: https://getfoundry.sh/forge/linting/var-read-using-this
 
-note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`
+note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`; access it directly
    ╭▸ ROOT/testdata/VarReadUsingThis.sol:LL:CC
    │
 LL │     function gatedWithArg() external view withArg(this.counter()) returns (uint256) {
@@ -155,20 +154,20 @@ LL │     function gatedWithArg() external view withArg(this.counter()) returns
    │
    ╰ help: https://getfoundry.sh/forge/linting/var-read-using-this
 
-note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`
+note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`; access it directly
    ╭▸ ROOT/testdata/VarReadUsingThis.sol:LL:CC
    │
 LL │         return this.publicViewLocal() + this.counter();
    │                ━━━━━━━━━━━━━━━━━━━━━━
    │
-   ├ help: avoid the `STATICCALL` by invoking the function directly
+   ├ note: avoid the `STATICCALL` by invoking the function directly
    │       
    │       call directly without `this.`: `publicViewLocal(...)`
    │       
    │       
    ╰ help: https://getfoundry.sh/forge/linting/var-read-using-this
 
-note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`
+note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`; access it directly
    ╭▸ ROOT/testdata/VarReadUsingThis.sol:LL:CC
    │
 LL │         return this.publicViewLocal() + this.counter();
@@ -176,20 +175,20 @@ LL │         return this.publicViewLocal() + this.counter();
    │
    ╰ help: https://getfoundry.sh/forge/linting/var-read-using-this
 
-note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`
+note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`; access it directly
    ╭▸ ROOT/testdata/VarReadUsingThis.sol:LL:CC
    │
 LL │         return this.takesUint(this.counter());
    │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ├ help: avoid the `STATICCALL` by invoking the function directly
+   ├ note: avoid the `STATICCALL` by invoking the function directly
    │       
    │       call directly without `this.`: `takesUint(...)`
    │       
    │       
    ╰ help: https://getfoundry.sh/forge/linting/var-read-using-this
 
-note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`
+note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`; access it directly
    ╭▸ ROOT/testdata/VarReadUsingThis.sol:LL:CC
    │
 LL │         return this.takesUint(this.counter());
@@ -197,7 +196,7 @@ LL │         return this.takesUint(this.counter());
    │
    ╰ help: https://getfoundry.sh/forge/linting/var-read-using-this
 
-note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`
+note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`; access it directly
    ╭▸ ROOT/testdata/VarReadUsingThis.sol:LL:CC
    │
 LL │         emit Counted(this.counter());
@@ -205,7 +204,7 @@ LL │         emit Counted(this.counter());
    │
    ╰ help: https://getfoundry.sh/forge/linting/var-read-using-this
 
-note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`
+note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`; access it directly
    ╭▸ ROOT/testdata/VarReadUsingThis.sol:LL:CC
    │
 LL │         revert BadCount(this.counter());
@@ -213,7 +212,7 @@ LL │         revert BadCount(this.counter());
    │
    ╰ help: https://getfoundry.sh/forge/linting/var-read-using-this
 
-note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`
+note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`; access it directly
    ╭▸ ROOT/testdata/VarReadUsingThis.sol:LL:CC
    │
 LL │         if (this.counter() > 0) {
@@ -221,7 +220,7 @@ LL │         if (this.counter() > 0) {
    │
    ╰ help: https://getfoundry.sh/forge/linting/var-read-using-this
 
-note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`
+note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`; access it directly
    ╭▸ ROOT/testdata/VarReadUsingThis.sol:LL:CC
    │
 LL │         return b ? this.counter() : this.publicViewLocal();
@@ -229,20 +228,20 @@ LL │         return b ? this.counter() : this.publicViewLocal();
    │
    ╰ help: https://getfoundry.sh/forge/linting/var-read-using-this
 
-note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`
+note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`; access it directly
    ╭▸ ROOT/testdata/VarReadUsingThis.sol:LL:CC
    │
 LL │         return b ? this.counter() : this.publicViewLocal();
    │                                     ━━━━━━━━━━━━━━━━━━━━━━
    │
-   ├ help: avoid the `STATICCALL` by invoking the function directly
+   ├ note: avoid the `STATICCALL` by invoking the function directly
    │       
    │       call directly without `this.`: `publicViewLocal(...)`
    │       
    │       
    ╰ help: https://getfoundry.sh/forge/linting/var-read-using-this
 
-note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`
+note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`; access it directly
    ╭▸ ROOT/testdata/VarReadUsingThis.sol:LL:CC
    │
 LL │             sum += this.counter();
@@ -250,7 +249,7 @@ LL │             sum += this.counter();
    │
    ╰ help: https://getfoundry.sh/forge/linting/var-read-using-this
 
-note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`
+note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`; access it directly
    ╭▸ ROOT/testdata/VarReadUsingThis.sol:LL:CC
    │
 LL │             return this.counter() + 1;
@@ -258,7 +257,7 @@ LL │             return this.counter() + 1;
    │
    ╰ help: https://getfoundry.sh/forge/linting/var-read-using-this
 
-note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`
+note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`; access it directly
    ╭▸ ROOT/testdata/VarReadUsingThis.sol:LL:CC
    │
 LL │             return v + this.counter();
@@ -266,7 +265,7 @@ LL │             return v + this.counter();
    │
    ╰ help: https://getfoundry.sh/forge/linting/var-read-using-this
 
-note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`
+note[var-read-using-this]: reading a state variable via `this` causes an unnecessary `STATICCALL`; access it directly
    ╭▸ ROOT/testdata/VarReadUsingThis.sol:LL:CC
    │
 LL │         return this.abstractVar();

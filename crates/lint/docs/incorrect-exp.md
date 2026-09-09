@@ -21,8 +21,6 @@ which can corrupt amounts, decimals, or limits.
 uint256 constant WAD = 10 ^ 18; // evaluates to 24, not 1e18
 ```
 
-{{produces}}
-
 Use instead:
 
 ```solidity

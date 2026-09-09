@@ -15,7 +15,12 @@ use solar::{
     },
 };
 
-declare_forge_lint!(ENCODE_PACKED_COLLISION, Severity::High, "encode-packed-collision");
+declare_forge_lint!(
+    ENCODE_PACKED_COLLISION,
+    Severity::High,
+    "encode-packed-collision",
+    "`abi.encodePacked()` called with multiple dynamic type arguments; hash collisions possible"
+);
 
 impl<'gcx> LateLintPass<'gcx> for EncodedPackedCollision {
     fn check_expr(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, expr: &'gcx Expr<'gcx>) {
@@ -30,11 +35,7 @@ impl<'gcx> LateLintPass<'gcx> for EncodedPackedCollision {
             let dynamic_count =
                 args.exprs().filter(|arg| !is_str_lit(arg) && is_dynamic_arg(gcx, arg)).count();
             if dynamic_count >= 2 {
-                ctx.span_lint(&ENCODE_PACKED_COLLISION, expr.span, |diag| {
-                    diag.primary_message(
-                        "`abi.encodePacked()` called with multiple dynamic type arguments; hash collisions possible",
-                    );
-                });
+                ctx.emit(&ENCODE_PACKED_COLLISION, expr.span);
             }
         }
     }

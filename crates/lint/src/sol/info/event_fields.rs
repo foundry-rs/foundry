@@ -5,7 +5,12 @@ use crate::{
 };
 use solar::ast::{ElementaryType, Item, ItemKind, TypeKind};
 
-declare_forge_lint!(EVENT_FIELDS, Severity::Info, "event-fields");
+declare_forge_lint!(
+    EVENT_FIELDS,
+    Severity::Info,
+    "event-fields",
+    "`address` event parameter is not `indexed`"
+);
 
 impl<'ast> EarlyLintPass<'ast> for EventFields {
     fn check_item(&mut self, ctx: &LintContext, item: &'ast Item<'ast>) {
@@ -33,11 +38,11 @@ impl<'ast> EarlyLintPass<'ast> for EventFields {
             .take(slots_available)
             .collect::<Vec<String>>();
         if !names.is_empty() {
-            let msg = format!("event has unindexed address fields: {}", names.join(", "));
-            ctx.span_lint(&EVENT_FIELDS, event.name.span, |diag| {
-                diag.primary_message(msg);
-                diag.help("consider indexing address fields that consumers need to filter by");
-            });
+            let msg = format!(
+                "event has unindexed fields that may benefit from being indexed: {}",
+                names.join(", ")
+            );
+            ctx.emit_with_msg(&EVENT_FIELDS, event.name.span, msg);
         }
     }
 }

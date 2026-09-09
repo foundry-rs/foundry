@@ -1,19 +1,17 @@
-note[unaliased-plain-import]: plain import has no alias
+note[unaliased-plain-import]: plain import has no alias; use named imports `{A, B}` or alias `import ".." as X`
    ╭▸ ROOT/testdata/Imports.sol:LL:CC
    │
 LL │ import "./auxiliary/ImportsSomeFile.sol";
    │        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ├ help: use named imports `{A, B}` or alias `import ".." as X`
    ╰ help: https://getfoundry.sh/forge/linting/unaliased-plain-import
 
-note[unaliased-plain-import]: plain import has no alias
+note[unaliased-plain-import]: plain import has no alias; use named imports `{A, B}` or alias `import ".." as X`
    ╭▸ ROOT/testdata/Imports.sol:LL:CC
    │
 LL │ import "./auxiliary/ImportsAnotherFile.sol";
    │        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ├ help: use named imports `{A, B}` or alias `import ".." as X`
    ╰ help: https://getfoundry.sh/forge/linting/unaliased-plain-import
 
 note[unused-import]: unused import

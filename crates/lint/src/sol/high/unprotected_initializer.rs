@@ -18,7 +18,12 @@ use solar::{
 };
 use std::ops::ControlFlow;
 
-declare_forge_lint!(UNPROTECTED_INITIALIZER, Severity::High, "unprotected-initializer");
+declare_forge_lint!(
+    UNPROTECTED_INITIALIZER,
+    Severity::High,
+    "unprotected-initializer",
+    "upgradeable initializer is not protected against direct implementation calls"
+);
 
 impl<'gcx> LateLintPass<'gcx> for UnprotectedInitializer {
     fn check_nested_contract(
@@ -73,11 +78,7 @@ impl<'gcx> LateLintPass<'gcx> for UnprotectedInitializer {
                 && !has_modifier_named(&gcx.hir, func, "onlyProxy")
                 && reaches(gcx, bases, fid, |expr| writes_state(gcx, expr))
             {
-                ctx.span_lint(&UNPROTECTED_INITIALIZER, func.name.map_or(func.span, |name| name.span), |diag| {
-                    diag.primary_message(
-                        "upgradeable initializer is not protected against direct implementation calls",
-                    );
-                });
+                ctx.emit(&UNPROTECTED_INITIALIZER, func.name.map_or(func.span, |name| name.span));
             }
         }
     }

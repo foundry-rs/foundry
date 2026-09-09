@@ -4,14 +4,14 @@
 pragma solidity ^0.8.18;
 
 // Top-level event with unindexed address.
-event TopLevelTransfer(address from, address to, uint256 value); //~NOTE: event has unindexed address fields: `from` (`address`), `to` (`address`)
+event TopLevelTransfer(address from, address to, uint256 value); //~NOTE: event has unindexed fields that may benefit from being indexed: `from` (`address`), `to` (`address`)
 
 // Top-level event already fully OK.
 event TopLevelOk(address indexed from, address indexed to, uint256 value);
 
 interface IEvents {
     // Interface event with unindexed address.
-    event InterfaceTransfer(address from, uint256 value); //~NOTE: event has unindexed address fields: `from` (`address`)
+    event InterfaceTransfer(address from, uint256 value); //~NOTE: event has unindexed fields that may benefit from being indexed: `from` (`address`)
 }
 
 library LibEvents {
@@ -22,9 +22,9 @@ library LibEvents {
 contract EventFieldsTest {
     // --- triggering cases -------------------------------------------------
 
-    event Transfer(address from, address to, uint256 value); //~NOTE: event has unindexed address fields: `from` (`address`), `to` (`address`)
+    event Transfer(address from, address to, uint256 value); //~NOTE: event has unindexed fields that may benefit from being indexed: `from` (`address`), `to` (`address`)
 
-    event Mint(address to, uint256 tokenId); //~NOTE: event has unindexed address fields: `to` (`address`)
+    event Mint(address to, uint256 tokenId); //~NOTE: event has unindexed fields that may benefit from being indexed: `to` (`address`)
 
     event Order(bytes32 orderId, uint256 amount);
 
@@ -36,13 +36,13 @@ contract EventFieldsTest {
 
     event SnakeId(bytes32 token_id);
 
-    event PayableAddr(address payable receiver); //~NOTE: event has unindexed address fields: `receiver` (`address payable`)
+    event PayableAddr(address payable receiver); //~NOTE: event has unindexed fields that may benefit from being indexed: `receiver` (`address payable`)
 
     // Anonymous events allow up to 4 indexed.
-    event AnonFour(address a, address b, address c, address d) anonymous; //~NOTE: event has unindexed address fields: `a` (`address`), `b` (`address`), `c` (`address`), `d` (`address`)
+    event AnonFour(address a, address b, address c, address d) anonymous; //~NOTE: event has unindexed fields that may benefit from being indexed: `a` (`address`), `b` (`address`), `c` (`address`), `d` (`address`)
 
     // Unnamed param is reported using its positional index.
-    event Unnamed(address, uint256); //~NOTE: event has unindexed address fields: parameter #1 (`address`)
+    event Unnamed(address, uint256); //~NOTE: event has unindexed fields that may benefit from being indexed: parameter #1 (`address`)
 
     // --- non-triggering cases --------------------------------------------
 

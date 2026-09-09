@@ -23,7 +23,12 @@ use std::{
     slice,
 };
 
-declare_forge_lint!(MISSING_ZERO_CHECK, Severity::Low, "missing-zero-check");
+declare_forge_lint!(
+    MISSING_ZERO_CHECK,
+    Severity::Low,
+    "missing-zero-check",
+    "address parameter is used in a state write or value transfer without a zero-address check"
+);
 
 impl<'gcx> LateLintPass<'gcx> for MissingZeroCheck {
     fn check_function(
@@ -75,11 +80,7 @@ impl<'gcx> LateLintPass<'gcx> for MissingZeroCheck {
 
         for &p in &params {
             if a.sinks.contains(&p) {
-                ctx.span_lint(&MISSING_ZERO_CHECK, gcx.hir.variable(p).span, |diag| {
-                    diag.primary_message(
-                        "address parameter is used in a state write or value transfer without a zero-address check",
-                    );
-                });
+                ctx.emit(&MISSING_ZERO_CHECK, gcx.hir.variable(p).span);
             }
         }
     }

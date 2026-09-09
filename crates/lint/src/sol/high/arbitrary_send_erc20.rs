@@ -31,9 +31,19 @@ use std::{
     rc::Rc,
 };
 
-declare_forge_lint!(ARBITRARY_SEND_ERC20, Severity::High, "arbitrary-send-erc20");
+declare_forge_lint!(
+    ARBITRARY_SEND_ERC20,
+    Severity::High,
+    "arbitrary-send-erc20",
+    "`transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`"
+);
 
-declare_forge_lint!(ARBITRARY_SEND_ERC20_PERMIT, Severity::High, "arbitrary-send-erc20-permit");
+declare_forge_lint!(
+    ARBITRARY_SEND_ERC20_PERMIT,
+    Severity::High,
+    "arbitrary-send-erc20-permit",
+    "`transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens"
+);
 
 /// Recursion budget for `_msgSender()`-style helper chains.
 const HELPER_DEPTH: u8 = 3;
@@ -71,14 +81,7 @@ impl<'gcx> LateLintPass<'gcx> for ArbitrarySendErc20 {
         }
         a.visit_stmts(body.stmts);
         for (span, lint) in a.hits {
-            ctx.span_lint(lint, span, |diag| {
-                if lint.id == ARBITRARY_SEND_ERC20.id {
-                    diag.primary_message("`transferFrom` uses an arbitrary `from`");
-                    diag.help("require `from` to equal `msg.sender` or `address(this)`");
-                } else {
-                    diag.primary_message("`transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens");
-                }
-            });
+            ctx.emit(lint, span);
         }
     }
 }

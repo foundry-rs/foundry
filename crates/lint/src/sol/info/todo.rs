@@ -6,7 +6,12 @@ use crate::{
 use foundry_common::comments::{Comment, Comments};
 use solar::ast;
 
-declare_forge_lint!(TODO_COMMENT, Severity::Info, "todo-comment");
+declare_forge_lint!(
+    TODO_COMMENT,
+    Severity::Info,
+    "todo-comment",
+    "unresolved `TODO` or `FIXME` comment"
+);
 
 const MARKERS: &[&str] = &["TODO", "FIXME"];
 
@@ -44,9 +49,7 @@ impl<'ast> EarlyLintPass<'ast> for TodoComment {
             if !found.is_empty() {
                 let noun = if found.len() > 1 { "comments" } else { "comment" };
                 let msg = format!("unresolved `{}` {noun}", found.join(", "));
-                ctx.span_lint(&TODO_COMMENT, comment.span, |diag| {
-                    diag.primary_message(msg);
-                });
+                ctx.emit_with_msg(&TODO_COMMENT, comment.span, msg);
             }
         }
     }

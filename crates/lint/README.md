@@ -115,7 +115,7 @@ The behavior of the `SolidityLinter` can be customized with the following option
 | `with_severity`     | `None`  | Filters active lints by their severity (`High`, `Med`, `Low`, `Info`, `Gas`, `CodeSize`). `None` means all severities. |
 | `with_lints`        | `None`  | Specifies a list of `SolLint` instances to include. Overrides severity filter if a lint matches.                       |
 | `without_lints`     | `None`  | Specifies a list of `SolLint` instances to exclude, even if they match other criteria.                                 |
-| `with_description`  | `true`  | Whether to include the primary message in the diagnostic output.                                                     |
+| `with_description`  | `true`  | Whether to include the lint's description in the diagnostic output.                                                    |
 | `with_json_emitter` | `false` | If `true`, diagnostics are output in rustc-compatible JSON format; otherwise, human-readable text.                     |
 
 ## Contributing

@@ -15,7 +15,12 @@ use solar::{
 };
 use std::collections::HashMap;
 
-declare_forge_lint!(WRITE_AFTER_WRITE, Severity::Gas, "write-after-write");
+declare_forge_lint!(
+    WRITE_AFTER_WRITE,
+    Severity::Gas,
+    "write-after-write",
+    "redundant storage write; value overwritten before being read"
+);
 
 impl<'gcx> LateLintPass<'gcx> for WriteAfterWrite {
     fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, func: &'gcx Function<'gcx>) {
@@ -167,11 +172,7 @@ impl Analyzer<'_, '_> {
 
     fn write(&mut self, var: VariableId, span: Span) {
         if let Some(prev_span) = self.pending.insert(var, span) {
-            self.ctx.span_lint(&WRITE_AFTER_WRITE, prev_span, |diag| {
-                diag.primary_message(
-                    "redundant storage write; value overwritten before being read",
-                );
-            });
+            self.ctx.emit(&WRITE_AFTER_WRITE, prev_span);
         }
     }
 

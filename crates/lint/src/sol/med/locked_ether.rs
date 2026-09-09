@@ -23,7 +23,12 @@ use solar::{
 };
 use std::{collections::HashSet, ops::ControlFlow};
 
-declare_forge_lint!(LOCKED_ETHER, Severity::Med, "locked-ether");
+declare_forge_lint!(
+    LOCKED_ETHER,
+    Severity::Med,
+    "locked-ether",
+    "contract can receive ETH but has no mechanism to send it out"
+);
 
 impl<'gcx> LateLintPass<'gcx> for LockedEther {
     fn check_nested_contract(
@@ -75,9 +80,7 @@ impl<'gcx> LateLintPass<'gcx> for LockedEther {
             }
         }
 
-        ctx.span_lint(&LOCKED_ETHER, contract.name.span, |diag| {
-            diag.primary_message("contract can receive ETH but has no mechanism to send it out");
-        });
+        ctx.emit(&LOCKED_ETHER, contract.name.span);
     }
 }
 

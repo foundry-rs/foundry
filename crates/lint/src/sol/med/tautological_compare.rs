@@ -12,7 +12,12 @@ use solar::{
     },
 };
 
-declare_forge_lint!(TAUTOLOGICAL_COMPARE, Severity::Med, "tautological-compare");
+declare_forge_lint!(
+    TAUTOLOGICAL_COMPARE,
+    Severity::Med,
+    "tautological-compare",
+    "comparing an expression with itself is always true or false"
+);
 
 impl<'gcx> LateLintPass<'gcx> for TautologicalCompare {
     fn check_expr(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, expr: &'gcx hir::Expr<'gcx>) {
@@ -33,9 +38,7 @@ impl<'gcx> LateLintPass<'gcx> for TautologicalCompare {
                 .type_of_expr(left.peel_parens().id)
                 .is_some_and(|ty| matches!(ty.peel_refs().kind, TyKind::Udvt(..)))
         {
-            ctx.span_lint(&TAUTOLOGICAL_COMPARE, expr.span, |diag| {
-                diag.primary_message("comparing an expression with itself is always true or false");
-            });
+            ctx.emit(&TAUTOLOGICAL_COMPARE, expr.span);
         }
     }
 }

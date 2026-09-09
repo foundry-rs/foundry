@@ -16,32 +16,32 @@ contract CheatcodeEnvironmentPending {
     function first(uint256 value, uint256) internal pure returns (uint256) { return value; }
 
     function assignment() public returns (uint256) {
-        uint256 saved = block.number; //~WARN: `block.number` may be reused across `vm.roll`
+        uint256 saved = block.number; //~WARN: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
         a[advance()] = 1;
         return saved;
     }
 
     function deletion() public returns (uint256) {
-        uint256 saved = block.number; //~WARN: `block.number` may be reused across `vm.roll`
+        uint256 saved = block.number; //~WARN: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
         delete a[advance()];
         return saved;
     }
 
     function tuple() public returns (uint256) {
-        (uint256 saved, uint256 ignored) = (block.number, advance()); //~WARN: `block.number` may be reused across `vm.roll`
+        (uint256 saved, uint256 ignored) = (block.number, advance()); //~WARN: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
         return saved + ignored;
     }
 
     function binary() public returns (uint256) {
-        return block.number + advance(); //~WARN: `block.number` may be reused across `vm.roll`
+        return block.number + advance(); //~WARN: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
     }
 
     function arguments() public returns (uint256) {
-        return first(block.number, advance()); //~WARN: `block.number` may be reused across `vm.roll`
+        return first(block.number, advance()); //~WARN: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
     }
 
     function timestamp() public returns (uint256) {
-        (uint256 saved, uint256 ignored) = (block.timestamp, advanceTime()); //~WARN: `block.timestamp` may be reused across `vm.warp`
+        (uint256 saved, uint256 ignored) = (block.timestamp, advanceTime()); //~WARN: `block.timestamp` may be reused across `vm.warp`; capture it with `vm.getBlockTimestamp()` instead
         return saved + ignored;
     }
 

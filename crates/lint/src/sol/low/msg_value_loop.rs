@@ -11,7 +11,12 @@ use solar::{
     },
 };
 
-declare_forge_lint!(MSG_VALUE_LOOP, Severity::Low, "msg-value-loop");
+declare_forge_lint!(
+    MSG_VALUE_LOOP,
+    Severity::Low,
+    "msg-value-loop",
+    "payable function uses `msg.value` inside a loop"
+);
 
 impl<'gcx> LateLintPass<'gcx> for MsgValueLoop {
     fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, func: &'gcx Function<'gcx>) {
@@ -20,9 +25,7 @@ impl<'gcx> LateLintPass<'gcx> for MsgValueLoop {
                 && member.name == sym::value
                 && is_builtin(base, sym::msg)
             {
-                ctx.span_lint(&MSG_VALUE_LOOP, expr.span, |diag| {
-                    diag.primary_message("payable function uses `msg.value` inside a loop");
-                });
+                ctx.emit(&MSG_VALUE_LOOP, expr.span);
             }
         });
     }

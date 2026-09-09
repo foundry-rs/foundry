@@ -1,16 +1,11 @@
 use super::VarReadUsingThis;
 use crate::{
-    linter::{LateLintPass, LintContext},
+    linter::{LateLintPass, LintContext, Suggestion},
     sol::{Severity, SolLint, analysis::is_builtin},
 };
 use solar::{
     ast::{ContractKind, StateMutability},
-    interface::{
-        Span, Symbol,
-        data_structures::Never,
-        diagnostics::{Applicability, Diag},
-        sym,
-    },
+    interface::{Symbol, data_structures::Never, diagnostics::Applicability, sym},
     sema::{
         Gcx,
         hir::{self, CallArgs, Expr, ExprId, ExprKind, Function, Stmt, StmtKind, Visit as _},
@@ -18,7 +13,12 @@ use solar::{
 };
 use std::{collections::HashMap, ops::ControlFlow};
 
-declare_forge_lint!(VAR_READ_USING_THIS, Severity::Gas, "var-read-using-this");
+declare_forge_lint!(
+    VAR_READ_USING_THIS,
+    Severity::Gas,
+    "var-read-using-this",
+    "reading a state variable via `this` causes an unnecessary `STATICCALL`; access it directly"
+);
 
 impl<'gcx> LateLintPass<'gcx> for VarReadUsingThis {
     fn check_nested_contract(
@@ -111,55 +111,52 @@ impl ThisReadFinder<'_, '_> {
             }
             // With call options like `{gas: ...}` the external call is deliberate: flag the gas
             // waste without an auto-fix.
-            self.ctx.span_lint(&VAR_READ_USING_THIS, expr.span, |diag| {
-                diag.primary_message("reading a state variable via `this` causes an unnecessary `STATICCALL`");
-                if opts.is_some() || !suggest_direct_access(diag, self.ctx, func, member.name, args, expr.span) {
-                    diag.help("consider direct access if the external call semantics and gas limit are not required");
+            let suggestion =
+                if opts.is_some() { None } else { suggestion(self.ctx, func, member.name, args) };
+            match suggestion {
+                Some(suggestion) => {
+                    self.ctx.emit_with_suggestion(&VAR_READ_USING_THIS, expr.span, suggestion);
                 }
-            });
+                None => self.ctx.emit(&VAR_READ_USING_THIS, expr.span),
+            }
         }
     }
 }
 
-fn suggest_direct_access(
-    diag: &mut Diag,
+fn suggestion(
     ctx: &LintContext,
     func: &Function<'_>,
     name: Symbol,
     args: &CallArgs<'_>,
-    span: Span,
-) -> bool {
+) -> Option<Suggestion> {
     if !func.is_getter() {
         // Ordinary `view`/`pure` functions may be `external`, requiring a refactor to call them.
-        diag.help(format!("avoid the `STATICCALL` by invoking the function directly\n\ncall directly without `this.`: `{name}(...)`\n\n"));
-        return true;
+        return Some(
+            Suggestion::example(format!("call directly without `this.`: `{name}(...)`"))
+                .with_desc("avoid the `STATICCALL` by invoking the function directly"),
+        );
     }
     // Struct getters destructure their fields, so a direct read is not equivalent.
     if func.returns.len() != 1 {
-        diag.help(format!("read the state variable directly instead of via `this.`\n\nread the state variable directly: `{name}`\n\n"));
-        return true;
+        return Some(
+            Suggestion::example(format!("read the state variable directly: `{name}`"))
+                .with_desc("read the state variable directly instead of via `this.`"),
+        );
     }
     if args.is_empty() {
-        // A local may shadow this state variable, so removing `this` needs review.
-        diag.span_suggestion(
-            span,
-            "consider reading the state variable directly",
-            name.to_string(),
-            Applicability::MaybeIncorrect,
+        return Some(
+            // A local may shadow this state variable, so removing `this` needs review.
+            Suggestion::fix(name.to_string(), Applicability::MaybeIncorrect)
+                .with_desc("consider reading the state variable directly"),
         );
-        return true;
     }
     // Mapping/array getter: `name[arg1][arg2]...`.
     let mut indexed = name.to_string();
     for arg in args.exprs() {
-        let Some(snippet) = ctx.span_to_snippet(arg.span) else { return false };
-        indexed += &format!("[{}]", snippet.trim());
+        indexed += &format!("[{}]", ctx.span_to_snippet(arg.span)?.trim());
     }
-    diag.span_suggestion(
-        span,
-        "consider accessing storage directly",
-        indexed,
-        Applicability::MaybeIncorrect,
-    );
-    true
+    Some(
+        Suggestion::fix(indexed, Applicability::MaybeIncorrect)
+            .with_desc("consider accessing storage directly"),
+    )
 }

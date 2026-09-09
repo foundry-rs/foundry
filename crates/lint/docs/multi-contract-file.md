@@ -5,8 +5,8 @@
 
 ## What it does
 
-Reports every non-exempt top-level `contract`, `interface`, or `library` definition in a
-file that contains more than one non-exempt declaration.
+Reports each top-level `contract`, `interface`, or `library` definition (after the first) in a
+file that contains more than one such declaration.
 
 ## Why restrict this?
 

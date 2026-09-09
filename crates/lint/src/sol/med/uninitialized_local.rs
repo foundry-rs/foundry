@@ -22,7 +22,12 @@ use std::{
     ops::ControlFlow,
 };
 
-declare_forge_lint!(UNINITIALIZED_LOCAL, Severity::Med, "uninitialized-local");
+declare_forge_lint!(
+    UNINITIALIZED_LOCAL,
+    Severity::Med,
+    "uninitialized-local",
+    "local variable is read before being initialized"
+);
 
 impl<'gcx> LateLintPass<'gcx> for UninitializedLocal {
     fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, func: &'gcx Function<'gcx>) {
@@ -33,9 +38,7 @@ impl<'gcx> LateLintPass<'gcx> for UninitializedLocal {
             let _ = checker.visit_stmt(stmt);
         }
         for span in checker.findings.into_values() {
-            ctx.span_lint(&UNINITIALIZED_LOCAL, span, |diag| {
-                diag.primary_message("local variable is read before being initialized");
-            });
+            ctx.emit(&UNINITIALIZED_LOCAL, span);
         }
     }
 }

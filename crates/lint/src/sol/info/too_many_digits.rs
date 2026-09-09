@@ -9,7 +9,13 @@ use solar::{
 };
 use std::ops::ControlFlow;
 
-declare_forge_lint!(TOO_MANY_DIGITS, Severity::Info, "too-many-digits");
+declare_forge_lint!(
+    TOO_MANY_DIGITS,
+    Severity::Info,
+    "too-many-digits",
+    "numeric literal with many digits is error-prone; \
+     use scientific notation, sub-denominations, or underscore separators"
+);
 
 impl<'ast> EarlyLintPass<'ast> for TooManyDigits {
     fn check_stmt(&mut self, ctx: &LintContext, stmt: &'ast Stmt<'ast>) {
@@ -42,10 +48,7 @@ fn check_lit(ctx: &LintContext, lit: &Lit<'_>) {
     // 5+ consecutive zeros in the literal as written. Underscores are preserved, so
     // `1_000_000` passes while `1_000000` is flagged.
     if !is_hex_address && !is_scientific && s.contains("00000") {
-        ctx.span_lint(&TOO_MANY_DIGITS, lit.span, |diag| {
-            diag.primary_message("numeric literal with many digits is error-prone");
-            diag.help("use scientific notation, sub-denominations, or underscore separators");
-        });
+        ctx.emit(&TOO_MANY_DIGITS, lit.span);
     }
 }
 

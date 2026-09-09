@@ -9,7 +9,12 @@ use solar::sema::{
 };
 use std::{convert::Infallible, ops::ControlFlow};
 
-declare_forge_lint!(CYCLOMATIC_COMPLEXITY, Severity::Info, "cyclomatic-complexity");
+declare_forge_lint!(
+    CYCLOMATIC_COMPLEXITY,
+    Severity::Info,
+    "cyclomatic-complexity",
+    "this function has a cyclomatic complexity above 11; consider splitting it into smaller functions"
+);
 
 /// The threshold Slither's detector of the same name uses: a function reports when its
 /// complexity is strictly above this value.
@@ -39,10 +44,7 @@ impl<'gcx> LateLintPass<'gcx> for CyclomaticComplexity {
                 Some(name) if func.is_yul => name.span,
                 _ => func.keyword_span(),
             };
-            ctx.span_lint(&CYCLOMATIC_COMPLEXITY, span, |diag| {
-                diag.primary_message("this function has a cyclomatic complexity above 11");
-                diag.help("consider splitting it into smaller functions");
-            });
+            ctx.emit(&CYCLOMATIC_COMPLEXITY, span);
         }
     }
 }

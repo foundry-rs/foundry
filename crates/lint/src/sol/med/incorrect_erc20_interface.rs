@@ -5,7 +5,12 @@ use crate::{
 };
 use solar::sema::{Gcx, hir};
 
-declare_forge_lint!(INCORRECT_ERC20_INTERFACE, Severity::Med, "incorrect-erc20-interface");
+declare_forge_lint!(
+    INCORRECT_ERC20_INTERFACE,
+    Severity::Med,
+    "incorrect-erc20-interface",
+    "incorrect ERC20 function interface"
+);
 
 /// ERC20 functions as `(name, parameter types, return types)`.
 const ERC20_FUNCTIONS: &[(&str, &[&str], &[&str])] = &[
@@ -47,9 +52,7 @@ impl<'gcx> LateLintPass<'gcx> for IncorrectERC20Interface {
                         && !matches(func.returns, returns)
                 })
             {
-                ctx.span_lint(&INCORRECT_ERC20_INTERFACE, name.span, |diag| {
-                    diag.primary_message("incorrect ERC20 function interface");
-                });
+                ctx.emit(&INCORRECT_ERC20_INTERFACE, name.span);
             }
         }
     }

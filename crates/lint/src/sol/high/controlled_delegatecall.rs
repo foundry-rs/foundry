@@ -24,7 +24,12 @@ use solar::{
 };
 use std::{collections::HashSet, ops::ControlFlow};
 
-declare_forge_lint!(CONTROLLED_DELEGATECALL, Severity::High, "controlled-delegatecall");
+declare_forge_lint!(
+    CONTROLLED_DELEGATECALL,
+    Severity::High,
+    "controlled-delegatecall",
+    "`delegatecall` target is not provably trusted"
+);
 
 /// How many levels of no-argument helper functions are inlined when checking a target.
 const HELPER_DEPTH: u8 = 3;
@@ -43,9 +48,7 @@ impl<'gcx> LateLintPass<'gcx> for ControlledDelegatecall {
         }
         let _ = analyzer.visit_stmts(body.stmts);
         for span in analyzer.hits {
-            ctx.span_lint(&CONTROLLED_DELEGATECALL, span, |diag| {
-                diag.primary_message("`delegatecall` target is not provably trusted");
-            });
+            ctx.emit(&CONTROLLED_DELEGATECALL, span);
         }
     }
 }

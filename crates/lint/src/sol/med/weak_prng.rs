@@ -9,7 +9,12 @@ use solar::{
 };
 use std::ops::ControlFlow;
 
-declare_forge_lint!(WEAK_PRNG, Severity::Med, "weak-prng");
+declare_forge_lint!(
+    WEAK_PRNG,
+    Severity::Med,
+    "weak-prng",
+    "weak randomness derived from a predictable on-chain value"
+);
 
 impl<'ast> EarlyLintPass<'ast> for WeakPrng {
     fn check_full_source_unit(&mut self, ctx: &LintContext<'ast, '_>, ast: &'ast SourceUnit<'ast>) {
@@ -39,9 +44,7 @@ impl<'ast> Visit<'ast> for WeakPrngChecker<'_, '_> {
             _ => false,
         };
         if is_randomness {
-            self.ctx.span_lint(&WEAK_PRNG, expr.span, |diag| {
-                diag.primary_message("weak randomness derived from a predictable on-chain value");
-            });
+            self.ctx.emit(&WEAK_PRNG, expr.span);
             return ControlFlow::Continue(());
         }
         self.walk_expr(expr)

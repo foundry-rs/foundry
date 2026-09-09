@@ -5,9 +5,19 @@ use crate::{
 };
 use solar::ast;
 
-declare_forge_lint!(INTERFACE_FILE_NAMING, Severity::Info, "interface-file-naming");
+declare_forge_lint!(
+    INTERFACE_FILE_NAMING,
+    Severity::Info,
+    "interface-file-naming",
+    "interface file name is missing the `I` prefix"
+);
 
-declare_forge_lint!(INTERFACE_NAMING, Severity::Info, "interface-naming");
+declare_forge_lint!(
+    INTERFACE_NAMING,
+    Severity::Info,
+    "interface-naming",
+    "interface name is missing the `I` prefix"
+);
 
 impl<'ast> EarlyLintPass<'ast> for InterfaceFileNaming {
     fn check_full_source_unit(
@@ -30,18 +40,14 @@ impl<'ast> EarlyLintPass<'ast> for InterfaceFileNaming {
             && let Some(file_name) = file_name(ctx, unit)
             && !file_name.starts_with('I')
         {
-            ctx.span_lint(&INTERFACE_FILE_NAMING, first.name.span, |diag| {
-                diag.primary_message("interface file name is missing the `I` prefix");
-            });
+            ctx.emit(&INTERFACE_FILE_NAMING, first.name.span);
         }
     }
 
     fn check_item_contract(&mut self, ctx: &LintContext, contract: &'ast ast::ItemContract<'ast>) {
         if contract.kind == ast::ContractKind::Interface && !contract.name.as_str().starts_with('I')
         {
-            ctx.span_lint(&INTERFACE_NAMING, contract.name.span, |diag| {
-                diag.primary_message("interface name is missing the `I` prefix");
-            });
+            ctx.emit(&INTERFACE_NAMING, contract.name.span);
         }
     }
 }

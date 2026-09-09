@@ -20,7 +20,12 @@ use solar::{
 };
 use std::ops::ControlFlow;
 
-declare_forge_lint!(CACHE_ARRAY_LENGTH, Severity::Gas, "cache-array-length");
+declare_forge_lint!(
+    CACHE_ARRAY_LENGTH,
+    Severity::Gas,
+    "cache-array-length",
+    "array length is read on every loop iteration; cache it outside the loop"
+);
 
 impl<'gcx> LateLintPass<'gcx> for CacheArrayLength {
     fn check_stmt(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, stmt: &'gcx Stmt<'gcx>) {
@@ -49,10 +54,7 @@ impl<'gcx> LateLintPass<'gcx> for CacheArrayLength {
         }
         for (span, var) in reads {
             if !facts.written.contains(&var) {
-                ctx.span_lint(&CACHE_ARRAY_LENGTH, span, |diag| {
-                    diag.primary_message("array length is read on every loop iteration");
-                    diag.help("cache it outside the loop");
-                });
+                ctx.emit(&CACHE_ARRAY_LENGTH, span);
             }
         }
     }

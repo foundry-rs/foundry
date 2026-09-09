@@ -27,7 +27,12 @@ use std::{
     ops::ControlFlow,
 };
 
-declare_forge_lint!(ECRECOVER, Severity::Med, "ecrecover");
+declare_forge_lint!(
+    ECRECOVER,
+    Severity::Med,
+    "ecrecover",
+    "`ecrecover` call does not reject malleable signatures"
+);
 
 /// Largest canonical secp256k1 `s` value, `n / 2`.
 const SECP256K1_HALF_ORDER: U256 =
@@ -55,9 +60,7 @@ impl<'gcx> LateLintPass<'gcx> for Ecrecover {
             analyzer.use_return_values();
         }
         for span in analyzer.hits {
-            ctx.span_lint(&ECRECOVER, span, |diag| {
-                diag.primary_message("`ecrecover` call does not reject malleable signatures");
-            });
+            ctx.emit(&ECRECOVER, span);
         }
     }
 }

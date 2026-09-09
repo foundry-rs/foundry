@@ -1,6 +1,6 @@
 use super::UnsafeTypecast;
 use crate::{
-    linter::{LateLintPass, LintContext},
+    linter::{LateLintPass, LintContext, Suggestion},
     sol::{Severity, SolLint, analysis::cast_type},
 };
 use solar::{
@@ -12,7 +12,12 @@ use solar::{
     },
 };
 
-declare_forge_lint!(UNSAFE_TYPECAST, Severity::Med, "unsafe-typecast");
+declare_forge_lint!(
+    UNSAFE_TYPECAST,
+    Severity::Med,
+    "unsafe-typecast",
+    "typecast can truncate values"
+);
 
 impl<'gcx> LateLintPass<'gcx> for UnsafeTypecast {
     fn check_expr(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, expr: &'gcx hir::Expr<'gcx>) {
@@ -25,13 +30,15 @@ impl<'gcx> LateLintPass<'gcx> for UnsafeTypecast {
             let mut sources = Vec::new();
             source_types(gcx, arg, &mut sources);
             if sources.iter().any(|source| is_unsafe_elementary_typecast(*source, ty)) {
-                ctx.span_lint(&UNSAFE_TYPECAST, expr.span, |diag| {
-                    diag.primary_message("typecast can truncate values");
-                    diag.help(format!(
-                        "consider disabling this lint if you're certain the cast is safe\n\n// casting to '{}' is safe because [explain why]\n// forge-lint: disable-next-line(unsafe-typecast)\n\n",
+                ctx.emit_with_suggestion(
+                    &UNSAFE_TYPECAST,
+                    expr.span,
+                    Suggestion::example(format!(
+                        "// casting to '{}' is safe because [explain why]\n// forge-lint: disable-next-line(unsafe-typecast)",
                         ty.to_abi_str()
-                    ));
-                });
+                    ))
+                    .with_desc("consider disabling this lint if you're certain the cast is safe"),
+                );
             }
         }
     }

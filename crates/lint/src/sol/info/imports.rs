@@ -10,9 +10,14 @@ use solar::{
 };
 use std::ops::ControlFlow;
 
-declare_forge_lint!(UNUSED_IMPORT, Severity::Info, "unused-import");
+declare_forge_lint!(UNUSED_IMPORT, Severity::Info, "unused-import", "unused import");
 
-declare_forge_lint!(UNALIASED_PLAIN_IMPORT, Severity::Info, "unaliased-plain-import");
+declare_forge_lint!(
+    UNALIASED_PLAIN_IMPORT,
+    Severity::Info,
+    "unaliased-plain-import",
+    "plain import has no alias; use named imports `{A, B}` or alias `import \"..\" as X`"
+);
 
 impl<'ast> EarlyLintPass<'ast> for Imports {
     fn check_import_directive(
@@ -24,16 +29,12 @@ impl<'ast> EarlyLintPass<'ast> for Imports {
         if let ast::ImportItems::Plain(_) = &import.items
             && import.source_alias().is_none()
         {
-            ctx.span_lint(&UNALIASED_PLAIN_IMPORT, import.path.span, |diag| {
-                diag.primary_message("plain import has no alias");
-                diag.help("use named imports `{A, B}` or alias `import \"..\" as X`");
-            });
+            ctx.emit(&UNALIASED_PLAIN_IMPORT, import.path.span);
         }
     }
 
     fn check_full_source_unit(&mut self, ctx: &LintContext<'ast, '_>, ast: &'ast SourceUnit<'ast>) {
-        // Disabled lints are filtered inside `ctx.span_lint()`, but the full traversal is
-        // expensive.
+        // Disabled lints are filtered inside `ctx.emit()`, but the full traversal is expensive.
         if !ctx.is_lint_enabled(UNUSED_IMPORT.id) {
             return;
         }
@@ -49,9 +50,7 @@ impl<'ast> EarlyLintPass<'ast> for Imports {
                     for &(orig, alias) in symbols.iter() {
                         let name = alias.unwrap_or(orig);
                         if !used.contains(&name.name) {
-                            ctx.span_lint(&UNUSED_IMPORT, orig.span.to(name.span), |diag| {
-                                diag.primary_message("unused import");
-                            });
+                            ctx.emit(&UNUSED_IMPORT, orig.span.to(name.span));
                         }
                     }
                 }
@@ -59,9 +58,7 @@ impl<'ast> EarlyLintPass<'ast> for Imports {
                     if let Some(alias) = import.source_alias()
                         && !used.contains(&alias.name)
                     {
-                        ctx.span_lint(&UNUSED_IMPORT, item.span, |diag| {
-                            diag.primary_message("unused import");
-                        });
+                        ctx.emit(&UNUSED_IMPORT, item.span);
                     }
                 }
             }

@@ -14,7 +14,7 @@ use solar::{
 };
 use std::ops::ControlFlow;
 
-declare_forge_lint!(COSTLY_LOOP, Severity::Gas, "costly-loop");
+declare_forge_lint!(COSTLY_LOOP, Severity::Gas, "costly-loop", "storage write inside a loop");
 
 impl<'gcx> LateLintPass<'gcx> for CostlyLoop {
     fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, func: &'gcx Function<'gcx>) {
@@ -49,9 +49,7 @@ impl<'gcx> hir::Visit<'gcx> for LoopWriteFinder<'_, 'gcx> {
             && let Some(lvalue) = write_target(expr)
             && lvalue_is_state_var(self.gcx, lvalue)
         {
-            self.ctx.span_lint(&COSTLY_LOOP, expr.span, |diag| {
-                diag.primary_message("storage write inside a loop");
-            });
+            self.ctx.emit(&COSTLY_LOOP, expr.span);
         }
         self.walk_expr(expr)
     }

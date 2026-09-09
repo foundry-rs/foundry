@@ -23,8 +23,6 @@ contract C {
 }
 ```
 
-{{produces}}
-
 Use instead:
 
 ```solidity

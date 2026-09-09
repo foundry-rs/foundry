@@ -20,7 +20,12 @@ use solar::{
 };
 use std::ops::ControlFlow;
 
-declare_forge_lint!(ASSERT_STATE_CHANGE, Severity::Med, "assert-state-change");
+declare_forge_lint!(
+    ASSERT_STATE_CHANGE,
+    Severity::Med,
+    "assert-state-change",
+    "`assert()` contains a state-modifying expression"
+);
 
 impl<'gcx> LateLintPass<'gcx> for AssertStateChange {
     fn check_expr(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, expr: &'gcx Expr<'gcx>) {
@@ -37,14 +42,13 @@ impl<'gcx> LateLintPass<'gcx> for AssertStateChange {
                     ControlFlow::Continue(())
                 }
             }) {
-                ctx.span_lint(&ASSERT_STATE_CHANGE, span, |diag| {
-                    diag.primary_message(
-                        "`assert()` contains a state-modifying expression",
-                    );
-                    diag.help(
-                        "hoist the mutation before `assert()` when checking invariants, or use `require()` for validation",
-                    );
-                });
+                ctx.emit_with_msg(
+                    &ASSERT_STATE_CHANGE,
+                    span,
+                    "`assert()` argument contains a state-modifying expression; \
+                     `assert()` is for invariants, hoist the mutation before the `assert`, \
+                     or use `require()` for validation",
+                );
             }
         }
     }

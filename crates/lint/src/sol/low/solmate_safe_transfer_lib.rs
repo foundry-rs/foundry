@@ -11,7 +11,12 @@ use solar::sema::{
     hir::{Expr, ExprKind, FunctionId},
 };
 
-declare_forge_lint!(SOLMATE_SAFE_TRANSFER_LIB, Severity::Low, "solmate-safe-transfer-lib");
+declare_forge_lint!(
+    SOLMATE_SAFE_TRANSFER_LIB,
+    Severity::Low,
+    "solmate-safe-transfer-lib",
+    "the `SafeTransferLib` from Solmate does not check that the token has code, so a transfer to a token-less address succeeds silently"
+);
 
 impl<'gcx> LateLintPass<'gcx> for SolmateSafeTransferLib {
     fn check_expr(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, expr: &'gcx Expr<'gcx>) {
@@ -22,11 +27,7 @@ impl<'gcx> LateLintPass<'gcx> for SolmateSafeTransferLib {
             && let Some(function_id) = resolved_function(gcx, expr)
             && is_unchecked_token_op(gcx, function_id)
         {
-            ctx.span_lint(&SOLMATE_SAFE_TRANSFER_LIB, expr.span, |diag| {
-                diag.primary_message(
-                    "the `SafeTransferLib` from Solmate does not check that the token has code, so a transfer to a token-less address succeeds silently",
-                );
-            });
+            ctx.emit(&SOLMATE_SAFE_TRANSFER_LIB, expr.span);
         }
     }
 }

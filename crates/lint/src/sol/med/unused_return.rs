@@ -11,7 +11,12 @@ use solar::sema::{
     hir::{Expr, ExprKind, Stmt, StmtKind},
 };
 
-declare_forge_lint!(UNUSED_RETURN, Severity::Med, "unused-return");
+declare_forge_lint!(
+    UNUSED_RETURN,
+    Severity::Med,
+    "unused-return",
+    "return value of an external call is not used"
+);
 
 impl<'gcx> LateLintPass<'gcx> for UnusedReturn {
     fn check_stmt(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, stmt: &'gcx Stmt<'gcx>) {
@@ -31,9 +36,7 @@ impl<'gcx> LateLintPass<'gcx> for UnusedReturn {
             _ => return,
         };
         if is_unused_return_call(gcx, call) {
-            ctx.span_lint(&UNUSED_RETURN, span, |diag| {
-                diag.primary_message("return value of an external call is not used");
-            });
+            ctx.emit(&UNUSED_RETURN, span);
         }
     }
 }

@@ -15,7 +15,12 @@ use solar::{
 };
 use std::{collections::HashMap, convert::Infallible, ops::ControlFlow};
 
-declare_forge_lint!(LITERAL_INSTEAD_OF_CONSTANT, Severity::Info, "literal-instead-of-constant");
+declare_forge_lint!(
+    LITERAL_INSTEAD_OF_CONSTANT,
+    Severity::Info,
+    "literal-instead-of-constant",
+    "this literal appears multiple times in the contract; declare a named constant for it"
+);
 
 impl<'gcx> LateLintPass<'gcx> for LiteralInsteadOfConstant {
     fn check_nested_contract(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, id: hir::ContractId) {
@@ -44,10 +49,7 @@ impl<'gcx> LateLintPass<'gcx> for LiteralInsteadOfConstant {
             .collect::<Vec<Span>>();
         repeated.sort_by_key(|span| span.lo());
         for span in repeated {
-            ctx.span_lint(&LITERAL_INSTEAD_OF_CONSTANT, span, |diag| {
-                diag.primary_message("this literal appears multiple times in the contract");
-                diag.help("declare a named constant for it");
-            });
+            ctx.emit(&LITERAL_INSTEAD_OF_CONSTANT, span);
         }
     }
 }
