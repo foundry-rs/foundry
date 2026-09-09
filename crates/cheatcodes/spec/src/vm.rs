@@ -1147,12 +1147,16 @@ interface Vm {
 
     /// DEPRECATED: use `lastFrameGas` instead.
     /// Gets gas measurements for the last completed call, including nested execution, from the callee's perspective.
+    /// Unlike `lastFrameGas`, does not record CREATE or CREATE2 frames; external calls made by constructors still count.
+    /// Both functions return the same `Gas` fields and measurements when they refer to the same call.
     /// `Gas.gasTotalUsed` excludes EIP-8037 state gas; `Gas.gasStateUsed` reports it separately (zero without EIP-8037).
     /// See `Gas` for refunds, isolation, and gas-limit caveats, and <https://eips.ethereum.org/EIPS/eip-8037>.
     #[cheatcode(group = Evm, safety = Safe, status = Deprecated(Some("replaced by `lastFrameGas`")))]
     function lastCallGas() external view returns (Gas memory gas);
 
     /// Gets gas measurements for the last completed call or create, including nested execution, from the callee's perspective.
+    /// Extends `lastCallGas` by also recording CREATE and CREATE2 frames; it is not just a rename.
+    /// Both functions return the same `Gas` fields and measurements when they refer to the same call.
     /// `Gas.gasTotalUsed` excludes EIP-8037 state gas; `Gas.gasStateUsed` reports it separately (zero without EIP-8037).
     /// With isolation, includes transaction intrinsic gas. Cheatcode calls do not replace the recorded frame.
     /// See `Gas` for refunds and gas-limit caveats, and <https://eips.ethereum.org/EIPS/eip-8037>.
