@@ -3593,6 +3593,165 @@ Script ran successfully.
 "#]]);
 });
 
+// Protect both broadcast overloads and durations, including calldata/constructor arguments.
+forgetest_init!(script_broadcast_sender_mismatch, |prj, cmd| {
+    for broadcast in [
+        "vm.startBroadcast(address(0x1337))",
+        "vm.broadcast(address(0x1337))",
+        "vm.startBroadcast(uint256(1))",
+        "vm.broadcast(uint256(1))",
+    ] {
+        prj.add_script(
+            "SenderMismatch.s.sol",
+            &format!(
+                r#"
+import {{Script}} from "forge-std/Script.sol";
+
+contract Recipient {{
+    address public owner;
+    constructor(address owner_) {{ owner = owner_; }}
+}}
+
+contract SenderMismatch is Script {{
+    function run() public {{
+        {broadcast};
+        new Recipient(msg.sender);
+    }}
+}}
+"#
+            ),
+        );
+        prj.update_config(|config| config.script_execution_protection = true);
+        cmd.forge_fuse().args(["script", "SenderMismatch"]).assert_failure().stderr_eq(str![[r#"
+Error: script failed: Usage of `msg.sender` inside a `broadcast` in script contract detected. `msg.sender` is `0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38`, not the broadcast sender `[..]`. Use the `--sender` flag or pass the deployer address directly instead.
+
+"#]]);
+
+        prj.update_config(|config| config.script_execution_protection = false);
+        cmd.forge_fuse().args(["script", "SenderMismatch"]).assert_success();
+    }
+});
+
+// Explicit and inferred senders, and the default no-argument broadcast, must remain usable.
+forgetest_init!(script_broadcast_sender_matching, |prj, cmd| {
+    prj.add_script(
+        "SenderMatching.s.sol",
+        r#"
+import {Script, console} from "forge-std/Script.sol";
+
+contract SenderMatching is Script {
+    function run() public {
+        vm.startBroadcast();
+        console.log(msg.sender);
+        vm.stopBroadcast();
+    }
+
+    function explicitSender() public {
+        vm.startBroadcast(address(0x1337));
+        console.log(msg.sender);
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    cmd.forge_fuse().args(["script", "SenderMatching"]).assert_success();
+    cmd.forge_fuse()
+        .args([
+            "script",
+            "SenderMatching",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        ])
+        .assert_success();
+    cmd.forge_fuse()
+        .args([
+            "script",
+            "SenderMatching",
+            "--sig",
+            "explicitSender()",
+            "--sender",
+            "0x0000000000000000000000000000000000001337",
+        ])
+        .assert_success();
+});
+
+// Outgoing calls and callbacks have their own msg.sender; only the broadcasting frame is guarded.
+forgetest_init!(script_broadcast_sender_scope, |prj, cmd| {
+    prj.add_script(
+        "SenderScope.s.sol",
+        r#"
+import {Script} from "forge-std/Script.sol";
+
+contract Callback {
+    address public creator;
+    constructor() { creator = msg.sender; }
+
+    function check(SenderScope script) external {
+        require(msg.sender == address(0x1337));
+        require(script.callback() == address(this));
+    }
+}
+
+contract SenderScope is Script {
+    // The address guard is installed after the script constructor runs.
+    SenderScope private self = SenderScope(address(this));
+
+    function callback() external view returns (address) {
+        return msg.sender;
+    }
+
+    function run() public {
+        address caller = msg.sender;
+        vm.startBroadcast(address(0x1337));
+        require(tx.origin == caller);
+        Callback target = new Callback();
+        require(target.creator() == address(0x1337));
+        target.check(self);
+        vm.stopBroadcast();
+        require(msg.sender == caller);
+    }
+}
+"#,
+    );
+    cmd.args(["script", "SenderScope"]).assert_success();
+});
+
+// An external script helper's caller can differ from tx.origin in either direction.
+forgetest_init!(script_broadcast_sender_uses_frame_caller, |prj, cmd| {
+    prj.add_script(
+        "FrameCaller.s.sol",
+        r#"
+import {Script, console} from "forge-std/Script.sol";
+
+contract FrameCaller is Script {
+    FrameCaller private self = FrameCaller(address(this));
+
+    function run() public {
+        self.helper(address(self));
+    }
+
+    function mismatch() public {
+        self.helper(0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38);
+    }
+
+    function helper(address sender) external {
+        vm.startBroadcast(sender);
+        console.log(msg.sender);
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    cmd.forge_fuse().args(["script", "FrameCaller"]).assert_success();
+    cmd.forge_fuse()
+        .args(["script", "FrameCaller", "--sig", "mismatch()"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: script failed: Usage of `msg.sender` inside a `broadcast` in script contract detected. `msg.sender` is `[..]`, not the broadcast sender `0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38`. Use the `--sender` flag or pass the deployer address directly instead.
+
+"#]]);
+});
+
 // Tests that script warns if no tx to broadcast.
 // <https://github.com/foundry-rs/foundry/issues/10015>
 forgetest_async!(warns_if_no_transactions_to_broadcast, |prj, cmd| {
