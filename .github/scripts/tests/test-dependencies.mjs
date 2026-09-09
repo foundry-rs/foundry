@@ -104,3 +104,41 @@ test('restores authenticated sources into a fresh offline home and requires plat
   git('commit', '-m', 'test: change lock');
   assert.throws(() => restore(root, archive, digest, temp, 'linux-amd64'), /does not match/);
 });
+
+test('Cargo consumes the bundle offline and cannot resolve an absent package', t => {
+  const { root, temp, git } = fixture(t);
+  mkdirSync(join(root, 'src'));
+  writeFileSync(join(root, 'src/lib.rs'), 'pub fn value() -> u8 { approved::value() }\n');
+  writeFileSync(join(root, 'Cargo.toml'), '[package]\nname = "fixture"\nversion = "0.1.0"\nedition = "2021"\n[dependencies]\napproved = "1.0.0"\n');
+  const bundle = join(temp, 'bundle');
+  const vendor = join(bundle, 'vendor/approved-1.0.0');
+  mkdirSync(join(vendor, 'src'), { recursive: true });
+  mkdirSync(join(bundle, 'solc'));
+  writeFileSync(join(vendor, 'Cargo.toml'), '[package]\nname = "approved"\nversion = "1.0.0"\nedition = "2021"\n');
+  writeFileSync(join(vendor, 'src/lib.rs'), 'pub fn value() -> u8 { 7 }\n');
+  writeFileSync(join(vendor, '.cargo-checksum.json'), JSON.stringify({ package: null,
+    files: { 'Cargo.toml': checksum(join(vendor, 'Cargo.toml')), 'src/lib.rs': checksum(join(vendor, 'src/lib.rs')) } }));
+  const config = '[source.crates-io]\nreplace-with = "vendored-sources"\n[source.vendored-sources]\ndirectory = "vendor"\n';
+  writeFileSync(join(bundle, 'cargo-config.toml'), config);
+  writeFileSync(join(bundle, 'solc/linux-amd64.json'), '{"builds":[],"releases":{}}');
+  const initialHome = join(temp, 'initial-cargo-home');
+  mkdirSync(initialHome);
+  writeFileSync(join(initialHome, 'config.toml'), sourceConfig(config, join(bundle, 'vendor')));
+  const cargo = (args, env) => execFileSync('cargo', args, {
+    cwd: root, env: { ...process.env, RUSTC_WRAPPER: '', CARGO_TARGET_DIR: join(temp, 'target'), ...env },
+    stdio: 'pipe',
+  });
+  cargo(['generate-lockfile', '--offline'], { CARGO_HOME: initialHome });
+  git('add', '.');
+  git('commit', '-m', 'test: add approved fixture dependency');
+  writeFileSync(join(bundle, 'identity.json'), JSON.stringify(identity(root)));
+  const archive = join(temp, 'dependencies.tar.gz');
+  const digest = pack(bundle, archive);
+  const env = restore(root, archive, digest, temp, 'linux-amd64');
+  cargo(['check', '--frozen'], env);
+  writeFileSync(join(root, 'Cargo.toml'), readFileSync(join(root, 'Cargo.toml'), 'utf8') + 'absent_from_bundle = "1.0.0"\n');
+  assert.throws(() => cargo(['check', '--frozen'], env), error => {
+    assert.match(error.stderr.toString(), /no matching package named `absent_from_bundle` found/);
+    return true;
+  });
+});
