@@ -96,44 +96,30 @@ interface Vm {
         address emitter;
     }
 
-    /// Gas measurements returned by `lastCallGas` and `lastFrameGas`, from the callee's perspective.
-    /// Includes nested execution, but not all overhead charged to the caller.
-    /// With isolation, the isolated call is measured as a transaction, including intrinsic gas.
-    ///
-    /// EIP-8037 separates regular gas (also called execution gas) from state gas for state creation.
-    /// State charges use a separate reservoir first, then regular gas when the reservoir is empty.
-    /// On EVM versions/networks without EIP-8037, state creation uses the ordinary gas schedule:
-    /// `gasStateUsed` is zero, and those costs are included in `gasTotalUsed`.
-    /// These are measurements, not a gas-limit estimate or a transaction receipt.
+    /// Gas measured for the last completed call or create frame, from the callee's perspective,
+    /// including nested execution. Isolated transactions include intrinsic gas.
+    /// Regular gas (the EIP's execution gas) and EIP-8037 state gas are reported separately.
+    /// Without EIP-8037, state creation uses the ordinary gas schedule and `gasStateUsed` is zero.
     /// See <https://eips.ethereum.org/EIPS/eip-8037> and <https://getfoundry.sh/reference/cheatcodes/last-frame-gas>.
     struct Gas {
-        /// Regular gas limit of the frame, excluding the EIP-8037 state gas reservoir.
-        /// This is not the transaction's combined gas limit and need not equal the gas required to succeed.
+        /// Regular gas available to the frame at entry. Excludes the EIP-8037 state gas reservoir.
         uint64 gasLimit;
-        /// Regular (execution) gas used, excluding EIP-8037 state gas, before subtracting `gasRefunded`.
-        /// Includes nested execution. With isolation, includes intrinsic gas and the regular-gas calldata floor.
-        /// Without EIP-8037, includes state creation costs under the ordinary gas schedule.
-        /// Not the receipt's total charged gas or a sufficient gas limit; see `gasStateUsed` and `gasRefunded`.
+        /// Regular gas spent by the frame, before refunds. Excludes EIP-8037 state gas; see `gasStateUsed`.
+        /// With isolation, includes intrinsic gas and the regular-gas calldata floor.
         uint64 gasTotalUsed;
-        /// DEPRECATED: Always zero. Memory expansion costs are included in `gasTotalUsed`.
+        /// DEPRECATED: always zero. Memory expansion costs are included in `gasTotalUsed`.
         /// Ref: <https://github.com/foundry-rs/foundry/pull/7934#pullrequestreview-2069236939>.
         uint64 gasMemoryUsed;
-        /// Regular gas refund counter for the frame; can be negative in a nested frame.
-        /// Without isolation, this is before the transaction-wide refund cap and calldata floor.
-        /// With isolation, this is the isolated transaction's final refund reported by the EVM.
-        /// Excludes EIP-8037 state gas refills, which are already reflected in `gasStateUsed`.
-        /// Do not subtract it to estimate the gas limit needed to execute.
+        /// Ordinary refund counter before transaction settlement; finalized for an isolated transaction.
+        /// Can be negative in nested frames. State gas refills are already netted into `gasStateUsed`.
         int64 gasRefunded;
-        /// Regular gas remaining at frame completion, excluding the EIP-8037 state gas reservoir.
-        /// State charges can consume regular gas when the reservoir is empty, and state refills can restore it.
-        /// Therefore `gasLimit - gasRemaining` can include state gas and need not equal `gasTotalUsed`.
+        /// Regular gas left at frame end. Excludes the EIP-8037 state gas reservoir.
+        /// State charges can draw from this allowance, so `gasLimit - gasRemaining` can include state gas.
         uint64 gasRemaining;
-        /// Net EIP-8037 state gas used for state creation, excluding regular (execution) gas.
-        /// Includes nested execution and already subtracts state gas refills; do not subtract `gasRefunded` from it.
-        /// Zero without EIP-8037 and for reverted or halted frames. A successful nested frame can be negative
-        /// when it undoes state creation charged to an earlier frame in the same transaction.
-        /// Use signed arithmetic when combining with `gasTotalUsed`. Their sum is net measured consumption,
-        /// not peak gas required, the caller's full cost, or necessarily the transaction receipt's gas used.
+        /// Net EIP-8037 state gas: state creation charges minus refills, including nested execution.
+        /// Zero without EIP-8037 or if the frame reverted or halted. Can be negative when the frame
+        /// undoes state created earlier in the same transaction; use signed arithmetic with `gasTotalUsed`.
+        /// Their sum measures net consumption, not the gas limit needed to execute.
         int64 gasStateUsed;
     }
 
@@ -877,67 +863,54 @@ interface Vm {
 
     /// DEPRECATED: use `snapshotGasLastFrame` instead.
     /// Snapshot capture the gas usage of the last call by name from the callee perspective.
-    /// This scalar snapshot is not the EIP-8037 sum of regular and state gas.
-    /// It can include state gas drawn from regular gas, but excludes state gas paid from the reservoir.
-    /// Isolated frames with zero net state gas use receipt gas instead.
-    /// Use `lastFrameGas` for separate components. See <https://eips.ethereum.org/EIPS/eip-8037>.
+    /// Without isolation, measures regular counter consumption, including spillover but excluding reservoir-funded state gas.
+    /// Isolated frames with zero net state gas use receipt gas; see <https://getfoundry.sh/reference/cheatcodes/gas-snapshots>.
     #[cheatcode(group = Evm, safety = Unsafe, status = Deprecated(Some("replaced by `snapshotGasLastFrame`")))]
     function snapshotGasLastCall(string calldata name) external returns (uint256 gasUsed);
 
     /// DEPRECATED: use `snapshotGasLastFrame` instead.
     /// Snapshot capture the gas usage of the last call by name in a group from the callee perspective.
-    /// This scalar snapshot is not the EIP-8037 sum of regular and state gas.
-    /// It can include state gas drawn from regular gas, but excludes state gas paid from the reservoir.
-    /// Isolated frames with zero net state gas use receipt gas instead.
-    /// Use `lastFrameGas` for separate components. See <https://eips.ethereum.org/EIPS/eip-8037>.
+    /// Without isolation, measures regular counter consumption, including spillover but excluding reservoir-funded state gas.
+    /// Isolated frames with zero net state gas use receipt gas; see <https://getfoundry.sh/reference/cheatcodes/gas-snapshots>.
     #[cheatcode(group = Evm, safety = Unsafe, status = Deprecated(Some("replaced by `snapshotGasLastFrame`")))]
     function snapshotGasLastCall(string calldata group, string calldata name) external returns (uint256 gasUsed);
 
     /// Snapshot capture the gas usage of the last call or create by name from the callee perspective.
-    /// This scalar snapshot is not the EIP-8037 sum of regular and state gas.
-    /// It can include state gas drawn from regular gas, but excludes state gas paid from the reservoir.
-    /// Isolated frames with zero net state gas use receipt gas instead.
-    /// Use `lastFrameGas` for separate components. See <https://eips.ethereum.org/EIPS/eip-8037>.
+    /// Without isolation, measures regular counter consumption, including spillover but excluding reservoir-funded state gas.
+    /// Isolated frames with zero net state gas use receipt gas; see <https://getfoundry.sh/reference/cheatcodes/gas-snapshots>.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function snapshotGasLastFrame(string calldata name) external returns (uint256 gasUsed);
 
     /// Snapshot capture the gas usage of the last call or create by name in a group from the callee perspective.
-    /// This scalar snapshot is not the EIP-8037 sum of regular and state gas.
-    /// It can include state gas drawn from regular gas, but excludes state gas paid from the reservoir.
-    /// Isolated frames with zero net state gas use receipt gas instead.
-    /// Use `lastFrameGas` for separate components. See <https://eips.ethereum.org/EIPS/eip-8037>.
+    /// Without isolation, measures regular counter consumption, including spillover but excluding reservoir-funded state gas.
+    /// Isolated frames with zero net state gas use receipt gas; see <https://getfoundry.sh/reference/cheatcodes/gas-snapshots>.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function snapshotGasLastFrame(string calldata group, string calldata name) external returns (uint256 gasUsed);
 
     /// Start a snapshot capture of the current gas usage by name.
     /// The group name is derived from the contract name.
-    /// Measures regular gas-counter consumption; EIP-8037 state gas paid from the reservoir is not included.
-    /// This is not a combined transaction gas estimate. See <https://eips.ethereum.org/EIPS/eip-8037>.
+    /// Measures gas consumed from the regular counter, including state spillover but excluding reservoir-funded state gas.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function startSnapshotGas(string calldata name) external;
 
     /// Start a snapshot capture of the current gas usage by name in a group.
-    /// Measures regular gas-counter consumption; EIP-8037 state gas paid from the reservoir is not included.
-    /// This is not a combined transaction gas estimate. See <https://eips.ethereum.org/EIPS/eip-8037>.
+    /// Measures gas consumed from the regular counter, including state spillover but excluding reservoir-funded state gas.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function startSnapshotGas(string calldata group, string calldata name) external;
 
     /// Stop the snapshot capture of the current gas by latest snapshot name, capturing the gas used since the start.
-    /// Measures regular gas-counter consumption; EIP-8037 state gas paid from the reservoir is not included.
-    /// This is not a combined transaction gas estimate. See <https://eips.ethereum.org/EIPS/eip-8037>.
+    /// Measures gas consumed from the regular counter, including state spillover but excluding reservoir-funded state gas.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function stopSnapshotGas() external returns (uint256 gasUsed);
 
     /// Stop the snapshot capture of the current gas usage by name, capturing the gas used since the start.
     /// The group name is derived from the contract name.
-    /// Measures regular gas-counter consumption; EIP-8037 state gas paid from the reservoir is not included.
-    /// This is not a combined transaction gas estimate. See <https://eips.ethereum.org/EIPS/eip-8037>.
+    /// Measures gas consumed from the regular counter, including state spillover but excluding reservoir-funded state gas.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function stopSnapshotGas(string calldata name) external returns (uint256 gasUsed);
 
     /// Stop the snapshot capture of the current gas usage by name in a group, capturing the gas used since the start.
-    /// Measures regular gas-counter consumption; EIP-8037 state gas paid from the reservoir is not included.
-    /// This is not a combined transaction gas estimate. See <https://eips.ethereum.org/EIPS/eip-8037>.
+    /// Measures gas consumed from the regular counter, including state spillover but excluding reservoir-funded state gas.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function stopSnapshotGas(string calldata group, string calldata name) external returns (uint256 gasUsed);
 
@@ -1146,20 +1119,15 @@ interface Vm {
     // -------- Gas Measurement --------
 
     /// DEPRECATED: use `lastFrameGas` instead.
-    /// Gets gas measurements for the last completed call, including nested execution, from the callee's perspective.
-    /// Unlike `lastFrameGas`, does not record CREATE or CREATE2 frames; external calls made by constructors still count.
-    /// Both functions return the same `Gas` fields and measurements when they refer to the same call.
-    /// `Gas.gasTotalUsed` excludes EIP-8037 state gas; `Gas.gasStateUsed` reports it separately (zero without EIP-8037).
-    /// See `Gas` for refunds, isolation, and gas-limit caveats, and <https://eips.ethereum.org/EIPS/eip-8037>.
+    /// Gets gas measurements for the last completed call, from the callee's perspective.
+    /// Unlike `lastFrameGas`, CREATE and CREATE2 frames are not recorded; calls made by a constructor are.
+    /// See `Gas` for field semantics.
     #[cheatcode(group = Evm, safety = Safe, status = Deprecated(Some("replaced by `lastFrameGas`")))]
     function lastCallGas() external view returns (Gas memory gas);
 
-    /// Gets gas measurements for the last completed call or create, including nested execution, from the callee's perspective.
-    /// Extends `lastCallGas` by also recording CREATE and CREATE2 frames; it is not just a rename.
-    /// Both functions return the same `Gas` fields and measurements when they refer to the same call.
-    /// `Gas.gasTotalUsed` excludes EIP-8037 state gas; `Gas.gasStateUsed` reports it separately (zero without EIP-8037).
-    /// With isolation, includes transaction intrinsic gas. Cheatcode calls do not replace the recorded frame.
-    /// See `Gas` for refunds and gas-limit caveats, and <https://eips.ethereum.org/EIPS/eip-8037>.
+    /// Gets gas measurements for the last completed call or create, from the callee's perspective.
+    /// Unlike `lastCallGas`, CREATE and CREATE2 frames are recorded too. Cheatcode calls are never recorded.
+    /// See `Gas` for field semantics and <https://getfoundry.sh/reference/cheatcodes/last-frame-gas>.
     #[cheatcode(group = Evm, safety = Safe)]
     function lastFrameGas() external view returns (Gas memory gas);
 
