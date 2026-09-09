@@ -26,141 +26,6 @@ use std::{
     sync::Arc,
 };
 
-// ── public entry point ───────────────────────────────────────────────────────
-
-/// Render a single Solidity source file as a list of `(relative_output_path, mdx_content)` pairs.
-#[allow(clippy::too_many_arguments)]
-pub fn source<'ast, 'gcx>(
-    ast: &'ast SourceUnit<'ast>,
-    file: &Arc<SourceFile>,
-    _sm: &SourceMap,
-    rel_sol_path: &Path,
-    abs_sol_path: &Path,
-    _root: &Path,
-    gcx: Gcx<'gcx>,
-    name_to_page: &NameToPage,
-    git_url: Option<&str>,
-    deployments: &HashMap<String, Vec<Deployment>>,
-) -> Vec<(PathBuf, String)> {
-    let out_dir = rel_sol_path.parent().unwrap_or(Path::new(""));
-    let stem = rel_sol_path.file_stem().and_then(|s| s.to_str()).unwrap_or("constants");
-
-    let src_text = file.src.as_str();
-    let src_start = file.start_pos.to_usize();
-    let ctx = Ctx { src_text, src_start };
-
-    let mut pages: Vec<(PathBuf, String)> = Vec::new();
-    let mut const_vars: Vec<(Span, &VariableDefinition<'_>, &DocComments<'_>)> = Vec::new();
-    let mut free_fns: std::collections::BTreeMap<
-        String,
-        Vec<(Span, &ItemFunction<'_>, &DocComments<'_>)>,
-    > = Default::default();
-
-    for item in ast.items.iter() {
-        let span = item.span;
-        match &item.kind {
-            ItemKind::Pragma(_) | ItemKind::Import(_) | ItemKind::Using(_) => (),
-            ItemKind::Contract(c) => {
-                let kind_str = contract_kind_str(c.kind);
-                let fname = format!("{kind_str}.{}.mdx", c.name.as_str());
-                let page_path = out_dir.join(&fname);
-                // Look up HIR contract id for inheritance/inheritdoc.
-                let hir_id = find_contract_id(gcx, c.name.as_str(), abs_sol_path);
-                // Deployments only apply to non-abstract, non-interface, non-library contracts.
-                let contract_deployments = if matches!(c.kind, ContractKind::Contract) {
-                    deployments.get(c.name.as_str()).map(Vec::as_slice).unwrap_or(&[])
-                } else {
-                    &[]
-                };
-                let content = render_contract(
-                    span,
-                    c,
-                    &item.docs,
-                    &ctx,
-                    gcx,
-                    hir_id,
-                    name_to_page,
-                    &page_path,
-                    git_url,
-                    contract_deployments,
-                );
-                pages.push((page_path, content));
-            }
-
-            ItemKind::Function(f) => {
-                let name = f.header.name.map(|n| n.as_str().to_string()).unwrap_or_default();
-                free_fns.entry(name).or_default().push((span, f, &item.docs));
-            }
-
-            ItemKind::Variable(v) => {
-                const_vars.push((span, v, &item.docs));
-            }
-
-            ItemKind::Struct(s) => {
-                let fname = format!("struct.{}.mdx", s.name.as_str());
-                let page_path = out_dir.join(&fname);
-                pages.push((
-                    page_path.clone(),
-                    render_struct(span, s, &item.docs, &ctx, name_to_page, &page_path, git_url),
-                ));
-            }
-
-            ItemKind::Enum(e) => {
-                let fname = format!("enum.{}.mdx", e.name.as_str());
-                let page_path = out_dir.join(&fname);
-                pages.push((
-                    page_path.clone(),
-                    render_enum(span, e, &item.docs, &ctx, name_to_page, &page_path, git_url),
-                ));
-            }
-
-            ItemKind::Udvt(u) => {
-                let fname = format!("type.{}.mdx", u.name.as_str());
-                let page_path = out_dir.join(&fname);
-                pages.push((
-                    page_path.clone(),
-                    render_udvt(span, u, &item.docs, &ctx, name_to_page, &page_path, git_url),
-                ));
-            }
-
-            ItemKind::Error(e) => {
-                let fname = format!("error.{}.mdx", e.name.as_str());
-                let page_path = out_dir.join(&fname);
-                pages.push((
-                    page_path.clone(),
-                    render_error(span, e, &item.docs, &ctx, name_to_page, &page_path, git_url),
-                ));
-            }
-
-            ItemKind::Event(e) => {
-                let fname = format!("event.{}.mdx", e.name.as_str());
-                let page_path = out_dir.join(&fname);
-                pages.push((
-                    page_path.clone(),
-                    render_event(span, e, &item.docs, &ctx, name_to_page, &page_path, git_url),
-                ));
-            }
-        }
-    }
-
-    for (name, overloads) in &free_fns {
-        let fname = format!("function.{name}.mdx");
-        let page_path = out_dir.join(&fname);
-        let content =
-            render_free_functions(name, overloads, &ctx, name_to_page, &page_path, git_url);
-        pages.push((page_path, content));
-    }
-
-    if !const_vars.is_empty() {
-        let fname = format!("constants.{stem}.mdx");
-        let page_path = out_dir.join(&fname);
-        let content = render_constants(stem, &const_vars, &ctx, name_to_page, &page_path, git_url);
-        pages.push((page_path, content));
-    }
-
-    pages
-}
-
 // ── rendering context ────────────────────────────────────────────────────────
 
 struct Ctx<'a> {
@@ -229,11 +94,7 @@ fn render_contract<'ast, 'gcx>(
     let local = Some(&local);
 
     let comments = collect_comments(docs, name_to_page, page_path, local);
-    let mut out = String::new();
-    write_frontmatter(&mut out, name, first_notice(&comments).as_deref());
-    writeln!(out, "# {name}").unwrap();
-    writeln!(out).unwrap();
-    write_git_source(&mut out, git_url);
+    let mut out = write_page_header(name, first_notice(&comments).as_deref(), git_url);
     write_deployments_table(&mut out, deployments);
 
     // inheritance links.
@@ -300,28 +161,10 @@ fn render_contract<'ast, 'gcx>(
                 });
                 let sanitize =
                     |s: &str| hir_ext::replace_inline_links(s, name_to_page, page_path, local);
-                if let Some(ref base_doc) = inherited {
-                    if c.notices.is_empty() {
-                        let inherited_notices: Vec<String> =
-                            base_doc.notices.iter().map(|s| sanitize(s)).collect();
-                        let mut new_desc: Vec<Description> = inherited_notices
-                            .iter()
-                            .map(|s| Description { kind: DescKind::Notice, content: s.clone() })
-                            .collect();
-                        new_desc.append(&mut c.descriptions);
-                        c.descriptions = new_desc;
-                        c.notices.extend(inherited_notices);
-                    }
-                    if c.devs.is_empty() {
-                        let inherited_devs: Vec<String> =
-                            base_doc.devs.iter().map(|s| sanitize(s)).collect();
-                        c.descriptions.extend(
-                            inherited_devs
-                                .iter()
-                                .map(|s| Description { kind: DescKind::Dev, content: s.clone() }),
-                        );
-                        c.devs.extend(inherited_devs);
-                    }
+                let sanitize_description =
+                    |s: &str| replace_description_links(s, name_to_page, page_path, local);
+                if let Some(base_doc) = &inherited {
+                    c.inherit_descriptions(base_doc, &sanitize_description);
                 }
                 write_comment_block(out, &c);
                 write_code_block(out, &ctx.dedented_snippet(*span));
@@ -493,11 +336,7 @@ fn render_free_functions(
 ) -> String {
     let title = if name.is_empty() { "function" } else { name };
     let first_comments = collect_comments(overloads[0].2, name_to_page, page_path, None);
-    let mut out = String::new();
-    write_frontmatter(&mut out, title, first_notice(&first_comments).as_deref());
-    writeln!(out, "# {title}").unwrap();
-    writeln!(out).unwrap();
-    write_git_source(&mut out, git_url);
+    let mut out = write_page_header(title, first_notice(&first_comments).as_deref(), git_url);
     for (span, f, docs) in overloads {
         render_function_section(&mut out, *span, f, docs, ctx, name_to_page, page_path, None, None);
     }
@@ -515,11 +354,7 @@ fn render_constants(
     git_url: Option<&str>,
 ) -> String {
     let title = format!("{stem} Constants");
-    let mut out = String::new();
-    write_frontmatter(&mut out, &title, None);
-    writeln!(out, "# {title}").unwrap();
-    writeln!(out).unwrap();
-    write_git_source(&mut out, git_url);
+    let mut out = write_page_header(&title, None, git_url);
     for (span, v, docs) in vars {
         let name = v.name.map(|n| n.as_str().to_string()).unwrap_or_else(|| "_".to_string());
         writeln!(out, "## {name}").unwrap();
@@ -544,11 +379,7 @@ fn render_struct<'ast>(
 ) -> String {
     let name = s.name.as_str();
     let c = collect_comments(docs, name_to_page, page_path, None);
-    let mut out = String::new();
-    write_frontmatter(&mut out, name, first_notice(&c).as_deref());
-    writeln!(out, "# {name}").unwrap();
-    writeln!(out).unwrap();
-    write_git_source(&mut out, git_url);
+    let mut out = write_page_header(name, first_notice(&c).as_deref(), git_url);
     write_comment_block(&mut out, &c);
     write_code_block(&mut out, &ctx.dedented_snippet(span));
     write_struct_properties_table(&mut out, s.fields, &c, ctx);
@@ -566,11 +397,7 @@ fn render_enum<'ast>(
 ) -> String {
     let name = e.name.as_str();
     let c = collect_comments(docs, name_to_page, page_path, None);
-    let mut out = String::new();
-    write_frontmatter(&mut out, name, first_notice(&c).as_deref());
-    writeln!(out, "# {name}").unwrap();
-    writeln!(out).unwrap();
-    write_git_source(&mut out, git_url);
+    let mut out = write_page_header(name, first_notice(&c).as_deref(), git_url);
     write_comment_block(&mut out, &c);
     write_code_block(&mut out, &ctx.dedented_snippet(span));
     write_enum_variants_table(&mut out, e.variants, &c);
@@ -588,11 +415,7 @@ fn render_udvt<'ast>(
 ) -> String {
     let name = u.name.as_str();
     let c = collect_comments(docs, name_to_page, page_path, None);
-    let mut out = String::new();
-    write_frontmatter(&mut out, name, first_notice(&c).as_deref());
-    writeln!(out, "# {name}").unwrap();
-    writeln!(out).unwrap();
-    write_git_source(&mut out, git_url);
+    let mut out = write_page_header(name, first_notice(&c).as_deref(), git_url);
     write_comment_block(&mut out, &c);
     write_code_block(&mut out, &format!("{};", ctx.dedented_snippet(span)));
     out
@@ -609,11 +432,7 @@ fn render_error<'ast>(
 ) -> String {
     let name = e.name.as_str();
     let c = collect_comments(docs, name_to_page, page_path, None);
-    let mut out = String::new();
-    write_frontmatter(&mut out, name, first_notice(&c).as_deref());
-    writeln!(out, "# {name}").unwrap();
-    writeln!(out).unwrap();
-    write_git_source(&mut out, git_url);
+    let mut out = write_page_header(name, first_notice(&c).as_deref(), git_url);
     write_comment_block(&mut out, &c);
     write_code_block(&mut out, &ctx.dedented_snippet(span));
     write_param_table(&mut out, "Parameters", &e.parameters, &c, None, ctx);
@@ -631,11 +450,7 @@ fn render_event<'ast>(
 ) -> String {
     let name = e.name.as_str();
     let c = collect_comments(docs, name_to_page, page_path, None);
-    let mut out = String::new();
-    write_frontmatter(&mut out, name, first_notice(&c).as_deref());
-    writeln!(out, "# {name}").unwrap();
-    writeln!(out).unwrap();
-    write_git_source(&mut out, git_url);
+    let mut out = write_page_header(name, first_notice(&c).as_deref(), git_url);
     write_comment_block(&mut out, &c);
     write_code_block(&mut out, &ctx.dedented_snippet(span));
     write_param_table(&mut out, "Parameters", &e.parameters, &c, None, ctx);
@@ -667,26 +482,9 @@ fn render_function_section(
     // Merge inherited natspec for missing tags.
     if let Some(inherited) = inherited {
         let sanitize = |s: &str| hir_ext::replace_inline_links(s, name_to_page, page_path, local);
-        let inherited_notices: Vec<String> =
-            inherited.notices.iter().map(|s| sanitize(s)).collect();
-        let inherited_devs: Vec<String> = inherited.devs.iter().map(|s| sanitize(s)).collect();
-        if c.notices.is_empty() {
-            let mut new_desc: Vec<Description> = inherited_notices
-                .iter()
-                .map(|s| Description { kind: DescKind::Notice, content: s.clone() })
-                .collect();
-            new_desc.append(&mut c.descriptions);
-            c.descriptions = new_desc;
-            c.notices.extend_from_slice(&inherited_notices);
-        }
-        if c.devs.is_empty() {
-            c.devs.extend_from_slice(&inherited_devs);
-            c.descriptions.extend(
-                inherited_devs
-                    .iter()
-                    .map(|s| Description { kind: DescKind::Dev, content: s.clone() }),
-            );
-        }
+        let sanitize_description =
+            |s: &str| replace_description_links(s, name_to_page, page_path, local);
+        c.inherit_descriptions(inherited, &sanitize_description);
         if c.params.is_empty() {
             let params = inherited.params.iter().map(|desc| sanitize(desc)).collect::<Vec<_>>();
             for (index, desc) in params.iter().enumerate() {
@@ -787,12 +585,37 @@ struct CommentData {
     unnamed_param_names: Vec<String>,
 }
 
+impl CommentData {
+    /// Fill missing notice/dev tags, keeping inherited notices before local descriptions.
+    fn inherit_descriptions(
+        &mut self,
+        inherited: &hir_ext::NatSpecDoc,
+        sanitize: &impl Fn(&str) -> String,
+    ) {
+        if self.notices.is_empty() {
+            self.notices = inherited.notices.iter().map(|s| sanitize(s)).collect();
+            let mut descriptions = self
+                .notices
+                .iter()
+                .map(|s| Description { kind: DescKind::Notice, content: s.clone() })
+                .collect::<Vec<_>>();
+            descriptions.append(&mut self.descriptions);
+            self.descriptions = descriptions;
+        }
+        if self.devs.is_empty() {
+            self.devs = inherited.devs.iter().map(|s| sanitize(s)).collect();
+            self.descriptions.extend(
+                self.devs.iter().map(|s| Description { kind: DescKind::Dev, content: s.clone() }),
+            );
+        }
+    }
+}
+
 /// Collect natspec from doc comments, applying inline link replacement.
 ///
 /// Solar emits each `///` line as a separate `DocComment`. Lines without a `@` tag become
-/// synthetic `@notice` items with leading whitespace in their raw content. We detect these
-/// continuation lines and join them to the previous description paragraph so that multi-line
-/// natspec tags appear as a single coherent block in the right source order.
+/// synthetic `@notice` items. We join adjacent synthetic items to the previous rendered section
+/// so multi-line natspec tags form a single coherent block in source order.
 fn collect_comments(
     docs: &DocComments<'_>,
     name_to_page: &NameToPage,
@@ -826,7 +649,6 @@ fn collect_comments(
         Return,
     }
     let mut last_section: Option<LastSection> = None;
-
     for doc in docs.iter() {
         if doc.natspec.is_empty() {
             prev_doc_was_blank = true;
@@ -840,11 +662,10 @@ fn collect_comments(
             let raw: &str =
                 if doc.kind == CommentKind::Block { &clean_block_doc_content(raw) } else { raw };
 
-            // Detect a solar "synthetic" @notice: a continuation line with no `@` tag.
-            // Solar produces these when a `///` line has no tag; the raw content starts
-            // with whitespace (the indentation after `///`).
-            let is_continuation = matches!(item.kind, NatSpecKind::Notice)
-                && raw.starts_with(|c: char| c.is_whitespace());
+            // Solar represents an untagged doc comment as a synthetic notice whose span is the
+            // whole comment. Treat it as a continuation when it follows a rendered section;
+            // this also joins adjacent line and block doc comments before fence detection.
+            let is_continuation = matches!(item.kind, NatSpecKind::Notice) && item.span == doc.span;
 
             let trimmed = raw.trim();
             if trimmed.is_empty() {
@@ -852,8 +673,9 @@ fn collect_comments(
                 continue;
             }
 
-            // Apply inline {Ident} -> markdown link replacement.
-            let content = hir_ext::replace_inline_links(trimmed, name_to_page, page_path, local);
+            // Keep descriptions raw until continuation lines have been joined. Only complete,
+            // standalone descriptions can safely identify fenced code blocks.
+            let content = trimmed.to_string();
 
             if is_continuation && !prev_doc_was_blank {
                 let appended = match last_section {
@@ -903,6 +725,8 @@ fn collect_comments(
                         // Silently ignored.
                     } else if tag == "name" {
                         // `@custom:name <name>` -> unnamed param name (legacy parity).
+                        let content =
+                            hir_ext::replace_inline_links(&content, name_to_page, page_path, local);
                         if let Some(first) = content.split_whitespace().next() {
                             data.unnamed_param_names.push(first.to_string());
                         }
@@ -917,6 +741,27 @@ fn collect_comments(
                 NatSpecKind::Internal { .. } => {}
             }
         }
+    }
+
+    let sanitize = |s: &str| hir_ext::replace_inline_links(s, name_to_page, page_path, local);
+    for content in &mut data.titles {
+        *content = sanitize_description_prose(content, name_to_page, page_path, local);
+    }
+    for content in &mut data.authors {
+        *content = sanitize_description_prose(content, name_to_page, page_path, local);
+    }
+    for (_, content) in &mut data.params {
+        *content = sanitize(content);
+    }
+    for (_, content) in &mut data.returns {
+        *content = sanitize(content);
+    }
+    for (_, content) in &mut data.customs {
+        *content = sanitize_description_prose(content, name_to_page, page_path, local);
+    }
+    for description in &mut data.descriptions {
+        description.content =
+            replace_description_links(&description.content, name_to_page, page_path, local);
     }
 
     data
@@ -1032,11 +877,12 @@ fn italicize_dev(content: &str) -> String {
     if trimmed.is_empty() { String::new() } else { format!("<i>\n\n{trimmed}\n\n</i>") }
 }
 
-/// Byte ranges that MDX parses as code. An HTML entity would render literally inside these ranges,
-/// so neutralization skips them. If malformed MDX cannot be parsed, returning no ranges favors
-/// neutralizing possible ESM over preserving an invalid code example byte-for-byte.
-fn code_regions(text: &str) -> Vec<Range<usize>> {
-    let Ok(tree) = to_mdast(text, &ParseOptions::mdx()) else { return Vec::new() };
+/// Byte ranges that Markdown parses as code under `options`. An HTML entity would render literally
+/// inside these ranges, so neutralization skips them. If malformed MDX cannot be parsed, returning
+/// no ranges favors neutralizing possible ESM over preserving an invalid code example
+/// byte-for-byte.
+pub(crate) fn code_regions(text: &str, options: &ParseOptions) -> Vec<Range<usize>> {
+    let Ok(tree) = to_mdast(text, options) else { return Vec::new() };
     let mut regions = Vec::new();
     collect_code_regions(&tree, &mut regions);
     regions
@@ -1054,6 +900,120 @@ fn collect_code_regions(node: &Node, regions: &mut Vec<Range<usize>>) {
             collect_code_regions(child, regions);
         }
     }
+}
+
+/// Replace inline links in a standalone notice or dev description while preserving complete,
+/// top-level fenced code blocks. Other NatSpec fields use `replace_inline_links` directly because
+/// their rendering context (notably table cells) cannot contain block-level Markdown.
+fn replace_description_links(
+    text: &str,
+    name_to_page: &NameToPage,
+    current_page: &Path,
+    local: Option<&hir_ext::LocalMembers>,
+) -> String {
+    let regions = fenced_description_regions(text);
+    let mut out = String::with_capacity(text.len());
+    let mut rendered_regions = Vec::with_capacity(regions.len());
+    let mut copied = 0;
+    for region in regions {
+        out.push_str(&sanitize_description_prose(
+            &text[copied..region.start],
+            name_to_page,
+            current_page,
+            local,
+        ));
+        let start = out.len();
+        out.push_str(&text[region.clone()]);
+        rendered_regions.push(start..out.len());
+        copied = region.end;
+    }
+    out.push_str(&sanitize_description_prose(&text[copied..], name_to_page, current_page, local));
+    let mdx_regions = code_regions(&out, &ParseOptions::mdx());
+    if rendered_regions.iter().all(|region| mdx_regions.contains(region)) {
+        out
+    } else {
+        sanitize_description_prose(text, name_to_page, current_page, local)
+    }
+}
+
+fn sanitize_description_prose(
+    text: &str,
+    name_to_page: &NameToPage,
+    current_page: &Path,
+    local: Option<&hir_ext::LocalMembers>,
+) -> String {
+    let text = hir_ext::replace_inline_links(text, name_to_page, current_page, local);
+    neutralize_fence_markers(&text)
+}
+
+/// Keep rejected or incomplete fence markers from changing the Markdown context of subsequent
+/// descriptions. Entities render as the original marker characters without acting as syntax.
+fn neutralize_fence_markers(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if let marker @ (b'`' | b'~') = bytes[i] {
+            let length = bytes[i..].iter().take_while(|&&byte| byte == marker).count();
+            if length >= 3 {
+                out.push_str(if marker == b'`' { "&#96;" } else { "&#126;" });
+                out.push_str(&text[i + 1..i + length]);
+                i += length;
+                continue;
+            }
+        }
+        let ch = text[i..].chars().next().unwrap();
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
+}
+
+/// Complete fenced code blocks that are direct children of the description document. Restricting
+/// preservation to root-level blocks keeps list, quote, table, and unclosed-fence behavior on the
+/// conservative escaping path.
+fn fenced_description_regions(text: &str) -> Vec<Range<usize>> {
+    let Ok(Node::Root(root)) = to_mdast(text, &ParseOptions::gfm()) else {
+        return Vec::new();
+    };
+    root.children
+        .iter()
+        .filter_map(|node| {
+            let Node::Code(_) = node else { return None };
+            let position = node.position()?;
+            let range = position.start.offset..position.end.offset;
+            is_complete_fence(&text[range.clone()]).then_some(range)
+        })
+        .collect()
+}
+
+fn is_complete_fence(text: &str) -> bool {
+    let mut lines = logical_lines(text);
+    let Some((_, first)) = lines.next() else { return false };
+    let Some((marker, length)) = fence_marker(first) else { return false };
+    let mut last = None;
+    for (_, line) in lines {
+        last = Some(line);
+    }
+    let Some(last) = last else { return false };
+    let indent = last.len() - last.trim_start_matches(' ').len();
+    if indent > 3 {
+        return false;
+    }
+    let last = &last[indent..];
+    let closing_length = last.chars().take_while(|&ch| ch == marker).count();
+    closing_length >= length && last[closing_length..].trim().is_empty()
+}
+
+fn fence_marker(line: &str) -> Option<(char, usize)> {
+    let indent = line.len() - line.trim_start_matches(' ').len();
+    if indent > 3 {
+        return None;
+    }
+    let line = &line[indent..];
+    let marker @ ('`' | '~') = line.chars().next()? else { return None };
+    let length = line.chars().take_while(|&ch| ch == marker).count();
+    (length >= 3).then_some((marker, length))
 }
 
 /// Logical lines and their byte offsets in the original text. CRLF is one separator; lone CR and
@@ -1083,7 +1043,11 @@ fn logical_lines(text: &str) -> impl Iterator<Item = (usize, &str)> {
 }
 
 /// Check a position against sorted, merged ranges while advancing monotonically.
-fn region_contains(regions: &[Range<usize>], cursor: &mut usize, position: usize) -> bool {
+pub(crate) fn region_contains(
+    regions: &[Range<usize>],
+    cursor: &mut usize,
+    position: usize,
+) -> bool {
     while regions.get(*cursor).is_some_and(|region| region.end <= position) {
         *cursor += 1;
     }
@@ -1097,7 +1061,7 @@ fn region_contains(regions: &[Range<usize>], cursor: &mut usize, position: usize
 /// code span or fenced code block is left untouched (see `code_regions`): the entity would render
 /// literally and corrupt the example, and MDX would not execute it there.
 fn neutralize_esm(text: &str) -> String {
-    let regions = code_regions(text);
+    let regions = code_regions(text, &ParseOptions::mdx());
     let mut region_cursor = 0;
     let mut copied = 0;
     let mut out = String::with_capacity(text.len());
@@ -1165,6 +1129,15 @@ fn write_code_block(out: &mut String, snippet: &str) {
     writeln!(out, "{}", snippet.trim_end()).unwrap();
     writeln!(out, "```").unwrap();
     writeln!(out).unwrap();
+}
+
+fn write_page_header(title: &str, description: Option<&str>, git_url: Option<&str>) -> String {
+    let mut out = String::new();
+    write_frontmatter(&mut out, title, description);
+    writeln!(out, "# {title}").unwrap();
+    writeln!(out).unwrap();
+    write_git_source(&mut out, git_url);
+    out
 }
 
 /// Write link if `git_url` is set.
@@ -1372,10 +1345,147 @@ fn dedent(s: &str) -> String {
         .join("\n")
 }
 
+// ── public entry point ───────────────────────────────────────────────────────
+
+/// Render a single Solidity source file as a list of `(relative_output_path, mdx_content)` pairs.
+#[allow(clippy::too_many_arguments)]
+pub fn source<'ast, 'gcx>(
+    ast: &'ast SourceUnit<'ast>,
+    file: &Arc<SourceFile>,
+    _sm: &SourceMap,
+    rel_sol_path: &Path,
+    abs_sol_path: &Path,
+    _root: &Path,
+    gcx: Gcx<'gcx>,
+    name_to_page: &NameToPage,
+    git_url: Option<&str>,
+    deployments: &HashMap<String, Vec<Deployment>>,
+) -> Vec<(PathBuf, String)> {
+    let out_dir = rel_sol_path.parent().unwrap_or(Path::new(""));
+    let stem = rel_sol_path.file_stem().and_then(|s| s.to_str()).unwrap_or("constants");
+
+    let src_text = file.src.as_str();
+    let src_start = file.start_pos.to_usize();
+    let ctx = Ctx { src_text, src_start };
+
+    let mut pages: Vec<(PathBuf, String)> = Vec::new();
+    let mut const_vars: Vec<(Span, &VariableDefinition<'_>, &DocComments<'_>)> = Vec::new();
+    let mut free_fns: std::collections::BTreeMap<
+        String,
+        Vec<(Span, &ItemFunction<'_>, &DocComments<'_>)>,
+    > = Default::default();
+
+    for item in ast.items.iter() {
+        let span = item.span;
+        match &item.kind {
+            ItemKind::Pragma(_) | ItemKind::Import(_) | ItemKind::Using(_) => (),
+            ItemKind::Contract(c) => {
+                let kind_str = contract_kind_str(c.kind);
+                let fname = format!("{kind_str}.{}.mdx", c.name.as_str());
+                let page_path = out_dir.join(&fname);
+                // Look up HIR contract id for inheritance/inheritdoc.
+                let hir_id = find_contract_id(gcx, c.name.as_str(), abs_sol_path);
+                // Deployments only apply to non-abstract, non-interface, non-library contracts.
+                let contract_deployments = if matches!(c.kind, ContractKind::Contract) {
+                    deployments.get(c.name.as_str()).map(Vec::as_slice).unwrap_or(&[])
+                } else {
+                    &[]
+                };
+                let content = render_contract(
+                    span,
+                    c,
+                    &item.docs,
+                    &ctx,
+                    gcx,
+                    hir_id,
+                    name_to_page,
+                    &page_path,
+                    git_url,
+                    contract_deployments,
+                );
+                pages.push((page_path, content));
+            }
+
+            ItemKind::Function(f) => {
+                let name = f.header.name.map(|n| n.as_str().to_string()).unwrap_or_default();
+                free_fns.entry(name).or_default().push((span, f, &item.docs));
+            }
+
+            ItemKind::Variable(v) => {
+                const_vars.push((span, v, &item.docs));
+            }
+
+            ItemKind::Struct(s) => {
+                let fname = format!("struct.{}.mdx", s.name.as_str());
+                let page_path = out_dir.join(&fname);
+                pages.push((
+                    page_path.clone(),
+                    render_struct(span, s, &item.docs, &ctx, name_to_page, &page_path, git_url),
+                ));
+            }
+
+            ItemKind::Enum(e) => {
+                let fname = format!("enum.{}.mdx", e.name.as_str());
+                let page_path = out_dir.join(&fname);
+                pages.push((
+                    page_path.clone(),
+                    render_enum(span, e, &item.docs, &ctx, name_to_page, &page_path, git_url),
+                ));
+            }
+
+            ItemKind::Udvt(u) => {
+                let fname = format!("type.{}.mdx", u.name.as_str());
+                let page_path = out_dir.join(&fname);
+                pages.push((
+                    page_path.clone(),
+                    render_udvt(span, u, &item.docs, &ctx, name_to_page, &page_path, git_url),
+                ));
+            }
+
+            ItemKind::Error(e) => {
+                let fname = format!("error.{}.mdx", e.name.as_str());
+                let page_path = out_dir.join(&fname);
+                pages.push((
+                    page_path.clone(),
+                    render_error(span, e, &item.docs, &ctx, name_to_page, &page_path, git_url),
+                ));
+            }
+
+            ItemKind::Event(e) => {
+                let fname = format!("event.{}.mdx", e.name.as_str());
+                let page_path = out_dir.join(&fname);
+                pages.push((
+                    page_path.clone(),
+                    render_event(span, e, &item.docs, &ctx, name_to_page, &page_path, git_url),
+                ));
+            }
+        }
+    }
+
+    for (name, overloads) in &free_fns {
+        let fname = format!("function.{name}.mdx");
+        let page_path = out_dir.join(&fname);
+        let content =
+            render_free_functions(name, overloads, &ctx, name_to_page, &page_path, git_url);
+        pages.push((page_path, content));
+    }
+
+    if !const_vars.is_empty() {
+        let fname = format!("constants.{stem}.mdx");
+        let page_path = out_dir.join(&fname);
+        let content = render_constants(stem, &const_vars, &ctx, name_to_page, &page_path, git_url);
+        pages.push((page_path, content));
+    }
+
+    pages
+}
+
 #[cfg(test)]
 mod tests {
-    use super::neutralize_esm;
+    use super::{neutralize_esm, replace_description_links, sanitize_description_prose};
+    use crate::hir_ext::NameToPage;
     use markdown::{MdxSignal, ParseOptions, mdast::Node, to_mdast};
+    use std::path::Path;
 
     fn parse_mdx(text: &str) -> Node {
         let mut options = ParseOptions::mdx();
@@ -1386,6 +1496,71 @@ mod tests {
     fn contains_mdx_esm(node: &Node) -> bool {
         matches!(node, Node::MdxjsEsm(_))
             || node.children().is_some_and(|children| children.iter().any(contains_mdx_esm))
+    }
+
+    fn contains_mdx_expression(node: &Node) -> bool {
+        matches!(node, Node::MdxFlowExpression(_) | Node::MdxTextExpression(_))
+            || node.children().is_some_and(|children| children.iter().any(contains_mdx_expression))
+    }
+
+    #[test]
+    fn preserves_complete_top_level_description_fences() {
+        let input = "Before < and {\n~~~solidity\nif (a < b) { revert(); }\n~~~\nAfter < and {";
+        let output = replace_description_links(
+            input,
+            &NameToPage::new(),
+            Path::new("src/contract.Foo.mdx"),
+            None,
+        );
+
+        assert_eq!(
+            output,
+            "Before &lt; and &#123;\n~~~solidity\nif (a < b) { revert(); }\n~~~\nAfter &lt; and &#123;"
+        );
+    }
+
+    #[test]
+    fn conservatively_escapes_non_standalone_fences() {
+        for (input, expected) in [
+            (
+                "- ~~~\n  example <\n  ~~~\nOutside < and {",
+                "- &#126;~~\n  example &lt;\n  &#126;~~\nOutside &lt; and &#123;",
+            ),
+            ("~~~\nexample < and {", "&#126;~~\nexample &lt; and &#123;"),
+        ] {
+            assert_eq!(
+                replace_description_links(
+                    input,
+                    &NameToPage::new(),
+                    Path::new("src/contract.Foo.mdx"),
+                    None,
+                ),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn rejected_fences_cannot_change_later_mdx_context() {
+        let name_to_page = NameToPage::new();
+        let path = Path::new("src/contract.Foo.mdx");
+        let first = replace_description_links("~~~", &name_to_page, path, None);
+        let second = replace_description_links("~~~\n{1+1}\n~~~", &name_to_page, path, None);
+        let output = format!("{first}\n\n{second}");
+        assert_eq!(output, "&#126;~~\n\n~~~\n{1+1}\n~~~");
+        assert!(!contains_mdx_expression(&parse_mdx(&output)));
+
+        let output =
+            replace_description_links("~~~\n    ~~~\n{1+1}\n~~~", &name_to_page, path, None);
+        assert_eq!(output, "&#126;~~\n    &#126;~~\n`1+1`\n&#126;~~");
+        assert!(!contains_mdx_expression(&parse_mdx(&output)));
+
+        let notice = replace_description_links("~~~\n{1+1}\n~~~", &name_to_page, path, None);
+        for prefix in ["**Title:**", "**Author:**", "- **note:**"] {
+            let metadata = sanitize_description_prose("metadata\n~~~", &name_to_page, path, None);
+            let output = format!("{prefix} {metadata}\n\n{notice}");
+            assert!(!contains_mdx_expression(&parse_mdx(&output)), "{output}");
+        }
     }
 
     #[test]

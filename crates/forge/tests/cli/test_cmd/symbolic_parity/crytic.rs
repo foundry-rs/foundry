@@ -76,8 +76,8 @@ Failing tests:
 Encountered 1 failing test in test/CryticPropertiesErc20Parity.t.sol:CryticPropertiesErc20Parity
 [FAIL: [..]]
 	[Sequence] (original: [..], shrunk: 1)
-		[SENDER] addr=[test/CryticPropertiesErc20Parity.t.sol:BuggyToken]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=transfer(address,uint256) [ARGS]
- invariant_sumOfBalances() (runs: [..], calls: [..], reverts: [..])
+		[SENDER] [SENDER] calldata=transfer(address,uint256) [ARGS]
+ invariant_sumOfBalances() ([METRICS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 

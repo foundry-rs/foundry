@@ -786,6 +786,128 @@ async fn test_fork_load_state() {
     assert_eq!(balance_alice + value, latest_balance_alice);
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_load_state_preserves_fork_blocks_below_head() {
+    let (_origin_api, origin) =
+        spawn(NodeConfig::test().with_genesis_timestamp(Some(1_700_000_000u64))).await;
+    let (dump_source_api, dump_source) =
+        spawn(NodeConfig::test().with_genesis_timestamp(Some(1_700_000_001u64))).await;
+    let origin_provider = origin.http_provider();
+    let dump_provider = dump_source.http_provider();
+    let sender = origin.dev_wallets().next().unwrap().address();
+    let recipient = Address::repeat_byte(0x11);
+    let fork_boundary = 3;
+    let mut origin_transactions = Vec::new();
+    let mut dump_transactions = Vec::new();
+
+    for _ in 0..fork_boundary {
+        for (provider, value, transactions) in [
+            (&origin_provider, 1, &mut origin_transactions),
+            (&dump_provider, 2, &mut dump_transactions),
+        ] {
+            let receipt = provider
+                .send_transaction(WithOtherFields::new(
+                    TransactionRequest::default()
+                        .with_from(sender)
+                        .with_to(recipient)
+                        .with_value(U256::from(value)),
+                ))
+                .await
+                .unwrap()
+                .get_receipt()
+                .await
+                .unwrap();
+            assert!(receipt.status());
+            transactions.push(receipt.transaction_hash);
+        }
+    }
+
+    let mut origin_blocks = Vec::new();
+    let mut dump_blocks = Vec::new();
+    for number in 0..=fork_boundary {
+        let origin_block =
+            origin_provider.get_block_by_number(number.into()).await.unwrap().unwrap();
+        let dump_block = dump_provider.get_block_by_number(number.into()).await.unwrap().unwrap();
+        assert_ne!(origin_block.header.hash, dump_block.header.hash);
+        origin_blocks.push(origin_block);
+        dump_blocks.push(dump_block);
+    }
+    let state = dump_source_api.serialized_state(false).await.unwrap();
+    let (_forked_api, forked) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(origin.http_endpoint()))
+            .with_fork_block_number(Some(fork_boundary))
+            .with_init_state(Some(state)),
+    )
+    .await;
+    let forked_provider = forked.http_provider();
+    assert_eq!(forked_provider.get_block_number().await.unwrap(), fork_boundary);
+
+    for (number, (origin_block, dump_block)) in origin_blocks.iter().zip(&dump_blocks).enumerate() {
+        let block =
+            forked_provider.get_block_by_number((number as u64).into()).await.unwrap().unwrap();
+        assert_eq!(block.header.hash, origin_block.header.hash);
+        assert_eq!(block.header.parent_hash, origin_block.header.parent_hash);
+        if number > 0 {
+            assert_eq!(block.header.parent_hash, origin_blocks[number - 1].header.hash);
+        }
+        assert!(forked_provider.get_block_by_hash(dump_block.header.hash).await.unwrap().is_none());
+        assert!(
+            forked_provider
+                .get_block_by_hash(dump_block.header.hash)
+                .full()
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            forked_provider
+                .get_transaction_by_block_hash_and_index(dump_block.header.hash, 0)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        if number > 0 {
+            let origin_tx = origin_provider
+                .get_transaction_by_hash(origin_transactions[number - 1])
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                forked_provider
+                    .get_transaction_by_hash(origin_transactions[number - 1])
+                    .await
+                    .unwrap(),
+                Some(origin_tx.clone())
+            );
+            assert!(
+                forked_provider
+                    .get_transaction_by_hash(dump_transactions[number - 1])
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+            assert_eq!(
+                forked_provider
+                    .get_transaction_by_block_hash_and_index(origin_block.header.hash, 0)
+                    .await
+                    .unwrap(),
+                Some(origin_tx.clone())
+            );
+            // Number-and-index forwarding currently excludes the fork head.
+            if (number as u64) < fork_boundary {
+                assert_eq!(
+                    forked_provider
+                        .get_transaction_by_block_number_and_index((number as u64).into(), 0)
+                        .await
+                        .unwrap(),
+                    Some(origin_tx)
+                );
+            }
+        }
+    }
+}
+
 // <https://github.com/foundry-rs/foundry/issues/10501>
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_load_state_keeps_number_opcode_in_sync() {

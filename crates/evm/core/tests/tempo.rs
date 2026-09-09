@@ -176,7 +176,6 @@ async fn foundry_factory_keychain_limit_refund_does_not_leak_storage_credit() {
     let mut evm = TempoEvmFactory::default().create_foundry_evm_with_inspector(
         &mut db,
         evm_env,
-        (),
         NoOpInspector,
     );
 

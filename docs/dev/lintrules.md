@@ -46,17 +46,25 @@ Next, choose whether you want an [early or late lint pass](#choosing-between-ear
   // Note: The macro automatically generates a help link to the Foundry book
   ```
 
-- Register the pass struct and the lint using `register_lints!` in the `mod.rs` of its corresponding severity category. Specify the pass type (`early`, `late`, or both). Note that a single pass can handle multiple lints:
+- Declare the lint module and register its pass(es) with `register_lints!` in the `mod.rs` of its corresponding severity category. Entries are grouped by module (`module: (PassStruct, early | late | project, (LINTS...)), ...;`); a single pass can handle multiple lints and a module can declare several passes:
   ```rust
+  mod mixed_case;
+  mod pascal_case;
+  mod screaming_snake_case;
+
   register_lints!(
-    (PascalCaseStruct, early, (PASCAL_CASE_STRUCT)),
-    (MixedCaseVariable, early, (MIXED_CASE_VARIABLE)),
-    (MixedCaseFunction, early, (MIXED_CASE_FUNCTION)),
-    (ScreamingSnakeCase, early, (SCREAMING_SNAKE_CASE_CONSTANT, SCREAMING_SNAKE_CASE_IMMUTABLE)),
-    (AsmKeccak256, late, (ASM_KECCAK256))
+      pascal_case: (PascalCaseStruct, early, (PASCAL_CASE_STRUCT));
+      mixed_case:
+          (MixedCaseVariable, early, (MIXED_CASE_VARIABLE)),
+          (MixedCaseFunction, early, (MIXED_CASE_FUNCTION));
+      screaming_snake_case:
+          (ScreamingSnakeCase, early, (SCREAMING_SNAKE_CASE_CONSTANT, SCREAMING_SNAKE_CASE_IMMUTABLE));
   );
-  // The macro automatically generates the pass structs and helper functions
+  // The macro glob-imports each module and generates the pass structs, `REGISTERED_LINTS` and
+  // the registration function.
   ```
+
+- Reuse the shared HIR probes in `crates/lint/src/sol/analysis/` (expression, statement, type and access-control helpers) instead of reimplementing them in the lint.
 
 - Implement the appropriate trait logic (`EarlyLintPass` or `LateLintPass`) for your lint. Do it in a new file within the relevant severity module (e.g., `src/sol/med/my_new_lint.rs`).
 

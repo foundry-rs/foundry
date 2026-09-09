@@ -49,78 +49,12 @@ const POLL_INTERVAL_BLOCK_TIME_SCALE_FACTOR: f32 = 0.6;
 /// Helper type alias for a retry provider
 pub type RetryProvider<N = AnyNetwork> = RootProvider<N>;
 
-/// Returns whether an RPC transport error reports JSON-RPC method-not-found.
-///
-/// Some providers encode JSON-RPC errors inside an HTTP error response instead of returning a
-/// normal JSON-RPC response. Only the exact `-32601` code is treated as method unavailability;
-/// authentication, internal, and transport errors must remain visible to callers.
-pub fn is_rpc_method_not_found(error: &TransportError) -> bool {
-    if error.as_error_resp().is_some_and(|response| response.code == -32601) {
-        return true;
-    }
-    let TransportError::Transport(error) = error else { return false };
-    error
-        .as_http_error()
-        .and_then(|error| rpc_error_code(&error.body))
-        .is_some_and(|code| code == -32601)
-}
-
-/// Returns an RPC URL safe for display by retaining only its scheme, host, and port.
-pub fn redact_url(raw: &str) -> String {
-    let Ok(mut redacted) = Url::parse(raw) else {
-        return "<redacted>".to_owned();
-    };
-    let _ = redacted.set_username("");
-    let _ = redacted.set_password(None);
-    redacted.set_path("");
-    redacted.set_query(None);
-    redacted.set_fragment(None);
-    redacted.to_string()
-}
-
-fn rpc_error_code(body: &str) -> Option<i64> {
-    // HTTP transports may append human-readable diagnostics after the JSON-RPC body. Parse the
-    // first complete JSON value instead of requiring the entire body to be JSON.
-    let value =
-        serde_json::Deserializer::from_str(body).into_iter::<serde_json::Value>().next()?.ok()?;
-    value.get("error").unwrap_or(&value).get("code")?.as_i64()
-}
-
 /// Helper type alias for a retry provider with a signer
 pub type RetryProviderWithSigner<N = AnyNetwork, W = EthereumWallet> = FillProvider<
     JoinFill<JoinFill<Identity, <N as RecommendedFillers>::RecommendedFillers>, WalletFiller<W>>,
     RootProvider<N>,
     N,
 >;
-
-/// Constructs a provider with a 100 millisecond interval poll if it's a localhost URL (most likely
-/// an anvil or other dev node) and with the default, or 7 second otherwise.
-///
-/// See [`try_get_http_provider`] for more details.
-///
-/// # Panics
-///
-/// Panics if the URL is invalid.
-///
-/// # Examples
-///
-/// ```
-/// use foundry_common::provider::get_http_provider;
-///
-/// let retry_provider = get_http_provider("http://localhost:8545");
-/// ```
-#[inline]
-#[track_caller]
-pub fn get_http_provider(builder: impl AsRef<str>) -> RetryProvider {
-    try_get_http_provider(builder).unwrap()
-}
-
-/// Constructs a provider with a 100 millisecond interval poll if it's a localhost URL (most likely
-/// an anvil or other dev node) and with the default, or 7 second otherwise.
-#[inline]
-pub fn try_get_http_provider(builder: impl AsRef<str>) -> Result<RetryProvider> {
-    ProviderBuilder::new(builder.as_ref()).build()
-}
 
 /// A round-robin transport that distributes requests across multiple transports.
 ///
@@ -258,14 +192,21 @@ impl<N: Network> ProviderBuilder<N> {
     /// Defaults to `http://localhost:8545` and `Mainnet`.
     pub fn from_config(config: &Config) -> Result<Self> {
         let url = config.get_rpc_url_or_localhost_http()?;
-        let mut builder = Self::new(url.as_ref())
-            .accept_invalid_certs(config.eth_rpc_accept_invalid_certs)
-            .no_proxy(config.eth_rpc_no_proxy)
-            .curl_mode(config.eth_rpc_curl);
+        let mut builder = Self::from_config_with_url(config, url.as_ref())?;
 
         if let Ok(chain) = config.chain.unwrap_or_default().try_into() {
             builder = builder.chain(chain);
         }
+
+        Ok(builder)
+    }
+
+    /// Constructs a [ProviderBuilder] for `url`, applying transport options from [Config].
+    pub fn from_config_with_url(config: &Config, url: &str) -> Result<Self> {
+        let mut builder = Self::new(url)
+            .accept_invalid_certs(config.eth_rpc_accept_invalid_certs)
+            .no_proxy(config.eth_rpc_no_proxy)
+            .curl_mode(config.eth_rpc_curl);
 
         if let Some(jwt) = config.get_rpc_jwt_secret()? {
             builder = builder.jwt(jwt.as_ref());
@@ -607,6 +548,74 @@ impl<N: Network> ProviderBuilder<N> {
     }
 }
 
+/// Returns whether an RPC transport error reports JSON-RPC method-not-found.
+///
+/// Some providers encode JSON-RPC errors inside an HTTP error response instead of returning a
+/// normal JSON-RPC response. Only the exact `-32601` code is treated as method unavailability;
+/// authentication, internal, and transport errors must remain visible to callers.
+pub fn is_rpc_method_not_found(error: &TransportError) -> bool {
+    rpc_error_code(error) == Some(-32601)
+}
+
+/// Returns an RPC URL safe for display by retaining only its scheme, host, and port.
+pub fn redact_url(raw: &str) -> String {
+    let Ok(mut redacted) = Url::parse(raw) else {
+        return "<redacted>".to_owned();
+    };
+    let _ = redacted.set_username("");
+    let _ = redacted.set_password(None);
+    redacted.set_path("");
+    redacted.set_query(None);
+    redacted.set_fragment(None);
+    redacted.to_string()
+}
+
+fn rpc_error_code(error: &TransportError) -> Option<i64> {
+    if let Some(response) = error.as_error_resp() {
+        return Some(response.code);
+    }
+    let TransportError::Transport(error) = error else { return None };
+    error.as_http_error().and_then(|error| rpc_error_code_from_body(&error.body))
+}
+
+fn rpc_error_code_from_body(body: &str) -> Option<i64> {
+    // HTTP transports may append human-readable diagnostics after the JSON-RPC body. Parse the
+    // first complete JSON value instead of requiring the entire body to be JSON.
+    let value =
+        serde_json::Deserializer::from_str(body).into_iter::<serde_json::Value>().next()?.ok()?;
+    let error = value.get("error").unwrap_or(&value);
+    error.get("code")?.as_i64()
+}
+
+/// Constructs a provider with a 100 millisecond interval poll if it's a localhost URL (most likely
+/// an anvil or other dev node) and with the default, or 7 second otherwise.
+///
+/// See [`try_get_http_provider`] for more details.
+///
+/// # Panics
+///
+/// Panics if the URL is invalid.
+///
+/// # Examples
+///
+/// ```
+/// use foundry_common::provider::get_http_provider;
+///
+/// let retry_provider = get_http_provider("http://localhost:8545");
+/// ```
+#[inline]
+#[track_caller]
+pub fn get_http_provider(builder: impl AsRef<str>) -> RetryProvider {
+    try_get_http_provider(builder).unwrap()
+}
+
+/// Constructs a provider with a 100 millisecond interval poll if it's a localhost URL (most likely
+/// an anvil or other dev node) and with the default, or 7 second otherwise.
+#[inline]
+pub fn try_get_http_provider(builder: impl AsRef<str>) -> Result<RetryProvider> {
+    ProviderBuilder::new(builder.as_ref()).build()
+}
+
 #[cfg(not(windows))]
 fn resolve_path(path: &Path) -> Result<PathBuf, ()> {
     if path.is_absolute() {
@@ -701,6 +710,7 @@ mod tests {
     fn from_config_applies_rpc_transport_options() {
         let config = Config {
             eth_rpc_url: Some("http://example.com".to_string()),
+            chain: Some(NamedChain::Polygon.into()),
             eth_rpc_accept_invalid_certs: true,
             eth_rpc_no_proxy: true,
             eth_rpc_timeout: Some(7),
@@ -712,5 +722,24 @@ mod tests {
         assert!(builder.accept_invalid_certs);
         assert!(builder.no_proxy);
         assert_eq!(builder.timeout, Duration::from_secs(7));
+        assert_eq!(builder.chain, NamedChain::Polygon);
+    }
+
+    #[test]
+    fn from_config_with_url_overrides_rpc_url() {
+        let config = Config {
+            eth_rpc_url: Some("http://configured.example".to_string()),
+            chain: Some(NamedChain::Polygon.into()),
+            eth_rpc_timeout: Some(7),
+            ..Default::default()
+        };
+
+        let builder =
+            ProviderBuilder::<AnyNetwork>::from_config_with_url(&config, "http://sequence.example")
+                .unwrap();
+
+        assert_eq!(builder.url.unwrap().as_str(), "http://sequence.example/");
+        assert_eq!(builder.timeout, Duration::from_secs(7));
+        assert_eq!(builder.chain, NamedChain::Mainnet);
     }
 }

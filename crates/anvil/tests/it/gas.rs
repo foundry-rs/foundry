@@ -191,6 +191,20 @@ async fn test_tip_above_fee_cap() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_zero_block_fee_history_is_empty() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+
+    let history = api.fee_history(U256::ZERO, BlockNumberOrTag::Latest, vec![50.0]).await.unwrap();
+
+    assert_eq!(history.oldest_block, 0);
+    assert!(history.base_fee_per_gas.is_empty());
+    assert!(history.gas_used_ratio.is_empty());
+    assert!(history.reward.is_none());
+    assert!(history.base_fee_per_blob_gas.is_empty());
+    assert!(history.blob_gas_used_ratio.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_can_use_fee_history() {
     let base_fee = 50u128;
     let (_api, handle) = spawn(NodeConfig::test().with_base_fee(Some(base_fee as u64))).await;
@@ -283,6 +297,25 @@ async fn test_fee_history_ignores_stale_cache_after_reset() {
     api.mine_one().await.unwrap();
     let first = provider.get_block(BlockId::number(1)).await.unwrap().unwrap();
     assert_eq!(first.header.base_fee_per_gas, Some(INITIAL_BASE_FEE));
+}
+
+// Zero gas limits must not serialize gasUsedRatio as null.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fee_history_zero_gas_limit_does_not_produce_null_ratio() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    assert!(api.evm_set_block_gas_limit(U256::ZERO).unwrap());
+    api.mine_one().await.unwrap();
+
+    // Use HTTP to exercise JSON serialization and client deserialization.
+    let fee_history = provider
+        .get_fee_history(1, BlockNumberOrTag::Latest, &[])
+        .await
+        .expect("gasUsedRatio must deserialize as a finite f64, not null");
+
+    let ratio = *fee_history.gas_used_ratio.last().unwrap();
+    assert_eq!(ratio, 0.0, "a zero-gas-limit block used none of its (zero) capacity");
 }
 
 #[tokio::test(flavor = "multi_thread")]

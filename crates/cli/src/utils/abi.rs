@@ -9,24 +9,6 @@ use foundry_common::abi::{
 };
 use futures::future::join_all;
 
-async fn resolve_name_args<N: Network, P: Provider<N>>(
-    args: &[String],
-    provider: &P,
-) -> Vec<String> {
-    join_all(args.iter().map(|arg| async {
-        if arg.contains('.') {
-            let addr = NameOrAddress::Name(arg.clone()).resolve(provider).await;
-            match addr {
-                Ok(addr) => addr.to_string(),
-                Err(_) => arg.clone(),
-            }
-        } else {
-            arg.clone()
-        }
-    }))
-    .await
-}
-
 pub async fn parse_function_args<N: Network, P: Provider<N>>(
     sig: &str,
     args: Vec<String>,
@@ -70,4 +52,22 @@ pub async fn parse_function_args<N: Network, P: Provider<N>>(
     } else {
         Ok((encode_function_args(&func, &args)?, Some(func)))
     }
+}
+
+async fn resolve_name_args<N: Network, P: Provider<N>>(
+    args: &[String],
+    provider: &P,
+) -> Vec<String> {
+    join_all(args.iter().map(|arg| async {
+        if arg.contains('.') {
+            let addr = NameOrAddress::Name(arg.clone()).resolve(provider).await;
+            match addr {
+                Ok(addr) => addr.to_string(),
+                Err(_) => arg.clone(),
+            }
+        } else {
+            arg.clone()
+        }
+    }))
+    .await
 }

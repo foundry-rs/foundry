@@ -1,0 +1,854 @@
+//! Dependency installation shared by Forge commands.
+
+use crate::{
+    lockfile::{DepIdentifier, DepMap, FOUNDRY_LOCK, Lockfile},
+    opts::Dependency,
+    utils::{Git, LoadConfig},
+};
+use clap::{Parser, ValueHint};
+use eyre::{Context, Result};
+use foundry_common::fs;
+use foundry_config::{Config, impl_figment_convert_basic};
+use regex::Regex;
+use semver::Version;
+use soldeer_commands::{Command, Verbosity, commands::install::Install};
+use std::{
+    io::IsTerminal,
+    path::{Path, PathBuf},
+    str,
+    sync::LazyLock,
+};
+use yansi::Paint;
+
+static DEPENDENCY_VERSION_TAG_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^v?\d+(\.\d+)*$").unwrap());
+
+/// CLI arguments for `forge install`.
+#[derive(Clone, Debug, Parser)]
+#[command(override_usage = "forge install [OPTIONS] [DEPENDENCIES]...
+    forge install [OPTIONS] <github username>/<github project>@<tag>...
+    forge install [OPTIONS] <alias>=<github username>/<github project>@<tag>...
+    forge install [OPTIONS] <https://<github token>@git url>...)]
+    forge install [OPTIONS] <https:// git url>...")]
+pub struct InstallArgs {
+    /// The dependencies to install.
+    ///
+    /// A dependency can be a raw URL, or the path to a GitHub repository.
+    ///
+    /// Additionally, a ref can be provided by adding @ to the dependency path.
+    ///
+    /// A ref can be:
+    /// - A branch: master
+    /// - A tag: v1.2.3
+    /// - A commit: 8e8128
+    ///
+    /// For exact match, a ref can be provided with `@tag=`, `@branch=` or `@rev=` prefix.
+    ///
+    /// Target installation directory can be added via `<alias>=` suffix.
+    /// The dependency will installed to `lib/<alias>`.
+    dependencies: Vec<Dependency>,
+
+    /// The project's root path.
+    ///
+    /// By default root of the Git repository, if in one,
+    /// or the current working directory.
+    #[arg(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
+    pub root: Option<PathBuf>,
+
+    /// Do not create a commit after installing.
+    ///
+    /// This is a noop flag kept for backwards compatibility, as `forge install` no longer commits
+    /// by default. Use `--commit` to opt into creating a commit.
+    #[arg(long, hide = true)]
+    pub no_commit: bool,
+
+    #[command(flatten)]
+    opts: DependencyInstallOpts,
+}
+
+impl_figment_convert_basic!(InstallArgs);
+
+impl InstallArgs {
+    pub async fn run(mut self) -> Result<()> {
+        if self.root.is_none() {
+            self.root = std::env::current_dir()?
+                .ancestors()
+                .find(|root| root.join(Config::FILE_NAME).is_file())
+                .map(Path::to_path_buf);
+        }
+        let mut config = self.load_config()?;
+        self.opts.install(&mut config, self.dependencies).await
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Parser)]
+pub struct DependencyInstallOpts {
+    /// Perform shallow clones instead of deep ones.
+    ///
+    /// Improves performance and reduces disk usage, but prevents switching branches or tags.
+    #[arg(long)]
+    pub shallow: bool,
+
+    /// Install without adding the dependency as a submodule.
+    #[arg(long)]
+    pub no_git: bool,
+
+    /// Create a commit after installing the dependencies.
+    #[arg(long)]
+    pub commit: bool,
+}
+
+impl DependencyInstallOpts {
+    pub fn git(self, config: &Config) -> Git<'_> {
+        Git::from_config(config).shallow(self.shallow)
+    }
+
+    /// Installs all missing dependencies.
+    ///
+    /// See also [`Self::install`].
+    ///
+    /// Returns true if any dependency was installed.
+    pub fn install_missing_dependencies(self, config: &mut Config) -> bool {
+        let lib = config.install_lib_dir();
+        if self.git(config).has_missing_dependencies(Some(lib)).unwrap_or(false) {
+            let _ = sh_status!("Missing dependencies found. Installing now...");
+
+            if self.install_existing_dependencies(config).is_err() {
+                let _ =
+                    sh_warn!("Your project has missing dependencies that could not be installed.");
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Restores existing dependencies without running asynchronous package installation.
+    fn install_existing_dependencies(self, config: &mut Config) -> Result<()> {
+        let git = self.git(config);
+        let install_lib_dir = config.install_lib_dir();
+        let libs = git.root.join(install_lib_dir);
+        let (lockfile, out_of_sync_deps) = self.sync_lockfile(config, &git)?;
+
+        if !self.no_git {
+            // Use the root of the git repository to look for submodules.
+            let root = Git::root_of(git.root)?;
+            match git.has_submodules(Some(&root)) {
+                Ok(true) => {
+                    sh_status!("Updating dependencies in {}", libs.display())?;
+
+                    // recursively fetch all submodules (without fetching latest)
+                    git.submodule_update(false, false, false, true, Some(&libs))?;
+
+                    // checkout submodules at the revs recorded in `foundry.lock`
+                    if let Some(out_of_sync) = &out_of_sync_deps {
+                        for (rel_path, dep_id) in out_of_sync {
+                            git.checkout_at(dep_id.checkout_id(), &git.root.join(rel_path))?;
+                        }
+                    }
+
+                    lockfile.write()?;
+                }
+                Err(err) => {
+                    sh_err!("Failed to check for submodules: {err}")?;
+                }
+                _ => {
+                    // no submodules, nothing to do
+                }
+            }
+        }
+
+        fs::create_dir_all(&libs)?;
+
+        // update `libs` in config if not included yet
+        if !config.libs.iter().any(|p| p == install_lib_dir) {
+            config.libs.push(install_lib_dir.to_path_buf());
+            config.update_libs()?;
+        }
+
+        Ok(())
+    }
+
+    fn sync_lockfile<'a>(
+        self,
+        config: &Config,
+        git: &'a Git<'_>,
+    ) -> Result<(Lockfile<'a>, Option<DepMap>)> {
+        let libs = git.root.join(config.install_lib_dir());
+        let mut lockfile = Lockfile::new(&config.root);
+        if !self.no_git {
+            lockfile = lockfile.with_git(git);
+
+            // Check if submodules are uninitialized, if so, we need to fetch all submodules
+            // This is to ensure that foundry.lock syncs successfully and doesn't error out, when
+            // looking for commits/tags in submodules
+            if git.submodules_uninitialized()? {
+                trace!(lib = %libs.display(), "submodules uninitialized");
+                git.submodule_update(false, false, false, true, Some(&libs))?;
+            }
+        }
+
+        let out_of_sync_deps = lockfile.sync(config.install_lib_dir())?;
+
+        Ok((lockfile, out_of_sync_deps))
+    }
+
+    /// Installs all dependencies
+    pub async fn install(self, config: &mut Config, dependencies: Vec<Dependency>) -> Result<()> {
+        if dependencies.is_empty() {
+            return self.install_existing_dependencies(config);
+        }
+
+        let Self { no_git, commit, .. } = self;
+
+        let git = self.git(config);
+
+        let install_lib_dir = config.install_lib_dir();
+        let libs = git.root.join(install_lib_dir);
+
+        let (mut lockfile, out_of_sync_deps) = self.sync_lockfile(config, &git)?;
+
+        fs::create_dir_all(&libs)?;
+
+        let installer = Installer { git, commit };
+        for dep in dependencies {
+            if dep
+                .name()
+                .split(['/', '\\'])
+                .any(|component| component.is_empty() || matches!(component, "." | ".."))
+            {
+                eyre::bail!("invalid dependency name: {}", dep.name());
+            }
+            let path = libs.join(dep.name());
+            let rel_path = path
+                .strip_prefix(git.root)
+                .wrap_err("Library directory is not relative to the repository root")?;
+            sh_status!(
+                "Installing {} in {} (url: {}, tag: {})",
+                dep.name,
+                path.display(),
+                dep.url.as_deref().unwrap_or("None"),
+                dep.tag.as_deref().unwrap_or("None")
+            )?;
+
+            // this tracks the actual installed tag
+            let installed_tag;
+            let mut dep_id = None;
+            if no_git {
+                installed_tag = installer.install_as_folder(&dep, &path)?;
+            } else {
+                if commit {
+                    git.ensure_clean()?;
+                }
+                installed_tag = installer.install_as_submodule(&dep, &path)?;
+
+                let mut new_insertion = false;
+                // Pin branch to submodule if branch is used
+                if let Some(tag_or_branch) = &installed_tag {
+                    // First, check if this tag has a branch
+                    dep_id = Some(DepIdentifier::resolve_type(&git, &path, tag_or_branch)?);
+                    if git.has_branch(tag_or_branch, &path)?
+                        && dep_id.as_ref().is_some_and(|id| id.is_branch())
+                    {
+                        // always work with relative paths when directly modifying submodules
+                        git.set_submodule_branch(rel_path, tag_or_branch)?;
+                        let root = Git::root_of(git.root)?;
+                        git.root(&root).add_literal(Path::new(".gitmodules"))?;
+
+                        let rev = git.get_rev(tag_or_branch, &path)?;
+
+                        dep_id = Some(DepIdentifier::Branch {
+                            name: tag_or_branch.clone(),
+                            rev,
+                            r#override: false,
+                        });
+                    }
+
+                    trace!(?dep_id, ?tag_or_branch, "resolved dep id");
+                    if let Some(dep_id) = &dep_id {
+                        new_insertion = true;
+                        lockfile.insert(rel_path.to_path_buf(), dep_id.clone());
+                    }
+
+                    if commit {
+                        // update .gitmodules which is at the root of the repo,
+                        // not necessarily at the root of the current Foundry project
+                        let root = Git::root_of(git.root)?;
+                        git.root(&root).add(Some(".gitmodules"))?;
+                    }
+                }
+
+                if new_insertion
+                    || out_of_sync_deps.as_ref().is_some_and(|o| !o.is_empty())
+                    || !lockfile.exists()
+                {
+                    lockfile.write()?;
+                }
+
+                // commit the installation
+                if commit {
+                    let mut msg = String::with_capacity(128);
+                    msg.push_str("forge install: ");
+                    msg.push_str(dep.name());
+
+                    if let Some(tag) = &installed_tag {
+                        msg.push_str("\n\n");
+
+                        if let Some(dep_id) = &dep_id {
+                            msg.push_str(&dep_id.to_string());
+                        } else {
+                            msg.push_str(tag);
+                        }
+                    }
+
+                    if !lockfile.is_empty() {
+                        git.root(&config.root).add(Some(FOUNDRY_LOCK))?;
+                    }
+                    git.commit(&msg)?;
+                }
+            }
+
+            let mut msg = format!("    {} {}", "Installed".green(), dep.name);
+            if let Some(tag) = dep.tag.or(installed_tag) {
+                msg.push(' ');
+
+                if let Some(dep_id) = dep_id {
+                    msg.push_str(&dep_id.to_string());
+                } else {
+                    msg.push_str(tag.as_str());
+                }
+            }
+            sh_status!("{msg}")?;
+
+            // Check if the dependency has soldeer.lock and install soldeer dependencies
+            if let Err(e) = install_soldeer_deps_if_needed(&path).await {
+                sh_warn!("Failed to install soldeer dependencies for {}: {e}", dep.name)?;
+            }
+        }
+
+        // update `libs` in config if not included yet
+        if !config.libs.iter().any(|p| p == install_lib_dir) {
+            config.libs.push(install_lib_dir.to_path_buf());
+            config.update_libs()?;
+        }
+
+        Ok(())
+    }
+}
+
+/// Installs missing dependencies and reloads config only to discover new remappings.
+pub fn install_missing_dependencies<E>(
+    config: &mut Config,
+    reload: impl FnOnce() -> Result<Config, E>,
+) -> Result<(), E> {
+    if DependencyInstallOpts::default().install_missing_dependencies(config)
+        && config.auto_detect_remappings
+    {
+        *config = reload()?;
+    }
+    Ok(())
+}
+
+/// Checks if a dependency has soldeer.lock and installs soldeer dependencies if needed.
+async fn install_soldeer_deps_if_needed(dep_path: &Path) -> Result<()> {
+    let soldeer_lock = dep_path.join("soldeer.lock");
+
+    if soldeer_lock.exists() {
+        sh_status!("    Found soldeer.lock, installing soldeer dependencies...")?;
+
+        // Change to the dependency directory and run soldeer install
+        let original_dir = std::env::current_dir()?;
+        std::env::set_current_dir(dep_path)?;
+
+        let result = soldeer_commands::run(
+            Command::Install(Install::default()),
+            Verbosity::new(
+                foundry_common::shell::verbosity(),
+                if foundry_common::shell::is_quiet() { 1 } else { 0 },
+            ),
+        )
+        .await;
+
+        // Change back to original directory
+        std::env::set_current_dir(original_dir)?;
+
+        result.map_err(|e| eyre::eyre!("Failed to run soldeer install: {e}"))?;
+        sh_status!("    Soldeer dependencies installed successfully")?;
+    }
+
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Installer<'a> {
+    git: Git<'a>,
+    commit: bool,
+}
+
+struct NewSubmoduleGuard {
+    root: PathBuf,
+    relative_path: PathBuf,
+    path: PathBuf,
+    module_dir: PathBuf,
+    gitmodules_contents: Option<Vec<u8>>,
+    armed: bool,
+}
+
+impl NewSubmoduleGuard {
+    const fn disarm(&mut self) {
+        self.armed = false;
+    }
+
+    fn rollback(&self) {
+        let git = Git::new(&self.root);
+        if let Err(err) = git.remove_index_path(&self.relative_path) {
+            warn!(%err, "failed to remove submodule after installation failure");
+        }
+        if self.path.exists()
+            && let Err(err) = fs::remove_dir_all(&self.path)
+        {
+            warn!(%err, "failed to remove dependency after installation failure");
+        }
+        if self.module_dir.exists()
+            && let Err(err) = fs::remove_dir_all(&self.module_dir)
+        {
+            warn!(%err, "failed to remove submodule Git directory after installation failure");
+        }
+        if let Err(err) = git.remove_submodule_config(&self.relative_path) {
+            warn!(%err, "failed to remove submodule config after installation failure");
+        }
+        restore_file(&self.root.join(".gitmodules"), self.gitmodules_contents.as_deref());
+        if let Err(err) = git.add_literal(Path::new(".gitmodules")) {
+            warn!(%err, "failed to restore staged .gitmodules after installation failure");
+        }
+    }
+}
+
+impl Drop for NewSubmoduleGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            self.rollback();
+        }
+    }
+}
+
+fn restore_file(path: &Path, contents: Option<&[u8]>) {
+    let result = match contents {
+        Some(contents) => fs::write(path, contents),
+        None if path.exists() => fs::remove_file(path),
+        None => Ok(()),
+    };
+    if let Err(err) = result {
+        warn!(%err, path = %path.display(), "failed to restore file after installation failure");
+    }
+}
+
+impl Installer<'_> {
+    /// Installs the dependency as an ordinary folder instead of a submodule
+    fn install_as_folder(self, dep: &Dependency, path: &Path) -> Result<Option<String>> {
+        let url = dep.require_url()?;
+        Git::clone(dep.tag.is_none(), url, Some(&path))?;
+        let mut dep = dep.clone();
+
+        if dep.tag.is_none() {
+            // try to find latest semver release tag
+            dep.tag = self.last_tag(path);
+        }
+
+        // checkout the tag if necessary, using recursive checkout to properly clean up
+        // nested submodules that may exist on the default branch but not on the target tag.
+        // See: https://github.com/foundry-rs/foundry/issues/13688
+        self.git_checkout(&dep, path, true)?;
+
+        trace!("updating dependency submodules recursively");
+        self.git.root(path).submodule_update(
+            false,
+            false,
+            false,
+            true,
+            std::iter::empty::<PathBuf>(),
+        )?;
+
+        // remove nested .git directories from submodules before removing the top-level .git
+        Self::remove_nested_git_dirs(path)?;
+
+        // remove git artifacts
+        fs::remove_dir_all(path.join(".git"))?;
+
+        Ok(dep.tag)
+    }
+
+    /// Recursively removes `.git` files/directories from nested submodules within `root`.
+    ///
+    /// Submodules typically have a `.git` file (not a directory) pointing to the parent's
+    /// `.git/modules/` directory. This cleans those up so the result is a plain folder tree.
+    fn remove_nested_git_dirs(root: &Path) -> Result<()> {
+        Self::remove_nested_git_dirs_inner(root, root)
+    }
+
+    fn remove_nested_git_dirs_inner(root: &Path, dir: &Path) -> Result<()> {
+        let entries = match std::fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(_) => return Ok(()),
+        };
+        for entry in entries {
+            let entry = entry?;
+            let ft = entry.file_type()?;
+
+            // never follow symlinks
+            if ft.is_symlink() {
+                continue;
+            }
+
+            let path = entry.path();
+            if path.file_name() == Some(".git".as_ref()) && path.parent() != Some(root) {
+                if ft.is_dir() {
+                    fs::remove_dir_all(&path)?;
+                } else {
+                    fs::remove_file(&path)?;
+                }
+            } else if ft.is_dir() {
+                Self::remove_nested_git_dirs_inner(root, &path)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Installs the dependency as new submodule.
+    ///
+    /// This will add the git submodule to the given dir, initialize it and checkout the tag if
+    /// provided or try to find the latest semver, release tag.
+    fn install_as_submodule(self, dep: &Dependency, path: &Path) -> Result<Option<String>> {
+        let root = Git::root_of(self.git.root)?;
+        let relative_path = path.strip_prefix(&root)?;
+        let git = self.git.root(&root);
+        let gitmodules = root.join(".gitmodules");
+        let gitmodules_contents = gitmodules.exists().then(|| fs::read(&gitmodules)).transpose()?;
+        let has_mapping = git.has_submodule_mapping(relative_path)?;
+        let is_gitlink = git.is_gitlink(relative_path)?;
+        if has_mapping != is_gitlink {
+            eyre::bail!(
+                "cannot safely install dependency at {} because .gitmodules already contains a matching submodule",
+                relative_path.display()
+            );
+        }
+        let mut guard = if is_gitlink {
+            None
+        } else {
+            let module_dir = git.absolute_git_dir()?.join("modules").join(relative_path);
+            let gitmodules_safe = !gitmodules.is_symlink()
+                && if gitmodules.exists() {
+                    git.is_normal_tracked_file(Path::new(".gitmodules"))?
+                } else {
+                    !git.has_index_entries(Path::new(".gitmodules"))?
+                };
+            let can_rollback = !path.is_symlink()
+                && !path.exists()
+                && !module_dir.exists()
+                && !git.has_index_entries(relative_path)?
+                && !git.has_submodule_config(relative_path)?
+                && git.is_path_clean(relative_path)?
+                && gitmodules_safe;
+            if !can_rollback {
+                eyre::bail!(
+                    "cannot safely install dependency at {} because the target or .gitmodules has existing changes",
+                    relative_path.display()
+                );
+            }
+            Some(NewSubmoduleGuard {
+                root,
+                relative_path: relative_path.to_path_buf(),
+                path: path.to_path_buf(),
+                module_dir,
+                gitmodules_contents,
+                armed: true,
+            })
+        };
+
+        // install the dep
+        self.git_submodule(dep, path)?;
+
+        let mut dep = dep.clone();
+        if dep.tag.is_none() {
+            // try to find latest semver release tag
+            dep.tag = self.last_tag(path);
+        }
+
+        // checkout the tag if necessary
+        self.git_checkout(&dep, path, true)?;
+
+        trace!("updating dependency submodules recursively");
+        self.git.root(path).submodule_update(
+            false,
+            false,
+            false,
+            true,
+            std::iter::empty::<PathBuf>(),
+        )?;
+
+        // sync submodules config with changes in .gitmodules, see <https://github.com/foundry-rs/foundry/issues/9611>
+        self.git.root(path).submodule_sync()?;
+
+        if let Some(guard) = &mut guard {
+            guard.disarm();
+        }
+        if self.commit {
+            self.git.add_literal(path)?;
+        }
+
+        Ok(dep.tag)
+    }
+
+    fn last_tag(self, path: &Path) -> Option<String> {
+        if self.git.shallow {
+            None
+        } else {
+            self.git_semver_tags(path).ok().and_then(|mut tags| tags.pop()).map(|(tag, _)| tag)
+        }
+    }
+
+    /// Returns all semver git tags sorted in ascending order
+    fn git_semver_tags(self, path: &Path) -> Result<Vec<(String, Version)>> {
+        let out = self.git.root(path).tag()?;
+        let mut tags = Vec::new();
+        // tags are commonly prefixed which would make them not semver: v1.2.3 is not a semantic
+        // version
+        let common_prefixes = &["v-", "v", "release-", "release"];
+        for tag in out.lines() {
+            let mut maybe_semver = tag;
+            for &prefix in common_prefixes {
+                if let Some(rem) = tag.strip_prefix(prefix) {
+                    maybe_semver = rem;
+                    break;
+                }
+            }
+            match Version::parse(maybe_semver) {
+                Ok(v) => {
+                    // ignore if additional metadata, like rc, beta, etc...
+                    if v.build.is_empty() && v.pre.is_empty() {
+                        tags.push((tag.to_string(), v));
+                    }
+                }
+                Err(err) => {
+                    warn!(?err, ?maybe_semver, "No semver tag");
+                }
+            }
+        }
+
+        tags.sort_by(|(_, a), (_, b)| a.cmp(b));
+
+        Ok(tags)
+    }
+
+    /// Install the given dependency as git submodule in `target_dir`.
+    fn git_submodule(self, dep: &Dependency, path: &Path) -> Result<()> {
+        let url = dep.require_url()?;
+
+        // make path relative to the git root, already checked above
+        let path = path.strip_prefix(self.git.root).unwrap();
+
+        trace!(?dep, url, ?path, "installing git submodule");
+        self.git.submodule_add(true, url, path)
+    }
+
+    fn git_checkout(self, dep: &Dependency, path: &Path, recurse: bool) -> Result<String> {
+        // no need to checkout if there is no tag
+        let Some(mut tag) = dep.tag.clone() else { return Ok(String::new()) };
+
+        let mut is_branch = false;
+        // only try to match tag if current terminal is a tty
+        if std::io::stdout().is_terminal() {
+            if tag.is_empty() {
+                tag = self.match_tag(&tag, path)?;
+            } else if let Some(branch) = self.match_branch(&tag, path)? {
+                trace!(?tag, ?branch, "selecting branch for given tag");
+                tag = branch;
+                is_branch = true;
+            }
+        }
+        let url = dep.url.as_ref().unwrap();
+
+        let res = self.git.root(path).checkout(recurse, &tag);
+        if let Err(mut e) = res {
+            // remove dependency on failed checkout
+            fs::remove_dir_all(path)?;
+            if e.to_string().contains("did not match any file(s) known to git") {
+                e = eyre::eyre!("Tag: \"{tag}\" not found for repo \"{url}\"!")
+            }
+            return Err(e);
+        }
+
+        if is_branch { Ok(tag) } else { Ok(String::new()) }
+    }
+
+    /// disambiguate tag if it is a version tag
+    fn match_tag(self, tag: &str, path: &Path) -> Result<String> {
+        // only try to match if it looks like a version tag
+        if !DEPENDENCY_VERSION_TAG_REGEX.is_match(tag) {
+            return Ok(tag.into());
+        }
+
+        // generate candidate list by filtering `git tag` output, valid ones are those "starting
+        // with" the user-provided tag (ignoring the starting 'v'), for example, if the user
+        // specifies 1.5, then v1.5.2 is a valid candidate, but v3.1.5 is not
+        let trimmed_tag = tag.trim_start_matches('v').to_string();
+        let output = self.git.root(path).tag()?;
+        let mut candidates: Vec<String> = output
+            .trim()
+            .lines()
+            .filter(|x| x.trim_start_matches('v').starts_with(&trimmed_tag))
+            .map(|x| x.to_string())
+            .rev()
+            .collect();
+
+        // no match found, fall back to the user-provided tag
+        if candidates.is_empty() {
+            return Ok(tag.into());
+        }
+
+        // have exact match
+        for candidate in &candidates {
+            if candidate == tag {
+                return Ok(tag.into());
+            }
+        }
+
+        // only one candidate, ask whether the user wants to accept or not
+        if candidates.len() == 1 {
+            let matched_tag = &candidates[0];
+            let input = prompt!(
+                "Found a similar version tag: {matched_tag}, do you want to use this instead? [Y/n] "
+            )?;
+            return if match_yn(input) { Ok(matched_tag.clone()) } else { Ok(tag.into()) };
+        }
+
+        // multiple candidates, ask the user to choose one or skip
+        candidates.insert(0, String::from("SKIP AND USE ORIGINAL TAG"));
+        sh_status!("There are multiple matching tags:")?;
+        for (i, candidate) in candidates.iter().enumerate() {
+            sh_status!("[{i}] {candidate}")?;
+        }
+
+        let n_candidates = candidates.len();
+        loop {
+            let input: String =
+                prompt!("Please select a tag (0-{}, default: 1): ", n_candidates - 1)?;
+            let s = input.trim();
+            // default selection, return first candidate
+            let n = if s.is_empty() { Ok(1) } else { s.parse() };
+            // match user input, 0 indicates skipping and use original tag
+            match n {
+                Ok(0) => return Ok(tag.into()),
+                Ok(i) if (1..=n_candidates).contains(&i) => {
+                    let c = &candidates[i];
+                    sh_status!("[{i}] {c} selected")?;
+                    return Ok(c.clone());
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn match_branch(self, tag: &str, path: &Path) -> Result<Option<String>> {
+        // fetch remote branches and check for tag
+        let output = self.git.root(path).remote_branches()?;
+
+        let mut candidates = output
+            .lines()
+            .map(|x| x.trim().trim_start_matches("origin/"))
+            .filter(|x| x.starts_with(tag))
+            .map(ToString::to_string)
+            .rev()
+            .collect::<Vec<_>>();
+
+        trace!(?candidates, ?tag, "found branch candidates");
+
+        // no match found, fall back to the user-provided tag
+        if candidates.is_empty() {
+            return Ok(None);
+        }
+
+        // have exact match
+        for candidate in &candidates {
+            if candidate == tag {
+                return Ok(Some(tag.to_string()));
+            }
+        }
+
+        // only one candidate, ask whether the user wants to accept or not
+        if candidates.len() == 1 {
+            let matched_tag = &candidates[0];
+            let input = prompt!(
+                "Found a similar branch: {matched_tag}, do you want to use this instead? [Y/n] "
+            )?;
+            return if match_yn(input) { Ok(Some(matched_tag.clone())) } else { Ok(None) };
+        }
+
+        // multiple candidates, ask the user to choose one or skip
+        candidates.insert(0, format!("{tag} (original branch)"));
+        sh_status!("There are multiple matching branches:")?;
+        for (i, candidate) in candidates.iter().enumerate() {
+            sh_status!("[{i}] {candidate}")?;
+        }
+
+        let n_candidates = candidates.len();
+        let input: String = prompt!(
+            "Please select a tag (0-{}, default: 1, Press <enter> to cancel): ",
+            n_candidates - 1
+        )?;
+        let input = input.trim();
+
+        // default selection, return None
+        if input.is_empty() {
+            sh_status!("Canceled branch matching")?;
+            return Ok(None);
+        }
+
+        // match user input, 0 indicates skipping and use original tag
+        match input.parse::<usize>() {
+            Ok(0) => Ok(Some(tag.into())),
+            Ok(i) if (1..=n_candidates).contains(&i) => {
+                let c = &candidates[i];
+                sh_status!("[{i}] {c} selected")?;
+                Ok(Some(c.clone()))
+            }
+            _ => Ok(None),
+        }
+    }
+}
+
+/// Matches on the result of a prompt for yes/no.
+///
+/// Defaults to true.
+fn match_yn(input: String) -> bool {
+    let s = input.trim().to_lowercase();
+    matches!(s.as_str(), "" | "y" | "yes")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    #[ignore = "slow"]
+    fn get_oz_tags() {
+        let tmp = tempdir().unwrap();
+        let git = Git::new(tmp.path());
+        let installer = Installer { git, commit: false };
+
+        git.init().unwrap();
+
+        let dep: Dependency = "openzeppelin/openzeppelin-contracts".parse().unwrap();
+        let libs = tmp.path().join("libs");
+        fs::create_dir(&libs).unwrap();
+        let submodule = libs.join("openzeppelin-contracts");
+        installer.git_submodule(&dep, &submodule).unwrap();
+        assert!(submodule.exists());
+
+        let tags = installer.git_semver_tags(&submodule).unwrap();
+        assert!(!tags.is_empty());
+        let v480: Version = "4.8.0".parse().unwrap();
+        assert!(tags.iter().any(|(_, v)| v == &v480));
+    }
+}

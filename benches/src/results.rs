@@ -481,6 +481,7 @@ pub fn versioned_summary_filename(json_output: &Path, version: &str) -> String {
 pub fn format_benchmark_name(name: &str) -> String {
     match name {
         "forge_test" => "Forge Test",
+        "forge_test_filtered" => "Forge Test (Warm Cache)",
         "forge_build_no_cache" => "Forge Build (No Cache)",
         "forge_build_with_cache" => "Forge Build (With Cache)",
         "forge_fuzz_test" => "Forge Fuzz Test",

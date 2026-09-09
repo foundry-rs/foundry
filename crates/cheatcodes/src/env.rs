@@ -9,6 +9,11 @@ use std::{env, sync::OnceLock};
 /// Stores the forge execution context for the duration of the program.
 pub static FORGE_CONTEXT: OnceLock<ForgeContext> = OnceLock::new();
 
+/// Returns the current forge execution context, if it has been set.
+pub fn current_execution_context() -> Option<ForgeContext> {
+    FORGE_CONTEXT.get().copied()
+}
+
 impl Cheatcode for setEnvCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { name: key, value } = self;

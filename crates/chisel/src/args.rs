@@ -7,16 +7,21 @@ use eyre::{Context, Result};
 use foundry_cli::utils::{self, LoadConfig};
 use foundry_common::fs;
 use foundry_config::Config;
-#[cfg(feature = "optimism")]
-use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork},
+    executors::ExecutorBuilder,
     opts::EvmOpts,
 };
 use foundry_evm_networks::NetworkConfigs;
 use rustyline::{Editor, config::Configurer, error::ReadlineError};
 use std::{ops::ControlFlow, path::PathBuf};
 use yansi::Paint;
+
+#[cfg(feature = "monad")]
+use foundry_evm::core::evm::MonadEvmNetwork;
+
+#[cfg(feature = "optimism")]
+use foundry_evm::core::evm::OpEvmNetwork;
 
 /// Run the `chisel` command line interface.
 pub fn run() -> Result<()> {
@@ -64,6 +69,7 @@ pub async fn run_command(args: Chisel) -> Result<()> {
             args,
             config,
             evm_opts,
+            ExecutorBuilder::<TempoEvmNetwork>::new(),
             local_networks,
             local_chain_id,
         ))
@@ -72,10 +78,11 @@ pub async fn run_command(args: Chisel) -> Result<()> {
 
     #[cfg(feature = "monad")]
     if evm_opts.networks.is_monad() {
-        return Box::pin(run_command_with_network::<foundry_evm::core::evm::MonadEvmNetwork>(
+        return Box::pin(run_command_with_network::<MonadEvmNetwork>(
             args,
             config,
             evm_opts,
+            ExecutorBuilder::<MonadEvmNetwork>::new(),
             local_networks,
             local_chain_id,
         ))
@@ -88,6 +95,7 @@ pub async fn run_command(args: Chisel) -> Result<()> {
             args,
             config,
             evm_opts,
+            ExecutorBuilder::<OpEvmNetwork>::new(),
             local_networks,
             local_chain_id,
         ))
@@ -98,6 +106,7 @@ pub async fn run_command(args: Chisel) -> Result<()> {
         args,
         config,
         evm_opts,
+        ExecutorBuilder::<EthEvmNetwork>::new(),
         local_networks,
         local_chain_id,
     ))
@@ -119,6 +128,7 @@ async fn run_command_with_network<FEN: FoundryEvmNetwork>(
     args: Chisel,
     config: Config,
     evm_opts: EvmOpts,
+    executor_builder: ExecutorBuilder<FEN>,
     local_networks: NetworkConfigs,
     local_chain_id: Option<u64>,
 ) -> Result<()> {
@@ -131,6 +141,7 @@ async fn run_command_with_network<FEN: FoundryEvmNetwork>(
         foundry_config: config,
         no_vm: args.no_vm,
         evm_opts,
+        executor_builder,
         local_networks: Some(local_networks),
         local_chain_id,
         fork_network_is_inferred,
@@ -236,7 +247,7 @@ async fn load_prelude_file<FEN: FoundryEvmNetwork>(
 ) -> Result<ControlFlow<()>> {
     let prelude = fs::read_to_string(file)
         .wrap_err("Could not load source file. Are you sure this path is correct?")?;
-    dispatcher.dispatch(&prelude).await
+    dispatcher.dispatch_solidity(&prelude).await
 }
 
 async fn handle_cli_command<FEN: FoundryEvmNetwork>(
@@ -290,5 +301,22 @@ mod tests {
         let inferred = infer_network_from_chain_id(ethereum, Some(143)).unwrap();
 
         assert_eq!(inferred, ethereum);
+    }
+
+    #[tokio::test]
+    async fn prelude_does_not_dispatch_chisel_commands() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("prelude.sol");
+        std::fs::write(&file, "!calldata 0x00").unwrap();
+        let config = crate::source::SessionSourceConfig::<EthEvmNetwork> {
+            foundry_config: Config {
+                solc: Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 29))),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut dispatcher = ChiselDispatcher::new(config).unwrap();
+
+        assert!(load_prelude_file(&mut dispatcher, file).await.is_err());
     }
 }

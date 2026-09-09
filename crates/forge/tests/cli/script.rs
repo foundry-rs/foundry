@@ -1120,6 +1120,47 @@ forgetest_async!(can_deploy_unlocked, |prj, cmd| {
         .broadcast(ScriptOutcome::OkBroadcast);
 });
 
+forgetest_async!(broadcast_honors_rpc_timeout, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let upstream = handle.http_endpoint();
+    let client = reqwest::Client::new();
+    let app = Router::new().fallback(move |body: BodyBytes| {
+        let upstream = upstream.clone();
+        let client = client.clone();
+        async move {
+            let request: Value = serde_json::from_slice(&body).unwrap();
+            if request.get("method").and_then(Value::as_str) == Some("eth_sendTransaction") {
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            }
+            client
+                .post(upstream)
+                .header("content-type", "application/json")
+                .body(body)
+                .send()
+                .await
+                .unwrap()
+                .bytes()
+                .await
+                .unwrap()
+        }
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let _proxy = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let mut tester = ScriptTester::new_broadcast(cmd, &endpoint, prj.root());
+    tester
+        .sender("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266".parse().unwrap())
+        .unlocked()
+        .args(&["--rpc-timeout", "1"])
+        .add_sig("BroadcastTest", "deployOther()")
+        .arg("--broadcast");
+    tester.cmd.assert_failure().stderr_eq(str![[r#"
+Error: Failed to send transaction after 4 attempts Err([..]operation timed out)
+
+"#]]);
+});
+
 forgetest_async!(can_deploy_script_remember_key, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
@@ -1322,6 +1363,72 @@ forgetest_async!(can_deploy_and_simulate_25_txes_concurrently, |prj, cmd| {
         .broadcast(ScriptOutcome::OkBroadcast)
         .assert_nonce_increment(&[(0, 25)])
         .await;
+});
+
+forgetest_async!(broadcast_records_hashes_in_submission_order, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let upstream = handle.http_endpoint();
+    let client = reqwest::Client::new();
+    let submissions = std::sync::Arc::new(AtomicUsize::new(0));
+    let release_first = std::sync::Arc::new(tokio::sync::Notify::new());
+    let app = Router::new().fallback(move |body: BodyBytes| {
+        let upstream = upstream.clone();
+        let client = client.clone();
+        let submissions = submissions.clone();
+        let release_first = release_first.clone();
+        async move {
+            let request: Value = serde_json::from_slice(&body).unwrap();
+            let position = (request["method"] == "eth_sendRawTransaction")
+                .then(|| submissions.fetch_add(1, Ordering::SeqCst));
+            let response = client
+                .post(upstream)
+                .header("content-type", "application/json")
+                .body(body)
+                .send()
+                .await
+                .unwrap()
+                .bytes()
+                .await
+                .unwrap();
+            if position == Some(0) {
+                release_first.notified().await;
+                // Let the later submission's response reach the broadcaster first.
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            } else if position == Some(1) {
+                release_first.notify_one();
+            }
+            response
+        }
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let proxy = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    ScriptTester::new_broadcast(cmd, &endpoint, prj.root())
+        .load_private_keys(&[0])
+        .await
+        .add_sig("BroadcastTestNoLinking", "deployMany()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast);
+    let path = prj.root().join("broadcast/Broadcast.t.sol/31337/deployMany-latest.json");
+    let sequence: ScriptSequence<Ethereum> = foundry_common::fs::read_json_file(&path).unwrap();
+    assert_eq!(sequence.transactions.len(), 25);
+    let client = reqwest::Client::new();
+    for (nonce, transaction) in sequence.transactions.iter().enumerate() {
+        let response: Value = client
+            .post(handle.http_endpoint())
+            .json(&serde_json::json!({
+                "jsonrpc": "2.0", "id": 1, "method": "eth_getTransactionByHash",
+                "params": [transaction.hash.unwrap()]
+            }))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(response["result"]["nonce"], format!("0x{nonce:x}"));
+    }
+    proxy.abort();
 });
 
 forgetest_async!(fork_script_reuses_chain_ids, |prj, cmd| {
@@ -3548,6 +3655,165 @@ Error: script failed: Usage of `address(this)` detected in script contract. Scri
 ...
 Script ran successfully.
 ...
+
+"#]]);
+});
+
+// Protect both broadcast overloads and durations, including calldata/constructor arguments.
+forgetest_init!(script_broadcast_sender_mismatch, |prj, cmd| {
+    for broadcast in [
+        "vm.startBroadcast(address(0x1337))",
+        "vm.broadcast(address(0x1337))",
+        "vm.startBroadcast(uint256(1))",
+        "vm.broadcast(uint256(1))",
+    ] {
+        prj.add_script(
+            "SenderMismatch.s.sol",
+            &format!(
+                r#"
+import {{Script}} from "forge-std/Script.sol";
+
+contract Recipient {{
+    address public owner;
+    constructor(address owner_) {{ owner = owner_; }}
+}}
+
+contract SenderMismatch is Script {{
+    function run() public {{
+        {broadcast};
+        new Recipient(msg.sender);
+    }}
+}}
+"#
+            ),
+        );
+        prj.update_config(|config| config.script_execution_protection = true);
+        cmd.forge_fuse().args(["script", "SenderMismatch"]).assert_failure().stderr_eq(str![[r#"
+Error: script failed: Usage of `msg.sender` inside a `broadcast` in script contract detected. `msg.sender` is `0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38`, not the broadcast sender `[..]`. Use the `--sender` flag or pass the deployer address directly instead.
+
+"#]]);
+
+        prj.update_config(|config| config.script_execution_protection = false);
+        cmd.forge_fuse().args(["script", "SenderMismatch"]).assert_success();
+    }
+});
+
+// Explicit and inferred senders, and the default no-argument broadcast, must remain usable.
+forgetest_init!(script_broadcast_sender_matching, |prj, cmd| {
+    prj.add_script(
+        "SenderMatching.s.sol",
+        r#"
+import {Script, console} from "forge-std/Script.sol";
+
+contract SenderMatching is Script {
+    function run() public {
+        vm.startBroadcast();
+        console.log(msg.sender);
+        vm.stopBroadcast();
+    }
+
+    function explicitSender() public {
+        vm.startBroadcast(address(0x1337));
+        console.log(msg.sender);
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    cmd.forge_fuse().args(["script", "SenderMatching"]).assert_success();
+    cmd.forge_fuse()
+        .args([
+            "script",
+            "SenderMatching",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        ])
+        .assert_success();
+    cmd.forge_fuse()
+        .args([
+            "script",
+            "SenderMatching",
+            "--sig",
+            "explicitSender()",
+            "--sender",
+            "0x0000000000000000000000000000000000001337",
+        ])
+        .assert_success();
+});
+
+// Outgoing calls and callbacks have their own msg.sender; only the broadcasting frame is guarded.
+forgetest_init!(script_broadcast_sender_scope, |prj, cmd| {
+    prj.add_script(
+        "SenderScope.s.sol",
+        r#"
+import {Script} from "forge-std/Script.sol";
+
+contract Callback {
+    address public creator;
+    constructor() { creator = msg.sender; }
+
+    function check(SenderScope script) external {
+        require(msg.sender == address(0x1337));
+        require(script.callback() == address(this));
+    }
+}
+
+contract SenderScope is Script {
+    // The address guard is installed after the script constructor runs.
+    SenderScope private self = SenderScope(address(this));
+
+    function callback() external view returns (address) {
+        return msg.sender;
+    }
+
+    function run() public {
+        address caller = msg.sender;
+        vm.startBroadcast(address(0x1337));
+        require(tx.origin == caller);
+        Callback target = new Callback();
+        require(target.creator() == address(0x1337));
+        target.check(self);
+        vm.stopBroadcast();
+        require(msg.sender == caller);
+    }
+}
+"#,
+    );
+    cmd.args(["script", "SenderScope"]).assert_success();
+});
+
+// An external script helper's caller can differ from tx.origin in either direction.
+forgetest_init!(script_broadcast_sender_uses_frame_caller, |prj, cmd| {
+    prj.add_script(
+        "FrameCaller.s.sol",
+        r#"
+import {Script, console} from "forge-std/Script.sol";
+
+contract FrameCaller is Script {
+    FrameCaller private self = FrameCaller(address(this));
+
+    function run() public {
+        self.helper(address(self));
+    }
+
+    function mismatch() public {
+        self.helper(0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38);
+    }
+
+    function helper(address sender) external {
+        vm.startBroadcast(sender);
+        console.log(msg.sender);
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    cmd.forge_fuse().args(["script", "FrameCaller"]).assert_success();
+    cmd.forge_fuse()
+        .args(["script", "FrameCaller", "--sig", "mismatch()"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: script failed: Usage of `msg.sender` inside a `broadcast` in script contract detected. `msg.sender` is `[..]`, not the broadcast sender `0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38`. Use the `--sender` flag or pass the deployer address directly instead.
 
 "#]]);
 });

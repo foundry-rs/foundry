@@ -9,20 +9,6 @@ use std::{
     str::FromStr,
 };
 
-/// Expand globs with a root path.
-pub fn expand_globs(
-    root: &Path,
-    patterns: impl IntoIterator<Item = impl AsRef<str>>,
-) -> eyre::Result<Vec<PathBuf>> {
-    let mut expanded = Vec::new();
-    for pattern in patterns {
-        for paths in glob::glob(&root.join(pattern.as_ref()).display().to_string())? {
-            expanded.push(paths?);
-        }
-    }
-    Ok(expanded)
-}
-
 /// A `globset::Glob` that creates its `globset::GlobMatcher` when its created, so it doesn't need
 /// to be compiled when the filter functions `TestFilter` functions are called.
 #[derive(Clone, Debug)]
@@ -197,9 +183,70 @@ impl FromStr for SkipBuildFilter {
     }
 }
 
+/// Expand globs with a root path.
+///
+/// A trailing recursive component, like `src/**`, only matches subdirectories. Replace it with its
+/// parent so directory-aware consumers cover every descendant without enumerating the tree.
+pub fn expand_globs(
+    root: &Path,
+    patterns: impl IntoIterator<Item = impl AsRef<str>>,
+) -> eyre::Result<Vec<PathBuf>> {
+    let mut expanded = Vec::new();
+    for pattern in patterns {
+        let mut pattern = Path::new(pattern.as_ref());
+        if pattern.ends_with("**") {
+            pattern = pattern.parent().unwrap_or_else(|| Path::new(""));
+        }
+        for path in glob::glob(&root.join(pattern).display().to_string())? {
+            expanded.push(path?);
+        }
+    }
+    Ok(expanded)
+}
+
+/// Returns whether `file` is contained in `paths`, or lies underneath a directory contained in
+/// `paths`.
+///
+/// Expanded ignore globs can contain directories, e.g. `test/**` yields the directories under
+/// `test`, so an ignore check must also match the files below every entry. `base` is used to
+/// resolve `file` when it is relative.
+pub fn is_ignored_path(file: &Path, paths: &[PathBuf], base: &Path) -> bool {
+    let joined = base.join(file);
+    paths.iter().any(|path| file.starts_with(path) || joined.starts_with(path))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_expand_trailing_recursive_glob() {
+        let root = tempdir().unwrap();
+        let src = root.path().join("src");
+        fs::create_dir(&src).unwrap();
+
+        assert_eq!(expand_globs(root.path(), ["src/**"]).unwrap(), vec![src]);
+    }
+
+    #[test]
+    fn test_is_ignored_path() {
+        let base = Path::new("/root");
+        let ignored = [PathBuf::from("/root/test"), PathBuf::from("/root/src/A.sol")];
+
+        // Exact file matches, absolute and relative.
+        assert!(is_ignored_path(Path::new("/root/src/A.sol"), &ignored, base));
+        assert!(is_ignored_path(Path::new("src/A.sol"), &ignored, base));
+
+        // Files under an ignored directory.
+        assert!(is_ignored_path(Path::new("/root/test/B.t.sol"), &ignored, base));
+        assert!(is_ignored_path(Path::new("test/sub/C.t.sol"), &ignored, base));
+
+        // A directory prefix only matches whole path components.
+        assert!(!is_ignored_path(Path::new("/root/testOther.sol"), &ignored, base));
+        assert!(!is_ignored_path(Path::new("/root/src/B.sol"), &ignored, base));
+    }
 
     #[test]
     fn test_build_filter() {

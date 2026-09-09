@@ -3,10 +3,7 @@
 use clap::ValueEnum;
 use core::fmt;
 use serde::{Deserialize, Deserializer, Serialize};
-use solar::{
-    ast::{self as ast},
-    interface::diagnostics::Level,
-};
+use solar::{ast, interface::diagnostics::Level};
 use std::str::FromStr;
 use yansi::Paint;
 
@@ -15,7 +12,7 @@ use yansi::Paint;
 pub struct LinterConfig {
     /// Specifies which lints to run based on severity.
     ///
-    /// If uninformed, all severities are checked.
+    /// Defaults to high, medium, and low severity lints.
     pub severity: Vec<Severity>,
 
     /// Deny specific lints based on their ID (e.g. "mixed-case-function").
@@ -37,7 +34,7 @@ impl Default for LinterConfig {
     fn default() -> Self {
         Self {
             lint_on_build: true,
-            severity: Vec::new(),
+            severity: vec![Severity::High, Severity::Med, Severity::Low],
             exclude_lints: Vec::new(),
             ignore: Vec::new(),
             lint_specific: LintSpecificConfig::default(),
@@ -58,10 +55,11 @@ pub enum ContractException {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LintSpecificConfig {
-    /// Configurable patterns that should be excluded when performing `mixedCase` lint checks.
+    /// Configurable patterns that should be excluded when performing `mixedCase` and
+    /// `PascalCase` lint checks.
     ///
-    /// Defaults to ["ERC", "URI"] to allow common names like `rescueERC20`, `ERC721TokenReceiver`
-    /// or `tokenURI`.
+    /// Defaults to ["ERC", "URI", "ID", "URL", "API", "JSON", "XML", "HTML", "HTTP",
+    /// "HTTPS"] to allow common names like `rescueERC20`, `ERC721TokenReceiver` or `tokenURI`.
     pub mixed_case_exceptions: Vec<String>,
 
     /// Contract types that are allowed to appear multiple times in the same file.

@@ -13,7 +13,7 @@ use foundry_config::{
     lint::{LintSpecificConfig, Severity},
 };
 use solar::{
-    ast::{self as ast},
+    ast,
     interface::{
         ColorChoice, Session,
         diagnostics::{HumanEmitter, JsonEmitter, Level, SilentEmitter},
@@ -31,7 +31,6 @@ use thiserror::Error;
 pub mod macros;
 
 pub mod analysis;
-mod calls;
 pub mod codesize;
 pub mod gas;
 pub mod high;
@@ -40,22 +39,35 @@ pub mod low;
 pub mod med;
 pub mod naming;
 
-static ALL_REGISTERED_LINTS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
-    let mut lints = Vec::new();
-    lints.extend_from_slice(high::REGISTERED_LINTS);
-    lints.extend_from_slice(med::REGISTERED_LINTS);
-    lints.extend_from_slice(low::REGISTERED_LINTS);
-    lints.extend_from_slice(info::REGISTERED_LINTS);
-    lints.extend_from_slice(gas::REGISTERED_LINTS);
-    lints.extend_from_slice(codesize::REGISTERED_LINTS);
-    lints.into_iter().map(|lint| lint.id()).collect()
-});
+/// Every registered lint, in severity-group order.
+fn all_lints() -> impl Iterator<Item = &'static SolLint> {
+    [
+        high::REGISTERED_LINTS,
+        med::REGISTERED_LINTS,
+        low::REGISTERED_LINTS,
+        info::REGISTERED_LINTS,
+        gas::REGISTERED_LINTS,
+        codesize::REGISTERED_LINTS,
+    ]
+    .into_iter()
+    .flatten()
+}
+
+static ALL_REGISTERED_LINTS: LazyLock<Vec<&'static str>> =
+    LazyLock::new(|| all_lints().map(|lint| lint.id).collect());
 
 static DEFAULT_LINT_SPECIFIC_CONFIG: LazyLock<LintSpecificConfig> =
     LazyLock::new(LintSpecificConfig::default);
 
 struct OwnedLintPolicy {
-    inline: Option<InlineConfig<Vec<String>>>,
+    inline: Option<Arc<InlineConfig<Vec<String>>>>,
+    active: Arc<Vec<&'static str>>,
+    sources: Option<Arc<Vec<SourceLintPolicy>>>,
+}
+
+struct SourceLintPolicy {
+    file: Arc<solar::interface::source_map::SourceFile>,
+    inline: Arc<InlineConfig<Vec<String>>>,
     active: Vec<&'static str>,
 }
 
@@ -65,6 +77,20 @@ impl LintPolicy for OwnedLintPolicy {
     }
 
     fn is_lint_suppressed(&self, id: &str, span: solar::interface::Span) -> bool {
+        if !span.is_dummy()
+            && let Some(sources) = &self.sources
+        {
+            // Late passes can follow inheritance or calls into another file. Apply the policy of
+            // the file that owns the diagnostic span, not the file whose visitor emitted it.
+            let source = sources
+                .partition_point(|source| source.file.start_pos <= span.lo())
+                .checked_sub(1)
+                .map(|idx| &sources[idx])
+                .filter(|source| source.file.contains(span.lo()));
+            return source.is_none_or(|source| {
+                !source.active.contains(&id) || source.inline.is_id_disabled(span, id)
+            });
+        }
         self.inline.as_ref().is_some_and(|inline| inline.is_id_disabled(span, id))
     }
 }
@@ -77,6 +103,8 @@ pub struct ForgeLintSuite {
     lints_included: Option<Vec<SolLint>>,
     lints_excluded: Option<Vec<SolLint>>,
     registry: Arc<LintRegistry>,
+    sources: Option<Arc<Vec<SourceLintPolicy>>>,
+    run_active: Option<Arc<Vec<&'static str>>>,
 }
 
 impl std::fmt::Debug for ForgeLintSuite {
@@ -98,25 +126,15 @@ impl ForgeLintSuite {
     }
 
     fn active_lints(&self, path: Option<&Path>) -> Vec<&'static str> {
-        [
-            high::REGISTERED_LINTS,
-            med::REGISTERED_LINTS,
-            low::REGISTERED_LINTS,
-            info::REGISTERED_LINTS,
-            gas::REGISTERED_LINTS,
-            codesize::REGISTERED_LINTS,
-        ]
-        .into_iter()
-        .flatten()
-        .filter(|lint| {
-            self.include_lint(**lint)
-                && path.is_none_or(|path| {
-                    !self.path_config.is_test_or_script(path)
-                        || !matches!(lint.severity(), Severity::Gas | Severity::CodeSize)
-                })
-        })
-        .map(|lint| lint.id)
-        .collect()
+        all_lints()
+            .filter(|lint| {
+                self.include_lint(**lint)
+                    && path.is_none_or(|path| {
+                        !self.path_config.is_test_or_script(path) || lint.id == "unsafe-cheatcode"
+                    })
+            })
+            .map(|lint| lint.id)
+            .collect()
     }
 }
 
@@ -126,15 +144,36 @@ impl LintSuite for ForgeLintSuite {
     }
 
     fn source_policy(&self, source: LintSource<'_, '_>) -> Arc<dyn LintPolicy> {
-        let comments = Comments::new(source.file, source.session.source_map(), false, false, None);
+        let inline = self
+            .sources
+            .as_ref()
+            .and_then(|sources| {
+                sources
+                    .binary_search_by_key(&source.file.start_pos, |source| source.file.start_pos)
+                    .ok()
+                    .map(|idx| sources[idx].inline.clone())
+            })
+            .unwrap_or_else(|| {
+                let comments =
+                    Comments::new(source.file, source.session.source_map(), false, false, None);
+                Arc::new(parse_inline_config(source.session, &comments, source.ast))
+            });
         Arc::new(OwnedLintPolicy {
-            inline: Some(parse_inline_config(source.session, &comments, source.ast)),
-            active: self.active_lints(Some(source.path)),
+            inline: Some(inline),
+            active: self
+                .run_active
+                .clone()
+                .unwrap_or_else(|| Arc::new(self.active_lints(Some(source.path)))),
+            sources: self.sources.clone(),
         })
     }
 
     fn project_policy(&self) -> Arc<dyn LintPolicy> {
-        Arc::new(OwnedLintPolicy { inline: None, active: self.active_lints(None) })
+        Arc::new(OwnedLintPolicy {
+            inline: None,
+            active: Arc::new(self.active_lints(None)),
+            sources: None,
+        })
     }
 }
 
@@ -219,6 +258,8 @@ impl<'a> SolidityLinter<'a> {
             lints_included: self.lints_included.clone(),
             lints_excluded: self.lints_excluded.clone(),
             registry: Arc::new(registry),
+            sources: None,
+            run_active: None,
         }
     }
 }
@@ -292,7 +333,31 @@ impl<'a> Linter for SolidityLinter<'a> {
                 }
             }
 
-            let suite = self.to_suite();
+            let mut suite = self.to_suite();
+            let mut sources = targets
+                .iter()
+                .map(|path| {
+                    let (_, source) =
+                        gcx.get_ast_source(path).expect("lint target was validated above");
+                    let ast = source.ast.as_ref().expect("lint target AST was validated above");
+                    let comments =
+                        Comments::new(&source.file, gcx.sess.source_map(), false, false, None);
+                    SourceLintPolicy {
+                        file: source.file.clone(),
+                        inline: Arc::new(parse_inline_config(gcx.sess, &comments, ast)),
+                        active: suite.active_lints(Some(path)),
+                    }
+                })
+                .collect::<Vec<_>>();
+            sources.sort_unstable_by_key(|source| source.file.start_pos);
+            suite.run_active = Some(Arc::new(
+                suite
+                    .active_lints(None)
+                    .into_iter()
+                    .filter(|id| sources.iter().any(|source| source.active.contains(id)))
+                    .collect(),
+            ));
+            suite.sources = Some(Arc::new(sources));
             run_lints(
                 &suite,
                 LintRunContext {
@@ -328,36 +393,22 @@ impl<'a> Linter for SolidityLinter<'a> {
         let lint_warn_count = compiler.dcx().warn_count().saturating_sub(warn_count_before);
         let lint_note_count = compiler.dcx().note_count().saturating_sub(note_count_before);
 
-        const MSG: &str = "aborting due to ";
-        match (deny, lint_warn_count, lint_note_count) {
-            // Deny warnings.
-            (DenyLevel::Warnings, w, n) if w > 0 => {
-                if n > 0 {
-                    Err(DeniedLintDiagnostics(format!(
-                        "{MSG}{w} linter warning(s); {n} note(s) were also emitted\n"
-                    ))
-                    .into())
-                } else {
-                    Err(DeniedLintDiagnostics(format!("{MSG}{w} linter warning(s)\n")).into())
-                }
+        let (w, n) = (lint_warn_count, lint_note_count);
+        let denied = match deny {
+            DenyLevel::Warnings if w > 0 && n > 0 => {
+                format!("{w} linter warning(s); {n} note(s) were also emitted")
             }
-
-            // Deny any diagnostic.
-            (DenyLevel::Notes, w, n) if w > 0 || n > 0 => match (w, n) {
-                (w, n) if w > 0 && n > 0 => Err(DeniedLintDiagnostics(format!(
-                    "{MSG}{w} linter warning(s) and {n} note(s)\n"
-                ))
-                .into()),
-                (w, 0) => {
-                    Err(DeniedLintDiagnostics(format!("{MSG}{w} linter warning(s)\n")).into())
-                }
-                (0, n) => Err(DeniedLintDiagnostics(format!("{MSG}{n} linter note(s)\n")).into()),
-                _ => unreachable!(),
-            },
-
-            // Otherwise, succeed.
-            _ => Ok(()),
-        }
+            DenyLevel::Warnings if w > 0 => format!("{w} linter warning(s)"),
+            DenyLevel::Notes if w > 0 && n > 0 => format!("{w} linter warning(s) and {n} note(s)"),
+            DenyLevel::Notes if w > 0 => format!("{w} linter warning(s)"),
+            DenyLevel::Notes if n > 0 => format!("{n} linter note(s)"),
+            _ => return Ok(()),
+        };
+        Err(DeniedLintDiagnostics(format!(
+            "aborting due to {denied}
+"
+        ))
+        .into())
     }
 }
 
@@ -431,60 +482,16 @@ impl<'a> TryFrom<&'a str> for SolLint {
     type Error = SolLintError;
 
     fn try_from(value: &'a str) -> Result<Self, Self::Error> {
-        for &lint in high::REGISTERED_LINTS {
-            if lint.id() == value {
-                return Ok(lint);
-            }
-        }
-
-        for &lint in med::REGISTERED_LINTS {
-            if lint.id() == value {
-                return Ok(lint);
-            }
-        }
-
-        for &lint in low::REGISTERED_LINTS {
-            if lint.id() == value {
-                return Ok(lint);
-            }
-        }
-
-        for &lint in info::REGISTERED_LINTS {
-            if lint.id() == value {
-                return Ok(lint);
-            }
-        }
-
-        for &lint in gas::REGISTERED_LINTS {
-            if lint.id() == value {
-                return Ok(lint);
-            }
-        }
-
-        for &lint in codesize::REGISTERED_LINTS {
-            if lint.id() == value {
-                return Ok(lint);
-            }
-        }
-
-        Err(SolLintError::InvalidId(value.to_string()))
+        all_lints()
+            .find(|lint| lint.id == value)
+            .copied()
+            .ok_or_else(|| SolLintError::InvalidId(value.to_string()))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    const fn severity_doc_name(severity: Severity) -> &'static str {
-        match severity {
-            Severity::High => "High",
-            Severity::Med => "Med",
-            Severity::Low => "Low",
-            Severity::Info => "Info",
-            Severity::Gas => "Gas",
-            Severity::CodeSize => "CodeSize",
-        }
-    }
 
     /// Every registered lint must have a markdown documentation file at
     /// `crates/lint/docs/<str_id>.md` with matching metadata and the standard section structure.
@@ -499,14 +506,7 @@ mod tests {
         let docs_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("docs");
         assert!(docs_dir.is_dir(), "missing docs directory at {}", docs_dir.display());
 
-        let all_lints: Vec<&'static SolLint> = high::REGISTERED_LINTS
-            .iter()
-            .chain(med::REGISTERED_LINTS)
-            .chain(low::REGISTERED_LINTS)
-            .chain(info::REGISTERED_LINTS)
-            .chain(gas::REGISTERED_LINTS)
-            .chain(codesize::REGISTERED_LINTS)
-            .collect();
+        let all_lints: Vec<_> = all_lints().collect();
 
         let registered_ids: std::collections::HashSet<_> =
             all_lints.iter().map(|lint| lint.id()).collect();
@@ -516,7 +516,7 @@ mod tests {
             let path = docs_dir.join(format!("{}.md", lint.id()));
             match std::fs::read_to_string(&path) {
                 Ok(content) => {
-                    let severity = severity_doc_name(lint.severity());
+                    let severity = format!("{:?}", lint.severity());
                     let required = [
                         format!("**Severity**: `{severity}`"),
                         format!("**ID**: `{}`", lint.id()),
@@ -575,16 +575,7 @@ mod tests {
     /// link printed in diagnostics resolves correctly.
     #[test]
     fn registered_lints_have_canonical_help_url() {
-        let all_lints: Vec<&'static SolLint> = high::REGISTERED_LINTS
-            .iter()
-            .chain(med::REGISTERED_LINTS)
-            .chain(low::REGISTERED_LINTS)
-            .chain(info::REGISTERED_LINTS)
-            .chain(gas::REGISTERED_LINTS)
-            .chain(codesize::REGISTERED_LINTS)
-            .collect();
-
-        for lint in all_lints {
+        for lint in all_lints() {
             let expected = format!("https://getfoundry.sh/forge/linting/{}", lint.id());
             assert_eq!(lint.help(), expected, "lint `{}` has a non-canonical help URL", lint.id());
         }

@@ -18,7 +18,7 @@ use base64::prelude::*;
 use foundry_cheatcodes_spec::{SymbolicVm, Vm};
 use foundry_config::{SymbolicConfig, SymbolicExplorationOrder, SymbolicStorageLayout};
 use foundry_evm::{
-    constants::{CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS},
+    constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS},
     core::{backend::DatabaseExt, evm::FoundryEvmNetwork},
     executors::Executor,
     revm::{
@@ -30,8 +30,6 @@ use foundry_evm::{
     },
 };
 use serde::{Deserialize, Serialize};
-#[cfg(test)]
-use std::collections::BTreeMap;
 use std::{
     collections::VecDeque,
     fmt::{self, Write as _},
@@ -50,25 +48,17 @@ use std::{
 use thiserror::Error;
 use tracing::{debug, trace, trace_span, warn};
 
-mod consts;
-pub use consts::BUILTIN_SYMBOLIC_SOLVERS;
-pub(crate) use consts::*;
+#[cfg(test)]
+use std::collections::BTreeMap;
 
 mod abi;
+mod consts;
 mod executor;
 mod runtime;
 
+pub use consts::BUILTIN_SYMBOLIC_SOLVERS;
+pub(crate) use consts::*;
 pub use runtime::{PortfolioDiagnostics, SymbolicBranchTarget, SymbolicError, SymbolicRunInput};
-
-/// Returns whether `solver` is one of Foundry's semantic symbolic solver names.
-pub fn symbolic_solver_is_builtin(solver: &str) -> bool {
-    BUILTIN_SYMBOLIC_SOLVERS.contains(&solver)
-}
-
-/// Returns a warning when a configured symbolic solver portfolio has unavailable entries.
-pub fn symbolic_solver_portfolio_availability_warning(config: &SymbolicConfig) -> Option<String> {
-    runtime::solver_portfolio_availability_warning(config)
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SymbolicVmCheatcode {
@@ -147,120 +137,6 @@ impl SymbolicVmCheatcode {
     }
 }
 
-fn symbolic_create_uint_selectors() -> &'static [(usize, [u8; 4]); 32] {
-    static SELECTORS: [(usize, [u8; 4]); 32] = [
-        (8, SymbolicVm::createUint8Call::SELECTOR),
-        (16, SymbolicVm::createUint16Call::SELECTOR),
-        (24, SymbolicVm::createUint24Call::SELECTOR),
-        (32, SymbolicVm::createUint32Call::SELECTOR),
-        (40, SymbolicVm::createUint40Call::SELECTOR),
-        (48, SymbolicVm::createUint48Call::SELECTOR),
-        (56, SymbolicVm::createUint56Call::SELECTOR),
-        (64, SymbolicVm::createUint64Call::SELECTOR),
-        (72, SymbolicVm::createUint72Call::SELECTOR),
-        (80, SymbolicVm::createUint80Call::SELECTOR),
-        (88, SymbolicVm::createUint88Call::SELECTOR),
-        (96, SymbolicVm::createUint96Call::SELECTOR),
-        (104, SymbolicVm::createUint104Call::SELECTOR),
-        (112, SymbolicVm::createUint112Call::SELECTOR),
-        (120, SymbolicVm::createUint120Call::SELECTOR),
-        (128, SymbolicVm::createUint128Call::SELECTOR),
-        (136, SymbolicVm::createUint136Call::SELECTOR),
-        (144, SymbolicVm::createUint144Call::SELECTOR),
-        (152, SymbolicVm::createUint152Call::SELECTOR),
-        (160, SymbolicVm::createUint160Call::SELECTOR),
-        (168, SymbolicVm::createUint168Call::SELECTOR),
-        (176, SymbolicVm::createUint176Call::SELECTOR),
-        (184, SymbolicVm::createUint184Call::SELECTOR),
-        (192, SymbolicVm::createUint192Call::SELECTOR),
-        (200, SymbolicVm::createUint200Call::SELECTOR),
-        (208, SymbolicVm::createUint208Call::SELECTOR),
-        (216, SymbolicVm::createUint216Call::SELECTOR),
-        (224, SymbolicVm::createUint224Call::SELECTOR),
-        (232, SymbolicVm::createUint232Call::SELECTOR),
-        (240, SymbolicVm::createUint240Call::SELECTOR),
-        (248, SymbolicVm::createUint248Call::SELECTOR),
-        (256, SymbolicVm::createUint256Call::SELECTOR),
-    ];
-    &SELECTORS
-}
-
-fn symbolic_create_int_selectors() -> &'static [(usize, [u8; 4]); 32] {
-    static SELECTORS: [(usize, [u8; 4]); 32] = [
-        (8, SymbolicVm::createInt8Call::SELECTOR),
-        (16, SymbolicVm::createInt16Call::SELECTOR),
-        (24, SymbolicVm::createInt24Call::SELECTOR),
-        (32, SymbolicVm::createInt32Call::SELECTOR),
-        (40, SymbolicVm::createInt40Call::SELECTOR),
-        (48, SymbolicVm::createInt48Call::SELECTOR),
-        (56, SymbolicVm::createInt56Call::SELECTOR),
-        (64, SymbolicVm::createInt64Call::SELECTOR),
-        (72, SymbolicVm::createInt72Call::SELECTOR),
-        (80, SymbolicVm::createInt80Call::SELECTOR),
-        (88, SymbolicVm::createInt88Call::SELECTOR),
-        (96, SymbolicVm::createInt96Call::SELECTOR),
-        (104, SymbolicVm::createInt104Call::SELECTOR),
-        (112, SymbolicVm::createInt112Call::SELECTOR),
-        (120, SymbolicVm::createInt120Call::SELECTOR),
-        (128, SymbolicVm::createInt128Call::SELECTOR),
-        (136, SymbolicVm::createInt136Call::SELECTOR),
-        (144, SymbolicVm::createInt144Call::SELECTOR),
-        (152, SymbolicVm::createInt152Call::SELECTOR),
-        (160, SymbolicVm::createInt160Call::SELECTOR),
-        (168, SymbolicVm::createInt168Call::SELECTOR),
-        (176, SymbolicVm::createInt176Call::SELECTOR),
-        (184, SymbolicVm::createInt184Call::SELECTOR),
-        (192, SymbolicVm::createInt192Call::SELECTOR),
-        (200, SymbolicVm::createInt200Call::SELECTOR),
-        (208, SymbolicVm::createInt208Call::SELECTOR),
-        (216, SymbolicVm::createInt216Call::SELECTOR),
-        (224, SymbolicVm::createInt224Call::SELECTOR),
-        (232, SymbolicVm::createInt232Call::SELECTOR),
-        (240, SymbolicVm::createInt240Call::SELECTOR),
-        (248, SymbolicVm::createInt248Call::SELECTOR),
-        (256, SymbolicVm::createInt256Call::SELECTOR),
-    ];
-    &SELECTORS
-}
-
-fn symbolic_create_bytes_selectors() -> &'static [(usize, [u8; 4]); 32] {
-    static SELECTORS: [(usize, [u8; 4]); 32] = [
-        (1, SymbolicVm::createBytes1Call::SELECTOR),
-        (2, SymbolicVm::createBytes2Call::SELECTOR),
-        (3, SymbolicVm::createBytes3Call::SELECTOR),
-        (4, SymbolicVm::createBytes4Call::SELECTOR),
-        (5, SymbolicVm::createBytes5Call::SELECTOR),
-        (6, SymbolicVm::createBytes6Call::SELECTOR),
-        (7, SymbolicVm::createBytes7Call::SELECTOR),
-        (8, SymbolicVm::createBytes8Call::SELECTOR),
-        (9, SymbolicVm::createBytes9Call::SELECTOR),
-        (10, SymbolicVm::createBytes10Call::SELECTOR),
-        (11, SymbolicVm::createBytes11Call::SELECTOR),
-        (12, SymbolicVm::createBytes12Call::SELECTOR),
-        (13, SymbolicVm::createBytes13Call::SELECTOR),
-        (14, SymbolicVm::createBytes14Call::SELECTOR),
-        (15, SymbolicVm::createBytes15Call::SELECTOR),
-        (16, SymbolicVm::createBytes16Call::SELECTOR),
-        (17, SymbolicVm::createBytes17Call::SELECTOR),
-        (18, SymbolicVm::createBytes18Call::SELECTOR),
-        (19, SymbolicVm::createBytes19Call::SELECTOR),
-        (20, SymbolicVm::createBytes20Call::SELECTOR),
-        (21, SymbolicVm::createBytes21Call::SELECTOR),
-        (22, SymbolicVm::createBytes22Call::SELECTOR),
-        (23, SymbolicVm::createBytes23Call::SELECTOR),
-        (24, SymbolicVm::createBytes24Call::SELECTOR),
-        (25, SymbolicVm::createBytes25Call::SELECTOR),
-        (26, SymbolicVm::createBytes26Call::SELECTOR),
-        (27, SymbolicVm::createBytes27Call::SELECTOR),
-        (28, SymbolicVm::createBytes28Call::SELECTOR),
-        (29, SymbolicVm::createBytes29Call::SELECTOR),
-        (30, SymbolicVm::createBytes30Call::SELECTOR),
-        (31, SymbolicVm::createBytes31Call::SELECTOR),
-        (32, SymbolicVm::createBytes32Call::SELECTOR),
-    ];
-    &SELECTORS
-}
-
 /// Outcome of a symbolic test execution.
 ///
 /// The forge runner treats `Safe` as a passing symbolic test, `Counterexample` as a
@@ -305,6 +181,15 @@ pub struct SymbolicConcreteInput {
     pub calldata: Bytes,
 }
 
+/// Result of best-effort symbolic exploration toward one branch target.
+#[derive(Debug)]
+pub struct SymbolicBranchTargetSearchResult {
+    /// Concrete inputs whose completed root path reached the requested branch outcome.
+    pub candidates: Vec<SymbolicConcreteInput>,
+    /// Underlying execution result, retained so callers can report incomplete exploration.
+    pub execution: SymbolicRunResult,
+}
+
 /// A concrete invariant target selected from Foundry's invariant discovery.
 #[derive(Clone, Debug)]
 pub struct SymbolicInvariantTarget {
@@ -314,6 +199,59 @@ pub struct SymbolicInvariantTarget {
     pub contract_name: Option<String>,
     /// ABI function invoked with symbolic arguments.
     pub function: Function,
+}
+
+/// Input for best-effort invariant candidate search after one symbolic handler call.
+pub struct SymbolicInvariantCandidateInput<'a, FEN: FoundryEvmNetwork> {
+    /// Concrete Foundry executor containing the replayed invariant frontier prefix.
+    pub executor: &'a Executor<FEN>,
+    /// Address of the deployed invariant test contract.
+    pub invariant_address: Address,
+    /// Invariant functions checked independently after the handler call.
+    pub invariants: &'a [&'a Function],
+    /// Optional campaign hook checked from the unchanged post-handler state.
+    pub after_invariant: Option<&'a Function>,
+    /// Concrete handler target selected from the captured frontier.
+    pub target: &'a SymbolicInvariantTarget,
+    /// Sender of the captured handler call.
+    pub handler_sender: Address,
+    /// Whether symbolic `vm.ffi` calls are allowed to execute subprocesses.
+    pub ffi_enabled: bool,
+}
+
+/// One unconfirmed symbolic input produced by invariant candidate search.
+#[derive(Clone, Debug)]
+pub struct SymbolicInvariantCandidate {
+    /// Index within [`SymbolicInvariantCandidateInput::invariants`] predicted to fail.
+    pub invariant_idx: usize,
+    /// Concrete handler call extracted from the solver model.
+    pub step: SymbolicInvariantStep,
+    /// Concrete setup-storage values needed to replay the candidate.
+    pub storage: Vec<SymbolicStorageAssignment>,
+}
+
+/// An execution or solver limitation encountered during best-effort candidate search.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SymbolicInvariantSearchLimitation {
+    /// Category describing why part of the search could not complete.
+    pub kind: SymbolicStopReason,
+    /// Human-readable description of the limitation.
+    pub reason: String,
+}
+
+impl From<SymbolicError> for SymbolicInvariantSearchLimitation {
+    fn from(error: SymbolicError) -> Self {
+        Self { kind: error.stop_reason(), reason: error.to_string() }
+    }
+}
+
+/// Result of best-effort invariant candidate search after one symbolic handler call.
+#[derive(Clone, Debug)]
+pub struct SymbolicInvariantCandidateSearchResult {
+    /// Unconfirmed candidates that must be replayed concretely by the caller.
+    pub candidates: Vec<SymbolicInvariantCandidate>,
+    /// First encountered search limitation, if any. `None` is not a proof of safety.
+    pub limitation: Option<SymbolicInvariantSearchLimitation>,
 }
 
 /// Input for bounded symbolic invariant execution.
@@ -474,7 +412,7 @@ pub struct SymbolicStats {
 pub struct SymbolicExecutor {
     config: SymbolicConfig,
     cx: runtime::SymCx,
-    solver: Box<dyn runtime::SymbolicSolver>,
+    solver: runtime::SmtLibSubprocessSolver,
     deferred_incomplete: Option<DeferredIncomplete>,
     deadline: Option<Instant>,
 }
@@ -483,6 +421,131 @@ pub struct SymbolicExecutor {
 enum DeferredIncomplete {
     Unsupported(&'static str),
     SolverUnknown,
+    HardArithmetic,
+}
+
+fn symbolic_create_uint_selectors() -> &'static [(usize, [u8; 4]); 32] {
+    static SELECTORS: [(usize, [u8; 4]); 32] = [
+        (8, SymbolicVm::createUint8Call::SELECTOR),
+        (16, SymbolicVm::createUint16Call::SELECTOR),
+        (24, SymbolicVm::createUint24Call::SELECTOR),
+        (32, SymbolicVm::createUint32Call::SELECTOR),
+        (40, SymbolicVm::createUint40Call::SELECTOR),
+        (48, SymbolicVm::createUint48Call::SELECTOR),
+        (56, SymbolicVm::createUint56Call::SELECTOR),
+        (64, SymbolicVm::createUint64Call::SELECTOR),
+        (72, SymbolicVm::createUint72Call::SELECTOR),
+        (80, SymbolicVm::createUint80Call::SELECTOR),
+        (88, SymbolicVm::createUint88Call::SELECTOR),
+        (96, SymbolicVm::createUint96Call::SELECTOR),
+        (104, SymbolicVm::createUint104Call::SELECTOR),
+        (112, SymbolicVm::createUint112Call::SELECTOR),
+        (120, SymbolicVm::createUint120Call::SELECTOR),
+        (128, SymbolicVm::createUint128Call::SELECTOR),
+        (136, SymbolicVm::createUint136Call::SELECTOR),
+        (144, SymbolicVm::createUint144Call::SELECTOR),
+        (152, SymbolicVm::createUint152Call::SELECTOR),
+        (160, SymbolicVm::createUint160Call::SELECTOR),
+        (168, SymbolicVm::createUint168Call::SELECTOR),
+        (176, SymbolicVm::createUint176Call::SELECTOR),
+        (184, SymbolicVm::createUint184Call::SELECTOR),
+        (192, SymbolicVm::createUint192Call::SELECTOR),
+        (200, SymbolicVm::createUint200Call::SELECTOR),
+        (208, SymbolicVm::createUint208Call::SELECTOR),
+        (216, SymbolicVm::createUint216Call::SELECTOR),
+        (224, SymbolicVm::createUint224Call::SELECTOR),
+        (232, SymbolicVm::createUint232Call::SELECTOR),
+        (240, SymbolicVm::createUint240Call::SELECTOR),
+        (248, SymbolicVm::createUint248Call::SELECTOR),
+        (256, SymbolicVm::createUint256Call::SELECTOR),
+    ];
+    &SELECTORS
+}
+
+fn symbolic_create_int_selectors() -> &'static [(usize, [u8; 4]); 32] {
+    static SELECTORS: [(usize, [u8; 4]); 32] = [
+        (8, SymbolicVm::createInt8Call::SELECTOR),
+        (16, SymbolicVm::createInt16Call::SELECTOR),
+        (24, SymbolicVm::createInt24Call::SELECTOR),
+        (32, SymbolicVm::createInt32Call::SELECTOR),
+        (40, SymbolicVm::createInt40Call::SELECTOR),
+        (48, SymbolicVm::createInt48Call::SELECTOR),
+        (56, SymbolicVm::createInt56Call::SELECTOR),
+        (64, SymbolicVm::createInt64Call::SELECTOR),
+        (72, SymbolicVm::createInt72Call::SELECTOR),
+        (80, SymbolicVm::createInt80Call::SELECTOR),
+        (88, SymbolicVm::createInt88Call::SELECTOR),
+        (96, SymbolicVm::createInt96Call::SELECTOR),
+        (104, SymbolicVm::createInt104Call::SELECTOR),
+        (112, SymbolicVm::createInt112Call::SELECTOR),
+        (120, SymbolicVm::createInt120Call::SELECTOR),
+        (128, SymbolicVm::createInt128Call::SELECTOR),
+        (136, SymbolicVm::createInt136Call::SELECTOR),
+        (144, SymbolicVm::createInt144Call::SELECTOR),
+        (152, SymbolicVm::createInt152Call::SELECTOR),
+        (160, SymbolicVm::createInt160Call::SELECTOR),
+        (168, SymbolicVm::createInt168Call::SELECTOR),
+        (176, SymbolicVm::createInt176Call::SELECTOR),
+        (184, SymbolicVm::createInt184Call::SELECTOR),
+        (192, SymbolicVm::createInt192Call::SELECTOR),
+        (200, SymbolicVm::createInt200Call::SELECTOR),
+        (208, SymbolicVm::createInt208Call::SELECTOR),
+        (216, SymbolicVm::createInt216Call::SELECTOR),
+        (224, SymbolicVm::createInt224Call::SELECTOR),
+        (232, SymbolicVm::createInt232Call::SELECTOR),
+        (240, SymbolicVm::createInt240Call::SELECTOR),
+        (248, SymbolicVm::createInt248Call::SELECTOR),
+        (256, SymbolicVm::createInt256Call::SELECTOR),
+    ];
+    &SELECTORS
+}
+
+fn symbolic_create_bytes_selectors() -> &'static [(usize, [u8; 4]); 32] {
+    static SELECTORS: [(usize, [u8; 4]); 32] = [
+        (1, SymbolicVm::createBytes1Call::SELECTOR),
+        (2, SymbolicVm::createBytes2Call::SELECTOR),
+        (3, SymbolicVm::createBytes3Call::SELECTOR),
+        (4, SymbolicVm::createBytes4Call::SELECTOR),
+        (5, SymbolicVm::createBytes5Call::SELECTOR),
+        (6, SymbolicVm::createBytes6Call::SELECTOR),
+        (7, SymbolicVm::createBytes7Call::SELECTOR),
+        (8, SymbolicVm::createBytes8Call::SELECTOR),
+        (9, SymbolicVm::createBytes9Call::SELECTOR),
+        (10, SymbolicVm::createBytes10Call::SELECTOR),
+        (11, SymbolicVm::createBytes11Call::SELECTOR),
+        (12, SymbolicVm::createBytes12Call::SELECTOR),
+        (13, SymbolicVm::createBytes13Call::SELECTOR),
+        (14, SymbolicVm::createBytes14Call::SELECTOR),
+        (15, SymbolicVm::createBytes15Call::SELECTOR),
+        (16, SymbolicVm::createBytes16Call::SELECTOR),
+        (17, SymbolicVm::createBytes17Call::SELECTOR),
+        (18, SymbolicVm::createBytes18Call::SELECTOR),
+        (19, SymbolicVm::createBytes19Call::SELECTOR),
+        (20, SymbolicVm::createBytes20Call::SELECTOR),
+        (21, SymbolicVm::createBytes21Call::SELECTOR),
+        (22, SymbolicVm::createBytes22Call::SELECTOR),
+        (23, SymbolicVm::createBytes23Call::SELECTOR),
+        (24, SymbolicVm::createBytes24Call::SELECTOR),
+        (25, SymbolicVm::createBytes25Call::SELECTOR),
+        (26, SymbolicVm::createBytes26Call::SELECTOR),
+        (27, SymbolicVm::createBytes27Call::SELECTOR),
+        (28, SymbolicVm::createBytes28Call::SELECTOR),
+        (29, SymbolicVm::createBytes29Call::SELECTOR),
+        (30, SymbolicVm::createBytes30Call::SELECTOR),
+        (31, SymbolicVm::createBytes31Call::SELECTOR),
+        (32, SymbolicVm::createBytes32Call::SELECTOR),
+    ];
+    &SELECTORS
+}
+
+/// Returns whether `solver` is one of Foundry's semantic symbolic solver names.
+pub fn symbolic_solver_is_builtin(solver: &str) -> bool {
+    BUILTIN_SYMBOLIC_SOLVERS.contains(&solver)
+}
+
+/// Returns a warning when a configured symbolic solver portfolio has unavailable entries.
+pub fn symbolic_solver_portfolio_availability_warning(config: &SymbolicConfig) -> Option<String> {
+    runtime::solver_portfolio_availability_warning(config)
 }
 
 #[cfg(test)]

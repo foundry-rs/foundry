@@ -114,58 +114,9 @@ impl FromTxWithEncoded<FoundryTxEnvelope> for OpTx {
 
 impl FromTxWithEncoded<FoundryTxEnvelope> for OpTransaction<TxEnv> {
     fn from_encoded_tx(tx: &FoundryTxEnvelope, caller: Address, encoded: Bytes) -> Self {
-        match tx {
-            FoundryTxEnvelope::Legacy(signed_tx) => {
-                let base = TxEnv::from_recovered_tx(signed_tx, caller);
-                Self { base, enveloped_tx: Some(encoded), deposit: Default::default() }
-            }
-            FoundryTxEnvelope::Eip2930(signed_tx) => {
-                let base = TxEnv::from_recovered_tx(signed_tx, caller);
-                Self { base, enveloped_tx: Some(encoded), deposit: Default::default() }
-            }
-            FoundryTxEnvelope::Eip1559(signed_tx) => {
-                let base = TxEnv::from_recovered_tx(signed_tx, caller);
-                Self { base, enveloped_tx: Some(encoded), deposit: Default::default() }
-            }
-            FoundryTxEnvelope::Eip4844(signed_tx) => {
-                let base = TxEnv::from_recovered_tx(signed_tx, caller);
-                Self { base, enveloped_tx: Some(encoded), deposit: Default::default() }
-            }
-            FoundryTxEnvelope::Eip7702(signed_tx) => {
-                let base = TxEnv::from_recovered_tx(signed_tx, caller);
-                Self { base, enveloped_tx: Some(encoded), deposit: Default::default() }
-            }
-            FoundryTxEnvelope::Deposit(sealed_tx) => {
-                let deposit_tx = sealed_tx.inner();
-                let base = TxEnv {
-                    tx_type: deposit_tx.ty(),
-                    caller,
-                    gas_limit: deposit_tx.gas_limit,
-                    kind: deposit_tx.to,
-                    value: deposit_tx.value,
-                    data: deposit_tx.input.clone(),
-                    ..Default::default()
-                };
-                let deposit = DepositTransactionParts {
-                    source_hash: deposit_tx.source_hash,
-                    mint: Some(deposit_tx.mint),
-                    is_system_transaction: deposit_tx.is_system_transaction,
-                };
-                Self { base, enveloped_tx: Some(encoded), deposit }
-            }
-            FoundryTxEnvelope::PostExec(sealed_tx) => {
-                let tx = sealed_tx.inner();
-                let base = TxEnv {
-                    tx_type: tx.ty(),
-                    caller,
-                    kind: tx.kind(),
-                    data: tx.input.clone(),
-                    ..Default::default()
-                };
-                Self { base, enveloped_tx: Some(encoded), deposit: Default::default() }
-            }
-            FoundryTxEnvelope::Tempo(_) => unreachable!("Tempo tx in Optimism context"),
-        }
+        let mut tx = Self::from_recovered_tx(tx, caller);
+        tx.enveloped_tx = Some(encoded);
+        tx
     }
 }
 

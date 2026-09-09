@@ -30,7 +30,7 @@ use crate::{
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, B256, Selector, hex, keccak256};
+use alloy_primitives::{Address, B256, Selector, hex, keccak256, map::HashMap};
 use eyre::Result;
 use foundry_config::FuzzCorpusConfig;
 use foundry_evm_core::{constants::MAGIC_ASSUME, evm::FoundryEvmNetwork};
@@ -39,7 +39,7 @@ use foundry_evm_fuzz::{BasicTxDetails, invariant::FuzzRunIdentifiedContracts};
 use std::{
     borrow::Cow,
     cmp::Ordering,
-    collections::{BTreeSet, HashMap},
+    collections::BTreeSet,
     fmt,
     fs::File,
     io::{BufWriter, Write},
@@ -287,7 +287,7 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
     let mut failed_entries = 0usize;
     // Reused per call. In aggregate mode it accumulates across all entries; in per-input mode it
     // is cleared after each entry's file is written.
-    let mut evm_buf = EvmShowmap::new();
+    let mut evm_buf = EvmShowmap::default();
     let mut san_buf: Vec<u64> = Vec::new();
 
     for entry in entries {
@@ -705,7 +705,7 @@ fn fuzz_replay_call_succeeded<FEN: FoundryEvmNetwork>(
         fail_on_revert,
         target_addr,
         call_result.reverter,
-        executor.inspector().networks.extra_cheatcode_addresses(),
+        executor.inspector().extra_cheatcode_addresses(),
     ) || executor.is_raw_call_mut_success(target_addr, call_result, false)
 }
 
@@ -887,7 +887,7 @@ mod tests {
     fn write_evm_emits_only_nonzero_deterministic_ids() {
         let mut buf: Vec<u8> = Vec::new();
         let h = B256::with_last_byte(0xab);
-        let mut evm = EvmShowmap::new();
+        let mut evm = EvmShowmap::default();
         evm.insert((h, 1u32), 0u64); // skipped (count=0)
         evm.insert((h, 0x2au32), 3u64);
         write_evm(&mut buf, &evm).unwrap();
@@ -906,7 +906,7 @@ mod tests {
     fn write_showmap_file_skips_when_empty() {
         let dir = temp_dir();
         let path = dir.join("trial.txt");
-        let written = write_showmap_file(&path, &EvmShowmap::new(), &[]).unwrap();
+        let written = write_showmap_file(&path, &EvmShowmap::default(), &[]).unwrap();
         assert_eq!(written, 0);
         assert!(!path.exists());
     }
@@ -916,7 +916,7 @@ mod tests {
         let dir = temp_dir();
         let path = dir.join("trial.txt");
         let h = B256::with_last_byte(0xff);
-        let mut evm = EvmShowmap::new();
+        let mut evm = EvmShowmap::default();
         evm.insert((h, 7u32), 5u64);
         let written = write_showmap_file(&path, &evm, &[2]).unwrap();
         assert_eq!(written, 1);
@@ -931,7 +931,7 @@ mod tests {
         let path = dir.join("trial.txt");
         std::fs::write(&path, "keep me").unwrap();
         let h = B256::with_last_byte(0xff);
-        let mut evm = EvmShowmap::new();
+        let mut evm = EvmShowmap::default();
         evm.insert((h, 7u32), 5u64);
         let err = write_showmap_file(&path, &evm, &[]).unwrap_err();
         assert!(err.to_string().contains("pick a different --showmap-trial"), "{err:?}");

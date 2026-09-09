@@ -20,7 +20,7 @@ use crate::{
         },
         fees::{
             FeeDetails, FeeHistoryCache, FeeHistoryCacheItem, MIN_SUGGESTED_PRIORITY_FEE,
-            create_fee_history_cache_item,
+            REWARD_PERCENTILE_RESOLUTION, create_fee_history_cache_item,
         },
         macros::node_info,
         miner::FixedBlockTimeMiner,
@@ -36,12 +36,12 @@ use crate::{
     mem::transaction_build,
 };
 use alloy_consensus::{
-    Blob, BlockHeader, Transaction, TrieAccount, TxEip4844Variant, TxReceipt,
+    Blob, BlockHeader, Transaction, TrieAccount, TxEip4844Variant, TxReceipt, Typed2718,
     transaction::{Recovered, SignerRecoverable},
 };
 use alloy_dyn_abi::TypedData;
 use alloy_eips::{
-    eip2718::Encodable2718,
+    eip2718::{EIP4844_TX_TYPE_ID, Encodable2718},
     eip7910::{EthConfig, EthForkConfig},
 };
 use alloy_evm::overrides::{OverrideBlockHashes, apply_state_overrides};
@@ -52,7 +52,7 @@ use alloy_network::{
 };
 use alloy_primitives::{
     Address, B64, B256, Bytes, TxHash, TxKind, U64, U256,
-    map::{HashMap, HashSet},
+    map::{AddressSet, B256Set, HashMap, HashSet},
 };
 use alloy_rlp::{Encodable, Header, PayloadView};
 use alloy_rpc_types::{
@@ -101,7 +101,7 @@ use foundry_common::{
 use foundry_evm::decode::RevertDecoder;
 use foundry_primitives::{
     FoundryNetwork, FoundryReceiptEnvelope, FoundryTransactionRequest, FoundryTxEnvelope,
-    FoundryTxReceipt, FoundryTxType, FoundryTypedTx,
+    FoundryTxReceipt, FoundryTypedTx,
 };
 use futures::{
     StreamExt, TryFutureExt,
@@ -634,6 +634,7 @@ impl<N: Network> EthApi<N> {
             config.fork_urls = vec![url.clone()];
             config.fork_chain_id = None;
             config.endpoint_identity = endpoint_identity;
+            node_config.fork_endpoint_is_anvil = endpoint_identity.is_authoritative();
         }
         // Keep node_config in sync so a subsequent URL-less fork reset uses the updated endpoint.
         node_config.fork_urls = vec![url];
@@ -967,7 +968,7 @@ impl<N: Network> EthApi<N> {
     /// Handler for ETH RPC call: `eth_accounts`
     pub fn accounts(&self) -> Result<Vec<Address>> {
         node_info!("eth_accounts");
-        let mut unique = HashSet::new();
+        let mut unique = AddressSet::default();
         let mut accounts: Vec<Address> = Vec::new();
         for signer in self.signers.iter() {
             accounts.extend(signer.accounts().into_iter().filter(|acc| unique.insert(*acc)));
@@ -1115,18 +1116,6 @@ impl<N: Network> EthApi<N> {
         self.backend.transaction_by_block_hash_and_index(hash, index).await
     }
 
-    /// Returns transaction by given block number and index.
-    ///
-    /// Handler for ETH RPC call: `eth_getTransactionByBlockNumberAndIndex`
-    pub async fn transaction_by_block_number_and_index(
-        &self,
-        block: BlockNumber,
-        idx: Index,
-    ) -> Result<Option<AnyRpcTransaction>> {
-        node_info!("eth_getTransactionByBlockNumberAndIndex");
-        self.backend.transaction_by_block_number_and_index(block, idx).await
-    }
-
     /// Returns an uncles at given block and index.
     ///
     /// Handler for ETH RPC call: `eth_getUncleByBlockHashAndIndex`
@@ -1237,6 +1226,16 @@ impl<N: Network> EthApi<N> {
         N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
     {
         node_info!("eth_feeHistory");
+
+        if reward_percentiles.iter().any(|p| !(0.0..=100.0).contains(p))
+            || reward_percentiles.windows(2).any(|pair| pair[0] >= pair[1])
+        {
+            return Err(FeeHistoryError::InvalidRewardPercentiles.into());
+        }
+        if block_count.is_zero() {
+            return Ok(FeeHistory::default());
+        }
+
         // max number of blocks in the requested range
 
         let number = self.backend.convert_block_number(Some(newest_block));
@@ -1376,12 +1375,8 @@ impl<N: Network> EthApi<N> {
                 // requested percentiles
                 if !reward_percentiles.is_empty() {
                     let mut block_rewards = Vec::new();
-                    let resolution_per_percentile: f64 = 2.0;
                     for p in &reward_percentiles {
-                        let p = p.clamp(0.0, 100.0);
-                        let index = ((p.round() / 2f64) * 2f64) * resolution_per_percentile;
-                        let reward = item.rewards.get(index as usize).map_or(0, |r| *r);
-                        block_rewards.push(reward);
+                        block_rewards.push(reward_at_percentile(&item.rewards, *p));
                     }
                     rewards.push(block_rewards);
                 }
@@ -1573,6 +1568,25 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> EthApi<N> {
 // == impl EthApi anvil endpoints ==
 
 impl EthApi<FoundryNetwork> {
+    /// Returns transaction by given block number and index.
+    ///
+    /// Handler for ETH RPC call: `eth_getTransactionByBlockNumberAndIndex`
+    pub async fn transaction_by_block_number_and_index(
+        &self,
+        block: BlockNumber,
+        idx: Index,
+    ) -> Result<Option<AnyRpcTransaction>> {
+        node_info!("eth_getTransactionByBlockNumberAndIndex");
+        if block == BlockNumber::Pending {
+            return Ok(self.pending_block_full().await?.and_then(|block| {
+                let WithOtherFields { inner: block, .. } = block.0;
+                block.transactions.into_transactions().nth(idx.into())
+            }));
+        }
+
+        self.backend.transaction_by_block_number_and_index(block, idx).await
+    }
+
     /// Create a buffer that represents all state on the chain, which can be loaded to separate
     /// process by calling `anvil_loadState`
     ///
@@ -2398,7 +2412,7 @@ impl EthApi<FoundryNetwork> {
         match self.pool.get_transaction(hash) {
             Some(tx) => Ok(Some(tx.transaction.encoded_2718().into())),
             None => match self.backend.transaction_by_hash(hash).await? {
-                Some(tx) => Ok(Some(tx.as_ref().encoded_2718().into())),
+                Some(tx) => encode_rpc_transaction(&tx).map(Some),
                 None => Ok(None),
             },
         }
@@ -2526,6 +2540,10 @@ impl EthApi<FoundryNetwork> {
     ) -> Result<HashMap<Address, Vec<B256>>> {
         node_info!("eth_getStorageValues");
 
+        if requests.is_empty() {
+            return Err(RpcError::invalid_params("empty request").into());
+        }
+
         let total_slots: usize = requests.values().map(|s| s.len()).sum();
         if total_slots > 1024 {
             return Err(BlockchainError::RpcError(RpcError::invalid_params(format!(
@@ -2563,7 +2581,7 @@ impl EthApi<FoundryNetwork> {
     pub async fn block_by_number(&self, number: BlockNumber) -> Result<Option<AnyRpcBlock>> {
         node_info!("eth_getBlockByNumber");
         if number == BlockNumber::Pending {
-            return Ok(Some(self.pending_block().await));
+            return Ok(Some(self.pending_block().await?));
         }
 
         self.backend.block_by_number(number).await
@@ -2578,7 +2596,7 @@ impl EthApi<FoundryNetwork> {
     ) -> Result<Option<WithOtherFields<AnyRpcHeader>>> {
         node_info!("eth_getHeaderByNumber");
         if number == BlockNumber::Pending {
-            let WithOtherFields { inner: block, other } = self.pending_block().await.0;
+            let WithOtherFields { inner: block, other } = self.pending_block().await?.0;
             return Ok(Some(WithOtherFields { inner: block.header, other }));
         }
 
@@ -2594,7 +2612,7 @@ impl EthApi<FoundryNetwork> {
     pub async fn block_by_number_full(&self, number: BlockNumber) -> Result<Option<AnyRpcBlock>> {
         node_info!("eth_getBlockByNumber");
         if number == BlockNumber::Pending {
-            return Ok(self.pending_block_full().await);
+            return self.pending_block_full().await;
         }
         self.backend.block_by_number_full(number).await
     }
@@ -2624,10 +2642,17 @@ impl EthApi<FoundryNetwork> {
         block_hash: B256,
     ) -> Result<Option<serde_json::Value>> {
         node_info!("eth_getBlockAccessListByBlockHash");
-        if let Some(fork) = self.get_fork() {
-            return Ok(fork.block_access_list_by_hash(block_hash).await?);
+        let Some(fork) = self.get_fork() else { return Ok(None) };
+
+        // Only blocks we know to be mined after the fork point are guaranteed to be unknown
+        // upstream. Anything else, including hashes we cannot resolve locally, is left to the fork.
+        if let Some(block) = self.backend.get_block_by_hash(block_hash)
+            && !fork.predates_fork_inclusive(block.header.number)
+        {
+            return Ok(None);
         }
-        Ok(None)
+
+        Ok(fork.block_access_list_by_hash(block_hash).await?)
     }
 
     /// Returns the EIP-7928 block access list for a block number.
@@ -2690,11 +2715,12 @@ impl EthApi<FoundryNetwork> {
         block_number: BlockNumber,
     ) -> Result<Option<U256>> {
         node_info!("eth_getBlockTransactionCountByNumber");
-        let block_request = self.block_request(Some(block_number.into())).await?;
-        if let BlockRequest::Pending(txs) = block_request {
-            let block = self.backend.pending_block(txs).await;
+        if block_number == BlockNumber::Pending {
+            let txs = self.pool.ready_transactions().collect();
+            let block = self.backend.pending_block(txs).await?;
             return Ok(Some(U256::from(block.block.body.transactions.len())));
         }
+
         let block = self.backend.block_by_number(block_number).await?;
         let txs = block.map(|b| match b.transactions() {
             BlockTransactions::Full(txs) => U256::from(txs.len()),
@@ -2936,11 +2962,21 @@ impl EthApi<FoundryNetwork> {
         } else {
             None
         };
-        let raw = service_encoded.as_deref().unwrap_or(tx.as_ref());
+        let raw = service_encoded.map(Bytes::from).unwrap_or(tx);
 
-        let mut data = raw;
-        let transaction = FoundryTxEnvelope::decode_2718(&mut data)
-            .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
+        let transaction = if raw.first() == Some(&EIP4844_TX_TYPE_ID) {
+            // Pooled EIP-4844 decoding uses large stack frames for inline blobs. Isolate it from
+            // the already-large RPC dispatcher without increasing every worker's stack.
+            let raw = raw.clone();
+            tokio::task::spawn_blocking(move || FoundryTxEnvelope::decode_2718(&mut raw.as_ref()))
+                .await
+                .map_err(|_| {
+                    BlockchainError::Internal("transaction decoding task panicked".into())
+                })?
+        } else {
+            FoundryTxEnvelope::decode_2718(&mut raw.as_ref())
+        }
+        .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
 
         self.ensure_typed_transaction_supported(&transaction)?;
 
@@ -2955,7 +2991,7 @@ impl EthApi<FoundryNetwork> {
         };
 
         if self.backend.is_tempo() && TempoHardfork::from(self.backend.hardfork()).is_t5() {
-            let classification = classify_payment_lane(raw);
+            let classification = classify_payment_lane(raw.as_ref());
             trace!(target: "node", tx = ?transaction.hash(), ?classification, "classified transaction lane");
         }
 
@@ -3628,6 +3664,14 @@ impl EthApi<FoundryNetwork> {
     /// Handler for ETH RPC call: `eth_getBlockReceipts`
     pub async fn block_receipts(&self, number: BlockId) -> Result<Option<Vec<FoundryTxReceipt>>> {
         node_info!("eth_getBlockReceipts");
+        if number == BlockId::pending() {
+            let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
+            if transactions.is_empty() {
+                return Ok(Some(Vec::new()));
+            }
+            return Ok(Some(self.backend.pending_block_receipts(transactions).await?));
+        }
+
         self.backend.block_receipts(number).await
     }
 
@@ -3636,6 +3680,18 @@ impl EthApi<FoundryNetwork> {
     /// Handler for ETH RPC call: `eth_getLogs`
     pub async fn logs(&self, filter: Filter) -> Result<Vec<Log>> {
         node_info!("eth_getLogs");
+        let best = self.backend.best_number();
+        let to_block =
+            self.backend.convert_block_number(filter.block_option.get_to_block().copied());
+        if to_block > best {
+            return Err(BlockchainError::BlockOutOfRange(best, to_block));
+        }
+        let from_block =
+            self.backend.convert_block_number(filter.block_option.get_from_block().copied());
+        if from_block > to_block {
+            return Err(RpcError::invalid_params("invalid block range params").into());
+        }
+
         self.backend.logs(filter).await
     }
 
@@ -3786,7 +3842,7 @@ impl EthApi<FoundryNetwork> {
                 "fork provider returned a non-full block for a full block request".to_string(),
             ));
         };
-        Ok(txs.iter().map(|tx| tx.as_ref().encoded_2718().into()).collect())
+        txs.iter().map(encode_rpc_transaction).collect()
     }
 
     /// Returns RLP encoded raw block header.
@@ -3831,7 +3887,7 @@ impl EthApi<FoundryNetwork> {
         index: Index,
     ) -> Result<Option<Bytes>> {
         node_info!("eth_getRawTransactionByBlockNumberAndIndex");
-        match self.backend.transaction_by_block_number_and_index(block_number, index).await? {
+        match self.transaction_by_block_number_and_index(block_number, index).await? {
             Some(tx) => self.inner_raw_transaction(tx.tx_hash()).await,
             None => Ok(None),
         }
@@ -4663,7 +4719,7 @@ impl EthApi<FoundryNetwork> {
             let hash_filter = filter
                 .transaction_hashes
                 .filter(|hashes| !hashes.is_empty())
-                .map(|hashes| hashes.into_iter().collect::<std::collections::HashSet<_>>());
+                .map(|hashes| hashes.into_iter().collect::<B256Set>());
 
             loop {
                 let notification = tokio::select! {
@@ -4718,17 +4774,17 @@ impl EthApi<FoundryNetwork> {
     }
 
     /// Returns the pending block with tx hashes
-    async fn pending_block(&self) -> AnyRpcBlock {
+    async fn pending_block(&self) -> Result<AnyRpcBlock> {
         let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
-        let info = self.backend.pending_block(transactions).await;
-        self.backend.convert_block(info.block)
+        let info = self.backend.pending_block(transactions).await?;
+        Ok(self.backend.convert_block(info.block))
     }
 
     /// Returns the full pending block with `Transaction` objects
-    async fn pending_block_full(&self) -> Option<AnyRpcBlock> {
+    async fn pending_block_full(&self) -> Result<Option<AnyRpcBlock>> {
         let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
         let BlockInfo { block, transactions, receipts: _ } =
-            self.backend.pending_block(transactions).await;
+            self.backend.pending_block(transactions).await?;
 
         let mut partial_block = self.backend.convert_block(block.clone());
 
@@ -4736,7 +4792,10 @@ impl EthApi<FoundryNetwork> {
         let base_fee = self.backend.base_fee();
 
         for info in transactions {
-            let tx = block.body.transactions.get(info.transaction_index as usize)?.clone();
+            let Some(tx) = block.body.transactions.get(info.transaction_index as usize).cloned()
+            else {
+                return Ok(None);
+            };
 
             let tx = transaction_build(
                 Some(info.transaction_hash),
@@ -4750,7 +4809,7 @@ impl EthApi<FoundryNetwork> {
 
         partial_block.transactions = BlockTransactions::from(block_transactions);
 
-        Some(partial_block)
+        Ok(Some(partial_block))
     }
 
     /// Prepares transaction request by filling missing fields using Anvil's API, then attempts
@@ -4794,22 +4853,20 @@ impl EthApi<FoundryNetwork> {
 
         // Fill missing tx type specific fields
         if let Err((tx_type, _)) = request.missing_keys() {
-            if matches!(tx_type, FoundryTxType::Legacy | FoundryTxType::Eip2930) {
+            if tx_type.is_legacy() || tx_type.is_eip2930() {
                 request.gas_price().is_none().then(|| request.set_gas_price(self.gas_price()));
             }
-            if tx_type == FoundryTxType::Eip2930 {
+            if tx_type.is_eip2930() {
                 request
                     .access_list()
                     .is_none()
                     .then(|| request.set_access_list(Default::default()));
             }
-            if matches!(
-                tx_type,
-                FoundryTxType::Eip1559
-                    | FoundryTxType::Eip4844
-                    | FoundryTxType::Eip7702
-                    | FoundryTxType::Tempo
-            ) {
+            if tx_type.is_eip1559()
+                || tx_type.is_eip4844()
+                || tx_type.is_eip7702()
+                || tx_type.is_tempo()
+            {
                 request
                     .max_fee_per_gas()
                     .is_none()
@@ -4819,7 +4876,7 @@ impl EthApi<FoundryNetwork> {
                     .is_none()
                     .then(|| request.set_max_priority_fee_per_gas(MIN_SUGGESTED_PRIORITY_FEE));
             }
-            if tx_type == FoundryTxType::Eip4844 {
+            if tx_type.is_eip4844() {
                 request.as_ref().max_fee_per_blob_gas().is_none().then(|| {
                     request.as_mut().set_max_fee_per_blob_gas(
                         self.backend.fees().get_next_block_blob_base_fee_per_gas(),
@@ -5078,6 +5135,13 @@ fn normalize_fee_payer_service_encoding(raw: &[u8]) -> Option<Vec<u8>> {
     Some(normalized)
 }
 
+/// EIP-2718 encodes a transaction held in its JSON-RPC form, reporting the types anvil cannot
+/// encode as [`BlockchainError::UnsupportedTransactionEncoding`].
+fn encode_rpc_transaction(transaction: &AnyRpcTransaction) -> Result<Bytes> {
+    FoundryTxEnvelope::encode_rpc_2718(transaction)
+        .map_err(|_| BlockchainError::UnsupportedTransactionEncoding(transaction.ty()))
+}
+
 fn txpool_transaction_key(pending_transaction: &PendingTransaction<FoundryTxEnvelope>) -> String {
     match pending_transaction.transaction.as_ref() {
         FoundryTxEnvelope::Tempo(tx) if !tx.tx().nonce_key.is_zero() => {
@@ -5238,6 +5302,11 @@ fn merge_pre_fork_fee_history(
     response.blob_gas_used_ratio.resize(count, 0.0);
 }
 
+fn reward_at_percentile(rewards: &[u128], percentile: f64) -> u128 {
+    let index = (percentile * REWARD_PERCENTILE_RESOLUTION).round() as usize;
+    rewards.get(index).copied().unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5326,6 +5395,34 @@ mod tests {
         let rewards = fee_history.reward.unwrap();
         assert_eq!(rewards.len(), count as usize);
         assert!(rewards.iter().all(|reward| reward.len() == 1));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fee_history_rejects_invalid_reward_percentiles() {
+        let (api, _handle) = spawn(NodeConfig::test()).await;
+
+        for percentiles in [vec![-0.5], vec![100.5], vec![50.0, 25.0], vec![50.0, 50.0]] {
+            let err =
+                api.fee_history(U256::from(1), BlockNumber::Latest, percentiles).await.unwrap_err();
+            assert!(matches!(
+                err,
+                BlockchainError::FeeHistory(FeeHistoryError::InvalidRewardPercentiles)
+            ));
+        }
+
+        for percentiles in [vec![], vec![0.0, 100.0]] {
+            api.fee_history(U256::from(1), BlockNumber::Latest, percentiles).await.unwrap();
+        }
+    }
+
+    #[test]
+    fn fractional_reward_percentiles_use_cache_resolution() {
+        let rewards = (0..=200).collect::<Vec<_>>();
+
+        assert_eq!(reward_at_percentile(&rewards, 0.0), 0);
+        assert_eq!(reward_at_percentile(&rewards, 0.5), 1);
+        assert_eq!(reward_at_percentile(&rewards, 1.0), 2);
+        assert_eq!(reward_at_percentile(&rewards, 100.0), 200);
     }
 
     #[test]

@@ -10,9 +10,9 @@ use foundry_evm_core::{
     fork::CreateFork,
     opts::{EvmOpts, ExecutionSpecContext, resolve_execution_spec},
 };
-use foundry_evm_hardforks::{ExecutionSpec, FoundryHardfork, TempoHardfork};
+use foundry_evm_hardforks::{FoundryHardfork, TempoHardfork};
 use foundry_evm_networks::NetworkConfigs;
-use foundry_evm_traces::TraceRequirements;
+use foundry_evm_traces::{TraceContext, TraceRequirements};
 use revm::state::Bytecode;
 use std::ops::{Deref, DerefMut};
 
@@ -21,8 +21,81 @@ pub struct TracingExecutor<FEN: FoundryEvmNetwork> {
     executor: Executor<FEN>,
 }
 
+/// Fork state and network context used to construct a tracing executor.
+pub struct TracingFork<FEN: FoundryEvmNetwork> {
+    pub evm_env: EvmEnvFor<FEN>,
+    pub tx_env: TxEnvFor<FEN>,
+    fork: CreateFork,
+    context: TraceContext,
+}
+
+impl<FEN: FoundryEvmNetwork> TracingFork<FEN> {
+    pub const fn context(&self) -> TraceContext {
+        self.context
+    }
+
+    /// Resolves the execution spec and carries it into the trace decoding context.
+    pub fn resolve_spec(&mut self, config: &Config, evm_version: Option<EvmVersion>) {
+        let hardfork = TracingExecutor::<FEN>::resolve_spec_for_chain(
+            config,
+            self.context.networks(),
+            self.context.chain().id(),
+            self.context.hardfork(),
+            &mut self.evm_env,
+            evm_version,
+        );
+        self.context = self.context.with_hardfork(hardfork);
+    }
+
+    /// Adds labels for precompiles active in this trace context.
+    pub fn extend_precompile_labels(&self, config: &mut Config) {
+        TracingExecutor::<FEN>::extend_precompile_labels(
+            config,
+            self.context.networks(),
+            self.context.hardfork(),
+        );
+    }
+
+    /// Builds a tracing executor from this resolved fork.
+    pub fn into_executor(
+        self,
+        builder: ExecutorBuilder<FEN>,
+        trace_requirements: TraceRequirements,
+        create2_deployer: Address,
+        state_overrides: Option<StateOverride>,
+    ) -> eyre::Result<TracingExecutor<FEN>> {
+        TracingExecutor::new(
+            builder,
+            (self.evm_env, self.tx_env),
+            self.fork,
+            None,
+            trace_requirements,
+            self.context.networks(),
+            create2_deployer,
+            state_overrides,
+        )
+    }
+
+    fn into_parts(
+        self,
+    ) -> (EvmEnvFor<FEN>, TxEnvFor<FEN>, CreateFork, Chain, NetworkConfigs, Option<FoundryHardfork>)
+    {
+        (
+            self.evm_env,
+            self.tx_env,
+            self.fork,
+            self.context.chain(),
+            self.context.networks(),
+            self.context.hardfork(),
+        )
+    }
+}
+
 impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
+    /// Creates a tracing executor from tooling resolved by concrete network dispatch.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
+        builder: ExecutorBuilder<FEN>,
         env: (EvmEnvFor<FEN>, TxEnvFor<FEN>),
         fork: CreateFork,
         version: Option<EvmVersion>,
@@ -34,40 +107,15 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
         let db = Backend::spawn(Some(fork))?;
         // configures a bare version of the evm executor: no cheatcode and log_collector inspector
         // is enabled, tracing will be enabled only for the targeted transaction
-        let mut executor = ExecutorBuilder::default()
+        let mut executor = builder
             .inspectors(|stack| {
                 stack.trace_requirements(trace_requirements).create2_deployer(create2_deployer)
             })
             .spec_id_opt(version.map(evm_spec_id::<SpecFor<FEN>>))
             .build(env.0, env.1, db, networks);
 
-        // Apply the state overrides.
         if let Some(state_overrides) = state_overrides {
-            for (address, overrides) in state_overrides {
-                if let Some(balance) = overrides.balance {
-                    executor.set_balance(address, balance)?;
-                }
-                if let Some(nonce) = overrides.nonce {
-                    executor.set_nonce(address, nonce)?;
-                }
-                if let Some(code) = overrides.code {
-                    let bytecode = Bytecode::new_raw_checked(code)
-                        .wrap_err("invalid bytecode in state override")?;
-                    executor.set_code(address, bytecode)?;
-                }
-                if let Some(state) = overrides.state {
-                    let state: HashMap<U256, U256> = state
-                        .into_iter()
-                        .map(|(slot, value)| (slot.into(), value.into()))
-                        .collect();
-                    executor.set_storage(address, state)?;
-                }
-                if let Some(state_diff) = overrides.state_diff {
-                    for (slot, value) in state_diff {
-                        executor.set_storage_slot(address, slot.into(), value.into())?;
-                    }
-                }
-            }
+            apply_state_overrides(&mut executor, state_overrides)?;
         }
 
         Ok(Self { executor })
@@ -122,28 +170,14 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
         networks: NetworkConfigs,
         resolved_hardfork: Option<FoundryHardfork>,
     ) {
-        let tempo_hardfork = resolved_hardfork.and_then(TempoHardfork::from_foundry_hardfork);
-        #[cfg(feature = "monad")]
-        let monad_hardfork =
-            resolved_hardfork.and_then(foundry_evm_hardforks::MonadHardfork::from_foundry_hardfork);
-        #[cfg(not(feature = "monad"))]
-        let monad_hardfork = None;
-
-        config.labels.extend(networks.precompiles_label(tempo_hardfork, monad_hardfork));
+        config.labels.extend(networks.precompiles_label(resolved_hardfork));
     }
 
-    /// uses the fork block number from the config
-    pub async fn get_fork_material(
+    /// Resolves the fork state and trace context using the fork block number from the config.
+    pub async fn get_fork(
         config: &mut Config,
         mut evm_opts: EvmOpts,
-    ) -> eyre::Result<(
-        EvmEnvFor<FEN>,
-        TxEnvFor<FEN>,
-        CreateFork,
-        Chain,
-        NetworkConfigs,
-        Option<FoundryHardfork>,
-    )> {
+    ) -> eyre::Result<TracingFork<FEN>> {
         evm_opts.fork_url = Some(config.get_rpc_url_or_localhost_http()?.into_owned());
         evm_opts.fork_block_number = config.fork_block_number;
         evm_opts.infer_network_from_fork().await?;
@@ -157,8 +191,58 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
         let fork_context = resolved.context();
 
         let chain = fork_context.source_chain_id.into();
-        Ok((evm_env, tx_env, fork, chain, networks, fork_context.hardfork))
+        Ok(TracingFork {
+            evm_env,
+            tx_env,
+            fork,
+            context: TraceContext::new(chain, networks, fork_context.hardfork),
+        })
     }
+
+    /// Returns the tracing fork as its legacy tuple representation.
+    pub async fn get_fork_material(
+        config: &mut Config,
+        evm_opts: EvmOpts,
+    ) -> eyre::Result<(
+        EvmEnvFor<FEN>,
+        TxEnvFor<FEN>,
+        CreateFork,
+        Chain,
+        NetworkConfigs,
+        Option<FoundryHardfork>,
+    )> {
+        Ok(Self::get_fork(config, evm_opts).await?.into_parts())
+    }
+}
+
+fn apply_state_overrides<FEN: FoundryEvmNetwork>(
+    executor: &mut Executor<FEN>,
+    state_overrides: StateOverride,
+) -> eyre::Result<()> {
+    for (address, overrides) in state_overrides {
+        if let Some(balance) = overrides.balance {
+            executor.set_balance(address, balance)?;
+        }
+        if let Some(nonce) = overrides.nonce {
+            executor.set_account_nonce(address, nonce)?;
+        }
+        if let Some(code) = overrides.code {
+            let bytecode =
+                Bytecode::new_raw_checked(code).wrap_err("invalid bytecode in state override")?;
+            executor.set_code(address, bytecode)?;
+        }
+        if let Some(state) = overrides.state {
+            let state: HashMap<U256, U256> =
+                state.into_iter().map(|(slot, value)| (slot.into(), value.into())).collect();
+            executor.set_storage(address, state)?;
+        }
+        if let Some(state_diff) = overrides.state_diff {
+            for (slot, value) in state_diff {
+                executor.set_storage_slot(address, slot.into(), value.into())?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn network_hardfork_from_evm_version(
@@ -188,5 +272,45 @@ impl<FEN: FoundryEvmNetwork> Deref for TracingExecutor<FEN> {
 impl<FEN: FoundryEvmNetwork> DerefMut for TracingExecutor<FEN> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.executor
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_rpc_types::state::AccountOverride;
+    use foundry_evm_core::{FoundryTransaction, evm::EthEvmNetwork};
+    use revm::context::Transaction;
+
+    #[test]
+    fn state_override_nonce_does_not_modify_transaction_nonce() {
+        let sender = Address::repeat_byte(0x11);
+        let mut tx_env = TxEnvFor::<EthEvmNetwork>::default();
+        tx_env.set_caller(sender);
+        tx_env.set_nonce(7);
+        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        let mut evm_env = EvmEnvFor::<EthEvmNetwork>::default();
+        evm_env.cfg_env.disable_nonce_check = true;
+        let mut executor =
+            ExecutorBuilder::default().build(evm_env, tx_env, backend, NetworkConfigs::default());
+        executor.set_gas_limit(1_000_000);
+        executor.set_account_nonce(sender, 7).unwrap();
+
+        let overridden = Address::repeat_byte(0x42);
+        let mut state_overrides = StateOverride::default();
+        state_overrides.insert(sender, AccountOverride { nonce: Some(100), ..Default::default() });
+        state_overrides
+            .insert(overridden, AccountOverride { nonce: Some(200), ..Default::default() });
+
+        apply_state_overrides(&mut executor, state_overrides).unwrap();
+
+        assert_eq!(executor.get_nonce(sender).unwrap(), 100);
+        assert_eq!(executor.get_nonce(overridden).unwrap(), 200);
+        assert_eq!(executor.tx_env().caller(), sender);
+        assert_eq!(executor.tx_env().nonce(), 7);
+
+        let result =
+            executor.transact_raw(sender, overridden, Default::default(), U256::ZERO).unwrap();
+        assert_eq!(result.tx_env.nonce(), 7);
     }
 }

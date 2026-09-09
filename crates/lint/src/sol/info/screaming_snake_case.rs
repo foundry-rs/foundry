@@ -1,7 +1,10 @@
 use super::ScreamingSnakeCase;
 use crate::{
-    linter::{EarlyLintPass, LintContext, Suggestion},
-    sol::{Severity, SolLint, naming::check_screaming_snake_case},
+    linter::{EarlyLintPass, LintContext},
+    sol::{
+        Severity, SolLint,
+        naming::{check_screaming_snake_case, emit_rename},
+    },
 };
 use solar::ast::{VarMut, VariableDefinition};
 
@@ -28,20 +31,11 @@ impl<'ast> EarlyLintPass<'ast> for ScreamingSnakeCase {
         if let (Some(name), Some(mutability)) = (var.name, var.mutability)
             && let Some(expected) = check_screaming_snake_case(name.as_str())
         {
-            let suggestion = Suggestion::fix(
-                expected,
-                solar::interface::diagnostics::Applicability::MachineApplicable,
-            )
-            .with_desc("consider using");
-
-            match mutability {
-                VarMut::Constant => {
-                    ctx.emit_with_suggestion(&SCREAMING_SNAKE_CASE_CONSTANT, name.span, suggestion)
-                }
-                VarMut::Immutable => {
-                    ctx.emit_with_suggestion(&SCREAMING_SNAKE_CASE_IMMUTABLE, name.span, suggestion)
-                }
-            }
+            let lint = match mutability {
+                VarMut::Constant => &SCREAMING_SNAKE_CASE_CONSTANT,
+                VarMut::Immutable => &SCREAMING_SNAKE_CASE_IMMUTABLE,
+            };
+            emit_rename(ctx, lint, name.span, expected);
         }
     }
 }

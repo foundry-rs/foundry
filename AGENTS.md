@@ -12,9 +12,10 @@ written in Rust.
 - `anvil`: local Ethereum development node
 - `chisel`: Solidity REPL
 
-The repository is a Cargo workspace. Core crates live under `crates/`, docs for
-contributors live under `docs/dev/`, and Solidity fixtures and integration test
-projects live under `testdata/`.
+The repository is a Cargo workspace. Core crates live under `crates/`, Solidity
+fixtures and integration test projects live under `testdata/`, and the
+[developer documentation](docs/dev/README.md) defines documentation ownership
+and indexes maintained cross-crate guides.
 
 ## Commands
 
@@ -46,8 +47,8 @@ Rust formatting uses nightly.
 
 Foundry's EVM execution tooling is built around `revm`. Cheatcodes are calls to
 the fixed cheatcode address and are dispatched through the cheatcode inspector.
-Custom network behavior for `anvil`, `forge`, and `cast` is implemented through
-the EVM networks crate.
+For custom network work, follow the ownership, state-lifecycle, tool-dispatch,
+and CI checklist in [`docs/dev/networks.md`](docs/dev/networks.md).
 
 For symbolic execution work under `crates/evm/symbolic`, read
 `crates/evm/symbolic/AGENTS.md` before editing.
@@ -93,25 +94,9 @@ replays persisted corpus entries and writes AFL `showmap`-style coverage files.
 
 ## CLI Output
 
-Foundry CLIs follow a stdout/stderr contract:
-
-- stdout is the command's machine-readable primary result
-- stderr is for warnings, errors, progress, status text, prompts, and banners
-- `--json` changes stdout format, not channel cleanliness
-- `--quiet` suppresses diagnostics and progress, not the command result
-- verbosity flags such as `-vvv` must not change stdout content
-
-Use the `sh_*` macros from `foundry_common::io`:
-
-- `sh_println!` / `sh_print!`: primary stdout result only
-- `sh_status!`: status prose on stderr
-- `sh_progress!`: progress on stderr
-- `sh_warn!`: recoverable warnings on stderr
-- `sh_err!`: errors on stderr
-- `prompt!`: prompt on stderr and read from stdin
-
-Do not use `println!`, `print!`, `eprintln!`, or `eprint!`; workspace clippy
-configuration forbids them.
+Follow [`docs/dev/output-channels.md`](docs/dev/output-channels.md), the canonical
+stdout/stderr contract. Use the `foundry_common::io` `sh_*` and `prompt!` macros;
+workspace Clippy configuration forbids direct `std::print*` and `std::eprint*`.
 
 ## Configuration
 
@@ -258,6 +243,8 @@ performance claims.
 - Put module documentation at the top of the module file with inner doc comments (`//! ...`), not on the `mod` item in the parent module.
 - NEVER put imports inside functions unless required for `#[cfg(...)]` gating. All imports go at the top of the file.
 - Group all `use` imports together. Keep `pub use` imports in a separate group. For local module re-exports, write `mod x;` before `pub use x;`; for re-exporting another module or external crate, use `use x;`, then a blank line, then `pub use y;`, then a blank line before local `mod my_mod; pub use my_mod::*;`.
+- Put imports used only by tests inside the relevant `#[cfg(test)]` module, merging them into its ordinary imports instead of adding `#[cfg(test)] use` items to the parent. Keep any additional feature or platform conditions on those imports. Retain parent-level test-gated imports or re-exports only when test-only helpers or multiple test modules need them there.
+- Put conditional imports after unconditional imports, separated by a blank line. Group imports with the same `#[cfg(...)]` condition together, with a blank line between different conditions. Apply this to every feature, platform, and test gate, including imports in nested modules. Within each group, merge imports from the same crate when their conditions and other attributes match. Keep the full condition on each `use`; do not introduce import-only modules or macros to avoid repeated attributes. Apply the same ordering within the separate `pub use` group, keeping local re-exports after their module declarations.
 - In `Cargo.toml`, generally group optional dependencies for a feature together. Put a comment immediately above the group containing only the feature name, for example `# jit`.
 - Prefer `let Some(x) = x else { return };` / `let Ok(x) = x else { return };` over `match x { Some(x) => x, _ => return }`.
 - Use `let ... else` only for a single early-exit guard. When multiple conditions or patterns gate the same block, prefer a combined `if let` / `let` chain instead of several sequential `let ... else` statements.

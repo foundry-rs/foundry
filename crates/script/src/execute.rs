@@ -26,7 +26,6 @@ use foundry_debugger::Debugger;
 use foundry_evm::{
     core::evm::FoundryEvmNetwork,
     decode::decode_console_logs,
-    hardforks::{ExecutionSpec, TempoHardfork},
     inspectors::cheatcodes::BroadcastableTransactions,
     traces::{
         CallTraceDecoder, CallTraceDecoderBuilder, DebugTraceIdentifier, TraceKind,
@@ -453,21 +452,13 @@ pub(crate) fn build_trace_decoder_for_context<FEN: FoundryEvmNetwork>(
     let mut tracing = script_config.config.tracing.clone();
     tracing.labels.extend(execution_result.labeled_addresses.clone());
 
-    #[cfg_attr(not(feature = "monad"), allow(unused_mut))]
-    let mut builder = CallTraceDecoderBuilder::new()
+    let builder = CallTraceDecoderBuilder::new()
         .with_tracing_config(&tracing)
         .with_known_contracts(known_contracts)
         .with_signature_identifier(SignaturesIdentifier::from_config(&script_config.config)?)
         .with_networks(script_config.config.networks)
         .with_chain_id(chain_id.map(|chain| chain.id()))
-        .with_tempo_hardfork(resolved_hardfork.and_then(TempoHardfork::from_foundry_hardfork));
-    #[cfg(feature = "monad")]
-    {
-        builder = builder.with_monad_hardfork(
-            resolved_hardfork
-                .and_then(foundry_evm::hardforks::MonadHardfork::from_foundry_hardfork),
-        );
-    }
+        .with_hardfork(resolved_hardfork);
     let mut decoder = builder.build();
 
     if tracing.decode_internal {

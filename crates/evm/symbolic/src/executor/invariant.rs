@@ -1,5 +1,17 @@
 use super::*;
 
+fn record_candidate_limitation(
+    limitation: &mut Option<SymbolicInvariantSearchLimitation>,
+    error: SymbolicError,
+) -> bool {
+    let search_exhausted = matches!(
+        error,
+        SymbolicError::Timeout(_) | SymbolicError::Solver(_) | SymbolicError::SolverQueryLimit(_)
+    );
+    limitation.get_or_insert_with(|| error.into());
+    search_exhausted
+}
+
 impl SymbolicExecutor {
     #[expect(clippy::too_many_arguments)]
     pub(super) fn execute_invariant_check<FEN: FoundryEvmNetwork>(
@@ -12,30 +24,17 @@ impl SymbolicExecutor {
         after_invariant: Option<&Function>,
         completed_paths: &mut usize,
     ) -> Result<Vec<InvariantCheckOutcome>, SymbolicError> {
-        let calldata = SymbolicCalldata::selector_only(&mut self.cx, invariant)?;
-        let call_data = calldata.call_data(&mut self.cx);
-        let constraints = calldata.into_constraints();
-        let outcomes = self.execute_sequence_call(
-            executor,
-            state,
-            invariant_address,
-            sender,
-            invariant,
-            call_data,
-            constraints,
-            completed_paths,
-        )?;
+        let mut call =
+            self.prepare_invariant_call(executor, state, invariant_address, sender, invariant)?;
 
         let mut checked = Vec::new();
-        for mut outcome in outcomes {
-            if !matches!(outcome.status, CallStatus::Success) {
-                checked.push(InvariantCheckOutcome { failed: true, state: outcome.state });
-                continue;
-            }
-
-            if self.invariant_return_failed(invariant, &mut outcome.state)? {
-                checked.push(InvariantCheckOutcome { failed: true, state: outcome.state });
-                continue;
+        while let Some(mut outcome) =
+            self.execute_sequence_call_next(executor, &mut call, completed_paths)?
+        {
+            if !matches!(outcome.status, CallStatus::Success)
+                || self.invariant_return_failed(invariant, &mut outcome.state)?
+            {
+                return Ok(vec![InvariantCheckOutcome { failed: true, state: outcome.state }]);
             }
 
             let Some(after_invariant) = after_invariant else {
@@ -43,29 +42,240 @@ impl SymbolicExecutor {
                 continue;
             };
 
-            let after_calldata = SymbolicCalldata::selector_only(&mut self.cx, after_invariant)?;
-            let calldata = after_calldata.call_data(&mut self.cx);
-            let constraints = after_calldata.constraints().to_vec();
-            for after_outcome in self.execute_sequence_call(
+            let mut after_call = self.prepare_invariant_call(
                 executor,
                 outcome.state,
                 invariant_address,
                 sender,
                 after_invariant,
-                calldata,
-                constraints,
-                completed_paths,
-            )? {
-                checked.push(InvariantCheckOutcome {
-                    failed: !matches!(after_outcome.status, CallStatus::Success),
-                    state: after_outcome.state,
-                });
+            )?;
+            while let Some(after_outcome) =
+                self.execute_sequence_call_next(executor, &mut after_call, completed_paths)?
+            {
+                let failed = !matches!(after_outcome.status, CallStatus::Success);
+                let checked_outcome = InvariantCheckOutcome { failed, state: after_outcome.state };
+                if failed {
+                    return Ok(vec![checked_outcome]);
+                }
+                checked.push(checked_outcome);
             }
         }
         Ok(checked)
     }
 
-    pub(super) fn invariant_return_failed(
+    fn prepare_invariant_call<FEN: FoundryEvmNetwork>(
+        &mut self,
+        executor: &Executor<FEN>,
+        state: PathState,
+        invariant_address: Address,
+        sender: Address,
+        invariant: &Function,
+    ) -> Result<SequenceCall, SymbolicError> {
+        let calldata = SymbolicCalldata::selector_only(&mut self.cx, invariant)?;
+        let call_data = calldata.call_data(&mut self.cx);
+        let constraints = calldata.into_constraints();
+        self.prepare_sequence_call(
+            executor,
+            state,
+            invariant_address,
+            sender,
+            invariant,
+            call_data,
+            constraints,
+        )
+    }
+
+    pub(super) fn search_invariant_candidates_inner<FEN: FoundryEvmNetwork>(
+        &mut self,
+        input: &SymbolicInvariantCandidateInput<'_, FEN>,
+        candidates: &mut Vec<SymbolicInvariantCandidate>,
+        limitation: &mut Option<SymbolicInvariantSearchLimitation>,
+    ) -> Result<(), SymbolicError> {
+        if input.invariants.is_empty() {
+            return Err(SymbolicError::Unsupported("symbolic invariant has no predicates"));
+        }
+        let mut completed_paths = 0;
+
+        let mut initial_state = PathState::empty(
+            &mut self.cx,
+            input.invariant_address,
+            input.handler_sender,
+            input.ffi_enabled,
+        );
+        initial_state.apply_executor_env(&mut self.cx, input.executor);
+        initial_state.world.set_storage_layout(self.config.storage_layout);
+
+        let calldatas = SymbolicCalldata::variants_with_prefix(
+            &input.target.function,
+            &self.config,
+            &mut self.cx,
+            "frontier_handler",
+        )?;
+        'variants: for calldata in calldatas {
+            self.check_timeout()?;
+            let step = SequenceStepTemplate {
+                sender: input.handler_sender,
+                address: input.target.address,
+                contract_name: input.target.contract_name.clone(),
+                function: input.target.function.clone(),
+                calldata,
+            };
+            let call_data = step.calldata.call_data(&mut self.cx);
+            let constraints = step.calldata.constraints().to_vec();
+            let mut handler = match self.prepare_sequence_call(
+                input.executor,
+                initial_state.clone(),
+                input.target.address,
+                input.handler_sender,
+                &input.target.function,
+                call_data,
+                constraints,
+            ) {
+                Ok(call) => call,
+                Err(error) => {
+                    if record_candidate_limitation(limitation, error) {
+                        break;
+                    }
+                    continue;
+                }
+            };
+            let mut stop_after_handler = false;
+            loop {
+                let outcome = match self.execute_sequence_call_next(
+                    input.executor,
+                    &mut handler,
+                    &mut completed_paths,
+                ) {
+                    Ok(Some(outcome)) => outcome,
+                    Ok(None) => break,
+                    Err(error) => {
+                        stop_after_handler = record_candidate_limitation(limitation, error);
+                        break;
+                    }
+                };
+                if !matches!(outcome.status, CallStatus::Success) {
+                    continue;
+                }
+                let handler_state = outcome.state;
+                for (invariant_idx, invariant) in input.invariants.iter().enumerate() {
+                    self.check_timeout()?;
+                    let mut predicate = match self.prepare_invariant_call(
+                        input.executor,
+                        handler_state.clone(),
+                        input.invariant_address,
+                        CALLER,
+                        invariant,
+                    ) {
+                        Ok(call) => call,
+                        Err(error) => {
+                            if record_candidate_limitation(limitation, error) {
+                                break 'variants;
+                            }
+                            continue;
+                        }
+                    };
+                    let mut stop_after_predicate = false;
+                    let mut candidate_states = Vec::new();
+                    loop {
+                        let predicate_outcome = match self.execute_sequence_call_next(
+                            input.executor,
+                            &mut predicate,
+                            &mut completed_paths,
+                        ) {
+                            Ok(Some(outcome)) => outcome,
+                            Ok(None) => break,
+                            Err(error) => {
+                                stop_after_predicate =
+                                    record_candidate_limitation(limitation, error);
+                                break;
+                            }
+                        };
+                        if !matches!(predicate_outcome.status, CallStatus::Success) {
+                            candidate_states.push(predicate_outcome.state);
+                            continue;
+                        }
+                        let Some(after_invariant) = input.after_invariant else {
+                            continue;
+                        };
+
+                        // Concrete invariant checks do not commit predicate state before invoking
+                        // `afterInvariant`. Retain its path constraints while restoring the
+                        // unchanged post-handler world.
+                        let mut after_state = handler_state.clone();
+                        after_state.constraints = predicate_outcome.state.constraints;
+                        let mut after = match self.prepare_invariant_call(
+                            input.executor,
+                            after_state,
+                            input.invariant_address,
+                            CALLER,
+                            after_invariant,
+                        ) {
+                            Ok(call) => call,
+                            Err(error) => {
+                                if record_candidate_limitation(limitation, error) {
+                                    stop_after_predicate = true;
+                                    break;
+                                }
+                                continue;
+                            }
+                        };
+                        loop {
+                            match self.execute_sequence_call_next(
+                                input.executor,
+                                &mut after,
+                                &mut completed_paths,
+                            ) {
+                                Ok(Some(outcome)) => {
+                                    if !matches!(outcome.status, CallStatus::Success) {
+                                        candidate_states.push(outcome.state);
+                                    }
+                                }
+                                Ok(None) => break,
+                                Err(error) => {
+                                    if record_candidate_limitation(limitation, error) {
+                                        stop_after_predicate = true;
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                        if stop_after_predicate {
+                            break;
+                        }
+                    }
+
+                    for state in candidate_states {
+                        match self.materialize_sequence(std::slice::from_ref(&step), &state) {
+                            Ok((mut sequence, storage)) => {
+                                let step =
+                                    sequence.pop().expect("one handler template produces one step");
+                                candidates.push(SymbolicInvariantCandidate {
+                                    invariant_idx,
+                                    step,
+                                    storage,
+                                });
+                            }
+                            Err(error) => {
+                                if record_candidate_limitation(limitation, error) {
+                                    break 'variants;
+                                }
+                            }
+                        }
+                    }
+                    if stop_after_predicate {
+                        break 'variants;
+                    }
+                }
+            }
+            if stop_after_handler {
+                break;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn invariant_return_failed(
         &mut self,
         invariant: &Function,
         state: &mut PathState,
@@ -100,7 +310,7 @@ impl SymbolicExecutor {
     }
 
     #[expect(clippy::too_many_arguments)]
-    pub(super) fn execute_sequence_call<FEN: FoundryEvmNetwork>(
+    pub(super) fn prepare_sequence_call<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
         mut state: PathState,
@@ -109,8 +319,7 @@ impl SymbolicExecutor {
         _function: &Function,
         calldata: SymCalldata,
         constraints: Vec<SymBoolExpr>,
-        completed_paths: &mut usize,
-    ) -> Result<Vec<CallOutcome>, SymbolicError> {
+    ) -> Result<SequenceCall, SymbolicError> {
         state.world.clear_transaction_scoped_state();
         state.mapping_hook_keccak_preimages.clear();
         let code = state.world.extcode(&mut self.cx, executor, target)?;
@@ -121,85 +330,32 @@ impl SymbolicExecutor {
         state.frame =
             CallFrame::new(&mut self.cx, target, target, sender, callvalue, false, calldata);
         state.constraints.extend(constraints);
+        Ok(SequenceCall {
+            code,
+            worklist: VecDeque::from([state]),
+            deferred_worklist: VecDeque::new(),
+        })
+    }
 
-        let mut worklist = VecDeque::from([state]);
-        let mut outcomes = Vec::new();
-        let path_limit = self.config.path_width() as usize;
-        let depth_limit = self.config.execution_depth() as usize;
-
-        while let Some(mut state) = self.pop_next_feasible_path(&mut worklist)? {
-            if *completed_paths >= path_limit {
-                return Err(SymbolicError::Unsupported("symbolic path limit exceeded"));
-            }
-            if std::mem::take(&mut state.pending_storage_hook_revert) {
-                *completed_paths += 1;
-                outcomes.push(CallOutcome { status: CallStatus::Revert, state });
-                continue;
-            }
-            let _path_span =
-                trace_span!("symbolic_path", completed_paths, worklist_size = worklist.len())
-                    .entered();
-            trace!(completed_paths, worklist_size = worklist.len(), "exploring symbolic path");
-
-            loop {
-                self.check_timeout()?;
-                if state.depth >= depth_limit {
-                    return Err(SymbolicError::Unsupported("symbolic depth limit exceeded"));
-                }
-                state.depth += 1;
-
-                let Some(op) = code.opcode(&mut self.cx, state.pc)? else {
-                    *completed_paths += 1;
-                    outcomes.push(CallOutcome {
-                        status: if state.expectations_satisfied() {
-                            CallStatus::Success
-                        } else {
-                            CallStatus::Failure
-                        },
-                        state,
-                    });
-                    break;
-                };
-
-                let _step_span = trace_span!("symbolic_step", pc = state.pc, op).entered();
-                match self.step(
-                    executor,
-                    &code,
-                    code.jump_table(),
-                    &mut state,
-                    &mut worklist,
-                    completed_paths,
-                    op,
-                )? {
-                    StepOutcome::Continue => {}
-                    StepOutcome::Halt => {
-                        *completed_paths += 1;
-                        outcomes.push(CallOutcome {
-                            status: if state.expectations_satisfied() {
-                                CallStatus::Success
-                            } else {
-                                CallStatus::Failure
-                            },
-                            state,
-                        });
-                        break;
-                    }
-                    StepOutcome::Revert => {
-                        *completed_paths += 1;
-                        outcomes.push(CallOutcome { status: CallStatus::Revert, state });
-                        break;
-                    }
-                    StepOutcome::Failure => {
-                        *completed_paths += 1;
-                        outcomes.push(CallOutcome { status: CallStatus::Failure, state });
-                        break;
-                    }
-                    StepOutcome::AssumeRejected | StepOutcome::Forked => break,
-                }
-            }
+    pub(super) fn execute_sequence_call_next<FEN: FoundryEvmNetwork>(
+        &mut self,
+        executor: &Executor<FEN>,
+        call: &mut SequenceCall,
+        completed_paths: &mut usize,
+    ) -> Result<Option<CallOutcome>, SymbolicError> {
+        if call.worklist.is_empty() && call.deferred_worklist.is_empty() {
+            return Ok(None);
         }
-
-        Ok(outcomes)
+        let mut outcomes = self.execute_call_path_batch(
+            executor,
+            &call.code,
+            &mut call.worklist,
+            &mut call.deferred_worklist,
+            completed_paths,
+            CallPathKind::Sequence,
+        )?;
+        debug_assert!(outcomes.len() <= 1);
+        Ok(outcomes.pop())
     }
 
     pub(super) fn materialize_sequence(

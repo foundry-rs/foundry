@@ -10,11 +10,6 @@ use revm::{
 
 const IGNORE: [Address; 2] = [HARDHAT_CONSOLE_ADDRESS, CHEATCODE_ADDRESS];
 
-/// Checks if the call scheme corresponds to any sort of delegate call
-pub const fn is_delegatecall(scheme: CallScheme) -> bool {
-    matches!(scheme, CallScheme::DelegateCall | CallScheme::CallCode)
-}
-
 /// An inspector that tracks call context to enhances revert diagnostics.
 /// Useful for understanding reverts that are not linked to custom errors or revert strings.
 ///
@@ -203,4 +198,9 @@ impl<CTX: ContextTr> Inspector<CTX> for RevertDiagnostic {
             self.handle_extcodesize_output(interp);
         }
     }
+}
+
+/// Checks if the call scheme corresponds to any sort of delegate call
+pub const fn is_delegatecall(scheme: CallScheme) -> bool {
+    matches!(scheme, CallScheme::DelegateCall | CallScheme::CallCode)
 }

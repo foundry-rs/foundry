@@ -1,88 +1,71 @@
-# Developer Docs
+# Developer documentation
 
-The Foundry project is organized as a regular [Cargo workspace][cargo-workspace].
+These documents describe contributor workflows and invariants that span multiple Foundry crates.
+They are not a second user manual or a manually maintained map of every workspace dependency.
 
-## Installation requirements
+## Documentation ownership
 
-- [Rust](https://rustup.rs/)
-- Make
+Keep each fact in the source that owns it and link to that source elsewhere:
 
-We use `cargo-nextest` as test runner (both locally and in the [CI](#ci)):
+| Content | Canonical location |
+| --- | --- |
+| User-facing guides, configuration, and CLI workflows | [Foundry Book][foundry-book] |
+| Crate and module APIs, invariants, and implementation details | Source Rustdoc, published as [Foundry Rustdoc][foundry-rustdoc] |
+| Cross-crate contributor workflows | `docs/dev/` or [`CONTRIBUTING.md`](../../CONTRIBUTING.md) |
+| Agent-only repository instructions | [`AGENTS.md`](../../AGENTS.md) |
+| Release-facing changes | [Changelog fragments](../../.changelog/README.md) |
 
-- [Nextest](https://nexte.st/docs/installation/pre-built-binaries/#with-cargo-binstall)
+Do not copy generated CLI reference text or crate dependency lists into `docs/dev`. Update CLI help
+or Rustdoc at the source, then link to the generated documentation.
 
-## Recommended
+## Setup and validation
 
-If you are working in VSCode, we recommend you install the [rust-analyzer](https://rust-analyzer.github.io/) extension, and use the following VSCode user settings:
-
-```json
-"editor.formatOnSave": true,
-"rust-analyzer.rustfmt.extraArgs": ["+nightly"],
-"[rust]": {
-  "editor.defaultFormatter": "rust-lang.rust-analyzer"
-}
-```
-
-Note that we use Rust's latest `nightly` for formatting. If you see `;` being inserted by your code editor it is a good indication you are on `stable`.
-
-## Getting started
-
-Build the project.
+Install [Rust][rust], Make, and [cargo-nextest][nextest]. Foundry uses the stable toolchain for
+normal builds and the latest nightly toolchain for formatting and Clippy.
 
 ```sh
-$ make build
+make build
+make test
+make pr
 ```
 
-Run all tests.
+Use focused unit tests for local logic and integration tests for user-visible workflows. Tests that
+use forking must contain `fork` in their name. Forge and Cast CLI tests live under
+`crates/forge/tests/cli/` and `crates/cast/tests/cli/`; shared integration fixtures live in
+`crates/test-utils`, and Solidity fixtures live under `testdata/`.
 
-```sh
-$ make test
-```
+## Maintained guides
 
-Run all tests and linters in preparation for a PR.
+- [Cheatcodes](./cheatcodes.md) explains cheatcode generation, dispatch, and implementation.
+- [Debugging](./debugging.md) collects contributor debugging techniques.
+- [Lint rules](./lintrules.md) covers the lint registry, UI fixtures, and documentation contract.
+- [Custom EVM integrations](./networks.md) describes network selection, execution ownership,
+  state lifecycles, tool dispatch, and CI coverage.
+- [Output channels](./output-channels.md) defines the stdout/stderr contract for Foundry commands.
+- [Scripting](./scripting.md) documents the internal script execution and broadcast pipeline.
+- [Showmap corpus replay](./showmap.md) documents the persisted-corpus coverage workflow and file
+  format.
 
-```sh
-$ make pr
-```
+## Updating documentation
 
-## Contents
+When a change affects users, update the [Foundry Book][foundry-book] and the source CLI help where
+applicable. When it changes a crate or module contract, update Rustdoc next to the implementation.
+Add or update a guide here only when contributors need a cross-crate workflow or invariant that does
+not have a single source owner.
 
-- [Architecture](./architecture.md)
-- [Cheatcodes](./cheatcodes.md)
-- [Debugging](./debugging.md)
-- [Scripting](./scripting.md)
-- [Custom Network Features](./networks.md)
+Every maintained guide must be linked from this index. Prefer links to canonical documentation over
+duplicated instructions so updates cannot drift independently.
 
-_Note: This is incomplete and possibly outdated_
+## CI and release features
 
-## Getting in Touch
+CI runs tests through cargo-nextest. Nightly and stable release builds derive their enabled
+functionality from `RUST_FEATURES` in `.github/workflows/release.yml` and
+`.github/workflows/docker-publish.yml`. Keep those lists aligned with the default `FEATURES` in the
+root `Makefile` so published binaries expose the same surface as local release builds.
 
-See also [Getting Help](../../README.md#getting-help)
+For contribution policy and support channels, see [`CONTRIBUTING.md`](../../CONTRIBUTING.md).
 
-## Issue Labels
-
-Whenever a ticket is initially opened a [`T-needs-triage`](https://github.com/foundry-rs/foundry/issues?q=is%3Aissue+is%3Aopen+label%3AT-needs-triage) label is assigned. This means that a member has yet to correctly label it.
-
-If this is your first time contributing have a look at our [`first-issue`](https://github.com/foundry-rs/foundry/issues?q=is%3Aissue+is%3Aopen+label%3A%22first+issue%22) tickets. These are tickets we think are a good way to get familiar with the codebase.
-
-We classify the tickets in two major categories: [`T-feature`](https://github.com/foundry-rs/foundry/issues?q=is%3Aissue+is%3Aopen+label%3AT-feature) and [`T-bug`](https://github.com/foundry-rs/foundry/issues?q=is%3Aissue+is%3Aopen+label%3AT-bug). Additional labels are usually applied to help categorize the ticket for future reference.
-
-We also make use of [`T-meta`](https://github.com/foundry-rs/foundry/issues?q=is%3Aissue+is%3Aopen+label%3AT-meta) aggregation tickets. These tickets are tickets to collect related features and bugs.
-
-We also have [`T-discuss`](https://github.com/foundry-rs/foundry/issues?q=is%3Aissue+is%3Aopen+label%3AT-to-discuss) tickets that require further discussion before proceeding on an implementation. Feel free to jump into the conversation!
-
-## CI
-
-We use GitHub Actions for continuous integration (CI).
-
-We use [cargo-nextest][nextest] as the test runner.
-
-If `make test` passes locally, that's a good sign that CI will be green as well.
-
-## Release Features
-
-Nightly/stable release builds derive their enabled functionality from the shared `RUST_FEATURES` environment variable in `.github/workflows/release.yml` and `.github/workflows/docker-publish.yml`. Keep that list aligned with the default `FEATURES` value in the root `Makefile` so published artifacts expose the same CLI surface area (wallet backends, allocators, tracers, etc.) as local builds.
-
-[foundry-book]: https://book.getfoundry.sh
-[cargo-workspace]: https://doc.rust-lang.org/book/ch14-03-cargo-workspaces.html
-[nextest]: https://nexte.st/
+[foundry-book]: https://getfoundry.sh
+[foundry-rustdoc]: https://foundry-rs.github.io/foundry/
+[nextest]: https://nexte.st/docs/installation/pre-built-binaries/#with-cargo-binstall
+[rust]: https://rustup.rs/

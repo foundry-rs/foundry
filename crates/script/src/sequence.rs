@@ -12,48 +12,6 @@ use std::{
     path::Path,
 };
 
-/// Format transaction details for display
-fn format_transaction<N: Network>(
-    index: usize,
-    tx: &TransactionWithMetadata<N>,
-) -> Result<String, Error>
-where
-    N::TxEnvelope: UIfmt,
-    N::TransactionRequest: FoundryTransactionBuilder<N>,
-{
-    let mut output = String::new();
-    writeln!(output, "### Transaction {index} ###")?;
-    writeln!(output, "{}", tx.tx().pretty())?;
-
-    // Show contract name and address if available
-    if !tx.call_kind.is_any_create()
-        && let (Some(name), Some(addr)) = (&tx.contract_name, &tx.contract_address)
-    {
-        writeln!(output, "contract: {name}({addr})")?;
-    }
-
-    // Show decoded function if available
-    if let (Some(func), Some(args)) = (&tx.display_function, &tx.arguments) {
-        if args.is_empty() {
-            writeln!(output, "data (decoded): {func}()")?;
-        } else {
-            writeln!(output, "data (decoded): {func}(")?;
-            for (i, arg) in args.iter().enumerate() {
-                writeln!(&mut output, "  {}{}", arg, if i + 1 < args.len() { "," } else { "" })?;
-            }
-            writeln!(output, ")")?;
-        }
-    }
-
-    writeln!(output)?;
-    Ok(output)
-}
-
-/// Returns the commit hash of the project if it exists
-pub fn get_commit_hash(root: &Path) -> Option<String> {
-    Git::new(root).commit_hash(true, "HEAD").ok()
-}
-
 pub enum ScriptSequenceKind<N: Network>
 where
     N::TxEnvelope: for<'d> Deserialize<'d> + Serialize,
@@ -143,4 +101,46 @@ where
             error!(?err, "could not save deployment sequence");
         }
     }
+}
+
+/// Format transaction details for display
+fn format_transaction<N: Network>(
+    index: usize,
+    tx: &TransactionWithMetadata<N>,
+) -> Result<String, Error>
+where
+    N::TxEnvelope: UIfmt,
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+{
+    let mut output = String::new();
+    writeln!(output, "### Transaction {index} ###")?;
+    writeln!(output, "{}", tx.tx().pretty())?;
+
+    // Show contract name and address if available
+    if !tx.call_kind.is_any_create()
+        && let (Some(name), Some(addr)) = (&tx.contract_name, &tx.contract_address)
+    {
+        writeln!(output, "contract: {name}({addr})")?;
+    }
+
+    // Show decoded function if available
+    if let (Some(func), Some(args)) = (&tx.display_function, &tx.arguments) {
+        if args.is_empty() {
+            writeln!(output, "data (decoded): {func}()")?;
+        } else {
+            writeln!(output, "data (decoded): {func}(")?;
+            for (i, arg) in args.iter().enumerate() {
+                writeln!(&mut output, "  {}{}", arg, if i + 1 < args.len() { "," } else { "" })?;
+            }
+            writeln!(output, ")")?;
+        }
+    }
+
+    writeln!(output)?;
+    Ok(output)
+}
+
+/// Returns the commit hash of the project if it exists
+pub fn get_commit_hash(root: &Path) -> Option<String> {
+    Git::new(root).commit_hash(true, "HEAD").ok()
 }

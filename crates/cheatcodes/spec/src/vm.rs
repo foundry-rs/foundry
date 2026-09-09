@@ -100,7 +100,7 @@ interface Vm {
     struct Gas {
         /// The gas limit of the call.
         uint64 gasLimit;
-        /// The total gas used.
+        /// The total regular gas used.
         uint64 gasTotalUsed;
         /// DEPRECATED: The amount of gas used for memory expansion. Ref: <https://github.com/foundry-rs/foundry/pull/7934#pullrequestreview-2069236939>
         uint64 gasMemoryUsed;
@@ -108,6 +108,8 @@ interface Vm {
         int64 gasRefunded;
         /// The amount of gas remaining.
         uint64 gasRemaining;
+        /// The net state gas used. Zero for reverted or halted frames; may be negative within a nested frame when state gas is refunded.
+        int64 gasStateUsed;
     }
 
     /// An RPC URL and its alias. Returned by `rpcUrlStructs`.
@@ -353,7 +355,7 @@ interface Vm {
     struct PotentialRevert {
         /// The allowed origin of the revert opcode; address(0) allows reverts from any address
         address reverter;
-        /// When true, only matches on the beginning of the revert data, otherwise, matches on entire revert data
+        /// When true, only matches on the first 4 bytes (usually the selector) of the revert data, otherwise, matches on entire revert data
         bool partialMatch;
         /// The data to use to match encountered reverts
         bytes revertData;
@@ -1373,7 +1375,7 @@ interface Vm {
     #[cheatcode(group = Testing, safety = Unsafe, status = Internal)]
     function _expectCheatcodeRevert(bytes4 revertData) external;
 
-    /// Expects an error on next cheatcode call that exactly matches the revert data.
+    /// Expects an error on next cheatcode call that contains the revert data.
     #[cheatcode(group = Testing, safety = Unsafe, status = Internal)]
     function _expectCheatcodeRevert(bytes calldata revertData) external;
 
@@ -3141,6 +3143,22 @@ interface Vm {
     /// Derives secp256r1 public key from the provided `privateKey`.
     #[cheatcode(group = Crypto)]
     function publicKeyP256(uint256 privateKey) external pure returns (uint256 publicKeyX, uint256 publicKeyY);
+
+    /// Converts the secp256k1 affine point `(pointX, pointY)` to projective coordinates.
+    /// The point at infinity is converted from `(0, 0)` to `(0, 1, 0)`.
+    #[cheatcode(group = Crypto)]
+    function ecAffineToProjective(uint256 pointX, uint256 pointY)
+        external
+        pure
+        returns (uint256 resultX, uint256 resultY, uint256 resultZ);
+
+    /// Converts the secp256k1 projective point `(pointX, pointY, pointZ)` to affine coordinates.
+    /// The point at infinity is converted from `(0, y, 0)` for any non-zero `y` to `(0, 0)`.
+    #[cheatcode(group = Crypto)]
+    function ecProjectiveToAffine(uint256 pointX, uint256 pointY, uint256 pointZ)
+        external
+        pure
+        returns (uint256 resultX, uint256 resultY);
 
     /// Adds the secp256k1 affine points `point1 = (pointX1, pointY1)` and
     /// `point2 = (pointX2, pointY2)`.
