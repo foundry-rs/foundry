@@ -23,6 +23,8 @@ when renaming would disrupt downstream imports or conflict with that convention.
 interface ERC20 { /* ... */ }
 ```
 
+{{produces}}
+
 Use instead:
 
 ```solidity

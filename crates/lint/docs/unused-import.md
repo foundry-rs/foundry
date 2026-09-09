@@ -5,8 +5,9 @@
 
 ## What it does
 
-Reports `import "..."`, `import "..." as X`, and `import { A, B } from "..."` statements where one
-or more imported names are never used. This includes unused namespace imports (`import * as X`).
+Reports unused names in named imports (`import { A, B } from "..."`) and unused namespace
+aliases (`import "..." as X` or `import * as X from "..."`). Plain imports without an alias
+are not checked.
 
 ## Why is this bad?
 

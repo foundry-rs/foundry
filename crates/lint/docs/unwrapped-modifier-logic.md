@@ -5,8 +5,9 @@
 
 ## What it does
 
-Reports modifiers containing logic beyond a placeholder, simple `require` or `assert`
-checks, or a single library call. Assembly blocks are excluded from suggested extraction.
+Reports modifier logic that can be extracted into a helper, including `require` and `assert`
+checks. A single ordinary function or library call on either side of `_` is left inline.
+Assembly blocks are excluded from suggested extraction.
 
 ## Why is this bad?
 
