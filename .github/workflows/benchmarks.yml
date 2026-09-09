@@ -19,14 +19,8 @@ env:
   RUSTC_WRAPPER: "sccache"
 
 jobs:
-  cargo-cooldown:
-    permissions:
-      contents: read
-    uses: ./.github/workflows/cargo-cooldown.yml
-
   run-benchmarks:
     name: Run All Benchmarks
-    needs: cargo-cooldown
     runs-on: depot-ubuntu-24.04-32
     permissions:
       contents: read
@@ -73,11 +67,6 @@ jobs:
             git worktree add --detach ../foundry-baseline "$base_sha"
             echo "versions=master=../foundry-baseline,local" >> "$GITHUB_OUTPUT"
             echo "is_source_comparison=true" >> "$GITHUB_OUTPUT"
-            if [[ -f ../foundry-baseline/cooldown.toml ]]; then
-              echo "baseline_strict_project_config=true" >> "$GITHUB_OUTPUT"
-            else
-              echo "baseline_strict_project_config=false" >> "$GITHUB_OUTPUT"
-            fi
             printf '%s' "$base_sha" > benches/baseline-ref.txt
             printf '%s' "$candidate_sha" > benches/candidate-ref.txt
             git rev-list --count "${candidate_sha}..${base_sha}" > benches/behind-count.txt
@@ -92,15 +81,6 @@ jobs:
             echo "versions=$REQUESTED_VERSIONS" >> "$GITHUB_OUTPUT"
             echo "is_source_comparison=false" >> "$GITHUB_OUTPUT"
           fi
-
-      - name: Enforce baseline Cargo dependency cooldown
-        if: steps.prep.outputs.is_source_comparison == 'true'
-        uses: tempoxyz/gh-actions/actions/cargo-cooldown@0aa93238d85fd085d7901320b670cc6adb7a02f3
-        env:
-          RUSTC_WRAPPER: ""
-        with:
-          strict-project-config: ${{ steps.prep.outputs.baseline_strict_project_config }}
-          working-directory: ../foundry-baseline
 
       - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
 

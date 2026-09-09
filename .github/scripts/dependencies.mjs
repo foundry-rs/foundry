@@ -10,7 +10,7 @@ const schema = 1;
 const bindingsManifest = 'testdata/forge-bind/Cargo.toml';
 const inputs = [
   ':(glob)**/Cargo.toml', ':(glob)**/Cargo.lock', 'Cargo.toml', 'Cargo.lock',
-  '.cargo', 'cooldown.toml', '.github/scripts/dependencies.mjs',
+  '.cargo', '.github/scripts/dependencies.mjs',
   '.github/scripts/solc-releases.mjs', '.github/workflows/dependencies.yml',
   '.github/actions/setup-build', 'testdata/forge-bind',
 ];
