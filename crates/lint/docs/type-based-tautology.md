@@ -9,6 +9,9 @@ Flags comparisons that are always true or false because of an integer type's ran
 such as `uint256 x >= 0`. Also reports conditions that cover the entire range, such as
 `x > 0 || x == 0` for unsigned `x`.
 
+The compared value must be a local or state variable, optionally cast to an integer type.
+Struct fields and function return values are not checked.
+
 ## Why is this bad?
 
 A condition that is permanently true contributes no useful logic and may hide a bug where the developer intended to compare against a different value or use a differently sized type. A condition that is permanently false creates unreachable code, which can silently suppress intended behavior such as access control checks or error handling.

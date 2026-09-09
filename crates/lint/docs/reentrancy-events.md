@@ -9,14 +9,19 @@ Reports events emitted after an external interaction, such as a state-changing c
 call, low-level `call` or `delegatecall`, ETH `send` or `transfer`, or contract creation.
 Static calls and `view` or `pure` calls are excluded.
 
+Calls in ordinary internal helpers and modifiers are followed, but interactions hidden in
+library-qualified or `using for` internal calls may be missed.
+
 ## Why is this bad?
 
 Reentrancy and off-chain ordering both depend on event sequence:
 
-- A reentrant callee can observe (or trigger another contract to observe) events in an order that no longer reflects the final state of the calling contract.
+- A reentrant call can cause nested state changes and their events to be interleaved with the
+  original operation, making log order differ from the order of the state changes it describes.
 - Indexers, bridges, and monitoring tools that consume logs in emission order may apply state transitions incorrectly when events are not emitted alongside the writes they describe.
 
-Emitting the event **before** the external call ensures the log is anchored to the local state change, regardless of what the callee does.
+Emit the event alongside the state change it describes, before yielding control externally.
+Contracts cannot read transaction logs during execution; this warning concerns off-chain consumers.
 
 ## Example
 

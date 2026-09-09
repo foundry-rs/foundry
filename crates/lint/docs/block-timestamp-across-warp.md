@@ -8,6 +8,9 @@
 Warns in tests and scripts when a value derived from `block.timestamp` can be used after
 `vm.warp`, or when `block.timestamp` is read both before and after a warp in the same call.
 
+Indirect cheatcode calls, inline assembly, and values stored through heap or storage aliases
+may be missed. Use the getter for captures that must survive a warp even without a warning.
+
 ## Why is this bad?
 
 The EVM timestamp is constant during a normal transaction. Compilers can therefore reuse,

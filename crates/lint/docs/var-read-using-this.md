@@ -12,6 +12,10 @@ Read state directly where possible: use `foo` instead of `this.foo()`, or `m[k]`
 of `this.m(k)`. Check that the replacement preserves the getter's return value and any
 intentional external-call behavior.
 
+Struct getters return selected fields rather than the struct itself, and a local variable
+may shadow the state variable. Calls with explicit gas options receive no replacement;
+calls used as the target of `try` are excluded because `try` requires an external call.
+
 ## Why is this bad?
 
 Each `this.X(...)` call compiles to a `STATICCALL` to the contract's own address. That costs a

@@ -174,8 +174,8 @@ fn snippet<'gcx>(
         .join("\n");
     // Keep virtual/override specifiers and unnamed parameters in the modifier declaration.
     let header = ctx.span_to_snippet(func.span.until(func.body_span))?;
-    let header = header.trim_end();
-    let replacement = format!("{header} {{\n{body}\n{mod_indent}}}{before_helper}{after_helper}");
+    // Preserve the newline after a trailing line comment before the opening brace.
+    let replacement = format!("{header}{{\n{body}\n{mod_indent}}}{before_helper}{after_helper}");
     Some(
         // Helper names can collide with existing or inherited declarations, and extraction can
         // affect dispatch and reference aliasing. This is a refactoring candidate, not an autofix.

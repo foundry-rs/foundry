@@ -8,6 +8,9 @@
 Warns in tests and scripts when a value derived from `block.number` can be used after
 `vm.roll`, or when `block.number` is read both before and after a roll in the same call.
 
+Indirect cheatcode calls, inline assembly, and values stored through heap or storage aliases
+may be missed. Use the getter for captures that must survive a roll even without a warning.
+
 ## Why is this bad?
 
 The EVM block number is constant during a normal transaction. Compilers can therefore reuse,

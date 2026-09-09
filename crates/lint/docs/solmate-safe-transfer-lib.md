@@ -9,6 +9,9 @@ Reports uses of `safeTransfer`, `safeTransferFrom`, and `safeApprove` from solma
 `SafeTransferLib`. ETH transfers and similarly named libraries from other packages are
 excluded.
 
+The check recognizes Solmate package paths, not the installed implementation's version.
+A vendored copy under another package name can be missed, while a patched copy may still warn.
+
 ## Why is this bad?
 
 Solmate v6 treats a token call that returns no data as successful without checking whether

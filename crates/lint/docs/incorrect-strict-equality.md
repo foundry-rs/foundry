@@ -14,6 +14,8 @@ operand contains:
 Comparisons involving arithmetic on a balance, such as `address(this).balance + 1 == target`,
 are also flagged.
 
+Exact `msg.value` checks, such as requiring a fixed payment, are not flagged by this lint.
+
 ## Why is this bad?
 
 These values can be influenced by parties outside the contract's control:

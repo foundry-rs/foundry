@@ -7,6 +7,7 @@
 
 Reports unindexed `address` and `address payable` event parameters when the event has no
 indexed parameters. Contract, interface, and user-defined value types are excluded.
+At most three fields are suggested for a normal event, or four for an anonymous event.
 
 ## Why restrict this?
 

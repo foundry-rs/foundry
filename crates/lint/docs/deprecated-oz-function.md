@@ -8,6 +8,9 @@
 Reports uses of OpenZeppelin's `SafeERC20.safeApprove` and `AccessControl._setupRole`,
 including their upgradeable variants.
 
+Declarations must come from an OpenZeppelin package path; vendored copies under a different
+package name may go unreported.
+
 ## Why is this bad?
 
 OpenZeppelin deprecated both functions in the 4.x line and removed them in 5.0, so they are dead ends for upgrades:

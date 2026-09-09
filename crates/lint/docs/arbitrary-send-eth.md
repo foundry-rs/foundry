@@ -16,6 +16,10 @@ Constructors and library bodies are excluded.
 A warning may remain when access control is enforced by a caller or a role-checking helper.
 Review that protection before suppressing it.
 
+Transfers hidden behind wrappers can be missed. A mutable owner is accepted as an
+authority without checking who can change it, so the absence of a warning does not
+establish that the ownership setter or the transfer is protected.
+
 ## Why is this bad?
 
 If an attacker can choose the recipient of ETH transfers they can drain the

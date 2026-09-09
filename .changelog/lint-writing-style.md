@@ -8,3 +8,5 @@ guidance, and removed repetitive reference text. Preserved modifier
 signatures in suggested rewrites, required review for potentially unsafe refactorings, and
 focused diagnostics on the relevant source spans.
 Added a lightweight Markdown structure check for lint references, enforced in CI.
+Restored important detection caveats. Kept line comments intact in
+modifier suggestions and omitted invalid keyword renames and struct-getter replacements.

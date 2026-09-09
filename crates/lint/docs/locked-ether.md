@@ -15,7 +15,8 @@ the lint looks for an expression that can move Ether out:
 - `addr.delegatecall(...)` / `addr.callcode(...)`.
 - `selfdestruct(addr)`.
 
-If the contract has no way to send Ether out, it is reported.
+If no such expression is found, the contract is reported. Finding one does not prove that
+a withdrawal is reachable or authorized correctly.
 
 ## Why is this bad?
 

@@ -11,7 +11,7 @@ underscores are preserved.
 
 ## Why restrict this?
 
-The Solidity style guide recommends `SCREAMING_SNAKE_CASE` for `immutable` variables so they
+Foundry recommends `SCREAMING_SNAKE_CASE` for `immutable` variables so they
 visually align with `constant` ones and stand out from mutable state at call sites.
 
 Some projects distinguish immutables from constants through another naming convention. Keep that

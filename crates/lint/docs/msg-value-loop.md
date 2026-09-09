@@ -11,6 +11,9 @@ reachable from a `public payable` or `external payable` entry point.
 Payable constructors are ignored. `receive()` and `fallback()` functions are checked when they are
 payable.
 
+Loops in modifiers and reads in internal helpers are included. Inline assembly and calls
+through function pointers are not followed.
+
 ## Why is this bad?
 
 `msg.value` is fixed within a call frame. Nested calls can carry different values, while

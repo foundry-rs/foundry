@@ -31,7 +31,8 @@ diagnostics, and examples. This documentation format follows
   limitations instead of implying every match is a bug or every suggested change is always safe.
 - Write for lint users, not lint implementers. Omit AST/HIR details, alias tracking, traversal
   rules, analysis budgets, diagnostic placement, and comparisons with other detectors. Keep
-  caveats only when they help the reader interpret or address a warning; put implementation
+  caveats when they affect a remedy, explain false positives, or identify important missed cases;
+  do not turn a limited check into a claim of complete coverage. Put implementation
   explanations in developer documentation or source comments.
 - Start with `What it does`; do not repeat it in an introductory summary. Keep shared severity,
   file-exclusion, and suppression instructions in the linting guide. Omit generic review reminders

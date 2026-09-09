@@ -9,7 +9,7 @@ Reports contracts that implement an interface's external functions without inher
 An already-inherited base that provides the interface's functions satisfies the lint.
 Abstract contracts containing only interface declarations are also considered.
 
-## Why is this bad?
+## Why restrict this?
 
 Explicit inheritance:
 
@@ -20,6 +20,9 @@ Explicit inheritance:
 - makes refactors safer: changing the interface fails the build instead of silently drifting.
 
 Implementing the API by coincidence (or by copy-paste) skips all of those checks.
+
+Matching selectors do not prove an intended interface relationship. Inherit only interfaces the
+contract intends to implement; unrelated APIs may happen to overlap.
 
 `type(I).interfaceId` is available independently of inheritance. Implementing ERC-165 support
 still requires appropriate `supportsInterface` behavior; inheritance alone does not provide it.

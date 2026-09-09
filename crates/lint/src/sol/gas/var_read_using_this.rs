@@ -111,8 +111,11 @@ impl ThisReadFinder<'_, '_> {
             }
             // With call options like `{gas: ...}` the external call is deliberate: flag the gas
             // waste without an auto-fix.
-            let suggestion =
-                if opts.is_some() { None } else { suggestion(self.ctx, func, member.name, args) };
+            let suggestion = if opts.is_some() {
+                None
+            } else {
+                suggestion(self.ctx, self.hir, func, member.name, args)
+            };
             match suggestion {
                 Some(suggestion) => {
                     self.ctx.emit_with_suggestion(&VAR_READ_USING_THIS, expr.span, suggestion);
@@ -125,6 +128,7 @@ impl ThisReadFinder<'_, '_> {
 
 fn suggestion(
     ctx: &LintContext,
+    hir: &hir::Hir<'_>,
     func: &Function<'_>,
     name: Symbol,
     args: &CallArgs<'_>,
@@ -136,7 +140,17 @@ fn suggestion(
                 .with_desc("avoid the `STATICCALL` by invoking the function directly"),
         );
     }
-    // Struct getters destructure their fields, so a direct read is not equivalent.
+    // Even a single-field struct getter returns a field, not the struct itself.
+    let mut ty = &hir.variable(func.gettee?).ty;
+    loop {
+        match &ty.kind {
+            hir::TypeKind::Array(array) => ty = &array.element,
+            hir::TypeKind::Mapping(mapping) => ty = &mapping.value,
+            hir::TypeKind::Custom(hir::ItemId::Struct(_)) => return None,
+            _ => break,
+        }
+    }
+    // Avoid replacements for any other getter that destructures its result.
     if func.returns.len() != 1 {
         return Some(
             Suggestion::example(format!("read the state variable directly: `{name}`"))

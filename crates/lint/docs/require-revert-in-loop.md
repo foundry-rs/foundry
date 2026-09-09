@@ -6,6 +6,7 @@
 ## What it does
 
 Reports `require` calls and Solidity or Yul `revert` operations inside loops.
+This includes operations reached through modifiers and internal helpers called from a loop.
 
 ## Why restrict this?
 

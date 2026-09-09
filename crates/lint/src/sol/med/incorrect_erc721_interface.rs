@@ -46,13 +46,12 @@ impl<'gcx> LateLintPass<'gcx> for IncorrectERC721Interface {
         };
         let functions = contract.items.iter().filter_map(|id| id.as_function());
         for func in functions.map(|id| gcx.hir.function(id)) {
-            if let Some(name) = func.name.filter(|_| func.kind.is_function())
-                && ERC721_FUNCTIONS.iter().any(|(n, params, returns)| {
-                    *n == name.as_str()
-                        && matches(func.parameters, params)
-                        && !matches(func.returns, returns)
-                })
-            {
+            let Some(name) = func.name.filter(|_| func.kind.is_function()) else { continue };
+            if ERC721_FUNCTIONS.iter().any(|(n, params, returns)| {
+                *n == name.as_str()
+                    && matches(func.parameters, params)
+                    && !matches(func.returns, returns)
+            }) {
                 ctx.emit(&INCORRECT_ERC721_INTERFACE, name.span);
             }
         }

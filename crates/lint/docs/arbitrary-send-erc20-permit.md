@@ -6,11 +6,15 @@
 ## What it does
 
 Flags `transferFrom` and `safeTransferFrom` calls preceded by a `permit` for the same token
-and owner in the same function, when `from` is not constrained to `msg.sender` or
-`address(this)`. This includes common SafeERC20 and SafeTransferLib wrappers.
+and owner in the same function, with this contract as the spender, when `from` is not
+constrained to `msg.sender` or `address(this)`. This includes common SafeERC20 and
+SafeTransferLib wrappers.
 
 A permit does not make an arbitrary `from` safe, even when its value matches the transfer
 amount. Matching EIP-3156 flash-loan repayments are excluded.
+
+Permits issued in a separate helper or modifier are not correlated with the transfer;
+such transfers may instead be reported by `arbitrary-send-erc20`.
 
 ## Why is this bad?
 

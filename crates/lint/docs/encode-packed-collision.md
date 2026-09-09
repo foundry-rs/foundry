@@ -5,19 +5,19 @@
 
 ## What it does
 
-Flags calls to `abi.encodePacked()` where two or more arguments have dynamic types:
+Flags calls to `abi.encodePacked()` where two or more non-literal arguments have dynamic types:
 
 - `string`
 - `bytes` (dynamic)
 - dynamic arrays (`T[]`)
 
+String, hexadecimal-string, and Unicode-string literals do not count toward that total.
+
 ## Why is this bad?
 
-Hash collisions allow an attacker to craft inputs that hash to an identifier they do not own. Common vulnerable patterns include:
-
-- Merkle leaf construction: an attacker submits two adjacent leaves concatenated to match a sibling pair
-- Signature payloads: two different messages that produce the same signature hash
-- Access-control keys: two different (user, resource) pairs that map to the same key
+Packed encoding omits dynamic-value boundaries, so different inputs can produce identical
+encoded bytes and therefore the same hash. This is an ambiguous encoding, not a weakness in
+the hash function. It can make distinct signature payloads or access-control keys indistinguishable.
 
 Unambiguous encodings that repeat the same dynamic value or add length prefixes may still
 be reported.

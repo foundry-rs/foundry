@@ -1550,6 +1550,12 @@ contract Base {
         _;
     }
 
+    modifier checkedComment() // Keep this newline.
+    {
+        require(Stored_Value > 0);
+        _;
+    }
+
     function read(uint256 Stored_Value) public view returns (uint256) {
         return this.Stored_Value();
     }
@@ -1605,7 +1611,7 @@ contract Derived is Base {
         suggested_lints,
         ["mixed-case-variable", "unwrapped-modifier-logic", "var-read-using-this"]
     );
-    assert_eq!(modifier_replacements.len(), 4);
+    assert_eq!(modifier_replacements.len(), 5);
     for (start, end, replacement) in modifier_replacements {
         // Compile each actual suggested replacement. This exercises data locations, unnamed
         // parameters, and virtual/override modifiers, not a hand-written expected alternative.
@@ -1614,6 +1620,65 @@ contract Derived is Base {
         prj.add_source("Refactoring", &fixed);
         cmd.forge_fuse().args(["build", "--no-lint"]).assert_success();
     }
+});
+
+forgetest!(lint_omits_invalid_refactoring_replacements, |prj, cmd| {
+    prj.add_source(
+        "Refactoring",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.18;
+
+contract Refactoring {
+    struct Box { uint256 value; }
+    Box public box;
+    mapping(uint256 => Box) public boxes;
+    Box[] public entries;
+    uint256 public While;
+
+    function Address() external pure returns (address) { return address(0); }
+    function read() external view returns (uint256) { return this.box(); }
+    function readMapping(uint256 key) external view returns (uint256) { return this.boxes(key); }
+    function readArray(uint256 key) external view returns (uint256) { return this.entries(key); }
+}
+"#,
+    );
+    cmd.args(["build", "--no-lint"]).assert_success();
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "lint",
+            "--json",
+            "--only-lint",
+            "mixed-case-variable",
+            "mixed-case-function",
+            "var-read-using-this",
+        ])
+        .assert_success();
+    let diagnostics = serde_json::Deserializer::from_slice(&output.get_output().stdout)
+        .into_iter::<serde_json::Value>()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    let mut ids = Vec::new();
+    for diagnostic in &diagnostics {
+        ids.push(diagnostic["code"]["code"].as_str().unwrap());
+        for child in diagnostic["children"].as_array().unwrap() {
+            for span in child["spans"].as_array().unwrap() {
+                assert!(span["suggested_replacement"].is_null(), "{diagnostic}");
+            }
+        }
+    }
+    ids.sort_unstable();
+    assert_eq!(
+        ids,
+        [
+            "mixed-case-function",
+            "mixed-case-variable",
+            "var-read-using-this",
+            "var-read-using-this",
+            "var-read-using-this",
+        ]
+    );
 });
 
 // <https://github.com/foundry-rs/foundry/issues/11460>

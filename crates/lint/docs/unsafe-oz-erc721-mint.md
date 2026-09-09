@@ -14,6 +14,11 @@ is established and revert on rejection. Custom checks may still produce warnings
 the lint. Custom mint implementations that do not use OpenZeppelin's `_mint` are outside
 this rule's scope.
 
+Do not replace `super._mint` inside a `_mint` override with `_safeMint`: virtual dispatch
+can recurse back into the override. Delegating overrides are reported at their call sites.
+Minting through internal function pointers or assembly is not checked.
+Vendored OpenZeppelin copies whose package paths do not identify OpenZeppelin may be missed.
+
 ## Why is this bad?
 
 `ERC721._mint` assigns the token without calling `onERC721Received` on the recipient. A recipient

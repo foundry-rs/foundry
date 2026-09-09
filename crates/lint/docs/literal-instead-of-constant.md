@@ -8,8 +8,9 @@
 Reports repeated number, address, or hex-string values within a contract's executable code.
 Equivalent spellings, such as `100` and `0x64`, count as the same value.
 
-`0`, `1`, and `2`, plain array indices, slice bounds, shift amounts, type annotations,
-and inline assembly are excluded. Repetitions in separate contracts are checked separately.
+`0`, `1`, and `2`, plain literal array indices, slice bounds, and shift amounts, type annotations,
+and inline assembly are excluded. Mapping keys and literals inside computed shift amounts
+still count. Repetitions in separate contracts are checked separately.
 
 ## Why restrict this?
 
