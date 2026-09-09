@@ -1,8 +1,10 @@
 # Forge lint documentation
 
-This directory contains one markdown file per registered `forge-lint` rule. Each file is referenced
-by the lint's `help` URL (`https://getfoundry.sh/forge/linting/<id>`) and is consumed by the
-[Foundry book](https://github.com/foundry-rs/book) to render the lint reference page.
+This directory contains the canonical Markdown explanation for each registered `forge-lint` rule.
+Include documentation changes in the same Foundry PR as the lint. The
+[Foundry Book](https://github.com/foundry-rs/book)'s weekly update imports these files with
+`import:lints` and generates the reference pages and navigation. The lint's `help` URL points to
+the published page at `https://getfoundry.sh/forge/linting/<id>`.
 
 ## Adding a new lint
 
@@ -30,7 +32,6 @@ diagnostics, and examples. This documentation format follows
   rules, analysis budgets, diagnostic placement, and comparisons with other detectors. Keep
   caveats only when they help the reader interpret or address a warning; put implementation
   explanations in developer documentation or source comments.
-- Keep matching reference pages in the [Foundry Book](https://github.com/foundry-rs/book) synchronized.
 
 ## File structure
 

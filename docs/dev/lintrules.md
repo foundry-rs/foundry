@@ -68,7 +68,11 @@ Next, choose whether you want an [early or late lint pass](#choosing-between-ear
 
 - Implement the appropriate trait logic (`EarlyLintPass` or `LateLintPass`) for your lint. Do it in a new file within the relevant severity module (e.g., `src/sol/med/my_new_lint.rs`).
 
-- Add a markdown documentation file for the lint at `crates/lint/docs/<str_id>.md`. The file is referenced by the lint's `help` URL (`https://getfoundry.sh/forge/linting/<str_id>`) and is consumed by the [Foundry book](https://github.com/foundry-rs/book) to render the lint reference page. Use [`crates/lint/docs/_template.md`](../../crates/lint/docs/_template.md) as a starting point. The presence of this file is enforced by the `registered_lints_have_docs` unit test in `crates/lint/src/sol/mod.rs`.
+- Add the canonical documentation at `crates/lint/docs/<str_id>.md` in the same Foundry PR.
+  Use [`crates/lint/docs/_template.md`](../../crates/lint/docs/_template.md) as a starting point.
+  The `registered_lints_have_docs` unit test in `crates/lint/src/sol/mod.rs` checks the file.
+  The [Foundry Book](https://github.com/foundry-rs/book)'s weekly update generates its lint reference
+  pages and navigation from these files with `import:lints`.
 
 ### Lint writing style
 
@@ -103,8 +107,7 @@ the following Foundry-specific conventions:
 Review every diagnostic path and the reference page together. Cover triggering and non-triggering
 cases in UI tests, update affected expected output when messages change, and check that examples
 match the implemented detector. A structural check cannot establish that a suggested change is
-semantically correct. Keep the matching [Foundry Book](https://github.com/foundry-rs/book) page in
-sync with the source documentation, including caveats and configuration.
+semantically correct.
 
 ### Choosing Between Early and Late Passes
 

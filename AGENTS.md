@@ -81,6 +81,8 @@ For lint rules:
 
 - Follow `docs/dev/lintrules.md#lint-writing-style` and `crates/lint/docs/README.md` for
   lint names, diagnostic wording, and reference-page structure.
+- Update `crates/lint/docs/<id>.md` in the same Foundry PR as the lint. The Book's
+  `import:lints` workflow generates the published reference pages and navigation.
 - Add a Solidity test file under `crates/lint/testdata/`.
 - Use `//~WARN:` and `//~NOTE:` annotations for expected diagnostics.
 - Regenerate blessed output with `cargo bless-lints`.
