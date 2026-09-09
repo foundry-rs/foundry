@@ -1439,8 +1439,39 @@ impl Config {
     ) -> Result<Vec<String>, SolcError> {
         let mut warnings = Vec::new();
 
-        if let Err(err) = project.cleanup() {
-            warnings.push(format!("failed to clean project artifacts: {err}"));
+        let root = match dunce::canonicalize(project.root()) {
+            Ok(root) => Some(root),
+            Err(err) => {
+                warnings.push(format!(
+                    "skipping recursive cleanup: failed to resolve project root {}: {err}",
+                    project.root().display()
+                ));
+                None
+            }
+        };
+
+        if let Some(root) = &root {
+            let mut unsafe_path = None;
+            for path in [project.artifacts_path(), project.build_info_path()] {
+                match dunce::canonicalize(path) {
+                    Ok(path) if root.starts_with(&path) => {
+                        unsafe_path = Some(format!("{} contains the project root", path.display()));
+                        break;
+                    }
+                    Ok(_) => {}
+                    Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+                    Err(err) => {
+                        unsafe_path = Some(format!("failed to resolve {}: {err}", path.display()));
+                        break;
+                    }
+                }
+            }
+
+            if let Some(reason) = unsafe_path {
+                warnings.push(format!("skipping project artifact cleanup: {reason}"));
+            } else if let Err(err) = project.cleanup() {
+                warnings.push(format!("failed to clean project artifacts: {err}"));
+            }
         }
 
         // Remove last test run failures file.
@@ -1453,13 +1484,45 @@ impl Config {
             ));
         }
 
-        // Remove mutation test cache directory
-        let _ = fs::remove_dir_all(project.root().join(&self.mutation_dir));
-
-        // Remove fuzz and invariant cache directories.
-        let mut remove_test_dir = |test_dir: &Option<PathBuf>| {
-            if let Some(test_dir) = test_dir {
+        if let Some(root) = &root {
+            // Remove configured test cache directories within the project root.
+            for test_dir in [
+                Some(self.mutation_dir.as_path()),
+                self.fuzz.failure_persist_dir.as_deref(),
+                self.fuzz.corpus.corpus_dir.as_deref(),
+                self.fuzz.corpus.frontier_dir.as_deref(),
+                self.invariant.corpus.corpus_dir.as_deref(),
+                self.invariant.failure_persist_dir.as_deref(),
+            ]
+            .into_iter()
+            .flatten()
+            {
                 let path = project.root().join(test_dir);
+                let resolved = match dunce::canonicalize(&path) {
+                    Ok(resolved) => resolved,
+                    Err(err) if err.kind() == io::ErrorKind::NotFound => continue,
+                    Err(err) => {
+                        warnings.push(format!(
+                            "skipping test cache directory {}: failed to resolve path: {err}",
+                            path.display()
+                        ));
+                        continue;
+                    }
+                };
+                if root.starts_with(&resolved) {
+                    warnings.push(format!(
+                        "skipping test cache directory {}: contains the project root",
+                        path.display()
+                    ));
+                    continue;
+                }
+                if !resolved.starts_with(root) {
+                    warnings.push(format!(
+                        "skipping test cache directory {}: outside the project root",
+                        path.display()
+                    ));
+                    continue;
+                }
                 if let Err(err) = fs::remove_dir_all(&path)
                     && err.kind() != io::ErrorKind::NotFound
                 {
@@ -1469,12 +1532,7 @@ impl Config {
                     ));
                 }
             }
-        };
-        remove_test_dir(&self.fuzz.failure_persist_dir);
-        remove_test_dir(&self.fuzz.corpus.corpus_dir);
-        remove_test_dir(&self.fuzz.corpus.frontier_dir);
-        remove_test_dir(&self.invariant.corpus.corpus_dir);
-        remove_test_dir(&self.invariant.failure_persist_dir);
+        }
 
         Ok(warnings)
     }
@@ -3309,6 +3367,105 @@ mod tests {
     fn mark_serialized_invariant_provenance(config: &mut Config) {
         config.invariant.corpus_random_sequence_weight_configured = true;
         config.invariant.workers_configured = true;
+    }
+
+    #[test]
+    fn cleanup_preserves_project_root_and_ancestors() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("project");
+        fs::create_dir_all(root.join("src")).unwrap();
+        let canary = root.join("foundry.toml");
+        fs::write(&canary, "[profile.default]\n").unwrap();
+
+        for path in ["", ".", "src/..", ".."]
+            .map(PathBuf::from)
+            .into_iter()
+            .chain([canonic(&root), canonic(dir.path())])
+        {
+            let mut config = Config::with_root(&root).sanitized();
+            config.mutation_dir = path.clone();
+            config.fuzz.failure_persist_dir = Some(path.clone());
+            config.fuzz.corpus.corpus_dir = Some(path.clone());
+            config.fuzz.corpus.frontier_dir = Some(path.clone());
+            config.invariant.corpus.corpus_dir = Some(path.clone());
+            config.invariant.failure_persist_dir = Some(path);
+            let project = config.project().unwrap();
+            let warnings = config.cleanup(&project).unwrap();
+            assert_eq!(warnings.len(), 6);
+            assert!(warnings.iter().all(|warning| warning.ends_with("contains the project root")));
+            assert!(canary.exists());
+
+            config.force = true;
+            config.project().unwrap();
+            assert!(canary.exists());
+        }
+    }
+
+    #[test]
+    fn cleanup_preserves_external_directories_and_continues() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("project");
+        let external = dir.path().join("external");
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(&external).unwrap();
+        fs::write(external.join("corpus"), "test").unwrap();
+        fs::create_dir(root.join("frontier")).unwrap();
+        let mut config = Config::with_root(&root).sanitized();
+        config.mutation_dir = PathBuf::new();
+        config.fuzz.corpus.corpus_dir = Some(external.clone());
+        config.fuzz.corpus.frontier_dir = Some("frontier".into());
+        let warnings = config.cleanup(&config.project().unwrap()).unwrap();
+        assert_eq!(warnings.len(), 2);
+        assert!(root.exists());
+        assert!(external.exists());
+        assert!(!root.join("frontier").exists());
+    }
+
+    #[test]
+    fn cleanup_reports_mutation_directory_failure_and_continues() {
+        let dir = tempdir().unwrap();
+        let mut config = Config::with_root(dir.path()).sanitized();
+        config.mutation_dir = "mutation".into();
+        config.fuzz.corpus.frontier_dir = Some("frontier".into());
+        fs::write(dir.path().join("mutation"), "not a directory").unwrap();
+        fs::create_dir(dir.path().join("frontier")).unwrap();
+        let warnings = config.cleanup(&config.project().unwrap()).unwrap();
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].starts_with("failed to remove test cache directory "));
+        assert!(!dir.path().join("frontier").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cleanup_preserves_root_through_symlink() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("project");
+        fs::create_dir(&root).unwrap();
+        std::os::unix::fs::symlink(&root, dir.path().join("alias")).unwrap();
+        let mut config = Config::with_root(&root).sanitized();
+        config.mutation_dir = "../alias/.".into();
+        let warnings = config.cleanup(&config.project().unwrap()).unwrap();
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].ends_with("contains the project root"));
+        assert!(root.exists());
+    }
+
+    #[test]
+    fn cleanup_preserves_root_for_artifact_ancestor() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("project");
+        fs::create_dir(&root).unwrap();
+        let canary = root.join("foundry.toml");
+        fs::write(&canary, "[profile.default]\n").unwrap();
+        let mut config = Config::with_root(&root);
+        config.out = "..".into();
+        let config = config.sanitized();
+
+        let warnings = config.cleanup(&config.project().unwrap()).unwrap();
+
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].starts_with("skipping project artifact cleanup: "));
+        assert!(canary.exists());
     }
 
     #[test]
