@@ -99,6 +99,7 @@ jobs:
         with:
           cache-bin: false
           prefix-key: v2-rust-doctest
+      - uses: ./.github/actions/setup-cargo
       - run: cargo test --workspace --doc --locked
 
   no-default-features:
@@ -127,6 +128,7 @@ jobs:
         with:
           cache-bin: false
           prefix-key: v1-rust-no-default-features
+      - uses: ./.github/actions/setup-cargo
       - run: cargo build --workspace --no-default-features --locked
 
   touch-id-link:
@@ -157,6 +159,7 @@ jobs:
         with:
           cache-bin: false
           prefix-key: v1-rust-touch-id-macos
+      - uses: ./.github/actions/setup-cargo
       - name: Run native Touch ID regressions
         run: |
           cargo test --manifest-path crates/cast/Cargo.toml --lib --features touch-id --target aarch64-apple-darwin --locked cmd::wallet::tests
@@ -245,6 +248,7 @@ jobs:
       - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
       - uses: ./.github/actions/setup-sccache
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: ./.github/actions/setup-cargo
       - run: cargo clippy --workspace --all-targets --all-features --locked
         env:
           RUSTFLAGS: -Dwarnings
@@ -296,6 +300,7 @@ jobs:
         with:
           cache-bin: false
           prefix-key: v2-rust-forge-fmt
+      - uses: ./.github/actions/setup-cargo
       - name: forge fmt
         shell: bash
         run: ./.github/scripts/format.sh --check

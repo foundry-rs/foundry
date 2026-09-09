@@ -126,11 +126,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           cache-bin: false
-      - name: Fetch dependencies through Socket
-        run: cargo fetch --locked
-      - name: Resolve unwrapped Cargo
-        shell: bash
-        run: echo "REAL_CARGO=$(rustup which cargo)" >> "$GITHUB_ENV"
+      - uses: ./.github/actions/setup-cargo
       - uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
         with:
           tool: nextest
@@ -154,4 +150,4 @@ jobs:
             args+=(--partition "$NEXTEST_PARTITION")
           fi
           args+=(--no-fail-fast)
-          "$REAL_CARGO" nextest run --offline --locked --features monad "${args[@]}"
+          cargo nextest run --locked --features monad "${args[@]}"

@@ -36,6 +36,7 @@ jobs:
       - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
       - uses: ./.github/actions/setup-sccache
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: ./.github/actions/setup-cargo
       - name: Build documentation
         run: cargo doc --workspace --all-features --no-deps --document-private-items --locked
         env:

@@ -45,6 +45,7 @@ jobs:
           toolchain: stable
 
       - uses: ./.github/actions/setup-sccache
+      - uses: ./.github/actions/setup-cargo
 
       # Build and install binaries
       - name: Build and install Foundry binaries

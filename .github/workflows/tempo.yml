@@ -58,16 +58,12 @@ jobs:
       - uses: ./.github/actions/setup-sccache
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
-      - name: Fetch dependencies through Socket
-        run: cargo fetch --locked
-      - name: Resolve unwrapped Cargo
-        shell: bash
-        run: echo "REAL_CARGO=$(rustup which cargo)" >> "$GITHUB_ENV"
+      - uses: ./.github/actions/setup-cargo
 
       # Build and install binaries
       - name: Build and install Foundry binaries
         run: |
-          "$REAL_CARGO" build --offline --profile dev --locked --bin forge --bin cast --bin anvil --bin chisel
+          cargo build --profile dev --locked --bin forge --bin cast --bin anvil --bin chisel
           echo "${{ github.workspace }}/target/debug" >> "$GITHUB_PATH"
 
       - name: Check Tempo fork schedule compatibility
@@ -76,7 +72,7 @@ jobs:
           TEMPO_TESTNET_RPC_URL: ${{ secrets.TEMPO_TESTNET_RPC_URL }}
           TEMPO_DEVNET_RPC_URL: ${{ vars.TEMPO_DEVNET_CI != 'false' && secrets.TEMPO_DEVNET_RPC_URL || '' }}
         run: |
-          "$REAL_CARGO" test --offline --locked -p foundry-common --lib tempo::tests::test_fork_schedule_parses_configured_rpcs -- --exact --nocapture
+          cargo test --locked -p foundry-common --lib tempo::tests::test_fork_schedule_parses_configured_rpcs -- --exact --nocapture
 
       - name: Run Tempo check on mainnet
         if: |
