@@ -312,28 +312,12 @@ jobs:
 
   deny:
     needs: socket-dependencies
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    uses: tempoxyz/gh-actions/.github/workflows/rust-deny.yml@09dddc697b1c8c1d3c3733b41d6fdd2274f17734 # main
     permissions:
       id-token: write
       contents: read
-    steps:
-      - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@09dddc697b1c8c1d3c3733b41d6fdd2274f17734
-        with:
-          egress-policy: audit
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Install Rust toolchain
-        run: |
-          rustup toolchain install nightly --profile minimal
-          rustup default nightly
-      - uses: tempoxyz/gh-actions/vendor/EmbarkStudios/cargo-deny-action@6f436eb3a168279692739e8c0c9fdb52b94bfae7
-        with:
-          rust-version: nightly
-          command: check all
-          arguments: --all-features
+    with:
+      rust-toolchain: nightly
 
   codeql:
     name: analyze (${{ matrix.language }})
