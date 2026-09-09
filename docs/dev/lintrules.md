@@ -70,7 +70,7 @@ Next, choose whether you want an [early or late lint pass](#choosing-between-ear
 
 - Add the canonical documentation at `crates/lint/docs/<str_id>.md` in the same Foundry PR.
   Use [`crates/lint/docs/_template.md`](../../crates/lint/docs/_template.md) as a starting point.
-  The tests in `crates/lint/src/sol/tests.rs` enforce registry coverage, metadata, help URLs,
+  The tests in `crates/lint/src/sol/mod.rs` enforce registry coverage, metadata, help URLs,
   and the page structure. Run them with `cargo test -p forge-lint --lib sol::tests`.
   The [Foundry Book](https://github.com/foundry-rs/book) validates lint documentation and generates
   its lint reference pages and navigation from these files with `import:lints`.
