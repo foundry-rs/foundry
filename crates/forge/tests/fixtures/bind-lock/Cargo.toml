@@ -1,0 +1,12 @@
+[package]
+name = "foundry-contracts"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+alloy = { version = "1.0", features = ["sol-types", "contract"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_with = { version = "3.15", default-features = false, features = ["std"] }
