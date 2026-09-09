@@ -2,6 +2,11 @@ name: Approved Cargo dependencies
 
 on:
   workflow_call:
+    inputs:
+      scope:
+        description: Cargo dependency graph (workspace or bindings)
+        type: string
+        default: workspace
     outputs:
       artifact-id:
         description: Immutable source artifact from this run
@@ -14,6 +19,7 @@ permissions: {}
 
 jobs:
   prepare:
+    name: Prepare ${{ inputs.scope }} dependencies
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -38,12 +44,13 @@ jobs:
         id: bundle
         env:
           SFW: ${{ steps.security.outputs.firewall-path-binary }}
+          DEPENDENCY_SCOPE: ${{ inputs.scope }}
         run: node .github/scripts/dependencies.mjs prepare
       - name: Upload this run's dependency bundle
         id: upload
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: cargo-dependencies-${{ github.run_id }}-${{ github.run_attempt }}
+          name: cargo-${{ inputs.scope }}-dependencies-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ steps.bundle.outputs.archive }}
           if-no-files-found: error
           compression-level: 0

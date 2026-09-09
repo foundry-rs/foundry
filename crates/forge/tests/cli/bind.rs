@@ -15,7 +15,6 @@ pub(super) fn bindings_cargo(bindings_path: &Path, command: &str) -> Command {
         include_str!("../../../../testdata/forge-bind/Cargo.lock").parse::<DocumentMut>().unwrap();
     // Some generated crates do not need serde_with. Only prune their direct dependency list;
     // preserve every approved version and checksum, then let --locked enforce the resolution.
-    // CI also inherits offline mode from the approved dependency bundle.
     let package = lock["package"]
         .as_array_of_tables_mut()
         .unwrap()
@@ -31,6 +30,10 @@ pub(super) fn bindings_cargo(bindings_path: &Path, command: &str) -> Command {
     cmd.args([command, "--locked"])
         .current_dir(bindings_path)
         .env("CARGO_TARGET_DIR", cargo_profile_dir().join("bind-test-target"));
+    // CI supplies a test-only bundle, separate from the main workspace's dependencies.
+    if let Some(cargo_home) = std::env::var_os("FOUNDRY_BINDINGS_CARGO_HOME") {
+        cmd.env("CARGO_HOME", cargo_home).env("CARGO_NET_OFFLINE", "true");
+    }
     cmd
 }
 

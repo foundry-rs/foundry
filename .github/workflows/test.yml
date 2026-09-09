@@ -35,6 +35,15 @@ env:
   RUST_MIN_STACK: 4194304 # 2 * the default (2 * 1024 * 1024)
 
 jobs:
+  bindings:
+    name: Approve binding test dependencies
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/dependencies.yml
+    with:
+      scope: bindings
+
   matrices:
     name: build matrices
     runs-on: ubuntu-latest
@@ -67,7 +76,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    needs: matrices
+    needs: [matrices, bindings]
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.matrices.outputs.test-matrix) }}
@@ -86,6 +95,19 @@ jobs:
           sha256: ${{ inputs.sha256 }}
           targets: ${{ matrix.target }}
           svm-platform: ${{ matrix.svm_target_platform }}
+      - name: Download approved binding test sources
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.bindings.outputs.artifact-id }}
+          path: ${{ runner.temp }}/binding-dependency-download
+          merge-multiple: true
+      - name: Verify and activate binding test sources
+        env:
+          DEPENDENCY_SCOPE: bindings
+          DEPENDENCY_ARCHIVE: ${{ runner.temp }}/binding-dependency-download/dependencies.tar.gz
+          DEPENDENCY_SHA256: ${{ needs.bindings.outputs.sha256 }}
+        shell: bash
+        run: node .github/scripts/dependencies.mjs restore
       # External tests dependencies
       - name: Setup Node.js
         if: contains(matrix.name, 'external')

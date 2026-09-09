@@ -6,13 +6,19 @@ import { appendFileSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync
 import { dirname, join } from 'node:path';
 import { writeReleases } from './solc-releases.mjs';
 
-const schema = 1;
-const bindingsManifest = 'testdata/forge-bind/Cargo.toml';
+const schema = 2;
+const scope = process.env.DEPENDENCY_SCOPE || 'workspace';
+assert.ok(['workspace', 'bindings'].includes(scope), 'Expected workspace or bindings scope');
+const manifest = scope === 'bindings' ? 'testdata/forge-bind/Cargo.toml' : 'Cargo.toml';
 const inputs = [
-  ':(glob)**/Cargo.toml', ':(glob)**/Cargo.lock', 'Cargo.toml', 'Cargo.lock',
-  '.cargo', '.github/scripts/dependencies.mjs',
-  '.github/scripts/solc-releases.mjs', '.github/workflows/dependencies.yml',
-  '.github/actions/setup-build', 'testdata/forge-bind',
+  '.cargo', '.github/scripts/dependencies.mjs', '.github/workflows/dependencies.yml',
+  ...(scope === 'bindings' ? [
+    'testdata/forge-bind', 'crates/forge/tests/cli/bind.rs', '.github/workflows/test.yml',
+  ] : [
+    ':(glob)**/Cargo.toml', ':(glob)**/Cargo.lock', 'Cargo.toml', 'Cargo.lock',
+    '.github/scripts/solc-releases.mjs', '.github/actions/setup-build',
+    ':(exclude)testdata/forge-bind',
+  ]),
 ];
 
 function git(root, ...args) {
@@ -24,9 +30,10 @@ function identity(root) {
   // index only AFTER checking it and the worktree against HEAD, including new files.
   assert.equal(git(root, 'status', '--porcelain', '--untracked-files=all', '--', ...inputs), '',
     'Dependency inputs must be committed and unchanged');
-  assert.ok(existsSync(join(root, 'Cargo.lock')), 'Cargo.lock is required');
+  assert.ok(existsSync(join(root, dirname(manifest), 'Cargo.lock')), 'Cargo.lock is required');
   return {
     schema,
+    scope,
     commit: git(root, 'rev-parse', 'HEAD').trim(),
     inputs: createHash('sha256').update(git(root, 'ls-files', '--stage', '-z', '--', ...inputs)).digest('hex'),
   };
@@ -69,12 +76,10 @@ function prepare(root, parent, firewall) {
     // Git CLI honors Socket's proxy CA; Cargo's built-in Git client does not.
     CARGO_NET_GIT_FETCH_WITH_CLI: 'true',
   };
-  for (const manifest of ['Cargo.toml', bindingsManifest]) {
-    execFileSync(firewall, ['cargo', 'fetch', '--locked', '--manifest-path', manifest],
-      { cwd: root, env, stdio: 'inherit' });
-  }
+  execFileSync(firewall, ['cargo', 'fetch', '--locked', '--manifest-path', manifest],
+    { cwd: root, env, stdio: 'inherit' });
   const config = execFileSync('cargo', [
-    'vendor', '--frozen', '--versioned-dirs', '--sync', bindingsManifest, join(bundle, 'vendor'),
+    'vendor', '--frozen', '--versioned-dirs', '--manifest-path', manifest, join(bundle, 'vendor'),
   ], {
     cwd: root,
     env: { ...env, CARGO_NET_OFFLINE: 'true' },
@@ -108,13 +113,15 @@ function restore(root, archive, expected, parent, platform) {
   const bundle = mkdtempSync(join(parent, 'approved-dependencies-'));
   tar(bundle, archive, false);
   verifyIdentity(JSON.parse(readFileSync(join(bundle, 'identity.json'), 'utf8')), current);
-  assert.match(platform, /^(linux-(amd64|aarch64)|macosx-(amd64|aarch64)|windows-amd64)$/);
-  const releases = join(bundle, 'solc', `${platform}.json`);
-  assert.ok(existsSync(releases), `Missing solc release metadata for ${platform}`);
   const cargoHome = join(bundle, 'cargo-home');
   mkdirSync(cargoHome);
   writeFileSync(join(cargoHome, 'config.toml'),
     `${sourceConfig(readFileSync(join(bundle, 'cargo-config.toml'), 'utf8'), join(bundle, 'vendor'))}\n[net]\noffline = true\n`);
+  // Only nested Cargo commands in the binding tests use this separate graph.
+  if (scope === 'bindings') return { FOUNDRY_BINDINGS_CARGO_HOME: cargoHome };
+  assert.match(platform, /^(linux-(amd64|aarch64)|macosx-(amd64|aarch64)|windows-amd64)$/);
+  const releases = join(bundle, 'solc', `${platform}.json`);
+  assert.ok(existsSync(releases), `Missing solc release metadata for ${platform}`);
   return { CARGO_HOME: cargoHome, CARGO_NET_OFFLINE: 'true', SVM_RELEASES_LIST_JSON: releases, SVM_TARGET_PLATFORM: platform };
 }
 
@@ -132,7 +139,7 @@ switch (process.argv[2]) {
   case 'prepare': {
     const bundle = prepare(root, parent, process.env.SFW);
     // Release-list acquisition is data-only and separate from Socket's package policy.
-    await writeReleases(bundle);
+    if (scope === 'workspace') await writeReleases(bundle);
     const archive = join(dirname(bundle), 'dependencies.tar.gz');
     tar(bundle, archive, true);
     output('sha256', checksum(archive));
