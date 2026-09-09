@@ -8,7 +8,7 @@ const solc = 'https://raw.githubusercontent.com/ethereum/solc-bin/954cd950016143
 const linuxArm = 'https://raw.githubusercontent.com/nikitastupin/solc/2287d4326237172acf91ce42fd7ec18a67b7f512/linux/aarch64/list.json';
 const macArm = 'https://raw.githubusercontent.com/alloy-rs/solc-builds/e4b80d33bc4d015b2fc3583e217fbf248b2014e1/macosx/aarch64/list.json';
 
-export function compare(version, other) {
+function compare(version, other) {
   const [core, pre] = version.split('-', 2);
   const a = core.split('.').map(Number);
   const b = other.split('.').map(Number);
@@ -30,7 +30,7 @@ function merge(...lists) {
   };
 }
 
-export function compose({ linux, linuxNative, linuxLegacy, linuxOld, mac, macNative, windows }) {
+function compose({ linux, linuxNative, linuxLegacy, linuxOld, mac, macNative, windows }) {
   const legacy = retain(linuxLegacy, version => compare(version, '0.8.31') < 0);
   for (const build of legacy.builds) build.prerelease = build.version.split('-', 2)[1] || null;
   return {

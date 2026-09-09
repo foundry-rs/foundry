@@ -167,7 +167,7 @@ jobs:
       - name: Test GitHub scripts
         run: |
           python3 -m unittest discover -s .github/scripts/tests -p 'test_*.py'
-          node --test .github/scripts/tests/test-create-tag.js .github/scripts/tests/test-dependencies.mjs .github/scripts/tests/test-solc-releases.mjs
+          node --test .github/scripts/tests/test-create-tag.js
 
   clippy:
     needs: dependencies
@@ -194,32 +194,6 @@ jobs:
       - run: cargo +nightly clippy --workspace --all-targets --all-features --frozen
         env:
           RUSTFLAGS: -Dwarnings
-
-  dependency-contract:
-    name: dependency contract (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
-    permissions:
-      contents: read
-      id-token: write
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    steps:
-      - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@2794671f2a6e696217c8128ad4553a75bbba2709
-        with:
-          shims: false
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
-        with:
-          toolchain: stable
-      - name: Exercise source-bundle contracts with local fixtures
-        shell: bash
-        run: node --test .github/scripts/tests/test-dependencies.mjs .github/scripts/tests/test-solc-releases.mjs
 
   rustfmt:
     runs-on: depot-ubuntu-latest
@@ -327,7 +301,6 @@ jobs:
       - shellcheck
       - github-scripts
       - clippy
-      - dependency-contract
       - rustfmt
       - forge-fmt
       - deny

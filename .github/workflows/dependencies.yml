@@ -13,13 +13,7 @@ on:
 permissions: {}
 
 jobs:
-  cooldown:
-    permissions:
-      contents: read
-    uses: ./.github/workflows/cargo-cooldown.yml
-
   prepare:
-    needs: cooldown
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -40,6 +34,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
           toolchain: stable
+      - name: Enforce Cargo dependency cooldown
+        uses: tempoxyz/gh-actions/actions/cargo-cooldown@0aa93238d85fd085d7901320b670cc6adb7a02f3
+        env:
+          RUSTC_WRAPPER: ""
+        with:
+          strict-project-config: true
       - name: Prepare approved sources without compiling them
         id: bundle
         env:

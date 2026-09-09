@@ -1,81 +1,37 @@
 # CI dependency boundary
 
-This draft introduces a source-bundle boundary for the ordinary Cargo CI jobs.
-It is not yet complete supply-chain coverage for every Foundry workflow.
-
 ```text
-checkout SHA → cooldown → Socket-protected fetch → offline vendor → source artifact
+checkout SHA → cooldown → Socket fetch → offline vendor → source artifact
                                                               ↓
-                          verify SHA + inputs + artifact hash → parallel frozen builds
+                               verify checkout + hash → parallel frozen builds
 ```
 
-## Contract
+[`dependencies.yml`](../../.github/workflows/dependencies.yml) checks cooldown and
+runs `sfw cargo fetch --locked` in an empty Cargo home. Cargo uses the Git CLI for
+Socket's proxy certificate support. `cargo vendor --frozen` then packages only
+those fetched sources without executing package build scripts. Failed approval
+prevents publication; source caches cannot bypass the current policy.
 
-[`dependencies.yml`](../../.github/workflows/dependencies.yml) runs the existing
-cooldown and then invokes Socket Firewall explicitly around `cargo fetch --locked`.
-`cargo vendor --frozen` packages only the sources in that fresh approved cache.
-The acquisition job uses an empty Cargo home and runs no package build scripts. It
-does not restore a previously approved source cache: each run is evaluated against
-the current Socket policy. Failure prevents artifact publication and dependent jobs.
+[`setup-build`](../../.github/actions/setup-build/action.yml) downloads the exact
+artifact ID supplied by its caller, verifies its SHA256 and checkout identity,
+and configures a fresh offline Cargo home. Builds use `--frozen`, source replacement
+and compiler-only sccache; they cannot resolve a different Cargo graph. Tests and
+docs reuse their caller's bundle. No cross-run source or target cache is restored.
 
-The archive contains vendored registry and Git sources, Cargo's source-replacement
-configuration, compiler release metadata, and an identity record. Consumers receive
-the exact artifact ID and archive SHA256 through `needs`, never by an artifact name
-search or a cross-run approval lookup. They reject a different checkout, changed
-manifests or lockfiles, changed source configuration or acquisition policy, and
-missing platform metadata before compiling.
+[`solc-releases.mjs`](../../.github/scripts/solc-releases.mjs) bundles commit-pinned
+compiler metadata so `svm-rs-builds` need not fetch release lists during compilation.
+It mirrors svm-rs 0.5.27's platform rules: review it when updating that dependency
+or the solc snapshot. These JSON inputs are not packages scanned by Socket.
 
-[`setup-build`](../../.github/actions/setup-build/action.yml) installs CI tools and
-configures a fresh Cargo home through
-[`use-dependencies`](../../.github/actions/use-dependencies/action.yml). Cargo uses
-vendored sources with `CARGO_NET_OFFLINE=true`; build commands also specify
-`--frozen`. The format script's existing `--locked` command inherits offline mode.
-Registry/source caches and compiled target-directory caches are not restored.
-Compiler outputs can still use sccache with separate PR/trusted, OS, architecture,
-toolchain, and target namespaces. No speed improvement is claimed before measuring
-cold and warm CI runs, including artifact transfer and extraction.
+This draft covers regular Cargo CI, Tempo/MPP, flaky/deploy tests and crate checks,
+not every supply-chain input. Before rollout, merge the
+[secure-runner prerequisite](https://github.com/tempoxyz/gh-actions/pull/149),
+validate fork/Dependabot OIDC and the full OS matrix, and measure cold/warm CI time.
+Release/Docker/benchmark builders, the external cargo-deny workflow, Python/Node/Bun
+and generated binding graphs, bootstrap tools and OS packages need separate coverage.
+Python installs use Socket but are not part of this Cargo bundle.
 
-[`solc-releases.mjs`](../../.github/scripts/solc-releases.mjs) fetches release-list
-data from commit-pinned sources and preserves svm-rs 0.5.27's historical and native
-platform lists. The data travels in the artifact; `svm-rs-builds` reads it through
-`SVM_RELEASES_LIST_JSON` instead of downloading it while compiling. Review this
-script when upgrading svm-rs or the pinned solc-bin snapshot. These JSON files are
-data inputs, not packages approved by Socket.
-
-## Rollout and remaining work
-
-The initial consumers are the regular CI build/test/documentation jobs, Tempo and
-MPP checks, flaky and deploy/verify tests, and nightly crate checks. Matrices,
-features, network-secret guards, required CI aggregation, and Pages deployment stay
-in place. Tests and docs share their caller's single bundle.
-
-Before treating this as full coverage or marking the draft ready:
-
-- Merge the [secure-runner explicit-mode prerequisite](https://github.com/tempoxyz/gh-actions/pull/149)
-  and update the pin if its commits change. Verify the STS/OIDC path on fork and
-  Dependabot PRs as well as maintainer PRs; there is deliberately no bypass when
-  approval fails.
-- Port release/cross and remote Docker builders. The runner's source directory and
-  firewall do not automatically extend into a container. Separate artifact signing
-  and publishing credentials from compilation.
-- Give benchmark candidates and baselines distinct bundles for their exact commits.
-  Pin and independently approve benchmark fixture repositories and their npm graphs.
-- Freeze the Python test-tool graph (including transitive packages) and external
-  Node/Bun test projects, plus Cargo graphs generated by binding tests. Python
-  installs now explicitly use Socket but are **not**
-  part of the Cargo bundle. Bootstrap actions, Rust toolchains, OS packages, and
-  downloaded tools remain a separate trust boundary; pin and verify their inputs.
-- Migrate the external cargo-deny workflow and inventory non-build workflows; they
-  must not be counted as bundle consumers merely because they wait for the gate.
-- Enforce and test runner egress restrictions. `--frozen` constrains Cargo, not
-  network access by arbitrary build scripts, tools, or tests. The current
-  secure-runner fallback is audit mode, not a network sandbox. Networked tests need
-  a separate restricted execution phase rather than broadly relaxing build egress.
-- Run the Linux x86/ARM, macOS, and Windows matrix and failure-path acceptance checks
-  before rollout. Unit tests cover identity drift, artifact checksums, missing
-  metadata, rejected acquisition, and platform-list composition; they do not prove
-  live Socket policy or runner isolation.
-
-The required workflow and its policy must themselves be protected by repository
-review/rulesets. A PR-controlled workflow cannot attest to its own trustworthiness.
-No scanner can guarantee that approved dependencies contain no malicious code.
+`--frozen` restricts Cargo, not arbitrary build-script or test networking. Runner
+egress enforcement and separation of publishing secrets remain necessary;
+secure-runner's audit fallback is not a network sandbox. Protect the workflow and
+policy through repository review/rulesets. No scanner guarantees malware-free code.
