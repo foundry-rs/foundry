@@ -8,5 +8,5 @@ while IFS= read -r -d '' file; do
     sol_files+=("$file")
 done < <(find testdata -name '*.sol' ! -name Vm.sol ! -name console.sol -print0)
 
-# Run forge fmt on all found files
-cargo run --locked --bin forge -- fmt "$@" "${sol_files[@]}"
+# Run forge fmt on all found files. CI can provide the direct Cargo path after Socket prefetch.
+"${CARGO:-cargo}" run --locked --bin forge -- fmt "$@" "${sol_files[@]}"

@@ -100,7 +100,7 @@ jobs:
           cache-bin: false
           prefix-key: v2-rust-doctest
       - uses: ./.github/actions/setup-cargo
-      - run: cargo test --workspace --doc --locked
+      - run: rustup run stable cargo test --workspace --doc --locked --offline
 
   no-default-features:
     needs: socket-dependencies
@@ -129,7 +129,7 @@ jobs:
           cache-bin: false
           prefix-key: v1-rust-no-default-features
       - uses: ./.github/actions/setup-cargo
-      - run: cargo build --workspace --no-default-features --locked
+      - run: rustup run stable cargo build --workspace --no-default-features --locked --offline
 
   touch-id-link:
     needs: socket-dependencies
@@ -162,13 +162,13 @@ jobs:
       - uses: ./.github/actions/setup-cargo
       - name: Run native Touch ID regressions
         run: |
-          cargo test --manifest-path crates/cast/Cargo.toml --lib --features touch-id --target aarch64-apple-darwin --locked cmd::wallet::tests
-          cargo test --manifest-path crates/cast/Cargo.toml --test cli --features touch-id --target aarch64-apple-darwin --locked wallet_change_password
+          rustup run stable cargo test --manifest-path crates/cast/Cargo.toml --lib --features touch-id --target aarch64-apple-darwin --locked --offline cmd::wallet::tests
+          rustup run stable cargo test --manifest-path crates/cast/Cargo.toml --test cli --features touch-id --target aarch64-apple-darwin --locked --offline wallet_change_password
       - name: Check Intel Touch ID linking
         run: |
-          cargo test --manifest-path crates/cast/Cargo.toml --test cli --features touch-id --target x86_64-apple-darwin --locked --no-run
-          cargo build --manifest-path crates/forge/Cargo.toml --features touch-id --target x86_64-apple-darwin --locked
-      - run: cargo build --manifest-path crates/forge/Cargo.toml --features touch-id --target aarch64-apple-darwin --locked
+          rustup run stable cargo test --manifest-path crates/cast/Cargo.toml --test cli --features touch-id --target x86_64-apple-darwin --locked --offline --no-run
+          rustup run stable cargo build --manifest-path crates/forge/Cargo.toml --features touch-id --target x86_64-apple-darwin --locked --offline
+      - run: rustup run stable cargo build --manifest-path crates/forge/Cargo.toml --features touch-id --target aarch64-apple-darwin --locked --offline
 
   typos:
     runs-on: depot-ubuntu-latest
@@ -249,7 +249,7 @@ jobs:
       - uses: ./.github/actions/setup-sccache
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - uses: ./.github/actions/setup-cargo
-      - run: cargo clippy --workspace --all-targets --all-features --locked
+      - run: rustup run nightly cargo clippy --workspace --all-targets --all-features --locked --offline
         env:
           RUSTFLAGS: -Dwarnings
 
@@ -303,7 +303,12 @@ jobs:
       - uses: ./.github/actions/setup-cargo
       - name: forge fmt
         shell: bash
-        run: ./.github/scripts/format.sh --check
+        run: |
+          export RUSTUP_TOOLCHAIN=stable
+          cargo_path="$(rustup which cargo)"
+          export CARGO="$cargo_path"
+          export CARGO_NET_OFFLINE=true
+          ./.github/scripts/format.sh --check
 
   deny:
     needs: socket-dependencies

@@ -150,4 +150,6 @@ jobs:
             args+=(--partition "$NEXTEST_PARTITION")
           fi
           args+=(--no-fail-fast)
-          cargo nextest run --locked --features monad "${args[@]}"
+          # Keep offline mode scoped to the workspace build. Tests that compile generated crates
+          # invoke Cargo through the Socket shim and remain subject to package policy.
+          rustup run stable cargo nextest run --offline --locked --features monad "${args[@]}"

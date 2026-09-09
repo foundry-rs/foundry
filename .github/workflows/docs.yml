@@ -38,7 +38,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - uses: ./.github/actions/setup-cargo
       - name: Build documentation
-        run: cargo doc --workspace --all-features --no-deps --document-private-items --locked
+        run: rustup run nightly cargo doc --workspace --all-features --no-deps --document-private-items --locked --offline
         env:
           RUSTDOCFLAGS: --cfg docsrs -D warnings --show-type-layout --generate-link-to-definition --enable-index-page -Zunstable-options
       - name: Setup Pages

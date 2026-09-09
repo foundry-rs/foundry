@@ -1,5 +1,5 @@
 name: Setup Cargo after Socket
-description: Fetch locked dependencies through Socket, then use the selected Rust toolchain offline
+description: Fetch locked dependencies through Socket for an offline workspace build
 
 runs:
   using: composite
@@ -9,12 +9,3 @@ runs:
       run: |
         : "${SFW_SHIM_DIR:?Secure runner must install Socket Firewall first}"
         CARGO_NET_GIT_FETCH_WITH_CLI=true "$SFW_SHIM_DIR/cargo" fetch --locked
-    - name: Use prefetched dependencies without Socket proxy
-      shell: bash
-      run: |
-        cargo_path="$(rustup which cargo)"
-        if command -v cygpath >/dev/null 2>&1; then
-          cargo_path="$(cygpath -u "$cargo_path")"
-        fi
-        dirname "$cargo_path" >> "$GITHUB_PATH"
-        echo "CARGO_NET_OFFLINE=true" >> "$GITHUB_ENV"

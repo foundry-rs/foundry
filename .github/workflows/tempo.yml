@@ -63,7 +63,7 @@ jobs:
       # Build and install binaries
       - name: Build and install Foundry binaries
         run: |
-          cargo build --profile dev --locked --bin forge --bin cast --bin anvil --bin chisel
+          rustup run stable cargo build --profile dev --locked --offline --bin forge --bin cast --bin anvil --bin chisel
           echo "${{ github.workspace }}/target/debug" >> "$GITHUB_PATH"
 
       - name: Check Tempo fork schedule compatibility
@@ -72,7 +72,7 @@ jobs:
           TEMPO_TESTNET_RPC_URL: ${{ secrets.TEMPO_TESTNET_RPC_URL }}
           TEMPO_DEVNET_RPC_URL: ${{ vars.TEMPO_DEVNET_CI != 'false' && secrets.TEMPO_DEVNET_RPC_URL || '' }}
         run: |
-          cargo test --locked -p foundry-common --lib tempo::tests::test_fork_schedule_parses_configured_rpcs -- --exact --nocapture
+          rustup run stable cargo test --locked --offline -p foundry-common --lib tempo::tests::test_fork_schedule_parses_configured_rpcs -- --exact --nocapture
 
       - name: Run Tempo check on mainnet
         if: |
