@@ -13,17 +13,17 @@ The base is restricted to the values people write as powers (`2` for bit widths,
 
 ## Why is this bad?
 
-Developers coming from languages where `^` means exponentiation (Python, many calculators) write `10 ^ 18` expecting `10 ** 18`. The contract compiles and silently uses the wrong constant, which can corrupt amounts, decimals, or limits.
+Developers familiar with mathematical notation or calculators where `^` means exponentiation may
+write `10 ^ 18` expecting `10 ** 18`. The contract compiles and silently uses the wrong constant,
+which can corrupt amounts, decimals, or limits.
 
 ## Example
-
-### Bad
 
 ```solidity
 uint256 constant WAD = 10 ^ 18; // evaluates to 24, not 1e18
 ```
 
-### Good
+Use instead:
 
 ```solidity
 uint256 constant WAD = 10 ** 18;

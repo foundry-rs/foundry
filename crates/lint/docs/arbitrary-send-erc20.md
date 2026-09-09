@@ -45,7 +45,7 @@ facts proven on the surviving branch propagate past the `if`.
 
 A prior EIP-2612 `permit(owner, address(this), …)` does **not** suppress
 this lint — the sink is instead reported as
-[`arbitrary-send-erc20-permit`](./arbitrary-send-erc20-permit.md), since
+[`arbitrary-send-erc20-permit`](https://getfoundry.sh/forge/linting/arbitrary-send-erc20-permit), since
 non-EIP-2612 tokens with a fallback can silently accept the permit and
 let any prior allowance be drained.
 
@@ -59,15 +59,13 @@ DeFi protocols.
 
 ## Example
 
-### Bad
-
 ```solidity
 function pull(address from, address to, uint256 amount) external {
     token.transferFrom(from, to, amount); // attacker may pass any `from`
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 function deposit(uint256 amount) external {

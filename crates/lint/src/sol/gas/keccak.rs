@@ -15,7 +15,7 @@ declare_forge_lint!(
     ASM_KECCAK256,
     Severity::Gas,
     "asm-keccak256",
-    "use of inefficient hashing mechanism; consider using inline assembly"
+    "high-level `keccak256` call is a candidate for gas optimization"
 );
 
 impl<'gcx> LateLintPass<'gcx> for AsmKeccak256 {

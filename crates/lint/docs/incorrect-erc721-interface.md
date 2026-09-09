@@ -21,8 +21,6 @@ failures at runtime.
 
 ## Example
 
-### Bad
-
 ```solidity
 interface IBadERC721 {
     function balanceOf(address) external view returns (bool);   // should be uint256
@@ -31,7 +29,7 @@ interface IBadERC721 {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 interface IERC721 {

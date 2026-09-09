@@ -38,8 +38,6 @@ change ownership, authorization, or other protected configuration.
 
 ## Example
 
-### Bad
-
 ```solidity
 contract Registry {
     /// @custom:security write-protection="onlyOwner()"
@@ -56,7 +54,7 @@ contract Registry {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 contract Registry {

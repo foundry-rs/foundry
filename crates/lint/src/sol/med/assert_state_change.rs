@@ -24,7 +24,7 @@ declare_forge_lint!(
     ASSERT_STATE_CHANGE,
     Severity::Med,
     "assert-state-change",
-    "assert() should not contain state-modifying expressions"
+    "`assert()` contains a state-modifying expression"
 );
 
 impl<'gcx> LateLintPass<'gcx> for AssertStateChange {
@@ -45,9 +45,9 @@ impl<'gcx> LateLintPass<'gcx> for AssertStateChange {
                 ctx.emit_with_msg(
                     &ASSERT_STATE_CHANGE,
                     span,
-                    "assert() argument contains a state-modifying expression; \
-                     assert() is for invariants, hoist the mutation before the assert, \
-                     or use require() for validation",
+                    "`assert()` argument contains a state-modifying expression; \
+                     `assert()` is for invariants, hoist the mutation before the `assert`, \
+                     or use `require()` for validation",
                 );
             }
         }

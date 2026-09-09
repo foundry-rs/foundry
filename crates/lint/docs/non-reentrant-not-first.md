@@ -23,15 +23,13 @@ piece of modifier logic.
 
 ## Example
 
-### Bad
-
 ```solidity
 function withdraw(uint256 amount) external onlyOwner nonReentrant {
     _withdraw(amount);
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 function withdraw(uint256 amount) external nonReentrant onlyOwner {

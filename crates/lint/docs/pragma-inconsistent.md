@@ -20,8 +20,6 @@ removes a hidden source of integration bugs and makes upgrades coordinated.
 
 ## Example
 
-### Bad
-
 ```solidity
 // A.sol
 pragma solidity 0.8.18;
@@ -33,7 +31,7 @@ pragma solidity ^0.8.20;
 pragma solidity >=0.7.0 <0.9.0;
 ```
 
-### Good
+Use instead:
 
 ```solidity
 // All files

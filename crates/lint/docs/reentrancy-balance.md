@@ -32,8 +32,6 @@ saved baseline, rather than the comparison operator, is stale.
 
 ## Example
 
-### Bad
-
 ```solidity
 function mint(IPayer payer, uint256 amount) external {
     uint256 balanceBefore = address(this).balance;
@@ -43,7 +41,7 @@ function mint(IPayer payer, uint256 amount) external {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 function mint(uint256 amount) external payable nonReentrant {

@@ -32,8 +32,6 @@ without being fragile to external manipulation, or rely on internal accounting.
 
 ## Example
 
-### Bad
-
 ```solidity
 // ETH balance, bricked by selfdestruct donation
 function withdraw() external {
@@ -48,7 +46,7 @@ function claimWhenEmpty() external {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 // Use >= / <= to tolerate externally-added funds

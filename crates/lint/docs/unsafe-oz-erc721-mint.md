@@ -34,11 +34,13 @@ Two shapes stay out of reach, both resting on a mint the type checker cannot res
 
 ## Why is this bad?
 
-`ERC721._mint` assigns the token without calling `onERC721Received` on the recipient. Minting to a contract that does not implement the receiver interface permanently locks the token. `_safeMint` performs the check and reverts instead.
+`ERC721._mint` assigns the token without calling `onERC721Received` on the recipient. A recipient
+contract without a way to transfer the token onward may leave it permanently inaccessible, though
+lack of the receiver interface alone does not prove that it is locked. `_safeMint` checks receiver
+acceptance and reverts on rejection. Its receiver callback is an external interaction, so arrange
+state changes and reentrancy protections accordingly.
 
 ## Example
-
-### Bad
 
 ```solidity
 function mint(address to, uint256 id) external {
@@ -46,7 +48,7 @@ function mint(address to, uint256 id) external {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 function mint(address to, uint256 id) external {

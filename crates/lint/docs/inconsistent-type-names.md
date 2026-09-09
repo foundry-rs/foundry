@@ -24,16 +24,17 @@ expressions, `using ... for` directives, or user-defined value type definitions 
 declarations and do not affect the result. A contract that consistently uses only `uint` and `int`
 is not reported, though explicit sizes remain preferable.
 
-## Why is this bad?
+## Why restrict this?
 
 `uint` and `uint256` compile to the same type, as do `int` and `int256`, so mixing their spellings
 does not change runtime behavior. It does make the code less consistent and can make readers wonder
 whether an omitted size was intentional. Using the explicit spelling throughout removes that
 ambiguity.
 
-## Example
+A project may consistently prefer shorthand integer types. When integrating an established API
+or generated declarations, preserve that convention and suppress mixed spelling after review.
 
-### Bad
+## Example
 
 ```solidity
 contract Vault {
@@ -42,7 +43,7 @@ contract Vault {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 contract Vault {

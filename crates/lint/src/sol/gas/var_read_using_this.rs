@@ -17,7 +17,7 @@ declare_forge_lint!(
     VAR_READ_USING_THIS,
     Severity::Gas,
     "var-read-using-this",
-    "reading a state variable via `this` causes an unnecessary STATICCALL; access it directly"
+    "reading a state variable via `this` causes an unnecessary `STATICCALL`; access it directly"
 );
 
 impl<'gcx> LateLintPass<'gcx> for VarReadUsingThis {
@@ -134,7 +134,7 @@ fn suggestion(
         // Ordinary `view`/`pure` functions may be `external`, requiring a refactor to call them.
         return Some(
             Suggestion::example(format!("call directly without `this.`: `{name}(...)`"))
-                .with_desc("avoid the STATICCALL by invoking the function directly"),
+                .with_desc("avoid the `STATICCALL` by invoking the function directly"),
         );
     }
     // Struct getters destructure their fields, so a direct read is not equivalent.

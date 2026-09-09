@@ -19,8 +19,6 @@ indicate dead code or stale refactors.
 
 ## Example
 
-### Bad
-
 ```solidity
 import { A, B } from "./Lib.sol"; // B is never used
 
@@ -29,7 +27,7 @@ contract C {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 import { A } from "./Lib.sol";

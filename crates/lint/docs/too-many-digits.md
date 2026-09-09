@@ -12,21 +12,22 @@ literals with scientific notation, literals with a sub-denomination, and 40-digi
 address literals are skipped. Other hexadecimal literals remain in scope because long padded masks
 and bit patterns are also difficult to review.
 
-## Why is this bad?
+## Why restrict this?
 
 Long sequences of zeros are difficult to count visually, and an off-by-one zero is a common bug
 (e.g. funding `1_000_000` instead of `10_000_000`). Use scientific notation, sub-denominations, or
 underscore separators to make the magnitude obvious.
 
-## Example
+Fixed-width literals may intentionally mirror an external format, generated data, or a published
+constant. Preserve that representation when changing it would make comparison harder.
 
-### Bad
+## Example
 
 ```solidity
 uint256 amount = 1000000000000000000;
 ```
 
-### Good
+Use instead:
 
 ```solidity
 uint256 amount = 1e18;

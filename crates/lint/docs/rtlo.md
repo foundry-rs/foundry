@@ -19,13 +19,11 @@ and frequently audited visually; this attack vector must not be ignored.
 
 ## Example
 
-### Bad
-
 ```solidity
 // transfer(victim‮, attacker)/*  // U+202E hidden between args
 ```
 
-### Good
+Use instead:
 
 ```solidity
 // Avoid bidirectional override characters in code and comments.

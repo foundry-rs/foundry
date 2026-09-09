@@ -4,9 +4,8 @@
 **ID**: `external-function`
 
 `public` functions that are never called from inside the contract (or any of its
-derivatives) can be declared `external`. External functions read their reference-type
-arguments directly from `calldata` instead of copying them into `memory`, which saves
-gas at every call site.
+derivatives) may be candidates for `external` visibility and `calldata` parameters. Reading
+reference-type arguments directly from `calldata` can avoid a copy into `memory`.
 
 ## What it does
 
@@ -28,20 +27,13 @@ test and script files.
 
 ## Why is this bad?
 
-Calling a `public` function from outside the contract is more expensive than calling
-the equivalent `external` function:
-
-- Each reference-type parameter is copied from `calldata` into `memory` before the
-  function body executes, even though `external`-only callers never need that copy.
-- The opcode shim that allows the function to be called both internally and externally
-  adds a few bytes of bytecode and an extra branch on every entry.
-
-When the function is never called internally, switching `public` to `external` removes
-both costs at no semantic change.
+Reference-type parameters declared `memory` require a copy when read from external call data.
+Using `calldata` can avoid that copy when the function only reads the parameters. Changing
+visibility alone does not change their data location, and modern Solidity also permits `calldata`
+on public functions. Verify callers and inheritance before removing the internal entry point,
+and measure savings with the project's compiler settings.
 
 ## Example
-
-### Bad
 
 ```solidity
 contract Vault {
@@ -58,7 +50,7 @@ contract Vault {
 `deposit` is never called from inside `Vault`, but its `memory` arrays force an
 unnecessary calldata-to-memory copy on every external call.
 
-### Good
+Use instead:
 
 ```solidity
 contract Vault {

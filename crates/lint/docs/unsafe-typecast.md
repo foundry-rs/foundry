@@ -20,15 +20,13 @@ cast helper such as OpenZeppelin's `SafeCast` whenever the source value is not p
 
 ## Example
 
-### Bad
-
 ```solidity
 function setAmount(uint256 amount) external {
     smallAmount = uint128(amount); // silent truncation if amount >= 2**128
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 function setAmount(uint256 amount) external {

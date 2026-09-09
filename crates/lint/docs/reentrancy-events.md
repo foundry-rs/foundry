@@ -30,8 +30,6 @@ Emitting the event **before** the external call ensures the log is anchored to t
 
 ## Example
 
-### Bad
-
 ```solidity
 contract BadCounter {
     uint256 public counter;
@@ -45,7 +43,7 @@ contract BadCounter {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 contract GoodCounter {

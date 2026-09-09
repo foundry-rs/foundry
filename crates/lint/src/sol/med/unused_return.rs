@@ -15,7 +15,7 @@ declare_forge_lint!(
     UNUSED_RETURN,
     Severity::Med,
     "unused-return",
-    "Return value of an external call is not used"
+    "return value of an external call is not used"
 );
 
 impl<'gcx> LateLintPass<'gcx> for UnusedReturn {

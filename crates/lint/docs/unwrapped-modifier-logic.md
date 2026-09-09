@@ -18,13 +18,12 @@ placeholder and extracting the logic preserves local-variable and parameter beha
 
 ## Why is this bad?
 
-Solidity inlines a modifier's body at every call site, so any non-trivial logic is duplicated
-across all functions that use the modifier. Wrapping the logic in an internal function and calling
-it from the modifier keeps the bytecode small while preserving behavior.
+Modifier logic can be duplicated across functions that use it. Extracting shared logic into an
+internal helper can reduce that duplication, but the optimizer may inline the helper again.
+Treat extraction as a code-size optimization candidate and measure the compiled output with the
+project's compiler settings while preserving modifier behavior.
 
 ## Example
-
-### Bad
 
 ```solidity
 modifier onlyAuth() {
@@ -35,7 +34,7 @@ modifier onlyAuth() {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 modifier onlyAuth() {

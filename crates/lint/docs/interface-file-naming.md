@@ -3,29 +3,32 @@
 **Severity**: `Info`
 **ID**: `interface-file-naming`
 
-Flags Solidity files whose only top-level declaration is an interface but whose filename is not
-prefixed with `I`.
+Flags Solidity files whose contract-like declarations are all interfaces but whose filename is
+not prefixed with `I`. Other top-level declarations do not exclude a file.
 
 ## What it does
 
 Reports interface-only files whose path basename does not start with `I` (e.g. `IERC20.sol`).
 
-## Why is this bad?
+## Why restrict this?
 
 Prefixing interface filenames with `I` is the prevailing convention in the Solidity ecosystem.
 Following it makes import paths predictable and lets reviewers tell at a glance whether they are
 looking at an interface or an implementation.
 
+A project may use a different file-naming convention, or preserve existing import paths for
+compatibility. In those cases, keep the filename and suppress the lint.
+
 ## Example
 
-### Bad
-
-```text
-contracts/Token.sol      // file contains only `interface Token { ... }`
+```solidity
+// File: contracts/Token.sol
+interface IToken {}
 ```
 
-### Good
+Use instead:
 
-```text
-contracts/IToken.sol     // file contains only `interface IToken { ... }`
+```solidity
+// File: contracts/IToken.sol
+interface IToken {}
 ```

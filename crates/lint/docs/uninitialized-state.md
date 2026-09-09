@@ -50,8 +50,6 @@ storage variable is syntactically valid.
 
 ## Example
 
-### Bad
-
 ```solidity
 contract Escrow {
     address public owner; // never set, always address(0)
@@ -63,7 +61,7 @@ contract Escrow {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 contract Escrow {

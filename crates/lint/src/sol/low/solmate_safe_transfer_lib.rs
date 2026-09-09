@@ -15,7 +15,7 @@ declare_forge_lint!(
     SOLMATE_SAFE_TRANSFER_LIB,
     Severity::Low,
     "solmate-safe-transfer-lib",
-    "Solmate's `SafeTransferLib` does not check that the token has code, so a transfer to a token-less address succeeds silently"
+    "the `SafeTransferLib` from Solmate does not check that the token has code, so a transfer to a token-less address succeeds silently"
 );
 
 impl<'gcx> LateLintPass<'gcx> for SolmateSafeTransferLib {

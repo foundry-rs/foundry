@@ -21,8 +21,6 @@ succeeded or that the value is irrelevant, both of which may be bugs.
 
 ## Example
 
-### Bad
-
 ```solidity
 interface IOracle {
     function getPrice(address token) external returns (uint256);
@@ -37,7 +35,7 @@ contract Example {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 interface IOracle {

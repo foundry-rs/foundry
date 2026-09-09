@@ -3,33 +3,29 @@
 **Severity**: `Info`
 **ID**: `unsafe-cheatcode`
 
-Flags use of Foundry cheatcodes that perform dangerous side effects (filesystem access, network
-activity, environment variable reads, etc.) so they cannot slip into production code unnoticed.
+Flags use of Foundry cheatcodes classified as unsafe so their effects can receive deliberate review.
 
 ## What it does
 
-Reports calls to cheatcodes whose effects extend beyond the EVM sandbox or that bypass typical
-test invariants. The flagged set follows the cheatcode's
-[`Safety::Unsafe`](https://book.getfoundry.sh/cheatcodes) classification.
+Reports member calls named `ffi`, `readFile`, `readLine`, `writeFile`, `writeLine`, `removeFile`,
+`closeFile`, `setEnv`, or `deriveKey`. This is a fixed name-based list: it does not resolve the
+receiver to the cheatcode interface or derive its coverage from cheatcode safety metadata.
 
-## Why is this bad?
+## Why restrict this?
 
-Unsafe cheatcodes can read/write files, hit the network, or fork external state. They are
-appropriate in tests with explicit intent but should not be added without review, and must
-never end up in shipped contract code.
+Unsafe cheatcodes can interact with the host environment or introduce external dependencies into
+tests. A project may restrict them for reproducibility or to limit side effects. They can be
+appropriate in trusted tests and scripts; review the particular cheatcode before allowing it.
 
 ## Example
 
-### Bad
-
 ```solidity
-vm.writeFile("./out.txt", data);   // unsafe — writes to host filesystem
-vm.envString("PRIVATE_KEY");       // unsafe — reads host environment
+string memory expected = vm.readFile("./expected-label.txt");
 ```
 
-### Good
+Use instead:
 
 ```solidity
-// Use safe cheatcodes (vm.expectRevert, vm.prank, vm.warp, ...) and explicit
-// inputs/fixtures instead of pulling state from the host environment.
+// Keep a deterministic test fixture in the test source.
+string memory expected = "test-label";
 ```

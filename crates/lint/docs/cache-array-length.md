@@ -27,8 +27,6 @@ for hot loops.
 
 ## Example
 
-### Bad
-
 ```solidity
 contract C {
     uint256[] values;
@@ -41,7 +39,7 @@ contract C {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 contract C {

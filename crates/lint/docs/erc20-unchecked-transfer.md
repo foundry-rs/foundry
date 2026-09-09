@@ -20,14 +20,12 @@ explicitly.
 
 ## Example
 
-### Bad
-
 ```solidity
 token.transfer(to, amount);
 token.transferFrom(from, to, amount);
 ```
 
-### Good
+Use instead:
 
 ```solidity
 require(token.transfer(to, amount), "transfer failed");

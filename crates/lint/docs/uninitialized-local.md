@@ -27,8 +27,6 @@ The Solidity compiler does not warn about this; only static analysis catches it.
 
 ## Example
 
-### Bad
-
 ```solidity
 // `to` is never assigned, defaults to address(0), burning all ETH.
 function withdraw() public {
@@ -43,7 +41,7 @@ function getAmount() public pure returns (uint256) {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 function withdraw(address payable recipient) public {

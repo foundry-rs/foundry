@@ -27,15 +27,13 @@ may still be reported.
 
 ## Example
 
-### Bad
-
 ```solidity
 function getKey(string memory a, string memory b) public pure returns (bytes32) {
     return keccak256(abi.encodePacked(a, b)); // "a"+"bc" == "ab"+"c"
 }
 ```
 
-### Good
+Use instead:
 
 Use `abi.encode()` instead — it includes length prefixes that prevent collisions:
 

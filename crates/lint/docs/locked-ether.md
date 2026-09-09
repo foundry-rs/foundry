@@ -30,8 +30,6 @@ because each individual function looks correct.
 
 ## Example
 
-### Bad
-
 ```solidity
 contract Vault {
     // Accepts ETH...
@@ -41,7 +39,7 @@ contract Vault {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 contract Vault {

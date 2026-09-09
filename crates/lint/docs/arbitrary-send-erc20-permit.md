@@ -95,8 +95,6 @@ sink to a vetted token allowlist, review the finding and suppress with
 
 ## Example
 
-### Bad
-
 ```solidity
 function pullWithPermit(
     address from,
@@ -112,7 +110,7 @@ function pullWithPermit(
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 function pullWithPermit(

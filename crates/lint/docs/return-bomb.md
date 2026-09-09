@@ -20,8 +20,6 @@ causing the caller to run out of gas while implicitly copying the result.
 
 ## Example
 
-### Bad
-
 ```solidity
 function callTarget(address target, bytes memory payload, uint256 gasLimit) external {
     (bool ok, ) = target.call{gas: gasLimit}(payload);
@@ -29,7 +27,7 @@ function callTarget(address target, bytes memory payload, uint256 gasLimit) exte
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 function callTarget(address target, bytes memory payload, uint256 gasLimit) external {

@@ -1,4 +1,4 @@
-warning[msg-value-loop]: payable functions should not use `msg.value` inside a loop
+warning[msg-value-loop]: payable function uses `msg.value` inside a loop
    ╭▸ ROOT/testdata/MsgValueLoop.sol:LL:CC
    │
 LL │         return msg.value;
@@ -6,7 +6,7 @@ LL │         return msg.value;
    │
    ╰ help: https://getfoundry.sh/forge/linting/msg-value-loop
 
-warning[msg-value-loop]: payable functions should not use `msg.value` inside a loop
+warning[msg-value-loop]: payable function uses `msg.value` inside a loop
    ╭▸ ROOT/testdata/MsgValueLoop.sol:LL:CC
    │
 LL │             total += msg.value;
@@ -14,7 +14,7 @@ LL │             total += msg.value;
    │
    ╰ help: https://getfoundry.sh/forge/linting/msg-value-loop
 
-warning[msg-value-loop]: payable functions should not use `msg.value` inside a loop
+warning[msg-value-loop]: payable function uses `msg.value` inside a loop
    ╭▸ ROOT/testdata/MsgValueLoop.sol:LL:CC
    │
 LL │             total += msg.value;
@@ -22,7 +22,7 @@ LL │             total += msg.value;
    │
    ╰ help: https://getfoundry.sh/forge/linting/msg-value-loop
 
-warning[msg-value-loop]: payable functions should not use `msg.value` inside a loop
+warning[msg-value-loop]: payable function uses `msg.value` inside a loop
    ╭▸ ROOT/testdata/MsgValueLoop.sol:LL:CC
    │
 LL │             total += msg.value;
@@ -30,7 +30,7 @@ LL │             total += msg.value;
    │
    ╰ help: https://getfoundry.sh/forge/linting/msg-value-loop
 
-warning[msg-value-loop]: payable functions should not use `msg.value` inside a loop
+warning[msg-value-loop]: payable function uses `msg.value` inside a loop
    ╭▸ ROOT/testdata/MsgValueLoop.sol:LL:CC
    │
 LL │             total += msg.value;
@@ -38,7 +38,7 @@ LL │             total += msg.value;
    │
    ╰ help: https://getfoundry.sh/forge/linting/msg-value-loop
 
-warning[msg-value-loop]: payable functions should not use `msg.value` inside a loop
+warning[msg-value-loop]: payable function uses `msg.value` inside a loop
    ╭▸ ROOT/testdata/MsgValueLoop.sol:LL:CC
    │
 LL │             total += msg.value;
@@ -46,7 +46,7 @@ LL │             total += msg.value;
    │
    ╰ help: https://getfoundry.sh/forge/linting/msg-value-loop
 
-warning[msg-value-loop]: payable functions should not use `msg.value` inside a loop
+warning[msg-value-loop]: payable function uses `msg.value` inside a loop
    ╭▸ ROOT/testdata/MsgValueLoop.sol:LL:CC
    │
 LL │         for (uint256 i; i < iterations; value = msg.value + i++) {}
@@ -54,7 +54,7 @@ LL │         for (uint256 i; i < iterations; value = msg.value + i++) {}
    │
    ╰ help: https://getfoundry.sh/forge/linting/msg-value-loop
 
-warning[msg-value-loop]: payable functions should not use `msg.value` inside a loop
+warning[msg-value-loop]: payable function uses `msg.value` inside a loop
    ╭▸ ROOT/testdata/MsgValueLoop.sol:LL:CC
    │
 LL │         total += msg.value;
@@ -62,7 +62,7 @@ LL │         total += msg.value;
    │
    ╰ help: https://getfoundry.sh/forge/linting/msg-value-loop
 
-warning[msg-value-loop]: payable functions should not use `msg.value` inside a loop
+warning[msg-value-loop]: payable function uses `msg.value` inside a loop
    ╭▸ ROOT/testdata/MsgValueLoop.sol:LL:CC
    │
 LL │         return msg.value;
@@ -70,7 +70,7 @@ LL │         return msg.value;
    │
    ╰ help: https://getfoundry.sh/forge/linting/msg-value-loop
 
-warning[msg-value-loop]: payable functions should not use `msg.value` inside a loop
+warning[msg-value-loop]: payable function uses `msg.value` inside a loop
    ╭▸ ROOT/testdata/MsgValueLoop.sol:LL:CC
    │
 LL │             total += msg.value;
@@ -78,7 +78,7 @@ LL │             total += msg.value;
    │
    ╰ help: https://getfoundry.sh/forge/linting/msg-value-loop
 
-warning[msg-value-loop]: payable functions should not use `msg.value` inside a loop
+warning[msg-value-loop]: payable function uses `msg.value` inside a loop
    ╭▸ ROOT/testdata/MsgValueLoop.sol:LL:CC
    │
 LL │         return msg.value;
@@ -86,7 +86,7 @@ LL │         return msg.value;
    │
    ╰ help: https://getfoundry.sh/forge/linting/msg-value-loop
 
-warning[msg-value-loop]: payable functions should not use `msg.value` inside a loop
+warning[msg-value-loop]: payable function uses `msg.value` inside a loop
    ╭▸ ROOT/testdata/MsgValueLoop.sol:LL:CC
    │
 LL │         return msg.value;
@@ -94,7 +94,7 @@ LL │         return msg.value;
    │
    ╰ help: https://getfoundry.sh/forge/linting/msg-value-loop
 
-warning[msg-value-loop]: payable functions should not use `msg.value` inside a loop
+warning[msg-value-loop]: payable function uses `msg.value` inside a loop
    ╭▸ ROOT/testdata/MsgValueLoop.sol:LL:CC
    │
 LL │         return msg.value;
@@ -102,7 +102,7 @@ LL │         return msg.value;
    │
    ╰ help: https://getfoundry.sh/forge/linting/msg-value-loop
 
-warning[msg-value-loop]: payable functions should not use `msg.value` inside a loop
+warning[msg-value-loop]: payable function uses `msg.value` inside a loop
    ╭▸ ROOT/testdata/MsgValueLoop.sol:LL:CC
    │
 LL │         return msg.value;

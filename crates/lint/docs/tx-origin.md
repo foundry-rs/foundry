@@ -1,4 +1,4 @@
-# Use of tx.origin for authorization
+# Use of `tx.origin` for authorization
 
 **Severity**: `Med`
 **ID**: `tx-origin`
@@ -21,13 +21,11 @@ Use `msg.sender` for authorization checks instead.
 
 ## Example
 
-### Bad
-
 ```solidity
 require(tx.origin == owner, "not owner");
 ```
 
-### Good
+Use instead:
 
 ```solidity
 require(msg.sender == owner, "not owner");

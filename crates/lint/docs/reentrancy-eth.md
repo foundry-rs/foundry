@@ -27,8 +27,6 @@ explicit gas cap.
 
 ## Example
 
-### Bad
-
 ```solidity
 function withdraw() external {
     uint256 amount = balances[msg.sender];
@@ -38,7 +36,7 @@ function withdraw() external {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 function withdraw() external {

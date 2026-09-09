@@ -19,8 +19,6 @@ bit-packing, or bounds logic.
 
 ## Example
 
-### Bad
-
 ```solidity
 assembly {
     result := shl(value, 8)
@@ -28,7 +26,7 @@ assembly {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 assembly {

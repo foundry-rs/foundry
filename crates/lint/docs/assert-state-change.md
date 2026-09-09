@@ -20,8 +20,6 @@ The correct pattern is to perform the mutation first, then assert the post-condi
 
 ## Example
 
-### Bad
-
 ```solidity
 uint256 public counter;
 
@@ -36,7 +34,7 @@ function depositAndAssert() external payable {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 uint256 public counter;

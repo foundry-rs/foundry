@@ -48,6 +48,8 @@ are likewise rejected.
 
 ## Known limitations
 
+- A destination classified as safe does not prove the caller is entitled to the transfer amount.
+  Validate amounts and balances separately, including transfers back to `msg.sender`.
 - No general inter-procedural taint: a wrapper forwarding an arbitrary
   destination may be missed. Library bodies are skipped; lint call sites.
 - Internal/private helpers are linted in isolation; a sink inside one is
@@ -71,8 +73,6 @@ controls.
 
 ## Example
 
-### Bad
-
 ```solidity
 contract Vault {
     function withdraw(address payable to, uint256 amount) external {
@@ -81,7 +81,7 @@ contract Vault {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 contract Vault {
@@ -93,10 +93,6 @@ contract Vault {
 
     function withdrawTo(address payable to, uint256 amount) external onlyOwner {
         to.transfer(amount);
-    }
-
-    function refund(uint256 amount) external {
-        payable(msg.sender).transfer(amount);
     }
 }
 ```

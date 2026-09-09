@@ -1,4 +1,4 @@
-# Unsafe ecrecover
+# Unsafe `ecrecover`
 
 **Severity**: `Med`
 **ID**: `ecrecover`
@@ -33,15 +33,13 @@ Ethereum transactions enforce.
 
 ## Example
 
-### Bad
-
 ```solidity
 function recover(bytes32 hash, uint8 v, bytes32 r, bytes32 s) pure returns (address) {
     return ecrecover(hash, v, r, s);
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 uint256 constant HALF_ORDER =

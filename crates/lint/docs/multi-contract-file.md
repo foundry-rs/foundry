@@ -10,15 +10,13 @@ Flags source files that declare more than one top-level contract, interface, or 
 Reports each top-level `contract`, `interface`, or `library` definition (after the first) in a
 file that contains more than one such declaration.
 
-## Why is this bad?
+## Why restrict this?
 
-Keeping one contract per file improves discoverability (`grep`, IDE jump-to-file), simplifies
-import paths, and avoids unintentional bytecode bloat from artifacts that bundle unrelated
-contracts.
+Keeping one contract per file can improve discoverability and make import paths predictable.
+Closely related interfaces, helper contracts, or test fixtures can also be reasonable to group.
+File organization alone does not add unrelated contracts to a deployed contract's bytecode.
 
 ## Example
-
-### Bad
 
 ```solidity
 // File: Token.sol
@@ -26,7 +24,7 @@ contract TokenA { /* ... */ }
 contract TokenB { /* ... */ }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 // File: TokenA.sol

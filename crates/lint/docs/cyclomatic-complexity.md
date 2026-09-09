@@ -9,31 +9,56 @@ Flags functions whose cyclomatic complexity is strictly above 11.
 
 Reports a function whose cyclomatic complexity exceeds 11, the threshold Slither's detector of the same name uses. The complexity is one plus the number of decision points in the body: each `if` (loop conditions included, since every `for`, `while` and `do while` branches on its condition, and a condition-less `for (;;)` adds nothing), each ternary, each `catch` clause and each additional case of an assembly `switch`. Boolean `&&` and `||` operators add nothing, matching the control-flow graph Slither computes on.
 
-## Why is this bad?
+## Why restrict this?
 
-A function with many independent paths is hard to read, hard to review and hard to test: covering it takes one test per path, and every new branch multiplies the states a reader has to keep in mind. Splitting it into smaller functions gives each piece a testable contract.
+A function with many decision points can be harder to read, review, and test. Splitting it into
+smaller functions can make each piece easier to understand. Complexity is a heuristic, not a count
+of all possible execution paths; a cohesive dispatch function may be clearer kept together.
 
 ## Example
 
-### Bad
-
 ```solidity
 // complexity 12: eleven branching points plus one
-function dispatch(uint256 kind) internal {
-    if (kind == 0) { ... }
-    if (kind == 1) { ... }
-    // ... nine more branches
+function dispatch(uint256 kind) internal pure returns (uint256) {
+    if (kind == 0) return 10;
+    if (kind == 1) return 20;
+    if (kind == 2) return 30;
+    if (kind == 3) return 40;
+    if (kind == 4) return 50;
+    if (kind == 5) return 60;
+    if (kind == 6) return 70;
+    if (kind == 7) return 80;
+    if (kind == 8) return 90;
+    if (kind == 9) return 100;
+    if (kind == 10) return 110;
+    revert();
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
-function dispatch(uint256 kind) internal {
-    if (kind < 8) {
-        dispatchLow(kind);
-    } else {
-        dispatchHigh(kind);
-    }
+function dispatch(uint256 kind) internal pure returns (uint256) {
+    if (kind < 6) return dispatchLow(kind);
+    return dispatchHigh(kind);
+}
+
+function dispatchLow(uint256 kind) internal pure returns (uint256) {
+    if (kind == 0) return 10;
+    if (kind == 1) return 20;
+    if (kind == 2) return 30;
+    if (kind == 3) return 40;
+    if (kind == 4) return 50;
+    if (kind == 5) return 60;
+    revert();
+}
+
+function dispatchHigh(uint256 kind) internal pure returns (uint256) {
+    if (kind == 6) return 70;
+    if (kind == 7) return 80;
+    if (kind == 8) return 90;
+    if (kind == 9) return 100;
+    if (kind == 10) return 110;
+    revert();
 }
 ```

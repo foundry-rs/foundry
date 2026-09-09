@@ -15,7 +15,7 @@ and/or the `("memory-safe")` flag. Blocks declared as memory-safe — either via
 still reported, but with a softer message acknowledging the developer attestation: review
 focuses on business logic and side effects rather than memory layout.
 
-## Why is this bad?
+## Why restrict this?
 
 Assembly skips Solidity's compile-time checks and many of its runtime guarantees. Mistakes
 inside an `assembly` block can corrupt memory, break the free memory pointer, leak storage,
@@ -47,23 +47,18 @@ If you must use assembly:
 
 ## Example
 
-### Bad
-
 ```solidity
-function rawCall(address target, bytes calldata data) external returns (bytes memory) {
+function chainId() external view returns (uint256 result) {
     assembly {
-        let ok := call(gas(), target, 0, add(data.offset, 0), data.length, 0, 0)
-        // ...
+        result := chainid()
     }
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
-function rawCall(address target, bytes calldata data) external returns (bytes memory result) {
-    bool ok;
-    (ok, result) = target.call(data);
-    require(ok, "call failed");
+function chainId() external view returns (uint256) {
+    return block.chainid;
 }
 ```

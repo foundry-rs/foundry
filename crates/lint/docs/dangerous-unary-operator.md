@@ -17,13 +17,11 @@ Reports `x =- y` and `x =~ y` when the source writes `=` directly against the un
 
 ## Example
 
-### Bad
-
 ```solidity
 x =- 1; // parses as `x = -1`, not `x -= 1`
 ```
 
-### Good
+Use instead:
 
 ```solidity
 x -= 1;

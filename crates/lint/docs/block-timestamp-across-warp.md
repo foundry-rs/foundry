@@ -21,8 +21,6 @@ Its call result is materialized. Keep normal compiler optimizations enabled.
 
 ## Example
 
-### Bad
-
 ```solidity
 vm.warp(100);
 uint256 saved = block.timestamp; // Warning: this capture can cross the next warp.
@@ -30,7 +28,7 @@ vm.warp(200);
 vm.warp(saved);
 ```
 
-### Good
+Use instead:
 
 Capture through the getter instead:
 

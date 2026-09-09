@@ -15,8 +15,6 @@ A directive that attaches nothing is dead code, and usually a typo: the wrong li
 
 ## Example
 
-### Bad
-
 ```solidity
 library CounterLib {
     function increment(uint256 v) internal pure returns (uint256) {
@@ -30,7 +28,7 @@ contract C {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 contract C {

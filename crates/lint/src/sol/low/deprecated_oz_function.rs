@@ -15,7 +15,7 @@ declare_forge_lint!(
     DEPRECATED_OZ_FUNCTION,
     Severity::Low,
     "deprecated-oz-function",
-    "OpenZeppelin deprecated this function: `_grantRole` replaces `_setupRole`, `safeIncreaseAllowance` / `safeDecreaseAllowance` replace `safeApprove`"
+    "this OpenZeppelin function is deprecated: `_grantRole` replaces `_setupRole`, `safeIncreaseAllowance` / `safeDecreaseAllowance` replace `safeApprove`"
 );
 
 impl<'gcx> LateLintPass<'gcx> for DeprecatedOzFunction {

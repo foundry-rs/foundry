@@ -21,15 +21,13 @@ guard is cheap and removes an entire class of operational mistakes.
 
 ## Example
 
-### Bad
-
 ```solidity
 function setOwner(address newOwner) external onlyOwner {
     owner = newOwner; // no zero-address check
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 function setOwner(address newOwner) external onlyOwner {

@@ -1,4 +1,4 @@
-# Controlled delegatecall
+# Controlled `delegatecall`
 
 **Severity**: `High`
 **ID**: `controlled-delegatecall`
@@ -28,8 +28,6 @@ the contract.
 
 ## Example
 
-### Bad
-
 ```solidity
 contract Delegatecall {
     function delegate(address target, bytes calldata data) external {
@@ -38,7 +36,7 @@ contract Delegatecall {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 contract Delegatecall {

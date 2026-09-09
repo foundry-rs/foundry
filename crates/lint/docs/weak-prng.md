@@ -25,13 +25,11 @@ unpredictable randomness.
 
 ## Example
 
-### Bad
-
 ```solidity
 uint256 winner = uint256(keccak256(abi.encodePacked(block.timestamp, msg.sender))) % players.length;
 ```
 
-### Good
+Use instead:
 
 ```solidity
 // Example shape only: consume randomness that was committed before it was revealed.

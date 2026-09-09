@@ -25,8 +25,6 @@ attempt to prove custom guard modifiers are effective.
 
 ## Example
 
-### Bad
-
 ```solidity
 function claim(IHook hook) external {
     uint256 amount = balances[msg.sender];
@@ -35,7 +33,7 @@ function claim(IHook hook) external {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 function claim(IHook hook) external {

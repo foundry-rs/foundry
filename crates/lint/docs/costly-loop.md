@@ -3,10 +3,9 @@
 **Severity**: `Gas`
 **ID**: `costly-loop`
 
-Flags storage variable writes inside loops. Each SSTORE costs at least 2,900 gas (warm) or 20,000
-gas (cold), so writing to storage on every loop iteration can be extremely expensive. Accumulating
-the result in a local memory variable and writing to storage once after the loop is the standard
-optimization.
+Flags storage variable writes inside loops. Repeated storage writes can be expensive; their cost
+depends on slot access history and the original, current, and new values. Accumulating the result
+in a local variable and writing to storage once after the loop can reduce that work.
 
 ## What it does
 
@@ -22,8 +21,6 @@ economically impractical.
 
 ## Example
 
-### Bad
-
 ```solidity
 contract C {
     uint256 public counter;
@@ -36,7 +33,7 @@ contract C {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 contract C {

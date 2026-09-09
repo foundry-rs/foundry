@@ -19,14 +19,12 @@ where state is updated on the assumption that an external interaction succeeded.
 
 ## Example
 
-### Bad
-
 ```solidity
 target.call(data);                          // success ignored
 (, bytes memory ret) = target.call(data);   // only payload kept
 ```
 
-### Good
+Use instead:
 
 ```solidity
 (bool ok, ) = target.call(data);

@@ -26,21 +26,21 @@ contract UncheckedTransfer {
 
     // SHOULD FAIL: Unchecked transfer calls
     function uncheckedTransfer(address to, uint256 amount) public {
-        IERC20(address(token)).transfer(to, amount); //~WARN: ERC20 'transfer' and 'transferFrom' calls should check the return value
-        token.transfer(to, amount); //~WARN: ERC20 'transfer' and 'transferFrom' calls should check the return value
-        token.transfer({to: to, amount: amount}); //~WARN: ERC20 'transfer' and 'transferFrom' calls should check the return value
+        IERC20(address(token)).transfer(to, amount); //~WARN: ERC20 `transfer` or `transferFrom` call does not check the return value
+        token.transfer(to, amount); //~WARN: ERC20 `transfer` or `transferFrom` call does not check the return value
+        token.transfer({to: to, amount: amount}); //~WARN: ERC20 `transfer` or `transferFrom` call does not check the return value
     }
 
     function uncheckedTransferFrom(address from, address to, uint256 amount) public {
-        IERC20(address(token)).transferFrom(from, to, amount); //~WARN: ERC20 'transfer' and 'transferFrom' calls should check the return value
-        token.transferFrom(from, to, amount); //~WARN: ERC20 'transfer' and 'transferFrom' calls should check the return value
-        token.transferFrom({from: from, to: to, amount: amount}); //~WARN: ERC20 'transfer' and 'transferFrom' calls should check the return value
+        IERC20(address(token)).transferFrom(from, to, amount); //~WARN: ERC20 `transfer` or `transferFrom` call does not check the return value
+        token.transferFrom(from, to, amount); //~WARN: ERC20 `transfer` or `transferFrom` call does not check the return value
+        token.transferFrom({from: from, to: to, amount: amount}); //~WARN: ERC20 `transfer` or `transferFrom` call does not check the return value
     }
 
     function uncheckedInLoop(address[] memory recipients, uint256[] memory amounts) public {
         for (uint256 i = 0; i < recipients.length; i++) {
-            IERC20(address(token)).transfer(recipients[i], amounts[i]); //~WARN: ERC20 'transfer' and 'transferFrom' calls should check the return value
-            token.transfer(recipients[i], amounts[i]); //~WARN: ERC20 'transfer' and 'transferFrom' calls should check the return value
+            IERC20(address(token)).transfer(recipients[i], amounts[i]); //~WARN: ERC20 `transfer` or `transferFrom` call does not check the return value
+            token.transfer(recipients[i], amounts[i]); //~WARN: ERC20 `transfer` or `transferFrom` call does not check the return value
         }
     }
 

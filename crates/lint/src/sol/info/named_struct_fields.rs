@@ -15,7 +15,7 @@ declare_forge_lint!(
     NAMED_STRUCT_FIELDS,
     Severity::Info,
     "named-struct-fields",
-    "prefer initializing structs with named fields"
+    "struct is initialized with positional fields"
 );
 
 impl<'gcx> LateLintPass<'gcx> for NamedStructFields {

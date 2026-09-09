@@ -1,4 +1,4 @@
-# Solmate SafeTransferLib
+# Solmate `SafeTransferLib`
 
 **Severity**: `Low`
 **ID**: `solmate-safe-transfer-lib`
@@ -17,8 +17,6 @@ In the released solmate v6, a token call that returns no data is treated as a su
 
 ## Example
 
-### Bad
-
 ```solidity
 using SafeTransferLib for ERC20;
 
@@ -27,7 +25,7 @@ function pay(ERC20 token, address to, uint256 amount) internal {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 using SafeERC20 for IERC20;

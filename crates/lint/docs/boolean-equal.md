@@ -10,14 +10,15 @@ simplified.
 
 Reports any equality comparison between a boolean expression and a literal `true` or `false`.
 
-## Why is this bad?
+## Why restrict this?
 
 Comparing a boolean to a boolean literal is redundant and harms readability. Use the boolean
 expression directly (or its negation).
 
-## Example
+An explicit comparison may be appropriate in generated code or when a project's notation relies on
+it; keep it consistently and suppress the lint if that improves clarity.
 
-### Bad
+## Example
 
 ```solidity
 if (paused == true) revert();
@@ -25,7 +26,7 @@ if (paused == false) doSomething();
 require(ok != false, "fail");
 ```
 
-### Good
+Use instead:
 
 ```solidity
 if (paused) revert();

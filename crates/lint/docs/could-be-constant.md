@@ -26,8 +26,6 @@ expresses intent and prevents future writes.
 
 ## Example
 
-### Bad
-
 ```solidity
 contract C {
     uint256 LIMIT = 100;
@@ -35,7 +33,7 @@ contract C {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 contract C {

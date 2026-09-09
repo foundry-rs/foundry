@@ -28,7 +28,7 @@ declare_forge_lint!(
     CONTROLLED_DELEGATECALL,
     Severity::High,
     "controlled-delegatecall",
-    "delegatecall target is not provably trusted"
+    "`delegatecall` target is not provably trusted"
 );
 
 /// How many levels of no-argument helper functions are inlined when checking a target.

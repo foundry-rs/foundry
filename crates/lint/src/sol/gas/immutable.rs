@@ -22,14 +22,14 @@ declare_forge_lint!(
     COULD_BE_IMMUTABLE,
     Severity::Gas,
     "could-be-immutable",
-    "state variable could be declared immutable"
+    "state variable could be declared `immutable`"
 );
 
 declare_forge_lint!(
     COULD_BE_CONSTANT,
     Severity::Gas,
     "could-be-constant",
-    "state variable could be declared constant"
+    "state variable could be declared `constant`"
 );
 
 impl<'gcx> LateLintPass<'gcx> for UnchangedStateVariables {

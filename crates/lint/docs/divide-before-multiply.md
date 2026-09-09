@@ -17,15 +17,17 @@ Solidity's integer division truncates toward zero. Performing `(a / b) * c` disc
 of `a / b` before scaling, while `(a * c) / b` preserves precision. This pattern frequently
 manifests as fee/share/yield miscalculations.
 
-## Example
+Multiplying first can overflow even when the final result fits. Use this rewrite only when the
+product fits the integer type; otherwise use a checked full-precision multiplication/division
+helper. Decide explicitly which rounding behavior the calculation requires.
 
-### Bad
+## Example
 
 ```solidity
 uint256 share = (amount / total) * weight; // truncates first, then scales
 ```
 
-### Good
+Use instead:
 
 ```solidity
 uint256 share = (amount * weight) / total; // preserves precision

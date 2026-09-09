@@ -11,17 +11,16 @@ Explain precisely what the lint flags.
 
 ## Why is this bad?
 
-Explain the impact (security, correctness, gas, readability).
+Explain the impact (security, correctness, gas, readability). For a style or policy choice,
+replace this heading with `## Why restrict this?` and explain the tradeoff.
 
 ## Example
-
-### Bad
 
 ```solidity
 // triggering example
 ```
 
-### Good
+Use instead:
 
 ```solidity
 // non-triggering, recommended example

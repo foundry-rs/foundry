@@ -4,8 +4,8 @@
 **ID**: `write-after-write`
 
 Flags storage variables that are written to consecutively without the first value ever being read.
-The first write is dead code; it pays the SSTORE cost but its value is immediately discarded when
-the second write overwrites it.
+The first stored value is immediately discarded when the second write overwrites it. If the
+compiler does not eliminate that first write, it incurs an unnecessary storage operation.
 
 ## What it does
 
@@ -25,13 +25,12 @@ excluded to avoid false positives.
 
 ## Why is this bad?
 
-Every SSTORE costs at least 2,900 gas (warm slot) or 20,000 gas (cold slot). Writing a value to
-storage and then immediately overwriting it wastes that gas with no observable effect; only the
-final write matters.
+Writing a value to storage and then immediately overwriting it can waste gas when the compiler
+does not eliminate the first write. The cost depends on slot access history and the values
+involved; it is not a fixed amount per write. Remove the first assignment only when evaluating
+its right-hand side has no required side effects.
 
 ## Example
-
-### Bad
 
 ```solidity
 contract C {
@@ -44,7 +43,7 @@ contract C {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 contract C {

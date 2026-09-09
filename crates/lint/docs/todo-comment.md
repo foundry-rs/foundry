@@ -1,4 +1,4 @@
-# TODO/FIXME comments
+# `TODO`/`FIXME` comments
 
 **Severity**: `Info`
 **ID**: `todo-comment`
@@ -18,14 +18,15 @@ NatSpec tag such as `@dev`. A period does not count when followed by an alphanum
 underscore, preventing dotted names such as `todo.md` from matching. Matching is case-insensitive,
 so `todo:`, `ToDo:`, and `FixMe:` all match.
 
-## Why is this bad?
+## Why restrict this?
 
 `TODO` and `FIXME` comments are development notes. Shipping them into production contracts
 signals incomplete work.
 
-## Example
+Development branches and tracked follow-up work may legitimately contain these markers. Keep
+useful context and suppress the lint when the outstanding work is understood and acceptable.
 
-### Bad
+## Example
 
 ```solidity
 contract Vault {
@@ -39,7 +40,7 @@ contract Vault {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 contract Vault {

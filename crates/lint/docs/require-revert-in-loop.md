@@ -1,4 +1,4 @@
-# Require or revert inside a loop
+# `require` or `revert` inside a loop
 
 **Severity**: `Low`
 **ID**: `require-revert-in-loop`
@@ -11,14 +11,16 @@ entire batch.
 Reports Solidity `require`/`revert`, revert statements, and Yul `revert` inside loops. The analysis
 also follows modifiers and internal helper calls reached from a loop.
 
-## Why is this bad?
+## Why restrict this?
 
 A single invalid item can revert the entire loop, which can make batched operations unusable when
 one element fails validation.
 
-## Example
+Atomic batches may intentionally require every item to succeed. Skip invalid items only when
+partial processing is part of the API's intended behavior; otherwise keep the revert and suppress
+the lint after review.
 
-### Bad
+## Example
 
 ```solidity
 contract Batch {
@@ -30,7 +32,9 @@ contract Batch {
 }
 ```
 
-### Good
+Use instead:
+
+When the batch permits partial processing:
 
 ```solidity
 contract Batch {

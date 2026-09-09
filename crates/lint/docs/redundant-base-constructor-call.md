@@ -13,14 +13,15 @@ For every base contract listed in a contract's inheritance specifier or invoked 
 constructor's header, the lint reports the empty `()` when the base does not require any
 arguments.
 
-## Why is this bad?
+## Why restrict this?
 
 Writing `A()` suggests an explicit call, but if `A` has no constructor or a zero-parameter
 constructor, the parentheses are redundant noise that obscure the real inheritance shape.
 
-## Example
+A project may retain explicit empty calls to make constructor initialization visually consistent
+across its inheritance hierarchy. Suppress the lint when that notation is intentional.
 
-### Bad
+## Example
 
 ```solidity
 contract A {}
@@ -30,7 +31,7 @@ contract C is A() {}                 // A has no constructor
 contract D is B { constructor() B() {} } // B's constructor takes no arguments
 ```
 
-### Good
+Use instead:
 
 ```solidity
 contract A {}

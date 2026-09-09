@@ -23,8 +23,6 @@ ETH or where every external contract must respond successfully before the functi
 
 ## Example
 
-### Bad
-
 ```solidity
 contract Payouts {
     address payable[] recipients;
@@ -37,7 +35,7 @@ contract Payouts {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 contract Payouts {

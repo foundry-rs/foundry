@@ -25,16 +25,14 @@ An empty body on a regular function does nothing: either the implementation was 
 
 ## Example
 
-### Bad
-
 ```solidity
-function withdraw() external {}
+function increment() external {}
 ```
 
-### Good
+Use instead:
 
 ```solidity
-function withdraw() external {
-    payable(msg.sender).transfer(address(this).balance);
+function increment() external {
+    counter += 1;
 }
 ```

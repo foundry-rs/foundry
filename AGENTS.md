@@ -79,6 +79,8 @@ For CLI and integration tests:
 
 For lint rules:
 
+- Follow `docs/dev/lintrules.md#lint-writing-style` and `crates/lint/docs/README.md` for
+  lint names, diagnostic wording, and reference-page structure.
 - Add a Solidity test file under `crates/lint/testdata/`.
 - Use `//~WARN:` and `//~NOTE:` annotations for expected diagnostics.
 - Regenerate blessed output with `cargo bless-lints`.

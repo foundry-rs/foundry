@@ -29,15 +29,13 @@ critical permission updates are harder to review and investigate.
 
 ## Example
 
-### Bad
-
 ```solidity
 function transferOwnership(address newOwner) external onlyOwner {
     owner = newOwner;
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 event OwnershipTransferred(address indexed oldOwner, address indexed newOwner);

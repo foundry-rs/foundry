@@ -18,8 +18,6 @@ OpenZeppelin deprecated both functions in the 4.x line and removed them in 5.0, 
 
 ## Example
 
-### Bad
-
 ```solidity
 using SafeERC20 for IERC20;
 
@@ -32,7 +30,7 @@ constructor(address admin) {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 using SafeERC20 for IERC20;

@@ -25,8 +25,6 @@ successful even though the protected action never ran.
 
 ## Example
 
-### Bad
-
 ```solidity
 modifier onlyWhenEnabled() {
     if (enabled) {
@@ -35,7 +33,7 @@ modifier onlyWhenEnabled() {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 modifier onlyWhenEnabled() {

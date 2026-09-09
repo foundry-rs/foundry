@@ -13,11 +13,12 @@ References to constants, calls to pure functions and plain literal expressions a
 
 ## Why is this bad?
 
-State variable initializers run at construction, before the constructor body, in base-to-derived order. An initializer that reads another state variable or calls a function that does may observe default values or an ordering the author did not intend, so the computed value is rarely the expected one, and silently so.
+State variable initializers run at construction, before the constructor body, in base-to-derived
+order. An initializer that reads another state variable or calls a function that does may observe
+a default value before a later initializer or constructor assignment runs. Move dependent
+initialization into the constructor when its ordering needs to be explicit.
 
 ## Example
-
-### Bad
 
 ```solidity
 contract C {
@@ -30,7 +31,7 @@ contract C {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 contract C {

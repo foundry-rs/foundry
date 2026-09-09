@@ -19,8 +19,6 @@ lending protocols, multisigs) and are a common source of integration bugs and ex
 
 ## Example
 
-### Bad
-
 ```solidity
 interface IBadERC20 {
     function balanceOf(address) external view returns (bool);  // should be uint256
@@ -28,7 +26,7 @@ interface IBadERC20 {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 interface IERC20 {

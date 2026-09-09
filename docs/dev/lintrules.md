@@ -70,6 +70,37 @@ Next, choose whether you want an [early or late lint pass](#choosing-between-ear
 
 - Add a markdown documentation file for the lint at `crates/lint/docs/<str_id>.md`. The file is referenced by the lint's `help` URL (`https://getfoundry.sh/forge/linting/<str_id>`) and is consumed by the [Foundry book](https://github.com/foundry-rs/book) to render the lint reference page. Use [`crates/lint/docs/_template.md`](../../crates/lint/docs/_template.md) as a starting point. The presence of this file is enforced by the `registered_lints_have_docs` unit test in `crates/lint/src/sol/mod.rs`.
 
+### Lint writing style
+
+Follow Clippy's [lint authoring guide](https://doc.rust-lang.org/clippy/development/adding_lints.html),
+[diagnostic conventions](https://rustc-dev-guide.rust-lang.org/diagnostics.html), and
+[lint naming conventions](https://rust-lang.github.io/rfcs/0344-conventions-galore.html#lints), with
+the following Foundry-specific conventions:
+
+- Use `SCREAMING_SNAKE_CASE` for the Rust static and `kebab-case` for its public lint ID. Name new
+  lints after the condition they detect so the name reads naturally when enabled or suppressed.
+  Existing public IDs are configuration and documentation APIs: do not rename them just to adopt
+  Clippy's `snake_case` spelling or a different naming style.
+- Make the primary diagnostic a short, factual description of the detected problem. Use help
+  messages or suggestion labels for detailed corrective instructions. Start diagnostic text with lowercase
+  prose and omit the final period for a single sentence; preserve capitalization inside code and
+  in acronyms. Use normal sentence punctuation for multi-sentence explanations.
+- Enclose code, identifiers, types, operators, and literal values in backticks in descriptions,
+  labels, notes, and help text. Do not add backticks to replacement source code itself.
+- Highlight the relevant code and make suggestions actionable. Use `MachineApplicable` only when
+  the replacement is correct without user intervention; document assumptions and limitations.
+- Write each reference page using the [documentation contract](../../crates/lint/docs/README.md).
+  Explain what is detected, why it matters, and show a minimal triggering example followed by
+  `Use instead:` and a corrected example. For policy or style choices, use `Why restrict this?`
+  rather than claiming that the flagged code is inherently bad. Foundry has severity groups,
+  not a Clippy `restriction` group, so choose the heading based on the lint's purpose.
+
+Review every diagnostic path and the reference page together. Cover triggering and non-triggering
+cases in UI tests, update affected expected output when messages change, and check that examples
+match the implemented detector. A structural check cannot establish that a suggested change is
+semantically correct. Keep the matching [Foundry Book](https://github.com/foundry-rs/book) page in
+sync with the source documentation, including caveats and configuration.
+
 ### Choosing Between Early and Late Passes
 
 - **Use `EarlyLintPass`** for:

@@ -19,8 +19,6 @@ variables `immutable` also expresses intent and prevents future writes.
 
 ## Example
 
-### Bad
-
 ```solidity
 contract C {
     address owner;
@@ -28,7 +26,7 @@ contract C {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 contract C {

@@ -234,7 +234,7 @@ forgetest!(can_use_config, |prj, cmd| {
         };
     });
     cmd.arg("lint").assert_success().stderr_eq(str![[r#"
-warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
+warning[divide-before-multiply]: division before multiplication may lose precision
    [FILE]:16:9
    │
 16 │         (1 / 2) * 3;
@@ -261,7 +261,7 @@ forgetest!(can_use_config_ignore, |prj, cmd| {
         };
     });
     cmd.arg("lint").assert_success().stderr_eq(str![[r#"
-note[mixed-case-function]: function names should use mixedCase
+note[mixed-case-function]: function name is not `mixedCase`
   [FILE]:9:14
   │
 9 │     function functionMIXEDCaseInfo() public { uint256 x = 1; }
@@ -410,7 +410,7 @@ forgetest!(default_lint_severity_excludes_info, |prj, cmd| {
 
     cmd.arg("lint").assert_success().stderr_eq("");
     cmd.forge_fuse().args(["lint", "--severity", "info"]).assert_success().stderr_eq(str![[r#"
-note[mixed-case-function]: function names should use mixedCase
+note[mixed-case-function]: function name is not `mixedCase`
   [FILE]:8:14
   │
 8 │     function BAD_CASE() public { uint256 x = 1; }
@@ -418,7 +418,7 @@ note[mixed-case-function]: function names should use mixedCase
   │
   ╰ help: https://getfoundry.sh/forge/linting/mixed-case-function
 
-note[unused-import]: unused imports should be removed
+note[unused-import]: unused import
   [FILE]:5:10
   │
 5 │ import { UnusedSymbol } from "./DefaultInfoLintsImport.sol";
@@ -1072,7 +1072,7 @@ forgetest!(can_override_config_severity, |prj, cmd| {
         };
     });
     cmd.arg("lint").args(["--severity", "info"]).assert_success().stderr_eq(str![[r#"
-note[mixed-case-function]: function names should use mixedCase
+note[mixed-case-function]: function name is not `mixedCase`
   [FILE]:9:14
   │
 9 │     function functionMIXEDCaseInfo() public { uint256 x = 1; }
@@ -1099,7 +1099,7 @@ forgetest!(can_override_config_path, |prj, cmd| {
         };
     });
     cmd.arg("lint").arg("src/ContractWithLints.sol").assert_success().stderr_eq(str![[r#"
-warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
+warning[divide-before-multiply]: division before multiplication may lose precision
    [FILE]:16:9
    │
 16 │         (1 / 2) * 3;
@@ -1155,8 +1155,10 @@ forgetest!(build_runs_linter_by_default, |prj, cmd| {
     });
 
     // Run forge build and expect linting output before compilation
-    cmd.arg("build").assert_success().stderr_eq(str![[r#"
-warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
+    cmd.arg("build")
+        .assert_success()
+        .stderr_eq(str![[r#"
+warning[divide-before-multiply]: division before multiplication may lose precision
    [FILE]:16:9
    │
 16 │         (1 / 2) * 3;
@@ -1165,7 +1167,8 @@ warning[divide-before-multiply]: multiplication should occur before division to 
    ╰ help: https://getfoundry.sh/forge/linting/divide-before-multiply
 
 
-"#]]).stdout_eq(str![[r#"
+"#]])
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful with warnings:
@@ -1288,7 +1291,7 @@ forgetest!(build_emits_lint_diagnostics, |prj, cmd| {
     });
 
     cmd.arg("build").assert_success().stderr_eq(str![[r#"
-note[mixed-case-variable]: mutable variables should use mixedCase
+note[mixed-case-variable]: mutable variable name is not `mixedCase`
   [FILE]:6:20
   │
 6 │     uint256 public CounterA_Fail_Lint;
@@ -1379,7 +1382,7 @@ forgetest!(build_denied_lints_do_not_emit_internal_failure_notice, |prj, cmd| {
     });
 
     cmd.arg("build").assert_failure().stderr_eq(str![[r#"
-note[mixed-case-variable]: mutable variables should use mixedCase
+note[mixed-case-variable]: mutable variable name is not `mixedCase`
   [FILE]:6:20
   │
 6 │     uint256 public CounterA_Fail_Lint;
@@ -1418,7 +1421,7 @@ contract RecoverableSolarDiagnostic {
     });
 
     cmd.arg("build").assert_failure().stderr_eq(str![[r#"
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
+warning[unsafe-typecast]: typecast can truncate values
   [FILE]:9:16
   │
 9 │         return uint64(block.chainid);
@@ -1467,7 +1470,7 @@ forgetest!(can_use_only_lint_with_multilint_passes, |prj, cmd| {
     prj.add_source("ContractWithLints", CONTRACT);
     prj.add_source("OnlyImports", ONLY_IMPORTS);
     cmd.arg("lint").args(["--only-lint", "unused-import"]).assert_success().stderr_eq(str![[r#"
-note[unused-import]: unused imports should be removed
+note[unused-import]: unused import
   [FILE]:8:10
   │
 8 │ import { _PascalCaseInfo } from "./ContractWithLints.sol";
@@ -1490,16 +1493,16 @@ forgetest!(can_lint_only_built_files, |prj, cmd| {
 
     // Both contracts should be linted on build. Redact contract as order is not guaranteed.
     cmd.forge_fuse().args(["build"]).assert_success().stderr_eq(str![[r#"
-note[mixed-case-variable]: mutable variables should use mixedCase
+note[mixed-case-variable]: mutable variable name is not `mixedCase`
 ...
-note[mixed-case-variable]: mutable variables should use mixedCase
+note[mixed-case-variable]: mutable variable name is not `mixedCase`
 ...
 "#]]);
 
     // Only contract CounterBWithLints that we build should be linted.
     let args = ["build", "src/CounterBWithLints.sol"];
     cmd.forge_fuse().args(args).assert_success().stderr_eq(str![[r#"
-note[mixed-case-variable]: mutable variables should use mixedCase
+note[mixed-case-variable]: mutable variable name is not `mixedCase`
   [FILE]:6:20
   │
 6 │     uint256 public CounterB_Fail_Lint;
@@ -1564,7 +1567,7 @@ forgetest!(lint_json_output_no_ansi_escape_codes, |prj, cmd| {
             str![[r#"
 {
   "$message_type": "diagnostic",
-  "message": "wrap modifier logic to reduce code size",
+  "message": "modifier logic can be wrapped to reduce code size",
   "code": {
     "code": "unwrapped-modifier-logic",
     "explanation": null
@@ -1673,7 +1676,7 @@ forgetest!(lint_json_output_no_ansi_escape_codes, |prj, cmd| {
       "rendered": null
     }
   ],
-  "rendered": "note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size\n\nhelp: wrap modifier logic to reduce code size\n 9 +                 _onlyOwner();\n10 +                 _;\n11 +             }\n12 + \n13 +             function _onlyOwner() internal {\n14 +                 require(isOwner[msg.sender], \"Not owner\");\n15 +                 require(msg.sender != address(0), \"Zero address\");\n16 +             }\n   ╭▸ src/UnwrappedModifierTest.sol:8:13\n   │\n 8 │ ┏             modifier onlyOwner() {\n 9 │ ┃                 require(isOwner[msg.sender], \"Not owner\");\n10 │ ┃                 require(msg.sender != address(0), \"Zero address\");\n11 │ ┃                 _;\n12 │ ┃             }\n   │ ┗━━━━━━━━━━━━━┛\n   │\n   ╰ help: https://getfoundry.sh/forge/linting/unwrapped-modifier-logic\n   ╭╴\n 8 ±             modifier onlyOwner() {\n   ╰╴\n"
+  "rendered": "\nhelp: wrap modifier logic to reduce code size\n 9 +                 _onlyOwner();\n10 +                 _;\n11 +             }\n12 + \n13 +             function _onlyOwner() internal {\n14 +                 require(isOwner[msg.sender], \"Not owner\");\n15 +                 require(msg.sender != address(0), \"Zero address\");\n16 +             }\n   ╭▸ src/UnwrappedModifierTest.sol:8:13\n   │\n 8 │ ┏             modifier onlyOwner() {\n 9 │ ┃                 require(isOwner[msg.sender], \"Not owner\");\n10 │ ┃                 require(msg.sender != address(0), \"Zero address\");\n11 │ ┃                 _;\n12 │ ┃             }\n   │ ┗━━━━━━━━━━━━━┛\n   │\n   ╰ help: https://getfoundry.sh/forge/linting/unwrapped-modifier-logic\n   ╭╴\n 8 ±             modifier onlyOwner() {\n   ╰╴\nnote[unwrapped-modifier-logic]: modifier logic can be wrapped to reduce code size\n"
 }
 "#]],
         )
@@ -1972,7 +1975,7 @@ forgetest!(pragma_inconsistent_cross_file, |prj, cmd| {
 
     cmd.arg("lint").args(["--only-lint", "pragma-inconsistent"]).assert_success().stderr_eq(str![
         [r#"
-note[pragma-inconsistent]: 2 different Solidity pragma version requirements are used: 0.8.20, ^0.8.20
+note[pragma-inconsistent]: 2 different Solidity pragma version requirements are used: `0.8.20`, `^0.8.20`
   [FILE]:3:1
   │
 3 │ pragma solidity ^0.8.20;
@@ -2075,7 +2078,7 @@ forgetest!(pragma_inconsistent_duplicates_among_conflict, |prj, cmd| {
 
     cmd.arg("lint").args(["--only-lint", "pragma-inconsistent"]).assert_success().stderr_eq(str![
         [r#"
-note[pragma-inconsistent]: 2 different Solidity pragma version requirements are used: 0.8.20, ^0.8.20
+note[pragma-inconsistent]: 2 different Solidity pragma version requirements are used: `0.8.20`, `^0.8.20`
   [FILE]:3:1
   │
 3 │ pragma solidity 0.8.20;
@@ -2099,7 +2102,7 @@ forgetest!(pragma_inconsistent_files_without_pragma, |prj, cmd| {
 
     cmd.arg("lint").args(["--only-lint", "pragma-inconsistent"]).assert_success().stderr_eq(str![
         [r#"
-note[pragma-inconsistent]: 2 different Solidity pragma version requirements are used: 0.8.20, ^0.8.20
+note[pragma-inconsistent]: 2 different Solidity pragma version requirements are used: `0.8.20`, `^0.8.20`
   [FILE]:3:1
   │
 3 │ pragma solidity 0.8.20;

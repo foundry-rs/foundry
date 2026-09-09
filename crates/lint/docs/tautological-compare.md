@@ -15,8 +15,6 @@ Reports `a <op> a` where `a` is a side-effect-free expression (an identifier, me
 
 ## Example
 
-### Bad
-
 ```solidity
 require(balance >= balance); // always true; likely meant another operand
 if (a[i] < a[i]) {           // always false; dead branch
@@ -24,7 +22,7 @@ if (a[i] < a[i]) {           // always false; dead branch
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 require(balance >= amount);

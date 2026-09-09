@@ -27,8 +27,6 @@ A condition that is permanently true contributes no useful logic and may hide a 
 
 ## Example
 
-### Bad
-
 ```solidity
 function isValid(uint256 x) public pure returns (bool) {
     return x >= 0; // always true, uint cannot be negative
@@ -51,7 +49,7 @@ function coversRange(uint256 x) public pure returns (bool) {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 function isValid(uint256 x) public pure returns (bool) {

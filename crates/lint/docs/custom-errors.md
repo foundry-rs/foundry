@@ -13,32 +13,40 @@ Reports `require` calls with no reason or whose second argument is a string lite
 
 ## Why is this bad?
 
-Custom errors:
-- cost less gas than encoding/decoding a string,
-- can carry typed parameters for richer diagnostics,
-- shrink contract bytecode (string constants live in code).
+Custom errors can reduce the bytecode and revert-data costs of descriptive strings, and can carry
+typed parameters for richer diagnostics. Exact savings depend on the error and compiler settings.
+
+A bare `require(cond)` or `revert()` returns no error data. Replacing it with a custom error adds
+diagnostic data and can increase gas costs; this is a clarity tradeoff, not a gas optimization.
+Keep an intentionally empty revert when that behavior is part of the contract's interface.
 
 Solidity 0.8.4+ supports custom errors natively.
 
 ## Example
 
-### Bad
-
 ```solidity
-require(amount > 0, "amount must be > 0");
-require(amount > 0);
-revert("not authorized");
-revert();
+function validate(uint256 amount) internal pure {
+    require(amount > 0, "amount must be > 0");
+}
+
+function fail() internal pure {
+    revert("not authorized");
+}
 ```
 
-### Good
+Use instead:
 
 ```solidity
 error AmountZero();
 error NotAuthorized();
 
-if (amount == 0) revert AmountZero();
-if (!authorized) revert NotAuthorized();
+function validate(uint256 amount) internal pure {
+    if (amount == 0) revert AmountZero();
+}
+
+function fail() internal pure {
+    revert NotAuthorized();
+}
 ```
 
 ## Notes

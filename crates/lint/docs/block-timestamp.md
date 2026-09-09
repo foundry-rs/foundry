@@ -1,10 +1,10 @@
-# Use of block.timestamp in comparisons
+# Use of `block.timestamp` in comparisons
 
 **Severity**: `Low`
 **ID**: `block-timestamp`
 
-Flags use of `block.timestamp` as an operand of a comparison, where its value can be slightly
-manipulated by the block proposer.
+Flags use of `block.timestamp` as an operand of a comparison for review against the target chain's
+timestamp and transaction-inclusion guarantees.
 
 ## What it does
 
@@ -13,16 +13,16 @@ transitively reads `block.timestamp`.
 
 ## Why is this bad?
 
-Block proposers can adjust `block.timestamp` within a small window (a few seconds). This is
-usually harmless, but for short-window logic — auctions ending, randomness, time-locked
-withdrawals — a few seconds of manipulation can be enough for an attacker to capture value.
+Timestamp rules depend on the chain's consensus protocol; there is no universal number of seconds
+by which a proposer can adjust a timestamp. Transaction ordering and delayed inclusion can also
+affect which side of a deadline an operation reaches. Review timing-sensitive logic against the
+target chain's guarantees and avoid using timestamps as unpredictable randomness.
 
-Using `block.timestamp` for general scheduling (hours/days) is fine; what's risky is fine-grained
-timing and treating timestamps as a source of randomness.
+Ordinary scheduling may intentionally use `block.timestamp`. Block numbers are not a universal
+substitute for elapsed time. When a deadline comparison is intended, document that assumption and
+suppress this conservative lint locally.
 
 ## Example
-
-### Bad
 
 ```solidity
 function settle() external {
@@ -31,11 +31,15 @@ function settle() external {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
-// Prefer block numbers for tight windows, or accept a clearly large grace period.
-require(block.number >= endBlock, "auction ongoing");
+function settle() external {
+    // This auction intentionally permits settlement any time after its deadline.
+    // forge-lint: disable-next-line(block-timestamp)
+    require(block.timestamp >= auctionEnd, "auction ongoing");
+    // ...
+}
 ```
 
 ## Notes

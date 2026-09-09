@@ -19,13 +19,13 @@ Reports initializer-like functions that:
 
 ## Why is this bad?
 
-An attacker can initialize the implementation directly, take ownership, and invoke its destructive
-entry point. Destroying or corrupting an implementation can disable every proxy that delegates to
-it.
+An attacker may initialize the implementation directly and gain authority over implementation
+state or its privileged entry points. Consequences depend on the reachable operations and the
+target chain's fork rules: `selfdestruct` does not universally delete an already deployed
+contract. Review the implementation's access controls and initialization separately from the
+proxy's state.
 
 ## Example
-
-### Bad
 
 ```solidity
 contract Vault is Initializable {
@@ -42,7 +42,11 @@ contract Vault is Initializable {
 }
 ```
 
-### Good
+Use instead:
+
+Disable direct implementation initialization in the constructor. This example also removes the
+unnecessary public delegatecall entry point; adding `_disableInitializers()` alone would not
+protect that unrestricted function.
 
 ```solidity
 contract Vault is Initializable {

@@ -12,12 +12,11 @@ Reports each state variable that has no read or write site across the project.
 
 ## Why is this bad?
 
-Unused state variables waste storage slots, inflate deployment cost, and are a strong signal of
-dead or stale code that should be removed.
+Unused state variables occupy storage layout positions and can indicate dead or stale code.
+An untouched slot does not itself incur an `SSTORE` charge. Before removing a variable from an
+upgradeable contract, preserve the storage layout expected by existing deployments.
 
 ## Example
-
-### Bad
 
 ```solidity
 contract C {
@@ -26,7 +25,7 @@ contract C {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 contract C {

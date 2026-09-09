@@ -17,8 +17,6 @@ A proxy dispatches its own external functions before its fallback. If a proxy fu
 
 ## Example
 
-### Bad
-
 ```solidity
 interface IImplementation {
     function gsf() external;
@@ -36,7 +34,7 @@ contract Proxy {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 interface IImplementation {

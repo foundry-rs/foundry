@@ -22,13 +22,11 @@ An unused error is dead code. It suggests a missing revert path or a leftover fr
 
 ## Example
 
-### Bad
-
 ```solidity
 error Unauthorized(); // declared but never referenced
 ```
 
-### Good
+Use instead:
 
 ```solidity
 error Unauthorized();

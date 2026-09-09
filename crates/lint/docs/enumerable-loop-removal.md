@@ -50,27 +50,23 @@ The argument passed to `remove` is not related back to the value returned by `at
 
 ## Example
 
-### Bad
-
 ```solidity
 for (uint256 i = 0; i < set.length(); i++) {
     set.remove(set.at(i));
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
-// removing everything: EnumerableSet has a dedicated function for it,
-// much cheaper than removing one element at a time
-set.clear();
-
-// removing selectively: collect during the loop, remove after it
+// Remove selectively: collect during the loop, remove after it.
 address[] memory toRemove = new address[](set.length());
+uint256 count = 0;
 for (uint256 i = 0; i < set.length(); i++) {
-    if (shouldRemove(set.at(i))) toRemove[i] = set.at(i);
+    address value = set.at(i);
+    if (shouldRemove(value)) toRemove[count++] = value;
 }
-for (uint256 i = 0; i < toRemove.length; i++) {
+for (uint256 i = 0; i < count; i++) {
     set.remove(toRemove[i]);
 }
 ```

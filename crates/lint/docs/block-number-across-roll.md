@@ -21,8 +21,6 @@ Its call result is materialized. Keep normal compiler optimizations enabled.
 
 ## Example
 
-### Bad
-
 ```solidity
 vm.roll(100);
 uint256 saved = block.number; // Warning: this capture can cross the next roll.
@@ -30,7 +28,7 @@ vm.roll(200);
 vm.roll(saved);
 ```
 
-### Good
+Use instead:
 
 Capture through the getter instead:
 

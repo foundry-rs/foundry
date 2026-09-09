@@ -28,15 +28,13 @@ parameter used in calculations, downstream behavior can change without an easy a
 
 ## Example
 
-### Bad
-
 ```solidity
 function setBuyPrice(uint256 newBuyPrice) external onlyOwner {
     buyPrice = newBuyPrice;
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 event BuyPriceUpdated(uint256 newBuyPrice);

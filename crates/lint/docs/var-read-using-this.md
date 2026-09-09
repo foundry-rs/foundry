@@ -33,8 +33,6 @@ storage read itself. Reading the variable directly skips the call entirely.
 
 ## Example
 
-### Bad
-
 ```solidity
 contract C {
     uint256 public counter;
@@ -47,7 +45,7 @@ contract C {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 contract C {
