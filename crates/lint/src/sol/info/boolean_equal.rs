@@ -1,6 +1,6 @@
 use super::BooleanEqual;
 use crate::{
-    linter::{EarlyLintPass, LintContext, Suggestion},
+    linter::{EarlyLintPass, LintContext},
     sol::{Severity, SolLint, analysis::ast_bool_literal},
 };
 use solar::{
@@ -8,12 +8,7 @@ use solar::{
     interface::diagnostics::Applicability,
 };
 
-declare_forge_lint!(
-    BOOLEAN_EQUAL,
-    Severity::Info,
-    "boolean-equal",
-    "boolean comparison to a constant can be simplified"
-);
+declare_forge_lint!(BOOLEAN_EQUAL, Severity::Info, "boolean-equal");
 
 impl<'ast> EarlyLintPass<'ast> for BooleanEqual {
     fn check_expr(&mut self, ctx: &LintContext, expr: &'ast Expr<'ast>) {
@@ -28,13 +23,18 @@ impl<'ast> EarlyLintPass<'ast> for BooleanEqual {
             (None, Some(constant)) => simplify(ctx, left, op.kind, constant),
         };
         match simplified {
-            Some(simplified) => ctx.emit_with_suggestion(
-                &BOOLEAN_EQUAL,
-                expr.span,
-                Suggestion::fix(simplified, Applicability::MachineApplicable)
-                    .with_desc("consider simplifying to"),
-            ),
-            None => ctx.emit(&BOOLEAN_EQUAL, expr.span),
+            Some(simplified) => ctx.span_lint(&BOOLEAN_EQUAL, expr.span, |diag| {
+                diag.primary_message("boolean comparison to a constant is redundant");
+                diag.span_suggestion(
+                    expr.span,
+                    "consider simplifying to",
+                    simplified,
+                    Applicability::MachineApplicable,
+                );
+            }),
+            None => ctx.span_lint(&BOOLEAN_EQUAL, expr.span, |diag| {
+                diag.primary_message("boolean comparison to a constant is redundant");
+            }),
         }
     }
 }

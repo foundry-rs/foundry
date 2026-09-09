@@ -13,12 +13,7 @@ use solar::{
 };
 use std::{collections::HashSet, ops::ControlFlow};
 
-declare_forge_lint!(
-    UNUSED_STATE_VARIABLES,
-    Severity::Gas,
-    "unused-state-variables",
-    "state variable is never used"
-);
+declare_forge_lint!(UNUSED_STATE_VARIABLES, Severity::Gas, "unused-state-variables");
 
 impl<'gcx> LateLintPass<'gcx> for UnusedStateVariables {
     fn check_contract(
@@ -45,7 +40,9 @@ impl<'gcx> LateLintPass<'gcx> for UnusedStateVariables {
         for var_id in contract.variables() {
             let var = gcx.hir.variable(var_id);
             if !var.is_constant() && !var.is_immutable() && !collector.used.contains(&var_id) {
-                ctx.emit(&UNUSED_STATE_VARIABLES, var.span);
+                ctx.span_lint(&UNUSED_STATE_VARIABLES, var.span, |diag| {
+                    diag.primary_message("state variable is never used");
+                });
             }
         }
     }

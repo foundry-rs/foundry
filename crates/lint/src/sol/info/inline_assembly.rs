@@ -8,12 +8,7 @@ use solar::{
     interface::BytePos,
 };
 
-declare_forge_lint!(
-    INLINE_ASSEMBLY,
-    Severity::Info,
-    "inline-assembly",
-    "usage of inline assembly; assembly bypasses Solidity safety features and should be reviewed"
-);
+declare_forge_lint!(INLINE_ASSEMBLY, Severity::Info, "inline-assembly");
 
 impl<'ast> EarlyLintPass<'ast> for InlineAssembly {
     fn check_stmt(&mut self, ctx: &LintContext, stmt: &'ast Stmt<'ast>) {
@@ -22,12 +17,15 @@ impl<'ast> EarlyLintPass<'ast> for InlineAssembly {
         let kw_span = stmt.span.with_hi(stmt.span.lo() + BytePos("assembly".len() as u32));
         let memory_safe = asm.flags.iter().any(|f| f.value.as_str() == "memory-safe")
             || has_memory_safe_natspec(ctx, stmt.span.lo());
-        let msg = if memory_safe {
-            "inline assembly (declared memory-safe); review business logic and side effects"
+        let (msg, help) = if memory_safe {
+            ("inline assembly (declared memory-safe)", "review business logic and side effects")
         } else {
-            "inline assembly used; review for memory safety and side effects"
+            ("inline assembly used", "review for memory safety and side effects")
         };
-        ctx.emit_with_msg(&INLINE_ASSEMBLY, kw_span, msg);
+        ctx.span_lint(&INLINE_ASSEMBLY, kw_span, |diag| {
+            diag.primary_message(msg);
+            diag.help(help);
+        });
     }
 }
 

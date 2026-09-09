@@ -11,12 +11,7 @@ use solar::{
     },
 };
 
-declare_forge_lint!(
-    INCORRECT_USING_FOR,
-    Severity::Info,
-    "incorrect-using-for",
-    "`using ... for` names a library with no function applicable to the type, so the directive attaches nothing"
-);
+declare_forge_lint!(INCORRECT_USING_FOR, Severity::Info, "incorrect-using-for");
 
 impl<'gcx> LateLintPass<'gcx> for IncorrectUsingFor {
     fn check_nested_source(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, id: hir::SourceId) {
@@ -63,7 +58,11 @@ fn check_directive<'gcx>(ctx: &LintContext, gcx: Gcx<'gcx>, directive: &'gcx Usi
                     && function.visibility != hir::Visibility::Private
             });
         if !attaches {
-            ctx.emit(&INCORRECT_USING_FOR, entry.span);
+            ctx.span_lint(&INCORRECT_USING_FOR, entry.span, |diag| {
+                diag.primary_message(
+                    "`using ... for` names a library with no function applicable to the type, so the directive attaches nothing",
+                );
+            });
         }
     }
 }

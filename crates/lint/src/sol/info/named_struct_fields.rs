@@ -1,6 +1,6 @@
 use super::NamedStructFields;
 use crate::{
-    linter::{LateLintPass, LintContext, Suggestion},
+    linter::{LateLintPass, LintContext},
     sol::{Severity, SolLint},
 };
 use solar::{
@@ -11,12 +11,7 @@ use solar::{
     },
 };
 
-declare_forge_lint!(
-    NAMED_STRUCT_FIELDS,
-    Severity::Info,
-    "named-struct-fields",
-    "struct is initialized with positional fields"
-);
+declare_forge_lint!(NAMED_STRUCT_FIELDS, Severity::Info, "named-struct-fields");
 
 impl<'gcx> LateLintPass<'gcx> for NamedStructFields {
     fn check_expr(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, expr: &'gcx Expr<'gcx>) {
@@ -46,13 +41,18 @@ impl<'gcx> LateLintPass<'gcx> for NamedStructFields {
             Some(format!("{}({{ {} }})", ctx.span_to_snippet(*span)?, assignments.join(", ")))
         });
         match fix.flatten() {
-            Some(fix) => ctx.emit_with_suggestion(
-                &NAMED_STRUCT_FIELDS,
-                expr.span,
-                Suggestion::fix(fix, Applicability::MachineApplicable)
-                    .with_desc("consider using named fields"),
-            ),
-            None => ctx.emit(&NAMED_STRUCT_FIELDS, expr.span),
+            Some(fix) => ctx.span_lint(&NAMED_STRUCT_FIELDS, expr.span, |diag| {
+                diag.primary_message("struct is initialized with positional fields");
+                diag.span_suggestion(
+                    expr.span,
+                    "consider using named fields",
+                    fix,
+                    Applicability::MachineApplicable,
+                );
+            }),
+            None => ctx.span_lint(&NAMED_STRUCT_FIELDS, expr.span, |diag| {
+                diag.primary_message("struct is initialized with positional fields");
+            }),
         }
     }
 }

@@ -11,12 +11,7 @@ use solar::sema::{
     hir::{Expr, ExprKind, FunctionId},
 };
 
-declare_forge_lint!(
-    DEPRECATED_OZ_FUNCTION,
-    Severity::Low,
-    "deprecated-oz-function",
-    "this OpenZeppelin function is deprecated: `_grantRole` replaces `_setupRole`, `safeIncreaseAllowance` / `safeDecreaseAllowance` replace `safeApprove`"
-);
+declare_forge_lint!(DEPRECATED_OZ_FUNCTION, Severity::Low, "deprecated-oz-function");
 
 impl<'gcx> LateLintPass<'gcx> for DeprecatedOzFunction {
     fn check_expr(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, expr: &'gcx Expr<'gcx>) {
@@ -27,7 +22,14 @@ impl<'gcx> LateLintPass<'gcx> for DeprecatedOzFunction {
             && let Some(function_id) = resolved_function(gcx, expr)
             && is_deprecated_oz(gcx, function_id)
         {
-            ctx.emit(&DEPRECATED_OZ_FUNCTION, expr.span);
+            ctx.span_lint(&DEPRECATED_OZ_FUNCTION, expr.span, |diag| {
+                diag.primary_message(
+                    "this OpenZeppelin function is deprecated",
+                );
+                diag.help(
+                    "use `_grantRole` instead of `_setupRole`, or `safeIncreaseAllowance` / `safeDecreaseAllowance` instead of `safeApprove`",
+                );
+            });
         }
     }
 }

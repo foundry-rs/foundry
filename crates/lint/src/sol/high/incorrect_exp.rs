@@ -12,12 +12,7 @@ use solar::{
     },
 };
 
-declare_forge_lint!(
-    INCORRECT_EXP,
-    Severity::High,
-    "incorrect-exp",
-    "`^` is bitwise xor, not exponentiation; use `**`"
-);
+declare_forge_lint!(INCORRECT_EXP, Severity::High, "incorrect-exp");
 
 impl<'gcx> LateLintPass<'gcx> for IncorrectExp {
     fn check_expr(&mut self, ctx: &LintContext, _gcx: Gcx<'gcx>, expr: &'gcx hir::Expr<'gcx>) {
@@ -34,7 +29,10 @@ impl<'gcx> LateLintPass<'gcx> for IncorrectExp {
             && (base == U256::from(2u64) || base == U256::from(10u64))
             && plain_decimal_int_lit(ctx, rhs).is_some()
         {
-            ctx.emit(&INCORRECT_EXP, expr.span);
+            ctx.span_lint(&INCORRECT_EXP, expr.span, |diag| {
+                diag.primary_message("`^` is bitwise xor, not exponentiation");
+                diag.help("use `**` for exponentiation");
+            });
         }
     }
 }

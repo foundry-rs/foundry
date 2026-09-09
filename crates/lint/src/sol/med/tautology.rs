@@ -13,12 +13,7 @@ use solar::{
 };
 use std::cmp::Ordering;
 
-declare_forge_lint!(
-    TYPE_BASED_TAUTOLOGY,
-    Severity::Med,
-    "type-based-tautology",
-    "condition is always true or false based on the variable's type"
-);
+declare_forge_lint!(TYPE_BASED_TAUTOLOGY, Severity::Med, "type-based-tautology");
 
 impl<'gcx> LateLintPass<'gcx> for TypeBasedTautology {
     fn check_expr(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, expr: &'gcx Expr<'gcx>) {
@@ -37,7 +32,11 @@ impl<'gcx> LateLintPass<'gcx> for TypeBasedTautology {
             })
         };
         if is_tautology {
-            ctx.emit(&TYPE_BASED_TAUTOLOGY, expr.span);
+            ctx.span_lint(&TYPE_BASED_TAUTOLOGY, expr.span, |diag| {
+                diag.primary_message(
+                    "condition is always true or false based on the variable's type",
+                );
+            });
         }
     }
 }

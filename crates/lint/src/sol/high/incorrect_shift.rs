@@ -11,12 +11,7 @@ use solar::{
 };
 use std::ops::ControlFlow;
 
-declare_forge_lint!(
-    INCORRECT_SHIFT,
-    Severity::High,
-    "incorrect-shift",
-    "the order of args in a shift operation is incorrect"
-);
+declare_forge_lint!(INCORRECT_SHIFT, Severity::High, "incorrect-shift");
 
 impl<'ast> EarlyLintPass<'ast> for IncorrectShift {
     fn check_stmt(&mut self, ctx: &LintContext, stmt: &'ast Stmt<'ast>) {
@@ -44,7 +39,9 @@ impl<'ast> Visit<'ast> for ShiftChecker<'_, '_> {
             && !(call.name.name == kw::Shl
                 && matches!(lit.kind, LitKind::Number(value) if value == U256::ONE))
         {
-            self.ctx.emit(&INCORRECT_SHIFT, expr.span);
+            self.ctx.span_lint(&INCORRECT_SHIFT, expr.span, |diag| {
+                diag.primary_message("the order of args in a shift operation is incorrect");
+            });
         }
         self.walk_yul_expr(expr)
     }

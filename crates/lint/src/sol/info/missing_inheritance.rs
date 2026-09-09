@@ -8,12 +8,7 @@ use solar::{
 };
 use std::collections::{BTreeSet, HashMap};
 
-declare_forge_lint!(
-    MISSING_INHERITANCE,
-    Severity::Info,
-    "missing-inheritance",
-    "contract implements an interface's external API but does not explicitly inherit from it"
-);
+declare_forge_lint!(MISSING_INHERITANCE, Severity::Info, "missing-inheritance");
 
 impl<'ast> ProjectLintPass<'ast> for MissingInheritance {
     fn check_project(&mut self, ctx: &ProjectLintEmitter<'_, '_>, sources: &[ProjectSource<'ast>]) {
@@ -120,7 +115,9 @@ impl<'ast> ProjectLintPass<'ast> for MissingInheritance {
                     target.name.as_str(),
                     gcx.hir.contract(iid).name.as_str(),
                 );
-                ctx.emit_with_msg(&sources[src_idx], &MISSING_INHERITANCE, target.name.span, msg);
+                ctx.span_lint(&sources[src_idx], &MISSING_INHERITANCE, target.name.span, |diag| {
+                    diag.primary_message(msg);
+                });
             }
         }
     }

@@ -16,7 +16,7 @@ use std::{
     ops::ControlFlow,
 };
 
-declare_forge_lint!(UNUSED_ERROR, Severity::Info, "unused-error", "custom error is never used");
+declare_forge_lint!(UNUSED_ERROR, Severity::Info, "unused-error");
 
 impl<'ast> ProjectLintPass<'ast> for UnusedError {
     fn check_project(&mut self, ctx: &ProjectLintEmitter<'_, '_>, sources: &[ProjectSource<'ast>]) {
@@ -58,7 +58,9 @@ impl<'ast> ProjectLintPass<'ast> for UnusedError {
                 )
             });
             if !abi_surface && !collector.used.contains(&error_id) {
-                ctx.emit(&sources[src_idx], &UNUSED_ERROR, error.name.span);
+                ctx.span_lint(&sources[src_idx], &UNUSED_ERROR, error.name.span, |diag| {
+                    diag.primary_message("custom error is never used");
+                });
             }
         }
     }

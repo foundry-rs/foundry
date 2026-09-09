@@ -5,12 +5,7 @@ use crate::{
 };
 use solar::sema::{Gcx, hir};
 
-declare_forge_lint!(
-    INCORRECT_ERC721_INTERFACE,
-    Severity::Med,
-    "incorrect-erc721-interface",
-    "incorrect ERC721 function interface"
-);
+declare_forge_lint!(INCORRECT_ERC721_INTERFACE, Severity::Med, "incorrect-erc721-interface");
 
 /// ERC721 (and ERC165) functions as `(name, parameter types, return types)`.
 const ERC721_FUNCTIONS: &[(&str, &[&str], &[&str])] = &[
@@ -53,7 +48,9 @@ impl<'gcx> LateLintPass<'gcx> for IncorrectERC721Interface {
                         && !matches(func.returns, returns)
                 })
             {
-                ctx.emit(&INCORRECT_ERC721_INTERFACE, name.span);
+                ctx.span_lint(&INCORRECT_ERC721_INTERFACE, name.span, |diag| {
+                    diag.primary_message("incorrect ERC721 function interface");
+                });
             }
         }
     }

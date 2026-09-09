@@ -16,12 +16,12 @@ contract IncorrectExp {
         pure
         returns (uint256 a, uint256 b, uint256 c, uint256 d, uint256 e, uint256 f)
     {
-        a = 10 ^ 18; //~WARN: `^` is bitwise xor, not exponentiation; use `**`
-        b = 2 ^ 64; //~WARN: `^` is bitwise xor, not exponentiation; use `**`
-        c = 2 ^ 256; //~WARN: `^` is bitwise xor, not exponentiation; use `**`
-        d = uint256(10) ^ 18; //~WARN: `^` is bitwise xor, not exponentiation; use `**`
-        e = 2 ^ uint256(64); //~WARN: `^` is bitwise xor, not exponentiation; use `**`
-        f = uint256(uint8(2)) ^ 64; //~WARN: `^` is bitwise xor, not exponentiation; use `**`
+        a = 10 ^ 18; //~WARN: `^` is bitwise xor, not exponentiation
+        b = 2 ^ 64; //~WARN: `^` is bitwise xor, not exponentiation
+        c = 2 ^ 256; //~WARN: `^` is bitwise xor, not exponentiation
+        d = uint256(10) ^ 18; //~WARN: `^` is bitwise xor, not exponentiation
+        e = 2 ^ uint256(64); //~WARN: `^` is bitwise xor, not exponentiation
+        f = uint256(uint8(2)) ^ 64; //~WARN: `^` is bitwise xor, not exponentiation
     }
 
     function ok(uint256 x)

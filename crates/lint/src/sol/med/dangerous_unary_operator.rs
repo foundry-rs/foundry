@@ -5,12 +5,7 @@ use crate::{
 };
 use solar::ast::{Expr, ExprKind, UnOpKind};
 
-declare_forge_lint!(
-    DANGEROUS_UNARY_OPERATOR,
-    Severity::Med,
-    "dangerous-unary-operator",
-    "unary operator fused to `=`: `x =- 1` parses as `x = -1`, not `x -= 1`"
-);
+declare_forge_lint!(DANGEROUS_UNARY_OPERATOR, Severity::Med, "dangerous-unary-operator");
 
 impl<'ast> EarlyLintPass<'ast> for DangerousUnaryOperator {
     fn check_expr(&mut self, ctx: &LintContext, expr: &'ast Expr<'ast>) {
@@ -24,7 +19,11 @@ impl<'ast> EarlyLintPass<'ast> for DangerousUnaryOperator {
             && leads_with_fusable_unary(rhs)
             && ctx.span_to_snippet(lhs.span.between(rhs.span)).is_some_and(|gap| gap.ends_with('='))
         {
-            ctx.emit(&DANGEROUS_UNARY_OPERATOR, expr.span);
+            ctx.span_lint(&DANGEROUS_UNARY_OPERATOR, expr.span, |diag| {
+                diag.primary_message(
+                    "unary operator fused to `=`: `x =- 1` parses as `x = -1`, not `x -= 1`",
+                );
+            });
         }
     }
 }

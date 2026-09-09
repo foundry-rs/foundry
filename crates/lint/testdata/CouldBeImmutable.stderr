@@ -1,64 +1,72 @@
-note[could-be-immutable]: state variable could be declared `immutable`
+note[could-be-immutable]: state variable is initialized but not written at runtime
    ╭▸ ROOT/testdata/CouldBeImmutable.sol:LL:CC
    │
 LL │     address public owner;
    │                    ━━━━━
    │
+   ├ help: consider declaring it `immutable`
    ╰ help: https://getfoundry.sh/forge/linting/could-be-immutable
 
-note[could-be-immutable]: state variable could be declared `immutable`
+note[could-be-immutable]: state variable is initialized but not written at runtime
    ╭▸ ROOT/testdata/CouldBeImmutable.sol:LL:CC
    │
 LL │     address public deployer = msg.sender;
    │                    ━━━━━━━━
    │
+   ├ help: consider declaring it `immutable`
    ╰ help: https://getfoundry.sh/forge/linting/could-be-immutable
 
-note[could-be-immutable]: state variable could be declared `immutable`
+note[could-be-immutable]: state variable is initialized but not written at runtime
    ╭▸ ROOT/testdata/CouldBeImmutable.sol:LL:CC
    │
 LL │     uint256 private configured;
    │                     ━━━━━━━━━━
    │
+   ├ help: consider declaring it `immutable`
    ╰ help: https://getfoundry.sh/forge/linting/could-be-immutable
 
-note[could-be-immutable]: state variable could be declared `immutable`
+note[could-be-immutable]: state variable is initialized but not written at runtime
    ╭▸ ROOT/testdata/CouldBeImmutable.sol:LL:CC
    │
 LL │     bytes32 internal salt = keccak256(abi.encodePacked(block.timestamp));
    │                      ━━━━
    │
+   ├ help: consider declaring it `immutable`
    ╰ help: https://getfoundry.sh/forge/linting/could-be-immutable
 
-note[could-be-immutable]: state variable could be declared `immutable`
+note[could-be-immutable]: state variable is initialized but not written at runtime
    ╭▸ ROOT/testdata/CouldBeImmutable.sol:LL:CC
    │
 LL │     CouldBeImmutable private peer;
    │                              ━━━━
    │
+   ├ help: consider declaring it `immutable`
    ╰ help: https://getfoundry.sh/forge/linting/could-be-immutable
 
-note[could-be-immutable]: state variable could be declared `immutable`
+note[could-be-immutable]: state variable is initialized but not written at runtime
    ╭▸ ROOT/testdata/CouldBeImmutable.sol:LL:CC
    │
 LL │     uint256 internal inheritedBase;
    │                      ━━━━━━━━━━━━━
    │
+   ├ help: consider declaring it `immutable`
    ╰ help: https://getfoundry.sh/forge/linting/could-be-immutable
 
-note[could-be-immutable]: state variable could be declared `immutable`
+note[could-be-immutable]: state variable is initialized but not written at runtime
    ╭▸ ROOT/testdata/CouldBeImmutable.sol:LL:CC
    │
 LL │     uint256 internal baseConfigured;
    │                      ━━━━━━━━━━━━━━
    │
+   ├ help: consider declaring it `immutable`
    ╰ help: https://getfoundry.sh/forge/linting/could-be-immutable
 
-note[could-be-immutable]: state variable could be declared `immutable`
+note[could-be-immutable]: state variable is initialized but not written at runtime
    ╭▸ ROOT/testdata/CouldBeImmutable.sol:LL:CC
    │
 LL │     uint256 internal y = (x = 1);
    │                      ━
    │
+   ├ help: consider declaring it `immutable`
    ╰ help: https://getfoundry.sh/forge/linting/could-be-immutable
 

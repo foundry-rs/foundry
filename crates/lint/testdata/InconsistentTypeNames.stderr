@@ -1,80 +1,90 @@
-warning[inconsistent-type-names]: contract mixes shorthand and explicit integer type names; use `uint256` and `int256` consistently
+warning[inconsistent-type-names]: contract mixes shorthand and explicit integer type names
    ╭▸ ROOT/testdata/InconsistentTypeNames.sol:LL:CC
    │
 LL │     uint internal shorthandUint;
    │     ━━━━
    │
+   ├ help: use `uint256` and `int256` consistently
    ╰ help: https://getfoundry.sh/forge/linting/inconsistent-type-names
 
-warning[inconsistent-type-names]: contract mixes shorthand and explicit integer type names; use `uint256` and `int256` consistently
+warning[inconsistent-type-names]: contract mixes shorthand and explicit integer type names
    ╭▸ ROOT/testdata/InconsistentTypeNames.sol:LL:CC
    │
 LL │     int internal shorthandInt;
    │     ━━━
    │
+   ├ help: use `uint256` and `int256` consistently
    ╰ help: https://getfoundry.sh/forge/linting/inconsistent-type-names
 
-warning[inconsistent-type-names]: contract mixes shorthand and explicit integer type names; use `uint256` and `int256` consistently
+warning[inconsistent-type-names]: contract mixes shorthand and explicit integer type names
    ╭▸ ROOT/testdata/InconsistentTypeNames.sol:LL:CC
    │
 LL │         uint[] values;
    │         ━━━━━━
    │
+   ├ help: use `uint256` and `int256` consistently
    ╰ help: https://getfoundry.sh/forge/linting/inconsistent-type-names
 
-warning[inconsistent-type-names]: contract mixes shorthand and explicit integer type names; use `uint256` and `int256` consistently
+warning[inconsistent-type-names]: contract mixes shorthand and explicit integer type names
    ╭▸ ROOT/testdata/InconsistentTypeNames.sol:LL:CC
    │
-LL │ …     mapping(uint => uint256) indexes;
-   │       ━━━━━━━━━━━━━━━━━━━━━━━━
+LL │         mapping(uint => uint256) indexes;
+   │         ━━━━━━━━━━━━━━━━━━━━━━━━
    │
+   ├ help: use `uint256` and `int256` consistently
    ╰ help: https://getfoundry.sh/forge/linting/inconsistent-type-names
 
-warning[inconsistent-type-names]: contract mixes shorthand and explicit integer type names; use `uint256` and `int256` consistently
+warning[inconsistent-type-names]: contract mixes shorthand and explicit integer type names
    ╭▸ ROOT/testdata/InconsistentTypeNames.sol:LL:CC
    │
 LL │     error Difference(int delta, int256 expected);
    │                      ━━━
    │
+   ├ help: use `uint256` and `int256` consistently
    ╰ help: https://getfoundry.sh/forge/linting/inconsistent-type-names
 
-warning[inconsistent-type-names]: contract mixes shorthand and explicit integer type names; use `uint256` and `int256` consistently
+warning[inconsistent-type-names]: contract mixes shorthand and explicit integer type names
    ╭▸ ROOT/testdata/InconsistentTypeNames.sol:LL:CC
    │
 LL │     event Updated(uint oldValue, uint256 newValue);
    │                   ━━━━
    │
+   ├ help: use `uint256` and `int256` consistently
    ╰ help: https://getfoundry.sh/forge/linting/inconsistent-type-names
 
-warning[inconsistent-type-names]: contract mixes shorthand and explicit integer type names; use `uint256` and `int256` consistently
+warning[inconsistent-type-names]: contract mixes shorthand and explicit integer type names
    ╭▸ ROOT/testdata/InconsistentTypeNames.sol:LL:CC
    │
 LL │     function (uint) external returns (uint256) callback;
    │               ━━━━
    │
+   ├ help: use `uint256` and `int256` consistently
    ╰ help: https://getfoundry.sh/forge/linting/inconsistent-type-names
 
-warning[inconsistent-type-names]: contract mixes shorthand and explicit integer type names; use `uint256` and `int256` consistently
+warning[inconsistent-type-names]: contract mixes shorthand and explicit integer type names
    ╭▸ ROOT/testdata/InconsistentTypeNames.sol:LL:CC
    │
 LL │         uint amount,
    │         ━━━━
    │
+   ├ help: use `uint256` and `int256` consistently
    ╰ help: https://getfoundry.sh/forge/linting/inconsistent-type-names
 
-warning[inconsistent-type-names]: contract mixes shorthand and explicit integer type names; use `uint256` and `int256` consistently
+warning[inconsistent-type-names]: contract mixes shorthand and explicit integer type names
    ╭▸ ROOT/testdata/InconsistentTypeNames.sol:LL:CC
    │
 LL │     ) external returns (int result, int256 expected) {
    │                         ━━━
    │
+   ├ help: use `uint256` and `int256` consistently
    ╰ help: https://getfoundry.sh/forge/linting/inconsistent-type-names
 
-warning[inconsistent-type-names]: contract mixes shorthand and explicit integer type names; use `uint256` and `int256` consistently
+warning[inconsistent-type-names]: contract mixes shorthand and explicit integer type names
    ╭▸ ROOT/testdata/InconsistentTypeNames.sol:LL:CC
    │
-LL │ …     uint[] memory values = new uint[](amount);
-   │       ━━━━━━
+LL │         uint[] memory values = new uint[](amount);
+   │         ━━━━━━
    │
+   ├ help: use `uint256` and `int256` consistently
    ╰ help: https://getfoundry.sh/forge/linting/inconsistent-type-names
 

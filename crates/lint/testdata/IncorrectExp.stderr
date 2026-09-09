@@ -1,48 +1,54 @@
-warning[incorrect-exp]: `^` is bitwise xor, not exponentiation; use `**`
+warning[incorrect-exp]: `^` is bitwise xor, not exponentiation
    ╭▸ ROOT/testdata/IncorrectExp.sol:LL:CC
    │
 LL │         a = 10 ^ 18;
    │             ━━━━━━━
    │
+   ├ help: use `**` for exponentiation
    ╰ help: https://getfoundry.sh/forge/linting/incorrect-exp
 
-warning[incorrect-exp]: `^` is bitwise xor, not exponentiation; use `**`
+warning[incorrect-exp]: `^` is bitwise xor, not exponentiation
    ╭▸ ROOT/testdata/IncorrectExp.sol:LL:CC
    │
 LL │         b = 2 ^ 64;
    │             ━━━━━━
    │
+   ├ help: use `**` for exponentiation
    ╰ help: https://getfoundry.sh/forge/linting/incorrect-exp
 
-warning[incorrect-exp]: `^` is bitwise xor, not exponentiation; use `**`
+warning[incorrect-exp]: `^` is bitwise xor, not exponentiation
    ╭▸ ROOT/testdata/IncorrectExp.sol:LL:CC
    │
 LL │         c = 2 ^ 256;
    │             ━━━━━━━
    │
+   ├ help: use `**` for exponentiation
    ╰ help: https://getfoundry.sh/forge/linting/incorrect-exp
 
-warning[incorrect-exp]: `^` is bitwise xor, not exponentiation; use `**`
+warning[incorrect-exp]: `^` is bitwise xor, not exponentiation
    ╭▸ ROOT/testdata/IncorrectExp.sol:LL:CC
    │
 LL │         d = uint256(10) ^ 18;
    │             ━━━━━━━━━━━━━━━━
    │
+   ├ help: use `**` for exponentiation
    ╰ help: https://getfoundry.sh/forge/linting/incorrect-exp
 
-warning[incorrect-exp]: `^` is bitwise xor, not exponentiation; use `**`
+warning[incorrect-exp]: `^` is bitwise xor, not exponentiation
    ╭▸ ROOT/testdata/IncorrectExp.sol:LL:CC
    │
 LL │         e = 2 ^ uint256(64);
    │             ━━━━━━━━━━━━━━━
    │
+   ├ help: use `**` for exponentiation
    ╰ help: https://getfoundry.sh/forge/linting/incorrect-exp
 
-warning[incorrect-exp]: `^` is bitwise xor, not exponentiation; use `**`
+warning[incorrect-exp]: `^` is bitwise xor, not exponentiation
    ╭▸ ROOT/testdata/IncorrectExp.sol:LL:CC
    │
 LL │         f = uint256(uint8(2)) ^ 64;
    │             ━━━━━━━━━━━━━━━━━━━━━━
    │
+   ├ help: use `**` for exponentiation
    ╰ help: https://getfoundry.sh/forge/linting/incorrect-exp
 

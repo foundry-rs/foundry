@@ -3,23 +3,17 @@ use crate::{
     linter::{EarlyLintPass, LintContext},
     sol::{
         Severity, SolLint,
-        naming::{check_screaming_snake_case, emit_rename},
+        naming::{check_screaming_snake_case, suggest_rename},
     },
 };
 use solar::ast::{VarMut, VariableDefinition};
 
-declare_forge_lint!(
-    SCREAMING_SNAKE_CASE_CONSTANT,
-    Severity::Info,
-    "screaming-snake-case-const",
-    "constant name is not `SCREAMING_SNAKE_CASE`"
-);
+declare_forge_lint!(SCREAMING_SNAKE_CASE_CONSTANT, Severity::Info, "screaming-snake-case-const");
 
 declare_forge_lint!(
     SCREAMING_SNAKE_CASE_IMMUTABLE,
     Severity::Info,
-    "screaming-snake-case-immutable",
-    "immutable name is not `SCREAMING_SNAKE_CASE`"
+    "screaming-snake-case-immutable"
 );
 
 impl<'ast> EarlyLintPass<'ast> for ScreamingSnakeCase {
@@ -31,11 +25,19 @@ impl<'ast> EarlyLintPass<'ast> for ScreamingSnakeCase {
         if let (Some(name), Some(mutability)) = (var.name, var.mutability)
             && let Some(expected) = check_screaming_snake_case(name.as_str())
         {
-            let lint = match mutability {
-                VarMut::Constant => &SCREAMING_SNAKE_CASE_CONSTANT,
-                VarMut::Immutable => &SCREAMING_SNAKE_CASE_IMMUTABLE,
+            let (lint, message) = match mutability {
+                VarMut::Constant => {
+                    (&SCREAMING_SNAKE_CASE_CONSTANT, "constant name is not `SCREAMING_SNAKE_CASE`")
+                }
+                VarMut::Immutable => (
+                    &SCREAMING_SNAKE_CASE_IMMUTABLE,
+                    "immutable name is not `SCREAMING_SNAKE_CASE`",
+                ),
             };
-            emit_rename(ctx, lint, name.span, expected);
+            ctx.span_lint(lint, name.span, |diag| {
+                diag.primary_message(message);
+                suggest_rename(diag, name.span, expected);
+            });
         }
     }
 }

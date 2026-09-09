@@ -6,12 +6,7 @@ use foundry_config::lint::LintSpecificConfig;
 use solar::ast;
 use std::sync::Arc;
 
-declare_forge_lint!(
-    MULTI_CONTRACT_FILE,
-    Severity::Info,
-    "multi-contract-file",
-    "file contains multiple contracts, interfaces or libraries"
-);
+declare_forge_lint!(MULTI_CONTRACT_FILE, Severity::Info, "multi-contract-file");
 
 #[derive(Debug)]
 pub(super) struct MultiContractFilePass {
@@ -46,7 +41,11 @@ impl<'ast> EarlyLintPass<'ast> for MultiContractFilePass {
             .collect::<Vec<_>>();
         if spans.len() > 1 {
             for span in spans {
-                ctx.emit(&MULTI_CONTRACT_FILE, span);
+                ctx.span_lint(&MULTI_CONTRACT_FILE, span, |diag| {
+                    diag.primary_message(
+                        "file contains multiple contracts, interfaces or libraries",
+                    );
+                });
             }
         }
     }

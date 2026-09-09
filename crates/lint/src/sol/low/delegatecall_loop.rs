@@ -11,12 +11,7 @@ use solar::{
     },
 };
 
-declare_forge_lint!(
-    DELEGATECALL_LOOP,
-    Severity::Low,
-    "delegatecall-loop",
-    "payable function uses `delegatecall` inside a loop"
-);
+declare_forge_lint!(DELEGATECALL_LOOP, Severity::Low, "delegatecall-loop");
 
 impl<'gcx> LateLintPass<'gcx> for DelegatecallLoop {
     fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, func: &'gcx Function<'gcx>) {
@@ -28,7 +23,9 @@ impl<'gcx> LateLintPass<'gcx> for DelegatecallLoop {
                 && member.name == kw::Delegatecall
                 && expr_is_address(gcx, receiver)
             {
-                ctx.emit(&DELEGATECALL_LOOP, expr.span);
+                ctx.span_lint(&DELEGATECALL_LOOP, expr.span, |diag| {
+                    diag.primary_message("payable function uses `delegatecall` inside a loop");
+                });
             }
         });
     }

@@ -24,12 +24,7 @@ use std::{
     rc::Rc,
 };
 
-declare_forge_lint!(
-    EXTERNAL_FUNCTION,
-    Severity::Gas,
-    "external-function",
-    "`public` function can be declared `external`"
-);
+declare_forge_lint!(EXTERNAL_FUNCTION, Severity::Gas, "external-function");
 
 #[derive(Default)]
 struct ProjectIndex {
@@ -156,7 +151,14 @@ impl<'gcx> LateLintPass<'gcx> for ExternalFunction {
                         && other.parameters.len() == func.parameters.len()
                 });
             if !super_called && !override_referenced {
-                ctx.emit(&EXTERNAL_FUNCTION, name.span);
+                ctx.span_lint(&EXTERNAL_FUNCTION, name.span, |diag| {
+                    diag.primary_message(
+                        "`public` function with `memory` reference parameters is not referenced internally",
+                    );
+                    diag.help(
+                        "consider declaring the function `external` and using `calldata` for read-only reference parameters",
+                    );
+                });
             }
         }
     }

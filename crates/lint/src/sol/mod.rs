@@ -458,7 +458,6 @@ pub struct DeniedLintDiagnostics(String);
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct SolLint {
     id: &'static str,
-    description: &'static str,
     help: &'static str,
     severity: Severity,
 }
@@ -475,9 +474,6 @@ impl Lint for SolLint {
     }
     fn level(&self) -> Level {
         self.severity.into()
-    }
-    fn description(&self) -> &'static str {
-        self.description
     }
     fn help(&self) -> &'static str {
         self.help

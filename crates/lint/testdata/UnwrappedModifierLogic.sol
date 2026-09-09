@@ -88,7 +88,7 @@ contract UnwrappedModifierLogicTest {
     /// -----------------------------------------------------------------------
 
     // Bad because there are multiple valid function calls before the placeholder
-    modifier multipleBeforePlaceholder() { //~NOTE: modifier logic can be wrapped to reduce code size
+    modifier multipleBeforePlaceholder() { //~NOTE: modifier contains inline logic that may increase code size
         checkPublic(msg.sender); // These should become _multipleBeforePlaceholder()
         checkPrivate(msg.sender);
         checkInternal(msg.sender);
@@ -96,7 +96,7 @@ contract UnwrappedModifierLogicTest {
     }
 
     // Bad because there are multiple valid function calls after the placeholder
-    modifier multipleAfterPlaceholder() { //~NOTE: modifier logic can be wrapped to reduce code size
+    modifier multipleAfterPlaceholder() { //~NOTE: modifier contains inline logic that may increase code size
         _;
         checkPublic(msg.sender); // These should become _multipleAfterPlaceholder()
         checkPrivate(msg.sender);
@@ -104,7 +104,7 @@ contract UnwrappedModifierLogicTest {
     }
 
     // Bad because there are multiple valid statements both before and after
-    modifier multipleBeforeAfterPlaceholder(address sender) { //~NOTE: modifier logic can be wrapped to reduce code size
+    modifier multipleBeforeAfterPlaceholder(address sender) { //~NOTE: modifier contains inline logic that may increase code size
         checkPublic(sender); // These should become _multipleBeforeAfterPlaceholderBefore(sender)
         checkPrivate(sender);
         _;
@@ -114,7 +114,7 @@ contract UnwrappedModifierLogicTest {
 
     // Bad because there are multiple valid function calls before the placeholder.
     // The single call after the placeholder must be preserved in the rewrite.
-    modifier beforeWrappedAfterKept(address sender) { //~NOTE: modifier logic can be wrapped to reduce code size
+    modifier beforeWrappedAfterKept(address sender) { //~NOTE: modifier contains inline logic that may increase code size
         checkPublic(sender); // These should become _beforeWrappedAfterKept(sender)
         checkPrivate(sender);
         _;
@@ -123,7 +123,7 @@ contract UnwrappedModifierLogicTest {
 
     // Bad because there are multiple valid function calls after the placeholder.
     // The single call before the placeholder must be preserved in the rewrite.
-    modifier afterWrappedBeforeKept(address sender) { //~NOTE: modifier logic can be wrapped to reduce code size
+    modifier afterWrappedBeforeKept(address sender) { //~NOTE: modifier contains inline logic that may increase code size
         checkPublic(sender); // This should stay in the modifier
         _;
         checkPrivate(sender); // These should become _afterWrappedBeforeKept(sender)
@@ -132,7 +132,7 @@ contract UnwrappedModifierLogicTest {
 
     // Bad because there are multiple valid function calls after the placeholder.
     // The assembly block before the placeholder must be preserved in the rewrite.
-    modifier keepAssemblyBefore() { //~NOTE: modifier logic can be wrapped to reduce code size
+    modifier keepAssemblyBefore() { //~NOTE: modifier contains inline logic that may increase code size
         assembly ("memory-safe") {
             mstore(0x00, 0)
         }
@@ -146,25 +146,25 @@ contract UnwrappedModifierLogicTest {
     /// -----------------------------------------------------------------------
 
     // Bad because `require` built-in is used.
-    modifier onlyOwner() { //~NOTE: modifier logic can be wrapped to reduce code size
+    modifier onlyOwner() { //~NOTE: modifier contains inline logic that may increase code size
         require(isOwner[msg.sender], "Not owner"); // _onlyOwner();
         _;
     }
 
     // Bad because `if/revert` is used.
-    modifier onlyRole(bytes32 role) { //~NOTE: modifier logic can be wrapped to reduce code size
+    modifier onlyRole(bytes32 role) { //~NOTE: modifier contains inline logic that may increase code size
         if(!hasRole[msg.sender][role]) revert("Not authorized"); // _onlyRole(role);
         _;
     }
 
     // Bad because `assert` built-in is used.
-    modifier onlyRoleOrOpenRole(bytes32 role) { //~NOTE: modifier logic can be wrapped to reduce code size
+    modifier onlyRoleOrOpenRole(bytes32 role) { //~NOTE: modifier contains inline logic that may increase code size
         assert(hasRole[msg.sender][role] || hasRole[address(0)][role]); // _onlyRoleOrOpenRole(role);
         _;
     }
 
     // Bad because `assert` built-in is used (ensures we can parse multiple params).
-    modifier onlyRoleOrAdmin(bytes32 role, address admin) { //~NOTE: modifier logic can be wrapped to reduce code size
+    modifier onlyRoleOrAdmin(bytes32 role, address admin) { //~NOTE: modifier contains inline logic that may increase code size
         assert(hasRole[msg.sender][role] || msg.sender == admin); // _onlyRoleOrAdmin(role, admin);
         _;
     }
@@ -174,14 +174,14 @@ contract UnwrappedModifierLogicTest {
     /// -----------------------------------------------------------------------
 
     // Only call expressions are allowed (public/private/internal functions).
-    modifier assign(address sender) { //~NOTE: modifier logic can be wrapped to reduce code size
+    modifier assign(address sender) { //~NOTE: modifier contains inline logic that may increase code size
         bool _isOwner = true;
         isOwner[sender] = _isOwner;
         _;
     }
 
     // Only call expressions are allowed (public/private/internal functions).
-    modifier uncheckedBlock(address sender) { //~NOTE: modifier logic can be wrapped to reduce code size
+    modifier uncheckedBlock(address sender) { //~NOTE: modifier contains inline logic that may increase code size
         unchecked {
             sender;
         }
@@ -189,7 +189,7 @@ contract UnwrappedModifierLogicTest {
     }
 
     // Only call expressions are allowed (public/private/internal functions).
-    modifier emitEvent(address sender) { //~NOTE: modifier logic can be wrapped to reduce code size
+    modifier emitEvent(address sender) { //~NOTE: modifier contains inline logic that may increase code size
         emit DidSomething(sender);
         _;
     }
@@ -199,7 +199,7 @@ contract UnwrappedModifierLogicTest {
     /// -----------------------------------------------------------------------
 
     // Bad because there's an external call.
-    modifier onlyOwnerContract(address sender) { //~NOTE: modifier logic can be wrapped to reduce code size
+    modifier onlyOwnerContract(address sender) { //~NOTE: modifier contains inline logic that may increase code size
         c.onlyOwner(sender);
         _;
     }

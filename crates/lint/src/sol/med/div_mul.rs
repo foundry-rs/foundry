@@ -13,12 +13,7 @@ use solar::sema::{
 };
 use std::collections::HashSet;
 
-declare_forge_lint!(
-    DIVIDE_BEFORE_MULTIPLY,
-    Severity::Med,
-    "divide-before-multiply",
-    "division before multiplication may lose precision"
-);
+declare_forge_lint!(DIVIDE_BEFORE_MULTIPLY, Severity::Med, "divide-before-multiply");
 
 /// Locals whose current value is the result of a division.
 type Tainted = HashSet<VariableId>;
@@ -165,7 +160,11 @@ fn check_expr<'gcx>(
                     let is_tainted = is_division_or_tainted(lhs, tainted)
                         || is_division_or_tainted(rhs, tainted);
                     if is_tainted {
-                        ctx.emit(&DIVIDE_BEFORE_MULTIPLY, expr.span);
+                        ctx.span_lint(&DIVIDE_BEFORE_MULTIPLY, expr.span, |diag| {
+                            diag.primary_message(
+                                "division before multiplication may lose precision",
+                            );
+                        });
                     }
                     set_lhs_taint(hir, lhs, is_tainted, tainted);
                 }
@@ -178,7 +177,9 @@ fn check_expr<'gcx>(
             if op.kind == BinOpKind::Mul
                 && (is_division_or_tainted(left, tainted) || is_division_or_tainted(right, tainted))
             {
-                ctx.emit(&DIVIDE_BEFORE_MULTIPLY, expr.span);
+                ctx.span_lint(&DIVIDE_BEFORE_MULTIPLY, expr.span, |diag| {
+                    diag.primary_message("division before multiplication may lose precision");
+                });
             }
         }
         ExprKind::Call(callee, args, named_args) => {
@@ -192,7 +193,9 @@ fn check_expr<'gcx>(
             if is_yul_call(expr, &[Builtin::YulMul])
                 && args.exprs().any(|arg| is_division_or_tainted(arg, tainted))
             {
-                ctx.emit(&DIVIDE_BEFORE_MULTIPLY, expr.span);
+                ctx.span_lint(&DIVIDE_BEFORE_MULTIPLY, expr.span, |diag| {
+                    diag.primary_message("division before multiplication may lose precision");
+                });
             }
         }
         ExprKind::Ternary(cond, then_expr, else_expr) => {

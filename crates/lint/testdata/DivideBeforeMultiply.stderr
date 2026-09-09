@@ -6,20 +6,22 @@ LL │             revert("done");
    │
    ╰ help: https://getfoundry.sh/forge/linting/custom-errors
 
-note[inline-assembly]: inline assembly used; review for memory safety and side effects
+note[inline-assembly]: inline assembly used
    ╭▸ ROOT/testdata/DivideBeforeMultiply.sol:LL:CC
    │
 LL │         assembly {
    │         ━━━━━━━━
    │
+   ├ help: review for memory safety and side effects
    ╰ help: https://getfoundry.sh/forge/linting/inline-assembly
 
-note[inline-assembly]: inline assembly used; review for memory safety and side effects
+note[inline-assembly]: inline assembly used
    ╭▸ ROOT/testdata/DivideBeforeMultiply.sol:LL:CC
    │
 LL │         assembly {
    │         ━━━━━━━━
    │
+   ├ help: review for memory safety and side effects
    ╰ help: https://getfoundry.sh/forge/linting/inline-assembly
 
 warning[divide-before-multiply]: division before multiplication may lose precision

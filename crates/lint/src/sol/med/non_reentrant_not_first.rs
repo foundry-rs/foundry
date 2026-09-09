@@ -8,12 +8,7 @@ use solar::sema::{
     hir::{self, FunctionKind},
 };
 
-declare_forge_lint!(
-    NON_REENTRANT_NOT_FIRST,
-    Severity::Med,
-    "non-reentrant-not-first",
-    "`nonReentrant` is not the first modifier"
-);
+declare_forge_lint!(NON_REENTRANT_NOT_FIRST, Severity::Med, "non-reentrant-not-first");
 
 impl<'gcx> LateLintPass<'gcx> for NonReentrantNotFirst {
     fn check_function(
@@ -33,7 +28,9 @@ impl<'gcx> LateLintPass<'gcx> for NonReentrantNotFirst {
                 gcx.hir.function(id).name.is_some_and(|name| name.as_str() == "nonReentrant")
             });
             if is_non_reentrant {
-                ctx.emit(&NON_REENTRANT_NOT_FIRST, modifier.span);
+                ctx.span_lint(&NON_REENTRANT_NOT_FIRST, modifier.span, |diag| {
+                    diag.primary_message("`nonReentrant` is not the first modifier");
+                });
             }
         }
     }

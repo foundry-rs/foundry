@@ -15,12 +15,7 @@ use solar::{
     },
 };
 
-declare_forge_lint!(
-    RETURN_BOMB,
-    Severity::Low,
-    "return-bomb",
-    "external call with a gas limit consumes unbounded return data"
-);
+declare_forge_lint!(RETURN_BOMB, Severity::Low, "return-bomb");
 
 impl<'gcx> LateLintPass<'gcx> for ReturnBomb {
     fn check_expr(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, expr: &'gcx hir::Expr<'gcx>) {
@@ -34,7 +29,11 @@ impl<'gcx> LateLintPass<'gcx> for ReturnBomb {
                 if matches!(member.name, kw::Call | kw::Delegatecall | kw::Staticcall)
                     && is_address_like(gcx, receiver));
             if low_level || gcx.type_of_expr(expr.id).is_some_and(|ty| is_dynamic_ty(gcx, ty)) {
-                ctx.emit(&RETURN_BOMB, expr.span);
+                ctx.span_lint(&RETURN_BOMB, expr.span, |diag| {
+                    diag.primary_message(
+                        "external call with a gas limit consumes unbounded return data",
+                    );
+                });
             }
         }
     }

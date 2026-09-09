@@ -21,12 +21,7 @@ use solar::{
 };
 use std::{convert::Infallible, ops::ControlFlow};
 
-declare_forge_lint!(
-    ENUMERABLE_LOOP_REMOVAL,
-    Severity::High,
-    "enumerable-loop-removal",
-    "`remove` on an `EnumerableSet` inside a loop that iterates it with `at` can corrupt the iteration"
-);
+declare_forge_lint!(ENUMERABLE_LOOP_REMOVAL, Severity::High, "enumerable-loop-removal");
 
 // The detector reports only the shape it can judge without a flow analysis: a loop whose own
 // index is written exclusively by simple unconditional increments, reads the set with `at` at
@@ -203,7 +198,11 @@ impl<'gcx> LoopFinder<'_, '_, '_, 'gcx> {
                 removed.as_ref().zip(iterated.as_ref()).is_none_or(|(a, b)| a == b)
             });
             if corrupts {
-                self.ctx.emit(&ENUMERABLE_LOOP_REMOVAL, span);
+                self.ctx.span_lint(&ENUMERABLE_LOOP_REMOVAL, span, |diag| {
+                    diag.primary_message(
+                        "`remove` on an `EnumerableSet` inside a loop that iterates it with `at` can corrupt the iteration",
+                    );
+                });
             }
         }
     }

@@ -5,7 +5,7 @@ use crate::{
 };
 use solar::ast::{FunctionKind, ItemFunction, StateMutability};
 
-declare_forge_lint!(EMPTY_BLOCK, Severity::Low, "empty-block", "empty function body");
+declare_forge_lint!(EMPTY_BLOCK, Severity::Low, "empty-block");
 
 impl<'ast> EarlyLintPass<'ast> for EmptyBlock {
     fn check_item_function(&mut self, ctx: &LintContext, func: &'ast ItemFunction<'ast>) {
@@ -26,7 +26,9 @@ impl<'ast> EarlyLintPass<'ast> for EmptyBlock {
             && (func.header.state_mutability() != StateMutability::Payable
                 || func.header.returns.is_some())
         {
-            ctx.emit(&EMPTY_BLOCK, body.span);
+            ctx.span_lint(&EMPTY_BLOCK, body.span, |diag| {
+                diag.primary_message("empty function body");
+            });
         }
     }
 }

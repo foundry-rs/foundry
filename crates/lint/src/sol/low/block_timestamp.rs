@@ -22,12 +22,7 @@ use solar::{
 };
 use std::{collections::HashSet, convert::Infallible, ops::ControlFlow};
 
-declare_forge_lint!(
-    BLOCK_TIMESTAMP,
-    Severity::Low,
-    "block-timestamp",
-    "usage of `block.timestamp` in a comparison may be manipulated by validators"
-);
+declare_forge_lint!(BLOCK_TIMESTAMP, Severity::Low, "block-timestamp");
 
 impl<'gcx> LateLintPass<'gcx> for BlockTimestamp {
     fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, func: &'gcx Function<'gcx>) {
@@ -244,7 +239,11 @@ impl<'gcx> Visit<'gcx> for Checker<'_, '_, '_, 'gcx> {
             }
             ExprKind::Binary(lhs, op, rhs) => {
                 if is_cmp(op.kind) && (self.contains_source(lhs) || self.contains_source(rhs)) {
-                    self.ctx.emit(&BLOCK_TIMESTAMP, expr.span);
+                    self.ctx.span_lint(&BLOCK_TIMESTAMP, expr.span, |diag| {
+                        diag.primary_message(
+                            "usage of `block.timestamp` in a comparison may be manipulated by validators",
+                        );
+                    });
                 }
                 self.visit_expr(lhs)?;
                 self.visit_expr(rhs)?;

@@ -24,12 +24,7 @@ use solar::{
 };
 use std::collections::{HashMap, HashSet};
 
-declare_forge_lint!(
-    REENTRANCY_EVENTS,
-    Severity::Low,
-    "reentrancy-events",
-    "event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on"
-);
+declare_forge_lint!(REENTRANCY_EVENTS, Severity::Low, "reentrancy-events");
 
 impl<'gcx> LateLintPass<'gcx> for ReentrancyEvents {
     fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, func: &'gcx Function<'gcx>) {
@@ -241,7 +236,11 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
                     return Exits::default();
                 }
                 if entry && !self.suppress_inline_reports && self.emitted.insert(stmt.span) {
-                    self.ctx.emit(&REENTRANCY_EVENTS, stmt.span);
+                    self.ctx.span_lint(&REENTRANCY_EVENTS, stmt.span, |diag| {
+                        diag.primary_message(
+                            "event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on",
+                        );
+                    });
                 }
                 Exits::fallthrough(entry)
             }

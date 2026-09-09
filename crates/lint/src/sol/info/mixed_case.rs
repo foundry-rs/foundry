@@ -3,8 +3,8 @@ use crate::{
     sol::{
         Severity, SolLint,
         naming::{
-            check_mixed_case as check_mixed_case_pure, check_screaming_snake_case, emit_rename,
-            has_acronym_exception,
+            check_mixed_case as check_mixed_case_pure, check_screaming_snake_case,
+            has_acronym_exception, suggest_rename,
         },
     },
 };
@@ -12,19 +12,9 @@ use foundry_config::lint::LintSpecificConfig;
 use solar::ast::{FunctionHeader, ItemFunction, VariableDefinition, Visibility};
 use std::sync::Arc;
 
-declare_forge_lint!(
-    MIXED_CASE_FUNCTION,
-    Severity::Info,
-    "mixed-case-function",
-    "function name is not `mixedCase`"
-);
+declare_forge_lint!(MIXED_CASE_FUNCTION, Severity::Info, "mixed-case-function");
 
-declare_forge_lint!(
-    MIXED_CASE_VARIABLE,
-    Severity::Info,
-    "mixed-case-variable",
-    "mutable variable name is not `mixedCase`"
-);
+declare_forge_lint!(MIXED_CASE_VARIABLE, Severity::Info, "mixed-case-variable");
 
 /// Checks function names when `FUNCTIONS` is set, mutable variable names otherwise.
 #[derive(Debug)]
@@ -49,7 +39,10 @@ impl<'ast, const FUNCTIONS: bool> EarlyLintPass<'ast> for MixedCasePass<FUNCTION
                 check_mixed_case(name.as_str(), true, &self.config.mixed_case_exceptions)
             && !is_constant_getter(&func.header)
         {
-            emit_rename(ctx, &MIXED_CASE_FUNCTION, name.span, expected);
+            ctx.span_lint(&MIXED_CASE_FUNCTION, name.span, |diag| {
+                diag.primary_message("function name is not `mixedCase`");
+                suggest_rename(diag, name.span, expected);
+            });
         }
     }
 
@@ -64,7 +57,10 @@ impl<'ast, const FUNCTIONS: bool> EarlyLintPass<'ast> for MixedCasePass<FUNCTION
             && let Some(expected) =
                 check_mixed_case(name.as_str(), false, &self.config.mixed_case_exceptions)
         {
-            emit_rename(ctx, &MIXED_CASE_VARIABLE, name.span, expected);
+            ctx.span_lint(&MIXED_CASE_VARIABLE, name.span, |diag| {
+                diag.primary_message("mutable variable name is not `mixedCase`");
+                suggest_rename(diag, name.span, expected);
+            });
         }
     }
 }

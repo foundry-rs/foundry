@@ -33,26 +33,11 @@ use std::{
 /// Gas stipend forwarded by `transfer`/`send`; a call capped at or below it cannot reenter.
 const REENTRANCY_GAS_STIPEND: u64 = 2_300;
 
-declare_forge_lint!(
-    REENTRANCY_BALANCE,
-    Severity::High,
-    "reentrancy-balance",
-    "external call can be reentered before a stale contract balance is checked"
-);
+declare_forge_lint!(REENTRANCY_BALANCE, Severity::High, "reentrancy-balance");
 
-declare_forge_lint!(
-    REENTRANCY_ETH,
-    Severity::High,
-    "reentrancy-eth",
-    "state read before ETH transfer is written after the transfer"
-);
+declare_forge_lint!(REENTRANCY_ETH, Severity::High, "reentrancy-eth");
 
-declare_forge_lint!(
-    REENTRANCY_NO_ETH,
-    Severity::Med,
-    "reentrancy-no-eth",
-    "state read before external call is written after the call"
-);
+declare_forge_lint!(REENTRANCY_NO_ETH, Severity::Med, "reentrancy-no-eth");
 
 impl<'gcx> LateLintPass<'gcx> for ReentrancyEth {
     fn check_function(
@@ -990,7 +975,9 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
                 .name
                 .map_or_else(|| "state".to_string(), |name| name.to_string());
             let msg = format!("{what} can be reentered before `{name}` is updated");
-            self.ctx.emit_with_msg(lint, span, msg);
+            self.ctx.span_lint(lint, span, |diag| {
+                diag.primary_message(msg);
+            });
         }
     }
 
@@ -1000,7 +987,11 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
             if !self.emitted_balance.contains(&span)
                 && self.guard_has_stale_balance_comparison(guard, span, call, state)
             {
-                self.ctx.emit(&REENTRANCY_BALANCE, span);
+                self.ctx.span_lint(&REENTRANCY_BALANCE, span, |diag| {
+                    diag.primary_message(
+                        "external call can be reentered before a stale contract balance is checked",
+                    );
+                });
                 self.emitted_balance.insert(span);
             }
         }

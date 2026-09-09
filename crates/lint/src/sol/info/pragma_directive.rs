@@ -5,12 +5,7 @@ use crate::{
 };
 use solar::ast;
 
-declare_forge_lint!(
-    PRAGMA_INCONSISTENT,
-    Severity::Info,
-    "pragma-inconsistent",
-    "inconsistent Solidity pragma version requirements across the project"
-);
+declare_forge_lint!(PRAGMA_INCONSISTENT, Severity::Info, "pragma-inconsistent");
 
 impl<'ast> ProjectLintPass<'ast> for PragmaDirective {
     fn check_project(&mut self, ctx: &ProjectLintEmitter<'_, '_>, sources: &[ProjectSource<'ast>]) {
@@ -47,7 +42,9 @@ impl<'ast> ProjectLintPass<'ast> for PragmaDirective {
                 distinct.len(),
                 distinct.join("`, `")
             );
-            ctx.emit_with_msg(&sources[*idx], &PRAGMA_INCONSISTENT, *span, msg);
+            ctx.span_lint(&sources[*idx], &PRAGMA_INCONSISTENT, *span, |diag| {
+                diag.primary_message(msg);
+            });
         }
     }
 }

@@ -9,12 +9,7 @@ use solar::sema::{
     ty::{Ty, TyKind},
 };
 
-declare_forge_lint!(
-    MAPPING_DELETION,
-    Severity::Med,
-    "mapping-deletion",
-    "`delete` on a value containing a mapping does not clear the mapping"
-);
+declare_forge_lint!(MAPPING_DELETION, Severity::Med, "mapping-deletion");
 
 impl<'gcx> LateLintPass<'gcx> for MappingDeletion {
     fn check_expr(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, expr: &'gcx hir::Expr<'gcx>) {
@@ -22,7 +17,11 @@ impl<'gcx> LateLintPass<'gcx> for MappingDeletion {
             && let Some(ty) = gcx.type_of_expr(operand.peel_parens().id)
             && ty_contains_mapping(gcx, ty, &mut Vec::new())
         {
-            ctx.emit(&MAPPING_DELETION, expr.span);
+            ctx.span_lint(&MAPPING_DELETION, expr.span, |diag| {
+                diag.primary_message(
+                    "`delete` on a value containing a mapping does not clear the mapping",
+                );
+            });
         }
     }
 }

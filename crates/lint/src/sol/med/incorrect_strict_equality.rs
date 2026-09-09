@@ -16,12 +16,7 @@ use solar::{
 };
 use std::ops::ControlFlow;
 
-declare_forge_lint!(
-    INCORRECT_STRICT_EQUALITY,
-    Severity::Med,
-    "incorrect-strict-equality",
-    "dangerous strict equality check on an externally-influenced value"
-);
+declare_forge_lint!(INCORRECT_STRICT_EQUALITY, Severity::Med, "incorrect-strict-equality");
 
 impl<'gcx> LateLintPass<'gcx> for IncorrectStrictEquality {
     fn check_expr(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, expr: &'gcx Expr<'gcx>) {
@@ -38,7 +33,11 @@ impl<'gcx> LateLintPass<'gcx> for IncorrectStrictEquality {
                 .is_break()
             })
         {
-            ctx.emit(&INCORRECT_STRICT_EQUALITY, expr.span);
+            ctx.span_lint(&INCORRECT_STRICT_EQUALITY, expr.span, |diag| {
+                diag.primary_message(
+                    "dangerous strict equality check on an externally-influenced value",
+                );
+            });
         }
     }
 }

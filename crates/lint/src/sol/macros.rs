@@ -3,17 +3,15 @@
 /// - `$id`: identifier of the generated `SolLint` constant.
 /// - `$severity`: the `Severity` of the lint.
 /// - `$str_id`: the user-facing lint id used in configuration and diagnostics.
-/// - `$desc`: a short description.
 ///
 /// Each lint must have a markdown page at `crates/lint/docs/<str_id>.md`; the `help` URL is
 /// derived from `$str_id`.
 #[macro_export]
 macro_rules! declare_forge_lint {
-    ($id:ident, $severity:expr, $str_id:expr, $desc:expr) => {
+    ($id:ident, $severity:expr, $str_id:expr $(,)?) => {
         pub static $id: SolLint = SolLint {
             id: $str_id,
             severity: $severity,
-            description: $desc,
             help: concat!("https://getfoundry.sh/forge/linting/", $str_id),
         };
     };

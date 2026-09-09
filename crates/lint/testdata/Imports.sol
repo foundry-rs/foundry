@@ -42,8 +42,8 @@ import {
     YetAnotherType //~NOTE: unused import
 } from "./auxiliary/ImportsTypes.sol";
 
-import "./auxiliary/ImportsSomeFile.sol"; //~NOTE: plain import has no alias; use named imports `{A, B}` or alias `import ".." as X`
-import "./auxiliary/ImportsAnotherFile.sol"; //~NOTE: plain import has no alias; use named imports `{A, B}` or alias `import ".." as X`
+import "./auxiliary/ImportsSomeFile.sol"; //~NOTE: plain import has no alias
+import "./auxiliary/ImportsAnotherFile.sol"; //~NOTE: plain import has no alias
 
 import "./auxiliary/ImportsSomeFile2.sol" as SomeFile2;
 import "./auxiliary/ImportsAnotherFile2.sol" as AnotherFile2; //~NOTE: unused import

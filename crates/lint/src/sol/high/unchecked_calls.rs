@@ -11,19 +11,9 @@ use solar::{
     sema::{Gcx, hir},
 };
 
-declare_forge_lint!(
-    UNCHECKED_CALL,
-    Severity::High,
-    "unchecked-call",
-    "low-level call does not check the success return value"
-);
+declare_forge_lint!(UNCHECKED_CALL, Severity::High, "unchecked-call");
 
-declare_forge_lint!(
-    ERC20_UNCHECKED_TRANSFER,
-    Severity::High,
-    "erc20-unchecked-transfer",
-    "ERC20 `transfer` or `transferFrom` call does not check the return value"
-);
+declare_forge_lint!(ERC20_UNCHECKED_TRANSFER, Severity::High, "erc20-unchecked-transfer");
 
 /// Checks that calls to functions with the same signature as the ERC20 transfer methods, and which
 /// return a boolean, are not ignored.
@@ -36,7 +26,11 @@ impl<'gcx> LateLintPass<'gcx> for UncheckedTransferERC20 {
         if let hir::StmtKind::Expr(expr) = &stmt.kind
             && is_erc20_transfer_call(gcx, expr)
         {
-            ctx.emit(&ERC20_UNCHECKED_TRANSFER, expr.span);
+            ctx.span_lint(&ERC20_UNCHECKED_TRANSFER, expr.span, |diag| {
+                diag.primary_message(
+                    "ERC20 `transfer` or `transferFrom` call does not check the return value",
+                );
+            });
         }
     }
 }
@@ -94,6 +88,8 @@ impl<'ast> EarlyLintPass<'ast> for UncheckedCall {
             }
             _ => return,
         };
-        ctx.emit(&UNCHECKED_CALL, span);
+        ctx.span_lint(&UNCHECKED_CALL, span, |diag| {
+            diag.primary_message("low-level call does not check the success return value");
+        });
     }
 }

@@ -9,12 +9,7 @@ use solar::{
 };
 use std::collections::HashMap;
 
-declare_forge_lint!(
-    INCONSISTENT_TYPE_NAMES,
-    Severity::Low,
-    "inconsistent-type-names",
-    "contract mixes shorthand and explicit integer type names; use `uint256` and `int256` consistently"
-);
+declare_forge_lint!(INCONSISTENT_TYPE_NAMES, Severity::Low, "inconsistent-type-names");
 
 impl<'ast> ProjectLintPass<'ast> for InconsistentTypeNames {
     fn check_project(&mut self, ctx: &ProjectLintEmitter<'_, '_>, sources: &[ProjectSource<'ast>]) {
@@ -53,7 +48,17 @@ impl<'ast> ProjectLintPass<'ast> for InconsistentTypeNames {
                 if (names.contains(&"uint") && contract_names.contains(&"uint256"))
                     || (names.contains(&"int") && contract_names.contains(&"int256"))
                 {
-                    ctx.emit(&sources[source_idx], &INCONSISTENT_TYPE_NAMES, variable.ty.span);
+                    ctx.span_lint(
+                        &sources[source_idx],
+                        &INCONSISTENT_TYPE_NAMES,
+                        variable.ty.span,
+                        |diag| {
+                            diag.primary_message(
+                                "contract mixes shorthand and explicit integer type names",
+                            );
+                            diag.help("use `uint256` and `int256` consistently");
+                        },
+                    );
                 }
             }
         }

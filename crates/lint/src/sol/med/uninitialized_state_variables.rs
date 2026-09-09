@@ -22,12 +22,7 @@ use std::{
     ops::ControlFlow,
 };
 
-declare_forge_lint!(
-    UNINITIALIZED_STATE_VARIABLES,
-    Severity::Med,
-    "uninitialized-state",
-    "state variable is read but never written"
-);
+declare_forge_lint!(UNINITIALIZED_STATE_VARIABLES, Severity::Med, "uninitialized-state");
 
 impl<'gcx> LateLintPass<'gcx> for UninitializedStateVariables {
     fn check_nested_contract(
@@ -70,9 +65,12 @@ impl<'gcx> LateLintPass<'gcx> for UninitializedStateVariables {
                 && collector.read.contains(&var_id)
                 && !collector.written.contains(&var_id)
             {
-                ctx.emit(
+                ctx.span_lint(
                     &UNINITIALIZED_STATE_VARIABLES,
                     var.name.map_or(var.span, |name| name.span),
+                    |diag| {
+                        diag.primary_message("state variable is read but never written");
+                    },
                 );
             }
         }

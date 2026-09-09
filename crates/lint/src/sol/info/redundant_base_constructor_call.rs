@@ -1,6 +1,6 @@
 use super::RedundantBaseConstructorCall;
 use crate::{
-    linter::{LateLintPass, LintContext, Suggestion},
+    linter::{LateLintPass, LintContext},
     sol::{Severity, SolLint},
 };
 use solar::{
@@ -11,8 +11,7 @@ use solar::{
 declare_forge_lint!(
     REDUNDANT_BASE_CONSTRUCTOR_CALL,
     Severity::Info,
-    "redundant-base-constructor-call",
-    "explicit empty base-constructor arguments are redundant"
+    "redundant-base-constructor-call"
 );
 
 impl<'gcx> LateLintPass<'gcx> for RedundantBaseConstructorCall {
@@ -62,15 +61,19 @@ fn try_emit(ctx: &LintContext, hir: &hir::Hir<'_>, m: &hir::Modifier<'_>, fix_sp
     if ctx.span_to_snippet(m.args.span).is_some_and(|s| s.trim() == "()")
         && ctx.span_to_snippet(fix_span).is_some_and(|s| !s.contains("//") && !s.contains("/*"))
     {
-        ctx.emit_with_suggestion(
-            &REDUNDANT_BASE_CONSTRUCTOR_CALL,
-            m.args.span,
-            Suggestion::fix(String::new(), Applicability::MachineApplicable)
-                .with_span(fix_span)
-                .with_desc("remove redundant base-constructor call"),
-        );
+        ctx.span_lint(&REDUNDANT_BASE_CONSTRUCTOR_CALL, m.args.span, |diag| {
+            diag.primary_message("explicit empty base-constructor arguments are redundant");
+            diag.span_suggestion(
+                fix_span,
+                "remove redundant base-constructor call",
+                String::new(),
+                Applicability::MachineApplicable,
+            );
+        });
     } else {
-        ctx.emit(&REDUNDANT_BASE_CONSTRUCTOR_CALL, m.args.span);
+        ctx.span_lint(&REDUNDANT_BASE_CONSTRUCTOR_CALL, m.args.span, |diag| {
+            diag.primary_message("explicit empty base-constructor arguments are redundant");
+        });
     }
 }
 

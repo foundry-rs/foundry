@@ -26,12 +26,7 @@ use std::{
     ops::ControlFlow,
 };
 
-declare_forge_lint!(
-    MISSING_EVENTS_ARITHMETIC,
-    Severity::Low,
-    "missing-events-arithmetic",
-    "critical arithmetic state changes without an event"
-);
+declare_forge_lint!(MISSING_EVENTS_ARITHMETIC, Severity::Low, "missing-events-arithmetic");
 
 impl<'gcx> LateLintPass<'gcx> for MissingEventsArithmetic {
     fn check_nested_contract(
@@ -119,11 +114,11 @@ impl<'gcx> LateLintPass<'gcx> for MissingEventsArithmetic {
                     .variable(write.var_id)
                     .name
                     .map_or_else(|| "state variable".to_string(), |name| name.to_string());
-                ctx.emit_with_msg(
-                    &MISSING_EVENTS_ARITHMETIC,
-                    write.span,
-                    format!("`{name}` is changed without an event but is used in arithmetic"),
-                );
+                ctx.span_lint(&MISSING_EVENTS_ARITHMETIC, write.span, |diag| {
+                    diag.primary_message(format!(
+                        "`{name}` is changed without an event but is used in arithmetic"
+                    ));
+                });
             }
         }
     }

@@ -19,7 +19,7 @@ use solar::{
     },
 };
 
-declare_forge_lint!(CALLS_LOOP, Severity::Low, "calls-loop", "external call inside a loop");
+declare_forge_lint!(CALLS_LOOP, Severity::Low, "calls-loop");
 
 impl<'gcx> LateLintPass<'gcx> for CallsLoop {
     fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, func: &'gcx Function<'gcx>) {
@@ -28,7 +28,9 @@ impl<'gcx> LateLintPass<'gcx> for CallsLoop {
                 && let ExprKind::Call(callee, ..) = &expr.kind
                 && is_external_call(gcx, callee)
             {
-                ctx.emit(&CALLS_LOOP, expr.span);
+                ctx.span_lint(&CALLS_LOOP, expr.span, |diag| {
+                    diag.primary_message("external call inside a loop");
+                });
             }
         });
     }

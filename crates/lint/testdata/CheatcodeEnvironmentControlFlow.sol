@@ -13,11 +13,11 @@ library EnvironmentLibrary {
     function publicNumber() public view returns (uint256) { return block.number; }
 
     function internalNumber() internal view returns (uint256) {
-        return block.number; //~WARN: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
+        return block.number; //~WARN: `block.number` may be reused across `vm.roll`
     }
 
     function internalTimestamp() internal view returns (uint256) {
-        return block.timestamp; //~WARN: `block.timestamp` may be reused across `vm.warp`; capture it with `vm.getBlockTimestamp()` instead
+        return block.timestamp; //~WARN: `block.timestamp` may be reused across `vm.warp`
     }
 }
 
@@ -76,22 +76,22 @@ contract CheatcodeEnvironmentControlFlow {
 
     function twoIterations() public {
         for (uint256 i; i < 2; ++i) {
-            vm.roll(block.number + 1); //~WARN: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
+            vm.roll(block.number + 1); //~WARN: `block.number` may be reused across `vm.roll`
         }
         for (uint256 i; i < 2; i++) {
-            vm.warp(block.timestamp + 1); //~WARN: `block.timestamp` may be reused across `vm.warp`; capture it with `vm.getBlockTimestamp()` instead
+            vm.warp(block.timestamp + 1); //~WARN: `block.timestamp` may be reused across `vm.warp`
         }
     }
 
     function afterOneIteration() public returns (uint256) {
-        uint256 saved = block.number; //~WARN: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
+        uint256 saved = block.number; //~WARN: `block.number` may be reused across `vm.roll`
         for (uint256 i; i < 1; ++i) { vm.roll(200); }
         return saved;
     }
 
     function unknownBound(uint256 count) public {
         for (uint256 i; i < count; ++i) {
-            vm.roll(block.number + 1); //~WARN: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
+            vm.roll(block.number + 1); //~WARN: `block.number` may be reused across `vm.roll`
         }
     }
 
@@ -117,7 +117,7 @@ contract CheatcodeEnvironmentControlFlow {
     function wrappingStillRepeats() public {
         unchecked {
             for (uint8 i = 255; i != 254; ++i) {
-                vm.roll(block.number + 1); //~WARN: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
+                vm.roll(block.number + 1); //~WARN: `block.number` may be reused across `vm.roll`
             }
         }
     }
@@ -161,7 +161,7 @@ contract CheatcodeEnvironmentControlFlow {
     }
 
     function hazardBeforeAmbiguousReturn(bool choose) internal returns (uint256) {
-        uint256 saved = block.number; //~WARN: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
+        uint256 saved = block.number; //~WARN: `block.number` may be reused across `vm.roll`
         if (choose) { vm.roll(200); return saved; }
         return 0;
     }
@@ -171,7 +171,7 @@ contract CheatcodeEnvironmentControlFlow {
     }
 
     function knownNumberOutcome() public returns (uint256, FlowClock) {
-        uint256 saved = block.number; //~WARN: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
+        uint256 saved = block.number; //~WARN: `block.number` may be reused across `vm.roll`
         return (saved, vm);
     }
 
@@ -182,7 +182,7 @@ contract CheatcodeEnvironmentControlFlow {
     }
 
     function identicalOutcomes(bool choose) internal view returns (uint256, FlowClock) {
-        uint256 saved = block.timestamp; //~WARN: `block.timestamp` may be reused across `vm.warp`; capture it with `vm.getBlockTimestamp()` instead
+        uint256 saved = block.timestamp; //~WARN: `block.timestamp` may be reused across `vm.warp`
         if (choose) return (saved, vm);
         return (saved, vm);
     }

@@ -5,8 +5,7 @@ use std::path::PathBuf;
 
 pub use solar_lint::{
     EarlyLintPass, EarlyLintVisitor, LateLintPass, LateLintVisitor, Lint, LintContext, LintPolicy,
-    ProjectLintContext as ProjectLintEmitter, ProjectLintPass, ProjectSource, Suggestion,
-    SuggestionKind,
+    ProjectLintContext as ProjectLintEmitter, ProjectLintPass, ProjectSource,
 };
 
 /// Trait representing a linter for a language supported by Foundry.
