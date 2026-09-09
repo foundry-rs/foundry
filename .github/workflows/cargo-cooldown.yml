@@ -22,12 +22,7 @@ jobs:
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
           toolchain: stable
-      - name: Validate exact-version cooldown exceptions
-        run: |
-          python3 -m unittest discover -s .github/scripts/tests -p test_validate_cooldown.py
-          python3 .github/scripts/validate_cooldown.py
       - name: Enforce Cargo dependency cooldown
         uses: tempoxyz/gh-actions/actions/cargo-cooldown@0aa93238d85fd085d7901320b670cc6adb7a02f3
         with:
-          # Validated above with a TOML parser to support compact exact rules.
-          strict-project-config: false
+          strict-project-config: true
