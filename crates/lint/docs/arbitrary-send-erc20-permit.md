@@ -3,10 +3,6 @@
 **Severity**: `High`
 **ID**: `arbitrary-send-erc20-permit`
 
-Flags `transferFrom` / `safeTransferFrom` calls whose `from` argument is not provably
-`msg.sender` (or `address(this)`) when the function also calls
-`token.permit(owner, address(this), …)` for the same token and owner beforehand.
-
 ## What it does
 
 Flags `transferFrom` and `safeTransferFrom` calls preceded by a `permit` for the same token

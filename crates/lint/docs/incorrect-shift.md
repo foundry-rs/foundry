@@ -3,8 +3,6 @@
 **Severity**: `High`
 **ID**: `incorrect-shift`
 
-Flags Yul `shl` and `shr` calls whose operands appear to be reversed.
-
 ## What it does
 
 Warns when the first argument to a Yul `shl` or `shr` call is dynamic and the second argument is a

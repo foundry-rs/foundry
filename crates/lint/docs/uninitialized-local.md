@@ -3,8 +3,6 @@
 **Severity**: `Med`
 **ID**: `uninitialized-local`
 
-Flags local variables that are declared without an initializer and then read before any assignment. In Solidity, uninitialized value-type locals silently default to zero (`address` -> `address(0)`, `uint` -> `0`, `bool` -> `false`), so this is almost always a logic bug rather than intentional behavior.
-
 ## What it does
 
 Reports local variables that can be read before being assigned. Parameters and state variables

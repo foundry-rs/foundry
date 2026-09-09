@@ -3,10 +3,6 @@
 **Severity**: `Info`
 **ID**: `missing-inheritance`
 
-A contract that implements every external function of an interface but does not explicitly inherit
-from it loses compiler checks that its implementation conforms to the interface and obscures
-intent for readers and tooling.
-
 ## What it does
 
 Reports contracts that implement an interface's external functions without inheriting it.

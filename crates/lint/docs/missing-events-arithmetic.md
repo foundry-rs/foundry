@@ -3,9 +3,6 @@
 **Severity**: `Low`
 **ID**: `missing-events-arithmetic`
 
-Flags protected entry-point functions that update integer state used in arithmetic by an
-unprotected function without emitting an event.
-
 ## What it does
 
 Flags protected public or external functions that update integer parameters used in

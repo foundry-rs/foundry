@@ -3,8 +3,6 @@
 **Severity**: `Low`
 **ID**: `reentrancy-events`
 
-Flags events emitted after an external interaction. Emitting state-change events only after the external call returns can mislead off-chain consumers — including indexers, subgraphs, monitoring tools, and bridges — that rely on log ordering to reconstruct contract state.
-
 ## What it does
 
 Reports events emitted after an external interaction, such as a state-changing contract

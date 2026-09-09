@@ -31,6 +31,9 @@ diagnostics, and examples. This documentation format follows
   rules, analysis budgets, diagnostic placement, and comparisons with other detectors. Keep
   caveats only when they help the reader interpret or address a warning; put implementation
   explanations in developer documentation or source comments.
+- Start with `What it does`; do not repeat it in an introductory summary. Keep shared severity,
+  file-exclusion, and suppression instructions in the linting guide. Omit generic review reminders
+  and extra sections that repeat the problem or remedy.
 
 ## File structure
 
@@ -41,8 +44,6 @@ Each lint doc file should follow this structure:
 
 **Severity**: `<High | Med | Low | Info | Gas | CodeSize>`
 **ID**: `<str_id>`
-
-A one-paragraph description of what this lint detects and why it matters.
 
 ## What it does
 

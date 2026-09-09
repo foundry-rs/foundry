@@ -3,9 +3,6 @@
 **Severity**: `Info`
 **ID**: `todo-comment`
 
-Flags `TODO` and `FIXME` markers left in comments, which signal unfinished work or known
-bugs that have not been resolved before the code reached production.
-
 ## What it does
 
 Reports `TODO` and `FIXME` markers in line, block, and NatSpec comments, regardless of case.

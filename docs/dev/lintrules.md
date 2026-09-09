@@ -102,6 +102,8 @@ the following Foundry-specific conventions:
   rules, analysis budgets, diagnostic placement, and comparisons with other detectors.
   Include a limitation only when it changes how the reader should interpret or address a warning.
   Implementation explanations belong in developer documentation or source comments.
+- Start reference pages with `What it does` instead of a duplicate summary. Keep shared lint
+  controls in the linting guide; omit generic review reminders and repeated explanations.
 
 Review every diagnostic path and the reference page together. Cover triggering and non-triggering
 cases in UI tests, update affected expected output when messages change, and check that examples

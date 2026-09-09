@@ -3,9 +3,6 @@
 **Severity**: `Info`
 **ID**: `unused-import`
 
-Flags imported symbols (or whole import statements) whose imported names are not referenced
-anywhere in the source file.
-
 ## What it does
 
 Reports `import "..."`, `import "..." as X`, and `import { A, B } from "..."` statements where one

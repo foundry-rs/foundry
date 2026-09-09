@@ -3,9 +3,6 @@
 **Severity**: `Med`
 **ID**: `incorrect-strict-equality`
 
-Flags `==` and `!=` comparisons on values that can be manipulated by parties outside the
-contract's control: ETH balances (`.balance`) and ERC-20 balances (`.balanceOf(...)`).
-
 ## What it does
 
 Reports any strict-equality or strict-inequality expression (`==` or `!=`) whose left or right
@@ -61,15 +58,3 @@ function claimWhenEmpty() external {
     require(internalBalance == 0, "not empty");
 }
 ```
-
-## Notes
-
-Only address balances are checked; unrelated struct fields named `balance` are not.
-
-`msg.value` is **not** covered by this lint. Exact payment validation
-(`require(msg.value == price, ...)`) is a normal pattern and is left to the developer.
-
-`block.timestamp` equality is handled by the separate `block-timestamp` lint.
-
-Review each occurrence and prefer internal accounting over direct balance reads for critical
-invariants.

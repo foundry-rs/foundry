@@ -3,10 +3,6 @@
 **Severity**: `Med`
 **ID**: `locked-ether`
 
-Flags contracts that can receive Ether (via `payable` functions, `receive()`, or a payable
-`fallback()`) but expose no code path that can send Ether out. Any Ether sent to such a contract is
-permanently trapped.
-
 ## What it does
 
 For each concrete or abstract contract that has a payable entry point (`receive()`, payable

@@ -3,8 +3,6 @@
 **Severity**: `Med`
 **ID**: `unsafe-oz-erc721-mint`
 
-Flags calls to OpenZeppelin's `ERC721._mint`, which credits a token without checking that the recipient can receive it.
-
 ## What it does
 
 Reports calls to OpenZeppelin's ERC721 `_mint`, including overrides that delegate to it,

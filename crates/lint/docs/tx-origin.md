@@ -3,9 +3,6 @@
 **Severity**: `Med`
 **ID**: `tx-origin`
 
-Flags use of `tx.origin` inside authorization-like predicates such as `require`, `assert`, `if`,
-`while`, and `for` conditions.
-
 ## What it does
 
 Reports `tx.origin` reads when they are used as part of a guard condition. Plain reads outside of

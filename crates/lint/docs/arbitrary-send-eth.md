@@ -3,11 +3,6 @@
 **Severity**: `High`
 **ID**: `arbitrary-send-eth`
 
-Detects functions that send ETH to a destination the caller controls. When the
-destination of `transfer` / `send` / a `{value: …}` low-level call /
-`selfdestruct` is reachable from a function parameter or mutable storage that
-any caller can rewrite, an attacker can redirect the contract's funds.
-
 ## What it does
 
 Flags ETH transfers to caller-controlled destinations in functions without a recognized
@@ -20,9 +15,6 @@ Constructors and library bodies are excluded.
 
 A warning may remain when access control is enforced by a caller or a role-checking helper.
 Review that protection before suppressing it.
-
-A destination that is not flagged does not prove the caller is entitled to the amount.
-Validate amounts, balances, and any function that changes the authorized owner separately.
 
 ## Why is this bad?
 

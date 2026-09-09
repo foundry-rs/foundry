@@ -3,9 +3,6 @@
 **Severity**: `Info`
 **ID**: `unaliased-plain-import`
 
-Flags `import "path";` statements that pull in every top-level symbol from another file without
-an alias.
-
 ## What it does
 
 Reports plain imports of the form `import "path";`. Suggests using either named imports

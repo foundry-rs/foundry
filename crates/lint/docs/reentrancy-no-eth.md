@@ -3,9 +3,6 @@
 **Severity**: `Med`
 **ID**: `reentrancy-no-eth`
 
-Flags external calls that do not transfer ETH when state read before the call is written after the
-call on the same reachable path.
-
 ## What it does
 
 Reports public or external functions that read a state variable, make an external call

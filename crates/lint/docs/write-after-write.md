@@ -3,10 +3,6 @@
 **Severity**: `Gas`
 **ID**: `write-after-write`
 
-Flags storage variables that are written to consecutively without the first value ever being read.
-The first stored value is immediately discarded when the second write overwrites it. If the
-compiler does not eliminate that first write, it incurs an unnecessary storage operation.
-
 ## What it does
 
 Reports assignments to state variables whose values are overwritten before being read.

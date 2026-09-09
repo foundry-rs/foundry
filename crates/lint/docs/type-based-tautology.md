@@ -3,23 +3,11 @@
 **Severity**: `Med`
 **ID**: `type-based-tautology`
 
-Detects comparison expressions that are always true or always false due to the numeric range of the variable's type. These dead conditions indicate logic errors or misunderstandings about integer bounds.
-
 ## What it does
 
-Flags binary comparisons (`<`, `<=`, `>`, `>=`, `==`, `!=`) where one operand is a typed integer variable and the other is a constant that lies outside, or exactly at the boundary of the variable's representable range, making the condition unconditionally true or false.
-
-Examples:
-- `uint x >= 0` is always true because unsigned integers cannot be negative.
-- `uint8 x > 255` is always false because 255 is the maximum value of `uint8`.
-- `int8 x < -128` is always false because -128 is the minimum value of `int8`.
-- `uint8 x == 256` is always false because 256 is outside the range of `uint8`.
-- `uint8 x != 256` is always true because 256 is outside the range of `uint8`.
-- `uint x > 0 || x == 0` is always true because the two branches cover the full `uint` range.
-
-The check also applies to explicit type casts: `uint8(x) < 256` is always true.
-
-> **Limitation:** The lint only fires when the left-hand variable is a local or state variable identifier, or an explicit cast expression (e.g. `uint8(x)`). It does not fire on struct member access (`s.field < 0`) or function return values (`foo() < 0`).
+Flags comparisons that are always true or false because of an integer type's range,
+such as `uint256 x >= 0`. Also reports conditions that cover the entire range, such as
+`x > 0 || x == 0` for unsigned `x`.
 
 ## Why is this bad?
 

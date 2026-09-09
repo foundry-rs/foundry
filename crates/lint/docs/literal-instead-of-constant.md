@@ -3,8 +3,6 @@
 **Severity**: `Info`
 **ID**: `literal-instead-of-constant`
 
-Flags literal values appearing more than once in the executable bodies of a contract.
-
 ## What it does
 
 Reports repeated number, address, or hex-string values within a contract's executable code.

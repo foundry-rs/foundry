@@ -3,8 +3,6 @@
 **Severity**: `Low`
 **ID**: `msg-value-loop`
 
-Flags `msg.value` reads inside loops reachable from externally callable payable functions.
-
 ## What it does
 
 Reports `msg.value` expressions that execute inside a `for`, `while`, or `do while` loop
@@ -48,8 +46,3 @@ function batch(address[] calldata receivers) external payable {
     }
 }
 ```
-
-## Notes
-
-Review each occurrence manually. Prefer computing the intended per-iteration amount before the
-loop, then use that derived value inside the loop.

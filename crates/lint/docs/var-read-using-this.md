@@ -3,10 +3,6 @@
 **Severity**: `Gas`
 **ID**: `var-read-using-this`
 
-Flags reads of the contract's own state through `this.X(...)`. Calling a public state-variable
-getter or any `view`/`pure` function via `this` performs an external `STATICCALL` to the same
-address, paying the call overhead for data that could be read directly.
-
 ## What it does
 
 Reports calls through `this` to the contract's own public variable getters and `view`
@@ -49,10 +45,6 @@ contract C {
     }
 }
 ```
-
-## Notes
-
-This is a `Gas`-severity lint and is **not** applied to test or script files.
 
 For `external view`/`pure` functions, calling them via `this` from inside the contract is the
 only in-contract syntax that resolves; the recommended fix is to extract the body into an

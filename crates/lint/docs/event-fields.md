@@ -3,8 +3,6 @@
 **Severity**: `Info`
 **ID**: `event-fields`
 
-Flags events whose `address` parameters are not declared `indexed`.
-
 ## What it does
 
 Reports unindexed `address` and `address payable` event parameters when the event has no

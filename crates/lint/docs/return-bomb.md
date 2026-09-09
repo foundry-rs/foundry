@@ -3,8 +3,6 @@
 **Severity**: `Low`
 **ID**: `return-bomb`
 
-Flags external calls that set an explicit gas limit while copying unbounded dynamic returndata.
-
 ## What it does
 
 Detects low-level `call`, `delegatecall`, and `staticcall` expressions that specify `{gas: ...}`.

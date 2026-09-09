@@ -3,8 +3,6 @@
 **Severity**: `Low`
 **ID**: `calls-loop`
 
-Flags external calls made from inside loops.
-
 ## What it does
 
 Reports high-level contract calls, low-level `call`/`delegatecall`/`staticcall`, Ether

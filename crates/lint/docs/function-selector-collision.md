@@ -3,8 +3,6 @@
 **Severity**: `High`
 **ID**: `function-selector-collision`
 
-Flags different proxy and implementation function signatures that produce the same four-byte selector and can route implementation calls to the proxy instead.
-
 ## What it does
 
 Reports different proxy and implementation function signatures with the same four-byte

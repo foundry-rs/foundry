@@ -3,8 +3,6 @@
 **Severity**: `Info`
 **ID**: `screaming-snake-case-immutable`
 
-Flags `immutable` state variables whose names do not follow `SCREAMING_SNAKE_CASE`.
-
 ## What it does
 
 Reports state variables declared `immutable` whose identifier deviates from

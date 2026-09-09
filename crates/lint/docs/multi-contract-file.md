@@ -3,8 +3,6 @@
 **Severity**: `Info`
 **ID**: `multi-contract-file`
 
-Flags source files that declare more than one top-level contract, interface, or library.
-
 ## What it does
 
 Reports each top-level `contract`, `interface`, or `library` definition (after the first) in a

@@ -3,9 +3,6 @@
 **Severity**: `CodeSize`
 **ID**: `unwrapped-modifier-logic`
 
-Flags modifiers whose body contains non-trivial logic that should be moved into a helper function
-to reduce contract code size.
-
 ## What it does
 
 Reports modifiers containing logic beyond a placeholder, simple `require` or `assert`
@@ -43,7 +40,3 @@ function _checkAuth() internal {
     seenNonce[nonce] = true;
 }
 ```
-
-## Notes
-
-This is a `CodeSize`-severity lint and is **not** applied to test or script files.

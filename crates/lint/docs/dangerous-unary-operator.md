@@ -3,8 +3,6 @@
 **Severity**: `Med`
 **ID**: `dangerous-unary-operator`
 
-Flags an assignment whose `=` is fused to a unary operator (`=-`, `=~`), which parses as a plain assignment of a unary expression rather than the compound assignment it resembles.
-
 ## What it does
 
 Reports `x =- y` and `x =~ y`, where `=` is written directly beside a unary operator.

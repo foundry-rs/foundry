@@ -3,8 +3,6 @@
 **Severity**: `Low`
 **ID**: `solmate-safe-transfer-lib`
 
-Flags token operations of solmate's `SafeTransferLib`, which does not check that the token has code in its released version.
-
 ## What it does
 
 Reports uses of `safeTransfer`, `safeTransferFrom`, and `safeApprove` from solmate's
@@ -13,7 +11,9 @@ excluded.
 
 ## Why is this bad?
 
-In the released solmate v6, a token call that returns no data is treated as a success without checking that the token has code (`success := 1` on the empty-return path), unlike OpenZeppelin's `SafeERC20`. A token operation against an address with no code, a wrong address, a not-yet-deployed or a self-destructed token, is therefore a silent no-op that looks like a successful transfer. The unreleased solmate main branch has since added a code check to the empty-return path; on a released version, the mitigation is to verify the token has code, or to use OpenZeppelin's `SafeERC20`.
+Solmate v6 treats a token call that returns no data as successful without checking whether
+the token address has code. A call to an address with no code can therefore look like a
+successful transfer. Verify that the token has code or use OpenZeppelin's `SafeERC20`.
 
 ## Example
 

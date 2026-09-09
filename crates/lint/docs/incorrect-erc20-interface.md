@@ -3,9 +3,6 @@
 **Severity**: `Med`
 **ID**: `incorrect-erc20-interface`
 
-Flags interfaces or contracts whose function signatures match an ERC20 method by name and
-parameters but use the wrong return type.
-
 ## What it does
 
 For each function whose name and parameter types match a canonical ERC20 method

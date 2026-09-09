@@ -3,9 +3,6 @@
 **Severity**: `High`
 **ID**: `unprotected-initializer`
 
-Flags upgradeable contracts whose public or external initializer can still be called directly on an
-implementation contract that exposes a destructive entry point.
-
 ## What it does
 
 Reports initializer-like functions that:

@@ -3,10 +3,6 @@
 **Severity**: `High`
 **ID**: `controlled-delegatecall`
 
-`delegatecall` executes code from another address in the caller's storage and execution context.
-This lint detects delegatecall targets that are not provably trusted, including targets that can be
-influenced by users, mutable storage, or constructor-provided values.
-
 ## What it does
 
 Flags `delegatecall` targets other than a trusted literal, constant, zero address, or

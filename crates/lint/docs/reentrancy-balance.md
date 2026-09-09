@@ -3,9 +3,6 @@
 **Severity**: `High`
 **ID**: `reentrancy-balance`
 
-Flags reentrant external calls between saving `address(this).balance` and checking the current
-contract balance against that saved value.
-
 ## What it does
 
 Reports public or external functions that save `address(this).balance`, make an external

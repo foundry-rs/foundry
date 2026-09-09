@@ -3,8 +3,6 @@
 **Severity**: `Med`
 **ID**: `weak-prng`
 
-Flags randomness-like expressions that directly derive entropy from predictable on-chain values.
-
 ## What it does
 
 Reports direct use of `block.timestamp`, `block.number`, `block.coinbase`, `blockhash(...)`,
@@ -41,6 +39,3 @@ uint256 winner = uint256(keccak256(abi.encodePacked(revealedSeed, msg.sender))) 
 Time-bucketing expressions such as `block.timestamp % 1 days` are excluded when the bucket
 is a constant whole-day multiple. Shorter or variable buckets may still warn; review
 their intended use before suppressing the lint.
-
-Copied values, helper-derived entropy, and inline assembly may go unreported. Review all
-randomness sources rather than relying on the absence of a warning.

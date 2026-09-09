@@ -3,9 +3,6 @@
 **Severity**: `Info`
 **ID**: `interface-file-naming`
 
-Flags Solidity files whose contract-like declarations are all interfaces but whose filename is
-not prefixed with `I`. Other top-level declarations do not exclude a file.
-
 ## What it does
 
 Reports interface-only files whose path basename does not start with `I` (e.g. `IERC20.sol`).

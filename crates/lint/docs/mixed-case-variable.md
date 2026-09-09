@@ -3,8 +3,6 @@
 **Severity**: `Info`
 **ID**: `mixed-case-variable`
 
-Flags mutable variable names (locals, parameters, mutable state) that do not follow `mixedCase`.
-
 ## What it does
 
 Reports mutable variable identifiers that contain embedded underscores, start with an uppercase

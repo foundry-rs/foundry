@@ -3,9 +3,6 @@
 **Severity**: `Info`
 **ID**: `pragma-inconsistent`
 
-Flags projects whose source files declare incompatible or differently-shaped Solidity version
-pragmas.
-
 ## What it does
 
 Reports inconsistent `pragma solidity ...;` requirements across source files, such as different

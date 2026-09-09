@@ -3,9 +3,6 @@
 **Severity**: `Med`
 **ID**: `unused-return`
 
-Flags external calls whose return value is discarded, which often indicates a logic bug where the
-result of a computation or state query is silently ignored.
-
 ## What it does
 
 Detects high-level external calls (member calls on contract-typed variables or interface-cast
