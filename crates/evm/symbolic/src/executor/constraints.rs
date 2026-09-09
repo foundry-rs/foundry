@@ -1,4 +1,5 @@
 use super::*;
+use foundry_evm::revm::interpreter::instructions::i256::i256_cmp;
 
 impl SymbolicExecutor {
     pub(super) fn handle_assume(
@@ -182,7 +183,10 @@ impl SymbolicExecutor {
         if let (Some(value), Some(min), Some(max)) =
             (value.as_const(), min.as_const(), max.as_const())
         {
-            if !slt(min, max) || slt(value, min) || slt(max, value) {
+            if !i256_cmp(&min, &max).is_lt()
+                || i256_cmp(&value, &min).is_lt()
+                || i256_cmp(&value, &max).is_gt()
+            {
                 return Ok(CheatcodeOutcome::Failure);
             }
             let bounded = if value == min { max } else { min };
@@ -190,7 +194,7 @@ impl SymbolicExecutor {
         }
 
         if let (Some(min), Some(max)) = (min.as_const(), max.as_const())
-            && !slt(min, max)
+            && !i256_cmp(&min, &max).is_lt()
         {
             return Ok(CheatcodeOutcome::Failure);
         }

@@ -97,15 +97,53 @@ fn comparison_helpers_use_evm_operand_order() {
 }
 
 #[test]
+fn signed_arithmetic_preserves_evm_boundaries() {
+    let min = U256::from(1) << 255;
+    let negative_seven = U256::ZERO.wrapping_sub(U256::from(7));
+    let negative_three = U256::ZERO.wrapping_sub(U256::from(3));
+    for (left, right, quotient, remainder) in [
+        (min, U256::MAX, min, U256::ZERO),
+        (min, U256::from(1), min, U256::ZERO),
+        (min, min, U256::from(1), U256::ZERO),
+        (min, U256::ZERO, U256::ZERO, U256::ZERO),
+        (U256::ZERO, min, U256::ZERO, U256::ZERO),
+        (negative_seven, U256::from(3), U256::MAX - U256::from(1), U256::MAX),
+        (U256::from(7), negative_three, U256::MAX - U256::from(1), U256::from(1)),
+        (negative_seven, negative_three, U256::from(2), U256::MAX),
+    ] {
+        let mut cx = SymCx::new();
+        for (op, expected) in [(SymBinOp::SDiv, quotient), (SymBinOp::SRem, remainder)] {
+            let left = SymExpr::constant(&mut cx, left);
+            let right = SymExpr::constant(&mut cx, right);
+            assert_eq!(SymExpr::binop(&mut cx, op, left, right).as_const(), Some(expected));
+        }
+    }
+
+    let ordered = [min, negative_seven, U256::MAX, U256::ZERO, U256::from(1), min - U256::from(1)];
+    for (i, &left) in ordered.iter().enumerate() {
+        for (j, &right) in ordered.iter().enumerate() {
+            assert_eq!(SymCmpOp::Slt.eval(left, right), i < j);
+            assert_eq!(SymCmpOp::Sgt.eval(left, right), i > j);
+        }
+    }
+}
+
+#[test]
 fn exp_helper_uses_evm_operand_order() {
     let mut cx = SymCx::new();
-    let mut state = empty_state(&mut cx);
-    state.stack.push(SymExpr::constant(&mut cx, U256::ZERO)).unwrap();
-    state.stack.push(SymExpr::constant(&mut cx, U256::from(0x100))).unwrap();
-
-    state.exp_word(&mut cx).unwrap();
-
-    assert_eq!(state.stack.pop().unwrap(), SymExpr::constant(&mut cx, U256::from(1)));
+    for (base, exponent, expected) in [
+        (U256::from(0x100), U256::ZERO, U256::from(1)),
+        (U256::ZERO, U256::ZERO, U256::from(1)),
+        (U256::from(2), U256::from(256), U256::ZERO),
+        (U256::MAX, U256::from(2), U256::from(1)),
+        (U256::MAX, U256::MAX, U256::MAX),
+    ] {
+        let mut state = empty_state(&mut cx);
+        state.stack.push(SymExpr::constant(&mut cx, exponent)).unwrap();
+        state.stack.push(SymExpr::constant(&mut cx, base)).unwrap();
+        state.exp_word(&mut cx).unwrap();
+        assert_eq!(state.stack.pop().unwrap().as_const(), Some(expected));
+    }
 }
 
 #[test]
@@ -144,6 +182,35 @@ fn exp_helper_expands_bounded_symbolic_exponent() {
             .unwrap(),
         U256::from(243)
     );
+}
+
+#[test]
+fn arithmetic_shift_preserves_sign_at_word_boundaries() {
+    let mut cx = SymCx::new();
+    let min = U256::from(1) << 255;
+    for (value, shift, expected) in [
+        (min, U256::ZERO, min),
+        (min, U256::from(1), min | (min >> 1)),
+        (min, U256::from(255), U256::MAX),
+        (min, U256::from(256), U256::MAX),
+        (min, U256::MAX, U256::MAX),
+        (U256::from(4), U256::from(1), U256::from(2)),
+        (min - U256::from(1), U256::from(255), U256::ZERO),
+        (U256::from(4), U256::from(256), U256::ZERO),
+        (U256::from(4), U256::MAX, U256::ZERO),
+    ] {
+        let mut state = empty_state(&mut cx);
+        state.stack.push(SymExpr::constant(&mut cx, value)).unwrap();
+        state.stack.push(SymExpr::constant(&mut cx, shift)).unwrap();
+        state.shift_word(&mut cx, ShiftKind::Sar).unwrap();
+        assert_eq!(state.stack.pop().unwrap().as_const(), Some(expected));
+
+        let word = SymExpr::var(&mut cx, "word");
+        let amount = SymExpr::var(&mut cx, "amount");
+        let expr = SymExpr::binop(&mut cx, SymBinOp::Sar, word, amount);
+        let model = symbolic_model(&mut cx, [("word", value), ("amount", shift)]);
+        assert_eq!(expr.eval_model(&model).unwrap(), expected);
+    }
 }
 
 #[test]
