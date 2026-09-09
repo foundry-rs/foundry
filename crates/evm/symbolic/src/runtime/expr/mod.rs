@@ -33,8 +33,8 @@ struct ExpressionFoldCache<'a> {
 /// revisit the same node exponentially many times.
 struct ModelEvaluator<'a, M: ?Sized> {
     model: &'a M,
-    words: HashMap<SymExpr, U256>,
-    bools: HashMap<SymBoolExpr, bool>,
+    words: HashMap<&'a SymExpr, U256>,
+    bools: HashMap<&'a SymBoolExpr, bool>,
 }
 
 impl<'a, M: SymbolicModelLookup + ?Sized> ModelEvaluator<'a, M> {
@@ -42,7 +42,7 @@ impl<'a, M: SymbolicModelLookup + ?Sized> ModelEvaluator<'a, M> {
         Self { model, words: HashMap::default(), bools: HashMap::default() }
     }
 
-    fn eval_word(&mut self, expr: &SymExpr) -> Result<U256, SymbolicError> {
+    fn eval_word(&mut self, expr: &'a SymExpr) -> Result<U256, SymbolicError> {
         let kind = expr.kind();
         if let Some(var) = kind.get_eval_var() {
             return Ok(self.model.value(var).unwrap_or_default());
@@ -93,11 +93,11 @@ impl<'a, M: SymbolicModelLookup + ?Sized> ModelEvaluator<'a, M> {
                 }
             }
         };
-        self.words.insert(expr.clone(), value);
+        self.words.insert(expr, value);
         Ok(value)
     }
 
-    fn eval_bool(&mut self, expr: &SymBoolExpr) -> Result<bool, SymbolicError> {
+    fn eval_bool(&mut self, expr: &'a SymBoolExpr) -> Result<bool, SymbolicError> {
         let kind = expr.kind();
         if let SymBoolExprKind::Const(value) = kind {
             return Ok(*value);
@@ -127,7 +127,7 @@ impl<'a, M: SymbolicModelLookup + ?Sized> ModelEvaluator<'a, M> {
             }
         };
         if cache_result {
-            self.bools.insert(expr.clone(), value);
+            self.bools.insert(expr, value);
         }
         Ok(value)
     }
@@ -156,7 +156,7 @@ mod tests {
 
         assert!(evaluator.eval_bool(&condition).unwrap());
         assert!(evaluator.bools.is_empty());
-        let conjunction = SymBoolExpr::and(&mut cx, vec![condition.clone(), condition]);
+        let conjunction = SymBoolExpr::and(&mut cx, vec![condition.clone(), condition.clone()]);
         assert!(evaluator.eval_bool(&conjunction).unwrap());
         assert_eq!(evaluator.bools.len(), 1);
     }
