@@ -528,6 +528,136 @@ note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous op
     cmd.forge_fuse().arg("lint").assert_success().stderr_eq("");
 });
 
+const BLOCK_ENVIRONMENT_CAPTURE: &str = r#"
+interface Vm {
+    function roll(uint256 height) external;
+    function warp(uint256 time) external;
+}
+contract EnvironmentCapture {
+    Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+    function capture() public returns (uint256, uint256) {
+        uint256 height = block.number;
+        uint256 time = block.timestamp;
+        vm.roll(200);
+        vm.warp(200);
+        return (height, time);
+    }
+}
+"#;
+
+forgetest!(block_environment_lints_tests_and_scripts, |prj, cmd| {
+    prj.add_test("EnvironmentCapture.t.sol", BLOCK_ENVIRONMENT_CAPTURE);
+    let expected = str![[r#"
+warning[block-number-across-roll]: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
+   [FILE]:11:26
+   │
+11 │         uint256 height = block.number;
+   │                          ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/block-number-across-roll
+
+warning[block-timestamp-across-warp]: `block.timestamp` may be reused across `vm.warp`; capture it with `vm.getBlockTimestamp()` instead
+   [FILE]:12:24
+   │
+12 │         uint256 time = block.timestamp;
+   │                        ━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/block-timestamp-across-warp
+
+
+"#]];
+    cmd.arg("lint").assert_success().stderr_eq(expected.clone());
+    cmd.forge_fuse().args(["lint", "--deny", "warnings"]).assert_failure();
+
+    let script = prj.add_script("EnvironmentCapture.s.sol", BLOCK_ENVIRONMENT_CAPTURE);
+    cmd.forge_fuse().arg("lint").arg(script).assert_success().stderr_eq(expected);
+
+    prj.update_config(|config| {
+        config.lint.exclude_lints =
+            vec!["block-number-across-roll".into(), "block-timestamp-across-warp".into()];
+    });
+    cmd.forge_fuse().arg("lint").assert_success().stderr_eq("");
+    prj.update_config(|config| {
+        config.lint.exclude_lints.clear();
+        config.lint.severity = vec![LintSeverity::Info];
+    });
+    cmd.forge_fuse().arg("lint").assert_success().stderr_eq("");
+});
+
+forgetest!(block_environment_build_is_bytecode_neutral, |prj, cmd| {
+    prj.add_test("EnvironmentCapture.t.sol", BLOCK_ENVIRONMENT_CAPTURE);
+    prj.update_config(|config| {
+        config.optimizer = Some(true);
+        config.via_ir = true;
+    });
+    cmd.args(["build", "--no-lint"]).assert_success().stderr_eq("");
+    let artifact = prj.artifacts().join("EnvironmentCapture.t.sol/EnvironmentCapture.json");
+    let without_lints = std::fs::read(&artifact).unwrap();
+
+    cmd.forge_fuse().args(["build", "--force"]).assert_success().stderr_eq(str![[r#"
+warning[block-number-across-roll]: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
+   [FILE]:11:26
+   │
+11 │         uint256 height = block.number;
+   │                          ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/block-number-across-roll
+
+warning[block-timestamp-across-warp]: `block.timestamp` may be reused across `vm.warp`; capture it with `vm.getBlockTimestamp()` instead
+   [FILE]:12:24
+   │
+12 │         uint256 time = block.timestamp;
+   │                        ━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/block-timestamp-across-warp
+
+
+"#]]);
+    assert_eq!(
+        without_lints,
+        std::fs::read(artifact).unwrap(),
+        "linting changed the build artifact"
+    );
+});
+
+forgetest!(block_environment_getters_materialize_captures, |prj, cmd| {
+    prj.add_test(
+        "EnvironmentGetters.t.sol",
+        r#"
+interface Vm {
+    function roll(uint256 height) external;
+    function warp(uint256 time) external;
+    function getBlockNumber() external view returns (uint256);
+    function getBlockTimestamp() external view returns (uint256);
+}
+contract EnvironmentGetters {
+    Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+    function testCapture() public {
+        vm.roll(100);
+        vm.warp(100);
+        uint256 height = vm.getBlockNumber();
+        uint256 time = vm.getBlockTimestamp();
+        vm.roll(200);
+        vm.warp(200);
+        vm.roll(height);
+        vm.warp(time);
+        require(vm.getBlockNumber() == 100, "height was not captured");
+        require(vm.getBlockTimestamp() == 100, "time was not captured");
+    }
+}
+"#,
+    );
+    for via_ir in [false, true] {
+        for optimizer in [false, true] {
+            prj.update_config(|config| {
+                config.via_ir = via_ir;
+                config.optimizer = Some(optimizer);
+            });
+            cmd.forge_fuse().args(["test", "--force"]).assert_success().stderr_eq("");
+        }
+    }
+});
+
 forgetest!(skip_test_and_script_project_lints, |prj, cmd| {
     prj.add_test("Test", "pragma solidity ^0.8.0; contract Test {}");
     prj.add_script("Script", "pragma solidity >=0.8.0; contract Script {}");
