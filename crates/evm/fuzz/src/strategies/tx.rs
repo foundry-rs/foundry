@@ -278,6 +278,7 @@ mod tests {
             assert_eq!(generator.next_tx(&mut runner).unwrap().call_details.target, retained);
         }
     }
+
     #[test]
     fn default_sender_pool_includes_foundry_deployer() {
         let senders = SenderFilters::default();
