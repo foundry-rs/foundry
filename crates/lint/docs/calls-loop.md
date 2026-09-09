@@ -3,9 +3,6 @@
 **Severity**: `Low`
 **ID**: `calls-loop`
 
-Flags external calls made from inside loops, including calls reached through modifiers or internal
-helper functions.
-
 ## What it does
 
 Reports high-level contract calls, low-level `call`/`delegatecall`/`staticcall`, Ether
@@ -23,8 +20,6 @@ ETH or where every external contract must respond successfully before the functi
 
 ## Example
 
-### Bad
-
 ```solidity
 contract Payouts {
     address payable[] recipients;
@@ -37,7 +32,7 @@ contract Payouts {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 contract Payouts {

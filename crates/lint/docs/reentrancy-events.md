@@ -3,34 +3,27 @@
 **Severity**: `Low`
 **ID**: `reentrancy-events`
 
-Flags `emit` statements that appear after an external call within the same function (or any internal helper it transitively calls). Emitting state-change events only after the external call returns can mislead off-chain consumers — including indexers, subgraphs, monitoring tools, and bridges — that rely on log ordering to reconstruct contract state.
-
 ## What it does
 
-For every function body, the lint performs a control-flow analysis that tracks whether an external call has occurred on the path leading to each statement. Only calls that can plausibly affect log ordering or observable state are considered — `staticcall` and high-level `view` / `pure` external calls are excluded. Tracked calls include:
+Reports events emitted after an external interaction, such as a state-changing contract
+call, low-level `call` or `delegatecall`, ETH `send` or `transfer`, or contract creation.
+Static calls and `view` or `pure` calls are excluded.
 
-- Low-level calls: `address.call(...)` and `address.delegatecall(...)` (with or without `{value: ...}` / `{gas: ...}` options).
-- ETH sends: `address.transfer(...)`, `address.send(...)`.
-- `this.method(...)` self-external calls.
-- High-level state-mutating external calls on interface or contract types (e.g. `IERC20(token).transfer(...)`). `view` and `pure` callees are not tracked.
-- Contract deployments via `new Foo(...)` (the constructor runs as an external interaction).
-
-External calls reached through internal/private/public helper functions, modifiers, and `super.f(...)` base-chain dispatch are tracked transitively when the helper is invoked by a bare identifier (e.g. `_helper()`) or via `super.`. Member-form internal dispatch such as `Lib.f(...)` and `using for` syntax is **not** yet followed; external calls hidden behind those forms may go undetected.
-
-When the analysis encounters an `emit` statement reachable from a path that already executed a tracked external call, the statement is flagged.
+Calls in ordinary internal helpers and modifiers are followed, but interactions hidden in
+library-qualified or `using for` internal calls may be missed.
 
 ## Why is this bad?
 
 Reentrancy and off-chain ordering both depend on event sequence:
 
-- A reentrant callee can observe (or trigger another contract to observe) events in an order that no longer reflects the final state of the calling contract.
+- A reentrant call can cause nested state changes and their events to be interleaved with the
+  original operation, making log order differ from the order of the state changes it describes.
 - Indexers, bridges, and monitoring tools that consume logs in emission order may apply state transitions incorrectly when events are not emitted alongside the writes they describe.
 
-Emitting the event **before** the external call ensures the log is anchored to the local state change, regardless of what the callee does.
+Emit the event alongside the state change it describes, before yielding control externally.
+Contracts cannot read transaction logs during execution; this warning concerns off-chain consumers.
 
 ## Example
-
-### Bad
 
 ```solidity
 contract BadCounter {
@@ -45,7 +38,7 @@ contract BadCounter {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 contract GoodCounter {

@@ -7,7 +7,7 @@ pragma solidity ^0.8.18;
 interface I1 {}
 
 // Library is also a contract-like item and it should be counted.
-library L1 {} //~NOTE: prefer having only one contract, interface or library per file
+library L1 {} //~NOTE: file contains multiple contracts, interfaces or libraries
 
 // Third contract-like item.
 contract C1 {}

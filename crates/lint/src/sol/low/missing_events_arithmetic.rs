@@ -30,7 +30,7 @@ declare_forge_lint!(
     MISSING_EVENTS_ARITHMETIC,
     Severity::Low,
     "missing-events-arithmetic",
-    "critical arithmetic state changes should emit events"
+    "critical arithmetic state changes without an event"
 );
 
 impl<'gcx> LateLintPass<'gcx> for MissingEventsArithmetic {

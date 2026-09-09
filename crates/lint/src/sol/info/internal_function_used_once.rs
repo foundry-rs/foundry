@@ -19,7 +19,7 @@ declare_forge_lint!(
     INTERNAL_FUNCTION_USED_ONCE,
     Severity::Info,
     "internal-function-used-once",
-    "this internal function is used only once; consider inlining it into its caller"
+    "this internal function is used only once"
 );
 
 impl<'ast> ProjectLintPass<'ast> for InternalFunctionUsedOnce {

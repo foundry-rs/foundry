@@ -28,7 +28,7 @@ declare_forge_lint!(
     EXTERNAL_FUNCTION,
     Severity::Gas,
     "external-function",
-    "public function can be declared external"
+    "`public` function can be declared `external`"
 );
 
 #[derive(Default)]

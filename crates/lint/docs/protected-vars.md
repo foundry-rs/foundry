@@ -3,9 +3,6 @@
 **Severity**: `High`
 **ID**: `protected-vars`
 
-Flags externally callable functions that can write a state variable without invoking the function
-or modifier named by its `@custom:security write-protection` annotation.
-
 ## What it does
 
 A state variable can declare a required protection with an exact function or modifier signature:
@@ -15,21 +12,12 @@ A state variable can declare a required protection with an exact function or mod
 address owner;
 ```
 
-The lint follows modifiers, library calls, and resolved internal call paths from public, external,
-fallback, and receive entry points. If an entry point writes the variable directly or through a
-reachable helper, the required function or modifier must dominate every path to that write. This
-includes writes through storage references, returned storage locations, collection
-`push`/`pop` operations, and resolvable inline-assembly storage slots.
+The named internal function or modifier must run before every write reachable from an
+externally callable function. Calling it after the write or on only one branch is insufficient;
+an external call such as `this.onlyOwner()` does not satisfy the requirement.
 
-Overloads are matched by their exact signature. Inherited variables, entry points, functions, and
-modifiers are resolved in the most-derived contract, including virtual dispatch. External calls
-such as `this.onlyOwner()` do not satisfy an internal write-protection requirement. An unresolved
-signature or malformed `write-protection` value is treated as unsatisfied so an invalid annotation
-cannot silently disable the lint.
-
-Like Slither's annotation semantics, the annotation identifies a required internal function or
-modifier by its exact signature. The lint additionally checks control-flow order so a call after a
-write or on only one branch does not satisfy the requirement.
+Use the exact signature, including parameter types. An invalid or unresolved annotation
+does not disable the warning.
 
 ## Why is this bad?
 
@@ -37,8 +25,6 @@ Writing security-sensitive state without its declared access check can let an un
 change ownership, authorization, or other protected configuration.
 
 ## Example
-
-### Bad
 
 ```solidity
 contract Registry {
@@ -56,7 +42,7 @@ contract Registry {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 contract Registry {

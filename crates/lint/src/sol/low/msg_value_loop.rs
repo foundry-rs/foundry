@@ -15,7 +15,7 @@ declare_forge_lint!(
     MSG_VALUE_LOOP,
     Severity::Low,
     "msg-value-loop",
-    "payable functions should not use `msg.value` inside a loop"
+    "payable function uses `msg.value` inside a loop"
 );
 
 impl<'gcx> LateLintPass<'gcx> for MsgValueLoop {

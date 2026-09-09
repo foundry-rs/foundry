@@ -15,7 +15,7 @@ declare_forge_lint!(
     DELEGATECALL_LOOP,
     Severity::Low,
     "delegatecall-loop",
-    "payable functions should not use `delegatecall` inside a loop"
+    "payable function uses `delegatecall` inside a loop"
 );
 
 impl<'gcx> LateLintPass<'gcx> for DelegatecallLoop {

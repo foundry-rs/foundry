@@ -17,7 +17,7 @@ declare_forge_lint!(
     DIVIDE_BEFORE_MULTIPLY,
     Severity::Med,
     "divide-before-multiply",
-    "multiplication should occur before division to avoid loss of precision"
+    "division before multiplication may lose precision"
 );
 
 /// Locals whose current value is the result of a division.

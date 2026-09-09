@@ -1,10 +1,7 @@
-# Use of tx.origin for authorization
+# Use of `tx.origin` for authorization
 
 **Severity**: `Med`
 **ID**: `tx-origin`
-
-Flags use of `tx.origin` inside authorization-like predicates such as `require`, `assert`, `if`,
-`while`, and `for` conditions.
 
 ## What it does
 
@@ -21,13 +18,11 @@ Use `msg.sender` for authorization checks instead.
 
 ## Example
 
-### Bad
-
 ```solidity
 require(tx.origin == owner, "not owner");
 ```
 
-### Good
+Use instead:
 
 ```solidity
 require(msg.sender == owner, "not owner");

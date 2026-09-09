@@ -131,7 +131,7 @@ contract ArbitrarySendErc20Permit {
         bytes32 s
     ) public {
         token.permit(from, address(this), a, deadline, v, r, s);
-        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`
     }
 
     // Same as `badPermitPlain` but the sink is `safeTransferFrom` (member form).
@@ -145,7 +145,7 @@ contract ArbitrarySendErc20Permit {
         bytes32 s
     ) public {
         token.permit(from, address(this), a, deadline, v, r, s);
-        token.safeTransferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+        token.safeTransferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`
     }
 
     // Library-form sink: `SafeERC20.safeTransferFrom(token, from, to, a)` still triggers
@@ -160,7 +160,7 @@ contract ArbitrarySendErc20Permit {
         bytes32 s
     ) public {
         token.permit(from, address(this), a, deadline, v, r, s);
-        SafeERC20.safeTransferFrom(token, from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+        SafeERC20.safeTransferFrom(token, from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`
     }
 
     // Named-args form for both permit and transferFrom.
@@ -182,7 +182,7 @@ contract ArbitrarySendErc20Permit {
             r: r,
             s: s
         });
-        token.transferFrom({from: from, to: to, amount: a}); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+        token.transferFrom({from: from, to: to, amount: a}); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`
     }
 
     // Both `then` and `else` permit + sink: each branch sink emits independently.
@@ -198,10 +198,10 @@ contract ArbitrarySendErc20Permit {
     ) public {
         if (flag) {
             token.permit(from, address(this), a, deadline, v, r, s);
-            token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+            token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`
         } else {
             token.permit(from, address(this), a, deadline, v, r, s);
-            token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+            token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`
         }
     }
 
@@ -222,7 +222,7 @@ contract ArbitrarySendErc20Permit {
         } else {
             token.permit(from, address(this), a, deadline, v, r, s);
         }
-        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`
     }
 
     // Permit + sink inside a single branch.
@@ -238,7 +238,7 @@ contract ArbitrarySendErc20Permit {
     ) public {
         if (flag) {
             token.permit(from, address(this), a, deadline, v, r, s);
-            token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+            token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`
         }
     }
 
@@ -254,7 +254,7 @@ contract ArbitrarySendErc20Permit {
     ) public {
         token.permit(from, address(this), a, deadline, v, r, s);
         unchecked {
-            token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+            token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`
         }
     }
 
@@ -271,7 +271,7 @@ contract ArbitrarySendErc20Permit {
         bytes32 s
     ) public {
         IERC20(rawToken).permit(from, address(this), a, deadline, v, r, s);
-        IERC20(rawToken).transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+        IERC20(rawToken).transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`
     }
 
     // Solady-shaped library: token passed as raw `address`; permit recorded under the
@@ -287,7 +287,7 @@ contract ArbitrarySendErc20Permit {
         bytes32 s
     ) public {
         IERC20(rawToken).permit(from, address(this), a, deadline, v, r, s);
-        SafeTransferLib.safeTransferFrom(rawToken, from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+        SafeTransferLib.safeTransferFrom(rawToken, from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`
     }
 
     // `using SafeTransferLib for address;` member form: `rawToken.safeTransferFrom(...)`.
@@ -302,7 +302,7 @@ contract ArbitrarySendErc20Permit {
         bytes32 s
     ) public {
         IERC20(rawToken).permit(from, address(this), a, deadline, v, r, s);
-        rawToken.safeTransferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+        rawToken.safeTransferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`
     }
 
     // `do { permit } while (false)` establishes the permit on the only path through the
@@ -319,7 +319,7 @@ contract ArbitrarySendErc20Permit {
         do {
             token.permit(from, address(this), a, deadline, v, r, s);
         } while (false);
-        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`
     }
 
     // Try-call succeeds; sink inside the success clause inherits the permit from the
@@ -337,7 +337,7 @@ contract ArbitrarySendErc20Permit {
     ) public {
         token.permit(from, address(this), a, deadline, v, r, s);
         try t.transfer(to, a) returns (bool) {
-            token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+            token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`
         } catch {}
     }
 
@@ -354,7 +354,7 @@ contract ArbitrarySendErc20Permit {
     ) public {
         address self = address(this);
         token.permit(from, self, a, deadline, v, r, s);
-        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`
     }
 
     // `payable(address(this))` as spender — also recognised.
@@ -368,7 +368,7 @@ contract ArbitrarySendErc20Permit {
         bytes32 s
     ) public {
         token.permit(from, payable(address(this)), a, deadline, v, r, s);
-        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`
     }
 
     // Two distinct permits on two distinct tokens, sinks in reverse order. Permits don't
@@ -385,8 +385,8 @@ contract ArbitrarySendErc20Permit {
     ) public {
         token.permit(from1, address(this), a, deadline, v, r, s);
         other.permit(from2, address(this), a, deadline, v, r, s);
-        other.transferFrom(from2, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
-        token.transferFrom(from1, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+        other.transferFrom(from2, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`
+        token.transferFrom(from1, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`
     }
 
     // Modifier-hoisted `spender == address(this)` guard. The modifier proves the caller
@@ -403,7 +403,7 @@ contract ArbitrarySendErc20Permit {
         bytes32 s
     ) public onlyContract(spender) {
         token.permit(from, spender, a, deadline, v, r, s);
-        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`
     }
 
     // Equality guard `spender == address(this)` makes `spender` a self alias for the
@@ -421,7 +421,7 @@ contract ArbitrarySendErc20Permit {
     ) public {
         require(spender == address(this), "spender");
         token.permit(from, spender, a, deadline, v, r, s);
-        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`
     }
 
     // After consuming an EIP-3156 repayment, the *same-shape* second pullback no longer
@@ -439,7 +439,7 @@ contract ArbitrarySendErc20Permit {
         token.permit(address(receiver), address(this), amount + fee, deadline, v, r, s);
         receiver.onFlashLoan(msg.sender, address(token), amount, fee, data);
         token.transferFrom(address(receiver), address(this), amount + fee);
-        token.transferFrom(address(receiver), address(this), amount + fee); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+        token.transferFrom(address(receiver), address(this), amount + fee); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`
     }
 
     // Permit + double flash-loan: two identical `onFlashLoan` calls each license one
@@ -842,7 +842,7 @@ contract ArbitrarySendErc20Permit {
         bytes32 s
     ) public {
         try token.permit(from, address(this), a, deadline, v, r, s) {
-            token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+            token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`
         } catch {}
     }
 
@@ -1053,7 +1053,7 @@ contract ArbitrarySendErc20Permit {
         try token.permit(from, address(this), a, deadline, v, r, s) {} catch {
             revert("permit failed");
         }
-        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`
     }
 
     // do-while runs at least once and the only exit is after the permit.
@@ -1070,7 +1070,7 @@ contract ArbitrarySendErc20Permit {
             token.permit(from, address(this), a, deadline, v, r, s);
             break;
         } while (true);
-        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`
     }
 
     // Permit's owner is a local alias of the sink's `from`.
@@ -1085,7 +1085,7 @@ contract ArbitrarySendErc20Permit {
     ) public {
         address ownerAlias = from;
         token.permit(ownerAlias, address(this), a, deadline, v, r, s);
-        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`
     }
 
     // Reverse: sink's `from` is the alias of the permit's owner.
@@ -1100,7 +1100,7 @@ contract ArbitrarySendErc20Permit {
     ) public {
         address from2 = from;
         token.permit(from, address(this), a, deadline, v, r, s);
-        token.transferFrom(from2, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+        token.transferFrom(from2, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`
     }
 
     // Sink receiver `t` is a local alias of the permit's token.
@@ -1115,7 +1115,7 @@ contract ArbitrarySendErc20Permit {
     ) public {
         IERC20 t = token;
         token.permit(from, address(this), a, deadline, v, r, s);
-        t.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+        t.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`
     }
 
     // No-arg helper returning `address(this)` is recognised as the permit spender.
@@ -1129,7 +1129,7 @@ contract ArbitrarySendErc20Permit {
         bytes32 s
     ) public {
         token.permit(from, _self(), a, deadline, v, r, s);
-        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`
     }
 
     // Modifier prefix definitely exits; body is unreachable.
@@ -1191,7 +1191,7 @@ contract ArbitrarySendErc20Permit {
         bytes32 s
     ) external {
         cfg.token.permit(from, address(this), a, deadline, v, r, s);
-        cfg.token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+        cfg.token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`
     }
 
     // Library wrapper `SafeERC20.safePermit(token, ...)`; later raw transferFrom on the
@@ -1206,7 +1206,7 @@ contract ArbitrarySendErc20Permit {
         bytes32 s
     ) external {
         SafeERC20.safePermit(token, from, address(this), a, deadline, v, r, s);
-        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`
     }
 
     // Internal call reassigns the token state var; the prior permit no longer covers it.
@@ -1276,7 +1276,7 @@ contract ArbitrarySendErc20Permit {
         bytes32 s
     ) external {
         token.permit(from, address(this), a, deadline, v, r, s);
-        _switchTokenAndReturn(token.transferFrom(from, to, a) ? 0 : 0); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+        _switchTokenAndReturn(token.transferFrom(from, to, a) ? 0 : 0); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`
     }
 
     // Immutable seeded from constructor with `address(this)`; flash-loan repayment

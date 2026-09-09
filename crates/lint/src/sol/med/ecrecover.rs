@@ -31,7 +31,7 @@ declare_forge_lint!(
     ECRECOVER,
     Severity::Med,
     "ecrecover",
-    "ecrecover should reject malleable signatures"
+    "`ecrecover` call does not reject malleable signatures"
 );
 
 /// Largest canonical secp256k1 `s` value, `n / 2`.

@@ -29,7 +29,7 @@ declare_forge_lint!(
     MISSING_EVENTS_ACCESS_CONTROL,
     Severity::Low,
     "missing-events-access-control",
-    "access control changes should emit events"
+    "access control changes without an event"
 );
 
 impl<'gcx> LateLintPass<'gcx> for MissingEventsAccessControl {

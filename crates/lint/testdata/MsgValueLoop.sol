@@ -11,7 +11,7 @@ contract MsgValueBase {
 
 contract MsgValueReader is MsgValueBase {
     function superRead() internal virtual override returns (uint256) {
-        return msg.value; //~WARN: payable functions should not use `msg.value` inside a loop
+        return msg.value; //~WARN: payable function uses `msg.value` inside a loop
     }
 }
 
@@ -23,7 +23,7 @@ contract MsgValueSuperCaller is MsgValueBase {
 
 contract MsgValueSuperOverloadBase {
     function overloaded(uint256) internal virtual returns (uint256) {
-        return msg.value; //~WARN: payable functions should not use `msg.value` inside a loop
+        return msg.value; //~WARN: payable function uses `msg.value` inside a loop
     }
 }
 
@@ -46,7 +46,7 @@ contract MsgValueSuperOverloadLeaf is MsgValueSuperOverloadMask {
 library MsgValueExtension {
     function extensionRead(uint256 self) internal returns (uint256) {
         self;
-        return msg.value; //~WARN: payable functions should not use `msg.value` inside a loop
+        return msg.value; //~WARN: payable function uses `msg.value` inside a loop
     }
 }
 
@@ -76,13 +76,13 @@ contract MsgValueLoop is MsgValueReader, MsgValueSuperCaller {
 
     receive() external payable {
         for (uint256 i; i < 2; ++i) {
-            total += msg.value; //~WARN: payable functions should not use `msg.value` inside a loop
+            total += msg.value; //~WARN: payable function uses `msg.value` inside a loop
         }
     }
 
     fallback() external payable {
         for (uint256 i; i < 2; ++i) {
-            total += msg.value; //~WARN: payable functions should not use `msg.value` inside a loop
+            total += msg.value; //~WARN: payable function uses `msg.value` inside a loop
         }
     }
 
@@ -92,14 +92,14 @@ contract MsgValueLoop is MsgValueReader, MsgValueSuperCaller {
 
     function payableForLoop(uint256 iterations) external payable {
         for (uint256 i; i < iterations; ++i) {
-            total += msg.value; //~WARN: payable functions should not use `msg.value` inside a loop
+            total += msg.value; //~WARN: payable function uses `msg.value` inside a loop
         }
     }
 
     function payableWhileLoop(uint256 iterations) external payable {
         uint256 i;
         while (i < iterations) {
-            total += msg.value; //~WARN: payable functions should not use `msg.value` inside a loop
+            total += msg.value; //~WARN: payable function uses `msg.value` inside a loop
             ++i;
         }
     }
@@ -108,14 +108,14 @@ contract MsgValueLoop is MsgValueReader, MsgValueSuperCaller {
         if (iterations == 0) return;
         uint256 i;
         do {
-            total += msg.value; //~WARN: payable functions should not use `msg.value` inside a loop
+            total += msg.value; //~WARN: payable function uses `msg.value` inside a loop
             ++i;
         } while (i < iterations);
     }
 
     function payableForUpdateExpression(uint256 iterations) external payable {
         uint256 value;
-        for (uint256 i; i < iterations; value = msg.value + i++) {} //~WARN: payable functions should not use `msg.value` inside a loop
+        for (uint256 i; i < iterations; value = msg.value + i++) {} //~WARN: payable function uses `msg.value` inside a loop
         total += value;
     }
 
@@ -126,7 +126,7 @@ contract MsgValueLoop is MsgValueReader, MsgValueSuperCaller {
     }
 
     function payableModifierLoopPlaceholder(uint256 iterations) external payable loopPlaceholder(iterations) {
-        total += msg.value; //~WARN: payable functions should not use `msg.value` inside a loop
+        total += msg.value; //~WARN: payable function uses `msg.value` inside a loop
     }
 
     function payableLoopWithInternalMsgValue(uint256 iterations) external payable {
@@ -136,7 +136,7 @@ contract MsgValueLoop is MsgValueReader, MsgValueSuperCaller {
     }
 
     function readValue() internal returns (uint256) {
-        return msg.value; //~WARN: payable functions should not use `msg.value` inside a loop
+        return msg.value; //~WARN: payable function uses `msg.value` inside a loop
     }
 
     function payableInternalLoopWithMsgValue(uint256 iterations) external payable {
@@ -145,7 +145,7 @@ contract MsgValueLoop is MsgValueReader, MsgValueSuperCaller {
 
     function readValueInLoop(uint256 iterations) internal {
         for (uint256 i; i < iterations; ++i) {
-            total += msg.value; //~WARN: payable functions should not use `msg.value` inside a loop
+            total += msg.value; //~WARN: payable function uses `msg.value` inside a loop
         }
     }
 
@@ -156,7 +156,7 @@ contract MsgValueLoop is MsgValueReader, MsgValueSuperCaller {
     }
 
     function publicReadValue() public payable returns (uint256) {
-        return msg.value; //~WARN: payable functions should not use `msg.value` inside a loop
+        return msg.value; //~WARN: payable function uses `msg.value` inside a loop
     }
 
     function payableLoopWithSuperMsgValue(uint256 iterations) external payable {
@@ -191,7 +191,7 @@ contract MsgValueLoop is MsgValueReader, MsgValueSuperCaller {
     }
 
     function duplicateReadValue() internal returns (uint256) {
-        return msg.value; //~WARN: payable functions should not use `msg.value` inside a loop
+        return msg.value; //~WARN: payable function uses `msg.value` inside a loop
     }
 
     function payableMsgValueOutsideLoop() external payable {

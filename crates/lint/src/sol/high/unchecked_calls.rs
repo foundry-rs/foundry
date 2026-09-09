@@ -15,14 +15,14 @@ declare_forge_lint!(
     UNCHECKED_CALL,
     Severity::High,
     "unchecked-call",
-    "Low-level calls should check the success return value"
+    "low-level call does not check the success return value"
 );
 
 declare_forge_lint!(
     ERC20_UNCHECKED_TRANSFER,
     Severity::High,
     "erc20-unchecked-transfer",
-    "ERC20 'transfer' and 'transferFrom' calls should check the return value"
+    "ERC20 `transfer` or `transferFrom` call does not check the return value"
 );
 
 /// Checks that calls to functions with the same signature as the ERC20 transfer methods, and which

@@ -25,7 +25,7 @@ declare_forge_lint!(
     ENUMERABLE_LOOP_REMOVAL,
     Severity::High,
     "enumerable-loop-removal",
-    "`remove` on an EnumerableSet inside a loop that iterates it with `at` corrupts the iteration"
+    "`remove` on an `EnumerableSet` inside a loop that iterates it with `at` can corrupt the iteration"
 );
 
 // The detector reports only the shape it can judge without a flow analysis: a loop whose own
