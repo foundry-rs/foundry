@@ -151,9 +151,10 @@ impl SymbolicExecutor {
             return Ok(CheatcodeOutcome::Failure);
         }
         let out_of_range = in_range.not(&mut self.cx);
-        let (_out_of_range_constraints, out_of_range_sat) =
+        let (out_of_range_constraints, out_of_range_sat) =
             self.constraints_with_condition(state, out_of_range)?;
         if out_of_range_sat {
+            state.constraints = out_of_range_constraints;
             return Ok(CheatcodeOutcome::Failure);
         }
 
@@ -213,9 +214,10 @@ impl SymbolicExecutor {
             return Ok(CheatcodeOutcome::Failure);
         }
         let out_of_range = in_range.not(&mut self.cx);
-        let (_out_of_range_constraints, out_of_range_sat) =
+        let (out_of_range_constraints, out_of_range_sat) =
             self.constraints_with_condition(state, out_of_range)?;
         if out_of_range_sat {
+            state.constraints = out_of_range_constraints;
             return Ok(CheatcodeOutcome::Failure);
         }
 
