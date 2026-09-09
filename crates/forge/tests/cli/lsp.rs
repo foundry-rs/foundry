@@ -1,3 +1,4 @@
+use super::lsp_client::{LspClient, request};
 use async_lsp::{
     LanguageServer,
     lsp_types::{
@@ -21,8 +22,6 @@ use std::{
     path::Path,
     process::Command,
 };
-
-use super::lsp_client::{LspClient, request};
 
 #[cfg(unix)]
 use foundry_test_utils::snapbox::{IntoData, data::DataFormat};

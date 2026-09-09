@@ -7,10 +7,6 @@ use eyre::{Context, Result};
 use foundry_cli::utils::{self, LoadConfig};
 use foundry_common::fs;
 use foundry_config::Config;
-#[cfg(feature = "monad")]
-use foundry_evm::core::evm::MonadEvmNetwork;
-#[cfg(feature = "optimism")]
-use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork},
     executors::ExecutorBuilder,
@@ -20,6 +16,12 @@ use foundry_evm_networks::NetworkConfigs;
 use rustyline::{Editor, config::Configurer, error::ReadlineError};
 use std::{ops::ControlFlow, path::PathBuf};
 use yansi::Paint;
+
+#[cfg(feature = "monad")]
+use foundry_evm::core::evm::MonadEvmNetwork;
+
+#[cfg(feature = "optimism")]
+use foundry_evm::core::evm::OpEvmNetwork;
 
 /// Run the `chisel` command line interface.
 pub fn run() -> Result<()> {

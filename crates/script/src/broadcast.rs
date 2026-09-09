@@ -583,7 +583,6 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 // We send transactions and wait for receipts in batches of 100, since some networks
                 // cannot handle more than that.
                 let batch_size = if sequential_broadcast { 1 } else { 100 };
-                let mut index = already_broadcasted;
                 let sequence_chain = sequence.chain;
 
                 for (batch_number, batch) in transactions.chunks(batch_size).enumerate() {
@@ -594,8 +593,10 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                     ));
 
                     if !batch.is_empty() {
-                        let pending_transactions =
-                            batch.iter().map(|(kind, is_fixed_gas_limit)| {
+                        let pending_transactions = batch.iter().enumerate().map(
+                            |(position, (kind, is_fixed_gas_limit))| {
+                                let index =
+                                    already_broadcasted + batch_number * batch_size + position;
                                 let provider = provider.clone();
                                 let tempo_sponsor = tempo_sponsor.clone();
                                 async move {
@@ -611,10 +612,11 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                             Some(sequence_chain.into()),
                                         )
                                         .await;
-                                    (res, kind, *is_fixed_gas_limit, 0, None)
+                                    (res, kind, *is_fixed_gas_limit, 0, None, index)
                                 }
                                 .boxed()
-                            });
+                            },
+                        );
 
                         let mut buffer = pending_transactions.collect::<FuturesUnordered<_>>();
 
@@ -624,6 +626,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                             is_fixed_gas_limit,
                             attempt,
                             original_res,
+                            index,
                         )) = buffer.next().await
                         {
                             if res.is_err()
@@ -663,6 +666,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                         is_fixed_gas_limit,
                                         attempt,
                                         original_res.or(Some(res)),
+                                        index,
                                     )
                                 }));
 
@@ -686,7 +690,6 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                             sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
                             seq_progress.inner.write().tx_sent(tx_hash);
-                            index += 1;
                         }
 
                         // Checkpoint save

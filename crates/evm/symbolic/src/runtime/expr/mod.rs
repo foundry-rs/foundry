@@ -6,6 +6,10 @@ pub(super) mod hashcons;
 #[path = "expr.rs"]
 mod word;
 
+pub(crate) use bool::*;
+pub(crate) use cx::*;
+pub(crate) use word::*;
+
 struct NoopModel;
 
 impl SymbolicModelLookup for NoopModel {
@@ -14,9 +18,14 @@ impl SymbolicModelLookup for NoopModel {
     }
 }
 
-pub(crate) use bool::*;
-pub(crate) use cx::*;
-pub(crate) use word::*;
+/// Results from one deterministic bottom-up expression fold.
+///
+/// Keys borrow the original DAG so the memo table does not add strong references to source nodes.
+#[derive(Default)]
+struct ExpressionFoldCache<'a> {
+    words: HashMap<&'a SymExpr, SymExpr>,
+    bools: HashMap<&'a SymBoolExpr, SymBoolExpr>,
+}
 
 /// Evaluates hash-consed expressions once per model.
 ///

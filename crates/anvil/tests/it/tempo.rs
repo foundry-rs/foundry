@@ -6,17 +6,6 @@
 //! - Native value transfer rejection
 //! - Basic transaction behavior in Tempo mode
 
-use std::num::NonZeroU64;
-#[cfg(feature = "cli")]
-use std::{
-    net::TcpListener,
-    path::PathBuf,
-    process::{Child, Command, Stdio},
-    time::Duration,
-};
-
-#[cfg(feature = "cli")]
-use crate::utils::http_provider;
 use alloy_consensus::{
     BlockHeader, Eip658Value, Receipt, Sealable, TxEip1559, Typed2718,
     proofs::{calculate_receipt_root, calculate_transaction_root},
@@ -45,6 +34,7 @@ use foundry_evm::core::tempo::{
 };
 use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope, TempoTransactionRequest};
 use futures::StreamExt;
+use std::num::NonZeroU64;
 use tempo_alloy::{TempoNetwork, primitives::TempoTxEnvelope, rpc::TempoHeaderResponse};
 use tempo_hardfork::{
     TempoHardfork,
@@ -70,6 +60,16 @@ use tempo_primitives::{
         Call, FEE_PAYER_SIGNATURE_MARKER, KeyAuthorization, KeychainSignature, PrimitiveSignature,
         SignatureType, TokenLimit,
     },
+};
+
+#[cfg(feature = "cli")]
+use crate::utils::http_provider;
+#[cfg(feature = "cli")]
+use std::{
+    net::TcpListener,
+    path::PathBuf,
+    process::{Child, Command, Stdio},
+    time::Duration,
 };
 
 const PATH_USD: Address = PATH_USD_ADDRESS;

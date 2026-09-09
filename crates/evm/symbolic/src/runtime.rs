@@ -23,7 +23,12 @@ pub(crate) use expr::*;
 pub(crate) use memory::*;
 pub(crate) use precompiles::*;
 pub use solver::PortfolioDiagnostics;
-pub(crate) use solver::{SmtLibSubprocessSolver, solver_portfolio_availability_warning};
+pub(crate) use solver::{
+    BranchFeasibility, SmtLibSubprocessSolver, solver_portfolio_availability_warning,
+};
+pub(crate) use state::*;
+pub(crate) use symbols::*;
+
 #[cfg(test)]
 pub(crate) use solver::{
     SolverCommand, SolverConfigError, SolverOutcome, SolverRunSummary, fallback_single_var_model,
@@ -32,8 +37,6 @@ pub(crate) use solver::{
     product_monotonic_unsat, solver_commands_for_config, split_solver_command,
     validate_solver_model_output,
 };
-pub(crate) use state::*;
-pub(crate) use symbols::*;
 
 /// One comparison site from a fuzz branch frontier to target during symbolic execution.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

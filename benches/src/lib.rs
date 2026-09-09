@@ -341,6 +341,32 @@ impl BenchmarkProject {
         )
     }
 
+    /// Benchmarks tests after cleaning once and warming the selected workload.
+    ///
+    /// Keeps the project's dynamic linking configuration. Effective CLI or configuration
+    /// filters are needed to exercise partial-cache discovery.
+    pub fn bench_forge_test_filtered(
+        &self,
+        version: &str,
+        runs: u32,
+        verbose: bool,
+    ) -> Result<HyperfineResult> {
+        let command = self.cmd("forge test");
+        // Force cleanup in the first warmup using the same root/configuration as the tests.
+        // The second invocation warms discovery against the resulting normal artifacts.
+        let setup = format!("FOUNDRY_FORCE=true {command} && {command}");
+        self.hyperfine(
+            "forge_test_filtered",
+            version,
+            &command,
+            runs,
+            Some(&setup),
+            None,
+            None,
+            verbose,
+        )
+    }
+
     /// Benchmark forge build with cache
     pub fn bench_forge_build_with_cache(
         &self,
@@ -569,6 +595,7 @@ impl BenchmarkProject {
     ) -> Result<HyperfineResult> {
         match benchmark {
             "forge_test" => self.bench_forge_test(version, runs, verbose),
+            "forge_test_filtered" => self.bench_forge_test_filtered(version, runs, verbose),
             "forge_build_no_cache" => self.bench_forge_build_no_cache(version, runs, verbose),
             "forge_build_with_cache" => self.bench_forge_build_with_cache(version, runs, verbose),
             "forge_fuzz_test" => self.bench_forge_fuzz_test(version, runs, verbose),
