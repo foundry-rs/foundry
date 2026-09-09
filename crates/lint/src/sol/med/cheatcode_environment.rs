@@ -35,7 +35,7 @@ use solar::{
         Gcx,
         builtins::Builtin,
         eval::ConstValue,
-        hir::{self, Expr, ExprKind, Function, FunctionId, ItemId, Stmt, StmtKind, VariableId},
+        hir::{self, Expr, ExprKind, Function, FunctionId, Stmt, StmtKind, VariableId},
         ty::TyKind,
     },
 };
@@ -267,13 +267,12 @@ impl<'gcx> Checker<'_, '_, '_, 'gcx> {
             return Vec::new();
         }
         if let Some(modifier) = func.modifiers.get(index) {
-            let ItemId::Function(mut id) = modifier.id else { return Vec::new() };
-            // A qualified `Base.modifier` names that implementation exactly.
-            if modifier.span.lo() == modifier.name_span.lo()
-                && let Some(contract) = self.contract
-            {
-                id = self.gcx.resolve_virtual_function(contract, id);
-            }
+            let Some(id) = self.contract.map_or_else(
+                || modifier.id.as_function(),
+                |contract| self.gcx.resolve_modifier_target(contract, modifier),
+            ) else {
+                return Vec::new();
+            };
             let definition = self.gcx.hir.function(id);
             let Some(body) = definition.body else { return Vec::new() };
             let values: Vec<_> = definition
@@ -758,8 +757,11 @@ impl<'gcx> Checker<'_, '_, '_, 'gcx> {
                     let bindings = func
                         .parameters
                         .iter()
-                        .map(|&param| {
-                            let value = arg_for_param(&self.gcx.hir, func, param, args)
+                        .enumerate()
+                        .map(|(index, &param)| {
+                            let value = self
+                                .gcx
+                                .call_arg(expr, index)
                                 .and_then(|arg| arguments.iter().find(|(id, _)| *id == arg.id))
                                 .map(|(_, value)| value.clone())
                                 .unwrap_or_default();
