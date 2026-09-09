@@ -3,8 +3,6 @@
 **Severity**: `Med`
 **ID**: `mapping-deletion`
 
-Flags `delete` applied to a value whose type contains a `mapping`.
-
 ## What it does
 
 Reports `delete x` when `x` is a struct or array whose type holds a `mapping`, directly or through a

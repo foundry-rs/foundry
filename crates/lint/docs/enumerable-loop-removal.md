@@ -3,19 +3,15 @@
 **Severity**: `High`
 **ID**: `enumerable-loop-removal`
 
-Flags `remove` on an EnumerableSet inside a loop that also iterates the same set with `at`.
-
 ## What it does
 
 Flags `EnumerableSet.remove` inside a loop that also reads the same set with `at`
 using an increasing index.
 
-Collecting elements in one loop and removing them in a separate loop avoids the warning
-and the iteration hazard.
-
-Complex loops may go unreported, and a warning does not prove that a particular removal
-skips an element. Review which element is moved into the removed position and which
-position the loop visits next.
+The check is limited to straight-line loop bodies with an unconditional increasing index.
+Conditional removals, nested loops, descending traversal, and copied or computed indices
+may go unreported. It can also warn about safe removals of the current tail or about
+set operands that are distinct at runtime but cannot be distinguished by the lint.
 
 ## Why is this bad?
 

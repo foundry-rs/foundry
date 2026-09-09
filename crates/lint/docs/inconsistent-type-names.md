@@ -3,8 +3,6 @@
 **Severity**: `Low`
 **ID**: `inconsistent-type-names`
 
-Flags mixed use of the equivalent `uint`/`uint256` or `int`/`int256` type spellings within one contract.
-
 ## What it does
 
 Reports shorthand `uint` or `int` declarations when the same contract also uses `uint256`

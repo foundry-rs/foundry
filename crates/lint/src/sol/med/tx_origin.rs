@@ -5,7 +5,7 @@ use crate::{
 };
 use solar::{
     ast::{Expr, ExprKind, Stmt, StmtKind, visit::Visit},
-    interface::{Span, kw, sym},
+    interface::{kw, sym},
 };
 use std::ops::ControlFlow;
 
@@ -33,22 +33,22 @@ impl<'ast> EarlyLintPass<'ast> for TxOrigin {
 }
 
 fn emit_if_contains_tx_origin<'ast>(ctx: &LintContext, expr: &'ast Expr<'ast>) {
-    if let ControlFlow::Break(span) = TxOriginFinder.visit_expr(expr) {
-        ctx.emit(&TX_ORIGIN, span);
+    if TxOriginFinder.visit_expr(expr).is_break() {
+        ctx.emit(&TX_ORIGIN, expr.span);
     }
 }
 
 struct TxOriginFinder;
 
 impl<'ast> Visit<'ast> for TxOriginFinder {
-    type BreakValue = Span;
+    type BreakValue = ();
 
-    fn visit_expr(&mut self, expr: &'ast Expr<'ast>) -> ControlFlow<Self::BreakValue> {
+    fn visit_expr(&mut self, expr: &'ast Expr<'ast>) -> ControlFlow<()> {
         if let ExprKind::Member(base, member) = &expr.kind
             && member.name == kw::Origin
             && matches!(&base.kind, ExprKind::Ident(id) if id.name == sym::tx)
         {
-            return ControlFlow::Break(expr.span);
+            return ControlFlow::Break(());
         }
         self.walk_expr(expr)
     }

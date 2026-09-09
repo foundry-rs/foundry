@@ -3,9 +3,6 @@
 **Severity**: `Low`
 **ID**: `missing-zero-check`
 
-Flags entry-point functions and constructors where an `address` parameter flows into a state write
-or value transfer without a zero-address guard.
-
 ## What it does
 
 Reports `address` parameters used in a state write or value transfer by an externally

@@ -3,8 +3,6 @@
 **Severity**: `Info`
 **ID**: `mixed-case-function`
 
-Flags function names that do not follow `mixedCase`.
-
 ## What it does
 
 Reports functions whose names contain embedded underscores, start with an uppercase letter, or

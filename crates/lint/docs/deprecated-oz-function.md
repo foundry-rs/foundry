@@ -3,12 +3,13 @@
 **Severity**: `Low`
 **ID**: `deprecated-oz-function`
 
-Flags references to OpenZeppelin functions the library has deprecated: `SafeERC20.safeApprove` and `AccessControl._setupRole`.
-
 ## What it does
 
 Reports uses of OpenZeppelin's `SafeERC20.safeApprove` and `AccessControl._setupRole`,
 including their upgradeable variants.
+
+Declarations must come from an OpenZeppelin package path; vendored copies under a different
+package name may go unreported.
 
 ## Why is this bad?
 

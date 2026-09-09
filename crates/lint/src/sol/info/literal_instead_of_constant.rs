@@ -19,7 +19,7 @@ declare_forge_lint!(
     LITERAL_INSTEAD_OF_CONSTANT,
     Severity::Info,
     "literal-instead-of-constant",
-    "this literal appears multiple times in the contract; declare a named constant for it"
+    "this literal appears multiple times in the contract"
 );
 
 impl<'gcx> LateLintPass<'gcx> for LiteralInsteadOfConstant {
@@ -41,12 +41,8 @@ impl<'gcx> LateLintPass<'gcx> for LiteralInsteadOfConstant {
         }
         // A value used in one single place is fine: only repetitions report. Emissions are
         // sorted by position so the output does not depend on the map's iteration order.
-        let mut repeated = collector
-            .groups
-            .into_values()
-            .filter(|spans| spans.len() > 1)
-            .flatten()
-            .collect::<Vec<Span>>();
+        let mut repeated: Vec<Span> =
+            collector.groups.into_values().filter(|spans| spans.len() > 1).flatten().collect();
         repeated.sort_by_key(|span| span.lo());
         for span in repeated {
             ctx.emit(&LITERAL_INSTEAD_OF_CONSTANT, span);

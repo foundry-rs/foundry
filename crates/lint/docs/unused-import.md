@@ -3,13 +3,10 @@
 **Severity**: `Info`
 **ID**: `unused-import`
 
-Flags imported symbols (or whole import statements) whose imported names are not referenced
-anywhere in the source file.
-
 ## What it does
 
-Reports `import "..."`, `import "..." as X`, and `import { A, B } from "..."` statements where one
-or more imported names are never used. This includes unused namespace imports (`import * as X`).
+Reports unused names in `import { A, B } from "..."` and unused namespace aliases from
+`import "..." as X` or `import * as X from "..."`. Plain unaliased imports are not checked.
 
 ## Why is this bad?
 

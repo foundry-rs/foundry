@@ -3,13 +3,11 @@
 **Severity**: `CodeSize`
 **ID**: `unwrapped-modifier-logic`
 
-Flags modifiers whose body contains non-trivial logic that should be moved into a helper function
-to reduce contract code size.
-
 ## What it does
 
-Reports modifiers containing logic beyond a placeholder, simple `require` or `assert`
-checks, or a single library call. Assembly blocks are excluded from suggested extraction.
+Reports modifier logic that can be extracted around a single top-level `_` placeholder,
+including `require` and `assert` checks. A single ordinary function or library call on
+either side is left inline. A side containing inline assembly is not extracted.
 
 ## Why is this bad?
 
@@ -17,6 +15,9 @@ Modifier logic can be duplicated across functions that use it. Extracting shared
 internal helper can reduce that duplication, but the optimizer may inline the helper again.
 Treat extraction as a code-size optimization candidate and measure the compiled output with the
 project's compiler settings while preserving modifier behavior.
+
+Suggested helper names can collide with existing declarations, and extraction can affect
+virtual dispatch or reference aliasing. Review the replacement rather than applying it automatically.
 
 ## Example
 
@@ -43,7 +44,3 @@ function _checkAuth() internal {
     seenNonce[nonce] = true;
 }
 ```
-
-## Notes
-
-This is a `CodeSize`-severity lint and is **not** applied to test or script files.

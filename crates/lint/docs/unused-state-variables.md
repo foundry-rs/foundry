@@ -3,9 +3,6 @@
 **Severity**: `Gas`
 **ID**: `unused-state-variables`
 
-Flags state variables that are declared but never read or written anywhere in the contract or its
-descendants.
-
 ## What it does
 
 Reports each state variable that has no read or write site across the project.
@@ -32,7 +29,3 @@ contract C {
     uint256 public total;
 }
 ```
-
-## Notes
-
-This is a `Gas`-severity lint and is **not** applied to test or script files.

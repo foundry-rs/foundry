@@ -44,9 +44,9 @@ impl<'gcx> LateLintPass<'gcx> for MissingEventsAccessControl {
         }
 
         // Every state variable some access check in the contract depends on.
-        let functions = contract.all_functions().collect::<Vec<_>>();
-        let targets =
-            functions.iter().flat_map(|&id| guard_vars(&gcx.hir, id)).collect::<HashSet<_>>();
+        let functions: Vec<_> = contract.all_functions().collect();
+        let targets: HashSet<_> =
+            functions.iter().flat_map(|&id| guard_vars(&gcx.hir, id)).collect();
         if targets.is_empty() {
             return;
         }

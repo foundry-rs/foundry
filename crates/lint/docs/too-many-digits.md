@@ -3,8 +3,6 @@
 **Severity**: `Info`
 **ID**: `too-many-digits`
 
-Flags numeric literals containing five or more consecutive zeros, which are easy to misread.
-
 ## What it does
 
 Reports Solidity and Yul numeric literals that contain a run of 5 or more `0` characters. Decimal

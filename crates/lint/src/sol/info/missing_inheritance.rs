@@ -12,7 +12,7 @@ declare_forge_lint!(
     MISSING_INHERITANCE,
     Severity::Info,
     "missing-inheritance",
-    "contract implements an interface's external API but does not explicitly inherit from it"
+    "contract has all selectors of an interface it does not explicitly inherit"
 );
 
 impl<'ast> ProjectLintPass<'ast> for MissingInheritance {
@@ -23,14 +23,14 @@ impl<'ast> ProjectLintPass<'ast> for MissingInheritance {
         let gcx = ctx.gcx();
 
         // Only user-provided files are analyzed (and emitted against).
-        let input_source_idx = gcx
+        let input_source_idx: HashMap<_, _> = gcx
             .hir
             .sources_enumerated()
             .filter_map(|(sid, src)| {
                 let FileName::Real(path) = &src.file.name else { return None };
                 Some((sid, sources.iter().position(|s| &s.path == path)?))
             })
-            .collect::<HashMap<_, _>>();
+            .collect();
         if input_source_idx.is_empty() {
             return;
         }
@@ -45,12 +45,8 @@ impl<'ast> ProjectLintPass<'ast> for MissingInheritance {
             if contract.linearization_failed() {
                 continue;
             }
-            let sels = gcx
-                .interface_functions(cid)
-                .all()
-                .iter()
-                .map(|f| f.selector.0)
-                .collect::<BTreeSet<_>>();
+            let sels: BTreeSet<_> =
+                gcx.interface_functions(cid).all().iter().map(|f| f.selector.0).collect();
             let interface_like = match contract.kind {
                 ContractKind::Interface => true,
                 ContractKind::AbstractContract => is_signature_only(&gcx.hir, cid),
@@ -80,7 +76,7 @@ impl<'ast> ProjectLintPass<'ast> for MissingInheritance {
             }
             // The target must implement every selector of the candidate, without already
             // inheriting it (transitively) or an inherited base covering the candidate.
-            let mut intended = candidates
+            let mut intended: Vec<ContractId> = candidates
                 .iter()
                 .copied()
                 .filter(|&iid| {
@@ -92,7 +88,7 @@ impl<'ast> ProjectLintPass<'ast> for MissingInheritance {
                             *b != tid && selectors.get(b).is_some_and(|bsel| isel.is_subset(bsel))
                         })
                 })
-                .collect::<Vec<ContractId>>();
+                .collect();
             // Deterministic dedupe by maximal selector set: sort by descending selector count,
             // tie-break by (span, name), then drop any candidate whose selector set is a
             // subset/superset of a kept one.
@@ -102,7 +98,7 @@ impl<'ast> ProjectLintPass<'ast> for MissingInheritance {
                     .cmp(&selectors[&a].len())
                     .then_with(|| sort_key(a).cmp(&sort_key(b)))
             });
-            let mut kept = Vec::<ContractId>::new();
+            let mut kept: Vec<ContractId> = Vec::new();
             for iid in intended {
                 let isel = &selectors[&iid];
                 if !kept.iter().any(|kid| {
@@ -116,7 +112,7 @@ impl<'ast> ProjectLintPass<'ast> for MissingInheritance {
             let Some(&src_idx) = input_source_idx.get(&target.source) else { continue };
             for iid in kept {
                 let msg = format!(
-                    "contract `{}` implements interface `{}`'s external API but does not explicitly inherit from it",
+                    "contract `{}` has all selectors of interface `{}` but does not explicitly inherit from it",
                     target.name.as_str(),
                     gcx.hir.contract(iid).name.as_str(),
                 );

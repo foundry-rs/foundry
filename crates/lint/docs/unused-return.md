@@ -3,9 +3,6 @@
 **Severity**: `Med`
 **ID**: `unused-return`
 
-Flags external calls whose return value is discarded, which often indicates a logic bug where the
-result of a computation or state query is silently ignored.
-
 ## What it does
 
 Detects high-level external calls (member calls on contract-typed variables or interface-cast
@@ -15,9 +12,9 @@ the separate `erc20-unchecked-transfer` lint.
 
 ## Why is this bad?
 
-Discarding a return value can mask failures and incorrect assumptions. For example, ignoring the
-result of an oracle query or a state-mutating helper means the caller proceeds as if the call
-succeeded or that the value is irrelevant, both of which may be bugs.
+Discarding a return value can hide an application-level failure reported in that value or ignore
+the result of a query. A high-level external call still propagates a revert even when its return
+value is discarded; this lint concerns information returned by successful calls.
 
 ## Example
 

@@ -3,9 +3,6 @@
 **Severity**: `High`
 **ID**: `protected-vars`
 
-Flags externally callable functions that can write a state variable without invoking the function
-or modifier named by its `@custom:security write-protection` annotation.
-
 ## What it does
 
 A state variable can declare a required protection with an exact function or modifier signature:

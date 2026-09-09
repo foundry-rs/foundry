@@ -3,8 +3,6 @@
 **Severity**: `Low`
 **ID**: `delegatecall-loop`
 
-Flags `delegatecall` operations inside loops in externally callable payable functions.
-
 ## What it does
 
 Reports `delegatecall` expressions that appear in the body of a `for`, `while`, or `do while`
@@ -45,8 +43,3 @@ function batch(address[] calldata receivers) external payable {
     }
 }
 ```
-
-## Notes
-
-Review each occurrence manually. If `delegatecall` is required, ensure delegated code cannot
-reuse `msg.value` or unexpectedly modify caller storage across loop iterations.

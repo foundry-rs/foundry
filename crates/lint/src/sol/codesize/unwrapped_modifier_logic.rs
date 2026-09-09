@@ -3,9 +3,7 @@ use crate::{
     linter::{LateLintPass, LintContext, Suggestion},
     sol::{
         Severity, SolLint,
-        analysis::{
-            block_outcome, count_placeholders, for_each_lhs_var, referenced_item, write_target,
-        },
+        analysis::{block_outcome, count_placeholders, for_each_lhs_var, referenced_item},
     },
 };
 use solar::{
@@ -109,7 +107,12 @@ fn snippet<'gcx>(
     }
     if wrap_before {
         any_expr(hir, before, |expr| {
-            if let Some(lvalue) = write_target(expr) {
+            let lvalue = match &expr.kind {
+                ExprKind::Assign(lhs, ..) | ExprKind::Delete(lhs) => Some(lhs),
+                ExprKind::Unary(op, inner) if op.kind.has_side_effects() => Some(inner),
+                _ => None,
+            };
+            if let Some(lvalue) = lvalue {
                 for_each_lhs_var(lvalue, &mut |v| {
                     if func.parameters.contains(&v) && !shared.contains(&v) {
                         shared.push(v);
@@ -131,9 +134,9 @@ fn snippet<'gcx>(
         let var = hir.variable(var_id);
         // Unnamed parameters cannot be forwarded to the helper.
         let Some(ident) = var.name else { continue };
+        let ty = ctx.span_to_snippet(var.ty.span).unwrap_or_else(|| "/* unknown type */".into());
         param_list.push(ident.to_string());
-        // Preserve reference data locations and any other parameter syntax verbatim.
-        param_decls.push(ctx.span_to_snippet(var.span)?);
+        param_decls.push(format!("{ty} {ident}"));
     }
     let (param_list, param_decls) = (param_list.join(", "), param_decls.join(", "));
     let body_indent = " ".repeat(
@@ -172,14 +175,11 @@ fn snippet<'gcx>(
         .chain(after_lines)
         .collect::<Vec<_>>()
         .join("\n");
-    // Keep virtual/override specifiers and unnamed parameters in the modifier declaration.
-    let header = ctx.span_to_snippet(func.span.until(func.body_span))?;
-    let header = header.trim_end();
-    let replacement = format!("{header} {{\n{body}\n{mod_indent}}}{before_helper}{after_helper}");
+    let replacement = format!(
+        "modifier {name}({param_decls}) {{\n{body}\n{mod_indent}}}{before_helper}{after_helper}"
+    );
     Some(
-        // Helper names can collide with existing or inherited declarations, and extraction can
-        // affect dispatch and reference aliasing. This is a refactoring candidate, not an autofix.
-        Suggestion::fix(replacement, Applicability::MaybeIncorrect)
+        Suggestion::fix(replacement, Applicability::MachineApplicable)
             .with_desc("wrap modifier logic to reduce code size"),
     )
 }

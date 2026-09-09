@@ -17,13 +17,11 @@ declare_forge_lint!(
 
 impl<'ast> EarlyLintPass<'ast> for CustomErrors {
     fn check_expr(&mut self, ctx: &LintContext, expr: &'ast Expr<'ast>) {
-        let ExprKind::Call(
-            Expr { kind: ExprKind::Ident(ident), .. },
-            CallArgs { kind: CallArgsKind::Unnamed(args), .. },
-        ) = &expr.kind
+        let ExprKind::Call(callee, CallArgs { kind: CallArgsKind::Unnamed(args), .. }) = &expr.kind
         else {
             return;
         };
+        let ExprKind::Ident(ident) = &callee.kind else { return };
         // `require(cond)` / `require(cond, "reason")` and `revert()` / `revert("reason")`.
         let lint = match ident.name {
             sym::require => args.len() == 1 || args.get(1).is_some_and(|e| is_string_literal(e)),

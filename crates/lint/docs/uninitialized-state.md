@@ -3,11 +3,6 @@
 **Severity**: `Med`
 **ID**: `uninitialized-state`
 
-Flags state variables that are read anywhere in a contract's inheritance chain but never
-assigned. Because Solidity zero-initialises all storage, such a variable silently returns
-its type's zero value (`0`, `address(0)`, `false`, etc.), which almost always indicates a
-missing initialisation step, for example, forgetting to set `owner` in the constructor.
-
 ## What it does
 
 Reports state variables that are read but never assigned in the contract or its base contracts.
@@ -25,9 +20,6 @@ consequences include:
 - Ownership checks that permanently pass or fail (`owner` is always `address(0)`).
 - Token balances that always read as zero regardless of deposits.
 - Flags and counters that never reflect actual contract state.
-
-The Solidity compiler does not warn about this pattern because reading an uninitialized
-storage variable is syntactically valid.
 
 ## Example
 

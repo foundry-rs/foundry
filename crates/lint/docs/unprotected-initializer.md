@@ -3,9 +3,6 @@
 **Severity**: `High`
 **ID**: `unprotected-initializer`
 
-Flags upgradeable contracts whose public or external initializer can still be called directly on an
-implementation contract that exposes a destructive entry point.
-
 ## What it does
 
 Reports initializer-like functions that:
@@ -66,3 +63,5 @@ contract Vault is Initializable {
 
 This rule concerns direct initialization of the implementation. Separately ensure the
 proxy is initialized atomically during deployment.
+The `onlyProxy` exemption recognizes the modifier's name; it does not verify a custom
+modifier's implementation.

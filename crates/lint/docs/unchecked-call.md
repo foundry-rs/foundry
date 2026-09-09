@@ -3,9 +3,6 @@
 **Severity**: `High`
 **ID**: `unchecked-call`
 
-Flags low-level calls (`call`, `delegatecall`, `staticcall`, `callcode`) whose `success` return
-value is ignored.
-
 ## What it does
 
 Warns when the boolean returned by a low-level call is discarded — either because the return value

@@ -3,8 +3,6 @@
 **Severity**: `Info`
 **ID**: `pascal-case-struct`
 
-Flags struct definitions whose names do not follow `PascalCase`.
-
 ## What it does
 
 Reports `struct` identifiers longer than one character that do not match the `PascalCase`

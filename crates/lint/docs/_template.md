@@ -3,8 +3,6 @@
 **Severity**: `<High | Med | Low | Info | Gas | CodeSize>`
 **ID**: `<str_id>`
 
-One-paragraph summary of what this lint detects and why it matters.
-
 ## What it does
 
 Explain the user-visible pattern the lint flags, not how the detector implements the check.

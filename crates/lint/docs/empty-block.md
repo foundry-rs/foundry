@@ -3,8 +3,6 @@
 **Severity**: `Low`
 **ID**: `empty-block`
 
-Flags regular functions whose body is empty, which is dead or unfinished code.
-
 ## What it does
 
 Reports a function whose body is `{}` (a comment does not make a body non-empty).

@@ -3,12 +3,10 @@
 **Severity**: `Low`
 **ID**: `require-revert-in-loop`
 
-Flags `require` calls and `revert` statements inside loops because one invalid item can abort the
-entire batch.
-
 ## What it does
 
 Reports `require` calls and Solidity or Yul `revert` operations inside loops.
+This includes operations reached through modifiers and internal helpers called from a loop.
 
 ## Why restrict this?
 

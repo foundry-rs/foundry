@@ -3,8 +3,6 @@
 **Severity**: `Info`
 **ID**: `screaming-snake-case-const`
 
-Flags `constant` state variables whose names do not follow `SCREAMING_SNAKE_CASE`.
-
 ## What it does
 
 Reports state variables declared `constant` whose identifier is longer than one character and

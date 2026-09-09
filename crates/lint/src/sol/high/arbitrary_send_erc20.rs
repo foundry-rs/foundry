@@ -42,7 +42,7 @@ declare_forge_lint!(
     ARBITRARY_SEND_ERC20_PERMIT,
     Severity::High,
     "arbitrary-send-erc20-permit",
-    "`transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens"
+    "`transferFrom` uses an arbitrary `from` after `permit`"
 );
 
 /// Recursion budget for `_msgSender()`-style helper chains.
@@ -253,13 +253,8 @@ impl<'gcx> Analyzer<'gcx> {
     /// Hoists `require(param == msg.sender | address(this))` guards from the prefix of modifier
     /// `m` onto the caller's argument variables.
     fn hoist_modifier_facts(&mut self, m: &'gcx Modifier<'gcx>) {
-        let (fid, prefix) = if let Some(fid) = m.id.as_function()
-            && let Some(prefix) = modifier_prefix(&self.gcx.hir, fid)
-        {
-            (fid, prefix)
-        } else {
-            return;
-        };
+        let Some(fid) = m.id.as_function() else { return };
+        let Some(prefix) = modifier_prefix(&self.gcx.hir, fid) else { return };
         let modifier = self.gcx.hir.function(fid);
         let mut a = Self::new(self.gcx, self.has_solady_lib);
         for stmt in prefix {
@@ -373,11 +368,11 @@ impl<'gcx> Analyzer<'gcx> {
         if let Some(elems) = tuple_elems(lhs) {
             let rhs = rhs.and_then(tuple_elems);
             // Evaluate every slot before writing any, so `(x, y) = (y, x)` stays consistent.
-            let slots = elems
+            let slots: Vec<_> = elems
                 .iter()
                 .enumerate()
                 .map(|(i, l)| (*l, self.eval_rhs(rhs.and_then(|r| r.get(i).copied().flatten()))))
-                .collect::<Vec<_>>();
+                .collect();
             for (lhs, rhs) in slots {
                 if let Some(v) = lhs.and_then(underlying_var) {
                     self.assign_var(v, rhs);
@@ -433,13 +428,8 @@ impl<'gcx> Analyzer<'gcx> {
     /// EIP-2612 `token.permit(owner, <self>, ...)` or the OpenZeppelin-style wrapper
     /// `Lib.safePermit(token, owner, <self>, ...)`.
     fn match_permit_call(&self, expr: &Expr<'gcx>) -> Option<PermitRecord> {
-        let (recv, ident, args) = if let ExprKind::Call(callee, args, _) = &expr.kind
-            && let ExprKind::Member(recv, ident) = &callee.peel_parens().kind
-        {
-            (recv, ident, args)
-        } else {
-            return None;
-        };
+        let ExprKind::Call(callee, args, _) = &expr.kind else { return None };
+        let ExprKind::Member(recv, ident) = &callee.peel_parens().kind else { return None };
         let (token, owner, spender) = match ident.name.as_str() {
             "permit" => {
                 let a = canonical_args(
@@ -765,13 +755,8 @@ fn canonical_args<'gcx>(
 /// EIP-3156 `receiver.onFlashLoan(initiator, token, amount, fee, data)` on a receiver type
 /// declaring the exact signature. Literal arguments yield `None`.
 fn match_flash_loan_call<'gcx>(gcx: Gcx<'gcx>, expr: &Expr<'gcx>) -> Option<PendingRepayment> {
-    let (recv, ident, args) = if let ExprKind::Call(callee, args, _) = &expr.kind
-        && let ExprKind::Member(recv, ident) = &callee.peel_parens().kind
-    {
-        (recv, ident, args)
-    } else {
-        return None;
-    };
+    let ExprKind::Call(callee, args, _) = &expr.kind else { return None };
+    let ExprKind::Member(recv, ident) = &callee.peel_parens().kind else { return None };
     if ident.name.as_str() != "onFlashLoan" {
         return None;
     }
@@ -803,13 +788,8 @@ fn match_sink<'gcx>(
     has_solady_lib: bool,
     expr: &'gcx Expr<'gcx>,
 ) -> Option<Sink<'gcx>> {
-    let (recv, ident, args) = if let ExprKind::Call(callee, args, _) = &expr.kind
-        && let ExprKind::Member(recv, ident) = &callee.peel_parens().kind
-    {
-        (recv, ident, args)
-    } else {
-        return None;
-    };
+    let ExprKind::Call(callee, args, _) = &expr.kind else { return None };
+    let ExprKind::Member(recv, ident) = &callee.peel_parens().kind else { return None };
     let name = ident.name.as_str();
     if matches!(name, "transferFrom" | "safeTransferFrom")
         && let Some(a) = canonical_args(args, &[&["from"], &["to"], &["value", "amount"]])

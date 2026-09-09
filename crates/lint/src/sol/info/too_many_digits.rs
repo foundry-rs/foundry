@@ -13,8 +13,7 @@ declare_forge_lint!(
     TOO_MANY_DIGITS,
     Severity::Info,
     "too-many-digits",
-    "numeric literal with many digits is error-prone; \
-     use scientific notation, sub-denominations, or underscore separators"
+    "numeric literal contains a long sequence of zeros"
 );
 
 impl<'ast> EarlyLintPass<'ast> for TooManyDigits {

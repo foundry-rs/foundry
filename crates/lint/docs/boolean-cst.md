@@ -3,9 +3,6 @@
 **Severity**: `Med`
 **ID**: `boolean-cst`
 
-Flags expressions where a boolean constant (`true`/`false`) is used as a control-flow condition
-or operand of a boolean operator, which usually indicates dead code or a leftover debug toggle.
-
 ## What it does
 
 Reports literal boolean conditions in `if`, `for`, and `do while`, `while (false)`, and

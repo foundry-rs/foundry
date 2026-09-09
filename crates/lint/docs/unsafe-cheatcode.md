@@ -3,8 +3,6 @@
 **Severity**: `Info`
 **ID**: `unsafe-cheatcode`
 
-Flags use of Foundry cheatcodes classified as unsafe so their effects can receive deliberate review.
-
 ## What it does
 
 Reports calls to `ffi`, `readFile`, `readLine`, `writeFile`, `writeLine`, `removeFile`,

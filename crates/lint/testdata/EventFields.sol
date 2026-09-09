@@ -42,7 +42,7 @@ contract EventFieldsTest {
     event AnonFour(address a, address b, address c, address d) anonymous; //~NOTE: event has unindexed fields that may benefit from being indexed: `a` (`address`), `b` (`address`), `c` (`address`), `d` (`address`)
 
     // Unnamed param is reported using its positional index.
-    event Unnamed(address, uint256); //~NOTE: event has unindexed fields that may benefit from being indexed: parameter #1 (`address`)
+    event Unnamed(address, uint256); //~NOTE: event has unindexed fields that may benefit from being indexed: `parameter #1` (`address`)
 
     // --- non-triggering cases --------------------------------------------
 

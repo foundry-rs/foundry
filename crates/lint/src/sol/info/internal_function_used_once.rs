@@ -19,7 +19,7 @@ declare_forge_lint!(
     INTERNAL_FUNCTION_USED_ONCE,
     Severity::Info,
     "internal-function-used-once",
-    "this internal function is used only once; consider inlining it into its caller"
+    "this internal function is used only once"
 );
 
 impl<'ast> ProjectLintPass<'ast> for InternalFunctionUsedOnce {
@@ -31,14 +31,14 @@ impl<'ast> ProjectLintPass<'ast> for InternalFunctionUsedOnce {
 
         // Only functions declared in user-provided files are reported, while references are
         // counted across the whole unit, dependencies included.
-        let input_source_idx = gcx
+        let input_source_idx: HashMap<_, _> = gcx
             .hir
             .sources_enumerated()
             .filter_map(|(sid, src)| {
                 let FileName::Real(path) = &src.file.name else { return None };
                 Some((sid, sources.iter().position(|s| &s.path == path)?))
             })
-            .collect::<HashMap<_, _>>();
+            .collect();
         if input_source_idx.is_empty() {
             return;
         }
@@ -48,7 +48,7 @@ impl<'ast> ProjectLintPass<'ast> for InternalFunctionUsedOnce {
         // named function anyway.
         let source_usings = gcx.hir.source_ids().flat_map(|id| gcx.hir.source(id).usings);
         let contract_usings = gcx.hir.contract_ids().flat_map(|id| gcx.hir.contract(id).usings);
-        let operator_bound = source_usings
+        let operator_bound: HashSet<_> = source_usings
             .chain(contract_usings)
             .flat_map(|directive| directive.entries)
             .filter(|entry| entry.operator.is_some())
@@ -58,7 +58,7 @@ impl<'ast> ProjectLintPass<'ast> for InternalFunctionUsedOnce {
             })
             .flatten()
             .copied()
-            .collect::<HashSet<_>>();
+            .collect();
 
         let mut counter =
             ReferenceCounter { gcx, current: None, callee: None, refs: HashMap::new() };

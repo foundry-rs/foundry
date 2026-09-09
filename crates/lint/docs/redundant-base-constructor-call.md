@@ -3,10 +3,6 @@
 **Severity**: `Info`
 **ID**: `redundant-base-constructor-call`
 
-Flags an explicit empty base-constructor specifier (e.g. `is A()` or `constructor() A() {}`)
-when the base contract either has no constructor or has a constructor that takes no arguments.
-The empty `()` adds no information and can be removed.
-
 ## What it does
 
 For every base contract listed in a contract's inheritance specifier or invoked from a derived

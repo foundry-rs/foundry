@@ -19,7 +19,7 @@ declare_forge_lint!(
     RETURN_BOMB,
     Severity::Low,
     "return-bomb",
-    "external call with a gas limit consumes unbounded return data"
+    "external call with a gas limit may copy unbounded return data"
 );
 
 impl<'gcx> LateLintPass<'gcx> for ReturnBomb {
@@ -27,15 +27,15 @@ impl<'gcx> LateLintPass<'gcx> for ReturnBomb {
         // Flag gas-limited calls that can force the caller to copy unbounded returndata: a
         // low-level call on an address, or a call returning dynamic data.
         let expr = expr.peel_parens();
-        if is_call_with_gas_limit(expr)
-            && let ExprKind::Call(callee, ..) = &expr.kind
-        {
-            let low_level = matches!(&callee.peel_parens().kind, ExprKind::Member(receiver, member)
-                if matches!(member.name, kw::Call | kw::Delegatecall | kw::Staticcall)
-                    && is_address_like(gcx, receiver));
-            if low_level || gcx.type_of_expr(expr.id).is_some_and(|ty| is_dynamic_ty(gcx, ty)) {
-                ctx.emit(&RETURN_BOMB, expr.span);
-            }
+        if !is_call_with_gas_limit(expr) {
+            return;
+        }
+        let ExprKind::Call(callee, ..) = &expr.kind else { return };
+        let low_level = matches!(&callee.peel_parens().kind, ExprKind::Member(receiver, member)
+            if matches!(member.name, kw::Call | kw::Delegatecall | kw::Staticcall)
+                && is_address_like(gcx, receiver));
+        if low_level || gcx.type_of_expr(expr.id).is_some_and(|ty| is_dynamic_ty(gcx, ty)) {
+            ctx.emit(&RETURN_BOMB, expr.span);
         }
     }
 }

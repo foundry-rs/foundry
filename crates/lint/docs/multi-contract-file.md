@@ -3,12 +3,10 @@
 **Severity**: `Info`
 **ID**: `multi-contract-file`
 
-Flags source files that declare more than one top-level contract, interface, or library.
-
 ## What it does
 
-Reports each top-level `contract`, `interface`, or `library` definition (after the first) in a
-file that contains more than one such declaration.
+Reports every non-exempt top-level `contract`, `interface`, or `library` definition when a
+file contains more than one non-exempt declaration.
 
 ## Why restrict this?
 

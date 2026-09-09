@@ -3,8 +3,6 @@
 **Severity**: `Med`
 **ID**: `assert-state-change`
 
-Flags expressions inside `assert()` that modify contract state.
-
 ## What it does
 
 Warns when an `assert()` argument contains a state-mutating operation: a pre- or post-increment/decrement (`++`/`--`) on a state variable, an assignment (`=`, `+=`,etc.) to a state variable, a `delete` of a state variable, or a call to a function that writes state variables.

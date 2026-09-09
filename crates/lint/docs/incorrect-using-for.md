@@ -3,8 +3,6 @@
 **Severity**: `Info`
 **ID**: `incorrect-using-for`
 
-Flags `using L for T` directives whose library has no function applicable to the type: they attach nothing.
-
 ## What it does
 
 Reports `using L for T` when library `L` has no non-private function whose first parameter

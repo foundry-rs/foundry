@@ -3,8 +3,6 @@
 **Severity**: `Info`
 **ID**: `interface-naming`
 
-Flags `interface` declarations whose names are not prefixed with `I`.
-
 ## What it does
 
 Reports `interface Foo` where `Foo` does not start with `I` (e.g. `IFoo`).

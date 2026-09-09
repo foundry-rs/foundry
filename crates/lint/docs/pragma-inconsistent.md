@@ -3,19 +3,18 @@
 **Severity**: `Info`
 **ID**: `pragma-inconsistent`
 
-Flags projects whose source files declare incompatible or differently-shaped Solidity version
-pragmas.
-
 ## What it does
 
 Reports inconsistent `pragma solidity ...;` requirements across source files, such as different
 exact versions or mixed caret, tilde, and range constraints.
 
-## Why is this bad?
+## Why restrict this?
 
-A project compiled under multiple Solidity versions can subtly change behavior between files
-(e.g. checked arithmetic, default visibility, ABI encoding). Aligning pragmas across the project
-removes a hidden source of integration bugs and makes upgrades coordinated.
+Different constraints can complicate compiler upgrades and make separately compiled parts of a
+project use different language behavior. Aligning them can make upgrades easier to coordinate.
+Different but overlapping constraints can still select the same compiler; reusable libraries
+may intentionally support a wider range than an application. This lint does not prove that the
+requirements are incompatible or that different compilers were used.
 
 ## Example
 

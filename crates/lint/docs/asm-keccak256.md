@@ -3,9 +3,6 @@
 **Severity**: `Gas`
 **ID**: `asm-keccak256`
 
-Flags direct calls to the high-level `keccak256(...)` builtin for review as gas optimization
-candidates.
-
 ## What it does
 
 Reports direct `keccak256(...)` calls in statements and initializers for gas review.
@@ -35,7 +32,3 @@ function hashPair(bytes32 a, bytes32 b) internal pure returns (bytes32 h) {
     }
 }
 ```
-
-## Notes
-
-This is a `Gas`-severity lint and is **not** applied to test or script files.

@@ -3,16 +3,10 @@
 **Severity**: `Med`
 **ID**: `non-reentrant-not-first`
 
-Flags functions where an OpenZeppelin-style `nonReentrant` modifier is present but is not the first
-modifier in the modifier list.
-
 ## What it does
 
 Reports a function, fallback, or receive function when `nonReentrant` appears after another
 modifier, for example `onlyOwner nonReentrant`.
-
-The lint is intentionally narrow: it only checks modifier ordering and only matches a modifier named
-`nonReentrant`.
 
 ## Why is this bad?
 

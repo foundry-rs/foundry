@@ -3,8 +3,6 @@
 **Severity**: `Info`
 **ID**: `cyclomatic-complexity`
 
-Flags functions whose cyclomatic complexity is strictly above 11.
-
 ## What it does
 
 Reports functions with a complexity score above 11. The score starts at one and increases

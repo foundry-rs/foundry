@@ -7,7 +7,8 @@
 
 Warns when a raw environment value can be used after a Foundry cheatcode changes that
 environment, or when matching raw reads occur on both sides of a mutation in the same call
-frame. Reads without a matching mutation are not flagged.
+frame. Reads without a matching mutation are not flagged. The rule applies to tests and scripts,
+regardless of optimizer settings.
 
 ## Why is this bad?
 
@@ -39,7 +40,9 @@ vm.chainId(2);
 vm.chainId(saved);
 ```
 
-## Affected reads and mutations
+## Notes
+
+These reads can be affected by the corresponding setters:
 
 | Read | Direct setter | Getter or alternative |
 | --- | --- | --- |
@@ -87,22 +90,17 @@ function example() public {
 return-data, and gas reads are not in this invariant-environment class: the compiler already
 accounts for their changes across calls.
 
-## Scope and controls
-
-The rule applies to tests and scripts, regardless of optimizer settings. Use getters or
-external helpers whenever a test needs to save an environment value across a matching
-mutation; the absence of a warning does not guarantee that a raw capture is reliable,
-including in assembly or when calling cheatcodes through low-level calls.
-
 This rule replaces `block-number-across-roll` and `block-timestamp-across-warp`. Update
-`--only-lint`, `exclude_lints`, and inline suppressions to the new ID. Existing severity
-filters and suppressions apply. Suppress at the raw capture when its behavior is intentional:
+`--only-lint`, `exclude_lints`, and inline suppressions to the new ID. Suppress at the raw
+capture when its behavior is intentional:
 
 ```solidity
 // forge-lint: disable-next-line(environment-read-across-mutation)
 uint256 saved = block.chainid;
 ```
 
-This is separate from `block-timestamp`, which asks you to review timestamp comparisons
-against the target chain's timing guarantees. This rule concerns saved environment values
-in tests and scripts.
+## Limitations
+
+The absence of a warning does not guarantee that a raw capture is reliable, including in
+assembly or when calling cheatcodes through low-level calls. Use getters or external helpers
+when a test needs to retain an environment value across a matching mutation.

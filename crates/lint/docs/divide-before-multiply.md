@@ -3,9 +3,6 @@
 **Severity**: `Med`
 **ID**: `divide-before-multiply`
 
-Flags arithmetic expressions where division is performed before multiplication, which can cause
-unintended precision loss in integer arithmetic.
-
 ## What it does
 
 Warns on expressions of the form `(a / b) * c` (or equivalent shapes), where the integer division

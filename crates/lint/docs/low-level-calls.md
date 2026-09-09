@@ -3,8 +3,6 @@
 **Severity**: `Info`
 **ID**: `low-level-calls`
 
-Flags direct use of Solidity low-level calls (`call`, `delegatecall`, and `staticcall`).
-
 ## What it does
 
 Warns whenever a contract uses a low-level call expression, even if the success return value is

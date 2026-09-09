@@ -3,8 +3,6 @@
 **Severity**: `Low`
 **ID**: `incorrect-modifier`
 
-Reports modifiers that can finish without executing the modified function body or reverting.
-
 ## What it does
 
 Flags modifiers that can finish successfully without reaching the `_` placeholder.

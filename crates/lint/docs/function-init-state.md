@@ -3,8 +3,6 @@
 **Severity**: `Info`
 **ID**: `function-init-state`
 
-Flags state variables whose initializer depends on a non-pure function or on another state variable.
-
 ## What it does
 
 Reports inline state-variable initializers that reference a non-constant state variable

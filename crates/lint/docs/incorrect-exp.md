@@ -3,8 +3,6 @@
 **Severity**: `High`
 **ID**: `incorrect-exp`
 
-Flags `^` used between integer literals where `**` was almost certainly intended.
-
 ## What it does
 
 Reports `a ^ b` when both operands are decimal integer literals and `a` is `2` or `10`.

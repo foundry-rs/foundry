@@ -3,8 +3,6 @@
 **Severity**: `Med`
 **ID**: `unsafe-oz-erc721-mint`
 
-Flags calls to OpenZeppelin's `ERC721._mint`, which credits a token without checking that the recipient can receive it.
-
 ## What it does
 
 Reports calls to OpenZeppelin's ERC721 `_mint`, including overrides that delegate to it,
@@ -15,6 +13,11 @@ the recipient has no code or ask that recipient to accept the minted token after
 is established and revert on rejection. Custom checks may still produce warnings; review them before suppressing
 the lint. Custom mint implementations that do not use OpenZeppelin's `_mint` are outside
 this rule's scope.
+
+Do not replace `super._mint` inside a `_mint` override with `_safeMint`: virtual dispatch
+can recurse back into the override. Delegating overrides are reported at their call sites.
+Minting through internal function pointers or assembly is not checked.
+Vendored OpenZeppelin copies whose package paths do not identify OpenZeppelin may be missed.
 
 ## Why is this bad?
 

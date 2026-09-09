@@ -3,9 +3,6 @@
 **Severity**: `High`
 **ID**: `reentrancy-eth`
 
-Flags uncapped ETH-transferring low-level `call` operations when state read before the call is
-written after the call.
-
 ## What it does
 
 Reports low-level `.call{value: ...}(...)` operations without a concrete gas cap, including

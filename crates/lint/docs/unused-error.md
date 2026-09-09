@@ -3,8 +3,6 @@
 **Severity**: `Info`
 **ID**: `unused-error`
 
-Flags a custom error declaration that is never referenced anywhere in the compiled sources.
-
 ## What it does
 
 Reports custom error declarations that are never used by a revert, `require`, or selector

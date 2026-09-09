@@ -3,8 +3,6 @@
 **Severity**: `Med`
 **ID**: `unsafe-typecast`
 
-Flags explicit numeric typecasts that can silently truncate or alter the value.
-
 ## What it does
 
 Reports casts where the source value's type can exceed the target type (for example,

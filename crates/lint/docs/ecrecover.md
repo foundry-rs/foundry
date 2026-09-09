@@ -3,9 +3,6 @@
 **Severity**: `Med`
 **ID**: `ecrecover`
 
-Flags direct calls to Solidity's `ecrecover` builtin when the signature's `s` value is not proven
-to be in the canonical lower half of the secp256k1 curve order.
-
 ## What it does
 
 Reports direct `ecrecover` calls without a check that `s` is at most

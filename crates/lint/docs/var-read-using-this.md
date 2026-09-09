@@ -3,10 +3,6 @@
 **Severity**: `Gas`
 **ID**: `var-read-using-this`
 
-Flags reads of the contract's own state through `this.X(...)`. Calling a public state-variable
-getter or any `view`/`pure` function via `this` performs an external `STATICCALL` to the same
-address, paying the call overhead for data that could be read directly.
-
 ## What it does
 
 Reports calls through `this` to the contract's own public variable getters and `view`
@@ -15,6 +11,10 @@ or `pure` functions, including inherited functions.
 Read state directly where possible: use `foo` instead of `this.foo()`, or `m[k]` instead
 of `this.m(k)`. Check that the replacement preserves the getter's return value and any
 intentional external-call behavior.
+
+Struct getters return selected fields rather than the struct itself, and a local variable
+may shadow the state variable. Calls with explicit gas options receive no replacement;
+calls used as the target of `try` are excluded because `try` requires an external call.
 
 ## Why is this bad?
 
@@ -49,10 +49,6 @@ contract C {
     }
 }
 ```
-
-## Notes
-
-This is a `Gas`-severity lint and is **not** applied to test or script files.
 
 For `external view`/`pure` functions, calling them via `this` from inside the contract is the
 only in-contract syntax that resolves; the recommended fix is to extract the body into an

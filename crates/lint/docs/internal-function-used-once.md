@@ -3,8 +3,6 @@
 **Severity**: `Info`
 **ID**: `internal-function-used-once`
 
-Flags internal functions referenced exactly once in the whole compilation unit.
-
 ## What it does
 
 Reports internal and free functions referenced exactly once across the compiled sources.

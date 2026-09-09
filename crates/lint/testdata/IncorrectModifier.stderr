@@ -1,56 +1,88 @@
 warning[incorrect-modifier]: modifier can finish without executing the modified function
    ╭▸ ROOT/testdata/IncorrectModifier.sol:LL:CC
    │
-LL │     modifier conditionalPlaceholder() {
-   │     ━━━━━━━━
+LL │ ┏     modifier conditionalPlaceholder() {
+LL │ ┃         if (enabled) {
+LL │ ┃             _;
+LL │ ┃         }
+LL │ ┃     }
+   │ ┗━━━━━┛
    │
    ╰ help: https://getfoundry.sh/forge/linting/incorrect-modifier
 
 warning[incorrect-modifier]: modifier can finish without executing the modified function
    ╭▸ ROOT/testdata/IncorrectModifier.sol:LL:CC
    │
-LL │     modifier returnsBeforePlaceholder() {
-   │     ━━━━━━━━
+LL │ ┏     modifier returnsBeforePlaceholder() {
+LL │ ┃         if (paused) {
+LL │ ┃             return;
+   ‡ ┃
+LL │ ┃     }
+   │ ┗━━━━━┛
    │
    ╰ help: https://getfoundry.sh/forge/linting/incorrect-modifier
 
 warning[incorrect-modifier]: modifier can finish without executing the modified function
    ╭▸ ROOT/testdata/IncorrectModifier.sol:LL:CC
    │
-LL │     modifier nestedConditionalPlaceholder() {
-   │     ━━━━━━━━
+LL │ ┏     modifier nestedConditionalPlaceholder() {
+LL │ ┃         if (enabled) {
+LL │ ┃             if (!paused) {
+LL │ ┃                 _;
+   ‡ ┃
+LL │ ┃     }
+   │ ┗━━━━━┛
    │
    ╰ help: https://getfoundry.sh/forge/linting/incorrect-modifier
 
 warning[incorrect-modifier]: modifier can finish without executing the modified function
    ╭▸ ROOT/testdata/IncorrectModifier.sol:LL:CC
    │
-LL │     modifier loopOnlyPlaceholder() {
-   │     ━━━━━━━━
+LL │ ┏     modifier loopOnlyPlaceholder() {
+LL │ ┃         while (enabled) {
+LL │ ┃             _;
+LL │ ┃         }
+LL │ ┃     }
+   │ ┗━━━━━┛
    │
    ╰ help: https://getfoundry.sh/forge/linting/incorrect-modifier
 
 warning[incorrect-modifier]: modifier can finish without executing the modified function
    ╭▸ ROOT/testdata/IncorrectModifier.sol:LL:CC
    │
-LL │     modifier breakSkipsPlaceholder() {
-   │     ━━━━━━━━
+LL │ ┏     modifier breakSkipsPlaceholder() {
+LL │ ┃         while (enabled) {
+LL │ ┃             if (paused) {
+LL │ ┃                 break;
+   ‡ ┃
+LL │ ┃     }
+   │ ┗━━━━━┛
    │
    ╰ help: https://getfoundry.sh/forge/linting/incorrect-modifier
 
 warning[incorrect-modifier]: modifier can finish without executing the modified function
    ╭▸ ROOT/testdata/IncorrectModifier.sol:LL:CC
    │
-LL │     modifier doWhileContinueSkipsPlaceholder() {
-   │     ━━━━━━━━
+LL │ ┏     modifier doWhileContinueSkipsPlaceholder() {
+LL │ ┃         do {
+LL │ ┃             if (paused) {
+LL │ ┃                 continue;
+   ‡ ┃
+LL │ ┃         } while (enabled);
+LL │ ┃     }
+   │ ┗━━━━━┛
    │
    ╰ help: https://getfoundry.sh/forge/linting/incorrect-modifier
 
 warning[incorrect-modifier]: modifier can finish without executing the modified function
    ╭▸ ROOT/testdata/IncorrectModifier.sol:LL:CC
    │
-LL │     modifier yulReturnBeforePlaceholder() {
-   │     ━━━━━━━━
+LL │ ┏     modifier yulReturnBeforePlaceholder() {
+LL │ ┃         assembly {
+LL │ ┃             return(0, 0)
+   ‡ ┃
+LL │ ┃     }
+   │ ┗━━━━━┛
    │
    ╰ help: https://getfoundry.sh/forge/linting/incorrect-modifier
 

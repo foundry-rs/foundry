@@ -3,9 +3,6 @@
 **Severity**: `Low`
 **ID**: `missing-events-access-control`
 
-Flags protected entry-point functions that update state used for access control without emitting an
-event.
-
 ## What it does
 
 Flags protected public or external functions that change ownership, roles, or other

@@ -3,9 +3,6 @@
 **Severity**: `Gas`
 **ID**: `custom-errors`
 
-Flags `require(cond)`, `require(cond, "message")`, `revert("message")`, and `revert()` calls;
-suggests replacing them with a `revert CustomError(...)`.
-
 ## What it does
 
 Reports `require` calls with no reason or whose second argument is a string literal, and
@@ -48,7 +45,3 @@ function fail() internal pure {
     revert NotAuthorized();
 }
 ```
-
-## Notes
-
-This is a `Gas`-severity lint and is **not** applied to test or script files.

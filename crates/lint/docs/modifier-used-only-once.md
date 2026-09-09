@@ -3,8 +3,6 @@
 **Severity**: `Info`
 **ID**: `modifier-used-only-once`
 
-Flags modifiers invoked by exactly one function in the whole compilation unit.
-
 ## What it does
 
 Reports modifiers used by exactly one function or constructor across the compiled sources.

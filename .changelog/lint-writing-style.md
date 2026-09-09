@@ -3,7 +3,6 @@ forge: patch
 forge-lint: patch
 ---
 
-Standardized lint diagnostics and reference examples, focused explanations on user-facing
-guidance, and strengthened checks for lint documentation structure. Preserved modifier
-signatures in suggested rewrites, required review for potentially unsafe refactorings, and
-focused diagnostics on the relevant source spans.
+Standardized lint diagnostic wording and reference examples, preserved important detection
+caveats, and removed repetitive reference text. Added Rust tests for documentation coverage,
+registered metadata, canonical help URLs, and Markdown structure.

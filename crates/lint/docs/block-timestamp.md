@@ -3,9 +3,6 @@
 **Severity**: `Low`
 **ID**: `block-timestamp`
 
-Flags use of `block.timestamp` as an operand of a comparison for review against the target chain's
-timestamp and transaction-inclusion guarantees.
-
 ## What it does
 
 Reports comparison expressions (`<`, `<=`, `>`, `>=`, `==`, `!=`) involving `block.timestamp`.
@@ -40,8 +37,3 @@ function settle() external {
     // ...
 }
 ```
-
-## Notes
-
-This lint is intentionally conservative: not every flagged comparison is exploitable. Review
-each occurrence in context.

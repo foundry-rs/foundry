@@ -4,7 +4,7 @@ use crate::{
     sol::{Severity, SolLint},
 };
 use solar::{
-    ast::{self, SourceUnit, Symbol, visit::Visit},
+    ast::{self as ast, SourceUnit, Symbol, visit::Visit},
     data_structures::{Never, map::FxHashSet},
     interface::SourceMap,
 };

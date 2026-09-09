@@ -190,7 +190,7 @@ impl<'gcx> Analyzer<'gcx> {
             ..FlowState::default()
         };
         let mut merged = HashMap::new();
-        let keys = left.values.keys().chain(right.values.keys()).copied().collect::<HashSet<_>>();
+        let keys: HashSet<_> = left.values.keys().chain(right.values.keys()).copied().collect();
         for key in keys {
             let (l, r) = (left.value(key), right.value(key));
             let value = if l == r {
@@ -463,10 +463,8 @@ impl<'gcx> Analyzer<'gcx> {
 
     /// Assigns every pair, reading all right-hand sides first so tuple swaps are exact.
     fn assign_pairs(&mut self, pairs: &[Pair<'gcx>]) {
-        let assigned = pairs
-            .iter()
-            .filter_map(|(key, rhs)| Some(((*key)?, self.assigned(*rhs))))
-            .collect::<Vec<_>>();
+        let assigned: Vec<_> =
+            pairs.iter().filter_map(|(key, rhs)| Some(((*key)?, self.assigned(*rhs)))).collect();
         for (key, assigned) in assigned {
             self.assign(key, assigned);
         }
