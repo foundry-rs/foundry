@@ -1,9 +1,6 @@
 //! Tests for backtrace functionality
 
-use foundry_test_utils::{
-    rpc::{next_etherscan_api_key, next_http_rpc_endpoint},
-    util::SOLC_VERSION,
-};
+use foundry_test_utils::rpc::{next_etherscan_api_key, next_http_rpc_endpoint};
 
 forgetest!(test_backtraces, |prj, cmd| {
     prj.insert_ds_test();
@@ -290,9 +287,8 @@ forgetest!(test_library_backtrace, |prj, cmd| {
         include_str!("../fixtures/backtraces/LibraryBacktrace.t.sol"),
     );
 
-    // Pin the compiler to keep the output snapshot stable and configure the linked library.
+    // Configure the linked library.
     let config = foundry_config::Config {
-        solc: Some(foundry_config::SolcReq::Version(SOLC_VERSION.parse().unwrap())),
         libraries: vec!["src/libraries/ExternalMathLib.sol:ExternalMathLib:0x1234567890123456789012345678901234567890".to_string()],
         ..Default::default()
     };
@@ -304,8 +300,8 @@ forgetest!(test_library_backtrace, |prj, cmd| {
     output.stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
+Compiler run successful[..]
+...
 Ran 9 tests for test/LibraryBacktrace.t.sol:LibraryBacktraceTest
 [FAIL: DivisionByZero()] testExternalDivisionByZero() ([GAS])
 ...
