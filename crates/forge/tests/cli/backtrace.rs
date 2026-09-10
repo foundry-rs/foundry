@@ -1,6 +1,9 @@
 //! Tests for backtrace functionality
 
-use foundry_test_utils::rpc::{next_etherscan_api_key, next_http_rpc_endpoint};
+use foundry_test_utils::{
+    rpc::{next_etherscan_api_key, next_http_rpc_endpoint},
+    util::SOLC_VERSION,
+};
 
 forgetest!(test_backtraces, |prj, cmd| {
     prj.insert_ds_test();
@@ -287,8 +290,9 @@ forgetest!(test_library_backtrace, |prj, cmd| {
         include_str!("../fixtures/backtraces/LibraryBacktrace.t.sol"),
     );
 
-    // Add foundry.toml configuration for linked library
+    // Pin the compiler to keep the output snapshot stable and configure the linked library.
     let config = foundry_config::Config {
+        solc: Some(foundry_config::SolcReq::Version(SOLC_VERSION.parse().unwrap())),
         libraries: vec!["src/libraries/ExternalMathLib.sol:ExternalMathLib:0x1234567890123456789012345678901234567890".to_string()],
         ..Default::default()
     };
