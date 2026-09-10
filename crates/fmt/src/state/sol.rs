@@ -2006,12 +2006,17 @@ impl<'ast> State<'_, 'ast> {
     /// Prints the given statement in the source code, handling formatting, inline documentation,
     /// trailing comments and layout logic for various statement kinds.
     fn print_stmt(&mut self, stmt: &'ast ast::Stmt<'ast>) {
+        self.print_stmt_bound(stmt, None);
+    }
+
+    /// Prints a statement with a bounded trailing-comment scan.
+    fn print_stmt_bound(&mut self, stmt: &'ast ast::Stmt<'ast>, next_pos: Option<BytePos>) {
         let ast::Stmt { ref docs, span, ref kind } = *stmt;
         self.print_docs(docs);
 
         // Handle disabled statements.
         if self.handle_span(span, false) {
-            self.print_trailing_comment_no_break(stmt.span.hi(), None);
+            self.print_trailing_comment_no_break(stmt.span.hi(), next_pos);
             return;
         }
 
@@ -2080,7 +2085,7 @@ impl<'ast> State<'_, 'ast> {
             stmt.span.hi(),
             CommentConfig::default().trailing_no_break().mixed_no_break().mixed_prev_space(),
         );
-        self.print_trailing_comment_no_break(stmt.span.hi(), None);
+        self.print_trailing_comment_no_break(stmt.span.hi(), next_pos);
     }
 
     /// Prints an `assembly` statement, including optional dialect and flags,
@@ -2179,14 +2184,26 @@ impl<'ast> State<'_, 'ast> {
 
         // Print init.
         self.s.cbox(0);
-        match init {
-            Some(init_stmt) => self.print_stmt(init_stmt),
-            None => self.print_word(";"),
-        }
+        let init_trailing_comment = match init {
+            Some(init_stmt) => {
+                let has_trailing_comment = cond.as_ref().is_some_and(|cond| {
+                    self.peek_trailing_comment(init_stmt.span.hi(), Some(cond.span.lo())).is_some()
+                });
+                self.print_stmt_bound(init_stmt, Some(init_stmt.span.hi()));
+                has_trailing_comment
+            }
+            None => {
+                self.print_word(";");
+                false
+            }
+        };
 
         // Print condition.
         match cond {
             Some(cond_expr) => {
+                if init_trailing_comment {
+                    self.hardbreak_if_not_bol();
+                }
                 self.print_sep(Separator::Space);
                 self.print_expr(cond_expr);
             }
