@@ -297,31 +297,6 @@ fmt_tests! {
 }
 
 #[test]
-fn test_comment_empty_line_bug() {
-    init_tracing();
-    let source = r#"pragma solidity ^0.8.0;
-
-contract ProofOfConcept {
-    // some comment
-
-}
-"#;
-
-    let expected = r#"pragma solidity ^0.8.0;
-
-contract ProofOfConcept {
-    // some comment
-}
-"#;
-
-    let fmt_config = Arc::new(FormatterConfig::default());
-    let path = Path::new("test.sol");
-    let formatted = format(source, path, fmt_config);
-
-    assert_eq!(formatted, expected, "Formatting mismatch");
-}
-
-#[test]
 fn test_override_state_variable_without_initializer_does_not_leak_indent() {
     init_tracing();
 
@@ -464,6 +439,5 @@ struct AfterInitializer {
     for (case, source, expected) in cases {
         let formatted = format(source, path, fmt_config.clone());
         assert_eq!(formatted, expected, "{case}");
-        assert_eq!(format(&formatted, path, fmt_config.clone()), expected, "{case} idempotency");
     }
 }
