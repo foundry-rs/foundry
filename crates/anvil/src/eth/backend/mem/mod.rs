@@ -3589,7 +3589,14 @@ impl<N: Network> Backend<N> {
             && let Some(fork) = self.get_fork()
             && fork.predates_fork(*number)
         {
-            return Ok(fork.trace_call(request, trace_types, block_id).await?);
+            // Delegate the resolved block number so tags (`latest`/`pending`/`safe`/
+            // `finalized`) are resolved against the fork's head instead of drifting with
+            // the upstream chain. Hashes are forwarded unchanged.
+            let resolved = match block_id {
+                BlockId::Hash(_) => block_id,
+                _ => BlockId::number(*number),
+            };
+            return Ok(fork.trace_call(request, trace_types, resolved).await?);
         }
 
         self.with_database_at_and_context(Some(block_request), |state, block, mut monad_context| {

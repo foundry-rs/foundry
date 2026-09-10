@@ -411,6 +411,100 @@ async fn test_trace_call_local() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_trace_call_safe_at_fork_point() {
+    let epoch = 1u64;
+    let (_origin_api, origin_handle) =
+        spawn(NodeConfig::test().with_slots_in_an_epoch(epoch)).await;
+    let origin_provider = origin_handle.http_provider();
+    let origin_accounts = origin_handle.dev_wallets().collect::<Vec<_>>();
+    let from = origin_accounts[0].address();
+    let to = origin_accounts[1].address();
+    let amount1 = U256::from(1_000);
+    let amount2 = U256::from(2_000);
+    let amount3 = U256::from(3_000);
+
+    // Block 1: `to` balance = genesis + amount1.
+    let tx1 = TransactionRequest::default().to(to).value(amount1).from(from);
+    origin_provider
+        .send_transaction(WithOtherFields::new(tx1))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    // Block 2: the fork point. `to` balance = genesis + amount1 + amount2.
+    let tx2 = TransactionRequest::default().to(to).value(amount2).from(from);
+    let receipt2 = origin_provider
+        .send_transaction(WithOtherFields::new(tx2))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let fork_point_number = receipt2.block_number.unwrap();
+    assert_eq!(fork_point_number, 2);
+
+    let (_api, handle) = spawn(
+        NodeConfig::test()
+            .with_slots_in_an_epoch(epoch)
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint())),
+    )
+    .await;
+    let provider = handle.http_provider();
+    assert_eq!(provider.get_block_number().await.unwrap(), fork_point_number);
+
+    // Advance the upstream head after the fork captures its snapshot: `to` balance becomes
+    // genesis + amount1 + amount2 + amount3 on the ORIGIN chain (block 3), while the forked
+    // node's own local chain has not advanced past the fork point.
+    let tx3 = TransactionRequest::default().to(to).value(amount3).from(from);
+    let receipt3 = origin_provider
+        .send_transaction(WithOtherFields::new(tx3))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert_eq!(receipt3.block_number.unwrap(), fork_point_number + 1);
+    assert_eq!(provider.get_block_number().await.unwrap(), fork_point_number);
+
+    let call_amount = U256::from(1);
+    let call =
+        WithOtherFields::new(TransactionRequest::default().to(to).value(call_amount).from(from));
+
+    // `safe` resolves locally (current=2, epoch=1) to block 1 - the fork's own snapshot,
+    // never the upstream chain's post-fork block 2.
+    let by_safe: TraceResults = provider
+        .client()
+        .request(
+            "trace_call",
+            (call.clone(), vec![TraceType::StateDiff], BlockId::Number(BlockNumberOrTag::Safe)),
+        )
+        .await
+        .unwrap();
+    let by_number: TraceResults = provider
+        .client()
+        .request("trace_call", (call, vec![TraceType::StateDiff], BlockId::number(1)))
+        .await
+        .unwrap();
+
+    let ChangedType { from: before_safe, to: after_safe } =
+        by_safe.state_diff.as_ref().unwrap().get(&to).unwrap().balance.as_changed().unwrap();
+    let ChangedType { from: before_number, to: after_number } =
+        by_number.state_diff.as_ref().unwrap().get(&to).unwrap().balance.as_changed().unwrap();
+
+    let expected_balance_at_block_1 = origin_handle.genesis_balance().saturating_add(amount1);
+    assert_eq!(*before_number, expected_balance_at_block_1);
+    assert_eq!(
+        *before_safe, expected_balance_at_block_1,
+        "trace_call(safe) drifted to the upstream tip's resolution instead of the fork's own \
+         local resolution"
+    );
+    assert_eq!(before_safe, before_number);
+    assert_eq!(after_safe, after_number);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_trace_call_many_local() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let wallets = handle.dev_wallets().collect::<Vec<_>>();
