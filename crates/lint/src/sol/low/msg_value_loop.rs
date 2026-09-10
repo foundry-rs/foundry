@@ -1,15 +1,9 @@
 use super::{MsgValueLoop, payable_loop::for_each_payable_loop_expr};
 use crate::{
     linter::{LateLintPass, LintContext},
-    sol::{Severity, SolLint, analysis::is_builtin},
+    sol::{Severity, SolLint},
 };
-use solar::{
-    interface::sym,
-    sema::{
-        Gcx,
-        hir::{ExprKind, Function},
-    },
-};
+use solar::sema::{Gcx, builtins::Builtin, hir::Function};
 
 declare_forge_lint!(
     MSG_VALUE_LOOP,
@@ -21,10 +15,7 @@ declare_forge_lint!(
 impl<'gcx> LateLintPass<'gcx> for MsgValueLoop {
     fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, func: &'gcx Function<'gcx>) {
         for_each_payable_loop_expr(gcx, func, |expr| {
-            if let ExprKind::Member(base, member) = &expr.peel_parens().kind
-                && member.name == sym::value
-                && is_builtin(base, sym::msg)
-            {
+            if gcx.resolved_builtin(expr) == Some(Builtin::MsgValue) {
                 ctx.emit(&MSG_VALUE_LOOP, expr.span);
             }
         });

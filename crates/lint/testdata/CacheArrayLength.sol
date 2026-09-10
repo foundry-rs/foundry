@@ -186,6 +186,18 @@ contract CacheArrayLength {
         }
     }
 
+    function viewPointer(function(uint256) external view check) external view {
+        for (uint256 i = 0; i < items.length; ++i) { //~NOTE: array length is read on every loop iteration
+            check(i);
+        }
+    }
+
+    function mutatingPointer(function(uint256) external check) external {
+        for (uint256 i = 0; i < items.length; ++i) {
+            check(i);
+        }
+    }
+
     function generatedValues() internal pure returns (uint256[] memory values) {
         values = new uint256[](3);
     }

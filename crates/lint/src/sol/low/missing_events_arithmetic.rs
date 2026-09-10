@@ -4,7 +4,7 @@ use crate::{
     sol::{
         Severity, SolLint,
         analysis::{
-            builtins, dispatched_function, is_protected, lhs_local_var, loop_stmts, state_lhs_vars,
+            dispatched_function, is_protected, lhs_local_var, loop_stmts, state_lhs_vars,
             underlying_var,
         },
     },
@@ -17,7 +17,7 @@ use solar::{
         builtins::Builtin,
         hir::{
             self, BinOpKind, ContractId, ElementaryType, Expr, ExprKind, FunctionId, StmtKind,
-            TypeKind, UnOpKind, VariableId, Visit,
+            TypeKind, VariableId, Visit,
         },
     },
 };
@@ -73,7 +73,7 @@ impl<'gcx> LateLintPass<'gcx> for MissingEventsArithmetic {
             .all()
             .iter()
             .map(|func| func.id)
-            .partition(|&id| is_protected(&gcx.hir, id));
+            .partition(|&id| is_protected(gcx, id));
         let entry_points: Vec<_> = protected
             .into_iter()
             .filter(|&id| {
@@ -141,10 +141,6 @@ const fn is_arithmetic_op(kind: BinOpKind) -> bool {
     )
 }
 
-const fn is_inc_dec_op(kind: UnOpKind) -> bool {
-    matches!(kind, UnOpKind::PreInc | UnOpKind::PostInc | UnOpKind::PreDec | UnOpKind::PostDec)
-}
-
 // --- Arithmetic uses --------------------------------------------------------------------------
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -181,9 +177,9 @@ impl<'gcx> UseAnalyzer<'_, 'gcx> {
         self.call_stack.pop();
     }
 
-    /// Analyzes `callee_id` with its parameters bound to the sources of `args`, restoring the
+    /// Analyzes `callee_id` with its parameters bound to the call's argument sources, restoring the
     /// caller's taint afterwards.
-    fn analyze_call(&mut self, callee_id: FunctionId, args: &hir::CallArgs<'gcx>) {
+    fn analyze_call(&mut self, callee_id: FunctionId, call: &Expr<'gcx>) {
         if self.call_stack.contains(&callee_id) {
             return;
         }
@@ -193,9 +189,9 @@ impl<'gcx> UseAnalyzer<'_, 'gcx> {
             .function(callee_id)
             .parameters
             .iter()
-            .zip(args.exprs())
-            .filter_map(|(&param, arg)| {
-                let sources = self.sources(arg);
+            .enumerate()
+            .filter_map(|(index, &param)| {
+                let sources = self.sources(self.gcx.call_arg(call, index)?);
                 (!sources.is_empty()).then_some((param, sources))
             })
             .collect();
@@ -208,7 +204,7 @@ impl<'gcx> UseAnalyzer<'_, 'gcx> {
     fn sources(&mut self, expr: &Expr<'gcx>) -> HashSet<VariableId> {
         let mut out = HashSet::new();
         let _ = expr.visit(&mut |e| {
-            if let Some(var_id) = underlying_var(e) {
+            if let Some(var_id) = underlying_var(self.gcx, e) {
                 if self.targets.contains(&var_id) {
                     out.insert(var_id);
                 }
@@ -216,24 +212,20 @@ impl<'gcx> UseAnalyzer<'_, 'gcx> {
                     out.extend(sources);
                 }
             }
-            if let ExprKind::Call(callee, args, _) = &e.kind
+            if let ExprKind::Call(callee, ..) = &e.kind
                 && let Some(callee_id) = dispatched_function(self.gcx, self.contract_id, callee)
             {
-                out.extend(self.return_sources(callee_id, args));
+                out.extend(self.return_sources(callee_id, e));
             }
             ControlFlow::<()>::Continue(())
         });
         out
     }
 
-    fn return_sources(
-        &mut self,
-        callee_id: FunctionId,
-        args: &hir::CallArgs<'gcx>,
-    ) -> HashSet<VariableId> {
+    fn return_sources(&mut self, callee_id: FunctionId, call: &Expr<'gcx>) -> HashSet<VariableId> {
         let outer_mode = std::mem::replace(&mut self.mode, Mode::Returns);
         let outer_returned = std::mem::take(&mut self.returned);
-        self.analyze_call(callee_id, args);
+        self.analyze_call(callee_id, call);
         self.mode = outer_mode;
         std::mem::replace(&mut self.returned, outer_returned)
     }
@@ -280,7 +272,7 @@ impl<'gcx> Visit<'gcx> for UseAnalyzer<'_, 'gcx> {
     fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
         match &expr.kind {
             ExprKind::Assign(lhs, _, rhs) => {
-                if let Some(local) = lhs_local_var(&self.gcx.hir, lhs) {
+                if let Some(local) = lhs_local_var(self.gcx, lhs) {
                     let sources = self.sources(rhs);
                     self.set_taint(local, sources);
                 }
@@ -293,10 +285,10 @@ impl<'gcx> Visit<'gcx> for UseAnalyzer<'_, 'gcx> {
                 let sources = self.sources(rhs);
                 self.used.extend(sources);
             }
-            ExprKind::Call(callee, args, _) if self.mode == Mode::Uses => {
+            ExprKind::Call(callee, ..) if self.mode == Mode::Uses => {
                 self.walk_expr(expr)?;
                 if let Some(callee_id) = dispatched_function(self.gcx, self.contract_id, callee) {
-                    self.analyze_call(callee_id, args);
+                    self.analyze_call(callee_id, expr);
                 }
                 return ControlFlow::Continue(());
             }
@@ -485,17 +477,17 @@ impl<'gcx> WriteAnalyzer<'_, 'gcx> {
                     if dynamic || op.is_some_and(|op| is_arithmetic_op(op.kind)) {
                         self.record_writes(state, lhs);
                     }
-                    if let Some(local) = lhs_local_var(&self.gcx.hir, lhs) {
+                    if let Some(local) = lhs_local_var(self.gcx, lhs) {
                         self.set_dynamic(state, local, rhs);
                     }
                 }
-                ExprKind::Unary(op, inner) if is_inc_dec_op(op.kind) => {
+                ExprKind::Unary(op, inner) if op.kind.has_side_effects() => {
                     self.record_writes(state, inner);
                 }
-                ExprKind::Call(callee, args, _) => {
+                ExprKind::Call(callee, ..) => {
                     if let Some(callee_id) = dispatched_function(self.gcx, self.contract_id, callee)
                     {
-                        self.analyze_call(callee_id, args, state);
+                        self.analyze_call(callee_id, e, state);
                     }
                 }
                 _ => {}
@@ -506,12 +498,7 @@ impl<'gcx> WriteAnalyzer<'_, 'gcx> {
 
     /// Inlines `callee_id` with its parameters marked dynamic when the matching argument is; the
     /// callee's pending writes (and any `emit` clearing them) flow back into the caller.
-    fn analyze_call(
-        &mut self,
-        callee_id: FunctionId,
-        args: &hir::CallArgs<'gcx>,
-        state: &mut WriteState,
-    ) {
+    fn analyze_call(&mut self, callee_id: FunctionId, call: &Expr<'gcx>, state: &mut WriteState) {
         let callee_state = WriteState {
             dynamic: self
                 .gcx
@@ -519,9 +506,11 @@ impl<'gcx> WriteAnalyzer<'_, 'gcx> {
                 .function(callee_id)
                 .parameters
                 .iter()
-                .zip(args.exprs())
-                .filter(|(_, arg)| self.is_dynamic(state, arg))
-                .map(|(&param, _)| param)
+                .enumerate()
+                .filter(|(index, _)| {
+                    self.gcx.call_arg(call, *index).is_some_and(|arg| self.is_dynamic(state, arg))
+                })
+                .map(|(_, &param)| param)
                 .collect(),
             writes: state.writes.clone(),
         };
@@ -531,7 +520,7 @@ impl<'gcx> WriteAnalyzer<'_, 'gcx> {
     }
 
     fn record_writes(&self, state: &mut WriteState, lhs: &Expr<'_>) {
-        for var_id in state_lhs_vars(&self.gcx.hir, lhs) {
+        for var_id in state_lhs_vars(self.gcx, lhs) {
             if self.targets.contains(&var_id) {
                 state.writes.push(StateWrite { var_id, span: lhs.span });
             }
@@ -553,9 +542,12 @@ impl<'gcx> WriteAnalyzer<'_, 'gcx> {
             let dynamic = match &e.kind {
                 ExprKind::Call(..) => true,
                 ExprKind::Member(base, _) => {
-                    builtins(base).any(|b| matches!(b, Builtin::Block | Builtin::Msg | Builtin::Tx))
+                    matches!(
+                        self.gcx.resolved_builtin(base),
+                        Some(Builtin::Block | Builtin::Msg | Builtin::Tx)
+                    )
                 }
-                _ => underlying_var(e).is_some_and(|var_id| {
+                _ => underlying_var(self.gcx, e).is_some_and(|var_id| {
                     let var = self.gcx.hir.variable(var_id);
                     state.dynamic.contains(&var_id)
                         || (var.kind.is_state() && !var.is_constant() && !var.is_immutable())

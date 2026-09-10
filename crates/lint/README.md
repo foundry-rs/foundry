@@ -4,7 +4,7 @@ Solidity linter for identifying potential errors, vulnerabilities, gas optimizat
 It helps enforce best practices and improve code quality within Foundry projects.
 
 Files under the configured test and script directories are excluded from all lints except
-`unsafe-cheatcode`, `block-number-across-roll`, and `block-timestamp-across-warp`, including when a
+`unsafe-cheatcode` and `environment-read-across-mutation`, including when a
 lint is explicitly selected. These exceptions still respect severity filters, exclusions, and
 inline suppressions. Production source files remain linted.
 
@@ -29,8 +29,7 @@ inline suppressions. Production source files remain linted.
   - `protected-vars`: Flags externally callable entry points that write a state variable without its required `@custom:security write-protection` function or modifier.
   - `unprotected-initializer`: Upgradeable initializers should not be callable on the implementation contract.
 - **Medium Severity:**
-  - `block-number-across-roll`: Capture raw block-number values with `vm.getBlockNumber()` when they cross `vm.roll`.
-  - `block-timestamp-across-warp`: Capture raw timestamp values with `vm.getBlockTimestamp()` when they cross `vm.warp`.
+  - `environment-read-across-mutation`: Capture environment values through getters or external helpers when they cross Foundry setters, fork changes, or snapshot restoration.
   - `assert-state-change`: Flags state-modifying expressions inside `assert()` arguments.
   - `boolean-cst`: Flags misuse of boolean constants.
   - `dangerous-unary-operator`: Flags an assignment whose `=` is fused to a unary operator (`=-`, `=~`), e.g. `x =- 1`, which parses as `x = -1` instead of the intended compound `x -= 1`.

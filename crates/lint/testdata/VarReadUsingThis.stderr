@@ -268,6 +268,19 @@ LL │             return v + this.counter();
 note[var-read-using-this]: call through `this` to a `view` or `pure` function incurs a `STATICCALL`
    ╭▸ ROOT/testdata/VarReadUsingThis.sol:LL:CC
    │
+LL │         return this.ambiguous(0);
+   │                ━━━━━━━━━━━━━━━━━
+   │
+   ├ note: avoid the `STATICCALL` by invoking the function directly
+   │       
+   │       call directly without `this.`: `ambiguous(...)`
+   │       
+   │       
+   ╰ help: https://getfoundry.sh/forge/linting/var-read-using-this
+
+note[var-read-using-this]: call through `this` to a `view` or `pure` function incurs a `STATICCALL`
+   ╭▸ ROOT/testdata/VarReadUsingThis.sol:LL:CC
+   │
 LL │         return this.abstractVar();
    │                ━━━━━━━━━━━━━━━━━━ help: consider reading the state variable directly: `abstractVar`
    │

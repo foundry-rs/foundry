@@ -89,6 +89,7 @@ interface IToken {
     // narrowing can correctly distinguish them.
     function update(address target, uint256 amount) external returns (bool);
     function update(uint256 n) external view returns (bool);
+    function update(address target) external returns (bool);
 }
 
 // Interface with view functions that share names with low-level address builtins.
@@ -124,6 +125,10 @@ contract AssertStateChangeExternal {
     // the 2-arg mutating overload, so no false positive.
     function goodOverloadView(uint256 n) external view {
         assert(token.update(n));
+    }
+
+    function badSameArityOverload(address target) external {
+        assert(token.update(target)); //~WARN: `assert()` argument contains a state-modifying expression
     }
 
     // Bad: calling the 2-arg mutating overload `update(address,uint256)` — only
@@ -210,9 +215,7 @@ contract AssertStateChangeUsingFor {
     }
 }
 
-// ---- same-arity overloads: any-mutates policy ----
-// Both overloads have arity 1 but different param types. Since Solar does not resolve
-// which overload was selected, we flag whenever any candidate mutates state.
+// Same-arity overloads use the selected function's mutability.
 interface IOverloaded {
     function check(uint256 n) external returns (bool);   // mutating
     function check(address a) external view returns (bool); // view
@@ -221,14 +224,14 @@ interface IOverloaded {
 contract AssertStateChangeSameArityOverload {
     IOverloaded public o;
 
-    // Bad: `check(uint256)` mutates state; any-mutates policy must flag this.
+    // Bad: the selected `check(uint256)` overload mutates state.
     function badSameArityMutating(uint256 n) external {
         assert(o.check(n)); //~WARN: `assert()` argument contains a state-modifying expression
     }
 
-    // Bad: `check(address)` is view but `check(uint256)` mutates; still flagged.
-    function badSameArityView(address a) external {
-        assert(o.check(a)); //~WARN: `assert()` argument contains a state-modifying expression
+    // Good: the selected `check(address)` overload only reads state.
+    function goodSameArityView(address a) external {
+        assert(o.check(a));
     }
 }
 

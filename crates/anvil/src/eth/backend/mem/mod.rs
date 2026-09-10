@@ -1657,6 +1657,19 @@ impl<N: Network> Backend<N> {
             .collect()
     }
 
+    /// Returns the EVM-visible number for a locally mined RPC block.
+    fn evm_block_number(&self, rpc_number: u64) -> U256 {
+        self.get_fork()
+            .map_or_else(|| U256::from(rpc_number), |fork| fork.evm_block_number(rpc_number))
+    }
+
+    /// Restores the execution number separately from the RPC header number.
+    fn block_env_from_header(&self, header: &impl BlockHeader) -> BlockEnv {
+        let mut block = block_env_from_header::<BlockEnv>(header);
+        block.number = self.evm_block_number(header.number());
+        block
+    }
+
     /// Returns the environment for the next block
     fn next_evm_env(&self) -> EvmEnv {
         let mut evm_env = self.evm_env.read().clone();
@@ -1671,7 +1684,7 @@ impl<N: Network> Backend<N> {
     /// Returns the environment for replaying transactions from a historical block.
     fn tx_replay_evm_env(&self, block: &Block) -> (EvmEnv, FoundryHardfork) {
         let mut evm_env = self.evm_env.read().clone();
-        evm_env.block_env = block_env_from_header(&block.header);
+        evm_env.block_env = self.block_env_from_header(&block.header);
         let hardfork = self.hardfork();
         #[cfg(feature = "monad")]
         let hardfork = if self.is_monad() {
@@ -2086,7 +2099,10 @@ impl<N: Network> Backend<N> {
         // If Arbitrum, apply chain specifics to converted block.
         if is_arbitrum(self.protocol_chain_id()) {
             // Set `l1BlockNumber` field.
-            block.other.insert("l1BlockNumber".to_string(), number.into());
+            block.other.insert(
+                "l1BlockNumber".to_string(),
+                serde_json::json!(self.evm_block_number(number)),
+            );
         }
 
         if let Some((
@@ -3363,8 +3379,11 @@ impl<N: Network> Backend<N> {
             return None;
         }
 
-        let env_block = evm_env.block_env.number.saturating_to();
-        Some(self.get_fork().map_or(env_block, |fork| fork.block_number().max(env_block)))
+        let env_block = evm_env.block_env.number;
+        Some(
+            self.get_fork()
+                .map_or_else(|| env_block.saturating_to(), |fork| fork.rpc_block_number(env_block)),
+        )
     }
 
     pub fn get_code_with_state(
@@ -3570,7 +3589,14 @@ impl<N: Network> Backend<N> {
             && let Some(fork) = self.get_fork()
             && fork.predates_fork(*number)
         {
-            return Ok(fork.trace_call(request, trace_types, block_id).await?);
+            // Delegate the resolved block number so tags (`latest`/`pending`/`safe`/
+            // `finalized`) are resolved against the fork's head instead of drifting with
+            // the upstream chain. Hashes are forwarded unchanged.
+            let resolved = match block_id {
+                BlockId::Hash(_) => block_id,
+                _ => BlockId::number(*number),
+            };
+            return Ok(fork.trace_call(request, trace_types, resolved).await?);
         }
 
         self.with_database_at_and_context(Some(block_request), |state, block, mut monad_context| {
@@ -4788,7 +4814,7 @@ impl<N: Network> Backend<N> {
         {
             let mut env = self.evm_env.write();
             env.block_env = BlockEnv {
-                number: U256::from(num),
+                number: self.evm_block_number(num),
                 timestamp: U256::from(block.header.timestamp()),
                 difficulty: block.header.difficulty(),
                 // ensures prevrandao is set
@@ -5058,11 +5084,7 @@ where
 
         let best_number = self.blockchain.storage.read().best_number;
         let block_number = best_number.saturating_add(1);
-        if arbitrum_block_numbers.is_some() {
-            evm_env.block_env.number = U256::from(block_number);
-        } else {
-            evm_env.block_env.number = evm_env.block_env.number.saturating_add(U256::from(1));
-        }
+        evm_env.block_env.number = evm_env.block_env.number.saturating_add(U256::from(1));
         evm_env.block_env.basefee = current_base_fee;
         evm_env.block_env.blob_excess_gas_and_price = current_excess_blob_gas_and_price;
         evm_env.block_env.timestamp = U256::from(timestamp);
@@ -5412,13 +5434,9 @@ where
 
             let block_number = self.blockchain.storage.read().best_number.saturating_add(1);
 
-            // increase block number for this block
-            if is_arbitrum(self.protocol_chain_id()) {
-                // Temporary set `env.block.number` to `block_number` for Arbitrum chains.
-                evm_env.block_env.number = U256::from(block_number);
-            } else {
-                evm_env.block_env.number = evm_env.block_env.number.saturating_add(U256::from(1));
-            }
+            // Advance the EVM number independently of the RPC header number. On Arbitrum
+            // forks this preserves the L1 number read by NUMBER while the header tracks L2.
+            evm_env.block_env.number = evm_env.block_env.number.saturating_add(U256::from(1));
 
             evm_env.block_env.basefee = current_base_fee;
             evm_env.block_env.blob_excess_gas_and_price = current_excess_blob_gas_and_price;
@@ -5721,7 +5739,7 @@ where
         let cache_db = cache_db.0;
 
         let state_root = cache_db.maybe_state_root().unwrap_or_default();
-        let block_number = evm_env.block_env.number.saturating_to();
+        let block_number = self.best_number().saturating_add(1);
         let block_info = self.build_block_info(
             &evm_env,
             parent_hash,
@@ -6192,7 +6210,7 @@ where
                 let result = self
                     .with_pending_block(pool_transactions, |state, block| {
                         let block = block.block;
-                        f(state, block_env_from_header(&block.header))
+                        f(state, self.block_env_from_header(&block.header))
                     })
                     .await?;
                 return Ok(result);
@@ -6216,12 +6234,12 @@ where
             {
                 let read_guard = self.states.upgradable_read();
                 if let Some(state_db) = read_guard.get_state(&block_hash) {
-                    return Ok(f(Box::new(state_db), block_env_from_header(&block.header)));
+                    return Ok(f(Box::new(state_db), self.block_env_from_header(&block.header)));
                 }
 
                 let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
                 if let Some(state) = write_guard.get_on_disk_state(&block_hash) {
-                    return Ok(f(Box::new(state), block_env_from_header(&block.header)));
+                    return Ok(f(Box::new(state), self.block_env_from_header(&block.header)));
                 }
             }
 
@@ -6255,7 +6273,7 @@ where
                             &block_info.block,
                             block_info.block.body.transactions.len(),
                         )?;
-                        let block_env = block_env_from_header(&block_info.block.header);
+                        let block_env = self.block_env_from_header(&block_info.block.header);
                         f(state, block_env, context)
                     })
                     .await?;
@@ -6287,12 +6305,16 @@ where
             {
                 let read_guard = self.states.upgradable_read();
                 if let Some(state_db) = read_guard.get_state(&block_hash) {
-                    return f(Box::new(state_db), block_env_from_header(&block.header), context);
+                    return f(
+                        Box::new(state_db),
+                        self.block_env_from_header(&block.header),
+                        context,
+                    );
                 }
 
                 let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
                 if let Some(state) = write_guard.get_on_disk_state(&block_hash) {
-                    return f(Box::new(state), block_env_from_header(&block.header), context);
+                    return f(Box::new(state), self.block_env_from_header(&block.header), context);
                 }
             }
 
@@ -6605,7 +6627,14 @@ where
         if let Some(fork) = self.get_fork() {
             let number = self.ensure_block_number(Some(block_id)).await?;
             if fork.predates_fork_inclusive(number) {
-                return Ok(fork.trace_block_opcode_gas(block_id).await?);
+                // Delegate the resolved block number so tags (`latest`/`pending`/`safe`/
+                // `finalized`) are resolved against the fork's head instead of drifting with
+                // the upstream chain. Hashes are forwarded unchanged.
+                let resolved = match block_id {
+                    BlockId::Hash(_) => block_id,
+                    _ => BlockId::number(number),
+                };
+                return Ok(fork.trace_block_opcode_gas(resolved).await?);
             }
         }
 
@@ -6862,7 +6891,7 @@ where
 
             // Set environment back to common block
             let mut env = self.evm_env.write();
-            env.block_env.number = U256::from(common_block.header.number());
+            env.block_env.number = self.evm_block_number(common_block.header.number());
             env.block_env.timestamp = U256::from(common_block.header.timestamp());
             env.block_env.gas_limit = common_block.header.gas_limit();
             env.block_env.difficulty = common_block.header.difficulty();
@@ -7547,7 +7576,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         if let Some(block) = block_env.as_mut() {
             // Keep NUMBER aligned with the canonical local head chosen above. Arbitrum state dumps
             // can intentionally keep BlockEnv.number distinct from the best L2 block number.
-            if !is_arbitrum(self.chain_id().to())
+            if !is_arbitrum(self.protocol_chain_id())
                 && let Some((number, _)) = selected_head
             {
                 block.number = U256::from(number);
@@ -7977,6 +8006,10 @@ impl Backend<FoundryNetwork> {
                 if let Some(block_overrides) = block_overrides {
                     cache_db.apply_block_overrides(block_overrides, &mut block_env);
                 }
+                // Simulation overrides and RPC results use L2 numbers, while Arbitrum
+                // execution reads the corresponding L1 number through NUMBER.
+                let rpc_block_number = block_env.number.saturating_to();
+                block_env.number = self.evm_block_number(rpc_block_number);
                 let simulation_evm_env =
                     EvmEnv::new(self.evm_env.read().cfg_env.clone(), block_env.clone());
                 let spec_id = *simulation_evm_env.spec_id();
@@ -8369,7 +8402,7 @@ impl Backend<FoundryNetwork> {
                             .into_iter()
                             .map(|(idx, log)| Log {
                                 inner: log,
-                                block_number: Some(block_env.number.saturating_to()),
+                                block_number: Some(rpc_block_number),
                                 block_timestamp: Some(block_env.timestamp.saturating_to()),
                                 transaction_index: Some(req_idx as u64),
                                 log_index: Some(idx + log_index),
@@ -8429,7 +8462,7 @@ impl Backend<FoundryNetwork> {
                     beneficiary: block_env.beneficiary,
                     state_root,
                     difficulty: block_env.difficulty,
-                    number: block_env.number.saturating_to(),
+                    number: rpc_block_number,
                     gas_limit: block_env.gas_limit,
                     gas_used,
                     timestamp: block_env.timestamp.saturating_to(),
@@ -8489,13 +8522,16 @@ impl Backend<FoundryNetwork> {
                     });
                 }
 
-                let simulated_block = SimulatedBlock {
-                    inner: AnyRpcBlock::new(WithOtherFields::new(block)),
-                    calls: call_res,
-                };
+                let mut block = AnyRpcBlock::new(WithOtherFields::new(block));
+                if is_arbitrum(self.protocol_chain_id()) {
+                    block
+                        .other
+                        .insert("l1BlockNumber".to_string(), serde_json::json!(block_env.number));
+                }
+                let simulated_block = SimulatedBlock { inner: block, calls: call_res };
 
                 parent_hash = block_hash;
-                cache_db.cache.block_hashes.insert(block_env.number, block_hash);
+                cache_db.cache.block_hashes.insert(U256::from(rpc_block_number), block_hash);
                 inherited_block_env.beneficiary = block_env.beneficiary;
                 inherited_block_env.difficulty = block_env.difficulty;
                 inherited_block_env.gas_limit = block_env.gas_limit;
@@ -8533,7 +8569,7 @@ impl Backend<FoundryNetwork> {
                     };
                     simulate_at(
                         state,
-                        block_env_from_header(header),
+                        self.block_env_from_header(header),
                         header.number(),
                         header.timestamp(),
                         header.hash_slow(),

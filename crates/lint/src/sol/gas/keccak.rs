@@ -33,7 +33,7 @@ impl<'gcx> LateLintPass<'gcx> for AsmKeccak256 {
         if let Some(expr) = expr
             && let ExprKind::Call(callee, args, _) = &expr.kind
             && args.len() == 1
-            && is_builtin(callee, kw::Keccak256)
+            && is_builtin(gcx, callee, kw::Keccak256)
         {
             ctx.emit(&ASM_KECCAK256, expr.span);
         }

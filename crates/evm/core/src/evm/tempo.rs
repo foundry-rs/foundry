@@ -9,9 +9,10 @@ use revm::{
     },
     handler::{EvmTr, FrameResult},
     inspector::InspectorHandler,
-    interpreter::FrameInput,
+    interpreter::{FrameInput, InstructionResult},
     state::Bytecode,
 };
+use tempo_alloy::TempoNetwork;
 use tempo_evm::{TempoBlockEnv, TempoEvmFactory, TempoHaltReason, evm::TempoEvm};
 use tempo_precompiles::{
     extend_tempo_precompiles,
@@ -26,12 +27,31 @@ use crate::{
     FoundryContextExt, FoundryInspectorExt,
     backend::{DatabaseExt, JournaledState},
     constants::{CALLER, SYSTEM_PRECOMPILE_STUB, TEST_CONTRACT_ADDRESS},
-    evm::{FoundryEvmFactory, NestedEvm, NestedEvmFor, run_inspected_frame},
+    evm::{
+        FoundryEvmFactory, FoundryEvmNetwork, IntoInstructionResult, NestedEvm, NestedEvmFor,
+        run_inspected_frame,
+    },
     tempo::{TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS, initialize_tempo_test_genesis_inner},
 };
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TempoEvmNetwork;
+impl FoundryEvmNetwork for TempoEvmNetwork {
+    type Network = TempoNetwork;
+    type EvmFactory = TempoEvmFactory;
+}
+
 // Will be removed when the next revm release includes bluealloy/revm#3518.
 pub type TempoRevmEvm<'db, I> = tempo_revm::TempoEvm<&'db mut dyn DatabaseExt<TempoEvmFactory>, I>;
+
+impl IntoInstructionResult for TempoHaltReason {
+    fn into_instruction_result(self) -> InstructionResult {
+        match self {
+            Self::Ethereum(eth) => eth.into(),
+            _ => InstructionResult::PrecompileError,
+        }
+    }
+}
 
 impl FoundryEvmFactory for TempoEvmFactory {
     type Chain = ();
@@ -79,25 +99,6 @@ impl FoundryEvmFactory for TempoEvmFactory {
         I: FoundryInspectorExt<Self::FoundryContext<'db>> + 'db,
     {
         Box::new(self.create_foundry_evm_with_inspector(db, evm_env, inspector).into_inner())
-    }
-}
-
-/// Maps a Tempo [`EVMError`] to the common `EVMError<DatabaseError>` used by [`NestedEvm`].
-///
-/// This exists because [`NestedEvm`] currently uses Eth-typed errors. When `NestedEvm` gains
-/// an associated `Error` type, this mapping can be removed.
-pub(crate) fn map_tempo_error(
-    e: EVMError<DatabaseError, TempoInvalidTransaction>,
-) -> EVMError<DatabaseError> {
-    match e {
-        EVMError::Database(db) => EVMError::Database(db),
-        EVMError::Header(h) => EVMError::Header(h),
-        EVMError::Custom(s) => EVMError::Custom(s),
-        EVMError::CustomAny(custom_any_error) => EVMError::CustomAny(custom_any_error),
-        EVMError::Transaction(t) => match t {
-            TempoInvalidTransaction::EthInvalidTransaction(eth) => EVMError::Transaction(eth),
-            t => EVMError::Custom(format!("tempo transaction error: {t}")),
-        },
     }
 }
 
@@ -150,6 +151,25 @@ impl<'db, I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmF
 
     fn to_evm_env(&self) -> EvmEnv<Self::Spec, Self::Block> {
         self.ctx_ref().evm_clone()
+    }
+}
+
+/// Maps a Tempo [`EVMError`] to the common `EVMError<DatabaseError>` used by [`NestedEvm`].
+///
+/// This exists because [`NestedEvm`] currently uses Eth-typed errors. When `NestedEvm` gains
+/// an associated `Error` type, this mapping can be removed.
+pub(crate) fn map_tempo_error(
+    e: EVMError<DatabaseError, TempoInvalidTransaction>,
+) -> EVMError<DatabaseError> {
+    match e {
+        EVMError::Database(db) => EVMError::Database(db),
+        EVMError::Header(h) => EVMError::Header(h),
+        EVMError::Custom(s) => EVMError::Custom(s),
+        EVMError::CustomAny(custom_any_error) => EVMError::CustomAny(custom_any_error),
+        EVMError::Transaction(t) => match t {
+            TempoInvalidTransaction::EthInvalidTransaction(eth) => EVMError::Transaction(eth),
+            t => EVMError::Custom(format!("tempo transaction error: {t}")),
+        },
     }
 }
 
