@@ -4,6 +4,7 @@ use foundry_evm::revm::interpreter::instructions::i256::{i256_div, i256_mod};
 // Boolean selector recovery is an optional expression rewrite. Bound it to one word's worth of
 // unique nodes so adversarial expression trees cannot make construction unbounded.
 const MAX_BITWISE_BOOL_WORD_VISITS: usize = 256;
+const MAX_CONSTANT_DIFFERENCE_VISITS: usize = 256;
 
 impl SymExpr {
     pub(crate) fn select_storage_write(
@@ -1855,6 +1856,75 @@ impl SymExpr {
         }
     }
 
+    /// Returns a constant `self - other` modulo the EVM word size when it follows from the
+    /// expression structure on every branch.
+    pub(crate) fn constant_difference(&self, other: &Self) -> Option<U256> {
+        let mut differences = HashMap::default();
+        let mut remaining = MAX_CONSTANT_DIFFERENCE_VISITS;
+        self.constant_difference_cached(other, &mut differences, &mut remaining)
+    }
+
+    fn constant_difference_cached(
+        &self,
+        other: &Self,
+        differences: &mut HashMap<(Self, Self), Option<U256>>,
+        remaining: &mut usize,
+    ) -> Option<U256> {
+        if self == other {
+            return Some(U256::ZERO);
+        }
+        let key = (self.clone(), other.clone());
+        if let Some(difference) = differences.get(&key) {
+            return *difference;
+        }
+        *remaining = remaining.checked_sub(1)?;
+
+        let difference = match (self.kind(), other.kind()) {
+            (SymExprKind::Const(left), SymExprKind::Const(right)) => {
+                Some(left.wrapping_sub(*right))
+            }
+            (
+                SymExprKind::Ite(left_condition, left_then, left_else),
+                SymExprKind::Ite(right_condition, right_then, right_else),
+            ) if left_condition == right_condition => {
+                let then_difference =
+                    left_then.constant_difference_cached(right_then, differences, remaining)?;
+                let else_difference =
+                    left_else.constant_difference_cached(right_else, differences, remaining)?;
+                (then_difference == else_difference).then_some(then_difference)
+            }
+            (SymExprKind::BinOp(SymBinOp::Add, value, constant), _)
+                if let Some(constant) = constant.as_const() =>
+            {
+                value
+                    .constant_difference_cached(other, differences, remaining)
+                    .map(|difference| difference.wrapping_add(constant))
+            }
+            (SymExprKind::BinOp(SymBinOp::Sub, value, constant), _)
+                if let Some(constant) = constant.as_const() =>
+            {
+                value
+                    .constant_difference_cached(other, differences, remaining)
+                    .map(|difference| difference.wrapping_sub(constant))
+            }
+            (_, SymExprKind::BinOp(SymBinOp::Add, value, constant))
+                if let Some(constant) = constant.as_const() =>
+            {
+                self.constant_difference_cached(value, differences, remaining)
+                    .map(|difference| difference.wrapping_sub(constant))
+            }
+            (_, SymExprKind::BinOp(SymBinOp::Sub, value, constant))
+                if let Some(constant) = constant.as_const() =>
+            {
+                self.constant_difference_cached(value, differences, remaining)
+                    .map(|difference| difference.wrapping_add(constant))
+            }
+            _ => None,
+        };
+        differences.insert(key, difference);
+        difference
+    }
+
     /// Visits this expression and all child expressions.
     pub(crate) fn visit<B>(
         &self,
@@ -2716,5 +2786,35 @@ mod tests {
             assert_eq!(original.eval_model(&model).unwrap(), expected_value);
             assert_eq!(simplified.eval_model(&model).unwrap(), expected_value);
         }
+    }
+
+    #[test]
+    fn constant_difference_follows_aligned_branches() {
+        let mut cx = SymCx::new();
+        let selector = SymExpr::var(&mut cx, "selector");
+        let condition = SymBoolExpr::eq_word_const(&mut cx, &selector, U256::ZERO);
+        let base = SymExpr::var(&mut cx, "base");
+        let left_then = SymExpr::add_const(&mut cx, base.clone(), U256::from(196));
+        let left_else = SymExpr::add_const(&mut cx, base.clone(), U256::from(228));
+        let left = SymExpr::ite(&mut cx, condition.clone(), left_then, left_else);
+        let right_else = SymExpr::add_const(&mut cx, base.clone(), U256::from(32));
+        let right = SymExpr::ite(&mut cx, condition, base, right_else);
+
+        assert_eq!(left.constant_difference(&right), Some(U256::from(196)));
+    }
+
+    #[test]
+    fn constant_difference_rejects_misaligned_branches() {
+        let mut cx = SymCx::new();
+        let selector = SymExpr::var(&mut cx, "selector");
+        let condition = SymBoolExpr::eq_word_const(&mut cx, &selector, U256::ZERO);
+        let base = SymExpr::var(&mut cx, "base");
+        let left_then = SymExpr::add_const(&mut cx, base.clone(), U256::from(196));
+        let left_else = SymExpr::add_const(&mut cx, base.clone(), U256::from(229));
+        let left = SymExpr::ite(&mut cx, condition.clone(), left_then, left_else);
+        let right_else = SymExpr::add_const(&mut cx, base.clone(), U256::from(32));
+        let right = SymExpr::ite(&mut cx, condition, base, right_else);
+
+        assert_eq!(left.constant_difference(&right), None);
     }
 }

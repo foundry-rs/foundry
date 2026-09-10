@@ -504,6 +504,41 @@ impl SymBoolExpr {
         self.visit_bool(|expr| expr.contains_udiv())
     }
 
+    pub(crate) fn implies_unsigned_less_or_equal(
+        &self,
+        expected: bool,
+        left: &SymExpr,
+        right: &SymExpr,
+        remaining: &mut usize,
+    ) -> bool {
+        if left == right {
+            return true;
+        }
+        let Some(next) = remaining.checked_sub(1) else { return false };
+        *remaining = next;
+
+        match self.kind() {
+            SymBoolExprKind::Not(value) => {
+                value.implies_unsigned_less_or_equal(!expected, left, right, remaining)
+            }
+            SymBoolExprKind::And(values) if expected => values
+                .iter()
+                .any(|value| value.implies_unsigned_less_or_equal(true, left, right, remaining)),
+            SymBoolExprKind::Cmp(op, fact_left, fact_right) => match (*op, expected) {
+                (SymCmpOp::Ult | SymCmpOp::Ule, true) => fact_left == left && fact_right == right,
+                (SymCmpOp::Uge | SymCmpOp::Ugt, true) => fact_right == left && fact_left == right,
+                (SymCmpOp::Ult | SymCmpOp::Ule, false) => fact_right == left && fact_left == right,
+                (SymCmpOp::Uge | SymCmpOp::Ugt, false) => fact_left == left && fact_right == right,
+                (SymCmpOp::Eq, true) => {
+                    (fact_left == left && fact_right == right)
+                        || (fact_right == left && fact_left == right)
+                }
+                (SymCmpOp::Eq | SymCmpOp::Slt | SymCmpOp::Sgt, _) => false,
+            },
+            SymBoolExprKind::Const(_) | SymBoolExprKind::And(_) => false,
+        }
+    }
+
     pub(crate) fn forces_expr_const_with_context(
         &self,
         expr: &SymExpr,
@@ -546,27 +581,31 @@ impl SymBoolExpr {
             SymBoolExprKind::Cmp(op, left, right) => {
                 if *op == SymCmpOp::Eq {
                     return match (left == expr, right == expr) {
-                        (true, _) => right.eval().and_then(|value| usize::try_from(value).ok()),
-                        (_, true) => left.eval().and_then(|value| usize::try_from(value).ok()),
+                        (true, _) => right.as_const().and_then(|value| usize::try_from(value).ok()),
+                        (_, true) => left.as_const().and_then(|value| usize::try_from(value).ok()),
                         _ => None,
                     };
                 }
                 if left == expr {
                     match *op {
                         SymCmpOp::Ult => right
-                            .eval()
+                            .as_const()
                             .and_then(|bound| (!bound.is_zero()).then(|| bound - U256::from(1)))
                             .and_then(|value| usize::try_from(value).ok()),
-                        SymCmpOp::Ule => right.eval().and_then(|value| usize::try_from(value).ok()),
+                        SymCmpOp::Ule => {
+                            right.as_const().and_then(|value| usize::try_from(value).ok())
+                        }
                         _ => None,
                     }
                 } else if right == expr {
                     match *op {
                         SymCmpOp::Ugt => left
-                            .eval()
+                            .as_const()
                             .and_then(|bound| (!bound.is_zero()).then(|| bound - U256::from(1)))
                             .and_then(|value| usize::try_from(value).ok()),
-                        SymCmpOp::Uge => left.eval().and_then(|value| usize::try_from(value).ok()),
+                        SymCmpOp::Uge => {
+                            left.as_const().and_then(|value| usize::try_from(value).ok())
+                        }
                         _ => None,
                     }
                 } else {
