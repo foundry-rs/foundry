@@ -188,3 +188,13 @@ version = "2.4.2"
 [[allow.exact]]
 crate = "alloy-tx-macros"
 version = "2.4.2"
+
+# Exact-version exceptions for the maintained Monad releases required by revm 43.
+# Remove after 2026-09-16 17:29 UTC, when both releases clear the 7-day cooldown.
+[[allow.exact]]
+crate = "alloy-monad-evm"
+version = "0.8.0"
+
+[[allow.exact]]
+crate = "monad-revm"
+version = "0.8.0"
