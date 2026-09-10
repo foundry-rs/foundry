@@ -229,7 +229,7 @@ fn create_and_mint_token(
     )?;
 
     let mut token = TIP20Token::from_address(token_address)?;
-    token.grant_role_internal(admin, *ISSUER_ROLE)?;
+    token.grant_role_internal(admin, ISSUER_ROLE)?;
     token.mint(admin, ITIP20::mintCall { to: recipient, amount: mint_amount })?;
     if admin != recipient {
         token.mint(admin, ITIP20::mintCall { to: admin, amount: mint_amount })?;
