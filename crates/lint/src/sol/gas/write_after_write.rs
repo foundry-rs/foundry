@@ -6,9 +6,9 @@ use crate::{
 use solar::{
     interface::Span,
     sema::{
-        Gcx, Hir,
+        Gcx,
         hir::{
-            BinOpKind, Block, CallArgs, CallOptions, Expr, ExprKind, Function, Res, Stmt, StmtKind,
+            BinOpKind, Block, CallArgs, CallOptions, Expr, ExprKind, Function, Stmt, StmtKind,
             VariableId,
         },
     },
@@ -25,7 +25,7 @@ declare_forge_lint!(
 impl<'gcx> LateLintPass<'gcx> for WriteAfterWrite {
     fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, func: &'gcx Function<'gcx>) {
         if let Some(body) = func.body {
-            Analyzer { ctx, hir: &gcx.hir, pending: HashMap::new() }.check_block(body);
+            Analyzer { ctx, gcx, pending: HashMap::new() }.check_block(body);
         }
     }
 }
@@ -34,7 +34,7 @@ impl<'gcx> LateLintPass<'gcx> for WriteAfterWrite {
 /// variable makes the pending one redundant.
 struct Analyzer<'a, 'gcx> {
     ctx: &'a LintContext<'a, 'a>,
-    hir: &'gcx Hir<'gcx>,
+    gcx: Gcx<'gcx>,
     pending: HashMap<VariableId, Span>,
 }
 
@@ -49,7 +49,7 @@ impl Analyzer<'_, '_> {
         match &stmt.kind {
             StmtKind::Expr(expr) => self.process_expr(expr),
             StmtKind::DeclSingle(var_id) => {
-                if let Some(init) = self.hir.variable(*var_id).initializer {
+                if let Some(init) = self.gcx.hir.variable(*var_id).initializer {
                     self.reads(init);
                 }
             }
@@ -181,8 +181,8 @@ impl Analyzer<'_, '_> {
     fn reads(&mut self, expr: &Expr<'_>) {
         let expr = expr.peel_parens();
         match &expr.kind {
-            ExprKind::Ident(reses) => {
-                for var in reses.iter().filter_map(Res::as_variable) {
+            ExprKind::Ident(_) => {
+                if let Some(var) = self.gcx.resolved_variable(expr) {
                     self.pending.remove(&var);
                 }
             }
@@ -246,10 +246,8 @@ impl Analyzer<'_, '_> {
 
     /// The state variable a bare identifier refers to.
     fn state_var(&self, expr: &Expr<'_>) -> Option<VariableId> {
-        let ExprKind::Ident(reses) = &expr.peel_parens().kind else { return None };
-        reses
-            .iter()
-            .filter_map(Res::as_variable)
-            .find(|&var| self.hir.variable(var).is_state_variable())
+        self.gcx
+            .resolved_variable(expr)
+            .filter(|&var| self.gcx.hir.variable(var).is_state_variable())
     }
 }

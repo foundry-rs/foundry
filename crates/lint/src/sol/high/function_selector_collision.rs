@@ -4,7 +4,7 @@ use crate::{
     sol::{
         Severity, SolLint,
         analysis::{
-            arg_for_param, branch_always_exits, expr_is_address, is_address_cast, is_builtin,
+            arg_for_param, branch_always_exits, expr_is_address, is_address_cast,
             is_require_or_assert, ty_contract_id,
         },
     },
@@ -12,13 +12,13 @@ use crate::{
 use alloy_primitives::Selector;
 use solar::{
     ast::{LitKind, UnOpKind},
-    interface::{Symbol, data_structures::Never, kw, sym},
+    interface::{data_structures::Never, kw, sym},
     sema::{
         Gcx,
         builtins::Builtin,
         hir::{
-            self, BinOpKind, ContractId, ContractKind, Expr, ExprKind, LoopSource, Res, Stmt,
-            StmtKind, VariableId, Visit,
+            self, BinOpKind, ContractId, ContractKind, Expr, ExprKind, LoopSource, Stmt, StmtKind,
+            VariableId, Visit,
         },
     },
 };
@@ -49,6 +49,7 @@ impl<'gcx> LateLintPass<'gcx> for FunctionSelectorCollision {
 
         let mut collector = DelegateTargetCollector {
             gcx,
+            contract_id: proxy_id,
             current_inputs: Vec::new(),
             paths: vec![PathState::default()],
             placeholder: None,
@@ -189,11 +190,11 @@ struct Continuation<'gcx> {
     body_input: Option<CalldataInput>,
 }
 
-fn lvalue_contains_var(expr: &Expr<'_>, target: VariableId) -> bool {
+fn lvalue_contains_var(gcx: Gcx<'_>, expr: &Expr<'_>, target: VariableId) -> bool {
     match &expr.peel_parens().kind {
-        ExprKind::Ident(reses) => reses.iter().any(|res| res.as_variable() == Some(target)),
+        ExprKind::Ident(_) => gcx.resolved_variable(expr) == Some(target),
         ExprKind::Tuple(exprs) => {
-            exprs.iter().flatten().any(|expr| lvalue_contains_var(expr, target))
+            exprs.iter().flatten().any(|expr| lvalue_contains_var(gcx, expr, target))
         }
         _ => false,
     }
@@ -214,6 +215,7 @@ fn dedup(paths: &mut Vec<PathState>) {
 
 struct DelegateTargetCollector<'gcx> {
     gcx: Gcx<'gcx>,
+    contract_id: ContractId,
     /// Full-calldata inputs visible in the block being visited.
     current_inputs: Vec<CalldataInput>,
     /// Live path states; empty means the current point is unreachable.
@@ -234,7 +236,8 @@ impl<'gcx> DelegateTargetCollector<'gcx> {
             for arg in invocation.args.exprs() {
                 let _ = self.visit_expr(arg);
             }
-            if let Some(modifier_id) = invocation.id.as_function()
+            if let Some(modifier_id) =
+                self.gcx.resolve_modifier_target(self.contract_id, invocation)
                 && let Some(modifier_body) = self.gcx.hir.function(modifier_id).body
             {
                 let modifier = self.gcx.hir.function(modifier_id);
@@ -248,8 +251,8 @@ impl<'gcx> DelegateTargetCollector<'gcx> {
                     .iter()
                     .filter_map(|&param| {
                         let arg =
-                            arg_for_param(&self.gcx.hir, modifier, param.var, &invocation.args)?;
-                        Some((param, full_calldata_source(arg, &self.current_inputs)?))
+                            arg_for_param(self.gcx, modifier_id, param.var, &invocation.args)?;
+                        Some((param, full_calldata_source(self.gcx, arg, &self.current_inputs)?))
                     })
                     .collect();
                 for path in &mut self.paths {
@@ -562,7 +565,7 @@ impl<'gcx> Visit<'gcx> for DelegateTargetCollector<'gcx> {
                     let _ = self.visit_expr(&arg.value);
                 }
                 let mut args = args.exprs();
-                if is_require_or_assert(callee) {
+                if is_require_or_assert(self.gcx, callee) {
                     let Some(condition) = args.next() else { return ControlFlow::Continue(()) };
                     let args: Vec<_> = args.collect();
                     let (true_paths, false_paths) = self.visit_condition(condition);
@@ -596,7 +599,7 @@ impl<'gcx> Visit<'gcx> for DelegateTargetCollector<'gcx> {
                         .current_inputs
                         .iter()
                         .copied()
-                        .filter(|input| lvalue_contains_var(lhs, input.var))
+                        .filter(|input| lvalue_contains_var(self.gcx, lhs, input.var))
                         .collect(),
                     _ => Vec::new(),
                 };
@@ -682,7 +685,7 @@ impl<'gcx> Visit<'gcx> for DelegateTargetCollector<'gcx> {
             }
             _ => {
                 let _ = self.walk_stmt(stmt);
-                if branch_always_exits(stmt) {
+                if branch_always_exits(self.gcx, stmt) {
                     self.paths.clear();
                 }
             }
@@ -699,9 +702,9 @@ fn selector_guard(gcx: Gcx<'_>, expr: &Expr<'_>) -> Option<(Selector, bool)> {
         BinOpKind::Ne => false,
         _ => return None,
     };
-    let selector = if is_msg_member(lhs, sym::sig) {
+    let selector = if gcx.resolved_builtin(lhs) == Some(Builtin::MsgSig) {
         rhs
-    } else if is_msg_member(rhs, sym::sig) {
+    } else if gcx.resolved_builtin(rhs) == Some(Builtin::MsgSig) {
         lhs
     } else {
         return None;
@@ -713,16 +716,8 @@ fn selector_guard(gcx: Gcx<'_>, expr: &Expr<'_>) -> Option<(Selector, bool)> {
     {
         return None;
     }
-    let Res::Item(hir::ItemId::Function(function)) = gcx.resolved_expr(function)? else {
-        return None;
-    };
+    let function = gcx.resolved_function(function)?;
     Some((gcx.function_selector(function), matches))
-}
-
-/// `msg.<name>`.
-fn is_msg_member(expr: &Expr<'_>, name: Symbol) -> bool {
-    matches!(&expr.peel_parens().kind, ExprKind::Member(base, member)
-        if member.name == name && is_builtin(base, sym::msg))
 }
 
 /// The statically typed implementation contract of a proxy-style `<addr>.delegatecall(<full
@@ -734,7 +729,7 @@ fn delegated_contract<'gcx>(
 ) -> Option<(ContractId, Option<CalldataInput>)> {
     let ExprKind::Call(callee, args, _) = &expr.peel_parens().kind else { return None };
     let ExprKind::Member(receiver, member) = &callee.peel_parens().kind else { return None };
-    let required_input = full_calldata_source(args.exprs().next()?, full_calldata_inputs)?;
+    let required_input = full_calldata_source(gcx, args.exprs().next()?, full_calldata_inputs)?;
     if member.name != kw::Delegatecall
         || gcx.resolved_builtin(callee) != Some(Builtin::AddressDelegatecall)
         || !expr_is_address(gcx, receiver)
@@ -764,15 +759,14 @@ fn typed_contract_behind_address_cast<'gcx>(
 /// `Some(None)` for `msg.data`, `Some(Some(input))` for a known full-calldata input, `None`
 /// otherwise.
 fn full_calldata_source(
+    gcx: Gcx<'_>,
     expr: &Expr<'_>,
     full_calldata_inputs: &[CalldataInput],
 ) -> Option<Option<CalldataInput>> {
-    if is_msg_member(expr, sym::data) {
+    if gcx.resolved_builtin(expr) == Some(Builtin::MsgData) {
         return Some(None);
     }
-    let ExprKind::Ident(reses) = &expr.peel_parens().kind else { return None };
-    reses
-        .iter()
-        .filter_map(Res::as_variable)
-        .find_map(|id| full_calldata_inputs.iter().copied().find(|input| input.var == id).map(Some))
+    let ExprKind::Ident(_) = &expr.peel_parens().kind else { return None };
+    let id = gcx.resolved_variable(expr)?;
+    full_calldata_inputs.iter().copied().find(|input| input.var == id).map(Some)
 }

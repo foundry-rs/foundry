@@ -65,6 +65,9 @@ Next, choose whether you want an [early or late lint pass](#choosing-between-ear
   ```
 
 - Reuse the shared HIR probes in `crates/lint/src/sol/analysis/` (expression, statement, type and access-control helpers) instead of reimplementing them in the lint.
+- Use Solar's `Gcx` queries for inferred expression types, resolved calls and arguments, and
+  inheritance. Do not reconstruct type-checker results or choose overloads by name or arity.
+  Keep lint-specific data-flow and control-flow analysis in the lint or shared probes.
 
 - Implement the appropriate trait logic (`EarlyLintPass` or `LateLintPass`) for your lint. Do it in a new file within the relevant severity module (e.g., `src/sol/med/my_new_lint.rs`).
 

@@ -262,9 +262,7 @@ contract VarReadUsingThis is Base {
         return this.counter();
     }
 
-    // Edge case: same-arity overloads with mixed mutability — solar's HIR doesn't
-    // carry the resolved overload, so we conservatively skip flagging to avoid a
-    // false positive on the mutating overload below.
+    // Same-arity overloads use the selected function's mutability.
     function ambiguous(uint256 x) public view returns (uint256) {
         return x;
     }
@@ -272,7 +270,10 @@ contract VarReadUsingThis is Base {
         counter += 1;
     }
     function callAmbiguous() external view returns (uint256) {
-        return this.ambiguous(0);
+        return this.ambiguous(0); //~NOTE: call through `this` to a `view` or `pure` function
+    }
+    function callMutatingOverload() external {
+        this.ambiguous(address(0));
     }
 }
 

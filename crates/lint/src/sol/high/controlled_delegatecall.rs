@@ -5,17 +5,18 @@ use crate::{
         Severity, SolLint,
         analysis::{
             arg_for_param, branch_always_exits, count_placeholders, do_while_user_stmts,
-            expr_is_address, function_ids, has_side_effect, is_address_like_cast,
-            is_loop_termination_if, is_require_or_assert, loop_update, stmts_before_placeholder,
-            stmts_break_or_continue, tuple_elems, unique, var_is_address_like,
+            has_side_effect, is_address_like_cast, is_loop_termination_if, is_require_or_assert,
+            loop_update, stmts_before_placeholder, stmts_break_or_continue, tuple_elems,
+            var_is_address_like,
         },
     },
 };
 use solar::{
     ast::{BinOpKind, LitKind, UnOpKind},
-    interface::{Span, kw, sym},
+    interface::{Span, sym},
     sema::{
         Gcx,
+        builtins::Builtin,
         hir::{
             self, ElementaryType, Expr, ExprKind, FunctionKind, ItemId, LoopSource, Res, Stmt,
             StmtKind, TypeKind, VariableId, Visit,
@@ -96,15 +97,15 @@ impl<'gcx> Analyzer<'gcx> {
                 LitKind::Number(n) => n.is_zero(),
                 _ => false,
             },
-            ExprKind::Ident(reses) => reses.iter().any(|res| match res {
+            ExprKind::Ident(_) => self.gcx.resolved_expr(expr).is_some_and(|res| match res {
                 Res::Builtin(builtin) => builtin.name() == sym::this,
                 Res::Item(ItemId::Variable(vid)) => {
-                    let var = self.gcx.hir.variable(*vid);
-                    (var.is_constant() && var_is_address_like(var)) || self.safe_vars.contains(vid)
+                    let var = self.gcx.hir.variable(vid);
+                    (var.is_constant() && var_is_address_like(var)) || self.safe_vars.contains(&vid)
                 }
                 _ => false,
             }),
-            ExprKind::Call(callee, args, _) if is_cast(callee) => {
+            ExprKind::Call(callee, args, _) if is_cast(self.gcx, callee) => {
                 args.exprs().next().is_some_and(|arg| self.is_trusted_target_inner(arg, depth))
             }
             ExprKind::Payable(inner) => self.is_trusted_target_inner(inner, depth),
@@ -140,7 +141,7 @@ impl<'gcx> Analyzer<'gcx> {
     }
 
     fn assign_expr(&mut self, lhs: &'gcx Expr<'gcx>, rhs: Option<&'gcx Expr<'gcx>>) {
-        if let Some(var) = underlying_var(lhs) {
+        if let Some(var) = underlying_var(self.gcx, lhs) {
             self.assign(var, rhs.is_some_and(|rhs| self.is_trusted_target(rhs)));
         }
     }
@@ -164,9 +165,8 @@ impl<'gcx> Analyzer<'gcx> {
 
     fn is_controlled_delegatecall(&self, expr: &'gcx Expr<'gcx>) -> bool {
         let ExprKind::Call(callee, ..) = &expr.peel_parens().kind else { return false };
-        let ExprKind::Member(receiver, member) = &callee.peel_parens().kind else { return false };
-        member.name == kw::Delegatecall
-            && expr_is_address(self.gcx, receiver)
+        let ExprKind::Member(receiver, _) = &callee.peel_parens().kind else { return false };
+        self.gcx.resolved_builtin(callee) == Some(Builtin::AddressDelegatecall)
             && !self.is_trusted_target(receiver)
     }
 
@@ -199,7 +199,7 @@ impl<'gcx> Analyzer<'gcx> {
                 } else if op.kind == eq {
                     for (safe, candidate) in [(lhs, rhs), (rhs, lhs)] {
                         if self.is_trusted_target(safe)
-                            && let Some(var) = underlying_var(candidate)
+                            && let Some(var) = underlying_var(self.gcx, candidate)
                             && self.is_trusted_fact_target(var)
                         {
                             self.safe_vars.insert(var);
@@ -336,7 +336,7 @@ impl<'gcx> Visit<'gcx> for Analyzer<'gcx> {
             }
             _ => {
                 let _ = self.walk_stmt(stmt);
-                if branch_always_exits(stmt) {
+                if branch_always_exits(self.gcx, stmt) {
                     ControlFlow::Break(())
                 } else {
                     ControlFlow::Continue(())
@@ -365,7 +365,7 @@ impl<'gcx> Visit<'gcx> for Analyzer<'gcx> {
                 let false_state = self.visit_arm(cond, true, |this| this.visit_expr(if_false));
                 self.join(true_state, false_state)
             }
-            ExprKind::Call(callee, args, _) if is_require_or_assert(callee) => {
+            ExprKind::Call(callee, args, _) if is_require_or_assert(self.gcx, callee) => {
                 let _ = self.walk_expr(expr);
                 let mut args = args.exprs();
                 if let Some(cond) = args.next()
@@ -382,7 +382,7 @@ impl<'gcx> Visit<'gcx> for Analyzer<'gcx> {
             }
             ExprKind::Delete(target) => {
                 // `delete` zeroes the target, and the zero address is trusted.
-                if let Some(var) = underlying_var(target) {
+                if let Some(var) = underlying_var(self.gcx, target) {
                     self.assign(var, true);
                 }
                 self.walk_expr(expr)
@@ -394,20 +394,20 @@ impl<'gcx> Visit<'gcx> for Analyzer<'gcx> {
 
 /// The variable a bare identifier refers to, looking through parens, `payable(...)` and
 /// address-like or numeric casts.
-fn underlying_var(expr: &Expr<'_>) -> Option<VariableId> {
+fn underlying_var(gcx: Gcx<'_>, expr: &Expr<'_>) -> Option<VariableId> {
     match &expr.peel_parens().kind {
-        ExprKind::Ident(reses) => reses.iter().find_map(Res::as_variable),
-        ExprKind::Call(callee, args, _) if is_cast(callee) => {
-            args.exprs().next().and_then(underlying_var)
+        ExprKind::Ident(_) => gcx.resolved_variable(expr),
+        ExprKind::Call(callee, args, _) if is_cast(gcx, callee) => {
+            args.exprs().next().and_then(|expr| underlying_var(gcx, expr))
         }
-        ExprKind::Payable(inner) => underlying_var(inner),
+        ExprKind::Payable(inner) => underlying_var(gcx, inner),
         _ => None,
     }
 }
 
 /// `address(..)`, `IFoo(..)`, `uintN(..)`, `intN(..)` or `bytes(..)` cast head.
-fn is_cast(callee: &Expr<'_>) -> bool {
-    is_address_like_cast(callee)
+fn is_cast(gcx: Gcx<'_>, callee: &Expr<'_>) -> bool {
+    is_address_like_cast(gcx, callee)
         || matches!(
             &callee.peel_parens().kind,
             ExprKind::Type(hir::Type {
@@ -425,7 +425,9 @@ fn no_arg_helper_return<'gcx>(
     gcx: Gcx<'gcx>,
     callee: &'gcx Expr<'gcx>,
 ) -> Option<&'gcx Expr<'gcx>> {
-    let fid = unique(function_ids(callee))?;
+    let fid = gcx
+        .resolved_function(callee)
+        .filter(|_| matches!(callee.peel_parens().kind, ExprKind::Ident(_)))?;
     let func = gcx.hir.function(fid);
     if func.virtual_ || func.override_ || !func.parameters.is_empty() {
         return None;
@@ -440,7 +442,7 @@ fn no_arg_helper_return<'gcx>(
         StmtKind::Return(Some(expr)) => Some(expr),
         StmtKind::Expr(expr) => match &expr.peel_parens().kind {
             ExprKind::Assign(lhs, None, rhs)
-                if func.returns.len() == 1 && underlying_var(lhs) == Some(func.returns[0]) =>
+                if func.returns.len() == 1 && underlying_var(gcx, lhs) == Some(func.returns[0]) =>
             {
                 Some(rhs)
             }
@@ -470,8 +472,8 @@ fn modifier_safe_vars<'gcx>(
         .parameters
         .iter()
         .filter_map(|&param| {
-            let arg = arg_for_param(&gcx.hir, modifier, param, &invocation.args)?;
-            Some((param, underlying_var(arg)?))
+            let arg = arg_for_param(gcx, fid, param, &invocation.args)?;
+            Some((param, underlying_var(gcx, arg)?))
         })
         .collect();
     if bindings.is_empty() {

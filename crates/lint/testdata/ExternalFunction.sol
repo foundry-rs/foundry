@@ -140,7 +140,7 @@ abstract contract Base {
     // Abstract — must stay ≥ public for derived contracts to override.
     function virtualWithoutBody(bytes memory data) public virtual;
 
-    // Reached via `super.calledViaSuper(...)` in `Derived`; matched by name.
+    // Reached via `super.calledViaSuper(...)` in `Derived`.
     function calledViaSuper(bytes memory data) public virtual {
         _bytes = data;
     }
@@ -258,5 +258,47 @@ contract EscapingParams is WithGuard {
 
     function returnsParam(bytes memory data) public returns (bytes memory) { //~NOTE: `public` function can be declared `external`
         return data;
+    }
+}
+
+contract OverloadedReferences {
+    function consume(bytes memory data) public pure returns (uint256) { //~NOTE: `public` function can be declared `external`
+        return data.length;
+    }
+
+    function consume(uint256[] memory data) public pure returns (uint256) {
+        return data.length;
+    }
+
+    function callArray(uint256[] memory data) external pure returns (uint256) {
+        return consume(data);
+    }
+}
+
+contract OverloadedSuperBase {
+    function consume(bytes memory data) public pure virtual returns (uint256) { //~NOTE: `public` function can be declared `external`
+        return data.length;
+    }
+
+    function consume(uint256[] memory data) public pure virtual returns (uint256) {
+        return data.length;
+    }
+}
+
+contract OverloadedSuperDerived is OverloadedSuperBase {
+    function callArray(uint256[] memory data) external pure returns (uint256) {
+        return super.consume(data);
+    }
+}
+
+contract QualifiedReferenceBase {
+    function consume(bytes memory data) public pure returns (uint256) {
+        return data.length;
+    }
+}
+
+contract QualifiedReferenceDerived is QualifiedReferenceBase {
+    function callBase(bytes memory data) external pure returns (uint256) {
+        return QualifiedReferenceBase.consume(data);
     }
 }

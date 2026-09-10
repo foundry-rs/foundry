@@ -11,7 +11,7 @@ use solar::{
     interface::diagnostics::Applicability,
     sema::{
         Gcx,
-        hir::{self, Expr, ExprKind, Function, ItemId, Res, Stmt, StmtKind, Visit as _},
+        hir::{self, Expr, ExprKind, Function, ItemId, Stmt, StmtKind, Visit as _},
     },
 };
 use std::ops::ControlFlow;
@@ -29,7 +29,7 @@ impl<'gcx> LateLintPass<'gcx> for UnwrappedModifierLogic {
         else {
             return;
         };
-        if block_outcome(body).can_skip_placeholder() {
+        if block_outcome(gcx, body).can_skip_placeholder() {
             return;
         }
         // Only a single, top-level placeholder can be split around: extracting a placeholder
@@ -42,7 +42,7 @@ impl<'gcx> LateLintPass<'gcx> for UnwrappedModifierLogic {
             return;
         };
         let (before, after) = (&body.stmts[..idx], &body.stmts[idx + 1..]);
-        if let Some(suggestion) = snippet(ctx, &gcx.hir, func, name.as_str(), before, after) {
+        if let Some(suggestion) = snippet(ctx, gcx, func, name.as_str(), before, after) {
             ctx.emit_with_suggestion(
                 &UNWRAPPED_MODIFIER_LOGIC,
                 func.span.to(func.body_span),
@@ -54,12 +54,14 @@ impl<'gcx> LateLintPass<'gcx> for UnwrappedModifierLogic {
 
 /// A call to a non-builtin function or to a library function: the only statement cheap enough to
 /// leave inline.
-fn is_plain_call(hir: &hir::Hir<'_>, expr: &Expr<'_>) -> bool {
+fn is_plain_call(gcx: Gcx<'_>, expr: &Expr<'_>) -> bool {
     let ExprKind::Call(callee, ..) = &expr.kind else { return false };
     match &callee.kind {
-        ExprKind::Ident(reses) => !reses.iter().any(|r| r.as_builtin().is_some()),
-        ExprKind::Member(base, _) => matches!(referenced_item(base), Some(ItemId::Contract(id))
-            if hir.contract(id).kind == ContractKind::Library),
+        ExprKind::Ident(_) => gcx.resolved_builtin(callee).is_none(),
+        ExprKind::Member(base, _) => {
+            matches!(referenced_item(gcx, base), Some(ItemId::Contract(id))
+            if gcx.hir.contract(id).kind == ContractKind::Library)
+        }
         _ => false,
     }
 }
@@ -67,12 +69,12 @@ fn is_plain_call(hir: &hir::Hir<'_>, expr: &Expr<'_>) -> bool {
 /// Whether `stmts` should move into a helper: anything but a single plain call requires wrapping.
 /// Inline assembly is left alone; its authors know how to manage code size and have a reason to
 /// use it in a modifier.
-fn requires_wrapping(hir: &hir::Hir<'_>, stmts: &[Stmt<'_>]) -> bool {
+fn requires_wrapping(gcx: Gcx<'_>, stmts: &[Stmt<'_>]) -> bool {
     let (mut calls, mut other) = (0, false);
     for stmt in stmts {
         match &stmt.kind {
             StmtKind::Placeholder => {}
-            StmtKind::Expr(expr) if is_plain_call(hir, expr) => calls += 1,
+            StmtKind::Expr(expr) if is_plain_call(gcx, expr) => calls += 1,
             StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) | StmtKind::Err(_) => return false,
             _ => other = true,
         }
@@ -82,13 +84,14 @@ fn requires_wrapping(hir: &hir::Hir<'_>, stmts: &[Stmt<'_>]) -> bool {
 
 fn snippet<'gcx>(
     ctx: &LintContext,
-    hir: &'gcx hir::Hir<'gcx>,
+    gcx: Gcx<'gcx>,
     func: &'gcx Function<'gcx>,
     name: &str,
     before: &'gcx [Stmt<'gcx>],
     after: &'gcx [Stmt<'gcx>],
 ) -> Option<Suggestion> {
-    let (wrap_before, wrap_after) = (requires_wrapping(hir, before), requires_wrapping(hir, after));
+    let hir = &gcx.hir;
+    let (wrap_before, wrap_after) = (requires_wrapping(gcx, before), requires_wrapping(gcx, after));
     if !(wrap_before || wrap_after) {
         return None;
     }
@@ -113,7 +116,7 @@ fn snippet<'gcx>(
                 _ => None,
             };
             if let Some(lvalue) = lvalue {
-                for_each_lhs_var(lvalue, &mut |v| {
+                for_each_lhs_var(gcx, lvalue, &mut |v| {
                     if func.parameters.contains(&v) && !shared.contains(&v) {
                         shared.push(v);
                     }
@@ -122,10 +125,8 @@ fn snippet<'gcx>(
             false
         });
     }
-    if any_expr(hir, after, |expr| {
-        matches!(&expr.kind, ExprKind::Ident(reses)
-            if reses.iter().filter_map(Res::as_variable).any(|v| shared.contains(&v)))
-    }) {
+    if any_expr(hir, after, |expr| gcx.resolved_variable(expr).is_some_and(|v| shared.contains(&v)))
+    {
         return None;
     }
 

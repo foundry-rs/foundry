@@ -3,7 +3,7 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{
         Severity, SolLint,
-        analysis::{OPENZEPPELIN_ROOTS, resolved_function, source_in_package},
+        analysis::{OPENZEPPELIN_ROOTS, source_in_package},
     },
 };
 use solar::sema::{
@@ -24,7 +24,7 @@ impl<'gcx> LateLintPass<'gcx> for DeprecatedOzFunction {
         // used as a value: judge the single declaration the type checker selected (overloads,
         // overrides, `super.`, `using for` and import aliases already accounted for).
         if matches!(expr.kind, ExprKind::Ident(..) | ExprKind::Member(..))
-            && let Some(function_id) = resolved_function(gcx, expr)
+            && let Some(function_id) = gcx.resolved_function(expr)
             && is_deprecated_oz(gcx, function_id)
         {
             ctx.emit(&DEPRECATED_OZ_FUNCTION, expr.span);

@@ -11,6 +11,8 @@ contract WeakPrngBase {
 }
 
 contract WeakPrng is WeakPrngBase(block.timestamp % 10) { //~WARN: weak randomness derived from a predictable on-chain value
+    uint256 constant DAY = 1 days;
+    uint256 constant MINUTE = 1 minutes;
     uint256 public deadline;
     uint256 public initializedSeed = block.timestamp % 10; //~WARN: weak randomness derived from a predictable on-chain value
 
@@ -70,6 +72,10 @@ contract WeakPrng is WeakPrngBase(block.timestamp % 10) { //~WARN: weak randomne
         return block.timestamp % 60; //~WARN: weak randomness derived from a predictable on-chain value
     }
 
+    function timestampConstantMinute() external view returns (uint256) {
+        return block.timestamp % MINUTE; //~WARN: weak randomness derived from a predictable on-chain value
+    }
+
     function timestampTenMinuteBound() external view returns (uint256) {
         return block.timestamp % 600; //~WARN: weak randomness derived from a predictable on-chain value
     }
@@ -102,6 +108,14 @@ contract WeakPrng is WeakPrngBase(block.timestamp % 10) { //~WARN: weak randomne
 
     function timestampTimeBucket() external view returns (uint256) {
         return block.timestamp % 1 days;
+    }
+
+    function timestampConstantTimeBucket() external view returns (uint256) {
+        return block.timestamp % DAY;
+    }
+
+    function timestampShiftedTimeBucket() external view returns (uint256) {
+        return block.timestamp % (DAY << 1);
     }
 
     function timestampNumericTimeBucket() external view returns (uint256) {
@@ -151,5 +165,16 @@ contract WeakPrng is WeakPrngBase(block.timestamp % 10) { //~WARN: weak randomne
     function localValueNotTracked(uint256 upper) external view returns (uint256) {
         uint256 seed = block.timestamp;
         return seed % upper;
+    }
+}
+
+contract UserDefinedBlock {
+    struct BlockData {
+        uint256 timestamp;
+        uint256 number;
+    }
+
+    function modulo(BlockData memory block) external pure returns (uint256) {
+        return block.timestamp % block.number;
     }
 }
