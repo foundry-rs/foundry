@@ -1,3 +1,20 @@
+[allow]
+# Match foundry-core: allow revm releases without per-version exceptions.
+package = [
+    { crate = "revm", min-publish-age = "0" },
+    { crate = "revm-bytecode", min-publish-age = "0" },
+    { crate = "revm-context", min-publish-age = "0" },
+    { crate = "revm-context-interface", min-publish-age = "0" },
+    { crate = "revm-database", min-publish-age = "0" },
+    { crate = "revm-database-interface", min-publish-age = "0" },
+    { crate = "revm-handler", min-publish-age = "0" },
+    { crate = "revm-inspector", min-publish-age = "0" },
+    { crate = "revm-interpreter", min-publish-age = "0" },
+    { crate = "revm-precompile", min-publish-age = "0" },
+    { crate = "revm-primitives", min-publish-age = "0" },
+    { crate = "revm-state", min-publish-age = "0" },
+]
+
 # Exact-version exceptions for the coordinated Tempo Alloy 1.7.2 release.
 [[allow.exact]]
 crate = "alloy-core"
@@ -65,6 +82,14 @@ version = "0.12.0"
 
 # Temporary exact-version exceptions for the Alloy 2.4.2 update.
 # Remove after 2026-09-15 07:36 UTC, when these releases clear the 7-day cooldown.
+[[allow.exact]]
+crate = "alloy"
+version = "2.4.2"
+
+[[allow.exact]]
+crate = "alloy-eip7928"
+version = "0.4.9"
+
 [[allow.exact]]
 crate = "alloy-consensus"
 version = "2.4.2"
