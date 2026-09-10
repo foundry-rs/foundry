@@ -147,6 +147,64 @@ async fn test_trace_block_opcode_gas_local() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_trace_block_opcode_gas_latest_at_fork_point() {
+    let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let origin_accounts = origin_handle.dev_wallets().collect::<Vec<_>>();
+    let origin_signer: EthereumWallet = origin_accounts[0].clone().into();
+    let origin_provider = http_provider_with_signer(&origin_handle.http_endpoint(), origin_signer);
+    let storage = SimpleStorage::deploy(&origin_provider, "init value".to_string()).await.unwrap();
+    let receipt = storage
+        .setValue("fork point".to_string())
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let fork_point_number = receipt.block_number.unwrap();
+    let fork_point_hash = receipt.block_hash.unwrap();
+
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
+    let provider = handle.http_provider();
+
+    // Advance the upstream head after the fork captures its snapshot.
+    let advanced =
+        storage.setValue("advanced".to_string()).send().await.unwrap().get_receipt().await.unwrap();
+    assert!(advanced.block_number.unwrap() > fork_point_number);
+    assert_eq!(provider.get_block_number().await.unwrap(), fork_point_number);
+
+    let mut by_latest = provider
+        .raw_request::<_, Option<BlockOpcodeGas>>(
+            "trace_blockOpcodeGas".into(),
+            (BlockId::latest(),),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let mut by_number = provider
+        .raw_request::<_, Option<BlockOpcodeGas>>(
+            "trace_blockOpcodeGas".into(),
+            (BlockId::number(fork_point_number),),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(by_number.block_hash, fork_point_hash);
+    assert_eq!(by_number.block_number, fork_point_number);
+    assert_eq!(by_number.transactions.len(), 1);
+    assert_eq!(by_number.transactions[0].transaction_hash, receipt.transaction_hash);
+    assert_eq!(by_latest.block_number, by_number.block_number);
+    assert_eq!(by_latest.block_hash, by_number.block_hash);
+    // Opcode gas entries are collected from a map and have no stable order.
+    for transaction in by_latest.transactions.iter_mut().chain(&mut by_number.transactions) {
+        transaction.opcode_gas.sort_unstable_by(|a, b| a.opcode.cmp(&b.opcode));
+    }
+    assert_eq!(by_latest.transactions, by_number.transactions);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_trace_raw_transaction_local() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
