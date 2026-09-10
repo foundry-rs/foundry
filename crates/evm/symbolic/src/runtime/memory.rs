@@ -1064,17 +1064,6 @@ impl SymReturnData {
         self.bytes.read_offset(cx, offset, size)
     }
 
-    pub(crate) fn load_word(
-        &self,
-        cx: &mut SymCx,
-        offset: usize,
-    ) -> Result<SymExpr, SymbolicError> {
-        if offset.saturating_add(32) > self.len() {
-            return Err(SymbolicError::Unsupported("out-of-bounds symbolic returndata word"));
-        }
-        Ok(self.bytes.word_at(cx, offset))
-    }
-
     pub(crate) fn read_concrete(
         &self,
         cx: &mut SymCx,

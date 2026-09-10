@@ -1,48 +1,72 @@
-warning[block-number-across-roll]: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
+warning[environment-read-across-mutation]: `block.number` may be reused across `vm.roll`
    ╭▸ ROOT/testdata/CheatcodeEnvironmentPending.sol:LL:CC
    │
-LL │ …     uint256 saved = block.number;
-   │                       ━━━━━━━━━━━━
+LL │     function advance() internal returns (uint256) { vm.roll(200); return 0; }
+   │                                                     ──────────── `vm.roll` changes this environment here
+   ‡
+LL │         uint256 saved = block.number;
+   │                         ━━━━━━━━━━━━
    │
-   ╰ help: https://getfoundry.sh/forge/linting/block-number-across-roll
+   ├ help: capture it with `vm.getBlockNumber()` instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
 
-warning[block-number-across-roll]: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
+warning[environment-read-across-mutation]: `block.number` may be reused across `vm.roll`
    ╭▸ ROOT/testdata/CheatcodeEnvironmentPending.sol:LL:CC
    │
-LL │ …     uint256 saved = block.number;
-   │                       ━━━━━━━━━━━━
+LL │     function advance() internal returns (uint256) { vm.roll(200); return 0; }
+   │                                                     ──────────── `vm.roll` changes this environment here
+   ‡
+LL │         uint256 saved = block.number;
+   │                         ━━━━━━━━━━━━
    │
-   ╰ help: https://getfoundry.sh/forge/linting/block-number-across-roll
+   ├ help: capture it with `vm.getBlockNumber()` instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
 
-warning[block-number-across-roll]: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
+warning[environment-read-across-mutation]: `block.number` may be reused across `vm.roll`
    ╭▸ ROOT/testdata/CheatcodeEnvironmentPending.sol:LL:CC
    │
-LL │ …     (uint256 saved, uint256 ignored) = (block.number, advance());
-   │                                           ━━━━━━━━━━━━
+LL │     function advance() internal returns (uint256) { vm.roll(200); return 0; }
+   │                                                     ──────────── `vm.roll` changes this environment here
+   ‡
+LL │         (uint256 saved, uint256 ignored) = (block.number, advance());
+   │                                             ━━━━━━━━━━━━
    │
-   ╰ help: https://getfoundry.sh/forge/linting/block-number-across-roll
+   ├ help: capture it with `vm.getBlockNumber()` instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
 
-warning[block-number-across-roll]: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
+warning[environment-read-across-mutation]: `block.number` may be reused across `vm.roll`
    ╭▸ ROOT/testdata/CheatcodeEnvironmentPending.sol:LL:CC
    │
-LL │ …     return block.number + advance();
-   │              ━━━━━━━━━━━━
+LL │     function advance() internal returns (uint256) { vm.roll(200); return 0; }
+   │                                                     ──────────── `vm.roll` changes this environment here
+   ‡
+LL │         return block.number + advance();
+   │                ━━━━━━━━━━━━
    │
-   ╰ help: https://getfoundry.sh/forge/linting/block-number-across-roll
+   ├ help: capture it with `vm.getBlockNumber()` instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
 
-warning[block-number-across-roll]: `block.number` may be reused across `vm.roll`; capture it with `vm.getBlockNumber()` instead
+warning[environment-read-across-mutation]: `block.number` may be reused across `vm.roll`
    ╭▸ ROOT/testdata/CheatcodeEnvironmentPending.sol:LL:CC
    │
-LL │ …     return first(block.number, advance());
-   │                    ━━━━━━━━━━━━
+LL │     function advance() internal returns (uint256) { vm.roll(200); return 0; }
+   │                                                     ──────────── `vm.roll` changes this environment here
+   ‡
+LL │         return first(block.number, advance());
+   │                      ━━━━━━━━━━━━
    │
-   ╰ help: https://getfoundry.sh/forge/linting/block-number-across-roll
+   ├ help: capture it with `vm.getBlockNumber()` instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
 
-warning[block-timestamp-across-warp]: `block.timestamp` may be reused across `vm.warp`; capture it with `vm.getBlockTimestamp()` instead
+warning[environment-read-across-mutation]: `block.timestamp` may be reused across `vm.warp`
    ╭▸ ROOT/testdata/CheatcodeEnvironmentPending.sol:LL:CC
    │
-LL │ …     (uint256 saved, uint256 ignored) = (block.timestamp, advanceTime());
-   │                                           ━━━━━━━━━━━━━━━
+LL │     function advanceTime() internal returns (uint256) { vm.warp(200); return 0; }
+   │                                                         ──────────── `vm.warp` changes this environment here
+   ‡
+LL │         (uint256 saved, uint256 ignored) = (block.timestamp, advanceTime());
+   │                                             ━━━━━━━━━━━━━━━
    │
-   ╰ help: https://getfoundry.sh/forge/linting/block-timestamp-across-warp
+   ├ help: capture it with `vm.getBlockTimestamp()` instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
 

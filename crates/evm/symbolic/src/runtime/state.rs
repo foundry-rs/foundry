@@ -609,7 +609,7 @@ impl PathState {
                 match kind {
                     ShiftKind::Shl => value << shift,
                     ShiftKind::Shr => value >> shift,
-                    ShiftKind::Sar => sar(value, shift),
+                    ShiftKind::Sar => value.arithmetic_shr(shift),
                 }
             };
             SymExpr::constant(cx, result)
@@ -630,7 +630,7 @@ impl PathState {
         let exponent = self.stack.pop()?;
         let result = if let Some(exponent) = self.constrained_word(cx, &exponent) {
             if let Some(base_value) = base.as_const() {
-                SymExpr::constant(cx, pow_mod(base_value, exponent))
+                SymExpr::constant(cx, base_value.wrapping_pow(exponent))
             } else if exponent <= U256::from(SYMBOLIC_EXP_CONCRETE_EXPONENT_LIMIT) {
                 exp_expr_for_concrete_exponent(
                     cx,

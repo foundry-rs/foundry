@@ -15,52 +15,52 @@ contract Rtlo {
     // and produces two diagnostics.
 
     string public lre = unicode"‪_‬";
-    //~^WARN: U+202A (Left-to-Right Embedding) detected
-    //~|WARN: U+202C (Pop Directional Formatting) detected
+    //~^WARN: `U+202A` (Left-to-Right Embedding) detected
+    //~|WARN: `U+202C` (Pop Directional Formatting) detected
 
     string public rle = unicode"‫_‬";
-    //~^WARN: U+202B (Right-to-Left Embedding) detected
-    //~|WARN: U+202C (Pop Directional Formatting) detected
+    //~^WARN: `U+202B` (Right-to-Left Embedding) detected
+    //~|WARN: `U+202C` (Pop Directional Formatting) detected
 
     string public pdf = unicode"‪‬";
-    //~^WARN: U+202A (Left-to-Right Embedding) detected
-    //~|WARN: U+202C (Pop Directional Formatting) detected
+    //~^WARN: `U+202A` (Left-to-Right Embedding) detected
+    //~|WARN: `U+202C` (Pop Directional Formatting) detected
 
     string public lro = unicode"‭_‬";
-    //~^WARN: U+202D (Left-to-Right Override) detected
-    //~|WARN: U+202C (Pop Directional Formatting) detected
+    //~^WARN: `U+202D` (Left-to-Right Override) detected
+    //~|WARN: `U+202C` (Pop Directional Formatting) detected
 
     string public rlo = unicode"‮_‬";
-    //~^WARN: U+202E (Right-to-Left Override) detected
-    //~|WARN: U+202C (Pop Directional Formatting) detected
+    //~^WARN: `U+202E` (Right-to-Left Override) detected
+    //~|WARN: `U+202C` (Pop Directional Formatting) detected
 
     string public lri = unicode"⁦_⁩";
-    //~^WARN: U+2066 (Left-to-Right Isolate) detected
-    //~|WARN: U+2069 (Pop Directional Isolate) detected
+    //~^WARN: `U+2066` (Left-to-Right Isolate) detected
+    //~|WARN: `U+2069` (Pop Directional Isolate) detected
 
     string public rli = unicode"⁧_⁩";
-    //~^WARN: U+2067 (Right-to-Left Isolate) detected
-    //~|WARN: U+2069 (Pop Directional Isolate) detected
+    //~^WARN: `U+2067` (Right-to-Left Isolate) detected
+    //~|WARN: `U+2069` (Pop Directional Isolate) detected
 
     string public fsi = unicode"⁨_⁩";
-    //~^WARN: U+2068 (First Strong Isolate) detected
-    //~|WARN: U+2069 (Pop Directional Isolate) detected
+    //~^WARN: `U+2068` (First Strong Isolate) detected
+    //~|WARN: `U+2069` (Pop Directional Isolate) detected
 
     string public pdi = unicode"⁦⁩";
-    //~^WARN: U+2066 (Left-to-Right Isolate) detected
-    //~|WARN: U+2069 (Pop Directional Isolate) detected
+    //~^WARN: `U+2066` (Left-to-Right Isolate) detected
+    //~|WARN: `U+2069` (Pop Directional Isolate) detected
 
     // SHOULD FAIL: bidi controls inside a block comment are also detected.
     /* hidden‮ /* text ‬ */ uint256 inBlockComment;
-    //~^WARN: U+202E (Right-to-Left Override) detected
-    //~|WARN: U+202C (Pop Directional Formatting) detected
+    //~^WARN: `U+202E` (Right-to-Left Override) detected
+    //~|WARN: `U+202C` (Pop Directional Formatting) detected
 
     // SHOULD FAIL: bidi controls inside a line comment are also detected. The
     // expectation markers must come on separate lines because the ui-test
     // parser only treats the first comment on a line as a marker.
     // sneaky‮ payload ‬ trailing
-    //~^WARN: U+202E (Right-to-Left Override) detected
-    //~|WARN: U+202C (Pop Directional Formatting) detected
+    //~^WARN: `U+202E` (Right-to-Left Override) detected
+    //~|WARN: `U+202C` (Pop Directional Formatting) detected
 
     // SHOULD PASS: inline-config disable suppresses the diagnostic.
     // forge-lint: disable-next-line(rtlo)
@@ -76,6 +76,6 @@ contract Rtlo {
 
     // SHOULD FAIL: LRM/RLM marks (U+200E/U+200F) are also flagged.
     string public marks = unicode"left‎right‏end";
-    //~^WARN: U+200E (Left-to-Right Mark) detected
-    //~|WARN: U+200F (Right-to-Left Mark) detected
+    //~^WARN: `U+200E` (Left-to-Right Mark) detected
+    //~|WARN: `U+200F` (Right-to-Left Mark) detected
 }

@@ -136,6 +136,25 @@ impl<N: Network> ClientFork<N> {
         self.config.read().block_number
     }
 
+    /// Converts a local RPC block number to its EVM-visible number.
+    ///
+    /// Local mining advances both numbers once per block, preserving the fork root's offset.
+    pub fn evm_block_number(&self, rpc_number: u64) -> U256 {
+        let config = self.config.read();
+        U256::from(rpc_number)
+            .saturating_add(U256::from(config.evm_block_number))
+            .saturating_sub(U256::from(config.block_number))
+    }
+
+    /// Converts a local EVM-visible block number to its RPC number.
+    pub fn rpc_block_number(&self, evm_number: U256) -> u64 {
+        let config = self.config.read();
+        evm_number
+            .saturating_add(U256::from(config.block_number))
+            .saturating_sub(U256::from(config.evm_block_number))
+            .saturating_to()
+    }
+
     /// Returns the transaction hash we forked off of, if any.
     pub fn transaction_hash(&self) -> Option<B256> {
         self.config.read().transaction_hash
@@ -849,6 +868,8 @@ pub struct ClientForkConfig<N: Network = AnyNetwork> {
     pub fork_urls: Vec<String>,
     /// The block number of the forked block
     pub block_number: u64,
+    /// The EVM-visible block number of the fork root, which is the L1 number on Arbitrum.
+    pub evm_block_number: u64,
     /// The hash of the forked block
     pub block_hash: B256,
     /// The transaction hash we forked off of, if any.
@@ -898,12 +919,14 @@ impl<N: Network> ClientForkConfig<N> {
     pub fn update_block(
         &mut self,
         block_number: u64,
+        evm_block_number: u64,
         block_hash: B256,
         timestamp: u64,
         base_fee: Option<u128>,
         total_difficulty: U256,
     ) {
         self.block_number = block_number;
+        self.evm_block_number = evm_block_number;
         self.block_hash = block_hash;
         self.timestamp = timestamp;
         self.base_fee = base_fee;

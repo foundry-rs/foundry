@@ -1,5 +1,9 @@
-use alloy_evm::{Evm, EvmEnv, EvmFactory};
+use alloy_consensus::BlockHeader;
+use alloy_evm::{Evm, EvmEnv, EvmFactory, FromRecoveredTx};
 use alloy_monad_evm::{MonadEvm, MonadEvmFactory, MonadPrecompilesMap};
+use alloy_network::{BlockResponse, Ethereum, TransactionResponse};
+use alloy_provider::Provider;
+use alloy_rpc_types::BlockTransactions;
 use alloy_sol_types::SolCall;
 use eyre::WrapErr;
 use foundry_fork_db::DatabaseError;
@@ -36,8 +40,28 @@ use revm::{
 use crate::{
     FoundryChain, FoundryContextExt, FoundryInspectorExt, FoundryJournal,
     backend::{DatabaseExt, JournaledState},
-    evm::{FoundryEvmFactory, NestedEvm, NestedEvmFor, run_inspected_frame},
+    evm::{
+        BlockResponseFor, ChainFor, FoundryEvmFactory, FoundryEvmNetwork, NestedEvm, NestedEvmFor,
+        TxEnvFor, run_inspected_frame,
+    },
 };
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct MonadEvmNetwork;
+impl FoundryEvmNetwork for MonadEvmNetwork {
+    type Network = Ethereum;
+    type EvmFactory = MonadEvmFactory;
+}
+
+type MonadEvmHandler<'db, I> =
+    MonadHandler<MonadRevmEvm<'db, I>, EVMError<DatabaseError>, EthFrame>;
+
+pub type MonadRevmEvm<'db, I> = RevmMonadEvm<
+    MonadContext<&'db mut dyn DatabaseExt<MonadEvmFactory>>,
+    I,
+    MonadInstructions<MonadContext<&'db mut dyn DatabaseExt<MonadEvmFactory>>>,
+    MonadPrecompilesMap,
+>;
 
 impl FoundryChain<TxEnv> for MonadChainContext {
     fn for_transaction(tx: &TxEnv) -> Self {
@@ -70,21 +94,256 @@ impl FoundryChain<TxEnv> for MonadChainContext {
     }
 }
 
+impl FoundryEvmFactory for MonadEvmFactory {
+    type Chain = MonadChainContext;
+
+    type FoundryContext<'db> = MonadContext<&'db mut dyn DatabaseExt<Self>>;
+
+    type FoundryEvm<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>> =
+        MonadEvm<&'db mut dyn DatabaseExt<Self>, I>;
+
+    fn create_foundry_evm_with_inspector<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>>(
+        &self,
+        db: &'db mut dyn DatabaseExt<Self>,
+        evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
+        inspector: I,
+    ) -> Self::FoundryEvm<'db, I> {
+        let mut monad_evm = self.create_evm_with_inspector(db, evm_env, inspector);
+        monad_evm.cfg.tx_chain_id_check = true;
+        monad_evm
+    }
+
+    fn create_nested_evm_with_inspector<'db, I>(
+        &self,
+        db: &'db mut dyn DatabaseExt<Self>,
+        evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
+        inspector: I,
+    ) -> NestedEvmFor<'db, Self>
+    where
+        I: FoundryInspectorExt<Self::FoundryContext<'db>> + 'db,
+    {
+        let spec = evm_env.cfg_env.spec;
+        let monad_cfg = MonadCfgEnv::from(evm_env.cfg_env);
+        let mut evm = monad_context_with_db(db)
+            .with_block(evm_env.block_env)
+            .with_cfg(monad_cfg)
+            .build_monad_with_inspector(inspector)
+            .with_precompiles(MonadPrecompilesMap::new_with_spec(spec));
+
+        evm.0.ctx.cfg.tx_chain_id_check = true;
+        Box::new(evm)
+    }
+}
+
+impl<'db, I: FoundryInspectorExt<MonadContext<&'db mut dyn DatabaseExt<MonadEvmFactory>>>> NestedEvm
+    for MonadRevmEvm<'db, I>
+{
+    type Spec = MonadHardfork;
+    type Block = BlockEnv;
+    type Tx = TxEnv;
+    type Chain = MonadChainContext;
+    type Journal = MonadJournal<&'db mut dyn DatabaseExt<MonadEvmFactory>>;
+
+    fn tx_mut(&mut self) -> &mut Self::Tx {
+        self.ctx_mut().tx_mut()
+    }
+
+    fn journal_inner_mut(&mut self) -> &mut JournaledState {
+        &mut self.ctx_mut().journaled_state.inner
+    }
+
+    fn chain_mut(&mut self) -> &mut Self::Chain {
+        &mut self.ctx_mut().chain
+    }
+
+    fn precompiles_mut(&mut self) -> &mut alloy_evm::precompiles::PrecompilesMap {
+        &mut self.0.precompiles
+    }
+
+    fn journal_mut(&mut self) -> &mut Self::Journal {
+        &mut self.ctx_mut().journaled_state
+    }
+
+    fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>> {
+        run_inspected_frame(self, MonadEvmHandler::<I>::new(), frame)
+    }
+
+    fn transact_raw(&mut self, tx: Self::Tx) -> eyre::Result<ResultAndState> {
+        let Some(system_call) = protocol_system_call(&tx)? else {
+            ContextSetters::set_tx(&mut self.0.ctx, tx);
+
+            let mut handler = MonadEvmHandler::<I>::new();
+            let result = handler.inspect_run(self)?;
+
+            return Ok(ResultAndState::new(
+                result,
+                self.ctx_ref().journaled_state.inner.state.clone(),
+            ));
+        };
+
+        system_call.validate_chain_id(self.ctx_ref().cfg().chain_id())?;
+        let journal = self.ctx_ref().journal_inner().clone();
+        let chain = self.ctx_ref().chain.clone();
+        let reserve_balance = self.ctx_ref().journaled_state.reserve_balance().clone();
+        let result = (|| {
+            let (db, journal) = self.0.ctx.db_journal_inner_mut();
+            system_call.apply_prestate(db, journal)?;
+            let result = self
+                .inspect_system_call_with_caller(
+                    system_call.caller,
+                    system_call.contract,
+                    system_call.data,
+                )
+                .wrap_err("failed to execute protocol system transaction")?;
+            finish_protocol_system_call(result)
+        })();
+        // Restore EVM-owned protocol state. Callers that require atomic inspector state isolate
+        // the inspector and database, as the Executor/Cow replay path does.
+        if result.is_err() {
+            self.ctx_mut().set_journal_inner(journal);
+            self.ctx_mut().chain = chain;
+            *self.ctx_mut().journaled_state.reserve_balance_mut() = reserve_balance;
+        }
+        result
+    }
+
+    fn transact_replay(
+        &mut self,
+        tx: Self::Tx,
+        is_system: bool,
+    ) -> eyre::Result<Option<ResultAndState>> {
+        if is_system && protocol_system_call(&tx)?.is_none() {
+            return Ok(None);
+        }
+        self.transact_raw(tx).map(Some)
+    }
+
+    fn to_evm_env(&self) -> EvmEnv<Self::Spec, Self::Block> {
+        self.ctx_ref().evm_clone()
+    }
+}
+
+/// Transaction metadata for an exact block and its two ancestors.
+#[derive(Clone, Debug)]
+pub struct BlockContext<FEN: FoundryEvmNetwork> {
+    grandparent: Vec<TxEnvFor<FEN>>,
+    parent: Vec<TxEnvFor<FEN>>,
+    current: Vec<TxEnvFor<FEN>>,
+}
+
+impl<FEN: FoundryEvmNetwork> BlockContext<FEN> {
+    /// Creates block context from grandparent, parent, and current block transactions.
+    pub const fn new(
+        grandparent: Vec<TxEnvFor<FEN>>,
+        parent: Vec<TxEnvFor<FEN>>,
+        current: Vec<TxEnvFor<FEN>>,
+    ) -> Self {
+        Self { grandparent, parent, current }
+    }
+
+    /// Fetches all transaction bodies needed to replay transactions in `block` exactly.
+    pub async fn fetch<P: Provider<FEN::Network>>(
+        provider: &P,
+        block: &BlockResponseFor<FEN>,
+    ) -> eyre::Result<Self> {
+        let current = transaction_envs::<FEN>(block)?;
+        let parent = fetch_parent::<FEN, P>(provider, block).await?;
+        let grandparent = if let Some(parent) = &parent {
+            fetch_parent::<FEN, P>(provider, parent).await?
+        } else {
+            None
+        };
+
+        Ok(Self::new(
+            grandparent.as_ref().map(transaction_envs::<FEN>).transpose()?.unwrap_or_default(),
+            parent.as_ref().map(transaction_envs::<FEN>).transpose()?.unwrap_or_default(),
+            current,
+        ))
+    }
+
+    /// Builds context for the transaction at `index` in the current block.
+    pub fn transaction(&self, index: usize) -> ChainFor<FEN> {
+        ChainFor::<FEN>::for_block(&self.grandparent, &self.parent, &self.current, index)
+    }
+
+    /// Returns a cursor positioned immediately before `index` in the current block.
+    pub fn before_transaction(mut self, index: usize) -> eyre::Result<Self> {
+        if index > self.current.len() {
+            eyre::bail!(
+                "transaction index {index} exceeds block transaction count {}",
+                self.current.len()
+            );
+        }
+        self.current.truncate(index);
+        Ok(self)
+    }
+
+    /// Returns a cursor positioned at the start of a child block.
+    pub fn into_child(mut self) -> Self {
+        self.grandparent = std::mem::take(&mut self.parent);
+        self.parent = std::mem::take(&mut self.current);
+        self
+    }
+
+    /// Builds context for the next transaction at the cursor's current block position.
+    pub fn next_transaction(&self, tx: &TxEnvFor<FEN>) -> ChainFor<FEN> {
+        let mut current = self.current.clone();
+        let index = current.len();
+        current.push(tx.clone());
+        ChainFor::<FEN>::for_block(&self.grandparent, &self.parent, &current, index)
+    }
+
+    /// Records a committed transaction at the cursor's current block position.
+    pub fn record_transaction(&mut self, tx: TxEnvFor<FEN>) {
+        self.current.push(tx);
+    }
+
+    /// Advances the cursor to the start of the next block.
+    pub fn advance_block(&mut self) {
+        self.grandparent = std::mem::take(&mut self.parent);
+        self.parent = std::mem::take(&mut self.current);
+    }
+}
+
+async fn fetch_parent<FEN, P>(
+    provider: &P,
+    block: &BlockResponseFor<FEN>,
+) -> eyre::Result<Option<BlockResponseFor<FEN>>>
+where
+    FEN: FoundryEvmNetwork,
+    P: Provider<FEN::Network>,
+{
+    let parent_hash = block.header().parent_hash();
+    if parent_hash.is_zero() {
+        return Ok(None);
+    }
+
+    provider
+        .get_block_by_hash(parent_hash)
+        .full()
+        .await
+        .wrap_err_with(|| format!("failed to fetch ancestor block {parent_hash}"))?
+        .map(Some)
+        .ok_or_else(|| eyre::eyre!("ancestor block {parent_hash} not found"))
+}
+
+fn transaction_envs<FEN: FoundryEvmNetwork>(
+    block: &BlockResponseFor<FEN>,
+) -> eyre::Result<Vec<TxEnvFor<FEN>>> {
+    let BlockTransactions::Full(transactions) = block.transactions() else {
+        eyre::bail!("block {} does not contain full transactions", block.header().number());
+    };
+    Ok(transactions
+        .iter()
+        .map(|tx| TxEnvFor::<FEN>::from_recovered_tx(tx.as_ref(), tx.from()))
+        .collect())
+}
+
 /// Refreshes journal state derived from a nested EVM's active Monad chain position.
 pub fn refresh_nested_chain_journal<E: NestedEvm + ?Sized>(evm: &mut E) {
     let chain = evm.chain_mut().clone();
     chain.refresh_journal(evm.journal_mut());
 }
-
-type MonadEvmHandler<'db, I> =
-    MonadHandler<MonadRevmEvm<'db, I>, EVMError<DatabaseError>, EthFrame>;
-
-pub type MonadRevmEvm<'db, I> = RevmMonadEvm<
-    MonadContext<&'db mut dyn DatabaseExt<MonadEvmFactory>>,
-    I,
-    MonadInstructions<MonadContext<&'db mut dyn DatabaseExt<MonadEvmFactory>>>,
-    MonadPrecompilesMap,
->;
 
 /// Senders and EIP-7702 authorities that participated in one Monad block.
 pub type MonadBlockParticipants = HashSet<Address>;
@@ -361,142 +620,10 @@ where
     result.map(Some)
 }
 
-impl FoundryEvmFactory for MonadEvmFactory {
-    type Chain = MonadChainContext;
-
-    type FoundryContext<'db> = MonadContext<&'db mut dyn DatabaseExt<Self>>;
-
-    type FoundryEvm<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>> =
-        MonadEvm<&'db mut dyn DatabaseExt<Self>, I>;
-
-    fn create_foundry_evm_with_inspector<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>>(
-        &self,
-        db: &'db mut dyn DatabaseExt<Self>,
-        evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        inspector: I,
-    ) -> Self::FoundryEvm<'db, I> {
-        let mut monad_evm = self.create_evm_with_inspector(db, evm_env, inspector);
-        monad_evm.cfg.tx_chain_id_check = true;
-        monad_evm
-    }
-
-    fn create_nested_evm_with_inspector<'db, I>(
-        &self,
-        db: &'db mut dyn DatabaseExt<Self>,
-        evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        inspector: I,
-    ) -> NestedEvmFor<'db, Self>
-    where
-        I: FoundryInspectorExt<Self::FoundryContext<'db>> + 'db,
-    {
-        let spec = evm_env.cfg_env.spec;
-        let monad_cfg = MonadCfgEnv::from(evm_env.cfg_env);
-        let mut evm = monad_context_with_db(db)
-            .with_block(evm_env.block_env)
-            .with_cfg(monad_cfg)
-            .build_monad_with_inspector(inspector)
-            .with_precompiles(MonadPrecompilesMap::new_with_spec(spec));
-
-        evm.0.ctx.cfg.tx_chain_id_check = true;
-        Box::new(evm)
-    }
-}
-
-impl<'db, I: FoundryInspectorExt<MonadContext<&'db mut dyn DatabaseExt<MonadEvmFactory>>>> NestedEvm
-    for MonadRevmEvm<'db, I>
-{
-    type Spec = MonadHardfork;
-    type Block = BlockEnv;
-    type Tx = TxEnv;
-    type Chain = MonadChainContext;
-    type Journal = MonadJournal<&'db mut dyn DatabaseExt<MonadEvmFactory>>;
-
-    fn tx_mut(&mut self) -> &mut Self::Tx {
-        self.ctx_mut().tx_mut()
-    }
-
-    fn journal_inner_mut(&mut self) -> &mut JournaledState {
-        &mut self.ctx_mut().journaled_state.inner
-    }
-
-    fn chain_mut(&mut self) -> &mut Self::Chain {
-        &mut self.ctx_mut().chain
-    }
-
-    fn precompiles_mut(&mut self) -> &mut alloy_evm::precompiles::PrecompilesMap {
-        &mut self.0.precompiles
-    }
-
-    fn journal_mut(&mut self) -> &mut Self::Journal {
-        &mut self.ctx_mut().journaled_state
-    }
-
-    fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>> {
-        run_inspected_frame(self, MonadEvmHandler::<I>::new(), frame)
-    }
-
-    fn transact_raw(&mut self, tx: Self::Tx) -> eyre::Result<ResultAndState> {
-        let Some(system_call) = protocol_system_call(&tx)? else {
-            ContextSetters::set_tx(&mut self.0.ctx, tx);
-
-            let mut handler = MonadEvmHandler::<I>::new();
-            let result = handler.inspect_run(self)?;
-
-            return Ok(ResultAndState::new(
-                result,
-                self.ctx_ref().journaled_state.inner.state.clone(),
-            ));
-        };
-
-        system_call.validate_chain_id(self.ctx_ref().cfg().chain_id())?;
-        let journal = self.ctx_ref().journal_inner().clone();
-        let chain = self.ctx_ref().chain.clone();
-        let reserve_balance = self.ctx_ref().journaled_state.reserve_balance().clone();
-        let result = (|| {
-            let (db, journal) = self.0.ctx.db_journal_inner_mut();
-            system_call.apply_prestate(db, journal)?;
-            let result = self
-                .inspect_system_call_with_caller(
-                    system_call.caller,
-                    system_call.contract,
-                    system_call.data,
-                )
-                .wrap_err("failed to execute protocol system transaction")?;
-            finish_protocol_system_call(result)
-        })();
-        // Restore EVM-owned protocol state. Callers that require atomic inspector state isolate
-        // the inspector and database, as the Executor/Cow replay path does.
-        if result.is_err() {
-            self.ctx_mut().set_journal_inner(journal);
-            self.ctx_mut().chain = chain;
-            *self.ctx_mut().journaled_state.reserve_balance_mut() = reserve_balance;
-        }
-        result
-    }
-
-    fn transact_replay(
-        &mut self,
-        tx: Self::Tx,
-        is_system: bool,
-    ) -> eyre::Result<Option<ResultAndState>> {
-        if is_system && protocol_system_call(&tx)?.is_none() {
-            return Ok(None);
-        }
-        self.transact_raw(tx).map(Some)
-    }
-
-    fn to_evm_env(&self) -> EvmEnv<Self::Spec, Self::Block> {
-        self.ctx_ref().evm_clone()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        backend::Backend,
-        evm::{BlockContext, EthEvmNetwork, MonadEvmNetwork},
-    };
+    use crate::{backend::Backend, evm::EthEvmNetwork};
     use alloy_evm::EthEvmFactory;
     use alloy_sol_types::SolEvent;
     use monad_revm::{

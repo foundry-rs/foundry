@@ -3,9 +3,6 @@
 **Severity**: `Med`
 **ID**: `divide-before-multiply`
 
-Flags arithmetic expressions where division is performed before multiplication, which can cause
-unintended precision loss in integer arithmetic.
-
 ## What it does
 
 Warns on expressions of the form `(a / b) * c` (or equivalent shapes), where the integer division
@@ -17,15 +14,17 @@ Solidity's integer division truncates toward zero. Performing `(a / b) * c` disc
 of `a / b` before scaling, while `(a * c) / b` preserves precision. This pattern frequently
 manifests as fee/share/yield miscalculations.
 
-## Example
+Multiplying first can overflow even when the final result fits. Use this rewrite only when the
+product fits the integer type; otherwise use a checked full-precision multiplication/division
+helper. Decide explicitly which rounding behavior the calculation requires.
 
-### Bad
+## Example
 
 ```solidity
 uint256 share = (amount / total) * weight; // truncates first, then scales
 ```
 
-### Good
+Use instead:
 
 ```solidity
 uint256 share = (amount * weight) / total; // preserves precision

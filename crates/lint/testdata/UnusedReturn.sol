@@ -13,7 +13,7 @@ interface IOracle {
 // Same name+arity as IOracle.getPrice but one overload has no return value.
 interface IOracleOverloaded {
     function getPrice(address token) external returns (uint256);
-    function getPrice(uint256 id) external; // no return, makes getPrice ambiguous
+    function getPrice(uint256 id) external;
 }
 
 interface IERC20 {
@@ -34,17 +34,17 @@ contract UnusedReturn {
 
     // SHOULD FAIL: uint256 return discarded
     function bad1(address t) external {
-        oracle.getPrice(t); //~WARN: Return value of an external call is not used
+        oracle.getPrice(t); //~WARN: return value of an external call is not used
     }
 
     // SHOULD FAIL: bool return discarded (non-ERC20 function)
     function bad2() external {
-        oracle.update(); //~WARN: Return value of an external call is not used
+        oracle.update(); //~WARN: return value of an external call is not used
     }
 
     // SHOULD FAIL: explicit interface cast, IOracle(addr).getPrice(t)
     function bad3(address oracleAddr, address t) external {
-        IOracle(oracleAddr).getPrice(t); //~WARN: Return value of an external call is not used
+        IOracle(oracleAddr).getPrice(t); //~WARN: return value of an external call is not used
     }
 
     // SHOULD PASS: return value stored in local variable
@@ -73,37 +73,40 @@ contract UnusedReturn {
         token.transferFrom(from, to, amt);
     }
 
-    // SHOULD PASS: ambiguous overload set, getPrice(address) returns uint256 but
-    // getPrice(uint256) returns nothing; conservatively skip to avoid false positives
-    function good6(address t) external {
-        oracleOverloaded.getPrice(t);
+    // The selected address overload returns a value.
+    function badOverload(address t) external {
+        oracleOverloaded.getPrice(t); //~WARN: return value of an external call is not used
+    }
+
+    function goodOverload(uint256 id) external {
+        oracleOverloaded.getPrice(id);
     }
 
     // SHOULD FAIL: named-arg call, arity should still be 1
     function bad4(address t) external {
-        oracle.getPrice({token: t}); //~WARN: Return value of an external call is not used
+        oracle.getPrice({token: t}); //~WARN: return value of an external call is not used
     }
 
     // SHOULD FAIL: parenthesized receiver
     function bad5(address t) external {
-        (oracle).getPrice(t); //~WARN: Return value of an external call is not used
+        (oracle).getPrice(t); //~WARN: return value of an external call is not used
     }
 
     // SHOULD FAIL: parenthesized interface cast receiver
     function bad6(address oracleAddr, address t) external {
-        (IOracle(oracleAddr)).getPrice(t); //~WARN: Return value of an external call is not used
+        (IOracle(oracleAddr)).getPrice(t); //~WARN: return value of an external call is not used
     }
 
     // SHOULD FAIL: tuple return has an ignored slot
     function bad7(address t) external {
-        (uint256 price, ) = oracle.latest(t); //~WARN: Return value of an external call is not used
+        (uint256 price, ) = oracle.latest(t); //~WARN: return value of an external call is not used
         price = price + 1;
     }
 
     // SHOULD FAIL: tuple assignment has an ignored slot
     function bad8(address t) external {
         uint256 price;
-        (price, ) = oracle.latest(t); //~WARN: Return value of an external call is not used
+        (price, ) = oracle.latest(t); //~WARN: return value of an external call is not used
         price = price + 1;
     }
 

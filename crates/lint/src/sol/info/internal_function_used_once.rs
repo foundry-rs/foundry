@@ -1,7 +1,7 @@
 use super::InternalFunctionUsedOnce;
 use crate::{
     linter::{Lint, ProjectLintEmitter, ProjectLintPass, ProjectSource},
-    sol::{Severity, SolLint, analysis::resolved_function},
+    sol::{Severity, SolLint},
 };
 use solar::{
     interface::{data_structures::Never, source_map::FileName},
@@ -19,7 +19,7 @@ declare_forge_lint!(
     INTERNAL_FUNCTION_USED_ONCE,
     Severity::Info,
     "internal-function-used-once",
-    "this internal function is used only once; consider inlining it into its caller"
+    "this internal function is used only once"
 );
 
 impl<'ast> ProjectLintPass<'ast> for InternalFunctionUsedOnce {
@@ -159,7 +159,7 @@ impl<'gcx> hir::Visit<'gcx> for ReferenceCounter<'gcx> {
         match &expr.kind {
             hir::ExprKind::Call(callee, ..) => self.callee = Some(callee.peel_parens().id),
             hir::ExprKind::Ident(..) | hir::ExprKind::Member(..) => {
-                if let Some(function_id) = resolved_function(self.gcx, expr) {
+                if let Some(function_id) = self.gcx.resolved_function(expr) {
                     let is_call = self.callee == Some(expr.id);
                     let info = self.refs.entry(function_id).or_default();
                     if self.current == Some(function_id) {

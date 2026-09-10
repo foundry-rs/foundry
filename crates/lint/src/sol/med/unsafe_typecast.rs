@@ -16,7 +16,7 @@ declare_forge_lint!(
     UNSAFE_TYPECAST,
     Severity::Med,
     "unsafe-typecast",
-    "typecasts that can truncate values should be checked"
+    "typecast can truncate values"
 );
 
 impl<'gcx> LateLintPass<'gcx> for UnsafeTypecast {
