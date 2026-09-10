@@ -222,14 +222,10 @@ jobs:
         with:
           toolchain: nightly
           components: clippy
-      - name: Secure Linux runner
-        if: runner.os == 'Linux'
+      - name: Secure runner
         uses: tempoxyz/gh-actions/actions/secure-runner@5338a3746a2ac2ddd88cbede733c79f907aca3a0
         with:
           egress-policy: audit
-      - name: Install Socket on macOS and Windows
-        if: runner.os != 'Linux'
-        uses: tempoxyz/gh-actions/actions/socket-firewall@5338a3746a2ac2ddd88cbede733c79f907aca3a0
       - name: Verify Socket Cargo interception
         uses: ./.github/actions/check-socket-shim
 
