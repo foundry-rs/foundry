@@ -8,7 +8,7 @@ use solar::{
     interface::data_structures::Never,
     sema::{
         Gcx,
-        hir::{self, ExprKind, Res, Visit as _},
+        hir::{self, Visit as _},
     },
 };
 use std::{collections::HashSet, ops::ControlFlow};
@@ -33,7 +33,7 @@ impl<'gcx> LateLintPass<'gcx> for UnusedStateVariables {
 
         // Functions (including modifier call args) and state variable initializers cover every
         // variable reference in the contract.
-        let mut collector = UsedVarCollector { hir: &gcx.hir, used: HashSet::new() };
+        let mut collector = UsedVarCollector { gcx, used: HashSet::new() };
         for func_id in contract.all_functions() {
             let _ = collector.visit_nested_function(func_id);
         }
@@ -52,7 +52,7 @@ impl<'gcx> LateLintPass<'gcx> for UnusedStateVariables {
 }
 
 struct UsedVarCollector<'gcx> {
-    hir: &'gcx hir::Hir<'gcx>,
+    gcx: Gcx<'gcx>,
     used: HashSet<hir::VariableId>,
 }
 
@@ -60,13 +60,11 @@ impl<'gcx> hir::Visit<'gcx> for UsedVarCollector<'gcx> {
     type BreakValue = Never;
 
     fn hir(&self) -> &'gcx hir::Hir<'gcx> {
-        self.hir
+        &self.gcx.hir
     }
 
     fn visit_expr(&mut self, expr: &'gcx hir::Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
-        if let ExprKind::Ident(reses) = &expr.kind {
-            self.used.extend(reses.iter().filter_map(Res::as_variable));
-        }
+        self.used.extend(self.gcx.resolved_variable(expr));
         self.walk_expr(expr)
     }
 }

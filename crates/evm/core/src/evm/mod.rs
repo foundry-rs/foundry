@@ -1,3 +1,7 @@
+//! Shared EVM traits, associated types, and execution helpers.
+//!
+//! Each network module owns its network marker and concrete EVM implementations.
+
 use std::{fmt::Debug, ops::DerefMut};
 
 use crate::{
@@ -6,10 +10,8 @@ use crate::{
     backend::{DatabaseExt, JournaledState},
 };
 use alloy_consensus::{SignableTransaction, Signed, transaction::SignerRecoverable};
-use alloy_evm::{
-    EthEvmFactory, Evm, EvmEnv, EvmFactory, FromRecoveredTx, precompiles::PrecompilesMap,
-};
-use alloy_network::{Ethereum, Network};
+use alloy_evm::{Evm, EvmEnv, EvmFactory, FromRecoveredTx, precompiles::PrecompilesMap};
+use alloy_network::Network;
 use alloy_primitives::{Address, Signature, U256};
 use alloy_rlp::Decodable;
 use foundry_common::{FoundryReceiptResponse, FoundryTransactionBuilder, fmt::UIfmt};
@@ -31,9 +33,6 @@ use revm::{
     primitives::hardfork::SpecId,
 };
 use serde::{Deserialize, Serialize};
-use tempo_alloy::TempoNetwork;
-use tempo_evm::evm::TempoEvmFactory;
-use tempo_revm::TempoHaltReason;
 
 #[cfg(feature = "base")]
 pub mod base;
@@ -73,58 +72,6 @@ pub trait FoundryEvmNetwork: Copy + Debug + Default + 'static {
         >;
     type EvmFactory: FoundryEvmFactory<Tx: FromRecoveredTx<<Self::Network as Network>::TxEnvelope>>;
 }
-
-#[derive(Clone, Copy, Debug, Default)]
-pub struct EthEvmNetwork;
-impl FoundryEvmNetwork for EthEvmNetwork {
-    type Network = Ethereum;
-    type EvmFactory = EthEvmFactory;
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-pub struct TempoEvmNetwork;
-impl FoundryEvmNetwork for TempoEvmNetwork {
-    type Network = TempoNetwork;
-    type EvmFactory = TempoEvmFactory;
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-#[cfg(feature = "monad")]
-pub struct MonadEvmNetwork;
-#[cfg(feature = "monad")]
-impl FoundryEvmNetwork for MonadEvmNetwork {
-    type Network = Ethereum;
-    type EvmFactory = alloy_monad_evm::MonadEvmFactory;
-}
-
-/// Convenience type aliases for accessing associated types through [`FoundryEvmNetwork`].
-pub type EvmFactoryFor<FEN> = <FEN as FoundryEvmNetwork>::EvmFactory;
-pub type FoundryContextFor<'db, FEN> =
-    <EvmFactoryFor<FEN> as FoundryEvmFactory>::FoundryContext<'db>;
-pub type TxEnvFor<FEN> = <EvmFactoryFor<FEN> as EvmFactory>::Tx;
-pub type HaltReasonFor<FEN> = <EvmFactoryFor<FEN> as EvmFactory>::HaltReason;
-pub type SpecFor<FEN> = <EvmFactoryFor<FEN> as EvmFactory>::Spec;
-pub type BlockEnvFor<FEN> = <EvmFactoryFor<FEN> as EvmFactory>::BlockEnv;
-pub type PrecompilesFor<FEN> = <EvmFactoryFor<FEN> as EvmFactory>::Precompiles;
-pub type EvmEnvFor<FEN> = EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>;
-pub type NetworkFor<FEN> = <FEN as FoundryEvmNetwork>::Network;
-pub type TxEnvelopeFor<FEN> = <NetworkFor<FEN> as Network>::TxEnvelope;
-pub type TransactionRequestFor<FEN> = <NetworkFor<FEN> as Network>::TransactionRequest;
-pub type TransactionResponseFor<FEN> = <NetworkFor<FEN> as Network>::TransactionResponse;
-pub type BlockResponseFor<FEN> = <NetworkFor<FEN> as Network>::BlockResponse;
-
-pub type ChainFor<FEN> = <EvmFactoryFor<FEN> as FoundryEvmFactory>::Chain;
-
-/// Boxed nested EVM produced by a Foundry EVM factory.
-pub type NestedEvmFor<'db, F> = Box<
-    dyn NestedEvm<
-            Spec = <F as EvmFactory>::Spec,
-            Block = <F as EvmFactory>::BlockEnv,
-            Tx = <F as EvmFactory>::Tx,
-            Chain = <F as FoundryEvmFactory>::Chain,
-            Journal = <<F as FoundryEvmFactory>::FoundryContext<'db> as ContextTr>::Journal,
-        > + 'db,
->;
 
 pub trait FoundryEvmFactory:
     EvmFactory<
@@ -251,6 +198,40 @@ pub trait NestedEvm {
     fn to_evm_env(&self) -> EvmEnv<Self::Spec, Self::Block>;
 }
 
+/// Converts a network-specific halt reason into an [`InstructionResult`].
+pub trait IntoInstructionResult {
+    fn into_instruction_result(self) -> InstructionResult;
+}
+
+/// Convenience type aliases for accessing associated types through [`FoundryEvmNetwork`].
+pub type EvmFactoryFor<FEN> = <FEN as FoundryEvmNetwork>::EvmFactory;
+pub type FoundryContextFor<'db, FEN> =
+    <EvmFactoryFor<FEN> as FoundryEvmFactory>::FoundryContext<'db>;
+pub type TxEnvFor<FEN> = <EvmFactoryFor<FEN> as EvmFactory>::Tx;
+pub type HaltReasonFor<FEN> = <EvmFactoryFor<FEN> as EvmFactory>::HaltReason;
+pub type SpecFor<FEN> = <EvmFactoryFor<FEN> as EvmFactory>::Spec;
+pub type BlockEnvFor<FEN> = <EvmFactoryFor<FEN> as EvmFactory>::BlockEnv;
+pub type PrecompilesFor<FEN> = <EvmFactoryFor<FEN> as EvmFactory>::Precompiles;
+pub type EvmEnvFor<FEN> = EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>;
+pub type NetworkFor<FEN> = <FEN as FoundryEvmNetwork>::Network;
+pub type TxEnvelopeFor<FEN> = <NetworkFor<FEN> as Network>::TxEnvelope;
+pub type TransactionRequestFor<FEN> = <NetworkFor<FEN> as Network>::TransactionRequest;
+pub type TransactionResponseFor<FEN> = <NetworkFor<FEN> as Network>::TransactionResponse;
+pub type BlockResponseFor<FEN> = <NetworkFor<FEN> as Network>::BlockResponse;
+
+pub type ChainFor<FEN> = <EvmFactoryFor<FEN> as FoundryEvmFactory>::Chain;
+
+/// Boxed nested EVM produced by a Foundry EVM factory.
+pub type NestedEvmFor<'db, F> = Box<
+    dyn NestedEvm<
+            Spec = <F as EvmFactory>::Spec,
+            Block = <F as EvmFactory>::BlockEnv,
+            Tx = <F as EvmFactory>::Tx,
+            Chain = <F as FoundryEvmFactory>::Chain,
+            Journal = <<F as FoundryEvmFactory>::FoundryContext<'db> as ContextTr>::Journal,
+        > + 'db,
+>;
+
 /// Closure type used by `CheatcodesExecutor` methods that run nested EVM operations.
 pub type NestedEvmClosure<'a, F> = &'a mut dyn for<'j> FnMut(
     &mut dyn NestedEvm<
@@ -338,24 +319,4 @@ pub fn get_create2_factory_call_inputs<T: JournalTr>(
         return_memory_offset: 0..0,
         charged_new_account_state_gas: false,
     })
-}
-
-/// Converts a network-specific halt reason into an [`InstructionResult`].
-pub trait IntoInstructionResult {
-    fn into_instruction_result(self) -> InstructionResult;
-}
-
-impl IntoInstructionResult for HaltReason {
-    fn into_instruction_result(self) -> InstructionResult {
-        self.into()
-    }
-}
-
-impl IntoInstructionResult for TempoHaltReason {
-    fn into_instruction_result(self) -> InstructionResult {
-        match self {
-            Self::Ethereum(eth) => eth.into(),
-            _ => InstructionResult::PrecompileError,
-        }
-    }
 }

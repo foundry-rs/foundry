@@ -285,13 +285,11 @@ contract DerivedFromBaseDeployable is BaseDeployable {
 }
 
 // ── Overloaded internal function ──────────────────────────────────────────────
-// When overloads exist and any of them takes `storage` at that position, the
-// argument is conservatively treated as written to avoid false positives.
-// The write is only suppressed when NO overload has a storage parameter.
+// Only the selected overload determines whether an argument can be written.
 
 contract OverloadUnion {
     struct S { uint256 v; }
-    uint256 public x; // any-overload: f(S storage) has storage at pos 0 → x treated as written
+    uint256 public x; //~WARN: state variable is read but never written
     S internal data;
 
     function f(uint256) internal {}

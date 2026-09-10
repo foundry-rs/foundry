@@ -3,21 +3,14 @@
 **Severity**: `Gas`
 **ID**: `cache-array-length`
 
-Flags `for` loop conditions that read a storage dynamic array's `.length` on every iteration
-instead of comparing against a cached local length.
-
 ## What it does
 
 Reports comparison expressions in `for` loop conditions when either side reads `.length` from a
 state dynamic array, such as `i < values.length` or `values.length > i`, including comparisons
 nested inside `&&` / `||` conditions.
 
-The lint does not report loops that already compare against a local cached length variable.
-It also skips loops that mutate an array length in the loop body, such as calling `push()` or
-`pop()`, because aliases can make caching the length change the loop semantics.
-
-Fixed-size arrays are excluded because their length is a compile-time constant instead of a repeated
-dynamic length lookup. This lint currently checks `for` loops.
+Loops that change an array's length with operations such as `push()` or `pop()` are
+excluded because caching the length can change which elements are visited.
 
 ## Why is this bad?
 
@@ -26,8 +19,6 @@ Caching the length once before entering the loop avoids repeated storage reads a
 for hot loops.
 
 ## Example
-
-### Bad
 
 ```solidity
 contract C {
@@ -41,7 +32,7 @@ contract C {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 contract C {
@@ -55,7 +46,3 @@ contract C {
     }
 }
 ```
-
-## Notes
-
-This is a `Gas`-severity lint and is **not** applied to test or script files.

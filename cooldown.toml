@@ -62,3 +62,139 @@ version = "0.12.0"
 [[allow.exact]]
 crate = "soldeer-core"
 version = "0.12.0"
+
+# Temporary exact-version exceptions for the Alloy 2.4.2 update.
+# Remove after 2026-09-15 07:36 UTC, when these releases clear the 7-day cooldown.
+[[allow.exact]]
+crate = "alloy-consensus"
+version = "2.4.2"
+
+[[allow.exact]]
+crate = "alloy-consensus-any"
+version = "2.4.2"
+
+[[allow.exact]]
+crate = "alloy-contract"
+version = "2.4.2"
+
+[[allow.exact]]
+crate = "alloy-eip5792"
+version = "2.4.2"
+
+[[allow.exact]]
+crate = "alloy-eips"
+version = "2.4.2"
+
+[[allow.exact]]
+crate = "alloy-ens"
+version = "2.4.2"
+
+[[allow.exact]]
+crate = "alloy-genesis"
+version = "2.4.2"
+
+[[allow.exact]]
+crate = "alloy-json-rpc"
+version = "2.4.2"
+
+[[allow.exact]]
+crate = "alloy-network"
+version = "2.4.2"
+
+[[allow.exact]]
+crate = "alloy-network-primitives"
+version = "2.4.2"
+
+[[allow.exact]]
+crate = "alloy-provider"
+version = "2.4.2"
+
+[[allow.exact]]
+crate = "alloy-pubsub"
+version = "2.4.2"
+
+[[allow.exact]]
+crate = "alloy-rpc-client"
+version = "2.4.2"
+
+[[allow.exact]]
+crate = "alloy-rpc-types"
+version = "2.4.2"
+
+[[allow.exact]]
+crate = "alloy-rpc-types-anvil"
+version = "2.4.2"
+
+[[allow.exact]]
+crate = "alloy-rpc-types-any"
+version = "2.4.2"
+
+[[allow.exact]]
+crate = "alloy-rpc-types-beacon"
+version = "2.4.2"
+
+[[allow.exact]]
+crate = "alloy-rpc-types-debug"
+version = "2.4.2"
+
+[[allow.exact]]
+crate = "alloy-rpc-types-engine"
+version = "2.4.2"
+
+[[allow.exact]]
+crate = "alloy-rpc-types-eth"
+version = "2.4.2"
+
+[[allow.exact]]
+crate = "alloy-rpc-types-mev"
+version = "2.4.2"
+
+[[allow.exact]]
+crate = "alloy-rpc-types-trace"
+version = "2.4.2"
+
+[[allow.exact]]
+crate = "alloy-rpc-types-txpool"
+version = "2.4.2"
+
+[[allow.exact]]
+crate = "alloy-serde"
+version = "2.4.2"
+
+[[allow.exact]]
+crate = "alloy-signer"
+version = "2.4.2"
+
+[[allow.exact]]
+crate = "alloy-signer-local"
+version = "2.4.2"
+
+[[allow.exact]]
+crate = "alloy-transport"
+version = "2.4.2"
+
+[[allow.exact]]
+crate = "alloy-transport-http"
+version = "2.4.2"
+
+[[allow.exact]]
+crate = "alloy-transport-ipc"
+version = "2.4.2"
+
+[[allow.exact]]
+crate = "alloy-transport-ws"
+version = "2.4.2"
+
+[[allow.exact]]
+crate = "alloy-tx-macros"
+version = "2.4.2"
+
+# Exact-version exceptions for the maintained Monad releases required by revm 43.
+# Remove after 2026-09-16 17:29 UTC, when both releases clear the 7-day cooldown.
+[[allow.exact]]
+crate = "alloy-monad-evm"
+version = "0.8.0"
+
+[[allow.exact]]
+crate = "monad-revm"
+version = "0.8.0"

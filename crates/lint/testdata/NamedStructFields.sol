@@ -19,6 +19,6 @@ contract NamedStructFields {
     }
 
     function positionalArgs() public {
-        Person memory person = Person("Alice", 25, address(0)); //~NOTE: prefer initializing structs with named fields
+        Person memory person = Person("Alice", 25, address(0)); //~NOTE: struct is initialized with positional fields
     }
 }
