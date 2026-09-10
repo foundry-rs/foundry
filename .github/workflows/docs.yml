@@ -56,6 +56,9 @@ jobs:
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: ./target/doc
+      - name: Upload Socket report
+        if: always() && env.SFW_JSON_REPORT_PATH != ''
+        uses: ./.github/actions/upload-socket-report
 
   deploy-docs:
     if: github.ref_name == 'master' && github.event_name == 'push'

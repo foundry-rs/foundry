@@ -231,3 +231,6 @@ jobs:
           fi
           actual="$(docker buildx imagetools inspect "$IMAGE:$TAG" --format '{{json .Manifest.Digest}}' | tr -d '"')"
           [[ "$actual" == "$DIGEST" ]] || { echo "::error::Exact tag verification failed: $actual"; exit 1; }
+      - name: Upload Socket report
+        if: always() && env.SFW_JSON_REPORT_PATH != ''
+        uses: ./.github/actions/upload-socket-report

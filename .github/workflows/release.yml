@@ -617,6 +617,9 @@ jobs:
             files+=("$FOUNDRY_MAN")
           fi
           gh release upload "$TAG_NAME" "${files[@]}" --clobber
+      - name: Upload Socket report
+        if: always() && env.SFW_JSON_REPORT_PATH != ''
+        uses: ./.github/actions/upload-socket-report
 
   # Auto-publish nightly releases once all assets have been uploaded so that
   # foundryup and other consumers see them immediately. Tagged releases are

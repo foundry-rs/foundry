@@ -1,0 +1,14 @@
+name: Upload Socket report
+description: Preserve Socket's report for dependency and TLS failure investigations.
+runs:
+  using: composite
+  steps:
+    # Upload only the report designated by Socket, never arbitrary runner files.
+    # TLS failures may leave an empty report; consult the job log as well.
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      if: always() && env.SFW_JSON_REPORT_PATH != ''
+      with:
+        name: sfw-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ strategy.job-index || '0' }}-${{ github.run_attempt }}
+        path: ${{ env.SFW_JSON_REPORT_PATH }}
+        if-no-files-found: warn
+        retention-days: 7

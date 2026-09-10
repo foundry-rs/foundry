@@ -121,3 +121,6 @@ jobs:
           TEMPO_RPC_URL: https://rpc.tempo.xyz
           MPP_TOKEN: "0x20c0000000000000000000008b4c619d2eedec7a"
         run: ./.github/scripts/tempo-mpp.sh "$(which cast | xargs dirname)"
+      - name: Upload Socket report
+        if: always() && env.SFW_JSON_REPORT_PATH != ''
+        uses: ./.github/actions/upload-socket-report

@@ -198,3 +198,6 @@ jobs:
             - Target tag: `${{ steps.prepare.outputs.expected_tag }}`
             - Changelog fragments: ${{ steps.prepare.outputs.fragment_count }}
             - Workspace packages: ${{ steps.prepare.outputs.package_count }}
+      - name: Upload Socket report
+        if: always() && env.SFW_JSON_REPORT_PATH != ''
+        uses: ./.github/actions/upload-socket-report

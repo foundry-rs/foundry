@@ -70,6 +70,9 @@ jobs:
           cache-bin: false
           prefix-key: v2-rust-doctest
       - run: cargo test --workspace --doc --locked
+      - name: Upload Socket report
+        if: always() && env.SFW_JSON_REPORT_PATH != ''
+        uses: ./.github/actions/upload-socket-report
 
   no-default-features:
     runs-on: depot-ubuntu-latest
@@ -105,6 +108,9 @@ jobs:
           cache-bin: false
           prefix-key: v1-rust-no-default-features
       - run: cargo build --workspace --no-default-features --locked
+      - name: Upload Socket report
+        if: always() && env.SFW_JSON_REPORT_PATH != ''
+        uses: ./.github/actions/upload-socket-report
 
   touch-id-link:
     name: touch-id link (macOS)
@@ -147,6 +153,9 @@ jobs:
           cargo test --manifest-path crates/cast/Cargo.toml --test cli --features touch-id --target x86_64-apple-darwin --locked --no-run
           cargo build --manifest-path crates/forge/Cargo.toml --features touch-id --target x86_64-apple-darwin --locked
       - run: cargo build --manifest-path crates/forge/Cargo.toml --features touch-id --target aarch64-apple-darwin --locked
+      - name: Upload Socket report
+        if: always() && env.SFW_JSON_REPORT_PATH != ''
+        uses: ./.github/actions/upload-socket-report
 
   typos:
     runs-on: depot-ubuntu-latest
@@ -232,6 +241,9 @@ jobs:
         shell: bash
         env:
           RUSTFLAGS: -Dwarnings
+      - name: Upload Socket report
+        if: always() && env.SFW_JSON_REPORT_PATH != ''
+        uses: ./.github/actions/upload-socket-report
 
   rustfmt:
     runs-on: depot-ubuntu-latest
@@ -284,6 +296,9 @@ jobs:
       - name: forge fmt
         shell: bash
         run: ./.github/scripts/format.sh --check
+      - name: Upload Socket report
+        if: always() && env.SFW_JSON_REPORT_PATH != ''
+        uses: ./.github/actions/upload-socket-report
 
   deny:
     name: cargo deny check
@@ -313,6 +328,9 @@ jobs:
       - name: Verify Socket Cargo interception
         uses: ./.github/actions/check-socket-shim
       - run: cargo deny --all-features check all
+      - name: Upload Socket report
+        if: always() && env.SFW_JSON_REPORT_PATH != ''
+        uses: ./.github/actions/upload-socket-report
   codeql:
     name: analyze (${{ matrix.language }})
     runs-on: ubuntu-latest
