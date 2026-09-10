@@ -1884,6 +1884,45 @@ async fn test_tip20_transfer() {
     );
 }
 
+/// Every transaction on Tempo pays gas in a fee token, so a sender holding fee tokens but no
+/// native balance, which is what every forked mainnet sender looks like, must get its EIP-1559
+/// transaction pooled and mined.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_eip1559_sender_without_native_balance_pays_gas_in_fee_token() {
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+
+    let signer = PrivateKeySigner::random();
+    let sender = signer.address();
+    let recipient = Address::random();
+    assert!(provider.get_balance(sender).await.unwrap().is_zero());
+
+    let chain_id = provider.get_chain_id().await.unwrap();
+    let gas_price = provider.get_gas_price().await.unwrap();
+    let amount = U256::from(1_000_000);
+    let tx = TxEip1559 {
+        chain_id,
+        nonce: 0,
+        gas_limit: TIP20_TRANSFER_GAS,
+        max_fee_per_gas: gas_price * 2,
+        max_priority_fee_per_gas: gas_price / 10,
+        to: TxKind::Call(PATH_USD),
+        input: IERC20::transferCall { to: recipient, amount }.abi_encode().into(),
+        ..Default::default()
+    };
+    let signature = signer.sign_hash(&tx.signature_hash()).await.unwrap();
+    let raw = FoundryTxEnvelope::Eip1559(tx.into_signed(signature)).encoded_2718();
+
+    // Without fee tokens the pool reports the fee token shortfall, not missing native funds.
+    let err = provider.send_raw_transaction(&raw).await.unwrap_err();
+    assert!(err.to_string().contains("insufficient fee token balance"), "unexpected error: {err}");
+
+    api.anvil_deal_tip20(sender, PATH_USD, U256::from(10_000_000)).await.unwrap();
+    let receipt = provider.send_raw_transaction(&raw).await.unwrap().get_receipt().await.unwrap();
+    assert!(receipt.status());
+    assert_eq!(IERC20::new(PATH_USD, &provider).balanceOf(recipient).call().await.unwrap(), amount);
+}
+
 // ============================================================================
 // TIP20 Token Operations: Approve and TransferFrom
 // ============================================================================

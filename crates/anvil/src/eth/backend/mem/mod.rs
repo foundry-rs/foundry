@@ -8813,7 +8813,7 @@ where
         let account = self.get_account(address).await?;
         let evm_env = self.next_evm_env();
 
-        // Tempo AA: validate time bounds and fee token balance (async checks)
+        // Tempo AA: validate time bounds (async checks)
         if let FoundryTxEnvelope::Tempo(aa_tx) = tx.transaction.as_ref() {
             let tempo_tx = aa_tx.tx();
             let current_time = evm_env.block_env.timestamp.saturating_to::<u64>();
@@ -8857,15 +8857,27 @@ where
                     .into());
                 }
             }
+        }
 
-            // Fee token balance check
-            let fee_payer = tempo_tx.recover_fee_payer(address).unwrap_or(address);
-            let fee_token =
-                tempo_tx.fee_token.unwrap_or(foundry_evm::core::tempo::PATH_USD_ADDRESS);
+        // Tempo charges gas in a fee token for every transaction type, never in the native token,
+        // so the fee token balance replaces the native balance check.
+        let pays_gas_in_fee_token =
+            self.is_tempo() || matches!(tx.transaction.as_ref(), FoundryTxEnvelope::Tempo(_));
+        if pays_gas_in_fee_token {
+            let (fee_payer, fee_token) = match tx.transaction.as_ref() {
+                FoundryTxEnvelope::Tempo(aa_tx) => {
+                    let tempo_tx = aa_tx.tx();
+                    (
+                        tempo_tx.recover_fee_payer(address).unwrap_or(address),
+                        tempo_tx.fee_token.unwrap_or(foundry_evm::core::tempo::PATH_USD_ADDRESS),
+                    )
+                }
+                _ => (address, self.tempo_user_fee_token(address).await?),
+            };
 
             // gas_limit * max_fee_per_gas in wei, scaled to 6-decimal token units
-            let required_wei =
-                U256::from(tempo_tx.gas_limit).saturating_mul(U256::from(tempo_tx.max_fee_per_gas));
+            let required_wei = U256::from(tx.transaction.gas_limit())
+                .saturating_mul(U256::from(tx.transaction.max_fee_per_gas()));
             let required = required_wei / U256::from(10u64.pow(12));
 
             let balance = self.get_fee_token_balance(fee_token, fee_payer).await?;
@@ -9058,6 +9070,11 @@ where
                 FoundryTxEnvelope::Tempo(_) => {
                     // Tempo AA transactions pay gas with fee tokens, not ETH.
                     // Fee token balance is validated in validate_pool_transaction (async).
+                }
+                _ if self.is_tempo() => {
+                    // Every transaction on Tempo pays gas in a fee token; forked mainnet senders
+                    // hold no native balance at all. The fee token balance is validated in
+                    // validate_pool_transaction (async).
                 }
                 #[cfg(feature = "monad")]
                 _ if self.validate_monad_transaction_funds(pending, account, evm_env)? => {}
