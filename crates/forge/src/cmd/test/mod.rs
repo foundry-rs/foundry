@@ -103,8 +103,9 @@ mod evm_profile_server;
 mod filter;
 mod summary;
 use filter::RerunFailures;
-pub use filter::{FilterArgs, ProjectPathsAwareFilter, RerunFailure};
 use summary::{TestSummaryReport, format_invariant_metrics_table};
+
+pub use filter::{FilterArgs, ProjectPathsAwareFilter, RerunFailure};
 
 const DEBUGGER_MATCHING_TESTS_DISPLAY_LIMIT: usize = 12;
 const AUTO_FUZZ_FAILURE_DIR: &str = "fuzz";

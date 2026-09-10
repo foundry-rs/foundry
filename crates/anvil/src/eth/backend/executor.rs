@@ -33,10 +33,6 @@ use alloy_primitives::{Address, B256, Bytes, Log, U256};
 use anvil_core::eth::transaction::{
     MaybeImpersonatedTransaction, PendingTransaction, TransactionInfo,
 };
-#[cfg(feature = "base")]
-use base_common_consensus::Eip8130Receipt;
-#[cfg(feature = "base")]
-use base_common_evm::Eip8130PhaseStatuses;
 use foundry_evm::core::{env::FoundryTransaction, evm::IntoInstructionResult};
 use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope, FoundryTxType};
 use revm::{
@@ -48,6 +44,11 @@ use revm::{
     state::{AccountInfo, EvmState},
 };
 use std::{fmt, fmt::Debug, mem::take, sync::Arc};
+
+#[cfg(feature = "base")]
+use base_common_consensus::Eip8130Receipt;
+#[cfg(feature = "base")]
+use base_common_evm::Eip8130PhaseStatuses;
 
 #[cfg(any(feature = "base", feature = "optimism"))]
 pub(crate) mod optimism;

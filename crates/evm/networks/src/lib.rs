@@ -22,16 +22,7 @@ use alloy_chains::{
 use alloy_eips::{eip1559::BaseFeeParams, eip7840::BlobParams};
 use alloy_evm::precompiles::{DynPrecompile, PrecompilesMap};
 use alloy_primitives::{Address, ChainId, address, map::AddressHashMap};
-#[cfg(feature = "base")]
-use base_common_precompiles::{
-    ActivationRegistryStorage, B20FactoryStorage, NonceManagerStorage, PolicyRegistryStorage,
-    TxContextStorage,
-};
 use clap::Parser;
-#[cfg(feature = "base")]
-use foundry_evm_hardforks::{BaseSpecId, BaseUpgrade};
-#[cfg(feature = "monad")]
-type MonadHardfork = foundry_evm_hardforks::MonadHardfork;
 use foundry_evm_hardforks::{
     EthereumHardfork, ExecutionSpec, FoundryHardfork, TempoHardfork, latest_active_tempo_hardfork,
 };
@@ -49,8 +40,19 @@ use tempo_contracts::precompiles::{
     VALIDATOR_CONFIG_ADDRESS, VALIDATOR_CONFIG_V2_ADDRESS,
 };
 
+#[cfg(feature = "base")]
+use base_common_precompiles::{
+    ActivationRegistryStorage, B20FactoryStorage, NonceManagerStorage, PolicyRegistryStorage,
+    TxContextStorage,
+};
+#[cfg(feature = "base")]
+use foundry_evm_hardforks::{BaseSpecId, BaseUpgrade};
+
 #[cfg(feature = "optimism")]
 use foundry_evm_hardforks::OpHardfork;
+
+#[cfg(feature = "monad")]
+type MonadHardfork = foundry_evm_hardforks::MonadHardfork;
 
 /// The Monad cheatcode handler address.
 pub const MONAD_CHEATCODE_ADDRESS: Address = address!("0xc0FFeeCD43A10e1C2b0De63c6CDCFe5B7d0e0CEA");

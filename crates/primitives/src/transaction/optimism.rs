@@ -1,5 +1,6 @@
 //! OP-stack-specific impls for [`FoundryTxEnvelope`] and [`FoundryTransactionRequest`].
 
+use super::{FoundryReceiptEnvelope, FoundryTransactionRequest, FoundryTxEnvelope};
 use alloy_consensus::{Sealed, Transaction as _, Typed2718};
 use alloy_evm::{FromRecoveredTx, FromTxWithEncoded};
 use alloy_op_evm::OpTx;
@@ -10,8 +11,6 @@ use op_alloy_consensus::{
 };
 use op_revm::{OpTransaction, transaction::deposit::DepositTransactionParts};
 use revm::context::TxEnv;
-
-use super::{FoundryReceiptEnvelope, FoundryTransactionRequest, FoundryTxEnvelope};
 
 impl OpTransactionTrait for FoundryTxEnvelope {
     fn is_deposit(&self) -> bool {
@@ -187,11 +186,10 @@ impl<T> FoundryReceiptEnvelope<T> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use alloy_network::eip2718::Encodable2718;
     use alloy_primitives::TxHash;
     use alloy_rlp::Decodable;
-
-    use super::*;
 
     #[test]
     fn test_from_recovered_tx_legacy_op() {

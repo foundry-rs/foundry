@@ -1620,13 +1620,14 @@ mod tests {
     use alloy_primitives::bytes;
     use alloy_rpc_types::TransactionRequest;
     use alloy_serde::WithOtherFields;
-    #[cfg(feature = "base")]
-    use foundry_evm_hardforks::BaseUpgrade;
     use foundry_test_utils::rpc::{
         spawn_rpc_proxy_internal_error_after, spawn_rpc_proxy_method_not_found_before,
         spawn_rpc_proxy_rejecting_method_after,
     };
     use revm::context::{BlockEnv, TxEnv};
+
+    #[cfg(feature = "base")]
+    use foundry_evm_hardforks::BaseUpgrade;
 
     #[cfg(feature = "optimism")]
     use op_revm::OpSpecId;

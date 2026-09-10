@@ -69,7 +69,6 @@ use alloy_evm::{
     precompiles::{DynPrecompile, MovePrecompileError, Precompile, PrecompilesMap},
 };
 use alloy_genesis::Genesis;
-
 use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType,
     BlockResponse, Network, NetworkTransactionBuilder, ReceiptResponse, UnknownTxEnvelope,
@@ -239,9 +238,7 @@ use base_common_rpc_types::{
 #[cfg(feature = "base")]
 use base_execution_eip8130::{FeeCheck, IntrinsicGas, IntrinsicGasInput};
 #[cfg(feature = "base")]
-use foundry_evm::core::constants::SYSTEM_PRECOMPILE_STUB;
-#[cfg(feature = "base")]
-use foundry_evm::hardfork::BaseUpgrade;
+use foundry_evm::{core::constants::SYSTEM_PRECOMPILE_STUB, hardfork::BaseUpgrade};
 #[cfg(feature = "base")]
 use revm::inspector::NoOpInspector;
 
@@ -10154,18 +10151,19 @@ mod tests {
     use alloy_provider::Provider;
     use alloy_rpc_types::{Block, BlockTransactions, TransactionRequest, state::EvmOverrides};
     use alloy_serde::WithOtherFields;
-    #[cfg(feature = "base")]
-    use base_common_precompiles::{ActivationRegistryStorage, B20FactoryStorage};
     use foundry_config::NamedChain;
     use foundry_evm::{
         backend::{BlockchainDb, BlockchainDbMeta},
         hardfork::{EthereumHardfork, FoundryHardfork},
     };
-    #[cfg(feature = "base")]
-    use foundry_evm::{hardforks::BaseUpgrade, traces::CallTraceDecoderBuilder};
     use foundry_evm_networks::arbitrum;
     use std::sync::Arc;
     use tempfile::tempdir;
+
+    #[cfg(feature = "base")]
+    use base_common_precompiles::{ActivationRegistryStorage, B20FactoryStorage};
+    #[cfg(feature = "base")]
+    use foundry_evm::{hardforks::BaseUpgrade, traces::CallTraceDecoderBuilder};
 
     fn test_cache_db(cache_path: std::path::PathBuf) -> BlockchainDb {
         let db = BlockchainDb::new(BlockchainDbMeta::default(), Some(cache_path));

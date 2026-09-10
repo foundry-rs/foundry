@@ -1,6 +1,4 @@
 use super::auth::{confirm_and_build, confirm_and_build_with_tempo_wallet};
-#[cfg(feature = "base")]
-use crate::cmd::resolve_network;
 use crate::{
     tempo,
     tx::{self, CastTxBuilder},
@@ -12,8 +10,6 @@ use alloy_network::{Ethereum, EthereumWallet, Network, NetworkTransactionBuilder
 use alloy_primitives::{Address, hex};
 use alloy_provider::Provider;
 use alloy_signer::{Signature, Signer};
-#[cfg(feature = "base")]
-use base_common_network::Base as BaseNetwork;
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
@@ -25,6 +21,11 @@ use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
 use foundry_wallets::{TempoAccountsWallet, WalletSigner};
 use std::{path::PathBuf, str::FromStr};
 use tempo_alloy::TempoNetwork;
+
+#[cfg(feature = "base")]
+use crate::cmd::resolve_network;
+#[cfg(feature = "base")]
+use base_common_network::Base as BaseNetwork;
 
 /// CLI arguments for `cast mktx`.
 #[derive(Debug, Parser)]

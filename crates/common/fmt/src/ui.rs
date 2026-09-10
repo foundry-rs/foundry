@@ -1284,6 +1284,9 @@ mod tests {
     use similar_asserts::assert_eq;
     use std::str::FromStr;
 
+    #[cfg(feature = "base")]
+    use base_common_consensus::{Call as BaseCall, TxEip8130};
+
     #[test]
     fn format_date_time() {
         // Fri Aug 29 2025 08:05:38 GMT+0000
@@ -1313,8 +1316,6 @@ mod tests {
     #[cfg(feature = "base")]
     #[test]
     fn can_pretty_print_eip8130_transaction() {
-        use base_common_consensus::{Call as BaseCall, TxEip8130};
-
         let base_call = BaseCall { to: Address::ZERO, data: Bytes::new() };
         let tx = TxEip8130 {
             chain_id: 8453,

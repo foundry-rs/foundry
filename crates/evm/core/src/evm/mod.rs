@@ -2,8 +2,6 @@
 //!
 //! Each network module owns its network marker and concrete EVM implementations.
 
-use std::{fmt::Debug, ops::DerefMut};
-
 use crate::{
     FoundryBlock, FoundryChain, FoundryContextExt, FoundryInspectorExt, FoundryJournal,
     FoundryTransaction, FromAnyRpcTransaction,
@@ -33,6 +31,7 @@ use revm::{
     primitives::hardfork::SpecId,
 };
 use serde::{Deserialize, Serialize};
+use std::{fmt::Debug, ops::DerefMut};
 
 #[cfg(feature = "base")]
 pub mod base;

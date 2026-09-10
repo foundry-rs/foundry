@@ -641,12 +641,10 @@ impl From<FoundryTxEnvelope> for FoundryTypedTx {
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
-
+    use super::*;
     use alloy_primitives::{TxKind, U256, b256, hex};
     use alloy_rlp::Decodable;
-
-    use super::*;
+    use std::str::FromStr;
 
     fn signed<T>(tx: T) -> Signed<T> {
         Signed::new_unchecked(tx, Signature::test_signature(), B256::ZERO)

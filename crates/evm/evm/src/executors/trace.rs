@@ -10,13 +10,14 @@ use foundry_evm_core::{
     fork::CreateFork,
     opts::{EvmOpts, ExecutionSpecContext, resolve_execution_spec},
 };
-#[cfg(feature = "base")]
-use foundry_evm_hardforks::BaseSpecId;
 use foundry_evm_hardforks::{FoundryHardfork, TempoHardfork};
 use foundry_evm_networks::NetworkConfigs;
 use foundry_evm_traces::{TraceContext, TraceRequirements};
 use revm::state::Bytecode;
 use std::ops::{Deref, DerefMut};
+
+#[cfg(feature = "base")]
+use foundry_evm_hardforks::BaseSpecId;
 
 /// A default executor with tracing enabled
 pub struct TracingExecutor<FEN: FoundryEvmNetwork> {

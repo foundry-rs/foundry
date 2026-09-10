@@ -37,14 +37,15 @@ use crate::{
     mem::storage::MinedBlockOutcome,
 };
 use alloy_consensus::Transaction;
-#[cfg(feature = "base")]
-use alloy_consensus::Typed2718;
 use alloy_primitives::{Address, TxHash};
 use alloy_rpc_types::txpool::TxpoolStatus;
 use anvil_core::eth::transaction::PendingTransaction;
 use futures::channel::mpsc::{Receiver, Sender, channel};
 use parking_lot::{Mutex, RwLock};
 use std::{collections::VecDeque, fmt, sync::Arc};
+
+#[cfg(feature = "base")]
+use alloy_consensus::Typed2718;
 
 pub mod transactions;
 

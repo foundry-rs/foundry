@@ -750,13 +750,12 @@ impl FromAnyRpcTransaction for TempoTxEnv {
 
 #[cfg(feature = "base")]
 mod base {
+    use super::*;
     use base_common_consensus::BaseTxEnvelope;
     use base_common_evm::{
         BaseTransaction, BaseTxTr, DEPOSIT_TRANSACTION_TYPE, EIP8130_TRANSACTION_TYPE,
     };
     use base_common_rpc_types::Transaction as BaseRpcTransaction;
-
-    use super::*;
 
     impl<TX: FoundryTransaction> FoundryTransaction for BaseTransaction<TX> {
         fn set_tx_type(&mut self, tx_type: u8) {
@@ -1096,8 +1095,6 @@ mod optimism {
 
 #[cfg(test)]
 mod tests {
-    use std::num::NonZeroU64;
-
     use super::*;
     use alloy_consensus::{Signed, TxEip1559, transaction::Recovered};
     use alloy_evm::{EthEvmFactory, EvmFactory};
@@ -1105,15 +1102,17 @@ mod tests {
     use alloy_primitives::Signature;
     use alloy_rpc_types::{Transaction as RpcTransaction, TransactionInfo};
     use alloy_serde::WithOtherFields;
-    #[cfg(feature = "base")]
-    use base_common_evm::{BaseEvmFactory, BaseSpecId, BaseTransaction, BaseUpgrade};
     use foundry_evm_hardforks::TempoHardfork;
     use revm::database::EmptyDB;
+    use std::num::NonZeroU64;
     use tempo_alloy::primitives::{
         AASigned, TempoSignature, TempoTransaction, TempoTxEnvelope,
         transaction::{Call, PrimitiveSignature},
     };
     use tempo_evm::TempoEvmFactory;
+
+    #[cfg(feature = "base")]
+    use base_common_evm::{BaseEvmFactory, BaseSpecId, BaseTransaction, BaseUpgrade};
 
     #[test]
     fn eth_evm_foundry_context_ext_implementation() {

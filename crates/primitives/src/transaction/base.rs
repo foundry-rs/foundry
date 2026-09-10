@@ -1,22 +1,22 @@
 //! Base-specific transaction conversions.
 
+use super::FoundryTxEnvelope;
 use alloy_consensus::Typed2718;
 use alloy_evm::{FromRecoveredTx, FromTxWithEncoded};
 use alloy_network::eip2718::Encodable2718;
 use alloy_primitives::{Address, Bytes};
-#[cfg(not(feature = "optimism"))]
-use alloy_primitives::{B256, U256};
-#[cfg(not(feature = "optimism"))]
-use alloy_serde::OtherFields;
 use base_common_consensus::BaseTxEnvelope;
 use base_common_evm::{BaseTransaction, DepositTransactionParts};
-#[cfg(not(feature = "optimism"))]
-use op_revm::transaction::deposit::DepositTransactionParts as OpDepositTransactionParts;
 use revm::context::TxEnv;
 
 #[cfg(not(feature = "optimism"))]
 use super::FoundryReceiptEnvelope;
-use super::FoundryTxEnvelope;
+#[cfg(not(feature = "optimism"))]
+use alloy_primitives::{B256, U256};
+#[cfg(not(feature = "optimism"))]
+use alloy_serde::OtherFields;
+#[cfg(not(feature = "optimism"))]
+use op_revm::transaction::deposit::DepositTransactionParts as OpDepositTransactionParts;
 
 /// Converts RPC extension fields into OP-compatible deposit parts.
 #[cfg(not(feature = "optimism"))]

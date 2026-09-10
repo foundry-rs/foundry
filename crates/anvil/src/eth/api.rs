@@ -93,14 +93,6 @@ use anvil_rpc::{
     error::{ErrorCode, RpcError},
     response::ResponseResult,
 };
-#[cfg(feature = "base")]
-use base_common_consensus::Eip8130Constants;
-#[cfg(feature = "base")]
-use base_common_precompiles::NonceManagerStorage;
-#[cfg(feature = "base")]
-use base_common_rpc_types::Eip8130Nonce;
-#[cfg(feature = "base")]
-use base_execution_eip8130::{FeeCheck, IntrinsicGas};
 use foundry_common::{
     provider::redact_url,
     tempo::{PaymentLaneClassification, PaymentLaneReason, classify_payment_lane},
@@ -133,6 +125,15 @@ use tokio::{
     sync::mpsc::{self, UnboundedReceiver, unbounded_channel},
     try_join,
 };
+
+#[cfg(feature = "base")]
+use base_common_consensus::Eip8130Constants;
+#[cfg(feature = "base")]
+use base_common_precompiles::NonceManagerStorage;
+#[cfg(feature = "base")]
+use base_common_rpc_types::Eip8130Nonce;
+#[cfg(feature = "base")]
+use base_execution_eip8130::{FeeCheck, IntrinsicGas};
 
 /// The client version: `anvil/v{major}.{minor}.{patch}`
 pub const CLIENT_VERSION: &str = concat!("anvil/v", env!("CARGO_PKG_VERSION"));

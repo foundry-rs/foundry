@@ -5,12 +5,13 @@ use alloy_provider::{
     network::{ReceiptResponse, TransactionBuilder},
 };
 use alloy_rpc_types::{BlockId, TransactionReceipt};
-#[cfg(feature = "base")]
-use base_common_rpc_types::BaseTransactionReceipt;
 use eyre::Result;
 use foundry_common_fmt::{UIfmt, UIfmtReceiptExt, get_pretty_receipt_attr};
 use serde::{Deserialize, Serialize};
 use tempo_alloy::rpc::TempoTransactionReceipt;
+
+#[cfg(feature = "base")]
+use base_common_rpc_types::BaseTransactionReceipt;
 
 #[cfg(feature = "optimism")]
 use op_alloy_rpc_types::OpTransactionReceipt;

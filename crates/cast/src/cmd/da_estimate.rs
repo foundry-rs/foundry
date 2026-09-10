@@ -4,14 +4,16 @@ use alloy_consensus::BlockHeader;
 use alloy_network::{AnyNetwork, BlockResponse, Ethereum, Network, eip2718::Encodable2718};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
-#[cfg(feature = "base")]
-use base_common_network::Base as BaseNetwork;
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{opts::RpcOpts, utils::LoadConfig};
 use foundry_common::provider::ProviderBuilder;
 use foundry_config::Config;
 use foundry_evm_networks::NetworkVariant;
+
+#[cfg(feature = "base")]
+use base_common_network::Base as BaseNetwork;
+
 #[cfg(feature = "optimism")]
 use op_alloy_network::Optimism;
 

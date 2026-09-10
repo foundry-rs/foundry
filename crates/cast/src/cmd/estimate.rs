@@ -1,14 +1,10 @@
 use super::{auth::confirm_and_build, print_result_line};
-#[cfg(feature = "base")]
-use crate::cmd::resolve_network;
 use crate::tx::{CastTxBuilder, read_only_sender};
 use alloy_ens::NameOrAddress;
 use alloy_network::{Ethereum, Network};
 use alloy_primitives::U256;
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
-#[cfg(feature = "base")]
-use base_common_network::Base as BaseNetwork;
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
@@ -19,6 +15,11 @@ use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
 use foundry_wallets::{BrowserWalletOpts, WalletOpts};
 use std::str::FromStr;
 use tempo_alloy::TempoNetwork;
+
+#[cfg(feature = "base")]
+use crate::cmd::resolve_network;
+#[cfg(feature = "base")]
+use base_common_network::Base as BaseNetwork;
 
 /// CLI arguments for `cast estimate`.
 #[derive(Debug, Parser)]

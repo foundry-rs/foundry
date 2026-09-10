@@ -1,3 +1,12 @@
+use crate::{
+    FoundryChain, FoundryContextExt, FoundryInspectorExt,
+    backend::{DatabaseExt, JournaledState},
+    constants::SYSTEM_PRECOMPILE_STUB,
+    evm::{
+        FoundryEvmFactory, FoundryEvmNetwork, IntoInstructionResult, NestedEvm, NestedEvmFor,
+        run_inspected_frame,
+    },
+};
 use alloy_evm::{Evm, EvmEnv, EvmFactory, precompiles::PrecompilesMap};
 use alloy_primitives::{Address, Bytes};
 use base_common_chains::ChainConfig;
@@ -19,16 +28,6 @@ use revm::{
     handler::{EthFrame, EvmTr, FrameResult},
     interpreter::{FrameInput, InstructionResult, interpreter::EthInterpreter},
     state::Bytecode,
-};
-
-use crate::{
-    FoundryChain, FoundryContextExt, FoundryInspectorExt,
-    backend::{DatabaseExt, JournaledState},
-    constants::SYSTEM_PRECOMPILE_STUB,
-    evm::{
-        FoundryEvmFactory, FoundryEvmNetwork, IntoInstructionResult, NestedEvm, NestedEvmFor,
-        run_inspected_frame,
-    },
 };
 
 /// Base EVM network.
@@ -201,6 +200,7 @@ impl<'db, I: FoundryInspectorExt<BaseContext<&'db mut dyn DatabaseExt<BaseEvmFac
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use alloy_sol_types::SolCall;
     use base_common_evm::BaseUpgrade;
     use base_common_precompiles::{
@@ -210,8 +210,6 @@ mod tests {
     use revm::{
         ExecuteEvm, context::CfgEnv, database::EmptyDB, precompile::secp256r1, primitives::TxKind,
     };
-
-    use super::*;
 
     fn has_precompile(upgrade: BaseUpgrade, address: Address) -> bool {
         let evm = BaseEvmFactory::default().create_evm(

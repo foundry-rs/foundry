@@ -12,11 +12,6 @@ use alloy_primitives::{
     map::{AddressHashMap, HashMap, HashSet},
 };
 use alloy_sol_types::SolValue;
-#[cfg(feature = "base")]
-use base_common_precompiles::{
-    ActivationRegistryStorage, B20FactoryStorage, NonceManagerStorage, PolicyRegistryStorage,
-    TxContextStorage,
-};
 use foundry_common::{
     ContractsByArtifact, SELECTOR_LEN, abi::get_indexed_event, fmt::format_token,
     get_contract_name, selectors::SelectorKind,
@@ -32,18 +27,11 @@ use foundry_evm_core::{
         EC_RECOVER, IDENTITY, MOD_EXP, POINT_EVALUATION, RIPEMD_160, SHA_256,
     },
 };
-#[cfg(feature = "base")]
-use foundry_evm_hardforks::BaseSpecId;
-#[cfg(feature = "monad")]
-type MonadHardfork = foundry_evm_hardforks::MonadHardfork;
 use foundry_evm_hardforks::{ExecutionSpec, FoundryHardfork, TempoHardfork};
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant, celo::transfer::CELO_TRANSFER_LABEL};
-#[cfg(feature = "base")]
-use foundry_evm_networks::{active_base_precompiles, is_base_precompile_active_at};
 use itertools::Itertools;
 use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
 use revm_inspectors::tracing::types::{DecodedCallLog, DecodedCallTrace};
-
 use std::{collections::BTreeMap, sync::OnceLock};
 use tempo_contracts::precompiles::{
     CURRENT_COMMITTEE_ADDRESS, IAccountKeychain, IAddressRegistry, ICurrentCommittee, IFeeManager,
@@ -57,6 +45,19 @@ use tempo_precompiles::{
     TIP20_FACTORY_ADDRESS, TIP403_REGISTRY_ADDRESS, VALIDATOR_CONFIG_ADDRESS, nonce::INonce,
     tip20::ITIP20,
 };
+
+#[cfg(feature = "base")]
+use base_common_precompiles::{
+    ActivationRegistryStorage, B20FactoryStorage, NonceManagerStorage, PolicyRegistryStorage,
+    TxContextStorage,
+};
+#[cfg(feature = "base")]
+use foundry_evm_hardforks::BaseSpecId;
+#[cfg(feature = "base")]
+use foundry_evm_networks::{active_base_precompiles, is_base_precompile_active_at};
+
+#[cfg(feature = "monad")]
+type MonadHardfork = foundry_evm_hardforks::MonadHardfork;
 
 #[cfg(feature = "base")]
 mod base;
@@ -1781,6 +1782,11 @@ mod tests {
     use alloy_sol_types::{SolCall, SolError, SolEvent};
     use foundry_evm_core::precompiles::P256_VERIFY;
     use std::borrow::Cow;
+
+    #[cfg(feature = "base")]
+    use foundry_evm_hardforks::BaseUpgrade;
+    #[cfg(feature = "base")]
+    use foundry_evm_networks::BASE_PRECOMPILE_ADDRESSES;
 
     #[cfg(feature = "monad")]
     fn function_abi_items(functions: impl IntoIterator<Item = Function>) -> Vec<(String, String)> {
@@ -3662,9 +3668,6 @@ mod tests {
     #[cfg(feature = "base")]
     #[test]
     fn test_precompile_labels_follow_base_upgrade_boundaries() {
-        use foundry_evm_hardforks::BaseUpgrade;
-        use foundry_evm_networks::BASE_PRECOMPILE_ADDRESSES;
-
         let labels_for_upgrade = |upgrade| {
             CallTraceDecoderBuilder::new()
                 .with_chain_id(Some(8453))

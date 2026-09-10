@@ -717,13 +717,12 @@ impl TransactionBuilder4844 for FoundryTransactionRequest {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use alloy_primitives::{B256, Bytes, Signature};
     use tempo_primitives::{
         TempoSignature, TempoTransaction,
         transaction::{Authorization, KeyAuthorization, PrimitiveSignature},
     };
-
-    use super::*;
 
     fn default_tx_req() -> TransactionRequest {
         TransactionRequest::default()

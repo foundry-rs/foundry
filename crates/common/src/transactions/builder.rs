@@ -5,15 +5,16 @@ use alloy_eips::{Encodable2718, eip7702::SignedAuthorization};
 use alloy_network::{AnyNetwork, Ethereum, Network, NetworkTransactionBuilder, NetworkWallet};
 use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256};
 use alloy_provider::Provider;
-#[cfg(feature = "base")]
-use base_common_network::Base;
-#[cfg(feature = "base")]
-use base_common_rpc_types::BaseTransactionRequest;
 use eyre::Result;
 use foundry_wallets::TempoAccountsWallet;
 use std::num::NonZeroU64;
 use tempo_alloy::TempoNetwork;
 use tempo_primitives::{SignatureType, TempoTxType, transaction::Call};
+
+#[cfg(feature = "base")]
+use base_common_network::Base;
+#[cfg(feature = "base")]
+use base_common_rpc_types::BaseTransactionRequest;
 
 #[cfg(feature = "optimism")]
 use op_alloy_network::Optimism;

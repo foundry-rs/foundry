@@ -657,8 +657,6 @@ mod tests {
     #[cfg(feature = "base")]
     #[test]
     fn eip8130_receipt_preserves_phase_statuses_outside_consensus_encoding() {
-        use alloy_network::eip2718::{Decodable2718, Encodable2718};
-
         let receipt = FoundryReceiptEnvelope::<alloy_rpc_types::Log>::from_parts(
             false,
             42_000,

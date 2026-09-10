@@ -1,7 +1,9 @@
 //! CLI arguments for configuring the EVM settings.
 
+use crate::opts::RpcCommonOpts;
 use alloy_primitives::{Address, B256, U256};
 use clap::Parser;
+use foundry_common::shell;
 use foundry_config::{
     Chain, Config, FoundryHardfork,
     figment::{
@@ -12,9 +14,6 @@ use foundry_config::{
 };
 use foundry_evm_networks::NetworkConfigs;
 use serde::Serialize;
-
-use crate::opts::RpcCommonOpts;
-use foundry_common::shell;
 
 /// `EvmArgs` and `EnvArgs` take the highest precedence in the Config/Figment hierarchy.
 ///

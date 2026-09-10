@@ -68,8 +68,9 @@ pub use endpoints::{
 };
 
 mod etherscan;
-pub use etherscan::EtherscanConfigError;
 use etherscan::{EtherscanConfigs, EtherscanEnvProvider, ResolvedEtherscanConfig};
+
+pub use etherscan::EtherscanConfigError;
 
 pub mod resolve;
 pub use resolve::UnresolvedEnvVarError;
@@ -84,11 +85,13 @@ pub mod lint;
 pub use lint::{LinterConfig, Severity as LintSeverity};
 
 pub mod fs_permissions;
-pub use fs_permissions::FsPermissions;
 use fs_permissions::PathPermission;
+
+pub use fs_permissions::FsPermissions;
 
 pub mod error;
 use error::ExtractConfigError;
+
 pub use error::SolidityErrorCode;
 
 pub mod doc;
@@ -107,8 +110,9 @@ pub use alloy_chains::{Chain, NamedChain};
 pub use figment;
 
 pub mod providers;
-pub use providers::Remappings;
 use providers::*;
+
+pub use providers::Remappings;
 
 mod fuzz;
 pub use fuzz::{FuzzConfig, FuzzCorpusConfig, FuzzCorpusMutationWeights, FuzzDictionaryConfig};
@@ -148,8 +152,8 @@ pub use compilation::{CompilationRestrictions, SettingsOverrides};
 
 pub mod extend;
 use extend::Extends;
-
 use foundry_evm_networks::NetworkConfigs;
+
 pub use semver;
 
 #[cfg(not(test))]
@@ -3290,8 +3294,6 @@ mod tests {
         ModelCheckerEngine, YulDetails,
         vyper::{VyperOptimizationLevel, VyperOptimizationMode, VyperVenomSettings},
     };
-    #[cfg(feature = "base")]
-    use foundry_evm_hardforks::BaseUpgrade;
     use foundry_evm_hardforks::{TempoHardfork, latest_active_tempo_hardfork};
     use similar_asserts::assert_eq;
     use soldeer_core::remappings::RemappingsLocation;
@@ -3301,6 +3303,9 @@ mod tests {
         num::NonZeroUsize,
     };
     use tempfile::tempdir;
+
+    #[cfg(feature = "base")]
+    use foundry_evm_hardforks::BaseUpgrade;
 
     // Helper function to clear `__warnings` in config, since it will be populated during loading
     // from file, causing testing problem when comparing to those created from `default()`, etc.

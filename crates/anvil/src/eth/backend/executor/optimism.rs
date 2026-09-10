@@ -1,28 +1,29 @@
 //! OP-stack receipt construction for the Anvil block executor.
 
-#[cfg(feature = "optimism")]
-use alloy_consensus::Transaction;
 use alloy_consensus::{Eip658Value, Receipt, ReceiptWithBloom};
-#[cfg(feature = "optimism")]
-use alloy_eips::Encodable2718;
 use alloy_primitives::{Address, Log};
 use foundry_evm::hardfork::FoundryHardfork;
-#[cfg(feature = "optimism")]
-use foundry_evm::hardfork::OpHardfork;
+use foundry_primitives::FoundryReceiptEnvelope;
+use op_alloy_consensus::{OpDepositReceipt, OpDepositReceiptWithBloom};
+use revm::{context_interface::result::ExecutionResult, state::EvmState};
+
 #[cfg(feature = "base")]
 use foundry_evm::hardforks::BaseUpgrade;
-use foundry_primitives::FoundryReceiptEnvelope;
+
+#[cfg(feature = "optimism")]
+use super::AnvilBlockExecutor;
+#[cfg(feature = "optimism")]
+use alloy_consensus::Transaction;
+#[cfg(feature = "optimism")]
+use alloy_eips::Encodable2718;
+#[cfg(feature = "optimism")]
+use foundry_evm::hardfork::OpHardfork;
 #[cfg(feature = "optimism")]
 use foundry_primitives::FoundryTxEnvelope;
-use op_alloy_consensus::{OpDepositReceipt, OpDepositReceiptWithBloom};
 #[cfg(feature = "optimism")]
 use op_revm::{L1BlockInfo, estimate_tx_compressed_size};
 #[cfg(feature = "optimism")]
 use revm::Database;
-use revm::{context_interface::result::ExecutionResult, state::EvmState};
-
-#[cfg(feature = "optimism")]
-use super::AnvilBlockExecutor;
 
 #[cfg(feature = "optimism")]
 impl<E> AnvilBlockExecutor<E> {

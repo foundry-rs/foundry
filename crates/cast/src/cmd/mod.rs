@@ -5,8 +5,6 @@
 //! implement `figment::Provider` which allows the subcommand to override the config's defaults, see
 //! [`foundry_config::Config`].
 
-#[cfg(feature = "base")]
-use alloy_network::AnyNetwork;
 use alloy_network::Network;
 use alloy_primitives::{Address, Bytes, map::AddressHashMap};
 use alloy_provider::Provider;
@@ -17,17 +15,20 @@ use foundry_cli::{
     opts::RpcOpts,
     utils::{LoadConfig, get_provider, load_config_from_provider},
 };
-#[cfg(feature = "base")]
-use foundry_common::provider::ProviderBuilder;
 use foundry_common::{provider::RetryProvider, shell};
 use foundry_config::{Config, figment::Figment};
 use foundry_evm::{core::bytecode::InstIter, opts::EvmOpts};
-#[cfg(feature = "base")]
-use foundry_evm_networks::NetworkVariant;
 use futures::StreamExt;
 use serde::Serialize;
 use serde_json::Value;
 use std::fmt::{Display, Write};
+
+#[cfg(feature = "base")]
+use alloy_network::AnyNetwork;
+#[cfg(feature = "base")]
+use foundry_common::provider::ProviderBuilder;
+#[cfg(feature = "base")]
+use foundry_evm_networks::NetworkVariant;
 
 const MAX_CONCURRENT_RPC_REQUESTS: usize = 5;
 

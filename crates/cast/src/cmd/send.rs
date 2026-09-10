@@ -1,5 +1,3 @@
-#[cfg(feature = "base")]
-use crate::cmd::resolve_network;
 use crate::{
     cmd::{
         auth::{confirm_and_build, confirm_and_build_with_tempo_wallet},
@@ -15,8 +13,6 @@ use alloy_network::{Ethereum, EthereumWallet, Network};
 use alloy_primitives::{Address, B256, hex};
 use alloy_provider::{Provider, ProviderBuilder as AlloyProviderBuilder};
 use alloy_signer::{Signature, Signer};
-#[cfg(feature = "base")]
-use base_common_network::Base as BaseNetwork;
 use clap::Parser;
 use eyre::{Result, eyre};
 use foundry_cli::{
@@ -35,6 +31,11 @@ use tempo_alloy::TempoNetwork;
 use tempo_contracts::precompiles::{TIP20_FACTORY_ADDRESS, is_iso4217_currency};
 use tempo_primitives::transaction::FEE_PAYER_SIGNATURE_MARKER;
 use url::Url;
+
+#[cfg(feature = "base")]
+use crate::cmd::resolve_network;
+#[cfg(feature = "base")]
+use base_common_network::Base as BaseNetwork;
 
 /// CLI arguments for `cast send`.
 #[derive(Debug, Parser)]

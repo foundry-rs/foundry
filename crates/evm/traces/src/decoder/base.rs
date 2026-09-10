@@ -228,16 +228,15 @@ sol! {
 
 #[cfg(test)]
 mod tests {
+    use crate::{CallTrace, CallTraceDecoderBuilder};
     use alloy_primitives::{Address, B256, U256};
-    use alloy_sol_types::{SolCall, SolError, SolEvent};
+    use alloy_sol_types::{SolCall, SolEnum, SolError, SolEvent, SolInterface};
     use base_common_precompiles::{
         self as canonical, ActivationRegistryStorage, B20FactoryStorage, NonceManagerStorage,
         TxContextStorage,
     };
     use foundry_evm_hardforks::{BaseUpgrade, FoundryHardfork};
     use foundry_evm_networks::NetworkConfigs;
-
-    use crate::{CallTrace, CallTraceDecoderBuilder};
 
     #[tokio::test]
     async fn registered_abis_decode_base_precompile_calls() {
@@ -379,8 +378,6 @@ mod tests {
     /// ordinal is byte `[10]` of every token address the factory deploys.
     #[test]
     fn b20_factory_abi_matches_canonical_surface() {
-        use alloy_sol_types::SolEnum;
-
         assert_eq!(
             super::IB20Factory::createB20Call::SELECTOR,
             canonical::IB20Factory::createB20Call::SELECTOR
@@ -428,8 +425,6 @@ mod tests {
     /// the selectors for the same reason as `B20Variant`.
     #[test]
     fn policy_registry_abi_matches_canonical_surface() {
-        use alloy_sol_types::SolEnum;
-
         assert_eq!(
             super::IPolicyRegistry::createPolicyCall::SELECTOR,
             canonical::IPolicyRegistry::createPolicyCall::SELECTOR
@@ -489,8 +484,6 @@ mod tests {
     /// Base ever diverges a shared signature, this fails and V1 needs its own mirror.
     #[test]
     fn policy_registry_covers_v1_selectors() {
-        use alloy_sol_types::SolInterface;
-
         let mirrored: Vec<[u8; 4]> =
             super::IPolicyRegistry::IPolicyRegistryCalls::selectors().collect();
         for selector in canonical::IPolicyRegistryV1::IPolicyRegistryCalls::selectors() {
@@ -503,8 +496,6 @@ mod tests {
 
     #[test]
     fn b20_extensions_abi_matches_canonical_surface() {
-        use alloy_sol_types::SolEnum;
-
         assert_eq!(
             super::IB20Extensions::mintWithMemoCall::SELECTOR,
             canonical::IB20::mintWithMemoCall::SELECTOR
@@ -562,8 +553,6 @@ mod tests {
     /// change how ordinary token traces decode on every network in a Base-enabled build.
     #[test]
     fn b20_surface_excludes_erc20_members() {
-        use alloy_sol_types::SolInterface;
-
         let mirrored: Vec<[u8; 4]> =
             super::IB20Extensions::IB20ExtensionsCalls::selectors().collect();
         for excluded in [
