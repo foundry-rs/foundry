@@ -5573,7 +5573,7 @@ dependencies = [
 [[package]]
 name = "foundry-block-explorers"
 version = "0.24.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=957d190a53f3e287911ff50cbb55b340a99c2c19#957d190a53f3e287911ff50cbb55b340a99c2c19"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=85c305f62cf3e10772fef286bcd5b301fbfac360#85c305f62cf3e10772fef286bcd5b301fbfac360"
 dependencies = [
  "alloy-chains",
  "alloy-json-abi",
@@ -5818,7 +5818,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=957d190a53f3e287911ff50cbb55b340a99c2c19#957d190a53f3e287911ff50cbb55b340a99c2c19"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=85c305f62cf3e10772fef286bcd5b301fbfac360#85c305f62cf3e10772fef286bcd5b301fbfac360"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -5849,7 +5849,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=957d190a53f3e287911ff50cbb55b340a99c2c19#957d190a53f3e287911ff50cbb55b340a99c2c19"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=85c305f62cf3e10772fef286bcd5b301fbfac360#85c305f62cf3e10772fef286bcd5b301fbfac360"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -5858,7 +5858,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-solc"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=957d190a53f3e287911ff50cbb55b340a99c2c19#957d190a53f3e287911ff50cbb55b340a99c2c19"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=85c305f62cf3e10772fef286bcd5b301fbfac360#85c305f62cf3e10772fef286bcd5b301fbfac360"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -5878,7 +5878,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=957d190a53f3e287911ff50cbb55b340a99c2c19#957d190a53f3e287911ff50cbb55b340a99c2c19"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=85c305f62cf3e10772fef286bcd5b301fbfac360#85c305f62cf3e10772fef286bcd5b301fbfac360"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -5891,7 +5891,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-core"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=957d190a53f3e287911ff50cbb55b340a99c2c19#957d190a53f3e287911ff50cbb55b340a99c2c19"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=85c305f62cf3e10772fef286bcd5b301fbfac360#85c305f62cf3e10772fef286bcd5b301fbfac360"
 dependencies = [
  "alloy-primitives",
  "dunce",
@@ -6230,7 +6230,7 @@ dependencies = [
 [[package]]
 name = "foundry-fork-db"
 version = "0.27.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=957d190a53f3e287911ff50cbb55b340a99c2c19#957d190a53f3e287911ff50cbb55b340a99c2c19"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=85c305f62cf3e10772fef286bcd5b301fbfac360#85c305f62cf3e10772fef286bcd5b301fbfac360"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
@@ -6337,7 +6337,7 @@ dependencies = [
 [[package]]
 name = "foundry-wallets"
 version = "0.1.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=957d190a53f3e287911ff50cbb55b340a99c2c19#957d190a53f3e287911ff50cbb55b340a99c2c19"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=85c305f62cf3e10772fef286bcd5b301fbfac360#85c305f62cf3e10772fef286bcd5b301fbfac360"
 dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",
@@ -12418,9 +12418,9 @@ dependencies = [
 
 [[package]]
 name = "svm-rs"
-version = "0.5.27"
+version = "0.5.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4c237a2fa75db3754792aae93571a0e172c0b60f52cfe20fb96632d96fdf37fa"
+checksum = "497544d5ea6d62d7a382868d244081710a89358e7329d624ea2bf655d908b936"
 dependencies = [
  "const-hex",
  "dirs",
@@ -12437,9 +12437,9 @@ dependencies = [
 
 [[package]]
 name = "svm-rs-builds"
-version = "0.5.27"
+version = "0.5.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa9535b2e1700ef60c8036dee0ead4e0dd36f5e6c7120d616ca4171aaa37c506"
+checksum = "83f9fd6ebd5373360678e6abc9a89e1a60f005ebfe88ed33a5f8aa8d7047904a"
 dependencies = [
  "const-hex",
  "semver 1.0.28",
