@@ -575,7 +575,7 @@ pub struct AnvilEvmArgs {
 
     /// Read fork state by block number instead of by block hash.
     ///
-    /// For RPCs that cannot serve `eth_getBalance`, `eth_getCode`, `eth_getStorageAt` and
+    /// Use this for RPCs that cannot serve `eth_getBalance`, `eth_getCode`, `eth_getStorageAt` or
     /// `eth_getTransactionCount` for a block hash. Block hash ancestry is still validated against
     /// the fork block.
     ///
