@@ -161,7 +161,7 @@ pub fn expr_reads_sender<'gcx>(
     aliases: &HashSet<VariableId>,
 ) -> bool {
     expr.visit(&mut |e| {
-        let reads = is_sender_member(e)
+        let reads = is_sender_member(gcx, e)
             || underlying_var(gcx, e).is_some_and(|v| aliases.contains(&v))
             || matches!(&e.kind, ExprKind::Call(callee, ..)
                 if matches!(callee.peel_parens().kind, ExprKind::Ident(_))
@@ -258,8 +258,8 @@ fn for_each_guard<'gcx>(
     for stmt in stmts {
         if let StmtKind::If(cond, then_stmt, else_stmt) = stmt.kind {
             let exits = match access_check_polarity(gcx, cond, &aliases) {
-                Some(false) => branch_always_exits(then_stmt),
-                Some(true) => else_stmt.is_some_and(branch_always_exits),
+                Some(false) => branch_always_exits(gcx, then_stmt),
+                Some(true) => else_stmt.is_some_and(|expr| branch_always_exits(gcx, expr)),
                 None => false,
             };
             if exits {
@@ -270,7 +270,7 @@ fn for_each_guard<'gcx>(
         let Some(expr) = stmt_expr(&gcx.hir, stmt) else { continue };
         expr.visit(&mut |e| {
             match &e.kind {
-                ExprKind::Call(callee, args, _) if is_require_or_assert(callee) => {
+                ExprKind::Call(callee, args, _) if is_require_or_assert(gcx, callee) => {
                     if let Some(cond) = args.exprs().next()
                         && access_check_polarity(gcx, cond, &aliases) == Some(true)
                     {

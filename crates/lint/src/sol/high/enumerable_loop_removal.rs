@@ -163,7 +163,7 @@ impl<'gcx> LoopFinder<'_, '_, '_, 'gcx> {
     fn analyze_loop(&mut self, body: impl Iterator<Item = &'gcx Stmt<'gcx>> + Clone) {
         // Control flow would make the corruption depend on the path taken, which is not tracked;
         // without an ascending index there is no upward walk for swap-and-pop to disturb.
-        if !body_is_straight_line(body.clone()) {
+        if !body_is_straight_line(self.gcx, body.clone()) {
             return;
         }
         let cadence = ascending_cadence(self.gcx, body.clone());
@@ -284,12 +284,15 @@ fn user_body<'gcx>(body: &'gcx [Stmt<'gcx>]) -> &'gcx [Stmt<'gcx>] {
 /// statement, inline assembly or nested loop (bare blocks are transparent). Any of these could
 /// let control skip a removal or the cadence step, or leave the loop before a shifted slot is
 /// read, none of which this detector tracks.
-fn body_is_straight_line<'gcx>(stmts: impl IntoIterator<Item = &'gcx Stmt<'gcx>>) -> bool {
+fn body_is_straight_line<'gcx>(
+    gcx: Gcx<'_>,
+    stmts: impl IntoIterator<Item = &'gcx Stmt<'gcx>>,
+) -> bool {
     stmts.into_iter().all(|stmt| {
-        !branch_always_exits(stmt)
+        !branch_always_exits(gcx, stmt)
             && match &stmt.kind {
                 StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
-                    body_is_straight_line(block.stmts)
+                    body_is_straight_line(gcx, block.stmts)
                 }
                 StmtKind::If(..)
                 | StmtKind::Try(..)

@@ -15,41 +15,29 @@ use solar::{
 };
 use std::ops::ControlFlow;
 
-/// True if `expr` (through parens) is an identifier resolving to the given builtin name.
-pub fn is_builtin(expr: &Expr<'_>, name: Symbol) -> bool {
-    builtins(expr).any(|b| b.name() == name)
-}
-
-/// Iterator over the builtins `expr` (through parens) resolves to.
-pub fn builtins<'a>(expr: &'a Expr<'a>) -> impl Iterator<Item = Builtin> + 'a {
-    let reses: &[Res] = match &expr.peel_parens().kind {
-        ExprKind::Ident(reses) => reses,
-        _ => &[],
-    };
-    reses.iter().filter_map(Res::as_builtin)
+/// True if `expr` resolves to the given builtin name.
+pub fn is_builtin(gcx: Gcx<'_>, expr: &Expr<'_>, name: Symbol) -> bool {
+    gcx.resolved_builtin(expr).is_some_and(|builtin| builtin.name() == name)
 }
 
 /// `msg.sender`.
-pub fn is_msg_sender(expr: &Expr<'_>) -> bool {
-    matches!(&expr.peel_parens().kind, ExprKind::Member(base, name)
-        if name.name == sym::sender && is_builtin(base, sym::msg))
+pub fn is_msg_sender(gcx: Gcx<'_>, expr: &Expr<'_>) -> bool {
+    gcx.resolved_builtin(expr) == Some(Builtin::MsgSender)
 }
 
 /// `msg.sender` or `tx.origin`.
-pub fn is_sender_member(expr: &Expr<'_>) -> bool {
-    is_msg_sender(expr)
-        || matches!(&expr.peel_parens().kind, ExprKind::Member(base, name)
-            if name.name == kw::Origin && is_builtin(base, sym::tx))
+pub fn is_sender_member(gcx: Gcx<'_>, expr: &Expr<'_>) -> bool {
+    matches!(gcx.resolved_builtin(expr), Some(Builtin::MsgSender | Builtin::TxOrigin))
 }
 
 /// True if `callee` resolves to the builtin `require` or `assert`.
-pub fn is_require_or_assert(callee: &Expr<'_>) -> bool {
-    is_builtin(callee, sym::require) || is_builtin(callee, sym::assert)
+pub fn is_require_or_assert(gcx: Gcx<'_>, callee: &Expr<'_>) -> bool {
+    matches!(gcx.resolved_builtin(callee), Some(Builtin::Require | Builtin::Assert))
 }
 
 /// `revert(...)`, `revert Err(...)`-style builtin revert call (any form).
-pub fn is_revert_call(expr: &Expr<'_>) -> bool {
-    matches!(&expr.peel_parens().kind, ExprKind::Call(callee, ..) if is_builtin(callee, kw::Revert))
+pub fn is_revert_call(gcx: Gcx<'_>, expr: &Expr<'_>) -> bool {
+    matches!(&expr.peel_parens().kind, ExprKind::Call(callee, ..) if is_builtin(gcx, callee, kw::Revert))
 }
 
 /// A literal zero/false or an elementary cast or arithmetic negation of one.
@@ -72,11 +60,15 @@ pub fn is_zero_value(expr: &Expr<'_>) -> bool {
 }
 
 /// `revert(...)`, `selfdestruct(...)`, `require(false, ...)` or `assert(false)`.
-pub fn is_exit_call(expr: &Expr<'_>) -> bool {
+pub fn is_exit_call(gcx: Gcx<'_>, expr: &Expr<'_>) -> bool {
     let ExprKind::Call(callee, args, _) = &expr.peel_parens().kind else { return false };
-    is_builtin(callee, kw::Revert)
-        || builtins(callee).any(|b| b == Builtin::Selfdestruct)
-        || (is_require_or_assert(callee) && args.exprs().next().is_some_and(is_literal_false))
+    match gcx.resolved_builtin(callee) {
+        Some(Builtin::Revert | Builtin::RevertMsg | Builtin::Selfdestruct) => true,
+        Some(Builtin::Require | Builtin::Assert) => {
+            args.exprs().next().is_some_and(is_literal_false)
+        }
+        _ => false,
+    }
 }
 
 /// The boolean literal `false`.
@@ -99,25 +91,26 @@ pub fn is_address_cast(callee: &Expr<'_>) -> bool {
 }
 
 /// `IFoo(...)` contract / interface cast head.
-pub fn is_contract_cast(callee: &Expr<'_>) -> bool {
-    matches!(&callee.peel_parens().kind, ExprKind::Ident(reses)
-        if !reses.is_empty() && reses.iter().all(|r| matches!(r, Res::Item(ItemId::Contract(_)))))
+pub fn is_contract_cast(gcx: Gcx<'_>, callee: &Expr<'_>) -> bool {
+    gcx.type_of_expr(callee.peel_parens().id).is_some_and(
+        |ty| matches!(ty.kind, TyKind::Type(inner) if matches!(inner.kind, TyKind::Contract(_))),
+    )
 }
 
 /// `address(...)` or `IFoo(...)` cast head.
-pub fn is_address_like_cast(callee: &Expr<'_>) -> bool {
-    is_address_cast(callee) || is_contract_cast(callee)
+pub fn is_address_like_cast(gcx: Gcx<'_>, callee: &Expr<'_>) -> bool {
+    is_address_cast(callee) || is_contract_cast(gcx, callee)
 }
 
 /// `address(this)`, `payable(this)`, `IFoo(this)`, `IFoo(address(this))`, or bare `this`.
-pub fn is_address_self(expr: &Expr<'_>) -> bool {
+pub fn is_address_self(gcx: Gcx<'_>, expr: &Expr<'_>) -> bool {
     let expr = expr.peel_parens();
     match &expr.kind {
-        ExprKind::Payable(inner) => is_address_self(inner),
-        ExprKind::Call(callee, args, _) if is_address_like_cast(callee) => {
-            args.exprs().next().is_some_and(is_address_self)
+        ExprKind::Payable(inner) => is_address_self(gcx, inner),
+        ExprKind::Call(callee, args, _) if is_address_like_cast(gcx, callee) => {
+            args.exprs().next().is_some_and(|expr| is_address_self(gcx, expr))
         }
-        _ => is_builtin(expr, sym::this),
+        _ => is_builtin(gcx, expr, sym::this),
     }
 }
 
@@ -126,7 +119,7 @@ pub fn is_address_self(expr: &Expr<'_>) -> bool {
 pub fn underlying_var(gcx: Gcx<'_>, expr: &Expr<'_>) -> Option<VariableId> {
     match &expr.peel_parens().kind {
         ExprKind::Ident(_) => gcx.resolved_variable(expr),
-        ExprKind::Call(callee, args, _) if is_address_like_cast(callee) => {
+        ExprKind::Call(callee, args, _) if is_address_like_cast(gcx, callee) => {
             args.exprs().next().and_then(|arg| underlying_var(gcx, arg))
         }
         ExprKind::Payable(inner) => underlying_var(gcx, inner),

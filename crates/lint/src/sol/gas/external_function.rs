@@ -83,7 +83,7 @@ impl<'gcx> hir::Visit<'gcx> for IndexBuilder<'gcx> {
     fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
         match &expr.kind {
             ExprKind::Ident(_) => self.index.referenced.extend(self.gcx.resolved_function(expr)),
-            ExprKind::Member(base, _) if is_builtin(base, sym::super_) => {
+            ExprKind::Member(base, _) if is_builtin(self.gcx, base, sym::super_) => {
                 if let Some(cid) = self.contract
                     && let Some(fid) = self.gcx.resolved_function(expr)
                 {

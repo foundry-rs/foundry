@@ -113,7 +113,7 @@ impl<'gcx> Visit<'gcx> for Checker<'gcx> {
                 let v = self.hir.variable(*vid);
                 if v.kind == VarKind::Statement
                     && v.initializer.is_none()
-                    && matches!(v.ty.kind, TypeKind::Elementary(ty) if ty.is_value_type())
+                    && self.gcx.type_of_item((*vid).into()).is_value_type()
                 {
                     self.uninitialized.insert(*vid);
                 }
@@ -127,9 +127,9 @@ impl<'gcx> Visit<'gcx> for Checker<'gcx> {
                 if let Some(else_) = else_ {
                     self.visit_stmt(else_)?;
                 }
-                if branch_always_exits(then) {
+                if branch_always_exits(self.gcx, then) {
                     // Only the else path continues; keep its state.
-                } else if else_.is_some_and(branch_always_exits) {
+                } else if else_.is_some_and(|expr| branch_always_exits(self.gcx, expr)) {
                     self.uninitialized = after_then;
                 } else {
                     self.uninitialized.extend(after_then);

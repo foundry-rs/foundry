@@ -29,7 +29,7 @@ impl<'gcx> LateLintPass<'gcx> for UnwrappedModifierLogic {
         else {
             return;
         };
-        if block_outcome(body).can_skip_placeholder() {
+        if block_outcome(gcx, body).can_skip_placeholder() {
             return;
         }
         // Only a single, top-level placeholder can be split around: extracting a placeholder
@@ -57,7 +57,7 @@ impl<'gcx> LateLintPass<'gcx> for UnwrappedModifierLogic {
 fn is_plain_call(gcx: Gcx<'_>, expr: &Expr<'_>) -> bool {
     let ExprKind::Call(callee, ..) = &expr.kind else { return false };
     match &callee.kind {
-        ExprKind::Ident(reses) => !reses.iter().any(|r| r.as_builtin().is_some()),
+        ExprKind::Ident(_) => gcx.resolved_builtin(callee).is_none(),
         ExprKind::Member(base, _) => {
             matches!(referenced_item(gcx, base), Some(ItemId::Contract(id))
             if gcx.hir.contract(id).kind == ContractKind::Library)

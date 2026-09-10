@@ -17,6 +17,7 @@ use solar::{
     interface::{Span, Symbol, data_structures::Never, kw, sym},
     sema::{
         Gcx,
+        builtins::Builtin,
         hir::{
             self, CallArgs, CallOptions, Expr, ExprKind, FunctionId, ItemId, LoopSource, Stmt,
             StmtKind, VariableId, Visit,
@@ -542,8 +543,8 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
             StmtKind::If(cond, then_stmt, else_stmt) => {
                 self.analyze_expr(cond, state);
                 if self.reentrancy_balance_enabled
-                    && (branch_stops_current_path(then_stmt)
-                        || else_stmt.is_some_and(branch_stops_current_path))
+                    && (branch_stops_current_path(self.gcx, then_stmt)
+                        || else_stmt.is_some_and(|expr| branch_stops_current_path(self.gcx, expr)))
                 {
                     self.emit_balance_calls(cond, state);
                 }
@@ -686,7 +687,7 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
                 }
 
                 if self.reentrancy_balance_enabled
-                    && is_require_or_assert(callee)
+                    && is_require_or_assert(self.gcx, callee)
                     && let Some(cond) = args.exprs().next()
                 {
                     self.emit_balance_calls(cond, state);
@@ -1217,7 +1218,7 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
                 .and_then(|values| values.first())
                 .map(|value| constrain_paths(&value.self_address_paths, &state.path_predicates))
                 .unwrap_or_default(),
-            ExprKind::Ident(_) if is_builtin(expr, sym::this) => {
+            ExprKind::Ident(_) if is_builtin(self.gcx, expr, sym::this) => {
                 BTreeSet::from([state.path_predicates.clone()])
             }
             ExprKind::Ident(_) => self
@@ -1561,7 +1562,7 @@ fn static_internal_callee(gcx: Gcx<'_>, callee: &Expr<'_>) -> Option<FunctionId>
     let callee = callee.peel_parens();
     let direct = match &callee.kind {
         ExprKind::Ident(_) => true,
-        ExprKind::Member(base, _) => is_builtin(base, sym::super_),
+        ExprKind::Member(base, _) => is_builtin(gcx, base, sym::super_),
         _ => false,
     };
     let TyKind::Fn(function) = gcx.type_of_expr(callee.id).filter(|_| direct)?.kind else {
@@ -1734,7 +1735,7 @@ fn is_uncapped_value_call(gcx: Gcx<'_>, callee: &Expr<'_>, opts: Option<&CallOpt
         && call_sends_eth(gcx, opts)
         && call_option(opts, kw::Gas).is_none_or(|gas| {
             matches!(&gas.peel_parens().kind, ExprKind::Call(callee, args, None)
-                if args.is_empty() && is_builtin(callee, sym::gasleft))
+                if args.is_empty() && is_builtin(gcx, callee, sym::gasleft))
         })
 }
 
@@ -1755,16 +1756,16 @@ fn is_zero_value(gcx: Gcx<'_>, expr: &Expr<'_>) -> bool {
 }
 
 /// `break`/`continue` or anything that exits the function, so the current path stops here.
-fn branch_stops_current_path(stmt: &Stmt<'_>) -> bool {
+fn branch_stops_current_path(gcx: Gcx<'_>, stmt: &Stmt<'_>) -> bool {
     match &stmt.kind {
         StmtKind::Break | StmtKind::Continue => true,
         StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
-            block.stmts.iter().any(branch_stops_current_path)
+            block.stmts.iter().any(|expr| branch_stops_current_path(gcx, expr))
         }
         StmtKind::If(_, then_stmt, Some(else_stmt)) => {
-            branch_stops_current_path(then_stmt) && branch_stops_current_path(else_stmt)
+            branch_stops_current_path(gcx, then_stmt) && branch_stops_current_path(gcx, else_stmt)
         }
-        _ => branch_always_exits(stmt),
+        _ => branch_always_exits(gcx, stmt),
     }
 }
 
@@ -1858,12 +1859,12 @@ fn stmt_rejects_lock_value(
     match stmt.kind {
         StmtKind::Expr(expr) => {
             let ExprKind::Call(callee, args, _) = &expr.peel_parens().kind else { return false };
-            is_require_or_assert(callee)
+            is_require_or_assert(gcx, callee)
                 && args.exprs().next().is_some_and(|cond| eval(cond) == Some(false))
         }
         StmtKind::If(cond, then_stmt, else_stmt) => match eval(cond) {
-            Some(true) => branch_always_exits(then_stmt),
-            Some(false) => else_stmt.is_some_and(branch_always_exits),
+            Some(true) => branch_always_exits(gcx, then_stmt),
+            Some(false) => else_stmt.is_some_and(|expr| branch_always_exits(gcx, expr)),
             None => false,
         },
         _ => false,
@@ -1971,8 +1972,8 @@ fn guard_locks(gcx: Gcx<'_>, function: &hir::Function<'_>) -> Vec<VariableId> {
 /// `delegatecall`/`callcode`, which run the callee in the caller's storage context.
 fn call_uses_delegate_context(gcx: Gcx<'_>, callee: &Expr<'_>) -> bool {
     let callee = callee.peel_parens();
-    matches!(&callee.kind, ExprKind::Member(_, member)
-        if matches!(member.name, kw::Callcode | kw::Delegatecall))
+    gcx.resolved_builtin(callee) == Some(Builtin::AddressDelegatecall)
+        || matches!(&callee.kind, ExprKind::Member(_, member) if member.name == kw::Callcode)
         || gcx.type_of_expr(callee.id).is_some_and(
             |ty| matches!(ty.kind, TyKind::Fn(function) if function.is_delegate_call()),
         )
@@ -1982,17 +1983,18 @@ fn call_uses_delegate_context(gcx: Gcx<'_>, callee: &Expr<'_>) -> bool {
 /// `delegatecall` on an address, or a state-changing external function call.
 fn callee_can_reenter<'gcx>(gcx: Gcx<'gcx>, callee: &Expr<'gcx>) -> bool {
     let callee = callee.peel_parens();
+    match gcx.resolved_builtin(callee) {
+        Some(Builtin::AddressCall | Builtin::AddressDelegatecall) => return true,
+        Some(Builtin::AddressStaticcall) => return false,
+        _ => {}
+    }
     match &callee.kind {
         ExprKind::Member(receiver, member)
-            if expr_is_address(gcx, receiver)
-                && matches!(
-                    member.name,
-                    kw::Call | kw::Callcode | kw::Delegatecall | kw::Staticcall
-                ) =>
+            if expr_is_address(gcx, receiver) && member.name == kw::Callcode =>
         {
-            member.name != kw::Staticcall
+            true
         }
-        ExprKind::Member(receiver, _) if is_builtin(receiver, sym::super_) => false,
+        ExprKind::Member(receiver, _) if is_builtin(gcx, receiver, sym::super_) => false,
         _ => {
             let Some(TyKind::Fn(function)) = gcx.type_of_expr(callee.id).map(|ty| ty.kind) else {
                 return false;

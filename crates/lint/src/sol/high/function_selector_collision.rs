@@ -4,7 +4,7 @@ use crate::{
     sol::{
         Severity, SolLint,
         analysis::{
-            arg_for_param, branch_always_exits, expr_is_address, is_address_cast, is_builtin,
+            arg_for_param, branch_always_exits, expr_is_address, is_address_cast,
             is_require_or_assert, ty_contract_id,
         },
     },
@@ -12,7 +12,7 @@ use crate::{
 use alloy_primitives::Selector;
 use solar::{
     ast::{LitKind, UnOpKind},
-    interface::{Symbol, data_structures::Never, kw, sym},
+    interface::{data_structures::Never, kw, sym},
     sema::{
         Gcx,
         builtins::Builtin,
@@ -565,7 +565,7 @@ impl<'gcx> Visit<'gcx> for DelegateTargetCollector<'gcx> {
                     let _ = self.visit_expr(&arg.value);
                 }
                 let mut args = args.exprs();
-                if is_require_or_assert(callee) {
+                if is_require_or_assert(self.gcx, callee) {
                     let Some(condition) = args.next() else { return ControlFlow::Continue(()) };
                     let args: Vec<_> = args.collect();
                     let (true_paths, false_paths) = self.visit_condition(condition);
@@ -685,7 +685,7 @@ impl<'gcx> Visit<'gcx> for DelegateTargetCollector<'gcx> {
             }
             _ => {
                 let _ = self.walk_stmt(stmt);
-                if branch_always_exits(stmt) {
+                if branch_always_exits(self.gcx, stmt) {
                     self.paths.clear();
                 }
             }
@@ -702,9 +702,9 @@ fn selector_guard(gcx: Gcx<'_>, expr: &Expr<'_>) -> Option<(Selector, bool)> {
         BinOpKind::Ne => false,
         _ => return None,
     };
-    let selector = if is_msg_member(lhs, sym::sig) {
+    let selector = if gcx.resolved_builtin(lhs) == Some(Builtin::MsgSig) {
         rhs
-    } else if is_msg_member(rhs, sym::sig) {
+    } else if gcx.resolved_builtin(rhs) == Some(Builtin::MsgSig) {
         lhs
     } else {
         return None;
@@ -718,12 +718,6 @@ fn selector_guard(gcx: Gcx<'_>, expr: &Expr<'_>) -> Option<(Selector, bool)> {
     }
     let function = gcx.resolved_function(function)?;
     Some((gcx.function_selector(function), matches))
-}
-
-/// `msg.<name>`.
-fn is_msg_member(expr: &Expr<'_>, name: Symbol) -> bool {
-    matches!(&expr.peel_parens().kind, ExprKind::Member(base, member)
-        if member.name == name && is_builtin(base, sym::msg))
 }
 
 /// The statically typed implementation contract of a proxy-style `<addr>.delegatecall(<full
@@ -769,7 +763,7 @@ fn full_calldata_source(
     expr: &Expr<'_>,
     full_calldata_inputs: &[CalldataInput],
 ) -> Option<Option<CalldataInput>> {
-    if is_msg_member(expr, sym::data) {
+    if gcx.resolved_builtin(expr) == Some(Builtin::MsgData) {
         return Some(None);
     }
     let ExprKind::Ident(_) = &expr.peel_parens().kind else { return None };

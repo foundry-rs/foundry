@@ -5,17 +5,16 @@ use crate::{
         Severity, SolLint,
         analysis::{
             DEFAULT_HELPER_ANALYSIS_CACHE_LIMIT, HelperAnalysisCache, arg_for_param,
-            branch_always_exits, builtins, callee_no_arg_returns, expr_is_address,
-            function_no_arg_returns, is_address_like_cast, is_address_self, is_builtin,
-            is_contract_cast, is_literal_zero, is_msg_sender, is_require_or_assert, loop_stmts,
-            loop_update, modifier_prefix, referenced_item, tuple_elems, underlying_var,
-            var_is_address_like,
+            branch_always_exits, callee_no_arg_returns, function_no_arg_returns,
+            is_address_like_cast, is_address_self, is_builtin, is_contract_cast, is_literal_zero,
+            is_msg_sender, is_require_or_assert, is_sender_member, loop_stmts, loop_update,
+            modifier_prefix, referenced_item, tuple_elems, underlying_var, var_is_address_like,
         },
     },
 };
 use solar::{
     ast::{BinOpKind, LitKind, StateMutability, UnOpKind},
-    interface::{Span, data_structures::Never, kw, sym},
+    interface::{Span, data_structures::Never, sym},
     sema::{
         Gcx,
         builtins::Builtin,
@@ -153,16 +152,14 @@ impl<'gcx> Analyzer<'gcx> {
     }
 
     fn is_safe_inner(&self, expr: &'gcx Expr<'gcx>, depth: u8) -> bool {
-        let expr = peel_casts(expr);
+        let expr = peel_casts(self.gcx, expr);
         match &expr.kind {
-            ExprKind::Member(base, ident) => {
-                is_msg_sender(expr)
-                    || (ident.name == kw::Origin && is_builtin(base, sym::tx))
-                    || is_address_self(base)
+            ExprKind::Member(base, _) => {
+                is_sender_member(self.gcx, expr) || is_address_self(self.gcx, base)
             }
             ExprKind::Lit(_) => is_trusted_literal(expr),
             ExprKind::Ident(_) => {
-                is_builtin(expr, sym::this)
+                is_builtin(self.gcx, expr, sym::this)
                     || self.gcx.resolved_variable(expr).is_some_and(|v| self.is_safe_var(v))
             }
             ExprKind::Ternary(_, t, f) => {
@@ -339,7 +336,7 @@ impl<'gcx> Analyzer<'gcx> {
             _ => {}
         }
         let _ = self.walk_stmt(stmt);
-        !branch_always_exits(stmt)
+        !branch_always_exits(self.gcx, stmt)
     }
 }
 
@@ -376,7 +373,7 @@ impl<'gcx> Visit<'gcx> for Analyzer<'gcx> {
                 let _ = self.visit_expr(f);
                 self.state = after_t.meet(&self.state);
             }
-            ExprKind::Call(callee, args, _) if is_require_or_assert(callee) => {
+            ExprKind::Call(callee, args, _) if is_require_or_assert(self.gcx, callee) => {
                 // Sinks inside the predicate run before the guard takes effect.
                 let _ = self.walk_expr(expr);
                 if let Some(cond) = args.exprs().next() {
@@ -414,23 +411,24 @@ impl<'gcx> Visit<'gcx> for Analyzer<'gcx> {
 fn match_sink<'gcx>(gcx: Gcx<'gcx>, expr: &'gcx Expr<'gcx>) -> Option<&'gcx Expr<'gcx>> {
     let ExprKind::Call(callee, args, opts) = &expr.kind else { return None };
     let callee = callee.peel_parens();
-    if builtins(callee).any(|b| b == Builtin::Selfdestruct) {
-        return args.exprs().next().filter(|dest| !is_address_self(dest));
+    if gcx.resolved_builtin(callee) == Some(Builtin::Selfdestruct) {
+        return args.exprs().next().filter(|dest| !is_address_self(gcx, dest));
     }
     if opts.is_some_and(|o| {
         o.args.iter().any(|a| a.name.name == sym::value && !is_literal_zero(&a.value))
     }) {
         return match &callee.kind {
-            ExprKind::Member(recv, _) => (!is_address_self(recv)).then_some(recv),
+            ExprKind::Member(recv, _) => (!is_address_self(gcx, recv)).then_some(recv),
             _ => expr_is_function(gcx, callee).then_some(callee),
         };
     }
     let ExprKind::Member(recv, member) = &callee.kind else { return None };
-    if matches!(member.name, sym::transfer | sym::send)
-        && args.len() == 1
-        && expr_is_address(gcx, recv)
-    {
-        return (!is_address_self(recv) && !is_literal_zero(args.exprs().next()?)).then_some(recv);
+    if matches!(
+        gcx.resolved_builtin(callee),
+        Some(Builtin::AddressPayableTransfer | Builtin::AddressPayableSend)
+    ) {
+        return (!is_address_self(gcx, recv) && !is_literal_zero(args.exprs().next()?))
+            .then_some(recv);
     }
     match_eth_library_call(gcx, expr, recv, member.name.as_str(), args)
 }
@@ -467,7 +465,7 @@ fn match_eth_library_call<'gcx>(
     {
         return None;
     }
-    (!is_address_self(dest)).then_some(dest)
+    (!is_address_self(gcx, dest)).then_some(dest)
 }
 
 /// Recognises guards that restrict `msg.sender` to a deploy-time-fixed principal, backed by a
@@ -502,8 +500,8 @@ impl<'gcx> CallerGuards<'gcx> {
                 b.stmts.iter().any(|s| self.stmt_restricts(s))
             }
             StmtKind::If(cond, then, else_) => {
-                let then_exits = branch_always_exits(then);
-                let else_exits = else_.is_some_and(|e| branch_always_exits(e));
+                let then_exits = branch_always_exits(self.gcx, then);
+                let else_exits = else_.is_some_and(|e| branch_always_exits(self.gcx, e));
                 // `if (!guard) revert;` restricts by itself; otherwise every non-exiting branch
                 // must restrict.
                 (then_exits != else_exits && self.cond_restricts(cond, else_exits))
@@ -518,7 +516,7 @@ impl<'gcx> CallerGuards<'gcx> {
     /// the caller and cannot `return` early.
     fn expr_restricts(&mut self, expr: &'gcx Expr<'gcx>) -> bool {
         let ExprKind::Call(callee, args, _) = &expr.peel_parens().kind else { return false };
-        if is_require_or_assert(callee) {
+        if is_require_or_assert(self.gcx, callee) {
             return args.exprs().next().is_some_and(|c| self.cond_restricts(c, true));
         }
         self.gcx
@@ -579,7 +577,7 @@ impl<'gcx> CallerGuards<'gcx> {
     /// state (or statically indexed state) that cannot alias `address(this)`, possibly behind a
     /// no-arg getter. Parameters, locals, `msg.sender`, `tx.origin` and `this` are rejected.
     fn is_trusted_principal(&mut self, expr: &'gcx Expr<'gcx>, depth: u8) -> bool {
-        let expr = peel_casts(expr);
+        let expr = peel_casts(self.gcx, expr);
         match &expr.kind {
             ExprKind::Lit(_) => is_trusted_literal(expr),
             ExprKind::Ident(_) => self.gcx.resolved_variable(expr).is_some_and(|v| {
@@ -662,7 +660,7 @@ impl<'gcx> CallerGuards<'gcx> {
         if depth == 0 {
             return false;
         }
-        let children: Vec<&'gcx Expr<'gcx>> = match &peel_casts(expr).kind {
+        let children: Vec<&'gcx Expr<'gcx>> = match &peel_casts(self.gcx, expr).kind {
             ExprKind::Call(_, args, _) => args.exprs().collect(),
             ExprKind::Ternary(_, t, f) => vec![t, f],
             ExprKind::Tuple(elems) => elems.iter().copied().flatten().collect(),
@@ -674,8 +672,8 @@ impl<'gcx> CallerGuards<'gcx> {
 
     /// True when `expr` may evaluate to `address(this)`.
     fn expr_resolves_to_self(&mut self, expr: &'gcx Expr<'gcx>, depth: u8) -> bool {
-        let expr = peel_casts(expr);
-        if is_address_self(expr) {
+        let expr = peel_casts(self.gcx, expr);
+        if is_address_self(self.gcx, expr) {
             return true;
         }
         if depth == 0 {
@@ -869,7 +867,7 @@ fn identity_helper_arg<'gcx>(
         let f = gcx.hir.function(fid);
         let [stmt] = f.body?.stmts else { return None };
         let StmtKind::Return(Some(ret)) = &stmt.kind else { return None };
-        let param = underlying_var(gcx, peel_casts(ret))?;
+        let param = underlying_var(gcx, peel_casts(gcx, ret))?;
         (f.parameters.len() == args.len() && f.returns.len() == 1 && f.parameters.contains(&param))
             .then(|| arg_for_param(gcx, fid, param, args))
             .flatten()
@@ -882,7 +880,7 @@ fn lhs_root_var(gcx: Gcx<'_>, lhs: &Expr<'_>) -> Option<VariableId> {
         ExprKind::Member(base, _) | ExprKind::Index(base, _) | ExprKind::Payable(base) => {
             lhs_root_var(gcx, base)
         }
-        ExprKind::Call(callee, args, _) if is_address_like_cast(callee) => {
+        ExprKind::Call(callee, args, _) if is_address_like_cast(gcx, callee) => {
             args.exprs().next().and_then(|expr| lhs_root_var(gcx, expr))
         }
         _ => underlying_var(gcx, lhs),
@@ -913,7 +911,7 @@ fn index_is_static(gcx: Gcx<'_>, expr: &Expr<'_>) -> bool {
         }
         ExprKind::Call(callee, ..)
             if matches!(callee.peel_parens().kind, ExprKind::Type(_))
-                || is_contract_cast(callee) =>
+                || is_contract_cast(gcx, callee) =>
         {
             ControlFlow::Continue(())
         }
@@ -942,8 +940,8 @@ fn stmt_contains_return(stmt: &Stmt<'_>) -> bool {
 
 /// `msg.sender` modulo parens, casts, `payable(..)` and no-arg helpers such as `_msgSender()`.
 fn is_msg_sender_like<'gcx>(gcx: Gcx<'gcx>, expr: &'gcx Expr<'gcx>, depth: u8) -> bool {
-    let expr = peel_casts(expr);
-    is_msg_sender(expr)
+    let expr = peel_casts(gcx, expr);
+    is_msg_sender(gcx, expr)
         || matches!(&expr.kind, ExprKind::Call(callee, args, _)
             if depth > 0
                 && args.exprs().next().is_none()
@@ -951,14 +949,14 @@ fn is_msg_sender_like<'gcx>(gcx: Gcx<'gcx>, expr: &'gcx Expr<'gcx>, depth: u8) -
 }
 
 /// Looks through parens, `payable(..)`, address-like casts and integer casts.
-fn peel_casts<'a>(expr: &'a Expr<'a>) -> &'a Expr<'a> {
+fn peel_casts<'a>(gcx: Gcx<'_>, expr: &'a Expr<'a>) -> &'a Expr<'a> {
     let expr = expr.peel_parens();
     match &expr.kind {
-        ExprKind::Payable(inner) => peel_casts(inner),
+        ExprKind::Payable(inner) => peel_casts(gcx, inner),
         ExprKind::Call(callee, args, _)
-            if is_address_like_cast(callee) || is_numeric_cast(callee) =>
+            if is_address_like_cast(gcx, callee) || is_numeric_cast(callee) =>
         {
-            args.exprs().next().map_or(expr, peel_casts)
+            args.exprs().next().map_or(expr, |expr| peel_casts(gcx, expr))
         }
         _ => expr,
     }

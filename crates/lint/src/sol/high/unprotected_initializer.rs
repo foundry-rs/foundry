@@ -53,6 +53,11 @@ impl<'gcx> LateLintPass<'gcx> for UnprotectedInitializer {
         let locked = bases.iter().filter_map(|&cid| gcx.hir.contract(cid).ctor).any(|ctor| {
             reaches(gcx, bases, ctor, |expr| {
                 let ExprKind::Call(callee, ..) = &expr.kind else { return false };
+                if !gcx.type_of_expr(callee.peel_parens().id).is_some_and(
+                    |ty| matches!(ty.kind, TyKind::Fn(function) if function.is_internal()),
+                ) {
+                    return false;
+                }
                 gcx.resolved_function(callee).is_some_and(|fid| {
                     let func = gcx.hir.function(fid);
                     func.contract.is_some_and(|cid| bases.contains(&cid))
@@ -172,7 +177,7 @@ fn internal_callee(
     }
     Some(match &callee.kind {
         ExprKind::Ident(_) => gcx.resolve_virtual_function(contract, fid),
-        ExprKind::Member(base, _) if is_builtin(base, sym::super_) => {
+        ExprKind::Member(base, _) if is_builtin(gcx, base, sym::super_) => {
             gcx.resolve_super_function(contract, defining_contract?, fid)
         }
         _ => fid,

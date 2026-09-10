@@ -452,7 +452,7 @@ impl<'gcx> Checker<'_, '_, '_, 'gcx> {
             }
             StmtKind::Expr(expr) | StmtKind::Emit(expr) => {
                 self.expr(expr, &mut state);
-                if is_exit_call(expr) {
+                if is_exit_call(self.gcx, expr) {
                     state.flow = Flow::Halt;
                 }
             }

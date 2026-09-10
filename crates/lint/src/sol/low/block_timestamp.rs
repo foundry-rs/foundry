@@ -3,14 +3,11 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{
         Severity, SolLint,
-        analysis::{
-            any_subexpr, branch_always_exits, builtins, is_builtin, loop_stmts, tuple_elems,
-        },
+        analysis::{any_subexpr, branch_always_exits, loop_stmts, tuple_elems},
     },
 };
 use solar::{
     ast::Visibility,
-    interface::{kw, sym},
     sema::{
         Gcx, Hir,
         builtins::Builtin,
@@ -38,7 +35,7 @@ impl<'gcx> LateLintPass<'gcx> for BlockTimestamp {
             .filter(|&id| {
                 let helper = gcx.hir.function(id);
                 matches!(helper.visibility, Visibility::Internal | Visibility::Private)
-                    && helper.body.is_some_and(|body| returns_timestamp(body.stmts))
+                    && helper.body.is_some_and(|body| returns_timestamp(gcx, body.stmts))
             })
             .collect();
         Checker { ctx, gcx, helpers, aliases: HashSet::new() }.block(body.stmts);
@@ -60,7 +57,7 @@ impl<'gcx> Checker<'_, '_, '_, 'gcx> {
     fn block(&mut self, stmts: impl IntoIterator<Item = &'gcx Stmt<'gcx>>) {
         for stmt in stmts {
             let _ = self.visit_stmt(stmt);
-            if branch_always_exits(stmt) {
+            if branch_always_exits(self.gcx, stmt) {
                 break;
             }
         }
@@ -77,7 +74,7 @@ impl<'gcx> Checker<'_, '_, '_, 'gcx> {
         let saved = self.aliases.clone();
         walk(self);
         let aliases = std::mem::replace(&mut self.aliases, saved);
-        if !stmts.into_iter().any(branch_always_exits) {
+        if !stmts.into_iter().any(|expr| branch_always_exits(self.gcx, expr)) {
             merged.extend(aliases);
         }
     }
@@ -138,7 +135,7 @@ impl<'gcx> Checker<'_, '_, '_, 'gcx> {
 
     /// `block.timestamp`, a call to a helper returning it, or an alias of either.
     fn is_source(&self, expr: &Expr<'_>) -> bool {
-        is_block_timestamp(expr)
+        is_block_timestamp(self.gcx, expr)
             || self.gcx.resolved_variable(expr).is_some_and(|var| self.aliases.contains(&var))
             || matches!(&expr.peel_parens().kind, ExprKind::Call(callee, ..)
                 if self.gcx.resolved_function(callee).is_some_and(|id| self.helpers.contains(&id)))
@@ -281,20 +278,20 @@ const fn is_cmp(kind: BinOpKind) -> bool {
 }
 
 /// `block.timestamp`, or the Yul `timestamp()` builtin.
-fn is_block_timestamp(expr: &Expr<'_>) -> bool {
-    matches!(&expr.peel_parens().kind, ExprKind::Member(base, member)
-        if member.name == kw::Timestamp && is_builtin(base, sym::block))
-        || builtins(expr).any(|b| b == Builtin::BlockTimestamp)
+fn is_block_timestamp(gcx: Gcx<'_>, expr: &Expr<'_>) -> bool {
+    gcx.resolved_builtin(expr) == Some(Builtin::BlockTimestamp)
 }
 
 /// True if a `return` reachable through plain blocks and `if` arms mentions `block.timestamp`.
-fn returns_timestamp(stmts: &[Stmt<'_>]) -> bool {
+fn returns_timestamp(gcx: Gcx<'_>, stmts: &[Stmt<'_>]) -> bool {
     stmts.iter().any(|stmt| match &stmt.kind {
-        StmtKind::Return(Some(expr)) => any_subexpr(expr, is_block_timestamp),
-        StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => returns_timestamp(block.stmts),
+        StmtKind::Return(Some(expr)) => any_subexpr(expr, |expr| is_block_timestamp(gcx, expr)),
+        StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
+            returns_timestamp(gcx, block.stmts)
+        }
         StmtKind::If(_, then_stmt, else_stmt) => {
-            returns_timestamp(std::slice::from_ref(*then_stmt))
-                || else_stmt.is_some_and(|e| returns_timestamp(std::slice::from_ref(e)))
+            returns_timestamp(gcx, std::slice::from_ref(*then_stmt))
+                || else_stmt.is_some_and(|e| returns_timestamp(gcx, std::slice::from_ref(e)))
         }
         _ => false,
     })

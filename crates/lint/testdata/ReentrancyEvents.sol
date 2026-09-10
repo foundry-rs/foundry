@@ -21,6 +21,36 @@ interface ICall {
     function poke() external;
 }
 
+library ReadOnlyEventLibrary {
+    function read(uint256 value) public pure returns (uint256) {
+        return value;
+    }
+}
+
+contract FunctionPointerEvents {
+    event Tick();
+
+    function mutableCallback(function() external callback) external {
+        callback();
+        emit Tick(); //~WARN: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+    }
+
+    function viewCallback(function() external view callback) external {
+        callback();
+        emit Tick();
+    }
+
+    function viewLibrary() external {
+        ReadOnlyEventLibrary.read(1);
+        emit Tick();
+    }
+
+    function internalCallback(function() internal callback) internal {
+        callback();
+        emit Tick();
+    }
+}
+
 contract Other {
     function action(uint256) external returns (bool) {
         return true;

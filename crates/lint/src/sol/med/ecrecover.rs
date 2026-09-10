@@ -703,7 +703,7 @@ impl<'gcx> Analyzer<'gcx> {
                         let _ = self.visit_expr(expr);
                     }
                 }
-                !is_exit_call(expr)
+                !is_exit_call(self.gcx, expr)
             }
             StmtKind::AssemblyBlock(_) | StmtKind::Err(_) => {
                 // Inline assembly is opaque and may observe any local before changing it. Flush
@@ -800,7 +800,7 @@ impl<'gcx> Visit<'gcx> for Analyzer<'gcx> {
                     },
                 );
             }
-            ExprKind::Call(callee, args, _) if is_require_or_assert(callee) => {
+            ExprKind::Call(callee, args, _) if is_require_or_assert(self.gcx, callee) => {
                 let _ = self.walk_expr(expr);
                 if let Some(cond) = args.exprs().next() {
                     self.assume(cond, false);

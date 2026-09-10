@@ -4,7 +4,7 @@
 //! its modifier chain through `_` and inlining the internal helpers it calls (including `super`
 //! dispatch, resolved against the contract the entry point belongs to).
 
-use crate::sol::analysis::{is_builtin, is_contract_cast, loop_stmts};
+use crate::sol::analysis::{is_builtin, loop_stmts};
 use solar::{
     ast::{StateMutability, Visibility},
     interface::sym,
@@ -14,6 +14,7 @@ use solar::{
             Block, ContractId, Expr, ExprKind, Function, FunctionId, FunctionKind, Hir, Modifier,
             Stmt, StmtKind, Visit,
         },
+        ty::TyKind,
     },
 };
 use std::{convert::Infallible, ops::ControlFlow};
@@ -140,6 +141,10 @@ impl<'gcx, F: FnMut(LoopItem<'gcx>)> LoopWalker<'gcx, F> {
     /// Calls on a contract-typed value (`this` included) are external and are not followed.
     fn callee(&self, callee: &'gcx Expr<'gcx>) -> Option<FunctionId> {
         let callee = callee.peel_parens();
+        let TyKind::Fn(function) = self.gcx.type_of_expr(callee.id)?.kind else { return None };
+        if !function.is_internal() && !function.is_delegate_call() {
+            return None;
+        }
         let func_id = self.gcx.resolved_function(callee)?;
         let ExprKind::Member(base, _) = &callee.kind else {
             return Some(
@@ -148,11 +153,10 @@ impl<'gcx, F: FnMut(LoopItem<'gcx>)> LoopWalker<'gcx, F> {
                 }),
             );
         };
-        if is_builtin(base, sym::super_) {
+        if is_builtin(self.gcx, base, sym::super_) {
             return Some(self.gcx.resolve_super_function(self.dispatch?, self.current?, func_id));
         }
-        let attached = self.gcx.resolved_callee(callee.id).is_some_and(|c| c.attached);
-        (attached || is_contract_cast(base)).then_some(func_id)
+        Some(func_id)
     }
 }
 

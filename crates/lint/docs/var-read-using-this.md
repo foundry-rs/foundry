@@ -6,8 +6,7 @@
 ## What it does
 
 Reports calls through `this` to the contract's own public variable getters and `view`
-or `pure` functions, including inherited functions. Overloaded calls use the selected
-function's mutability.
+or `pure` functions, including inherited functions.
 
 Read state directly where possible: use `foo` instead of `this.foo()`, or `m[k]` instead
 of `this.m(k)`. Check that the replacement preserves the getter's return value and any

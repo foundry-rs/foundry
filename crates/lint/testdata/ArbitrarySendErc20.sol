@@ -961,3 +961,23 @@ contract PullModifierDerived is PullModifierBase {
 
     function depositFrom(address from, uint256 a) external pullFromAnyone(from, a) {}
 }
+
+interface InheritedERC20 is IERC20 {}
+
+interface InheritedFlashBorrower is IERC3156FlashBorrower {}
+
+contract InheritedERC20CallSites {
+    function arbitraryFrom(InheritedERC20 token, address from, address to, uint256 amount) external {
+        token.transferFrom(from, to, amount); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+    }
+
+    function callerFrom(InheritedERC20 token, address to, uint256 amount) external {
+        token.transferFrom(msg.sender, to, amount);
+    }
+
+    function flashRepayment(InheritedERC20 token, InheritedFlashBorrower receiver, uint256 amount, uint256 fee, bytes calldata data) external {
+        token.transfer(address(receiver), amount);
+        receiver.onFlashLoan(msg.sender, address(token), amount, fee, data);
+        token.transferFrom(address(receiver), address(this), amount + fee);
+    }
+}

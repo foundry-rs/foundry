@@ -227,7 +227,7 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
             }
             StmtKind::DeclMulti(_, expr) | StmtKind::Expr(expr) => {
                 self.analyze_expr(expr, &mut entry);
-                if is_exit_call(expr) {
+                if is_exit_call(self.gcx, expr) {
                     return Exits::default();
                 }
                 self.unless_aborted(Exits::fallthrough(entry))

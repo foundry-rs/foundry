@@ -471,7 +471,7 @@ impl<'gcx> Cx<'gcx> {
     fn branch_always_reverts(self, stmt: &'gcx Stmt<'gcx>) -> bool {
         match &stmt.kind {
             StmtKind::Revert(_) => !self.may_return(stmt),
-            StmtKind::Expr(expr) => is_revert_call(expr) && !self.may_return(stmt),
+            StmtKind::Expr(expr) => is_revert_call(self.gcx, expr) && !self.may_return(stmt),
             // Read in order: a `revert` further down is only reached when nothing before it can
             // leave the function on its own.
             StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => block
@@ -1164,7 +1164,7 @@ impl<'gcx> GuardWalker<'_, 'gcx> {
     fn guard_expr_coverage(&mut self, expr: &'gcx Expr<'gcx>) -> GuardCoverage {
         let expr = expr.peel_parens();
         let ExprKind::Call(callee, args, _) = &expr.kind else { return GuardCoverage::None };
-        if is_require_or_assert(callee) {
+        if is_require_or_assert(self.cx.gcx, callee) {
             return args
                 .exprs()
                 .next()
@@ -1187,7 +1187,7 @@ impl<'gcx> GuardWalker<'_, 'gcx> {
     /// before the condition's code-length snapshot.
     fn guard_extra_args_may_change_account_code(&self, expr: &'gcx Expr<'gcx>) -> bool {
         let ExprKind::Call(callee, args, _) = &expr.peel_parens().kind else { return false };
-        is_require_or_assert(callee)
+        is_require_or_assert(self.cx.gcx, callee)
             && args.exprs().skip(1).any(|arg| self.may_change_account_code(&[], Some(arg)))
     }
 
@@ -1340,10 +1340,10 @@ fn assigns_to(gcx: Gcx<'_>, expr: &Expr<'_>, var: VariableId) -> bool {
 }
 
 /// `revert(...)`, `require(false, ...)` and `assert(false)`.
-fn is_revert_call(expr: &Expr<'_>) -> bool {
+fn is_revert_call(gcx: Gcx<'_>, expr: &Expr<'_>) -> bool {
     let ExprKind::Call(callee, args, _) = &expr.peel_parens().kind else { return false };
-    is_builtin(callee, kw::Revert)
-        || (is_require_or_assert(callee) && args.exprs().next().is_some_and(is_literal_false))
+    is_builtin(gcx, callee, kw::Revert)
+        || (is_require_or_assert(gcx, callee) && args.exprs().next().is_some_and(is_literal_false))
 }
 
 /// The statements before and after a modifier's single top-level placeholder. More complicated

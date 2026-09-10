@@ -124,9 +124,6 @@ fn call_may_mutate_state<'gcx>(gcx: Gcx<'gcx>, callee: &'gcx Expr<'gcx>) -> bool
     let callee = callee.peel_parens();
     match &callee.kind {
         ExprKind::Type(_) => false,
-        ExprKind::Ident(_) => {
-            gcx.resolved_function(callee).is_none_or(|f| gcx.hir.function(f).mutates_state())
-        }
         ExprKind::Member(..)
             if matches!(
                 gcx.resolved_builtin(callee),

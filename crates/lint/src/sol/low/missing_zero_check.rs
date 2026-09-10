@@ -201,8 +201,8 @@ impl<'gcx> Visit<'gcx> for Analyzer<'gcx> {
 
                 // A guard in an exiting branch holds for everything after the `if`; otherwise it
                 // must hold on both branches.
-                let then_exits = branch_always_exits(then);
-                let else_exits = else_.is_some_and(branch_always_exits);
+                let then_exits = branch_always_exits(self.gcx, then);
+                let else_exits = else_.is_some_and(|expr| branch_always_exits(self.gcx, expr));
                 self.guarded = match (then_exits, else_exits) {
                     (true, true) => &then_guards | &else_guards,
                     (true, false) => else_guards,
@@ -237,7 +237,7 @@ impl<'gcx> Visit<'gcx> for Analyzer<'gcx> {
     fn visit_expr(&mut self, expr: &'gcx hir::Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
         match &expr.kind {
             // `require(cond, ..)` / `assert(cond)`: only the first arg is a guard predicate.
-            ExprKind::Call(callee, args, _) if is_require_or_assert(callee) => {
+            ExprKind::Call(callee, args, _) if is_require_or_assert(self.gcx, callee) => {
                 let mut iter = args.exprs();
                 if let Some(cond) = iter.next() {
                     self.guarded.extend(self.nonzero_facts(cond, false));

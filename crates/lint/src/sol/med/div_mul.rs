@@ -3,7 +3,7 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{
         Severity, SolLint,
-        analysis::{builtins, is_revert_call, loop_update, tuple_elems},
+        analysis::{is_revert_call, loop_update, tuple_elems},
     },
 };
 use solar::sema::{
@@ -85,7 +85,7 @@ fn check_stmt<'gcx>(
         }
         StmtKind::Expr(expr) => {
             check_expr(ctx, gcx, expr, tainted);
-            !is_revert_call(expr)
+            !is_revert_call(gcx, expr)
         }
         StmtKind::Emit(expr) => {
             check_expr(ctx, gcx, expr, tainted);
@@ -193,7 +193,7 @@ fn check_expr<'gcx>(
             for arg in named_args.iter().flat_map(|opts| opts.args) {
                 check_expr(ctx, gcx, &arg.value, tainted);
             }
-            if is_yul_call(expr, &[Builtin::YulMul])
+            if is_yul_call(gcx, expr, &[Builtin::YulMul])
                 && args.exprs().any(|arg| is_division_or_tainted(gcx, arg, tainted))
             {
                 ctx.emit(&DIVIDE_BEFORE_MULTIPLY, expr.span);
@@ -280,14 +280,14 @@ fn is_division_or_tainted(gcx: Gcx<'_>, expr: &Expr<'_>, tainted: &Tainted) -> b
     match &expr.peel_parens().kind {
         ExprKind::Binary(_, op, _) => op.kind == BinOpKind::Div,
         ExprKind::Ident(_) => gcx.resolved_variable(expr).is_some_and(|v| tainted.contains(&v)),
-        ExprKind::Call(..) => is_yul_call(expr, &[Builtin::YulDiv, Builtin::YulSdiv]),
+        ExprKind::Call(..) => is_yul_call(gcx, expr, &[Builtin::YulDiv, Builtin::YulSdiv]),
         ExprKind::YulMember(inner, _) => is_division_or_tainted(gcx, inner, tainted),
         _ => false,
     }
 }
 
 /// A two-argument call to one of the given Yul builtins.
-fn is_yul_call(expr: &Expr<'_>, candidates: &[Builtin]) -> bool {
+fn is_yul_call(gcx: Gcx<'_>, expr: &Expr<'_>, candidates: &[Builtin]) -> bool {
     matches!(&expr.peel_parens().kind, ExprKind::Call(callee, args, _)
-        if args.len() == 2 && builtins(callee).any(|b| candidates.contains(&b)))
+        if args.len() == 2 && gcx.resolved_builtin(callee).is_some_and(|b| candidates.contains(&b)))
 }

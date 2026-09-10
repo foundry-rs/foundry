@@ -173,7 +173,7 @@ impl<'gcx> WriteAnalyzer<'_, 'gcx> {
         for modifier in func.modifiers {
             if let Some(modifier_id) = modifier.id.as_function() {
                 let _ = self.visit_call_args(&modifier.args);
-                self.analyze_call(modifier_id, &modifier.args);
+                self.analyze_call(modifier_id, |index| modifier.args.exprs().nth(index));
             }
         }
         for stmt in body.stmts {
@@ -182,18 +182,22 @@ impl<'gcx> WriteAnalyzer<'_, 'gcx> {
         self.call_stack.pop();
     }
 
-    /// Inlines `callee_id` with its parameters bound to the sources of `args`; locals and storage
+    /// Inlines `callee_id` with its parameters bound to argument sources; locals and storage
     /// aliases are callee-private, pending writes flow back to the caller.
-    fn analyze_call(&mut self, callee_id: FunctionId, args: &hir::CallArgs<'gcx>) {
+    fn analyze_call(
+        &mut self,
+        callee_id: FunctionId,
+        mut argument: impl FnMut(usize) -> Option<&'gcx Expr<'gcx>>,
+    ) {
         let params = self
             .gcx
             .hir
             .function(callee_id)
             .parameters
             .iter()
-            .zip(args.exprs())
-            .filter_map(|(&param, arg)| {
-                let sources = self.value_sources(arg);
+            .enumerate()
+            .filter_map(|(index, &param)| {
+                let sources = self.value_sources(argument(index)?);
                 (!sources.is_empty()).then_some((param, sources))
             })
             .collect();
@@ -208,7 +212,7 @@ impl<'gcx> WriteAnalyzer<'_, 'gcx> {
     fn value_sources(&self, expr: &Expr<'_>) -> Sources {
         let mut out = Sources::new();
         let _ = expr.visit(&mut |e| {
-            if is_sender_member(e) {
+            if is_sender_member(self.gcx, e) {
                 out.insert(Source::Sender);
             }
             if let Some(var_id) = underlying_var(self.gcx, e) {
@@ -330,8 +334,8 @@ impl<'gcx> Visit<'gcx> for WriteAnalyzer<'_, 'gcx> {
                     base,
                     then_state,
                     else_state,
-                    branch_always_exits(then_stmt),
-                    else_stmt.is_some_and(branch_always_exits),
+                    branch_always_exits(self.gcx, then_stmt),
+                    else_stmt.is_some_and(|expr| branch_always_exits(self.gcx, expr)),
                 );
             }
             StmtKind::Emit(expr) => {
@@ -365,12 +369,13 @@ impl<'gcx> Visit<'gcx> for WriteAnalyzer<'_, 'gcx> {
                 self.record_writes(inner, &sources, true);
                 self.walk_expr(expr)
             }
-            ExprKind::Call(callee, args, _) => {
+            ExprKind::Call(callee, ..) => {
                 self.walk_expr(expr)?;
                 if matches!(callee.peel_parens().kind, ExprKind::Ident(_))
                     && let Some(callee_id) = self.gcx.resolved_function(callee)
                 {
-                    self.analyze_call(callee_id, args);
+                    let gcx = self.gcx;
+                    self.analyze_call(callee_id, |index| gcx.call_arg(expr, index));
                 }
                 ControlFlow::Continue(())
             }

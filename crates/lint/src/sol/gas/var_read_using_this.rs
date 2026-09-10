@@ -80,7 +80,7 @@ impl ThisReadFinder<'_, '_> {
     fn check_call(&self, expr: &Expr<'_>) {
         let ExprKind::Call(callee, args, opts) = &expr.kind else { return };
         let ExprKind::Member(base, member) = &callee.peel_parens().kind else { return };
-        if !is_builtin(base, sym::this) {
+        if !is_builtin(self.gcx, base, sym::this) {
             return;
         }
         let Some(function_id) = self.gcx.resolved_function(callee) else { return };

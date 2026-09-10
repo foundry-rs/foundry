@@ -66,7 +66,7 @@ impl<'gcx> LateLintPass<'gcx> for ArbitrarySendErc20 {
         if func.modifiers.iter().any(|m| {
             m.id.as_function()
                 .and_then(|fid| modifier_prefix(&gcx.hir, fid))
-                .is_some_and(|p| p.iter().any(|s| branch_always_exits(s)))
+                .is_some_and(|p| p.iter().any(|s| branch_always_exits(gcx, s)))
         }) {
             return;
         }
@@ -276,8 +276,8 @@ impl<'gcx> Analyzer<'gcx> {
 
     /// `msg.sender`, `address(this)` or a tracked-safe variable.
     fn is_safe(&self, expr: &Expr<'_>) -> bool {
-        origin_matches(self.gcx, expr, HELPER_DEPTH, &self.state.safe_vars, |e| {
-            is_msg_sender(e) || is_address_self(e)
+        origin_matches(self.gcx, expr, HELPER_DEPTH, &self.state.safe_vars, |gcx, e| {
+            is_msg_sender(gcx, e) || is_address_self(gcx, e)
         })
     }
 
@@ -581,7 +581,7 @@ impl<'gcx> Analyzer<'gcx> {
             _ => {}
         }
         let _ = self.walk_stmt(stmt);
-        !branch_always_exits(stmt)
+        !branch_always_exits(self.gcx, stmt)
     }
 }
 
@@ -608,7 +608,7 @@ impl<'gcx> Visit<'gcx> for Analyzer<'gcx> {
                 let _ = self.visit_expr(rhs);
                 self.state = skipped.meet(&self.state);
             }
-            ExprKind::Call(callee, args, _) if is_require_or_assert(callee) => {
+            ExprKind::Call(callee, args, _) if is_require_or_assert(self.gcx, callee) => {
                 // Sinks inside the predicate run before the guard takes effect.
                 let _ = self.walk_expr(expr);
                 if let Some(cond) = args.exprs().next() {
@@ -667,17 +667,17 @@ fn origin_matches(
     expr: &Expr<'_>,
     depth: u8,
     vars: &HashSet<VariableId>,
-    base: fn(&Expr<'_>) -> bool,
+    base: fn(Gcx<'_>, &Expr<'_>) -> bool,
 ) -> bool {
     let expr = expr.peel_parens();
     match &expr.kind {
         ExprKind::Payable(inner) => return origin_matches(gcx, inner, depth, vars, base),
-        ExprKind::Call(callee, args, _) if is_address_like_cast(callee) => {
+        ExprKind::Call(callee, args, _) if is_address_like_cast(gcx, callee) => {
             return args.exprs().next().is_some_and(|e| origin_matches(gcx, e, depth, vars, base));
         }
         _ => {}
     }
-    base(expr)
+    base(gcx, expr)
         || match &expr.kind {
             ExprKind::Ident(_) => gcx.resolved_variable(expr).is_some_and(|v| vars.contains(&v)),
             ExprKind::Ternary(_, t, f) => {
@@ -744,10 +744,10 @@ fn match_flash_loan_call<'gcx>(gcx: Gcx<'gcx>, expr: &Expr<'gcx>) -> Option<Pend
     }
     let a = canonical_args(gcx, expr, 5)?;
     let cid = receiver_contract_id(gcx, recv)?;
-    if !contract_has_function(
-        &gcx.hir,
+    if !interface_has_function(
+        gcx,
         cid,
-        "onFlashLoan",
+        "onFlashLoan(address,address,uint256,uint256,bytes)",
         &["address", "address", "uint256", "uint256", "bytes"],
         &["bytes32"],
     ) {
@@ -772,15 +772,14 @@ fn match_sink<'gcx>(gcx: Gcx<'gcx>, expr: &'gcx Expr<'gcx>) -> Option<Sink<'gcx>
     if matches!(name, "transferFrom" | "safeTransferFrom")
         && let Some(a) = canonical_args(gcx, expr, 3)
     {
-        let erc20 =
-            receiver_contract_id(gcx, recv).is_some_and(|cid| has_transfer_from(&gcx.hir, cid));
+        let erc20 = receiver_contract_id(gcx, recv).is_some_and(|cid| has_transfer_from(gcx, cid));
         let attached = gcx.resolved_call(expr).is_some_and(|resolved| {
             resolved.attached
                 && resolved
                     .res
                     .as_function()
                     .and_then(|fid| gcx.hir.function(fid).contract)
-                    .is_some_and(|cid| library_has_safe_transfer_from(&gcx.hir, cid))
+                    .is_some_and(|cid| library_has_safe_transfer_from(gcx, cid))
         });
         if erc20 || (name == "safeTransferFrom" && attached && expr_is_address(gcx, recv)) {
             return Some(Sink { from: a[0], to: a[1], amount: a[2], token: token_key(gcx, recv) });
@@ -790,7 +789,7 @@ fn match_sink<'gcx>(gcx: Gcx<'gcx>, expr: &'gcx Expr<'gcx>) -> Option<Sink<'gcx>
         && let Some(a) = canonical_args(gcx, expr, 4)
         && let Some(cid) = receiver_contract_id(gcx, recv)
         && gcx.hir.contract(cid).kind == ContractKind::Library
-        && library_has_safe_transfer_from(&gcx.hir, cid)
+        && library_has_safe_transfer_from(gcx, cid)
     {
         return Some(Sink { from: a[1], to: a[2], amount: a[3], token: token_key(gcx, a[0]) });
     }
@@ -911,8 +910,8 @@ impl<'gcx> CallsiteCollector<'gcx> {
         };
         let none = HashSet::new();
         for ((safe, is_self), arg) in facts.iter_mut().zip::<Vec<_>>(call_args) {
-            *safe &= origin_matches(self.gcx, arg, HELPER_DEPTH, &none, |e| {
-                is_msg_sender(e) || is_address_self(e)
+            *safe &= origin_matches(self.gcx, arg, HELPER_DEPTH, &none, |gcx, e| {
+                is_msg_sender(gcx, e) || is_address_self(gcx, e)
             });
             *is_self &= origin_matches(self.gcx, arg, HELPER_DEPTH, &none, is_address_self);
         }
@@ -938,36 +937,43 @@ impl<'gcx> Visit<'gcx> for CallsiteCollector<'gcx> {
 }
 
 /// ERC20's `transferFrom(address,address,uint256) returns (bool)`.
-fn has_transfer_from(hir: &Hir<'_>, cid: ContractId) -> bool {
-    contract_has_function(hir, cid, "transferFrom", &["address", "address", "uint256"], &["bool"])
+fn has_transfer_from(gcx: Gcx<'_>, cid: ContractId) -> bool {
+    interface_has_function(
+        gcx,
+        cid,
+        "transferFrom(address,address,uint256)",
+        &["address", "address", "uint256"],
+        &["bool"],
+    )
 }
 
-fn contract_has_function(
-    hir: &Hir<'_>,
+fn interface_has_function(
+    gcx: Gcx<'_>,
     cid: ContractId,
-    name: &str,
+    signature: &str,
     params: &[&str],
     returns: &[&str],
 ) -> bool {
-    hir.contract(cid).functions().any(|fid| {
-        let f = hir.function(fid);
-        f.name.is_some_and(|n| n.name.as_str() == name)
+    gcx.interface_functions(cid).all().iter().any(|function| {
+        let f = gcx.hir.function(function.id);
+        gcx.item_signature(function.id.into()) == signature
             && f.parameters.len() == params.len()
             && f.returns.len() == returns.len()
-            && f.parameters.iter().zip(params).all(|(id, abi)| is_elementary(hir, *id, abi))
-            && f.returns.iter().zip(returns).all(|(id, abi)| is_elementary(hir, *id, abi))
+            && f.parameters.iter().zip(params).all(|(id, abi)| is_elementary(&gcx.hir, *id, abi))
+            && f.returns.iter().zip(returns).all(|(id, abi)| is_elementary(&gcx.hir, *id, abi))
     })
 }
 
 /// 4-arg `safeTransferFrom(token, address, address, uint256)` where `token` is `address` (Solady)
 /// or an ERC20 contract type (OpenZeppelin `SafeERC20`); ERC721/1155 helpers are excluded since
 /// their `transferFrom` has no return value.
-fn library_has_safe_transfer_from(hir: &Hir<'_>, cid: ContractId) -> bool {
+fn library_has_safe_transfer_from(gcx: Gcx<'_>, cid: ContractId) -> bool {
+    let hir = &gcx.hir;
     hir.contract(cid).functions().any(|fid| {
         let f = hir.function(fid);
         let [token, from, to, amount] = f.parameters else { return false };
         let token_ok = match hir.variable(*token).ty.kind {
-            TypeKind::Custom(ItemId::Contract(token_cid)) => has_transfer_from(hir, token_cid),
+            TypeKind::Custom(ItemId::Contract(token_cid)) => has_transfer_from(gcx, token_cid),
             _ => is_address_type(hir, *token),
         };
         f.name.is_some_and(|n| n.name.as_str() == "safeTransferFrom")

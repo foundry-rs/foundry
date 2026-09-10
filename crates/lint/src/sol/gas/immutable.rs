@@ -3,7 +3,7 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{
         Severity, SolLint,
-        analysis::{builtins, for_each_lhs_var, is_contract_cast, loop_stmts},
+        analysis::{for_each_lhs_var, is_contract_cast, loop_stmts},
     },
 };
 use solar::{
@@ -174,7 +174,7 @@ fn is_compile_time_constant(gcx: Gcx<'_>, expr: &Expr<'_>) -> bool {
         ExprKind::Ternary(c, t, f) => is_const(c) && is_const(t) && is_const(f),
         ExprKind::Tuple(exprs) => exprs.iter().flatten().all(|e| is_const(e)),
         ExprKind::Call(callee, args, opts) => {
-            is_constant_call(callee)
+            is_constant_call(gcx, callee)
                 && args.exprs().all(is_const)
                 && opts.is_none_or(|opts| opts.args.iter().all(|arg| is_const(&arg.value)))
         }
@@ -198,10 +198,10 @@ fn is_compile_time_constant(gcx: Gcx<'_>, expr: &Expr<'_>) -> bool {
 }
 
 /// Type casts (`address(0xCAFE)`, `IToken(addr)`) and the hashing / modular arithmetic builtins.
-fn is_constant_call(callee: &Expr<'_>) -> bool {
+fn is_constant_call(gcx: Gcx<'_>, callee: &Expr<'_>) -> bool {
     matches!(callee.kind, ExprKind::Type(_))
-        || is_contract_cast(callee)
-        || builtins(callee).any(|b| {
+        || is_contract_cast(gcx, callee)
+        || gcx.resolved_builtin(callee).is_some_and(|b| {
             matches!(
                 b.name(),
                 kw::Keccak256

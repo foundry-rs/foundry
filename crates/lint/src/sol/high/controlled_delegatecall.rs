@@ -5,17 +5,18 @@ use crate::{
         Severity, SolLint,
         analysis::{
             arg_for_param, branch_always_exits, count_placeholders, do_while_user_stmts,
-            expr_is_address, has_side_effect, is_address_like_cast, is_loop_termination_if,
-            is_require_or_assert, loop_update, stmts_before_placeholder, stmts_break_or_continue,
-            tuple_elems, var_is_address_like,
+            has_side_effect, is_address_like_cast, is_loop_termination_if, is_require_or_assert,
+            loop_update, stmts_before_placeholder, stmts_break_or_continue, tuple_elems,
+            var_is_address_like,
         },
     },
 };
 use solar::{
     ast::{BinOpKind, LitKind, UnOpKind},
-    interface::{Span, kw, sym},
+    interface::{Span, sym},
     sema::{
         Gcx,
+        builtins::Builtin,
         hir::{
             self, ElementaryType, Expr, ExprKind, FunctionKind, ItemId, LoopSource, Res, Stmt,
             StmtKind, TypeKind, VariableId, Visit,
@@ -104,7 +105,7 @@ impl<'gcx> Analyzer<'gcx> {
                 }
                 _ => false,
             }),
-            ExprKind::Call(callee, args, _) if is_cast(callee) => {
+            ExprKind::Call(callee, args, _) if is_cast(self.gcx, callee) => {
                 args.exprs().next().is_some_and(|arg| self.is_trusted_target_inner(arg, depth))
             }
             ExprKind::Payable(inner) => self.is_trusted_target_inner(inner, depth),
@@ -164,9 +165,8 @@ impl<'gcx> Analyzer<'gcx> {
 
     fn is_controlled_delegatecall(&self, expr: &'gcx Expr<'gcx>) -> bool {
         let ExprKind::Call(callee, ..) = &expr.peel_parens().kind else { return false };
-        let ExprKind::Member(receiver, member) = &callee.peel_parens().kind else { return false };
-        member.name == kw::Delegatecall
-            && expr_is_address(self.gcx, receiver)
+        let ExprKind::Member(receiver, _) = &callee.peel_parens().kind else { return false };
+        self.gcx.resolved_builtin(callee) == Some(Builtin::AddressDelegatecall)
             && !self.is_trusted_target(receiver)
     }
 
@@ -336,7 +336,7 @@ impl<'gcx> Visit<'gcx> for Analyzer<'gcx> {
             }
             _ => {
                 let _ = self.walk_stmt(stmt);
-                if branch_always_exits(stmt) {
+                if branch_always_exits(self.gcx, stmt) {
                     ControlFlow::Break(())
                 } else {
                     ControlFlow::Continue(())
@@ -365,7 +365,7 @@ impl<'gcx> Visit<'gcx> for Analyzer<'gcx> {
                 let false_state = self.visit_arm(cond, true, |this| this.visit_expr(if_false));
                 self.join(true_state, false_state)
             }
-            ExprKind::Call(callee, args, _) if is_require_or_assert(callee) => {
+            ExprKind::Call(callee, args, _) if is_require_or_assert(self.gcx, callee) => {
                 let _ = self.walk_expr(expr);
                 let mut args = args.exprs();
                 if let Some(cond) = args.next()
@@ -397,7 +397,7 @@ impl<'gcx> Visit<'gcx> for Analyzer<'gcx> {
 fn underlying_var(gcx: Gcx<'_>, expr: &Expr<'_>) -> Option<VariableId> {
     match &expr.peel_parens().kind {
         ExprKind::Ident(_) => gcx.resolved_variable(expr),
-        ExprKind::Call(callee, args, _) if is_cast(callee) => {
+        ExprKind::Call(callee, args, _) if is_cast(gcx, callee) => {
             args.exprs().next().and_then(|expr| underlying_var(gcx, expr))
         }
         ExprKind::Payable(inner) => underlying_var(gcx, inner),
@@ -406,8 +406,8 @@ fn underlying_var(gcx: Gcx<'_>, expr: &Expr<'_>) -> Option<VariableId> {
 }
 
 /// `address(..)`, `IFoo(..)`, `uintN(..)`, `intN(..)` or `bytes(..)` cast head.
-fn is_cast(callee: &Expr<'_>) -> bool {
-    is_address_like_cast(callee)
+fn is_cast(gcx: Gcx<'_>, callee: &Expr<'_>) -> bool {
+    is_address_like_cast(gcx, callee)
         || matches!(
             &callee.peel_parens().kind,
             ExprKind::Type(hir::Type {

@@ -88,7 +88,7 @@ impl<'gcx> LateLintPass<'gcx> for LockedEther {
 /// reverts before its first `_` or after its last one).
 fn always_reverts(gcx: Gcx<'_>, contract: ContractId, func: &hir::Function<'_>) -> bool {
     let reverts = |stmts: &[hir::Stmt<'_>]| {
-        !block_outcome(Block { span: Span::DUMMY, stmts }).can_skip_placeholder()
+        !block_outcome(gcx, Block { span: Span::DUMMY, stmts }).can_skip_placeholder()
     };
     func.body.is_some_and(|body| reverts(body.stmts))
         || func.modifiers.iter().any(|m| {
@@ -142,7 +142,7 @@ impl<'gcx> Visit<'gcx> for SendChecker<'gcx> {
                     // `super.f()`, `Base.f()` and `Lib.f()` name one implementation; every other
                     // call dispatches through the leaf's linearization.
                     let direct = matches!(&callee.peel_parens().kind, ExprKind::Member(base, _)
-                        if is_builtin(base, sym::super_) || is_contract_cast(base));
+                        if is_builtin(self.gcx, base, sym::super_) || is_contract_cast(self.gcx, base));
                     self.worklist.push(if direct {
                         fid
                     } else {
@@ -175,7 +175,7 @@ fn expr_sends_ether<'gcx>(gcx: Gcx<'gcx>, expr: &'gcx hir::Expr<'gcx>) -> bool {
     };
     if opts.is_some_and(|opts| {
         opts.args.iter().any(|arg| arg.name.name == sym::value && !is_literal_zero(&arg.value))
-    }) && !receiver.is_some_and(|r| is_address_self(r))
+    }) && !receiver.is_some_and(|r| is_address_self(gcx, r))
     {
         return true;
     }
@@ -183,7 +183,7 @@ fn expr_sends_ether<'gcx>(gcx: Gcx<'gcx>, expr: &'gcx hir::Expr<'gcx>) -> bool {
         // Only address-typed receivers can move ETH out: `.transfer`/`.send` on a contract type
         // dispatch to a user-defined member.
         ExprKind::Member(receiver, member)
-            if expr_is_address(gcx, receiver) && !is_address_self(receiver) =>
+            if expr_is_address(gcx, receiver) && !is_address_self(gcx, receiver) =>
         {
             match member.name {
                 // Single-arg form, to tell it apart from ERC20's 2-arg `transfer`.
@@ -197,11 +197,9 @@ fn expr_sends_ether<'gcx>(gcx: Gcx<'gcx>, expr: &'gcx hir::Expr<'gcx>) -> bool {
                 _ => true,
             }
         }
-        ExprKind::Ident(reses)
-            if reses.iter().any(|r| matches!(r, Res::Builtin(Builtin::Selfdestruct))) =>
-        {
+        ExprKind::Ident(_) if gcx.resolved_builtin(callee) == Some(Builtin::Selfdestruct) => {
             // `selfdestruct(self)` burns the balance in place.
-            !args.exprs().next().is_some_and(is_address_self)
+            !args.exprs().next().is_some_and(|expr| is_address_self(gcx, expr))
         }
         _ => false,
     }

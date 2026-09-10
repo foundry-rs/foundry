@@ -7,7 +7,6 @@
 
 Flags implemented `public` functions with reference-type `memory` parameters that are
 never called internally and do not modify their parameters. Overrides are excluded.
-Internal references and `super` calls count against the selected overload and inherited target.
 
 ## Why is this bad?
 

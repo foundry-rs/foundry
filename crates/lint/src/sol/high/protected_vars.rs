@@ -10,13 +10,13 @@ use crate::{
     sol::{
         Severity, SolLint,
         analysis::{
-            branch_always_exits, builtins, is_builtin, is_loop_termination_if, lhs_local_var,
-            loop_update, runtime_entry_points,
+            branch_always_exits, is_builtin, is_loop_termination_if, lhs_local_var, loop_update,
+            runtime_entry_points,
         },
     },
 };
 use solar::{
-    ast::{BinOpKind, ContractKind, DataLocation, ElementaryType, FunctionKind},
+    ast::{BinOpKind, ContractKind, DataLocation, FunctionKind},
     interface::sym,
     sema::{
         Gcx,
@@ -414,7 +414,7 @@ impl<'gcx> EntryAnalyzer<'gcx> {
         self.return_stack.push(empty_returns());
         self.return_flow.push(None);
         let completes = self.analyze_modifier_chain(function.modifiers, 0, body);
-        if completes && !body.stmts.iter().any(branch_always_exits) {
+        if completes && !body.stmts.iter().any(|expr| branch_always_exits(self.gcx, expr)) {
             self.capture_named_returns();
         }
         let returned = self.return_flow.pop().expect("return flow frame").is_some();
@@ -590,7 +590,7 @@ impl<'gcx> EntryAnalyzer<'gcx> {
                 true
             }
             StmtKind::Emit(expression) | StmtKind::Expr(expression) => {
-                self.analyze_expr(expression) && !branch_always_exits(statement)
+                self.analyze_expr(expression) && !branch_always_exits(self.gcx, statement)
             }
             StmtKind::Revert(expression) => {
                 self.analyze_expr(expression);
@@ -774,18 +774,19 @@ impl<'gcx> EntryAnalyzer<'gcx> {
                     return false;
                 }
 
-                if let ExprKind::Member(base, member) = &callee.peel_parens().kind
-                    && matches!(member.as_str(), "push" | "pop")
-                    && is_dynamic_array_or_bytes(self.gcx, base)
+                if let ExprKind::Member(base, _) = &callee.peel_parens().kind
+                    && let Some(
+                        builtin @ (Builtin::ArrayPush0 | Builtin::ArrayPush | Builtin::ArrayPop),
+                    ) = self.gcx.resolved_builtin(callee)
                 {
                     self.record_write(base);
-                    if member.as_str() == "push" && args.is_empty() {
+                    if builtin == Builtin::ArrayPush0 {
                         let roots = self.storage_roots(base);
                         self.store_call_returns(expression.id, vec![roots]);
                     }
                 }
 
-                if builtins(callee).any(|builtin| builtin == Builtin::YulSstore)
+                if self.gcx.resolved_builtin(callee) == Some(Builtin::YulSstore)
                     && let Some(slot) = args.exprs().next()
                 {
                     let roots = self.slot_roots(slot);
@@ -1035,7 +1036,8 @@ impl<'gcx> EntryAnalyzer<'gcx> {
             ExprKind::Ident(_) => Some((function_id, self.dispatch_function(function_id), None)),
             ExprKind::Member(base, _) if attached => Some((function_id, function_id, Some(base))),
             ExprKind::Member(base, _)
-                if self.is_library_function(function_id) || is_static_internal_base(base) =>
+                if self.is_library_function(function_id)
+                    || is_static_internal_base(self.gcx, base) =>
             {
                 Some((function_id, function_id, None))
             }
@@ -1172,19 +1174,10 @@ impl<'gcx> EntryAnalyzer<'gcx> {
 }
 
 /// `super.f`, `Base.f` or `Lib.f`: a statically dispatched internal call.
-fn is_static_internal_base(base: &hir::Expr<'_>) -> bool {
-    is_builtin(base, sym::super_)
-        || matches!(&base.peel_parens().kind, ExprKind::Ident(resolutions)
-        if resolutions.iter().any(|resolution| {
-            matches!(resolution, Res::Item(ItemId::Contract(_)) | Res::Namespace(_))
-        }))
-}
-
-fn is_dynamic_array_or_bytes(gcx: Gcx<'_>, expression: &hir::Expr<'_>) -> bool {
-    gcx.type_of_expr(expression.peel_parens().id).is_some_and(|ty| {
-        matches!(
-            ty.peel_refs().kind,
-            TyKind::DynArray(_) | TyKind::Elementary(ElementaryType::Bytes)
+fn is_static_internal_base(gcx: Gcx<'_>, base: &hir::Expr<'_>) -> bool {
+    is_builtin(gcx, base, sym::super_)
+        || matches!(
+            gcx.resolved_expr(base),
+            Some(Res::Item(ItemId::Contract(_)) | Res::Namespace(_))
         )
-    })
 }
