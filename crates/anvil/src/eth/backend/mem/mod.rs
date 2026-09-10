@@ -201,8 +201,8 @@ use tempo_primitives::{
     },
 };
 use tempo_revm::{
-    ExecutionContext, TempoBatchCallEnv, TempoBlockEnv, TempoHaltReason, TempoTxEnv,
-    evm::TempoContext, gas_params::tempo_gas_params,
+    ExecutionContext, TempoBatchCallEnv, TempoBlockEnv, TempoTxEnv, evm::TempoContext,
+    gas_params::tempo_gas_params,
 };
 use tokio::{sync::RwLock as AsyncRwLock, task::JoinSet};
 
@@ -2623,14 +2623,7 @@ impl<N: Network> Backend<N> {
             inspector,
         );
         self.inject_tempo_precompiles(&mut evm, evm_env);
-        let result = evm.transact(tx_env)?;
-        Ok(ResultAndState {
-            result: result.result.map_haltreason(|h| match h {
-                TempoHaltReason::Ethereum(eth) => eth,
-                _ => HaltReason::PrecompileError,
-            }),
-            state: result.state,
-        })
+        Ok(evm.transact(tx_env)?)
     }
 
     /// Creates a concrete EVM + [`AnvilBlockExecutor`], runs pre-execution changes, and
@@ -3080,7 +3073,6 @@ impl<N: Network> Backend<N> {
                 tx_hash: B256::ZERO,
                 valid_before: request.valid_before.map(|value| value.get()),
                 valid_after: request.valid_after.map(|value| value.get()),
-                subblock_transaction: false,
                 override_key_id: key_id,
                 expiring_nonce_idx: None,
             })),
