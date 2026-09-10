@@ -259,6 +259,7 @@ fmt_tests! {
     ImportDirective,
     InlineDisable,
     IntTypes,
+    LineComments,
     LiteralExpression,
     MappingType,
     MethodChain,
