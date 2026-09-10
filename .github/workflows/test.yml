@@ -160,6 +160,3 @@ jobs:
           fi
           args+=(--no-fail-fast)
           cargo nextest run --locked --features monad "${args[@]}"
-      - name: Upload Socket report
-        if: always() && env.SFW_JSON_REPORT_PATH != ''
-        uses: ./.github/actions/upload-socket-report

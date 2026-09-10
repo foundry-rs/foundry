@@ -139,9 +139,6 @@ jobs:
 
   # Raised before the account actually runs dry, so the tests keep passing while someone tops it
   # up. Independent of whether the tests passed - a low balance is worth reporting either way.
-      - name: Upload Socket report
-        if: always() && env.SFW_JSON_REPORT_PATH != ''
-        uses: ./.github/actions/upload-socket-report
   refund:
     name: Open a refund issue
     runs-on: ubuntu-latest

@@ -194,9 +194,6 @@ jobs:
             benches/nightly-*.json
             benches/common/
             regression.md
-      - name: Upload Socket report
-        if: always() && env.SFW_JSON_REPORT_PATH != ''
-        uses: ./.github/actions/upload-socket-report
 
   report-regression:
     name: Report Regression

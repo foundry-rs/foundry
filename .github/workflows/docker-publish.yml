@@ -65,11 +65,6 @@ jobs:
           egress-policy: audit
       - name: Verify Socket Cargo interception
         uses: ./.github/actions/check-socket-shim
-      # BuildKit does not inherit the host's package-manager shims.
-      - name: Check Docker workspace dependencies
-        uses: ./.github/actions/check-socket-lockfile
-        env:
-          CARGO_HOME: ${{ runner.temp }}/socket-docker-cargo
 
       - name: Login into registry ${{ env.REGISTRY }}
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -231,6 +226,3 @@ jobs:
           fi
           actual="$(docker buildx imagetools inspect "$IMAGE:$TAG" --format '{{json .Manifest.Digest}}' | tr -d '"')"
           [[ "$actual" == "$DIGEST" ]] || { echo "::error::Exact tag verification failed: $actual"; exit 1; }
-      - name: Upload Socket report
-        if: always() && env.SFW_JSON_REPORT_PATH != ''
-        uses: ./.github/actions/upload-socket-report

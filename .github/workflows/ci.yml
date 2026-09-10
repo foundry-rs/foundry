@@ -71,9 +71,6 @@ jobs:
           cache-bin: false
           prefix-key: v2-rust-doctest
       - run: cargo test --workspace --doc --locked
-      - name: Upload Socket report
-        if: always() && env.SFW_JSON_REPORT_PATH != ''
-        uses: ./.github/actions/upload-socket-report
 
   no-default-features:
     runs-on: depot-ubuntu-latest
@@ -110,9 +107,6 @@ jobs:
           cache-bin: false
           prefix-key: v1-rust-no-default-features
       - run: cargo build --workspace --no-default-features --locked
-      - name: Upload Socket report
-        if: always() && env.SFW_JSON_REPORT_PATH != ''
-        uses: ./.github/actions/upload-socket-report
 
   touch-id-link:
     name: touch-id link (macOS)
@@ -155,9 +149,6 @@ jobs:
           cargo test --manifest-path crates/cast/Cargo.toml --test cli --features touch-id --target x86_64-apple-darwin --locked --no-run
           cargo build --manifest-path crates/forge/Cargo.toml --features touch-id --target x86_64-apple-darwin --locked
       - run: cargo build --manifest-path crates/forge/Cargo.toml --features touch-id --target aarch64-apple-darwin --locked
-      - name: Upload Socket report
-        if: always() && env.SFW_JSON_REPORT_PATH != ''
-        uses: ./.github/actions/upload-socket-report
 
   typos:
     runs-on: depot-ubuntu-latest
@@ -236,19 +227,9 @@ jobs:
       - run: sccache --start-server
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Run Clippy
-        shell: bash
         env:
           RUSTFLAGS: -Dwarnings
-        run: |
-          set -o pipefail
-          cargo +nightly clippy --workspace --all-targets --all-features --locked 2>&1 | tee "$RUNNER_TEMP/clippy.log"
-          if grep -Fq 'Socket Firewall encountered an unexpected error' "$RUNNER_TEMP/clippy.log"; then
-            echo '::error::Socket did not complete the Clippy run.'
-            exit 1
-          fi
-      - name: Upload Socket report
-        if: always() && env.SFW_JSON_REPORT_PATH != ''
-        uses: ./.github/actions/upload-socket-report
+        run: cargo +nightly clippy --workspace --all-targets --all-features --locked
 
   rustfmt:
     runs-on: depot-ubuntu-latest
@@ -302,9 +283,6 @@ jobs:
       - name: forge fmt
         shell: bash
         run: ./.github/scripts/format.sh --check
-      - name: Upload Socket report
-        if: always() && env.SFW_JSON_REPORT_PATH != ''
-        uses: ./.github/actions/upload-socket-report
 
   deny:
     name: cargo deny check
@@ -334,9 +312,6 @@ jobs:
       - name: Verify Socket Cargo interception
         uses: ./.github/actions/check-socket-shim
       - run: cargo deny --all-features check all
-      - name: Upload Socket report
-        if: always() && env.SFW_JSON_REPORT_PATH != ''
-        uses: ./.github/actions/upload-socket-report
   codeql:
     name: analyze (${{ matrix.language }})
     runs-on: ubuntu-latest

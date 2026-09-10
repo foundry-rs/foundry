@@ -71,9 +71,6 @@ jobs:
         run: cargo nextest run --locked --profile flaky --no-fail-fast
 
   # If any of the jobs fail, this will create a normal-priority issue to signal so.
-      - name: Upload Socket report
-        if: always() && env.SFW_JSON_REPORT_PATH != ''
-        uses: ./.github/actions/upload-socket-report
   issue:
     name: Open an issue
     runs-on: ubuntu-latest

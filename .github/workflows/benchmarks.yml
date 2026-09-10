@@ -218,9 +218,6 @@ jobs:
             benches/baseline-ref.txt
             benches/candidate-ref.txt
             benches/behind-count.txt
-      - name: Upload Socket report
-        if: always() && env.SFW_JSON_REPORT_PATH != ''
-        uses: ./.github/actions/upload-socket-report
 
   publish-results:
     name: Publish Results

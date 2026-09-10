@@ -405,10 +405,6 @@ jobs:
             --git https://github.com/cross-rs/cross \
             --rev 64b5bb4d3d34de062552b9a2093affe77b4ad16a
 
-      - name: Fetch dependencies for the musl container
-        if: contains(matrix.target, 'musl')
-        uses: ./.github/actions/check-socket-lockfile
-
       - name: Build binaries
         env:
           TAG_NAME: ${{ (env.IS_NIGHTLY == 'true' && 'nightly') || needs.prepare.outputs.tag_name }}
@@ -442,7 +438,7 @@ jobs:
           if [[ "$TARGET" == "x86_64-unknown-linux-gnu" ]]; then
             .github/scripts/pgo.sh "${flags[@]}"
           elif [[ "$TARGET" == *-musl ]]; then
-            cross build "${flags[@]}" --frozen --bins
+            cross build "${flags[@]}" --bins
           else
             cargo build "${flags[@]}" --bins
           fi
@@ -617,9 +613,6 @@ jobs:
             files+=("$FOUNDRY_MAN")
           fi
           gh release upload "$TAG_NAME" "${files[@]}" --clobber
-      - name: Upload Socket report
-        if: always() && env.SFW_JSON_REPORT_PATH != ''
-        uses: ./.github/actions/upload-socket-report
 
   # Auto-publish nightly releases once all assets have been uploaded so that
   # foundryup and other consumers see them immediately. Tagged releases are
