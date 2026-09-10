@@ -815,15 +815,20 @@ pub fn etherscan_project(metadata: &Metadata, target_path: &Path) -> Result<Proj
         .build(compiler)?)
 }
 
-/// Strips the components of an untrusted path that would let it escape the directory it is
-/// joined onto: parent directory components, and a leading separator or drive prefix.
-///
-/// Mirrors the sanitization [`foundry_block_explorers::contract::SourceTree`] applies when writing
-/// the sources themselves to disk.
+/// Normalizes an untrusted path relative to the source root, discarding leading separators,
+/// drive prefixes, and parent components that would escape that root.
 fn sanitize_relative_path(path: &Path) -> PathBuf {
-    path.components()
-        .filter(|component| matches!(component, Component::Normal(_) | Component::CurDir))
-        .collect()
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(part) => normalized.push(part),
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            _ => {}
+        }
+    }
+    normalized
 }
 
 /// Adds `storageLayout` to the compiler output selection for the given project.
@@ -1026,6 +1031,11 @@ mod tests {
                 "{path} escaped the root: {}",
                 joined.display()
             );
+        }
+
+        for (path, expected) in [("src/../lib/", "lib"), ("./a/../b", "b"), ("a/../../lib", "lib")]
+        {
+            assert_eq!(sanitize_relative_path(Path::new(path)), Path::new(expected));
         }
 
         // Ordinary relative paths are left alone.

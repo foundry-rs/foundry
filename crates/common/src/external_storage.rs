@@ -178,6 +178,11 @@ fn resolve(
         };
 
         let layout = compile_storage_layout(address, metadata, deadline);
+        if layout.is_none() && Instant::now() >= deadline {
+            // Exhausting this call's budget says nothing about whether the contract has a
+            // usable layout. Leave it unresolved so a later call can retry.
+            continue;
+        }
         if let Some((name, layout)) = &layout {
             resolved.insert(address, (name.clone(), layout.clone()));
             write_cached_layout(cache_dir, address, name, layout);
@@ -684,9 +689,8 @@ mod tests {
         assert!(run_solc(&solc, &NO_IMPORT_CALLBACK_SOLC, &input, Duration::from_secs(1)).is_ok());
     }
 
-    #[test]
-    fn source_less_metadata_is_rejected_without_compiling() {
-        let metadata = Metadata {
+    fn source_less_metadata() -> Metadata {
+        Metadata {
             source_code: SourceCodeMetadata::Sources(Default::default()),
             abi: "[]".to_string(),
             contract_name: "MissingSources".to_string(),
@@ -700,8 +704,41 @@ mod tests {
             proxy: 0,
             implementation: None,
             swarm_source: String::new(),
-        };
+        }
+    }
 
+    #[test]
+    fn retries_after_the_compilation_budget_expires() {
+        let chain_id = next_chain_id();
+        let address = Address::with_last_byte(1);
+        let metadata = Metadata {
+            source_code: SourceCodeMetadata::SourceCode(
+                "pragma solidity ^0.8.30; contract Counter { uint256 public count; }".to_string(),
+            ),
+            contract_name: "Counter".to_string(),
+            ..source_less_metadata()
+        };
+        // Keep compilation from progressing after fetching consumes the shared budget.
+        let _compiler = COMPILER.lock().unwrap();
+        let result =
+            resolve(chain_id, None, [address], Duration::from_millis(20), |_, remaining| {
+                std::thread::sleep(remaining);
+                [(address, Some(metadata))].into_iter().collect()
+            });
+        assert!(result.is_empty());
+
+        let mut retried = false;
+        resolve(chain_id, None, [address], Duration::from_secs(1), |addresses, _| {
+            assert_eq!(addresses, [address]);
+            retried = true;
+            AddressMap::default()
+        });
+        assert!(retried, "a compilation timeout must not be memoized as no layout");
+    }
+
+    #[test]
+    fn source_less_metadata_is_rejected_without_compiling() {
+        let metadata = source_less_metadata();
         assert!(compile_storage_layout(Address::ZERO, &metadata, Instant::now()).is_none());
     }
 }
