@@ -10,6 +10,7 @@ Keep each fact in the source that owns it and link to that source elsewhere:
 | Content | Canonical location |
 | --- | --- |
 | User-facing guides, configuration, and CLI workflows | [Foundry Book][foundry-book] |
+| Lint reference explanations | [`crates/lint/docs/`](../../crates/lint/docs/README.md), imported by the Book |
 | Crate and module APIs, invariants, and implementation details | Source Rustdoc, published as [Foundry Rustdoc][foundry-rustdoc] |
 | Cross-crate contributor workflows | `docs/dev/` or [`CONTRIBUTING.md`](../../CONTRIBUTING.md) |
 | Agent-only repository instructions | [`AGENTS.md`](../../AGENTS.md) |
@@ -48,8 +49,11 @@ use forking must contain `fork` in their name. Forge and Cast CLI tests live und
 
 ## Updating documentation
 
-When a change affects users, update the [Foundry Book][foundry-book] and the source CLI help where
-applicable. When it changes a crate or module contract, update Rustdoc next to the implementation.
+Update documentation at the canonical location in the ownership table alongside implementation
+changes. For lint reference pages, update [`crates/lint/docs/`](../../crates/lint/docs/README.md)
+in the Foundry PR; the Book's
+weekly update generates the published pages. Keep CLI help in the command definitions and crate or
+module contracts in Rustdoc next to the implementation.
 Add or update a guide here only when contributors need a cross-crate workflow or invariant that does
 not have a single source owner.
 

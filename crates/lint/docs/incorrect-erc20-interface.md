@@ -3,9 +3,6 @@
 **Severity**: `Med`
 **ID**: `incorrect-erc20-interface`
 
-Flags interfaces or contracts whose function signatures match an ERC20 method by name and
-parameters but use the wrong return type.
-
 ## What it does
 
 For each function whose name and parameter types match a canonical ERC20 method
@@ -19,8 +16,6 @@ lending protocols, multisigs) and are a common source of integration bugs and ex
 
 ## Example
 
-### Bad
-
 ```solidity
 interface IBadERC20 {
     function balanceOf(address) external view returns (bool);  // should be uint256
@@ -28,7 +23,7 @@ interface IBadERC20 {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 interface IERC20 {

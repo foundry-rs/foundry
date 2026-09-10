@@ -3,7 +3,7 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{
         Severity, SolLint,
-        analysis::{branch_always_exits, loop_update, resolved_function, write_target},
+        analysis::{branch_always_exits, loop_update, write_target},
     },
 };
 use alloy_primitives::U256;
@@ -13,10 +13,9 @@ use solar::{
     sema::{
         Gcx,
         hir::{
-            self, BinOpKind, CallArgs, CallArgsKind, Expr, ExprKind, FunctionId, Hir, LoopSource,
-            Res, Stmt, StmtKind, VarKind, VariableId, Visit,
+            self, BinOpKind, Expr, ExprKind, Hir, LoopSource, Stmt, StmtKind, VarKind, VariableId,
+            Visit,
         },
-        ty::TyKind,
     },
 };
 use std::{convert::Infallible, ops::ControlFlow};
@@ -25,7 +24,7 @@ declare_forge_lint!(
     ENUMERABLE_LOOP_REMOVAL,
     Severity::High,
     "enumerable-loop-removal",
-    "`remove` on an EnumerableSet inside a loop that iterates it with `at` corrupts the iteration"
+    "`remove` on an `EnumerableSet` inside a loop that iterates it with `at` can corrupt the iteration"
 );
 
 // The detector reports only the shape it can judge without a flow analysis: a loop whose own
@@ -131,7 +130,7 @@ impl<'gcx> LoopFinder<'_, '_, '_, 'gcx> {
         self.poison_writes(std::slice::from_ref(stmt));
         let bindings = &mut self.bindings;
         let mut bind = |var: VariableId, value: &Expr<'_>| {
-            let path = set_path(&self.gcx.hir, value, bindings, &mut Vec::new());
+            let path = set_path(self.gcx, value, bindings, &mut Vec::new());
             bindings.push((var, path));
         };
         match &stmt.kind {
@@ -142,11 +141,10 @@ impl<'gcx> LoopFinder<'_, '_, '_, 'gcx> {
             }
             StmtKind::Expr(expr) => {
                 if let ExprKind::Assign(target, None, value) = &expr.peel_parens().kind
-                    && let ExprKind::Ident(reses) = &target.peel_parens().kind
+                    && let ExprKind::Ident(_) = &target.peel_parens().kind
+                    && let Some(var) = self.gcx.resolved_variable(target)
                 {
-                    for var in reses.iter().filter_map(Res::as_variable) {
-                        bind(var, value);
-                    }
+                    bind(var, value);
                 }
             }
             _ => {}
@@ -156,7 +154,7 @@ impl<'gcx> LoopFinder<'_, '_, '_, 'gcx> {
     /// Marks everything the statements write as no longer naming one thing.
     fn poison_writes(&mut self, stmts: impl IntoIterator<Item = &'gcx Stmt<'gcx>>) {
         let mut written = Vec::new();
-        collect_writes(&self.gcx.hir, stmts, &mut written);
+        collect_writes(self.gcx, stmts, &mut written);
         self.bindings.extend(written.into_iter().map(|var| (var, None)));
     }
 
@@ -165,10 +163,10 @@ impl<'gcx> LoopFinder<'_, '_, '_, 'gcx> {
     fn analyze_loop(&mut self, body: impl Iterator<Item = &'gcx Stmt<'gcx>> + Clone) {
         // Control flow would make the corruption depend on the path taken, which is not tracked;
         // without an ascending index there is no upward walk for swap-and-pop to disturb.
-        if !body_is_straight_line(body.clone()) {
+        if !body_is_straight_line(self.gcx, body.clone()) {
             return;
         }
-        let cadence = ascending_cadence(&self.gcx.hir, body.clone());
+        let cadence = ascending_cadence(self.gcx, body.clone());
         if cadence.is_empty() {
             return;
         }
@@ -286,12 +284,15 @@ fn user_body<'gcx>(body: &'gcx [Stmt<'gcx>]) -> &'gcx [Stmt<'gcx>] {
 /// statement, inline assembly or nested loop (bare blocks are transparent). Any of these could
 /// let control skip a removal or the cadence step, or leave the loop before a shifted slot is
 /// read, none of which this detector tracks.
-fn body_is_straight_line<'gcx>(stmts: impl IntoIterator<Item = &'gcx Stmt<'gcx>>) -> bool {
+fn body_is_straight_line<'gcx>(
+    gcx: Gcx<'_>,
+    stmts: impl IntoIterator<Item = &'gcx Stmt<'gcx>>,
+) -> bool {
     stmts.into_iter().all(|stmt| {
-        !branch_always_exits(stmt)
+        !branch_always_exits(gcx, stmt)
             && match &stmt.kind {
                 StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
-                    body_is_straight_line(block.stmts)
+                    body_is_straight_line(gcx, block.stmts)
                 }
                 StmtKind::If(..)
                 | StmtKind::Try(..)
@@ -308,17 +309,17 @@ fn body_is_straight_line<'gcx>(stmts: impl IntoIterator<Item = &'gcx Stmt<'gcx>>
 /// on the straight line of the body (bare blocks included) is a supported ascending step. A
 /// reset, a no-op step, a decrement or composite arithmetic disqualifies the variable.
 fn ascending_cadence<'gcx>(
-    hir: &'gcx Hir<'gcx>,
+    gcx: Gcx<'gcx>,
     body: impl IntoIterator<Item = &'gcx Stmt<'gcx>>,
 ) -> Vec<VariableId> {
     let (mut cadence, mut other_writes) = (Vec::new(), Vec::new());
-    collect_cadence_writes(hir, body, &mut cadence, &mut other_writes);
+    collect_cadence_writes(gcx, body, &mut cadence, &mut other_writes);
     cadence.retain(|var| !other_writes.contains(var));
     cadence
 }
 
 fn collect_cadence_writes<'gcx>(
-    hir: &'gcx Hir<'gcx>,
+    gcx: Gcx<'gcx>,
     stmts: impl IntoIterator<Item = &'gcx Stmt<'gcx>>,
     cadence: &mut Vec<VariableId>,
     other_writes: &mut Vec<VariableId>,
@@ -326,16 +327,16 @@ fn collect_cadence_writes<'gcx>(
     for stmt in stmts {
         let mut written = match &stmt.kind {
             StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
-                collect_cadence_writes(hir, block.stmts, cadence, other_writes);
+                collect_cadence_writes(gcx, block.stmts, cadence, other_writes);
                 continue;
             }
             StmtKind::DeclSingle(var) => vec![*var],
             StmtKind::DeclMulti(vars, _) => vars.iter().flatten().copied().collect(),
             _ => Vec::new(),
         };
-        collect_writes(hir, std::slice::from_ref(stmt), &mut written);
+        collect_writes(gcx, std::slice::from_ref(stmt), &mut written);
         let ascending = match &stmt.kind {
-            StmtKind::Expr(expr) => ascending_step(expr.peel_parens()),
+            StmtKind::Expr(expr) => ascending_step(gcx, expr.peel_parens()),
             _ => None,
         };
         for var in written {
@@ -350,22 +351,26 @@ fn collect_cadence_writes<'gcx>(
 
 /// The bare identifier an expression steps upward by one of the simple ascending forms:
 /// `i++`/`++i`, `i += <positive literal>`, `i = i + <positive literal>` or its commutation.
-fn ascending_step<'gcx>(expr: &'gcx Expr<'gcx>) -> Option<VariableId> {
+fn ascending_step<'gcx>(gcx: Gcx<'gcx>, expr: &'gcx Expr<'gcx>) -> Option<VariableId> {
+    let variable = |expr: &Expr<'_>| {
+        gcx.resolved_variable(expr)
+            .filter(|_| matches!(expr.peel_parens().kind, ExprKind::Ident(_)))
+    };
     match &expr.kind {
         ExprKind::Unary(op, operand) if matches!(op.kind, UnOpKind::PreInc | UnOpKind::PostInc) => {
-            operand.as_variable()
+            variable(operand)
         }
         ExprKind::Assign(lhs, Some(op), rhs)
             if op.kind == BinOpKind::Add && is_positive_literal(rhs) =>
         {
-            lhs.as_variable()
+            variable(lhs)
         }
         ExprKind::Assign(lhs, None, rhs) => {
-            let target = lhs.as_variable()?;
+            let target = variable(lhs)?;
             let ExprKind::Binary(left, op, right) = &rhs.peel_parens().kind else { return None };
             (op.kind == BinOpKind::Add
-                && ((left.as_variable() == Some(target) && is_positive_literal(right))
-                    || (is_positive_literal(left) && right.as_variable() == Some(target))))
+                && ((variable(left) == Some(target) && is_positive_literal(right))
+                    || (is_positive_literal(left) && variable(right) == Some(target))))
             .then_some(target)
         }
         _ => None,
@@ -391,25 +396,25 @@ fn literal_bool(expr: &Expr<'_>) -> Option<bool> {
 /// assignments (tuple targets included), increments, decrements and deletes. Member and indexed
 /// targets do not write their base variable.
 fn collect_writes<'gcx>(
-    hir: &'gcx Hir<'gcx>,
+    gcx: Gcx<'gcx>,
     stmts: impl IntoIterator<Item = &'gcx Stmt<'gcx>>,
     out: &mut Vec<VariableId>,
 ) {
-    fn lvalue_variables(expr: &Expr<'_>, out: &mut Vec<VariableId>) {
+    fn lvalue_variables(gcx: Gcx<'_>, expr: &Expr<'_>, out: &mut Vec<VariableId>) {
         match &expr.peel_parens().kind {
-            ExprKind::Ident(reses) => out.extend(reses.iter().filter_map(Res::as_variable)),
+            ExprKind::Ident(_) => out.extend(gcx.resolved_variable(expr)),
             ExprKind::Tuple(exprs) => {
-                exprs.iter().flatten().for_each(|expr| lvalue_variables(expr, out));
+                exprs.iter().flatten().for_each(|expr| lvalue_variables(gcx, expr, out));
             }
             _ => {}
         }
     }
     let mut writes = ExprWalker {
-        hir,
+        hir: &gcx.hir,
         prune_unreachable: false,
         f: |expr: &Expr<'_>| {
             if let Some(target) = write_target(expr) {
-                lvalue_variables(target, out)
+                lvalue_variables(gcx, target, out)
             }
         },
     };
@@ -440,8 +445,8 @@ fn enumerable_set_call<'gcx>(
     bindings: &Bindings,
     expr: &'gcx Expr<'gcx>,
 ) -> Option<SetCall<'gcx>> {
-    let ExprKind::Call(callee, args, _) = &expr.kind else { return None };
-    let function_id = resolved_function(gcx, callee)?;
+    let ExprKind::Call(callee, ..) = &expr.kind else { return None };
+    let function_id = gcx.resolved_function(callee)?;
     let function = gcx.hir.function(function_id);
     let contract = gcx.hir.contract(function.contract?);
     if !contract.kind.is_library() || contract.name.as_str() != "EnumerableSet" {
@@ -455,15 +460,17 @@ fn enumerable_set_call<'gcx>(
     // The set operand is the bound receiver in the method form and the first argument in the
     // library-qualified form; the index of `at` sits right after it.
     let (set_expr, index_arg) = match &callee.peel_parens().kind {
-        ExprKind::Member(receiver, _) if is_enumerable_set_value(gcx, receiver) => {
+        ExprKind::Member(receiver, _)
+            if gcx.resolved_call(expr).is_some_and(|resolved| resolved.attached) =>
+        {
             (Some(&**receiver), 0)
         }
-        _ => (nth_argument(&gcx.hir, function_id, args, 0, 0), 1),
+        _ => (gcx.call_arg(expr, 0), 1),
     };
     Some(SetCall {
         op,
-        set: set_expr.and_then(|expr| set_path(&gcx.hir, expr, bindings, &mut Vec::new())),
-        index: nth_argument(&gcx.hir, function_id, args, index_arg, 1),
+        set: set_expr.and_then(|expr| set_path(gcx, expr, bindings, &mut Vec::new())),
+        index: gcx.call_arg(expr, index_arg),
     })
 }
 
@@ -490,19 +497,19 @@ type Bindings = [(VariableId, Option<SetPath>)];
 /// call result, a reference without one straight-line binding, anything the analysis would have
 /// to evaluate.
 fn set_path(
-    hir: &Hir<'_>,
+    gcx: Gcx<'_>,
     expr: &Expr<'_>,
     bindings: &Bindings,
     seen: &mut Vec<VariableId>,
 ) -> Option<SetPath> {
     match &expr.peel_parens().kind {
         ExprKind::Ident(_) => {
-            let var = expr.as_variable()?;
+            let var = gcx.resolved_variable(expr)?;
             if seen.contains(&var) {
                 return None;
             }
             seen.push(var);
-            let variable = hir.variable(var);
+            let variable = gcx.hir.variable(var);
             if !matches!(variable.kind, VarKind::Statement) {
                 return Some(SetPath { base: var, steps: Vec::new() });
             }
@@ -511,52 +518,21 @@ fn set_path(
             // anew each turn; a tuple-destructured one has neither and may name any set.
             match bindings.iter().rev().find(|(bound, _)| *bound == var) {
                 Some((_, binding)) => binding.clone(),
-                None => set_path(hir, variable.initializer?, bindings, seen),
+                None => set_path(gcx, variable.initializer?, bindings, seen),
             }
         }
         ExprKind::Member(base, field) => {
-            let mut path = set_path(hir, base, bindings, seen)?;
+            let mut path = set_path(gcx, base, bindings, seen)?;
             path.steps.push(Step::Field(field.name));
             Some(path)
         }
         ExprKind::Index(base, Some(index)) => {
             let ExprKind::Lit(lit) = &index.peel_parens().kind else { return None };
             let LitKind::Number(key) = &lit.kind else { return None };
-            let mut path = set_path(hir, base, bindings, seen)?;
+            let mut path = set_path(gcx, base, bindings, seen)?;
             path.steps.push(Step::Key(*key));
             Some(path)
         }
         _ => None,
     }
-}
-
-/// The argument at position `arg` of a positional call, or the one a named call binds to the
-/// callee's parameter at position `parameter`. In the method form the bound receiver fills the
-/// first parameter, so positional arguments sit one position before the parameters they fill.
-fn nth_argument<'gcx>(
-    hir: &'gcx Hir<'gcx>,
-    function_id: FunctionId,
-    args: &'gcx CallArgs<'gcx>,
-    arg: usize,
-    parameter: usize,
-) -> Option<&'gcx Expr<'gcx>> {
-    match &args.kind {
-        CallArgsKind::Unnamed(exprs) => exprs.get(arg),
-        CallArgsKind::Named(named) => {
-            let parameter = *hir.function(function_id).parameters.get(parameter)?;
-            let name = hir.variable(parameter).name?;
-            named.iter().find(|argument| argument.name.name == name.name).map(|arg| &arg.value)
-        }
-    }
-}
-
-/// Whether `receiver` is a value of a struct declared in a library (or contract) named
-/// `EnumerableSet`, which tells the bound method form apart from the library-qualified form.
-fn is_enumerable_set_value(gcx: Gcx<'_>, receiver: &Expr<'_>) -> bool {
-    let Some(ty) = gcx.type_of_expr(receiver.peel_parens().id) else { return false };
-    let TyKind::Struct(id) = ty.peel_refs().kind else { return false };
-    gcx.hir
-        .strukt(id)
-        .contract
-        .is_some_and(|c| gcx.hir.contract(c).name.as_str() == "EnumerableSet")
 }

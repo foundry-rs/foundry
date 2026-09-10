@@ -2,8 +2,9 @@
 
 use super::is_literal_false;
 use solar::sema::{
+    Gcx,
     builtins::Builtin,
-    hir::{Block, Expr, ExprKind, LoopSource, Res, Stmt, StmtKind},
+    hir::{Block, Expr, ExprKind, LoopSource, Stmt, StmtKind},
 };
 
 /// Summary of how control flow can leave a statement or block *without* having executed the
@@ -48,14 +49,14 @@ impl Outcome {
     }
 }
 
-pub fn block_outcome(block: Block<'_>) -> Outcome {
+pub fn block_outcome(gcx: Gcx<'_>, block: Block<'_>) -> Outcome {
     let mut outcome = Outcome::FALLTHROUGH;
     for stmt in block.stmts {
         // Once a statement cannot fall through, the rest of the block is unreachable.
         if !outcome.falls_through {
             return outcome;
         }
-        let stmt_outcome = stmt_outcome(stmt);
+        let stmt_outcome = stmt_outcome(gcx, stmt);
         outcome = Outcome {
             falls_through: stmt_outcome.falls_through,
             returns: outcome.returns || stmt_outcome.returns,
@@ -66,20 +67,21 @@ pub fn block_outcome(block: Block<'_>) -> Outcome {
     outcome
 }
 
-fn stmt_outcome(stmt: &Stmt<'_>) -> Outcome {
+fn stmt_outcome(gcx: Gcx<'_>, stmt: &Stmt<'_>) -> Outcome {
     match &stmt.kind {
         StmtKind::Placeholder => Outcome::COVERED,
         StmtKind::Return(_) => Outcome::RETURNS,
         StmtKind::Break => Outcome::BREAKS,
         StmtKind::Continue => Outcome::CONTINUES,
-        StmtKind::Expr(expr) => call_outcome(expr).unwrap_or(Outcome::FALLTHROUGH),
+        StmtKind::Expr(expr) => call_outcome(gcx, expr).unwrap_or(Outcome::FALLTHROUGH),
         StmtKind::Revert(_) => Outcome::COVERED,
         StmtKind::Block(block)
         | StmtKind::UncheckedBlock(block)
-        | StmtKind::AssemblyBlock(block) => block_outcome(*block),
+        | StmtKind::AssemblyBlock(block) => block_outcome(gcx, *block),
         StmtKind::If(_, then_stmt, else_stmt) => {
-            let then_outcome = stmt_outcome(then_stmt);
-            let else_outcome = else_stmt.map_or(Outcome::FALLTHROUGH, stmt_outcome);
+            let then_outcome = stmt_outcome(gcx, then_stmt);
+            let else_outcome =
+                else_stmt.map_or(Outcome::FALLTHROUGH, |stmt| stmt_outcome(gcx, stmt));
             then_outcome.merge(else_outcome)
         }
         StmtKind::Loop(block, source) => {
@@ -90,7 +92,7 @@ fn stmt_outcome(stmt: &Stmt<'_>) -> Outcome {
             // condition sits *after* the body, so a `continue` in the body also reaches it and can
             // exit the loop. `break`/`continue` are otherwise consumed by the loop; only `return`
             // keeps escaping toward the modifier's end.
-            let body = block_outcome(*block);
+            let body = block_outcome(gcx, *block);
             let falls_through =
                 body.breaks || (matches!(source, LoopSource::DoWhile) && body.continues);
             Outcome { falls_through, returns: body.returns, ..Outcome::COVERED }
@@ -101,7 +103,7 @@ fn stmt_outcome(stmt: &Stmt<'_>) -> Outcome {
             // path that skips all clauses, so start from `COVERED`.
             let mut outcome = Outcome::COVERED;
             for clause in try_stmt.clauses {
-                outcome = outcome.merge(block_outcome(clause.block));
+                outcome = outcome.merge(block_outcome(gcx, clause.block));
             }
             outcome
         }
@@ -111,7 +113,7 @@ fn stmt_outcome(stmt: &Stmt<'_>) -> Outcome {
             let has_default = switch.cases.last().is_some_and(|case| case.constant.is_none());
             let mut outcome = if has_default { Outcome::COVERED } else { Outcome::FALLTHROUGH };
             for case in switch.cases {
-                outcome = outcome.merge(block_outcome(case.body));
+                outcome = outcome.merge(block_outcome(gcx, case.body));
             }
             outcome
         }
@@ -131,24 +133,19 @@ fn stmt_outcome(stmt: &Stmt<'_>) -> Outcome {
 /// - Successful halts (Yul `return`/`stop`, `selfdestruct`) let the surrounding call finish
 ///   *without* running the modified function body, which is exactly what this lint flags, so they
 ///   behave like a `return` ([`Outcome::RETURNS`]).
-fn call_outcome(expr: &Expr<'_>) -> Option<Outcome> {
+fn call_outcome(gcx: Gcx<'_>, expr: &Expr<'_>) -> Option<Outcome> {
     let ExprKind::Call(callee, args, _) = &expr.peel_parens().kind else { return None };
-    let ExprKind::Ident(resolutions) = &callee.peel_parens().kind else { return None };
-    resolutions.iter().find_map(|res| match res {
-        Res::Builtin(
-            Builtin::Revert | Builtin::RevertMsg | Builtin::YulRevert | Builtin::YulInvalid,
-        ) => Some(Outcome::COVERED),
-        Res::Builtin(Builtin::Require | Builtin::Assert)
-            if args.exprs().next().is_some_and(is_literal_false) =>
-        {
+    match gcx.resolved_builtin(callee)? {
+        Builtin::Revert | Builtin::RevertMsg | Builtin::YulRevert | Builtin::YulInvalid => {
             Some(Outcome::COVERED)
         }
-        Res::Builtin(
-            Builtin::YulReturn
-            | Builtin::YulStop
-            | Builtin::YulSelfdestruct
-            | Builtin::Selfdestruct,
-        ) => Some(Outcome::RETURNS),
+        Builtin::Require | Builtin::Assert if args.exprs().next().is_some_and(is_literal_false) => {
+            Some(Outcome::COVERED)
+        }
+        Builtin::YulReturn
+        | Builtin::YulStop
+        | Builtin::YulSelfdestruct
+        | Builtin::Selfdestruct => Some(Outcome::RETURNS),
         _ => None,
-    })
+    }
 }

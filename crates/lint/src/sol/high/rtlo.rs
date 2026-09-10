@@ -12,7 +12,7 @@ declare_forge_lint!(
     RTLO,
     Severity::High,
     "rtlo",
-    "unicode bidirectional override character can hide malicious code"
+    "bidirectional Unicode override character can hide malicious code"
 );
 
 impl<'ast> EarlyLintPass<'ast> for Rtlo {
@@ -35,7 +35,7 @@ impl<'ast> EarlyLintPass<'ast> for Rtlo {
             let hi = lo + BytePos::from_usize(ch.len_utf8());
             let span = Span::new(lo, hi);
 
-            ctx.emit_with_msg(&RTLO, span, format!("U+{:04X} ({name}) detected", ch as u32));
+            ctx.emit_with_msg(&RTLO, span, format!("`U+{:04X}` ({name}) detected", ch as u32));
         }
     }
 }

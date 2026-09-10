@@ -1,10 +1,7 @@
 use super::SolmateSafeTransferLib;
 use crate::{
     linter::{LateLintPass, LintContext},
-    sol::{
-        Severity, SolLint,
-        analysis::{resolved_function, source_in_package},
-    },
+    sol::{Severity, SolLint, analysis::source_in_package},
 };
 use solar::sema::{
     Gcx,
@@ -15,7 +12,7 @@ declare_forge_lint!(
     SOLMATE_SAFE_TRANSFER_LIB,
     Severity::Low,
     "solmate-safe-transfer-lib",
-    "Solmate's `SafeTransferLib` does not check that the token has code, so a transfer to a token-less address succeeds silently"
+    "the `SafeTransferLib` from Solmate does not check that the token has code, so a transfer to a token-less address succeeds silently"
 );
 
 impl<'gcx> LateLintPass<'gcx> for SolmateSafeTransferLib {
@@ -24,7 +21,7 @@ impl<'gcx> LateLintPass<'gcx> for SolmateSafeTransferLib {
         // used as a value: judge the single declaration the type checker selected (overloads,
         // overrides, `using for` and import aliases already accounted for).
         if matches!(expr.kind, ExprKind::Ident(..) | ExprKind::Member(..))
-            && let Some(function_id) = resolved_function(gcx, expr)
+            && let Some(function_id) = gcx.resolved_function(expr)
             && is_unchecked_token_op(gcx, function_id)
         {
             ctx.emit(&SOLMATE_SAFE_TRANSFER_LIB, expr.span);

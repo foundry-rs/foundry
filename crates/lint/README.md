@@ -4,7 +4,7 @@ Solidity linter for identifying potential errors, vulnerabilities, gas optimizat
 It helps enforce best practices and improve code quality within Foundry projects.
 
 Files under the configured test and script directories are excluded from all lints except
-`unsafe-cheatcode`, `block-number-across-roll`, and `block-timestamp-across-warp`, including when a
+`unsafe-cheatcode` and `environment-read-across-mutation`, including when a
 lint is explicitly selected. These exceptions still respect severity filters, exclusions, and
 inline suppressions. Production source files remain linted.
 
@@ -21,7 +21,7 @@ inline suppressions. Production source files remain linted.
   - `arbitrary-send-erc20-permit`: Flags arbitrary `transferFrom` calls preceded by a covering `permit`; on non-permit tokens with a fallback (e.g. WETH) the permit silently succeeds and previously-approved tokens can be drained.
   - `controlled-delegatecall`: Flags `delegatecall` calls whose target is not provably trusted.
   - `encode-packed-collision`: Flags `abi.encodePacked()` calls with multiple dynamic-type arguments (`string`, `bytes`, dynamic arrays) that can produce hash collisions.
-  - `enumerable-loop-removal`: Flags `remove` on an EnumerableSet inside a loop that also iterates a set with `at`; swap-and-pop removal corrupts the iteration.
+  - `enumerable-loop-removal`: Flags `remove` on an `EnumerableSet` inside a loop that also iterates a set with `at`; swap-and-pop removal can corrupt the iteration.
   - `function-selector-collision`: Flags colliding selectors between a proxy and the statically typed implementation API targeted by its fallback.
   - `rtlo`: Flags Unicode bidirectional override characters ("Trojan Source", CVE-2021-42574) that can hide malicious code.
   - `reentrancy-balance`: Flags reentrant calls between saving `address(this).balance` and checking the current balance against that stale value.
@@ -29,8 +29,7 @@ inline suppressions. Production source files remain linted.
   - `protected-vars`: Flags externally callable entry points that write a state variable without its required `@custom:security write-protection` function or modifier.
   - `unprotected-initializer`: Upgradeable initializers should not be callable on the implementation contract.
 - **Medium Severity:**
-  - `block-number-across-roll`: Capture raw block-number values with `vm.getBlockNumber()` when they cross `vm.roll`.
-  - `block-timestamp-across-warp`: Capture raw timestamp values with `vm.getBlockTimestamp()` when they cross `vm.warp`.
+  - `environment-read-across-mutation`: Capture environment values through getters or external helpers when they cross Foundry setters, fork changes, or snapshot restoration.
   - `assert-state-change`: Flags state-modifying expressions inside `assert()` arguments.
   - `boolean-cst`: Flags misuse of boolean constants.
   - `dangerous-unary-operator`: Flags an assignment whose `=` is fused to a unary operator (`=-`, `=~`), e.g. `x =- 1`, which parses as `x = -1` instead of the intended compound `x -= 1`.
