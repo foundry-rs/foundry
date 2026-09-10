@@ -1280,12 +1280,11 @@ impl<'ast> State<'_, 'ast> {
                 // consumes "comment6" of which should be printed after the `=>`
                 self.print_comments(
                     value.span.lo(),
-                    CommentConfig::skip_ws()
-                        .trailing_no_break()
-                        .mixed_no_break()
-                        .mixed_prev_space(),
+                    CommentConfig::skip_ws().mixed_no_break().mixed_prev_space(),
                 );
-                self.space();
+                if !self.is_bol_or_only_ind() {
+                    self.space();
+                }
                 self.s.offset(self.ind);
                 self.word("=> ");
                 self.s.ibox(self.ind);
@@ -1517,7 +1516,10 @@ impl<'ast> State<'_, 'ast> {
                 |this, expr| match expr.as_ref() {
                     SpannedOption::Some(expr) => this.print_expr(expr),
                     SpannedOption::None(span) => {
-                        this.print_comments(span.hi(), CommentConfig::skip_ws().no_breaks());
+                        this.print_comments(
+                            span.hi(),
+                            CommentConfig::skip_ws().mixed_no_break_post(),
+                        );
                     }
                 },
                 |expr| match expr.as_ref() {
