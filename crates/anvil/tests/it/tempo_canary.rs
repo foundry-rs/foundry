@@ -46,6 +46,16 @@ const RELAY_USDCE_TRANSFER: PinnedTransaction = PinnedTransaction::new(
     b256!("0x061690e0b4378e2415de0ed6c8106edf8ef91b59ffe0ebe03b493ba02bff9645"),
 );
 
+/// A Relay fill executed under T10, before the incident: a USDC.e `transfer` with the 32-byte
+/// request id appended to the calldata, which T10 accepted.
+///
+/// Block <https://explore.tempo.xyz/block/38890775>, transaction
+/// <https://explore.tempo.xyz/receipt/0x70f6e31600875e6202c59862f1c9e47f8471fdbb347a9034e0b92a7019bec657>.
+const RELAY_T10_TRANSFER_WITH_REQUEST_ID: PinnedTransaction = PinnedTransaction::new(
+    38_890_775,
+    b256!("0x70f6e31600875e6202c59862f1c9e47f8471fdbb347a9034e0b92a7019bec657"),
+);
+
 /// The Relay fill reported during the T11 incident: a USDC.e `transfer` with the 32-byte request
 /// id appended to the calldata, which the strict decoding T11 introduced rejected.
 ///
@@ -139,6 +149,21 @@ async fn test_tempo_canary_fork_relay_usdce_transfer() {
     replay(RELAY_USDCE_TRANSFER, TempoHardfork::latest())
         .await
         .assert_matches_mainnet(GasCheck::Exact);
+}
+
+/// The T10-era fill, see [`RELAY_T10_TRANSFER_WITH_REQUEST_ID`], must reproduce mainnet exactly
+/// under T10 and keep succeeding under the latest hardfork.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_canary_fork_relay_t10_transfer_with_request_id() {
+    replay(RELAY_T10_TRANSFER_WITH_REQUEST_ID, TempoHardfork::T10)
+        .await
+        .assert_matches_mainnet(GasCheck::Exact);
+
+    // T11 raised the gas of precompile calldata, which charges this call 96 gas more than mainnet
+    // did under T10. The drift is permanent for a T10-era block, so it is allowed here.
+    replay(RELAY_T10_TRANSFER_WITH_REQUEST_ID, TempoHardfork::latest())
+        .await
+        .assert_matches_mainnet(GasCheck::Within(96));
 }
 
 /// The T11 incident fill, see [`RELAY_TRANSFER_WITH_REQUEST_ID`], replayed under the hardforks
@@ -249,7 +274,6 @@ enum GasCheck {
     /// The replay must use exactly the gas mainnet recorded.
     Exact,
     /// The replay may deviate from mainnet by up to this many gas units.
-    #[expect(dead_code)]
     Within(u64),
     /// Gas is reported in failures but not compared.
     #[expect(dead_code)]
