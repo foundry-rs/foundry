@@ -1,0 +1,17 @@
+name: Check container dependencies with Socket
+description: Check the workspace on the host when the build runs in a container.
+runs:
+  using: composite
+  steps:
+    - name: Fetch locked dependencies through Socket
+      shell: bash
+      env:
+        RUSTC_WRAPPER: ""
+      run: |
+        set -o pipefail
+        "$SFW_SHIM_DIR/cargo" fetch --locked 2>&1 | tee "$RUNNER_TEMP/socket-fetch.log"
+        if grep -Fq 'Socket Firewall encountered an unexpected error' "$RUNNER_TEMP/socket-fetch.log"; then
+          echo '::error::Socket did not complete its dependency check.'
+          exit 1
+        fi
+        "$(rustup which cargo)" fetch --frozen

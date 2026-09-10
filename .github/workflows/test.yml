@@ -29,11 +29,6 @@ env:
   RUST_MIN_STACK: 4194304 # 2 * the default (2 * 1024 * 1024)
 
 jobs:
-  cargo-cooldown:
-    permissions:
-      contents: read
-    uses: ./.github/workflows/cargo-cooldown.yml
-
   matrices:
     name: build matrices
     runs-on: ubuntu-latest
@@ -64,11 +59,16 @@ jobs:
     runs-on: ${{ matrix.runner_label }}
     timeout-minutes: 60
     permissions:
+      id-token: write
       contents: read
-    needs: [cargo-cooldown, matrices]
+    needs: matrices
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.matrices.outputs.test-matrix) }}
+    env:
+      NODE_OPTIONS: --no-network-family-autoselection
+      SFW_UNKNOWN_HOST_ACTION: ignore
+      SFW_CUSTOM_REGISTRIES: wrap:binaries.soliditylang.org,wrap:ethereum.reth.rs,wrap:bsc-dataseed.binance.org,wrap:bsc-testnet.bnbchain.org,wrap:mainnet.base.org,wrap:sepolia.base.org,wrap:mainnet.optimism.io,wrap:forno.celo.org,wrap:api.avax-test.network,wrap:rpc.viction.xyz,wrap:rpc.moderato.tempo.xyz,wrap:raw.githubusercontent.com/nikitastupin/solc,wrap:raw.githubusercontent.com/alloy-rs/solc-builds,wrap:dawn-intensive-sun.ethereum-sepolia.quiknode.pro,wrap:api.4byte.sourcify.dev,wrap:rpc.tempo.xyz,wrap:api.soldeer.xyz,wrap:soldeer-revisions.s3.amazonaws.com
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -77,11 +77,6 @@ jobs:
         with:
           toolchain: stable
           target: ${{ matrix.target }}
-      - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
-      - name: Install Linux system dependencies
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install --yes libudev-dev
-      # External tests dependencies
       - name: Setup Node.js
         if: contains(matrix.name, 'external')
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -96,6 +91,28 @@ jobs:
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.14"
+      - uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
+        with:
+          tool: nextest
+      - name: Secure Linux runner
+        if: runner.os == 'Linux'
+        uses: tempoxyz/gh-actions/actions/secure-runner@5338a3746a2ac2ddd88cbede733c79f907aca3a0
+        with:
+          egress-policy: audit
+      - name: Install Socket on macOS and Windows
+        if: runner.os != 'Linux'
+        uses: tempoxyz/gh-actions/actions/socket-firewall@5338a3746a2ac2ddd88cbede733c79f907aca3a0
+      - name: Verify Socket Cargo interception
+        uses: ./.github/actions/check-socket-shim
+
+      - name: Install pnpm for external fixtures
+        if: contains(matrix.name, 'external')
+        run: sfw npm install --global pnpm@11.8.0
+
+      - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes libudev-dev
       - name: Install Vyper
         # Also update vyper version in .devcontainer/Dockerfile.dev
         run: pip --version && pip install vyper==0.4.3
@@ -117,12 +134,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-foundry-${{ matrix.name }}-
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      # Start outside Socket so the cache daemon keeps its own proxy settings.
+      - run: sccache --start-server
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           cache-bin: false
-      - uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
-        with:
-          tool: nextest
       - name: Setup Git config
         run: |
           git config --global user.name "GitHub Actions Bot"

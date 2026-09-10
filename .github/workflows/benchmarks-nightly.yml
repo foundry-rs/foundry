@@ -11,40 +11,51 @@ env:
   RUSTC_WRAPPER: "sccache"
 
 jobs:
-  cargo-cooldown:
-    if: github.event_name != 'schedule' || github.repository == 'foundry-rs/foundry'
-    permissions:
-      contents: read
-    uses: ./.github/workflows/cargo-cooldown.yml
-
   run-benchmarks:
     name: Run Nightly Benchmarks
-    needs: cargo-cooldown
     if: github.event_name != 'schedule' || github.repository == 'foundry-rs/foundry'
     runs-on: depot-ubuntu-24.04-32
     permissions:
+      id-token: write
       contents: read
     outputs:
       has_regression: ${{ steps.compare.outputs.has_regression }}
+    env:
+      NODE_OPTIONS: --no-network-family-autoselection
+      SFW_UNKNOWN_HOST_ACTION: ignore
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config z3
-
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
           toolchain: stable
 
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+
+      - name: Secure Linux runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@5338a3746a2ac2ddd88cbede733c79f907aca3a0
+        with:
+          egress-policy: audit
+      - name: Verify Socket Cargo interception
+        uses: ./.github/actions/check-socket-shim
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config z3
+
       - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
 
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      # Start outside Socket so the cache daemon keeps its own proxy settings.
+      - run: sccache --start-server
 
       - name: Setup Foundry
         env:
@@ -56,11 +67,6 @@ jobs:
 
       - name: Build benchmark binary
         run: cargo build --locked --release --bin foundry-bench
-
-      - name: Setup Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: "24"
 
       - name: Install hyperfine
         run: |

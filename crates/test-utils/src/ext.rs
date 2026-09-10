@@ -22,6 +22,40 @@ pub struct ExtTester {
     pub verbosity: String,
 }
 
+#[cfg(all(test, unix))]
+mod tests {
+    use super::ExtTester;
+
+    #[test]
+    fn install_commands_allow_no_dependencies() {
+        ExtTester::new("", "", "").run_install_commands(".");
+    }
+
+    #[test]
+    fn install_commands_try_fallback() {
+        ExtTester::new("", "", "")
+            .install_command(&["sh", "-c", "exit 1"])
+            .install_command(&["sh", "-c", "exit 0"])
+            .run_install_commands(".");
+    }
+
+    #[test]
+    #[should_panic(expected = "all dependency installation commands failed")]
+    fn install_commands_reject_failure() {
+        ExtTester::new("", "", "")
+            .install_command(&["sh", "-c", "exit 1"])
+            .run_install_commands(".");
+    }
+
+    #[test]
+    #[should_panic(expected = "all dependency installation commands failed")]
+    fn install_commands_reject_missing_executable() {
+        ExtTester::new("", "", "")
+            .install_command(&["/nonexistent-foundry-test-installer"])
+            .run_install_commands(".");
+    }
+}
+
 impl ExtTester {
     /// Creates a new external test builder.
     pub fn new(org: &'static str, name: &'static str, rev: &'static str) -> Self {
@@ -99,8 +133,8 @@ impl ExtTester {
 
     /// Adds a command to run after the project is cloned.
     ///
-    /// Note that the command is run in the project's root directory, and it won't fail the test if
-    /// it fails.
+    /// Commands run in the project's root directory as alternatives, stopping at the first success.
+    /// If commands are configured and all fail, the test fails before running Forge.
     pub fn install_command(mut self, command: &[&str]) -> Self {
         self.install_commands.push(command.iter().map(|s| s.to_string()).collect());
         self
@@ -195,7 +229,7 @@ impl ExtTester {
                 Ok(s) => {
                     test_debug!("\n\n{install_cmd:?}: {s}");
                     if s.success() {
-                        break;
+                        return;
                     }
                 }
                 Err(e) => {
@@ -203,6 +237,7 @@ impl ExtTester {
                 }
             }
         }
+        assert!(self.install_commands.is_empty(), "all dependency installation commands failed");
     }
 
     /// Runs the test.

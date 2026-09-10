@@ -42,14 +42,25 @@ jobs:
     if: github.repository == 'foundry-rs/foundry' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     permissions:
+      id-token: write
       contents: read
       pull-requests: read
+    env:
+      NODE_OPTIONS: --no-network-family-autoselection
+      SFW_UNKNOWN_HOST_ACTION: ignore
     steps:
       - name: Checkout master
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Secure Linux runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@5338a3746a2ac2ddd88cbede733c79f907aca3a0
+        with:
+          egress-policy: audit
+      - name: Verify Socket Cargo interception
+        uses: ./.github/actions/check-socket-shim
 
       - name: Inspect existing release pull requests
         id: inspect

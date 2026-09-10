@@ -39,17 +39,16 @@ fn prb_proxy() {
 #[test]
 #[cfg_attr(windows, ignore = "Windows cannot find installed programs")]
 fn sablier_v2_core() {
+    // Keep the standalone v1.2.0 fixture; newer revisions use a different monorepo layout.
     let mut tester =
-        ExtTester::new("sablier-labs", "v2-core", "8b6823c019ff7556ac9ad24cbb5ac62821854d2f")
+        ExtTester::new("sablier-labs", "v2-core", "73356945b53e8dd4112f34f3e2c63c278c4a5239")
             // Skip fork tests.
             .args(["--nmc", "Fork"])
             // Increase the gas limit: https://github.com/sablier-labs/v2-core/issues/956
             .args(["--gas-limit", &u64::MAX.to_string()])
             // Run tests without optimizations.
             .env("FOUNDRY_PROFILE", "lite")
-            .install_command(&["bun", "install", "--prefer-offline"])
-            // Try npm if bun fails / is not installed.
-            .install_command(&["npm", "install", "--prefer-offline"])
+            .install_command(&["bun", "install", "--frozen-lockfile"])
             .verbosity(2);
 
     // This test reverts due to memory limit without isolation. This revert is not reached with
@@ -80,9 +79,7 @@ fn snekmate() {
     ExtTester::new("pcaversaccio", "snekmate", "df2816d6a5ecdb8dcc1257e22089422825fd5e27")
         .fuzz_runs(256)
         .python_package("git+https://github.com/vyperlang/vyper@v0.5.0a3")
-        .install_command(&["pnpm", "install", "--prefer-offline"])
-        // Try npm if pnpm fails / is not installed.
-        .install_command(&["npm", "install", "--prefer-offline"])
+        .install_command(&["pnpm", "install", "--frozen-lockfile"])
         .run();
 }
 
