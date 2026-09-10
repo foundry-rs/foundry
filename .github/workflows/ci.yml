@@ -128,8 +128,10 @@ jobs:
         with:
           toolchain: stable
           targets: aarch64-apple-darwin,x86_64-apple-darwin
-      - name: Install Socket on macOS and Windows
-        uses: tempoxyz/gh-actions/actions/socket-firewall@5338a3746a2ac2ddd88cbede733c79f907aca3a0
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@5338a3746a2ac2ddd88cbede733c79f907aca3a0
+        with:
+          egress-policy: audit
       - name: Verify Socket Cargo interception
         uses: ./.github/actions/check-socket-shim
 
