@@ -2099,6 +2099,7 @@ latest block number: {latest_block}"
         let config = ClientForkConfig {
             fork_urls: self.fork_urls.clone(),
             block_number: fork_block_number,
+            evm_block_number: evm_env.block_env.number.saturating_to(),
             block_hash,
             transaction_hash: self.fork_choice.and_then(|fc| fc.transaction_hash()),
             provider,
