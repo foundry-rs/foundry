@@ -6931,6 +6931,26 @@
     },
     {
       "func": {
+        "id": "getSlotNumber",
+        "description": "Gets the current `block.slotnum`.\nUse this instead of `block.slotnum` after `vm.rollSlot`, as the compiler assumes\n`block.slotnum` is constant across a transaction and may optimize repeated reads away.\nNot available on EVM versions before Amsterdam.\nIf used on unsupported EVM versions it will revert.",
+        "declaration": "function getSlotNumber() external view returns (uint64 slotNumber);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getSlotNumber()",
+        "selector": "0xa50d337b",
+        "selectorBytes": [
+          165,
+          13,
+          51,
+          123
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "getStateDiff",
         "description": "Returns state diffs from current `vm.startStateDiffRecording` session.",
         "declaration": "function getStateDiff() external view returns (string memory diff);",
@@ -10411,6 +10431,26 @@
           131,
           15,
           123
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "rollSlot",
+        "description": "Sets `block.slotnum` without changing the block number or timestamp.\nNot available on EVM versions before Amsterdam.\nIf used on unsupported EVM versions it will revert.",
+        "declaration": "function rollSlot(uint64 newSlotNumber) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "rollSlot(uint64)",
+        "selector": "0xf53fbdc4",
+        "selectorBytes": [
+          245,
+          63,
+          189,
+          196
         ]
       },
       "group": "evm",

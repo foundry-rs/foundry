@@ -227,3 +227,44 @@ contract StateGasTest is Test {
     });
     cmd.forge_fuse().args(args).assert_success();
 });
+
+forgetest_init!(can_test_slot_number_amsterdam, |prj, cmd| {
+    prj.add_test(
+        "SlotNumber.t.sol",
+        r#"
+pragma solidity =0.8.37;
+
+import "forge-std/Test.sol";
+
+interface VmSlot {
+    function getSlotNumber() external view returns (uint64);
+    function rollSlot(uint64 newSlotNumber) external;
+}
+
+contract SlotNumberTest is Test {
+    VmSlot constant slots = VmSlot(address(vm));
+
+    function readSlot() external view returns (uint256) {
+        return block.slotnum;
+    }
+
+    function testSlotNumber(uint64 first, uint64 second) public {
+        uint256 number = vm.getBlockNumber();
+        uint256 timestamp = vm.getBlockTimestamp();
+        slots.rollSlot(first);
+        assertEq(slots.getSlotNumber(), first);
+        assertEq(this.readSlot(), first);
+        slots.rollSlot(second);
+        assertEq(slots.getSlotNumber(), second);
+        assertEq(this.readSlot(), second);
+        assertEq(vm.getBlockNumber(), number);
+        assertEq(vm.getBlockTimestamp(), timestamp);
+    }
+}
+"#,
+    );
+    let args = ["test", "--use", "0.8.37", "--evm-version", "amsterdam", "--experimental"];
+    cmd.args(args).assert_success();
+    cmd.forge_fuse().args(args).args(["--optimize", "--via-ir"]).assert_success();
+    cmd.forge_fuse().args(args).arg("--isolate").assert_success();
+});
