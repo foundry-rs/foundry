@@ -103,4 +103,16 @@ contract ForStatement {
             i;
         }
     }
+
+    function initializerTrailingComment() external {
+        for (
+            uint256 i = 0;
+
+            // init
+            i < 10;
+            ++i
+        ) {
+            i++;
+        }
+    }
 }

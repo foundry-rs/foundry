@@ -2184,16 +2184,26 @@ impl<'ast> State<'_, 'ast> {
 
         // Print init.
         self.s.cbox(0);
-        match init {
+        let init_trailing_comment = match init {
             Some(init_stmt) => {
+                let has_trailing_comment = cond.as_ref().is_some_and(|cond| {
+                    self.peek_trailing_comment(init_stmt.span.hi(), Some(cond.span.lo())).is_some()
+                });
                 self.print_stmt_bound(init_stmt, Some(init_stmt.span.hi()));
+                has_trailing_comment
             }
-            None => self.print_word(";"),
-        }
+            None => {
+                self.print_word(";");
+                false
+            }
+        };
 
         // Print condition.
         match cond {
             Some(cond_expr) => {
+                if init_trailing_comment {
+                    self.hardbreak_if_not_bol();
+                }
                 self.print_sep(Separator::Space);
                 self.print_expr(cond_expr);
             }
