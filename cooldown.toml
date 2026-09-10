@@ -78,14 +78,14 @@ package = [
 crate = "wnaf"
 version = "0.14.1"
 
-# Exact-version exceptions for the solc installation race fixes.
+# Exact-version exceptions for the Solidity 0.8.37 release update.
 [[allow.exact]]
 crate = "svm-rs"
-version = "0.5.27"
+version = "0.5.28"
 
 [[allow.exact]]
 crate = "svm-rs-builds"
-version = "0.5.27"
+version = "0.5.28"
 
 # Temporary exact-version exceptions for Soldeer's validated archive extraction fixes.
 # Remove once the 0.12.0 releases published on 2026-09-07 clear the cooldown.
