@@ -8861,9 +8861,7 @@ where
 
         // Tempo charges gas in a fee token for every transaction type, never in the native token,
         // so the fee token balance replaces the native balance check.
-        let pays_gas_in_fee_token =
-            self.is_tempo() || matches!(tx.transaction.as_ref(), FoundryTxEnvelope::Tempo(_));
-        if pays_gas_in_fee_token {
+        if self.is_tempo() || tx.transaction.as_ref().is_tempo() {
             let (fee_payer, fee_token) = match tx.transaction.as_ref() {
                 FoundryTxEnvelope::Tempo(aa_tx) => {
                     let tempo_tx = aa_tx.tx();
