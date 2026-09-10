@@ -237,10 +237,17 @@ jobs:
       # Start outside Socket so the cache daemon keeps its own proxy settings.
       - run: sccache --start-server
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - run: cargo +nightly clippy --workspace --all-targets --all-features --locked
+      - name: Run Clippy
         shell: bash
         env:
           RUSTFLAGS: -Dwarnings
+        run: |
+          set -o pipefail
+          cargo +nightly clippy --workspace --all-targets --all-features --locked 2>&1 | tee "$RUNNER_TEMP/clippy.log"
+          if grep -Fq 'Socket Firewall encountered an unexpected error' "$RUNNER_TEMP/clippy.log"; then
+            echo '::error::Socket did not complete the Clippy run.'
+            exit 1
+          fi
       - name: Upload Socket report
         if: always() && env.SFW_JSON_REPORT_PATH != ''
         uses: ./.github/actions/upload-socket-report
