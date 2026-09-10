@@ -24,7 +24,7 @@ jobs:
     env:
       NODE_OPTIONS: --no-network-family-autoselection
       SFW_UNKNOWN_HOST_ACTION: ignore
-      SFW_CUSTOM_REGISTRIES: wrap:binaries.soliditylang.org
+      SFW_CUSTOM_REGISTRIES: bypass:binaries.soliditylang.org,bypass:raw.githubusercontent.com
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
