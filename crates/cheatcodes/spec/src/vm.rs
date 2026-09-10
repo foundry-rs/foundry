@@ -591,6 +591,20 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function getBlockNumber() external view returns (uint256 height);
 
+    /// Sets `block.slotnum` without changing the block number or timestamp.
+    /// Not available on EVM versions before Amsterdam.
+    /// If used on unsupported EVM versions it will revert.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function rollSlot(uint64 newSlotNumber) external;
+
+    /// Gets the current `block.slotnum`.
+    /// Use this instead of `block.slotnum` after `vm.rollSlot`, as the compiler assumes
+    /// `block.slotnum` is constant across a transaction and may optimize repeated reads away.
+    /// Not available on EVM versions before Amsterdam.
+    /// If used on unsupported EVM versions it will revert.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function getSlotNumber() external view returns (uint64 slotNumber);
+
     /// Sets `tx.gasprice`.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function txGasPrice(uint256 newGasPrice) external;
