@@ -4,8 +4,7 @@ use crate::{
     sol::{
         Severity, SolLint,
         analysis::{
-            any_subexpr, branch_always_exits, builtins, function_ids, is_builtin, loop_stmts,
-            tuple_elems,
+            any_subexpr, branch_always_exits, builtins, is_builtin, loop_stmts, tuple_elems,
         },
     },
 };
@@ -15,9 +14,7 @@ use solar::{
     sema::{
         Gcx, Hir,
         builtins::Builtin,
-        hir::{
-            BinOpKind, Expr, ExprKind, Function, FunctionId, Res, Stmt, StmtKind, VariableId, Visit,
-        },
+        hir::{BinOpKind, Expr, ExprKind, Function, FunctionId, Stmt, StmtKind, VariableId, Visit},
     },
 };
 use std::{collections::HashSet, convert::Infallible, ops::ControlFlow};
@@ -90,8 +87,8 @@ impl<'gcx> Checker<'_, '_, '_, 'gcx> {
     fn bind(&mut self, lhs: &Expr<'_>, is_source: bool) {
         match &lhs.peel_parens().kind {
             ExprKind::Tuple(elems) => elems.iter().flatten().for_each(|e| self.bind(e, is_source)),
-            ExprKind::Ident(reses) => {
-                for var in reses.iter().filter_map(Res::as_variable) {
+            ExprKind::Ident(_) => {
+                if let Some(var) = self.gcx.resolved_variable(lhs) {
                     self.set_alias(var, is_source);
                 }
             }
@@ -142,9 +139,9 @@ impl<'gcx> Checker<'_, '_, '_, 'gcx> {
     /// `block.timestamp`, a call to a helper returning it, or an alias of either.
     fn is_source(&self, expr: &Expr<'_>) -> bool {
         is_block_timestamp(expr)
-            || expr.as_variable().is_some_and(|var| self.aliases.contains(&var))
+            || self.gcx.resolved_variable(expr).is_some_and(|var| self.aliases.contains(&var))
             || matches!(&expr.peel_parens().kind, ExprKind::Call(callee, ..)
-                if function_ids(callee).any(|id| self.helpers.contains(&id)))
+                if self.gcx.resolved_function(callee).is_some_and(|id| self.helpers.contains(&id)))
     }
 }
 

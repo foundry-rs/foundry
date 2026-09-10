@@ -12,7 +12,7 @@ use solar::{
     sema::{
         Gcx, Hir,
         hir::{
-            BinOpKind, Block, Expr, ExprKind, Function, LoopSource, Res, Stmt, StmtKind, TypeKind,
+            BinOpKind, Block, Expr, ExprKind, Function, LoopSource, Stmt, StmtKind, TypeKind,
             UnOpKind, VarKind, VariableId, Visit,
         },
     },
@@ -33,7 +33,7 @@ impl<'gcx> LateLintPass<'gcx> for UninitializedLocal {
     fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, func: &'gcx Function<'gcx>) {
         let Some(body) = func.body else { return };
         let mut checker =
-            Checker { hir: &gcx.hir, uninitialized: HashSet::new(), findings: HashMap::new() };
+            Checker { gcx, hir: &gcx.hir, uninitialized: HashSet::new(), findings: HashMap::new() };
         for stmt in body.stmts {
             let _ = checker.visit_stmt(stmt);
         }
@@ -44,6 +44,7 @@ impl<'gcx> LateLintPass<'gcx> for UninitializedLocal {
 }
 
 struct Checker<'gcx> {
+    gcx: Gcx<'gcx>,
     hir: &'gcx Hir<'gcx>,
     /// Value-type locals declared without an initializer that have not yet been written on
     /// every path.
@@ -54,7 +55,7 @@ struct Checker<'gcx> {
 
 impl Checker<'_> {
     fn mark_written(&mut self, lhs: &Expr<'_>) {
-        for_each_lhs_var(lhs, &mut |v| {
+        for_each_lhs_var(self.gcx, lhs, &mut |v| {
             self.uninitialized.remove(&v);
         });
     }
@@ -65,25 +66,26 @@ impl Checker<'_> {
 /// the update on the loop source; matching the wrapper's span keeps declarations outside the
 /// header distinct.
 fn defaulted_counter_loop<'gcx>(
-    hir: &Hir<'gcx>,
+    gcx: Gcx<'gcx>,
     block: &'gcx Block<'gcx>,
 ) -> Option<&'gcx Stmt<'gcx>> {
     if let [Stmt { kind: StmtKind::DeclSingle(vid), .. }, loop_stmt] = block.stmts
         && block.span == loop_stmt.span
         && let StmtKind::Loop(body, LoopSource::For { update: Some(update) }) = &loop_stmt.kind
-        && let var = hir.variable(*vid)
+        && let var = gcx.hir.variable(*vid)
         && var.initializer.is_none()
         && matches!(var.ty.kind, TypeKind::Elementary(ElementaryType::UInt(_)))
         && let [Stmt { kind: StmtKind::If(cond, _, Some(else_)), .. }] = body.stmts
         && matches!(else_.kind, StmtKind::Break)
         && let ExprKind::Binary(left, op, right) = &cond.peel_parens().kind
-        && ((matches!(op.kind, BinOpKind::Lt | BinOpKind::Le) && left.as_variable() == Some(*vid))
+        && ((matches!(op.kind, BinOpKind::Lt | BinOpKind::Le)
+            && gcx.resolved_variable(left) == Some(*vid))
             || (matches!(op.kind, BinOpKind::Gt | BinOpKind::Ge)
-                && right.as_variable() == Some(*vid)))
+                && gcx.resolved_variable(right) == Some(*vid)))
         && let StmtKind::Expr(update) = &update.kind
         && let ExprKind::Unary(op, target) = &update.peel_parens().kind
         && matches!(op.kind, UnOpKind::PreInc | UnOpKind::PostInc)
-        && target.as_variable() == Some(*vid)
+        && gcx.resolved_variable(target) == Some(*vid)
     {
         Some(loop_stmt)
     } else {
@@ -101,7 +103,7 @@ impl<'gcx> Visit<'gcx> for Checker<'gcx> {
     fn visit_stmt(&mut self, stmt: &'gcx Stmt<'gcx>) -> ControlFlow<Never> {
         match &stmt.kind {
             StmtKind::Block(block) => {
-                if let Some(loop_stmt) = defaulted_counter_loop(self.hir, block) {
+                if let Some(loop_stmt) = defaulted_counter_loop(self.gcx, block) {
                     // Skip only the counter's declaration; all reads in the loop still run
                     // through the ordinary checker, including reads of other locals.
                     return self.visit_stmt(loop_stmt);
@@ -186,11 +188,9 @@ impl<'gcx> Visit<'gcx> for Checker<'gcx> {
                 self.mark_written(target);
                 self.visit_expr(target)
             }
-            ExprKind::Ident(reses) => {
-                if let Some(vid) = reses
-                    .iter()
-                    .filter_map(Res::as_variable)
-                    .find(|v| self.uninitialized.contains(v))
+            ExprKind::Ident(_) => {
+                if let Some(vid) =
+                    self.gcx.resolved_variable(expr).filter(|v| self.uninitialized.contains(v))
                 {
                     self.findings.entry(vid).or_insert(expr.span);
                 }

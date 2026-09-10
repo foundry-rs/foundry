@@ -17,7 +17,7 @@ use solar::{
         builtins::Builtin,
         hir::{
             self, BinOpKind, ContractId, ElementaryType, Expr, ExprKind, FunctionId, StmtKind,
-            TypeKind, UnOpKind, VariableId, Visit,
+            TypeKind, VariableId, Visit,
         },
     },
 };
@@ -73,7 +73,7 @@ impl<'gcx> LateLintPass<'gcx> for MissingEventsArithmetic {
             .all()
             .iter()
             .map(|func| func.id)
-            .partition(|&id| is_protected(&gcx.hir, id));
+            .partition(|&id| is_protected(gcx, id));
         let entry_points: Vec<_> = protected
             .into_iter()
             .filter(|&id| {
@@ -141,10 +141,6 @@ const fn is_arithmetic_op(kind: BinOpKind) -> bool {
     )
 }
 
-const fn is_inc_dec_op(kind: UnOpKind) -> bool {
-    matches!(kind, UnOpKind::PreInc | UnOpKind::PostInc | UnOpKind::PreDec | UnOpKind::PostDec)
-}
-
 // --- Arithmetic uses --------------------------------------------------------------------------
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -208,7 +204,7 @@ impl<'gcx> UseAnalyzer<'_, 'gcx> {
     fn sources(&mut self, expr: &Expr<'gcx>) -> HashSet<VariableId> {
         let mut out = HashSet::new();
         let _ = expr.visit(&mut |e| {
-            if let Some(var_id) = underlying_var(e) {
+            if let Some(var_id) = underlying_var(self.gcx, e) {
                 if self.targets.contains(&var_id) {
                     out.insert(var_id);
                 }
@@ -280,7 +276,7 @@ impl<'gcx> Visit<'gcx> for UseAnalyzer<'_, 'gcx> {
     fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
         match &expr.kind {
             ExprKind::Assign(lhs, _, rhs) => {
-                if let Some(local) = lhs_local_var(&self.gcx.hir, lhs) {
+                if let Some(local) = lhs_local_var(self.gcx, lhs) {
                     let sources = self.sources(rhs);
                     self.set_taint(local, sources);
                 }
@@ -485,11 +481,11 @@ impl<'gcx> WriteAnalyzer<'_, 'gcx> {
                     if dynamic || op.is_some_and(|op| is_arithmetic_op(op.kind)) {
                         self.record_writes(state, lhs);
                     }
-                    if let Some(local) = lhs_local_var(&self.gcx.hir, lhs) {
+                    if let Some(local) = lhs_local_var(self.gcx, lhs) {
                         self.set_dynamic(state, local, rhs);
                     }
                 }
-                ExprKind::Unary(op, inner) if is_inc_dec_op(op.kind) => {
+                ExprKind::Unary(op, inner) if op.kind.has_side_effects() => {
                     self.record_writes(state, inner);
                 }
                 ExprKind::Call(callee, args, _) => {
@@ -531,7 +527,7 @@ impl<'gcx> WriteAnalyzer<'_, 'gcx> {
     }
 
     fn record_writes(&self, state: &mut WriteState, lhs: &Expr<'_>) {
-        for var_id in state_lhs_vars(&self.gcx.hir, lhs) {
+        for var_id in state_lhs_vars(self.gcx, lhs) {
             if self.targets.contains(&var_id) {
                 state.writes.push(StateWrite { var_id, span: lhs.span });
             }
@@ -555,7 +551,7 @@ impl<'gcx> WriteAnalyzer<'_, 'gcx> {
                 ExprKind::Member(base, _) => {
                     builtins(base).any(|b| matches!(b, Builtin::Block | Builtin::Msg | Builtin::Tx))
                 }
-                _ => underlying_var(e).is_some_and(|var_id| {
+                _ => underlying_var(self.gcx, e).is_some_and(|var_id| {
                     let var = self.gcx.hir.variable(var_id);
                     state.dynamic.contains(&var_id)
                         || (var.kind.is_state() && !var.is_constant() && !var.is_immutable())

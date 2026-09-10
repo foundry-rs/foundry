@@ -347,3 +347,17 @@ contract RepeatedInitializerCalls is Initializable, DangerousBase {
         _left(owner_);
     }
 }
+
+contract SelectedInitializerOverload is Initializable, DangerousBase {
+    uint256 public value;
+
+    function initialize(address account) external initializer {
+        _initialize(account);
+    }
+
+    function _initialize(address) internal pure {}
+
+    function _initialize(uint256 next) internal {
+        value = next;
+    }
+}

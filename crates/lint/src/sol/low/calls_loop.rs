@@ -6,15 +6,15 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{
         Severity, SolLint,
-        analysis::{is_address_like, is_builtin},
+        analysis::{expr_is_address, is_builtin},
     },
 };
 use solar::{
-    ast::{StateMutability, Visibility},
+    ast::StateMutability,
     interface::{kw, sym},
     sema::{
         Gcx, Ty,
-        hir::{ContractId, Expr, ExprKind, Function, FunctionId},
+        hir::{Expr, ExprKind, Function},
         ty::TyKind,
     },
 };
@@ -57,7 +57,7 @@ fn classify<'gcx>(gcx: Gcx<'gcx>, callee: &Expr<'gcx>) -> Option<ExternalCall> {
     if matches!(
         member.name,
         kw::Call | kw::Delegatecall | kw::Staticcall | sym::send | sym::transfer
-    ) && is_address_like(gcx, base)
+    ) && expr_is_address(gcx, base)
     {
         let external =
             if member.name == kw::Staticcall { ExternalCall::Static } else { ExternalCall::Opaque };
@@ -88,28 +88,4 @@ pub(super) fn is_state_mutating_external_call<'gcx>(gcx: Gcx<'gcx>, callee: &Exp
         }
         Some(ExternalCall::Static) | None => false,
     }
-}
-
-/// The base-chain function `super.<member>(..)` dispatches to from `enclosing_contract`: the first
-/// arity-matching `internal`/`public` function of that name in its linearization.
-pub(super) fn resolved_super_function_ids<'gcx>(
-    gcx: Gcx<'gcx>,
-    enclosing_contract: Option<ContractId>,
-    callee: &'gcx Expr<'gcx>,
-    explicit_arg_count: usize,
-) -> impl Iterator<Item = FunctionId> + 'gcx {
-    let target = || {
-        let ExprKind::Member(base, member) = &callee.peel_parens().kind else { return None };
-        if !is_builtin(base, sym::super_) {
-            return None;
-        }
-        let bases = gcx.hir.contract(enclosing_contract?).linearized_bases;
-        bases.iter().skip(1).flat_map(|&id| gcx.hir.contract(id).functions()).find(|&id| {
-            let func = gcx.hir.function(id);
-            func.name.is_some_and(|name| name.name == member.name)
-                && func.parameters.len() == explicit_arg_count
-                && matches!(func.visibility, Visibility::Internal | Visibility::Public)
-        })
-    };
-    target().into_iter()
 }

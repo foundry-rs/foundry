@@ -7,7 +7,7 @@
 use crate::sol::analysis::{is_builtin, is_contract_cast, loop_stmts};
 use solar::{
     ast::{StateMutability, Visibility},
-    interface::{Symbol, sym},
+    interface::sym,
     sema::{
         Gcx,
         hir::{
@@ -95,8 +95,10 @@ impl<'gcx, F: FnMut(LoopItem<'gcx>)> LoopWalker<'gcx, F> {
             return self.visit_scoped(body, None, contract);
         };
         let _ = self.visit_call_args(&modifier.args);
-        if let Some(id) = modifier.id.as_function()
-            && let Some(modifier_body) = self.gcx.hir.function(id).body
+        if let Some(id) = self.dispatch.map_or_else(
+            || modifier.id.as_function(),
+            |contract| self.gcx.resolve_modifier_target(contract, modifier),
+        ) && let Some(modifier_body) = self.gcx.hir.function(id).body
             && !self.stack.contains(&id)
         {
             self.stack.push(id);
@@ -138,25 +140,19 @@ impl<'gcx, F: FnMut(LoopItem<'gcx>)> LoopWalker<'gcx, F> {
     /// Calls on a contract-typed value (`this` included) are external and are not followed.
     fn callee(&self, callee: &'gcx Expr<'gcx>) -> Option<FunctionId> {
         let callee = callee.peel_parens();
-        let func_id = self.gcx.resolved_expr(callee)?.as_function()?;
-        let ExprKind::Member(base, member) = &callee.kind else { return Some(func_id) };
+        let func_id = self.gcx.resolved_function(callee)?;
+        let ExprKind::Member(base, _) = &callee.kind else {
+            return Some(
+                self.dispatch.map_or(func_id, |contract| {
+                    self.gcx.resolve_virtual_function(contract, func_id)
+                }),
+            );
+        };
         if is_builtin(base, sym::super_) {
-            return self.super_target(func_id, member.name);
+            return Some(self.gcx.resolve_super_function(self.dispatch?, self.current?, func_id));
         }
         let attached = self.gcx.resolved_callee(callee.id).is_some_and(|c| c.attached);
         (attached || is_contract_cast(base)).then_some(func_id)
-    }
-
-    /// `super.<name>(..)` resolved against the dispatching contract: the first base after the
-    /// current one (in its linearization) defining `name` with the resolved signature.
-    fn super_target(&self, resolved: FunctionId, name: Symbol) -> Option<FunctionId> {
-        let bases = self.gcx.hir.contract(self.dispatch?).linearized_bases;
-        let start = bases.iter().position(|&c| Some(c) == self.current)? + 1;
-        let params = self.gcx.item_parameter_types(resolved);
-        bases[start..].iter().flat_map(|&c| self.gcx.hir.contract(c).functions()).find(|&id| {
-            let func = self.gcx.hir.function(id);
-            func.name.is_some_and(|n| n.name == name) && self.gcx.item_parameter_types(id) == params
-        })
     }
 }
 

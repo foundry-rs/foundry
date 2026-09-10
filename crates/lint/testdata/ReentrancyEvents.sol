@@ -274,12 +274,10 @@ contract ReentrancyEvents {
         emit Tick(); //~WARN: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
     }
 
-    // Known limitation: member-form internal calls (`Lib.f(...)`, `using for`)
-    // are not yet followed because Solar's `members_of` for `TyKind::Type(Contract)` is a
-    // TODO. The external call inside `staticHelper` is therefore missed and no warning fires.
+    // A resolved static library call runs in this frame and can make an external call.
     function emitAfterLibraryStaticCall() external {
         NotifyLib.staticHelper(ext);
-        emit Tick();
+        emit Tick(); //~WARN: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
     }
 
     function emitAfterUsingForCall() external {

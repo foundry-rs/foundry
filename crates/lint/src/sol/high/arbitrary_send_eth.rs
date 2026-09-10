@@ -5,11 +5,11 @@ use crate::{
         Severity, SolLint,
         analysis::{
             DEFAULT_HELPER_ANALYSIS_CACHE_LIMIT, HelperAnalysisCache, arg_for_param,
-            branch_always_exits, builtins, callee_fids, callee_no_arg_returns, expr_is_address,
-            expr_ty, function_ids, function_no_arg_returns, is_address_like_cast, is_address_self,
-            is_builtin, is_contract_cast, is_literal_zero, is_msg_sender, is_require_or_assert,
-            loop_stmts, loop_update, modifier_prefix, referenced_item, tuple_elems, underlying_var,
-            unique, var_is_address_like,
+            branch_always_exits, builtins, callee_no_arg_returns, expr_is_address,
+            function_no_arg_returns, is_address_like_cast, is_address_self, is_builtin,
+            is_contract_cast, is_literal_zero, is_msg_sender, is_require_or_assert, loop_stmts,
+            loop_update, modifier_prefix, referenced_item, tuple_elems, underlying_var,
+            var_is_address_like,
         },
     },
 };
@@ -20,9 +20,9 @@ use solar::{
         Gcx,
         builtins::Builtin,
         hir::{
-            self, CallArgs, CallArgsKind, ContractId, ContractKind, ElementaryType, Expr, ExprKind,
-            FunctionId, Hir, ItemId, LoopSource, Modifier, Res, Stmt, StmtKind, TypeKind, Variable,
-            VariableId, Visit,
+            self, CallArgs, ContractId, ContractKind, ElementaryType, Expr, ExprKind, FunctionId,
+            Hir, ItemId, LoopSource, Modifier, Res, Stmt, StmtKind, TypeKind, Variable, VariableId,
+            Visit,
         },
         ty::TyKind,
     },
@@ -136,8 +136,8 @@ impl<'gcx> Analyzer<'gcx> {
         for &param in modifier.parameters {
             if a.state.safe_vars.contains(&param)
                 && !a.written.contains(&param)
-                && let Some(caller) =
-                    arg_for_param(&self.gcx.hir, modifier, param, &m.args).and_then(underlying_var)
+                && let Some(caller) = arg_for_param(self.gcx, fid, param, &m.args)
+                    .and_then(|expr| underlying_var(self.gcx, expr))
                 && self.is_safe_target(caller)
             {
                 self.state.safe_vars.insert(caller);
@@ -161,9 +161,9 @@ impl<'gcx> Analyzer<'gcx> {
                     || is_address_self(base)
             }
             ExprKind::Lit(_) => is_trusted_literal(expr),
-            ExprKind::Ident(reses) => {
+            ExprKind::Ident(_) => {
                 is_builtin(expr, sym::this)
-                    || reses.iter().filter_map(Res::as_variable).any(|v| self.is_safe_var(v))
+                    || self.gcx.resolved_variable(expr).is_some_and(|v| self.is_safe_var(v))
             }
             ExprKind::Ternary(_, t, f) => {
                 self.is_safe_inner(t, depth) && self.is_safe_inner(f, depth)
@@ -171,9 +171,7 @@ impl<'gcx> Analyzer<'gcx> {
             ExprKind::Call(callee, args, _) => {
                 depth > 0
                     && args.exprs().next().is_none()
-                    && callee_no_arg_returns(&self.gcx.hir, callee, |e| {
-                        self.is_safe_inner(e, depth - 1)
-                    })
+                    && callee_no_arg_returns(self.gcx, callee, |e| self.is_safe_inner(e, depth - 1))
             }
             _ => false,
         }
@@ -210,7 +208,7 @@ impl<'gcx> Analyzer<'gcx> {
                     self.assign_lhs(lhs, rhs.and_then(|r| r.get(i).copied().flatten()));
                 }
             }
-        } else if let Some(v) = underlying_var(lhs) {
+        } else if let Some(v) = underlying_var(self.gcx, lhs) {
             self.assign_var(v, rhs);
         }
     }
@@ -237,7 +235,7 @@ impl<'gcx> Analyzer<'gcx> {
                 } else if op.kind == eq {
                     for (a, b) in [(lhs, rhs), (rhs, lhs)] {
                         if self.is_safe(a)
-                            && let Some(v) = underlying_var(b)
+                            && let Some(v) = underlying_var(self.gcx, b)
                             && self.is_safe_target(v)
                         {
                             self.state.safe_vars.insert(v);
@@ -434,13 +432,14 @@ fn match_sink<'gcx>(gcx: Gcx<'gcx>, expr: &'gcx Expr<'gcx>) -> Option<&'gcx Expr
     {
         return (!is_address_self(recv) && !is_literal_zero(args.exprs().next()?)).then_some(recv);
     }
-    match_eth_library_call(gcx, recv, member.name.as_str(), args)
+    match_eth_library_call(gcx, expr, recv, member.name.as_str(), args)
 }
 
 /// Destination of an OpenZeppelin `Address` / Solady `SafeTransferLib` ETH helper, called either
 /// statically (`Lib.f(to, ...)`) or via `using ... for address` (`to.f(...)`).
 fn match_eth_library_call<'gcx>(
     gcx: Gcx<'gcx>,
+    call: &Expr<'gcx>,
     recv: &'gcx Expr<'gcx>,
     name: &str,
     args: &'gcx CallArgs<'gcx>,
@@ -456,29 +455,19 @@ fn match_eth_library_call<'gcx>(
         "trySafeTransferAllETH" => (None, &[2]),
         _ => return None,
     };
-    let using = expr_is_address(gcx, recv);
-    let is_lib = matches!(referenced_item(recv), Some(ItemId::Contract(cid))
+    let using = gcx.resolved_call(call).is_some_and(|resolved| resolved.attached);
+    let is_lib = matches!(referenced_item(gcx, recv), Some(ItemId::Contract(cid))
         if gcx.hir.contract(cid).kind == ContractKind::Library);
     if (!using && !is_lib) || !arities.contains(&(args.len() + usize::from(using))) {
         return None;
     }
-    let dest = if using { recv } else { arg(args, 0, &["to", "target", "recipient"])? };
+    let dest = if using { recv } else { gcx.call_arg(call, 0)? };
     if let Some(i) = amount
-        && is_literal_zero(arg(args, i - usize::from(using), &["amount", "value"])?)
+        && is_literal_zero(gcx.call_arg(call, i - usize::from(using))?)
     {
         return None;
     }
     (!is_address_self(dest)).then_some(dest)
-}
-
-/// Call-site argument at position `pos`, or bound to any of `names` in the named form.
-fn arg<'gcx>(args: &'gcx CallArgs<'gcx>, pos: usize, names: &[&str]) -> Option<&'gcx Expr<'gcx>> {
-    match args.kind {
-        CallArgsKind::Unnamed(exprs) => exprs.get(pos),
-        CallArgsKind::Named(named) => {
-            named.iter().find(|a| names.contains(&a.name.as_str())).map(|a| &a.value)
-        }
-    }
 }
 
 /// Recognises guards that restrict `msg.sender` to a deploy-time-fixed principal, backed by a
@@ -532,26 +521,29 @@ impl<'gcx> CallerGuards<'gcx> {
         if is_require_or_assert(callee) {
             return args.exprs().next().is_some_and(|c| self.cond_restricts(c, true));
         }
-        function_ids(callee).any(|fid| {
-            if self.stack.contains(&fid) {
-                return false;
-            }
-            let Some(body) = self.gcx.hir.function(fid).body else { return false };
-            // A trailing bare `return;` is a normal exit and cannot bypass an earlier guard.
-            let mut stmts = body.stmts;
-            while let [rest @ .., last] = stmts
-                && matches!(last.kind, StmtKind::Return(None))
-            {
-                stmts = rest;
-            }
-            if stmts.iter().any(stmt_contains_return) {
-                return false;
-            }
-            self.stack.push(fid);
-            let restricts = stmts.iter().any(|s| self.stmt_restricts(s));
-            self.stack.pop();
-            restricts
-        })
+        self.gcx
+            .resolved_function(callee)
+            .filter(|_| matches!(callee.peel_parens().kind, ExprKind::Ident(_)))
+            .is_some_and(|fid| {
+                if self.stack.contains(&fid) {
+                    return false;
+                }
+                let Some(body) = self.gcx.hir.function(fid).body else { return false };
+                // A trailing bare `return;` is a normal exit and cannot bypass an earlier guard.
+                let mut stmts = body.stmts;
+                while let [rest @ .., last] = stmts
+                    && matches!(last.kind, StmtKind::Return(None))
+                {
+                    stmts = rest;
+                }
+                if stmts.iter().any(stmt_contains_return) {
+                    return false;
+                }
+                self.stack.push(fid);
+                let restricts = stmts.iter().any(|s| self.stmt_restricts(s));
+                self.stack.pop();
+                restricts
+            })
     }
 
     /// True when `cond` (holding iff `holds`) entails `msg.sender == <trusted>` on every path.
@@ -569,7 +561,7 @@ impl<'gcx> CallerGuards<'gcx> {
                     self.cond_restricts(lhs, holds) && self.cond_restricts(rhs, holds)
                 } else if op.kind == eq {
                     [(lhs, rhs), (rhs, lhs)].into_iter().any(|(a, b)| {
-                        is_msg_sender_like(&self.gcx.hir, a, HELPER_DEPTH)
+                        is_msg_sender_like(self.gcx, a, HELPER_DEPTH)
                             && self.is_trusted_principal(b, HELPER_DEPTH)
                     })
                 } else {
@@ -590,19 +582,19 @@ impl<'gcx> CallerGuards<'gcx> {
         let expr = peel_casts(expr);
         match &expr.kind {
             ExprKind::Lit(_) => is_trusted_literal(expr),
-            ExprKind::Ident(reses) => reses.iter().filter_map(Res::as_variable).any(|v| {
+            ExprKind::Ident(_) => self.gcx.resolved_variable(expr).is_some_and(|v| {
                 self.gcx.hir.variable(v).kind.is_state()
                     && !self.state_var_aliases_self(v, SELF_ALIAS_DEPTH)
             }),
             ExprKind::Member(base, _) => self.is_trusted_principal(base, depth),
             ExprKind::Index(base, idx) => {
                 self.is_trusted_principal(base, depth)
-                    && idx.is_none_or(|i| index_is_static(&self.gcx.hir, i))
+                    && idx.is_none_or(|i| index_is_static(self.gcx, i))
             }
             ExprKind::Call(callee, args, _) => {
                 depth > 0
                     && args.exprs().next().is_none()
-                    && callee_no_arg_returns(&self.gcx.hir, callee, |e| {
+                    && callee_no_arg_returns(self.gcx, callee, |e| {
                         self.is_trusted_principal(e, depth - 1)
                     })
             }
@@ -649,7 +641,7 @@ impl<'gcx> CallerGuards<'gcx> {
     ) -> bool {
         if var_is_address_like(target) {
             self.expr_resolves_to_self(rhs, depth)
-                || lhs_root_var(rhs).is_some_and(|v| locals.contains(&v))
+                || lhs_root_var(self.gcx, rhs).is_some_and(|v| locals.contains(&v))
         } else {
             self.expr_may_contain_self(rhs, depth, locals)
         }
@@ -663,7 +655,7 @@ impl<'gcx> CallerGuards<'gcx> {
         locals: &HashSet<VariableId>,
     ) -> bool {
         if self.expr_resolves_to_self(expr, depth)
-            || lhs_root_var(expr).is_some_and(|v| locals.contains(&v))
+            || lhs_root_var(self.gcx, expr).is_some_and(|v| locals.contains(&v))
         {
             return true;
         }
@@ -691,16 +683,16 @@ impl<'gcx> CallerGuards<'gcx> {
         }
         match &expr.kind {
             ExprKind::Ident(_) | ExprKind::Member(..) | ExprKind::Index(..) => {
-                lhs_root_var(expr).is_some_and(|v| self.state_var_aliases_self(v, depth))
+                lhs_root_var(self.gcx, expr).is_some_and(|v| self.state_var_aliases_self(v, depth))
             }
             ExprKind::Call(callee, args, _) if args.exprs().next().is_none() => {
-                callee_fids(&self.gcx.hir, callee).into_iter().any(|fid| {
-                    function_no_arg_returns(&self.gcx.hir, fid, &mut |e| {
+                self.gcx.resolved_function(callee).is_some_and(|fid| {
+                    function_no_arg_returns(self.gcx, fid, &mut |e| {
                         self.expr_resolves_to_self(e, depth - 1)
                     })
                 })
             }
-            ExprKind::Call(callee, args, _) => identity_helper_arg(&self.gcx.hir, callee, args)
+            ExprKind::Call(callee, args, _) => identity_helper_arg(self.gcx, callee, args)
                 .is_some_and(|a| self.expr_resolves_to_self(a, depth - 1)),
             ExprKind::Ternary(_, t, f) => {
                 self.expr_resolves_to_self(t, depth - 1) || self.expr_resolves_to_self(f, depth - 1)
@@ -760,7 +752,7 @@ impl<'gcx> SelfAssignScan<'_, 'gcx> {
                     self.assign(lhs, rhs);
                 }
             }
-        } else if let Some(v) = lhs_root_var(lhs) {
+        } else if let Some(v) = lhs_root_var(self.guards.gcx, lhs) {
             if v == self.target {
                 let var = self.guards.gcx.hir.variable(v);
                 self.found |= self.guards.rhs_carries_self(var, rhs, self.depth, &self.locals);
@@ -780,7 +772,7 @@ impl<'gcx> SelfAssignScan<'_, 'gcx> {
         let saved = self.locals.clone();
         for &param in f.parameters {
             if let Some(arg) =
-                args.and_then(|args| arg_for_param(&self.guards.gcx.hir, f, param, args))
+                args.and_then(|args| arg_for_param(self.guards.gcx, fid, param, args))
                 && self.may_contain_self(arg)
             {
                 self.locals.insert(param);
@@ -839,7 +831,7 @@ impl<'gcx> Visit<'gcx> for SelfAssignScan<'_, 'gcx> {
                 // `target.push(<self>)` on an array / bytes state variable.
                 ExprKind::Member(recv, member) => {
                     if member.name.as_str() == "push"
-                        && lhs_root_var(recv) == Some(self.target)
+                        && lhs_root_var(self.guards.gcx, recv) == Some(self.target)
                         && expr_is_array_or_bytes(self.guards.gcx, recv)
                         && args.exprs().any(|a| self.may_contain_self(a))
                     {
@@ -847,7 +839,7 @@ impl<'gcx> Visit<'gcx> for SelfAssignScan<'_, 'gcx> {
                     }
                 }
                 _ => {
-                    if let Some(fid) = unique(function_ids(callee)) {
+                    if let Some(fid) = self.guards.gcx.resolved_function(callee) {
                         self.scan_function(fid, Some(args));
                     }
                 }
@@ -869,37 +861,37 @@ fn invoked_function(hir: &Hir<'_>, m: &Modifier<'_>) -> Option<FunctionId> {
 
 /// Argument returned verbatim (modulo casts) by an identity helper call `id(x)` / `Lib.id(x)`.
 fn identity_helper_arg<'gcx>(
-    hir: &'gcx Hir<'gcx>,
+    gcx: Gcx<'gcx>,
     callee: &'gcx Expr<'gcx>,
     args: &'gcx CallArgs<'gcx>,
 ) -> Option<&'gcx Expr<'gcx>> {
-    callee_fids(hir, callee).into_iter().find_map(|fid| {
-        let f = hir.function(fid);
+    gcx.resolved_function(callee).and_then(|fid| {
+        let f = gcx.hir.function(fid);
         let [stmt] = f.body?.stmts else { return None };
         let StmtKind::Return(Some(ret)) = &stmt.kind else { return None };
-        let param = underlying_var(peel_casts(ret))?;
+        let param = underlying_var(gcx, peel_casts(ret))?;
         (f.parameters.len() == args.len() && f.returns.len() == 1 && f.parameters.contains(&param))
-            .then(|| arg_for_param(hir, f, param, args))
+            .then(|| arg_for_param(gcx, fid, param, args))
             .flatten()
     })
 }
 
 /// Variable at the root of an lvalue, through member / index accesses and address casts.
-fn lhs_root_var(lhs: &Expr<'_>) -> Option<VariableId> {
+fn lhs_root_var(gcx: Gcx<'_>, lhs: &Expr<'_>) -> Option<VariableId> {
     match &lhs.peel_parens().kind {
         ExprKind::Member(base, _) | ExprKind::Index(base, _) | ExprKind::Payable(base) => {
-            lhs_root_var(base)
+            lhs_root_var(gcx, base)
         }
         ExprKind::Call(callee, args, _) if is_address_like_cast(callee) => {
-            args.exprs().next().and_then(lhs_root_var)
+            args.exprs().next().and_then(|expr| lhs_root_var(gcx, expr))
         }
-        _ => underlying_var(lhs),
+        _ => underlying_var(gcx, lhs),
     }
 }
 
 /// True when an index expression only depends on literals and state: no locals, parameters,
 /// builtins (`msg.sender`) or non-cast calls.
-fn index_is_static(hir: &Hir<'_>, expr: &Expr<'_>) -> bool {
+fn index_is_static(gcx: Gcx<'_>, expr: &Expr<'_>) -> bool {
     expr.visit(&mut |e| match &e.kind {
         ExprKind::Lit(_)
         | ExprKind::Type(_)
@@ -910,9 +902,9 @@ fn index_is_static(hir: &Hir<'_>, expr: &Expr<'_>) -> bool {
         | ExprKind::Index(..)
         | ExprKind::Ternary(..)
         | ExprKind::Tuple([Some(_)]) => ControlFlow::Continue(()),
-        ExprKind::Ident(reses)
-            if reses.iter().all(|r| match r {
-                Res::Item(ItemId::Variable(v)) => hir.variable(*v).kind.is_state(),
+        ExprKind::Ident(_)
+            if gcx.resolved_expr(e).is_some_and(|res| match res {
+                Res::Item(ItemId::Variable(v)) => gcx.hir.variable(v).kind.is_state(),
                 Res::Builtin(_) => false,
                 _ => true,
             }) =>
@@ -949,13 +941,13 @@ fn stmt_contains_return(stmt: &Stmt<'_>) -> bool {
 }
 
 /// `msg.sender` modulo parens, casts, `payable(..)` and no-arg helpers such as `_msgSender()`.
-fn is_msg_sender_like<'gcx>(hir: &'gcx Hir<'gcx>, expr: &'gcx Expr<'gcx>, depth: u8) -> bool {
+fn is_msg_sender_like<'gcx>(gcx: Gcx<'gcx>, expr: &'gcx Expr<'gcx>, depth: u8) -> bool {
     let expr = peel_casts(expr);
     is_msg_sender(expr)
         || matches!(&expr.kind, ExprKind::Call(callee, args, _)
             if depth > 0
                 && args.exprs().next().is_none()
-                && callee_no_arg_returns(hir, callee, |e| is_msg_sender_like(hir, e, depth - 1)))
+                && callee_no_arg_returns(gcx, callee, |e| is_msg_sender_like(gcx, e, depth - 1)))
 }
 
 /// Looks through parens, `payable(..)`, address-like casts and integer casts.
@@ -990,11 +982,12 @@ fn is_trusted_literal(expr: &Expr<'_>) -> bool {
 }
 
 fn expr_is_function<'gcx>(gcx: Gcx<'gcx>, expr: &'gcx Expr<'gcx>) -> bool {
-    expr_ty(gcx, expr).is_some_and(|ty| matches!(ty.peel_refs().kind, TyKind::Fn(_)))
+    gcx.type_of_expr(expr.peel_parens().id)
+        .is_some_and(|ty| matches!(ty.peel_refs().kind, TyKind::Fn(_)))
 }
 
 fn expr_is_array_or_bytes<'gcx>(gcx: Gcx<'gcx>, expr: &'gcx Expr<'gcx>) -> bool {
-    expr_ty(gcx, expr).is_some_and(|ty| {
+    gcx.type_of_expr(expr.peel_parens().id).is_some_and(|ty| {
         matches!(
             ty.peel_refs().kind,
             TyKind::Array(..) | TyKind::DynArray(_) | TyKind::Elementary(ElementaryType::Bytes)

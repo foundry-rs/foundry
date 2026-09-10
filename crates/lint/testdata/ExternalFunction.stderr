@@ -78,3 +78,19 @@ LL │     function returnsParam(bytes memory data) public returns (bytes memory
    │
    ╰ help: https://getfoundry.sh/forge/linting/external-function
 
+note[external-function]: `public` function can be declared `external`
+   ╭▸ ROOT/testdata/ExternalFunction.sol:LL:CC
+   │
+LL │     function consume(bytes memory data) public pure returns (uint256) {
+   │              ━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/external-function
+
+note[external-function]: `public` function can be declared `external`
+   ╭▸ ROOT/testdata/ExternalFunction.sol:LL:CC
+   │
+LL │     function consume(bytes memory data) public pure virtual returns (uint256) {
+   │              ━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/external-function
+

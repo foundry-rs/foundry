@@ -3,7 +3,7 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{
         Severity, SolLint,
-        analysis::{is_address_like, referenced_item},
+        analysis::{expr_is_address, referenced_item},
     },
 };
 use solar::{
@@ -50,11 +50,11 @@ impl<'gcx> LateLintPass<'gcx> for IncorrectStrictEquality {
 /// method), skipping static library calls to avoid internal helpers of the same name.
 fn is_externally_influenced<'gcx>(gcx: Gcx<'gcx>, expr: &Expr<'gcx>) -> bool {
     match &expr.peel_parens().kind {
-        ExprKind::Member(base, member) => member.name == kw::Balance && is_address_like(gcx, base),
+        ExprKind::Member(base, member) => member.name == kw::Balance && expr_is_address(gcx, base),
         ExprKind::Call(callee, ..) => {
             matches!(&callee.peel_parens().kind, ExprKind::Member(base, m)
                 if m.as_str() == "balanceOf"
-                    && !matches!(referenced_item(base), Some(ItemId::Contract(cid))
+                    && !matches!(referenced_item(gcx, base), Some(ItemId::Contract(cid))
                         if gcx.hir.contract(cid).kind.is_library()))
         }
         _ => false,

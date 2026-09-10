@@ -5,8 +5,8 @@ use crate::{
         Severity, SolLint,
         analysis::{
             OPENZEPPELIN_ROOTS, arg_for_param, for_each_lhs_var, is_address_type, is_builtin,
-            is_literal_false, is_require_or_assert, loop_stmts, resolved_function,
-            source_in_package, underlying_var, unique, write_target,
+            is_literal_false, is_require_or_assert, loop_stmts, source_in_package, underlying_var,
+            unique, write_target,
         },
     },
 };
@@ -17,8 +17,8 @@ use solar::{
     sema::{
         Gcx,
         hir::{
-            self, BinOpKind, CallArgs, Expr, ExprKind, FunctionId, Hir, ItemId, Res, Stmt,
-            StmtKind, TypeKind, VariableId, Visit,
+            self, BinOpKind, CallArgs, Expr, ExprKind, FunctionId, Hir, ItemId, Stmt, StmtKind,
+            TypeKind, VariableId, Visit,
         },
         ty::{TyFn, TyKind},
     },
@@ -221,7 +221,8 @@ impl<'gcx> Cx<'gcx> {
         let forwards = |index: usize, var: Option<VariableId>| {
             var.is_some_and(|var| {
                 delegations.iter().all(|&&(callee, args, _)| {
-                    self.arg(callee, args, index).and_then(underlying_var) == Some(var)
+                    self.arg(callee, args, index).and_then(|expr| underlying_var(self.gcx, expr))
+                        == Some(var)
                 })
             })
         };
@@ -233,7 +234,7 @@ impl<'gcx> Cx<'gcx> {
         let mut token = None;
         let mut token_consistent = true;
         for &&(callee, args, _) in &delegations {
-            let minted = self.arg(callee, args, 1).and_then(underlying_var);
+            let minted = self.arg(callee, args, 1).and_then(|expr| underlying_var(self.gcx, expr));
             match minted.filter(|&minted| keeps_its_value(self.gcx, minted)) {
                 Some(minted) => {
                     token_consistent &= token.is_none_or(|token| token == minted);
@@ -343,7 +344,7 @@ impl<'gcx> Cx<'gcx> {
     /// The function a call expression dispatches to, as the type checker resolved it.
     fn resolved_callee(self, expr: &Expr<'_>) -> Option<FunctionId> {
         let ExprKind::Call(callee, ..) = &expr.kind else { return None };
-        resolved_function(self.gcx, callee)
+        self.gcx.resolved_function(callee)
     }
 
     fn callee_fn(self, expr: &Expr<'_>) -> Option<&'gcx TyFn<'gcx>> {
@@ -368,8 +369,8 @@ impl<'gcx> Cx<'gcx> {
     fn is_unresolved_internal_pointer_call(self, expr: &Expr<'_>) -> bool {
         let ExprKind::Call(callee, ..) = &expr.kind else { return false };
         self.callee_fn(expr).is_some_and(|f| f.is_internal() && f.function_id.is_none())
-            && matches!(&callee.peel_parens().kind, ExprKind::Ident(reses)
-                if reses.iter().any(|res| res.as_variable().is_some()))
+            && matches!(callee.peel_parens().kind, ExprKind::Ident(_))
+            && self.gcx.resolved_variable(callee).is_some()
     }
 
     /// The argument a call binds to the callee's parameter at `index`, positional or named.
@@ -380,7 +381,7 @@ impl<'gcx> Cx<'gcx> {
         index: usize,
     ) -> Option<&'gcx Expr<'gcx>> {
         let function = self.gcx.hir.function(function_id);
-        arg_for_param(&self.gcx.hir, function, *function.parameters.get(index)?, args)
+        arg_for_param(self.gcx, function_id, *function.parameters.get(index)?, args)
     }
 
     /// Whether a resolved declaration is the ERC721 receiver hook: the exact name, the exact
@@ -424,10 +425,10 @@ impl<'gcx> Cx<'gcx> {
             }
             ExprKind::Member(base, member) => {
                 member.as_str() == "selector"
-                    && resolved_function(self.gcx, base).is_some_and(|id| self.is_receiver_hook(id))
+                    && self.gcx.resolved_function(base).is_some_and(|id| self.is_receiver_hook(id))
             }
             // A constant is worth what it holds.
-            ExprKind::Ident(reses) => reses.iter().filter_map(Res::as_variable).any(|vid| {
+            ExprKind::Ident(_) => self.gcx.resolved_variable(expr).is_some_and(|vid| {
                 let variable = self.gcx.hir.variable(vid);
                 variable.is_constant()
                     && variable.initializer.is_some_and(|init| self.is_received_selector(init))
@@ -568,11 +569,13 @@ impl<'gcx> Cx<'gcx> {
     /// Identity is by variable, not by value, so a guard that checked `var` says nothing once
     /// `var` is reassigned.
     fn mutates_var(self, stmt: &'gcx Stmt<'gcx>, var: VariableId) -> bool {
-        self.any_in_stmts(slice::from_ref(stmt), is_assembly, |expr| assigns_to(expr, var))
+        self.any_in_stmts(slice::from_ref(stmt), is_assembly, |expr| {
+            assigns_to(self.gcx, expr, var)
+        })
     }
 
     fn expr_mutates_var(self, expr: &'gcx Expr<'gcx>, var: VariableId) -> bool {
-        self.any_in_expr(expr, |expr| assigns_to(expr, var))
+        self.any_in_expr(expr, |expr| assigns_to(self.gcx, expr, var))
     }
 
     /// Whether a subtree may change the code installed at an account. Inline assembly is opaque
@@ -675,7 +678,9 @@ impl<'gcx> Cx<'gcx> {
                 .iter()
                 .enumerate()
                 .find(|&(index, _)| {
-                    self.arg(function_id, args, index).and_then(underlying_var) == Some(var)
+                    self.arg(function_id, args, index)
+                        .and_then(|expr| underlying_var(self.gcx, expr))
+                        == Some(var)
                 })
                 .map(|(_, &parameter)| parameter)
         };
@@ -1217,8 +1222,9 @@ impl<'gcx> GuardWalker<'_, 'gcx> {
         let ExprKind::Member(receiver, _) = &callee.peel_parens().kind else { return false };
         let Some(function_id) = self.cx.resolved_callee(expr) else { return false };
         self.cx.is_receiver_hook(function_id)
-            && underlying_var(receiver) == Some(self.recipient)
-            && self.cx.arg(function_id, args, 2).and_then(underlying_var) == Some(self.token)
+            && underlying_var(self.cx.gcx, receiver) == Some(self.recipient)
+            && self.cx.arg(function_id, args, 2).and_then(|expr| underlying_var(self.cx.gcx, expr))
+                == Some(self.token)
     }
 
     /// `recipient.onERC721Received(...) <op> x`, and nothing else. The comparison must be the
@@ -1245,7 +1251,7 @@ impl<'gcx> GuardWalker<'_, 'gcx> {
             let ExprKind::Member(base, member) = &code.peel_parens().kind else { return false };
             length.as_str() == "length"
                 && member.as_str() == "code"
-                && underlying_var(base) == Some(self.recipient)
+                && underlying_var(self.cx.gcx, base) == Some(self.recipient)
         };
         let literal = |expr: &Expr<'_>| match &expr.peel_parens().kind {
             ExprKind::Lit(lit) => match &lit.kind {
@@ -1326,10 +1332,10 @@ fn keeps_its_value(gcx: Gcx<'_>, variable: VariableId) -> bool {
 
 /// Whether an expression writes `var`: `var = x`, `var += x`, `var++` or `delete var`, directly
 /// or as one component of a tuple.
-fn assigns_to(expr: &Expr<'_>, var: VariableId) -> bool {
+fn assigns_to(gcx: Gcx<'_>, expr: &Expr<'_>, var: VariableId) -> bool {
     let Some(target) = write_target(expr) else { return false };
     let mut hit = false;
-    for_each_lhs_var(target, &mut |vid| hit |= vid == var);
+    for_each_lhs_var(gcx, target, &mut |vid| hit |= vid == var);
     hit
 }
 

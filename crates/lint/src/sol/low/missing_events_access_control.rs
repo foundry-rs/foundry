@@ -4,8 +4,8 @@ use crate::{
     sol::{
         Severity, SolLint,
         analysis::{
-            branch_always_exits, for_each_lhs_var, function_ids, guard_vars, is_protected,
-            is_sender_member, is_zero_value, lhs_local_var, referenced_item, underlying_var,
+            branch_always_exits, for_each_lhs_var, guard_vars, is_protected, is_sender_member,
+            is_zero_value, lhs_local_var, referenced_item, underlying_var,
         },
     },
 };
@@ -45,8 +45,7 @@ impl<'gcx> LateLintPass<'gcx> for MissingEventsAccessControl {
 
         // Every state variable some access check in the contract depends on.
         let functions: Vec<_> = contract.all_functions().collect();
-        let targets: HashSet<_> =
-            functions.iter().flat_map(|&id| guard_vars(&gcx.hir, id)).collect();
+        let targets: HashSet<_> = functions.iter().flat_map(|&id| guard_vars(gcx, id)).collect();
         if targets.is_empty() {
             return;
         }
@@ -58,11 +57,11 @@ impl<'gcx> LateLintPass<'gcx> for MissingEventsAccessControl {
                 && !func.is_constructor()
                 && !func.is_special()
                 && !matches!(func.state_mutability, StateMutability::Pure | StateMutability::View);
-            if !is_entry_point || !is_protected(&gcx.hir, func_id) {
+            if !is_entry_point || !is_protected(gcx, func_id) {
                 continue;
             }
 
-            let guard_targets = guard_vars(&gcx.hir, func_id);
+            let guard_targets = guard_vars(gcx, func_id);
             let mut analyzer = WriteAnalyzer {
                 gcx,
                 targets: &targets,
@@ -212,7 +211,7 @@ impl<'gcx> WriteAnalyzer<'_, 'gcx> {
             if is_sender_member(e) {
                 out.insert(Source::Sender);
             }
-            if let Some(var_id) = underlying_var(e) {
+            if let Some(var_id) = underlying_var(self.gcx, e) {
                 if self.gcx.hir.variable(var_id).kind.is_state() {
                     out.insert(Source::Var(var_id));
                 }
@@ -228,7 +227,7 @@ impl<'gcx> WriteAnalyzer<'_, 'gcx> {
     /// State variables written through `lhs`, resolving storage pointers to their roots.
     fn lhs_state_vars(&self, lhs: &Expr<'_>) -> Vec<VariableId> {
         let mut vars = Vec::new();
-        for_each_lhs_var(lhs, &mut |var_id| {
+        for_each_lhs_var(self.gcx, lhs, &mut |var_id| {
             let root = if self.gcx.hir.variable(var_id).kind.is_state() {
                 Some(var_id)
             } else {
@@ -282,7 +281,7 @@ impl<'gcx> WriteAnalyzer<'_, 'gcx> {
     /// Marks pending writes covered by `emit`: the event must mention the variable and share a
     /// source with the write (or the write must be a fixed clear).
     fn mark_event(&mut self, expr: &Expr<'_>) {
-        let Some(event_id) = emitted_event_id(expr) else { return };
+        let Some(event_id) = emitted_event_id(self.gcx, expr) else { return };
         let event_sources = self.value_sources(expr);
         for write in &mut self.state.writes {
             if !write.evented
@@ -355,7 +354,7 @@ impl<'gcx> Visit<'gcx> for WriteAnalyzer<'_, 'gcx> {
                     sources.extend(self.value_sources(lhs));
                 }
                 self.record_writes(lhs, &sources, is_zero_value(rhs));
-                if let Some(local) = lhs_local_var(&self.gcx.hir, lhs) {
+                if let Some(local) = lhs_local_var(self.gcx, lhs) {
                     self.set_local(local, sources, rhs);
                 }
                 ControlFlow::Continue(())
@@ -368,7 +367,9 @@ impl<'gcx> Visit<'gcx> for WriteAnalyzer<'_, 'gcx> {
             }
             ExprKind::Call(callee, args, _) => {
                 self.walk_expr(expr)?;
-                for callee_id in function_ids(callee) {
+                if matches!(callee.peel_parens().kind, ExprKind::Ident(_))
+                    && let Some(callee_id) = self.gcx.resolved_function(callee)
+                {
                     self.analyze_call(callee_id, args);
                 }
                 ControlFlow::Continue(())
@@ -415,9 +416,9 @@ fn merge_branches(
     State { taint, storage_aliases, writes }
 }
 
-fn emitted_event_id(expr: &Expr<'_>) -> Option<EventId> {
+fn emitted_event_id(gcx: Gcx<'_>, expr: &Expr<'_>) -> Option<EventId> {
     let ExprKind::Call(callee, ..) = &expr.peel_parens().kind else { return None };
-    match referenced_item(callee)? {
+    match referenced_item(gcx, callee)? {
         ItemId::Event(event_id) => Some(event_id),
         _ => None,
     }

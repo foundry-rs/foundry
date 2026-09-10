@@ -9,8 +9,9 @@ Flags comparisons that are always true or false because of an integer type's ran
 such as `uint256 x >= 0`. Also reports conditions that cover the entire range, such as
 `x > 0 || x == 0` for unsigned `x`.
 
-The compared value must be a local or state variable, optionally cast to an integer type.
-Struct fields and function return values are not checked.
+Single comparisons use the expression's checked integer type, including struct fields,
+array elements, and function return values. Combined comparisons must refer to the same
+local or state variable, optionally cast to an integer type.
 
 ## Why is this bad?
 

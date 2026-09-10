@@ -3,7 +3,7 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{
         Severity, SolLint,
-        analysis::{is_exit_call, is_inc_dec, is_require_or_assert, loop_update, tuple_elems},
+        analysis::{is_exit_call, is_require_or_assert, loop_update, tuple_elems},
     },
 };
 use alloy_primitives::{U256, uint};
@@ -15,8 +15,8 @@ use solar::{
         builtins::Builtin,
         eval::ConstValue,
         hir::{
-            self, Expr, ExprId, ExprKind, ItemId, LoopSource, Res, StateMutability, Stmt, StmtKind,
-            TypeKind, VariableId, Visit,
+            self, Expr, ExprId, ExprKind, LoopSource, StateMutability, Stmt, StmtKind, TypeKind,
+            VariableId, Visit,
         },
         ty::TyKind,
     },
@@ -268,9 +268,9 @@ impl<'gcx> Analyzer<'gcx> {
                 self.place_key(args.exprs().next()?)
             }
             ExprKind::Member(base, field) => {
-                var_of(base).map(|var| self.state.field_key(var, field.name))
+                var_of(self.gcx, base).map(|var| self.state.field_key(var, field.name))
             }
-            _ => var_of(expr).map(ValueKey::Var),
+            _ => var_of(self.gcx, expr).map(ValueKey::Var),
         }
     }
 
@@ -299,7 +299,7 @@ impl<'gcx> Analyzer<'gcx> {
         receiver
             .into_iter()
             .chain(args.exprs())
-            .filter_map(var_of)
+            .filter_map(|expr| var_of(self.gcx, expr))
             .filter(|&var| {
                 matches!(
                     self.gcx.hir.variable(var).data_location,
@@ -821,7 +821,7 @@ impl<'gcx> Visit<'gcx> for Analyzer<'gcx> {
                     self.assign(key, (None, true));
                 }
             }
-            ExprKind::Unary(op, target) if is_inc_dec(op.kind) => {
+            ExprKind::Unary(op, target) if op.kind.has_side_effects() => {
                 let _ = self.walk_expr(expr);
                 if let Some(key) = self.place_key(target) {
                     self.assign(key, (None, false));
@@ -863,7 +863,7 @@ impl<'gcx> Visit<'gcx> for SideEffects<'_, 'gcx> {
     fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<()> {
         match &expr.kind {
             ExprKind::Assign(..) | ExprKind::Delete(_) => ControlFlow::Break(()),
-            ExprKind::Unary(op, _) if is_inc_dec(op.kind) => ControlFlow::Break(()),
+            ExprKind::Unary(op, _) if op.kind.has_side_effects() => ControlFlow::Break(()),
             ExprKind::Call(callee, ..) if call_may_mutate_state(self.0.gcx, callee) => {
                 ControlFlow::Break(())
             }
@@ -889,11 +889,11 @@ impl<'gcx> Visit<'gcx> for SideEffects<'_, 'gcx> {
 }
 
 /// The variable an expression denotes, through parens and `uint256(..)`/`bytes32(..)` casts.
-fn var_of(expr: &Expr<'_>) -> Option<VariableId> {
+fn var_of(gcx: Gcx<'_>, expr: &Expr<'_>) -> Option<VariableId> {
     match &expr.peel_parens().kind {
-        ExprKind::Ident(reses) => reses.iter().find_map(Res::as_variable),
+        ExprKind::Ident(_) => gcx.resolved_variable(expr),
         ExprKind::Call(callee, args, _) if is_transparent_cast(callee) && args.len() == 1 => {
-            args.exprs().next().and_then(var_of)
+            args.exprs().next().and_then(|expr| var_of(gcx, expr))
         }
         _ => None,
     }
@@ -943,14 +943,5 @@ fn call_may_mutate_state(gcx: Gcx<'_>, callee: &Expr<'_>) -> bool {
     {
         return function.state_mutability > StateMutability::View;
     }
-    match &callee.kind {
-        ExprKind::Ident(reses) => !reses.iter().all(|res| match res {
-            Res::Builtin(_) => true,
-            Res::Item(ItemId::Function(id)) => {
-                gcx.hir.function(*id).state_mutability <= StateMutability::View
-            }
-            _ => false,
-        }),
-        _ => true,
-    }
+    gcx.resolved_builtin(callee).is_none()
 }

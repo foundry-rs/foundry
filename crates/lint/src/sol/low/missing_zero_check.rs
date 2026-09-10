@@ -62,7 +62,7 @@ impl<'gcx> LateLintPass<'gcx> for MissingZeroCheck {
                 .iter()
                 .zip(m.args.exprs())
                 .filter_map(|(&mp, arg)| {
-                    let caller = underlying_var(arg).filter(|v| params.contains(v))?;
+                    let caller = underlying_var(gcx, arg).filter(|v| params.contains(v))?;
                     Some((mp, caller))
                 })
                 .collect();
@@ -143,7 +143,7 @@ impl<'gcx> Analyzer<'gcx> {
                 for (candidate, zero) in [(lhs, rhs), (rhs, lhs)] {
                     if is_zero_value(zero)
                         && let Some(sources) =
-                            underlying_var(candidate).and_then(|v| self.taint.get(&v))
+                            underlying_var(self.gcx, candidate).and_then(|v| self.taint.get(&v))
                     {
                         facts.extend(sources);
                     }
@@ -157,7 +157,7 @@ impl<'gcx> Analyzer<'gcx> {
     fn taint_sources(&self, expr: &hir::Expr<'_>) -> HashSet<VariableId> {
         let mut out = HashSet::new();
         let _ = expr.visit(&mut |e| {
-            if let Some(srcs) = underlying_var(e).and_then(|v| self.taint.get(&v)) {
+            if let Some(srcs) = underlying_var(self.gcx, e).and_then(|v| self.taint.get(&v)) {
                 out.extend(srcs);
             }
             ControlFlow::<Never>::Continue(())
@@ -259,7 +259,7 @@ impl<'gcx> Visit<'gcx> for Analyzer<'gcx> {
             }
             ExprKind::Assign(lhs, _, rhs) => {
                 // Sink: assignment to an address state variable.
-                if let Some(v) = underlying_var(lhs)
+                if let Some(v) = underlying_var(self.gcx, lhs)
                     && self.gcx.hir.variable(v).kind.is_state()
                     && is_address_type(&self.gcx.hir, v)
                 {
@@ -268,13 +268,14 @@ impl<'gcx> Visit<'gcx> for Analyzer<'gcx> {
                     self.sink_depth -= 1;
                     return ControlFlow::Continue(());
                 }
-                if let Some(local) = lhs_local_var(&self.gcx.hir, lhs) {
+                if let Some(local) = lhs_local_var(self.gcx, lhs) {
                     self.propagate(local, rhs);
                 }
             }
             ExprKind::Ident(_) => {
                 if self.sink_depth > 0
-                    && let Some(srcs) = underlying_var(expr).and_then(|v| self.taint.get(&v))
+                    && let Some(srcs) =
+                        underlying_var(self.gcx, expr).and_then(|v| self.taint.get(&v))
                 {
                     self.sinks.extend(srcs.iter().filter(|src| !self.guarded.contains(src)));
                 }

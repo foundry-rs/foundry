@@ -1,18 +1,16 @@
 use super::CacheArrayLength;
 use crate::{
     linter::{LateLintPass, LintContext},
-    sol::{
-        Severity, SolLint,
-        analysis::{for_each_lhs_var, function_ids},
-    },
+    sol::{Severity, SolLint, analysis::for_each_lhs_var},
 };
 use solar::{
     ast::ElementaryType,
-    interface::{Span, data_structures::Never, kw, sym},
+    interface::{Span, data_structures::Never, sym},
     sema::{
         Gcx,
+        builtins::Builtin,
         hir::{
-            self, BinOpKind, Expr, ExprKind, LoopSource, Res, StateMutability, Stmt, StmtKind,
+            self, BinOpKind, Expr, ExprKind, LoopSource, StateMutability, Stmt, StmtKind,
             VariableId, Visit as _,
         },
         ty::TyKind,
@@ -72,12 +70,7 @@ fn collect_length_reads<'gcx>(
             collect_length_reads(gcx, lhs, reads);
             collect_length_reads(gcx, rhs, reads);
         }
-        BinOpKind::Lt
-        | BinOpKind::Le
-        | BinOpKind::Gt
-        | BinOpKind::Ge
-        | BinOpKind::Eq
-        | BinOpKind::Ne => {
+        kind if kind.is_cmp() => {
             for (side, other) in [(lhs, rhs), (rhs, lhs)] {
                 let side = side.peel_parens();
                 if matches!(other.peel_parens().kind, ExprKind::Ident(_))
@@ -112,10 +105,10 @@ impl<'gcx> hir::Visit<'gcx> for LoopFacts<'gcx> {
         match &expr.kind {
             ExprKind::Assign(lhs, ..) | ExprKind::Delete(lhs) => {
                 self.skip |= is_array_like(self.gcx, lhs);
-                for_each_lhs_var(lhs, &mut |v| self.written.push(v));
+                for_each_lhs_var(self.gcx, lhs, &mut |v| self.written.push(v));
             }
             ExprKind::Unary(op, inner) if op.kind.has_side_effects() => {
-                for_each_lhs_var(inner, &mut |v| self.written.push(v));
+                for_each_lhs_var(self.gcx, inner, &mut |v| self.written.push(v));
             }
             ExprKind::Call(callee, ..) => {
                 self.skip |= call_may_mutate_state(self.gcx, callee);
@@ -132,10 +125,13 @@ fn call_may_mutate_state<'gcx>(gcx: Gcx<'gcx>, callee: &'gcx Expr<'gcx>) -> bool
     match &callee.kind {
         ExprKind::Type(_) => false,
         ExprKind::Ident(_) => {
-            function_ids(callee).next().is_none_or(|f| gcx.hir.function(f).mutates_state())
+            gcx.resolved_function(callee).is_none_or(|f| gcx.hir.function(f).mutates_state())
         }
-        ExprKind::Member(base, member)
-            if matches!(member.name, sym::push | kw::Pop) && is_array_like(gcx, base) =>
+        ExprKind::Member(..)
+            if matches!(
+                gcx.resolved_builtin(callee),
+                Some(Builtin::ArrayPush0 | Builtin::ArrayPush | Builtin::ArrayPop)
+            ) =>
         {
             true
         }
@@ -158,8 +154,7 @@ fn is_array_like<'gcx>(gcx: Gcx<'gcx>, expr: &Expr<'gcx>) -> bool {
 /// The state variable `expr` names, if it is a dynamic array.
 fn state_dyn_array<'gcx>(gcx: Gcx<'gcx>, expr: &Expr<'gcx>) -> Option<VariableId> {
     let expr = expr.peel_parens();
-    let ExprKind::Ident(reses) = &expr.kind else { return None };
-    let var = reses.iter().find_map(Res::as_variable)?;
+    let var = gcx.resolved_variable(expr)?;
     (gcx.hir.variable(var).is_state_variable()
         && matches!(
             gcx.type_of_expr(expr.id).map(|ty| ty.peel_refs().kind),
