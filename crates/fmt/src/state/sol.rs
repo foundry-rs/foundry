@@ -3072,7 +3072,9 @@ impl<'ast> AttributeCommentMapper<'ast> {
         header: &'ast ast::FunctionHeader<'ast>,
     ) -> (AttributeCommentMap, Vec<AttributeInfo<'ast>>, BytePos) {
         let first_attr = self.collect_attributes(header);
-        self.cache_comments(state);
+        if !self.attributes.is_empty() {
+            self.cache_comments(state);
+        }
         (self.map(), self.attributes, first_attr)
     }
 
