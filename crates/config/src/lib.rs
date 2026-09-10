@@ -8,7 +8,7 @@
 #[macro_use]
 extern crate tracing;
 
-use crate::cache::StorageCachingConfig;
+use crate::{cache::StorageCachingConfig, etherscan::EtherscanEnvProvider};
 use alloy_primitives::{Address, B256, FixedBytes, U256, address, map::AddressHashMap};
 use eyre::{ContextCompat, WrapErr};
 use figment::{
@@ -68,7 +68,6 @@ pub use endpoints::{
 };
 
 mod etherscan;
-use etherscan::EtherscanEnvProvider;
 pub use etherscan::{EtherscanConfigError, EtherscanConfigs, ResolvedEtherscanConfig};
 
 pub mod resolve;
@@ -570,7 +569,7 @@ pub struct Config {
     pub unchecked_cheatcode_artifacts: bool,
 
     /// Whether to decode the storage layouts of contracts outside the local project in state
-    /// diffs, by compiling the verified source Sourcify or a block explorer has for them.
+    /// diffs, by compiling the verified source a block explorer has for them.
     ///
     /// Resolved layouts are cached under the explorer cache directory; `forge cache clean`
     /// clears them.

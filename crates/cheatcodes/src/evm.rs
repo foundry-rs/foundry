@@ -1169,7 +1169,7 @@ impl Cheatcode for getStorageSlotsCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { target, variableName } = self;
 
-        let storage_layout = get_contract_data(ccx, *target)
+        let storage_layout = get_contract_data(ccx, *target, true)
             .and_then(|(_, data)| data.storage_layout.as_ref().map(|layout| layout.clone()))
             .ok_or_else(|| fmt_err!("Storage layout not available for contract at {target}. Try compiling contracts with `--extra-output storageLayout`"))?;
 
@@ -2139,6 +2139,9 @@ fn get_recorded_state_diffs<FEN: FoundryEvmNetwork>(
 
     // First, collect all unique addresses we need to look up
     let mut addresses_to_lookup = AddressSet::default();
+    // Storage owner to the chain and bytecode address that executed each write. For a delegatecall,
+    // these are the proxy and implementation respectively.
+    let mut layout_sources = AddressMap::default();
     for account_access in ccx.state.recorded_account_diffs() {
         if !account_access.storageAccesses.is_empty()
             || account_access.oldBalance != account_access.newBalance
@@ -2147,6 +2150,21 @@ fn get_recorded_state_diffs<FEN: FoundryEvmNetwork>(
             for storage_access in &account_access.storageAccesses {
                 if storage_access.isWrite && !storage_access.reverted {
                     addresses_to_lookup.insert(storage_access.account);
+                    let source = (
+                        account_access.chainInfo.chainId.to::<u64>(),
+                        account_access.chainInfo.forkId,
+                        account_access.account,
+                    );
+                    if let Some(existing) = layout_sources.get_mut(&storage_access.account) {
+                        if *existing != Some(source) {
+                            // The state-diff output has no chain dimension. If writes to one
+                            // address came from different chains or implementations, decoding it
+                            // with either layout would be misleading.
+                            *existing = None;
+                        }
+                    } else {
+                        layout_sources.insert(storage_access.account, Some(source));
+                    }
                 }
             }
         }
@@ -2155,33 +2173,75 @@ fn get_recorded_state_diffs<FEN: FoundryEvmNetwork>(
     // Look up contract names and storage layouts for all addresses
     let mut contract_names = AddressMap::default();
     let mut storage_layouts = AddressMap::default();
-    let mut unknown_contracts = Vec::new();
     for address in addresses_to_lookup {
-        if let Some((artifact_id, contract_data)) = get_contract_data(ccx, address) {
+        if let Some((artifact_id, contract_data)) = get_contract_data(ccx, address, false) {
             contract_names.insert(address, artifact_id.identifier());
 
             // Also get storage layout if available
             if let Some(storage_layout) = &contract_data.storage_layout {
                 storage_layouts.insert(address, storage_layout.clone());
             }
-        } else {
-            unknown_contracts.push(address);
         }
     }
 
-    // For contracts not found locally, compile a layout out of whatever verified source Sourcify
-    // or a block explorer has. The chain comes from the running EVM rather than the config, so
-    // this also covers forks selected via `vm.createSelectFork()`.
-    if ccx.state.config.decode_external_storage && !unknown_contracts.is_empty() {
-        let chain = foundry_config::Chain::from(ccx.ecx.cfg().chain_id());
-        let external = crate::external_storage::storage_layouts(
-            &ccx.state.config.external_sources,
-            chain,
-            unknown_contracts,
-        );
-        for (address, (name, layout)) in external {
-            contract_names.insert(address, name);
-            storage_layouts.insert(address, layout);
+    // A delegatecall writes the caller's storage with the callee's layout. Prefer a local artifact
+    // for the recorded bytecode address; otherwise fetch that exact implementation on the chain
+    // where the write occurred. This remains correct for historical forks and upgraded proxies.
+    if ccx.state.config.decode_external_storage {
+        let current_chain_id = ccx.ecx.cfg().chain_id();
+        let current_fork_id = ccx.ecx.db().active_fork_id().unwrap_or_default();
+        let mut external_requests = BTreeMap::<u64, AddressSet>::new();
+        let mut external_targets = Vec::new();
+        for (storage_address, source) in layout_sources {
+            let Some((chain_id, fork_id, code_address)) = source else {
+                // Writes from multiple chains or bytecode addresses cannot share one trustworthy
+                // layout in the address-keyed output.
+                contract_names.remove(&storage_address);
+                storage_layouts.remove(&storage_address);
+                continue;
+            };
+            let recorded_context_is_current =
+                chain_id == current_chain_id && fork_id == current_fork_id;
+            if !recorded_context_is_current {
+                contract_names.remove(&storage_address);
+            }
+            if recorded_context_is_current
+                && code_address == storage_address
+                && storage_layouts.contains_key(&storage_address)
+            {
+                continue;
+            }
+
+            // A local artifact for the storage owner may describe a proxy rather than the code
+            // that executed the write. Replace it only with the recorded bytecode's layout.
+            storage_layouts.remove(&storage_address);
+            if recorded_context_is_current
+                && let Some((artifact_id, contract_data)) =
+                    get_contract_data(ccx, code_address, false)
+                && let Some(layout) = &contract_data.storage_layout
+            {
+                contract_names.insert(storage_address, artifact_id.identifier());
+                storage_layouts.insert(storage_address, layout.clone());
+            } else {
+                external_requests.entry(chain_id).or_default().insert(code_address);
+                external_targets.push((storage_address, chain_id, code_address));
+            }
+        }
+
+        for (chain_id, addresses) in external_requests {
+            let external = crate::external_storage::storage_layouts(
+                &ccx.state.config.external_sources,
+                foundry_config::Chain::from(chain_id),
+                addresses.into_iter().collect(),
+            );
+            for &(storage_address, target_chain_id, code_address) in &external_targets {
+                if target_chain_id == chain_id
+                    && let Some((name, layout)) = external.get(&code_address)
+                {
+                    contract_names.insert(storage_address, name.clone());
+                    storage_layouts.insert(storage_address, layout.clone());
+                }
+            }
         }
     }
 
@@ -2327,6 +2387,7 @@ const EIP1822_PROXIABLE_SLOT: &str =
 fn get_contract_data<'a, FEN: FoundryEvmNetwork>(
     ccx: &'a mut CheatsCtxt<'_, '_, FEN>,
     address: Address,
+    detect_proxy: bool,
 ) -> Option<(&'a foundry_compilers::ArtifactId, &'a foundry_common::contracts::ContractData)> {
     // Check if we have available artifacts to match against
     let artifacts = ccx.state.config.available_artifacts.as_ref()?;
@@ -2342,23 +2403,23 @@ fn get_contract_data<'a, FEN: FoundryEvmNetwork>(
 
     // Try to find the artifact by deployed code
     let code_bytes = code.original_bytes();
-    // First check for proxy patterns
-    let hex_str = hex::encode(&code_bytes);
-    let find_by_suffix =
-        |suffix: &str| artifacts.iter().find(|(a, _)| a.identifier().ends_with(suffix));
-    // Simple proxy detection based on storage slot patterns
-    if hex_str.contains(EIP1967_IMPL_SLOT)
-        && let Some(result) = find_by_suffix(":TransparentUpgradeableProxy")
-    {
-        return Some(result);
-    } else if hex_str.contains(EIP1822_PROXIABLE_SLOT)
-        && let Some(result) = find_by_suffix(":UUPSUpgradeable")
-    {
+    if let Some(result) = artifacts.find_by_deployed_code_exact(&code_bytes) {
         return Some(result);
     }
 
-    // Try exact match
-    if let Some(result) = artifacts.find_by_deployed_code_exact(&code_bytes) {
+    // Fall back to known proxy artifacts when exact matching is impossible.
+    let hex_str = hex::encode(&code_bytes);
+    let find_by_suffix =
+        |suffix: &str| artifacts.iter().find(|(a, _)| a.identifier().ends_with(suffix));
+    if detect_proxy
+        && hex_str.contains(EIP1967_IMPL_SLOT)
+        && let Some(result) = find_by_suffix(":TransparentUpgradeableProxy")
+    {
+        return Some(result);
+    } else if detect_proxy
+        && hex_str.contains(EIP1822_PROXIABLE_SLOT)
+        && let Some(result) = find_by_suffix(":UUPSUpgradeable")
+    {
         return Some(result);
     }
 

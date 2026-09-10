@@ -61,9 +61,8 @@ pub struct CheatsConfig {
     /// Whether to decode the storage layouts of contracts outside the local project in state
     /// diffs, by fetching their verified source code from a block explorer.
     pub decode_external_storage: bool,
-    /// Settings for looking contracts up on Sourcify and block explorers, resolved lazily
-    /// against the chain a test is running on: a `vm.createSelectFork` can change it after this
-    /// config was built.
+    /// Settings for looking contracts up on block explorers, resolved lazily against the chain a
+    /// test is running on: a `vm.createSelectFork` can change it after this config was built.
     pub external_sources: ExternalIdentifierConfig,
     /// Currently running artifact.
     pub running_artifact: Option<ArtifactId>,

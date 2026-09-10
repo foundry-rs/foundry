@@ -1055,7 +1055,7 @@ pub struct TestArgs {
     pub showmap_corpus_dir: Option<PathBuf>,
 
     /// Decode the storage layouts of contracts outside the local project in state diffs, by
-    /// compiling the verified source Sourcify or a block explorer has for them.
+    /// compiling the verified source a block explorer has for them.
     #[arg(long)]
     pub decode_external_storage: bool,
 

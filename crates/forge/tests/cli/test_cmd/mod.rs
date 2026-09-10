@@ -394,6 +394,91 @@ contract DecodeExternalStorageProxyTest is Test {
     .assert_success();
 });
 
+// A local proxy artifact must not override the layout of the bytecode that executed a delegated
+// storage write.
+forgetest_init!(decode_external_storage_prefers_delegatecall_layout, |prj, cmd| {
+    prj.add_test(
+        "DecodeDelegatecallStorage.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Implementation {
+    uint256 public implementationValue;
+    bytes32 public constant IMPLEMENTATION_SLOT =
+        0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
+
+    function setValue(uint256 value) external {
+        implementationValue = value;
+    }
+}
+
+contract TransparentUpgradeableProxy {
+    uint256 public guessedProxyValue;
+}
+
+contract Proxy {
+    uint256 public misleadingProxyValue;
+    bytes32 private constant IMPLEMENTATION_SLOT =
+        0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
+
+    constructor(address implementation) {
+        bytes32 slot = IMPLEMENTATION_SLOT;
+        assembly {
+            sstore(slot, implementation)
+        }
+    }
+
+    fallback() external payable {
+        bytes32 slot = IMPLEMENTATION_SLOT;
+        assembly {
+            let implementation := sload(slot)
+            calldatacopy(0, 0, calldatasize())
+            let success := delegatecall(gas(), implementation, 0, calldatasize(), 0, 0)
+            returndatacopy(0, 0, returndatasize())
+            if iszero(success) { revert(0, returndatasize()) }
+            return(0, returndatasize())
+        }
+    }
+}
+
+contract DecodeDelegatecallStorageTest is Test {
+    function test_usesRecordedImplementationLayout() public {
+        Implementation implementation = new Implementation();
+        Proxy proxy = new Proxy(address(implementation));
+
+        vm.startStateDiffRecording();
+        Implementation(address(proxy)).setValue(42);
+        string memory diff = vm.getStateDiffJson();
+
+        assertTrue(vm.contains(diff, "implementationValue"));
+        assertFalse(vm.contains(diff, "misleadingProxyValue"));
+        assertFalse(vm.contains(diff, "guessedProxyValue"));
+
+        vm.startStateDiffRecording();
+        Implementation(address(proxy)).setValue(43);
+        vm.chainId(1);
+        string memory priorChainDiff = vm.getStateDiffJson();
+
+        // The current journal can no longer prove the code identity recorded on the prior chain.
+        assertFalse(vm.contains(priorChainDiff, "implementationValue"));
+        assertFalse(vm.contains(priorChainDiff, "misleadingProxyValue"));
+        assertFalse(vm.contains(priorChainDiff, "guessedProxyValue"));
+    }
+}
+"#,
+    );
+
+    cmd.args([
+        "test",
+        "--mt",
+        "test_usesRecordedImplementationLayout",
+        "--decode-external-storage",
+        "--extra-output",
+        "storageLayout",
+    ])
+    .assert_success();
+});
+
 // tests that a warning is displayed if there are tests but none match a non-empty filter
 forgetest!(suggest_when_no_tests_match, |prj, cmd| {
     prj.add_source(

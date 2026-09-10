@@ -218,7 +218,7 @@ impl SlotInfo {
             if length_byte & 1 == 1 {
                 // Long bytes/string - populate members
                 let length: U256 = U256::from_be_bytes(base_value.0) >> 1;
-                let byte_len: usize = length.try_into().unwrap_or(usize::MAX);
+                let byte_len = length.try_into().unwrap_or(usize::MAX);
                 let num_slots = byte_len.div_ceil(32).min(256);
                 let data_start = U256::from_be_bytes(keccak256(base_slot.0).0);
 
@@ -924,7 +924,7 @@ impl SlotIdentifier {
 
             // Check if our slot is within the data region
             if slot >= data_start && slot < data_start + num_slots {
-                let slot_index: usize = (slot - data_start).try_into().unwrap_or(usize::MAX);
+                let slot_index = (slot - data_start).try_into().unwrap_or(usize::MAX);
 
                 return Some(SlotInfo {
                     label: format!("{}[{}]", storage.label, slot_index),
@@ -999,16 +999,37 @@ fn get_array_base_indices(dyn_type: &DynSolType) -> String {
 /// Handles `contract X` types (which are addresses under the hood) and `enum X` types
 /// (which are uint8) that `DynSolType::parse` doesn't recognize.
 fn parse_sol_type(label: &str) -> Option<DynSolType> {
-    if label.starts_with("contract ") {
-        Some(DynSolType::Address)
+    let scalar = if label.starts_with("contract ") {
+        "address"
     } else if label.starts_with("enum ") {
-        Some(DynSolType::Uint(8))
+        "uint8"
     } else {
-        DynSolType::parse(label).ok()
-    }
+        return DynSolType::parse(label).ok();
+    };
+    let suffix = label.find('[').map_or("", |index| &label[index..]);
+    DynSolType::parse(&format!("{scalar}{suffix}")).ok()
 }
 
 /// Checks if a given type label represents a struct type.
 pub fn is_struct(s: &str) -> bool {
     s.starts_with("struct ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preserves_contract_and_enum_array_dimensions() {
+        for (label, expected) in [
+            ("contract IERC20", "address"),
+            ("contract IERC20[]", "address[]"),
+            ("contract IERC20[4][]", "address[4][]"),
+            ("enum Example.Status", "uint8"),
+            ("enum Example.Status[4]", "uint8[4]"),
+            ("enum Example.Status[][4]", "uint8[][4]"),
+        ] {
+            assert_eq!(parse_sol_type(label), DynSolType::parse(expected).ok(), "{label}");
+        }
+    }
 }

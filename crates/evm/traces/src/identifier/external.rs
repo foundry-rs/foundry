@@ -74,13 +74,37 @@ impl ExternalIdentifierConfig {
     ///
     /// Returns `None` when there is nothing to look them up with: identification is off, or
     /// neither Sourcify nor a block explorer is usable.
-    pub fn identifier(&self, mut chain: Option<Chain>) -> Option<ExternalIdentifier> {
+    pub fn identifier(&self, chain: Option<Chain>) -> Option<ExternalIdentifier> {
+        self.identifier_with(chain, self.etherscan_alias.as_deref(), true)
+    }
+
+    /// Builds an identifier for compiling storage layouts on exactly `chain`.
+    ///
+    /// Storage layouts are cached by chain, so an alias for another chain must not override the
+    /// chain that executed the recorded storage access. Sourcify is omitted because its compact
+    /// response does not contain the verified sources required for compilation.
+    pub fn storage_identifier(&self, chain: Chain) -> Option<ExternalIdentifier> {
+        let mut config = self.clone();
+        if config.etherscan_api_key.as_ref().is_some_and(|key| config.etherscan.contains_key(key)) {
+            // `etherscan_api_key` also accepts a table alias. Do not reuse an alias name as the
+            // literal API key for a different runtime chain.
+            config.etherscan_api_key = None;
+        }
+        config.identifier_with(Some(chain), None, false)
+    }
+
+    fn identifier_with(
+        &self,
+        mut chain: Option<Chain>,
+        etherscan_alias: Option<&str>,
+        sourcify: bool,
+    ) -> Option<ExternalIdentifier> {
         if self.offline || self.timeout == 0 {
             return None;
         }
 
         let resolved = self.etherscan.resolve_for(
-            self.etherscan_alias.as_deref(),
+            etherscan_alias,
             self.etherscan_api_key.as_deref(),
             chain.or(self.chain),
         );
@@ -100,7 +124,7 @@ impl ExternalIdentifierConfig {
         };
 
         let mut fetchers = Vec::<Arc<dyn ExternalFetcherT>>::new();
-        if let Some(chain) = chain {
+        if sourcify && let Some(chain) = chain {
             debug!(target: "evm::traces::external", ?chain, "using sourcify identifier");
             fetchers.push(Arc::new(SourcifyFetcher::new(chain)));
         }
@@ -126,10 +150,15 @@ impl ExternalIdentifierConfig {
             remaining_budget: Duration::from_secs(self.timeout),
         })
     }
+
+    /// Maximum time a storage-layout lookup may block.
+    pub const fn storage_timeout(&self) -> Duration {
+        Duration::from_secs(self.timeout)
+    }
 }
 
 impl ExternalIdentifier {
-    /// Creates a new external identifier with the given client
+    /// Creates a new external identifier with the given client.
     pub fn new(config: &Config, chain: Option<Chain>) -> eyre::Result<Option<Self>> {
         Ok(ExternalIdentifierConfig::new(config).identifier(chain))
     }
@@ -232,7 +261,12 @@ impl ExternalIdentifier {
     }
 
     async fn fetch_addresses_async(&mut self, addresses: &[Address]) {
-        if addresses.is_empty() || self.remaining_budget.is_zero() {
+        self.fetch_addresses_with_timeout(addresses, self.remaining_budget).await;
+    }
+
+    async fn fetch_addresses_with_timeout(&mut self, addresses: &[Address], timeout: Duration) {
+        let timeout = timeout.min(self.remaining_budget);
+        if addresses.is_empty() || timeout.is_zero() {
             return;
         }
 
@@ -242,7 +276,7 @@ impl ExternalIdentifier {
             .into_iter()
             .map(|fetcher| ExternalFetcher::new(fetcher, addresses));
         let started = tokio::time::Instant::now();
-        let timed_out = tokio::time::timeout(self.remaining_budget, async {
+        let timed_out = tokio::time::timeout(timeout, async {
             let mut fetched = futures::stream::select_all(fetchers);
             while let Some((address, value)) = fetched.next().await {
                 self.cache_fetched(address, value);
@@ -251,8 +285,7 @@ impl ExternalIdentifier {
         .await
         .is_err();
         self.remaining_budget = self.remaining_budget.saturating_sub(started.elapsed());
-        if timed_out {
-            self.remaining_budget = Duration::ZERO;
+        if timed_out && self.remaining_budget.is_zero() {
             warn!(target: "evm::traces::external", "external identification timed out; disabling it for the remainder of this session");
         }
     }
@@ -371,37 +404,25 @@ impl ExternalIdentifier {
             .collect()
     }
 
-    /// Resolves each address to the contract that actually implements it — itself, or the last
-    /// link of its proxy chain — along with that contract's verified metadata.
+    /// Fetches metadata for the exact addresses supplied, without following explorer proxy hints.
     ///
-    /// A proxy `delegatecall`s into its implementation, so it is the implementation that
-    /// describes the storage living in the proxy's own slots.
-    ///
-    /// A `None` entry means nothing has verified source for the address, which stays true until
-    /// someone verifies it. An address **missing** from the map is one the lookup reached no
-    /// conclusion about — the budget ran out, the explorer errored, a proxy pointed nowhere — and
-    /// asking again later may well answer differently.
-    pub async fn get_implementations(
+    /// Storage decoding uses the implementation address recorded by the EVM, which is authoritative
+    /// for historical forks and proxies that upgrade over time.
+    pub async fn get_metadata(
         &mut self,
         addresses: &[Address],
-    ) -> AddressMap<Option<(Address, Metadata)>> {
-        self.resolve_proxy_chains(addresses)
-            .await
-            .into_iter()
-            .zip(addresses.iter().copied())
-            .filter_map(|(chain, address)| {
-                let implementation = match chain.stop {
-                    // Walked to the end, so the last link is what implements the address.
-                    Stop::End => {
-                        let link = *chain.links.last()?;
-                        Some((link, self.metadata(link)?.clone()))
-                    }
-                    // Conclusive: nothing along the chain has verified source.
-                    Stop::Unverified => None,
-                    // Says nothing about the address, so don't answer for it at all.
-                    Stop::Unresolved => return None,
-                };
-                Some((address, implementation))
+        timeout: Duration,
+    ) -> AddressMap<Option<Metadata>> {
+        let to_fetch = addresses
+            .iter()
+            .copied()
+            .filter(|address| !self.contracts.contains_key(address))
+            .collect::<Vec<_>>();
+        self.fetch_addresses_with_timeout(&to_fetch, timeout).await;
+        addresses
+            .iter()
+            .filter_map(|address| {
+                self.contracts.get(address).map(|(_, metadata)| (*address, metadata.clone()))
             })
             .collect()
     }
@@ -605,13 +626,13 @@ impl Stream for ExternalFetcher {
                                 pin.queue.push(addr);
                             } else {
                                 warn!(target: "evm::traces::external", "blocked by cloudflare, giving up on address");
-                                return Poll::Ready(Some((addr, (pin.fetcher.kind(), None))));
+                                // No conclusion: do not turn a transient outage into a cached
+                                // "unverified" result.
                             }
                         }
                         Err(err) => {
                             warn!(target: "evm::traces::external", ?err, "could not get info");
-                            // Cache the failure so we don't re-fetch on subsequent arenas.
-                            return Poll::Ready(Some((addr, (pin.fetcher.kind(), None))));
+                            // Only ContractCodeNotVerified is a conclusive negative result.
                         }
                     }
                 }
@@ -875,6 +896,35 @@ mod tests {
         }
     }
 
+    struct ErrorFetcher {
+        calls: Arc<AtomicUsize>,
+        invalid: AtomicBool,
+    }
+
+    #[async_trait::async_trait]
+    impl ExternalFetcherT for ErrorFetcher {
+        fn kind(&self) -> FetcherKind {
+            FetcherKind::Etherscan
+        }
+
+        fn timeout(&self) -> Duration {
+            Duration::ZERO
+        }
+
+        fn concurrency(&self) -> usize {
+            1
+        }
+
+        fn invalid_api_key(&self) -> &AtomicBool {
+            &self.invalid
+        }
+
+        async fn fetch(&self, _address: Address) -> Result<Option<Metadata>, EtherscanError> {
+            self.calls.fetch_add(1, AtomicOrdering::Relaxed);
+            Err(EtherscanError::Unknown("temporary explorer failure".to_string()))
+        }
+    }
+
     fn metadata(contract_name: &str) -> Metadata {
         SourcifyMetadata {
             abi: None,
@@ -899,6 +949,22 @@ mod tests {
         config.tracing.external_identification_timeout = 0;
 
         assert!(ExternalIdentifier::new(&config, Some(Chain::mainnet())).unwrap().is_none());
+    }
+
+    #[test]
+    fn storage_identifier_does_not_use_an_alias_for_another_chain() {
+        let config = ExternalIdentifierConfig {
+            timeout: 1,
+            etherscan: serde_json::from_value(serde_json::json!({
+                "mainnet": { "chain": 1, "key": "key" }
+            }))
+            .unwrap(),
+            etherscan_alias: Some("mainnet".to_string()),
+            etherscan_api_key: Some("mainnet".to_string()),
+            ..Default::default()
+        };
+
+        assert!(config.storage_identifier(Chain::from(8453)).is_none());
     }
 
     /// Fetcher that returns a transient Cloudflare block the first time it sees an address, then
@@ -1037,6 +1103,28 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn metadata_requests_preserve_cumulative_budget() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let fetcher: Arc<dyn ExternalFetcherT> = Arc::new(TestFetcher {
+            kind: FetcherKind::Etherscan,
+            delay: None,
+            contract_name: None,
+            calls: Arc::clone(&calls),
+            invalid: AtomicBool::new(false),
+        });
+        let mut identifier = test_identifier(vec![fetcher], Duration::from_millis(30));
+        let address = Address::with_last_byte(1);
+
+        assert!(identifier.get_metadata(&[address], Duration::from_millis(10)).await.is_empty());
+        assert!(!identifier.remaining_budget.is_zero());
+        assert!(identifier.remaining_budget <= Duration::from_millis(20));
+        assert!(identifier.get_metadata(&[address], Duration::from_secs(1)).await.is_empty());
+        assert!(identifier.remaining_budget.is_zero());
+        assert!(identifier.get_metadata(&[address], Duration::from_secs(1)).await.is_empty());
+        assert_eq!(calls.load(AtomicOrdering::Relaxed), 2);
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn rate_limit_retries_cannot_escape_timeout_budget() {
         let calls = Arc::new(AtomicUsize::new(0));
         let fetcher: Arc<dyn ExternalFetcherT> = Arc::new(RateLimitedFetcher {
@@ -1049,6 +1137,23 @@ mod tests {
 
         assert!(identifier.remaining_budget.is_zero());
         assert!(calls.load(AtomicOrdering::Relaxed) > 1);
+    }
+
+    #[tokio::test]
+    async fn transient_errors_are_not_cached_as_unverified() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut identifier = test_identifier(
+            vec![Arc::new(ErrorFetcher {
+                calls: Arc::clone(&calls),
+                invalid: AtomicBool::new(false),
+            })],
+            Duration::from_secs(1),
+        );
+        let address = Address::with_last_byte(1);
+
+        assert!(identifier.get_metadata(&[address], Duration::from_secs(1)).await.is_empty());
+        assert!(identifier.get_metadata(&[address], Duration::from_secs(1)).await.is_empty());
+        assert_eq!(calls.load(AtomicOrdering::Relaxed), 2);
     }
 
     #[test]
@@ -1109,66 +1214,23 @@ mod tests {
         assert!(!complete);
     }
 
-    /// Flattens a resolved implementation to something comparable.
-    fn described(implementation: &Option<(Address, Metadata)>) -> Option<(Address, &str)> {
-        implementation
-            .as_ref()
-            .map(|(address, metadata)| (*address, metadata.contract_name.as_str()))
-    }
-
     #[tokio::test]
-    async fn get_implementations_follows_proxies_to_the_last_link() {
-        let plain = Address::with_last_byte(1);
-        let proxy = Address::with_last_byte(2);
-        let implementation_address = Address::with_last_byte(3);
-        let unverified = Address::with_last_byte(4);
-
-        let mut proxy_metadata = metadata("Proxy");
-        proxy_metadata.proxy = 1;
-        proxy_metadata.implementation = Some(implementation_address);
-
-        let mut identifier = test_identifier(Vec::new(), Duration::from_secs(1));
-        identifier.cache_fetched(plain, (FetcherKind::Etherscan, Some(metadata("Plain"))));
-        identifier.cache_fetched(proxy, (FetcherKind::Etherscan, Some(proxy_metadata)));
-        identifier.cache_fetched(
-            implementation_address,
-            (FetcherKind::Etherscan, Some(metadata("Implementation"))),
-        );
-        identifier.cache_fetched(unverified, (FetcherKind::Etherscan, None));
-
-        let results = identifier.get_implementations(&[plain, proxy, unverified]).await;
-
-        // A plain contract implements itself.
-        assert_eq!(described(&results[&plain]), Some((plain, "Plain")));
-        // A proxy resolves to the implementation it delegates to.
-        assert_eq!(described(&results[&proxy]), Some((implementation_address, "Implementation")));
-        // Present but `None`: conclusively not verified, as opposed to absent.
-        assert!(results[&unverified].is_none());
-        assert_eq!(results.len(), 3);
-    }
-
-    #[tokio::test]
-    async fn get_implementations_omits_addresses_it_could_not_resolve() {
+    async fn storage_metadata_does_not_follow_explorer_proxy_hints() {
         let proxy = Address::with_last_byte(1);
         let implementation_address = Address::with_last_byte(2);
-
         let mut proxy_metadata = metadata("Proxy");
         proxy_metadata.proxy = 1;
         proxy_metadata.implementation = Some(implementation_address);
-
-        // The proxy resolved but its implementation never did — a timed out or errored lookup.
-        // Reporting that as `Unverified` would let a transient outage be cached as a verdict.
-        let mut identifier = test_identifier(Vec::new(), Duration::ZERO);
+        let mut identifier = test_identifier(Vec::new(), Duration::from_secs(1));
         identifier.cache_fetched(proxy, (FetcherKind::Etherscan, Some(proxy_metadata)));
-
-        assert!(identifier.get_implementations(&[proxy]).await.is_empty());
-
-        // Once it does resolve, the answer is conclusive.
         identifier.cache_fetched(
             implementation_address,
-            (FetcherKind::Etherscan, Some(metadata("Implementation"))),
+            (FetcherKind::Etherscan, Some(metadata("CurrentImplementation"))),
         );
-        let results = identifier.get_implementations(&[proxy]).await;
-        assert_eq!(described(&results[&proxy]), Some((implementation_address, "Implementation")));
+
+        let result = identifier.get_metadata(&[proxy], Duration::from_secs(1)).await;
+
+        assert_eq!(result[&proxy].as_ref().unwrap().contract_name, "Proxy");
+        assert_eq!(result.len(), 1);
     }
 }

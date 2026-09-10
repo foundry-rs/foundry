@@ -1,8 +1,8 @@
 //! Storage layouts for contracts that aren't part of the local project.
 //!
 //! [`foundry_common::external_storage`] turns a verified source into a storage layout and caches
-//! the result; [`ExternalIdentifier`] finds that source on Sourcify or a block explorer. This
-//! module is the seam between them, and owns the state that has to outlive a single lookup.
+//! the result; [`ExternalIdentifier`] finds that source on a block explorer. This module is the
+//! seam between them, and owns the state that has to outlive a single lookup.
 
 use alloy_primitives::{
     Address,
@@ -12,7 +12,10 @@ use foundry_common::external_storage::fetch_external_storage_layouts;
 use foundry_compilers::artifacts::StorageLayout;
 use foundry_config::Chain;
 use foundry_evm_traces::identifier::{ExternalIdentifier, ExternalIdentifierConfig};
-use std::sync::{Arc, LazyLock, Mutex};
+use std::{
+    sync::{Arc, LazyLock, Mutex, MutexGuard, TryLockError},
+    time::{Duration, Instant},
+};
 
 /// Chain id to the identifier for that chain, or `None` if one couldn't be built.
 type Identifiers = HashMap<u64, Option<Arc<Mutex<ExternalIdentifier>>>>;
@@ -33,11 +36,22 @@ pub(crate) fn storage_layouts(
     chain: Chain,
     addresses: Vec<Address>,
 ) -> AddressMap<(String, Arc<StorageLayout>)> {
-    fetch_external_storage_layouts(chain, addresses, |unresolved| {
-        let Some(identifier) = identifier(sources, chain) else { return Default::default() };
-        let mut identifier = identifier.lock().unwrap_or_else(|err| err.into_inner());
-        foundry_common::block_on(identifier.get_implementations(unresolved))
-    })
+    fetch_external_storage_layouts(
+        chain,
+        addresses,
+        sources.storage_timeout(),
+        |unresolved, timeout| {
+            let deadline = Instant::now().checked_add(timeout).unwrap_or_else(Instant::now);
+            let Some(identifier) = identifier(sources, chain, deadline) else {
+                return Default::default();
+            };
+            let Some(mut identifier) = lock_until(&identifier, deadline) else {
+                return Default::default();
+            };
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            foundry_common::block_on(identifier.get_metadata(unresolved, remaining))
+        },
+    )
 }
 
 /// The identifier for `chain`, building it on first use.
@@ -47,19 +61,37 @@ pub(crate) fn storage_layouts(
 fn identifier(
     sources: &ExternalIdentifierConfig,
     chain: Chain,
+    deadline: Instant,
 ) -> Option<Arc<Mutex<ExternalIdentifier>>> {
-    let mut identifiers = IDENTIFIERS.lock().unwrap_or_else(|err| err.into_inner());
+    let mut identifiers = lock_until(&IDENTIFIERS, deadline)?;
     identifiers
         .entry(chain.id())
-        .or_insert_with(|| match sources.identifier(Some(chain)) {
+        .or_insert_with(|| match sources.storage_identifier(chain) {
             Some(identifier) => Some(Arc::new(Mutex::new(identifier))),
             None => {
                 let _ = sh_warn!(
-                    "cannot decode external storage on chain {chain}: no block explorer is \
-                     configured for it and Sourcify is unavailable"
+                    "cannot decode external storage on chain {chain}: no matching block explorer \
+                     is configured"
                 );
                 None
             }
         })
         .clone()
+}
+
+/// Acquires an external-lookup lock without exceeding the caller's deadline.
+fn lock_until<T>(mutex: &Mutex<T>, deadline: Instant) -> Option<MutexGuard<'_, T>> {
+    loop {
+        match mutex.try_lock() {
+            Ok(guard) => return Some(guard),
+            Err(TryLockError::Poisoned(err)) => return Some(err.into_inner()),
+            Err(TryLockError::WouldBlock) => {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    return None;
+                }
+                std::thread::sleep(remaining.min(Duration::from_millis(1)));
+            }
+        }
+    }
 }
