@@ -292,6 +292,7 @@ impl CallArgs {
 
         #[cfg(feature = "base")]
         if evm_opts.networks.is_base() {
+            super::validate_base_transaction_options(&self.tx)?;
             return self
                 .run_with_network_and_opts::<foundry_evm::core::evm::BaseEvmNetwork>(
                     config,
@@ -988,7 +989,8 @@ mod tests {
     #[cfg(all(not(feature = "base"), feature = "optimism"))]
     fn chain_id_without_base_still_resolves_to_optimism() {
         for chain_id in [8453, 84532] {
-            let networks = infer_network_from_chain_id(NetworkConfigs::default(), chain_id)
+            let networks = NetworkConfigs::default()
+                .try_with_chain_id(chain_id)
                 .unwrap_or_else(|error| panic!("chain ID {chain_id} must still resolve: {error}"));
             assert!(networks.is_optimism(), "chain ID {chain_id} must resolve to Optimism");
         }

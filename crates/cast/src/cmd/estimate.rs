@@ -100,6 +100,7 @@ impl EstimateArgs {
 
         #[cfg(feature = "base")]
         if resolve_network(&self.rpc.load_config()?).await?.is_base() {
+            super::validate_base_transaction_options(&self.tx)?;
             return self.run_with_network::<BaseNetwork>().await;
         }
 

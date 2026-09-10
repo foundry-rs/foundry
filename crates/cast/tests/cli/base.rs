@@ -53,3 +53,111 @@ casttest!(cast_decode_tx_network_base_short_and_long_equivalent, |_prj, cmd| {
 
     assert_eq!(via_long, via_short, "--network base and -n base should produce same output");
 });
+
+casttest!(cast_base_rejects_blob_options, |prj, cmd| {
+    prj.update_config(|config| {
+        config.networks = foundry_evm_networks::NetworkConfigs::with_base();
+        config.chain = Some(foundry_config::Chain::from_id(8453));
+    });
+    // The nonexistent path proves rejection precedes reading and discarding the blob data.
+    for command in ["mktx", "send", "estimate", "access-list"] {
+        for options in [vec!["--blob"], vec!["--blob", "--eip4844"], vec!["--blob-gas-price", "1"]]
+        {
+            cmd.cast_fuse()
+                .current_dir(prj.root())
+                .args([command, "0x0000000000000000000000000000000000000001"])
+                .args(options)
+                .args(["--rpc-url", "http://127.0.0.1:1"])
+                .assert_failure()
+                .stdout_eq(str![""])
+                .stderr_eq(str![[r#"
+Error: Base does not support blob transactions; remove --blob, --eip4844, and --blob-gas-price
+
+"#]]);
+        }
+    }
+    for command in ["mktx", "send"] {
+        cmd.cast_fuse()
+            .current_dir(prj.root())
+            .args([
+                command,
+                "0x0000000000000000000000000000000000000001",
+                "--blob",
+                "--path",
+                "missing-blob.bin",
+                "--rpc-url",
+                "http://127.0.0.1:1",
+            ])
+            .assert_failure()
+            .stdout_eq(str![""])
+            .stderr_eq(str![[r#"
+Error: Base does not support blob transactions; remove --blob, --eip4844, and --blob-gas-price
+
+"#]]);
+    }
+});
+
+casttest!(cast_base_transaction_roundtrip, async |prj, cmd| {
+    let (_api, handle) = anvil::spawn(NodeConfig::test().with_chain_id(Some(8453u64))).await;
+    let provider = handle.http_provider();
+    let mut accounts = handle.dev_accounts();
+    let from = accounts.next().unwrap();
+    let to = accounts.next().unwrap();
+    let receipt = provider
+        .send_transaction(
+            TransactionRequest::default().from(from).to(to).value(U256::from(1)).into(),
+        )
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let hash = receipt.transaction_hash;
+    let raw = provider.get_raw_transaction_by_hash(hash).await.unwrap().unwrap();
+    cmd.args(["tx", &hash.to_string(), "--raw", "--rpc-url", &handle.http_endpoint()])
+        .assert_success()
+        .stdout_eq(format!("{raw}\n"))
+        .stderr_eq(str![""]);
+
+    // Base construction must preserve ordinary transaction fields too.
+    let encoded = cmd
+        .cast_fuse()
+        .current_dir(prj.root())
+        .args([
+            "mktx",
+            &to.to_string(),
+            "--chain",
+            "8453",
+            "--nonce",
+            "7",
+            "--gas-limit",
+            "21000",
+            "--gas-price",
+            "1000000000",
+            "--priority-gas-price",
+            "1",
+            "--value",
+            "123",
+            "--raw-unsigned",
+            "--rpc-url",
+            "http://127.0.0.1:1",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let bytes = hex::decode(encoded.trim()).unwrap();
+    let tx = alloy_consensus::TypedTransaction::decode_unsigned(&mut bytes.as_slice()).unwrap();
+    assert_eq!(
+        tx,
+        alloy_consensus::TypedTransaction::Eip1559(alloy_consensus::TxEip1559 {
+            chain_id: 8453,
+            nonce: 7,
+            gas_limit: 21000,
+            max_fee_per_gas: 1000000000,
+            max_priority_fee_per_gas: 1,
+            to: to.into(),
+            value: U256::from(123),
+            ..Default::default()
+        })
+    );
+});

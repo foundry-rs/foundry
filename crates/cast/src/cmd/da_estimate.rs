@@ -1,7 +1,7 @@
 //! Estimates the data availability size of a block for opstack.
 
 use alloy_consensus::BlockHeader;
-use alloy_network::{AnyNetwork, BlockResponse, Ethereum, Network, eip2718::Encodable2718};
+use alloy_network::{BlockResponse, Ethereum, Network, eip2718::Encodable2718};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
 use clap::Parser;
@@ -35,10 +35,7 @@ impl DAEstimateArgs {
         let config = rpc.load_config()?;
         let network = match network {
             Some(n) => n,
-            None => {
-                let provider = ProviderBuilder::<AnyNetwork>::from_config(&config)?.build()?;
-                provider.get_chain_id().await?.into()
-            }
+            None => super::resolve_network(&config).await?,
         };
         match network {
             #[cfg(feature = "base")]

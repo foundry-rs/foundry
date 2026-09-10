@@ -23,11 +23,11 @@ use serde::Serialize;
 use serde_json::Value;
 use std::fmt::{Display, Write};
 
-#[cfg(feature = "base")]
+#[cfg(any(feature = "base", feature = "optimism"))]
 use alloy_network::AnyNetwork;
-#[cfg(feature = "base")]
+#[cfg(any(feature = "base", feature = "optimism"))]
 use foundry_common::provider::ProviderBuilder;
-#[cfg(feature = "base")]
+#[cfg(any(feature = "base", feature = "optimism"))]
 use foundry_evm_networks::NetworkVariant;
 
 const MAX_CONCURRENT_RPC_REQUESTS: usize = 5;
@@ -151,37 +151,39 @@ pub mod txpool;
 pub mod vaddr;
 pub mod wallet;
 
-/// Resolves the configured network, falling back to the RPC chain ID.
+/// Resolves the RPC network without requiring its local EVM implementation.
 ///
-/// Only Base-capable builds resolve a network here: every other family keeps picking its provider
-/// from the flags it already reads, and paying for an extra `eth_chainId` on their behalf would
-/// change behavior no other network asked for.
-#[cfg(feature = "base")]
+/// Explicit configuration takes precedence over the chain ID. Curl mode cannot query the node,
+/// so it uses Ethereum's RPC types unless a network or chain is configured.
+#[cfg(any(feature = "base", feature = "optimism"))]
 pub(crate) async fn resolve_network(config: &Config) -> eyre::Result<NetworkVariant> {
     if let Some(network) = config.networks.resolved_network() {
         return Ok(network);
     }
     if let Some(chain) = config.chain {
-        return network_for_chain_id(chain.id());
+        return Ok(chain.id().into());
+    }
+    if config.eth_rpc_curl {
+        return Ok(NetworkVariant::Ethereum);
     }
 
     let provider = ProviderBuilder::<AnyNetwork>::from_config(config)?.build()?;
-    network_for_chain_id(provider.get_chain_id().await?)
+    Ok(provider.get_chain_id().await?.into())
 }
 
-/// Resolves a chain ID to its network family, reporting a disabled family as an error.
-///
-/// The infallible `From<ChainId>` conversion swallows that error and degrades to Ethereum, which
-/// would make `cast tx` and `cast block --raw` disagree with `cast call` on the same input. Unknown
-/// chain IDs still fall back to Ethereum, as before.
+/// Rejects blob options before Base's transaction builder can discard them.
 #[cfg(feature = "base")]
-fn network_for_chain_id(chain_id: u64) -> eyre::Result<NetworkVariant> {
-    NetworkVariant::from_known_chain_id(chain_id)
-        .map_err(eyre::Report::msg)
-        .map(|network| network.unwrap_or(NetworkVariant::Ethereum))
+pub(crate) fn validate_base_transaction_options(
+    tx: &foundry_cli::opts::TransactionOpts,
+) -> eyre::Result<()> {
+    eyre::ensure!(
+        !tx.blob && !tx.eip4844 && tx.blob_gas_price.is_none(),
+        "Base does not support blob transactions; remove --blob, --eip4844, and --blob-gas-price"
+    );
+    Ok(())
 }
 
-#[cfg(all(test, any(feature = "base", feature = "monad")))]
+#[cfg(all(test, any(feature = "base", feature = "monad", feature = "optimism")))]
 mod tests {
     use super::*;
 
@@ -212,20 +214,43 @@ mod tests {
         assert_eq!(resolve_network(&config).await.unwrap(), NetworkVariant::Base);
     }
 
-    /// A disabled family has to surface here too, otherwise `cast tx` reports Ethereum for input
-    /// that `cast call` rejects.
-    #[cfg(all(feature = "base", not(feature = "monad")))]
+    #[cfg(all(any(feature = "base", feature = "optimism"), not(feature = "monad")))]
     #[tokio::test]
-    async fn resolve_network_reports_disabled_family() {
+    async fn resolve_network_allows_rpc_without_local_evm() {
         let config = Config {
             chain: Some(foundry_config::Chain::from_named(alloy_chains::NamedChain::Monad)),
             ..Default::default()
         };
-        let err = resolve_network(&config).await.unwrap_err().to_string();
-        assert!(err.contains("`monad` is not enabled"), "unexpected error: {err}");
+        assert_eq!(resolve_network(&config).await.unwrap(), NetworkVariant::Ethereum);
     }
 
     #[cfg(feature = "base")]
+    #[tokio::test]
+    async fn resolve_network_preserves_config_over_chain_in_curl_mode() {
+        let config = Config {
+            networks: NetworkVariant::Base.into(),
+            chain: Some(foundry_config::Chain::from_id(31337)),
+            eth_rpc_curl: true,
+            ..Default::default()
+        };
+        assert_eq!(resolve_network(&config).await.unwrap(), NetworkVariant::Base);
+        let config = Config {
+            networks: NetworkVariant::Ethereum.into(),
+            chain: Some(foundry_config::Chain::from_id(8453)),
+            ..config
+        };
+        assert_eq!(resolve_network(&config).await.unwrap(), NetworkVariant::Ethereum);
+    }
+
+    #[cfg(all(feature = "base", not(feature = "optimism")))]
+    #[tokio::test]
+    async fn resolve_network_allows_rpc_without_optimism() {
+        let config =
+            Config { chain: Some(foundry_config::Chain::from_id(10)), ..Default::default() };
+        assert_eq!(resolve_network(&config).await.unwrap(), NetworkVariant::Ethereum);
+    }
+
+    #[cfg(any(feature = "base", feature = "optimism"))]
     #[tokio::test]
     async fn resolve_network_still_defaults_unknown_chain_ids_to_ethereum() {
         let config =
