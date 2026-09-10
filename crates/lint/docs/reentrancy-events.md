@@ -9,8 +9,7 @@ Reports events emitted after an external interaction, such as a state-changing c
 call, low-level `call` or `delegatecall`, ETH `send` or `transfer`, or contract creation.
 Static calls and `view` or `pure` calls are excluded.
 
-Calls in ordinary internal helpers and modifiers are followed, but interactions hidden in
-library-qualified or `using for` internal calls may be missed.
+Interactions hidden in `using for` internal calls may be missed.
 
 ## Why is this bad?
 

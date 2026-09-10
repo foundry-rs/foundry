@@ -11,7 +11,7 @@ use solar::{
         hir::{self, CallArgs, Expr, ExprId, ExprKind, Function, Stmt, StmtKind, Visit as _},
     },
 };
-use std::{collections::HashMap, ops::ControlFlow};
+use std::ops::ControlFlow;
 
 declare_forge_lint!(
     VAR_READ_USING_THIS,
@@ -33,21 +33,7 @@ impl<'gcx> LateLintPass<'gcx> for VarReadUsingThis {
             return;
         }
 
-        // Externally callable functions reachable through `this.<name>(...)`, grouped by name so
-        // overloads and inherited overrides can be resolved by arity.
-        let mut callable = HashMap::<_, Vec<_>>::new();
-        for fid in
-            contract.linearized_bases.iter().flat_map(|&cid| gcx.hir.contract(cid).functions())
-        {
-            let func = gcx.hir.function(fid);
-            if let Some(name) = func.name
-                && func.is_part_of_external_interface()
-            {
-                callable.entry(name.name).or_default().push(func);
-            }
-        }
-
-        let mut finder = ThisReadFinder { ctx, hir: &gcx.hir, callable, try_target: None };
+        let mut finder = ThisReadFinder { ctx, gcx, try_target: None };
         // State variable initializers run in the synthesized constructor.
         for var_id in contract.variables() {
             let _ = finder.visit_nested_var(var_id);
@@ -61,8 +47,7 @@ impl<'gcx> LateLintPass<'gcx> for VarReadUsingThis {
 
 struct ThisReadFinder<'a, 'gcx> {
     ctx: &'a LintContext<'a, 'a>,
-    hir: &'gcx hir::Hir<'gcx>,
-    callable: HashMap<Symbol, Vec<&'gcx Function<'gcx>>>,
+    gcx: Gcx<'gcx>,
     /// The expression tried by the enclosing `try` statement, which must stay an external call.
     try_target: Option<ExprId>,
 }
@@ -71,7 +56,7 @@ impl<'gcx> hir::Visit<'gcx> for ThisReadFinder<'_, 'gcx> {
     type BreakValue = Never;
 
     fn hir(&self) -> &'gcx hir::Hir<'gcx> {
-        self.hir
+        &self.gcx.hir
     }
 
     fn visit_stmt(&mut self, stmt: &'gcx Stmt<'gcx>) -> ControlFlow<Self::BreakValue> {
@@ -95,20 +80,12 @@ impl ThisReadFinder<'_, '_> {
     fn check_call(&self, expr: &Expr<'_>) {
         let ExprKind::Call(callee, args, opts) = &expr.kind else { return };
         let ExprKind::Member(base, member) = &callee.peel_parens().kind else { return };
-        if !is_builtin(base, sym::this) {
+        if !is_builtin(self.gcx, base, sym::this) {
             return;
         }
-        let Some(candidates) = self.callable.get(&member.name) else { return };
-        // Solar's HIR `Member` is name-based, so overloads are resolved by arity. When same-arity
-        // overloads mix mutability (`f(uint256) view` vs `f(address)`), bail to avoid flagging
-        // the mutating one.
-        let same_arity: Vec<_> =
-            candidates.iter().filter(|f| f.parameters.len() == args.len()).collect();
-        let Some(func) = same_arity.first() else { return };
-        if !same_arity
-            .iter()
-            .all(|f| matches!(f.state_mutability, StateMutability::View | StateMutability::Pure))
-        {
+        let Some(function_id) = self.gcx.resolved_function(callee) else { return };
+        let func = self.gcx.hir.function(function_id);
+        if !matches!(func.state_mutability, StateMutability::View | StateMutability::Pure) {
             return;
         }
         // With call options like `{gas: ...}` the external call is deliberate: flag the gas waste

@@ -5,7 +5,7 @@ use crate::{
 };
 use alloy_primitives::{Address, U256};
 use solar::{
-    ast::{BinOpKind, LitKind, StrKind, UnOpKind},
+    ast::{LitKind, StrKind, UnOpKind},
     interface::Span,
     sema::{
         Gcx,
@@ -30,7 +30,7 @@ impl<'gcx> LateLintPass<'gcx> for LiteralInsteadOfConstant {
         // the header. Parameter and return types stay out, so a fixed array size in a signature
         // is a type annotation rather than a repeated value.
         let mut collector = LiteralCollector { gcx, groups: HashMap::new() };
-        let functions = gcx.hir.contract(id).items.iter().filter_map(|item| item.as_function());
+        let functions = gcx.hir.contract(id).functions();
         for function in functions.map(|id| gcx.hir.function(id)) {
             for modifier in function.modifiers {
                 let _ = collector.visit_modifier(modifier);
@@ -114,8 +114,6 @@ impl<'gcx> Visit<'gcx> for LiteralCollector<'gcx> {
     }
 
     fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
-        let is_shift =
-            |op: &hir::BinOp| matches!(op.kind, BinOpKind::Shl | BinOpKind::Shr | BinOpKind::Sar);
         let is_value_changing =
             |op: &hir::UnOp| matches!(op.kind, UnOpKind::Neg | UnOpKind::BitNot);
         match &expr.kind {
@@ -138,7 +136,7 @@ impl<'gcx> Visit<'gcx> for LiteralCollector<'gcx> {
             // A bare literal shift amount (`x << 128`, `acc >>= 128`) and bare slice bounds
             // (`d[555:600]`) are structural too: slices only exist on array-like values.
             ExprKind::Binary(lhs, op, rhs) | ExprKind::Assign(lhs, Some(op), rhs)
-                if is_shift(op) =>
+                if op.kind.is_shift() =>
             {
                 let _ = self.visit_expr(lhs);
                 self.visit_unless_bare_lit(rhs);

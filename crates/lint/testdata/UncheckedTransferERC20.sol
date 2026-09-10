@@ -131,3 +131,14 @@ contract UncheckedTransferUsingCurrencyLib {
         token.transferFrom(from, to, amount);
     }
 }
+
+interface IOverloadedTransfer {
+    function transfer(address to, uint256 amount) external returns (bool);
+    function transfer(address to, bytes32 referenceId) external returns (uint256);
+}
+
+contract SelectedTransferOverload {
+    function transferReference(IOverloadedTransfer token, address to, bytes32 referenceId) external {
+        token.transfer(to, referenceId);
+    }
+}
