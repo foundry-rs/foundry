@@ -274,7 +274,7 @@ repl_test!(last_result_resets_with_session, |repl| {
 
     repl.sendln(r#""stale""#);
     repl.sendln_raw(&format!("!load {loaded_id}"));
-    repl.expect(&format!("Loaded Chisel session! (ID = {saved_id})"));
+    repl.expect(&format!("Loaded Chisel session! (ID = {loaded_id})"));
     repl.expect_prompt();
     repl.sendln_raw("$_");
     repl.expect("no previous result");

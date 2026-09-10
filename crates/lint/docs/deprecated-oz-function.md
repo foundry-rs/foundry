@@ -3,11 +3,13 @@
 **Severity**: `Low`
 **ID**: `deprecated-oz-function`
 
-Flags references to OpenZeppelin functions the library has deprecated: `SafeERC20.safeApprove` and `AccessControl._setupRole`.
-
 ## What it does
 
-Reports a reference, called or used as a value, that resolves to a function named `safeApprove` declared in a library named `SafeERC20` / `SafeERC20Upgradeable`, or to a function named `_setupRole` declared in a contract named `AccessControl` / `AccessControlUpgradeable`. Resolution goes through the type checker, so the `using for` method form, the library-qualified form, import aliases and inheritance through extensions are all recognized, while same-name functions declared elsewhere stay out of scope. The declaration must also come from an OpenZeppelin package path (`lib/openzeppelin-contracts`, `@openzeppelin/...`), so a local library or contract reusing the canonical name is not reported; the flip side is that a vendored OpenZeppelin copy under a path that does not name OpenZeppelin is not recognized. This mirrors Aderyn's `deprecated-oz-function` detector, which matches any identifier or member with those names in files importing an OpenZeppelin path.
+Reports uses of OpenZeppelin's `SafeERC20.safeApprove` and `AccessControl._setupRole`,
+including their upgradeable variants.
+
+Declarations must come from an OpenZeppelin package path; vendored copies under a different
+package name may go unreported.
 
 ## Why is this bad?
 
@@ -17,8 +19,6 @@ OpenZeppelin deprecated both functions in the 4.x line and removed them in 5.0, 
 - `_setupRole` was only intended for constructor setup and bypasses the role-admin checks; `_grantRole` is the supported replacement.
 
 ## Example
-
-### Bad
 
 ```solidity
 using SafeERC20 for IERC20;
@@ -32,7 +32,7 @@ constructor(address admin) {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 using SafeERC20 for IERC20;

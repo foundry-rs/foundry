@@ -185,6 +185,15 @@ impl SymbolicExecutor {
         code: &SymCode,
         completed_paths: &mut usize,
     ) -> Result<Vec<CallOutcome>, SymbolicError> {
-        self.execute_call_paths(executor, initial, code, completed_paths, CallPathKind::External)
+        let mut worklist = VecDeque::from([initial]);
+        let mut deferred_worklist = VecDeque::new();
+        self.execute_call_path_batch(
+            executor,
+            code,
+            &mut worklist,
+            &mut deferred_worklist,
+            completed_paths,
+            CallPathKind::External,
+        )
     }
 }

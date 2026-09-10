@@ -419,11 +419,11 @@ impl PathState {
         self.function_mocks = reverted.function_mocks;
     }
 
-    /// Returns `true` if a successful path can be materialized into a fuzz corpus seed.
+    /// Returns `true` if the path can be materialized into a replayable corpus seed.
     ///
     /// Gas-dependent constraints are never modeled, so a seed for such a path would carry a
     /// fabricated `gasleft()` value; skip the seed rather than failing the whole run.
-    pub(crate) fn can_seed_success_input(&self) -> bool {
+    pub(crate) fn can_materialize_seed(&self) -> bool {
         !self.constraints.iter().any(SymBoolExpr::contains_gasleft)
     }
 
@@ -609,7 +609,7 @@ impl PathState {
                 match kind {
                     ShiftKind::Shl => value << shift,
                     ShiftKind::Shr => value >> shift,
-                    ShiftKind::Sar => sar(value, shift),
+                    ShiftKind::Sar => value.arithmetic_shr(shift),
                 }
             };
             SymExpr::constant(cx, result)
@@ -630,7 +630,7 @@ impl PathState {
         let exponent = self.stack.pop()?;
         let result = if let Some(exponent) = self.constrained_word(cx, &exponent) {
             if let Some(base_value) = base.as_const() {
-                SymExpr::constant(cx, pow_mod(base_value, exponent))
+                SymExpr::constant(cx, base_value.wrapping_pow(exponent))
             } else if exponent <= U256::from(SYMBOLIC_EXP_CONCRETE_EXPONENT_LIMIT) {
                 exp_expr_for_concrete_exponent(
                     cx,

@@ -13,11 +13,12 @@ use time::{OffsetDateTime, format_description};
 /// Rejects a session id that would let `chisel-<id>.json` escape the cache directory when
 /// concatenated into a path (e.g. `../../etc/cron.d/evil`, which yields the literal path
 /// component `chisel-..`, followed by a real `..` component once the id itself contains a `/`).
+/// Also rejects `:` to prevent targeting Windows Alternate Data Streams (ADS).
 fn validate_session_id(id: &str) -> Result<()> {
-    if id.is_empty() || id == "." || id == ".." || id.contains(['/', '\\']) {
+    if id.is_empty() || id == "." || id == ".." || id.contains(['/', '\\', ':']) {
         eyre::bail!(
             "invalid Chisel session id `{id}`: must not be empty, `.`, `..`, or contain a path \
-             separator"
+             separator or `:`"
         );
     }
     Ok(())
@@ -142,12 +143,29 @@ impl<FEN: FoundryEvmNetwork> ChiselSession<FEN> {
     /// ### Returns
     ///
     /// Optionally, returns a tuple containing the next cached session's id and file name.
+    ///
+    /// Uses one past the highest numeric ID to avoid collisions after deletion.
     pub fn next_cached_session() -> Result<(String, String)> {
-        let cache_dir = Self::cache_dir()?;
-        let entries = std::fs::read_dir(&cache_dir)?;
-        let session_num = entries.filter(Result::is_ok).count();
+        Self::next_cached_session_in(&Self::cache_dir()?)
+    }
 
-        Ok((format!("{session_num}"), format!("{cache_dir}chisel-{session_num}.json")))
+    fn next_cached_session_in(cache_dir: &str) -> Result<(String, String)> {
+        let next_id = std::fs::read_dir(cache_dir)?
+            .filter_map(|entry| entry.ok())
+            .filter_map(|entry| {
+                entry
+                    .file_name()
+                    .to_str()?
+                    .strip_prefix("chisel-")?
+                    .strip_suffix(".json")?
+                    .parse::<usize>()
+                    .ok()
+            })
+            .max()
+            .map_or(Some(0), |max| max.checked_add(1))
+            .ok_or_else(|| eyre::eyre!("no unused chisel session id available"))?;
+
+        Ok((format!("{next_id}"), format!("{cache_dir}chisel-{next_id}.json")))
     }
 
     /// The Chisel Cache Directory
@@ -212,10 +230,20 @@ impl<FEN: FoundryEvmNetwork> ChiselSession<FEN> {
     ///
     /// Optionally, an owned instance of the loaded chisel session.
     pub fn load(id: &str, executor_builder: ExecutorBuilder<FEN>) -> Result<Self> {
+        Self::load_from(id, &Self::cache_dir()?, executor_builder)
+    }
+
+    fn load_from(
+        id: &str,
+        cache_dir: &str,
+        executor_builder: ExecutorBuilder<FEN>,
+    ) -> Result<Self> {
         validate_session_id(id)?;
-        let cache_dir = Self::cache_dir()?;
         let contents = std::fs::read_to_string(Path::new(&format!("{cache_dir}chisel-{id}.json")))?;
-        Self::deserialize_cached(&contents, executor_builder)
+        let mut session = Self::deserialize_cached(&contents, executor_builder)?;
+        // Use the requested ID even if the cached ID is missing or stale.
+        session.id = Some(id.to_string());
+        Ok(session)
     }
 
     /// Gets the most recent chisel session from the cache dir
@@ -224,7 +252,10 @@ impl<FEN: FoundryEvmNetwork> ChiselSession<FEN> {
     ///
     /// Optionally, the file name of the most recently modified cached session.
     pub fn latest_cached_session() -> Result<String> {
-        let cache_dir = Self::cache_dir()?;
+        Self::latest_cached_session_in(&Self::cache_dir()?)
+    }
+
+    fn latest_cached_session_in(cache_dir: &str) -> Result<String> {
         let mut entries = std::fs::read_dir(cache_dir)?;
         let mut latest = entries.next().ok_or_else(|| eyre::eyre!("No entries found!"))??;
         for entry in entries {
@@ -246,9 +277,21 @@ impl<FEN: FoundryEvmNetwork> ChiselSession<FEN> {
     ///
     /// Optionally, an owned instance of the most recently modified cached session.
     pub fn latest(executor_builder: ExecutorBuilder<FEN>) -> Result<Self> {
-        let last_session = Self::latest_cached_session()?;
+        Self::latest_from(&Self::cache_dir()?, executor_builder)
+    }
+
+    fn latest_from(cache_dir: &str, executor_builder: ExecutorBuilder<FEN>) -> Result<Self> {
+        let last_session = Self::latest_cached_session_in(cache_dir)?;
         let last_session_contents = std::fs::read_to_string(Path::new(&last_session))?;
-        Self::deserialize_cached(&last_session_contents, executor_builder)
+        let mut session = Self::deserialize_cached(&last_session_contents, executor_builder)?;
+        // Bind the session to the file that was loaded.
+        session.id = Self::session_id_from_cache_file_name(&last_session);
+        Ok(session)
+    }
+
+    /// Extracts the session id from a `.../chisel-<id>.json` cache file path.
+    fn session_id_from_cache_file_name(path: &str) -> Option<String> {
+        Path::new(path).file_stem()?.to_str()?.strip_prefix("chisel-").map(str::to_string)
     }
 }
 
@@ -257,9 +300,47 @@ mod tests {
     use super::*;
     use foundry_config::{Config, SolcReq};
     use foundry_evm::core::evm::EthEvmNetwork;
+    use semver::Version;
+
     #[cfg(feature = "monad")]
     use foundry_evm::core::{constants::MONAD_CHEATCODE_ADDRESS, evm::MonadEvmNetwork};
-    use semver::Version;
+
+    /// Deleted sessions must not cause the next ID to collide with an existing file.
+    #[test]
+    fn next_cached_session_skips_gaps_left_by_deleted_sessions() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = format!("{}/", dir.path().to_str().unwrap());
+
+        // Sessions 0 and 2 exist; session 1 was deleted or renamed away, leaving a gap.
+        std::fs::write(format!("{cache_dir}chisel-0.json"), "{\"id\":\"0\"}").unwrap();
+        std::fs::write(format!("{cache_dir}chisel-2.json"), "{\"id\":\"2\"}").unwrap();
+
+        let (next_id, next_file) =
+            ChiselSession::<EthEvmNetwork>::next_cached_session_in(&cache_dir).unwrap();
+
+        // Counting entries would select the occupied ID 2.
+        assert_eq!(next_id, "3", "must skip past the gap instead of reusing the occupied id 2");
+        assert_eq!(next_file, format!("{cache_dir}chisel-3.json"));
+
+        assert_eq!(
+            std::fs::read_to_string(format!("{cache_dir}chisel-0.json")).unwrap(),
+            "{\"id\":\"0\"}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(format!("{cache_dir}chisel-2.json")).unwrap(),
+            "{\"id\":\"2\"}"
+        );
+    }
+
+    #[test]
+    fn next_cached_session_does_not_overflow_on_a_usize_max_named_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = format!("{}/", dir.path().to_str().unwrap());
+        std::fs::write(format!("{cache_dir}chisel-{}.json", usize::MAX), "{}").unwrap();
+
+        let result = ChiselSession::<EthEvmNetwork>::next_cached_session_in(&cache_dir);
+        assert!(result.is_err(), "must error instead of panicking or wrapping to a reused id");
+    }
 
     #[test]
     fn deserialized_sessions_do_not_restore_force() {
@@ -310,11 +391,21 @@ mod tests {
     /// A session id containing a path separator lets `chisel-<id>.json` escape the cache
     /// directory once resolved: `chisel-x/../../../foo.json` has real `..` path components
     /// after the `x` segment, walking back out past the cache directory entirely.
+    /// Also verifies that `:` is rejected to prevent targeting NTFS Alternate Data Streams (ADS).
     #[test]
     fn path_traversal_ids_are_rejected() {
-        for id in
-            ["../evil", "x/../../../../../../tmp/pwned", "..", ".", "", "sub/dir", "back\\slash"]
-        {
+        for id in [
+            "../evil",
+            "x/../../../../../../tmp/pwned",
+            "..",
+            ".",
+            "",
+            "sub/dir",
+            "back\\slash",
+            ":colon",
+            "foo:bar",
+            "session:1",
+        ] {
             let err = validate_session_id(id).unwrap_err();
             assert!(err.to_string().contains("invalid Chisel session id"), "{id:?}: {err}");
         }
@@ -339,6 +430,82 @@ mod tests {
     fn remove_cached_session_rejects_path_traversal_id() {
         let err = ChiselSession::<EthEvmNetwork>::remove_cached_session("../../evil").unwrap_err();
         assert!(err.to_string().contains("invalid Chisel session id"), "{err}");
+    }
+
+    fn session_for_normalization_tests() -> ChiselSession<EthEvmNetwork> {
+        ChiselSession::<EthEvmNetwork>::new(SessionSourceConfig {
+            foundry_config: Config {
+                solc: Some(SolcReq::Version(Version::new(0, 8, 29))),
+                ..Default::default()
+            },
+            no_vm: true,
+            ..Default::default()
+        })
+        .unwrap()
+    }
+
+    /// Loading uses the filename rather than a stale or missing cached ID.
+    #[test]
+    fn load_normalizes_id_ignoring_a_stale_or_missing_embedded_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = format!("{}/", dir.path().to_str().unwrap());
+
+        let mut session = session_for_normalization_tests();
+        session.id = Some("stale-name".to_string());
+        let serialized = serde_json::to_string(&session).unwrap();
+        std::fs::write(format!("{cache_dir}chisel-5.json"), &serialized).unwrap();
+
+        let loaded = ChiselSession::<EthEvmNetwork>::load_from(
+            "5",
+            &cache_dir,
+            ExecutorBuilder::<EthEvmNetwork>::new(),
+        )
+        .unwrap();
+        assert_eq!(loaded.id.as_deref(), Some("5"), "must use the requested id, not the stale one");
+
+        let without_id = serialized.replacen("\"stale-name\"", "null", 1);
+        std::fs::write(format!("{cache_dir}chisel-7.json"), without_id).unwrap();
+        let loaded = ChiselSession::<EthEvmNetwork>::load_from(
+            "7",
+            &cache_dir,
+            ExecutorBuilder::<EthEvmNetwork>::new(),
+        )
+        .unwrap();
+        assert_eq!(loaded.id.as_deref(), Some("7"), "a null embedded id must not survive the load");
+    }
+
+    #[test]
+    fn latest_normalizes_id_from_the_resolved_file_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = format!("{}/", dir.path().to_str().unwrap());
+
+        let session = session_for_normalization_tests();
+        // New sessions serialize with a null ID.
+        let serialized = serde_json::to_string(&session).unwrap();
+        std::fs::write(format!("{cache_dir}chisel-9.json"), serialized).unwrap();
+
+        let loaded = ChiselSession::<EthEvmNetwork>::latest_from(
+            &cache_dir,
+            ExecutorBuilder::<EthEvmNetwork>::new(),
+        )
+        .unwrap();
+        assert_eq!(loaded.id.as_deref(), Some("9"));
+    }
+
+    #[test]
+    fn session_id_from_cache_file_name_strips_prefix_and_extension() {
+        assert_eq!(
+            ChiselSession::<EthEvmNetwork>::session_id_from_cache_file_name(
+                "/home/user/.foundry/cache/chisel/chisel-42.json"
+            ),
+            Some("42".to_string())
+        );
+        assert_eq!(
+            ChiselSession::<EthEvmNetwork>::session_id_from_cache_file_name(
+                "/home/user/.foundry/cache/chisel/not-a-session-file.json"
+            ),
+            None
+        );
     }
 
     #[test]

@@ -1,3 +1,14 @@
+use crate::eth::{
+    backend::{info::StorageInfo, notifications::ChainNotifications},
+    error::BlockchainError,
+};
+use alloy_consensus::{BlockHeader, Transaction, TxReceipt};
+use alloy_eips::{calc_next_block_base_fee, eip1559::BaseFeeParams, eip7840::BlobParams};
+use alloy_network::Network;
+use alloy_primitives::{B256, Bytes};
+use futures::StreamExt;
+use parking_lot::{Mutex, RwLock};
+use revm::{context_interface::block::BlobExcessGasAndPrice, primitives::hardfork::SpecId};
 use std::{
     collections::BTreeMap,
     fmt,
@@ -5,22 +16,10 @@ use std::{
     sync::{Arc, LazyLock},
     task::{Context, Poll},
 };
-
-use alloy_consensus::{BlockHeader, Transaction, TxReceipt};
-use alloy_eips::{calc_next_block_base_fee, eip1559::BaseFeeParams, eip7840::BlobParams};
-use alloy_network::Network;
-use alloy_primitives::{B256, Bytes};
-#[cfg(feature = "optimism")]
-use foundry_evm::hardfork::FoundryHardfork;
-use futures::StreamExt;
-use parking_lot::{Mutex, RwLock};
-use revm::{context_interface::block::BlobExcessGasAndPrice, primitives::hardfork::SpecId};
 use tempo_hardfork::{TempoHardfork, constants::gas::tempo_t7_next_block_base_fee};
 
-use crate::eth::{
-    backend::{info::StorageInfo, notifications::ChainNotifications},
-    error::BlockchainError,
-};
+#[cfg(feature = "optimism")]
+use foundry_evm::hardfork::FoundryHardfork;
 
 #[cfg(feature = "optimism")]
 mod optimism;
@@ -623,7 +622,8 @@ where
 
         let gas_used = block.header.gas_used() as f64;
         let blob_gas_used = block.header.blob_gas_used().map(|g| g as f64);
-        item.gas_used_ratio = gas_used / block.header.gas_limit() as f64;
+        let gas_limit = block.header.gas_limit() as f64;
+        item.gas_used_ratio = if gas_limit == 0.0 { 0.0 } else { gas_used / gas_limit };
         item.blob_gas_used_ratio = blob_gas_used
             .map(|g| {
                 let max = blob_params.max_blob_gas_per_block() as f64;

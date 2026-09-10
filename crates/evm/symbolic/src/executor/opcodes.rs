@@ -990,9 +990,11 @@ impl SymbolicExecutor {
                         let store_pc = state.pc - 1;
                         let mut equality_state = state.clone();
                         equality_state.pc = store_pc;
+                        equality_state.depth = equality_state.depth.saturating_sub(1);
                         equality_state.constraints = equality;
                         let mut inequality_state = state.clone();
                         inequality_state.pc = store_pc;
+                        inequality_state.depth = inequality_state.depth.saturating_sub(1);
                         inequality_state.constraints = inequality;
                         worklist.push_back(equality_state);
                         worklist.push_back(inequality_state);
@@ -1563,6 +1565,10 @@ impl SymbolicExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use foundry_evm::{
+        core::{backend::Backend, evm::EthEvmNetwork},
+        executors::ExecutorBuilder,
+    };
 
     fn empty_state(executor: &mut SymbolicExecutor) -> PathState {
         let calldata =
@@ -1593,8 +1599,70 @@ mod tests {
     }
 
     #[test]
+    fn sstore_mapping_fork_refunds_retry_depth() {
+        let mut executor = SymbolicExecutor::new(SymbolicConfig::default());
+        if let Err(err) = executor.solver.check_available() {
+            let _ = foundry_common::sh_eprintln!(
+                "skipping sstore_mapping_fork_refunds_retry_depth: {err}"
+            );
+            return;
+        }
+        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        let concrete = ExecutorBuilder::default().build(
+            Default::default(),
+            Default::default(),
+            backend,
+            Default::default(),
+        );
+        let mut state = empty_state(&mut executor);
+        let original_depth = 7;
+        state.depth = original_depth;
+        state.mapping_storage_store_hooks.insert(
+            (state.storage_address, U256::ZERO),
+            SymbolicStorageHook {
+                callback_target: Address::repeat_byte(0x22),
+                callback_selector: [0x12, 0x34, 0x56, 0x78],
+            },
+        );
+        let preimage = vec![SymExpr::zero(&mut executor.cx); 64];
+        let hash = keccak_word(&mut executor.cx, preimage.clone());
+        state.mapping_hook_keccak_preimages.insert((state.storage_address, hash), preimage.into());
+        let key = state.fresh_word(&mut executor.cx, "storage_key");
+        state.stack.push(SymExpr::one(&mut executor.cx)).unwrap();
+        state.stack.push(key).unwrap();
+        let code = SymCode::concrete(&mut executor.cx, vec![opcode::SSTORE]);
+        let mut worklist = VecDeque::new();
+        let mut completed_paths = 0;
+
+        let outcome = executor
+            .step(
+                &concrete,
+                &code,
+                code.jump_table(),
+                &mut state,
+                &mut worklist,
+                &mut completed_paths,
+                opcode::SSTORE,
+            )
+            .unwrap();
+
+        assert!(matches!(outcome, StepOutcome::Forked));
+        assert_eq!(worklist.len(), 2);
+        for retry in worklist {
+            assert_eq!(retry.pc, 0);
+            assert_eq!(retry.depth, original_depth - 1);
+        }
+    }
+
+    #[test]
     fn returndata_copy_range_preserves_valid_and_invalid_paths() {
         let mut executor = SymbolicExecutor::new(SymbolicConfig::default());
+        if let Err(err) = executor.solver.check_available() {
+            let _ = foundry_common::sh_eprintln!(
+                "skipping returndata_copy_range_preserves_valid_and_invalid_paths: {err}"
+            );
+            return;
+        }
         let mut state = empty_state(&mut executor);
         state.return_data = SymReturnData::from_concrete_bytes(&mut executor.cx, vec![0; 64]);
         let offset = state.fresh_word(&mut executor.cx, "offset");

@@ -1,5 +1,3 @@
-use std::num::NonZeroU64;
-
 use alloy_consensus::{
     BlobTransactionSidecar, BlobTransactionSidecarEip7594, BlobTransactionSidecarVariant,
 };
@@ -9,12 +7,14 @@ use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256};
 use alloy_provider::Provider;
 use eyre::Result;
 use foundry_wallets::TempoAccountsWallet;
+use std::num::NonZeroU64;
+use tempo_alloy::TempoNetwork;
+use tempo_primitives::{SignatureType, TempoTxType, transaction::Call};
+
 #[cfg(feature = "optimism")]
 use op_alloy_network::Optimism;
 #[cfg(feature = "optimism")]
 use op_alloy_rpc_types::OpTransactionRequest;
-use tempo_alloy::TempoNetwork;
-use tempo_primitives::{SignatureType, TempoTxType, transaction::Call};
 
 /// Composite transaction builder trait for Foundry transactions.
 ///

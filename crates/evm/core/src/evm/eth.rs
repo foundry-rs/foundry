@@ -1,24 +1,35 @@
 use alloy_evm::{
     EthEvm, EthEvmFactory, Evm, EvmEnv, EvmFactory, eth::EthEvmContext, precompiles::PrecompilesMap,
 };
+use alloy_network::Ethereum;
 use foundry_evm_networks::apply_bsc_p256_precompile;
 use foundry_fork_db::DatabaseError;
 use revm::{
     context::{
         BlockEnv, Evm as RevmEvm, Journal, TxEnv,
-        result::{EVMError, ResultAndState},
+        result::{EVMError, HaltReason, ResultAndState},
     },
     handler::{EthFrame, EvmTr, FrameResult, MainnetHandler, instructions::EthInstructions},
     inspector::InspectorHandler,
-    interpreter::{FrameInput, interpreter::EthInterpreter},
+    interpreter::{FrameInput, InstructionResult, interpreter::EthInterpreter},
     primitives::hardfork::SpecId,
 };
 
 use crate::{
     FoundryContextExt, FoundryInspectorExt,
     backend::{DatabaseExt, JournaledState},
-    evm::{FoundryEvmFactory, NestedEvm, NestedEvmFor, run_inspected_frame},
+    evm::{
+        FoundryEvmFactory, FoundryEvmNetwork, IntoInstructionResult, NestedEvm, NestedEvmFor,
+        run_inspected_frame,
+    },
 };
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct EthEvmNetwork;
+impl FoundryEvmNetwork for EthEvmNetwork {
+    type Network = Ethereum;
+    type EvmFactory = EthEvmFactory;
+}
 
 type EthEvmHandler<'db, I> = MainnetHandler<EthRevmEvm<'db, I>, EVMError<DatabaseError>, EthFrame>;
 
@@ -30,6 +41,12 @@ pub type EthRevmEvm<'db, I> = RevmEvm<
     EthFrame,
 >;
 
+impl IntoInstructionResult for HaltReason {
+    fn into_instruction_result(self) -> InstructionResult {
+        self.into()
+    }
+}
+
 impl FoundryEvmFactory for EthEvmFactory {
     type Chain = ();
     type FoundryContext<'db> = EthEvmContext<&'db mut dyn DatabaseExt<Self>>;
@@ -37,20 +54,10 @@ impl FoundryEvmFactory for EthEvmFactory {
     type FoundryEvm<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>> =
         EthEvm<&'db mut dyn DatabaseExt<Self>, I, Self::Precompiles>;
 
-    fn create_evm_with_context<DB: alloy_evm::Database>(
-        &self,
-        db: DB,
-        evm_env: EvmEnv,
-        _chain_context: Self::Chain,
-    ) -> Self::Evm<DB, revm::inspector::NoOpInspector> {
-        self.create_evm(db, evm_env)
-    }
-
     fn create_foundry_evm_with_inspector<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>>(
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv,
-        _chain_context: Self::Chain,
         inspector: I,
     ) -> Self::FoundryEvm<'db, I> {
         let chain_id = evm_env.cfg_env.chain_id;
@@ -63,17 +70,16 @@ impl FoundryEvmFactory for EthEvmFactory {
         eth_evm
     }
 
-    fn create_foundry_nested_evm<'db>(
+    fn create_nested_evm_with_inspector<'db, I>(
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv,
-        chain_context: Self::Chain,
-        inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
-    ) -> NestedEvmFor<'db, Self> {
-        Box::new(
-            self.create_foundry_evm_with_inspector(db, evm_env, chain_context, inspector)
-                .into_inner(),
-        )
+        inspector: I,
+    ) -> NestedEvmFor<'db, Self>
+    where
+        I: FoundryInspectorExt<Self::FoundryContext<'db>> + 'db,
+    {
+        Box::new(self.create_foundry_evm_with_inspector(db, evm_env, inspector).into_inner())
     }
 }
 
@@ -96,6 +102,10 @@ impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFa
 
     fn chain_mut(&mut self) -> &mut Self::Chain {
         &mut self.ctx_mut().chain
+    }
+
+    fn precompiles_mut(&mut self) -> &mut alloy_evm::precompiles::PrecompilesMap {
+        &mut self.precompiles
     }
 
     fn journal_mut(&mut self) -> &mut Self::Journal {

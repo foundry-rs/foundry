@@ -1,6 +1,7 @@
 use crate::sol::SolLint;
 
 mod assert_state_change;
+mod cheatcode_environment;
 mod dangerous_unary_operator;
 mod div_mul;
 mod ecrecover;
@@ -22,6 +23,7 @@ mod weak_prng;
 
 register_lints!(
     assert_state_change: (AssertStateChange, late, (ASSERT_STATE_CHANGE));
+    cheatcode_environment: (CheatcodeEnvironment, project, (ENVIRONMENT_READ_ACROSS_MUTATION));
     dangerous_unary_operator: (DangerousUnaryOperator, early, (DANGEROUS_UNARY_OPERATOR));
     div_mul: (DivideBeforeMultiply, late, (DIVIDE_BEFORE_MULTIPLY));
     ecrecover: (Ecrecover, late, (ECRECOVER));
@@ -39,6 +41,6 @@ register_lints!(
     locked_ether: (LockedEther, late, (LOCKED_ETHER));
     mapping_deletion: (MappingDeletion, late, (MAPPING_DELETION));
     non_reentrant_not_first: (NonReentrantNotFirst, late, (NON_REENTRANT_NOT_FIRST));
-    weak_prng: (WeakPrng, early, (WEAK_PRNG));
+    weak_prng: (WeakPrng, late, (WEAK_PRNG));
     tautological_compare: (TautologicalCompare, late, (TAUTOLOGICAL_COMPARE));
 );

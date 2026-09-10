@@ -16,14 +16,14 @@ declare_forge_lint!(
     MIXED_CASE_FUNCTION,
     Severity::Info,
     "mixed-case-function",
-    "function names should use mixedCase"
+    "function name is not `mixedCase`"
 );
 
 declare_forge_lint!(
     MIXED_CASE_VARIABLE,
     Severity::Info,
     "mixed-case-variable",
-    "mutable variables should use mixedCase"
+    "mutable variable name is not `mixedCase`"
 );
 
 /// Checks function names when `FUNCTIONS` is set, mutable variable names otherwise.
@@ -84,10 +84,10 @@ fn check_mixed_case(s: &str, is_fn: bool, allowed_patterns: &[String]) -> Option
     check_mixed_case_pure(s)
 }
 
-/// Heuristic for a getter of a constant: `SCREAMING_SNAKE_CASE` name, `external view`, no
-/// parameters and exactly one elementary or custom-typed return value.
+/// Heuristic for a getter of a constant: `SCREAMING_SNAKE_CASE` name, `public view` or `external
+/// view`, no parameters and exactly one elementary or custom-typed return value.
 fn is_constant_getter(header: &FunctionHeader<'_>) -> bool {
-    matches!(header.visibility(), Some(Visibility::External))
+    matches!(header.visibility(), Some(Visibility::Public | Visibility::External))
         && header.state_mutability().is_view()
         && header.parameters.is_empty()
         && matches!(header.returns(), [ret] if ret.ty.kind.is_elementary() || ret.ty.kind.is_custom())

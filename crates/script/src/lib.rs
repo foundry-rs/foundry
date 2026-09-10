@@ -12,7 +12,7 @@ extern crate foundry_common;
 #[macro_use]
 extern crate tracing;
 
-use crate::{broadcast::BundledState, runner::ScriptRunner};
+use crate::{broadcast::BundledState, runner::ScriptRunner, simulate::PreSimulationState};
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_network::Network;
 use alloy_primitives::{
@@ -46,10 +46,6 @@ use foundry_config::{
     },
 };
 use foundry_debugger::DebuggerLayout;
-#[cfg(feature = "monad")]
-use foundry_evm::core::evm::MonadEvmNetwork;
-#[cfg(feature = "optimism")]
-use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     backend::Backend,
     core::{
@@ -70,6 +66,12 @@ use foundry_evm_networks::NetworkConfigs;
 use foundry_wallets::MultiWalletOpts;
 use serde::Serialize;
 use std::path::PathBuf;
+
+#[cfg(feature = "monad")]
+use foundry_evm::core::evm::MonadEvmNetwork;
+
+#[cfg(feature = "optimism")]
+use foundry_evm::core::evm::OpEvmNetwork;
 
 mod broadcast;
 mod build;
@@ -93,6 +95,12 @@ pub use wallet_session::ScriptWalletSessionArgs;
 foundry_config::merge_impl_figment_convert!(ScriptArgs, build, evm);
 
 const DEFAULT_CONFIRMATIONS: u64 = 1;
+
+/// Shared preparation stops before execution-family-specific on-chain simulation.
+enum PreparedScript<FEN: FoundryEvmNetwork> {
+    Resume(Box<BundledState<FEN>>),
+    Simulate(Box<PreSimulationState<FEN>>),
+}
 
 /// CLI arguments for `forge script`.
 #[derive(Clone, Debug, Default, Parser)]
@@ -294,10 +302,12 @@ impl ScriptArgs {
         Ok(self.tempo.session_id()?.is_some())
     }
 
-    /// Loads config, resolves evm_opts (including network inference from fork), and returns them.
-    async fn resolved_evm_opts(&self) -> Result<(Config, EvmOpts)> {
-        let (mut config, mut evm_opts) = self.load_config_and_evm_opts()?;
-
+    /// Resolves evm_opts (including network inference from fork) using the loaded config.
+    async fn resolved_evm_opts(
+        &self,
+        mut config: Config,
+        mut evm_opts: EvmOpts,
+    ) -> Result<(Config, EvmOpts)> {
         if self.tempo.is_tempo() || self.has_tempo_session()? {
             // If Tempo tx options or a session are set, select the Tempo network.
             evm_opts.networks = NetworkConfigs::with_tempo();
@@ -380,7 +390,9 @@ impl ScriptArgs {
             return self.run_wallet_session_wrapper();
         }
 
-        let (config, evm_opts) = self.resolved_evm_opts().await?;
+        let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
+        self.install_missing_dependencies(&mut config)?;
+        let (config, evm_opts) = self.resolved_evm_opts(config, evm_opts).await?;
 
         let is_tempo = evm_opts.networks.is_tempo();
 
@@ -427,11 +439,22 @@ impl ScriptArgs {
 
         #[cfg(feature = "monad")]
         if evm_opts.networks.is_monad() {
-            return Box::pin(self.run_generic_script::<MonadEvmNetwork>(
-                config,
-                evm_opts,
-                ExecutorBuilder::<MonadEvmNetwork>::new(),
-            ))
+            return Box::pin(async move {
+                let Some(prepared) = self
+                    .prepare_script(config, evm_opts, ExecutorBuilder::<MonadEvmNetwork>::new())
+                    .await?
+                else {
+                    return Ok(());
+                };
+                let bundled = match prepared {
+                    PreparedScript::Resume(bundled) => *bundled,
+                    PreparedScript::Simulate(state) => {
+                        state.fill_monad_metadata().await?.bundle().await?
+                    }
+                };
+                let Some(bundled) = Self::finish_bundle(bundled).await? else { return Ok(()) };
+                Self::broadcast_bundle(bundled).await
+            })
             .await;
         }
 
@@ -463,14 +486,34 @@ impl ScriptArgs {
         evm_opts: EvmOpts,
         executor_builder: ExecutorBuilder<FEN>,
     ) -> Result<Option<BundledState<FEN>>> {
+        let Some(prepared) = self.prepare_script(config, evm_opts, executor_builder).await? else {
+            return Ok(None);
+        };
+        let bundled = match prepared {
+            PreparedScript::Resume(bundled) => *bundled,
+            PreparedScript::Simulate(state) => {
+                state.fill_ordinary_metadata().await?.bundle().await?
+            }
+        };
+        Self::finish_bundle(bundled).await
+    }
+
+    /// Compiles and executes the local script, leaving on-chain simulation to its concrete owner.
+    #[allow(clippy::large_stack_frames)]
+    async fn prepare_script<FEN: FoundryEvmNetwork>(
+        self,
+        config: Config,
+        evm_opts: EvmOpts,
+        executor_builder: ExecutorBuilder<FEN>,
+    ) -> Result<Option<PreparedScript<FEN>>> {
         let state = self.preprocess::<FEN>(config, evm_opts, executor_builder).await?;
         let create2_deployer = state.script_config.evm_opts.create2_deployer;
         let compiled = state.compile()?;
 
         // Move from `CompiledState` to `BundledState` either by resuming or executing and
         // simulating script.
-        let bundled = if compiled.args.resume {
-            compiled.resume().await?
+        let prepared = if compiled.args.resume {
+            PreparedScript::Resume(Box::new(compiled.resume().await?))
         } else {
             // Drive state machine to point at which we have everything needed for simulation.
             let pre_simulation = compiled
@@ -533,9 +576,15 @@ impl ScriptArgs {
                 create2_deployer,
             )?;
 
-            pre_simulation.fill_metadata().await?.bundle().await?
+            PreparedScript::Simulate(Box::new(pre_simulation))
         };
+        Ok(Some(prepared))
+    }
 
+    /// Performs the shared post-simulation output and verification preflight checks.
+    async fn finish_bundle<FEN: FoundryEvmNetwork>(
+        bundled: BundledState<FEN>,
+    ) -> Result<Option<BundledState<FEN>>> {
         // Exit early in case user didn't provide any broadcast/verify related flags.
         if !bundled.args.should_broadcast() {
             if !shell::is_json() {
@@ -571,6 +620,10 @@ impl ScriptArgs {
         };
 
         // Wait for pending txes and broadcast others.
+        Self::broadcast_bundle(bundled).await
+    }
+
+    async fn broadcast_bundle<FEN: FoundryEvmNetwork>(bundled: BundledState<FEN>) -> Result<()> {
         let broadcasted = bundled.wait_for_pending().await?.broadcast().await?;
 
         if broadcasted.args.verify {
@@ -2266,7 +2319,8 @@ mod tests {
         unsafe { std::env::set_var(TEMPO_SESSION_ID_ENV, format!("{session_id:?}")) };
 
         let args = ScriptArgs::parse_from(["foundry-cli", "Contract.sol"]);
-        let (_, evm_opts) = args.resolved_evm_opts().await.unwrap();
+        let (config, evm_opts) = args.load_config_and_evm_opts().unwrap();
+        let (_, evm_opts) = args.resolved_evm_opts(config, evm_opts).await.unwrap();
 
         assert!(evm_opts.networks.is_tempo());
     }

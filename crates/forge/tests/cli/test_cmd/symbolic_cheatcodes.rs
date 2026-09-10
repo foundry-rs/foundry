@@ -2201,6 +2201,58 @@ contract SymbolicExpectRevert is Test {
     );
 });
 
+forgetest_init!(symbolic_vm_expect_revert_double_registration_is_rejected, |prj, cmd| {
+    skip_unless_z3!("symbolic_vm_expect_revert_double_registration_is_rejected");
+
+    prj.add_test(
+        "DoubleExpectRevert.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicExpectedReverter {
+    error Custom(uint256 value);
+
+    function failPanic() external pure {
+        assert(false);
+    }
+}
+
+contract DoubleExpectRevert is Test {
+    SymbolicExpectedReverter helper;
+
+    function setUp() public {
+        helper = new SymbolicExpectedReverter();
+    }
+
+    function checkDoubleExpectRevert(uint256) public {
+        vm.expectRevert(SymbolicExpectedReverter.Custom.selector);
+        vm.expectRevert(bytes4(0x4e487b71));
+        helper.failPanic();
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-test", "checkDoubleExpectRevert"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkDoubleExpectRevert(uint256)
+"#]],
+    );
+});
+
 forgetest_init!(symbolic_vm_expect_revert_missing_is_counterexample, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(

@@ -1,4 +1,5 @@
 use super::{hashcons::HashConsed, *};
+use foundry_evm::revm::interpreter::instructions::i256::{i256_div, i256_mod};
 
 // Boolean selector recovery is an optional expression rewrite. Bound it to one word's worth of
 // unique nodes so adversarial expression trees cannot make construction unbounded.
@@ -368,10 +369,6 @@ impl SymExpr {
             SymExprKind::Hash { algorithm, .. } => Some(algorithm),
             _ => None,
         }
-    }
-
-    pub(in crate::runtime) fn into_kind(self) -> SymExprKind {
-        self.kind.into_value()
     }
 
     pub(in crate::runtime) fn from_kind(cx: &mut SymCx, kind: SymExprKind) -> Self {
@@ -888,9 +885,9 @@ impl SymExpr {
 
     /// Checks the occurrence cost of a rewrite that places one operand in both ITE arms.
     ///
-    /// Hash-consing keeps the stored DAG compact, but solver normalization folds occurrences and
-    /// would revisit a shared operand twice after every rewrite. Count that unfolded result before
-    /// constructing it so a linear series of branchless operations cannot become exponential.
+    /// Hash-consing keeps the stored DAG compact, but the rewrite still places a shared operand in
+    /// both arms for downstream consumers. Count that unfolded result before constructing it so a
+    /// linear series of branchless operations cannot become exponential.
     fn duplicating_branchless_rewrite_fits(operand: &Self, conditional: &Self) -> bool {
         let mut counter = UnfoldedNodeCounter::new();
         let Some(operand_nodes) = counter.expr_nodes(operand) else {
@@ -1409,7 +1406,42 @@ impl SymExpr {
     }
 
     pub(crate) fn contains_ite(&self) -> bool {
-        self.visit_bool(|expr| matches!(expr.kind(), SymExprKind::Ite(_, _, _)))
+        let mut visited = HashSet::<&Self>::default();
+        self.contains_ite_cached(&mut visited, false)
+    }
+
+    fn contains_ite_cached<'a>(&'a self, visited: &mut HashSet<&'a Self>, memoize: bool) -> bool {
+        match self.kind() {
+            SymExprKind::Const(_) | SymExprKind::Var(_) | SymExprKind::GasLeft(_) => return false,
+            SymExprKind::Ite(_, _, _) => return true,
+            _ => {}
+        }
+        if memoize && !visited.insert(self) {
+            return false;
+        }
+
+        match self.kind() {
+            SymExprKind::Keccak { len, bytes, .. } => {
+                len.contains_ite_cached(visited, true)
+                    || bytes.iter().any(|byte| byte.contains_ite_cached(visited, true))
+            }
+            SymExprKind::Hash { bytes, .. } => {
+                bytes.iter().any(|byte| byte.contains_ite_cached(visited, true))
+            }
+            SymExprKind::Not(value) => value.contains_ite_cached(visited, true),
+            SymExprKind::BinOp(_, left, right) => {
+                left.contains_ite_cached(visited, true) || right.contains_ite_cached(visited, true)
+            }
+            SymExprKind::TernOp(_, left, right, modulus) => {
+                left.contains_ite_cached(visited, true)
+                    || right.contains_ite_cached(visited, true)
+                    || modulus.contains_ite_cached(visited, true)
+            }
+            SymExprKind::Const(_)
+            | SymExprKind::Var(_)
+            | SymExprKind::GasLeft(_)
+            | SymExprKind::Ite(_, _, _) => unreachable!("leaf expression handled before descent"),
+        }
     }
 
     pub(in crate::runtime) fn udiv_operands(&self) -> Option<(&Self, &Self)> {
@@ -1868,54 +1900,64 @@ impl SymExpr {
         .is_break()
     }
 
+    /// Rewrites each distinct word or nested Boolean node once in bottom-up order.
+    ///
+    /// The folder must return the same result for every occurrence of one hash-consed node.
     pub(crate) fn fold(
-        self,
+        &self,
         cx: &mut SymCx,
         folder: &mut impl FnMut(&mut SymCx, Self) -> Self,
     ) -> Self {
-        if matches!(
-            self.kind(),
-            SymExprKind::Const(_) | SymExprKind::Var(_) | SymExprKind::GasLeft(_)
-        ) {
-            return folder(cx, self);
+        let mut folded = ExpressionFoldCache::default();
+        self.fold_cached(cx, folder, &mut folded)
+    }
+
+    pub(in crate::runtime::expr) fn fold_cached<'a>(
+        &'a self,
+        cx: &mut SymCx,
+        folder: &mut impl FnMut(&mut SymCx, Self) -> Self,
+        folded: &mut ExpressionFoldCache<'a>,
+    ) -> Self {
+        if let Some(expr) = folded.words.get(self) {
+            return expr.clone();
         }
 
-        let expr = match self.into_kind() {
+        let expr = match self.kind() {
+            SymExprKind::Const(_) | SymExprKind::Var(_) | SymExprKind::GasLeft(_) => self.clone(),
             SymExprKind::Keccak { name, len, bytes } => {
-                let len = len.fold(cx, folder);
-                let bytes = bytes.iter().cloned().map(|byte| byte.fold(cx, folder)).collect();
-                Self::keccak_symbol(cx, name, len, bytes)
+                let len = len.fold_cached(cx, folder, folded);
+                let bytes = bytes.iter().map(|byte| byte.fold_cached(cx, folder, folded)).collect();
+                Self::keccak_symbol(cx, *name, len, bytes)
             }
             SymExprKind::Hash { name, algorithm, bytes } => {
-                let bytes = bytes.iter().cloned().map(|byte| byte.fold(cx, folder)).collect();
-                Self::hash_symbol(cx, name, algorithm, bytes)
+                let bytes = bytes.iter().map(|byte| byte.fold_cached(cx, folder, folded)).collect();
+                Self::hash_symbol(cx, *name, algorithm, bytes)
             }
             SymExprKind::Not(value) => {
-                let value = value.fold(cx, folder);
+                let value = value.fold_cached(cx, folder, folded);
                 Self::not(cx, value)
             }
             SymExprKind::BinOp(op, left, right) => {
-                let left = left.fold(cx, folder);
-                let right = right.fold(cx, folder);
-                Self::binop(cx, op, left, right)
+                let left = left.fold_cached(cx, folder, folded);
+                let right = right.fold_cached(cx, folder, folded);
+                Self::binop(cx, *op, left, right)
             }
             SymExprKind::TernOp(op, left, right, modulus) => {
-                let left = left.fold(cx, folder);
-                let right = right.fold(cx, folder);
-                let modulus = modulus.fold(cx, folder);
-                Self::ternop(cx, op, left, right, modulus)
+                let left = left.fold_cached(cx, folder, folded);
+                let right = right.fold_cached(cx, folder, folded);
+                let modulus = modulus.fold_cached(cx, folder, folded);
+                Self::ternop(cx, *op, left, right, modulus)
             }
             SymExprKind::Ite(condition, then_expr, else_expr) => {
-                let condition = condition.fold_exprs(cx, folder);
-                let then_expr = then_expr.fold(cx, folder);
-                let else_expr = else_expr.fold(cx, folder);
+                let condition = condition.fold_exprs_cached(cx, folder, folded);
+                let then_expr = then_expr.fold_cached(cx, folder, folded);
+                let else_expr = else_expr.fold_cached(cx, folder, folded);
                 Self::ite(cx, condition, then_expr, else_expr)
             }
-            SymExprKind::Const(_) | SymExprKind::Var(_) | SymExprKind::GasLeft(_) => {
-                unreachable!("leaf expression returned before folding children")
-            }
         };
-        folder(cx, expr)
+        let expr = folder(cx, expr);
+        folded.words.insert(self, expr.clone());
+        expr
     }
 
     #[cfg(test)]
@@ -1963,7 +2005,7 @@ impl SymExpr {
 }
 
 // Branchless expression rewrites are optional. Bound both the distinct DAG nodes inspected while
-// deciding whether to rewrite and the occurrences a later non-memoized solver fold could visit.
+// deciding whether to rewrite and the unfolded size of the expression they could produce.
 const MAX_BRANCHLESS_REWRITE_NODES: usize = 256;
 const MAX_BRANCHLESS_REWRITE_UNFOLDED_NODES: usize = 8 * 1024;
 
@@ -2165,8 +2207,8 @@ impl SymBinOp {
                     left % right
                 }
             }
-            Self::SDiv => sdiv(left, right),
-            Self::SRem => smod(left, right),
+            Self::SDiv => i256_div(left, right),
+            Self::SRem => i256_mod(left, right),
             Self::And => left & right,
             Self::Or => left | right,
             Self::Xor => left ^ right,
@@ -2186,9 +2228,9 @@ impl SymBinOp {
             }
             Self::Sar => {
                 if right >= U256::from(256) {
-                    sar(left, 256)
+                    left.arithmetic_shr(256)
                 } else {
-                    sar(left, usize::try_from(right).expect("checked word shift"))
+                    left.arithmetic_shr(usize::try_from(right).expect("checked word shift"))
                 }
             }
         }

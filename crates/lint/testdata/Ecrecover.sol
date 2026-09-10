@@ -39,7 +39,7 @@ contract Ecrecover {
     function observeSigner(address) internal pure {}
 
     function bare(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
-        return ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures
+        return ecrecover(hash, v, r, s); //~WARN: `ecrecover` call does not reject malleable signatures
     }
 
     function unreachableConstantBranch(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
@@ -113,7 +113,7 @@ contract Ecrecover {
         bytes32 r,
         bytes32 s
     ) external pure returns (bool) {
-        return true && ecrecover(hash, v, r, s) != address(0); //~WARN: ecrecover should reject malleable signatures
+        return true && ecrecover(hash, v, r, s) != address(0); //~WARN: `ecrecover` call does not reject malleable signatures
     }
 
     function unreachableShortCircuitOr(
@@ -140,12 +140,12 @@ contract Ecrecover {
         bytes32 r,
         bytes32 s
     ) external pure returns (address) {
-        return true ? ecrecover(hash, v, r, s) : address(0); //~WARN: ecrecover should reject malleable signatures
+        return true ? ecrecover(hash, v, r, s) : address(0); //~WARN: `ecrecover` call does not reject malleable signatures
     }
 
     function vOnly(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
         require(v == 27 || v == 28);
-        return ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures
+        return ecrecover(hash, v, r, s); //~WARN: `ecrecover` call does not reject malleable signatures
     }
 
     function wrongValue(
@@ -156,7 +156,7 @@ contract Ecrecover {
         bytes32 other
     ) external pure returns (address) {
         require(uint256(other) <= HALF_ORDER);
-        return ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures
+        return ecrecover(hash, v, r, s); //~WARN: `ecrecover` call does not reject malleable signatures
     }
 
     function oneBranch(
@@ -169,7 +169,7 @@ contract Ecrecover {
         if (check) {
             require(uint256(s) <= HALF_ORDER);
         }
-        return ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures
+        return ecrecover(hash, v, r, s); //~WARN: `ecrecover` call does not reject malleable signatures
     }
 
     function reassigned(
@@ -181,12 +181,12 @@ contract Ecrecover {
     ) external pure returns (address) {
         require(uint256(s) <= HALF_ORDER);
         s = replacement;
-        return ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures
+        return ecrecover(hash, v, r, s); //~WARN: `ecrecover` call does not reject malleable signatures
     }
 
     function topBitMask(bytes32 hash, uint8 v, bytes32 r, bytes32 vs) external pure returns (address) {
         bytes32 s = bytes32(uint256(vs) & TOP_BIT_MASK);
-        return ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures
+        return ecrecover(hash, v, r, s); //~WARN: `ecrecover` call does not reject malleable signatures
     }
 
     function guardAfterCall(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
@@ -216,7 +216,7 @@ contract Ecrecover {
         bytes32 s
     ) external pure returns (address) {
         address signer;
-        (signer,) = (ecrecover(hash, v, r, s), 0); //~WARN: ecrecover should reject malleable signatures
+        (signer,) = (ecrecover(hash, v, r, s), 0); //~WARN: `ecrecover` call does not reject malleable signatures
         observeSigner(signer);
         require(uint256(s) <= HALF_ORDER);
         return signer;
@@ -241,7 +241,7 @@ contract Ecrecover {
         bytes32 s,
         bool useRecovery
     ) external pure returns (address) {
-        address signer = useRecovery ? ecrecover(hash, v, r, s) : address(0); //~WARN: ecrecover should reject malleable signatures
+        address signer = useRecovery ? ecrecover(hash, v, r, s) : address(0); //~WARN: `ecrecover` call does not reject malleable signatures
         return signer;
     }
 
@@ -261,7 +261,7 @@ contract Ecrecover {
     ) external pure returns (address) {
         address first;
         address second;
-        first = second = ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures
+        first = second = ecrecover(hash, v, r, s); //~WARN: `ecrecover` call does not reject malleable signatures
         return first;
     }
 
@@ -272,7 +272,7 @@ contract Ecrecover {
         bytes32 s
     ) external returns (address) {
         address signer;
-        signer = storedSigner = ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures
+        signer = storedSigner = ecrecover(hash, v, r, s); //~WARN: `ecrecover` call does not reject malleable signatures
         require(uint256(s) <= HALF_ORDER);
         return signer;
     }
@@ -310,20 +310,20 @@ contract Ecrecover {
     }
 
     function usedBeforeGuard(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
-        address signer = ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures
+        address signer = ecrecover(hash, v, r, s); //~WARN: `ecrecover` call does not reject malleable signatures
         observeSigner(signer);
         require(uint256(s) <= HALF_ORDER);
         return signer;
     }
 
     function storedBeforeGuard(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external {
-        address signer = ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures
+        address signer = ecrecover(hash, v, r, s); //~WARN: `ecrecover` call does not reject malleable signatures
         storedSigner = signer;
         require(uint256(s) <= HALF_ORDER);
     }
 
     function assemblyAfterRecovery(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
-        address signer = ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures
+        address signer = ecrecover(hash, v, r, s); //~WARN: `ecrecover` call does not reject malleable signatures
         assembly {
             pop(0)
         }
@@ -331,7 +331,7 @@ contract Ecrecover {
     }
 
     function emptyAssemblyAfterRecovery(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
-        address signer = ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures
+        address signer = ecrecover(hash, v, r, s); //~WARN: `ecrecover` call does not reject malleable signatures
         assembly {}
         return signer;
     }
@@ -342,7 +342,7 @@ contract Ecrecover {
         bytes32 r,
         bytes32 s
     ) external pure returns (address) {
-        address signer = ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures
+        address signer = ecrecover(hash, v, r, s); //~WARN: `ecrecover` call does not reject malleable signatures
         assembly ("memory-safe") {
             pop(0)
         }
@@ -364,7 +364,7 @@ contract Ecrecover {
         bytes32 s,
         bool check
     ) external pure returns (address) {
-        address signer = ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures
+        address signer = ecrecover(hash, v, r, s); //~WARN: `ecrecover` call does not reject malleable signatures
         if (check) require(uint256(s) <= HALF_ORDER);
         return signer;
     }
@@ -376,7 +376,7 @@ contract Ecrecover {
         bytes32 s,
         bool check
     ) external pure returns (address signer) {
-        signer = ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures
+        signer = ecrecover(hash, v, r, s); //~WARN: `ecrecover` call does not reject malleable signatures
         if (check) require(uint256(s) <= HALF_ORDER);
     }
 
@@ -387,7 +387,7 @@ contract Ecrecover {
         bytes32 s,
         bytes32 replacement
     ) external pure returns (address) {
-        address signer = ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures
+        address signer = ecrecover(hash, v, r, s); //~WARN: `ecrecover` call does not reject malleable signatures
         s = replacement;
         require(uint256(s) <= HALF_ORDER);
         return signer;
@@ -397,7 +397,7 @@ contract Ecrecover {
         require(uint256(s) <= HALF_ORDER);
         address first = ecrecover(hash, v, r, s);
         s = bytes32(uint256(s) + 1);
-        address second = ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures
+        address second = ecrecover(hash, v, r, s); //~WARN: `ecrecover` call does not reject malleable signatures
         return (first, second);
     }
 
@@ -428,7 +428,7 @@ contract Ecrecover {
 
     function constantTernaryGuardControl(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
         require(false ? uint256(s) <= HALF_ORDER : true);
-        return ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures
+        return ecrecover(hash, v, r, s); //~WARN: `ecrecover` call does not reject malleable signatures
     }
 
     function unreachableElseGuardEffect(
@@ -461,7 +461,7 @@ contract Ecrecover {
         bytes32 replacement
     ) external pure returns (address) {
         require(true ? (s = replacement) == replacement : uint256(s) <= HALF_ORDER);
-        return ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures
+        return ecrecover(hash, v, r, s); //~WARN: `ecrecover` call does not reject malleable signatures
     }
 
     function assertReversed(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
@@ -531,7 +531,7 @@ contract Ecrecover {
     }
 
     function constantTernaryUnsafeS(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
-        return ecrecover(hash, v, r, false ? bytes32(0) : s); //~WARN: ecrecover should reject malleable signatures
+        return ecrecover(hash, v, r, false ? bytes32(0) : s); //~WARN: `ecrecover` call does not reject malleable signatures
     }
 
     function tupleSwapSafe(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
@@ -545,7 +545,7 @@ contract Ecrecover {
         bytes32 unsafeS = s;
         bytes32 safeS = bytes32(0);
         (unsafeS, safeS) = (safeS, unsafeS);
-        return ecrecover(hash, v, r, safeS); //~WARN: ecrecover should reject malleable signatures
+        return ecrecover(hash, v, r, safeS); //~WARN: `ecrecover` call does not reject malleable signatures
     }
 
     function ternarySafe(
@@ -583,7 +583,7 @@ contract Ecrecover {
     ) external pure returns (address signer) {
         require(uint256(s) <= HALF_ORDER);
         while (repeat) {
-            signer = ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures
+            signer = ecrecover(hash, v, r, s); //~WARN: `ecrecover` call does not reject malleable signatures
             s = replacement;
         }
     }
@@ -597,7 +597,7 @@ contract Ecrecover {
     ) external pure returns (address signer) {
         require(uint256(s) <= HALF_ORDER);
         for (uint256 i; i < 2; s = replacement) {
-            signer = ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures
+            signer = ecrecover(hash, v, r, s); //~WARN: `ecrecover` call does not reject malleable signatures
             ++i;
             continue;
         }
@@ -641,7 +641,7 @@ contract Ecrecover {
             if (skipGuard) break;
             require(uint256(s) <= HALF_ORDER);
         } while (false);
-        return ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures
+        return ecrecover(hash, v, r, s); //~WARN: `ecrecover` call does not reject malleable signatures
     }
 
     function stateChangedByCall(
@@ -652,7 +652,7 @@ contract Ecrecover {
     ) external returns (address) {
         require(uint256(storedS) <= HALF_ORDER);
         mutateStoredS(replacement);
-        return ecrecover(hash, v, r, storedS); //~WARN: ecrecover should reject malleable signatures
+        return ecrecover(hash, v, r, storedS); //~WARN: `ecrecover` call does not reject malleable signatures
     }
 
     function statePreservedByPureCall(bytes32 hash, uint8 v, bytes32 r) external view returns (address) {
@@ -672,19 +672,19 @@ contract Ecrecover {
         try helper.observe(mutateAndReturn(replacement)) {
             return address(0);
         } catch {}
-        return ecrecover(hash, v, r, storedS); //~WARN: ecrecover should reject malleable signatures
+        return ecrecover(hash, v, r, storedS); //~WARN: `ecrecover` call does not reject malleable signatures
     }
 
     function looseInclusive(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
         require(uint256(s) <= HALF_ORDER_PLUS_ONE);
-        return ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures
+        return ecrecover(hash, v, r, s); //~WARN: `ecrecover` call does not reject malleable signatures
     }
 
     function looseStrict(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
         unchecked {
             require(uint256(s) < HALF_ORDER_PLUS_ONE + 1);
         }
-        return ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures
+        return ecrecover(hash, v, r, s); //~WARN: `ecrecover` call does not reject malleable signatures
     }
 
     function uncheckedWrap(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
@@ -722,7 +722,7 @@ contract Ecrecover {
     }
 
     function structMemberUnguarded(bytes32 hash, Sig memory sig) external pure returns (address) {
-        return ecrecover(hash, sig.v, sig.r, sig.s); //~WARN: ecrecover should reject malleable signatures
+        return ecrecover(hash, sig.v, sig.r, sig.s); //~WARN: `ecrecover` call does not reject malleable signatures
     }
 
     function structMemberReassigned(
@@ -732,7 +732,7 @@ contract Ecrecover {
     ) external pure returns (address) {
         require(uint256(sig.s) <= HALF_ORDER);
         sig = other;
-        return ecrecover(hash, sig.v, sig.r, sig.s); //~WARN: ecrecover should reject malleable signatures
+        return ecrecover(hash, sig.v, sig.r, sig.s); //~WARN: `ecrecover` call does not reject malleable signatures
     }
 
     function structFieldReassigned(
@@ -742,7 +742,7 @@ contract Ecrecover {
     ) external pure returns (address) {
         require(uint256(sig.s) <= HALF_ORDER);
         sig.s = replacement;
-        return ecrecover(hash, sig.v, sig.r, sig.s); //~WARN: ecrecover should reject malleable signatures
+        return ecrecover(hash, sig.v, sig.r, sig.s); //~WARN: `ecrecover` call does not reject malleable signatures
     }
 
     function structFieldReassignedThroughMemoryAlias(
@@ -753,7 +753,7 @@ contract Ecrecover {
         Sig memory aliasSig = sig;
         require(uint256(sig.s) <= HALF_ORDER);
         aliasSig.s = replacement;
-        return ecrecover(hash, sig.v, sig.r, sig.s); //~WARN: ecrecover should reject malleable signatures
+        return ecrecover(hash, sig.v, sig.r, sig.s); //~WARN: `ecrecover` call does not reject malleable signatures
     }
 
     function stateStructMemberGuarded(bytes32 hash) external view returns (address) {
@@ -767,7 +767,7 @@ contract Ecrecover {
     ) external pure returns (address) {
         require(uint256(sig.s) <= HALF_ORDER);
         sig.s++;
-        return ecrecover(hash, sig.v, sig.r, sig.s); //~WARN: ecrecover should reject malleable signatures
+        return ecrecover(hash, sig.v, sig.r, sig.s); //~WARN: `ecrecover` call does not reject malleable signatures
     }
 
     function structMemberTupleAssignInvalidates(
@@ -778,7 +778,7 @@ contract Ecrecover {
     ) external pure returns (address) {
         require(uint256(sig.s) <= HALF_ORDER);
         (sig.s, sig.v) = (replacement, newV);
-        return ecrecover(hash, sig.v, sig.r, sig.s); //~WARN: ecrecover should reject malleable signatures
+        return ecrecover(hash, sig.v, sig.r, sig.s); //~WARN: `ecrecover` call does not reject malleable signatures
     }
 
     function structMemberLoopCarried(
@@ -789,7 +789,7 @@ contract Ecrecover {
     ) external pure returns (address signer) {
         require(uint256(sig.s) <= HALF_ORDER);
         while (repeat) {
-            signer = ecrecover(hash, sig.v, sig.r, sig.s); //~WARN: ecrecover should reject malleable signatures
+            signer = ecrecover(hash, sig.v, sig.r, sig.s); //~WARN: `ecrecover` call does not reject malleable signatures
             sig.s = replacement;
         }
     }
@@ -803,7 +803,7 @@ contract Ecrecover {
     function structMemberMutatedByCall(bytes32 hash, Sig memory sig) external pure returns (address) {
         require(uint256(sig.s) <= HALF_ORDER);
         normalizeSig(sig);
-        return ecrecover(hash, sig.v, sig.r, sig.s); //~WARN: ecrecover should reject malleable signatures
+        return ecrecover(hash, sig.v, sig.r, sig.s); //~WARN: `ecrecover` call does not reject malleable signatures
     }
 
     function structMemberMutatedByFunctionPointer(
@@ -813,7 +813,7 @@ contract Ecrecover {
         function(Sig memory) internal pure fn = normalizeSig;
         require(uint256(sig.s) <= HALF_ORDER);
         fn(sig);
-        return ecrecover(hash, sig.v, sig.r, sig.s); //~WARN: ecrecover should reject malleable signatures
+        return ecrecover(hash, sig.v, sig.r, sig.s); //~WARN: `ecrecover` call does not reject malleable signatures
     }
 
     function structMemberCopiedByExternalCall(bytes32 hash, Sig memory sig) external view returns (address) {
@@ -836,7 +836,7 @@ contract Ecrecover {
         Sig storage sig = storedSig;
         require(uint256(sig.s) <= HALF_ORDER);
         mutateStoredSig();
-        return ecrecover(hash, sig.v, sig.r, sig.s); //~WARN: ecrecover should reject malleable signatures
+        return ecrecover(hash, sig.v, sig.r, sig.s); //~WARN: `ecrecover` call does not reject malleable signatures
     }
 
     function structFieldReassignedThroughStorageAlias(
@@ -847,7 +847,7 @@ contract Ecrecover {
         Sig storage aliasSig = sig;
         require(uint256(sig.s) <= HALF_ORDER);
         aliasSig.s = replacement;
-        return ecrecover(hash, sig.v, sig.r, sig.s); //~WARN: ecrecover should reject malleable signatures
+        return ecrecover(hash, sig.v, sig.r, sig.s); //~WARN: `ecrecover` call does not reject malleable signatures
     }
 }
 

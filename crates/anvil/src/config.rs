@@ -2099,6 +2099,7 @@ latest block number: {latest_block}"
         let config = ClientForkConfig {
             fork_urls: self.fork_urls.clone(),
             block_number: fork_block_number,
+            evm_block_number: evm_env.block_env.number.saturating_to(),
             block_hash,
             transaction_hash: self.fork_choice.and_then(|fc| fc.transaction_hash()),
             provider,
@@ -2465,11 +2466,11 @@ async fn find_latest_fork_block<P: Provider<AnyNetwork>>(
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "optimism")]
-    use foundry_evm::hardfork::OpHardfork;
+    use super::*;
     use foundry_evm::{hardfork::EthereumHardfork, hardforks::latest_active_tempo_hardfork};
 
-    use super::*;
+    #[cfg(feature = "optimism")]
+    use foundry_evm::hardfork::OpHardfork;
 
     #[tokio::test(flavor = "multi_thread")]
     async fn fork_output_redacts_endpoint_credentials() {

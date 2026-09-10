@@ -7,9 +7,6 @@ yanked = "warn"
 ignore = [
     # https://rustsec.org/advisories/RUSTSEC-2024-0436 paste! is unmaintained
     "RUSTSEC-2024-0436",
-    # https://rustsec.org/advisories/RUSTSEC-2025-0172 zip-extract is unmaintained.
-    # No fixed soldeer release is available yet.
-    "RUSTSEC-2025-0172",
     # https://rustsec.org/advisories/RUSTSEC-2026-0173 proc-macro-error2 is unmaintained
     "RUSTSEC-2026-0173",
     # https://rustsec.org/advisories/RUSTSEC-2026-0194 quick-xml duplicate
@@ -22,6 +19,10 @@ ignore = [
     # https://rustsec.org/advisories/RUSTSEC-2026-0247 bitmaps is unmaintained.
     # No fixed imbl release is available yet: https://github.com/jneem/imbl/issues/170
     "RUSTSEC-2026-0247",
+    # RUSTSEC-2025-0167 affects bitmaps byte-slice conversion and mutation APIs.
+    # Our only consumers, imbl and imbl-sized-chunks, do not call those APIs.
+    # Remove when imbl replaces bitmaps: https://github.com/jneem/imbl/issues/170
+    "RUSTSEC-2025-0167",
 ]
 
 # This section is considered when running `cargo deny check bans`.
@@ -81,8 +82,6 @@ exceptions = [
     { allow = ["CC0-1.0"], name = "notify" },
     { allow = ["CC0-1.0"], name = "dunce" },
     { allow = ["CC0-1.0"], name = "aurora-engine-modexp" },
-    # Rendered mdBook HTML source code includes attribution as required by CC-BY-4.0
-    { allow = ["CC-BY-4.0", "MIT"], name = "font-awesome-as-a-crate" },
 ]
 # copyleft = "deny"
 

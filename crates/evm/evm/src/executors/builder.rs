@@ -3,8 +3,6 @@ use crate::{
     inspectors::{InspectorStackBuilder, TempoLabels},
 };
 use alloy_primitives::Address;
-#[cfg(feature = "optimism")]
-use foundry_evm_core::evm::OpEvmNetwork;
 use foundry_evm_core::{
     backend::Backend,
     evm::{
@@ -12,10 +10,14 @@ use foundry_evm_core::{
         TxEnvFor,
     },
 };
-#[cfg(feature = "monad")]
-use foundry_evm_core::{constants::MONAD_CHEATCODE_ADDRESS, evm::MonadEvmNetwork};
 use foundry_evm_networks::NetworkConfigs;
 use revm::context::{Block, Transaction};
+
+#[cfg(feature = "monad")]
+use foundry_evm_core::{constants::MONAD_CHEATCODE_ADDRESS, evm::MonadEvmNetwork};
+
+#[cfg(feature = "optimism")]
+use foundry_evm_core::evm::OpEvmNetwork;
 
 /// The builder that allows to configure an evm [`Executor`] which a stack of optional
 /// [`revm::Inspector`]s, such as [`Cheatcodes`].
@@ -103,8 +105,8 @@ impl<FEN: FoundryEvmNetwork> ExecutorBuilder<FEN> {
         mut evm_env: EvmEnvFor<FEN>,
         tx_env: TxEnvFor<FEN>,
         db: Backend<FEN>,
-        // TODO(monad-fen-dispatch): Remove this argument after inspector inputs and backend fork
-        // behavior are resolved by the initial concrete FEN dispatch.
+        // TODO(monad-fen-lifecycle): Remove this argument after the backend's Monad fork-position
+        // migration and the inspector's separate Celo configuration cleanup are complete.
         networks: NetworkConfigs,
     ) -> Executor<FEN> {
         let Self { mut stack, gas_limit, spec, legacy_assertions, .. } = self;
