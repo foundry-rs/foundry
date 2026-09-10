@@ -65,7 +65,9 @@ impl TraceContext {
         self
     }
 
-    /// Returns the hardfork to use while decoding this context's traces.
+    /// Completes metadata for a remotely executed trace before decoding.
+    /// Locally executed traces must use [`Self::hardfork`] directly, including `None`, so a
+    /// configured hardfork cannot replace an explicit execution-spec override.
     pub fn decoding_hardfork(self, config: &Config) -> Option<FoundryHardfork> {
         let execution_network = self.networks.execution_network();
         let mut hardfork = self

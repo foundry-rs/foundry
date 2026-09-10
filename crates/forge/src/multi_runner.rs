@@ -495,11 +495,10 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
         self.sender = config.sender;
         self.evm_opts.networks = config.networks;
         self.hardfork = resolve_execution_spec(
-            &config,
-            self.evm_opts.networks,
+            config.evm_version,
+            config.hardfork,
             &mut self.evm_env,
             ExecutionSpecContext::local_or_fork(self.fork_chain_id, self.fork_hardfork),
-            None,
             None,
         );
         self.spec_id = self.evm_env.cfg_env.spec;
@@ -906,11 +905,10 @@ impl MultiContractRunnerBuilder {
             (self.fork.is_some() || evm_opts.fork_url.is_some()).then_some(evm_env.cfg_env.chain_id)
         });
         let hardfork = resolve_execution_spec(
-            &self.config,
-            evm_opts.networks,
+            self.config.evm_version,
+            self.config.hardfork,
             &mut evm_env,
             ExecutionSpecContext::local_or_fork(fork_chain_id, self.fork_hardfork),
-            None,
             None,
         );
         let spec_id = evm_env.cfg_env.spec;

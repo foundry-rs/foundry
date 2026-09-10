@@ -77,6 +77,13 @@ network's execution semantics.
 | `NetworkConfigs` and hardfork types | Pre-dispatch selection, chain and endpoint inference, feature configuration, and hardfork validation |
 | Foundry tools | CLI/config plumbing, one authoritative dispatch per execution entry point, and tool-specific workflows and user-visible behavior |
 
+After dispatch, `SpecFor<FEN>` owns hardfork resolution through `ExecutionSpec`: checked
+namespaced conversion, native source-chain schedules, local-fork behavior, and metadata for direct
+spec overrides. The shared resolver accepts one typed explicit spec and derives its reported
+hardfork from that same value. Tracing carries the result, including absent metadata for an
+Ethereum or Optimism version override, directly into decoding. Keep the source chain ID separate
+from an overridden execution chain ID when supplying historical context.
+
 Do not encode protocol behavior only as a chain-ID branch in a tool. Put execution semantics in the
 network factory or context, selection in the network configuration layer, and tool-specific workflow
 behavior in the relevant tool.

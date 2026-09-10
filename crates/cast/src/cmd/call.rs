@@ -582,7 +582,14 @@ impl CallArgs {
             return handle_traces(
                 result,
                 &config,
-                TraceContext::new(chain, endpoint_identity.network_profile, resolved_hardfork),
+                {
+                    let context = TraceContext::new(
+                        chain,
+                        endpoint_identity.network_profile,
+                        resolved_hardfork,
+                    );
+                    context.with_hardfork(context.decoding_hardfork(&config))
+                },
                 &contracts_bytecode,
                 &tracing,
                 with_local_artifacts,
