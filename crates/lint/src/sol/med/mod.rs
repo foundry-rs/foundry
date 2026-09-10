@@ -41,6 +41,6 @@ register_lints!(
     locked_ether: (LockedEther, late, (LOCKED_ETHER));
     mapping_deletion: (MappingDeletion, late, (MAPPING_DELETION));
     non_reentrant_not_first: (NonReentrantNotFirst, late, (NON_REENTRANT_NOT_FIRST));
-    weak_prng: (WeakPrng, early, (WEAK_PRNG));
+    weak_prng: (WeakPrng, late, (WEAK_PRNG));
     tautological_compare: (TautologicalCompare, late, (TAUTOLOGICAL_COMPARE));
 );

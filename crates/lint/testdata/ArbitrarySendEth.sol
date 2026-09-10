@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.18;
 
+import "./ArbitrarySendEth.sol" as Self;
+
 interface IERC20 {
     function transfer(address to, uint256 amount) external returns (bool);
 }
@@ -805,6 +807,12 @@ library SelfRetLib {
 
 contract NumericCastSafeOk {
     function payZeroViaUint160Ok(uint256 amt) external { payable(address(uint160(0))).transfer(amt); }
+}
+
+contract QualifiedSelfCastOk {
+    function paySelf(uint256 amount) external {
+        Self.IThing(address(this)).ping{value: amount}();
+    }
 }
 
 contract FnPtrFromSelf {

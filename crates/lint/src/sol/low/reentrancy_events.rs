@@ -1,14 +1,11 @@
-use super::{
-    ReentrancyEvents,
-    calls_loop::{is_state_mutating_external_call, resolved_super_function_ids},
-};
+use super::{ReentrancyEvents, calls_loop::is_state_mutating_external_call};
 use crate::{
     linter::{LateLintPass, LintContext},
     sol::{
         Severity, SolLint,
         analysis::{
-            DEFAULT_HELPER_ANALYSIS_CACHE_LIMIT, HelperAnalysisCache, for_each_child, is_exit_call,
-            loop_stmts, loop_update, resolved_internal_function_ids,
+            DEFAULT_HELPER_ANALYSIS_CACHE_LIMIT, HelperAnalysisCache, dispatched_function,
+            for_each_child, is_exit_call, loop_stmts, loop_update,
         },
     },
 };
@@ -165,8 +162,13 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
         // A modifier may legitimately appear several times in the chain (`m(false) m(true)`),
         // so duplicates are not skipped; `index` strictly increases, and recursion through
         // internal calls is handled by `analyze_internal_call`.
-        let Some((modifier_id, modifier_body)) =
-            modifier.id.as_function().and_then(|id| Some((id, self.gcx.hir.function(id).body?)))
+        let Some((modifier_id, modifier_body)) = self
+            .enclosing_contract
+            .map_or_else(
+                || modifier.id.as_function(),
+                |contract| self.gcx.resolve_modifier_target(contract, modifier),
+            )
+            .and_then(|id| Some((id, self.gcx.hir.function(id).body?)))
         else {
             return self.analyze_modifier_chain(modifiers, index + 1, body, entry);
         };
@@ -225,7 +227,7 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
             }
             StmtKind::DeclMulti(_, expr) | StmtKind::Expr(expr) => {
                 self.analyze_expr(expr, &mut entry);
-                if is_exit_call(expr) {
+                if is_exit_call(self.gcx, expr) {
                     return Exits::default();
                 }
                 self.unless_aborted(Exits::fallthrough(entry))
@@ -318,14 +320,14 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
 
     fn analyze_expr(&mut self, expr: &'gcx Expr<'gcx>, tainted: &mut bool) {
         match &expr.kind {
-            ExprKind::Call(callee, args, _) => {
+            ExprKind::Call(callee, ..) => {
                 for_each_child(expr, &mut |child| self.analyze_expr(child, tainted));
                 if is_state_mutating_external_call(self.gcx, callee) {
                     *tainted = true;
                 }
                 // Follow internal helpers and `super` dispatch so their external calls taint the
                 // caller too.
-                for func_id in self.callees(callee, args.len()) {
+                for func_id in self.callees(callee) {
                     self.analyze_internal_call(func_id, tainted);
                 }
             }
@@ -364,14 +366,13 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
     }
 
     /// Internal functions and `super` targets a call through `callee` dispatches to.
-    fn callees(&self, callee: &'gcx Expr<'gcx>, arg_count: usize) -> Vec<FunctionId> {
-        resolved_internal_function_ids(&self.gcx.hir, callee)
-            .chain(resolved_super_function_ids(
-                self.gcx,
-                self.enclosing_contract,
-                callee,
-                arg_count,
-            ))
+    fn callees(&self, callee: &'gcx Expr<'gcx>) -> Vec<FunctionId> {
+        self.enclosing_contract
+            .map_or_else(
+                || self.gcx.resolved_function(callee),
+                |contract| dispatched_function(self.gcx, contract, callee),
+            )
+            .into_iter()
             .collect()
     }
 
@@ -509,10 +510,10 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
         if reached {
             return true;
         }
-        let ExprKind::Call(callee, args, _) = &expr.kind else { return false };
+        let ExprKind::Call(callee, ..) = &expr.kind else { return false };
         is_state_mutating_external_call(self.gcx, callee)
             || self
-                .callees(callee, args.len())
+                .callees(callee)
                 .into_iter()
                 .any(|id| self.helper_may_reach_external_call(id, seen))
     }

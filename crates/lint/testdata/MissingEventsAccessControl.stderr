@@ -174,3 +174,11 @@ LL │         admin = newAdmin;
    │
    ╰ help: https://getfoundry.sh/forge/linting/missing-events-access-control
 
+warning[missing-events-access-control]: `owner` is changed without an event but is used for access control
+   ╭▸ ROOT/testdata/MissingEventsAccessControl.sol:LL:CC
+   │
+LL │         owner = next;
+   │         ━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-events-access-control
+

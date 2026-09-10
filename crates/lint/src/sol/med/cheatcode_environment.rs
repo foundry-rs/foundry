@@ -21,10 +21,7 @@ use crate::{
     linter::{Lint, ProjectLintEmitter, ProjectLintPass, ProjectSource},
     sol::{
         Severity, SolLint,
-        analysis::{
-            arg_for_param, dispatched_function, for_each_child, is_exit_call, is_inc_dec,
-            loop_update,
-        },
+        analysis::{arg_for_param, dispatched_function, for_each_child, is_exit_call, loop_update},
     },
 };
 use alloy_primitives::{U256, keccak256, uint};
@@ -437,7 +434,7 @@ impl<'gcx> Checker<'_, '_, 'gcx> {
                 .parameters
                 .iter()
                 .map(|&param| {
-                    let value = arg_for_param(&self.gcx.hir, definition, param, &modifier.args)
+                    let value = arg_for_param(self.gcx, id, param, &modifier.args)
                         .map(|arg| self.expr(arg, &mut state))
                         .unwrap_or_default();
                     (param, value)
@@ -613,7 +610,7 @@ impl<'gcx> Checker<'_, '_, 'gcx> {
             }
             StmtKind::Expr(expr) | StmtKind::Emit(expr) => {
                 self.expr(expr, &mut state);
-                if is_exit_call(expr) {
+                if is_exit_call(self.gcx, expr) {
                     state.flow = Flow::Halt;
                 }
             }
@@ -666,7 +663,7 @@ impl<'gcx> Checker<'_, '_, 'gcx> {
                 }
             }
             _ => {
-                if let Some(var) = lhs.as_variable()
+                if let Some(var) = self.gcx.resolved_variable(lhs)
                     && !self.gcx.hir.variable(var).is_state_variable()
                 {
                     state.locals.insert(var, value);
@@ -682,7 +679,7 @@ impl<'gcx> Checker<'_, '_, 'gcx> {
             for part in parts.iter().flatten() {
                 self.destination(part, state);
             }
-        } else if expr.as_variable().is_none() {
+        } else if self.gcx.resolved_variable(expr).is_none() {
             for_each_child(expr, &mut |child| {
                 self.expr(child, state);
             });
@@ -727,7 +724,7 @@ impl<'gcx> Checker<'_, '_, 'gcx> {
         {
             return self.read(environment, expr.span, state);
         }
-        if let Some(var) = expr.as_variable()
+        if let Some(var) = self.gcx.resolved_variable(expr)
             && let Some(value) = state.locals.get(&var)
         {
             self.use_value(value);
@@ -755,12 +752,15 @@ impl<'gcx> Checker<'_, '_, 'gcx> {
             }
             ExprKind::Delete(lhs) => {
                 self.destination(lhs, state);
-                let value =
-                    lhs.as_variable().map(|var| self.default_value(var)).unwrap_or_default();
+                let value = self
+                    .gcx
+                    .resolved_variable(lhs)
+                    .map(|var| self.default_value(var))
+                    .unwrap_or_default();
                 self.bind(lhs, value, state);
                 Value::default()
             }
-            ExprKind::Unary(op, inner) if is_inc_dec(op.kind) => {
+            ExprKind::Unary(op, inner) if op.kind.has_side_effects() => {
                 let before = self.expr(inner, state);
                 let mut value = before.clone();
                 let binary = if matches!(op.kind, UnOpKind::PreInc | UnOpKind::PostInc) {

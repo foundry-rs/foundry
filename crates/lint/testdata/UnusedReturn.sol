@@ -13,7 +13,7 @@ interface IOracle {
 // Same name+arity as IOracle.getPrice but one overload has no return value.
 interface IOracleOverloaded {
     function getPrice(address token) external returns (uint256);
-    function getPrice(uint256 id) external; // no return, makes getPrice ambiguous
+    function getPrice(uint256 id) external;
 }
 
 interface IERC20 {
@@ -73,10 +73,13 @@ contract UnusedReturn {
         token.transferFrom(from, to, amt);
     }
 
-    // SHOULD PASS: ambiguous overload set, getPrice(address) returns uint256 but
-    // getPrice(uint256) returns nothing; conservatively skip to avoid false positives
-    function good6(address t) external {
-        oracleOverloaded.getPrice(t);
+    // The selected address overload returns a value.
+    function badOverload(address t) external {
+        oracleOverloaded.getPrice(t); //~WARN: return value of an external call is not used
+    }
+
+    function goodOverload(uint256 id) external {
+        oracleOverloaded.getPrice(id);
     }
 
     // SHOULD FAIL: named-arg call, arity should still be 1
