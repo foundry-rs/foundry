@@ -264,6 +264,7 @@ fmt_tests! {
     MappingType,
     MethodChain,
     MethodChainCallOptions,
+    MixedBlockComments,
     ModifierDefinition,
     NamedCallArgsInChain,
     NestedNamedCallArgumentChain,
