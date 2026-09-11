@@ -292,7 +292,7 @@ impl From<FoundryHardfork> for SpecId {
             #[cfg(feature = "optimism")]
             FoundryHardfork::Optimism(hardfork) => eth_spec_id_from_optimism_hardfork(hardfork),
             #[cfg(feature = "base")]
-            FoundryHardfork::Base(hardfork) => eth_spec_id_from_base_upgrade(hardfork),
+            FoundryHardfork::Base(hardfork) => BaseSpecId::new(hardfork).into_eth_spec(),
             FoundryHardfork::Tempo(hardfork) => spec_id_from_tempo_hardfork(hardfork),
             #[cfg(feature = "monad")]
             FoundryHardfork::Monad(hardfork) => hardfork.into(),
@@ -371,26 +371,6 @@ pub fn eth_spec_id_from_optimism_hardfork(hardfork: OpHardfork) -> SpecId {
         }
         OpHardfork::Isthmus | OpHardfork::Jovian => SpecId::PRAGUE,
         OpHardfork::Karst | OpHardfork::Lagoon => SpecId::OSAKA,
-        f => unreachable!("unimplemented {}", f),
-    }
-}
-
-#[cfg(feature = "base")]
-pub fn eth_spec_id_from_base_upgrade(hardfork: BaseUpgrade) -> SpecId {
-    match hardfork {
-        BaseUpgrade::Bedrock | BaseUpgrade::Regolith => SpecId::MERGE,
-        BaseUpgrade::Canyon | BaseUpgrade::Delta => SpecId::SHANGHAI,
-        BaseUpgrade::Ecotone
-        | BaseUpgrade::Fjord
-        | BaseUpgrade::Granite
-        | BaseUpgrade::Holocene
-        | BaseUpgrade::PectraBlobSchedule => SpecId::CANCUN,
-        BaseUpgrade::Isthmus | BaseUpgrade::Jovian => SpecId::PRAGUE,
-        BaseUpgrade::Azul
-        | BaseUpgrade::Beryl
-        | BaseUpgrade::Cobalt
-        | BaseUpgrade::Denim
-        | BaseUpgrade::Zenith => SpecId::OSAKA,
         f => unreachable!("unimplemented {}", f),
     }
 }
@@ -535,6 +515,11 @@ impl ExecutionSpec for OpSpecId {
             FoundryHardfork::Optimism(hardfork) => Some(spec_id_from_optimism_hardfork(hardfork)),
             _ => None,
         }
+    }
+
+    fn historical_hardfork(chain_id: u64, timestamp: u64) -> Option<FoundryHardfork> {
+        OpHardfork::from_chain_and_timestamp(Chain::from_id(chain_id), timestamp)
+            .map(FoundryHardfork::Optimism)
     }
 }
 
@@ -1055,6 +1040,9 @@ mod tests {
     mod optimism {
         use super::*;
 
+        #[cfg(feature = "base")]
+        use base_common_genesis::UpgradeConfig;
+
         #[test]
         fn test_optimism_spec_id_mapping() {
             assert_eq!(spec_id_from_optimism_hardfork(OpHardfork::Bedrock), OpSpecId::BEDROCK);
@@ -1077,6 +1065,34 @@ mod tests {
                 FoundryHardfork::from_chain_and_timestamp(op_chain_id, u64::MAX),
                 Some(FoundryHardfork::Optimism(_))
             ));
+        }
+
+        #[test]
+        #[cfg(feature = "base")]
+        fn test_base_chain_historical_hardfork_is_execution_family_specific() {
+            let chains = [
+                (8453, UpgradeConfig::BASE_MAINNET.ecotone_time.unwrap()),
+                (84532, UpgradeConfig::BASE_SEPOLIA.ecotone_time.unwrap()),
+            ];
+
+            for (chain_id, timestamp) in chains {
+                assert_eq!(
+                    FoundryHardfork::from_chain_and_timestamp(chain_id, timestamp),
+                    Some(FoundryHardfork::Base(BaseUpgrade::Ecotone))
+                );
+                assert_eq!(
+                    BaseSpecId::historical_hardfork(chain_id, timestamp),
+                    Some(FoundryHardfork::Base(BaseUpgrade::Ecotone))
+                );
+                assert_eq!(
+                    OpSpecId::historical_hardfork(chain_id, timestamp),
+                    Some(FoundryHardfork::Optimism(OpHardfork::Ecotone))
+                );
+                assert_eq!(
+                    OpSpecId::fork_hardfork(chain_id, timestamp, None),
+                    Some(FoundryHardfork::Optimism(OpHardfork::Ecotone))
+                );
+            }
         }
 
         /// Base is an OP-stack chain, so without the `base` feature its chain IDs must still map
