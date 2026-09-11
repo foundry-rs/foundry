@@ -103,8 +103,8 @@ sol! {
     /// **Deliberately partial** mirror of `base_common_precompiles::IB20`, the B-20 token surface.
     ///
     /// B-20 tokens are created by the factory at derived addresses, so they cannot be registered
-    /// per address like the fixed precompiles. Following Tempo's `ITIP20`, these are registered
-    /// globally by selector instead.
+    /// per address like the fixed precompiles. These members are therefore available as a
+    /// Base-only fallback after address-scoped and caller-supplied metadata.
     ///
     /// Only Base-specific members belong here. The ERC-20, EIP-2612 and AccessControl portions are
     /// omitted on purpose: the global function map is not network-scoped, so adding competing

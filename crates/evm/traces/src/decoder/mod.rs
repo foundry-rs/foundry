@@ -460,8 +460,7 @@ impl CallTraceDecoder {
             (PATH_USD_ADDRESS, "PathUSD".to_string()),
         ]);
 
-        #[allow(unused_mut)]
-        let mut function_groups: Vec<_> = console::hh::abi::functions()
+        let functions = console::hh::abi::functions()
             .into_values()
             .chain(Vm::abi::functions().into_values())
             .chain(IFeeManager::abi::functions().into_values())
@@ -479,19 +478,11 @@ impl CallTraceDecoder {
             .chain(ITIP20ChannelReserve::abi::functions().into_values())
             .chain(ISignatureVerifier::abi::functions().into_values())
             .chain(IReceivePolicyGuard::abi::functions().into_values())
-            .collect();
-        // B-20 tokens live at factory-derived addresses, so their Base-specific members are
-        // registered globally by selector, as Tempo does for TIP20.
-        #[cfg(feature = "base")]
-        function_groups.extend(base::IB20Extensions::abi::functions().into_values());
-        let functions = function_groups
-            .into_iter()
             .flatten()
             .map(|func| (func.selector(), vec![func]))
             .collect();
 
-        #[allow(unused_mut)]
-        let mut event_groups: Vec<_> = console::ds::abi::events()
+        let events = console::ds::abi::events()
             .into_values()
             .chain(IFeeManager::abi::events().into_values())
             .chain(ITIP20::abi::events().into_values())
@@ -505,11 +496,6 @@ impl CallTraceDecoder {
             .chain(ITIP20ChannelReserve::abi::events().into_values())
             .chain(ISignatureVerifier::abi::events().into_values())
             .chain(IReceivePolicyGuard::abi::events().into_values())
-            .collect();
-        #[cfg(feature = "base")]
-        event_groups.extend(base::IB20Extensions::abi::events().into_values());
-        let events = event_groups
-            .into_iter()
             .flatten()
             .map(|event| ((event.selector(), indexed_inputs(&event)), vec![event]))
             .collect();
@@ -686,7 +672,7 @@ impl CallTraceDecoder {
 
     /// Returns the functions registered for `selector` at `address`.
     ///
-    /// Address-scoped metadata takes precedence over globally registered functions.
+    /// Address-scoped and caller-supplied metadata takes precedence over network fallbacks.
     pub fn functions_for_selector(
         &self,
         address: Address,
@@ -707,11 +693,54 @@ impl CallTraceDecoder {
                 return Some(functions);
             }
         }
-        self.functions_by_address
+        let functions = self
+            .functions_by_address
             .get(&address)
             .and_then(|functions| functions.get(selector))
-            .or_else(|| self.functions.get(selector))
-            .map(Vec::as_slice)
+            .or_else(|| self.functions.get(selector));
+        #[cfg(feature = "base")]
+        let functions = functions.or_else(|| self.base_functions_for_selector(selector));
+        functions.map(Vec::as_slice)
+    }
+
+    #[cfg(feature = "base")]
+    fn is_base_context(&self) -> bool {
+        self.networks.map_or_else(
+            || self.hardfork.and_then(BaseSpecId::from_foundry_hardfork).is_some(),
+            |networks| networks.is_base(),
+        )
+    }
+
+    #[cfg(feature = "base")]
+    fn base_functions_for_selector(&self, selector: &Selector) -> Option<&'static Vec<Function>> {
+        if !self.is_base_context() {
+            return None;
+        }
+        static FUNCTIONS: OnceLock<HashMap<Selector, Vec<Function>>> = OnceLock::new();
+        FUNCTIONS
+            .get_or_init(|| {
+                base::IB20Extensions::abi::functions()
+                    .into_values()
+                    .flatten()
+                    .map(|function| (function.selector(), vec![function]))
+                    .collect()
+            })
+            .get(selector)
+    }
+
+    #[cfg(feature = "base")]
+    fn base_events(&self) -> Option<&'static BTreeMap<(B256, usize), Vec<Event>>> {
+        if !self.is_base_context() {
+            return None;
+        }
+        static EVENTS: OnceLock<BTreeMap<(B256, usize), Vec<Event>>> = OnceLock::new();
+        Some(EVENTS.get_or_init(|| {
+            base::IB20Extensions::abi::events()
+                .into_values()
+                .flatten()
+                .map(|event| ((event.selector(), indexed_inputs(&event)), vec![event]))
+                .collect()
+        }))
     }
 
     #[cfg(feature = "monad")]
@@ -1456,13 +1485,18 @@ impl CallTraceDecoder {
         let events = address.and_then(|address| self.events_by_address.as_deref()?.get(&address));
         let address_events = key.and_then(|(topic, count)| events?.get(&(Some(topic), count)));
         let global_events = key.and_then(|key| self.events.get(&key));
-        let regular_events = address_events.or(global_events);
+        #[cfg(feature = "base")]
+        let base_events = key.and_then(|key| self.base_events()?.get(&key));
+        #[cfg(not(feature = "base"))]
+        let base_events: Option<&Vec<Event>> = None;
+        let fallback_events = global_events.or(base_events);
+        let regular_events = address_events.or(fallback_events);
         let anonymous_events = events.and_then(|events| events.get(&(None, log.topics().len())));
 
         let decoded = if canonical_signature && address_events.is_none() {
             // Topic zero does not encode indexed parameter placement, so global metadata is only
             // a hint. Try every compatible layout and reject ambiguity.
-            let mut events = global_events
+            let mut events = fallback_events
                 .into_iter()
                 .flatten()
                 .flat_map(|event| indexed_event_candidates(event.clone(), log))
@@ -1957,6 +1991,37 @@ mod tests {
         // Should return only the function that can decode the calldata (func2)
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].signature(), "gasprice_bit_ether(int128)");
+    }
+
+    #[cfg(feature = "base")]
+    #[tokio::test]
+    async fn base_fallback_does_not_shadow_ethereum_abi() {
+        let abi = JsonAbi::parse(["function pause(uint8[] features) returns (bool)"]).unwrap();
+        let function = abi.functions().next().unwrap();
+        let trace = CallTrace {
+            address: Address::repeat_byte(0x12),
+            data: function
+                .abi_encode_input(&[DynSolValue::Array(vec![DynSolValue::Uint(U256::ZERO, 8)])])
+                .unwrap()
+                .into(),
+            output: function.abi_encode_output(&[DynSolValue::Bool(true)]).unwrap().into(),
+            success: true,
+            ..Default::default()
+        };
+
+        let ethereum = CallTraceDecoderBuilder::new()
+            .with_execution_network(NetworkVariant::Ethereum)
+            .with_abi(&abi)
+            .build();
+        let decoded = ethereum.decode_function(&trace).await;
+        assert_eq!(decoded.call_data.unwrap().signature, "pause(uint8[])");
+        assert_eq!(decoded.return_data.as_deref(), Some("true"));
+
+        let base =
+            CallTraceDecoderBuilder::new().with_execution_network(NetworkVariant::Base).build();
+        let decoded = base.decode_function(&trace).await;
+        assert_eq!(decoded.call_data.unwrap().signature, "pause(uint8[])");
+        assert_eq!(decoded.return_data, None);
     }
 
     #[tokio::test]
