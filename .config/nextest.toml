@@ -2,6 +2,8 @@
 # The on-chain deploy+verify tests share one funded deployer per network and one Etherscan key.
 # Running them concurrently collides on the account nonce and trips Etherscan's 3 calls/sec limit.
 deploy-verify = { max-threads = 1 }
+# The Tempo mainnet canaries fork a public endpoint that rate limits concurrent replays.
+tempo-canary = { max-threads = 1 }
 
 [profile.default]
 retries = { backoff = "exponential", count = 2, delay = "5s", jitter = true }
@@ -27,6 +29,10 @@ slow-timeout = { period = "5m", terminate-after = 4 }
 [[profile.default.overrides]]
 filter = "test(/(^|::)bind_event_module_name_shadowing$/) | test(/(^|::)bind_event_module_prefix_does_not_shadow_aliases$/) | test(/(^|::)can_bind_e2e$/) | test(/(^|::)test_clone_/) | test(/(^|::)can_deploy_and_simulate_25_txes_concurrently$/) | test(/(^|::)chisel_can_run_with_live_logs_flag$/) | test(/(^|::)session_wrapper_uses_project_config_for_cast_session$/)"
 slow-timeout = { period = "5m", terminate-after = 4 }
+
+[[profile.default.overrides]]
+filter = "test(/tempo_canary::/)"
+test-group = "tempo-canary"
 
 # Do not re-run so that `cargo cheats` is ran locally.
 [[profile.default.overrides]]
