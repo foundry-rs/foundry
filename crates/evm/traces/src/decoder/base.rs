@@ -27,6 +27,7 @@ sol! {
         error FeatureNotActivated(bytes32 feature);
         error DelegateCallNotAllowed();
         error StaticCallNotAllowed();
+        error NonPayable();
         error AdminStorageNotEnabled();
         error ZeroAdminAddress();
 
@@ -132,6 +133,7 @@ sol! {
         function mintWithMemo(address to, uint256 amount, bytes32 memo) external;
         function burnWithMemo(uint256 amount, bytes32 memo) external;
         function burnBlocked(address from, uint256 amount) external;
+        function transferWithMemo(address to, uint256 amount, bytes32 memo) external returns (bool);
         function seizeWithMemo(address from, address to, uint256 amount, bytes32 memo) external;
         function pausedFeatures() external view returns (PausableFeature[] memory);
         function isPaused(PausableFeature feature) external view returns (bool);
@@ -229,6 +231,7 @@ sol! {
 #[cfg(test)]
 mod tests {
     use crate::{CallTrace, CallTraceDecoderBuilder};
+    use alloy_dyn_abi::{DynSolValue, FunctionExt};
     use alloy_primitives::{Address, B256, Bytes, U256};
     use alloy_sol_types::{SolCall, SolEnum, SolError, SolEvent, SolInterface};
     use base_common_precompiles::{
@@ -237,6 +240,7 @@ mod tests {
     };
     use foundry_evm_hardforks::{BaseUpgrade, FoundryHardfork};
     use foundry_evm_networks::NetworkConfigs;
+    use revm::interpreter::InstructionResult;
 
     #[tokio::test]
     async fn registered_abis_decode_base_precompile_calls() {
@@ -292,6 +296,72 @@ mod tests {
         assert_eq!(decoded.label.as_deref(), Some("B20Factory"));
         let signature = decoded.call_data.expect("createB20 should decode").signature;
         assert!(signature.starts_with("createB20("), "{signature}");
+    }
+
+    #[tokio::test]
+    async fn b20_transfer_with_memo_decodes_bool_output() {
+        let call = super::IB20Extensions::transferWithMemoCall {
+            to: Address::repeat_byte(0x11),
+            amount: U256::from(1),
+            memo: B256::repeat_byte(0x22),
+        };
+        let abi = super::IB20Extensions::abi::contract();
+        let function = abi.functions.get("transferWithMemo").unwrap().first().unwrap();
+        let trace = CallTrace {
+            address: Address::repeat_byte(0x33),
+            data: call.abi_encode().into(),
+            output: function.abi_encode_output(&[DynSolValue::Bool(true)]).unwrap().into(),
+            success: true,
+            ..Default::default()
+        };
+
+        let base =
+            CallTraceDecoderBuilder::new().with_networks(NetworkConfigs::with_base()).build();
+        let decoded = base.decode_function(&trace).await;
+        assert_eq!(
+            decoded.call_data.unwrap().signature,
+            "transferWithMemo(address,uint256,bytes32)"
+        );
+        assert_eq!(decoded.return_data.as_deref(), Some("true"));
+
+        let custom_abi = alloy_json_abi::JsonAbi::parse([
+            "function transferWithMemo(address,uint256,bytes32) returns (uint256)",
+        ])
+        .unwrap();
+        let custom_base = CallTraceDecoderBuilder::new()
+            .with_networks(NetworkConfigs::with_base())
+            .with_abi(&custom_abi)
+            .build();
+        assert_eq!(custom_base.decode_function(&trace).await.return_data.as_deref(), Some("1"));
+
+        let tempo =
+            CallTraceDecoderBuilder::new().with_networks(NetworkConfigs::with_tempo()).build();
+        assert_eq!(tempo.decode_function(&trace).await.return_data, None);
+    }
+
+    #[tokio::test]
+    async fn base_precompile_errors_are_address_scoped() {
+        let trace = CallTrace {
+            address: ActivationRegistryStorage::ADDRESS,
+            output: super::IActivationRegistry::NonPayable {}.abi_encode().into(),
+            success: false,
+            status: Some(InstructionResult::Revert),
+            ..Default::default()
+        };
+        let base = CallTraceDecoderBuilder::new()
+            .with_networks(NetworkConfigs::with_base())
+            .with_hardfork(Some(FoundryHardfork::Base(BaseUpgrade::Beryl)))
+            .build();
+        assert_eq!(base.decode_function(&trace).await.return_data.as_deref(), Some("NonPayable()"));
+
+        let ethereum = CallTraceDecoderBuilder::new()
+            .with_networks(NetworkConfigs::with_ethereum())
+            .with_hardfork(Some(FoundryHardfork::Base(BaseUpgrade::Beryl)))
+            .build();
+        assert_ne!(
+            ethereum.decode_function(&trace).await.return_data.as_deref(),
+            Some("NonPayable()")
+        );
     }
 
     /// The transaction-context precompile only exists from Cobalt, so a Beryl decoder must not
@@ -360,6 +430,10 @@ mod tests {
         assert_eq!(
             super::IActivationRegistry::StaticCallNotAllowed::SELECTOR,
             canonical::IActivationRegistry::StaticCallNotAllowed::SELECTOR
+        );
+        assert_eq!(
+            super::IActivationRegistry::NonPayable::SELECTOR,
+            canonical::IActivationRegistry::NonPayable::SELECTOR
         );
         assert_eq!(
             super::IActivationRegistry::FeatureActivated::SIGNATURE_HASH,

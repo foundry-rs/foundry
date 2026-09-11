@@ -568,16 +568,12 @@ pub(crate) fn is_known_precompile(
             },
             |networks| networks.is_base(),
         );
-        if is_base_context {
-            let installed = match base_upgrade {
-                Some(upgrade) => {
-                    foundry_evm_networks::is_base_precompile_active_at(address, upgrade)
-                }
-                None => foundry_evm_networks::BASE_PRECOMPILE_ADDRESSES.contains(&address),
-            };
-            if installed {
-                return true;
-            }
+        if is_base_context
+            && base_upgrade.is_some_and(|upgrade| {
+                foundry_evm_networks::is_base_precompile_active_at(address, upgrade)
+            })
+        {
+            return true;
         }
     }
     // Celo transfer precompile (only on Celo chains).
@@ -653,6 +649,11 @@ mod tests {
     use super::*;
     use alloy_primitives::{address, hex};
 
+    #[cfg(feature = "base")]
+    use base_common_precompiles::ActivationRegistryStorage;
+    #[cfg(feature = "base")]
+    use foundry_evm_hardforks::BaseUpgrade;
+
     #[test]
     fn known_precompile_boundaries() {
         assert!(is_known_precompile(P256_VERIFY, None, None, None));
@@ -667,6 +668,19 @@ mod tests {
             None,
             None,
             None
+        ));
+    }
+
+    #[cfg(feature = "base")]
+    #[test]
+    fn base_precompiles_require_a_known_upgrade() {
+        let address = ActivationRegistryStorage::ADDRESS;
+        assert!(!is_known_precompile(address, Some(NetworkConfigs::with_base()), Some(8453), None));
+        assert!(is_known_precompile(
+            address,
+            Some(NetworkConfigs::with_base()),
+            Some(8453),
+            Some(FoundryHardfork::Base(BaseUpgrade::Beryl))
         ));
     }
 

@@ -693,13 +693,34 @@ impl CallTraceDecoder {
                 return Some(functions);
             }
         }
-        let functions = self
-            .functions_by_address
-            .get(&address)
-            .and_then(|functions| functions.get(selector))
-            .or_else(|| self.functions.get(selector));
+        if let Some(functions) =
+            self.functions_by_address.get(&address).and_then(|functions| functions.get(selector))
+        {
+            return Some(functions);
+        }
         #[cfg(feature = "base")]
-        let functions = functions.or_else(|| self.base_functions_for_selector(selector));
+        let base_functions = self.base_functions_for_selector(selector);
+        // Tempo's function with this selector has no output, while B20 returns a bool.
+        #[cfg(feature = "base")]
+        if let Some(functions) = base_functions
+            && functions.first().is_some_and(|function| function.name == "transferWithMemo")
+        {
+            if let Some(global) = self.functions.get(selector) {
+                let tempo_fallback = global.first().is_some_and(|function| {
+                    function.name == "transferWithMemo" && function.outputs.is_empty()
+                });
+                if !tempo_fallback {
+                    return Some(global);
+                }
+                if global.len() > 1 {
+                    return Some(&global[1..]);
+                }
+            }
+            return Some(functions);
+        }
+        let functions = self.functions.get(selector);
+        #[cfg(feature = "base")]
+        let functions = functions.or(base_functions);
         functions.map(Vec::as_slice)
     }
 
@@ -741,6 +762,43 @@ impl CallTraceDecoder {
                 .map(|event| ((event.selector(), indexed_inputs(&event)), vec![event]))
                 .collect()
         }))
+    }
+
+    #[cfg(feature = "base")]
+    fn base_revert_decoder(&self, address: Address) -> Option<&'static RevertDecoder> {
+        let upgrade =
+            self.hardfork.and_then(BaseSpecId::from_foundry_hardfork).map(|spec| spec.upgrade())?;
+        if !self.is_base_context() || !is_base_precompile_active_at(address, upgrade) {
+            return None;
+        }
+
+        static DECODERS: OnceLock<HashMap<Address, RevertDecoder>> = OnceLock::new();
+        DECODERS
+            .get_or_init(|| {
+                HashMap::from_iter([
+                    (
+                        ActivationRegistryStorage::ADDRESS,
+                        RevertDecoder::new().with_abi(&base::IActivationRegistry::abi::contract()),
+                    ),
+                    (
+                        PolicyRegistryStorage::ADDRESS,
+                        RevertDecoder::new().with_abi(&base::IPolicyRegistry::abi::contract()),
+                    ),
+                    (
+                        B20FactoryStorage::ADDRESS,
+                        RevertDecoder::new().with_abi(&base::IB20Factory::abi::contract()),
+                    ),
+                    (
+                        NonceManagerStorage::ADDRESS,
+                        RevertDecoder::new().with_abi(&base::INonceManager::abi::contract()),
+                    ),
+                    (
+                        TxContextStorage::ADDRESS,
+                        RevertDecoder::new().with_abi(&base::ITransactionContext::abi::contract()),
+                    ),
+                ])
+            })
+            .get(&address)
     }
 
     #[cfg(feature = "monad")]
@@ -1441,6 +1499,12 @@ impl CallTraceDecoder {
         output: &[u8],
         status: Option<InstructionResult>,
     ) -> String {
+        #[cfg(feature = "base")]
+        if let Some(reason) =
+            self.base_revert_decoder(address).and_then(|decoder| decoder.maybe_decode_known(output))
+        {
+            return reason;
+        }
         if self.is_current_committee_active(address) {
             static DECODER: OnceLock<RevertDecoder> = OnceLock::new();
             let decoder = DECODER
