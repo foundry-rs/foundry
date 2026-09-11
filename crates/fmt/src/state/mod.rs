@@ -1252,15 +1252,13 @@ impl CommentConfig {
 }
 
 fn snippet_with_tabs(s: String, tab_width: usize) -> String {
-    // process leading breaks
-    let trimmed = s.trim_start_matches('\n');
-    let num_breaks = s.len() - trimmed.len();
-    let mut formatted = std::iter::repeat_n('\n', num_breaks).collect::<String>();
-
-    // process lines
-    for (pos, line) in trimmed.lines().delimited() {
+    let mut formatted = String::with_capacity(s.len());
+    for line in s.split_inclusive('\n') {
+        let (line, has_newline) =
+            line.strip_suffix('\n').map_or((line, false), |line| (line, true));
+        let line = line.strip_suffix('\r').unwrap_or(line);
         line_with_tabs(&mut formatted, line, tab_width, None);
-        if !pos.is_last {
+        if has_newline {
             formatted.push('\n');
         }
     }
