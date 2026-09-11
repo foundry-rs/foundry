@@ -1,6 +1,6 @@
 //! Various helper functions
 
-use alloy_chains::NamedChain;
+use alloy_chains::{Chain, NamedChain};
 use alloy_primitives::Address;
 use alloy_signer_local::PrivateKeySigner;
 use std::path::Path;
@@ -48,7 +48,7 @@ pub fn network_private_key(chain: &str) -> Option<String> {
 
 /// Represents external input required for executing verification requests
 pub struct EnvExternalities {
-    pub chain: NamedChain,
+    pub chain: Chain,
     pub rpc: String,
     pub pk: String,
     pub etherscan: String,
@@ -65,23 +65,28 @@ impl EnvExternalities {
     /// Externalities for a deploy + verify run of `chain` against `verifier`.
     ///
     /// `network` is the name used to look up `<NETWORK>_RPC_URL` and `<NETWORK>_PRIVATE_KEY`, and
-    /// matches the canonical `NamedChain::as_str` spelling. Blockscout instances have no shared
-    /// registry, so they must be given an explicit `verifier_url`.
+    /// uses a stable network name, including for numeric chains. Blockscout instances have no
+    /// shared registry, so they must be given an explicit `verifier_url`.
     ///
     /// Returns `None` when the network is not configured, which is how these tests stay inert
     /// outside of the nightly workflow that supplies the funded deployer key.
     pub fn deploy_verify(
-        chain: NamedChain,
+        chain: impl Into<Chain>,
         network: &str,
         verifier: &str,
         verifier_url: Option<&str>,
     ) -> Option<Self> {
+        let chain = chain.into();
         Some(Self {
             chain,
             rpc: network_rpc_key(network)?,
             pk: network_private_key(network)?,
             // Only Etherscan authenticates; Sourcify and Blockscout take no key.
-            etherscan: if verifier == "etherscan" { etherscan_key(chain)? } else { String::new() },
+            etherscan: if verifier == "etherscan" {
+                chain.named().and_then(etherscan_key)?
+            } else {
+                String::new()
+            },
             verifier: verifier.to_string(),
             verifier_url: verifier_url.map(str::to_string),
         })
@@ -89,7 +94,7 @@ impl EnvExternalities {
 
     pub fn goerli() -> Option<Self> {
         Some(Self {
-            chain: NamedChain::Goerli,
+            chain: NamedChain::Goerli.into(),
             rpc: network_rpc_key("goerli")?,
             pk: network_private_key("goerli")?,
             etherscan: etherscan_key(NamedChain::Goerli)?,
@@ -100,7 +105,7 @@ impl EnvExternalities {
 
     pub fn ftm_testnet() -> Option<Self> {
         Some(Self {
-            chain: NamedChain::FantomTestnet,
+            chain: NamedChain::FantomTestnet.into(),
             rpc: network_rpc_key("ftm_testnet")?,
             pk: network_private_key("ftm_testnet")?,
             etherscan: etherscan_key(NamedChain::FantomTestnet)?,
@@ -111,7 +116,7 @@ impl EnvExternalities {
 
     pub fn optimism_kovan() -> Option<Self> {
         Some(Self {
-            chain: NamedChain::OptimismKovan,
+            chain: NamedChain::OptimismKovan.into(),
             rpc: network_rpc_key("op_kovan")?,
             pk: network_private_key("op_kovan")?,
             etherscan: etherscan_key(NamedChain::OptimismKovan)?,
@@ -122,7 +127,7 @@ impl EnvExternalities {
 
     pub fn arbitrum_goerli() -> Option<Self> {
         Some(Self {
-            chain: NamedChain::ArbitrumGoerli,
+            chain: NamedChain::ArbitrumGoerli.into(),
             rpc: network_rpc_key("arbitrum-goerli")?,
             pk: network_private_key("arbitrum-goerli")?,
             etherscan: etherscan_key(NamedChain::ArbitrumGoerli)?,
@@ -133,7 +138,7 @@ impl EnvExternalities {
 
     pub fn amoy() -> Option<Self> {
         Some(Self {
-            chain: NamedChain::PolygonAmoy,
+            chain: NamedChain::PolygonAmoy.into(),
             rpc: network_rpc_key("amoy")?,
             pk: network_private_key("amoy")?,
             etherscan: etherscan_key(NamedChain::PolygonAmoy)?,
@@ -144,7 +149,7 @@ impl EnvExternalities {
 
     pub fn sepolia_etherscan() -> Option<Self> {
         Some(Self {
-            chain: NamedChain::Sepolia,
+            chain: NamedChain::Sepolia.into(),
             rpc: network_rpc_key("sepolia")?,
             pk: network_private_key("sepolia")?,
             etherscan: etherscan_key(NamedChain::Sepolia)?,
@@ -155,7 +160,7 @@ impl EnvExternalities {
 
     pub fn sepolia_sourcify() -> Option<Self> {
         Some(Self {
-            chain: NamedChain::Sepolia,
+            chain: NamedChain::Sepolia.into(),
             rpc: network_rpc_key("sepolia")?,
             pk: network_private_key("sepolia")?,
             etherscan: String::new(),
@@ -166,7 +171,7 @@ impl EnvExternalities {
 
     pub fn sepolia_sourcify_with_etherscan_api_key_set() -> Option<Self> {
         Some(Self {
-            chain: NamedChain::Sepolia,
+            chain: NamedChain::Sepolia.into(),
             rpc: network_rpc_key("sepolia")?,
             pk: network_private_key("sepolia")?,
             etherscan: etherscan_key(NamedChain::Sepolia)?,
@@ -177,7 +182,7 @@ impl EnvExternalities {
 
     pub fn sepolia_blockscout() -> Option<Self> {
         Some(Self {
-            chain: NamedChain::Sepolia,
+            chain: NamedChain::Sepolia.into(),
             rpc: network_rpc_key("sepolia")?,
             pk: network_private_key("sepolia")?,
             etherscan: String::new(),
@@ -188,7 +193,7 @@ impl EnvExternalities {
 
     pub fn sepolia_blockscout_with_etherscan_api_key_set() -> Option<Self> {
         Some(Self {
-            chain: NamedChain::Sepolia,
+            chain: NamedChain::Sepolia.into(),
             rpc: network_rpc_key("sepolia")?,
             pk: network_private_key("sepolia")?,
             etherscan: etherscan_key(NamedChain::Sepolia)?,
@@ -199,7 +204,7 @@ impl EnvExternalities {
 
     pub fn sepolia_empty_verifier() -> Option<Self> {
         Some(Self {
-            chain: NamedChain::Sepolia,
+            chain: NamedChain::Sepolia.into(),
             rpc: network_rpc_key("sepolia")?,
             pk: network_private_key("sepolia")?,
             etherscan: String::new(),
