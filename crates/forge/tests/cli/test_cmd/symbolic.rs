@@ -928,33 +928,53 @@ forgetest_init!(symbolic_preserves_completed_external_call_counterexamples, |prj
     prj.add_test(
         "SymbolicDeferredExternalPriority.t.sol",
         r#"
+interface SymbolicDeferredPriorityVm {
+    function assume(bool condition) external pure;
+    function unixTime() external returns (uint256);
+}
+
 contract SymbolicDeferredPriorityTarget {
     function evaluate(uint256 x, uint256 y) external pure returns (uint256) {
-        if (x == 0) return 42;
         unchecked {
-            uint256 product = x * y;
-            if (product == 0 && product == 1) return 1;
+            uint256 value = (x * y + 9) / 10;
+            if (value == 37) return 1;
+            if (value == 38) return 2;
         }
         return 0;
     }
 }
 
 contract SymbolicDeferredExternalPriority {
+    SymbolicDeferredPriorityVm constant vm = SymbolicDeferredPriorityVm(
+        address(uint160(uint256(keccak256("hevm cheat code"))))
+    );
     SymbolicDeferredPriorityTarget target;
 
     function setUp() public {
         target = new SymbolicDeferredPriorityTarget();
     }
 
-    /// forge-config: default.symbolic.max_solver_queries = 8
+    /// forge-config: default.symbolic.max_solver_queries = 16
     function checkCompletedCallBfs(uint256 x, uint256 y) external view {
-        assert(target.evaluate(x, y) != 42);
+        vm.assume(x >= 11 && x <= 18);
+        vm.assume(y >= 19 && y <= 30);
+        assert(target.evaluate(x, y) == 0);
     }
 
-    /// forge-config: default.symbolic.max_solver_queries = 8
+    /// forge-config: default.symbolic.max_solver_queries = 16
     /// forge-config: default.symbolic.exploration_order = "dfs"
     function checkCompletedCallDfs(uint256 x, uint256 y) external view {
-        assert(target.evaluate(x, y) != 42);
+        vm.assume(x >= 11 && x <= 18);
+        vm.assume(y >= 19 && y <= 30);
+        assert(target.evaluate(x, y) == 0);
+    }
+
+    function checkDeferredHostRead(uint256 x, uint256 y) external {
+        vm.assume(x >= 11 && x <= 18);
+        vm.assume(y >= 19 && y <= 30);
+        uint256 value = target.evaluate(x, y);
+        if (value != 0) vm.unixTime();
+        assert(value <= 2);
     }
 }
 "#,
@@ -979,7 +999,17 @@ contract SymbolicDeferredExternalPriority {
         let result = json_test_result(&output, signature);
         assert_eq!(result["symbolic"]["status"], "fail_counterexample");
         assert_eq!(result["symbolic"]["replay"]["status"], "confirmed");
+        assert!(result["symbolic"]["solver"]["stats"]["smt_queries"].as_u64().unwrap() > 0);
     }
+
+    let result = json_test_result(&output, "checkDeferredHostRead(uint256,uint256)");
+    assert_eq!(result["symbolic"]["status"], "incomplete");
+    assert!(
+        result["symbolic"]["incomplete"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("nested hard arithmetic")
+    );
 });
 
 forgetest_init!(symbolic_proves_saturating_mul_equivalence, |prj, cmd| {

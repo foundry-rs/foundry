@@ -17,14 +17,14 @@ impl SymbolicExecutor {
             solver,
             deferred_incomplete: None,
             deadline: None,
-            escalate_nested_deferred: false,
+            nested_deferred_mode: DeferredPathMode::Skip,
             stateless_retry_safe: true,
         }
     }
 
     fn reset_run_state(&mut self, use_wall_clock_deadline: bool) {
         self.deferred_incomplete = None;
-        self.escalate_nested_deferred = false;
+        self.nested_deferred_mode = DeferredPathMode::Skip;
         self.stateless_retry_safe = true;
         self.deadline = if use_wall_clock_deadline {
             self.config
@@ -214,7 +214,7 @@ impl SymbolicExecutor {
             };
 
         // Preserve the cheap-path priority of the first pass. Only a deterministic stateless
-        // proof retries once after nested hard arithmetic was its remaining limitation.
+        // proof retries after nested hard arithmetic was its remaining limitation.
         let retry_nested_deferred = branch_candidates.is_none()
             && self.stateless_retry_safe
             && matches!(self.deferred_incomplete, Some(DeferredIncomplete::HardArithmetic))
@@ -238,7 +238,40 @@ impl SymbolicExecutor {
         }
 
         self.deferred_incomplete = None;
-        self.escalate_nested_deferred = true;
+        self.nested_deferred_mode = DeferredPathMode::Yield;
+        let prioritized = match self.run_inner(&input, None, &mut completed_paths) {
+            Ok(result) => result,
+            Err(err) => {
+                return SymbolicRunResult::Incomplete {
+                    kind: err.stop_reason(),
+                    reason: err.to_string(),
+                    stats: self.stats_with_paths(completed_paths),
+                };
+            }
+        };
+        let drain_nested_deferred = self.stateless_retry_safe
+            && matches!(self.deferred_incomplete, Some(DeferredIncomplete::HardArithmetic))
+            && matches!(
+                &prioritized,
+                SymbolicRunResult::Incomplete {
+                    kind: SymbolicStopReason::RevertAll | SymbolicStopReason::Timeout,
+                    ..
+                }
+            );
+        if !drain_nested_deferred {
+            return prioritized;
+        }
+
+        if let Err(err) = self.check_timeout() {
+            return SymbolicRunResult::Incomplete {
+                kind: err.stop_reason(),
+                reason: err.to_string(),
+                stats: self.stats_with_paths(completed_paths),
+            };
+        }
+
+        self.deferred_incomplete = None;
+        self.nested_deferred_mode = DeferredPathMode::Drain;
         match self.run_inner(&input, None, &mut completed_paths) {
             Ok(result) => result,
             Err(err) => SymbolicRunResult::Incomplete {
@@ -388,9 +421,12 @@ impl SymbolicExecutor {
         let path_limit = self.config.path_width() as usize;
         let depth_limit = self.config.execution_depth() as usize;
 
-        while let Some(mut state) =
-            self.pop_next_feasible_path(&mut worklist, &mut deferred_worklist, true)?
-        {
+        while let Some(next) = self.pop_next_feasible_path(
+            &mut worklist,
+            &mut deferred_worklist,
+            DeferredPathMode::Drain,
+        )? {
+            let mut state = next.state;
             if *completed_paths >= path_limit {
                 debug!(
                     completed_paths = *completed_paths,

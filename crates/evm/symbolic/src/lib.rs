@@ -415,8 +415,15 @@ pub struct SymbolicExecutor {
     solver: runtime::SmtLibSubprocessSolver,
     deferred_incomplete: Option<DeferredIncomplete>,
     deadline: Option<Instant>,
-    escalate_nested_deferred: bool,
+    nested_deferred_mode: DeferredPathMode,
     stateless_retry_safe: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DeferredPathMode {
+    Skip,
+    Yield,
+    Drain,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
