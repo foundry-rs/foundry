@@ -287,7 +287,7 @@ forgetest!(test_library_backtrace, |prj, cmd| {
         include_str!("../fixtures/backtraces/LibraryBacktrace.t.sol"),
     );
 
-    // Add foundry.toml configuration for linked library
+    // Configure the linked library.
     let config = foundry_config::Config {
         libraries: vec!["src/libraries/ExternalMathLib.sol:ExternalMathLib:0x1234567890123456789012345678901234567890".to_string()],
         ..Default::default()
@@ -300,8 +300,8 @@ forgetest!(test_library_backtrace, |prj, cmd| {
     output.stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
+Compiler run successful[..]
+...
 Ran 9 tests for test/LibraryBacktrace.t.sol:LibraryBacktraceTest
 [FAIL: DivisionByZero()] testExternalDivisionByZero() ([GAS])
 ...

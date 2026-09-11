@@ -201,8 +201,8 @@ use tempo_primitives::{
     },
 };
 use tempo_revm::{
-    ExecutionContext, TempoBatchCallEnv, TempoBlockEnv, TempoHaltReason, TempoTxEnv,
-    evm::TempoContext, gas_params::tempo_gas_params,
+    ExecutionContext, TempoBatchCallEnv, TempoBlockEnv, TempoTxEnv, evm::TempoContext,
+    gas_params::tempo_gas_params,
 };
 use tokio::{sync::RwLock as AsyncRwLock, task::JoinSet};
 
@@ -2852,14 +2852,7 @@ impl<N: Network> Backend<N> {
             inspector,
         );
         self.inject_tempo_precompiles(&mut evm, evm_env);
-        let result = evm.transact(tx_env)?;
-        Ok(ResultAndState {
-            result: result.result.map_haltreason(|h| match h {
-                TempoHaltReason::Ethereum(eth) => eth,
-                _ => HaltReason::PrecompileError,
-            }),
-            state: result.state,
-        })
+        Ok(evm.transact(tx_env)?)
     }
 
     /// Creates a concrete EVM + [`AnvilBlockExecutor`], runs pre-execution changes, and
@@ -3384,7 +3377,6 @@ impl<N: Network> Backend<N> {
                 tx_hash: B256::ZERO,
                 valid_before: request.valid_before.map(|value| value.get()),
                 valid_after: request.valid_after.map(|value| value.get()),
-                subblock_transaction: false,
                 override_key_id: key_id,
                 expiring_nonce_idx: None,
             })),
@@ -3925,7 +3917,14 @@ impl<N: Network> Backend<N> {
             && let Some(fork) = self.get_fork()
             && fork.predates_fork(*number)
         {
-            return Ok(fork.trace_call(request, trace_types, block_id).await?);
+            // Delegate the resolved block number so tags (`latest`/`pending`/`safe`/
+            // `finalized`) are resolved against the fork's head instead of drifting with
+            // the upstream chain. Hashes are forwarded unchanged.
+            let resolved = match block_id {
+                BlockId::Hash(_) => block_id,
+                _ => BlockId::number(*number),
+            };
+            return Ok(fork.trace_call(request, trace_types, resolved).await?);
         }
 
         self.with_database_at_and_context(Some(block_request), |state, block, mut monad_context| {
@@ -7053,7 +7052,14 @@ where
         if let Some(fork) = self.get_fork() {
             let number = self.ensure_block_number(Some(block_id)).await?;
             if fork.predates_fork_inclusive(number) {
-                return Ok(fork.trace_block_opcode_gas(block_id).await?);
+                // Delegate the resolved block number so tags (`latest`/`pending`/`safe`/
+                // `finalized`) are resolved against the fork's head instead of drifting with
+                // the upstream chain. Hashes are forwarded unchanged.
+                let resolved = match block_id {
+                    BlockId::Hash(_) => block_id,
+                    _ => BlockId::number(number),
+                };
+                return Ok(fork.trace_block_opcode_gas(resolved).await?);
             }
         }
 
