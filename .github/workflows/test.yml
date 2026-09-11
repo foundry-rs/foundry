@@ -17,6 +17,8 @@ on:
         required: false
       ETH_SEPOLIA_RPC:
         required: false
+      TEMPO_MAINNET_RPC_URL:
+        required: false
 
 concurrency:
   group: tests-${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -134,6 +136,7 @@ jobs:
           ETHERSCAN_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
           ARBITRUM_RPC: ${{ secrets.ARBITRUM_RPC }}
           ETH_SEPOLIA_RPC: ${{ secrets.ETH_SEPOLIA_RPC }}
+          TEMPO_MAINNET_RPC_URL: ${{ secrets.TEMPO_MAINNET_RPC_URL }}
           NEXTEST_FILTER: ${{ matrix.filter }}
           NEXTEST_PARTITION: ${{ matrix.partition_arg }}
         shell: bash

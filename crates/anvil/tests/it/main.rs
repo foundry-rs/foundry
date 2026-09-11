@@ -32,6 +32,7 @@ mod simulate;
 mod state;
 mod storage_values;
 mod tempo;
+mod tempo_canary;
 mod traces;
 mod transaction;
 mod txpool;

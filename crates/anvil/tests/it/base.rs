@@ -208,6 +208,7 @@ fn sponsored_eip8130_envelope_with_nonce(
 fn eip8130_simulation_request(sender: Address) -> WithOtherFields<TransactionRequest> {
     serde_json::from_value(serde_json::json!({
         "from": sender,
+        "type": "0x79",
         "calls": [],
         "maxFeePerGas": "0x3b9aca00",
         "gas": "0x30d40"
@@ -562,6 +563,7 @@ async fn base_eip8130_estimate_rejects_missing_sender() {
     let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Zenith.into()));
     let (_api, handle) = spawn(config).await;
     let request = serde_json::from_value(serde_json::json!({
+        "type": "0x79",
         "calls": [],
         "maxFeePerGas": "0x3b9aca00",
         "gas": "0x30d40"

@@ -50,6 +50,7 @@ base-common-evm = { workspace = true, optional = true, features = [
     "serde",
     "std",
 ] }
+base-common-genesis = { workspace = true, optional = true, features = ["std"] }
 base-common-precompiles = { workspace = true, optional = true, features = ["std"] }
 base-common-rpc-types = { workspace = true, optional = true, features = ["eip8130", "serde", "std"] }
 base-execution-eip8130 = { workspace = true, optional = true }
@@ -159,6 +160,7 @@ base = [
     "dep:base-common-chains",
     "dep:base-common-consensus",
     "dep:base-common-evm",
+    "dep:base-common-genesis",
     "dep:base-common-precompiles",
     "dep:base-common-rpc-types",
     "dep:base-execution-eip8130",
