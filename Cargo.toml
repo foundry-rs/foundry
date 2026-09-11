@@ -556,6 +556,8 @@ snapbox = { version = "1.2", features = ["json", "regex", "term-svg"] }
 idna_adapter = "=1.1.0"
 
 [patch.crates-io]
+# HyperliquidTestnet is not yet available in a crates.io release.
+alloy-chains = { git = "https://github.com/alloy-rs/chains", rev = "1ed86765a836a117eda91d49b2985ff658742726" }
 solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "866584c05a475b4face83bd0fa3c56a55abe394a" }
 solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "866584c05a475b4face83bd0fa3c56a55abe394a" }
 solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "866584c05a475b4face83bd0fa3c56a55abe394a" }
