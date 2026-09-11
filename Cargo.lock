@@ -110,8 +110,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-chains"
-version = "0.2.37"
-source = "git+https://github.com/alloy-rs/chains?rev=1ed86765a836a117eda91d49b2985ff658742726#1ed86765a836a117eda91d49b2985ff658742726"
+version = "0.2.38"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "21e8b1ebba2b80691b880da6d6add754b740252352959948e50c9d6a93c64f01"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
