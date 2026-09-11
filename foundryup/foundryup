@@ -10,7 +10,7 @@ set -eo pipefail
 # Read by external tooling from the raw URL, so it stays even though the bootstrap
 # no longer self-updates.
 # shellcheck disable=SC2034
-FOUNDRYUP_INSTALLER_VERSION="2.0.0"
+FOUNDRYUP_INSTALLER_VERSION="2.0.1"
 
 # ----------------------------------------------------------------------------
 # Rust foundryup migration bootstrap
@@ -80,7 +80,9 @@ bootstrap() {
 
   mkdir -p "$FOUNDRY_BIN_DIR"
 
-  trap cleanup EXIT INT TERM
+  trap cleanup EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   _init="$(mktemp)"
   # Stage beside the launcher so the final move is an atomic same-filesystem rename.
   _stage="$(mktemp -d "$(dirname "$FOUNDRY_BIN_PATH")/.foundryup-bootstrap.XXXXXX")"
