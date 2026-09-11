@@ -1052,7 +1052,8 @@ mod tests {
         let admin_arg = admin.to_string();
         let args = NodeArgs::parse_from([
             "anvil",
-            "--base",
+            "--network",
+            "base",
             "--hardfork",
             "base:Beryl",
             "--base-activation-admin",

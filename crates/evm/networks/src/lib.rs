@@ -46,7 +46,7 @@ use base_common_precompiles::{
     TxContextStorage,
 };
 #[cfg(feature = "base")]
-use foundry_evm_hardforks::{BaseSpecId, BaseUpgrade};
+use foundry_evm_hardforks::BaseUpgrade;
 
 #[cfg(feature = "optimism")]
 use foundry_evm_hardforks::OpHardfork;
@@ -425,20 +425,17 @@ pub struct NetworkConfigs {
     #[arg(help_heading = "Networks", long, short, num_args = 1, value_name = "NETWORK", value_enum, conflicts_with_all = ["celo", "tempo"])]
     #[cfg_attr(feature = "optimism", arg(conflicts_with = "optimism"))]
     #[cfg_attr(feature = "monad", arg(conflicts_with = "monad"))]
-    #[cfg_attr(feature = "base", arg(conflicts_with = "base"))]
     #[serde(default)]
     pub(crate) network: Option<NetworkVariant>,
     /// Enable Celo network features.
     #[arg(help_heading = "Networks", long, conflicts_with_all = ["network", "tempo"])]
     #[cfg_attr(feature = "optimism", arg(conflicts_with = "optimism"))]
     #[cfg_attr(feature = "monad", arg(conflicts_with = "monad"))]
-    #[cfg_attr(feature = "base", arg(conflicts_with = "base"))]
     celo: bool,
     /// Enable Optimism network features (deprecated: use --network optimism).
     #[cfg(feature = "optimism")]
     #[arg(long, hide = true, conflicts_with_all = ["network", "celo", "tempo"])]
     #[cfg_attr(feature = "monad", arg(conflicts_with = "monad"))]
-    #[cfg_attr(feature = "base", arg(conflicts_with = "base"))]
     // Deserialize-only legacy alias: accepted in foundry.toml but never serialized — the
     // canonical form is `network = "optimism"`.
     #[serde(default)]
@@ -447,7 +444,6 @@ pub struct NetworkConfigs {
     #[arg(long, hide = true, conflicts_with_all = ["network", "celo"])]
     #[cfg_attr(feature = "optimism", arg(conflicts_with = "optimism"))]
     #[cfg_attr(feature = "monad", arg(conflicts_with = "monad"))]
-    #[cfg_attr(feature = "base", arg(conflicts_with = "base"))]
     // Deserialize-only legacy alias: accepted in foundry.toml but never serialized — the
     // canonical form is `network = "tempo"`.
     #[serde(default)]
@@ -456,20 +452,10 @@ pub struct NetworkConfigs {
     #[cfg(feature = "monad")]
     #[arg(long, hide = true, conflicts_with_all = ["network", "celo", "tempo"])]
     #[cfg_attr(feature = "optimism", arg(conflicts_with = "optimism"))]
-    #[cfg_attr(feature = "base", arg(conflicts_with = "base"))]
     // Deserialize-only legacy alias: accepted in foundry.toml but never serialized - the
     // canonical form is `network = "monad"`.
     #[serde(default)]
     monad: bool,
-    /// Enable Base network features (deprecated: use --network base).
-    #[cfg(feature = "base")]
-    #[arg(long, hide = true, conflicts_with_all = ["network", "celo", "tempo"])]
-    #[cfg_attr(feature = "optimism", arg(conflicts_with = "optimism"))]
-    #[cfg_attr(feature = "monad", arg(conflicts_with = "monad"))]
-    // Deserialize-only legacy alias: accepted in foundry.toml but never serialized — the
-    // canonical form is `network = "base"`.
-    #[serde(default)]
-    base: bool,
     /// Whether to bypass prevrandao.
     #[arg(skip)]
     #[serde(default)]
@@ -514,10 +500,6 @@ impl NetworkConfigs {
         if self.monad {
             selectors.push(("monad", "monad = true".to_string()));
         }
-        #[cfg(feature = "base")]
-        if self.base {
-            selectors.push(("base", "base = true".to_string()));
-        }
 
         if let Some((family, selector)) = selectors.first()
             && let Some((_, conflicting)) =
@@ -551,7 +533,7 @@ impl NetworkConfigs {
 
     #[cfg(feature = "base")]
     pub fn with_base() -> Self {
-        Self { network: Some(NetworkVariant::Base), base: true, ..Default::default() }
+        Self { network: Some(NetworkVariant::Base), ..Default::default() }
     }
 
     pub const fn is_tempo(&self) -> bool {
@@ -609,10 +591,6 @@ impl NetworkConfigs {
     pub const fn resolved_network(&self) -> Option<NetworkVariant> {
         if let Some(n) = self.network {
             return Some(n);
-        }
-        #[cfg(feature = "base")]
-        if self.base {
-            return Some(NetworkVariant::Base);
         }
         #[cfg(feature = "optimism")]
         if self.optimism {
@@ -680,20 +658,24 @@ impl NetworkConfigs {
 
     /// Returns the base fee parameters for the configured network.
     ///
-    /// For Optimism networks, returns Canyon parameters if the Canyon hardfork is active
-    /// at the given timestamp, otherwise returns pre-Canyon parameters.
-    #[cfg(feature = "optimism")]
+    /// For OP Stack networks, returns Canyon parameters if the Canyon hardfork is active at the
+    /// given timestamp, otherwise returns pre-Canyon parameters.
     pub fn base_fee_params(&self, timestamp: u64) -> BaseFeeParams {
+        #[cfg(feature = "base")]
+        if self.is_base() {
+            let canyon_active =
+                BaseUpgrade::from_chain_and_timestamp(NamedChain::Base as u64, timestamp)
+                    .is_some_and(|upgrade| upgrade >= BaseUpgrade::Canyon);
+            return if canyon_active {
+                BaseFeeParams::new(250, 6)
+            } else {
+                BaseFeeParams::new(50, 6)
+            };
+        }
+        #[cfg(feature = "optimism")]
         if self.is_optimism() {
             return self.op_base_fee_params(timestamp);
         }
-        BaseFeeParams::ethereum()
-    }
-
-    /// Returns the base fee parameters for the configured network.
-    #[cfg(not(feature = "optimism"))]
-    pub const fn base_fee_params(&self, timestamp: u64) -> BaseFeeParams {
-        let _ = timestamp;
         BaseFeeParams::ethereum()
     }
 
@@ -709,6 +691,10 @@ impl NetworkConfigs {
         parent_blob_gas_used: u64,
         parent_base_fee: u64,
     ) -> u64 {
+        #[cfg(feature = "base")]
+        if self.is_base() {
+            return 0;
+        }
         if self.is_optimism() {
             return 0;
         }
@@ -945,8 +931,10 @@ impl NetworkConfigs {
         }
         #[cfg(feature = "base")]
         if self.is_base() {
-            let base_upgrade =
-                hardfork.and_then(BaseSpecId::from_foundry_hardfork).map(|spec| spec.upgrade());
+            let base_upgrade = hardfork.and_then(|hardfork| match hardfork {
+                FoundryHardfork::Base(upgrade) => Some(upgrade),
+                _ => None,
+            });
             labels.extend(
                 BASE_PRECOMPILES
                     .iter()
@@ -999,8 +987,10 @@ impl NetworkConfigs {
         }
         #[cfg(feature = "base")]
         if self.is_base() {
-            let base_upgrade =
-                hardfork.and_then(BaseSpecId::from_foundry_hardfork).map(|spec| spec.upgrade());
+            let base_upgrade = hardfork.and_then(|hardfork| match hardfork {
+                FoundryHardfork::Base(upgrade) => Some(upgrade),
+                _ => None,
+            });
             precompiles.extend(
                 BASE_PRECOMPILES
                     .iter()
@@ -1044,9 +1034,7 @@ impl From<NetworkVariant> for NetworkConfigs {
                 Self { network: Some(network), monad: true, ..Default::default() }
             }
             #[cfg(feature = "base")]
-            NetworkVariant::Base => {
-                Self { network: Some(network), base: true, ..Default::default() }
-            }
+            NetworkVariant::Base => Self { network: Some(network), ..Default::default() },
             #[cfg(feature = "optimism")]
             NetworkVariant::Optimism => {
                 Self { network: Some(network), optimism: true, ..Default::default() }
@@ -2081,31 +2069,32 @@ mod tests {
         use super::*;
 
         #[test]
-        fn new_base_flag_equivalent_to_legacy() {
-            let via_new =
-                NetworkConfigs { network: Some(NetworkVariant::Base), ..Default::default() };
-            let via_old = NetworkConfigs { base: true, ..Default::default() };
-            assert_eq!(via_new.is_base(), via_old.is_base());
-            assert_eq!(via_new.is_tempo(), via_old.is_tempo());
-            assert_eq!(via_new.active_network_name(), via_old.active_network_name());
-        }
-
-        #[test]
-        fn new_flag_wins_over_legacy_when_both_set() {
-            // --network base --tempo: network field wins
-            let cfg = NetworkConfigs {
-                network: Some(NetworkVariant::Base),
-                tempo: true,
-                ..Default::default()
-            };
-            assert!(cfg.is_base());
-            assert!(!cfg.is_tempo());
-        }
-
-        #[test]
         fn active_network_name_base() {
             let cfg = NetworkConfigs::with_base();
             assert_eq!(cfg.active_network_name(), Some("base"));
+        }
+
+        #[test]
+        fn base_fee_params_follow_canyon_boundary() {
+            const CANYON_TIMESTAMP: u64 = 1_704_992_401;
+
+            let config = NetworkConfigs::with_base();
+            assert_eq!(config.base_fee_params(CANYON_TIMESTAMP - 1), BaseFeeParams::new(50, 6));
+            assert_eq!(config.base_fee_params(CANYON_TIMESTAMP), BaseFeeParams::new(250, 6));
+        }
+
+        #[test]
+        fn base_does_not_inherit_ethereum_blob_excess_gas() {
+            let params = BlobParams::prague();
+            assert_eq!(
+                NetworkConfigs::with_base().next_block_blob_excess_gas(
+                    params,
+                    0,
+                    params.target_blob_gas_per_block() + 1,
+                    1,
+                ),
+                0
+            );
         }
 
         #[test]
