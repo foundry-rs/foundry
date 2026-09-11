@@ -2094,7 +2094,10 @@ impl<'ast> State<'_, 'ast> {
             });
         self.print_comments(
             stmt.span.hi(),
-            CommentConfig::default().trailing_no_break().mixed_no_break().mixed_prev_space(),
+            CommentConfig::skip_trailing_ws()
+                .trailing_no_break()
+                .mixed_no_break()
+                .mixed_prev_space(),
         );
         if ends_with_line_comment && self.peek_comment().is_some() {
             self.hardbreak_if_not_bol();
