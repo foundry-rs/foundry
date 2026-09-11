@@ -339,6 +339,7 @@ interface Vm {
     function getRecordedLogs() external view returns (Log[] memory logs);
     function getRecordedLogsJson() external view returns (string memory logsJson);
     function getSelectors(string calldata artifactPath) external view returns (bytes4[] memory selectors);
+    function getSlotNumber() external view returns (uint64 slotNumber);
     function getStateDiff() external view returns (string memory diff);
     function getStateDiffJson() external view returns (string memory diff);
     function getStorageAccesses() external view returns (StorageAccess[] memory storageAccesses);
@@ -513,6 +514,7 @@ interface Vm {
     function rollFork(bytes32 txHash) external;
     function rollFork(uint256 forkId, uint256 blockNumber) external;
     function rollFork(uint256 forkId, bytes32 txHash) external;
+    function rollSlot(uint64 newSlotNumber) external;
     function rpcJson(string calldata method, string calldata params) external returns (string memory data);
     function rpcJson(string calldata urlOrAlias, string calldata method, string calldata params) external returns (string memory data);
     function rpcUrl(string calldata rpcAlias) external view returns (string memory json);

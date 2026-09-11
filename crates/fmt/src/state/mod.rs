@@ -820,13 +820,17 @@ impl<'sess> State<'sess, '_> {
                         }
                     }
                 } else {
-                    // No wrapping, print as-is
+                    // Match the opening-column normalization of continuation lines.
+                    self.visual_align();
                     for (pos, line) in cmnt.lines.into_iter().delimited() {
-                        self.word(line);
+                        if !line.is_empty() {
+                            self.word(line);
+                        }
                         if !pos.is_last {
                             self.hardbreak();
                         }
                     }
+                    self.end();
                 }
                 if config.mixed_post_nbsp {
                     if config.mixed_post_glued {

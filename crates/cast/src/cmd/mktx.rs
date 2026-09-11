@@ -107,13 +107,9 @@ impl MakeTxArgs {
             );
         }
 
-        if self.tx.tempo.session_id()?.is_some() {
-            return self.run_generic::<TempoNetwork>(None, None).await;
-        }
-
-        let (is_tempo, signer, access_key) =
+        let (network, signer, access_key) =
             tempo::resolve_transaction_network_and_signer(&self.tx.tempo, &self.eth).await?;
-        if is_tempo {
+        if network.is_tempo() {
             self.run_generic::<TempoNetwork>(signer, access_key).await
         } else {
             self.run_generic::<Ethereum>(signer, None).await
