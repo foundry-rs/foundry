@@ -8,8 +8,8 @@
 //! costs a full `solc` invocation, and making sure that cost is paid once.
 //! `forge test` runs test contracts in parallel, so lookups are:
 //!
-//! - deduplicated process-wide by [`LOOKUPS`], so concurrent tests touching the same contract
-//!   compile it once instead of racing each other;
+//! - deduplicated process-wide by `LOOKUPS`, so concurrent tests touching the same contract compile
+//!   it once instead of racing each other;
 //! - persisted to disk once resolved, so later runs skip straight to the layout.
 //!
 //! Unverified responses are memoized only for this run so later runs can discover newly verified
