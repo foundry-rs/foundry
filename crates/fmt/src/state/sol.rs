@@ -2196,15 +2196,35 @@ impl<'ast> State<'_, 'ast> {
     ) {
         self.cbox(0);
         self.s.ibox(self.ind);
-        self.print_word("for (");
-        self.zerobreak();
+        let open_paren = self.find_uncommented_char(span, '(').unwrap();
+        self.print_word("for");
+        if self
+            .print_comments(
+                open_paren,
+                CommentConfig::skip_ws().mixed_prev_space().mixed_post_nbsp(),
+            )
+            .is_none()
+        {
+            self.nbsp();
+        }
+        self.cursor.advance_to(open_paren, true);
+        self.print_word("(");
+        let init_has_leading_comment =
+            init.as_ref().is_some_and(|stmt| self.peek_comment_before(stmt.span.lo()).is_some());
+        if !init_has_leading_comment {
+            self.zerobreak();
+        }
 
         // Print init.
         self.s.cbox(0);
         let init_trailing_comment = match init {
             Some(init_stmt) => {
                 let has_trailing_comment = cond.as_ref().is_some_and(|cond| {
-                    self.peek_trailing_comment(init_stmt.span.hi(), Some(cond.span.lo())).is_some()
+                    self.comments
+                        .iter()
+                        .skip_while(|cmnt| cmnt.pos() < init_stmt.span.hi())
+                        .take_while(|cmnt| cmnt.pos() < cond.span.lo())
+                        .any(|cmnt| cmnt.style.is_trailing())
                 });
                 self.print_stmt_bound(init_stmt, Some(init_stmt.span.hi()));
                 has_trailing_comment

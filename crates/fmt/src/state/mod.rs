@@ -327,11 +327,16 @@ impl State<'_, '_> {
 
     /// Returns the position of the first `{` within the span, ignoring the ones inside comments.
     fn find_opening_brace(&self, span: Span) -> Option<BytePos> {
+        self.find_uncommented_char(span, '{')
+    }
+
+    /// Returns the position of the first matching character within the span, ignoring comments.
+    fn find_uncommented_char(&self, span: Span, needle: char) -> Option<BytePos> {
         let snip = self.sm.span_to_snippet(span).ok()?;
         let mut idx = 0;
         while idx < snip.len() {
             let rest = &snip[idx..];
-            if rest.starts_with('{') {
+            if rest.starts_with(needle) {
                 return Some(span.lo() + idx as u32);
             }
             idx += if let Some(line) = rest.strip_prefix("//") {
@@ -543,6 +548,7 @@ impl<'sess> State<'sess, '_> {
         let mut is_leading = true;
         let config_cache = config;
         let mut buffered_blank = None;
+        let mut previous_mixed_at_bol = false;
         while self.peek_comment().is_some_and(|c| c.pos() < pos) {
             let mut cmnt = self.next_comment().unwrap();
             let style_cache = cmnt.style;
@@ -607,6 +613,13 @@ impl<'sess> State<'sess, '_> {
                 self.print_comment(blank, config);
             }
 
+            if previous_mixed_at_bol
+                && cmnt.style.is_trailing()
+                && matches!(cmnt.kind, ast::CommentKind::Line)
+            {
+                self.hardbreak_if_not_bol();
+            }
+
             // Handle mixed with follow-up comment
             if cmnt.style.is_mixed() {
                 if let Some(cmnt) = self.peek_comment_before(pos) {
@@ -635,6 +648,7 @@ impl<'sess> State<'sess, '_> {
             }
 
             last_style = Some(cmnt.style);
+            previous_mixed_at_bol = cmnt.style.is_mixed() && self.is_bol_or_only_ind();
             self.print_comment(cmnt, config);
             config = config_cache;
         }
