@@ -1890,6 +1890,27 @@ impl<N: Network> Backend<N> {
         self.get_block_with_hash(id).map(|(block, _)| block)
     }
 
+    /// Returns a rollback ancestor, including the remote base of a Monad transaction-hash fork.
+    pub async fn rollback_block(&self, number: u64) -> Result<Option<Block>, BlockchainError> {
+        if let Some(block) = self.get_block(number) {
+            return Ok(Some(block));
+        }
+
+        let Some(fork) = self.get_fork().filter(|fork| {
+            self.is_monad()
+                && fork.transaction_hash().is_some()
+                && fork.predates_fork_inclusive(number)
+        }) else {
+            return Ok(None);
+        };
+        let Some(block) = fork.block_by_number(number).await? else {
+            return Ok(None);
+        };
+        let header = Header::try_from(block.header().inner.clone())
+            .map_err(|err| BlockchainError::Internal(err.to_string()))?;
+        Ok(Some(Block { header: foundry_header(&self.networks, header), body: Default::default() }))
+    }
+
     pub fn get_block_by_hash(&self, hash: B256) -> Option<Block> {
         self.blockchain.get_block_by_hash(&hash)
     }
@@ -6842,7 +6863,12 @@ where
     /// The state of the chain is rewound using `rewind` to the common block, including the db,
     /// storage, and env.
     pub async fn rollback(&self, common_block: Block) -> Result<(), BlockchainError> {
+        #[cfg(feature = "monad")]
+        let _mining_guard = if self.is_monad() { Some(self.mining.lock().await) } else { None };
         let hash = common_block.header.hash_slow();
+
+        #[cfg(feature = "monad")]
+        let monad_profile = self.prepare_monad_rollback_profile(&common_block).await;
 
         // Get the database at the common block
         let common_state = {
@@ -6890,6 +6916,10 @@ where
             env.block_env.gas_limit = common_block.header.gas_limit();
             env.block_env.difficulty = common_block.header.difficulty();
             env.block_env.prevrandao = common_block.header.mix_hash();
+            #[cfg(feature = "monad")]
+            if let Some(profile) = &monad_profile {
+                profile.apply_env(&mut env, &common_block);
+            }
 
             self.time.reset(env.block_env.timestamp.saturating_to());
             // drop any pending next-block prevrandao override so it does not leak into a block
@@ -6928,6 +6958,11 @@ where
             for (block_num, hash) in block_hashes {
                 db.insert_block_hash(U256::from(block_num), hash);
             }
+        }
+
+        #[cfg(feature = "monad")]
+        if let Some(profile) = monad_profile {
+            self.publish_monad_rollback_profile(profile);
         }
 
         Ok(())
