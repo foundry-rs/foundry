@@ -405,7 +405,7 @@ pub trait FromEvmVersion: From<FoundryHardfork> {
     fn from_evm_version(version: EvmVersion) -> Self;
 }
 
-/// Trait for parsing and displaying a network-specific execution spec.
+/// Conversion, hardfork scheduling, and trace metadata for a concrete execution spec.
 pub trait ExecutionSpec: FromEvmVersion {
     // Returns the user-facing name for the active execution spec.
     fn evm_version_name(&self) -> String;
@@ -417,6 +417,31 @@ pub trait ExecutionSpec: FromEvmVersion {
 
     // Converts a namespaced Foundry hardfork if it belongs to this spec family.
     fn from_foundry_hardfork(hardfork: FoundryHardfork) -> Option<Self>;
+
+    /// Returns this family's hardfork at a historical source-chain timestamp.
+    /// Unknown source chains return `None`; this never discovers another execution family.
+    fn historical_hardfork(chain_id: u64, timestamp: u64) -> Option<FoundryHardfork> {
+        FoundryHardfork::from_chain_and_timestamp(chain_id, timestamp)
+            .filter(|&hardfork| Self::from_foundry_hardfork(hardfork).is_some())
+    }
+
+    /// Resolves a local fork's hardfork from compatible endpoint metadata or its source schedule.
+    /// Ethereum overrides this to retain the configured EVM version for local forks.
+    fn fork_hardfork(
+        chain_id: u64,
+        timestamp: u64,
+        endpoint_hardfork: Option<FoundryHardfork>,
+    ) -> Option<FoundryHardfork> {
+        endpoint_hardfork
+            .filter(|&hardfork| Self::from_foundry_hardfork(hardfork).is_some())
+            .or_else(|| Self::historical_hardfork(chain_id, timestamp))
+    }
+
+    /// Returns exact metadata for a directly selected spec, when the family requires it.
+    /// Ethereum and Optimism retain their existing absence of metadata for direct spec overrides.
+    fn reported_hardfork(self) -> Option<FoundryHardfork> {
+        None
+    }
 }
 
 impl FromEvmVersion for SpecId {
@@ -458,6 +483,14 @@ impl ExecutionSpec for SpecId {
             FoundryHardfork::Ethereum(hardfork) => Some(spec_id_from_ethereum_hardfork(hardfork)),
             _ => None,
         }
+    }
+
+    fn fork_hardfork(
+        _chain_id: u64,
+        _timestamp: u64,
+        _endpoint_hardfork: Option<FoundryHardfork>,
+    ) -> Option<FoundryHardfork> {
+        None
     }
 }
 
@@ -529,6 +562,10 @@ impl ExecutionSpec for TempoHardfork {
             _ => None,
         }
     }
+
+    fn reported_hardfork(self) -> Option<FoundryHardfork> {
+        Some(self.into())
+    }
 }
 
 #[cfg(feature = "monad")]
@@ -557,6 +594,10 @@ impl ExecutionSpec for MonadHardfork {
             FoundryHardfork::Monad(hardfork) => Some(hardfork),
             _ => None,
         }
+    }
+
+    fn reported_hardfork(self) -> Option<FoundryHardfork> {
+        Some(self.into())
     }
 }
 
@@ -601,6 +642,10 @@ impl ExecutionSpec for BaseSpecId {
             FoundryHardfork::Base(hardfork) => Some(Self::new(hardfork)),
             _ => None,
         }
+    }
+
+    fn reported_hardfork(self) -> Option<FoundryHardfork> {
+        Some(FoundryHardfork::Base(self.upgrade()))
     }
 }
 

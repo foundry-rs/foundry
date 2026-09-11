@@ -319,11 +319,10 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
         let fork_hardfork = fork_context.and_then(|context| context.hardfork);
         self.config.source_chain_id = fork_chain_id;
         self.config.resolved_hardfork = resolve_execution_spec(
-            &self.config.foundry_config,
-            self.config.evm_opts.networks,
+            self.config.foundry_config.evm_version,
+            self.config.foundry_config.hardfork,
             &mut evm_env,
             ExecutionSpecContext::local_or_fork(fork_chain_id, fork_hardfork),
-            None,
             None,
         );
 

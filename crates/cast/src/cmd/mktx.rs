@@ -23,8 +23,6 @@ use std::{path::PathBuf, str::FromStr};
 use tempo_alloy::TempoNetwork;
 
 #[cfg(feature = "base")]
-use crate::cmd::resolve_network;
-#[cfg(feature = "base")]
 use base_common_network::Base;
 
 /// CLI arguments for `cast mktx`.
@@ -112,18 +110,14 @@ impl MakeTxArgs {
             );
         }
 
-        if self.tx.tempo.session_id()?.is_some() {
-            return self.run_generic::<TempoNetwork>(None, None).await;
-        }
-
-        let (is_tempo, signer, access_key) =
+        let (network, signer, access_key) =
             tempo::resolve_transaction_network_and_signer(&self.tx.tempo, &self.eth).await?;
-        if is_tempo {
+        if network.is_tempo() {
             return self.run_generic::<TempoNetwork>(signer, access_key).await;
         }
 
         #[cfg(feature = "base")]
-        if resolve_network(&self.eth.load_config()?).await?.is_base() {
+        if network.is_base() {
             super::validate_base_transaction_options(&self.tx)?;
             return self.run_generic::<Base>(signer, None).await;
         }

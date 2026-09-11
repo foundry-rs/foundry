@@ -1073,6 +1073,31 @@ const fn bsc_p256_precompile(chain_id: ChainId, timestamp: u64) -> Option<Option
     }
 }
 
+/// Returns custom precompile labels for an already resolved execution hardfork.
+/// This metadata lookup does not discover or select an execution network.
+pub fn resolved_precompile_labels(hardfork: Option<FoundryHardfork>) -> AddressHashMap<String> {
+    match hardfork {
+        Some(FoundryHardfork::Tempo(hardfork)) => TEMPO_PRECOMPILES
+            .iter()
+            .filter(|(_, address)| is_tempo_precompile_active_at(*address, hardfork))
+            .map(|(label, address)| (*address, (*label).to_string()))
+            .collect(),
+        #[cfg(feature = "monad")]
+        Some(FoundryHardfork::Monad(hardfork)) => MONAD_PRECOMPILE_LABELS
+            .iter()
+            .filter(|(_, address)| is_monad_precompile_active_at(*address, hardfork))
+            .map(|(label, address)| (*address, (*label).to_string()))
+            .collect(),
+        #[cfg(feature = "base")]
+        Some(FoundryHardfork::Base(upgrade)) => BASE_PRECOMPILES
+            .iter()
+            .filter(|(_, address)| is_base_precompile_active_at(*address, upgrade))
+            .map(|(label, address)| (*address, (*label).to_string()))
+            .collect(),
+        _ => AddressHashMap::default(),
+    }
+}
+
 /// Returns whether a well-known Tempo precompile address is active at `hardfork`.
 pub fn is_tempo_precompile_active_at(address: Address, hardfork: TempoHardfork) -> bool {
     if address == CURRENT_COMMITTEE_ADDRESS {
@@ -1664,6 +1689,13 @@ mod tests {
         let cobalt = config.precompiles_label(Some(BaseUpgrade::Cobalt.into()));
         assert_eq!(cobalt.len(), BASE_PRECOMPILES.len());
         assert_eq!(config.precompiles_label(None).len(), BASE_PRECOMPILES.len());
+
+        for upgrade in [BaseUpgrade::Azul, BaseUpgrade::Beryl, BaseUpgrade::Cobalt] {
+            assert_eq!(
+                resolved_precompile_labels(Some(upgrade.into())),
+                config.precompiles_label(Some(upgrade.into()))
+            );
+        }
 
         // The name-keyed precompile map must honor the same upgrade boundaries.
         assert!(config.precompiles(Some(BaseUpgrade::Azul.into())).is_empty());

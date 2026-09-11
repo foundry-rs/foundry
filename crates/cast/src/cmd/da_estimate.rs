@@ -35,7 +35,7 @@ impl DAEstimateArgs {
         let config = rpc.load_config()?;
         let network = match network {
             Some(n) => n,
-            None => super::resolve_network(&config).await?,
+            None => super::resolve_transaction_network(&config, false).await?,
         };
         match network {
             #[cfg(feature = "base")]

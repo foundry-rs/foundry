@@ -11,12 +11,11 @@ use foundry_cli::{
     utils::LoadConfig,
 };
 use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder, shell};
+use foundry_config::Config;
 use foundry_wallets::{BrowserWalletOpts, WalletOpts};
 use std::str::FromStr;
 use tempo_alloy::TempoNetwork;
 
-#[cfg(feature = "base")]
-use crate::cmd::resolve_network;
 #[cfg(feature = "base")]
 use base_common_network::Base;
 
@@ -70,28 +69,32 @@ pub struct AccessListArgs {
 
 impl AccessListArgs {
     pub async fn run(self) -> Result<()> {
-        if self.tx.tempo.is_tempo() {
-            return self.run_with_network::<TempoNetwork>().await;
+        let config = self.rpc.load_config()?;
+        let requires_tempo = self.tx.tempo.is_tempo() || self.tx.tempo.session_id()?.is_some();
+        let network = super::resolve_transaction_network(&config, requires_tempo).await?;
+        if network.is_tempo() {
+            return self.run_with_network::<TempoNetwork>(config).await;
         }
-
         #[cfg(feature = "base")]
-        if resolve_network(&self.rpc.load_config()?).await?.is_base() {
+        if network.is_base() {
             super::validate_base_transaction_options(&self.tx)?;
-            return self.run_with_network::<Base>().await;
+            return self.run_with_network::<Base>(config).await;
         }
-
-        self.run_with_network::<Ethereum>().await
+        self.run_with_network::<Ethereum>(config).await
     }
 
-    async fn run_with_network<N: Network + Unpin>(self) -> Result<()>
+    async fn run_with_network<N: Network + Unpin>(self, config: Config) -> Result<()>
     where
         N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
-        let Self { to, sig, args, data, tx, force, rpc, wallet, browser, block } = self;
+        let Self { to, sig, args, data, tx, force, rpc: _, wallet, browser, block } = self;
 
-        let config = rpc.load_config()?;
         let provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
-        let (sender, _) = read_only_sender::<N>(&browser, wallet).await?;
+        let chain_id = match config.chain {
+            Some(chain) => chain.id(),
+            None => provider.get_chain_id().await?,
+        };
+        let (sender, _) = read_only_sender::<N>(&browser, wallet, &tx.tempo, chain_id).await?;
 
         let builder = CastTxBuilder::new(&provider, tx, &config)
             .await?

@@ -5,7 +5,7 @@
 //! implement `figment::Provider` which allows the subcommand to override the config's defaults, see
 //! [`foundry_config::Config`].
 
-use alloy_network::Network;
+use alloy_network::{AnyNetwork, Network};
 use alloy_primitives::{Address, Bytes, map::AddressHashMap};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
@@ -15,20 +15,17 @@ use foundry_cli::{
     opts::RpcOpts,
     utils::{LoadConfig, get_provider, load_config_from_provider},
 };
-use foundry_common::{provider::RetryProvider, shell};
+use foundry_common::{
+    provider::{ProviderBuilder, RetryProvider},
+    shell,
+};
 use foundry_config::{Config, figment::Figment};
 use foundry_evm::{core::bytecode::InstIter, opts::EvmOpts};
+use foundry_evm_networks::NetworkVariant;
 use futures::StreamExt;
 use serde::Serialize;
 use serde_json::Value;
 use std::fmt::{Display, Write};
-
-#[cfg(any(feature = "base", feature = "optimism"))]
-use alloy_network::AnyNetwork;
-#[cfg(any(feature = "base", feature = "optimism"))]
-use foundry_common::provider::ProviderBuilder;
-#[cfg(any(feature = "base", feature = "optimism"))]
-use foundry_evm_networks::NetworkVariant;
 
 const MAX_CONCURRENT_RPC_REQUESTS: usize = 5;
 
@@ -151,14 +148,30 @@ pub mod txpool;
 pub mod vaddr;
 pub mod wallet;
 
-/// Resolves the RPC network without requiring its local EVM implementation.
-///
-/// Explicit configuration takes precedence over the chain ID. Curl mode cannot query the node,
-/// so it uses Ethereum's RPC types unless a network or chain is configured.
-#[cfg(any(feature = "base", feature = "optimism"))]
-pub(crate) async fn resolve_network(config: &Config) -> eyre::Result<NetworkVariant> {
-    if let Some(network) = config.networks.resolved_network() {
-        return Ok(network);
+/// Validates a Tempo transaction requirement against an explicit execution family.
+pub(crate) fn validate_tempo_network(config: &Config, requires_tempo: bool) -> Result<()> {
+    if requires_tempo && config.networks.has_network_selection() {
+        let network = config.networks.execution_network();
+        eyre::ensure!(
+            network.is_tempo(),
+            "Tempo transaction options conflict with configured network `{}`",
+            config.networks.execution_profile_name()
+        );
+    }
+    Ok(())
+}
+
+/// Resolves the RPC request family before typed transaction construction.
+pub(crate) async fn resolve_transaction_network(
+    config: &Config,
+    requires_tempo: bool,
+) -> Result<NetworkVariant> {
+    validate_tempo_network(config, requires_tempo)?;
+    if requires_tempo {
+        return Ok(NetworkVariant::Tempo);
+    }
+    if config.networks.has_network_selection() {
+        return Ok(config.networks.execution_network());
     }
     if let Some(chain) = config.chain {
         return Ok(chain.id().into());
@@ -169,6 +182,14 @@ pub(crate) async fn resolve_network(config: &Config) -> eyre::Result<NetworkVari
 
     let provider = ProviderBuilder::<AnyNetwork>::from_config(config)?.build()?;
     Ok(provider.get_chain_id().await?.into())
+}
+
+pub(crate) fn disassemble(code: &[u8]) -> Result<String> {
+    let mut output = String::new();
+    for (pc, inst) in InstIter::new(code).with_pc() {
+        writeln!(output, "{pc:08x}: {inst}")?;
+    }
+    Ok(output)
 }
 
 /// Rejects blob options before Base's transaction builder can discard them.
@@ -183,7 +204,7 @@ pub(crate) fn validate_base_transaction_options(
     Ok(())
 }
 
-#[cfg(all(test, any(feature = "base", feature = "monad", feature = "optimism")))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -191,6 +212,42 @@ mod tests {
     use alloy_chains::NamedChain;
     #[cfg(feature = "base")]
     use foundry_config::Chain;
+
+    #[tokio::test]
+    async fn transaction_network_respects_explicit_selection() {
+        for network in [NetworkVariant::Ethereum, NetworkVariant::Tempo] {
+            let config =
+                Config { networks: network.into(), eth_rpc_curl: true, ..Default::default() };
+            assert_eq!(resolve_transaction_network(&config, false).await.unwrap(), network);
+            assert_eq!(
+                resolve_transaction_network(&config, true).await.is_ok(),
+                network.is_tempo()
+            );
+        }
+        let config = Config { eth_rpc_curl: true, ..Default::default() };
+        assert_eq!(
+            resolve_transaction_network(&config, true).await.unwrap(),
+            NetworkVariant::Tempo
+        );
+        assert_eq!(
+            resolve_transaction_network(&config, false).await.unwrap(),
+            NetworkVariant::Ethereum
+        );
+
+        let config = Config {
+            networks: foundry_evm_networks::NetworkConfigs::with_celo(),
+            eth_rpc_curl: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_transaction_network(&config, false).await.unwrap(),
+            NetworkVariant::Ethereum
+        );
+        assert_eq!(
+            resolve_transaction_network(&config, true).await.unwrap_err().to_string(),
+            "Tempo transaction options conflict with configured network `celo`"
+        );
+    }
 
     #[cfg(feature = "monad")]
     #[test]
@@ -206,7 +263,14 @@ mod tests {
     #[tokio::test]
     async fn resolve_network_preserves_explicit_base() {
         let config = Config { networks: NetworkVariant::Base.into(), ..Default::default() };
-        assert_eq!(resolve_network(&config).await.unwrap(), NetworkVariant::Base);
+        assert_eq!(
+            resolve_transaction_network(&config, false).await.unwrap(),
+            NetworkVariant::Base
+        );
+        assert_eq!(
+            resolve_transaction_network(&config, true).await.unwrap_err().to_string(),
+            "Tempo transaction options conflict with configured network `base`"
+        );
     }
 
     #[cfg(feature = "base")]
@@ -214,7 +278,10 @@ mod tests {
     async fn resolve_network_infers_base_from_chain_id() {
         let config =
             Config { chain: Some(Chain::from_named(NamedChain::Base)), ..Default::default() };
-        assert_eq!(resolve_network(&config).await.unwrap(), NetworkVariant::Base);
+        assert_eq!(
+            resolve_transaction_network(&config, false).await.unwrap(),
+            NetworkVariant::Base
+        );
     }
 
     #[cfg(all(any(feature = "base", feature = "optimism"), not(feature = "monad")))]
@@ -224,7 +291,10 @@ mod tests {
             chain: Some(foundry_config::Chain::from_named(alloy_chains::NamedChain::Monad)),
             ..Default::default()
         };
-        assert_eq!(resolve_network(&config).await.unwrap(), NetworkVariant::Ethereum);
+        assert_eq!(
+            resolve_transaction_network(&config, false).await.unwrap(),
+            NetworkVariant::Ethereum
+        );
     }
 
     #[cfg(feature = "base")]
@@ -236,13 +306,19 @@ mod tests {
             eth_rpc_curl: true,
             ..Default::default()
         };
-        assert_eq!(resolve_network(&config).await.unwrap(), NetworkVariant::Base);
+        assert_eq!(
+            resolve_transaction_network(&config, false).await.unwrap(),
+            NetworkVariant::Base
+        );
         let config = Config {
             networks: NetworkVariant::Ethereum.into(),
             chain: Some(foundry_config::Chain::from_id(8453)),
             ..config
         };
-        assert_eq!(resolve_network(&config).await.unwrap(), NetworkVariant::Ethereum);
+        assert_eq!(
+            resolve_transaction_network(&config, false).await.unwrap(),
+            NetworkVariant::Ethereum
+        );
     }
 
     #[cfg(all(feature = "base", not(feature = "optimism")))]
@@ -250,7 +326,10 @@ mod tests {
     async fn resolve_network_allows_rpc_without_optimism() {
         let config =
             Config { chain: Some(foundry_config::Chain::from_id(10)), ..Default::default() };
-        assert_eq!(resolve_network(&config).await.unwrap(), NetworkVariant::Ethereum);
+        assert_eq!(
+            resolve_transaction_network(&config, false).await.unwrap(),
+            NetworkVariant::Ethereum
+        );
     }
 
     #[cfg(any(feature = "base", feature = "optimism"))]
@@ -258,14 +337,9 @@ mod tests {
     async fn resolve_network_still_defaults_unknown_chain_ids_to_ethereum() {
         let config =
             Config { chain: Some(foundry_config::Chain::from_id(u64::MAX)), ..Default::default() };
-        assert_eq!(resolve_network(&config).await.unwrap(), NetworkVariant::Ethereum);
+        assert_eq!(
+            resolve_transaction_network(&config, false).await.unwrap(),
+            NetworkVariant::Ethereum
+        );
     }
-}
-
-pub(crate) fn disassemble(code: &[u8]) -> Result<String> {
-    let mut output = String::new();
-    for (pc, inst) in InstIter::new(code).with_pc() {
-        writeln!(output, "{pc:08x}: {inst}")?;
-    }
-    Ok(output)
 }

@@ -557,7 +557,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let config = rpc.load_config()?;
             #[cfg(feature = "base")]
             let network = if network.is_none() && (raw || fields.iter().any(|f| f == "raw")) {
-                crate::cmd::resolve_network(&config)
+                crate::cmd::resolve_transaction_network(&config, false)
                     .await?
                     .is_base()
                     .then_some(NetworkVariant::Base)
@@ -1034,7 +1034,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             #[cfg(feature = "base")]
             let network = match network {
                 Some(network) => Some(network),
-                None => crate::cmd::resolve_network(&config)
+                None => crate::cmd::resolve_transaction_network(&config, false)
                     .await?
                     .is_base()
                     .then_some(NetworkVariant::Base),
