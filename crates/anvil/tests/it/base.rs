@@ -437,7 +437,7 @@ async fn base_standalone_includes_failed_deposit_transaction() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn base_eip8130_call_and_estimate_are_read_only() {
-    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Cobalt.into()));
+    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Zenith.into()));
     let (_api, handle) = spawn(config).await;
     let provider = handle.http_provider();
     let sender = handle.dev_wallets().next().unwrap().address();
@@ -459,7 +459,7 @@ async fn base_eip8130_call_and_estimate_are_read_only() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn base_eip8130_estimate_includes_sponsored_payer_auth() {
-    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Cobalt.into()));
+    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Zenith.into()));
     let (_api, handle) = spawn(config).await;
     let provider = handle.http_provider();
     let wallets: Vec<_> = handle.dev_wallets().collect();
@@ -486,7 +486,7 @@ async fn base_eip8130_estimate_includes_sponsored_payer_auth() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn base_eip8130_estimate_prices_authentication_scheme() {
-    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Cobalt.into()));
+    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Zenith.into()));
     let (_api, handle) = spawn(config).await;
     let provider = handle.http_provider();
     let sender = handle.dev_wallets().next().unwrap().address();
@@ -526,20 +526,20 @@ async fn base_eip8130_estimate_prices_authentication_scheme() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn base_eip8130_estimate_is_rejected_before_cobalt() {
-    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Beryl.into()));
+async fn base_eip8130_estimate_is_rejected_before_zenith() {
+    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Cobalt.into()));
     let (_api, handle) = spawn(config).await;
     let sender = handle.dev_wallets().next().unwrap().address();
 
     let error =
         handle.http_provider().estimate_gas(eip8130_simulation_request(sender)).await.unwrap_err();
 
-    assert!(error.to_string().contains("not active before the Cobalt hard fork"), "{error}");
+    assert!(error.to_string().contains("not active before the Zenith hard fork"), "{error}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn base_eip8130_call_and_nonce_key_are_rejected_before_cobalt() {
-    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Beryl.into()));
+async fn base_eip8130_call_and_nonce_key_are_rejected_before_zenith() {
+    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Cobalt.into()));
     let (_api, handle) = spawn(config).await;
     let provider = handle.http_provider();
     let sender = handle.dev_wallets().next().unwrap().address();
@@ -553,13 +553,13 @@ async fn base_eip8130_call_and_nonce_key_are_rejected_before_cobalt() {
         .unwrap_err();
 
     for error in [call_error.to_string(), access_list_error.to_string(), nonce_error.to_string()] {
-        assert!(error.contains("not active before the Cobalt hard fork"), "{error}");
+        assert!(error.contains("not active before the Zenith hard fork"), "{error}");
     }
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn base_eip8130_estimate_rejects_missing_sender() {
-    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Cobalt.into()));
+    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Zenith.into()));
     let (_api, handle) = spawn(config).await;
     let request = serde_json::from_value(serde_json::json!({
         "calls": [],
@@ -575,7 +575,7 @@ async fn base_eip8130_estimate_rejects_missing_sender() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn base_eip8130_estimate_accepts_sender_and_rejects_sender_mismatch() {
-    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Cobalt.into()));
+    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Zenith.into()));
     let (_api, handle) = spawn(config).await;
     let provider = handle.http_provider();
     let wallets: Vec<_> = handle.dev_wallets().collect();
@@ -604,7 +604,7 @@ async fn base_eip8130_estimate_accepts_sender_and_rejects_sender_mismatch() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn base_eip8130_estimate_surfaces_phase_revert() {
-    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Cobalt.into()));
+    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Zenith.into()));
     let (api, handle) = spawn(config).await;
     let provider = handle.http_provider();
     let sender = handle.dev_wallets().next().unwrap().address();
@@ -619,7 +619,7 @@ async fn base_eip8130_estimate_surfaces_phase_revert() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn base_eip8130_debug_trace_call_inspects_protocol_calls() {
-    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Cobalt.into()));
+    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Zenith.into()));
     let (api, handle) = spawn(config).await;
     let provider = handle.http_provider();
     let sender = handle.dev_wallets().next().unwrap().address();
@@ -646,7 +646,7 @@ async fn base_eip8130_debug_trace_call_inspects_protocol_calls() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn base_eip8130_debug_trace_transaction_inspects_protocol_calls() {
-    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Cobalt.into()));
+    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Zenith.into()));
     let (api, handle) = spawn(config).await;
     let provider = handle.http_provider();
     let signer = handle.dev_wallets().next().unwrap().clone();
@@ -684,7 +684,7 @@ async fn base_eip8130_debug_trace_transaction_inspects_protocol_calls() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn base_eip8130_nonce_key_rpc_reads_channel_state() {
-    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Cobalt.into()));
+    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Zenith.into()));
     let (api, handle) = spawn(config).await;
     let provider = handle.http_provider();
     let sender = handle.dev_wallets().next().unwrap().address();
@@ -719,7 +719,7 @@ async fn base_eip8130_nonce_key_rpc_reads_channel_state() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn base_eip8130_txpool_keeps_independent_nonce_channels() {
-    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Cobalt.into()));
+    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Zenith.into()));
     let (api, handle) = spawn(config).await;
     api.anvil_set_auto_mine(false).await.unwrap();
     let provider = handle.http_provider();
@@ -760,7 +760,7 @@ async fn base_eip8130_txpool_keeps_independent_nonce_channels() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn base_eip8130_txpool_orders_channel_heads_by_fee() {
-    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Cobalt.into()));
+    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Zenith.into()));
     let (api, handle) = spawn(config).await;
     api.anvil_set_auto_mine(false).await.unwrap();
     let provider = handle.http_provider();
@@ -790,7 +790,7 @@ async fn base_eip8130_txpool_orders_channel_heads_by_fee() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn base_eip8130_txpool_promotes_filled_channel_gap() {
-    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Cobalt.into()));
+    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Zenith.into()));
     let (api, handle) = spawn(config).await;
     api.anvil_set_auto_mine(false).await.unwrap();
     let provider = handle.http_provider();
@@ -826,7 +826,7 @@ async fn base_eip8130_txpool_promotes_filled_channel_gap() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn base_eip8130_txpool_replaces_with_higher_fee_in_lane() {
-    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Cobalt.into()));
+    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Zenith.into()));
     let (api, handle) = spawn(config).await;
     api.anvil_set_auto_mine(false).await.unwrap();
     let provider = handle.http_provider();
@@ -858,7 +858,7 @@ async fn base_eip8130_txpool_replaces_with_higher_fee_in_lane() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn base_eip8130_txpool_rejects_underpriced_lane_replacement() {
-    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Cobalt.into()));
+    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Zenith.into()));
     let (api, handle) = spawn(config).await;
     api.anvil_set_auto_mine(false).await.unwrap();
     let provider = handle.http_provider();
@@ -889,7 +889,7 @@ async fn base_eip8130_txpool_replaces_nonce_free_by_replay_id() {
     let genesis_timestamp =
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
     let config = NodeConfig::test_base()
-        .with_hardfork(Some(BaseUpgrade::Cobalt.into()))
+        .with_hardfork(Some(BaseUpgrade::Zenith.into()))
         .with_genesis_timestamp(Some(genesis_timestamp));
     let (api, handle) = spawn(config).await;
     api.anvil_set_auto_mine(false).await.unwrap();
@@ -952,7 +952,7 @@ async fn base_eip8130_rejects_mined_nonce_free_replay_at_admission() {
     let genesis_timestamp =
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
     let config = NodeConfig::test_base()
-        .with_hardfork(Some(BaseUpgrade::Cobalt.into()))
+        .with_hardfork(Some(BaseUpgrade::Zenith.into()))
         .with_genesis_timestamp(Some(genesis_timestamp));
     let (_api, handle) = spawn(config).await;
     let provider = handle.http_provider();
@@ -994,7 +994,7 @@ async fn base_eip8130_rejects_mined_nonce_free_replay_at_admission() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn base_eip8130_txpool_drops_expired_nonce_free_transaction() {
-    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Cobalt.into()));
+    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Zenith.into()));
     let (api, handle) = spawn(config).await;
     api.anvil_set_auto_mine(false).await.unwrap();
     let provider = handle.http_provider();
@@ -1021,7 +1021,7 @@ async fn base_eip8130_txpool_drops_expired_nonce_free_transaction() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn base_eip8130_snapshot_revert_restores_channel_nonce() {
-    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Cobalt.into()));
+    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Zenith.into()));
     let (api, handle) = spawn(config).await;
     let provider = handle.http_provider();
     let signer = handle.dev_wallets().next().unwrap().clone();
@@ -1064,7 +1064,7 @@ async fn base_eip8130_snapshot_revert_restores_channel_nonce() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn base_eip8130_snapshot_revert_clears_pending_transactions() {
-    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Cobalt.into()));
+    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Zenith.into()));
     let (api, handle) = spawn(config).await;
     api.anvil_set_auto_mine(false).await.unwrap();
     let provider = handle.http_provider();
@@ -1087,7 +1087,7 @@ async fn base_eip8130_snapshot_revert_clears_pending_transactions() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn base_eip8130_state_cheat_clears_pending_transactions() {
-    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Cobalt.into()));
+    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Zenith.into()));
     let (api, handle) = spawn(config).await;
     api.anvil_set_auto_mine(false).await.unwrap();
     let provider = handle.http_provider();
@@ -1109,7 +1109,7 @@ async fn base_eip8130_state_cheat_clears_pending_transactions() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn base_standalone_mines_eip8130_transaction() {
-    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Cobalt.into()));
+    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Zenith.into()));
     let (_api, handle) = spawn(config).await;
     let provider = handle.http_provider();
     let signer = handle.dev_wallets().next().unwrap().clone();
@@ -1142,7 +1142,7 @@ async fn base_standalone_mines_eip8130_transaction() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn base_eip8130_rejects_protocol_nonce_replay_at_admission() {
-    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Cobalt.into()));
+    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Zenith.into()));
     let (_api, handle) = spawn(config).await;
     let provider = handle.http_provider();
     let signer = handle.dev_wallets().next().unwrap().clone();
@@ -1166,7 +1166,7 @@ async fn base_eip8130_rejects_protocol_nonce_replay_at_admission() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn base_eip8130_rejects_invalid_configured_auth_at_admission() {
-    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Cobalt.into()));
+    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Zenith.into()));
     let (_api, handle) = spawn(config).await;
     let provider = handle.http_provider();
     let signer = handle.dev_wallets().next().unwrap().clone();
@@ -1182,7 +1182,7 @@ async fn base_eip8130_rejects_invalid_configured_auth_at_admission() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn base_eip8130_rejects_invalid_buffered_auth_at_admission() {
-    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Cobalt.into()));
+    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Zenith.into()));
     let (_api, handle) = spawn(config).await;
     let provider = handle.http_provider();
     let signer = handle.dev_wallets().next().unwrap().clone();
@@ -1196,7 +1196,7 @@ async fn base_eip8130_rejects_invalid_buffered_auth_at_admission() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn base_eip8130_receipt_reports_phase_statuses_and_metadata() {
-    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Cobalt.into()));
+    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Zenith.into()));
     let (api, handle) = spawn(config).await;
     let provider = handle.http_provider();
     let signer = handle.dev_wallets().next().unwrap().clone();
@@ -1225,7 +1225,7 @@ async fn base_eip8130_receipt_reports_phase_statuses_and_metadata() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn base_eip8130_sponsored_receipt_reports_payer() {
-    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Cobalt.into()));
+    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Zenith.into()));
     let (_api, handle) = spawn(config).await;
     let provider = handle.http_provider();
     let wallets: Vec<_> = handle.dev_wallets().collect();
@@ -1250,7 +1250,7 @@ async fn base_eip8130_sponsored_receipt_reports_payer() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn base_eip8130_sponsored_tx_accepts_unfunded_sender() {
-    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Cobalt.into()));
+    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Zenith.into()));
     let (_api, handle) = spawn(config).await;
     let provider = handle.http_provider();
     let sender = PrivateKeySigner::from_bytes(&B256::with_last_byte(0x42)).unwrap();
@@ -1273,7 +1273,7 @@ async fn base_eip8130_sponsored_tx_accepts_unfunded_sender() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn base_eip8130_sponsored_tx_rejects_unfunded_payer() {
-    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Cobalt.into()));
+    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Zenith.into()));
     let (_api, handle) = spawn(config).await;
     let provider = handle.http_provider();
     let sender = handle.dev_wallets().next().unwrap().clone();
@@ -1290,7 +1290,7 @@ async fn base_eip8130_sponsored_tx_rejects_unfunded_payer() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn base_eip8130_txpool_reserves_pending_payer_balance() {
-    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Cobalt.into()));
+    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Zenith.into()));
     let (api, handle) = spawn(config).await;
     api.anvil_set_auto_mine(false).await.unwrap();
     let provider = handle.http_provider();
@@ -1319,7 +1319,7 @@ async fn base_eip8130_txpool_reserves_pending_payer_balance() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn base_eip8130_receipt_reports_partial_phase_revert() {
-    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Cobalt.into()));
+    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Zenith.into()));
     let (api, handle) = spawn(config).await;
     let provider = handle.http_provider();
     let signer = handle.dev_wallets().next().unwrap().clone();
@@ -1353,7 +1353,7 @@ async fn base_eip8130_receipt_reports_partial_phase_revert() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn base_eip8130_same_block_receipts_keep_phase_statuses_isolated() {
-    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Cobalt.into()));
+    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Zenith.into()));
     let (api, handle) = spawn(config).await;
     api.anvil_set_auto_mine(false).await.unwrap();
     let provider = handle.http_provider();
@@ -1418,9 +1418,9 @@ async fn base_beryl_rejects_eip8130_transaction() {
         .await
         .unwrap_err();
 
-    assert!(err.to_string().contains("gated behind Cobalt"), "{err}");
+    assert!(err.to_string().contains("gated behind Zenith"), "{err}");
     assert!(
-        nonce_error.to_string().contains("not active before the Cobalt hard fork"),
+        nonce_error.to_string().contains("not active before the Zenith hard fork"),
         "{nonce_error}"
     );
 }
@@ -1440,6 +1440,6 @@ async fn base_eip8130_is_rejected_by_non_base_networks() {
             .await
             .unwrap_err();
 
-        assert!(error.to_string().contains("gated behind Cobalt"), "{error}");
+        assert!(error.to_string().contains("gated behind Zenith"), "{error}");
     }
 }

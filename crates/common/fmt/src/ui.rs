@@ -17,7 +17,7 @@ use alloy_rpc_types::{
 };
 use alloy_serde::{OtherFields, WithOtherFields};
 use revm::context_interface::transaction::SignedAuthorization;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::num::NonZeroU64;
 use tempo_alloy::{
     primitives::{
@@ -187,7 +187,10 @@ impl UIfmt for Signature {
 }
 
 /// Pretty-prints the common fields of any `TransactionReceipt<T>`.
-fn pretty_receipt<T: TxReceipt<Log = Log>>(receipt: &TransactionReceipt<T>, tx_type: u8) -> String {
+fn pretty_receipt<T: TxReceipt>(receipt: &TransactionReceipt<T>, tx_type: u8) -> String
+where
+    T::Log: Serialize,
+{
     let mut pretty = format!(
         "
 blockHash            {}
@@ -215,7 +218,7 @@ blobGasUsed          {}",
         receipt.gas_used.pretty(),
         serde_json::to_string(receipt.inner.logs()).unwrap(),
         receipt.inner.bloom().pretty(),
-        receipt.state_root().pretty(),
+        receipt.inner.status_or_post_state().as_post_state().pretty(),
         receipt.inner.status_or_post_state().pretty(),
         receipt.transaction_hash.pretty(),
         receipt.transaction_index.pretty(),
@@ -989,11 +992,14 @@ pub trait UIfmtReceiptExt {
     fn tx_type_pretty(&self) -> String;
 }
 
-fn receipt_logs_pretty<T: TxReceipt<Log = Log>>(receipt: &TransactionReceipt<T>) -> String {
+fn receipt_logs_pretty<T: TxReceipt>(receipt: &TransactionReceipt<T>) -> String
+where
+    T::Log: Serialize,
+{
     serde_json::to_string(receipt.inner.logs()).unwrap_or_default()
 }
 
-fn receipt_logs_bloom_pretty<T: TxReceipt<Log = Log>>(receipt: &TransactionReceipt<T>) -> String {
+fn receipt_logs_bloom_pretty<T: TxReceipt>(receipt: &TransactionReceipt<T>) -> String {
     receipt.inner.bloom().pretty()
 }
 
@@ -1369,7 +1375,18 @@ payerAuth            0x02"
             "effectiveGasPrice": "0x0",
             "from": "0xdeaddeaddeaddeaddeaddeaddeaddeaddead0001",
             "gasUsed": "0xfa0d",
-            "logs": [],
+            "logs": [{
+                "address": "0x4200000000000000000000000000000000000015",
+                "topics": [],
+                "data": "0x",
+                "removed": false,
+                "blockTimestampMs": "0x18bcfe568c8",
+                "blockNumber": "0x6cfef89",
+                "blockHash": null,
+                "transactionHash": null,
+                "transactionIndex": null,
+                "logIndex": null
+            }],
             "logsBloom": format!("0x{}", "00".repeat(256)),
             "status": "0x1",
             "to": "0x4200000000000000000000000000000000000015",
@@ -1389,6 +1406,13 @@ payerAuth            0x02"
         .unwrap();
 
         let pretty = receipt.pretty();
+        let logs = receipt.logs_pretty();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&logs).unwrap()[0]["blockTimestampMs"],
+            "0x18bcfe568c8"
+        );
+        assert!(pretty.contains(&format!("logs                 {logs}")), "{pretty}");
+        assert_eq!(receipt.logs_bloom_pretty(), receipt.inner.inner.bloom().pretty());
         assert!(pretty.contains("l1Fee                24681034813"), "{pretty}");
         assert!(pretty.contains("operatorFeeScalar    1"), "{pretty}");
         assert!(pretty.contains("depositNonce         9055505"), "{pretty}");

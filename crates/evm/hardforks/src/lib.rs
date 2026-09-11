@@ -386,7 +386,11 @@ pub fn eth_spec_id_from_base_upgrade(hardfork: BaseUpgrade) -> SpecId {
         | BaseUpgrade::Holocene
         | BaseUpgrade::PectraBlobSchedule => SpecId::CANCUN,
         BaseUpgrade::Isthmus | BaseUpgrade::Jovian => SpecId::PRAGUE,
-        BaseUpgrade::Azul | BaseUpgrade::Beryl | BaseUpgrade::Cobalt => SpecId::OSAKA,
+        BaseUpgrade::Azul
+        | BaseUpgrade::Beryl
+        | BaseUpgrade::Cobalt
+        | BaseUpgrade::Denim
+        | BaseUpgrade::Zenith => SpecId::OSAKA,
         f => unreachable!("unimplemented {}", f),
     }
 }

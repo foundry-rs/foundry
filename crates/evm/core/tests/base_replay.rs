@@ -405,7 +405,7 @@ fn simulates_and_commits_eip8130_without_placeholder_txenv() {
     let initial_balance = balance(&mut simulation_db, sender);
     let mut simulation_evm = BaseEvmFactory::default().create_foundry_evm_with_inspector(
         &mut simulation_db,
-        simple_base_env(BaseUpgrade::Cobalt),
+        simple_base_env(BaseUpgrade::Zenith),
         NoOpInspector,
     );
     simulation_evm.ctx_mut().chain.l2_block = Some(U256::ONE);
@@ -420,7 +420,7 @@ fn simulates_and_commits_eip8130_without_placeholder_txenv() {
     let mut db = eip8130_backend(sender);
     let mut evm = BaseEvmFactory::default().create_foundry_evm_with_inspector(
         &mut db,
-        simple_base_env(BaseUpgrade::Cobalt),
+        simple_base_env(BaseUpgrade::Zenith),
         NoOpInspector,
     );
     evm.ctx_mut().chain.l2_block = Some(U256::ONE);
@@ -432,7 +432,7 @@ fn simulates_and_commits_eip8130_without_placeholder_txenv() {
 
     let mut replay_evm = BaseEvmFactory::default().create_foundry_evm_with_inspector(
         &mut db,
-        simple_base_env(BaseUpgrade::Cobalt),
+        simple_base_env(BaseUpgrade::Zenith),
         NoOpInspector,
     );
     replay_evm.ctx_mut().chain.l2_block = Some(U256::ONE);

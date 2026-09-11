@@ -232,7 +232,7 @@ use base_common_evm::{
 use base_common_precompiles::NonceManagerStorage;
 #[cfg(feature = "base")]
 use base_common_rpc_types::{
-    EIP8130_PRE_COBALT_RPC_ERROR, Eip8130Nonce, Eip8130ReceiptFields,
+    EIP8130_PRE_ZENITH_RPC_ERROR, Eip8130Nonce, Eip8130ReceiptFields,
     Transaction as BaseRpcTransaction,
 };
 #[cfg(feature = "base")]
@@ -1680,16 +1680,16 @@ impl<N: Network> Backend<N> {
     #[cfg(feature = "base")]
     pub fn ensure_base_eip8130_active_at(&self, timestamp: u64) -> Result<(), BlockchainError> {
         let upgrade = self.base_upgrade_at_timestamp(timestamp);
-        if self.is_base() && upgrade >= BaseUpgrade::Cobalt {
+        if self.is_base() && upgrade >= BaseUpgrade::Zenith {
             return Ok(());
         }
-        Err(BlockchainError::InvalidTransactionRequest(EIP8130_PRE_COBALT_RPC_ERROR.to_string()))
+        Err(BlockchainError::InvalidTransactionRequest(EIP8130_PRE_ZENITH_RPC_ERROR.to_string()))
     }
 
     /// Returns an admission error if Base EIP-8130 submissions are not active.
     #[cfg(feature = "base")]
     pub fn ensure_base_eip8130_submission_active(&self) -> Result<(), BlockchainError> {
-        if self.is_base() && self.base_upgrade() >= BaseUpgrade::Cobalt {
+        if self.is_base() && self.base_upgrade() >= BaseUpgrade::Zenith {
             return Ok(());
         }
         Err(BlockchainError::Eip8130TransactionRejected(EIP8130_REJECTION_MSG.to_string()))
@@ -4521,15 +4521,15 @@ impl<N: Network> Backend<N> {
                     ChainUpgrades::new([(BaseUpgrade::Canyon, ForkCondition::Timestamp(1))]);
                 ensure_create2_deployer(upgrades, 1, &mut erased)?;
             }
-            if upgrade >= BaseUpgrade::Cobalt {
+            if upgrade >= BaseUpgrade::Zenith {
                 let upgrades =
-                    ChainUpgrades::new([(BaseUpgrade::Cobalt, ForkCondition::Timestamp(0))]);
+                    ChainUpgrades::new([(BaseUpgrade::Zenith, ForkCondition::Timestamp(0))]);
                 ensure_eip8130_system_accounts(upgrades, 1, &mut erased)?;
             }
 
             // Give the installed Base precompiles a sentinel byte so Solidity's `extcodesize`
             // check on high-level calls to functions without return data does not revert in the
-            // caller. `ensure_eip8130_system_accounts` only covers the Cobalt nonce manager.
+            // caller. `ensure_eip8130_system_accounts` only covers the Zenith nonce manager.
             for address in
                 foundry_evm::core::evm::base_code_sentinel_addresses(BaseSpecId::new(upgrade))
             {

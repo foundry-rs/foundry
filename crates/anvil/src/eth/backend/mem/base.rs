@@ -8,7 +8,7 @@ use base_common_chains::ChainConfig;
 use base_common_evm::{
     BaseContext, BaseEvmFactory, BaseHaltReason, BaseSpecId, BaseTransaction, BaseUpgrade,
 };
-use base_common_rpc_types::EIP8130_PRE_COBALT_RPC_ERROR;
+use base_common_rpc_types::EIP8130_PRE_ZENITH_RPC_ERROR;
 use foundry_evm::backend::DatabaseError;
 use revm::{
     DatabaseRef, Inspector,
@@ -34,9 +34,9 @@ impl<N: Network> Backend<N> {
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
         let upgrade = self.base_upgrade_at_timestamp(evm_env.block_env.timestamp.saturating_to());
-        if tx.eip8130.is_some() && upgrade < BaseUpgrade::Cobalt {
+        if tx.eip8130.is_some() && upgrade < BaseUpgrade::Zenith {
             return Err(BlockchainError::InvalidTransactionRequest(
-                EIP8130_PRE_COBALT_RPC_ERROR.to_string(),
+                EIP8130_PRE_ZENITH_RPC_ERROR.to_string(),
             ));
         }
         let base_env = EvmEnv::new(
