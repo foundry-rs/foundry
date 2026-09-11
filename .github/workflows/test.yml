@@ -46,7 +46,8 @@ jobs:
       - name: Generate matrices
         id: gen
         env:
-          EVENT_NAME: ${{ github.event_name }}
+          # Temporary: exercise master's full matrix on this PR; revert after validation.
+          EVENT_NAME: push
           PROFILE: ${{ inputs.profile }}
         shell: bash
         run: |
