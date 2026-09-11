@@ -16,6 +16,8 @@ use std::{io::Write, path::PathBuf, str::FromStr};
 #[cfg(unix)]
 use std::fs;
 
+#[cfg(feature = "base")]
+mod base;
 mod brutalize;
 mod core;
 mod exact_fork;

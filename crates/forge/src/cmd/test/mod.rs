@@ -93,6 +93,9 @@ use std::{
 use tempfile::TempDir;
 use yansi::Paint;
 
+#[cfg(feature = "base")]
+use foundry_evm::core::evm::BaseEvmNetwork;
+
 #[cfg(feature = "monad")]
 use foundry_evm::core::evm::MonadEvmNetwork;
 
@@ -103,8 +106,9 @@ mod evm_profile_server;
 mod filter;
 mod summary;
 use filter::RerunFailures;
-pub use filter::{FilterArgs, ProjectPathsAwareFilter, RerunFailure};
 use summary::{TestSummaryReport, format_invariant_metrics_table};
+
+pub use filter::{FilterArgs, ProjectPathsAwareFilter, RerunFailure};
 
 const DEBUGGER_MATCHING_TESTS_DISPLAY_LIMIT: usize = 12;
 const AUTO_FUZZ_FAILURE_DIR: &str = "fuzz";
@@ -216,6 +220,8 @@ fn count_fuzz_minimize_targets<FEN: FoundryEvmNetwork>(
 #[derive(Clone, Copy)]
 enum NetworkDispatchKind {
     Tempo,
+    #[cfg(feature = "base")]
+    Base,
     #[cfg(feature = "monad")]
     Monad,
     #[cfg(feature = "optimism")]
@@ -227,6 +233,12 @@ const fn network_dispatch_kind(evm_opts: &EvmOpts) -> NetworkDispatchKind {
     if evm_opts.networks.is_tempo() {
         return NetworkDispatchKind::Tempo;
     }
+
+    #[cfg(feature = "base")]
+    if evm_opts.networks.is_base() {
+        return NetworkDispatchKind::Base;
+    }
+
     #[cfg(feature = "monad")]
     if evm_opts.networks.is_monad() {
         return NetworkDispatchKind::Monad;
@@ -242,6 +254,11 @@ const fn network_dispatch_kind(evm_opts: &EvmOpts) -> NetworkDispatchKind {
 macro_rules! dispatch_network {
     ($evm_opts:expr, | $fen:ident | $body:expr) => {
         match network_dispatch_kind($evm_opts) {
+            #[cfg(feature = "base")]
+            NetworkDispatchKind::Base => {
+                type $fen = BaseEvmNetwork;
+                $body
+            }
             NetworkDispatchKind::Tempo => {
                 type $fen = TempoEvmNetwork;
                 $body

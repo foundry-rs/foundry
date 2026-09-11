@@ -27,14 +27,11 @@ use foundry_evm_core::{
         EC_RECOVER, IDENTITY, MOD_EXP, POINT_EVALUATION, RIPEMD_160, SHA_256,
     },
 };
-#[cfg(feature = "monad")]
-type MonadHardfork = foundry_evm_hardforks::MonadHardfork;
 use foundry_evm_hardforks::{ExecutionSpec, FoundryHardfork, TempoHardfork};
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant, celo::transfer::CELO_TRANSFER_LABEL};
 use itertools::Itertools;
 use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
 use revm_inspectors::tracing::types::{DecodedCallLog, DecodedCallTrace};
-
 use std::{collections::BTreeMap, sync::OnceLock};
 use tempo_contracts::precompiles::{
     CURRENT_COMMITTEE_ADDRESS, IAccountKeychain, IAddressRegistry, ICurrentCommittee, IFeeManager,
@@ -49,6 +46,21 @@ use tempo_precompiles::{
     tip20::ITIP20,
 };
 
+#[cfg(feature = "base")]
+use base_common_precompiles::{
+    ActivationRegistryStorage, B20FactoryStorage, NonceManagerStorage, PolicyRegistryStorage,
+    TxContextStorage,
+};
+#[cfg(feature = "base")]
+use foundry_evm_hardforks::BaseSpecId;
+#[cfg(feature = "base")]
+use foundry_evm_networks::{active_base_precompiles, is_base_precompile_active_at};
+
+#[cfg(feature = "monad")]
+type MonadHardfork = foundry_evm_hardforks::MonadHardfork;
+
+#[cfg(feature = "base")]
+mod base;
 #[cfg(feature = "monad")]
 mod monad;
 pub(crate) mod precompiles;
@@ -210,6 +222,8 @@ impl CallTraceDecoderBuilder {
         self.decoder.register_tempo_metadata();
         #[cfg(feature = "monad")]
         self.decoder.register_monad_metadata();
+        #[cfg(feature = "base")]
+        self.decoder.register_base_metadata();
         self.decoder
     }
 }
@@ -313,6 +327,55 @@ impl CallTraceDecoder {
         }
     }
 
+    #[cfg(feature = "base")]
+    fn register_base_metadata(&mut self) {
+        if self.networks.is_some_and(|networks| !networks.is_base()) {
+            return;
+        }
+        let Some(upgrade) =
+            self.hardfork.and_then(BaseSpecId::from_foundry_hardfork).map(|spec| spec.upgrade())
+        else {
+            return;
+        };
+
+        for (label, address) in active_base_precompiles(upgrade) {
+            self.labels.entry(address).or_insert_with(|| label.to_string());
+        }
+
+        // Labels alone leave calls showing a raw selector, so register the ABIs too. Each is
+        // scoped to its address and gated on the upgrade that installs it.
+        if is_base_precompile_active_at(ActivationRegistryStorage::ADDRESS, upgrade) {
+            self.register_address_abi(
+                ActivationRegistryStorage::ADDRESS,
+                &base::IActivationRegistry::abi::contract(),
+            );
+        }
+        if is_base_precompile_active_at(PolicyRegistryStorage::ADDRESS, upgrade) {
+            self.register_address_abi(
+                PolicyRegistryStorage::ADDRESS,
+                &base::IPolicyRegistry::abi::contract(),
+            );
+        }
+        if is_base_precompile_active_at(B20FactoryStorage::ADDRESS, upgrade) {
+            self.register_address_abi(
+                B20FactoryStorage::ADDRESS,
+                &base::IB20Factory::abi::contract(),
+            );
+        }
+        if is_base_precompile_active_at(NonceManagerStorage::ADDRESS, upgrade) {
+            self.register_address_abi(
+                NonceManagerStorage::ADDRESS,
+                &base::INonceManager::abi::contract(),
+            );
+        }
+        if is_base_precompile_active_at(TxContextStorage::ADDRESS, upgrade) {
+            self.register_address_abi(
+                TxContextStorage::ADDRESS,
+                &base::ITransactionContext::abi::contract(),
+            );
+        }
+    }
+
     /// Creates a new call trace decoder.
     ///
     /// The call trace decoder always knows how to decode calls to the cheatcode address, as well
@@ -397,7 +460,7 @@ impl CallTraceDecoder {
             (PATH_USD_ADDRESS, "PathUSD".to_string()),
         ]);
 
-        let function_groups: Vec<_> = console::hh::abi::functions()
+        let functions = console::hh::abi::functions()
             .into_values()
             .chain(Vm::abi::functions().into_values())
             .chain(IFeeManager::abi::functions().into_values())
@@ -415,14 +478,11 @@ impl CallTraceDecoder {
             .chain(ITIP20ChannelReserve::abi::functions().into_values())
             .chain(ISignatureVerifier::abi::functions().into_values())
             .chain(IReceivePolicyGuard::abi::functions().into_values())
-            .collect();
-        let functions = function_groups
-            .into_iter()
             .flatten()
             .map(|func| (func.selector(), vec![func]))
             .collect();
 
-        let event_groups: Vec<_> = console::ds::abi::events()
+        let events = console::ds::abi::events()
             .into_values()
             .chain(IFeeManager::abi::events().into_values())
             .chain(ITIP20::abi::events().into_values())
@@ -436,9 +496,6 @@ impl CallTraceDecoder {
             .chain(ITIP20ChannelReserve::abi::events().into_values())
             .chain(ISignatureVerifier::abi::events().into_values())
             .chain(IReceivePolicyGuard::abi::events().into_values())
-            .collect();
-        let events = event_groups
-            .into_iter()
             .flatten()
             .map(|event| ((event.selector(), indexed_inputs(&event)), vec![event]))
             .collect();
@@ -498,6 +555,8 @@ impl CallTraceDecoder {
         self.register_tempo_metadata();
         #[cfg(feature = "monad")]
         self.register_monad_metadata();
+        #[cfg(feature = "base")]
+        self.register_base_metadata();
     }
 
     /// Returns labels for precompiles active in this decoder's chain context.
@@ -613,7 +672,7 @@ impl CallTraceDecoder {
 
     /// Returns the functions registered for `selector` at `address`.
     ///
-    /// Address-scoped metadata takes precedence over globally registered functions.
+    /// Address-scoped and caller-supplied metadata takes precedence over network fallbacks.
     pub fn functions_for_selector(
         &self,
         address: Address,
@@ -634,11 +693,112 @@ impl CallTraceDecoder {
                 return Some(functions);
             }
         }
-        self.functions_by_address
+        if let Some(functions) =
+            self.functions_by_address.get(&address).and_then(|functions| functions.get(selector))
+        {
+            return Some(functions);
+        }
+        #[cfg(feature = "base")]
+        let base_functions = self.base_functions_for_selector(selector);
+        // Tempo's function with this selector has no output, while B20 returns a bool.
+        #[cfg(feature = "base")]
+        if let Some(functions) = base_functions
+            && functions.first().is_some_and(|function| function.name == "transferWithMemo")
+        {
+            if let Some(global) = self.functions.get(selector) {
+                let tempo_fallback = global.first().is_some_and(|function| {
+                    function.name == "transferWithMemo" && function.outputs.is_empty()
+                });
+                if !tempo_fallback {
+                    return Some(global);
+                }
+                if global.len() > 1 {
+                    return Some(&global[1..]);
+                }
+            }
+            return Some(functions);
+        }
+        let functions = self.functions.get(selector);
+        #[cfg(feature = "base")]
+        let functions = functions.or(base_functions);
+        functions.map(Vec::as_slice)
+    }
+
+    #[cfg(feature = "base")]
+    fn is_base_context(&self) -> bool {
+        self.networks.map_or_else(
+            || self.hardfork.and_then(BaseSpecId::from_foundry_hardfork).is_some(),
+            |networks| networks.is_base(),
+        )
+    }
+
+    #[cfg(feature = "base")]
+    fn base_functions_for_selector(&self, selector: &Selector) -> Option<&'static Vec<Function>> {
+        if !self.is_base_context() {
+            return None;
+        }
+        static FUNCTIONS: OnceLock<HashMap<Selector, Vec<Function>>> = OnceLock::new();
+        FUNCTIONS
+            .get_or_init(|| {
+                base::IB20Extensions::abi::functions()
+                    .into_values()
+                    .flatten()
+                    .map(|function| (function.selector(), vec![function]))
+                    .collect()
+            })
+            .get(selector)
+    }
+
+    #[cfg(feature = "base")]
+    fn base_events(&self) -> Option<&'static BTreeMap<(B256, usize), Vec<Event>>> {
+        if !self.is_base_context() {
+            return None;
+        }
+        static EVENTS: OnceLock<BTreeMap<(B256, usize), Vec<Event>>> = OnceLock::new();
+        Some(EVENTS.get_or_init(|| {
+            base::IB20Extensions::abi::events()
+                .into_values()
+                .flatten()
+                .map(|event| ((event.selector(), indexed_inputs(&event)), vec![event]))
+                .collect()
+        }))
+    }
+
+    #[cfg(feature = "base")]
+    fn base_revert_decoder(&self, address: Address) -> Option<&'static RevertDecoder> {
+        let upgrade =
+            self.hardfork.and_then(BaseSpecId::from_foundry_hardfork).map(|spec| spec.upgrade())?;
+        if !self.is_base_context() || !is_base_precompile_active_at(address, upgrade) {
+            return None;
+        }
+
+        static DECODERS: OnceLock<HashMap<Address, RevertDecoder>> = OnceLock::new();
+        DECODERS
+            .get_or_init(|| {
+                HashMap::from_iter([
+                    (
+                        ActivationRegistryStorage::ADDRESS,
+                        RevertDecoder::new().with_abi(&base::IActivationRegistry::abi::contract()),
+                    ),
+                    (
+                        PolicyRegistryStorage::ADDRESS,
+                        RevertDecoder::new().with_abi(&base::IPolicyRegistry::abi::contract()),
+                    ),
+                    (
+                        B20FactoryStorage::ADDRESS,
+                        RevertDecoder::new().with_abi(&base::IB20Factory::abi::contract()),
+                    ),
+                    (
+                        NonceManagerStorage::ADDRESS,
+                        RevertDecoder::new().with_abi(&base::INonceManager::abi::contract()),
+                    ),
+                    (
+                        TxContextStorage::ADDRESS,
+                        RevertDecoder::new().with_abi(&base::ITransactionContext::abi::contract()),
+                    ),
+                ])
+            })
             .get(&address)
-            .and_then(|functions| functions.get(selector))
-            .or_else(|| self.functions.get(selector))
-            .map(Vec::as_slice)
     }
 
     #[cfg(feature = "monad")]
@@ -679,7 +839,7 @@ impl CallTraceDecoder {
         }
     }
 
-    #[cfg(feature = "monad")]
+    #[cfg(any(feature = "base", feature = "monad"))]
     fn register_address_abi(&mut self, address: Address, abi: &JsonAbi) {
         for function in abi.functions() {
             self.push_address_function(address, function.clone());
@@ -1339,6 +1499,12 @@ impl CallTraceDecoder {
         output: &[u8],
         status: Option<InstructionResult>,
     ) -> String {
+        #[cfg(feature = "base")]
+        if let Some(reason) =
+            self.base_revert_decoder(address).and_then(|decoder| decoder.maybe_decode_known(output))
+        {
+            return reason;
+        }
         if self.is_current_committee_active(address) {
             static DECODER: OnceLock<RevertDecoder> = OnceLock::new();
             let decoder = DECODER
@@ -1383,13 +1549,18 @@ impl CallTraceDecoder {
         let events = address.and_then(|address| self.events_by_address.as_deref()?.get(&address));
         let address_events = key.and_then(|(topic, count)| events?.get(&(Some(topic), count)));
         let global_events = key.and_then(|key| self.events.get(&key));
-        let regular_events = address_events.or(global_events);
+        #[cfg(feature = "base")]
+        let base_events = key.and_then(|key| self.base_events()?.get(&key));
+        #[cfg(not(feature = "base"))]
+        let base_events: Option<&Vec<Event>> = None;
+        let fallback_events = global_events.or(base_events);
+        let regular_events = address_events.or(fallback_events);
         let anonymous_events = events.and_then(|events| events.get(&(None, log.topics().len())));
 
         let decoded = if canonical_signature && address_events.is_none() {
             // Topic zero does not encode indexed parameter placement, so global metadata is only
             // a hint. Try every compatible layout and reject ambiguity.
-            let mut events = global_events
+            let mut events = fallback_events
                 .into_iter()
                 .flatten()
                 .flat_map(|event| indexed_event_candidates(event.clone(), log))
@@ -1710,6 +1881,11 @@ mod tests {
     use foundry_evm_core::precompiles::P256_VERIFY;
     use std::borrow::Cow;
 
+    #[cfg(feature = "base")]
+    use foundry_evm_hardforks::BaseUpgrade;
+    #[cfg(feature = "base")]
+    use foundry_evm_networks::BASE_PRECOMPILE_ADDRESSES;
+
     #[cfg(feature = "monad")]
     fn function_abi_items(functions: impl IntoIterator<Item = Function>) -> Vec<(String, String)> {
         let mut items = functions
@@ -1879,6 +2055,37 @@ mod tests {
         // Should return only the function that can decode the calldata (func2)
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].signature(), "gasprice_bit_ether(int128)");
+    }
+
+    #[cfg(feature = "base")]
+    #[tokio::test]
+    async fn base_fallback_does_not_shadow_ethereum_abi() {
+        let abi = JsonAbi::parse(["function pause(uint8[] features) returns (bool)"]).unwrap();
+        let function = abi.functions().next().unwrap();
+        let trace = CallTrace {
+            address: Address::repeat_byte(0x12),
+            data: function
+                .abi_encode_input(&[DynSolValue::Array(vec![DynSolValue::Uint(U256::ZERO, 8)])])
+                .unwrap()
+                .into(),
+            output: function.abi_encode_output(&[DynSolValue::Bool(true)]).unwrap().into(),
+            success: true,
+            ..Default::default()
+        };
+
+        let ethereum = CallTraceDecoderBuilder::new()
+            .with_execution_network(NetworkVariant::Ethereum)
+            .with_abi(&abi)
+            .build();
+        let decoded = ethereum.decode_function(&trace).await;
+        assert_eq!(decoded.call_data.unwrap().signature, "pause(uint8[])");
+        assert_eq!(decoded.return_data.as_deref(), Some("true"));
+
+        let base =
+            CallTraceDecoderBuilder::new().with_execution_network(NetworkVariant::Base).build();
+        let decoded = base.decode_function(&trace).await;
+        assert_eq!(decoded.call_data.unwrap().signature, "pause(uint8[])");
+        assert_eq!(decoded.return_data, None);
     }
 
     #[tokio::test]
@@ -3585,6 +3792,25 @@ mod tests {
             inferred_celo.precompile_labels().get(&CELO_TRANSFER),
             Some(&CELO_TRANSFER_LABEL.to_string())
         );
+    }
+
+    #[cfg(feature = "base")]
+    #[test]
+    fn test_precompile_labels_follow_base_upgrade_boundaries() {
+        let labels_for_upgrade = |upgrade| {
+            CallTraceDecoderBuilder::new()
+                .with_chain_id(Some(8453))
+                .with_hardfork(Some(FoundryHardfork::Base(upgrade)))
+                .build()
+                .precompile_labels()
+        };
+        let base_label_count = |labels: &AddressHashMap<String>| {
+            BASE_PRECOMPILE_ADDRESSES.iter().filter(|address| labels.contains_key(*address)).count()
+        };
+
+        assert_eq!(base_label_count(&labels_for_upgrade(BaseUpgrade::Azul)), 0);
+        assert_eq!(base_label_count(&labels_for_upgrade(BaseUpgrade::Beryl)), 3);
+        assert_eq!(base_label_count(&labels_for_upgrade(BaseUpgrade::Cobalt)), 5);
     }
 
     #[tokio::test]

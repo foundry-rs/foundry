@@ -1,0 +1,43 @@
+{
+  "chain_id": "0x2105",
+  "upgrade": "Azul",
+  "block": {
+    "number": "0x2cec52f",
+    "timestamp": "0x6a27e741",
+    "gas_limit": "0x17d78400",
+    "base_fee_per_gas": "0x4c4b40",
+    "beneficiary": "0x4200000000000000000000000000000000000011",
+    "prevrandao": "0x04fbdf553b3ad1934509230ac0e921f9be5d37234b37f4ec2b58910f235bbd63",
+    "excess_blob_gas": "0x0",
+    "parent_beacon_block_root": "0xcd3ba43fbc5bf8ce774016b7d46375b5e00b4990beea138a8152f5c8dc292006",
+    "receipts_root": "0x803abb6d7b0bea097ee972ec819a378f6f534606d5d276f6e6bf98d9e5b6461e",
+    "state_root": "0x5f25c26c6cb53289a050f880fbf48f668ce944bbe4592917dcf2c17859c1c450"
+  },
+  "transaction": {
+    "hash": "0x1304308f42386396b1a2607e22616eabc82506d5db3c81dc0d112e57ca3e3b33",
+    "raw": "0x02f87382210582028e835b8d8083c28cb0825208942d32b281144421abcd351a767269a9cbdc16fa6f8720fca886bd500080c080a0232c1d3e199f83911b457d97b3ce8be5b69050d097720f604eb93c7d762395faa06b5c2136bd6edab1c049ac187b9907ee000ccdbb4033f4c56a4a516638e03612",
+    "from": "0x77dfd3391d071e0d42cfb6682512bfb65735cae1",
+    "to": "0x2d32b281144421abcd351a767269a9cbdc16fa6f",
+    "value": "0x20fca886bd5000"
+  },
+  "parent_state": {
+    "caller_balance": "0x21ac628ea7b40c",
+    "caller_nonce": "0x28e",
+    "recipient_balance": "0x144200844c29",
+    "recipient_code": "0x",
+    "l1_block_info_storage": [
+      ["0x1", "0x000000000000000000000000000000000000000000000000000000000754caea"],
+      ["0x3", "0x00000000000000000000000000000000000008dd00101c120000000000000000"],
+      ["0x7", "0x00000000000000000000000000000000000000000000000000000000006b3409"],
+      ["0x8", "0x0000000000000000000000000000000000000094000000000000000000000000"]
+    ]
+  },
+  "expected": {
+    "status": true,
+    "gas_used": "0x5208",
+    "effective_gas_price": "0xa7d8c0",
+    "l1_gas_used": "0x640",
+    "l1_fee": "0x46d39efc",
+    "log_count": 0
+  }
+}
