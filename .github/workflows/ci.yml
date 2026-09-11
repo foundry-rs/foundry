@@ -45,7 +45,7 @@ jobs:
     env:
       NODE_OPTIONS: --no-network-family-autoselection
       SFW_UNKNOWN_HOST_ACTION: ignore
-      SFW_CUSTOM_REGISTRIES: bypass:binaries.soliditylang.org,bypass:raw.githubusercontent.com
+      SFW_CUSTOM_REGISTRIES: wrap:binaries.soliditylang.org,wrap:raw.githubusercontent.com/nikitastupin/solc,wrap:raw.githubusercontent.com/alloy-rs/solc-builds
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -81,7 +81,7 @@ jobs:
     env:
       NODE_OPTIONS: --no-network-family-autoselection
       SFW_UNKNOWN_HOST_ACTION: ignore
-      SFW_CUSTOM_REGISTRIES: bypass:binaries.soliditylang.org,bypass:raw.githubusercontent.com
+      SFW_CUSTOM_REGISTRIES: wrap:binaries.soliditylang.org,wrap:raw.githubusercontent.com/nikitastupin/solc,wrap:raw.githubusercontent.com/alloy-rs/solc-builds
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -207,9 +207,9 @@ jobs:
     env:
       NODE_OPTIONS: --no-network-family-autoselection
       SFW_UNKNOWN_HOST_ACTION: ignore
-      SFW_CUSTOM_REGISTRIES: bypass:binaries.soliditylang.org,bypass:raw.githubusercontent.com
+      SFW_CUSTOM_REGISTRIES: ${{ contains(matrix.os, 'ubuntu') && 'wrap:binaries.soliditylang.org,wrap:raw.githubusercontent.com/nikitastupin/solc,wrap:raw.githubusercontent.com/alloy-rs/solc-builds' || 'bypass:binaries.soliditylang.org,bypass:raw.githubusercontent.com' }}
       # Socket's proxy certificates lack revocation endpoints; Windows-only setting.
-      CARGO_HTTP_CHECK_REVOKE: "false"
+      CARGO_HTTP_CHECK_REVOKE: ${{ contains(matrix.os, 'windows') && 'false' || 'true' }}
       CARGO_NET_GIT_FETCH_WITH_CLI: "true"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -236,7 +236,13 @@ jobs:
         shell: bash
         env:
           RUSTFLAGS: -Dwarnings
-        run: cargo +nightly clippy --workspace --all-targets --all-features --locked
+        run: |
+          set -o pipefail
+          cargo +nightly clippy --workspace --all-targets --all-features --locked 2>&1 | tee "$RUNNER_TEMP/sfw-clippy.log"
+          if grep -F "Socket Firewall encountered an unexpected error" "$RUNNER_TEMP/sfw-clippy.log"; then
+            echo "::error::Socket Firewall failed before Clippy completed"
+            exit 1
+          fi
 
   rustfmt:
     runs-on: depot-ubuntu-latest
@@ -251,7 +257,7 @@ jobs:
         with:
           toolchain: nightly
           components: rustfmt
-      - run: cargo fmt --all --check
+      - run: cargo +nightly fmt --all --check
 
   forge-fmt:
     runs-on: depot-ubuntu-latest
@@ -262,7 +268,7 @@ jobs:
     env:
       NODE_OPTIONS: --no-network-family-autoselection
       SFW_UNKNOWN_HOST_ACTION: ignore
-      SFW_CUSTOM_REGISTRIES: bypass:binaries.soliditylang.org,bypass:raw.githubusercontent.com
+      SFW_CUSTOM_REGISTRIES: wrap:binaries.soliditylang.org,wrap:raw.githubusercontent.com/nikitastupin/solc,wrap:raw.githubusercontent.com/alloy-rs/solc-builds
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

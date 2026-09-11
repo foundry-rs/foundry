@@ -68,9 +68,9 @@ jobs:
     env:
       NODE_OPTIONS: --no-network-family-autoselection
       SFW_UNKNOWN_HOST_ACTION: ignore
-      SFW_CUSTOM_REGISTRIES: bypass:binaries.soliditylang.org,bypass:raw.githubusercontent.com,wrap:ethereum.reth.rs,wrap:bsc-dataseed.binance.org,wrap:bsc-testnet.bnbchain.org,wrap:mainnet.base.org,wrap:sepolia.base.org,wrap:mainnet.optimism.io,wrap:forno.celo.org,wrap:api.avax-test.network,wrap:rpc.viction.xyz,wrap:rpc.moderato.tempo.xyz,wrap:dawn-intensive-sun.ethereum-sepolia.quiknode.pro,wrap:api.4byte.sourcify.dev,wrap:rpc.tempo.xyz,wrap:api.soldeer.xyz,wrap:soldeer-revisions.s3.amazonaws.com
+      SFW_CUSTOM_REGISTRIES: ${{ contains(matrix.target, 'linux') && 'wrap:binaries.soliditylang.org,wrap:raw.githubusercontent.com/nikitastupin/solc,wrap:raw.githubusercontent.com/alloy-rs/solc-builds' || 'bypass:binaries.soliditylang.org,bypass:raw.githubusercontent.com' }},wrap:ethereum.reth.rs,wrap:bsc-dataseed.binance.org,wrap:bsc-testnet.bnbchain.org,wrap:mainnet.base.org,wrap:sepolia.base.org,wrap:mainnet.optimism.io,wrap:forno.celo.org,wrap:api.avax-test.network,wrap:rpc.viction.xyz,wrap:rpc.moderato.tempo.xyz,wrap:dawn-intensive-sun.ethereum-sepolia.quiknode.pro,wrap:api.4byte.sourcify.dev,wrap:rpc.tempo.xyz,wrap:api.soldeer.xyz,wrap:soldeer-revisions.s3.amazonaws.com
       # Socket's proxy certificates lack revocation endpoints; Windows-only setting.
-      CARGO_HTTP_CHECK_REVOKE: "false"
+      CARGO_HTTP_CHECK_REVOKE: ${{ contains(matrix.target, 'windows') && 'false' || 'true' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -105,6 +105,7 @@ jobs:
 
       - name: Install pnpm for external fixtures
         if: contains(matrix.name, 'external')
+        shell: bash
         run: sfw npm install --global pnpm@11.8.0
 
       - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
@@ -152,9 +153,15 @@ jobs:
           NEXTEST_PARTITION: ${{ matrix.partition_arg }}
         shell: bash
         run: |
+          set -o pipefail
           args=(-E "$NEXTEST_FILTER")
           if [[ -n "$NEXTEST_PARTITION" ]]; then
             args+=(--partition "$NEXTEST_PARTITION")
           fi
           args+=(--no-fail-fast)
-          cargo nextest run --locked --features monad "${args[@]}"
+          cargo nextest run --locked --features monad "${args[@]}" 2>&1 | tee "$RUNNER_TEMP/sfw-test.log"
+          # Socket can return success after an internal error without finishing tests.
+          if grep -F "Socket Firewall encountered an unexpected error" "$RUNNER_TEMP/sfw-test.log"; then
+            echo "::error::Socket Firewall failed before the test command completed"
+            exit 1
+          fi
