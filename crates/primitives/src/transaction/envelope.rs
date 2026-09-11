@@ -684,9 +684,12 @@ mod tests {
         assert!(FoundryTxType::Tempo.is_tempo());
         assert!(!FoundryTxType::Tempo.is_legacy());
 
+        #[cfg(any(feature = "base", feature = "optimism"))]
+        assert!(FoundryTxType::Deposit.is_deposit());
+        #[cfg(feature = "base")]
+        assert!(FoundryTxType::Eip8130.is_eip8130());
         #[cfg(feature = "optimism")]
         {
-            assert!(FoundryTxType::Deposit.is_deposit());
             assert!(FoundryTxType::PostExec.is_post_exec());
             assert!(!FoundryTxType::Deposit.is_post_exec());
         }
@@ -703,9 +706,12 @@ mod tests {
         assert!(FoundryTypedTx::Eip7702(TxEip7702::default()).is_eip7702());
         assert!(FoundryTypedTx::Tempo(TempoTransaction::default()).is_tempo());
 
+        #[cfg(any(feature = "base", feature = "optimism"))]
+        assert!(FoundryTypedTx::Deposit(TxDeposit::default()).is_deposit());
+        #[cfg(feature = "base")]
+        assert!(FoundryTypedTx::Eip8130(TxEip8130::default()).is_eip8130());
         #[cfg(feature = "optimism")]
         {
-            assert!(FoundryTypedTx::Deposit(TxDeposit::default()).is_deposit());
             assert!(FoundryTypedTx::PostExec(TxPostExec::default()).is_post_exec());
         }
     }
@@ -721,9 +727,19 @@ mod tests {
         );
         assert!(FoundryTxEnvelope::Eip7702(signed(TxEip7702::default())).is_eip7702());
 
+        #[cfg(any(feature = "base", feature = "optimism"))]
+        assert!(FoundryTxEnvelope::Deposit(Sealed::new(TxDeposit::default())).is_deposit());
+        #[cfg(feature = "base")]
+        assert!(
+            FoundryTxEnvelope::Eip8130(Eip8130Signed::new(
+                TxEip8130::default(),
+                Default::default(),
+                Default::default()
+            ))
+            .is_eip8130()
+        );
         #[cfg(feature = "optimism")]
         {
-            assert!(FoundryTxEnvelope::Deposit(Sealed::new(TxDeposit::default())).is_deposit());
             assert!(FoundryTxEnvelope::PostExec(Sealed::new(TxPostExec::default())).is_post_exec());
         }
     }

@@ -532,13 +532,15 @@ mod tests {
             FoundryTxType::Eip4844,
             FoundryTxType::Eip7702,
             FoundryTxType::Tempo,
+            #[cfg(feature = "base")]
+            FoundryTxType::Eip8130,
+            #[cfg(any(feature = "base", feature = "optimism"))]
+            FoundryTxType::Deposit,
         ] {
             assert_roundtrip(receipt_for(tx_type));
         }
         #[cfg(feature = "optimism")]
-        for tx_type in [FoundryTxType::PostExec, FoundryTxType::Deposit] {
-            assert_roundtrip(receipt_for(tx_type));
-        }
+        assert_roundtrip(receipt_for(FoundryTxType::PostExec));
 
         // Varied payload so encodings differ beyond the type byte.
         let logs = vec![Log {
@@ -556,7 +558,7 @@ mod tests {
         }));
         // A deposit receipt with set deposit fields; op-alloy encodes them only when `Some`, so
         // this catches decode paths that drop them.
-        #[cfg(feature = "optimism")]
+        #[cfg(any(feature = "base", feature = "optimism"))]
         assert_roundtrip(FoundryReceiptEnvelope::Deposit(OpDepositReceiptWithBloom {
             receipt: OpDepositReceipt {
                 inner: receipt,
@@ -647,9 +649,12 @@ mod tests {
         assert!(receipt_for(FoundryTxType::Tempo).is_tempo());
         assert!(!receipt_for(FoundryTxType::Tempo).is_legacy());
 
+        #[cfg(any(feature = "base", feature = "optimism"))]
+        assert!(receipt_for(FoundryTxType::Deposit).is_deposit());
+        #[cfg(feature = "base")]
+        assert!(receipt_for(FoundryTxType::Eip8130).is_eip8130());
         #[cfg(feature = "optimism")]
         {
-            assert!(receipt_for(FoundryTxType::Deposit).is_deposit());
             assert!(receipt_for(FoundryTxType::PostExec).is_post_exec());
         }
     }
@@ -828,7 +833,7 @@ mod tests {
         assert!(receipt.status());
         assert_eq!(receipt.cumulative_gas_used(), 100000);
         assert!(receipt.logs().is_empty());
-        #[cfg(feature = "optimism")]
+        #[cfg(any(feature = "base", feature = "optimism"))]
         {
             assert!(receipt.deposit_nonce().is_none());
             assert!(receipt.deposit_receipt_version().is_none());

@@ -27,6 +27,8 @@ use op_revm::transaction::deposit::DepositTransactionParts;
 use alloy_serde::OtherFields;
 
 #[cfg(feature = "base")]
+use base_common_evm::EIP8130_TRANSACTION_TYPE;
+#[cfg(feature = "base")]
 use base_common_rpc_types::BaseTransactionRequest;
 
 #[cfg(feature = "optimism")]
@@ -340,14 +342,35 @@ impl TryFrom<WithOtherFields<TransactionRequest>> for FoundryTransactionRequest 
         );
 
         #[cfg(feature = "base")]
-        if tx.transaction_type != Some(TEMPO_TX_TYPE_ID)
-            && !TEMPO_REQUEST_FIELDS.iter().any(|field| {
-                !matches!(*field, "nonceKey" | "calls") && tx.other.get(*field).is_some()
-            })
         {
-            let base =
-                serde_json::from_value::<BaseTransactionRequest>(serde_json::to_value(&tx)?)?;
-            if base.as_eip8130().is_some() {
+            let present = |field: &str| tx.other.get(field).is_some_and(|value| !value.is_null());
+            let base_fields =
+                ["accountChanges", "metadata", "sender", "senderAuth", "payer", "payerAuth"]
+                    .iter()
+                    .any(|field| present(field));
+            let phased_calls = tx
+                .other
+                .get("calls")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|calls| calls.first().is_some_and(serde_json::Value::is_array));
+            let explicit_base = tx.transaction_type == Some(EIP8130_TRANSACTION_TYPE);
+            if base_fields || phased_calls || explicit_base {
+                if tx.transaction_type.is_some() && !explicit_base {
+                    return Err(serde::de::Error::custom(
+                        "Base fields conflict with transaction type",
+                    ));
+                }
+                if TEMPO_REQUEST_FIELDS.iter().any(|field| {
+                    !matches!(*field, "nonceKey" | "calls" | "validBefore" | "validAfter")
+                        && present(field)
+                }) {
+                    return Err(serde::de::Error::custom(
+                        "conflicting Base and Tempo request fields",
+                    ));
+                }
+                let mut base =
+                    serde_json::from_value::<BaseTransactionRequest>(serde_json::to_value(&tx)?)?;
+                base.as_mut().transaction_type = Some(EIP8130_TRANSACTION_TYPE);
                 return Ok(Self::Base(base));
             }
         }
@@ -456,8 +479,8 @@ impl From<FoundryTypedTx> for FoundryTransactionRequest {
             .try_into()
             .expect("valid OP post-exec transaction request"),
             #[cfg(feature = "base")]
-            FoundryTypedTx::Eip8130(_) => {
-                unreachable!("EIP-8130 requires a signed raw transaction envelope")
+            FoundryTypedTx::Eip8130(tx) => {
+                Self::Base(super::base::simulation_request(tx, None, None, None))
             }
             FoundryTypedTx::Tempo(tx) => Self::Tempo(Box::new(tx.into())),
         }
@@ -466,6 +489,18 @@ impl From<FoundryTypedTx> for FoundryTransactionRequest {
 
 impl From<FoundryTxEnvelope> for FoundryTransactionRequest {
     fn from(tx: FoundryTxEnvelope) -> Self {
+        #[cfg(feature = "base")]
+        if let FoundryTxEnvelope::Eip8130(tx) = tx {
+            let from = tx.recover_sender().ok();
+            let sender_auth = Some(tx.sender_auth().clone());
+            let payer_auth = Some(tx.payer_auth().clone());
+            return Self::Base(super::base::simulation_request(
+                tx.into_tx(),
+                from,
+                sender_auth,
+                payer_auth,
+            ));
+        }
         FoundryTypedTx::from(tx).into()
     }
 }
@@ -744,7 +779,7 @@ mod tests {
         assert!(tempo.is_tempo());
         assert!(!tempo.is_ethereum());
 
-        #[cfg(feature = "optimism")]
+        #[cfg(any(feature = "base", feature = "optimism"))]
         {
             let op = FoundryTransactionRequest::Op(WithOtherFields::default());
             assert!(op.is_op());
@@ -777,17 +812,44 @@ mod tests {
 
     #[cfg(feature = "base")]
     #[test]
-    fn test_routing_base_by_eip8130_fields() {
-        let request = serde_json::from_value::<FoundryTransactionRequest>(serde_json::json!({
-            "from": Address::random(),
-            "calls": []
-        }))
-        .unwrap();
-
-        assert!(request.is_base());
-        assert_eq!(request.preferred_type(), FoundryTxType::Eip8130);
-        assert!(!request.can_build());
-        assert!(serde_json::to_value(request).unwrap().get("calls").is_some());
+    fn base_and_tempo_request_routing() {
+        let call = serde_json::json!({ "to": Address::ZERO, "data": "0x", "value": "0x0" });
+        for (value, expected_type) in [
+            (serde_json::json!({"calls": [call]}), FoundryTxType::Tempo),
+            (serde_json::json!({"nonceKey": "0x1"}), FoundryTxType::Tempo),
+            (serde_json::json!({"validBefore": "0x123"}), FoundryTxType::Tempo),
+            (serde_json::json!({"calls": []}), FoundryTxType::Eip1559),
+            (serde_json::json!({"calls": [[call]], "validBefore": 123}), FoundryTxType::Eip8130),
+            (serde_json::json!({"type": "0x79"}), FoundryTxType::Eip8130),
+            (serde_json::json!({"type": "0x79", "nonceKey": "0x1"}), FoundryTxType::Eip8130),
+            (serde_json::json!({"type": "0x76", "calls": [call]}), FoundryTxType::Tempo),
+            (
+                serde_json::json!({"sender": Address::ZERO, "feeToken": null}),
+                FoundryTxType::Eip8130,
+            ),
+        ] {
+            let request: FoundryTransactionRequest = serde_json::from_value(value.clone())
+                .unwrap_or_else(|err| panic!("{value}: {err}"));
+            assert_eq!(request.preferred_type(), expected_type, "{value}");
+            if expected_type == FoundryTxType::Eip8130 {
+                assert!(request.is_base(), "{value}");
+                assert!(!request.can_build(), "{value}");
+            }
+            let roundtrip: FoundryTransactionRequest =
+                serde_json::from_value(serde_json::to_value(&request).unwrap()).unwrap();
+            assert_eq!(request, roundtrip);
+        }
+        for value in [
+            serde_json::json!({"type": "0x76", "calls": [[call]]}),
+            serde_json::json!({"type": "0x79", "feeToken": Address::ZERO}),
+            serde_json::json!({"type": "0x2", "sender": Address::ZERO}),
+            serde_json::json!({"type": "0x79", "calls": [call]}),
+        ] {
+            assert!(
+                serde_json::from_value::<FoundryTransactionRequest>(value.clone()).is_err(),
+                "{value}"
+            );
+        }
     }
 
     #[test]
@@ -805,7 +867,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "optimism")]
+    #[cfg(any(feature = "base", feature = "optimism"))]
     fn test_routing_op_by_deposit_fields() {
         let tx = default_tx_req();
         let mut other = OtherFields::default();
@@ -860,7 +922,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "optimism")]
+    #[cfg(any(feature = "base", feature = "optimism"))]
     fn test_serialization_op() {
         let tx = default_tx_req();
         let mut other = OtherFields::default();
@@ -997,7 +1059,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "optimism")]
+    #[cfg(any(feature = "base", feature = "optimism"))]
     fn test_deposit_typed_tx_roundtrip() {
         let deposit_tx = TxDeposit {
             from: Address::random(),
