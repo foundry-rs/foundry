@@ -327,11 +327,16 @@ impl State<'_, '_> {
 
     /// Returns the position of the first `{` within the span, ignoring the ones inside comments.
     fn find_opening_brace(&self, span: Span) -> Option<BytePos> {
+        self.find_uncommented_char(span, '{')
+    }
+
+    /// Returns the position of the first matching character within the span, ignoring comments.
+    fn find_uncommented_char(&self, span: Span, needle: char) -> Option<BytePos> {
         let snip = self.sm.span_to_snippet(span).ok()?;
         let mut idx = 0;
         while idx < snip.len() {
             let rest = &snip[idx..];
-            if rest.starts_with('{') {
+            if rest.starts_with(needle) {
                 return Some(span.lo() + idx as u32);
             }
             idx += if let Some(line) = rest.strip_prefix("//") {
@@ -543,6 +548,7 @@ impl<'sess> State<'sess, '_> {
         let mut is_leading = true;
         let config_cache = config;
         let mut buffered_blank = None;
+        let mut previous_mixed_at_bol = false;
         while self.peek_comment().is_some_and(|c| c.pos() < pos) {
             let mut cmnt = self.next_comment().unwrap();
             let style_cache = cmnt.style;
@@ -607,6 +613,13 @@ impl<'sess> State<'sess, '_> {
                 self.print_comment(blank, config);
             }
 
+            if previous_mixed_at_bol
+                && cmnt.style.is_trailing()
+                && matches!(cmnt.kind, ast::CommentKind::Line)
+            {
+                self.hardbreak_if_not_bol();
+            }
+
             // Handle mixed with follow-up comment
             if cmnt.style.is_mixed() {
                 if let Some(cmnt) = self.peek_comment_before(pos) {
@@ -635,6 +648,7 @@ impl<'sess> State<'sess, '_> {
             }
 
             last_style = Some(cmnt.style);
+            previous_mixed_at_bol = cmnt.style.is_mixed() && self.is_bol_or_only_ind();
             self.print_comment(cmnt, config);
             config = config_cache;
         }
@@ -802,6 +816,7 @@ impl<'sess> State<'sess, '_> {
             CommentStyle::Mixed => {
                 let Some(prefix) = cmnt.prefix() else { return };
                 let never_break = self.last_token_is_neverbreak();
+                let starts_line = self.is_bol_or_only_ind() || self.last_token_is_break();
                 if !self.is_bol_or_only_ind() {
                     match (never_break || config.mixed_no_break_prev, config.mixed_prev_space) {
                         (false, true) => config.space(&mut self.s),
@@ -812,12 +827,18 @@ impl<'sess> State<'sess, '_> {
                 }
                 if self.config.wrap_comments {
                     // Merge and wrap comments
+                    if starts_line {
+                        self.ibox(config.offset);
+                    }
                     let merged_lines = self.merge_comment_lines(&cmnt.lines, prefix);
                     for (pos, line) in merged_lines.into_iter().delimited() {
                         self.print_wrapped_line(&line, prefix, 0, cmnt.is_doc);
                         if !pos.is_last {
                             self.hardbreak();
                         }
+                    }
+                    if starts_line {
+                        self.end();
                     }
                 } else {
                     // Match the opening-column normalization of continuation lines.
@@ -1231,15 +1252,13 @@ impl CommentConfig {
 }
 
 fn snippet_with_tabs(s: String, tab_width: usize) -> String {
-    // process leading breaks
-    let trimmed = s.trim_start_matches('\n');
-    let num_breaks = s.len() - trimmed.len();
-    let mut formatted = std::iter::repeat_n('\n', num_breaks).collect::<String>();
-
-    // process lines
-    for (pos, line) in trimmed.lines().delimited() {
+    let mut formatted = String::with_capacity(s.len());
+    for line in s.split_inclusive('\n') {
+        let (line, has_newline) =
+            line.strip_suffix('\n').map_or((line, false), |line| (line, true));
+        let line = line.strip_suffix('\r').unwrap_or(line);
         line_with_tabs(&mut formatted, line, tab_width, None);
-        if !pos.is_last {
+        if has_newline {
             formatted.push('\n');
         }
     }
