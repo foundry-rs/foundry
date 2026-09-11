@@ -282,6 +282,85 @@ fn tab_style_preserves_crlf_disabled_block_lines() {
     assert_eq!(format(&source, Path::new("test.sol"), config), expected);
 }
 
+#[test]
+fn array_type_comment_before_bracket_is_idempotent() {
+    let source = r#"contract C {
+    function f() external {
+        uint256 /* first */ [
+            /* second */
+
+            3
+        ] memory values;
+    }
+}
+"#;
+    let expected = r#"contract C {
+    function f() external {
+        uint256 /* first */ [
+            /* second */
+
+            3] memory values;
+    }
+}
+"#;
+
+    assert_eq!(
+        format(source, Path::new("test.sol"), Arc::new(FormatterConfig::default())),
+        expected
+    );
+}
+
+#[test]
+fn yul_assignment_comment_is_idempotent() {
+    let source = r#"contract C {
+    function f() external pure returns (uint256 x) {
+        assembly {
+            x := /* comment */ add(1, 2)
+        }
+    }
+}
+"#;
+    let expected = r#"contract C {
+    function f() external pure returns (uint256 x) {
+        assembly {
+            x := /* comment */
+            add(1, 2)
+        }
+    }
+}
+"#;
+
+    assert_eq!(
+        format(source, Path::new("test.sol"), Arc::new(FormatterConfig::default())),
+        expected
+    );
+}
+
+#[test]
+fn return_expression_comment_is_idempotent() {
+    let source = r#"contract C {
+    function f() external pure returns (uint256, uint256, bool) {
+        return /* return values */ (1234567890, 9876543210, false);
+    }
+}
+"#;
+    let expected = r#"contract C {
+    function f()
+        external
+        pure
+        returns (uint256, uint256, bool)
+    {
+        return /* return values */
+            (1234567890, 9876543210, false);
+    }
+}
+"#;
+    let config =
+        Arc::new(FormatterConfig { line_length: 60, wrap_comments: true, ..Default::default() });
+
+    assert_eq!(format(source, Path::new("test.sol"), config), expected);
+}
+
 fn tests_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata")
 }
