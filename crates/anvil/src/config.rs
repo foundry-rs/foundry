@@ -217,6 +217,8 @@ pub struct NodeConfig {
     pub fork_headers: Vec<String>,
     /// specifies chain id for cache to skip fetching from remote in offline-start mode
     pub fork_chain_id: Option<U256>,
+    /// Address fork state reads by block number instead of by block hash.
+    pub fork_state_by_number: bool,
     /// Chain ID discovered from the active fork source.
     pub fork_source_chain_id: Option<u64>,
     /// Chain ID exposed by the active fork endpoint.
@@ -611,6 +613,7 @@ impl Default for NodeConfig {
             fork_request_retries: 5,
             fork_retry_backoff: Duration::from_millis(1_000),
             fork_chain_id: None,
+            fork_state_by_number: false,
             fork_source_chain_id: None,
             fork_execution_chain_id: None,
             fork_endpoint_is_anvil: false,
@@ -1056,6 +1059,13 @@ impl NodeConfig {
     #[must_use]
     pub fn with_fork_choice<U: Into<ForkChoice>>(mut self, fork_choice: Option<U>) -> Self {
         self.fork_choice = fork_choice.map(Into::into);
+        self
+    }
+
+    /// Sets whether fork state reads are addressed by block number instead of by block hash.
+    #[must_use]
+    pub const fn with_fork_state_by_number(mut self, fork_state_by_number: bool) -> Self {
+        self.fork_state_by_number = fork_state_by_number;
         self
     }
 
@@ -2092,13 +2102,21 @@ latest block number: {latest_block}"
             fork_block_number,
             block_hash,
         );
-        let (backend, handler) =
-            SharedBackend::new_with_anchor(Arc::clone(&provider), block_chain_db.clone(), anchor)?;
+        let (backend, handler) = if self.fork_state_by_number {
+            SharedBackend::new_with_anchor_by_number(
+                Arc::clone(&provider),
+                block_chain_db.clone(),
+                anchor,
+            )?
+        } else {
+            SharedBackend::new_with_anchor(Arc::clone(&provider), block_chain_db.clone(), anchor)?
+        };
         tokio::spawn(handler);
 
         let config = ClientForkConfig {
             fork_urls: self.fork_urls.clone(),
             block_number: fork_block_number,
+            evm_block_number: evm_env.block_env.number.saturating_to(),
             block_hash,
             transaction_hash: self.fork_choice.and_then(|fc| fc.transaction_hash()),
             provider,

@@ -29,6 +29,9 @@ pub trait FoundryBlock: Block {
     /// Sets the block number.
     fn set_number(&mut self, number: U256);
 
+    /// Sets the slot number.
+    fn set_slot_num(&mut self, slot_num: u64);
+
     /// Sets the beneficiary (coinbase) address.
     fn set_beneficiary(&mut self, beneficiary: Address);
 
@@ -70,6 +73,10 @@ impl FoundryBlock for BlockEnv {
         self.number = number;
     }
 
+    fn set_slot_num(&mut self, slot_num: u64) {
+        self.slot_num = slot_num;
+    }
+
     fn set_beneficiary(&mut self, beneficiary: Address) {
         self.beneficiary = beneficiary;
     }
@@ -106,6 +113,10 @@ impl FoundryBlock for BlockEnv {
 impl FoundryBlock for TempoBlockEnv {
     fn set_number(&mut self, number: U256) {
         self.inner.set_number(number);
+    }
+
+    fn set_slot_num(&mut self, slot_num: u64) {
+        self.inner.set_slot_num(slot_num);
     }
 
     fn set_beneficiary(&mut self, beneficiary: Address) {

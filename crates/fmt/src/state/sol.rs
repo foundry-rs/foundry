@@ -1280,12 +1280,11 @@ impl<'ast> State<'_, 'ast> {
                 // consumes "comment6" of which should be printed after the `=>`
                 self.print_comments(
                     value.span.lo(),
-                    CommentConfig::skip_ws()
-                        .trailing_no_break()
-                        .mixed_no_break()
-                        .mixed_prev_space(),
+                    CommentConfig::skip_ws().mixed_no_break().mixed_prev_space(),
                 );
-                self.space();
+                if !self.is_bol_or_only_ind() {
+                    self.space();
+                }
                 self.s.offset(self.ind);
                 self.word("=> ");
                 self.s.ibox(self.ind);
@@ -1517,7 +1516,10 @@ impl<'ast> State<'_, 'ast> {
                 |this, expr| match expr.as_ref() {
                     SpannedOption::Some(expr) => this.print_expr(expr),
                     SpannedOption::None(span) => {
-                        this.print_comments(span.hi(), CommentConfig::skip_ws().no_breaks());
+                        this.print_comments(
+                            span.hi(),
+                            CommentConfig::skip_ws().mixed_no_break_post(),
+                        );
                     }
                 },
                 |expr| match expr.as_ref() {
@@ -2006,12 +2008,17 @@ impl<'ast> State<'_, 'ast> {
     /// Prints the given statement in the source code, handling formatting, inline documentation,
     /// trailing comments and layout logic for various statement kinds.
     fn print_stmt(&mut self, stmt: &'ast ast::Stmt<'ast>) {
+        self.print_stmt_bound(stmt, None);
+    }
+
+    /// Prints a statement with a bounded trailing-comment scan.
+    fn print_stmt_bound(&mut self, stmt: &'ast ast::Stmt<'ast>, next_pos: Option<BytePos>) {
         let ast::Stmt { ref docs, span, ref kind } = *stmt;
         self.print_docs(docs);
 
         // Handle disabled statements.
         if self.handle_span(span, false) {
-            self.print_trailing_comment_no_break(stmt.span.hi(), None);
+            self.print_trailing_comment_no_break(stmt.span.hi(), next_pos);
             return;
         }
 
@@ -2076,11 +2083,26 @@ impl<'ast> State<'_, 'ast> {
             self.cursor.advance_to(span.hi(), true);
         }
         // print comments without breaks, as those are handled by the caller.
+        let ends_with_line_comment = self
+            .comments
+            .iter()
+            .take_while(|cmnt| cmnt.pos() < stmt.span.hi())
+            .filter(|cmnt| !cmnt.style.is_blank())
+            .last()
+            .is_some_and(|cmnt| {
+                cmnt.style.is_trailing() && matches!(cmnt.kind, ast::CommentKind::Line)
+            });
         self.print_comments(
             stmt.span.hi(),
-            CommentConfig::default().trailing_no_break().mixed_no_break().mixed_prev_space(),
+            CommentConfig::skip_trailing_ws()
+                .trailing_no_break()
+                .mixed_no_break()
+                .mixed_prev_space(),
         );
-        self.print_trailing_comment_no_break(stmt.span.hi(), None);
+        if ends_with_line_comment && self.peek_comment().is_some() {
+            self.hardbreak_if_not_bol();
+        }
+        self.print_trailing_comment_no_break(stmt.span.hi(), next_pos);
     }
 
     /// Prints an `assembly` statement, including optional dialect and flags,
@@ -2174,19 +2196,51 @@ impl<'ast> State<'_, 'ast> {
     ) {
         self.cbox(0);
         self.s.ibox(self.ind);
-        self.print_word("for (");
-        self.zerobreak();
+        let open_paren = self.find_uncommented_char(span, '(').unwrap();
+        self.print_word("for");
+        if self
+            .print_comments(
+                open_paren,
+                CommentConfig::skip_ws().mixed_prev_space().mixed_post_nbsp(),
+            )
+            .is_none()
+        {
+            self.nbsp();
+        }
+        self.cursor.advance_to(open_paren, true);
+        self.print_word("(");
+        let init_has_leading_comment =
+            init.as_ref().is_some_and(|stmt| self.peek_comment_before(stmt.span.lo()).is_some());
+        if !init_has_leading_comment {
+            self.zerobreak();
+        }
 
         // Print init.
         self.s.cbox(0);
-        match init {
-            Some(init_stmt) => self.print_stmt(init_stmt),
-            None => self.print_word(";"),
-        }
+        let init_trailing_comment = match init {
+            Some(init_stmt) => {
+                let has_trailing_comment = cond.as_ref().is_some_and(|cond| {
+                    self.comments
+                        .iter()
+                        .skip_while(|cmnt| cmnt.pos() < init_stmt.span.hi())
+                        .take_while(|cmnt| cmnt.pos() < cond.span.lo())
+                        .any(|cmnt| cmnt.style.is_trailing())
+                });
+                self.print_stmt_bound(init_stmt, Some(init_stmt.span.hi()));
+                has_trailing_comment
+            }
+            None => {
+                self.print_word(";");
+                false
+            }
+        };
 
         // Print condition.
         match cond {
             Some(cond_expr) => {
+                if init_trailing_comment {
+                    self.hardbreak_if_not_bol();
+                }
                 self.print_sep(Separator::Space);
                 self.print_expr(cond_expr);
             }
@@ -3055,7 +3109,9 @@ impl<'ast> AttributeCommentMapper<'ast> {
         header: &'ast ast::FunctionHeader<'ast>,
     ) -> (AttributeCommentMap, Vec<AttributeInfo<'ast>>, BytePos) {
         let first_attr = self.collect_attributes(header);
-        self.cache_comments(state);
+        if !self.attributes.is_empty() {
+            self.cache_comments(state);
+        }
         (self.map(), self.attributes, first_attr)
     }
 

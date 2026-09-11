@@ -1,9 +1,7 @@
-# Mutable variable names should use mixedCase
+# Mutable variable names should use `mixedCase`
 
 **Severity**: `Info`
 **ID**: `mixed-case-variable`
-
-Flags mutable variable names (locals, parameters, mutable state) that do not follow `mixedCase`.
 
 ## What it does
 
@@ -15,21 +13,22 @@ single-character names are not checked.
 [`screaming-snake-case-const`](https://getfoundry.sh/forge/linting/screaming-snake-case-const) and
 [`screaming-snake-case-immutable`](https://getfoundry.sh/forge/linting/screaming-snake-case-immutable).
 
-## Why is this bad?
+## Why restrict this?
 
 The Solidity style guide recommends `mixedCase` for mutable variables. Consistent style makes
 code easier to scan and review.
 
-## Example
+A project may follow another naming convention or preserve generated names and public getter
+names for compatibility. Suppress those declarations when renaming would be inappropriate.
 
-### Bad
+## Example
 
 ```solidity
 uint256 public total_supply;
 address Owner;
 ```
 
-### Good
+Use instead:
 
 ```solidity
 uint256 public totalSupply;

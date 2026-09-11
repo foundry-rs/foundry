@@ -12,7 +12,7 @@ declare_forge_lint!(
     NON_REENTRANT_NOT_FIRST,
     Severity::Med,
     "non-reentrant-not-first",
-    "`nonReentrant` should be the first modifier"
+    "`nonReentrant` is not the first modifier"
 );
 
 impl<'gcx> LateLintPass<'gcx> for NonReentrantNotFirst {

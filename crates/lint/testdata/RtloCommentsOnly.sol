@@ -5,11 +5,11 @@ pragma solidity ^0.8.18;
 // reported.
 
 // hidden‮ payload ‬ trailing
-//~^WARN: U+202E (Right-to-Left Override) detected
-//~|WARN: U+202C (Pop Directional Formatting) detected
+//~^WARN: `U+202E` (Right-to-Left Override) detected
+//~|WARN: `U+202C` (Pop Directional Formatting) detected
 
 /* block‮ comment ‬ end */
-//~^WARN: U+202E (Right-to-Left Override) detected
-//~|WARN: U+202C (Pop Directional Formatting) detected
+//~^WARN: `U+202E` (Right-to-Left Override) detected
+//~|WARN: `U+202C` (Pop Directional Formatting) detected
 
 contract RtloCommentsOnly {}

@@ -94,7 +94,7 @@ pub(crate) async fn handle_traces(
         .with_signature_identifier(SignaturesIdentifier::from_config(config)?)
         .with_networks(context.networks())
         .with_chain_id(Some(context.chain().id()))
-        .with_hardfork(context.decoding_hardfork(config));
+        .with_hardfork(context.hardfork());
     let mut identifier = TraceIdentifiers::new().with_external(config, Some(context.chain()))?;
     if let Some(contracts) = &known_contracts {
         builder = builder.with_known_contracts(contracts);

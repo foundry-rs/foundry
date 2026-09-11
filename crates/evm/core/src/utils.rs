@@ -21,6 +21,7 @@ pub const fn cold_path() {
 pub fn block_env_from_header<BLOCK: FoundryBlock + Default>(header: &impl BlockHeader) -> BLOCK {
     let mut block = BLOCK::default();
     block.set_number(U256::from(header.number()));
+    block.set_slot_num(header.slot_number().unwrap_or_default());
     block.set_beneficiary(header.beneficiary());
     block.set_timestamp(U256::from(header.timestamp()));
     block.set_difficulty(header.difficulty());
@@ -234,6 +235,15 @@ mod tests {
     use alloy_network::{AnyHeader, AnyNetwork, AnyRpcBlock, AnyRpcHeader};
     use alloy_rpc_types::{Block, BlockTransactions};
     use revm::context::{BlockEnv, CfgEnv};
+
+    #[test]
+    fn block_env_preserves_slot_number() {
+        for slot_number in [None, Some(0), Some(42), Some(u64::MAX)] {
+            let header = AnyHeader { slot_number, ..Default::default() };
+            let block = block_env_from_header::<BlockEnv>(&header);
+            assert_eq!(block.slot_num, slot_number.unwrap_or_default());
+        }
+    }
 
     #[test]
     fn block_normalization_uses_source_chain() {

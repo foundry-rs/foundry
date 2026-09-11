@@ -174,6 +174,7 @@ impl SymbolicExecutor {
             return Ok(StepOutcome::Revert);
         }
 
+        self.stateless_retry_safe = false;
         let mut initcode = artifact_code(&artifact, false)?;
         initcode.extend_from_slice(&constructor_args);
         let initcode = SymCode::concrete(&mut self.cx, initcode);
@@ -1931,6 +1932,7 @@ impl SymbolicExecutor {
                     0,
                     "symbolic vm.getCode",
                 )?;
+                self.stateless_retry_safe = false;
                 let code = artifact_code(&artifact, selector == getDeployedCodeCall::SELECTOR)?;
                 return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
                     &mut self.cx,
@@ -2359,6 +2361,7 @@ impl SymbolicExecutor {
                 )));
             }
             projectRootCall::SELECTOR => {
+                self.stateless_retry_safe = false;
                 let root = std::env::current_dir()
                     .map_err(|_| SymbolicError::Unsupported("symbolic vm.projectRoot"))?;
                 return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
@@ -2367,6 +2370,7 @@ impl SymbolicExecutor {
                 )));
             }
             unixTimeCall::SELECTOR => {
+                self.stateless_retry_safe = false;
                 let milliseconds = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .map_err(|_| SymbolicError::Unsupported("symbolic vm.unixTime"))?
@@ -2684,6 +2688,7 @@ impl SymbolicExecutor {
                     0,
                     "symbolic vm.envExists",
                 )?;
+                self.stateless_retry_safe = false;
                 return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(
                     &mut self.cx,
                     U256::from(std::env::var_os(name).is_some()),
@@ -2697,6 +2702,7 @@ impl SymbolicExecutor {
                     0,
                     "symbolic vm.envBool",
                 )?;
+                self.stateless_retry_safe = false;
                 let value = std::env::var(name)
                     .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
                 return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(
@@ -2712,6 +2718,7 @@ impl SymbolicExecutor {
                     0,
                     "symbolic vm.envUint",
                 )?;
+                self.stateless_retry_safe = false;
                 let value = std::env::var(name)
                     .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
                 return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(
@@ -2727,6 +2734,7 @@ impl SymbolicExecutor {
                     0,
                     "symbolic vm.envInt",
                 )?;
+                self.stateless_retry_safe = false;
                 let value = std::env::var(name)
                     .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
                 return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(
@@ -2742,6 +2750,7 @@ impl SymbolicExecutor {
                     0,
                     "symbolic vm.envAddress",
                 )?;
+                self.stateless_retry_safe = false;
                 let value = std::env::var(name)
                     .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
                 let address = parse_env_address(&value)?;
@@ -2758,6 +2767,7 @@ impl SymbolicExecutor {
                     0,
                     "symbolic vm.envBytes32",
                 )?;
+                self.stateless_retry_safe = false;
                 let value = std::env::var(name)
                     .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
                 return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(
@@ -2773,6 +2783,7 @@ impl SymbolicExecutor {
                     0,
                     "symbolic vm.envString",
                 )?;
+                self.stateless_retry_safe = false;
                 let value = std::env::var(name)
                     .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
                 return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
@@ -2788,6 +2799,7 @@ impl SymbolicExecutor {
                     0,
                     "symbolic vm.envBytes",
                 )?;
+                self.stateless_retry_safe = false;
                 let value = std::env::var(name)
                     .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
                 let bytes = parse_env_bytes(&value)?;
@@ -2812,6 +2824,7 @@ impl SymbolicExecutor {
                 )?;
                 let name = dyn_string(&values[0])?;
                 let delimiter = dyn_string(&values[1])?;
+                self.stateless_retry_safe = false;
                 let value = std::env::var(name)
                     .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
                 let value = if selector == envBool_1Call::SELECTOR {
@@ -2842,6 +2855,7 @@ impl SymbolicExecutor {
                     0,
                     "symbolic vm.envOr",
                 )?;
+                self.stateless_retry_safe = false;
                 let value = match std::env::var(name) {
                     Ok(value) => U256::from(parse_env_bool(&value)?),
                     Err(_) => read_abi_concrete_word_arg(
@@ -2875,6 +2889,7 @@ impl SymbolicExecutor {
                     1,
                     "symbolic vm.envOr",
                 )?;
+                self.stateless_retry_safe = false;
                 let value = match std::env::var(name) {
                     Ok(value) if selector == envOr_1Call::SELECTOR => parse_env_uint(&value)?,
                     Ok(value) if selector == envOr_2Call::SELECTOR => parse_env_int(&value)?,
@@ -2898,6 +2913,7 @@ impl SymbolicExecutor {
                     vec![DynSolType::String, DynSolType::String],
                 )?;
                 let name = dyn_string(&values[0])?;
+                self.stateless_retry_safe = false;
                 let value = std::env::var(name).unwrap_or(dyn_string(&values[1])?);
                 return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
                     &mut self.cx,
@@ -2913,6 +2929,7 @@ impl SymbolicExecutor {
                     vec![DynSolType::String, DynSolType::Bytes],
                 )?;
                 let name = dyn_string(&values[0])?;
+                self.stateless_retry_safe = false;
                 let value = match std::env::var(name) {
                     Ok(value) => parse_env_bytes(&value)?,
                     Err(_) => dyn_bytes(&values[1])?,
@@ -2957,6 +2974,7 @@ impl SymbolicExecutor {
                 )?;
                 let name = dyn_string(&values[0])?;
                 let delimiter = dyn_string(&values[1])?;
+                self.stateless_retry_safe = false;
                 let value = match std::env::var(name) {
                     Ok(value) if selector == envOr_7Call::SELECTOR => {
                         parse_env_array(&value, &delimiter, parse_env_bool_value)?
@@ -2999,6 +3017,7 @@ impl SymbolicExecutor {
                 if args.is_empty() || args[0].is_empty() {
                     return Err(SymbolicError::Unsupported("symbolic ffi empty command"));
                 }
+                self.stateless_retry_safe = false;
                 let output = Command::new(&args[0])
                     .args(&args[1..])
                     .output()

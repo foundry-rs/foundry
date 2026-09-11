@@ -30,7 +30,7 @@ abstract contract IFooLike {
 }
 
 // SHOULD FAIL: Implements ISomething but does not explicitly inherit from it.
-contract Something { //~NOTE: contract `Something` implements interface `ISomething`'s external API but does not explicitly inherit from it
+contract Something { //~NOTE: contract `Something` has all selectors of interface `ISomething` but does not explicitly inherit from it
     function f1() external pure returns (uint256) {
         return 42;
     }
@@ -53,7 +53,7 @@ contract SomethingTransitive is ISomethingExt {
 }
 
 // SHOULD FAIL: Abstract contract with bodies is itself a target.
-abstract contract SomethingBase { //~NOTE: contract `SomethingBase` implements interface `ISomething`'s external API but does not explicitly inherit from it
+abstract contract SomethingBase { //~NOTE: contract `SomethingBase` has all selectors of interface `ISomething` but does not explicitly inherit from it
     function f1() external virtual returns (uint256) {
         return 1;
     }
@@ -67,7 +67,7 @@ contract SomethingDerived is SomethingBase {
 }
 
 // SHOULD FAIL: Implements both IERC20Like and IERC20LikeMetadata; only the maximal interface is reported.
-contract Token { //~NOTE: contract `Token` implements interface `IERC20LikeMetadata`'s external API but does not explicitly inherit from it
+contract Token { //~NOTE: contract `Token` has all selectors of interface `IERC20LikeMetadata` but does not explicitly inherit from it
     function transfer(address, uint256) external pure returns (bool) {
         return true;
     }
@@ -80,7 +80,7 @@ contract Token { //~NOTE: contract `Token` implements interface `IERC20LikeMetad
 }
 
 // SHOULD FAIL: Signature-only abstract `IFooLike` is treated as a candidate interface.
-contract Foo { //~NOTE: contract `Foo` implements interface `IFooLike`'s external API but does not explicitly inherit from it
+contract Foo { //~NOTE: contract `Foo` has all selectors of interface `IFooLike` but does not explicitly inherit from it
     function foo() external pure returns (uint256) {
         return 1;
     }
@@ -106,8 +106,8 @@ library SomeLib {
 }
 
 // SHOULD FAIL: Implements two unrelated interfaces; both are reported.
-contract MultiNoInherit { //~NOTE: contract `MultiNoInherit` implements interface `ISomething`'s external API but does not explicitly inherit from it
-    //~^NOTE: contract `MultiNoInherit` implements interface `IExtra`'s external API but does not explicitly inherit from it
+contract MultiNoInherit { //~NOTE: contract `MultiNoInherit` has all selectors of interface `ISomething` but does not explicitly inherit from it
+    //~^NOTE: contract `MultiNoInherit` has all selectors of interface `IExtra` but does not explicitly inherit from it
     function f1() external pure returns (uint256) {
         return 1;
     }
@@ -117,7 +117,7 @@ contract MultiNoInherit { //~NOTE: contract `MultiNoInherit` implements interfac
 }
 
 // SHOULD FAIL: Implements an interface declared in an external dependency without inheriting it.
-contract External { //~NOTE: contract `External` implements interface `IExternalThing`'s external API but does not explicitly inherit from it
+contract External { //~NOTE: contract `External` has all selectors of interface `IExternalThing` but does not explicitly inherit from it
     function doExternalThing() external pure returns (uint256) {
         return 1;
     }

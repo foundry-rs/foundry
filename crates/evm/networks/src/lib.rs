@@ -924,6 +924,25 @@ const fn bsc_p256_precompile(chain_id: ChainId, timestamp: u64) -> Option<Option
     }
 }
 
+/// Returns custom precompile labels for an already resolved execution hardfork.
+/// This metadata lookup does not discover or select an execution network.
+pub fn resolved_precompile_labels(hardfork: Option<FoundryHardfork>) -> AddressHashMap<String> {
+    match hardfork {
+        Some(FoundryHardfork::Tempo(hardfork)) => TEMPO_PRECOMPILES
+            .iter()
+            .filter(|(_, address)| is_tempo_precompile_active_at(*address, hardfork))
+            .map(|(label, address)| (*address, (*label).to_string()))
+            .collect(),
+        #[cfg(feature = "monad")]
+        Some(FoundryHardfork::Monad(hardfork)) => MONAD_PRECOMPILE_LABELS
+            .iter()
+            .filter(|(_, address)| is_monad_precompile_active_at(*address, hardfork))
+            .map(|(label, address)| (*address, (*label).to_string()))
+            .collect(),
+        _ => AddressHashMap::default(),
+    }
+}
+
 /// Returns whether a well-known Tempo precompile address is active at `hardfork`.
 pub fn is_tempo_precompile_active_at(address: Address, hardfork: TempoHardfork) -> bool {
     if address == CURRENT_COMMITTEE_ADDRESS {

@@ -24,22 +24,11 @@ use crate::{
     },
 };
 
-impl FoundryChain<OpTx> for L1BlockInfo {}
-
 #[derive(Clone, Copy, Debug, Default)]
 pub struct OpEvmNetwork;
 impl FoundryEvmNetwork for OpEvmNetwork {
     type Network = Optimism;
     type EvmFactory = OpEvmFactory;
-}
-
-impl IntoInstructionResult for OpHaltReason {
-    fn into_instruction_result(self) -> InstructionResult {
-        match self {
-            Self::Base(eth) => eth.into(),
-            Self::FailedDeposit => InstructionResult::Stop,
-        }
-    }
 }
 
 type OpEvmHandler<'db, I> =
@@ -51,6 +40,17 @@ pub type OpRevmEvm<'db, I> = RevmEvm<
     EthInstructions<EthInterpreter, OpEvmContext<&'db mut dyn DatabaseExt<OpEvmFactory>>>,
     PrecompilesMap,
 >;
+
+impl FoundryChain<OpTx> for L1BlockInfo {}
+
+impl IntoInstructionResult for OpHaltReason {
+    fn into_instruction_result(self) -> InstructionResult {
+        match self {
+            Self::Base(eth) => eth.into(),
+            Self::FailedDeposit => InstructionResult::Stop,
+        }
+    }
+}
 
 impl FoundryEvmFactory for OpEvmFactory {
     type Chain = L1BlockInfo;
@@ -80,17 +80,6 @@ impl FoundryEvmFactory for OpEvmFactory {
         I: FoundryInspectorExt<Self::FoundryContext<'db>> + 'db,
     {
         Box::new(self.create_foundry_evm_with_inspector(db, evm_env, inspector).into_inner())
-    }
-}
-
-/// Maps an OP [`EVMError`] to the common `EVMError<DatabaseError>` used by [`NestedEvm`].
-fn map_op_error(e: EVMError<DatabaseError, OpTransactionError>) -> EVMError<DatabaseError> {
-    match e {
-        EVMError::Database(db) => EVMError::Database(db),
-        EVMError::Header(h) => EVMError::Header(h),
-        EVMError::Custom(s) => EVMError::Custom(s),
-        EVMError::Transaction(t) => EVMError::Custom(format!("op transaction error: {t}")),
-        EVMError::CustomAny(custom_any_error) => EVMError::CustomAny(custom_any_error),
     }
 }
 
@@ -143,6 +132,17 @@ impl<'db, I: FoundryInspectorExt<OpEvmContext<&'db mut dyn DatabaseExt<OpEvmFact
 
     fn to_evm_env(&self) -> EvmEnv<Self::Spec, Self::Block> {
         self.ctx_ref().evm_clone()
+    }
+}
+
+/// Maps an OP [`EVMError`] to the common `EVMError<DatabaseError>` used by [`NestedEvm`].
+fn map_op_error(e: EVMError<DatabaseError, OpTransactionError>) -> EVMError<DatabaseError> {
+    match e {
+        EVMError::Database(db) => EVMError::Database(db),
+        EVMError::Header(h) => EVMError::Header(h),
+        EVMError::Custom(s) => EVMError::Custom(s),
+        EVMError::Transaction(t) => EVMError::Custom(format!("op transaction error: {t}")),
+        EVMError::CustomAny(custom_any_error) => EVMError::CustomAny(custom_any_error),
     }
 }
 

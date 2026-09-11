@@ -1,57 +1,91 @@
-# Exact-version exceptions for the coordinated Tempo Alloy 1.7.2 release.
-[[allow.exact]]
-crate = "alloy-core"
-version = "1.7.2"
-
-[[allow.exact]]
-crate = "alloy-dyn-abi"
-version = "1.7.2"
-
-[[allow.exact]]
-crate = "alloy-json-abi"
-version = "1.7.2"
-
-[[allow.exact]]
-crate = "alloy-primitives"
-version = "1.7.2"
-
-[[allow.exact]]
-crate = "alloy-sol-macro"
-version = "1.7.2"
-
-[[allow.exact]]
-crate = "alloy-sol-macro-expander"
-version = "1.7.2"
-
-[[allow.exact]]
-crate = "alloy-sol-macro-input"
-version = "1.7.2"
-
-[[allow.exact]]
-crate = "alloy-sol-type-parser"
-version = "1.7.2"
-
-[[allow.exact]]
-crate = "alloy-sol-types"
-version = "1.7.2"
-
-[[allow.exact]]
-crate = "syn-solidity"
-version = "1.7.2"
+[allow]
+# Match foundry-core's revm pattern for revm and Alloy releases.
+package = [
+    { crate = "revm", min-publish-age = "0" },
+    { crate = "revm-bytecode", min-publish-age = "0" },
+    { crate = "revm-context", min-publish-age = "0" },
+    { crate = "revm-context-interface", min-publish-age = "0" },
+    { crate = "revm-database", min-publish-age = "0" },
+    { crate = "revm-database-interface", min-publish-age = "0" },
+    { crate = "revm-handler", min-publish-age = "0" },
+    { crate = "revm-inspector", min-publish-age = "0" },
+    { crate = "revm-interpreter", min-publish-age = "0" },
+    { crate = "revm-precompile", min-publish-age = "0" },
+    { crate = "revm-primitives", min-publish-age = "0" },
+    { crate = "revm-state", min-publish-age = "0" },
+    # Alloy and alloy-core packages used by this workspace.
+    { crate = "alloy", min-publish-age = "0" },
+    { crate = "alloy-chains", min-publish-age = "0" },
+    { crate = "alloy-consensus", min-publish-age = "0" },
+    { crate = "alloy-consensus-any", min-publish-age = "0" },
+    { crate = "alloy-contract", min-publish-age = "0" },
+    { crate = "alloy-core", min-publish-age = "0" },
+    { crate = "alloy-dyn-abi", min-publish-age = "0" },
+    { crate = "alloy-eip2124", min-publish-age = "0" },
+    { crate = "alloy-eip2930", min-publish-age = "0" },
+    { crate = "alloy-eip5792", min-publish-age = "0" },
+    { crate = "alloy-eip7702", min-publish-age = "0" },
+    { crate = "alloy-eip7928", min-publish-age = "0" },
+    { crate = "alloy-eips", min-publish-age = "0" },
+    { crate = "alloy-ens", min-publish-age = "0" },
+    { crate = "alloy-evm", min-publish-age = "0" },
+    { crate = "alloy-genesis", min-publish-age = "0" },
+    { crate = "alloy-hardforks", min-publish-age = "0" },
+    { crate = "alloy-json-abi", min-publish-age = "0" },
+    { crate = "alloy-json-rpc", min-publish-age = "0" },
+    { crate = "alloy-network", min-publish-age = "0" },
+    { crate = "alloy-network-primitives", min-publish-age = "0" },
+    { crate = "alloy-primitives", min-publish-age = "0" },
+    { crate = "alloy-provider", min-publish-age = "0" },
+    { crate = "alloy-pubsub", min-publish-age = "0" },
+    { crate = "alloy-rlp", min-publish-age = "0" },
+    { crate = "alloy-rlp-derive", min-publish-age = "0" },
+    { crate = "alloy-rpc-client", min-publish-age = "0" },
+    { crate = "alloy-rpc-types", min-publish-age = "0" },
+    { crate = "alloy-rpc-types-anvil", min-publish-age = "0" },
+    { crate = "alloy-rpc-types-any", min-publish-age = "0" },
+    { crate = "alloy-rpc-types-beacon", min-publish-age = "0" },
+    { crate = "alloy-rpc-types-debug", min-publish-age = "0" },
+    { crate = "alloy-rpc-types-engine", min-publish-age = "0" },
+    { crate = "alloy-rpc-types-eth", min-publish-age = "0" },
+    { crate = "alloy-rpc-types-mev", min-publish-age = "0" },
+    { crate = "alloy-rpc-types-trace", min-publish-age = "0" },
+    { crate = "alloy-rpc-types-txpool", min-publish-age = "0" },
+    { crate = "alloy-serde", min-publish-age = "0" },
+    { crate = "alloy-signer", min-publish-age = "0" },
+    { crate = "alloy-signer-aws", min-publish-age = "0" },
+    { crate = "alloy-signer-gcp", min-publish-age = "0" },
+    { crate = "alloy-signer-ledger", min-publish-age = "0" },
+    { crate = "alloy-signer-local", min-publish-age = "0" },
+    { crate = "alloy-signer-trezor", min-publish-age = "0" },
+    { crate = "alloy-signer-turnkey", min-publish-age = "0" },
+    { crate = "alloy-sol-macro", min-publish-age = "0" },
+    { crate = "alloy-sol-macro-expander", min-publish-age = "0" },
+    { crate = "alloy-sol-macro-input", min-publish-age = "0" },
+    { crate = "alloy-sol-type-parser", min-publish-age = "0" },
+    { crate = "alloy-sol-types", min-publish-age = "0" },
+    { crate = "alloy-transport", min-publish-age = "0" },
+    { crate = "alloy-transport-http", min-publish-age = "0" },
+    { crate = "alloy-transport-ipc", min-publish-age = "0" },
+    { crate = "alloy-transport-ws", min-publish-age = "0" },
+    { crate = "alloy-trie", min-publish-age = "0" },
+    { crate = "alloy-tx-macros", min-publish-age = "0" },
+    { crate = "syn-solidity", min-publish-age = "0" },
+]
 
 # Exact-version exception for the RustCrypto release required by the updated dependency graph.
 [[allow.exact]]
 crate = "wnaf"
 version = "0.14.1"
 
-# Exact-version exceptions for the solc installation race fixes.
+# Exact-version exceptions for the Solidity 0.8.37 release update.
 [[allow.exact]]
 crate = "svm-rs"
-version = "0.5.27"
+version = "0.5.28"
 
 [[allow.exact]]
 crate = "svm-rs-builds"
-version = "0.5.27"
+version = "0.5.28"
 
 # Temporary exact-version exceptions for Soldeer's validated archive extraction fixes.
 # Remove once the 0.12.0 releases published on 2026-09-07 clear the cooldown.
@@ -62,3 +96,13 @@ version = "0.12.0"
 [[allow.exact]]
 crate = "soldeer-core"
 version = "0.12.0"
+
+# Exact-version exceptions for the maintained Monad releases required by revm 43.
+# Remove after 2026-09-16 17:29 UTC, when both releases clear the 7-day cooldown.
+[[allow.exact]]
+crate = "alloy-monad-evm"
+version = "0.8.0"
+
+[[allow.exact]]
+crate = "monad-revm"
+version = "0.8.0"

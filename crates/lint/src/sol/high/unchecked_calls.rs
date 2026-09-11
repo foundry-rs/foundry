@@ -15,14 +15,14 @@ declare_forge_lint!(
     UNCHECKED_CALL,
     Severity::High,
     "unchecked-call",
-    "Low-level calls should check the success return value"
+    "low-level call does not check the success return value"
 );
 
 declare_forge_lint!(
     ERC20_UNCHECKED_TRANSFER,
     Severity::High,
     "erc20-unchecked-transfer",
-    "ERC20 'transfer' and 'transferFrom' calls should check the return value"
+    "ERC20 `transfer` or `transferFrom` call does not check the return value"
 );
 
 /// Checks that calls to functions with the same signature as the ERC20 transfer methods, and which
@@ -52,8 +52,10 @@ fn is_erc20_transfer_call<'gcx>(gcx: Gcx<'gcx>, expr: &hir::Expr<'gcx>) -> bool 
         ("transferFrom", 3) => &["address", "address", "uint256"],
         _ => return false,
     };
-    let Some(cid) = receiver_contract_id(gcx, receiver) else { return false };
-    gcx.hir.contract_item_ids(cid).filter_map(|item| item.as_function()).any(|fid| {
+    if receiver_contract_id(gcx, receiver).is_none() {
+        return false;
+    }
+    gcx.resolved_function(callee).is_some_and(|fid| {
         let func = gcx.hir.function(fid);
         func.name.is_some_and(|name| name.name == func_ident.name)
             && func.kind.is_function()
