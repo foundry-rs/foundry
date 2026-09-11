@@ -204,6 +204,47 @@ fn disable_line_uses_comment_context() {
 }
 
 #[test]
+fn narrow_multiline_comment_is_idempotent() {
+    let source = r#"contract C {
+    function f() external {
+        for (uint i = 0; i < 10; ++i) /* detail.
+        more text. */ {}
+    }
+}
+"#;
+    let expected = "contract C {\n    function f() external {\n        for (uint256 i = 0; i < 10; ++i) \n        /* detail.\n        more text. */\n        {}\n    }\n}\n";
+    let config = Arc::new(FormatterConfig { line_length: 40, ..Default::default() });
+
+    let first = format(source, Path::new("test.sol"), config.clone());
+    assert_eq!(first, expected);
+    assert_eq!(format(&first, Path::new("test.sol"), config), first);
+}
+
+#[test]
+fn wrapped_mixed_comment_at_line_start_is_idempotent() {
+    let source = r#"contract C {
+    function f() external {
+        /* detail.
+        more text. */ uint value;
+    }
+}
+"#;
+    let expected = r#"contract C {
+    function f() external {
+        /* detail.
+        more text. */
+        uint256 value;
+    }
+}
+"#;
+    let config = Arc::new(FormatterConfig { wrap_comments: true, ..Default::default() });
+
+    let first = format(source, Path::new("test.sol"), config.clone());
+    assert_eq!(first, expected);
+    assert_eq!(format(&first, Path::new("test.sol"), config), first);
+}
+
+#[test]
 fn trailing_line_comment_separates_following_comment() {
     let source = r#"contract C {
     function f() external {
