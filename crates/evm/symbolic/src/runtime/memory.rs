@@ -512,8 +512,10 @@ impl SymMemory {
                 .and_then(|write_offset| write_offset.checked_add(write.bytes.len()))
                 .is_some_and(|end| end <= materialized_size)
         });
+        let maximum_target = maximum_offset.and_then(|offset| offset.checked_add(delta));
+        let target_non_wrapping = delta == 0 || maximum_target.is_some();
 
-        if all_writes_bounded {
+        if all_writes_bounded && target_non_wrapping {
             let mut result = SymExpr::zero(cx);
             for candidate in (delta..self.materialized_size).rev() {
                 let candidate_expr = SymExpr::constant(cx, U256::from(candidate - delta));
@@ -525,8 +527,11 @@ impl SymMemory {
         }
 
         let target = SymExpr::add_const(cx, offset.clone(), U256::from(delta));
-        let minimum_target = minimum_offset.checked_add(delta).unwrap_or_default();
-        let maximum_target = maximum_offset.and_then(|offset| offset.checked_add(delta));
+        let minimum_target = if target_non_wrapping {
+            minimum_offset.checked_add(delta).unwrap_or_default()
+        } else {
+            0
+        };
         let gas_dependent_offset = offset.contains_gasleft();
         let mut result = SymExpr::zero(cx);
         for write in &self.symbolic_writes {

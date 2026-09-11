@@ -842,9 +842,9 @@ impl SymbolicExecutor {
                     .try_into()
                     .map_err(|_| SymbolicError::Unsupported("symbolic cheatcode selector"))?
             };
-            if has_symbolic_input_offset
-                && (to != CHEATCODE_ADDRESS || !is_full_word_array_assertion(selector))
-            {
+            let full_word_array_assertion =
+                to == CHEATCODE_ADDRESS && is_full_word_array_assertion(selector);
+            if has_symbolic_input_offset && !full_word_array_assertion {
                 return Err(SymbolicError::Unsupported("symbolic cheatcode CALL input offset"));
             }
             if has_symbolic_in_size {
@@ -859,7 +859,7 @@ impl SymbolicExecutor {
                 if min_size > in_size {
                     return Err(SymbolicError::Unsupported("symbolic cheatcode CALL input size"));
                 }
-                if !has_symbolic_input_offset
+                if !full_word_array_assertion
                     && state.lower_bound_usize(&in_size_word) < min_size
                     && !self.assume_expr_at_least(state, &in_size_word, min_size)?
                 {

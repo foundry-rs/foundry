@@ -1811,23 +1811,36 @@ contract SymbolicArrayAssertions is Test {
             mstore(0xe4, value)
             mstore(0x104, 1)
             mstore(0x124, value)
-            let size := add(0xa4, shl(5, complete))
+            let size := add(4, mul(0xc0, complete))
             success := staticcall(gas(), 0x7109709ECfa91a80626fF3989D68f67F5b1DD12D, 0x80, size, 0, 0)
         }
         assertTrue(success);
     }
 
-    function testNoncanonicalArrayEncoding() public view {
+    function checkNoncanonicalArrayEncoding(bool shifted) public view {
         bool success;
         assembly {
-            mstore(0x80, shl(224, 0x975d5a12))
-            mstore(0x84, 0x60)
-            mstore(0xa4, 0x60)
-            mstore(0xe4, 1)
-            mstore(0x104, 7)
-            success := staticcall(gas(), 0x7109709ECfa91a80626fF3989D68f67F5b1DD12D, 0x80, 0xa4, 0, 0)
+            let start := add(0x80, shl(5, shifted))
+            mstore(start, shl(224, 0x975d5a12))
+            mstore(add(start, 4), 0x60)
+            mstore(add(start, 0x24), 0x60)
+            mstore(add(start, 0x64), 1)
+            mstore(add(start, 0x84), 7)
+            success := staticcall(gas(), 0x7109709ECfa91a80626fF3989D68f67F5b1DD12D, start, 0xa4, 0, 0)
         }
         assertTrue(success);
+    }
+
+    function checkZeroLengthMcopy(uint256 dest, uint256 size) public view {
+        vm.assume(size <= 2);
+        uint256 byteAtZero;
+        assembly {
+            mstore8(0, 0xaa)
+            mstore8(0x20, 0xbb)
+            mcopy(dest, 0x1f, size)
+            byteAtZero := byte(0, mload(0))
+        }
+        assert(size != 0 || byteAtZero == 0xaa);
     }
 }
 "#,
@@ -1893,17 +1906,27 @@ args=[[0]]] checkCorruptedArrayCopy(uint256[])
         ]],
     );
 
-    cmd.forge_fuse()
-        .args(["test", "--match-test", "^testNoncanonicalArrayEncoding\\("])
-        .assert_success();
-    let stdout = cmd
+    let output = cmd
         .forge_fuse()
         .args(args)
-        .args(["--match-test", "^testNoncanonicalArrayEncoding\\("])
+        .args(["--json", "--match-test", "^checkNoncanonicalArrayEncoding\\("])
         .assert_success()
         .get_output()
-        .stdout_lossy();
-    assert_relevant_lines(&stdout, str![["[PASS] testNoncanonicalArrayEncoding()"]]);
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkNoncanonicalArrayEncoding(bool)");
+    assert_eq!(result["symbolic"]["status"], "pass");
+
+    let output = cmd
+        .forge_fuse()
+        .args(args)
+        .args(["--json", "--match-test", "^checkZeroLengthMcopy\\("])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkZeroLengthMcopy(uint256,uint256)");
+    assert_eq!(result["symbolic"]["status"], "pass");
 });
 
 forgetest_init!(symbolic_uses_legacy_halmos_array_lengths, |prj, cmd| {
