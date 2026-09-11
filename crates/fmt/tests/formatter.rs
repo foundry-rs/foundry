@@ -61,6 +61,33 @@ fn chained_named_call_layout_ignores_source_spacing() {
     }
 }
 
+#[test]
+fn statement_trailing_blank_line_is_idempotent() {
+    let source = r#"contract C {
+    function f() external {
+        uint value;
+        value += 1
+        /* detail. */
+
+        ;
+    }
+}
+"#;
+    let expected = r#"contract C {
+    function f() external {
+        uint256 value;
+        value += 1;
+        /* detail. */
+    }
+}
+"#;
+
+    assert_eq!(
+        format(source, Path::new("test.sol"), Arc::new(FormatterConfig::default())),
+        expected
+    );
+}
+
 // <https://github.com/foundry-rs/foundry/issues/3831>
 #[test]
 fn disable_line_uses_comment_context() {
