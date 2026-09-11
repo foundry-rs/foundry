@@ -290,39 +290,34 @@ impl ExternalIdentifier {
         }
     }
 
-    /// Walks the proxy chain of every address, fetching the metadata of each link as it goes.
-    ///
-    /// Returns one [`ProxyChain`] per input address, in the same order.
-    async fn resolve_proxy_chains(&mut self, addresses: &[Address]) -> Vec<ProxyChain> {
+    /// Fetches all verified ABIs and whether each proxy chain was fully resolved.
+    pub async fn get_abis(
+        &mut self,
+        addresses: &[Address],
+    ) -> Vec<(Address, eyre::Result<(Vec<JsonAbi>, bool)>)> {
         const MAX_PROXY_DEPTH: usize = 16;
 
-        struct Walk {
-            /// The link to visit next, or `None` once the walk ended.
+        struct Chain {
             current: Option<Address>,
             visited: HashSet<Address>,
-            chain: ProxyChain,
+            abis: Vec<JsonAbi>,
+            complete: bool,
         }
 
-        impl Walk {
-            const fn stop(&mut self, stop: Stop) {
-                self.current = None;
-                self.chain.stop = stop;
-            }
-        }
-
-        let mut walks = addresses
+        let mut chains = addresses
             .iter()
-            .map(|&address| Walk {
+            .map(|&address| Chain {
                 current: Some(address),
                 visited: HashSet::default(),
-                chain: ProxyChain { links: Vec::new(), stop: Stop::Unresolved },
+                abis: Vec::new(),
+                complete: true,
             })
             .collect::<Vec<_>>();
 
         for _ in 0..MAX_PROXY_DEPTH {
-            let to_fetch = walks
+            let to_fetch = chains
                 .iter()
-                .filter_map(|walk| walk.current)
+                .filter_map(|chain| chain.current)
                 .filter(|address| !self.contracts.contains_key(address))
                 .collect::<HashSet<_>>()
                 .into_iter()
@@ -330,74 +325,43 @@ impl ExternalIdentifier {
             self.fetch_addresses_async(&to_fetch).await;
 
             let mut has_next = false;
-            for walk in &mut walks {
-                let Some(current) = walk.current else { continue };
-                // A cycle: stop rather than walk it again.
-                if !walk.visited.insert(current) {
-                    walk.stop(Stop::Unresolved);
+            for chain in &mut chains {
+                let Some(current) = chain.current else { continue };
+                if !chain.visited.insert(current) {
+                    chain.current = None;
+                    chain.complete = false;
                     continue;
                 }
-                let Some(entry) = self.contracts.get(&current) else {
-                    // Never answered: out of budget, or an error the fetchers gave up on.
-                    walk.stop(Stop::Unresolved);
+                let Some((_, Some(metadata))) = self.contracts.get(&current) else {
+                    chain.current = None;
+                    chain.complete = false;
                     continue;
                 };
-                let Some(metadata) = &entry.1 else {
-                    // Answered, and the answer is that nothing has source for it.
-                    walk.stop(Stop::Unverified);
-                    continue;
-                };
-                walk.chain.links.push(current);
-                match (metadata.proxy != 0).then_some(metadata.implementation).flatten() {
-                    Some(implementation) => {
-                        walk.current = Some(implementation);
-                        has_next = true;
-                    }
-                    // A proxy that doesn't say what it points at.
-                    None if metadata.proxy != 0 => walk.stop(Stop::Unresolved),
-                    None => walk.stop(Stop::End),
+                if let Ok(abi) = metadata.abi() {
+                    chain.abis.push(abi);
+                } else {
+                    chain.complete = false;
                 }
+                chain.current = (metadata.proxy != 0).then_some(metadata.implementation).flatten();
+                if metadata.proxy != 0 && chain.current.is_none() {
+                    chain.complete = false;
+                }
+                has_next |= chain.current.is_some();
             }
             if !has_next {
                 break;
             }
         }
 
-        walks
-            .into_iter()
-            .map(|mut walk| {
-                // Still walking after `MAX_PROXY_DEPTH`: the chain is longer than we follow.
-                if walk.current.is_some() {
-                    walk.stop(Stop::Unresolved);
-                }
-                walk.chain
-            })
-            .collect()
-    }
-
-    /// Fetches all verified ABIs and whether each proxy chain was fully resolved.
-    pub async fn get_abis(
-        &mut self,
-        addresses: &[Address],
-    ) -> Vec<(Address, eyre::Result<(Vec<JsonAbi>, bool)>)> {
-        self.resolve_proxy_chains(addresses)
-            .await
+        chains
             .into_iter()
             .zip(addresses.iter().copied())
-            .map(|(chain, address)| {
-                let mut complete = chain.stop == Stop::End;
-                let mut abis = Vec::new();
-                for metadata in chain.links.iter().filter_map(|link| self.metadata(*link)) {
-                    match metadata.abi() {
-                        Ok(abi) => abis.push(abi),
-                        Err(_) => complete = false,
-                    }
-                }
-                let result = if abis.is_empty() {
+            .map(|(mut chain, address)| {
+                chain.complete &= chain.current.is_none();
+                let result = if chain.abis.is_empty() {
                     Err(eyre::eyre!("external ABI lookup failed"))
                 } else {
-                    // Innermost implementation first.
-                    Ok((abis.into_iter().rev().collect(), complete))
+                    Ok((chain.abis.into_iter().rev().collect(), chain.complete))
                 };
                 (address, result)
             })
@@ -426,36 +390,6 @@ impl ExternalIdentifier {
             })
             .collect()
     }
-
-    /// The metadata fetched for `address`, if it was fetched and is verified.
-    fn metadata(&self, address: Address) -> Option<&Metadata> {
-        self.contracts.get(&address)?.1.as_ref()
-    }
-}
-
-/// The chain of addresses one address resolves through, from the address itself down to the
-/// contract that implements it.
-struct ProxyChain {
-    /// Every link that had verified metadata, starting at the address that was asked for.
-    links: Vec<Address>,
-    /// Why the walk stopped.
-    stop: Stop,
-}
-
-/// Why a proxy chain walk stopped.
-///
-/// [`Stop::End`] and [`Stop::Unverified`] are conclusions about the contract that will hold until
-/// someone deploys or verifies something; [`Stop::Unresolved`] is a conclusion about the lookup,
-/// and asking again later may well answer differently.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Stop {
-    /// Reached a contract that isn't a proxy, so the chain is whole.
-    End,
-    /// A link is known to have no verified source.
-    Unverified,
-    /// A link never answered, the chain cycled, a proxy didn't say what it points at, or the
-    /// chain is longer than we follow.
-    Unresolved,
 }
 
 impl TraceIdentifier for ExternalIdentifier {
