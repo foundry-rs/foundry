@@ -4531,7 +4531,7 @@ impl<N: Network> Backend<N> {
             // Give the installed Base precompiles a sentinel byte so Solidity's `extcodesize`
             // check on high-level calls to functions without return data does not revert in the
             // caller. `ensure_eip8130_system_accounts` only covers the Zenith nonce manager.
-            for address in base_code_sentinel_addresses(BaseSpecId::new(upgrade)) {
+            for address in base_code_sentinel_addresses(upgrade) {
                 let mut account = erased.basic(address)?.unwrap_or_default();
                 if account.code.as_ref().is_none_or(|code| code.is_empty()) {
                     let code = revm::state::Bytecode::new_legacy(Bytes::from_static(

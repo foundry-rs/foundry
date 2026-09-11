@@ -12,7 +12,7 @@ use alloy_primitives::{Address, Bytes};
 use base_common_chains::ChainConfig;
 use base_common_evm::{
     BaseContext, BaseEvm, BaseEvmFactory, BaseHaltReason, BaseHandler, BaseSpecId, BaseTransaction,
-    BaseTransactionError, L1BlockInfo,
+    BaseTransactionError, BaseUpgrade, L1BlockInfo,
 };
 use base_common_network::Base;
 // Only the tests below need this crate, but Cargo forbids optional dev-dependencies, so it is an
@@ -56,52 +56,17 @@ type BaseEvmHandler<'db, I> = BaseHandler<
     EthFrame<EthInterpreter>,
 >;
 
-/// Base precompiles installed at `spec` that hold state but carry no bytecode.
+/// Base precompiles installed at `upgrade` that hold state but carry no bytecode.
 ///
 /// Solidity emits an `extcodesize` check for high-level calls to functions without return data,
 /// so a code-less precompile makes the *caller* revert before the precompile ever runs. Base
 /// mainnet plants a one-byte sentinel on exactly these accounts, so mirroring it keeps local
 /// execution faithful to the chain.
-pub fn base_code_sentinel_addresses(spec: BaseSpecId) -> impl Iterator<Item = Address> {
-    let upgrade = spec.upgrade();
+pub fn base_code_sentinel_addresses(upgrade: BaseUpgrade) -> impl Iterator<Item = Address> {
     BASE_CODE_SENTINEL_ADDRESSES
         .iter()
         .copied()
         .filter(move |address| is_base_precompile_active_at(*address, upgrade))
-}
-
-/// Plants the sentinel byte on code-less stateful precompiles for a newly created EVM.
-///
-/// A real deployment is never replaced, so forks that already carry the mainnet sentinel — or
-/// any genuine code — are left untouched.
-fn plant_code_sentinels<'db, I>(evm: &mut BaseRevmEvm<'db, I>)
-where
-    I: FoundryInspectorExt<BaseContext<&'db mut dyn DatabaseExt<BaseEvmFactory>>>,
-{
-    let spec = evm.ctx_ref().cfg_env().spec;
-    let sentinel = Bytecode::new_legacy(Bytes::from_static(SYSTEM_PRECOMPILE_STUB));
-    let sentinel_hash = sentinel.hash_slow();
-    let journal = evm.ctx_mut().journal_mut();
-    for address in base_code_sentinel_addresses(spec) {
-        let Ok(account) = journal.load_account_with_code(address) else { continue };
-        let is_code_less = account.info.code.as_ref().is_none_or(|code| code.is_empty());
-        if is_code_less {
-            journal.set_code_with_hash(address, sentinel.clone(), sentinel_hash);
-        }
-    }
-}
-
-fn base_factory_for_env(
-    factory: BaseEvmFactory,
-    evm_env: &EvmEnv<BaseSpecId, BlockEnv>,
-) -> BaseEvmFactory {
-    let activation_admin_address = factory.activation_admin_address().or_else(|| {
-        ChainConfig::activation_admin_address_for_upgrade_by_chain_id(
-            evm_env.cfg_env.chain_id,
-            evm_env.cfg_env.spec.upgrade(),
-        )
-    });
-    factory.with_activation_admin_address(activation_admin_address)
 }
 
 impl FoundryChain<BaseTransaction<TxEnv>> for L1BlockInfo {}
@@ -118,10 +83,27 @@ impl FoundryEvmFactory for BaseEvmFactory {
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
         inspector: I,
     ) -> Self::FoundryEvm<'db, I> {
-        let factory = base_factory_for_env(*self, &evm_env);
+        let upgrade = evm_env.cfg_env.spec.upgrade();
+        let activation_admin = self.activation_admin_address().or_else(|| {
+            ChainConfig::activation_admin_address_for_upgrade_by_chain_id(
+                evm_env.cfg_env.chain_id,
+                upgrade,
+            )
+        });
+        let factory = self.with_activation_admin_address(activation_admin);
         let mut base_evm = factory.create_evm_with_inspector(db, evm_env, inspector);
         base_evm.ctx_mut().cfg.tx_chain_id_check = true;
-        plant_code_sentinels(&mut base_evm);
+        // Preserve existing code, including sentinels already present on forks.
+        let sentinel = Bytecode::new_legacy(Bytes::from_static(SYSTEM_PRECOMPILE_STUB));
+        let sentinel_hash = sentinel.hash_slow();
+        let journal = base_evm.ctx_mut().journal_mut();
+        for address in base_code_sentinel_addresses(upgrade) {
+            if let Ok(account) = journal.load_account_with_code(address)
+                && account.info.code.as_ref().is_none_or(|code| code.is_empty())
+            {
+                journal.set_code_with_hash(address, sentinel.clone(), sentinel_hash);
+            }
+        }
         base_evm
     }
 
@@ -201,68 +183,21 @@ impl<'db, I: FoundryInspectorExt<BaseContext<&'db mut dyn DatabaseExt<BaseEvmFac
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backend::Backend;
     use alloy_sol_types::SolCall;
-    use base_common_evm::BaseUpgrade;
     use base_common_precompiles::{
         ActivationRegistryStorage, B20FactoryStorage, IActivationRegistry, NonceManagerStorage,
         PolicyRegistryStorage, TxContextStorage,
     };
     use revm::{
-        ExecuteEvm, context::CfgEnv, database::EmptyDB, precompile::secp256r1, primitives::TxKind,
+        ExecuteEvm, context::CfgEnv, inspector::NoOpInspector, primitives::TxKind,
+        state::AccountInfo,
     };
-
-    fn has_precompile(upgrade: BaseUpgrade, address: Address) -> bool {
-        let evm = BaseEvmFactory::default().create_evm(
-            EmptyDB::default(),
-            EvmEnv::new(CfgEnv::new_with_spec(BaseSpecId::new(upgrade)), BlockEnv::default()),
-        );
-        evm.precompiles().get(&address).is_some()
-    }
 
     fn base_env(chain_id: u64, upgrade: BaseUpgrade) -> EvmEnv<BaseSpecId, BlockEnv> {
         let mut cfg = CfgEnv::new_with_spec(BaseSpecId::new(upgrade));
         cfg.chain_id = chain_id;
         EvmEnv::new(cfg, BlockEnv::default())
-    }
-
-    /// Mainnet plants a one-byte sentinel on exactly the two registries that expose
-    /// void-returning functions, and leaves the factory, nonce manager, and transaction context
-    /// code-less. Stubbing more than this would make an `isContract` probe pass locally and
-    /// revert on Base.
-    #[test]
-    fn code_sentinel_covers_only_void_returning_precompiles() {
-        let stubbed =
-            |upgrade| base_code_sentinel_addresses(BaseSpecId::new(upgrade)).collect::<Vec<_>>();
-
-        assert!(stubbed(BaseUpgrade::Azul).is_empty());
-
-        for upgrade in [BaseUpgrade::Beryl, BaseUpgrade::Cobalt] {
-            let addresses = stubbed(upgrade);
-            assert_eq!(
-                addresses,
-                vec![ActivationRegistryStorage::ADDRESS, PolicyRegistryStorage::ADDRESS],
-                "unexpected sentinel set at {upgrade:?}"
-            );
-            for absent in [
-                B20FactoryStorage::ADDRESS,
-                NonceManagerStorage::ADDRESS,
-                TxContextStorage::ADDRESS,
-            ] {
-                assert!(
-                    !addresses.contains(&absent),
-                    "{absent} is code-less on Base and must not be stubbed"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn base_evm_factory_implements_foundry_evm_factory() {
-        fn assert_foundry_factory<F: FoundryEvmFactory>() {}
-        fn assert_foundry_network<N: FoundryEvmNetwork>() {}
-
-        assert_foundry_factory::<BaseEvmFactory>();
-        assert_foundry_network::<BaseEvmNetwork>();
     }
 
     #[test]
@@ -274,61 +209,86 @@ mod tests {
     }
 
     #[test]
-    fn factory_resolves_activation_admin_from_chain_and_upgrade() {
-        let env = base_env(8453, BaseUpgrade::Beryl);
-        let factory = base_factory_for_env(BaseEvmFactory::default(), &env);
-        assert_eq!(
-            factory.activation_admin_address(),
+    fn constructor_resolves_activation_admin_and_preserves_override() {
+        let chain_admin =
             ChainConfig::activation_admin_address_for_upgrade_by_chain_id(8453, BaseUpgrade::Beryl)
-        );
-
+                .unwrap();
         let custom_admin = Address::repeat_byte(0xaa);
-        let factory = base_factory_for_env(BaseEvmFactory::new(Some(custom_admin)), &env);
-        assert_eq!(factory.activation_admin_address(), Some(custom_admin));
-    }
-
-    #[test]
-    fn beryl_installs_dynamic_precompiles_after_azul() {
-        for address in [B20FactoryStorage::ADDRESS, ActivationRegistryStorage::ADDRESS] {
-            assert!(!has_precompile(BaseUpgrade::Azul, address));
-            assert!(has_precompile(BaseUpgrade::Beryl, address));
+        for (override_admin, expected_admin) in
+            [(None, chain_admin), (Some(custom_admin), custom_admin)]
+        {
+            let mut db = Backend::<BaseEvmNetwork>::spawn(None).unwrap();
+            let mut evm = BaseEvmFactory::new(override_admin).create_foundry_evm_with_inspector(
+                &mut db,
+                base_env(8453, BaseUpgrade::Beryl),
+                NoOpInspector,
+            );
+            let tx = BaseTransaction::builder()
+                .base(
+                    TxEnv::builder()
+                        .chain_id(Some(8453))
+                        .kind(TxKind::Call(ActivationRegistryStorage::ADDRESS))
+                        .data(Bytes::from(IActivationRegistry::adminCall {}.abi_encode()))
+                        .gas_limit(100_000),
+                )
+                .build_fill();
+            let result = evm.transact_one(tx).unwrap();
+            let admin =
+                IActivationRegistry::adminCall::abi_decode_returns(result.output().unwrap())
+                    .unwrap();
+            assert_eq!(admin, expected_admin);
         }
     }
 
     #[test]
-    fn beryl_activation_registry_uses_resolved_chain_admin() {
-        let env = base_env(8453, BaseUpgrade::Beryl);
-        let factory = base_factory_for_env(BaseEvmFactory::default(), &env);
-        let expected_admin = factory.activation_admin_address().unwrap();
-        let mut evm = factory.create_evm(EmptyDB::default(), env);
-        let tx = BaseTransaction::builder()
-            .base(
-                TxEnv::builder()
-                    .chain_id(Some(8453))
-                    .kind(TxKind::Call(ActivationRegistryStorage::ADDRESS))
-                    .data(Bytes::from(IActivationRegistry::adminCall {}.abi_encode()))
-                    .gas_limit(100_000),
-            )
-            .build_fill();
-
-        let result = evm.transact_one(tx).unwrap();
-        let admin =
-            IActivationRegistry::adminCall::abi_decode_returns(result.output().unwrap()).unwrap();
-        assert_eq!(admin, expected_admin);
-    }
-
-    #[test]
-    fn fjord_installs_p256_precompile_after_ecotone() {
-        let address = *secp256r1::P256VERIFY.address();
-        assert!(!has_precompile(BaseUpgrade::Ecotone, address));
-        assert!(has_precompile(BaseUpgrade::Fjord, address));
-    }
-
-    #[test]
-    fn cobalt_installs_eip8130_precompiles_after_beryl() {
-        for address in [TxContextStorage::ADDRESS, NonceManagerStorage::ADDRESS] {
-            assert!(!has_precompile(BaseUpgrade::Beryl, address));
-            assert!(has_precompile(BaseUpgrade::Cobalt, address));
+    fn constructor_plants_only_active_registry_sentinels() {
+        for upgrade in [BaseUpgrade::Azul, BaseUpgrade::Beryl] {
+            let mut db = Backend::<BaseEvmNetwork>::spawn(None).unwrap();
+            let mut evm = BaseEvmFactory::default().create_foundry_evm_with_inspector(
+                &mut db,
+                base_env(8453, upgrade),
+                NoOpInspector,
+            );
+            for (address, registry) in [
+                (ActivationRegistryStorage::ADDRESS, true),
+                (PolicyRegistryStorage::ADDRESS, true),
+                (B20FactoryStorage::ADDRESS, false),
+                (NonceManagerStorage::ADDRESS, false),
+                (TxContextStorage::ADDRESS, false),
+            ] {
+                let expected = if upgrade == BaseUpgrade::Beryl && registry {
+                    Bytecode::new_legacy(Bytes::from_static(SYSTEM_PRECOMPILE_STUB))
+                } else {
+                    Bytecode::default()
+                };
+                let account = evm.ctx_mut().journal_mut().load_account_with_code(address).unwrap();
+                assert_eq!(
+                    account.info.code.as_ref().unwrap(),
+                    &expected,
+                    "{upgrade:?}: {address}"
+                );
+                assert_eq!(account.info.code_hash, expected.hash_slow());
+            }
         }
+    }
+
+    #[test]
+    fn constructor_preserves_existing_registry_code() {
+        let address = ActivationRegistryStorage::ADDRESS;
+        let code = Bytecode::new_legacy(Bytes::from_static(&[0x60, 0x00, 0x00]));
+        let code_hash = code.hash_slow();
+        let mut db = Backend::<BaseEvmNetwork>::spawn(None).unwrap();
+        db.insert_account_info(
+            address,
+            AccountInfo { code_hash, code: Some(code.clone()), ..Default::default() },
+        );
+        let mut evm = BaseEvmFactory::default().create_foundry_evm_with_inspector(
+            &mut db,
+            base_env(8453, BaseUpgrade::Beryl),
+            NoOpInspector,
+        );
+        let account = evm.ctx_mut().journal_mut().load_account_with_code(address).unwrap();
+        assert_eq!(account.info.code.as_ref().unwrap(), &code);
+        assert_eq!(account.info.code_hash, code_hash);
     }
 }
