@@ -1720,6 +1720,7 @@ impl EthApi<FoundryNetwork> {
     /// Handler for RPC call: `anvil_rollback`
     pub async fn anvil_rollback(&self, depth: Option<u64>) -> Result<()> {
         node_info!("anvil_rollback");
+        let _lifecycle = self.lifecycle_lock.write().await;
         let depth = depth.unwrap_or(1);
 
         // Check reorg depth doesn't exceed current chain height
@@ -1731,8 +1732,11 @@ impl EthApi<FoundryNetwork> {
         ))?;
 
         // Get the common ancestor block
-        let common_block =
-            self.backend.get_block(common_height).ok_or(BlockchainError::BlockNotFound)?;
+        let common_block = self
+            .backend
+            .rollback_block(common_height)
+            .await?
+            .ok_or(BlockchainError::BlockNotFound)?;
 
         self.backend.rollback(common_block).await?;
         Ok(())
@@ -1902,8 +1906,8 @@ impl EthApi<FoundryNetwork> {
         trace!(target: "rpc::api", "executing eth request");
         // Fork reset and RPC URL replacement take the write lock internally after their fallible
         // remote staging work. Memory reset takes it before staging because it snapshots live
-        // state. Identity and snapshot methods also lock internally to keep direct API callers
-        // safe without recursively acquiring this fair RwLock.
+        // state. Identity, snapshot, and chain-rewind methods also lock internally to keep direct
+        // API callers safe without recursively acquiring this fair RwLock.
         let _lifecycle = if matches!(
             &request,
             EthRequest::Reset(_)
@@ -1912,6 +1916,8 @@ impl EthApi<FoundryNetwork> {
                 | EthRequest::AnvilMetadata(_)
                 | EthRequest::EvmSnapshot(_)
                 | EthRequest::EvmRevert(_)
+                | EthRequest::Reorg(_)
+                | EthRequest::Rollback(_)
         ) {
             None
         } else {
@@ -4217,6 +4223,7 @@ impl EthApi<FoundryNetwork> {
     /// Handler for RPC call: `anvil_reorg`
     pub async fn anvil_reorg(&self, options: ReorgOptions) -> Result<()> {
         node_info!("anvil_reorg");
+        let _lifecycle = self.lifecycle_lock.write().await;
         let depth = options.depth;
         let tx_block_pairs = options.tx_block_pairs;
 
@@ -4229,8 +4236,11 @@ impl EthApi<FoundryNetwork> {
         ))?;
 
         // Get the common ancestor block
-        let common_block =
-            self.backend.get_block(common_height).ok_or(BlockchainError::BlockNotFound)?;
+        let common_block = self
+            .backend
+            .rollback_block(common_height)
+            .await?
+            .ok_or(BlockchainError::BlockNotFound)?;
 
         // Convert the transaction requests to pool transactions if they exist, otherwise use empty
         // hashmap
