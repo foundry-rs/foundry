@@ -117,7 +117,7 @@ allow-git = [
     "https://github.com/tempoxyz/tempo",
     "https://github.com/tempoxyz/mpp-rs",
     # Base
-    "https://github.com/base/base",
+    "https://github.com/foundry-rs/base",
     # Transitive dependency of Tempo
     "https://github.com/commonwarexyz/monorepo",
     "https://github.com/paradigmxyz/reth",
