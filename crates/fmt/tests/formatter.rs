@@ -1,4 +1,5 @@
 use forge_fmt::FormatterConfig;
+use foundry_config::fmt::IndentStyle;
 use foundry_test_utils::init_tracing;
 use snapbox::{Data, assert_data_eq};
 use solar::sema::Compiler;
@@ -228,6 +229,16 @@ fn trailing_line_comment_separates_following_comment() {
         format(source, Path::new("test.sol"), Arc::new(FormatterConfig::default())),
         expected
     );
+}
+
+#[test]
+fn tab_style_preserves_crlf_disabled_block_lines() {
+    let source = "contract C {\n// forgefmt: disable-start\nfunction  disabled( ) external { uint   value = 1; }\n// forgefmt: disable-end\nuint value;\n}\n"
+        .replace('\n', "\r\n");
+    let expected = "contract C {\n\t// forgefmt: disable-start\nfunction  disabled( ) external { uint   value = 1; }\n// forgefmt: disable-end\n\tuint256 value;\n}\n";
+    let config = Arc::new(FormatterConfig { style: IndentStyle::Tab, ..Default::default() });
+
+    assert_eq!(format(&source, Path::new("test.sol"), config), expected);
 }
 
 fn tests_dir() -> PathBuf {
