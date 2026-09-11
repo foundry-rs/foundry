@@ -780,6 +780,208 @@ contract SymbolicQuadraticQuote {
     assert_eq!(result["symbolic"]["solver"]["stats"]["heuristic_witnesses"], 0);
 });
 
+forgetest_init!(symbolic_retries_deferred_nested_arithmetic, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_retries_deferred_nested_arithmetic because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicDeferredExternalCall.t.sol",
+        r#"
+interface Vm {
+    function assume(bool condition) external pure;
+    function unixTime() external returns (uint256);
+}
+
+contract SymbolicConversionTarget {
+    function convert(uint256 base, uint256 coefficient) external pure returns (uint256) {
+        return (base * coefficient + 9) / 10;
+    }
+}
+
+contract SymbolicCreatedConversion {
+    uint256 public value;
+
+    constructor(uint256 base, uint256 coefficient) {
+        value = (base * coefficient + 9) / 10;
+    }
+}
+
+contract SymbolicDeferredExternalCall {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    SymbolicConversionTarget target;
+
+    function setUp() public {
+        target = new SymbolicConversionTarget();
+    }
+
+    /// forge-config: default.symbolic.timeout = 5
+    function checkExternalConversion(uint256 base, uint256 coefficient) external view {
+        vm.assume(base > 0 && base < 1_000);
+        vm.assume(coefficient >= 10 && coefficient <= 100);
+        assert(target.convert(base, coefficient) > 0);
+    }
+
+    /// forge-config: default.symbolic.timeout = 5
+    function checkCreatedConversion(uint256 base, uint256 coefficient) external {
+        vm.assume(base > 0 && base < 1_000);
+        vm.assume(coefficient >= 10 && coefficient <= 100);
+        SymbolicCreatedConversion created = new SymbolicCreatedConversion(base, coefficient);
+        assert(created.value() > 0);
+    }
+
+    /// forge-config: default.symbolic.timeout = 5
+    function checkNondeterministicExternalConversion(uint256 base, uint256 coefficient) external {
+        vm.unixTime();
+        vm.assume(base > 0 && base < 1_000);
+        vm.assume(coefficient >= 10 && coefficient <= 100);
+        assert(target.convert(base, coefficient) > 0);
+    }
+
+    /// forge-config: default.symbolic.max_solver_queries = 16
+    function checkQueryLimitedExternalConversion(uint256 base, uint256 coefficient) external view {
+        vm.assume(base > 0 && base < 1_000);
+        vm.assume(coefficient >= 10 && coefficient <= 100);
+        assert(target.convert(base, coefficient) > 0);
+    }
+}
+"#,
+    );
+
+    for (test, signature) in [
+        ("checkExternalConversion", "checkExternalConversion(uint256,uint256)"),
+        ("checkCreatedConversion", "checkCreatedConversion(uint256,uint256)"),
+    ] {
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--optimize", "--match-test", test])
+            .assert_success()
+            .get_output()
+            .stdout
+            .clone();
+        let result = json_test_result(&output, signature);
+        assert_eq!(result["symbolic"]["status"], "pass");
+        assert!(result["symbolic"]["solver"]["stats"]["smt_queries"].as_u64().unwrap() > 0);
+    }
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--optimize",
+            "--match-test",
+            "checkNondeterministicExternalConversion",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result =
+        json_test_result(&output, "checkNondeterministicExternalConversion(uint256,uint256)");
+    assert_eq!(result["symbolic"]["status"], "incomplete");
+    assert!(
+        result["symbolic"]["incomplete"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("nested hard arithmetic")
+    );
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--optimize",
+            "--match-test",
+            "checkQueryLimitedExternalConversion",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkQueryLimitedExternalConversion(uint256,uint256)");
+    assert_eq!(result["symbolic"]["status"], "incomplete");
+    assert!(
+        result["symbolic"]["incomplete"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("solver query limit exceeded (16)")
+    );
+    assert_eq!(result["symbolic"]["solver"]["stats"]["solver_queries"], 16);
+    assert!(result["symbolic"]["solver"]["stats"]["paths"].as_u64().unwrap() > 2);
+});
+
+forgetest_init!(symbolic_preserves_completed_external_call_counterexamples, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_preserves_completed_external_call_counterexamples because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicDeferredExternalPriority.t.sol",
+        r#"
+contract SymbolicDeferredPriorityTarget {
+    function evaluate(uint256 x, uint256 y) external pure returns (uint256) {
+        if (x == 0) return 42;
+        unchecked {
+            uint256 product = x * y;
+            if (product == 0 && product == 1) return 1;
+        }
+        return 0;
+    }
+}
+
+contract SymbolicDeferredExternalPriority {
+    SymbolicDeferredPriorityTarget target;
+
+    function setUp() public {
+        target = new SymbolicDeferredPriorityTarget();
+    }
+
+    /// forge-config: default.symbolic.max_solver_queries = 8
+    function checkCompletedCallBfs(uint256 x, uint256 y) external view {
+        assert(target.evaluate(x, y) != 42);
+    }
+
+    /// forge-config: default.symbolic.max_solver_queries = 8
+    /// forge-config: default.symbolic.exploration_order = "dfs"
+    function checkCompletedCallDfs(uint256 x, uint256 y) external view {
+        assert(target.evaluate(x, y) != 42);
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--optimize",
+            "--match-contract",
+            "SymbolicDeferredExternalPriority",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    for signature in
+        ["checkCompletedCallBfs(uint256,uint256)", "checkCompletedCallDfs(uint256,uint256)"]
+    {
+        let result = json_test_result(&output, signature);
+        assert_eq!(result["symbolic"]["status"], "fail_counterexample");
+        assert_eq!(result["symbolic"]["replay"]["status"], "confirmed");
+    }
+});
+
 forgetest_init!(symbolic_proves_saturating_mul_equivalence, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(

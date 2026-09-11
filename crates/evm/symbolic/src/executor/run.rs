@@ -11,11 +11,21 @@ impl SymbolicExecutor {
     /// a fresh executor when a caller needs independent solver query accounting.
     pub fn new(config: SymbolicConfig) -> Self {
         let solver = SmtLibSubprocessSolver::from_config(&config);
-        Self { config, cx: SymCx::new(), solver, deferred_incomplete: None, deadline: None }
+        Self {
+            config,
+            cx: SymCx::new(),
+            solver,
+            deferred_incomplete: None,
+            deadline: None,
+            escalate_nested_deferred: false,
+            stateless_retry_safe: true,
+        }
     }
 
     fn reset_run_state(&mut self, use_wall_clock_deadline: bool) {
         self.deferred_incomplete = None;
+        self.escalate_nested_deferred = false;
+        self.stateless_retry_safe = true;
         self.deadline = if use_wall_clock_deadline {
             self.config
                 .timeout
@@ -37,12 +47,22 @@ impl SymbolicExecutor {
 
     /// Defers an incomplete result until all counterexample-producing modeled paths are explored.
     pub(super) fn defer_incomplete(&mut self, reason: &'static str) {
-        self.deferred_incomplete.get_or_insert(DeferredIncomplete::Unsupported(reason));
+        if self
+            .deferred_incomplete
+            .is_none_or(|reason| reason == DeferredIncomplete::HardArithmetic)
+        {
+            self.deferred_incomplete = Some(DeferredIncomplete::Unsupported(reason));
+        }
     }
 
     /// Defers a solver-unknown result while continuing with decidable sibling paths.
     pub(super) fn defer_solver_unknown(&mut self) {
-        self.deferred_incomplete.get_or_insert(DeferredIncomplete::SolverUnknown);
+        if self
+            .deferred_incomplete
+            .is_none_or(|reason| reason == DeferredIncomplete::HardArithmetic)
+        {
+            self.deferred_incomplete = Some(DeferredIncomplete::SolverUnknown);
+        }
     }
 
     /// Defers an incomplete result for a hard-arithmetic branch skipped by nested execution.
@@ -75,9 +95,9 @@ impl SymbolicExecutor {
         }
     }
 
-    /// Returns and clears any deferred incomplete reason.
-    fn take_deferred_incomplete(&mut self) -> Option<(SymbolicStopReason, String)> {
-        match self.deferred_incomplete.take()? {
+    /// Returns any deferred incomplete reason.
+    fn deferred_incomplete(&self) -> Option<(SymbolicStopReason, String)> {
+        match self.deferred_incomplete? {
             DeferredIncomplete::Unsupported(reason) => Some((
                 SymbolicStopReason::Stuck,
                 format!("unsupported symbolic execution feature: {reason}"),
@@ -167,7 +187,7 @@ impl SymbolicExecutor {
     fn execute_run<FEN: FoundryEvmNetwork>(
         &mut self,
         input: SymbolicRunInput<'_, FEN>,
-        branch_candidates: Option<&mut Vec<SymbolicConcreteInput>>,
+        mut branch_candidates: Option<&mut Vec<SymbolicConcreteInput>>,
     ) -> SymbolicRunResult {
         self.reset_run_state(false);
         self.solver.clear_context_caches();
@@ -180,12 +200,51 @@ impl SymbolicExecutor {
             };
         }
 
-        match self.run_inner(input, branch_candidates) {
+        let mut completed_paths = 0;
+        let first =
+            match self.run_inner(&input, branch_candidates.as_deref_mut(), &mut completed_paths) {
+                Ok(result) => result,
+                Err(err) => {
+                    return SymbolicRunResult::Incomplete {
+                        kind: err.stop_reason(),
+                        reason: err.to_string(),
+                        stats: self.stats_with_paths(completed_paths),
+                    };
+                }
+            };
+
+        // Preserve the cheap-path priority of the first pass. Only a deterministic stateless
+        // proof retries once after nested hard arithmetic was its remaining limitation.
+        let retry_nested_deferred = branch_candidates.is_none()
+            && self.stateless_retry_safe
+            && matches!(self.deferred_incomplete, Some(DeferredIncomplete::HardArithmetic))
+            && matches!(
+                &first,
+                SymbolicRunResult::Incomplete {
+                    kind: SymbolicStopReason::RevertAll | SymbolicStopReason::Timeout,
+                    ..
+                }
+            );
+        if !retry_nested_deferred {
+            return first;
+        }
+
+        if let Err(err) = self.check_timeout() {
+            return SymbolicRunResult::Incomplete {
+                kind: err.stop_reason(),
+                reason: err.to_string(),
+                stats: self.stats_with_paths(completed_paths),
+            };
+        }
+
+        self.deferred_incomplete = None;
+        self.escalate_nested_deferred = true;
+        match self.run_inner(&input, None, &mut completed_paths) {
             Ok(result) => result,
             Err(err) => SymbolicRunResult::Incomplete {
                 kind: err.stop_reason(),
                 reason: err.to_string(),
-                stats: self.solver.stats(),
+                stats: self.stats_with_paths(completed_paths),
             },
         }
     }
@@ -276,7 +335,7 @@ impl SymbolicExecutor {
         // Deferred hard-arithmetic branches are now sent to SMT before candidate search finishes.
         // Only branches that nested execution could not escalate remain incomplete.
         if limitation.is_none()
-            && let Some((kind, reason)) = self.take_deferred_incomplete()
+            && let Some((kind, reason)) = self.deferred_incomplete()
         {
             limitation = Some(SymbolicInvariantSearchLimitation { kind, reason });
         }
@@ -286,8 +345,9 @@ impl SymbolicExecutor {
 
     pub(super) fn run_inner<FEN: FoundryEvmNetwork>(
         &mut self,
-        input: SymbolicRunInput<'_, FEN>,
+        input: &SymbolicRunInput<'_, FEN>,
         mut branch_candidates: Option<&mut Vec<SymbolicConcreteInput>>,
+        completed_paths: &mut usize,
     ) -> Result<SymbolicRunResult, SymbolicError> {
         let account = input
             .executor
@@ -322,7 +382,6 @@ impl SymbolicExecutor {
         order_roots_by_corpus_seed_count(&mut roots, self.config.exploration_order);
         let mut worklist = roots.into_iter().collect::<VecDeque<_>>();
         let mut deferred_worklist = VecDeque::new();
-        let mut completed_paths = 0usize;
         let mut reverted_paths = 0usize;
         let mut normal_paths = 0usize;
         let mut success_input = None;
@@ -332,12 +391,15 @@ impl SymbolicExecutor {
         while let Some(mut state) =
             self.pop_next_feasible_path(&mut worklist, &mut deferred_worklist, true)?
         {
-            if completed_paths >= path_limit {
-                debug!(completed_paths, path_limit, "symbolic path limit reached");
+            if *completed_paths >= path_limit {
+                debug!(
+                    completed_paths = *completed_paths,
+                    path_limit, "symbolic path limit reached"
+                );
                 return Ok(SymbolicRunResult::Incomplete {
                     kind: SymbolicStopReason::Stuck,
                     reason: format!("symbolic path limit exceeded ({path_limit})"),
-                    stats: self.stats_with_paths(completed_paths),
+                    stats: self.stats_with_paths(*completed_paths),
                 });
             }
             if std::mem::take(&mut state.pending_storage_hook_revert) {
@@ -346,14 +408,21 @@ impl SymbolicExecutor {
                     input.function,
                     &state,
                 )?;
-                completed_paths += 1;
+                *completed_paths += 1;
                 reverted_paths += 1;
                 continue;
             }
-            let _path_span =
-                trace_span!("symbolic_path", completed_paths, worklist_size = worklist.len())
-                    .entered();
-            trace!(completed_paths, worklist_size = worklist.len(), "exploring symbolic path");
+            let _path_span = trace_span!(
+                "symbolic_path",
+                completed_paths = *completed_paths,
+                worklist_size = worklist.len()
+            )
+            .entered();
+            trace!(
+                completed_paths = *completed_paths,
+                worklist_size = worklist.len(),
+                "exploring symbolic path"
+            );
 
             loop {
                 self.check_timeout()?;
@@ -362,7 +431,7 @@ impl SymbolicExecutor {
                     return Ok(SymbolicRunResult::Incomplete {
                         kind: SymbolicStopReason::Stuck,
                         reason: format!("symbolic depth limit exceeded ({depth_limit})"),
-                        stats: self.stats_with_paths(completed_paths),
+                        stats: self.stats_with_paths(*completed_paths),
                     });
                 }
                 state.depth += 1;
@@ -378,13 +447,13 @@ impl SymbolicExecutor {
                                 &state,
                             )?
                         else {
-                            completed_paths += 1;
+                            *completed_paths += 1;
                             break;
                         };
                         return Ok(SymbolicRunResult::Counterexample {
                             args,
                             calldata: calldata_bytes,
-                            stats: self.stats_with_paths(completed_paths + 1),
+                            stats: self.stats_with_paths(*completed_paths + 1),
                         });
                     }
                     let candidate = self.collect_branch_candidate(
@@ -409,7 +478,7 @@ impl SymbolicExecutor {
                         };
                         success_input = Some((state.depth, input));
                     }
-                    completed_paths += 1;
+                    *completed_paths += 1;
                     break;
                 };
 
@@ -420,7 +489,7 @@ impl SymbolicExecutor {
                     code.jump_table(),
                     &mut state,
                     &mut worklist,
-                    &mut completed_paths,
+                    completed_paths,
                     op,
                 )? {
                     StepOutcome::Continue => {}
@@ -435,13 +504,13 @@ impl SymbolicExecutor {
                                     &state,
                                 )?
                             else {
-                                completed_paths += 1;
+                                *completed_paths += 1;
                                 break;
                             };
                             return Ok(SymbolicRunResult::Counterexample {
                                 args,
                                 calldata: calldata_bytes,
-                                stats: self.stats_with_paths(completed_paths + 1),
+                                stats: self.stats_with_paths(*completed_paths + 1),
                             });
                         }
                         let candidate = self.collect_branch_candidate(
@@ -466,7 +535,7 @@ impl SymbolicExecutor {
                             };
                             success_input = Some((state.depth, input));
                         }
-                        completed_paths += 1;
+                        *completed_paths += 1;
                         normal_paths += 1;
                         break;
                     }
@@ -476,7 +545,7 @@ impl SymbolicExecutor {
                             input.function,
                             &state,
                         )?;
-                        completed_paths += 1;
+                        *completed_paths += 1;
                         reverted_paths += 1;
                         break;
                     }
@@ -492,13 +561,13 @@ impl SymbolicExecutor {
                                 &state,
                             )?
                         else {
-                            completed_paths += 1;
+                            *completed_paths += 1;
                             break;
                         };
                         return Ok(SymbolicRunResult::Counterexample {
                             args,
                             calldata: calldata_bytes,
-                            stats: self.stats_with_paths(completed_paths + 1),
+                            stats: self.stats_with_paths(*completed_paths + 1),
                         });
                     }
                 }
@@ -506,25 +575,25 @@ impl SymbolicExecutor {
         }
 
         if normal_paths == 0 && reverted_paths > 0 {
-            debug!(completed_paths, "all symbolic paths reverted");
+            debug!(completed_paths = *completed_paths, "all symbolic paths reverted");
             return Ok(SymbolicRunResult::Incomplete {
                 kind: SymbolicStopReason::RevertAll,
                 reason: "all symbolic paths reverted".to_string(),
-                stats: self.stats_with_paths(completed_paths),
+                stats: self.stats_with_paths(*completed_paths),
             });
         }
 
-        if let Some((kind, reason)) = self.take_deferred_incomplete() {
+        if let Some((kind, reason)) = self.deferred_incomplete() {
             return Ok(SymbolicRunResult::Incomplete {
                 kind,
                 reason,
-                stats: self.stats_with_paths(completed_paths),
+                stats: self.stats_with_paths(*completed_paths),
             });
         }
 
-        debug!(completed_paths, "symbolic execution safe");
+        debug!(completed_paths = *completed_paths, "symbolic execution safe");
         Ok(SymbolicRunResult::Safe {
-            stats: self.stats_with_paths(completed_paths),
+            stats: self.stats_with_paths(*completed_paths),
             success_input: success_input.map(|(_, input)| input),
         })
     }
@@ -847,7 +916,7 @@ impl SymbolicExecutor {
             frontier = next_frontier;
         }
 
-        if let Some((kind, reason)) = self.take_deferred_incomplete() {
+        if let Some((kind, reason)) = self.deferred_incomplete() {
             return Ok(SymbolicInvariantRunResult::Incomplete {
                 kind,
                 reason,
@@ -908,5 +977,27 @@ mod tests {
 
         executor.reset_run_state(true);
         assert!(executor.deadline.is_some());
+    }
+
+    #[test]
+    fn hard_arithmetic_never_masks_a_specific_incomplete_reason() {
+        let mut executor = SymbolicExecutor::new(SymbolicConfig::default());
+
+        executor.defer_hard_arithmetic();
+        executor.defer_solver_unknown();
+        assert_eq!(executor.deferred_incomplete, Some(DeferredIncomplete::SolverUnknown));
+
+        executor.reset_run_state(false);
+        executor.defer_hard_arithmetic();
+        executor.defer_incomplete("unsupported after hard arithmetic");
+        assert_eq!(
+            executor.deferred_incomplete,
+            Some(DeferredIncomplete::Unsupported("unsupported after hard arithmetic"))
+        );
+
+        executor.reset_run_state(false);
+        executor.defer_solver_unknown();
+        executor.defer_hard_arithmetic();
+        assert_eq!(executor.deferred_incomplete, Some(DeferredIncomplete::SolverUnknown));
     }
 }

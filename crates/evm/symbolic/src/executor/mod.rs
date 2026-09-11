@@ -221,7 +221,7 @@ impl SymbolicExecutor {
             let Some(mut state) = self.pop_next_feasible_path(
                 worklist,
                 deferred_worklist,
-                matches!(kind, CallPathKind::Sequence),
+                matches!(kind, CallPathKind::Sequence) || self.escalate_nested_deferred,
             )?
             else {
                 break;
