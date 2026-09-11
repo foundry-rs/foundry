@@ -146,6 +146,67 @@ fn trailing_line_comment_separates_following_comment() {
     );
 }
 
+#[test]
+fn for_initializer_leading_comment_is_idempotent() {
+    let source = r#"contract C {
+    function f() external {
+        for (
+            /* lead
+            detail */ uint i = 0; i < 1; ++i
+        ) {}
+    }
+}
+"#;
+    let expected = r#"contract C {
+    function f() external {
+        for (
+            /* lead
+            detail */
+            uint256 i = 0;
+            i < 1;
+            ++i
+        ) {}
+    }
+}
+"#;
+
+    assert_eq!(
+        format(source, Path::new("test.sol"), Arc::new(FormatterConfig::default())),
+        expected
+    );
+}
+
+#[test]
+fn for_initializer_comment_run_is_idempotent() {
+    let source = r#"contract C {
+    function f() external {
+        for (uint i = 0 /* detail
+        more */; // after init
+        i < 1; ++i) {}
+    }
+}
+"#;
+    let expected = r#"contract C {
+    function f() external {
+        for (
+            uint256 i = 0;
+
+            /* detail
+            more */
+            // after init
+            i < 1;
+            ++i
+        ) {}
+    }
+}
+"#;
+
+    assert_eq!(
+        format(source, Path::new("test.sol"), Arc::new(FormatterConfig::default())),
+        expected
+    );
+}
+
 fn tests_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata")
 }
