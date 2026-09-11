@@ -291,7 +291,7 @@ fn deploy_and_verify_on_chain(
 
     let mut args = vec![
         "--chain-id".to_string(),
-        info.chain.id().to_string(),
+        (info.chain as u64).to_string(),
         address,
         contract_path.to_string(),
         "--watch".to_string(),
@@ -360,7 +360,7 @@ forgetest!(can_verify_contract_sepolia_etherscan_also_runs_sourcify, |prj, cmd| 
             .root_arg()
             .args([
                 "--chain-id",
-                &info.chain.to_string(),
+                info.chain.as_ref(),
                 &address,
                 contract_path,
                 "--etherscan-api-key",
@@ -497,7 +497,7 @@ macro_rules! deploy_verify_tests {
 }
 
 deploy_verify_tests! {
-    deploy_verify_hyperevm_testnet_sourcify: 998u64, "hyperevm-testnet", "sourcify", None;
+    deploy_verify_hyperevm_testnet_sourcify: NamedChain::HyperliquidTestnet, "hyperevm-testnet", "sourcify", None;
 
     deploy_verify_hoodi_etherscan: NamedChain::Hoodi, "hoodi", "etherscan", None;
     deploy_verify_hoodi_sourcify: NamedChain::Hoodi, "hoodi", "sourcify", None;
