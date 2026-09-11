@@ -229,7 +229,7 @@ sol! {
 #[cfg(test)]
 mod tests {
     use crate::{CallTrace, CallTraceDecoderBuilder};
-    use alloy_primitives::{Address, B256, U256};
+    use alloy_primitives::{Address, B256, Bytes, U256};
     use alloy_sol_types::{SolCall, SolEnum, SolError, SolEvent, SolInterface};
     use base_common_precompiles::{
         self as canonical, ActivationRegistryStorage, B20FactoryStorage, NonceManagerStorage,
@@ -279,7 +279,7 @@ mod tests {
         let create = super::IB20Factory::createB20Call {
             variant: super::IB20Factory::B20Variant::ASSET,
             salt: B256::repeat_byte(0x33),
-            params: alloy_primitives::Bytes::new(),
+            params: Bytes::new(),
             initCalls: Vec::new(),
         };
         let trace = CallTrace {

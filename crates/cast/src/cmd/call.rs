@@ -63,6 +63,9 @@ use foundry_evm_networks::NetworkConfigs;
 use foundry_wallets::{BrowserWalletOpts, WalletOpts};
 use std::str::FromStr;
 
+#[cfg(feature = "base")]
+use foundry_evm::core::evm::BaseEvmNetwork;
+
 #[cfg(feature = "monad")]
 use foundry_evm::core::evm::MonadEvmNetwork;
 
@@ -294,11 +297,11 @@ impl CallArgs {
         if evm_opts.networks.is_base() {
             super::validate_base_transaction_options(&self.tx)?;
             return self
-                .run_with_network_and_opts::<foundry_evm::core::evm::BaseEvmNetwork>(
+                .run_with_network_and_opts::<BaseEvmNetwork>(
                     config,
                     evm_opts,
                     auth_preflight,
-                    ExecutorBuilder::<foundry_evm::core::evm::BaseEvmNetwork>::new(),
+                    ExecutorBuilder::<BaseEvmNetwork>::new(),
                 )
                 .await;
         }

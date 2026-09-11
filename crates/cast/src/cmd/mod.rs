@@ -187,6 +187,11 @@ pub(crate) fn validate_base_transaction_options(
 mod tests {
     use super::*;
 
+    #[cfg(feature = "base")]
+    use alloy_chains::NamedChain;
+    #[cfg(feature = "base")]
+    use foundry_config::Chain;
+
     #[cfg(feature = "monad")]
     #[test]
     fn normalized_hardfork_network_is_applied_to_evm_opts() {
@@ -207,10 +212,8 @@ mod tests {
     #[cfg(feature = "base")]
     #[tokio::test]
     async fn resolve_network_infers_base_from_chain_id() {
-        let config = Config {
-            chain: Some(foundry_config::Chain::from_named(alloy_chains::NamedChain::Base)),
-            ..Default::default()
-        };
+        let config =
+            Config { chain: Some(Chain::from_named(NamedChain::Base)), ..Default::default() };
         assert_eq!(resolve_network(&config).await.unwrap(), NetworkVariant::Base);
     }
 

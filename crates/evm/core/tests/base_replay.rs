@@ -6,6 +6,7 @@ use alloy_eips::eip2718::{Decodable2718, Encodable2718};
 use alloy_evm::{Evm, EvmEnv, FromRecoveredTx};
 use alloy_network::{AnyRpcTransaction, AnyTxEnvelope, UnknownTxEnvelope};
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, hex};
+use alloy_rpc_types::Transaction as RpcTransaction;
 use alloy_serde::WithOtherFields;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
@@ -16,7 +17,7 @@ use base_common_evm::{
     BaseEvmFactory, BaseHaltReason, BaseSpecId, BaseTransaction, BaseUpgrade, Eip8130ExecutionMode,
     L1BlockInfo,
 };
-use base_common_rpc_types::Transaction as BaseRpcTransaction;
+use base_common_rpc_types::Transaction;
 use foundry_evm_core::{
     FoundryBlock, FoundryTransaction, FromAnyRpcTransaction,
     backend::Backend,
@@ -444,7 +445,7 @@ fn converts_eip8130_from_any_rpc_transaction() {
     let signer = PrivateKeySigner::from_bytes(&B256::with_last_byte(2)).unwrap();
     let (envelope, expected) = eip8130_transaction(&signer);
     let hash = *envelope.tx_hash();
-    let rpc_tx = BaseRpcTransaction::from_transaction(
+    let rpc_tx = Transaction::from_transaction(
         Recovered::new_unchecked(envelope, signer.address()),
         BaseTransactionInfo::default(),
     );
@@ -454,7 +455,7 @@ fn converts_eip8130_from_any_rpc_transaction() {
         .unwrap()
         .insert("hash".to_string(), serde_json::to_value(hash).unwrap());
     let unknown = serde_json::from_value::<UnknownTxEnvelope>(rpc_value).unwrap();
-    let any_tx = alloy_rpc_types::Transaction::from_transaction(
+    let any_tx = RpcTransaction::from_transaction(
         Recovered::new_unchecked(AnyTxEnvelope::Unknown(unknown), signer.address()),
         Default::default(),
     );

@@ -58,6 +58,9 @@ use foundry_evm_networks::NetworkConfigs;
 use futures::TryFutureExt;
 use revm::{DatabaseRef, context::Block, primitives::hardfork::SpecId};
 
+#[cfg(feature = "base")]
+use foundry_evm::core::evm::BaseEvmNetwork;
+
 #[cfg(feature = "monad")]
 use foundry_evm::core::evm::{BlockContext, ChainFor, MonadEvmNetwork};
 
@@ -230,11 +233,7 @@ impl RunArgs {
         #[cfg(feature = "base")]
         if evm_opts.networks.is_base() {
             return self
-                .run_with_evm(
-                    config,
-                    evm_opts,
-                    ExecutorBuilder::<foundry_evm::core::evm::BaseEvmNetwork>::new(),
-                )
+                .run_with_evm(config, evm_opts, ExecutorBuilder::<BaseEvmNetwork>::new())
                 .await;
         }
 

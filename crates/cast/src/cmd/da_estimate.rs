@@ -12,7 +12,7 @@ use foundry_config::Config;
 use foundry_evm_networks::NetworkVariant;
 
 #[cfg(feature = "base")]
-use base_common_network::Base as BaseNetwork;
+use base_common_network::Base;
 
 #[cfg(feature = "optimism")]
 use op_alloy_network::Optimism;
@@ -39,7 +39,7 @@ impl DAEstimateArgs {
         };
         match network {
             #[cfg(feature = "base")]
-            NetworkVariant::Base => da_estimate::<BaseNetwork>(&config, block).await,
+            NetworkVariant::Base => da_estimate::<Base>(&config, block).await,
             #[cfg(feature = "optimism")]
             NetworkVariant::Optimism => da_estimate::<Optimism>(&config, block).await,
             NetworkVariant::Ethereum => da_estimate::<Ethereum>(&config, block).await,

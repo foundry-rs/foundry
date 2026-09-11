@@ -67,6 +67,9 @@ use foundry_wallets::MultiWalletOpts;
 use serde::Serialize;
 use std::path::PathBuf;
 
+#[cfg(feature = "base")]
+use foundry_evm::core::evm::BaseEvmNetwork;
+
 #[cfg(feature = "monad")]
 use foundry_evm::core::evm::MonadEvmNetwork;
 
@@ -439,10 +442,10 @@ impl ScriptArgs {
 
         #[cfg(feature = "base")]
         if evm_opts.networks.is_base() {
-            return Box::pin(self.run_generic_script::<foundry_evm::core::evm::BaseEvmNetwork>(
+            return Box::pin(self.run_generic_script::<BaseEvmNetwork>(
                 config,
                 evm_opts,
-                ExecutorBuilder::<foundry_evm::core::evm::BaseEvmNetwork>::new(),
+                ExecutorBuilder::<BaseEvmNetwork>::new(),
             ))
             .await;
         }

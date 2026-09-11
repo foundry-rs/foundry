@@ -223,8 +223,7 @@ use base_common_consensus::{
 };
 #[cfg(feature = "base")]
 use base_common_evm::{
-    BaseContext, BaseEvmFactory, BaseSpecId, BaseTransaction,
-    DEPOSIT_TRANSACTION_TYPE as BASE_DEPOSIT_TRANSACTION_TYPE,
+    BaseContext, BaseEvmFactory, BaseSpecId, BaseTransaction, DEPOSIT_TRANSACTION_TYPE,
     DepositTransactionParts as BaseDepositTransactionParts, EIP8130_TRANSACTION_TYPE,
     Eip8130PhaseStatuses, L1BlockInfo, ensure_create2_deployer, ensure_eip8130_system_accounts,
 };
@@ -238,7 +237,10 @@ use base_common_rpc_types::{
 #[cfg(feature = "base")]
 use base_execution_eip8130::{FeeCheck, IntrinsicGas, IntrinsicGasInput};
 #[cfg(feature = "base")]
-use foundry_evm::{core::constants::SYSTEM_PRECOMPILE_STUB, hardfork::BaseUpgrade};
+use foundry_evm::{
+    core::{constants::SYSTEM_PRECOMPILE_STUB, evm::base_code_sentinel_addresses},
+    hardfork::BaseUpgrade,
+};
 #[cfg(feature = "base")]
 use revm::inspector::NoOpInspector;
 
@@ -681,7 +683,7 @@ impl CallTxEnv {
             #[cfg(feature = "base")]
             Self::Base(tx) => {
                 tx.eip8130.is_none()
-                    && tx.base.tx_type != BASE_DEPOSIT_TRANSACTION_TYPE
+                    && tx.base.tx_type != DEPOSIT_TRANSACTION_TYPE
                     && matches!(tx.base.kind, TxKind::Call(_))
             }
             #[cfg(feature = "monad")]
@@ -3202,7 +3204,7 @@ impl<N: Network> Backend<N> {
         #[cfg(feature = "base")]
         if self.is_base() {
             let mut base_tx = BaseTransaction::new(tx_env);
-            if base_tx.base.tx_type == BASE_DEPOSIT_TRANSACTION_TYPE {
+            if base_tx.base.tx_type == DEPOSIT_TRANSACTION_TYPE {
                 let deposit = &transaction_info.deposit;
                 base_tx.deposit = BaseDepositTransactionParts::new(
                     deposit.source_hash,
@@ -4529,9 +4531,7 @@ impl<N: Network> Backend<N> {
             // Give the installed Base precompiles a sentinel byte so Solidity's `extcodesize`
             // check on high-level calls to functions without return data does not revert in the
             // caller. `ensure_eip8130_system_accounts` only covers the Zenith nonce manager.
-            for address in
-                foundry_evm::core::evm::base_code_sentinel_addresses(BaseSpecId::new(upgrade))
-            {
+            for address in base_code_sentinel_addresses(BaseSpecId::new(upgrade)) {
                 let mut account = erased.basic(address)?.unwrap_or_default();
                 if account.code.as_ref().is_none_or(|code| code.is_empty()) {
                     let code = revm::state::Bytecode::new_legacy(Bytes::from_static(

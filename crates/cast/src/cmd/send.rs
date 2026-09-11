@@ -35,7 +35,7 @@ use url::Url;
 #[cfg(feature = "base")]
 use crate::cmd::resolve_network;
 #[cfg(feature = "base")]
-use base_common_network::Base as BaseNetwork;
+use base_common_network::Base;
 
 /// CLI arguments for `cast send`.
 #[derive(Debug, Parser)]
@@ -148,7 +148,7 @@ impl SendTxArgs {
         #[cfg(feature = "base")]
         if resolve_network(&self.send_tx.eth.load_config()?).await?.is_base() {
             super::validate_base_transaction_options(&self.tx)?;
-            return self.run_generic::<BaseNetwork>(signer, None).await;
+            return self.run_generic::<Base>(signer, None).await;
         }
 
         self.run_generic::<Ethereum>(signer, None).await

@@ -59,6 +59,9 @@ use std::{
 use tempo_alloy::TempoNetwork;
 use tempo_contracts::precompiles::{ITIP20ChannelReserve, TIP20_CHANNEL_RESERVE_ADDRESS};
 
+#[cfg(feature = "base")]
+use base_common_network::Base as BaseNetwork;
+
 #[cfg(feature = "optimism")]
 use op_alloy_network::Optimism;
 
@@ -77,7 +80,7 @@ macro_rules! with_network_provider {
         match $network {
             #[cfg(feature = "base")]
             Some(NetworkVariant::Base) => {
-                let $provider = ProviderBuilder::<base_common_network::Base>::from_config($config)?.build()?;
+                let $provider = ProviderBuilder::<BaseNetwork>::from_config($config)?.build()?;
                 $body
             }
             #[cfg(feature = "optimism")]
@@ -1268,9 +1271,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 Some(NetworkVariant::Optimism) => decode_raw_transaction::<Optimism>(&tx)?,
                 Some(NetworkVariant::Tempo) => decode_raw_transaction::<TempoNetwork>(&tx)?,
                 #[cfg(feature = "base")]
-                Some(NetworkVariant::Base) => {
-                    decode_raw_transaction::<base_common_network::Base>(&tx)?
-                }
+                Some(NetworkVariant::Base) => decode_raw_transaction::<BaseNetwork>(&tx)?,
                 Some(NetworkVariant::Ethereum) => decode_raw_transaction::<Ethereum>(&tx)?,
                 #[cfg(feature = "monad")]
                 Some(NetworkVariant::Monad) => decode_raw_transaction::<Ethereum>(&tx)?,

@@ -129,9 +129,11 @@ use tokio::{
 #[cfg(feature = "base")]
 use base_common_consensus::Eip8130Constants;
 #[cfg(feature = "base")]
+use base_common_evm::EIP8130_TRANSACTION_TYPE;
+#[cfg(feature = "base")]
 use base_common_precompiles::NonceManagerStorage;
 #[cfg(feature = "base")]
-use base_common_rpc_types::Eip8130Nonce;
+use base_common_rpc_types::{BaseTransactionRequest, Eip8130Nonce};
 #[cfg(feature = "base")]
 use base_execution_eip8130::{FeeCheck, IntrinsicGas};
 
@@ -364,7 +366,7 @@ impl<N: Network> EthApi<N> {
     #[cfg(feature = "base")]
     fn invalidate_base_eip8130_pool(&self) {
         if self.backend.is_base() {
-            let _ = self.pool.clear_transaction_type(base_common_evm::EIP8130_TRANSACTION_TYPE);
+            let _ = self.pool.clear_transaction_type(EIP8130_TRANSACTION_TYPE);
         }
     }
 
@@ -3342,7 +3344,7 @@ impl EthApi<FoundryNetwork> {
         #[cfg(feature = "base")]
         if self.backend.is_base()
             && serde_json::to_value(&request)
-                .and_then(serde_json::from_value::<base_common_rpc_types::BaseTransactionRequest>)
+                .and_then(serde_json::from_value::<BaseTransactionRequest>)
                 .is_ok_and(|request| request.as_eip8130().is_some())
         {
             let timestamp = self.backend.block_request_timestamp(&block_request).await?;
@@ -3572,7 +3574,7 @@ impl EthApi<FoundryNetwork> {
         #[cfg(feature = "base")]
         if self.backend.is_base()
             && serde_json::to_value(&request)
-                .and_then(serde_json::from_value::<base_common_rpc_types::BaseTransactionRequest>)
+                .and_then(serde_json::from_value::<BaseTransactionRequest>)
                 .is_ok_and(|request| request.as_eip8130().is_some())
         {
             let timestamp = self.backend.block_request_timestamp(&block_request).await?;

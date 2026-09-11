@@ -3,6 +3,9 @@
 use super::*;
 
 #[cfg(feature = "base")]
+use alloy_consensus::{TxEip1559, TypedTransaction};
+
+#[cfg(feature = "base")]
 casttest!(cast_call_trace_selects_base_network, async |prj, cmd| {
     prj.update_config(|config| {
         config.networks = foundry_evm_networks::NetworkConfigs::with_base();
@@ -146,10 +149,10 @@ casttest!(cast_base_transaction_roundtrip, async |prj, cmd| {
         .get_output()
         .stdout_lossy();
     let bytes = hex::decode(encoded.trim()).unwrap();
-    let tx = alloy_consensus::TypedTransaction::decode_unsigned(&mut bytes.as_slice()).unwrap();
+    let tx = TypedTransaction::decode_unsigned(&mut bytes.as_slice()).unwrap();
     assert_eq!(
         tx,
-        alloy_consensus::TypedTransaction::Eip1559(alloy_consensus::TxEip1559 {
+        TypedTransaction::Eip1559(TxEip1559 {
             chain_id: 8453,
             nonce: 7,
             gas_limit: 21000,

@@ -93,6 +93,9 @@ use std::{
 use tempfile::TempDir;
 use yansi::Paint;
 
+#[cfg(feature = "base")]
+use foundry_evm::core::evm::BaseEvmNetwork;
+
 #[cfg(feature = "monad")]
 use foundry_evm::core::evm::MonadEvmNetwork;
 
@@ -253,7 +256,7 @@ macro_rules! dispatch_network {
         match network_dispatch_kind($evm_opts) {
             #[cfg(feature = "base")]
             NetworkDispatchKind::Base => {
-                type $fen = foundry_evm::core::evm::BaseEvmNetwork;
+                type $fen = BaseEvmNetwork;
                 $body
             }
             NetworkDispatchKind::Tempo => {

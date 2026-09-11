@@ -17,6 +17,9 @@ use rustyline::{Editor, config::Configurer, error::ReadlineError};
 use std::{ops::ControlFlow, path::PathBuf};
 use yansi::Paint;
 
+#[cfg(feature = "base")]
+use foundry_evm::core::evm::BaseEvmNetwork;
+
 #[cfg(feature = "monad")]
 use foundry_evm::core::evm::MonadEvmNetwork;
 
@@ -78,11 +81,11 @@ pub async fn run_command(args: Chisel) -> Result<()> {
 
     #[cfg(feature = "base")]
     if evm_opts.networks.is_base() {
-        return Box::pin(run_command_with_network::<foundry_evm::core::evm::BaseEvmNetwork>(
+        return Box::pin(run_command_with_network::<BaseEvmNetwork>(
             args,
             config,
             evm_opts,
-            ExecutorBuilder::<foundry_evm::core::evm::BaseEvmNetwork>::new(),
+            ExecutorBuilder::<BaseEvmNetwork>::new(),
             local_networks,
             local_chain_id,
         ))

@@ -19,7 +19,7 @@ use tempo_alloy::TempoNetwork;
 #[cfg(feature = "base")]
 use crate::cmd::resolve_network;
 #[cfg(feature = "base")]
-use base_common_network::Base as BaseNetwork;
+use base_common_network::Base;
 
 /// CLI arguments for `cast estimate`.
 #[derive(Debug, Parser)]
@@ -101,7 +101,7 @@ impl EstimateArgs {
         #[cfg(feature = "base")]
         if resolve_network(&self.rpc.load_config()?).await?.is_base() {
             super::validate_base_transaction_options(&self.tx)?;
-            return self.run_with_network::<BaseNetwork>().await;
+            return self.run_with_network::<Base>().await;
         }
 
         self.run_with_network::<Ethereum>().await

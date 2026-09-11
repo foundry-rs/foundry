@@ -28,7 +28,7 @@ use base_common_consensus::{BaseTxEnvelope, Eip8130Signed, TxEip8130};
 #[cfg(feature = "base")]
 use base_common_evm::EIP8130_TRANSACTION_TYPE;
 #[cfg(feature = "base")]
-use base_common_rpc_types::Transaction as BaseRpcTransaction;
+use base_common_rpc_types::Transaction;
 
 #[cfg(feature = "optimism")]
 use alloy_consensus::Transaction as _;
@@ -407,7 +407,7 @@ impl TryFrom<AnyRpcTransaction> for FoundryTxEnvelope {
     fn try_from(value: AnyRpcTransaction) -> Result<Self, Self::Error> {
         #[cfg(feature = "base")]
         if value.ty() == EIP8130_TRANSACTION_TYPE {
-            let rpc = serde_json::from_value::<BaseRpcTransaction>(
+            let rpc = serde_json::from_value::<Transaction>(
                 serde_json::to_value(&value)
                     .map_err(|err| ConversionError::Custom(err.to_string()))?,
             )

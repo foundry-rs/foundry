@@ -11,6 +11,8 @@ use tempo_primitives::TEMPO_TX_TYPE_ID;
 use super::optimism::build_deposit_receipt_envelope;
 
 #[cfg(feature = "base")]
+use alloy_consensus::ReceiptWithBloom;
+#[cfg(feature = "base")]
 use base_common_consensus::Eip8130Receipt;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, AsRef)]
@@ -153,7 +155,7 @@ impl TryFrom<AnyTransactionReceipt> for FoundryTxReceipt {
                     0x03 => FoundryReceiptEnvelope::Eip4844(receipt_with_bloom),
                     0x04 => FoundryReceiptEnvelope::Eip7702(receipt_with_bloom),
                     #[cfg(feature = "base")]
-                    0x79 => FoundryReceiptEnvelope::Eip8130(alloy_consensus::ReceiptWithBloom {
+                    0x79 => FoundryReceiptEnvelope::Eip8130(ReceiptWithBloom {
                         receipt: Eip8130Receipt::new(receipt_with_bloom.receipt, Vec::new()),
                         logs_bloom: receipt_with_bloom.logs_bloom,
                     }),
