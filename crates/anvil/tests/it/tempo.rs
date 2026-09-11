@@ -52,13 +52,14 @@ use tempo_precompiles::{
     current_committee::{CURRENT_COMMITTEE_ADDRESS, ICurrentCommittee},
     nonce::NonceManager,
     receive_policy_guard::{IReceivePolicyGuard, InboundKind},
+    tip_fee_manager::IFeeManager,
     tip403_registry::{ALLOW_ALL_POLICY_ID, ITIP403Registry, REJECT_ALL_POLICY_ID},
 };
 use tempo_primitives::{
     AASigned, TempoHeader, TempoSignature, TempoTransaction,
     transaction::{
         Call, FEE_PAYER_SIGNATURE_MARKER, KeyAuthorization, KeychainSignature, PrimitiveSignature,
-        SignatureType, TokenLimit,
+        SignatureType, TEMPO_GAS_PRICE_SCALING_FACTOR, TokenLimit, calc_gas_balance_spending,
     },
 };
 
@@ -1921,6 +1922,181 @@ async fn test_tempo_eip1559_sender_without_native_balance_pays_gas_in_fee_token(
     let receipt = provider.send_raw_transaction(&raw).await.unwrap().get_receipt().await.unwrap();
     assert!(receipt.status());
     assert_eq!(IERC20::new(PATH_USD, &provider).balanceOf(recipient).call().await.unwrap(), amount);
+}
+
+/// The pool admits a Tempo transaction only once the fee payer can cover the maximum fee,
+/// rounded up to a whole fee token unit like the execution precharge: one unit short is rejected,
+/// the exact amount is admitted and mined.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_pool_requires_max_fee_rounded_up_in_fee_token() {
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+
+    let signer = PrivateKeySigner::random();
+    let sender = signer.address();
+    let chain_id = provider.get_chain_id().await.unwrap();
+    let gas_price = provider.get_gas_price().await.unwrap();
+
+    // An odd gas limit keeps the fee from being a whole number of fee token units; a fresh
+    // account's first transaction also pays Tempo's new account cost.
+    let gas_limit = 1_000_001;
+    let max_fee_per_gas = gas_price * 2;
+    let required = calc_gas_balance_spending(gas_limit, max_fee_per_gas);
+    assert_ne!(
+        required * TEMPO_GAS_PRICE_SCALING_FACTOR,
+        U256::from(gas_limit) * U256::from(max_fee_per_gas),
+        "the fee must round up for the boundary to matter"
+    );
+
+    let tx = TxEip1559 {
+        chain_id,
+        nonce: 0,
+        gas_limit,
+        max_fee_per_gas,
+        max_priority_fee_per_gas: gas_price / 10,
+        to: TxKind::Call(Address::random()),
+        ..Default::default()
+    };
+    let signature = signer.sign_hash(&tx.signature_hash()).await.unwrap();
+    let raw = FoundryTxEnvelope::Eip1559(tx.into_signed(signature)).encoded_2718();
+
+    api.anvil_deal_tip20(sender, PATH_USD, required - U256::from(1)).await.unwrap();
+    let err = provider.send_raw_transaction(&raw).await.unwrap_err();
+    assert!(err.to_string().contains("insufficient fee token balance"), "unexpected error: {err}");
+
+    api.anvil_deal_tip20(sender, PATH_USD, required).await.unwrap();
+    let receipt = provider.send_raw_transaction(&raw).await.unwrap().get_receipt().await.unwrap();
+    assert!(receipt.status());
+}
+
+/// Signs `tx` with `signer` and returns its raw EIP-2718 encoding.
+async fn sign_eip1559(signer: &PrivateKeySigner, tx: TxEip1559) -> Vec<u8> {
+    let signature = signer.sign_hash(&tx.signature_hash()).await.unwrap();
+    FoundryTxEnvelope::Eip1559(tx.into_signed(signature)).encoded_2718()
+}
+
+/// The pool resolves the fee token like execution does: a sender holding only AlphaUSD that
+/// transfers AlphaUSD pays its fee in AlphaUSD, without any pathUSD or stored preference.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_pool_infers_fee_token_from_tip20_call() {
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+
+    let signer = PrivateKeySigner::random();
+    let sender = signer.address();
+    let recipient = Address::random();
+    let chain_id = provider.get_chain_id().await.unwrap();
+    let gas_price = provider.get_gas_price().await.unwrap();
+    let amount = U256::from(1_000_000);
+    api.anvil_deal_tip20(sender, ALPHA_USD, U256::from(10_000_000)).await.unwrap();
+
+    let tx = TxEip1559 {
+        chain_id,
+        nonce: 0,
+        gas_limit: TIP20_TRANSFER_GAS,
+        max_fee_per_gas: gas_price * 2,
+        max_priority_fee_per_gas: gas_price / 10,
+        to: TxKind::Call(ALPHA_USD),
+        input: IERC20::transferCall { to: recipient, amount }.abi_encode().into(),
+        ..Default::default()
+    };
+    let raw = sign_eip1559(&signer, tx).await;
+    let receipt = provider.send_raw_transaction(&raw).await.unwrap().get_receipt().await.unwrap();
+    assert!(receipt.status());
+
+    let alpha = IERC20::new(ALPHA_USD, &provider);
+    assert_eq!(alpha.balanceOf(recipient).call().await.unwrap(), amount);
+    assert!(
+        alpha.balanceOf(sender).call().await.unwrap() < U256::from(10_000_000) - amount,
+        "the fee was not paid in AlphaUSD"
+    );
+    assert_eq!(
+        IERC20::new(PATH_USD, &provider).balanceOf(sender).call().await.unwrap(),
+        U256::ZERO
+    );
+}
+
+/// A transaction that sets the sender's fee token preference pays its own fee in the token it
+/// sets, so the pool must resolve that token immediately instead of the stored preference.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_pool_uses_fee_token_set_by_the_transaction() {
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+
+    let signer = PrivateKeySigner::random();
+    let sender = signer.address();
+    let chain_id = provider.get_chain_id().await.unwrap();
+    let gas_price = provider.get_gas_price().await.unwrap();
+    api.anvil_deal_tip20(sender, ALPHA_USD, U256::from(10_000_000)).await.unwrap();
+
+    let tx = TxEip1559 {
+        chain_id,
+        nonce: 0,
+        gas_limit: TIP20_TRANSFER_GAS,
+        max_fee_per_gas: gas_price * 2,
+        max_priority_fee_per_gas: gas_price / 10,
+        to: TxKind::Call(TIP_FEE_MANAGER_ADDRESS),
+        input: IFeeManager::setUserTokenCall { token: ALPHA_USD }.abi_encode().into(),
+        ..Default::default()
+    };
+    let raw = sign_eip1559(&signer, tx).await;
+    let receipt = provider.send_raw_transaction(&raw).await.unwrap().get_receipt().await.unwrap();
+    assert!(receipt.status());
+
+    let fee_manager = IFeeManagerRpc::new(TIP_FEE_MANAGER_ADDRESS, &provider);
+    assert_eq!(fee_manager.userTokens(sender).call().await.unwrap(), ALPHA_USD);
+    assert!(
+        IERC20::new(ALPHA_USD, &provider).balanceOf(sender).call().await.unwrap()
+            < U256::from(10_000_000),
+        "the fee was not paid in AlphaUSD"
+    );
+}
+
+/// With pool balance checks disabled, a sender may spend fee tokens it only receives from an
+/// earlier transaction in the same block, mirroring the Ethereum test in `txpool`.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_accepts_spend_after_funding_when_pool_checks_disabled() {
+    let (api, handle) =
+        spawn(NodeConfig::test_tempo().with_disable_pool_balance_checks(true)).await;
+    let provider = handle.http_provider();
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let funder = provider.get_accounts().await.unwrap().remove(0);
+    let spender = Address::random();
+    api.anvil_impersonate_account(spender).await.unwrap();
+    let token = IERC20::new(PATH_USD, &provider);
+    let gas_price = provider.get_gas_price().await.unwrap();
+
+    // The funding transaction pays more, so it is mined first within the block.
+    let funding = U256::from(5_000_000);
+    let fund = TransactionRequest::default()
+        .with_from(funder)
+        .with_to(PATH_USD)
+        .with_input(token.transfer(spender, funding).calldata().clone())
+        .with_gas_limit(TIP20_TRANSFER_GAS)
+        .with_gas_price(gas_price * 10);
+    let fund_hash = *provider.send_transaction(WithOtherFields::new(fund)).await.unwrap().tx_hash();
+
+    // Without fee tokens the spender would be rejected while balance checks are enabled.
+    let spend = TransactionRequest::default()
+        .with_from(spender)
+        .with_to(PATH_USD)
+        .with_input(token.transfer(funder, U256::from(1_000_000)).calldata().clone())
+        .with_gas_limit(TIP20_TRANSFER_GAS)
+        .with_gas_price(gas_price);
+    let spend_hash =
+        *provider.send_transaction(WithOtherFields::new(spend)).await.unwrap().tx_hash();
+
+    let status = provider.txpool_status().await.unwrap();
+    assert_eq!((status.pending, status.queued), (2, 0));
+
+    api.mine_one().await.unwrap();
+    let block = provider.get_block(BlockId::number(1)).full().await.unwrap().unwrap();
+    assert_eq!(block.transactions.hashes().collect::<Vec<_>>(), vec![fund_hash, spend_hash]);
+    for hash in [fund_hash, spend_hash] {
+        let receipt = provider.get_transaction_receipt(hash).await.unwrap().unwrap();
+        assert!(receipt.status(), "{hash} failed");
+    }
 }
 
 // ============================================================================
