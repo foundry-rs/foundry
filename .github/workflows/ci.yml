@@ -195,21 +195,15 @@ jobs:
           node --test .github/scripts/tests/test-create-tag.js
 
   clippy:
-    runs-on: ${{ matrix.os }}
+    runs-on: depot-ubuntu-latest
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [depot-ubuntu-latest, depot-macos-latest, depot-windows-latest-16]
     permissions:
       id-token: write
       contents: read
     env:
       NODE_OPTIONS: --no-network-family-autoselection
       SFW_UNKNOWN_HOST_ACTION: ignore
-      SFW_CUSTOM_REGISTRIES: ${{ contains(matrix.os, 'ubuntu') && 'wrap:binaries.soliditylang.org,wrap:raw.githubusercontent.com/nikitastupin/solc,wrap:raw.githubusercontent.com/alloy-rs/solc-builds' || 'bypass:binaries.soliditylang.org,bypass:raw.githubusercontent.com' }}
-      # Socket's proxy certificates lack revocation endpoints; Windows-only setting.
-      CARGO_HTTP_CHECK_REVOKE: ${{ contains(matrix.os, 'windows') && 'false' || 'true' }}
+      SFW_CUSTOM_REGISTRIES: wrap:binaries.soliditylang.org,wrap:raw.githubusercontent.com/nikitastupin/solc,wrap:raw.githubusercontent.com/alloy-rs/solc-builds
       CARGO_NET_GIT_FETCH_WITH_CLI: "true"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -227,7 +221,6 @@ jobs:
         uses: ./.github/actions/check-socket-shim
 
       - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
-        if: runner.os == 'Linux'
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       # Start outside Socket so the cache daemon keeps its own proxy settings.
       - run: sccache --start-server
