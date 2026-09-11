@@ -192,7 +192,7 @@ use tempo_precompiles::{
     nonce::NonceManager,
     storage::{Handler, StorageActions, StorageCtx},
     tip_fee_manager::{IFeeManager, TipFeeManager},
-    tip20::{ISSUER_ROLE, ITIP20, TIP20Token},
+    tip20::{ITIP20, TIP20Token},
     tip20_factory::TIP20Factory,
 };
 use tempo_primitives::{
@@ -8687,7 +8687,9 @@ impl Backend<FoundryNetwork> {
             // grant_role_internal bypasses the caller check, matching genesis seeding.
             for &token_address in &[user_token, validator_token] {
                 let mut token = TIP20Token::from_address(token_address).map_err(tempo_db_err)?;
-                token.grant_role_internal(admin, ISSUER_ROLE).map_err(tempo_db_err)?;
+                token
+                    .grant_role_internal(admin, TIP20Token::issuer_role())
+                    .map_err(tempo_db_err)?;
                 token.mint(admin, ITIP20::mintCall { to: admin, amount }).map_err(tempo_db_err)?;
             }
             let mut fee_manager = TipFeeManager::new();

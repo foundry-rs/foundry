@@ -16,7 +16,7 @@ use tempo_hardfork::TempoHardfork;
 use tempo_precompiles::{
     error::TempoPrecompileError,
     storage::{PrecompileStorageProvider, StorageCtx},
-    tip20::{ISSUER_ROLE, ITIP20, TIP20Token},
+    tip20::{ITIP20, TIP20Token},
     tip20_factory::TIP20Factory,
     validator_config,
 };
@@ -229,7 +229,7 @@ fn create_and_mint_token(
     )?;
 
     let mut token = TIP20Token::from_address(token_address)?;
-    token.grant_role_internal(admin, ISSUER_ROLE)?;
+    token.grant_role_internal(admin, TIP20Token::issuer_role())?;
     token.mint(admin, ITIP20::mintCall { to: recipient, amount: mint_amount })?;
     if admin != recipient {
         token.mint(admin, ITIP20::mintCall { to: admin, amount: mint_amount })?;

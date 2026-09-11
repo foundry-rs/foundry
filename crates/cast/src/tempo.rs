@@ -20,6 +20,7 @@ use foundry_common::{
 };
 use foundry_config::{Chain, Config, Eip1559FeeEstimatePreset};
 use foundry_evm::hardfork::TempoHardfork;
+use foundry_evm_networks::NetworkVariant;
 use foundry_wallets::{TempoAccountsWallet, WalletOpts, WalletSigner};
 use serde::Deserialize;
 use serde_json::Value;
@@ -55,6 +56,14 @@ where
     N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
     P: Provider<N>,
 {
+    if tx.gas_price().is_some() {
+        eyre::ensure!(
+            sponsor.is_none() && !tx.is_tempo_aa(),
+            "Tempo transaction options cannot be combined with a legacy transaction"
+        );
+        return Ok(());
+    }
+
     if sponsor.is_some() {
         maybe_attach_sponsor(sponsor, provider, chain, tx, payer).await
     } else {
@@ -271,41 +280,51 @@ pub(crate) fn sponsor_relay_connector<N: Network>(
 /// Accounts store change ordinary Ethereum commands.
 ///
 /// Explicit signer options are resolved with `from` cleared so the store fallback is not consulted.
-/// The fallback is only enabled when a Tempo transaction option is present or the RPC chain is a
-/// known Tempo chain.
+/// The fallback is only enabled after selecting Tempo from transaction options, configuration,
+/// or the RPC chain.
 pub(crate) async fn resolve_transaction_network_and_signer(
     tempo: &TempoOpts,
     eth: &EthereumOpts,
-) -> Result<(bool, Option<WalletSigner>, Option<TempoAccountsWallet>)> {
+) -> Result<(NetworkVariant, Option<WalletSigner>, Option<TempoAccountsWallet>)> {
+    let config = eth.load_config()?;
+    let has_session = tempo.session_id()?.is_some();
+    let requires_tempo = tempo.is_tempo() || has_session;
+    crate::cmd::validate_tempo_network(&config, requires_tempo)?;
+    if has_session {
+        return Ok((NetworkVariant::Tempo, None, None));
+    }
+
     let mut explicit_wallet = eth.wallet.clone();
     explicit_wallet.from = None;
     let (signer, access_key) = explicit_wallet.maybe_signer().await?;
-
-    if access_key.is_some() {
-        return Ok((true, signer, access_key));
+    let network =
+        crate::cmd::resolve_transaction_network(&config, requires_tempo || access_key.is_some())
+            .await?;
+    if let (Some(from), Some(access_key)) = (eth.wallet.from, &access_key) {
+        eyre::ensure!(
+            access_key.account() == from,
+            "sender {from} does not match Tempo account {}",
+            access_key.account()
+        );
+    }
+    if !network.is_tempo() || signer.is_some() || access_key.is_some() || eth.wallet.from.is_none()
+    {
+        return Ok((network, signer, access_key));
     }
 
-    if tempo.is_tempo() {
-        if signer.is_some() || eth.wallet.from.is_none() {
-            return Ok((true, signer, None));
-        }
-        let (signer, access_key) = eth.wallet.maybe_signer().await?;
-        return Ok((true, signer, access_key));
-    }
-
-    if signer.is_some() || eth.wallet.from.is_none() {
-        return Ok((false, signer, None));
-    }
-
-    let config = eth.load_config()?;
+    // Only consult the Accounts store after selecting Tempo.
     let provider = ProviderBuilder::<Ethereum>::from_config(&config)?.build()?;
     let chain = get_chain(config.chain, &provider).await?;
-    if !chain.is_tempo() {
-        return Ok((false, None, None));
-    }
-
     let (signer, access_key) = eth.wallet.maybe_signer_for_chain(chain.id()).await?;
-    Ok((true, signer, access_key))
+    if let Some(access_key) = &access_key {
+        let from = eth.wallet.from.expect("checked above");
+        eyre::ensure!(
+            access_key.account() == from,
+            "sender {from} does not match active Tempo account {}",
+            access_key.account()
+        );
+    }
+    Ok((network, signer, access_key))
 }
 
 /// Fills a Tempo transaction request that was built outside [`crate::tx::CastTxBuilder`] before
@@ -364,6 +383,29 @@ mod tests {
             Some(true)
         );
         assert_eq!(active_from_anvil_node_info(&info("ethereum", "T3"), TempoHardfork::T3), None);
+    }
+
+    #[tokio::test]
+    async fn legacy_fee_payment_skips_stored_token_and_rejects_tempo_fields() {
+        let asserter = Asserter::new();
+        let provider =
+            AlloyProviderBuilder::new().network::<TempoNetwork>().connect_mocked_client(asserter);
+        let payer = Address::repeat_byte(0x11);
+        let chain = Chain::from_id(4217);
+        let mut tx = <TempoNetwork as Network>::TransactionRequest::default();
+        tx.set_gas_price(1);
+
+        apply_fee_payment(None, Some(&provider), chain, &mut tx, payer).await.unwrap();
+        assert!(tx.fee_token().is_none());
+
+        tx.set_fee_token(Address::repeat_byte(0x22));
+        assert_eq!(
+            apply_fee_payment(None, Some(&provider), chain, &mut tx, payer)
+                .await
+                .unwrap_err()
+                .to_string(),
+            "Tempo transaction options cannot be combined with a legacy transaction"
+        );
     }
 
     #[tokio::test]
