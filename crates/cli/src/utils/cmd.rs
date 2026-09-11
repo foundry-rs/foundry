@@ -179,14 +179,14 @@ pub trait LoadConfig {
     }
 
     /// Loads config and installs missing project dependencies.
-    fn load_config_with_dependencies(&self) -> Result<Config, ExtractConfigError> {
+    fn load_config_with_dependencies(&self) -> Result<Config> {
         let mut config = self.load_config()?;
         self.install_missing_dependencies(&mut config)?;
         Ok(config)
     }
 
     /// Installs missing dependencies, reloading config only for automatic remapping discovery.
-    fn install_missing_dependencies(&self, config: &mut Config) -> Result<(), ExtractConfigError> {
+    fn install_missing_dependencies(&self, config: &mut Config) -> Result<()> {
         crate::install::install_missing_dependencies(config, || self.load_config())
     }
 

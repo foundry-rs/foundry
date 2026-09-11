@@ -13,6 +13,7 @@ use clap::{ArgGroup, Parser};
 use eyre::Result;
 use foundry_cli::{
     json::print_json_object,
+    lockfile::check_foundry_lock,
     opts::{EtherscanOpts, RpcOpts},
     utils::{self, load_config_from_provider},
 };
@@ -128,6 +129,7 @@ async fn local_event_abis<N: Network, P: Provider<N>>(
     logs: &[Log],
     config: &Config,
 ) -> Result<BTreeMap<Address, JsonAbi>> {
+    check_foundry_lock(&config.root, false)?;
     let addresses = logs.iter().map(Log::address).collect::<BTreeSet<_>>();
     let Some(block_number) = logs.first().and_then(|log| log.block_number) else {
         return Ok(BTreeMap::new());

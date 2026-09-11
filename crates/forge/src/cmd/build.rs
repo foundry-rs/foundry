@@ -1,5 +1,4 @@
 use super::watch::WatchArgs;
-use crate::Lockfile;
 use clap::Parser;
 use eyre::Result;
 use forge_lint::{
@@ -7,8 +6,9 @@ use forge_lint::{
     sol::{DeniedLintDiagnostics, SolidityLinter},
 };
 use foundry_cli::{
+    lockfile::check_foundry_lock,
     opts::{BuildOpts, configure_pcx_from_solc, get_solar_sources_from_compile_output},
-    utils::{Git, LoadConfig, cache_local_signatures},
+    utils::{LoadConfig, cache_local_signatures},
 };
 use foundry_common::{
     compile::{ContractSizeLimits, ProjectCompiler},
@@ -34,7 +34,7 @@ use solar::{
     interface::{Session, config::CompileOpts},
     sema::Compiler,
 };
-use std::{fmt::Write, path::PathBuf};
+use std::path::PathBuf;
 
 foundry_config::merge_impl_figment_convert!(BuildArgs, build);
 
@@ -94,7 +94,7 @@ impl BuildArgs {
         let mut config = self.load_config()?;
 
         if locked {
-            self.check_foundry_lock_consistency(&config)?;
+            check_foundry_lock(&config.root, true)?;
         }
 
         self.install_missing_dependencies(&mut config)?;
@@ -255,7 +255,13 @@ impl BuildArgs {
         self.watch.watchexec_config(|| {
             let config = self.load_config()?;
             let foundry_toml: PathBuf = config.root.join(Config::FILE_NAME);
-            Ok([config.src, config.test, config.script, foundry_toml])
+            Ok([
+                config.src,
+                config.test,
+                config.script,
+                foundry_toml,
+                config.root.join(foundry_cli::lockfile::FOUNDRY_LOCK),
+            ])
         })
     }
 
@@ -293,22 +299,6 @@ impl BuildArgs {
                 }
             }
         }
-    }
-
-    /// Checks foundry.lock file consistency with Git submodules.
-    fn check_foundry_lock_consistency(&self, config: &Config) -> Result<()> {
-        let git = Git::new(&config.root);
-        let mut lockfile = Lockfile::new(&config.root).with_git(&git);
-        let mismatches = lockfile.check()?;
-        if mismatches.is_empty() {
-            return Ok(());
-        }
-
-        let mut message = String::from("foundry.lock does not match installed dependencies:");
-        for mismatch in mismatches {
-            write!(message, "\n  {mismatch}")?;
-        }
-        Err(eyre::eyre!(message))
     }
 }
 
