@@ -140,6 +140,15 @@ impl ExtTester {
         let status = git.status().unwrap();
         assert!(status.success(), "git checkout failed: {status}");
 
+        // Match submodules to the pinned revision, not the remote's default branch.
+        if recursive {
+            let mut git = Command::new("git");
+            git.current_dir(root).args(["submodule", "update", "--init", "--recursive"]);
+            test_debug!("$ {git:?}");
+            let status = git.status().unwrap();
+            assert!(status.success(), "git submodule update failed: {status}");
+        }
+
         // Export fixture-local Python packages, vyper, and forge in the test command.
         let mut new_paths = Vec::new();
         if let Some(python_bin_dir) = self.install_python_packages(root) {
