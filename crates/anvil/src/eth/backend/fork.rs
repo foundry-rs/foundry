@@ -36,7 +36,10 @@ use alloy_rpc_types_mev::{EthCallBundle, EthCallBundleResponse};
 use alloy_serde::WithOtherFields;
 use alloy_transport::TransportError;
 use foundry_common::provider::RetryProvider;
-use foundry_evm::hardfork::FoundryHardfork;
+use foundry_evm::{
+    backend::{AccountFetchPolicy, account_fetch_policy_for_source},
+    hardfork::FoundryHardfork,
+};
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
 use foundry_primitives::FoundryTxReceipt;
 use parking_lot::{
@@ -180,6 +183,15 @@ impl<N: Network> ClientFork<N> {
         self.config.read().chain_id
     }
 
+    /// Returns whether this fork source requires the combined account-info RPC.
+    pub fn requires_account_info(&self) -> bool {
+        let config = self.config.read();
+        account_fetch_policy_for_source(
+            config.chain_id,
+            config.endpoint_identity.network_profile.unwrap_or_default(),
+        ) == AccountFetchPolicy::RequireAccountInfo
+    }
+
     /// Returns the execution chain ID exposed by the forked node.
     pub fn execution_chain_id(&self) -> u64 {
         self.config.read().execution_chain_id
@@ -302,6 +314,15 @@ impl<N: Network> ClientFork<N> {
     ) -> Result<U256, TransportError> {
         trace!(target: "backend::fork", "get_balance={:?}", address);
         self.provider().get_balance(address).block_id(blocknumber.into()).await
+    }
+
+    pub async fn get_account_info(
+        &self,
+        address: Address,
+        blocknumber: u64,
+    ) -> Result<AccountInfo, TransportError> {
+        trace!(target: "backend::fork", "get_account_info={:?}", address);
+        self.provider().get_account_info(address).block_id(blocknumber.into()).await
     }
 
     pub async fn get_nonce(&self, address: Address, block: u64) -> Result<u64, TransportError> {

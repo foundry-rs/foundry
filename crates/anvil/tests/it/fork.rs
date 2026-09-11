@@ -4123,6 +4123,18 @@ async fn test_fork_get_account_info() {
         }
     );
 
+    let snapshot = api.evm_snapshot().await.unwrap();
+    api.anvil_set_nonce(address!("0x19e53a7397bE5AA7908fE9eA991B03710bdC74Fd"), U256::from(123))
+        .await
+        .unwrap();
+    let info = provider
+        .get_account_info(address!("0x19e53a7397bE5AA7908fE9eA991B03710bdC74Fd"))
+        .number(BLOCK_NUMBER)
+        .await
+        .unwrap();
+    assert_eq!(info.nonce, 6690);
+    assert!(api.evm_revert(snapshot).await.unwrap());
+
     // Mine and check account info at new block number, see https://github.com/foundry-rs/foundry/issues/12148
     api.evm_mine(None).await.unwrap();
     let info = provider

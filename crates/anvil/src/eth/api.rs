@@ -2468,31 +2468,36 @@ impl EthApi<FoundryNetwork> {
     ) -> Result<alloy_rpc_types::eth::AccountInfo> {
         node_info!("eth_getAccountInfo");
 
+        let reads_current = block_number.is_none()
+            || matches!(block_number, Some(BlockId::Number(BlockNumber::Latest)));
         if let Some(fork) = self.get_fork() {
             let block_request = self.block_request(block_number).await?;
-            // check if the number predates the fork, if in fork mode
             if let BlockRequest::Number(number) = block_request {
-                trace!(target: "node", "get_account_info: fork block {}, requested block {number}", fork.block_number());
-                return if fork.predates_fork(number) {
-                    // if this predates the fork we need to fetch balance, nonce, code individually
-                    // because the provider might not support this endpoint
+                if !reads_current && fork.predates_fork_inclusive(number) {
+                    if fork.requires_account_info() {
+                        return Ok(fork.get_account_info(address, number).await?);
+                    }
                     let balance = fork.get_balance(address, number).map_err(BlockchainError::from);
                     let code = fork.get_code(address, number).map_err(BlockchainError::from);
-                    let nonce = self.get_transaction_count(address, Some(number.into()));
+                    let nonce = fork.get_nonce(address, number).map_err(BlockchainError::from);
                     let (balance, code, nonce) = try_join!(balance, code, nonce)?;
+                    return Ok(alloy_rpc_types::eth::AccountInfo { balance, nonce, code });
+                }
 
-                    Ok(alloy_rpc_types::eth::AccountInfo { balance, nonce, code })
-                } else {
-                    // Anvil node is at the same block or higher than the fork block,
-                    // return account info from backend to reflect current state.
-                    let account_info = self.backend.get_account(address).await?;
-                    let code = self.backend.get_code(address, Some(block_request)).await?;
-                    Ok(alloy_rpc_types::eth::AccountInfo {
-                        balance: account_info.balance,
-                        nonce: account_info.nonce,
+                if reads_current || number >= self.backend.best_number() {
+                    let account = self.backend.get_account(address).await?;
+                    let code =
+                        self.backend.get_code(address, Some(BlockRequest::Number(number))).await?;
+                    return Ok(alloy_rpc_types::eth::AccountInfo {
+                        balance: account.balance,
+                        nonce: account.nonce,
                         code,
-                    })
-                };
+                    });
+                }
+                return self
+                    .backend
+                    .get_account_info_at_block(address, Some(BlockRequest::Number(number)))
+                    .await;
             }
         }
 
