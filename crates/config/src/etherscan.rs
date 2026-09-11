@@ -83,6 +83,47 @@ impl EtherscanConfigs {
         self.configs.values().find(|config| config.chain == Some(chain))
     }
 
+    /// Picks the explorer config to use, given the settings that select between the entries.
+    ///
+    /// `alias` names an entry outright and wins if it matches one. Otherwise the first entry whose
+    /// chain id matches `chain` is used, with `api_key` — which usually comes from an env var or a
+    /// CLI flag — overriding the key that entry carries. With no matching entry, `api_key` alone is
+    /// enough to build a config for `chain`.
+    ///
+    /// Shared by [`Config::get_etherscan_config_with_chain`](crate::Config::
+    /// get_etherscan_config_with_chain) and by consumers that keep only a snapshot of the config
+    /// and resolve later, against a chain they don't learn until runtime.
+    pub fn resolve_for(
+        &self,
+        alias: Option<&str>,
+        api_key: Option<&str>,
+        chain: Option<Chain>,
+    ) -> Result<Option<ResolvedEtherscanConfig>, EtherscanConfigError> {
+        if let Some(alias) = alias
+            && self.contains_key(alias)
+        {
+            return self.clone().resolved().remove(alias).transpose();
+        }
+
+        if let Some(res) = chain.and_then(|chain| self.clone().resolved().find_chain(chain)) {
+            match (res, api_key) {
+                (Ok(mut config), Some(key)) => {
+                    config.key = key.to_string();
+                    return Ok(Some(config));
+                }
+                (Ok(config), None) => return Ok(Some(config)),
+                (Err(err), None) => return Err(err),
+                // Unresolvable entry, but there is a key to fall back on.
+                (Err(_), Some(_)) => {}
+            }
+        }
+
+        if let Some(key) = api_key {
+            return Ok(ResolvedEtherscanConfig::create(key, chain.unwrap_or_default()));
+        }
+        Ok(None)
+    }
+
     /// Returns all (alias -> url) pairs
     pub fn resolved(self) -> ResolvedEtherscanConfigs {
         ResolvedEtherscanConfigs {

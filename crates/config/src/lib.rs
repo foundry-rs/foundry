@@ -8,7 +8,7 @@
 #[macro_use]
 extern crate tracing;
 
-use crate::cache::StorageCachingConfig;
+use crate::{cache::StorageCachingConfig, etherscan::EtherscanEnvProvider};
 use alloy_primitives::{Address, B256, FixedBytes, U256, address, map::AddressHashMap};
 use eyre::{ContextCompat, WrapErr};
 use figment::{
@@ -68,8 +68,7 @@ pub use endpoints::{
 };
 
 mod etherscan;
-pub use etherscan::EtherscanConfigError;
-use etherscan::{EtherscanConfigs, EtherscanEnvProvider, ResolvedEtherscanConfig};
+pub use etherscan::{EtherscanConfigError, EtherscanConfigs, ResolvedEtherscanConfig};
 
 pub mod resolve;
 pub use resolve::UnresolvedEnvVarError;
@@ -568,6 +567,13 @@ pub struct Config {
     /// Whether to enable safety checks for `vm.getCode` and `vm.getDeployedCode` invocations.
     /// If disabled, it is possible to access artifacts which were not recompiled or cached.
     pub unchecked_cheatcode_artifacts: bool,
+
+    /// Whether to decode the storage layouts of contracts outside the local project in state
+    /// diffs, by compiling the verified source a block explorer has for them.
+    ///
+    /// Resolved layouts are cached under the explorer cache directory; `forge cache clean`
+    /// clears them.
+    pub decode_external_storage: bool,
 
     /// CREATE2 salt to use for the library deployment in scripts.
     pub create2_library_salt: B256,
@@ -1834,40 +1840,16 @@ impl Config {
         &self,
         chain: Option<Chain>,
     ) -> Result<Option<ResolvedEtherscanConfig>, EtherscanConfigError> {
-        if let Some(maybe_alias) = self.etherscan_api_key.as_ref().or(self.eth_rpc_url.as_ref())
-            && self.etherscan.contains_key(maybe_alias)
-        {
-            return self.etherscan.clone().resolved().remove(maybe_alias).transpose();
-        }
+        self.etherscan.resolve_for(
+            self.etherscan_alias(),
+            self.etherscan_api_key.as_deref(),
+            chain.or(self.chain),
+        )
+    }
 
-        // try to find by comparing chain IDs after resolving
-        if let Some(res) = chain
-            .or(self.chain)
-            .and_then(|chain| self.etherscan.clone().resolved().find_chain(chain))
-        {
-            match (res, self.etherscan_api_key.as_ref()) {
-                (Ok(mut config), Some(key)) => {
-                    // we update the key, because if an etherscan_api_key is set, it should take
-                    // precedence over the entry, since this is usually set via env var or CLI args.
-                    config.key.clone_from(key);
-                    return Ok(Some(config));
-                }
-                (Ok(config), None) => return Ok(Some(config)),
-                (Err(err), None) => return Err(err),
-                (Err(_), Some(_)) => {
-                    // use the etherscan key as fallback
-                }
-            }
-        }
-
-        // etherscan fallback via API key
-        if let Some(key) = self.etherscan_api_key.as_ref() {
-            return Ok(ResolvedEtherscanConfig::create(
-                key,
-                chain.or(self.chain).unwrap_or_default(),
-            ));
-        }
-        Ok(None)
+    /// The `[etherscan]` entry to prefer over matching on chain id, if it names one.
+    pub fn etherscan_alias(&self) -> Option<&str> {
+        self.etherscan_api_key.as_deref().or(self.eth_rpc_url.as_deref())
     }
 
     /// Helper function to just get the API key
@@ -3037,6 +3019,7 @@ impl Default for Config {
             bind_json: Default::default(),
             labels: Default::default(),
             unchecked_cheatcode_artifacts: false,
+            decode_external_storage: false,
             create2_library_salt: Self::DEFAULT_CREATE2_LIBRARY_SALT,
             create2_deployer: Self::DEFAULT_CREATE2_DEPLOYER,
             skip: vec![],

@@ -36,7 +36,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fmt::Display,
     io::IsTerminal,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     str::FromStr,
     sync::Arc,
     time::Instant,
@@ -768,8 +768,12 @@ pub fn etherscan_project(metadata: &Metadata, target_path: &Path) -> Result<Proj
     let mut settings = metadata.settings()?;
 
     // make remappings absolute with our root
+    //
+    // The remappings come from the explorer's copy of the contract's compiler settings, which is
+    // attacker controlled: a target of `../../..` would otherwise point the compiler at sources
+    // outside the checkout and let a verified contract pull arbitrary local files into the build.
     for remapping in &mut settings.remappings {
-        let new_path = sources_path.join(remapping.path.trim_start_matches('/'));
+        let new_path = sources_path.join(sanitize_relative_path(remapping.path.as_ref()));
         remapping.path = new_path.display().to_string();
     }
 
@@ -809,6 +813,36 @@ pub fn etherscan_project(metadata: &Metadata, target_path: &Path) -> Result<Proj
         .ephemeral()
         .no_artifacts()
         .build(compiler)?)
+}
+
+/// Normalizes an untrusted path relative to the source root, discarding leading separators,
+/// drive prefixes, and parent components that would escape that root.
+fn sanitize_relative_path(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(part) => normalized.push(part),
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            _ => {}
+        }
+    }
+    normalized
+}
+
+/// Adds `storageLayout` to the compiler output selection for the given project.
+pub fn add_storage_layout_output<C: Compiler<CompilerContract = Contract>>(
+    project: &mut Project<C>,
+) {
+    project.artifacts.additional_values.storage_layout = true;
+    project.update_output_selection(|selection| {
+        for contract_selection in selection.0.values_mut() {
+            for selection in contract_selection.values_mut() {
+                selection.push("storageLayout".to_string());
+            }
+        }
+    })
 }
 
 /// Configures the reporter and runs the given closure.
@@ -984,6 +1018,30 @@ mod tests {
         assert_eq!(
             ContractSizeLimits::for_spec_id(SpecId::AMSTERDAM),
             ContractSizeLimits::new(65_536, 131_072)
+        );
+    }
+
+    #[test]
+    fn sanitized_remapping_paths_stay_inside_the_root() {
+        let root = Path::new("/tmp/sources");
+        for path in ["../../../etc", "a/../../../etc", "/etc", "./a/../b"] {
+            let joined = root.join(sanitize_relative_path(Path::new(path)));
+            assert!(
+                joined.starts_with(root) && !joined.components().any(|c| c == Component::ParentDir),
+                "{path} escaped the root: {}",
+                joined.display()
+            );
+        }
+
+        for (path, expected) in [("src/../lib/", "lib"), ("./a/../b", "b"), ("a/../../lib", "lib")]
+        {
+            assert_eq!(sanitize_relative_path(Path::new(path)), Path::new(expected));
+        }
+
+        // Ordinary relative paths are left alone.
+        assert_eq!(
+            sanitize_relative_path(Path::new("lib/openzeppelin")),
+            Path::new("lib/openzeppelin")
         );
     }
 }
