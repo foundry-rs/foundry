@@ -327,11 +327,16 @@ impl State<'_, '_> {
 
     /// Returns the position of the first `{` within the span, ignoring the ones inside comments.
     fn find_opening_brace(&self, span: Span) -> Option<BytePos> {
+        self.find_uncommented_char(span, '{')
+    }
+
+    /// Returns the position of the first matching character within the span, ignoring comments.
+    fn find_uncommented_char(&self, span: Span, needle: char) -> Option<BytePos> {
         let snip = self.sm.span_to_snippet(span).ok()?;
         let mut idx = 0;
         while idx < snip.len() {
             let rest = &snip[idx..];
-            if rest.starts_with('{') {
+            if rest.starts_with(needle) {
                 return Some(span.lo() + idx as u32);
             }
             idx += if let Some(line) = rest.strip_prefix("//") {

@@ -2196,7 +2196,19 @@ impl<'ast> State<'_, 'ast> {
     ) {
         self.cbox(0);
         self.s.ibox(self.ind);
-        self.print_word("for (");
+        let open_paren = self.find_uncommented_char(span, '(').unwrap();
+        self.print_word("for");
+        if self
+            .print_comments(
+                open_paren,
+                CommentConfig::skip_ws().mixed_prev_space().mixed_post_nbsp(),
+            )
+            .is_none()
+        {
+            self.nbsp();
+        }
+        self.cursor.advance_to(open_paren, true);
+        self.print_word("(");
         let init_has_leading_comment =
             init.as_ref().is_some_and(|stmt| self.peek_comment_before(stmt.span.lo()).is_some());
         if !init_has_leading_comment {
