@@ -816,6 +816,7 @@ impl<'sess> State<'sess, '_> {
             CommentStyle::Mixed => {
                 let Some(prefix) = cmnt.prefix() else { return };
                 let never_break = self.last_token_is_neverbreak();
+                let starts_line = self.is_bol_or_only_ind() || self.last_token_is_break();
                 if !self.is_bol_or_only_ind() {
                     match (never_break || config.mixed_no_break_prev, config.mixed_prev_space) {
                         (false, true) => config.space(&mut self.s),
@@ -826,12 +827,18 @@ impl<'sess> State<'sess, '_> {
                 }
                 if self.config.wrap_comments {
                     // Merge and wrap comments
+                    if starts_line {
+                        self.ibox(config.offset);
+                    }
                     let merged_lines = self.merge_comment_lines(&cmnt.lines, prefix);
                     for (pos, line) in merged_lines.into_iter().delimited() {
                         self.print_wrapped_line(&line, prefix, 0, cmnt.is_doc);
                         if !pos.is_last {
                             self.hardbreak();
                         }
+                    }
+                    if starts_line {
+                        self.end();
                     }
                 } else {
                     // Match the opening-column normalization of continuation lines.
