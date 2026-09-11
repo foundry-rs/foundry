@@ -6053,6 +6053,7 @@ dependencies = [
  "eyre",
  "foundry-cheatcodes-spec",
  "foundry-common",
+ "foundry-compilers",
  "foundry-config",
  "foundry-evm-abi",
  "foundry-evm-hardforks",

@@ -1206,11 +1206,10 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         let fork_hardfork = fork_context.and_then(|context| context.hardfork);
         self.source_chain_id = fork_chain_id;
         self.hardfork = resolve_execution_spec(
-            &self.config,
-            self.evm_opts.networks,
+            self.config.evm_version,
+            self.config.hardfork,
             &mut evm_env,
             ExecutionSpecContext::local_or_fork(fork_chain_id, fork_hardfork),
-            None,
             None,
         );
         Ok((resolved, evm_env, tx_env))
