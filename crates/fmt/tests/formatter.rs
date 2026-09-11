@@ -92,6 +92,33 @@ fn disable_line_uses_comment_context() {
     );
 }
 
+#[test]
+fn trailing_line_comment_separates_following_comment() {
+    let source = r#"contract C {
+    function f() external {
+        uint value;
+        value // Trailing line.
+        ; /* Following block.
+        more text. */
+    }
+}
+"#;
+    let expected = r#"contract C {
+    function f() external {
+        uint256 value;
+        value; // Trailing line.
+        /* Following block.
+        more text. */
+    }
+}
+"#;
+
+    assert_eq!(
+        format(source, Path::new("test.sol"), Arc::new(FormatterConfig::default())),
+        expected
+    );
+}
+
 fn tests_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata")
 }

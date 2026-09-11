@@ -2083,10 +2083,22 @@ impl<'ast> State<'_, 'ast> {
             self.cursor.advance_to(span.hi(), true);
         }
         // print comments without breaks, as those are handled by the caller.
+        let ends_with_line_comment = self
+            .comments
+            .iter()
+            .take_while(|cmnt| cmnt.pos() < stmt.span.hi())
+            .filter(|cmnt| !cmnt.style.is_blank())
+            .last()
+            .is_some_and(|cmnt| {
+                cmnt.style.is_trailing() && matches!(cmnt.kind, ast::CommentKind::Line)
+            });
         self.print_comments(
             stmt.span.hi(),
             CommentConfig::default().trailing_no_break().mixed_no_break().mixed_prev_space(),
         );
+        if ends_with_line_comment && self.peek_comment().is_some() {
+            self.hardbreak_if_not_bol();
+        }
         self.print_trailing_comment_no_break(stmt.span.hi(), next_pos);
     }
 
