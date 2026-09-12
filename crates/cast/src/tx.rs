@@ -880,15 +880,18 @@ pub(crate) async fn decode_custom_error(data: &[u8]) -> Result<Option<String>> {
 mod tests {
     use super::*;
     use alloy_json_rpc::{RequestPacket, ResponsePacket};
-    use alloy_network::Ethereum;
+    use alloy_network::{Ethereum, NetworkTransactionBuilder};
     use alloy_provider::{ProviderBuilder, mock::Asserter};
     use alloy_rpc_client::RpcClient;
+    use alloy_sol_types::SolValue;
     use alloy_transport::{TransportFut, mock::MockTransport};
     use clap::Parser;
+    use foundry_common::tempo::resolve_and_set_fee_token;
     use std::{
         sync::{Arc, Mutex},
         task::{Context, Poll},
     };
+    use tempo_alloy::TempoNetwork;
     use tokio::{sync::Barrier, time::timeout};
     use tower::Service;
 
@@ -983,6 +986,91 @@ mod tests {
         let mut fill_methods = fill_methods.lock().unwrap().clone();
         fill_methods.sort();
         assert_eq!(fill_methods, ["eth_estimateGas", "eth_getTransactionCount"]);
+    }
+
+    #[tokio::test]
+    async fn browser_submission_preserves_transaction_type() {
+        let provider =
+            ProviderBuilder::new_with_network::<Ethereum>().connect_mocked_client(Asserter::new());
+        for (fees, expected_type) in [
+            (vec!["--legacy", "--gas-price", "1000000000"], "0x0"),
+            (vec!["--legacy", "--gas-price", "1000000000", "--access-list", "[]"], "0x1"),
+            (vec!["--gas-price", "1000000000", "--priority-gas-price", "1"], "0x2"),
+        ] {
+            let args =
+                [&["--gas-limit", "21000", "--nonce", "0", "--value", "0"][..], &fees].concat();
+            let (mut tx, _) = builder(&provider, &args)
+                .await
+                .with_browser_wallet()
+                .build(Address::repeat_byte(0x22))
+                .await
+                .unwrap();
+            tx.prep_for_submission();
+            let mut expected = serde_json::json!({
+                "from": Address::repeat_byte(0x22),
+                "to": TO,
+                "chainId": "0x1",
+                "type": expected_type,
+                "gas": "0x5208",
+                "nonce": "0x0",
+                "value": "0x0",
+                "input": "0x",
+                "data": "0x",
+            });
+            if expected_type == "0x2" {
+                expected["maxFeePerGas"] = "0x3b9aca00".into();
+                expected["maxPriorityFeePerGas"] = "0x1".into();
+            } else {
+                expected["gasPrice"] = "0x3b9aca00".into();
+            }
+            if expected_type == "0x1" {
+                expected["accessList"] = serde_json::json!([]);
+            }
+            assert_eq!(serde_json::to_value(tx).unwrap(), expected);
+        }
+    }
+
+    #[tokio::test]
+    async fn browser_submission_resolves_type_after_tempo_fee_token() {
+        let asserter = Asserter::new();
+        let token = Address::repeat_byte(0x42);
+        asserter.push_success(&token.abi_encode());
+        let provider =
+            ProviderBuilder::new_with_network::<TempoNetwork>().connect_mocked_client(asserter);
+        let chain = Chain::from_id(4217);
+        let config = Config { chain: Some(chain), ..Default::default() };
+        let opts = TransactionOpts::parse_from([
+            "test",
+            "--gas-limit",
+            "21000",
+            "--nonce",
+            "0",
+            "--gas-price",
+            "1",
+            "--priority-gas-price",
+            "1",
+        ]);
+        let (mut tx, _) = CastTxBuilder::new(&provider, opts, &config)
+            .await
+            .unwrap()
+            .with_browser_wallet()
+            .with_to(Some(TO.into()))
+            .await
+            .unwrap()
+            .with_code_sig_and_args(None, None, Vec::new())
+            .await
+            .unwrap()
+            .build(Address::repeat_byte(0x22))
+            .await
+            .unwrap();
+        assert_eq!(tx.inner.transaction_type, None);
+        assert_eq!(tx.fee_token, None);
+
+        // Fee resolution happens after building and can change the submission type to Tempo AA.
+        resolve_and_set_fee_token(Some(&provider), Some(chain), &mut tx, None).await.unwrap();
+        tx.prep_for_submission();
+        assert_eq!(tx.inner.transaction_type, Some(0x76));
+        assert_eq!(tx.fee_token, Some(token));
     }
 
     #[tokio::test]
