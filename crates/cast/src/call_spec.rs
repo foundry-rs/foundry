@@ -72,7 +72,8 @@ impl CallSpec {
                 spec.sig = Some(part.to_string());
                 if !tail.is_empty() {
                     // Args are comma-separated; rejoin any colons that were split off.
-                    spec.args = tail.join(":").split(',').map(|s| s.trim().to_string()).collect();
+                    let args_str = tail.join(":");
+                    spec.args = split_call_args(&args_str);
                 }
             }
             _ => {}
@@ -111,6 +112,33 @@ impl CallSpec {
         };
         Ok(Call { to: self.to.into(), value: self.value, input })
     }
+}
+
+/// Split call arguments on top-level commas, respecting nested parentheses and brackets.
+///
+/// This ensures that array and tuple arguments containing internal commas are not incorrectly
+/// split. For example:
+/// - `[1,2]` stays as one argument
+/// - `(7,hello),9` splits into `(7,hello)` and `9`
+fn split_call_args(s: &str) -> Vec<String> {
+    let mut args = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+
+    for (idx, ch) in s.char_indices() {
+        match ch {
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                args.push(s[start..idx].trim().to_string());
+                start = idx + ch.len_utf8();
+            }
+            _ => {}
+        }
+    }
+
+    args.push(s[start..].trim().to_string());
+    args
 }
 
 #[cfg(test)]
@@ -184,5 +212,59 @@ mod tests {
                 "Unexpected trailing field(s) after raw calldata"
             );
         }
+    }
+
+    #[test]
+    fn test_parse_array_args() {
+        let spec =
+            CallSpec::parse("0x1234567890123456789012345678901234567890::foo(uint256[]):[1,2]")
+                .unwrap();
+        assert_eq!(spec.sig, Some("foo(uint256[])".to_string()));
+        assert_eq!(spec.args, vec!["[1,2]"]);
+
+        let spec = CallSpec::parse(
+            "0x1234567890123456789012345678901234567890::foo(uint256[][]):[[1,2],[3,4]]",
+        )
+        .unwrap();
+        assert_eq!(spec.sig, Some("foo(uint256[][])".to_string()));
+        assert_eq!(spec.args, vec!["[[1,2],[3,4]]"]);
+    }
+
+    #[test]
+    fn test_parse_tuple_args() {
+        let spec = CallSpec::parse(
+            "0x1234567890123456789012345678901234567890::foo((uint256,string)):(7,hello)",
+        )
+        .unwrap();
+        assert_eq!(spec.sig, Some("foo((uint256,string))".to_string()));
+        assert_eq!(spec.args, vec!["(7,hello)"]);
+
+        let spec = CallSpec::parse(
+            "0x1234567890123456789012345678901234567890::foo((uint256,string),uint256):(7,hello),9",
+        )
+        .unwrap();
+        assert_eq!(spec.sig, Some("foo((uint256,string),uint256)".to_string()));
+        assert_eq!(spec.args, vec!["(7,hello)", "9"]);
+    }
+
+    #[test]
+    fn test_parse_nested_structures() {
+        let spec = CallSpec::parse(
+            "0x1234567890123456789012345678901234567890::foo((uint256[],string)):([(1,2),(3,4)],hello)",
+        )
+        .unwrap();
+        assert_eq!(spec.sig, Some("foo((uint256[],string))".to_string()));
+        assert_eq!(spec.args, vec!["([(1,2),(3,4)],hello)"]);
+    }
+
+    #[test]
+    fn test_split_call_args() {
+        assert_eq!(split_call_args("[1,2]"), vec!["[1,2]"]);
+        assert_eq!(split_call_args("[[1,2],[3,4]]"), vec!["[[1,2],[3,4]]"]);
+        assert_eq!(split_call_args("(7,hello)"), vec!["(7,hello)"]);
+        assert_eq!(split_call_args("(7,hello),9"), vec!["(7,hello)", "9"]);
+        assert_eq!(split_call_args("1,2,3"), vec!["1", "2", "3"]);
+        assert_eq!(split_call_args("(1,2),(3,4)"), vec!["(1,2)", "(3,4)"]);
+        assert_eq!(split_call_args("[1,2],[3,4]"), vec!["[1,2]", "[3,4]"]);
     }
 }
