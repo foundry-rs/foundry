@@ -3681,6 +3681,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             }
 
             let mut selected_branch_seed = None;
+            let mut selected_failure_seed = false;
             for solved_input in search.candidates {
                 let mut solved_sequence = sequence[..=call_index].to_vec();
                 solved_sequence[call_index].call_details.calldata = solved_input.calldata;
@@ -3766,7 +3767,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 }
 
                 if assertion_failure || replay_result.reverted {
-                    selected_branch_seed = Some(solved_sequence);
+                    if !selected_failure_seed {
+                        selected_branch_seed = Some(solved_sequence);
+                        selected_failure_seed = true;
+                    }
                 } else {
                     selected_branch_seed.get_or_insert(solved_sequence);
                 }
