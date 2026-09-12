@@ -1,5 +1,5 @@
 use super::{CoverageItem, CoverageItemKind, SourceLocation};
-use alloy_primitives::map::HashMap;
+use alloy_primitives::map::{HashMap, HashSet};
 use foundry_common::TestFunctionExt;
 use foundry_compilers::ProjectCompileOutput;
 use rayon::prelude::*;
@@ -33,6 +33,8 @@ struct SourceVisitor<'gcx> {
     items: Vec<CoverageItem>,
 
     all_lines: Vec<u32>,
+    /// Branch IDs whose jumps must match the exact ternary expression span.
+    ternary_branches: Vec<u32>,
     /// Deferred function-call spans, each paired with the contract scope active where the call
     /// was collected, so scope travels with the span to the delayed HIR resolution pass.
     function_calls: Vec<(Span, Arc<str>)>,
@@ -43,6 +45,7 @@ struct SourceVisitorCheckpoint {
     items: usize,
     all_lines: usize,
     function_calls: usize,
+    ternary_branches: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -118,6 +121,7 @@ impl<'gcx> SourceVisitor<'gcx> {
             gcx,
             contract_name: Arc::default(),
             branch_id: 0,
+            ternary_branches: Default::default(),
             all_lines: Default::default(),
             function_calls: Default::default(),
             function_call_scopes: Default::default(),
@@ -130,14 +134,17 @@ impl<'gcx> SourceVisitor<'gcx> {
             items: self.items.len(),
             all_lines: self.all_lines.len(),
             function_calls: self.function_calls.len(),
+            ternary_branches: self.ternary_branches.len(),
         }
     }
 
     fn restore_checkpoint(&mut self, checkpoint: SourceVisitorCheckpoint) {
-        let SourceVisitorCheckpoint { items, all_lines, function_calls } = checkpoint;
+        let SourceVisitorCheckpoint { items, all_lines, function_calls, ternary_branches } =
+            checkpoint;
         self.items.truncate(items);
         self.all_lines.truncate(all_lines);
         self.function_calls.truncate(function_calls);
+        self.ternary_branches.truncate(ternary_branches);
     }
 
     fn visit_contract<'ast>(&mut self, contract: &'ast ast::ItemContract<'ast>) {
@@ -303,6 +310,8 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
                     );
                 }
 
+                // Discover decisions without changing the ordinary statement/call traversal.
+                TernaryVisitor(self).walk_item(item)?;
                 self.walk_item(item)?;
             }
             _ => {}
@@ -370,12 +379,17 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
                 }
             }
 
+            StmtKind::Expr(expr) => {
+                if matches!(expr.kind, ExprKind::Ternary(..)) {
+                    self.push_stmt(expr.span);
+                }
+            }
+
             // Skip placeholder statements as they are never referenced in source maps.
             StmtKind::Assembly(_)
             | StmtKind::Block(_)
             | StmtKind::UncheckedBlock(_)
             | StmtKind::Placeholder
-            | StmtKind::Expr(_)
             | StmtKind::While(..)
             | StmtKind::DoWhile(..)
             | StmtKind::For { .. } => {}
@@ -385,10 +399,7 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
 
     fn visit_expr(&mut self, expr: &'ast ast::Expr<'ast>) -> ControlFlow<Self::BreakValue> {
         match &expr.kind {
-            ExprKind::Assign(..)
-            | ExprKind::Unary(..)
-            | ExprKind::Binary(..)
-            | ExprKind::Ternary(..) => {
+            ExprKind::Assign(..) | ExprKind::Unary(..) | ExprKind::Binary(..) => {
                 self.push_stmt(expr.span);
                 if matches!(expr.kind, ExprKind::Binary(..)) {
                     return self.walk_expr(expr);
@@ -482,6 +493,28 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
     }
 }
 
+/// Walks all expression shapes, adding only ternary decisions. Statement coverage remains owned
+/// by the enclosing statement or the ordinary expression visitor.
+struct TernaryVisitor<'a, 'gcx>(&'a mut SourceVisitor<'gcx>);
+
+impl<'ast> ast::Visit<'ast> for TernaryVisitor<'_, '_> {
+    type BreakValue = Never;
+
+    fn visit_expr(&mut self, expr: &'ast ast::Expr<'ast>) -> ControlFlow<Self::BreakValue> {
+        if matches!(expr.kind, ExprKind::Ternary(..)) {
+            let branch_id = self.0.next_branch_id();
+            self.0.ternary_branches.push(branch_id);
+            for path_id in 0..2 {
+                self.0.push_item_kind(
+                    CoverageItemKind::Branch { branch_id, path_id, is_first_opcode: false },
+                    expr.span,
+                );
+            }
+        }
+        self.walk_expr(expr)
+    }
+}
+
 impl<'gcx> hir::Visit<'gcx> for SourceVisitor<'gcx> {
     type BreakValue = Never;
 
@@ -533,6 +566,8 @@ fn stmt_has_statements(stmt: &ast::Stmt<'_>) -> bool {
 pub struct SourceAnalysis {
     /// All the coverage items.
     all_items: Vec<CoverageItem>,
+    /// Source and branch IDs requiring exact decision-node source-map matching.
+    ternary_branches: HashSet<(u32, u32)>,
     /// Source ID to `(offset, len)` into `all_items`.
     map: Vec<(u32, u32)>,
     /// Empty receive and fallback items keyed by coverage item ID.
@@ -610,18 +645,20 @@ impl SourceAnalysis {
                         visitor.push_lines();
                         visitor.sort();
                     }
-                    (source_id, visitor.items)
+                    (source_id, visitor.items, visitor.ternary_branches)
                 })
-                .collect::<Vec<(u32, Vec<CoverageItem>)>>()
+                .collect::<Vec<_>>()
         });
 
         // Create mapping and merge items.
-        sourced_items.sort_by_key(|(id, items)| (*id, items.first().map(|i| i.loc.bytes.start)));
-        let Some(&(max_idx, _)) = sourced_items.last() else { return Ok(Self::default()) };
+        sourced_items.sort_by_key(|(id, items, _)| (*id, items.first().map(|i| i.loc.bytes.start)));
+        let Some(&(max_idx, _, _)) = sourced_items.last() else { return Ok(Self::default()) };
         let len = max_idx + 1;
         let mut all_items = Vec::new();
         let mut map = vec![(u32::MAX, 0); len as usize];
-        for (idx, items) in sourced_items {
+        let mut ternary_branches = HashSet::default();
+        for (idx, items, branches) in sourced_items {
+            ternary_branches.extend(branches.into_iter().map(|branch| (idx, branch)));
             // Assumes that all `idx` items are consecutive, guaranteed by the sort above.
             let idx = idx as usize;
             if map[idx].0 == u32::MAX {
@@ -655,7 +692,17 @@ impl SourceAnalysis {
                 .extend(item_ids);
         }
 
-        Ok(Self { all_items, map, empty_special_functions, contract_empty_special_functions })
+        Ok(Self {
+            all_items,
+            map,
+            ternary_branches,
+            empty_special_functions,
+            contract_empty_special_functions,
+        })
+    }
+
+    pub(crate) fn is_ternary_branch(&self, source_id: u32, branch_id: u32) -> bool {
+        self.ternary_branches.contains(&(source_id, branch_id))
     }
 
     /// Returns all the coverage items.
