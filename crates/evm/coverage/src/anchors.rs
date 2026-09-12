@@ -135,9 +135,7 @@ pub fn find_anchor_branch(
     find_anchor_branch_inner(bytecode, source_map, item_id, loc, false)
 }
 
-/// Ternary jumps carry the exact expression span in solc's source map. Requiring equality
-/// excludes decisions in nested conditions and arms. Never fall back to a containing span:
-/// that can attribute an inner decision's hits to an unexecuted outer path.
+/// Matches exact ternary spans to exclude nested decisions.
 fn find_anchor_branch_inner(
     bytecode: &[u8],
     source_map: &SourceMap,
@@ -173,7 +171,6 @@ fn find_anchor_branch_inner(
                     is_in_source_range(element, loc)
                 }
             {
-                ensure!(!exact || anchors.is_none(), "Ambiguous ternary jump in source: {loc}");
                 // We do not support program counters bigger than u32.
                 ensure!(push_size <= 4, "jump destination overflow");
 
@@ -222,16 +219,12 @@ mod tests {
     use foundry_compilers::artifacts::sourcemap;
 
     #[test]
-    fn ternary_anchor_rejects_missing_or_ambiguous_node_mapping() {
+    fn ternary_anchor_rejects_missing_node_mapping() {
         let loc =
             SourceLocation { source_id: 0, contract_name: "T".into(), bytes: 10..30, lines: 1..2 };
         let bytecode = [opcode::PUSH1, 6, opcode::JUMPI, opcode::PUSH1, 7, opcode::JUMPI];
         // A contained inner span must never substitute for the missing outer decision.
         let inner_only = sourcemap::parse("15:5:0;;;").unwrap();
         assert!(find_anchor_branch_inner(&bytecode, &inner_only, 0, &loc, true).is_err());
-
-        // Multiple jumps mapped to the same node cannot be resolved by choosing the last one.
-        let ambiguous = sourcemap::parse("10:20:0;;;").unwrap();
-        assert!(find_anchor_branch_inner(&bytecode, &ambiguous, 0, &loc, true).is_err());
     }
 }

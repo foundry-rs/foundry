@@ -379,17 +379,12 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
                 }
             }
 
-            StmtKind::Expr(expr) => {
-                if matches!(expr.kind, ExprKind::Ternary(..)) {
-                    self.push_stmt(expr.span);
-                }
-            }
-
             // Skip placeholder statements as they are never referenced in source maps.
             StmtKind::Assembly(_)
             | StmtKind::Block(_)
             | StmtKind::UncheckedBlock(_)
             | StmtKind::Placeholder
+            | StmtKind::Expr(_)
             | StmtKind::While(..)
             | StmtKind::DoWhile(..)
             | StmtKind::For { .. } => {}
@@ -399,7 +394,10 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
 
     fn visit_expr(&mut self, expr: &'ast ast::Expr<'ast>) -> ControlFlow<Self::BreakValue> {
         match &expr.kind {
-            ExprKind::Assign(..) | ExprKind::Unary(..) | ExprKind::Binary(..) => {
+            ExprKind::Assign(..)
+            | ExprKind::Unary(..)
+            | ExprKind::Binary(..)
+            | ExprKind::Ternary(..) => {
                 self.push_stmt(expr.span);
                 if matches!(expr.kind, ExprKind::Binary(..)) {
                     return self.walk_expr(expr);
@@ -504,6 +502,7 @@ impl<'ast> ast::Visit<'ast> for TernaryVisitor<'_, '_> {
         if matches!(expr.kind, ExprKind::Ternary(..)) {
             let branch_id = self.0.next_branch_id();
             self.0.ternary_branches.push(branch_id);
+            // Ternary path 0 is the false arm (fallthrough); path 1 is the true arm (jump target).
             for path_id in 0..2 {
                 self.0.push_item_kind(
                     CoverageItemKind::Branch { branch_id, path_id, is_first_opcode: false },
