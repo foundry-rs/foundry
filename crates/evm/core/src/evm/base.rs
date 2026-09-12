@@ -84,9 +84,11 @@ impl FoundryEvmFactory for BaseEvmFactory {
         inspector: I,
     ) -> Self::FoundryEvm<'db, I> {
         let upgrade = evm_env.cfg_env.spec.upgrade();
+        // Nested EVMs use the same fork database, so execution chain-ID overrides cannot
+        // change the source-chain registry configuration when rebuilding their precompiles.
         let activation_admin = self.activation_admin_address().or_else(|| {
             ChainConfig::activation_admin_address_for_upgrade_by_chain_id(
-                evm_env.cfg_env.chain_id,
+                db.active_fork_source_chain_id().unwrap_or(evm_env.cfg_env.chain_id),
                 upgrade,
             )
         });
@@ -183,12 +185,18 @@ impl<'db, I: FoundryInspectorExt<BaseContext<&'db mut dyn DatabaseExt<BaseEvmFac
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::Backend;
+    use crate::{
+        backend::{Backend, CowBackend},
+        evm::with_cloned_context,
+        opts::EvmOpts,
+    };
     use alloy_sol_types::SolCall;
     use base_common_precompiles::{
         ActivationRegistryStorage, B20FactoryStorage, IActivationRegistry, NonceManagerStorage,
         PolicyRegistryStorage, TxContextStorage,
     };
+    use foundry_config::Config;
+    use foundry_evm_networks::NetworkConfigs;
     use revm::{
         ExecuteEvm, context::CfgEnv, inspector::NoOpInspector, primitives::TxKind,
         state::AccountInfo,
@@ -237,6 +245,83 @@ mod tests {
                 IActivationRegistry::adminCall::abi_decode_returns(result.output().unwrap())
                     .unwrap();
             assert_eq!(admin, expected_admin);
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fork_activation_admin_uses_source_chain_in_nested_deployment() {
+        let (_api, handle) =
+            anvil::spawn(anvil::NodeConfig::test().with_chain_id(Some(8453u64))).await;
+        let expected =
+            ChainConfig::activation_admin_address_for_upgrade_by_chain_id(8453, BaseUpgrade::Beryl)
+                .unwrap();
+        for chain_id in [31337, 84532] {
+            let mut opts = EvmOpts {
+                fork_url: Some(handle.http_endpoint()),
+                networks: NetworkConfigs::with_base(),
+                ..Default::default()
+            };
+            opts.env.chain_id = Some(chain_id);
+            let fork = opts.get_fork(&Config::default(), 8453, Some(0)).unwrap();
+            let backend = Backend::<BaseEvmNetwork>::spawn(Some(fork)).unwrap();
+            assert_eq!(backend.active_fork_source_chain_id(), Some(8453));
+            let mut db = CowBackend::new_borrowed(&backend);
+            let env = base_env(chain_id, BaseUpgrade::Beryl);
+            let mut evm = BaseEvmFactory::default().create_foundry_evm_with_inspector(
+                &mut db,
+                env,
+                NoOpInspector,
+            );
+            let tx = BaseTransaction::builder()
+                .base(
+                    TxEnv::builder()
+                        .chain_id(Some(chain_id))
+                        .kind(TxKind::Call(ActivationRegistryStorage::ADDRESS))
+                        .data(Bytes::from(IActivationRegistry::adminCall {}.abi_encode()))
+                        .gas_limit(100_000),
+                )
+                .build_fill();
+            let result = evm.transact_one(tx).unwrap();
+            assert_eq!(
+                IActivationRegistry::adminCall::abi_decode_returns(result.output().unwrap())
+                    .unwrap(),
+                expected
+            );
+            // Deploy initcode that calls admin() and returns it as the deployed code.
+            let mut initcode = vec![0x63];
+            initcode.extend(IActivationRegistry::adminCall::SELECTOR);
+            initcode
+                .extend([0x60, 0xe0, 0x1b, 0x5f, 0x52, 0x60, 0x20, 0x5f, 0x60, 0x04, 0x5f, 0x73]);
+            initcode.extend(ActivationRegistryStorage::ADDRESS.as_slice());
+            initcode.extend([0x5a, 0xfa, 0x50, 0x60, 0x20, 0x5f, 0xf3]);
+            with_cloned_context(evm.ctx_mut(), |db, env, journal| {
+                let mut nested = BaseEvmFactory::default().create_nested_evm(db, env);
+                *nested.journal_inner_mut() = journal;
+                let result = nested
+                    .transact_raw(
+                        BaseTransaction::builder()
+                            .base(
+                                TxEnv::builder()
+                                    .chain_id(Some(chain_id))
+                                    .nonce(1)
+                                    .kind(TxKind::Create)
+                                    .data(Bytes::from(initcode))
+                                    .gas_limit(200_000),
+                            )
+                            .build_fill(),
+                    )
+                    .unwrap();
+                assert!(result.result.is_success(), "{:?}", result.result);
+                assert_eq!(
+                    IActivationRegistry::adminCall::abi_decode_returns(
+                        result.result.output().unwrap()
+                    )
+                    .unwrap(),
+                    expected
+                );
+                Ok((nested.to_evm_env(), nested.journal_inner_mut().clone()))
+            })
+            .unwrap();
         }
     }
 

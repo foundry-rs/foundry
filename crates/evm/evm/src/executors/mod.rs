@@ -970,6 +970,18 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         target_tx_env: TxEnvFor<FEN>,
         replay: Vec<(B256, TxEnvFor<FEN>)>,
     ) -> eyre::Result<RawCallResult<FEN>> {
+        // EIP-8130 requires phase-aware execution and has no ordinary call/create kind.
+        // Check the entire prefix before executing anything or accessing ordinary tx fields.
+        eyre::ensure!(
+            target_tx_env.tx_type() != 0x79,
+            "EIP-8130 target transactions are not supported by tooling replay"
+        );
+        for (hash, tx) in &replay {
+            eyre::ensure!(
+                tx.tx_type() != 0x79,
+                "EIP-8130 prefix transaction {hash} is not supported by tooling replay"
+            );
+        }
         let block_number = evm_env.block_env.number();
         let mut stack = self.inspector().clone();
         let sancov_edges = stack.inner.sancov_edges;
@@ -1969,6 +1981,9 @@ mod tests {
     use revm::context::{CfgEnv, TxEnv};
     use std::{sync::mpsc, thread};
 
+    #[cfg(feature = "base")]
+    use foundry_evm_core::evm::BaseEvmNetwork;
+
     #[cfg(feature = "monad")]
     use foundry_evm_core::constants::MONAD_CHEATCODE_ADDRESS;
 
@@ -2117,6 +2132,64 @@ mod tests {
 
         let err = raw.into_evm_error(None);
         assert!(matches!(err, EvmError::Execution(_)));
+    }
+
+    #[cfg(feature = "base")]
+    #[test]
+    fn base_block_replay_rejects_eip8130_before_execution() {
+        for target_is_eip8130 in [true, false] {
+            let mut executor = ExecutorBuilder::<BaseEvmNetwork>::new().build(
+                EvmEnvFor::<BaseEvmNetwork>::default(),
+                TxEnvFor::<BaseEvmNetwork>::default(),
+                Backend::spawn(None).unwrap(),
+                NetworkConfigs::with_base(),
+            );
+            let unsupported = TxEnvFor::<BaseEvmNetwork> {
+                eip8130: Some(
+                    serde_json::from_value(serde_json::json!({
+                        "signed": {
+                            "tx": {
+                                "chainId": 8453, "sender": null, "nonceKey": "0x0",
+                                "nonceSequence": 0, "validAfter": 0, "validBefore": 0,
+                                "maxPriorityFeePerGas": "0x0", "maxFeePerGas": "0x0",
+                                "gasLimit": 100000, "accountChanges": [], "calls": [],
+                                "metadata": "0x", "payer": null
+                            },
+                            "senderAuth": "0x", "payerAuth": "0x"
+                        },
+                        "mode": "Verified", "simulation_sender_actor_id": null
+                    }))
+                    .unwrap(),
+                ),
+                ..Default::default()
+            };
+            let ordinary = TxEnvFor::<BaseEvmNetwork>::default();
+            let hash = B256::repeat_byte(1);
+            let (target, prefix, expected) = if target_is_eip8130 {
+                (
+                    unsupported,
+                    vec![(hash, ordinary)],
+                    "EIP-8130 target transactions are not supported by tooling replay".to_string(),
+                )
+            } else {
+                (
+                    ordinary.clone(),
+                    vec![(B256::ZERO, ordinary), (hash, unsupported)],
+                    format!(
+                        "EIP-8130 prefix transaction {hash} is not supported by tooling replay"
+                    ),
+                )
+            };
+            let error = executor
+                .transact_with_ordinary_block_replay(
+                    EvmEnvFor::<BaseEvmNetwork>::default(),
+                    target,
+                    prefix,
+                )
+                .unwrap_err();
+            assert_eq!(error.to_string(), expected);
+            assert_eq!(executor.get_nonce(Address::ZERO).unwrap(), 0);
+        }
     }
 
     #[test]
