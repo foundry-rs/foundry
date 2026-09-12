@@ -216,15 +216,18 @@ the current campaign anchor and its hook.
 
 Property checking catches correlated inputs that violate an invariant even when
 flipping the recorded comparison is harmless. Forge first symbolizes only the
-call that reached the frontier. If that finds no candidate for a predicate, it
-may retry with the final two calls symbolic while keeping their recorded order,
-targets, and senders. Calls before that suffix remain concrete. Both symbolic
+call that reached the frontier. If that search completes without a candidate, it
+may retry when the preceding call invokes the same handler on the same target
+from the same sender, covering per-actor state accumulated across repeated
+operations without widening every unrelated call pair. The retry keeps both
+calls' recorded order; calls before that suffix remain concrete. Both symbolic
 calls must omit warp, roll, and nonzero value, and Forge persists only candidates
 with no symbolic initial-storage assignments that replay concretely through the
-complete sequence and fail the exact predicate. Unsupported or bounded
-predicates do not discard candidates already found, but an empty search does not
-prove the suite safe. Forge performs comparison flipping after the property
-search regardless of whether that search found a candidate.
+complete sequence and fail the exact predicate.
+Unsupported or bounded predicates do not discard candidates already found or
+trigger the harder retry, and an empty search does not prove the suite safe.
+Forge performs comparison flipping after the property search regardless of
+whether that search found a candidate.
 Configured symbolic limits apply separately to the one-call property attempt,
 the optional two-call retry, and the comparison-flipping pass for each imported
 frontier.

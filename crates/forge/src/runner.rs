@@ -3428,7 +3428,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         prefix_executor: &Executor<FEN>,
         calls: &[SymbolicInvariantCandidateCall<'_>],
         prefix: &[BasicTxDetails],
-    ) -> Vec<(usize, Vec<BasicTxDetails>)> {
+    ) -> (Vec<(usize, Vec<BasicTxDetails>)>, bool) {
         let after_invariant = invariant_contract
             .call_after_invariant
             .then(|| {
@@ -3461,7 +3461,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 "symbolic invariant frontier candidate search incomplete"
             );
         }
-        result
+        let completed = result.limitation.is_none();
+        let candidates = result
             .candidates
             .into_iter()
             .filter_map(|candidate| {
@@ -3517,7 +3518,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 sequence.extend(calls);
                 Some((invariant_idx, sequence))
             })
-            .collect()
+            .collect();
+        (candidates, completed)
     }
 
     fn try_seed_invariant_corpus_from_frontiers(
@@ -3615,13 +3617,14 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     target: &invariant_target,
                     sender: call.sender,
                 }];
-                let mut solved = self.solve_invariants_from_frontier_prefix(
-                    invariant_contract,
-                    &invariant_indexes,
-                    &prefix_executor,
-                    &single_call,
-                    &sequence[..call_index],
-                );
+                let (mut solved, single_call_completed) = self
+                    .solve_invariants_from_frontier_prefix(
+                        invariant_contract,
+                        &invariant_indexes,
+                        &prefix_executor,
+                        &single_call,
+                        &sequence[..call_index],
+                    );
 
                 let solved_invariants =
                     solved.iter().map(|(index, _)| *index).collect::<HashSet<_>>();
@@ -3630,9 +3633,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     .copied()
                     .filter(|index| !solved_invariants.contains(index))
                     .collect::<Vec<_>>();
-                if !remaining_invariants.is_empty()
+                if single_call_completed
+                    && !remaining_invariants.is_empty()
                     && call_index > 0
                     && let Some(previous_call) = sequence.get(call_index - 1)
+                    && previous_call.call_details.target == call.call_details.target
+                    && previous_call.call_details.calldata.starts_with(selector.as_slice())
+                    && previous_call.sender == call.sender
                     && previous_call.warp.is_none_or(|warp| warp.is_zero())
                     && previous_call.roll.is_none_or(|roll| roll.is_zero())
                     && previous_call.call_details.value.is_none_or(|value| value.is_zero())
@@ -3665,13 +3672,16 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                                         sender: call.sender,
                                     },
                                 ];
-                                solved.extend(self.solve_invariants_from_frontier_prefix(
-                                    invariant_contract,
-                                    &remaining_invariants,
-                                    &suffix_executor,
-                                    &calls,
-                                    &sequence[..call_index - 1],
-                                ));
+                                solved.extend(
+                                    self.solve_invariants_from_frontier_prefix(
+                                        invariant_contract,
+                                        &remaining_invariants,
+                                        &suffix_executor,
+                                        &calls,
+                                        &sequence[..call_index - 1],
+                                    )
+                                    .0,
+                                );
                             }
                         }
                         Err(err) => {
