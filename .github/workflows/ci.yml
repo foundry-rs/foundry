@@ -17,14 +17,10 @@ env:
   RUSTC_WRAPPER: "sccache"
 
 jobs:
-  cargo-cooldown:
-    permissions:
-      contents: read
-    uses: ./.github/workflows/cargo-cooldown.yml
-
   test:
     uses: ./.github/workflows/test.yml
     permissions:
+      id-token: write
       contents: read
     with:
       profile: default
@@ -42,11 +38,15 @@ jobs:
       id-token: write
 
   doctest:
-    needs: cargo-cooldown
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
+      id-token: write
       contents: read
+    env:
+      NODE_OPTIONS: --no-network-family-autoselection
+      SFW_UNKNOWN_HOST_ACTION: ignore
+      SFW_CUSTOM_REGISTRIES: wrap:binaries.soliditylang.org,wrap:raw.githubusercontent.com/nikitastupin/solc,wrap:raw.githubusercontent.com/alloy-rs/solc-builds
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -54,10 +54,19 @@ jobs:
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
           toolchain: stable
+      - name: Secure Linux runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@5338a3746a2ac2ddd88cbede733c79f907aca3a0
+        with:
+          egress-policy: audit
+      - name: Verify Socket Cargo interception
+        uses: ./.github/actions/check-socket-shim
+
       - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
       - name: Install Linux system dependencies
         run: sudo apt-get update && sudo apt-get install --yes libudev-dev
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      # Start outside Socket so the cache daemon keeps its own proxy settings.
+      - run: sccache --start-server
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           cache-bin: false
@@ -65,11 +74,15 @@ jobs:
       - run: cargo test --workspace --doc --locked
 
   no-default-features:
-    needs: cargo-cooldown
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
+      id-token: write
       contents: read
+    env:
+      NODE_OPTIONS: --no-network-family-autoselection
+      SFW_UNKNOWN_HOST_ACTION: ignore
+      SFW_CUSTOM_REGISTRIES: wrap:binaries.soliditylang.org,wrap:raw.githubusercontent.com/nikitastupin/solc,wrap:raw.githubusercontent.com/alloy-rs/solc-builds
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -77,10 +90,19 @@ jobs:
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
           toolchain: stable
+      - name: Secure Linux runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@5338a3746a2ac2ddd88cbede733c79f907aca3a0
+        with:
+          egress-policy: audit
+      - name: Verify Socket Cargo interception
+        uses: ./.github/actions/check-socket-shim
+
       - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
       - name: Install Linux system dependencies
         run: sudo apt-get update && sudo apt-get install --yes libudev-dev
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      # Start outside Socket so the cache daemon keeps its own proxy settings.
+      - run: sccache --start-server
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           cache-bin: false
@@ -89,14 +111,17 @@ jobs:
 
   touch-id-link:
     name: touch-id link (macOS)
-    if: github.event_name == 'push'
-    needs: cargo-cooldown
+    # Temporary: exercise the push-only Touch ID job on this PR.
     runs-on: depot-macos-latest
     timeout-minutes: 45
     permissions:
+      id-token: write
       contents: read
     env:
+      NODE_OPTIONS: --no-network-family-autoselection
+      SFW_UNKNOWN_HOST_ACTION: ignore
       MACOSX_DEPLOYMENT_TARGET: "11.0"
+      SFW_CUSTOM_REGISTRIES: bypass:binaries.soliditylang.org,bypass:raw.githubusercontent.com
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -105,7 +130,16 @@ jobs:
         with:
           toolchain: stable
           targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@5338a3746a2ac2ddd88cbede733c79f907aca3a0
+        with:
+          egress-policy: audit
+      - name: Verify Socket Cargo interception
+        uses: ./.github/actions/check-socket-shim
+
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      # Start outside Socket so the cache daemon keeps its own proxy settings.
+      - run: sccache --start-server
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           cache-bin: false
@@ -162,11 +196,16 @@ jobs:
           node --test .github/scripts/tests/test-create-tag.js
 
   clippy:
-    needs: cargo-cooldown
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
+      id-token: write
       contents: read
+    env:
+      NODE_OPTIONS: --no-network-family-autoselection
+      SFW_UNKNOWN_HOST_ACTION: ignore
+      SFW_CUSTOM_REGISTRIES: wrap:binaries.soliditylang.org,wrap:raw.githubusercontent.com/nikitastupin/solc,wrap:raw.githubusercontent.com/alloy-rs/solc-builds
+      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -175,12 +214,29 @@ jobs:
         with:
           toolchain: nightly
           components: clippy
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@5338a3746a2ac2ddd88cbede733c79f907aca3a0
+        with:
+          egress-policy: audit
+      - name: Verify Socket Cargo interception
+        uses: ./.github/actions/check-socket-shim
+
       - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      # Start outside Socket so the cache daemon keeps its own proxy settings.
+      - run: sccache --start-server
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - run: cargo clippy --workspace --all-targets --all-features --locked
+      - name: Run Clippy
+        shell: bash
         env:
           RUSTFLAGS: -Dwarnings
+        run: |
+          set -o pipefail
+          cargo +nightly clippy --workspace --all-targets --all-features --locked 2>&1 | tee "$RUNNER_TEMP/sfw-clippy.log"
+          if grep -F "Socket Firewall encountered an unexpected error" "$RUNNER_TEMP/sfw-clippy.log"; then
+            echo "::error::Socket Firewall failed before Clippy completed"
+            exit 1
+          fi
 
   rustfmt:
     runs-on: depot-ubuntu-latest
@@ -195,14 +251,18 @@ jobs:
         with:
           toolchain: nightly
           components: rustfmt
-      - run: cargo fmt --all --check
+      - run: cargo +nightly fmt --all --check
 
   forge-fmt:
-    needs: cargo-cooldown
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
+      id-token: write
       contents: read
+    env:
+      NODE_OPTIONS: --no-network-family-autoselection
+      SFW_UNKNOWN_HOST_ACTION: ignore
+      SFW_CUSTOM_REGISTRIES: wrap:binaries.soliditylang.org,wrap:raw.githubusercontent.com/nikitastupin/solc,wrap:raw.githubusercontent.com/alloy-rs/solc-builds
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -210,10 +270,19 @@ jobs:
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
           toolchain: stable
+      - name: Secure Linux runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@5338a3746a2ac2ddd88cbede733c79f907aca3a0
+        with:
+          egress-policy: audit
+      - name: Verify Socket Cargo interception
+        uses: ./.github/actions/check-socket-shim
+
       - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
       - name: Install Linux system dependencies
         run: sudo apt-get update && sudo apt-get install --yes libudev-dev
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      # Start outside Socket so the cache daemon keeps its own proxy settings.
+      - run: sccache --start-server
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           cache-bin: false
@@ -223,18 +292,33 @@ jobs:
         run: ./.github/scripts/format.sh --check
 
   deny:
-    needs: cargo-cooldown
-    uses: tempoxyz/gh-actions/.github/workflows/rust-lint.yml@5aecd9fd9dca5935851b94f7cb853465e7f9158f # main
+    name: cargo deny check
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
-    secrets:
-      STEP_SECURITY_API_KEY: ${{ secrets.STEP_SECURITY_API_KEY }}
-    with:
-      run-clippy: false
-      run-fmt: false
-      run-typos: false
-      deny-rust-toolchain: nightly
-
+      id-token: write
+    env:
+      RUSTC_WRAPPER: ""
+      NODE_OPTIONS: --no-network-family-autoselection
+      SFW_UNKNOWN_HOST_ACTION: ignore
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: nightly
+      - uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
+        with:
+          tool: cargo-deny@0.20.2
+      - name: Secure Linux runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@5338a3746a2ac2ddd88cbede733c79f907aca3a0
+        with:
+          egress-policy: audit
+      - name: Verify Socket Cargo interception
+        uses: ./.github/actions/check-socket-shim
+      - run: cargo deny --all-features check all
   codeql:
     name: analyze (${{ matrix.language }})
     runs-on: ubuntu-latest
@@ -279,7 +363,6 @@ jobs:
     if: always()
     permissions: {}
     needs:
-      - cargo-cooldown
       - test
       - docs
       - doctest
@@ -299,5 +382,4 @@ jobs:
       - name: Decide whether the needed jobs succeeded or failed
         uses: re-actors/alls-green@b5b5b37504aa4183270bd3d855c52a67f212be35 # v1.3.0
         with:
-          allowed-skips: touch-id-link
           jobs: ${{ toJSON(needs) }}

@@ -1,0 +1,14 @@
+name: Verify Socket Cargo interception
+description: Fail if Cargo resolves to an unprotected binary.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        shim_dir="$SFW_SHIM_DIR"
+        if [[ "$RUNNER_OS" == Windows ]]; then
+          shim_dir="$(cygpath -u "$shim_dir")"
+        fi
+        test "$(command -v cargo)" = "$shim_dir/cargo"
+        # Git CLI honors Socket's certificate settings; Cargo's libgit2 does not.
+        echo 'CARGO_NET_GIT_FETCH_WITH_CLI=true' >> "$GITHUB_ENV"
