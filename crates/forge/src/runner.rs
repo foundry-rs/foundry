@@ -3421,6 +3421,41 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         Ok((executor, targets))
     }
 
+    fn sequence_breaks_invariant(
+        &self,
+        invariant_contract: &InvariantContract<'_>,
+        invariant_idx: usize,
+        sequence: &[BasicTxDetails],
+        replay_order: &[usize],
+        call_after_invariant: bool,
+    ) -> bool {
+        let policy = invariant_contract.invariant_fns[invariant_idx].1;
+        let Ok(outcome) = check_sequence(
+            self.clone_executor(),
+            sequence,
+            replay_order,
+            invariant_contract.address,
+            invariant_contract.invariant_calldata(invariant_idx),
+            CheckSequenceOptions {
+                accumulate_warp_roll: false,
+                fail_on_revert: policy,
+                expect_assertion_failure: false,
+                call_after_invariant,
+                rd: Some(self.revert_decoder()),
+            },
+        ) else {
+            return false;
+        };
+        let exact_failure = match outcome.failure_site {
+            Some(CheckSequenceFailureSite::Invariant { selector, .. }) => {
+                selector == invariant_contract.invariant_fns[invariant_idx].0.selector()
+            }
+            Some(CheckSequenceFailureSite::AfterInvariant { .. }) => call_after_invariant,
+            _ => false,
+        };
+        !outcome.success && outcome.replayed_entirely && exact_failure
+    }
+
     fn solve_invariants_from_frontier_prefix(
         &self,
         invariant_contract: &InvariantContract<'_>,
@@ -3484,38 +3519,19 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         },
                     })
                     .collect::<Vec<_>>();
-                let policy = invariant_contract.invariant_fns[invariant_idx].1;
-                let sequence = (0..calls.len()).collect::<Vec<_>>();
-                let outcome = check_sequence(
-                    prefix_executor.clone(),
-                    &calls,
-                    &sequence,
-                    invariant_contract.address,
-                    invariant_contract.invariant_calldata(invariant_idx),
-                    CheckSequenceOptions {
-                        accumulate_warp_roll: false,
-                        fail_on_revert: policy,
-                        expect_assertion_failure: false,
-                        call_after_invariant: after_invariant.is_some(),
-                        rd: Some(self.revert_decoder()),
-                    },
-                )
-                .ok()?;
-                let exact_failure = match outcome.failure_site {
-                    Some(CheckSequenceFailureSite::Invariant { selector, .. }) => {
-                        selector == invariant_contract.invariant_fns[invariant_idx].0.selector()
-                    }
-                    Some(CheckSequenceFailureSite::AfterInvariant { .. }) => {
-                        after_invariant.is_some()
-                    }
-                    _ => false,
-                };
-                if outcome.success || !outcome.replayed_entirely || !exact_failure {
-                    return None;
-                }
                 let mut sequence = Vec::with_capacity(prefix.len() + calls.len());
                 sequence.extend_from_slice(prefix);
                 sequence.extend(calls);
+                let replay_order = (0..sequence.len()).collect::<Vec<_>>();
+                if !self.sequence_breaks_invariant(
+                    invariant_contract,
+                    invariant_idx,
+                    &sequence,
+                    &replay_order,
+                    after_invariant.is_some(),
+                ) {
+                    return None;
+                }
                 Some((invariant_idx, sequence))
             })
             .collect();
@@ -3617,78 +3633,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     target: &invariant_target,
                     sender: call.sender,
                 }];
-                let (mut solved, single_call_completed) = self
-                    .solve_invariants_from_frontier_prefix(
-                        invariant_contract,
-                        &invariant_indexes,
-                        &prefix_executor,
-                        &single_call,
-                        &sequence[..call_index],
-                    );
-
-                let solved_invariants =
-                    solved.iter().map(|(index, _)| *index).collect::<HashSet<_>>();
-                let remaining_invariants = invariant_indexes
-                    .iter()
-                    .copied()
-                    .filter(|index| !solved_invariants.contains(index))
-                    .collect::<Vec<_>>();
-                if single_call_completed
-                    && !remaining_invariants.is_empty()
-                    && call_index > 0
-                    && let Some(previous_call) = sequence.get(call_index - 1)
-                    && previous_call.call_details.target == call.call_details.target
-                    && previous_call.call_details.calldata.starts_with(selector.as_slice())
-                    && previous_call.sender == call.sender
-                    && previous_call.warp.is_none_or(|warp| warp.is_zero())
-                    && previous_call.roll.is_none_or(|roll| roll.is_zero())
-                    && previous_call.call_details.value.is_none_or(|value| value.is_zero())
-                    && sender_filters.allows(previous_call.sender)
-                {
-                    match self.replay_invariant_frontier_prefix(
-                        &sequence[..call_index - 1],
-                        targeted_contracts,
-                        sender_filters,
-                        dynamic_target_ctx,
-                    ) {
-                        Ok((suffix_executor, suffix_targets)) => {
-                            let calls_replayable = {
-                                let targets = suffix_targets.targets();
-                                targets.can_replay(previous_call) && targets.can_replay(call)
-                            };
-                            if calls_replayable
-                                && let Some(previous_target) =
-                                    symbolic_invariant_target(&suffix_targets, previous_call)
-                                && let Some(current_target) =
-                                    symbolic_invariant_target(&suffix_targets, call)
-                            {
-                                let calls = [
-                                    SymbolicInvariantCandidateCall {
-                                        target: &previous_target,
-                                        sender: previous_call.sender,
-                                    },
-                                    SymbolicInvariantCandidateCall {
-                                        target: &current_target,
-                                        sender: call.sender,
-                                    },
-                                ];
-                                solved.extend(
-                                    self.solve_invariants_from_frontier_prefix(
-                                        invariant_contract,
-                                        &remaining_invariants,
-                                        &suffix_executor,
-                                        &calls,
-                                        &sequence[..call_index - 1],
-                                    )
-                                    .0,
-                                );
-                            }
-                        }
-                        Err(err) => {
-                            debug!(%err, id, "failed to replay widened invariant frontier prefix");
-                        }
-                    }
-                }
+                let (solved, _) = self.solve_invariants_from_frontier_prefix(
+                    invariant_contract,
+                    &invariant_indexes,
+                    &prefix_executor,
+                    &single_call,
+                    &sequence[..call_index],
+                );
 
                 for (invariant_idx, solved_sequence) in solved {
                     match persist_corpus_seed(&invariant_config.corpus, solved_sequence) {
@@ -3768,11 +3719,54 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     );
                     continue;
                 }
+
+                let replay_order = (0..solved_sequence.len()).collect::<Vec<_>>();
+                let invariant_indexes = if invariant_contract.call_after_invariant {
+                    (!seeded_invariants.contains(&invariant_contract.anchor_idx))
+                        .then_some(invariant_contract.anchor_idx)
+                        .into_iter()
+                        .collect::<Vec<_>>()
+                } else {
+                    (0..invariant_contract.invariant_fns.len())
+                        .filter(|idx| !seeded_invariants.contains(idx))
+                        .collect::<Vec<_>>()
+                };
+                let broken_invariants = invariant_indexes
+                    .into_iter()
+                    .filter(|&invariant_idx| {
+                        self.sequence_breaks_invariant(
+                            invariant_contract,
+                            invariant_idx,
+                            &solved_sequence,
+                            &replay_order,
+                            invariant_contract.call_after_invariant,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                if !broken_invariants.is_empty() {
+                    match persist_corpus_seed(&invariant_config.corpus, solved_sequence.clone()) {
+                        Ok(path) => {
+                            seeded_invariants.extend(broken_invariants.iter().copied());
+                            if let Some(path) = path {
+                                debug!(
+                                    id,
+                                    ?broken_invariants,
+                                    path = %path.display(),
+                                    "persisted property-breaking branch frontier seed"
+                                );
+                            }
+                        }
+                        Err(err) => {
+                            warn!(%err, id, "failed to persist property-breaking branch frontier seed");
+                        }
+                    }
+                }
+
                 if assertion_failure || replay_result.reverted {
                     selected_branch_seed = Some(solved_sequence);
-                    break;
+                } else {
+                    selected_branch_seed.get_or_insert(solved_sequence);
                 }
-                selected_branch_seed.get_or_insert(solved_sequence);
             }
             if let Some(sequence) = selected_branch_seed {
                 match persist_corpus_seed(&invariant_config.corpus, sequence) {
