@@ -29,8 +29,14 @@ impl<'ast> State<'_, 'ast> {
             yul::StmtKind::Block(stmts) => self.print_yul_block(stmts, span, false, 0),
             yul::StmtKind::AssignSingle(path, expr) => {
                 self.print_path(path, false);
-                self.word(" := ");
+                self.word(" :=");
                 self.neverbreak();
+                if self
+                    .print_comments(expr.span.lo(), CommentConfig::skip_ws().mixed_prev_space())
+                    .is_none()
+                {
+                    self.nbsp();
+                }
                 self.cursor.advance_to(expr.span.lo(), self.cursor.enabled);
                 self.print_yul_expr(expr);
             }
