@@ -5627,13 +5627,19 @@ fn feasible_path_selection_drains_easy_paths_before_deferred_hard_arithmetic() {
     let mut deferred_paths = VecDeque::new();
 
     assert!(
-        executor.pop_next_feasible_path(&mut paths, &mut deferred_paths, true).unwrap().is_some()
+        executor
+            .pop_next_feasible_path(&mut paths, &mut deferred_paths, DeferredPathMode::Drain)
+            .unwrap()
+            .is_some()
     );
     assert_eq!(deferred_paths.len(), 1);
     assert!(executor.deadline.is_none());
     assert_eq!(counted_solver_invocations(&marker), 0);
     assert!(
-        executor.pop_next_feasible_path(&mut paths, &mut deferred_paths, true).unwrap().is_none()
+        executor
+            .pop_next_feasible_path(&mut paths, &mut deferred_paths, DeferredPathMode::Drain)
+            .unwrap()
+            .is_none()
     );
     assert!(executor.deadline.is_some());
     assert_eq!(counted_solver_invocations(&marker), 1);
@@ -5665,13 +5671,13 @@ fn nested_feasible_path_selection_skips_hard_arithmetic_without_escalating() {
     let mut deferred_paths = VecDeque::new();
     assert!(
         executor
-            .pop_next_feasible_path(&mut nested_paths, &mut deferred_paths, false)
+            .pop_next_feasible_path(&mut nested_paths, &mut deferred_paths, DeferredPathMode::Skip)
             .unwrap()
             .is_some()
     );
     assert!(
         executor
-            .pop_next_feasible_path(&mut nested_paths, &mut deferred_paths, false)
+            .pop_next_feasible_path(&mut nested_paths, &mut deferred_paths, DeferredPathMode::Skip)
             .unwrap()
             .is_none()
     );
