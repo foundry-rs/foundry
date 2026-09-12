@@ -1093,6 +1093,31 @@ fn memory_load_accepts_symbolic_offsets() {
 }
 
 #[test]
+fn memory_bounded_relative_load_preserves_wrapping_offsets() {
+    let mut cx = SymCx::new();
+    let mut memory = SymMemory::default();
+
+    let byte = SymExpr::constant(&mut cx, U256::from(0xaa));
+    memory.store_byte(&mut cx, 0, byte);
+    // Keep the read on the general write-folding path where the lower bound is used for pruning.
+    let write_offset = SymExpr::var(&mut cx, "write_offset");
+    let other_byte = SymExpr::constant(&mut cx, U256::from(0xbb));
+    memory.store_byte_offset(&mut cx, write_offset, other_byte, 64);
+
+    let base = SymExpr::var(&mut cx, "base");
+    let loaded = memory.load_word_offset_with_bounds(&mut cx, &base, 4, 0, None);
+    let model = symbolic_model(
+        &mut cx,
+        [
+            ("base".to_string(), U256::MAX - U256::from(3)),
+            ("write_offset".to_string(), U256::from(64)),
+        ],
+    );
+
+    assert_eq!(loaded.eval_model(&model).unwrap(), U256::from(0xaa) << 248);
+}
+
+#[test]
 fn memory_store_word_accepts_symbolic_offsets() {
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();

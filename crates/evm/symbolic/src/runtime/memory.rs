@@ -353,8 +353,12 @@ impl SymMemory {
         maximum_base: Option<usize>,
     ) -> SymExpr {
         let offset = SymExpr::add_const(cx, base.clone(), U256::from(relative_offset));
-        let minimum_offset = minimum_base.checked_add(relative_offset).unwrap_or_default();
         let maximum_offset = maximum_base.and_then(|offset| offset.checked_add(relative_offset));
+        let minimum_offset = if relative_offset == 0 || maximum_offset.is_some() {
+            minimum_base.checked_add(relative_offset).unwrap_or_default()
+        } else {
+            0
+        };
         self.read_bytes_offset_with_bounds(cx, offset, 32, minimum_offset, maximum_offset)
             .word_at(cx, 0)
     }
