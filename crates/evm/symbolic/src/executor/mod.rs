@@ -288,6 +288,11 @@ impl SymbolicExecutor {
                             let mut out_of_bounds_constraints = state.constraints.clone();
                             out_of_bounds_constraints.push(condition.not(&mut self.cx));
                             if self.is_sat_with_state(&state, &out_of_bounds_constraints)? {
+                                if *completed_paths >= path_limit {
+                                    return Err(SymbolicError::Unsupported(
+                                        "symbolic path limit exceeded",
+                                    ));
+                                }
                                 let mut halted = state.clone();
                                 halted.constraints = out_of_bounds_constraints;
                                 *completed_paths += 1;

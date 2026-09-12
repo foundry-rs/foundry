@@ -146,6 +146,57 @@ incomplete symbolic execution (Stuck)
     );
 });
 
+forgetest_init!(symbolic_limits_create_size_respects_path_width, |prj, cmd| {
+    if should_skip("symbolic_limits_create_size_respects_path_width") {
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicLimitsCreateSize.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicLimitsCreateSize is Test {
+    function checkCreateSizeRespectsPathWidth(uint256 size) public {
+        vm.assume(size <= 64);
+        bytes memory code = new bytes(64);
+        for (uint256 i = 0; i < 64; i++) {
+            code[i] = 0x5b;
+        }
+        address created;
+        assembly {
+            created := create(0, add(code, 0x20), size)
+        }
+        assert(created != address(0));
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--symbolic-width",
+            "2",
+            "--match-test",
+            "checkCreateSizeRespectsPathWidth",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+(paths: 2,
+incomplete symbolic execution (Stuck)
+symbolic path limit exceeded
+checkCreateSizeRespectsPathWidth(uint256)
+"#]],
+    );
+});
+
 forgetest_init!(symbolic_limits_reports_execution_depth_exhaustion, |prj, cmd| {
     if should_skip("symbolic_limits_reports_execution_depth_exhaustion") {
         return;
