@@ -1746,6 +1746,271 @@ contract AContractTest is DSTest {
 "#]]);
 });
 
+forgetest!(ternary_return, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    function execute(bool condition) external pure returns (uint256) {
+        return condition ? 1 : 2;
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import {AContract} from "./AContract.sol";
+
+contract AContractTest is DSTest {
+    AContract a = new AContract();
+
+    function testCoverage() external {
+        a.execute(true);
+    }
+}
+"#,
+    );
+    cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
+...
+╭-------------------+---------------+---------------+--------------+---------------╮
+| File              | % Lines       | % Statements  | % Branches   | % Funcs       |
++==================================================================================+
+| src/AContract.sol | 100.00% (2/2) | 100.00% (2/2) | 50.00% (1/2) | 100.00% (1/1) |
+|-------------------+---------------+---------------+--------------+---------------|
+| Total             | 100.00% (2/2) | 100.00% (2/2) | 50.00% (1/2) | 100.00% (1/1) |
+╰-------------------+---------------+---------------+--------------+---------------╯
+
+"#]]);
+});
+
+forgetest!(ternary_nested_partial, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    function execute(bool outer, bool inner) external pure returns (uint256) {
+        return outer ? (inner ? 1 : 2) : 3;
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import {AContract} from "./AContract.sol";
+
+contract AContractTest is DSTest {
+    AContract a = new AContract();
+
+    function testCoverage() external {
+        a.execute(true, true);
+        a.execute(true, false);
+    }
+}
+"#,
+    );
+    cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
+...
+╭-------------------+---------------+---------------+--------------+---------------╮
+| File              | % Lines       | % Statements  | % Branches   | % Funcs       |
++==================================================================================+
+| src/AContract.sol | 100.00% (2/2) | 100.00% (2/2) | 75.00% (3/4) | 100.00% (1/1) |
+|-------------------+---------------+---------------+--------------+---------------|
+| Total             | 100.00% (2/2) | 100.00% (2/2) | 75.00% (3/4) | 100.00% (1/1) |
+╰-------------------+---------------+---------------+--------------+---------------╯
+
+"#]]);
+});
+
+forgetest!(ternary_nested_outer_only, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    function execute(bool outer, bool inner) external pure returns (uint256) {
+        return outer ? (inner ? 1 : 2) : 3;
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import {AContract} from "./AContract.sol";
+
+contract AContractTest is DSTest {
+    AContract a = new AContract();
+
+    function testCoverage() external {
+        a.execute(false, false);
+    }
+}
+"#,
+    );
+    cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
+...
+╭-------------------+---------------+---------------+--------------+---------------╮
+| File              | % Lines       | % Statements  | % Branches   | % Funcs       |
++==================================================================================+
+| src/AContract.sol | 100.00% (2/2) | 100.00% (2/2) | 25.00% (1/4) | 100.00% (1/1) |
+|-------------------+---------------+---------------+--------------+---------------|
+| Total             | 100.00% (2/2) | 100.00% (2/2) | 25.00% (1/4) | 100.00% (1/1) |
+╰-------------------+---------------+---------------+--------------+---------------╯
+
+"#]]);
+});
+
+forgetest!(ternary_nested_false_partial, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    function execute(bool outer, bool inner) external pure returns (uint256) {
+        return outer ? 1 : (inner ? 2 : 3);
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import {AContract} from "./AContract.sol";
+
+contract AContractTest is DSTest {
+    AContract a = new AContract();
+
+    function testCoverage() external {
+        a.execute(false, true);
+        a.execute(false, false);
+    }
+}
+"#,
+    );
+    cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
+...
+╭-------------------+---------------+---------------+--------------+---------------╮
+| File              | % Lines       | % Statements  | % Branches   | % Funcs       |
++==================================================================================+
+| src/AContract.sol | 100.00% (2/2) | 100.00% (2/2) | 75.00% (3/4) | 100.00% (1/1) |
+|-------------------+---------------+---------------+--------------+---------------|
+| Total             | 100.00% (2/2) | 100.00% (2/2) | 75.00% (3/4) | 100.00% (1/1) |
+╰-------------------+---------------+---------------+--------------+---------------╯
+
+"#]]);
+});
+
+forgetest!(ternary_expression_contexts, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    function bare(bool cond) external pure {
+        cond ? uint(1) : uint(2);
+    }
+    function assignment(bool cond) external pure returns (uint x) {
+        x = cond ? 1 : 2;
+    }
+    function declaration(bool cond) external pure returns (uint) {
+        uint x = cond ? 1 : 2;
+        return x;
+    }
+    function tuple(bool cond) external pure returns (uint) {
+        (uint x, uint y) = (cond ? 1 : 2, 0);
+        return x + y;
+    }
+    function argument(bool cond) external pure returns (uint) {
+        return identity(cond ? 1 : 2);
+    }
+    function identity(uint x) internal pure returns (uint) { return x; }
+}
+"#,
+    );
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import {AContract} from "./AContract.sol";
+
+contract AContractTest is DSTest {
+    AContract a = new AContract();
+
+    function testCoverage() external {
+        a.bare(true);
+        a.assignment(true);
+        a.declaration(true);
+        a.tuple(true);
+        a.argument(true);
+    }
+}
+"#,
+    );
+    cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
+...
+╭-------------------+-----------------+-----------------+---------------+---------------╮
+| File              | % Lines         | % Statements    | % Branches    | % Funcs       |
++=======================================================================================+
+| src/AContract.sol | 100.00% (13/13) | 100.00% (11/11) | 50.00% (5/10) | 100.00% (6/6) |
+|-------------------+-----------------+-----------------+---------------+---------------|
+| Total             | 100.00% (13/13) | 100.00% (11/11) | 50.00% (5/10) | 100.00% (6/6) |
+╰-------------------+-----------------+-----------------+---------------+---------------╯
+
+"#]]);
+});
+
+forgetest!(ternary_modifier, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    modifier check(bool cond) {
+        uint256 x = cond ? 1 : 2;
+        _;
+    }
+    function a(bool cond) external check(cond) returns (uint256) { return 1; }
+    function b(bool cond) external check(cond) returns (uint256) { return 2; }
+}
+"#,
+    );
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import {AContract} from "./AContract.sol";
+
+contract AContractTest is DSTest {
+    AContract a = new AContract();
+
+    function testCoverage() external {
+        a.a(true);
+        a.b(false);
+    }
+}
+"#,
+    );
+    cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
+...
+╭-------------------+---------------+---------------+--------------+---------------╮
+| File              | % Lines       | % Statements  | % Branches   | % Funcs       |
++==================================================================================+
+| src/AContract.sol | 100.00% (4/4) | 100.00% (4/4) | 50.00% (1/2) | 100.00% (3/3) |
+|-------------------+---------------+---------------+--------------+---------------|
+| Total             | 100.00% (4/4) | 100.00% (4/4) | 50.00% (1/2) | 100.00% (3/3) |
+╰-------------------+---------------+---------------+--------------+---------------╯
+
+"#]]);
+});
+
 forgetest!(identical_bytecodes, |prj, cmd| {
     prj.insert_ds_test();
     prj.add_source(
