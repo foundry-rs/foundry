@@ -734,6 +734,125 @@ contract ArbitrarySendErc20 {
         token.transferFrom(x, to, a);
     }
 
+    // A single flash-loan callback must not license repeated pulls across loop iterations.
+    function badFlashLoanLoopPull(
+        IERC3156FlashBorrower receiver,
+        uint256 amount,
+        uint256 fee,
+        uint256 n,
+        bytes calldata data
+    ) public {
+        receiver.onFlashLoan(msg.sender, address(token), amount, fee, data);
+        for (uint256 i = 0; i < n; i++) {
+            token.transferFrom(address(receiver), address(this), amount + fee); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+        }
+    }
+
+    // Mint-and-consume both inside the same loop body is still safe on every iteration.
+    function okFlashLoanPerIterationMintAndPull(
+        IERC3156FlashBorrower receiver,
+        uint256 amount,
+        uint256 fee,
+        uint256 n,
+        bytes calldata data
+    ) public {
+        for (uint256 i = 0; i < n; i++) {
+            receiver.onFlashLoan(msg.sender, address(token), amount, fee, data);
+            token.transferFrom(address(receiver), address(this), amount + fee);
+        }
+    }
+
+    // A pull *after* a loop that never touches the repayment is still safely licensed by the
+    // pre-loop mint - the loop-entry floor only restricts sinks reached *inside* that loop.
+    function okFlashLoanPostLoopPullStillGuarded(
+        IERC3156FlashBorrower receiver,
+        uint256 amount,
+        uint256 fee,
+        uint256 n,
+        bytes calldata data
+    ) public {
+        receiver.onFlashLoan(msg.sender, address(token), amount, fee, data);
+        for (uint256 i = 0; i < n; i++) {
+            unrelatedSideEffect();
+        }
+        token.transferFrom(address(receiver), address(this), amount + fee);
+    }
+
+    // Same shape, nested: an inner loop unrelated to the repayment must not strip the license
+    // from a pull that happens after both loops return.
+    function okFlashLoanNestedUnrelatedLoop(
+        IERC3156FlashBorrower receiver,
+        uint256 amount,
+        uint256 fee,
+        uint256 n,
+        uint256 m,
+        bytes calldata data
+    ) public {
+        receiver.onFlashLoan(msg.sender, address(token), amount, fee, data);
+        for (uint256 i = 0; i < n; i++) {
+            for (uint256 j = 0; j < m; j++) {
+                unrelatedSideEffect();
+            }
+        }
+        token.transferFrom(address(receiver), address(this), amount + fee);
+    }
+
+    // `do { ... } while (false)` provably runs exactly once, so the repeated-pull hazard the
+    // loop-entry floor guards against doesn't actually apply here - but the lint has no
+    // constant-condition reasoning to prove that, so it conservatively still flags this as if
+    // the license could be replayed. Accepted false positive on an otherwise-safe idiom, in
+    // exchange for never missing a real repeated-pull drain.
+    function badFlashLoanDoWhileFalseSingleIteration(
+        IERC3156FlashBorrower receiver,
+        uint256 amount,
+        uint256 fee,
+        bytes calldata data
+    ) public {
+        receiver.onFlashLoan(msg.sender, address(token), amount, fee, data);
+        do {
+            token.transferFrom(address(receiver), address(this), amount + fee); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+        } while (false);
+    }
+
+    // Same accepted trade-off, spelled as a `while` that always breaks on its first pass - also
+    // provably single-iteration, also unrecognised as such, also intentionally still flagged.
+    function badFlashLoanWhileBreakSingleIteration(
+        IERC3156FlashBorrower receiver,
+        uint256 amount,
+        uint256 fee,
+        bool cond,
+        bytes calldata data
+    ) public {
+        receiver.onFlashLoan(msg.sender, address(token), amount, fee, data);
+        while (cond) {
+            token.transferFrom(address(receiver), address(this), amount + fee); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+            break;
+        }
+    }
+
+    // Reassigning a repayment's own key variable mid-loop invalidates the stale pre-loop record,
+    // and the fresh `onFlashLoan` right after re-mints the same key - but the loop-entry floor
+    // isn't corrected for that, since doing so in-place would leak across sibling `if`/`try`
+    // branches sharing this loop (see the comment on `invalidate`). Accepted false positive on
+    // a rare shape, in exchange for the floor mechanism never producing a branch-sensitive
+    // false negative.
+    function badFlashLoanReassignThenRemintInLoop(
+        IERC3156FlashBorrower receiver,
+        uint256 amount,
+        uint256 fee,
+        uint256 n,
+        bytes calldata data
+    ) public {
+        receiver.onFlashLoan(msg.sender, address(token), amount, fee, data);
+        for (uint256 i = 0; i < n; i++) {
+            receiver = receiver;
+            receiver.onFlashLoan(msg.sender, address(token), amount, fee, data);
+            token.transferFrom(address(receiver), address(this), amount + fee); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+        }
+    }
+
+    function unrelatedSideEffect() internal {}
+
     // -- MODIFIER BODY SINKS --
 
     modifier pullBad(address from, address to, uint256 a) {
