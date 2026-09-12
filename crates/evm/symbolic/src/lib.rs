@@ -219,6 +219,31 @@ pub struct SymbolicInvariantCandidateInput<'a, FEN: FoundryEvmNetwork> {
     pub ffi_enabled: bool,
 }
 
+/// One call in a fixed symbolic suffix used for invariant candidate search.
+#[derive(Clone, Copy, Debug)]
+pub struct SymbolicInvariantCandidateCall<'a> {
+    /// Concrete target and function selected from the captured sequence.
+    pub target: &'a SymbolicInvariantTarget,
+    /// Sender of the captured call.
+    pub sender: Address,
+}
+
+/// Input for best-effort invariant candidate search after a fixed symbolic call suffix.
+pub struct SymbolicInvariantCandidateSequenceInput<'a, FEN: FoundryEvmNetwork> {
+    /// Concrete Foundry executor containing the replayed prefix before the symbolic suffix.
+    pub executor: &'a Executor<FEN>,
+    /// Address of the deployed invariant test contract.
+    pub invariant_address: Address,
+    /// Invariant functions checked independently after the suffix.
+    pub invariants: &'a [&'a Function],
+    /// Optional campaign hook checked from the unchanged post-suffix state.
+    pub after_invariant: Option<&'a Function>,
+    /// Calls executed symbolically in their recorded order.
+    pub calls: &'a [SymbolicInvariantCandidateCall<'a>],
+    /// Whether symbolic `vm.ffi` calls are allowed to execute subprocesses.
+    pub ffi_enabled: bool,
+}
+
 /// One unconfirmed symbolic input produced by invariant candidate search.
 #[derive(Clone, Debug)]
 pub struct SymbolicInvariantCandidate {
@@ -226,6 +251,17 @@ pub struct SymbolicInvariantCandidate {
     pub invariant_idx: usize,
     /// Concrete handler call extracted from the solver model.
     pub step: SymbolicInvariantStep,
+    /// Concrete setup-storage values needed to replay the candidate.
+    pub storage: Vec<SymbolicStorageAssignment>,
+}
+
+/// One unconfirmed symbolic call sequence produced by invariant candidate search.
+#[derive(Clone, Debug)]
+pub struct SymbolicInvariantSequenceCandidate {
+    /// Index within [`SymbolicInvariantCandidateSequenceInput::invariants`] predicted to fail.
+    pub invariant_idx: usize,
+    /// Concrete calls extracted from one solver model in their recorded order.
+    pub steps: Vec<SymbolicInvariantStep>,
     /// Concrete setup-storage values needed to replay the candidate.
     pub storage: Vec<SymbolicStorageAssignment>,
 }
@@ -250,6 +286,15 @@ impl From<SymbolicError> for SymbolicInvariantSearchLimitation {
 pub struct SymbolicInvariantCandidateSearchResult {
     /// Unconfirmed candidates that must be replayed concretely by the caller.
     pub candidates: Vec<SymbolicInvariantCandidate>,
+    /// First encountered search limitation, if any. `None` is not a proof of safety.
+    pub limitation: Option<SymbolicInvariantSearchLimitation>,
+}
+
+/// Result of best-effort invariant candidate search after a fixed symbolic call suffix.
+#[derive(Clone, Debug)]
+pub struct SymbolicInvariantCandidateSequenceSearchResult {
+    /// Unconfirmed candidates that must be replayed concretely by the caller.
+    pub candidates: Vec<SymbolicInvariantSequenceCandidate>,
     /// First encountered search limitation, if any. `None` is not a proof of safety.
     pub limitation: Option<SymbolicInvariantSearchLimitation>,
 }

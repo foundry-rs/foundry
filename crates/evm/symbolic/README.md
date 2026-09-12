@@ -215,15 +215,19 @@ campaign semantics: assertions and reverts indicate failure, while a Solidity
 the current campaign anchor and its hook.
 
 Property checking catches correlated inputs that violate an invariant even when
-flipping the recorded comparison is harmless. Forge persists only a one-call
-symbolic suffix with no symbolic initial-storage assignments that replays
-concretely through the full prefix and fails the exact predicate. Unsupported or
-bounded predicates do not discard candidates already found, but an empty search
-does not prove the suite safe. Forge performs comparison flipping after the
-property search regardless of whether that search found a candidate, and does
-not symbolize or repair earlier calls in the recorded prefix.
-Configured symbolic limits apply separately to the property attempt and
-comparison-flipping pass for each imported frontier.
+flipping the recorded comparison is harmless. Forge first symbolizes only the
+call that reached the frontier. If that finds no candidate for a predicate, it
+may retry with the final two calls symbolic while keeping their recorded order,
+targets, and senders. Calls before that suffix remain concrete. Both symbolic
+calls must omit warp, roll, and nonzero value, and Forge persists only candidates
+with no symbolic initial-storage assignments that replay concretely through the
+complete sequence and fail the exact predicate. Unsupported or bounded
+predicates do not discard candidates already found, but an empty search does not
+prove the suite safe. Forge performs comparison flipping after the property
+search regardless of whether that search found a candidate.
+Configured symbolic limits apply separately to the one-call property attempt,
+the optional two-call retry, and the comparison-flipping pass for each imported
+frontier.
 
 This is an explicit follow-up to a concrete campaign, not automatic symbolic
 work in every fuzz run. A short solver timeout keeps iteration bounded; increase

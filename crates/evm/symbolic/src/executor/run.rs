@@ -348,11 +348,46 @@ impl SymbolicExecutor {
         &mut self,
         input: SymbolicInvariantCandidateInput<'_, FEN>,
     ) -> SymbolicInvariantCandidateSearchResult {
+        let calls =
+            [SymbolicInvariantCandidateCall { target: input.target, sender: input.handler_sender }];
+        let result =
+            self.search_invariant_sequence_candidates(SymbolicInvariantCandidateSequenceInput {
+                executor: input.executor,
+                invariant_address: input.invariant_address,
+                invariants: input.invariants,
+                after_invariant: input.after_invariant,
+                calls: &calls,
+                ffi_enabled: input.ffi_enabled,
+            });
+        let candidates = result
+            .candidates
+            .into_iter()
+            .map(|mut candidate| SymbolicInvariantCandidate {
+                invariant_idx: candidate.invariant_idx,
+                step: candidate
+                    .steps
+                    .pop()
+                    .expect("one symbolic candidate call produces one concrete step"),
+                storage: candidate.storage,
+            })
+            .collect();
+        SymbolicInvariantCandidateSearchResult { candidates, limitation: result.limitation }
+    }
+
+    /// Searches for invariant-breaking inputs after a fixed symbolic call suffix.
+    ///
+    /// Calls execute in the supplied order with their supplied targets and senders. Returned
+    /// candidates are unconfirmed until the caller replays the complete concrete sequence, and an
+    /// empty result does not prove any invariant.
+    pub fn search_invariant_sequence_candidates<FEN: FoundryEvmNetwork>(
+        &mut self,
+        input: SymbolicInvariantCandidateSequenceInput<'_, FEN>,
+    ) -> SymbolicInvariantCandidateSequenceSearchResult {
         self.reset_run_state(true);
         self.solver.clear_context_caches();
         self.cx = SymCx::new();
         if let Err(error) = self.solver.check_available() {
-            return SymbolicInvariantCandidateSearchResult {
+            return SymbolicInvariantCandidateSequenceSearchResult {
                 candidates: Vec::new(),
                 limitation: Some(error.into()),
             };
@@ -360,9 +395,11 @@ impl SymbolicExecutor {
 
         let mut candidates = Vec::new();
         let mut limitation = None;
-        if let Err(error) =
-            self.search_invariant_candidates_inner(&input, &mut candidates, &mut limitation)
-        {
+        if let Err(error) = self.search_invariant_sequence_candidates_inner(
+            &input,
+            &mut candidates,
+            &mut limitation,
+        ) {
             limitation.get_or_insert_with(|| error.into());
         }
         // Deferred hard-arithmetic branches are now sent to SMT before candidate search finishes.
@@ -373,7 +410,7 @@ impl SymbolicExecutor {
             limitation = Some(SymbolicInvariantSearchLimitation { kind, reason });
         }
 
-        SymbolicInvariantCandidateSearchResult { candidates, limitation }
+        SymbolicInvariantCandidateSequenceSearchResult { candidates, limitation }
     }
 
     pub(super) fn run_inner<FEN: FoundryEvmNetwork>(
