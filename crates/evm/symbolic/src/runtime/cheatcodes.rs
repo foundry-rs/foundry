@@ -785,6 +785,14 @@ pub(crate) const fn array_assertion_element_type(
     }
 }
 
+pub(crate) fn is_full_word_array_assertion(selector: [u8; 4]) -> bool {
+    !selector_has_string_reason(selector)
+        && matches!(
+            array_assertion_element_type(selector),
+            Ok(DynSolType::Uint(256) | DynSolType::Int(256) | DynSolType::FixedBytes(32))
+        )
+}
+
 pub(crate) fn dyn_string(value: &DynSolValue) -> Result<String, SymbolicError> {
     match value {
         DynSolValue::String(value) => Ok(value.clone()),
@@ -1088,5 +1096,28 @@ mod tests {
             foundry_cheatcode_min_input_size(registerMappingSstoreHookCall::SELECTOR),
             Some(abi_static_input_size(3))
         );
+    }
+
+    #[test]
+    fn symbolic_full_word_array_assertions_exclude_normalized_types_and_reasons() {
+        for selector in [
+            assertEq_16Call::SELECTOR,
+            assertEq_18Call::SELECTOR,
+            assertEq_22Call::SELECTOR,
+            assertNotEq_16Call::SELECTOR,
+            assertNotEq_18Call::SELECTOR,
+            assertNotEq_22Call::SELECTOR,
+        ] {
+            assert!(is_full_word_array_assertion(selector));
+        }
+        for selector in [
+            assertEq_14Call::SELECTOR,
+            assertEq_17Call::SELECTOR,
+            assertEq_20Call::SELECTOR,
+            assertNotEq_15Call::SELECTOR,
+            assertNotEq_20Call::SELECTOR,
+        ] {
+            assert!(!is_full_word_array_assertion(selector));
+        }
     }
 }

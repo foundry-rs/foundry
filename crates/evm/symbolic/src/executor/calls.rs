@@ -808,16 +808,45 @@ impl SymbolicExecutor {
             if in_size < 4 {
                 return Err(SymbolicError::Unsupported("short cheatcode CALL"));
             }
-            let in_offset = in_offset.as_usize_or("symbolic cheatcode CALL input offset")?;
-            if !self.assume_expr_at_least(state, &in_size_word, 4)? {
-                return Ok(StepOutcome::AssumeRejected);
-            }
 
-            let selector = state
-                .memory
-                .read_concrete(&mut self.cx, in_offset, 4)?
-                .try_into()
-                .map_err(|_| SymbolicError::Unsupported("symbolic cheatcode selector"))?;
+            let has_symbolic_input_offset = in_offset.as_const().is_none();
+            let concrete_in_offset = if has_symbolic_input_offset {
+                None
+            } else {
+                Some(in_offset.as_usize_or("symbolic cheatcode CALL input offset")?)
+            };
+            let selector = if has_symbolic_input_offset {
+                let minimum_offset = state.lower_bound_usize(&in_offset);
+                let maximum_offset = state.upper_bound_usize(&mut self.cx, &in_offset);
+                let selector = state
+                    .memory
+                    .read_bytes_offset_with_bounds(
+                        &mut self.cx,
+                        in_offset.clone(),
+                        4,
+                        minimum_offset,
+                        maximum_offset,
+                    )
+                    .right_aligned_word(&mut self.cx, 0, 4);
+                self.constrained_word_with_solver(state, &selector)?
+                    .map(|selector| selector.to_be_bytes::<32>()[28..].try_into().unwrap())
+                    .ok_or(SymbolicError::Unsupported("symbolic cheatcode selector"))?
+            } else {
+                state
+                    .memory
+                    .read_concrete(
+                        &mut self.cx,
+                        concrete_in_offset.expect("ordinary cheatcode input offset is concrete"),
+                        4,
+                    )?
+                    .try_into()
+                    .map_err(|_| SymbolicError::Unsupported("symbolic cheatcode selector"))?
+            };
+            let full_word_array_assertion =
+                to == CHEATCODE_ADDRESS && is_full_word_array_assertion(selector);
+            if has_symbolic_input_offset && !full_word_array_assertion {
+                return Err(SymbolicError::Unsupported("symbolic cheatcode CALL input offset"));
+            }
             if has_symbolic_in_size {
                 let min_size = if to == CHEATCODE_ADDRESS {
                     foundry_cheatcode_min_input_size(selector)
@@ -830,17 +859,21 @@ impl SymbolicExecutor {
                 if min_size > in_size {
                     return Err(SymbolicError::Unsupported("symbolic cheatcode CALL input size"));
                 }
-                if !self.assume_expr_at_least(state, &in_size_word, min_size)? {
+                if !full_word_array_assertion
+                    && state.lower_bound_usize(&in_size_word) < min_size
+                    && !self.assume_expr_at_least(state, &in_size_word, min_size)?
+                {
                     return Ok(StepOutcome::AssumeRejected);
                 }
             }
 
             if to == CHEATCODE_ADDRESS
+                && let Some(concrete_in_offset) = concrete_in_offset
                 && let Some(outcome) = self.branch_accesses_cheatcode_if_needed(
                     state,
                     worklist,
                     selector,
-                    in_offset,
+                    concrete_in_offset,
                     out_offset.clone(),
                     &out_size,
                 )?
@@ -849,13 +882,14 @@ impl SymbolicExecutor {
             }
 
             if to == CHEATCODE_ADDRESS
+                && let Some(concrete_in_offset) = concrete_in_offset
                 && let Some(outcome) = self.deploy_code_cheatcode_if_needed(
                     executor,
                     state,
                     worklist,
                     completed_paths,
                     selector,
-                    in_offset,
+                    concrete_in_offset,
                     out_offset.clone(),
                     &out_size,
                 )?
@@ -864,9 +898,15 @@ impl SymbolicExecutor {
             }
 
             let return_data = if to == CHEATCODE_ADDRESS {
-                match self
-                    .handle_foundry_cheatcode(executor, state, selector, in_offset, in_size)?
-                {
+                let outcome = self.handle_foundry_cheatcode(
+                    executor,
+                    state,
+                    selector,
+                    &in_offset,
+                    &in_size_word,
+                    in_size,
+                )?;
+                match outcome {
                     CheatcodeOutcome::Continue(ret) => SymReturnData::from_words(&mut self.cx, ret),
                     CheatcodeOutcome::ContinueData(ret) => ret,
                     CheatcodeOutcome::Revert(ret) => {
@@ -879,7 +919,11 @@ impl SymbolicExecutor {
                     CheatcodeOutcome::Failure => return Ok(StepOutcome::Failure),
                 }
             } else if to == SYMBOLIC_VM_COMPAT_ADDRESS {
-                self.handle_symbolic_vm_cheatcode(state, selector, in_offset)?
+                self.handle_symbolic_vm_cheatcode(
+                    state,
+                    selector,
+                    concrete_in_offset.expect("symbolic vm input offset is concrete"),
+                )?
             } else {
                 return Err(SymbolicError::Unsupported("symbolic cheatcode address"));
             };
