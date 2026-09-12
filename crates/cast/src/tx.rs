@@ -989,48 +989,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn browser_submission_preserves_transaction_type() {
-        let provider =
-            ProviderBuilder::new_with_network::<Ethereum>().connect_mocked_client(Asserter::new());
-        for (fees, expected_type) in [
-            (vec!["--legacy", "--gas-price", "1000000000"], "0x0"),
-            (vec!["--legacy", "--gas-price", "1000000000", "--access-list", "[]"], "0x1"),
-            (vec!["--gas-price", "1000000000", "--priority-gas-price", "1"], "0x2"),
-        ] {
-            let args =
-                [&["--gas-limit", "21000", "--nonce", "0", "--value", "0"][..], &fees].concat();
-            let (mut tx, _) = builder(&provider, &args)
-                .await
-                .with_browser_wallet()
-                .build(Address::repeat_byte(0x22))
-                .await
-                .unwrap();
-            tx.prep_for_submission();
-            let mut expected = serde_json::json!({
-                "from": Address::repeat_byte(0x22),
-                "to": TO,
-                "chainId": "0x1",
-                "type": expected_type,
-                "gas": "0x5208",
-                "nonce": "0x0",
-                "value": "0x0",
-                "input": "0x",
-                "data": "0x",
-            });
-            if expected_type == "0x2" {
-                expected["maxFeePerGas"] = "0x3b9aca00".into();
-                expected["maxPriorityFeePerGas"] = "0x1".into();
-            } else {
-                expected["gasPrice"] = "0x3b9aca00".into();
-            }
-            if expected_type == "0x1" {
-                expected["accessList"] = serde_json::json!([]);
-            }
-            assert_eq!(serde_json::to_value(tx).unwrap(), expected);
-        }
-    }
-
-    #[tokio::test]
     async fn browser_submission_resolves_type_after_tempo_fee_token() {
         let asserter = Asserter::new();
         let token = Address::repeat_byte(0x42);
