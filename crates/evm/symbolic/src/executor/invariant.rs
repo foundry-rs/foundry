@@ -83,264 +83,194 @@ impl SymbolicExecutor {
         )
     }
 
-    pub(super) fn search_invariant_sequence_candidates_inner<FEN: FoundryEvmNetwork>(
+    pub(super) fn search_invariant_candidates_inner<FEN: FoundryEvmNetwork>(
         &mut self,
-        input: &SymbolicInvariantCandidateSequenceInput<'_, FEN>,
-        candidates: &mut Vec<SymbolicInvariantSequenceCandidate>,
+        input: &SymbolicInvariantCandidateInput<'_, FEN>,
+        candidates: &mut Vec<SymbolicInvariantCandidate>,
         limitation: &mut Option<SymbolicInvariantSearchLimitation>,
     ) -> Result<(), SymbolicError> {
         if input.invariants.is_empty() {
             return Err(SymbolicError::Unsupported("symbolic invariant has no predicates"));
         }
-        let Some(first_call) = input.calls.first() else {
-            return Err(SymbolicError::Unsupported("symbolic invariant has no candidate calls"));
-        };
+        let mut completed_paths = 0;
 
         let mut initial_state = PathState::empty(
             &mut self.cx,
             input.invariant_address,
-            first_call.sender,
+            input.handler_sender,
             input.ffi_enabled,
         );
         initial_state.apply_executor_env(&mut self.cx, input.executor);
         initial_state.world.set_storage_layout(self.config.storage_layout);
 
-        let calldata_variants = input
-            .calls
-            .iter()
-            .enumerate()
-            .map(|(index, call)| {
-                let indexed_prefix =
-                    (input.calls.len() > 1).then(|| format!("frontier_handler_{index}"));
-                SymbolicCalldata::variants_with_prefix(
-                    &call.target.function,
-                    &self.config,
-                    &mut self.cx,
-                    indexed_prefix.as_deref().unwrap_or("frontier_handler"),
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let mut completed_paths = 0;
-        let _ = self.search_invariant_candidate_calls(
-            input,
-            &calldata_variants,
-            0,
-            initial_state,
-            Vec::new(),
-            candidates,
-            limitation,
-            &mut completed_paths,
+        let calldatas = SymbolicCalldata::variants_with_prefix(
+            &input.target.function,
+            &self.config,
+            &mut self.cx,
+            "frontier_handler",
         )?;
-        Ok(())
-    }
-
-    #[expect(clippy::too_many_arguments)]
-    fn search_invariant_candidate_calls<FEN: FoundryEvmNetwork>(
-        &mut self,
-        input: &SymbolicInvariantCandidateSequenceInput<'_, FEN>,
-        calldata_variants: &[Vec<SymbolicCalldata>],
-        call_index: usize,
-        state: PathState,
-        steps: Vec<SequenceStepTemplate>,
-        candidates: &mut Vec<SymbolicInvariantSequenceCandidate>,
-        limitation: &mut Option<SymbolicInvariantSearchLimitation>,
-        completed_paths: &mut usize,
-    ) -> Result<ControlFlow<()>, SymbolicError> {
-        let call = input.calls[call_index];
-        for calldata in calldata_variants[call_index].iter().cloned() {
+        'variants: for calldata in calldatas {
             self.check_timeout()?;
             let step = SequenceStepTemplate {
-                sender: call.sender,
-                address: call.target.address,
-                contract_name: call.target.contract_name.clone(),
-                function: call.target.function.clone(),
+                sender: input.handler_sender,
+                address: input.target.address,
+                contract_name: input.target.contract_name.clone(),
+                function: input.target.function.clone(),
                 calldata,
             };
             let call_data = step.calldata.call_data(&mut self.cx);
             let constraints = step.calldata.constraints().to_vec();
             let mut handler = match self.prepare_sequence_call(
                 input.executor,
-                state.clone(),
-                call.target.address,
-                call.sender,
-                &call.target.function,
+                initial_state.clone(),
+                input.target.address,
+                input.handler_sender,
+                &input.target.function,
                 call_data,
                 constraints,
             ) {
                 Ok(call) => call,
                 Err(error) => {
                     if record_candidate_limitation(limitation, error) {
-                        return Ok(ControlFlow::Break(()));
+                        break;
                     }
                     continue;
                 }
             };
+            let mut stop_after_handler = false;
             loop {
                 let outcome = match self.execute_sequence_call_next(
                     input.executor,
                     &mut handler,
-                    completed_paths,
+                    &mut completed_paths,
                 ) {
                     Ok(Some(outcome)) => outcome,
                     Ok(None) => break,
                     Err(error) => {
-                        if record_candidate_limitation(limitation, error) {
-                            return Ok(ControlFlow::Break(()));
-                        }
+                        stop_after_handler = record_candidate_limitation(limitation, error);
                         break;
                     }
                 };
                 if !matches!(outcome.status, CallStatus::Success) {
                     continue;
                 }
-                let mut next_steps = steps.clone();
-                next_steps.push(step.clone());
-                let next_call_index = call_index + 1;
-                let flow = if next_call_index < input.calls.len() {
-                    self.search_invariant_candidate_calls(
-                        input,
-                        calldata_variants,
-                        next_call_index,
-                        outcome.state,
-                        next_steps,
-                        candidates,
-                        limitation,
-                        completed_paths,
-                    )?
-                } else {
-                    self.search_invariant_candidate_predicates(
-                        input,
-                        outcome.state,
-                        &next_steps,
-                        candidates,
-                        limitation,
-                        completed_paths,
-                    )?
-                };
-                if flow.is_break() {
-                    return Ok(flow);
-                }
-            }
-        }
-        Ok(ControlFlow::Continue(()))
-    }
-
-    fn search_invariant_candidate_predicates<FEN: FoundryEvmNetwork>(
-        &mut self,
-        input: &SymbolicInvariantCandidateSequenceInput<'_, FEN>,
-        handler_state: PathState,
-        steps: &[SequenceStepTemplate],
-        candidates: &mut Vec<SymbolicInvariantSequenceCandidate>,
-        limitation: &mut Option<SymbolicInvariantSearchLimitation>,
-        completed_paths: &mut usize,
-    ) -> Result<ControlFlow<()>, SymbolicError> {
-        for (invariant_idx, invariant) in input.invariants.iter().enumerate() {
-            self.check_timeout()?;
-            let mut predicate = match self.prepare_invariant_call(
-                input.executor,
-                handler_state.clone(),
-                input.invariant_address,
-                CALLER,
-                invariant,
-            ) {
-                Ok(call) => call,
-                Err(error) => {
-                    if record_candidate_limitation(limitation, error) {
-                        return Ok(ControlFlow::Break(()));
-                    }
-                    continue;
-                }
-            };
-            let mut stop_after_predicate = false;
-            let mut candidate_states = Vec::new();
-            loop {
-                let predicate_outcome = match self.execute_sequence_call_next(
-                    input.executor,
-                    &mut predicate,
-                    completed_paths,
-                ) {
-                    Ok(Some(outcome)) => outcome,
-                    Ok(None) => break,
-                    Err(error) => {
-                        stop_after_predicate = record_candidate_limitation(limitation, error);
-                        break;
-                    }
-                };
-                if !matches!(predicate_outcome.status, CallStatus::Success) {
-                    candidate_states.push(predicate_outcome.state);
-                    continue;
-                }
-                let Some(after_invariant) = input.after_invariant else {
-                    continue;
-                };
-
-                // Concrete invariant checks do not commit predicate state before invoking
-                // `afterInvariant`. Retain its path constraints while restoring the unchanged
-                // post-handler world.
-                let mut after_state = handler_state.clone();
-                after_state.constraints = predicate_outcome.state.constraints;
-                let mut after = match self.prepare_invariant_call(
-                    input.executor,
-                    after_state,
-                    input.invariant_address,
-                    CALLER,
-                    after_invariant,
-                ) {
-                    Ok(call) => call,
-                    Err(error) => {
-                        if record_candidate_limitation(limitation, error) {
-                            stop_after_predicate = true;
-                            break;
-                        }
-                        continue;
-                    }
-                };
-                loop {
-                    match self.execute_sequence_call_next(
+                let handler_state = outcome.state;
+                for (invariant_idx, invariant) in input.invariants.iter().enumerate() {
+                    self.check_timeout()?;
+                    let mut predicate = match self.prepare_invariant_call(
                         input.executor,
-                        &mut after,
-                        completed_paths,
+                        handler_state.clone(),
+                        input.invariant_address,
+                        CALLER,
+                        invariant,
                     ) {
-                        Ok(Some(outcome)) => {
-                            if !matches!(outcome.status, CallStatus::Success) {
-                                candidate_states.push(outcome.state);
-                            }
-                        }
-                        Ok(None) => break,
+                        Ok(call) => call,
                         Err(error) => {
                             if record_candidate_limitation(limitation, error) {
-                                stop_after_predicate = true;
+                                break 'variants;
                             }
+                            continue;
+                        }
+                    };
+                    let mut stop_after_predicate = false;
+                    let mut candidate_states = Vec::new();
+                    loop {
+                        let predicate_outcome = match self.execute_sequence_call_next(
+                            input.executor,
+                            &mut predicate,
+                            &mut completed_paths,
+                        ) {
+                            Ok(Some(outcome)) => outcome,
+                            Ok(None) => break,
+                            Err(error) => {
+                                stop_after_predicate =
+                                    record_candidate_limitation(limitation, error);
+                                break;
+                            }
+                        };
+                        if !matches!(predicate_outcome.status, CallStatus::Success) {
+                            candidate_states.push(predicate_outcome.state);
+                            continue;
+                        }
+                        let Some(after_invariant) = input.after_invariant else {
+                            continue;
+                        };
+
+                        // Concrete invariant checks do not commit predicate state before invoking
+                        // `afterInvariant`. Retain its path constraints while restoring the
+                        // unchanged post-handler world.
+                        let mut after_state = handler_state.clone();
+                        after_state.constraints = predicate_outcome.state.constraints;
+                        let mut after = match self.prepare_invariant_call(
+                            input.executor,
+                            after_state,
+                            input.invariant_address,
+                            CALLER,
+                            after_invariant,
+                        ) {
+                            Ok(call) => call,
+                            Err(error) => {
+                                if record_candidate_limitation(limitation, error) {
+                                    stop_after_predicate = true;
+                                    break;
+                                }
+                                continue;
+                            }
+                        };
+                        loop {
+                            match self.execute_sequence_call_next(
+                                input.executor,
+                                &mut after,
+                                &mut completed_paths,
+                            ) {
+                                Ok(Some(outcome)) => {
+                                    if !matches!(outcome.status, CallStatus::Success) {
+                                        candidate_states.push(outcome.state);
+                                    }
+                                }
+                                Ok(None) => break,
+                                Err(error) => {
+                                    if record_candidate_limitation(limitation, error) {
+                                        stop_after_predicate = true;
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                        if stop_after_predicate {
                             break;
                         }
                     }
-                }
-                if stop_after_predicate {
-                    break;
-                }
-            }
 
-            for state in candidate_states {
-                match self.materialize_sequence(steps, &state) {
-                    Ok((steps, storage)) => {
-                        candidates.push(SymbolicInvariantSequenceCandidate {
-                            invariant_idx,
-                            steps,
-                            storage,
-                        });
-                    }
-                    Err(error) => {
-                        if record_candidate_limitation(limitation, error) {
-                            return Ok(ControlFlow::Break(()));
+                    for state in candidate_states {
+                        match self.materialize_sequence(std::slice::from_ref(&step), &state) {
+                            Ok((mut sequence, storage)) => {
+                                let step =
+                                    sequence.pop().expect("one handler template produces one step");
+                                candidates.push(SymbolicInvariantCandidate {
+                                    invariant_idx,
+                                    step,
+                                    storage,
+                                });
+                            }
+                            Err(error) => {
+                                if record_candidate_limitation(limitation, error) {
+                                    break 'variants;
+                                }
+                            }
                         }
                     }
+                    if stop_after_predicate {
+                        break 'variants;
+                    }
                 }
             }
-            if stop_after_predicate {
-                return Ok(ControlFlow::Break(()));
+            if stop_after_handler {
+                break;
             }
         }
-        Ok(ControlFlow::Continue(()))
+
+        Ok(())
     }
 
     #[expect(clippy::too_many_arguments)]

@@ -71,11 +71,10 @@ use foundry_evm::{
 };
 use foundry_evm_networks::NetworkVariant;
 use foundry_evm_symbolic::{
-    SymbolicBranchTarget, SymbolicConcreteInput, SymbolicExecutor, SymbolicInvariantCandidateCall,
-    SymbolicInvariantCandidateSequenceInput, SymbolicInvariantCounterexampleKind,
-    SymbolicInvariantRunInput, SymbolicInvariantRunResult, SymbolicInvariantStep,
-    SymbolicInvariantTarget, SymbolicRunInput, SymbolicRunResult, SymbolicStats,
-    SymbolicStopReason, SymbolicStorageAssignment,
+    SymbolicBranchTarget, SymbolicConcreteInput, SymbolicExecutor, SymbolicInvariantCandidateInput,
+    SymbolicInvariantCounterexampleKind, SymbolicInvariantRunInput, SymbolicInvariantRunResult,
+    SymbolicInvariantStep, SymbolicInvariantTarget, SymbolicRunInput, SymbolicRunResult,
+    SymbolicStats, SymbolicStopReason, SymbolicStorageAssignment,
 };
 use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestError, TestRng, TestRunner};
@@ -3393,34 +3392,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         }
     }
 
-    fn replay_invariant_frontier_prefix(
-        &self,
-        prefix: &[BasicTxDetails],
-        targeted_contracts: &FuzzRunIdentifiedContracts,
-        sender_filters: &SenderFilters,
-        dynamic_target_ctx: &DynamicTargetCtx<'_>,
-    ) -> Result<(Executor<FEN>, FuzzRunIdentifiedContracts)> {
-        let mut executor = self.clone_executor();
-        let targets = FuzzRunIdentifiedContracts::new(
-            targeted_contracts.targets().clone(),
-            targeted_contracts.is_updatable,
-        );
-        let mut created_contracts = Vec::new();
-        for call in prefix {
-            if !targets.targets().can_replay(call) || !sender_filters.allows(call.sender) {
-                return Err(eyre::eyre!("frontier prefix call is not eligible for this campaign"));
-            }
-            execute_tx_and_register_created(
-                &mut executor,
-                call,
-                &targets,
-                dynamic_target_ctx,
-                &mut created_contracts,
-            )?;
-        }
-        Ok((executor, targets))
-    }
-
     fn sequence_breaks_invariant(
         &self,
         invariant_contract: &InvariantContract<'_>,
@@ -3461,7 +3432,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         invariant_contract: &InvariantContract<'_>,
         invariant_indexes: &[usize],
         prefix_executor: &Executor<FEN>,
-        calls: &[SymbolicInvariantCandidateCall<'_>],
+        target: &SymbolicInvariantTarget,
+        sender: Address,
         prefix: &[BasicTxDetails],
     ) -> Vec<(usize, Vec<BasicTxDetails>)> {
         let after_invariant = invariant_contract
@@ -3478,16 +3450,15 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             .map(|&idx| invariant_contract.invariant_fns[idx].0)
             .collect::<Vec<_>>();
         let mut symbolic = SymbolicExecutor::new(self.config.symbolic.clone());
-        let result = symbolic.search_invariant_sequence_candidates(
-            SymbolicInvariantCandidateSequenceInput {
-                executor: prefix_executor,
-                invariant_address: invariant_contract.address,
-                invariants: &invariants,
-                after_invariant,
-                calls,
-                ffi_enabled: self.config.ffi,
-            },
-        );
+        let result = symbolic.search_invariant_candidates(SymbolicInvariantCandidateInput {
+            executor: prefix_executor,
+            invariant_address: invariant_contract.address,
+            invariants: &invariants,
+            after_invariant,
+            target,
+            handler_sender: sender,
+            ffi_enabled: self.config.ffi,
+        });
         if let Some(limitation) = &result.limitation {
             debug!(
                 ?limitation.kind,
@@ -3496,6 +3467,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 "symbolic invariant frontier candidate search incomplete"
             );
         }
+
         result
             .candidates
             .into_iter()
@@ -3504,34 +3476,28 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     return None;
                 }
                 let invariant_idx = invariant_indexes[candidate.invariant_idx];
-                let calls = candidate
-                    .steps
-                    .into_iter()
-                    .map(|step| BasicTxDetails {
-                        warp: None,
-                        roll: None,
-                        sender: step.sender,
-                        call_details: CallDetails {
-                            target: step.address,
-                            calldata: step.calldata,
-                            value: None,
-                        },
-                    })
-                    .collect::<Vec<_>>();
-                let mut sequence = Vec::with_capacity(prefix.len() + calls.len());
+                let call = BasicTxDetails {
+                    warp: None,
+                    roll: None,
+                    sender: candidate.step.sender,
+                    call_details: CallDetails {
+                        target: candidate.step.address,
+                        calldata: candidate.step.calldata,
+                        value: None,
+                    },
+                };
+                let mut sequence = Vec::with_capacity(prefix.len() + 1);
                 sequence.extend_from_slice(prefix);
-                sequence.extend(calls);
+                sequence.push(call);
                 let replay_order = (0..sequence.len()).collect::<Vec<_>>();
-                if !self.sequence_breaks_invariant(
+                self.sequence_breaks_invariant(
                     invariant_contract,
                     invariant_idx,
                     &sequence,
                     &replay_order,
                     after_invariant.is_some(),
-                ) {
-                    return None;
-                }
-                Some((invariant_idx, sequence))
+                )
+                .then_some((invariant_idx, sequence))
             })
             .collect()
     }
@@ -3575,23 +3541,48 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             else {
                 continue;
             };
-            let (prefix_executor, prefix_targets) = match self.replay_invariant_frontier_prefix(
-                &sequence[..call_index],
-                targeted_contracts,
-                sender_filters,
-                dynamic_target_ctx,
-            ) {
-                Ok(prefix) => prefix,
-                Err(err) => {
-                    debug!(%err, id, "failed to replay invariant frontier prefix");
-                    continue;
+            let mut prefix_executor = self.clone_executor();
+            let mut created_contracts = Vec::new();
+            let prefix_targets = FuzzRunIdentifiedContracts::new(
+                targeted_contracts.targets().clone(),
+                targeted_contracts.is_updatable,
+            );
+            let prefix_result = sequence[..call_index].iter().try_for_each(|prefix_call| {
+                if !prefix_targets.targets().can_replay(prefix_call)
+                    || !sender_filters.allows(prefix_call.sender)
+                {
+                    return Err(eyre::eyre!(
+                        "frontier prefix call is not eligible for this campaign"
+                    ));
                 }
-            };
+                execute_tx_and_register_created(
+                    &mut prefix_executor,
+                    prefix_call,
+                    &prefix_targets,
+                    dynamic_target_ctx,
+                    &mut created_contracts,
+                )
+            });
+            if let Err(err) = prefix_result {
+                debug!(%err, id, "failed to replay invariant frontier prefix");
+                continue;
+            }
             if !sender_filters.allows(call.sender) {
                 debug!(id, sender = %call.sender, "skipping invariant frontier with forbidden sender");
                 continue;
             }
-            let invariant_target = symbolic_invariant_target(&prefix_targets, call);
+            let invariant_target = {
+                let targets = prefix_targets.targets();
+                targets.get(&call.call_details.target).and_then(|contract| {
+                    contract.fuzzed_function_by_selector(selector).map(|function| {
+                        SymbolicInvariantTarget {
+                            address: call.call_details.target,
+                            contract_name: Some(contract.identifier.clone()),
+                            function: function.clone(),
+                        }
+                    })
+                })
+            };
             let Some(invariant_target) = invariant_target else {
                 debug!(id, selector = %selector, "skipping invariant frontier with unknown target function");
                 continue;
@@ -3627,19 +3618,14 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     let rotation = (checked_property_calls.len() - 1) % invariant_indexes.len();
                     invariant_indexes.rotate_left(rotation);
                 }
-                let single_call = [SymbolicInvariantCandidateCall {
-                    target: &invariant_target,
-                    sender: call.sender,
-                }];
-                let (solved, _) = self.solve_invariants_from_frontier_prefix(
+                for (invariant_idx, solved_sequence) in self.solve_invariants_from_frontier_prefix(
                     invariant_contract,
                     &invariant_indexes,
                     &prefix_executor,
-                    &single_call,
+                    &invariant_target,
+                    call.sender,
                     &sequence[..call_index],
-                );
-
-                for (invariant_idx, solved_sequence) in solved {
+                ) {
                     match persist_corpus_seed(&invariant_config.corpus, solved_sequence) {
                         Ok(Some(path)) => {
                             seeded_invariants.insert(invariant_idx);
@@ -5604,21 +5590,6 @@ fn frontier_selector(frontier: &FuzzBranchFrontierRecord) -> Option<Selector> {
         .get(frontier.call_index)
         .and_then(|call| call.call_details.calldata.get(..4))
         .map(Selector::from_slice)
-}
-
-fn symbolic_invariant_target(
-    targets: &FuzzRunIdentifiedContracts,
-    call: &BasicTxDetails,
-) -> Option<SymbolicInvariantTarget> {
-    let selector = Selector::from_slice(call.call_details.calldata.get(..4)?);
-    let targets = targets.targets();
-    let contract = targets.get(&call.call_details.target)?;
-    let function = contract.fuzzed_function_by_selector(selector)?;
-    Some(SymbolicInvariantTarget {
-        address: call.call_details.target,
-        contract_name: Some(contract.identifier.clone()),
-        function: function.clone(),
-    })
 }
 
 fn parse_frontier_selectors(selectors: &[String], signature: &str) -> Vec<Selector> {
