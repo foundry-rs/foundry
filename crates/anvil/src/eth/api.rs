@@ -1721,6 +1721,7 @@ impl EthApi<FoundryNetwork> {
     pub async fn anvil_rollback(&self, depth: Option<u64>) -> Result<()> {
         node_info!("anvil_rollback");
         let depth = depth.unwrap_or(1);
+        let mining_guard = self.backend.lock_mining().await;
 
         // Check reorg depth doesn't exceed current chain height
         let current_height = self.backend.best_number();
@@ -1734,7 +1735,7 @@ impl EthApi<FoundryNetwork> {
         let common_block =
             self.backend.get_block(common_height).ok_or(BlockchainError::BlockNotFound)?;
 
-        self.backend.rollback(common_block).await?;
+        self.backend.rollback_with_guard(common_block, &mining_guard).await?;
         Ok(())
     }
 
@@ -4219,6 +4220,7 @@ impl EthApi<FoundryNetwork> {
         node_info!("anvil_reorg");
         let depth = options.depth;
         let tx_block_pairs = options.tx_block_pairs;
+        let mining_guard = self.backend.lock_mining().await;
 
         // Check reorg depth doesn't exceed current chain height
         let current_height = self.backend.best_number();
@@ -4341,7 +4343,7 @@ impl EthApi<FoundryNetwork> {
             txs
         };
 
-        self.backend.reorg(depth, block_pool_txs, common_block).await?;
+        self.backend.reorg_with_guard(depth, block_pool_txs, common_block, &mining_guard).await?;
         Ok(())
     }
 
@@ -4371,7 +4373,7 @@ impl EthApi<FoundryNetwork> {
     pub async fn evm_mine_detailed(&self, opts: Option<MineOptions>) -> Result<Vec<AnyRpcBlock>> {
         node_info!("evm_mine_detailed");
 
-        let mined_blocks = self.do_evm_mine(opts).await?;
+        let (mined_blocks, _mining_guard) = self.do_evm_mine(opts).await?;
 
         let mut blocks = Vec::with_capacity(mined_blocks as usize);
 
@@ -4562,7 +4564,10 @@ impl EthApi<FoundryNetwork> {
 
 impl EthApi<FoundryNetwork> {
     /// Executes the `evm_mine` and returns the number of blocks mined
-    async fn do_evm_mine(&self, opts: Option<MineOptions>) -> Result<u64> {
+    async fn do_evm_mine(
+        &self,
+        opts: Option<MineOptions>,
+    ) -> Result<(u64, backend::mem::MiningGuard)> {
         let mut blocks_to_mine = 1u64;
 
         if let Some(opts) = opts {
@@ -4583,16 +4588,18 @@ impl EthApi<FoundryNetwork> {
 
         // this can be blocking for a bit, especially in forking mode
         // <https://github.com/foundry-rs/foundry/issues/6036>
-        self.on_blocking_task(|this| async move {
-            // mine all the blocks
-            for _ in 0..blocks_to_mine {
-                this.mine_one().await?;
-            }
-            Ok(())
-        })
-        .await?;
+        let mining_guard = self
+            .on_blocking_task(|this| async move {
+                let mining_guard = this.backend.lock_mining().await;
+                // mine all the blocks
+                for _ in 0..blocks_to_mine {
+                    this.mine_one_with_guard(&mining_guard).await?;
+                }
+                Ok(mining_guard)
+            })
+            .await?;
 
-        Ok(blocks_to_mine)
+        Ok((blocks_to_mine, mining_guard))
     }
 
     async fn do_estimate_gas(
@@ -4765,8 +4772,13 @@ impl EthApi<FoundryNetwork> {
 
     /// Mines exactly one block
     pub async fn mine_one(&self) -> Result<()> {
+        let mining_guard = self.backend.lock_mining().await;
+        self.mine_one_with_guard(&mining_guard).await
+    }
+
+    async fn mine_one_with_guard(&self, mining_guard: &backend::mem::MiningGuard) -> Result<()> {
         let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
-        let outcome = self.backend.mine_block(transactions).await?;
+        let outcome = self.backend.mine_block_with_guard(transactions, mining_guard).await?;
 
         trace!(target: "node", blocknumber = ?outcome.block_number, "mined block");
         self.pool.on_mined_block(outcome);
@@ -5311,6 +5323,43 @@ fn reward_at_percentile(rewards: &[u128], percentile: f64) -> u128 {
 mod tests {
     use super::*;
     use crate::{NodeConfig, spawn};
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn evm_mine_detailed_handles_concurrent_rollback() {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            for _ in 0..20 {
+                let (api, _handle) = spawn(NodeConfig::test().with_no_mining(true)).await;
+                let mining_api = api.clone();
+                let mining = tokio::spawn(async move {
+                    mining_api
+                        .evm_mine_detailed(Some(MineOptions::Options {
+                            timestamp: None,
+                            blocks: Some(50),
+                        }))
+                        .await
+                });
+
+                while !mining.is_finished() {
+                    if api.backend.best_number() >= 5 {
+                        api.anvil_rollback(Some(5)).await.unwrap();
+                    }
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+
+                let blocks = mining.await.unwrap().unwrap();
+                assert_eq!(blocks.len(), 50);
+                assert!(
+                    blocks.windows(2).all(|pair| pair[0].header.number < pair[1].header.number)
+                );
+                if api.backend.best_number() < 50 {
+                    return;
+                }
+            }
+            panic!("rollback did not shorten the mined block range");
+        })
+        .await
+        .unwrap();
+    }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn set_rpc_url_installs_context_equivalent_identity_with_new_instance() {
