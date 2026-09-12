@@ -4541,6 +4541,125 @@ contract SymbolicInvariantAssertionSeed is Test {
         .assert_failure();
 });
 
+forgetest_init!(
+    symbolic_invariant_frontier_seeding_retains_property_breaking_candidate,
+    |prj, cmd| {
+        if !z3_available() {
+            let _ = sh_eprintln!(
+                "skipping symbolic_invariant_frontier_seeding_retains_property_breaking_candidate because z3 is not available"
+            );
+            return;
+        }
+
+        prj.add_test(
+            "SymbolicInvariantCandidateSeed.t.sol",
+            r#"
+import "forge-std/Test.sol";
+
+contract SymbolicInvariantCandidateTarget {
+    bool public broken;
+
+    function act(uint256 value) external {
+        if (value < 10 && value == 7) broken = true;
+    }
+}
+
+contract SymbolicInvariantCandidateSeed is Test {
+    SymbolicInvariantCandidateTarget target;
+
+    function setUp() public {
+        target = new SymbolicInvariantCandidateTarget();
+        targetContract(address(target));
+    }
+
+    function invariant_anchor() public pure {}
+
+    function invariant_notBroken() public view {
+        assertFalse(target.broken());
+    }
+
+    function afterInvariant() public pure {}
+}
+"#,
+        );
+
+        cmd.forge_fuse()
+            .args([
+                "fuzz",
+                "run",
+                "--match-contract",
+                "SymbolicInvariantCandidateSeed",
+                "--runs",
+                "1",
+                "--depth",
+                "1",
+                "--seed",
+                "0x1234",
+                "--dictionary-weight",
+                "0",
+                "--threads",
+                "1",
+                "--frontier-dir",
+                "candidate_frontiers",
+            ])
+            .assert_success();
+
+        let frontier_path =
+            find_stateful_frontier_artifact(&prj.root().join("candidate_frontiers"));
+        let target_frontier =
+            keep_only_matching_frontier(&frontier_path, "value < 10", |frontier| {
+                frontier["call_index"] == 0
+                    && frontier["site"]["opcode_name"] == "LT"
+                    && frontier["operands"]["result"] == false
+                    && (frontier["operands"]["lhs"] == "0xa"
+                        || frontier["operands"]["rhs"] == "0xa")
+            });
+        let target_frontier_id = target_frontier["id"].as_u64().unwrap().to_string();
+
+        cmd.forge_fuse();
+        cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+        cmd.args([
+            "test",
+            "--match-contract",
+            "SymbolicInvariantCandidateSeed",
+            "--threads",
+            "1",
+            "--invariant-frontier-dir",
+            "candidate_frontiers",
+            "--invariant-corpus-dir",
+            "candidate_corpus",
+            "--symbolic-use-fuzz-frontiers",
+            "--symbolic-frontier-limit",
+            "1",
+            "--symbolic-frontier-ids",
+            &target_frontier_id,
+        ])
+        .assert_success();
+
+        let output = cmd
+            .forge_fuse()
+            .args([
+                "fuzz",
+                "replay",
+                "--match-contract",
+                "SymbolicInvariantCandidateSeed",
+                "--match-test",
+                "invariant_notBroken",
+                "--corpus-dir",
+                "candidate_corpus",
+            ])
+            .assert_failure()
+            .get_output()
+            .clone();
+        assert!(
+            output.stdout_lossy().contains("invariant_notBroken"),
+            "stdout={}\nstderr={}",
+            output.stdout_lossy(),
+            output.stderr_lossy()
+        );
+    }
+);
+
 forgetest_init!(symbolic_invariant_frontier_seeding_checks_property_from_prefix, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(
