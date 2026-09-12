@@ -9,7 +9,7 @@ use crate::{
 };
 use alloy_consensus::{SignableTransaction, Signed};
 use alloy_ens::NameOrAddress;
-use alloy_network::{Ethereum, EthereumWallet, Network};
+use alloy_network::{Ethereum, EthereumWallet, Network, NetworkTransactionBuilder};
 use alloy_primitives::{Address, B256, hex};
 use alloy_provider::{Provider, ProviderBuilder as AlloyProviderBuilder};
 use alloy_signer::{Signature, Signer};
@@ -407,6 +407,7 @@ impl SendTxArgs {
                 browser.switch_chain(chain.id()).await?;
             }
 
+            tx_request.prep_for_submission();
             let tx_hash = browser.send_transaction_via_browser(tx_request).await?;
             send_opts.print_tx_result(&provider, tx_hash).await?;
         // Case 3: Tempo access-key wallet.
