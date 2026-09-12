@@ -3463,7 +3463,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         prefix_executor: &Executor<FEN>,
         calls: &[SymbolicInvariantCandidateCall<'_>],
         prefix: &[BasicTxDetails],
-    ) -> (Vec<(usize, Vec<BasicTxDetails>)>, bool) {
+    ) -> Vec<(usize, Vec<BasicTxDetails>)> {
         let after_invariant = invariant_contract
             .call_after_invariant
             .then(|| {
@@ -3496,8 +3496,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 "symbolic invariant frontier candidate search incomplete"
             );
         }
-        let completed = result.limitation.is_none();
-        let candidates = result
+        result
             .candidates
             .into_iter()
             .filter_map(|candidate| {
@@ -3534,8 +3533,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 }
                 Some((invariant_idx, sequence))
             })
-            .collect();
-        (candidates, completed)
+            .collect()
     }
 
     fn try_seed_invariant_corpus_from_frontiers(

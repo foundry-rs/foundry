@@ -4819,7 +4819,6 @@ contract SymbolicInvariantSuffixSeed is Test {
     function setUp() public {
         target = new SymbolicInvariantSuffixTarget();
         targetContract(address(target));
-        targetSender(address(0xBEEF));
     }
 
     function invariant_noFailure() public view {
