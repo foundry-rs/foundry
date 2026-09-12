@@ -478,6 +478,18 @@ pub struct CampaignArgs {
     #[arg(long, value_name = "WEIGHT")]
     pub mutation_weight_crossover_replace: Option<u32>,
 
+    /// Corpus mutation weight for inserting generated calls.
+    #[arg(long, value_name = "WEIGHT")]
+    pub mutation_weight_insert: Option<u32>,
+
+    /// Corpus mutation weight for deleting calls.
+    #[arg(long, value_name = "WEIGHT")]
+    pub mutation_weight_delete: Option<u32>,
+
+    /// Corpus mutation weight for swapping calls.
+    #[arg(long, value_name = "WEIGHT")]
+    pub mutation_weight_swap: Option<u32>,
+
     /// Directory for fuzz branch frontier artifacts.
     #[arg(long, value_name = "PATH", value_hint = ValueHint::DirPath)]
     pub frontier_dir: Option<PathBuf>,
@@ -734,6 +746,18 @@ pub struct TestArgs {
     #[arg(long, env = "FOUNDRY_FUZZ_MUTATION_WEIGHT_CROSSOVER_REPLACE", value_name = "WEIGHT")]
     pub fuzz_mutation_weight_crossover_replace: Option<u32>,
 
+    /// Corpus mutation weight for inserting freshly generated calls.
+    #[arg(long, env = "FOUNDRY_FUZZ_MUTATION_WEIGHT_INSERT", value_name = "WEIGHT")]
+    pub fuzz_mutation_weight_insert: Option<u32>,
+
+    /// Corpus mutation weight for deleting calls.
+    #[arg(long, env = "FOUNDRY_FUZZ_MUTATION_WEIGHT_DELETE", value_name = "WEIGHT")]
+    pub fuzz_mutation_weight_delete: Option<u32>,
+
+    /// Corpus mutation weight for swapping calls.
+    #[arg(long, env = "FOUNDRY_FUZZ_MUTATION_WEIGHT_SWAP", value_name = "WEIGHT")]
+    pub fuzz_mutation_weight_swap: Option<u32>,
+
     /// File to rerun fuzz failures from.
     #[arg(
         long,
@@ -831,6 +855,18 @@ pub struct TestArgs {
         value_name = "WEIGHT"
     )]
     pub invariant_mutation_weight_crossover_replace: Option<u32>,
+
+    /// Corpus mutation weight for inserting freshly generated calls.
+    #[arg(long, env = "FOUNDRY_INVARIANT_MUTATION_WEIGHT_INSERT", value_name = "WEIGHT")]
+    pub invariant_mutation_weight_insert: Option<u32>,
+
+    /// Corpus mutation weight for deleting calls.
+    #[arg(long, env = "FOUNDRY_INVARIANT_MUTATION_WEIGHT_DELETE", value_name = "WEIGHT")]
+    pub invariant_mutation_weight_delete: Option<u32>,
+
+    /// Corpus mutation weight for swapping calls.
+    #[arg(long, env = "FOUNDRY_INVARIANT_MUTATION_WEIGHT_SWAP", value_name = "WEIGHT")]
+    pub invariant_mutation_weight_swap: Option<u32>,
 
     /// Run symbolic check*/prove*/invariant*/statefulFuzz* tests.
     #[arg(long, env = "FOUNDRY_SYMBOLIC")]
@@ -1415,6 +1451,12 @@ impl TestArgs {
             fuzz_mutation_weight_crossover_replace: campaign.mutation_weight_crossover_replace,
             invariant_mutation_weight_crossover_insert: campaign.mutation_weight_crossover_insert,
             invariant_mutation_weight_crossover_replace: campaign.mutation_weight_crossover_replace,
+            fuzz_mutation_weight_insert: campaign.mutation_weight_insert,
+            fuzz_mutation_weight_delete: campaign.mutation_weight_delete,
+            fuzz_mutation_weight_swap: campaign.mutation_weight_swap,
+            invariant_mutation_weight_insert: campaign.mutation_weight_insert,
+            invariant_mutation_weight_delete: campaign.mutation_weight_delete,
+            invariant_mutation_weight_swap: campaign.mutation_weight_swap,
             fuzz_frontier_dir: campaign.frontier_dir.clone(),
             invariant_frontier_dir: campaign.frontier_dir,
             fuzz_frontier_limit: campaign.frontier_limit,
@@ -3043,6 +3085,9 @@ impl Provider for TestArgs {
             "mutation_weight_cmp" => self.fuzz_mutation_weight_cmp,
             "mutation_weight_crossover_insert" => self.fuzz_mutation_weight_crossover_insert,
             "mutation_weight_crossover_replace" => self.fuzz_mutation_weight_crossover_replace,
+            "mutation_weight_insert" => self.fuzz_mutation_weight_insert,
+            "mutation_weight_delete" => self.fuzz_mutation_weight_delete,
+            "mutation_weight_swap" => self.fuzz_mutation_weight_swap,
         };
         let invariant = dict! {
             "runs" => self.invariant_runs_override,
@@ -3071,6 +3116,9 @@ impl Provider for TestArgs {
             "mutation_weight_cmp" => self.invariant_mutation_weight_cmp,
             "mutation_weight_crossover_insert" => self.invariant_mutation_weight_crossover_insert,
             "mutation_weight_crossover_replace" => self.invariant_mutation_weight_crossover_replace,
+            "mutation_weight_insert" => self.invariant_mutation_weight_insert,
+            "mutation_weight_delete" => self.invariant_mutation_weight_delete,
+            "mutation_weight_swap" => self.invariant_mutation_weight_swap,
         };
         let symbolic = dict! {
             "enabled" => self.symbolic.then_some(true),
@@ -3900,6 +3948,12 @@ mod tests {
             "1",
             "--invariant-mutation-weight-crossover-replace",
             "3",
+            "--invariant-mutation-weight-insert",
+            "4",
+            "--invariant-mutation-weight-delete",
+            "5",
+            "--invariant-mutation-weight-swap",
+            "6",
         ]);
 
         let config = Config::default().merge_inline_provider(&args).unwrap();
@@ -3943,5 +3997,8 @@ mod tests {
         assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_cmp, 7);
         assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_crossover_insert, 1);
         assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_crossover_replace, 3);
+        assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_insert, 4);
+        assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_delete, 5);
+        assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_swap, 6);
     }
 }
