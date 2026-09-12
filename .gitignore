@@ -9,7 +9,11 @@ snapshots/
 
 # IDEs and extensions
 .idea
-.vscode
+**/.vscode/*
+!/.vscode/launch.json
+!/.vscode/tasks.json
+!/editors/vscode/.vscode/launch.json
+!/editors/vscode/.vscode/tasks.json
 .claude
 .zed
 

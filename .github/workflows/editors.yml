@@ -1,0 +1,90 @@
+name: Editors
+
+permissions: {}
+
+on:
+  pull_request:
+    paths:
+      - "editors/**"
+      - ".vscode/**"
+      - ".github/workflows/editors.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/forge/src/cmd/lsp.rs"
+      - "crates/forge/src/cmd/lsp/**"
+      - "crates/forge/src/opts.rs"
+      - "crates/forge/tests/cli/lsp.rs"
+      - "crates/forge/tests/support/lsp_client.rs"
+  push:
+    branches: [master]
+    paths:
+      - "editors/**"
+      - ".github/workflows/editors.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/forge/src/cmd/lsp.rs"
+      - "crates/forge/src/cmd/lsp/**"
+      - "crates/forge/src/opts.rs"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  vscode:
+    runs-on: depot-ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
+      - name: Install Forge and VS Code native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libudev-dev xvfb libgtk-3-0 libgbm1 libnss3 libasound2t64
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          cache-bin: false
+          prefix-key: v2-editor-forge
+      - run: npm ci
+        working-directory: editors/vscode
+      - run: npm run check && npm test && npm run bundle:check && npm run package
+        working-directory: editors/vscode
+      - run: cargo build --locked -p forge --bin forge
+      - run: cargo test --locked -p forge --test cli 'lsp::'
+      - name: Real Forge in VS Code Extension Development Host
+        run: xvfb-run -a npm run test:host
+        working-directory: editors/vscode
+        env:
+          FORGE_PATH: ${{ github.workspace }}/target/debug/forge
+
+  zed:
+    runs-on: depot-ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
+          targets: wasm32-wasip2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: editors/zed
+          cache-bin: false
+      - run: cargo test --locked --manifest-path editors/zed/Cargo.toml
+      - run: cargo build --locked --manifest-path editors/zed/Cargo.toml --target wasm32-wasip2 --release
