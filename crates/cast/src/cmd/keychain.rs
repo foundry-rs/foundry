@@ -3019,7 +3019,6 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
 
     match root_signer {
         KeychainRootSigner::Browser(browser) => {
-            // Finalize the type after fee payment, which can add network-specific fields.
             tx.prep_for_submission();
             let tx_hash = browser.send_transaction_via_browser(tx).await?;
             send_opts.print_tx_result(&provider, tx_hash).await?;

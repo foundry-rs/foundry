@@ -407,7 +407,6 @@ impl SendTxArgs {
                 browser.switch_chain(chain.id()).await?;
             }
 
-            // Finalize the type after fee payment, which can add network-specific fields.
             tx_request.prep_for_submission();
             let tx_hash = browser.send_transaction_via_browser(tx_request).await?;
             send_opts.print_tx_result(&provider, tx_hash).await?;
