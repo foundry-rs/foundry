@@ -3,12 +3,13 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{
         Severity, SolLint,
-        analysis::{is_elementary, receiver_contract_id, tuple_elems},
+        analysis::{is_elementary, tuple_elems},
     },
 };
 use solar::sema::{
     Gcx,
     hir::{Expr, ExprKind, Stmt, StmtKind},
+    ty::{TyFnKind, TyKind},
 };
 
 declare_forge_lint!(
@@ -41,13 +42,15 @@ impl<'gcx> LateLintPass<'gcx> for UnusedReturn {
     }
 }
 
-/// True if `expr` is a member call on a contract whose selected function has return values,
+/// True if `expr` is an external member call whose selected function has return values,
 /// excluding ERC20 `transfer`/`transferFrom` (covered by
 /// `erc20-unchecked-transfer`).
 fn is_unused_return_call<'gcx>(gcx: Gcx<'gcx>, expr: &Expr<'gcx>) -> bool {
     let ExprKind::Call(callee, ..) = &expr.peel_parens().kind else { return false };
-    let ExprKind::Member(receiver, name) = &callee.peel_parens().kind else { return false };
-    if receiver_contract_id(gcx, receiver).is_none() {
+    let ExprKind::Member(_, name) = &callee.peel_parens().kind else { return false };
+    let Some(ty) = gcx.type_of_expr(callee.peel_parens().id) else { return false };
+    if !matches!(ty.kind, TyKind::Fn(f) if matches!(f.kind(), TyFnKind::External | TyFnKind::DelegateCall))
+    {
         return false;
     }
     let Some(fid) = gcx.resolved_function(callee) else { return false };

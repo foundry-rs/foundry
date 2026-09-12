@@ -921,7 +921,8 @@ impl SymbolicExecutor {
                 }
                 let offset = state.stack.pop()?;
                 let value = state.stack.pop()?;
-                state.memory.store_word_offset(&mut self.cx, offset, value);
+                let minimum_offset = state.lower_bound_usize(&offset);
+                state.memory.store_word_offset(&mut self.cx, offset, value, minimum_offset);
             }
             opcode::MSTORE8 => {
                 let offset = state.stack.peek(0)?.clone();
@@ -932,7 +933,8 @@ impl SymbolicExecutor {
                 }
                 let offset = state.stack.pop()?;
                 let value = state.stack.pop()?;
-                state.memory.store_byte_offset(&mut self.cx, offset, value);
+                let minimum_offset = state.lower_bound_usize(&offset);
+                state.memory.store_byte_offset(&mut self.cx, offset, value, minimum_offset);
             }
             opcode::SLOAD => {
                 let key = state.stack.pop()?;

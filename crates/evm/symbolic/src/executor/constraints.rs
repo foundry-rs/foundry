@@ -102,6 +102,53 @@ impl SymbolicExecutor {
         }
     }
 
+    /// Proves that every feasible value is at least `min` without restricting the path.
+    pub(super) fn proves_expr_at_least(
+        &mut self,
+        state: &PathState,
+        expr: &SymExpr,
+        min: usize,
+    ) -> Result<bool, SymbolicError> {
+        if state.lower_bound_usize(expr) >= min {
+            return Ok(true);
+        }
+
+        let mut below_min = state.constraints.clone();
+        below_min.push(SymBoolExpr::cmp_word_const(
+            &mut self.cx,
+            SymCmpOp::Ult,
+            expr,
+            U256::from(min),
+        ));
+        Ok(!self.is_sat_with_state(state, &below_min)?)
+    }
+
+    /// Resolves a path-constant word and proves that no alternate value is feasible.
+    pub(super) fn constrained_word_with_solver(
+        &mut self,
+        state: &PathState,
+        expr: &SymExpr,
+    ) -> Result<Option<U256>, SymbolicError> {
+        if let Some(value) = state.constrained_word(&mut self.cx, expr) {
+            return Ok(Some(value));
+        }
+        if expr.contains_gasleft() {
+            return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
+        }
+
+        let replayable_storage = state.world.replay_storage_symbols();
+        let model = self.solver.model_with_replayable_storage(
+            &mut self.cx,
+            &state.constraints,
+            &replayable_storage,
+        )?;
+        let value = expr.eval_model(&model)?;
+        let differs = SymBoolExpr::eq_word_const(&mut self.cx, expr, value).not(&mut self.cx);
+        let mut constraints = state.constraints.clone();
+        constraints.push(differs);
+        if self.is_sat_with_state(state, &constraints)? { Ok(None) } else { Ok(Some(value)) }
+    }
+
     /// Rejects symbolic integer bit widths outside the EVM word size.
     pub(super) fn validate_symbolic_integer_bits(
         bits: U256,
