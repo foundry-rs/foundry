@@ -2,8 +2,6 @@
 //!
 //! Each network module owns its network marker and concrete EVM implementations.
 
-use std::{fmt::Debug, ops::DerefMut};
-
 use crate::{
     FoundryBlock, FoundryChain, FoundryContextExt, FoundryInspectorExt, FoundryJournal,
     FoundryTransaction, FromAnyRpcTransaction,
@@ -33,7 +31,10 @@ use revm::{
     primitives::hardfork::SpecId,
 };
 use serde::{Deserialize, Serialize};
+use std::{fmt::Debug, ops::DerefMut};
 
+#[cfg(feature = "base")]
+pub mod base;
 pub mod eth;
 #[cfg(feature = "monad")]
 pub mod monad;
@@ -43,6 +44,9 @@ pub mod tempo;
 
 pub use eth::*;
 pub use tempo::*;
+
+#[cfg(feature = "base")]
+pub use base::*;
 
 #[cfg(feature = "monad")]
 pub use monad::*;

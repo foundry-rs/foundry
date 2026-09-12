@@ -46,8 +46,13 @@ use foundry_evm::{
     backend::{BlockchainDb, BlockchainDbMeta, ForkBlock, SharedBackend},
     constants::DEFAULT_CREATE2_DEPLOYER,
     hardfork::FoundryHardfork,
-    utils::{apply_chain_and_block_specific_env_changes_for_chain, block_env_from_header},
+    traces::{CallTraceDecoderBuilder, identifier::SignaturesIdentifier},
+    utils::{
+        apply_chain_and_block_specific_env_changes_for_chain, block_env_from_header,
+        get_blob_params, get_blob_params_by_hardfork,
+    },
 };
+use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
 use parking_lot::RwLock;
 use rand_08::thread_rng;
 use revm::{
@@ -67,16 +72,11 @@ use tempo_hardfork::{
     TempoHardfork,
     constants::gas::{TEMPO_T0_BASE_FEE, TEMPO_T1_BASE_FEE},
 };
+use tempo_precompiles::TIP_FEE_MANAGER_ADDRESS;
 use tokio::sync::RwLock as TokioRwLock;
 use yansi::Paint;
 
 pub use foundry_common::version::SHORT_VERSION as VERSION_MESSAGE;
-use foundry_evm::{
-    traces::{CallTraceDecoderBuilder, identifier::SignaturesIdentifier},
-    utils::{get_blob_params, get_blob_params_by_hardfork},
-};
-use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
-use tempo_precompiles::TIP_FEE_MANAGER_ADDRESS;
 
 /// Default port the rpc will open
 pub const NODE_PORT: u16 = 8545;
@@ -289,6 +289,9 @@ pub struct NodeConfig {
     pub precompile_factory: Option<Arc<dyn PrecompileFactory>>,
     /// Networks to enable features for.
     pub networks: NetworkConfigs,
+    /// Overrides the Base activation-registry administrator.
+    #[cfg(feature = "base")]
+    pub base_activation_admin: Option<Address>,
     /// The account used to sponsor Tempo fee-payer requests.
     ///
     /// Must be an unlocked signer account. Defaults to the last dev account on Tempo networks.
@@ -555,6 +558,15 @@ impl NodeConfig {
         Self { networks: NetworkConfigs::with_monad(), ..Self::test() }
     }
 
+    /// Returns a test config with Base network enabled.
+    #[cfg(feature = "base")]
+    #[doc(hidden)]
+    pub fn test_base() -> Self {
+        Self::test()
+            .with_networks(NetworkConfigs::with_base())
+            .with_chain_id(Some(NamedChain::Base as u64))
+    }
+
     /// Returns a new config which does not initialize any accounts on node startup.
     pub fn empty_state() -> Self {
         Self {
@@ -634,6 +646,8 @@ impl Default for NodeConfig {
             memory_limit: None,
             precompile_factory: None,
             networks: Default::default(),
+            #[cfg(feature = "base")]
+            base_activation_admin: None,
             tempo_fee_payer: None,
             silent: false,
             cache_path: None,
@@ -1287,6 +1301,24 @@ impl NodeConfig {
         self.networks = NetworkConfigs::with_monad();
         self.inferred_fork_network = None;
         self.chain_id_network_base = None;
+        self
+    }
+
+    /// Enable Base network features.
+    #[cfg(feature = "base")]
+    #[must_use]
+    pub fn with_base(mut self) -> Self {
+        self.networks = NetworkConfigs::with_base();
+        self.inferred_fork_network = None;
+        self.chain_id_network_base = None;
+        self
+    }
+
+    /// Sets the Base activation-registry administrator override.
+    #[cfg(feature = "base")]
+    #[must_use]
+    pub const fn with_base_activation_admin(mut self, admin: Option<Address>) -> Self {
+        self.base_activation_admin = admin;
         self
     }
 
@@ -2486,6 +2518,9 @@ mod tests {
     use super::*;
     use foundry_evm::{hardfork::EthereumHardfork, hardforks::latest_active_tempo_hardfork};
 
+    #[cfg(feature = "base")]
+    use foundry_evm::hardforks::BaseUpgrade;
+
     #[cfg(feature = "optimism")]
     use foundry_evm::hardfork::OpHardfork;
 
@@ -2729,6 +2764,27 @@ mod tests {
         let config = NodeConfig::test_tempo();
 
         assert_eq!(config.get_hardfork(), FoundryHardfork::Tempo(latest_active_tempo_hardfork()));
+    }
+
+    #[test]
+    #[cfg(feature = "base")]
+    fn test_base_config_uses_base_network_and_chain_id() {
+        let config = NodeConfig::test_base();
+
+        assert!(config.networks.is_base());
+        assert_eq!(config.get_chain_id(), NamedChain::Base as u64);
+    }
+
+    #[test]
+    #[cfg(feature = "base")]
+    fn get_hardfork_on_base_fork_uses_source_chain_timestamp_mapping() {
+        let mut config = NodeConfig::test_base()
+            .with_chain_id(Some(1u64))
+            .with_genesis_timestamp(Some(u64::MAX));
+        config.fork_source_chain_id = Some(NamedChain::Base as u64);
+
+        assert_eq!(config.get_chain_id(), 1);
+        assert_eq!(config.get_hardfork(), FoundryHardfork::Base(BaseUpgrade::Beryl));
     }
 
     #[test]

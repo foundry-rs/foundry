@@ -22,6 +22,9 @@ use foundry_wallets::{TempoAccountsWallet, WalletSigner};
 use std::{path::PathBuf, str::FromStr};
 use tempo_alloy::TempoNetwork;
 
+#[cfg(feature = "base")]
+use base_common_network::Base;
+
 /// CLI arguments for `cast mktx`.
 #[derive(Debug, Parser)]
 pub struct MakeTxArgs {
@@ -110,10 +113,16 @@ impl MakeTxArgs {
         let (network, signer, access_key) =
             tempo::resolve_transaction_network_and_signer(&self.tx.tempo, &self.eth).await?;
         if network.is_tempo() {
-            self.run_generic::<TempoNetwork>(signer, access_key).await
-        } else {
-            self.run_generic::<Ethereum>(signer, None).await
+            return self.run_generic::<TempoNetwork>(signer, access_key).await;
         }
+
+        #[cfg(feature = "base")]
+        if network.is_base() {
+            super::validate_base_transaction_options(&self.tx)?;
+            return self.run_generic::<Base>(signer, None).await;
+        }
+
+        self.run_generic::<Ethereum>(signer, None).await
     }
 
     async fn run_generic<N: Network>(

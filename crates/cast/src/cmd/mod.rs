@@ -120,7 +120,7 @@ pub mod call_overrides;
 pub mod constructor_args;
 pub mod create2;
 pub mod creation_code;
-#[cfg(feature = "optimism")]
+#[cfg(any(feature = "base", feature = "optimism"))]
 pub mod da_estimate;
 pub mod erc20;
 pub mod erc4626;
@@ -192,9 +192,26 @@ pub(crate) fn disassemble(code: &[u8]) -> Result<String> {
     Ok(output)
 }
 
+/// Rejects blob options before Base's transaction builder can discard them.
+#[cfg(feature = "base")]
+pub(crate) fn validate_base_transaction_options(
+    tx: &foundry_cli::opts::TransactionOpts,
+) -> eyre::Result<()> {
+    eyre::ensure!(
+        !tx.blob && !tx.eip4844 && tx.blob_gas_price.is_none(),
+        "Base does not support blob transactions; remove --blob, --eip4844, and --blob-gas-price"
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "base")]
+    use alloy_chains::NamedChain;
+    #[cfg(feature = "base")]
+    use foundry_config::Chain;
 
     #[tokio::test]
     async fn transaction_network_respects_explicit_selection() {
@@ -240,5 +257,89 @@ mod tests {
 
         assert!(config.networks.is_monad());
         assert!(evm_opts.networks.is_monad());
+    }
+
+    #[cfg(feature = "base")]
+    #[tokio::test]
+    async fn resolve_network_preserves_explicit_base() {
+        let config = Config { networks: NetworkVariant::Base.into(), ..Default::default() };
+        assert_eq!(
+            resolve_transaction_network(&config, false).await.unwrap(),
+            NetworkVariant::Base
+        );
+        assert_eq!(
+            resolve_transaction_network(&config, true).await.unwrap_err().to_string(),
+            "Tempo transaction options conflict with configured network `base`"
+        );
+    }
+
+    #[cfg(feature = "base")]
+    #[tokio::test]
+    async fn resolve_network_infers_base_from_chain_id() {
+        let config =
+            Config { chain: Some(Chain::from_named(NamedChain::Base)), ..Default::default() };
+        assert_eq!(
+            resolve_transaction_network(&config, false).await.unwrap(),
+            NetworkVariant::Base
+        );
+    }
+
+    #[cfg(all(any(feature = "base", feature = "optimism"), not(feature = "monad")))]
+    #[tokio::test]
+    async fn resolve_network_allows_rpc_without_local_evm() {
+        let config = Config {
+            chain: Some(foundry_config::Chain::from_named(alloy_chains::NamedChain::Monad)),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_transaction_network(&config, false).await.unwrap(),
+            NetworkVariant::Ethereum
+        );
+    }
+
+    #[cfg(feature = "base")]
+    #[tokio::test]
+    async fn resolve_network_preserves_config_over_chain_in_curl_mode() {
+        let config = Config {
+            networks: NetworkVariant::Base.into(),
+            chain: Some(foundry_config::Chain::from_id(31337)),
+            eth_rpc_curl: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_transaction_network(&config, false).await.unwrap(),
+            NetworkVariant::Base
+        );
+        let config = Config {
+            networks: NetworkVariant::Ethereum.into(),
+            chain: Some(foundry_config::Chain::from_id(8453)),
+            ..config
+        };
+        assert_eq!(
+            resolve_transaction_network(&config, false).await.unwrap(),
+            NetworkVariant::Ethereum
+        );
+    }
+
+    #[cfg(all(feature = "base", not(feature = "optimism")))]
+    #[tokio::test]
+    async fn resolve_network_allows_rpc_without_optimism() {
+        let config =
+            Config { chain: Some(foundry_config::Chain::from_id(10)), ..Default::default() };
+        assert_eq!(
+            resolve_transaction_network(&config, false).await.unwrap(),
+            NetworkVariant::Ethereum
+        );
+    }
+
+    #[cfg(any(feature = "base", feature = "optimism"))]
+    #[tokio::test]
+    async fn resolve_network_still_defaults_unknown_chain_ids_to_ethereum() {
+        let config =
+            Config { chain: Some(foundry_config::Chain::from_id(u64::MAX)), ..Default::default() };
+        assert_eq!(
+            resolve_transaction_network(&config, false).await.unwrap(),
+            NetworkVariant::Ethereum
+        );
     }
 }

@@ -67,6 +67,9 @@ use foundry_wallets::MultiWalletOpts;
 use serde::Serialize;
 use std::path::PathBuf;
 
+#[cfg(feature = "base")]
+use foundry_evm::core::evm::BaseEvmNetwork;
+
 #[cfg(feature = "monad")]
 use foundry_evm::core::evm::MonadEvmNetwork;
 
@@ -442,6 +445,16 @@ impl ScriptArgs {
                 }
                 Ok(())
             })
+            .await;
+        }
+
+        #[cfg(feature = "base")]
+        if evm_opts.networks.is_base() {
+            return Box::pin(self.run_generic_script::<BaseEvmNetwork>(
+                config,
+                evm_opts,
+                ExecutorBuilder::<BaseEvmNetwork>::new(),
+            ))
             .await;
         }
 
@@ -2333,6 +2346,8 @@ mod tests {
             for (networks, name) in [
                 (NetworkConfigs::with_ethereum(), "ethereum"),
                 (NetworkConfigs::with_celo(), "celo"),
+                #[cfg(feature = "base")]
+                (NetworkConfigs::with_base(), "base"),
             ] {
                 let evm_opts = EvmOpts { networks, ..Default::default() };
                 let err = args.resolved_evm_opts(Config::default(), evm_opts).await.unwrap_err();

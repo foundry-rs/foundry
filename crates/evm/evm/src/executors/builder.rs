@@ -13,6 +13,9 @@ use foundry_evm_core::{
 use foundry_evm_networks::NetworkConfigs;
 use revm::context::{Block, Transaction};
 
+#[cfg(feature = "base")]
+use foundry_evm_core::evm::BaseEvmNetwork;
+
 #[cfg(feature = "monad")]
 use foundry_evm_core::{constants::MONAD_CHEATCODE_ADDRESS, evm::MonadEvmNetwork};
 
@@ -127,6 +130,15 @@ impl<FEN: FoundryEvmNetwork> ExecutorBuilder<FEN> {
 
 impl ExecutorBuilder<EthEvmNetwork> {
     /// Creates the default Ethereum executor builder.
+    #[inline]
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+#[cfg(feature = "base")]
+impl ExecutorBuilder<BaseEvmNetwork> {
+    /// Creates the default Base executor builder.
     #[inline]
     pub fn new() -> Self {
         Self::default()

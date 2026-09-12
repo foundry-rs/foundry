@@ -44,6 +44,9 @@ use futures::channel::mpsc::{Receiver, Sender, channel};
 use parking_lot::{Mutex, RwLock};
 use std::{collections::VecDeque, fmt, sync::Arc};
 
+#[cfg(feature = "base")]
+use alloy_consensus::Typed2718;
+
 pub mod transactions;
 
 /// Transaction pool that performs validation.
@@ -71,6 +74,16 @@ impl<T> Pool<T> {
     /// Returns all transactions that are not ready to be included in a block yet
     pub fn pending_transactions(&self) -> Vec<Arc<PoolTransaction<T>>> {
         self.inner.read().pending_transactions.transactions().collect()
+    }
+
+    /// Returns every ready and queued transaction.
+    #[cfg(feature = "base")]
+    pub fn all_transactions(&self) -> Vec<Arc<PoolTransaction<T>>> {
+        let pool = self.inner.read();
+        pool.pending_transactions
+            .transactions()
+            .chain(pool.ready_transactions.get_transactions())
+            .collect()
     }
 
     /// Returns the number of tx that are ready and queued for further execution
@@ -104,6 +117,16 @@ impl<T> Pool<T> {
             .read()
             .transactions_by_sender(sender)
             .any(|tx| tx.pending_transaction.nonce() == nonce)
+    }
+
+    /// Returns a transaction from `sender` that provides exactly `markers`.
+    #[cfg(feature = "base")]
+    pub fn transaction_with_markers(
+        &self,
+        sender: Address,
+        markers: &[TxMarker],
+    ) -> Option<Arc<PoolTransaction<T>>> {
+        self.inner.read().transactions_by_sender(sender).find(|tx| tx.provides == markers)
     }
 
     /// Removes all transactions from the pool
@@ -246,6 +269,24 @@ impl<T: Transaction> Pool<T> {
         let added = self.inner.write().add_transaction(tx)?;
         self.notify_ready(&added);
         Ok(added)
+    }
+}
+
+#[cfg(feature = "base")]
+impl<T: Typed2718> Pool<T> {
+    /// Removes every transaction with the given EIP-2718 type.
+    pub fn clear_transaction_type(&self, tx_type: u8) -> Vec<Arc<PoolTransaction<T>>> {
+        let hashes = {
+            let pool = self.inner.read();
+            pool.pending_transactions
+                .transactions()
+                .chain(pool.ready_transactions.get_transactions())
+                .filter_map(|tx| {
+                    (tx.pending_transaction.transaction.ty() == tx_type).then_some(tx.hash())
+                })
+                .collect()
+        };
+        self.remove_invalid(hashes)
     }
 }
 

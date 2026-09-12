@@ -1,17 +1,15 @@
 //! OP-stack-specific impls for [`FoundryTxEnvelope`] and [`FoundryTransactionRequest`].
 
+use super::{FoundryTransactionRequest, FoundryTxEnvelope};
 use alloy_consensus::{Sealed, Transaction as _, Typed2718};
 use alloy_evm::{FromRecoveredTx, FromTxWithEncoded};
 use alloy_op_evm::OpTx;
-use alloy_primitives::{Address, B256, Bytes, U256};
-use alloy_serde::OtherFields;
+use alloy_primitives::{Address, Bytes};
 use op_alloy_consensus::{
-    OpDepositReceipt, OpTransaction as OpTransactionTrait, OpTxEnvelope, TxDeposit, TxPostExec,
+    OpTransaction as OpTransactionTrait, OpTxEnvelope, TxDeposit, TxPostExec,
 };
 use op_revm::{OpTransaction, transaction::deposit::DepositTransactionParts};
 use revm::context::TxEnv;
-
-use super::{FoundryReceiptEnvelope, FoundryTransactionRequest, FoundryTxEnvelope};
 
 impl OpTransactionTrait for FoundryTxEnvelope {
     fn is_deposit(&self) -> bool {
@@ -95,6 +93,10 @@ impl FromRecoveredTx<FoundryTxEnvelope> for OpTransaction<TxEnv> {
                 };
                 Self { base, enveloped_tx: None, deposit: Default::default() }
             }
+            #[cfg(feature = "base")]
+            FoundryTxEnvelope::Eip8130(_) => {
+                unreachable!("EIP-8130 transaction in Optimism context")
+            }
             FoundryTxEnvelope::Tempo(_) => unreachable!("Tempo tx in Optimism context"),
         }
     }
@@ -126,68 +128,12 @@ impl From<op_alloy_rpc_types::Transaction<FoundryTxEnvelope>> for FoundryTransac
     }
 }
 
-/// Converts `OtherFields` to `DepositTransactionParts`, produces error with missing fields.
-pub fn get_deposit_tx_parts(
-    other: &OtherFields,
-) -> Result<DepositTransactionParts, Vec<&'static str>> {
-    let mut missing = Vec::new();
-    let source_hash =
-        other.get_deserialized::<B256>("sourceHash").transpose().ok().flatten().unwrap_or_else(
-            || {
-                missing.push("sourceHash");
-                Default::default()
-            },
-        );
-    let mint = other
-        .get_deserialized::<U256>("mint")
-        .transpose()
-        .unwrap_or_else(|_| {
-            missing.push("mint");
-            Default::default()
-        })
-        .map(|value| value.saturating_to::<u128>());
-    let is_system_transaction =
-        other.get_deserialized::<bool>("isSystemTx").transpose().ok().flatten().unwrap_or_else(
-            || {
-                missing.push("isSystemTx");
-                Default::default()
-            },
-        );
-    if missing.is_empty() {
-        Ok(DepositTransactionParts { source_hash, mint, is_system_transaction })
-    } else {
-        Err(missing)
-    }
-}
-
-/// OP-stack-specific accessors on [`FoundryReceiptEnvelope`].
-impl<T> FoundryReceiptEnvelope<T> {
-    /// Return the receipt's deposit_nonce if it is a deposit receipt.
-    pub fn deposit_nonce(&self) -> Option<u64> {
-        self.as_deposit_receipt().and_then(|r| r.deposit_nonce)
-    }
-
-    /// Return the receipt's deposit version if it is a deposit receipt.
-    pub fn deposit_receipt_version(&self) -> Option<u64> {
-        self.as_deposit_receipt().and_then(|r| r.deposit_receipt_version)
-    }
-
-    /// Returns the deposit receipt if it is a deposit receipt.
-    pub const fn as_deposit_receipt(&self) -> Option<&OpDepositReceipt<T>> {
-        match self {
-            Self::Deposit(t) => Some(&t.receipt),
-            _ => None,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use super::*;
     use alloy_network::eip2718::Encodable2718;
     use alloy_primitives::TxHash;
     use alloy_rlp::Decodable;
-
-    use super::*;
 
     #[test]
     fn test_from_recovered_tx_legacy_op() {
