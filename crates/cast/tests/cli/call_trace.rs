@@ -135,6 +135,8 @@ forgetest_async!(cast_call_debug_trace_call_with_local_artifacts, |prj, cmd| {
         "script",
         "--private-key",
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--sender",
+        "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
         "--rpc-url",
         &handle.http_endpoint(),
         "--broadcast",
@@ -166,6 +168,24 @@ Traces:
 Transaction successfully executed.
 [GAS]
 
+"#]]);
+
+    // A warm compiler cache must not bypass lockfile validation.
+    fs::write(prj.root().join("foundry.lock"), "not json").unwrap();
+    cmd.cast_fuse();
+    cmd.args([
+        "call",
+        "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+        "number()(uint256)",
+        "--debug-trace-call",
+        "--with-local-artifacts",
+        "--rpc-url",
+        &handle.http_endpoint(),
+    ])
+    .assert_failure()
+    .stderr_eq(str![[r#"
+Error: Failed to read foundry.lock
+...
 "#]]);
 });
 

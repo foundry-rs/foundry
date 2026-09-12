@@ -1,5 +1,5 @@
 use super::ProjectPathOpts;
-use crate::{opts::CompilerOpts, utils::LoadConfig};
+use crate::{lockfile::check_foundry_lock, opts::CompilerOpts, utils::LoadConfig};
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_compilers::{
@@ -166,6 +166,7 @@ impl BuildOpts {
     /// [`foundry_config::Config::project()`]).
     pub fn project(&self) -> Result<Project<MultiCompiler>> {
         let config = self.load_config()?;
+        check_foundry_lock(&config.root, false)?;
         Ok(config.project()?)
     }
 

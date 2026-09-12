@@ -1012,7 +1012,7 @@ forgetest!(locked_is_build_only, |_prj, cmd| {
 forgetest_init!(build_locked_rejects_malformed_lockfile, |prj, cmd| {
     fs::write(prj.root().join("foundry.lock"), "not json").unwrap();
 
-    cmd.args(["build", "--locked"]).assert_failure().stdout_eq("").stderr_eq(str![[r#"
+    cmd.args(["build"]).assert_failure().stdout_eq("").stderr_eq(str![[r#"
 Error: Failed to read foundry.lock
 
 Context:
@@ -1021,7 +1021,7 @@ Context:
 "#]]);
 });
 
-forgetest_init!(build_checks_foundry_lock_only_when_locked, |prj, cmd| {
+forgetest_init!(build_checks_foundry_lock_by_default, |prj, cmd| {
     let foundry_lock = prj.root().join("foundry.lock");
     let lockfile = r#"{
   "lib/forge-std": {
@@ -1030,18 +1030,37 @@ forgetest_init!(build_checks_foundry_lock_only_when_locked, |prj, cmd| {
 }"#;
     fs::write(&foundry_lock, lockfile).unwrap();
 
-    cmd.args(["build"]).assert_success().stderr_eq("");
-
     fs::write(prj.root().join("src/Broken.sol"), "this is not Solidity").unwrap();
 
-    cmd.forge_fuse().args(["build", "--locked"]).assert_failure().stdout_eq("").stderr_eq(str![[
-        r#"
+    cmd.forge_fuse().args(["build"]).assert_failure().stdout_eq("").stderr_eq(str![[r#"
 Error: foundry.lock does not match installed dependencies:
   lib/forge-std: expected 0000000000000000000000000000000000000000, found [..]
 
-"#
-    ]]);
+"#]]);
     assert_eq!(fs::read_to_string(foundry_lock).unwrap(), lockfile);
+});
+
+forgetest_init!(project_commands_check_foundry_lock_before_compiling, |prj, cmd| {
+    // Populate the build cache first; cached artifacts must not bypass validation.
+    cmd.args(["build"]).assert_success();
+    let path = prj.root().join("foundry.lock");
+    let contents = r#"{"lib/forge-std":{"rev":"0000000000000000000000000000000000000000"}}"#;
+    fs::write(&path, contents).unwrap();
+    for args in [
+        vec!["build"],
+        vec!["test"],
+        vec!["script", "script/Counter.s.sol:CounterScript"],
+        vec!["create", "src/Counter.sol:Counter"],
+        vec!["inspect", "src/Counter.sol:Counter", "abi"],
+        vec!["bind", "--skip-build"],
+    ] {
+        cmd.forge_fuse().args(args).assert_failure().stdout_eq("").stderr_eq(str![[r#"
+Error: foundry.lock does not match installed dependencies:
+  lib/forge-std: expected 0000000000000000000000000000000000000000, found [..]
+
+"#]]);
+        assert_eq!(fs::read_to_string(&path).unwrap(), contents);
+    }
 });
 
 forgetest_init!(build_locked_reports_uninitialized_dependency_without_installing, |prj, cmd| {
@@ -1056,7 +1075,7 @@ forgetest_init!(build_locked_reports_uninitialized_dependency_without_installing
     let index = fs::read(root.join(".git/index")).unwrap();
     let git_config = fs::read(root.join(".git/config")).unwrap();
 
-    cmd.args(["build", "--locked"]).assert_failure().stdout_eq("").stderr_eq(str![[r#"
+    cmd.args(["build"]).assert_failure().stdout_eq("").stderr_eq(str![[r#"
 Error: foundry.lock does not match installed dependencies:
   lib/forge-std: dependency submodule is not initialized (expected [..])
 
@@ -1065,6 +1084,29 @@ Error: foundry.lock does not match installed dependencies:
     assert_eq!(fs::read(root.join(".git/index")).unwrap(), index);
     assert_eq!(fs::read(root.join(".git/config")).unwrap(), git_config);
     assert!(!root.join("lib/forge-std/.git").exists());
+});
+
+#[cfg(unix)]
+forgetest_init!(build_rejects_dangling_lockfile_symlink_without_side_effects, |prj, cmd| {
+    let root = prj.root();
+    let lockfile = root.join("foundry.lock");
+    fs::remove_file(&lockfile).unwrap();
+    symlink("missing-foundry-lock", &lockfile).unwrap();
+    let index = fs::read(root.join(".git/index")).unwrap();
+    let git_config = fs::read(root.join(".git/config")).unwrap();
+    let dependency_head = git(&root.join("lib/forge-std"), &["rev-parse", "HEAD"]);
+
+    cmd.args(["build"]).assert_failure().stdout_eq("").stderr_eq(str![[r#"
+Error: Failed to read foundry.lock
+
+Context:
+- failed to read from "[..]/foundry.lock": No such file or directory (os error 2)
+
+"#]]);
+    assert_eq!(fs::read_link(lockfile).unwrap(), Path::new("missing-foundry-lock"));
+    assert_eq!(fs::read(root.join(".git/index")).unwrap(), index);
+    assert_eq!(fs::read(root.join(".git/config")).unwrap(), git_config);
+    assert_eq!(git(&root.join("lib/forge-std"), &["rev-parse", "HEAD"]), dependency_head);
 });
 
 forgetest_init!(build_locked_preserves_uninitialized_state_without_lock_entry, |prj, cmd| {

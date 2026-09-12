@@ -5,6 +5,7 @@ use eyre::{Context, Result};
 use forge_fmt::FormatterConfig;
 use foundry_cli::{
     json::print_json_object,
+    lockfile::check_foundry_lock,
     opts::EtherscanOpts,
     utils::{LoadConfig, fetch_abi_from_etherscan},
 };
@@ -123,6 +124,7 @@ pub(crate) fn load_abi_from_file(path: &str) -> Result<JsonAbi> {
 /// Load the ABI and name from the artifact of a locally compiled contract.
 fn load_abi_from_artifact(path_or_contract: &str) -> Result<(JsonAbi, String)> {
     let config = load_config()?;
+    check_foundry_lock(&config.root, false)?;
     let mut project = config.project()?;
     project.no_artifacts = true;
     let compiler = ProjectCompiler::new().quiet(true);

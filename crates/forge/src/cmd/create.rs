@@ -143,11 +143,14 @@ impl CreateArgs {
             );
         }
 
+        // Validate local project inputs before RPC discovery or wallet interaction.
+        let config = self.load_config()?;
+        foundry_cli::lockfile::check_foundry_lock(&config.root, false)?;
+
         // Resolve chain early so we can dispatch to the correct network type.
         let chain = if let Some(chain) = self.chain_id() {
             chain
         } else {
-            let config = self.load_config()?;
             let provider = ProviderBuilder::<Ethereum>::from_config(&config)?.build()?;
             let chain_id = provider.get_chain_id().await?;
             let chain = Chain::from(chain_id);
