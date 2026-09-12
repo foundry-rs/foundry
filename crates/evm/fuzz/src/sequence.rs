@@ -50,6 +50,7 @@ enum SequenceMode {
 #[derive(Clone)]
 pub struct SequenceGenerator {
     tx: TxGenerator,
+    observed_calls: Vec<BasicTxDetails>,
     state: FuzzState,
     fixtures: FuzzFixtures,
     mode: SequenceMode,
@@ -65,6 +66,7 @@ pub struct SequenceGenerator {
 pub struct SequencePlan {
     initial: InitialSequence,
     tx: TxGenerator,
+    observed_calls: Vec<BasicTxDetails>,
     fresh_weight: u32,
     has_corpus_dir: bool,
     stateless: bool,
@@ -112,11 +114,11 @@ impl SequencePlan {
             return Err(eyre!("stateless sequence is limited to one transaction"));
         }
         if !self.has_corpus_dir || discarded {
-            return self.tx.next_tx(runner);
+            return next_tx(&self.tx, &self.observed_calls, runner);
         }
         let fresh = self.fresh_weight > 0 && runner.rng().random_ratio(self.fresh_weight, 100);
         if depth >= self.initial.as_slice().len() || fresh {
-            self.tx.next_tx(runner)
+            next_tx(&self.tx, &self.observed_calls, runner)
         } else {
             Ok(self.initial.as_slice()[depth].clone())
         }
@@ -206,6 +208,7 @@ impl SequenceGenerator {
         };
         Ok(Self {
             tx,
+            observed_calls: Vec::new(),
             state,
             fixtures,
             mode,
@@ -216,6 +219,20 @@ impl SequenceGenerator {
             payable_weight: config.payable_value_weight,
             has_corpus_dir: config.corpus_dir.is_some(),
         })
+    }
+
+    /// Adds a replayable call shape to the generation dictionary.
+    pub fn observe_call(&mut self, call: BasicTxDetails) -> bool {
+        if self.observed_calls.iter().any(|existing| same_tx(existing, &call)) {
+            return false;
+        }
+        self.observed_calls.push(call);
+        true
+    }
+
+    /// Returns the number of call shapes in the generation dictionary.
+    pub const fn observed_call_count(&self) -> usize {
+        self.observed_calls.len()
     }
 
     pub fn start<'a, F>(
@@ -239,6 +256,7 @@ impl SequenceGenerator {
         Ok(SequencePlan {
             initial,
             tx: self.tx.clone(),
+            observed_calls: self.observed_calls.clone(),
             fresh_weight: self.fresh_weight,
             has_corpus_dir: self.has_corpus_dir,
             stateless: matches!(self.mode, SequenceMode::Stateless(_)),
@@ -258,7 +276,7 @@ impl SequenceGenerator {
             || corpus_len == 0
             || (self.fresh_weight > 0 && runner.rng().random_ratio(self.fresh_weight, 100))
         {
-            return Ok((InitialSequence::Single(self.tx.next_tx(runner)?), None));
+            return Ok((InitialSequence::Single(self.next_tx(runner)?), None));
         }
         let index = runner.rng().random_range(0..corpus_len);
         let entry = entry_at(index)?;
@@ -299,7 +317,7 @@ impl SequenceGenerator {
                 let _ =
                     SequenceMutator::cmp_mutate(&mut tx, function, hints, runner, &self.fixtures)?;
             }
-            None => return Ok((InitialSequence::Single(self.tx.next_tx(runner)?), None)),
+            None => return Ok((InitialSequence::Single(self.next_tx(runner)?), None)),
             _ => {}
         }
         Ok((InitialSequence::Single(tx), Some(index)))
@@ -314,7 +332,7 @@ impl SequenceGenerator {
         targets: &FuzzRunIdentifiedContracts,
     ) -> Result<(InitialSequence, Option<usize>)> {
         if !coverage || corpus_len == 0 {
-            return Ok((InitialSequence::Multiple(vec![self.tx.next_tx(runner)?]), None));
+            return Ok((InitialSequence::Multiple(vec![self.next_tx(runner)?]), None));
         }
         let kind = match self.mutations.sample(runner.rng()) {
             0 => MutationType::Splice,
@@ -352,7 +370,7 @@ impl SequenceGenerator {
                 };
                 let mut r = Vec::with_capacity(len);
                 for _ in 0..len {
-                    r.push(self.tx.next_tx(runner)?)
+                    r.push(self.next_tx(runner)?)
                 }
                 (
                     if matches!(kind, MutationType::Prefix) {
@@ -420,10 +438,34 @@ impl SequenceGenerator {
             }
         };
         if seq.is_empty() {
-            seq.push(self.tx.next_tx(runner)?)
+            seq.push(self.next_tx(runner)?)
         }
         Ok((InitialSequence::Multiple(seq), Some(source)))
     }
+
+    fn next_tx(&self, runner: &mut TestRunner) -> Result<BasicTxDetails> {
+        next_tx(&self.tx, &self.observed_calls, runner)
+    }
+}
+
+fn same_tx(left: &BasicTxDetails, right: &BasicTxDetails) -> bool {
+    left.warp == right.warp
+        && left.roll == right.roll
+        && left.sender == right.sender
+        && left.call_details.target == right.call_details.target
+        && left.call_details.calldata == right.call_details.calldata
+        && left.call_details.value == right.call_details.value
+}
+
+fn next_tx(
+    generator: &TxGenerator,
+    observed_calls: &[BasicTxDetails],
+    runner: &mut TestRunner,
+) -> Result<BasicTxDetails> {
+    if !observed_calls.is_empty() && runner.rng().random_ratio(1, 2) {
+        return Ok(observed_calls[runner.rng().random_range(0..observed_calls.len())].clone());
+    }
+    generator.next_tx(runner)
 }
 
 /// An EVM comparison observed while executing an input.
@@ -830,6 +872,7 @@ mod tests {
         let plan = SequencePlan {
             initial: InitialSequence::Multiple(vec![tx(1), tx(2)]),
             tx: generator.tx,
+            observed_calls: Vec::new(),
             fresh_weight: generator.fresh_weight,
             has_corpus_dir: generator.has_corpus_dir,
             stateless: false,
@@ -852,6 +895,7 @@ mod tests {
             let plan = SequencePlan {
                 initial: InitialSequence::Multiple(vec![tx(1), tx(2)]),
                 tx: generator_tx(9),
+                observed_calls: Vec::new(),
                 fresh_weight,
                 has_corpus_dir: true,
                 stateless: false,
