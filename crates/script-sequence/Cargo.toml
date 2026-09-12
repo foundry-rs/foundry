@@ -31,4 +31,5 @@ alloy-primitives.workspace = true
 [features]
 default = ["optimism"]
 monad = ["foundry-common/monad", "foundry-config/monad"]
+base = ["foundry-common/base"]
 optimism = ["foundry-common/optimism"]

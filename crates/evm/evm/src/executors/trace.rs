@@ -252,6 +252,11 @@ mod tests {
     use foundry_evm_core::{FoundryTransaction, evm::EthEvmNetwork};
     use revm::context::Transaction;
 
+    #[cfg(feature = "base")]
+    use foundry_evm_core::evm::BaseEvmNetwork;
+    #[cfg(feature = "base")]
+    use foundry_evm_hardforks::{BaseSpecId, BaseUpgrade};
+
     fn assert_trace_spec_authority<FEN>(
         networks: NetworkConfigs,
         configured: FoundryHardfork,
@@ -306,6 +311,18 @@ mod tests {
             EvmVersion::Cancun,
             spec,
             Some(spec.into()),
+        );
+    }
+
+    #[cfg(feature = "base")]
+    #[test]
+    fn trace_spec_base_override_reports_executed_hardfork() {
+        assert_trace_spec_authority::<BaseEvmNetwork>(
+            NetworkConfigs::with_base(),
+            FoundryHardfork::Base(BaseUpgrade::Cobalt),
+            EvmVersion::Cancun,
+            BaseSpecId::new(BaseUpgrade::Ecotone),
+            Some(FoundryHardfork::Base(BaseUpgrade::Ecotone)),
         );
     }
 

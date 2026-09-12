@@ -42,6 +42,9 @@ use std::{
 };
 use tempfile::TempDir;
 
+#[cfg(feature = "base")]
+use foundry_evm::core::evm::BaseEvmNetwork;
+
 #[cfg(feature = "monad")]
 use foundry_evm::core::evm::MonadEvmNetwork;
 
@@ -638,6 +641,18 @@ fn compile_and_test(
             ExecutorBuilder::<TempoEvmNetwork>::new(),
         )
     } else {
+        #[cfg(feature = "base")]
+        if evm.opts.networks.is_base() {
+            return compile_and_test_inner::<BaseEvmNetwork>(
+                config,
+                evm,
+                filter_args,
+                rerun_failures,
+                selected_sources_relative,
+                isolate,
+                ExecutorBuilder::<BaseEvmNetwork>::new(),
+            );
+        }
         #[cfg(feature = "monad")]
         if evm.opts.networks.is_monad() {
             return compile_and_test_inner::<MonadEvmNetwork>(

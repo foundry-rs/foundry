@@ -59,28 +59,41 @@ use std::{
 use tempo_alloy::TempoNetwork;
 use tempo_contracts::precompiles::{ITIP20ChannelReserve, TIP20_CHANNEL_RESERVE_ADDRESS};
 
+#[cfg(feature = "base")]
+use base_common_network::Base as BaseNetwork;
+
 #[cfg(feature = "optimism")]
 use op_alloy_network::Optimism;
 
 /// Runs `$body` with `$provider` bound to a provider for the selected `--network`.
+/// Optionally binds `$network_type` to the selected network type.
 ///
 /// The fallback arm is used for Ethereum and when no network is selected: either `$default` is a
 /// provider expression that `$body` runs against, or a full `_ => $default` arm.
 macro_rules! with_network_provider {
-    ($network:expr, $config:expr, $default:expr, |$provider:ident| $body:expr) => {
-        with_network_provider!($network, $config, |$provider| $body, _ => {
+    ($network:expr, $config:expr, $default:expr, |$provider:ident $(, $network_type:ident)?| $body:expr) => {
+        with_network_provider!($network, $config, |$provider $(, $network_type)?| $body, _ => {
+            $(type $network_type = Ethereum;)?
             let $provider = $default;
             $body
         })
     };
-    ($network:expr, $config:expr, |$provider:ident| $body:expr, _ => $default:expr) => {
+    ($network:expr, $config:expr, |$provider:ident $(, $network_type:ident)?| $body:expr, _ => $default:expr) => {
         match $network {
+            #[cfg(feature = "base")]
+            Some(NetworkVariant::Base) => {
+                $(type $network_type = BaseNetwork;)?
+                let $provider = ProviderBuilder::<BaseNetwork>::from_config($config)?.build()?;
+                $body
+            }
             #[cfg(feature = "optimism")]
             Some(NetworkVariant::Optimism) => {
+                $(type $network_type = Optimism;)?
                 let $provider = ProviderBuilder::<Optimism>::from_config($config)?.build()?;
                 $body
             }
             Some(NetworkVariant::Tempo) => {
+                $(type $network_type = TempoNetwork;)?
                 let $provider = ProviderBuilder::<TempoNetwork>::from_config($config)?.build()?;
                 $body
             }
@@ -542,6 +555,15 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::Block { block, full, fields, raw, rpc, network } => {
             let config = rpc.load_config()?;
+            #[cfg(feature = "base")]
+            let network = if network.is_none() && (raw || fields.iter().any(|f| f == "raw")) {
+                crate::cmd::resolve_transaction_network(&config, false)
+                    .await?
+                    .is_base()
+                    .then_some(NetworkVariant::Base)
+            } else {
+                network
+            };
             let block = block.unwrap_or_default();
             // Can use either --raw or specify raw as a field
             let output = if raw || fields.contains(&"raw".into()) {
@@ -549,14 +571,16 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                     network,
                     &config,
                     ProviderBuilder::<Ethereum>::from_config(&config)?.build()?,
-                    |provider| {
+                    |provider, N| {
                         let block_id = block;
                         let block = provider
                             .get_block(block_id)
                             .kind(full.into())
                             .await?
                             .ok_or_else(|| eyre::eyre!("block {:?} not found", block_id))?;
-                        hex::encode_prefixed(alloy_rlp::encode(block.header().as_ref()))
+                        hex::encode_prefixed(alloy_rlp::encode(
+                            AsRef::<<N as Network>::Header>::as_ref(block.header()),
+                        ))
                     }
                 )
             } else {
@@ -1007,6 +1031,14 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::Tx { tx_hash, from, nonce, field, raw, lane, rpc, to_request, network } => {
             let config = rpc.load_config()?;
+            #[cfg(feature = "base")]
+            let network = match network {
+                Some(network) => Some(network),
+                None => crate::cmd::resolve_transaction_network(&config, false)
+                    .await?
+                    .is_base()
+                    .then_some(NetworkVariant::Base),
+            };
             // Can use either --raw or specify raw as a field
             let is_raw = raw || field.as_deref() == Some("raw");
             let output = if is_raw || lane {
@@ -1238,6 +1270,8 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 #[cfg(feature = "optimism")]
                 Some(NetworkVariant::Optimism) => decode_raw_transaction::<Optimism>(&tx)?,
                 Some(NetworkVariant::Tempo) => decode_raw_transaction::<TempoNetwork>(&tx)?,
+                #[cfg(feature = "base")]
+                Some(NetworkVariant::Base) => decode_raw_transaction::<BaseNetwork>(&tx)?,
                 Some(NetworkVariant::Ethereum) => decode_raw_transaction::<Ethereum>(&tx)?,
                 #[cfg(feature = "monad")]
                 Some(NetworkVariant::Monad) => decode_raw_transaction::<Ethereum>(&tx)?,
@@ -1263,7 +1297,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::KeyAuthorization { command } => command.run().await?,
         CastSubcommand::Tempo { command } => command.run().await?,
         CastSubcommand::VirtualAddress { command } => command.run().await?,
-        #[cfg(feature = "optimism")]
+        #[cfg(any(feature = "base", feature = "optimism"))]
         CastSubcommand::DAEstimate(cmd) => cmd.run().await?,
         CastSubcommand::Trace(cmd) => cmd.run().await?,
     };

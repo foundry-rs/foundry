@@ -78,6 +78,9 @@ use foundry_evm::{
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
 use tempo_precompiles::TIP_FEE_MANAGER_ADDRESS;
 
+#[cfg(all(feature = "base", feature = "optimism"))]
+use foundry_evm::hardfork::OpHardfork;
+
 /// Default port the rpc will open
 pub const NODE_PORT: u16 = 8545;
 /// Default chain id of the node
@@ -88,6 +91,31 @@ pub const DEFAULT_GAS_LIMIT: u64 = 30_000_000;
 pub const DEFAULT_SLOTS_IN_AN_EPOCH: u64 = 32;
 /// Default mnemonic for dev accounts
 pub const DEFAULT_MNEMONIC: &str = "test test test test test test test test test test test junk";
+
+/// Keeps inferred Base chains on Anvil's existing OP execution path until native support lands.
+#[cfg(feature = "base")]
+pub(crate) fn legacy_base_profile(profile: NetworkConfigs) -> Result<NetworkConfigs, String> {
+    if profile.is_base() {
+        #[cfg(feature = "optimism")]
+        return Ok(profile.with_rpc_network(NetworkVariant::Optimism));
+        #[cfg(not(feature = "optimism"))]
+        return Err("network family `optimism` is not enabled in this build".to_string());
+    }
+    Ok(profile)
+}
+
+/// Resolves source-chain upgrades using the execution families currently supported by Anvil.
+pub(crate) fn source_hardfork(chain_id: u64, timestamp: u64) -> Option<FoundryHardfork> {
+    #[cfg(feature = "base")]
+    if matches!(NamedChain::try_from(chain_id), Ok(NamedChain::Base | NamedChain::BaseSepolia)) {
+        #[cfg(feature = "optimism")]
+        return OpHardfork::from_chain_and_timestamp(Chain::from_id(chain_id), timestamp)
+            .map(FoundryHardfork::Optimism);
+        #[cfg(not(feature = "optimism"))]
+        return None;
+    }
+    FoundryHardfork::from_chain_and_timestamp(chain_id, timestamp)
+}
 
 #[derive(Clone, Copy, Debug)]
 struct ForkOverrides {
@@ -780,6 +808,12 @@ impl NodeConfig {
         let chain_id = self.get_chain_id();
         let base = self.networks;
         let inferred = base.with_chain_id(chain_id);
+        #[cfg(feature = "base")]
+        let inferred = if base.has_network_selection() {
+            inferred
+        } else {
+            legacy_base_profile(inferred).unwrap_or(base)
+        };
         if !base.has_network_selection() && inferred.has_network_selection() {
             self.chain_id_network_base = Some(base);
         }
@@ -1342,6 +1376,12 @@ impl NodeConfig {
                 ReceiptEnvelope = foundry_primitives::FoundryReceiptEnvelope,
             >,
     {
+        #[cfg(feature = "base")]
+        eyre::ensure!(
+            !self.networks.is_base() && !matches!(self.hardfork, Some(FoundryHardfork::Base(_))),
+            "Base execution is not supported by Anvil yet"
+        );
+
         // configure the revm environment
 
         let mut cfg = CfgEnv::default();
@@ -1565,6 +1605,9 @@ impl NodeConfig {
                 explicit_fallback,
             )
             .map_err(eyre::Report::msg)?;
+            #[cfg(feature = "base")]
+            let network_profile =
+                network_profile.map(legacy_base_profile).transpose().map_err(eyre::Report::msg)?;
             return Ok(ForkEndpointIdentity {
                 execution_chain_id: fallback_execution_chain_id,
                 source_chain_id,
@@ -1614,6 +1657,12 @@ impl NodeConfig {
         )
         .map_err(eyre::Report::msg)?
         .ok_or_else(|| eyre::eyre!("Anvil metadata did not identify an execution profile"))?;
+        #[cfg(feature = "base")]
+        let network_profile = if node_info.network.is_none() {
+            legacy_base_profile(network_profile).map_err(eyre::Report::msg)?
+        } else {
+            network_profile
+        };
         let network = network_profile.execution_network();
         let hardfork = network
             .parse_hardfork(&node_info.hard_fork)
@@ -1871,6 +1920,8 @@ impl NodeConfig {
 
         let target_network = fork_identity.network.unwrap_or(NetworkVariant::Ethereum);
         let target_profile = fork_identity.network_profile.unwrap_or_default();
+        #[cfg(feature = "base")]
+        eyre::ensure!(!target_profile.is_base(), "Base execution is not supported by Anvil yet");
         if self.inferred_fork_network.is_some()
             && !self.networks.supports_fork_source(&target_profile)
         {
@@ -1964,9 +2015,9 @@ latest block number: {latest_block}"
         let effective_network =
             self.networks.resolved_network().unwrap_or(NetworkVariant::Ethereum);
         let endpoint_matches_execution = fork_identity.network == Some(effective_network);
-        let source_hardfork = fork_identity.hardfork.or_else(|| {
-            FoundryHardfork::from_chain_and_timestamp(source_chain_id, block.header.timestamp())
-        });
+        let source_hardfork = fork_identity
+            .hardfork
+            .or_else(|| source_hardfork(source_chain_id, block.header.timestamp()));
         let inferred_hardfork = source_hardfork.filter(|hardfork| {
             endpoint_matches_execution
                 && hardfork.namespace() == effective_network.hardfork_namespace()
@@ -2486,8 +2537,53 @@ mod tests {
     use super::*;
     use foundry_evm::{hardfork::EthereumHardfork, hardforks::latest_active_tempo_hardfork};
 
-    #[cfg(feature = "optimism")]
+    #[cfg(all(feature = "optimism", not(feature = "base")))]
     use foundry_evm::hardfork::OpHardfork;
+
+    #[cfg(feature = "base")]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn base_execution_is_deferred() {
+        for config in [
+            NodeConfig::test().with_networks(NetworkConfigs::with_base()),
+            NodeConfig::test().with_hardfork(Some("base:Beryl".parse().unwrap())),
+        ] {
+            let error = crate::try_spawn(config).await.err().unwrap();
+            assert_eq!(error.to_string(), "Base execution is not supported by Anvil yet");
+        }
+    }
+
+    #[cfg(all(feature = "base", feature = "optimism"))]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn base_chain_inference_preserves_optimism_forks() {
+        for chain_id in [8453u64, 84532] {
+            let (origin_api, origin) = crate::spawn(
+                NodeConfig::test()
+                    .with_chain_id(Some(chain_id))
+                    .with_genesis_timestamp(Some(1_710_374_401u64)),
+            )
+            .await;
+            assert!(origin_api.backend.is_optimism());
+            assert_eq!(origin_api.backend.hardfork(), OpHardfork::Ecotone.into());
+
+            let anonymous_url = foundry_test_utils::rpc::spawn_rpc_proxy_rejecting_method_after(
+                origin.http_endpoint(),
+                "anvil_nodeInfo",
+                0,
+            )
+            .await;
+            for endpoint in [origin.http_endpoint(), anonymous_url] {
+                let (api, _handle) =
+                    crate::spawn(NodeConfig::test().with_eth_rpc_url(Some(endpoint))).await;
+                assert!(api.backend.is_optimism());
+                assert_eq!(api.backend.hardfork(), OpHardfork::Ecotone.into());
+                let fork = api.backend.get_fork().unwrap();
+                assert_eq!(
+                    fork.config.read().endpoint_identity.network,
+                    Some(NetworkVariant::Optimism)
+                );
+            }
+        }
+    }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn fork_output_redacts_endpoint_credentials() {

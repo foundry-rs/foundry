@@ -273,6 +273,13 @@ impl NodeArgs {
             self.evm.networks
         };
 
+        #[cfg(feature = "base")]
+        let networks = if self.evm.networks.has_network_selection() {
+            networks
+        } else {
+            crate::config::legacy_base_profile(networks).map_err(eyre::Report::msg)?
+        };
+
         let hardfork = match &self.hardfork {
             Some(hf) => Some(parse_hardfork(hf, &networks)?),
             None => None,
@@ -945,6 +952,22 @@ mod tests {
 
     #[cfg(feature = "optimism")]
     use foundry_evm::hardfork::OpHardfork;
+
+    #[cfg(all(feature = "base", feature = "optimism"))]
+    #[test]
+    fn base_chain_ids_preserve_existing_node_routing() {
+        for chain_id in ["8453", "84532"] {
+            let config =
+                NodeArgs::parse_from(["anvil", "--chain-id", chain_id]).into_node_config().unwrap();
+            assert!(config.networks.is_optimism());
+
+            let config =
+                NodeArgs::parse_from(["anvil", "--chain-id", chain_id, "--network", "ethereum"])
+                    .into_node_config()
+                    .unwrap();
+            assert!(config.networks.execution_network().is_ethereum());
+        }
+    }
 
     #[test]
     fn test_parse_fork_url() {
