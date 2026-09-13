@@ -1,4 +1,4 @@
-use alloy_primitives::U256;
+use alloy_primitives::{U256, keccak256};
 use foundry_test_utils::{
     TestCommand, forgetest_init, snapbox::cmd::OutputAssert, str, util::OutputExt,
 };
@@ -1350,6 +1350,155 @@ Ran 3 test suites [ELAPSED]: 6 tests passed, 0 failed, 0 skipped (6 total tests)
     assert!(
         prj.root().join("fuzz_corpus").join("Counter2Test").join("testFuzz_SetNumber").exists()
     );
+});
+
+forgetest_init!(invariant_corpus_retains_coverage_winning_reverts, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 1;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(1).unwrap());
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+        config.invariant.corpus.corpus_gzip = false;
+    });
+    prj.add_test(
+        "RevertingCorpusTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract RevertingCorpusHandler {
+    uint256 public credit;
+
+    function spend(uint256 amount) external {
+        require(amount <= credit, "over credit");
+        require(amount > credit, "under credit");
+        credit = amount;
+    }
+}
+
+contract RevertingCorpusTest is Test {
+    function setUp() public {
+        RevertingCorpusHandler handler = new RevertingCorpusHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_ok() public pure {}
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mc", "RevertingCorpusTest", "--fuzz-seed", "0x574"]).assert_success();
+
+    let corpus_dir = prj.root().join("invariant_corpus/RevertingCorpusTest/worker0/corpus");
+    let selector = &keccak256("spend(uint256)")[..4];
+    let retained = std::fs::read_dir(corpus_dir)
+        .unwrap()
+        .flatten()
+        .map(|entry| std::fs::read_to_string(entry.path()).unwrap())
+        .map(|contents| {
+            serde_json::from_str::<Vec<foundry_evm::fuzz::BasicTxDetails>>(&contents).unwrap()
+        })
+        .any(|sequence| {
+            sequence.len() == 1 && sequence[0].call_details.calldata.starts_with(selector)
+        });
+    assert!(retained, "coverage-winning reverted call was not retained in the corpus");
+});
+
+forgetest_init!(invariant_corpus_ends_at_last_coverage_call, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 3;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(1).unwrap());
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+        config.invariant.corpus.corpus_gzip = false;
+    });
+    prj.add_test(
+        "CoveragePrefixTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract CoveragePrefixHandler {
+    function touch() external {}
+}
+
+contract CoveragePrefixTest is Test {
+    function setUp() public {
+        CoveragePrefixHandler handler = new CoveragePrefixHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_ok() public pure {}
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mc", "CoveragePrefixTest", "--fuzz-seed", "0x574"]).assert_success();
+
+    let corpus_dir = prj.root().join("invariant_corpus/CoveragePrefixTest/worker0/corpus");
+    let entry = std::fs::read_dir(corpus_dir).unwrap().next().unwrap().unwrap();
+    let contents = std::fs::read_to_string(entry.path()).unwrap();
+    let sequence =
+        serde_json::from_str::<Vec<foundry_evm::fuzz::BasicTxDetails>>(&contents).unwrap();
+    assert_eq!(sequence.len(), 1);
+});
+
+forgetest_init!(invariant_corpus_reuses_comparison_hints, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 10;
+        config.invariant.depth = 1;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(1).unwrap());
+        config.invariant.dictionary.dictionary_weight = 0;
+        config.invariant.dictionary.include_storage = false;
+        config.invariant.dictionary.include_push_bytes = false;
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+        config.invariant.corpus.corpus_random_sequence_weight = 0;
+        config.invariant.corpus.mutation_weights = foundry_config::FuzzCorpusMutationWeights {
+            mutation_weight_splice: 0,
+            mutation_weight_repeat: 0,
+            mutation_weight_interleave: 0,
+            mutation_weight_prefix: 0,
+            mutation_weight_suffix: 0,
+            mutation_weight_abi: 0,
+            mutation_weight_cmp: 1,
+        };
+    });
+    prj.add_test(
+        "ComparisonCorpusTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ComparisonCorpusHandler {
+    bool public reached;
+
+    function compare(uint256 value) external {
+        if (value >= type(uint256).max - 100) reached = true;
+    }
+}
+
+contract ComparisonCorpusTest is Test {
+    ComparisonCorpusHandler handler;
+
+    function setUp() public {
+        handler = new ComparisonCorpusHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_comparison_is_reached() public view {
+        assertFalse(handler.reached());
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mc", "ComparisonCorpusTest", "--fuzz-seed", "0x574"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: assertion failed]
+...
+"#]]);
 });
 
 forgetest_init!(parallel_invariant_corpus_uses_worker_dirs, |prj, cmd| {
