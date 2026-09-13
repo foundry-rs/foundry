@@ -752,8 +752,13 @@ async fn create_fork<
         );
     }
     let number = resolved.number();
+    let account_fetch_policy = crate::backend::account_fetch_policy_for_source(
+        fork_context.source_chain_id,
+        fork_context.network_profile,
+    );
     let meta = BlockchainDbMeta::new(evm_env.block_env.clone(), fork.url.clone())
-        .with_fork_identity(resolved.hash(), resolved.source_id());
+        .with_fork_identity(resolved.hash(), resolved.source_id())
+        .with_account_fetch_policy(account_fetch_policy);
 
     // Determine the cache path if caching is enabled.
     let cache_path = if fork.enable_caching {
@@ -780,8 +785,10 @@ async fn create_fork<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_chains::NamedChain;
     use alloy_primitives::B256;
     use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
+    use foundry_fork_db::AccountFetchPolicy;
 
     fn context(block_number: u64) -> ForkContext {
         ForkContext {
@@ -827,5 +834,27 @@ mod tests {
 
         assert_ne!(ForkId::resolved(url, &first), ForkId::resolved(url, &replacement));
         assert_ne!(ForkId::resolved(url, &first), ForkId::resolved(url, &authenticated));
+    }
+
+    #[test]
+    fn account_fetch_policy_follows_source_identity() {
+        assert_eq!(
+            crate::backend::account_fetch_policy_for_source(
+                NamedChain::Tempo as u64,
+                NetworkConfigs::with_ethereum(),
+            ),
+            AccountFetchPolicy::RequireAccountInfo,
+        );
+        assert_eq!(
+            crate::backend::account_fetch_policy_for_source(
+                NamedChain::Mainnet as u64,
+                NetworkConfigs::with_tempo(),
+            ),
+            AccountFetchPolicy::Auto,
+        );
+        assert_eq!(
+            crate::backend::account_fetch_policy_for_source(123_456, NetworkConfigs::with_tempo(),),
+            AccountFetchPolicy::RequireAccountInfo,
+        );
     }
 }
