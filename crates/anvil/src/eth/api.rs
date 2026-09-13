@@ -2468,8 +2468,7 @@ impl EthApi<FoundryNetwork> {
     ) -> Result<alloy_rpc_types::eth::AccountInfo> {
         node_info!("eth_getAccountInfo");
 
-        let reads_current = block_number.is_none()
-            || matches!(block_number, Some(BlockId::Number(BlockNumber::Latest)));
+        let reads_current = block_number.is_none_or(|block| block.is_latest());
         if let Some(fork) = self.get_fork() {
             let block_request = self.block_request(block_number).await?;
             if let BlockRequest::Number(number) = block_request {
