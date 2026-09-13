@@ -49,7 +49,7 @@ pub struct CoverageReport {
     /// All item anchors for the codebase, keyed by their contract ID.
     ///
     /// `(id, (creation, runtime))`
-    pub anchors: HashMap<ContractId, (Vec<ItemAnchor>, Vec<ItemAnchor>)>,
+    pub anchors: HashMap<ContractId, (ItemAnchors, ItemAnchors)>,
     /// Execution-based anchors for coverage items without source-mapped bytecode.
     execution_anchors: HashMap<ContractId, ContractExecutionAnchors>,
     /// All the bytecode hits for the codebase.
@@ -93,7 +93,7 @@ impl CoverageReport {
     /// `(id, (creation, runtime))`
     pub fn add_anchors(
         &mut self,
-        anchors: impl IntoIterator<Item = (ContractId, (Vec<ItemAnchor>, Vec<ItemAnchor>))>,
+        anchors: impl IntoIterator<Item = (ContractId, (ItemAnchors, ItemAnchors))>,
     ) {
         self.anchors.extend(anchors);
     }
@@ -168,14 +168,12 @@ impl CoverageReport {
         // Add source level hits.
         if let Some(anchors) = self.anchors.get(contract_id) {
             let anchors = if is_deployed_code { &anchors.1 } else { &anchors.0 };
-            for anchor in anchors {
-                if let Some(hits) = anchor.hits(hit_map) {
-                    self.analyses
-                        .get_mut(&contract_id.build_id)
-                        .and_then(|items| items.all_items_mut().get_mut(anchor.item_id as usize))
-                        .expect("Anchor refers to non-existent coverage item")
-                        .hits += hits.get();
-                }
+            for (anchor, hits) in anchors.hits(hit_map) {
+                self.analyses
+                    .get_mut(&contract_id.build_id)
+                    .and_then(|items| items.all_items_mut().get_mut(anchor.item_id as usize))
+                    .expect("Anchor refers to non-existent coverage item")
+                    .hits += hits.get();
             }
         }
         if let Some(anchors) = self.execution_anchors.get(contract_id) {
@@ -203,10 +201,8 @@ impl CoverageReport {
         let anchors = if is_deployed_code { &anchors.1 } else { &anchors.0 };
 
         let mut hits_by_item = BTreeMap::<u32, u32>::new();
-        for anchor in anchors {
-            if let Some(hits) = anchor.hits(hit_map) {
-                *hits_by_item.entry(anchor.item_id).or_default() += hits.get();
-            }
+        for (anchor, hits) in anchors.hits(hit_map) {
+            *hits_by_item.entry(anchor.item_id).or_default() += hits.get();
         }
         if let Some(anchors) = self.execution_anchors.get(contract_id) {
             for anchor in &anchors.anchors {
@@ -465,25 +461,38 @@ pub struct ItemAnchor {
     pub instruction: u32,
     /// The item ID this anchor points to.
     pub item_id: u32,
-    /// The conditional jump whose taken edge this anchor represents, if any.
-    ///
-    /// The destination may also be reached through the other branch. Count executions of the
-    /// jump minus executions of its fall-through instruction instead of destination hits.
-    /// A branch anchor's jump follows a PUSH, so its program counter is always nonzero.
-    pub jump: Option<NonZeroU32>,
 }
 
-const _: () = assert!(std::mem::size_of::<ItemAnchor>() == 12);
+const _: () = assert!(std::mem::size_of::<ItemAnchor>() == 8);
 
-impl ItemAnchor {
-    fn hits(&self, hit_map: &HitMap) -> Option<NonZeroU32> {
-        let hits = hit_map.get(self.jump.map_or(self.instruction, NonZeroU32::get))?.get();
-        let hits = if let Some(jump) = self.jump {
-            hits.saturating_sub(hit_map.get(jump.get() + 1).map_or(0, NonZeroU32::get))
-        } else {
-            hits
-        };
-        NonZeroU32::new(hits)
+/// Item anchors for one contract's creation or runtime bytecode.
+#[derive(Clone, Debug, Default)]
+pub struct ItemAnchors {
+    /// Anchors into the source analysis.
+    pub anchors: Vec<ItemAnchor>,
+    /// Sparse map from anchor indices to the conditional jumps whose taken edges they represent.
+    /// Indices distinguish anchors even when they share an item or destination.
+    pub jumps: FxHashMap<usize, u32>,
+}
+
+impl ItemAnchors {
+    fn hits<'a>(
+        &'a self,
+        hit_map: &'a HitMap,
+    ) -> impl Iterator<Item = (&'a ItemAnchor, NonZeroU32)> {
+        self.anchors.iter().enumerate().filter_map(|(index, anchor)| {
+            let hits = if let Some(&jump) = self.jumps.get(&index) {
+                // A destination can also be reached through the other branch. Count executions
+                // of the jump minus its fall-through instruction instead of destination hits.
+                let hits = hit_map.get(jump)?.get();
+                NonZeroU32::new(
+                    hits.saturating_sub(hit_map.get(jump + 1).map_or(0, NonZeroU32::get)),
+                )?
+            } else {
+                hit_map.get(anchor.instruction)?
+            };
+            Some((anchor, hits))
+        })
     }
 }
 
@@ -865,5 +874,49 @@ impl CoverageSummary {
         for item in items {
             self.add_item(item);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sparse_jump_hits_distinguish_shared_items_and_destinations() {
+        let anchors = ItemAnchors {
+            anchors: vec![
+                ItemAnchor { instruction: 20, item_id: 0 },
+                ItemAnchor { instruction: 20, item_id: 0 },
+                ItemAnchor { instruction: 20, item_id: 0 },
+            ],
+            jumps: [(1, 4), (2, 10)].into_iter().collect(),
+        };
+        for (jump_hits, fallthrough_hits, taken_hits) in
+            [(3, 2, 1), (3, 0, 3), (3, 3, 0), (0, 0, 0)]
+        {
+            let mut hit_map = HitMap::new(Bytes::new());
+            hit_map.hits(20, 5);
+            hit_map.hits(4, jump_hits);
+            hit_map.hits(5, fallthrough_hits);
+            hit_map.hits(10, 2);
+            hit_map.hits(11, 2);
+
+            let hits = anchors.hits(&hit_map).map(|(_, hits)| hits.get()).collect::<Vec<_>>();
+            let expected = if taken_hits == 0 { vec![5] } else { vec![5, taken_hits] };
+            assert_eq!(hits, expected);
+        }
+    }
+
+    #[test]
+    fn ordinary_anchors_do_not_allocate_jump_metadata() {
+        let anchors = ItemAnchors {
+            anchors: vec![ItemAnchor { instruction: 20, item_id: 0 }],
+            ..Default::default()
+        };
+        assert_eq!(anchors.jumps.capacity(), 0);
+        let mut hit_map = HitMap::new(Bytes::new());
+        assert_eq!(anchors.hits(&hit_map).count(), 0);
+        hit_map.hits(20, 3);
+        assert_eq!(anchors.hits(&hit_map).next().unwrap().1.get(), 3);
     }
 }

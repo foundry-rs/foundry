@@ -473,14 +473,15 @@ impl CoverageReporter for DebugReporter {
         }
 
         for (contract_id, (cta, rta)) in &report.anchors {
-            if cta.is_empty() && rta.is_empty() {
+            if cta.anchors.is_empty() && rta.anchors.is_empty() {
                 continue;
             }
 
             let anchors = cta
+                .anchors
                 .iter()
                 .map(|anchor| (false, anchor))
-                .chain(rta.iter().map(|anchor| (true, anchor)))
+                .chain(rta.anchors.iter().map(|anchor| (true, anchor)))
                 .filter_map(|(is_runtime, anchor)| {
                     let item = report
                         .analyses
