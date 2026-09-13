@@ -5,6 +5,7 @@ use eyre::ensure;
 use foundry_compilers::artifacts::sourcemap::{SourceElement, SourceMap};
 use foundry_evm_core::{bytecode::InstIter, ic::IcPcMap};
 use revm::bytecode::opcode;
+use std::num::NonZeroU32;
 
 /// Attempts to find anchors for the given items using the given source map and bytecode.
 pub fn find_anchors(
@@ -166,7 +167,11 @@ pub fn find_anchor_branch(
                         instruction: (next_pc + 1) as u32,
                         jump: None,
                     },
-                    ItemAnchor { item_id, instruction: pc_jump, jump: Some(next_pc as u32) },
+                    ItemAnchor {
+                        item_id,
+                        instruction: pc_jump,
+                        jump: NonZeroU32::new(next_pc.try_into()?),
+                    },
                 ));
             }
         }

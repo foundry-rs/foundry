@@ -469,14 +469,17 @@ pub struct ItemAnchor {
     ///
     /// The destination may also be reached through the other branch. Count executions of the
     /// jump minus executions of its fall-through instruction instead of destination hits.
-    pub jump: Option<u32>,
+    /// A branch anchor's jump follows a PUSH, so its program counter is always nonzero.
+    pub jump: Option<NonZeroU32>,
 }
+
+const _: () = assert!(std::mem::size_of::<ItemAnchor>() == 12);
 
 impl ItemAnchor {
     fn hits(&self, hit_map: &HitMap) -> Option<NonZeroU32> {
-        let hits = hit_map.get(self.jump.unwrap_or(self.instruction))?.get();
+        let hits = hit_map.get(self.jump.map_or(self.instruction, NonZeroU32::get))?.get();
         let hits = if let Some(jump) = self.jump {
-            hits.saturating_sub(hit_map.get(jump + 1).map_or(0, NonZeroU32::get))
+            hits.saturating_sub(hit_map.get(jump.get() + 1).map_or(0, NonZeroU32::get))
         } else {
             hits
         };
