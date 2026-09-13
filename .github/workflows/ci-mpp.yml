@@ -27,83 +27,6 @@ env:
   RUSTC_WRAPPER: "sccache"
 
 jobs:
-  # Temporary comparison: the current Socket action with empty caches on both runners.
-  mpp-fetch-comparison:
-    name: MPP fetch (${{ matrix.provider }})
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - provider: depot
-            runner: depot-ubuntu-latest
-          - provider: github
-            runner: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
-    env:
-      NODE_OPTIONS: --no-network-family-autoselection
-      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
-      SFW_UNKNOWN_HOST_ACTION: ignore
-      SFW_CUSTOM_REGISTRIES: wrap:binaries.soliditylang.org,wrap:raw.githubusercontent.com/nikitastupin/solc,wrap:raw.githubusercontent.com/alloy-rs/solc-builds
-    defaults:
-      run:
-        shell: bash
-    steps:
-      # Both runners use the same installed toolchain before creating wrappers.
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
-        with:
-          toolchain: 1.98.1
-      - name: Secure runner (current)
-        uses: tempoxyz/gh-actions/actions/secure-runner@6e62935eb0bfeac202d19c425f742dc1dcd88f5d
-        with:
-          egress-policy: audit
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
-      - run: sccache --start-server
-      - name: Select empty Cargo cache and record versions
-        run: |
-          comparison_cargo_home=$(mktemp -d "$RUNNER_TEMP/sfw-comparison-cargo.XXXXXX")
-          echo "CARGO_HOME=$comparison_cargo_home" >> "$GITHUB_ENV"
-          git rev-parse HEAD
-          rustc --version
-          cargo --version
-          sfw --version
-          command -v cargo
-          node --version
-          uname -srmo
-      - name: Fetch dependencies through Socket
-        env:
-          SFW_DEBUG: "true"
-          SFW_JSON_REPORT_PATH: ${{ runner.temp }}/sfw-mpp-fetch-raw/report.json
-        run: |
-          test -z "$(ls -A "$CARGO_HOME")"
-          mkdir -p "$RUNNER_TEMP/sfw-mpp-fetch-raw"
-          cargo fetch --locked > "$RUNNER_TEMP/sfw-mpp-fetch-raw/fetch.log" 2>&1
-          # Retain the same explicit failure check from the action comparison.
-          if grep -Fq 'Socket Firewall encountered an unexpected error' "$RUNNER_TEMP/sfw-mpp-fetch-raw/fetch.log"; then
-            echo "::error::Socket reported an internal failure; refusing a successful exit"
-            exit 1
-          fi
-      - name: Collect sanitized Socket fetch diagnostics
-        if: always()
-        run: node .github/scripts/sanitize-sfw-diagnostics.cjs fetch
-      - name: Upload Socket comparison diagnostics
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: sfw-mpp-${{ matrix.provider }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/sfw-mpp-diagnostics/
-          if-no-files-found: warn
-          retention-days: 3
-
   mpp-check:
     # Skip on PRs from forks (only run for branches in foundry-rs/foundry, i.e. maintainer PRs).
     if: |
@@ -138,42 +61,11 @@ jobs:
       # Start outside Socket so the cache daemon keeps its own proxy settings.
       - run: sccache --start-server
 
-      # Isolate downloads from compilation, retaining the same Socket wrapper.
-      - name: Fetch dependencies through Socket
-        env:
-          SFW_DEBUG: "true"
-          SFW_JSON_REPORT_PATH: ${{ runner.temp }}/sfw-mpp-fetch-raw/report.json
-        run: |
-          mkdir -p "$RUNNER_TEMP/sfw-mpp-fetch-raw"
-          cargo fetch --locked > "$RUNNER_TEMP/sfw-mpp-fetch-raw/fetch.log" 2>&1
-
-      - name: Collect sanitized Socket fetch diagnostics
-        if: always()
-        run: node .github/scripts/sanitize-sfw-diagnostics.cjs fetch
-
-      # Build and install binaries.
+      # Build and install binaries
       - name: Build and install Foundry binaries
-        env:
-          # Temporary diagnostics for the repeated Socket download termination.
-          SFW_DEBUG: "true"
-          SFW_JSON_REPORT_PATH: ${{ runner.temp }}/sfw-mpp-build-raw/report.json
         run: |
-          mkdir -p "$RUNNER_TEMP/sfw-mpp-build-raw"
-          cargo build --profile dev --locked --bin forge --bin cast --bin anvil --bin chisel > "$RUNNER_TEMP/sfw-mpp-build-raw/build.log" 2>&1
+          cargo build --profile dev --locked --bin forge --bin cast --bin anvil --bin chisel
           echo "${{ github.workspace }}/target/debug" >> "$GITHUB_PATH"
-
-      - name: Collect sanitized Socket diagnostics
-        if: always()
-        run: node .github/scripts/sanitize-sfw-diagnostics.cjs
-
-      - name: Upload Socket diagnostics
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: sfw-mpp-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/sfw-mpp-diagnostics/
-          if-no-files-found: warn
-          retention-days: 3
 
       - name: Restore bounded NanoUSD wallet
         if: |
