@@ -15,6 +15,7 @@ const MAX_CORPUS_TREE_DIRS: usize = 10_000;
 const MAX_CORPUS_ENTRIES: usize = 1_000_000;
 
 /// A single corpus file on disk.
+#[derive(Clone)]
 pub struct CorpusDirEntry {
     pub path: PathBuf,
     pub uuid: Uuid,

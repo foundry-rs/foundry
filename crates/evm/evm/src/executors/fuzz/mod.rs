@@ -456,15 +456,17 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         // Handle `vm.assume` before recording coverage or persisting the input.
         if kind == CampaignCallKind::AssumptionRejected {
             // Account for the attempted corpus mutation without retaining or crediting the input.
-            coverage_metrics.process_inputs(&[], &[], false, None);
+            coverage_metrics.process_inputs(&[], &[], false, Vec::new(), None);
             return Err(TestCaseError::reject(FuzzError::AssumeReject));
         }
 
         if call.skip_reason().is_some() {
             // Account for the attempted corpus mutation without retaining or crediting the input.
-            coverage_metrics.process_inputs(&[], &[], false, None);
+            coverage_metrics.process_inputs(&[], &[], false, Vec::new(), None);
         } else {
-            let new_coverage = coverage_metrics.merge_edge_coverage(&mut call);
+            let mut edges_covered = Vec::new();
+            let new_coverage =
+                coverage_metrics.merge_edge_coverage_with_edges_into(&mut call, &mut edges_covered);
             // `new_coverage` is only meaningful when edge coverage is collected; otherwise
             // `merge_edge_coverage` always returns `false`, so record it as unknown for frontiers.
             let frontier_new_coverage =
@@ -480,6 +482,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                 std::slice::from_ref(&tx),
                 &[cmp_values],
                 new_coverage,
+                edges_covered,
                 None,
             );
         }
