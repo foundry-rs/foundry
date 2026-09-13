@@ -884,7 +884,13 @@ impl<'ast> State<'_, 'ast> {
     ) {
         // Check if the total expression overflows but the RHS would fit alone on a new line.
         // This helps keep the RHS together on a single line when possible.
-        let rhs_size = self.estimate_size(rhs.span);
+        let rhs_size = if matches!(rhs.kind, ast::ExprKind::Binary(..))
+            && !self.has_comment_between(rhs.span.lo(), rhs.span.hi())
+        {
+            self.estimate_binary_size(rhs)
+        } else {
+            self.estimate_size(rhs.span)
+        };
         let overflows = lhs_size + rhs_size >= space_left;
         let fits_alone = rhs_size + self.config.tab_width < space_left;
         let fits_alone_no_cmnts =
@@ -2976,6 +2982,27 @@ impl<'ast> State<'_, 'ast> {
             .fold(0, |len, p| if len != 0 { len + 2 } else { 2 } + self.estimate_size(p.span));
 
         kw + header.name.map_or(0, |name| self.estimate_size(name.span)) + std::cmp::max(2, params)
+    }
+
+    /// Estimates a comment-free binary expression using the printed operator spacing.
+    fn estimate_binary_size(&self, expr: &ast::Expr<'_>) -> usize {
+        match &expr.kind {
+            ast::ExprKind::Binary(lhs, op, rhs) => {
+                let spaces = if self.config.pow_no_space && matches!(op.kind, ast::BinOpKind::Pow) {
+                    0
+                } else {
+                    2
+                };
+                self.estimate_binary_size(lhs)
+                    + op.kind.to_str().len()
+                    + spaces
+                    + self.estimate_binary_size(rhs)
+            }
+            ast::ExprKind::Tuple(exprs) if let [SpannedOption::Some(inner)] = exprs.as_ref() => {
+                self.estimate_binary_size(inner) + 2
+            }
+            _ => self.estimate_size(expr.span),
+        }
     }
 
     fn estimate_lhs_size(&self, expr: &ast::Expr<'_>, parent_op: &ast::BinOp) -> usize {

@@ -28,6 +28,69 @@ fn assert_eof(content: &str) {
 }
 
 #[test]
+fn binary_assignment_layout_ignores_operator_spacing() {
+    for (line_length, source, expected) in [
+        (
+            105,
+            r#"contract C {
+    function f() external {
+        p2pSupplyRate =
+            p2pSupplyRate.mul(CompoundMath.WAD - shareOfTheDelta) +
+            _params.poolRate.mul(shareOfTheDelta);
+    }
+}
+"#,
+            r#"contract C {
+    function f() external {
+        p2pSupplyRate = p2pSupplyRate.mul(CompoundMath.WAD - shareOfTheDelta)
+            + _params.poolRate.mul(shareOfTheDelta);
+    }
+}
+"#,
+        ),
+        (
+            116,
+            r#"contract C {
+    function f() external {
+        p2pSupplyGrowthFactor =
+            p2pGrowthFactor -
+            (_params.reserveFactor * (p2pGrowthFactor - poolSupplyGrowthFactor)) /
+            MAX_BASIS_POINTS;
+    }
+}
+"#,
+            r#"contract C {
+    function f() external {
+        p2pSupplyGrowthFactor = p2pGrowthFactor
+            - (_params.reserveFactor * (p2pGrowthFactor - poolSupplyGrowthFactor)) / MAX_BASIS_POINTS;
+    }
+}
+"#,
+        ),
+        (
+            120,
+            r#"contract C {
+    function f() external {
+        uint256 poolTVL = (IERC20Detailed(address(_cpToken)).totalSupply() *
+            _cpToken.getCurrentExchangeRate()) / 10**18;
+    }
+}
+"#,
+            r#"contract C {
+    function f() external {
+        uint256 poolTVL =
+            (IERC20Detailed(address(_cpToken)).totalSupply() * _cpToken.getCurrentExchangeRate()) / 10 ** 18;
+    }
+}
+"#,
+        ),
+    ] {
+        let config = Arc::new(FormatterConfig { line_length, ..Default::default() });
+        assert_eq!(format(source, Path::new("test.sol"), config), expected);
+    }
+}
+
+#[test]
 fn for_initializer_leading_comment_is_idempotent() {
     let source = r#"contract C {
     function f() external {
