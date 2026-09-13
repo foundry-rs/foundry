@@ -135,6 +135,7 @@ impl BindArgs {
         };
         let artifacts = config.out.clone();
         let enum_definitions = if self.skip_build {
+            foundry_cli::lockfile::check_foundry_lock(&config.root, false)?;
             let paths = config.project_paths();
             cached_enum_definitions(&paths, self.get_json_files(&artifacts)?.map(|(_, path)| path))
         } else {

@@ -143,6 +143,27 @@ contract InitCodeHash {
         .assert_json_stdout(format!(
             r#"{{"schema_version":1,"success":true,"data":"{expected}","errors":[],"warnings":[]}}"#
         ));
+
+    // A warm compiler cache must not bypass lockfile validation.
+    fs::write(prj.root().join("foundry.lock"), "not json").unwrap();
+    cmd.cast_fuse()
+        .current_dir(prj.root())
+        .args([
+            "create2",
+            "init-code-hash",
+            "src/InitCodeHash.sol:InitCodeHash",
+            "42",
+            &owner.to_string(),
+        ])
+        .assert_failure()
+        .stdout_eq("")
+        .stderr_eq(str![[r#"
+Error: Failed to read foundry.lock
+
+Context:
+- expected ident at line 1 column 2
+
+"#]]);
 });
 
 casttest!(create2_init_code_hash_rejects_abstract_contract, |prj, cmd| {
