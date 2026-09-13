@@ -1404,6 +1404,45 @@ contract RevertingCorpusTest is Test {
     assert!(retained, "coverage-winning reverted call was not retained in the corpus");
 });
 
+forgetest_init!(invariant_corpus_ends_at_last_coverage_call, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 3;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(1).unwrap());
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+        config.invariant.corpus.corpus_gzip = false;
+    });
+    prj.add_test(
+        "CoveragePrefixTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract CoveragePrefixHandler {
+    function touch() external {}
+}
+
+contract CoveragePrefixTest is Test {
+    function setUp() public {
+        CoveragePrefixHandler handler = new CoveragePrefixHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_ok() public pure {}
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mc", "CoveragePrefixTest", "--fuzz-seed", "0x574"]).assert_success();
+
+    let corpus_dir = prj.root().join("invariant_corpus/CoveragePrefixTest/worker0/corpus");
+    let entry = std::fs::read_dir(corpus_dir).unwrap().next().unwrap().unwrap();
+    let contents = std::fs::read_to_string(entry.path()).unwrap();
+    let sequence =
+        serde_json::from_str::<Vec<foundry_evm::fuzz::BasicTxDetails>>(&contents).unwrap();
+    assert_eq!(sequence.len(), 1);
+});
+
 forgetest_init!(invariant_corpus_reuses_comparison_hints, |prj, cmd| {
     prj.update_config(|config| {
         config.invariant.runs = 10;

@@ -1183,6 +1183,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 
             let mut call_cmp_values = Vec::new();
             let mut call_new_coverage = false;
+            let mut coverage_prefix_len = 0;
             let mut assertion_failure = false;
             let mut pre_merge_edges_hash = None;
             let mut handler = None;
@@ -1299,6 +1300,13 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                                     });
                                 } else if !result.reverted || preserve_revert {
                                     current_run.cmp_seq.push(std::mem::take(&mut call_cmp_values));
+                                }
+                                if call_new_coverage {
+                                    coverage_prefix_len = corpus_run
+                                        .as_ref()
+                                        .map_or(current_run.inputs.len(), |history| {
+                                            history.inputs.len()
+                                        });
                                 }
                             }
                             let (handler_target, handler_selector) =
@@ -1514,12 +1522,16 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 let prefix = current_run.inputs[..current_run.optimization_prefix_len].to_vec();
                 (v, prefix)
             });
-            let corpus_inputs = corpus_run
+            let mut corpus_inputs = corpus_run
                 .as_ref()
                 .map_or(current_run.inputs.as_slice(), |history| history.inputs.as_slice());
-            let corpus_cmp_seq = corpus_run
+            let mut corpus_cmp_seq = corpus_run
                 .as_ref()
                 .map_or(current_run.cmp_seq.as_slice(), |history| history.cmp_seq.as_slice());
+            if current_run.new_coverage && !invariant_contract.is_optimization() {
+                corpus_inputs = &corpus_inputs[..coverage_prefix_len];
+                corpus_cmp_seq = &corpus_cmp_seq[..coverage_prefix_len];
+            }
             if worker_count > 1 {
                 corpus_manager.process_inputs_for_campaign(
                     corpus_inputs,
