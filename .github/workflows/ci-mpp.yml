@@ -63,9 +63,27 @@ jobs:
 
       # Build and install binaries
       - name: Build and install Foundry binaries
+        env:
+          # Temporary diagnostics for the repeated Socket download termination.
+          SFW_DEBUG: "true"
+          SFW_JSON_REPORT_PATH: ${{ runner.temp }}/sfw-mpp-raw/report.json
         run: |
-          cargo build --profile dev --locked --bin forge --bin cast --bin anvil --bin chisel
+          mkdir -p "$RUNNER_TEMP/sfw-mpp-raw"
+          cargo build --profile dev --locked --bin forge --bin cast --bin anvil --bin chisel > "$RUNNER_TEMP/sfw-mpp-raw/build.log" 2>&1
           echo "${{ github.workspace }}/target/debug" >> "$GITHUB_PATH"
+
+      - name: Collect sanitized Socket diagnostics
+        if: always()
+        run: node .github/scripts/sanitize-sfw-diagnostics.cjs
+
+      - name: Upload Socket diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sfw-mpp-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/sfw-mpp-diagnostics/
+          if-no-files-found: warn
+          retention-days: 3
 
       - name: Restore bounded NanoUSD wallet
         if: |
