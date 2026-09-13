@@ -104,6 +104,9 @@ struct StableForkSnapshot {
     gas_price: u128,
 }
 
+/// Keep optional identity probes from delaying startup on RPCs that stall on unknown methods.
+const FORK_IDENTITY_PROBE_TIMEOUT: Duration = Duration::from_millis(500);
+
 /// Best-effort Anvil detection that becomes strict after positive identification.
 ///
 /// Before the first successful `anvil_nodeInfo` response, any probe failure means that the
@@ -121,7 +124,14 @@ impl AnvilNodeInfoProbe {
     }
 
     async fn request(&mut self, provider: &RetryProvider) -> Result<Option<NodeInfo>> {
-        match provider.raw_request::<_, NodeInfo>("anvil_nodeInfo".into(), ()).await {
+        let response = tokio::time::timeout(
+            FORK_IDENTITY_PROBE_TIMEOUT,
+            provider.raw_request::<_, NodeInfo>("anvil_nodeInfo".into(), ()),
+        )
+        .await
+        .wrap_err("timed out retrieving anvil_nodeInfo")
+        .and_then(|response| response.map_err(eyre::Report::from));
+        match response {
             Ok(node_info) => {
                 self.identified = true;
                 Ok(Some(node_info))
@@ -1583,7 +1593,13 @@ impl NodeConfig {
             instance_id,
             source_fork_block_number,
             source_fork_block_hash,
-        ) = match provider.raw_request::<_, Metadata>("anvil_metadata".into(), ()).await {
+        ) = match tokio::time::timeout(
+            FORK_IDENTITY_PROBE_TIMEOUT,
+            provider.raw_request::<_, Metadata>("anvil_metadata".into(), ()),
+        )
+        .await
+        .wrap_err("timed out retrieving Anvil fork source identity")?
+        {
             Ok(metadata) => (
                 metadata.chain_id,
                 source_chain_id_override.unwrap_or_else(|| {

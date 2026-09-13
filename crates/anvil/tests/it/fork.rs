@@ -50,15 +50,18 @@ use foundry_test_utils::rpc::{
     spawn_rpc_proxy_rejecting_method_when_enabled,
     spawn_rpc_proxy_retyping_first_block_transaction,
 };
-use futures::StreamExt;
+use futures::{StreamExt, future::pending};
 use revm::{
     context::BlockEnv, context_interface::block::BlobExcessGasAndPrice,
     precompile::PrecompileStatus, primitives::hardfork::SpecId,
 };
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    sync::{Arc, atomic::Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::Duration,
 };
 
@@ -97,6 +100,158 @@ pub fn fork_config() -> NodeConfig {
     NodeConfig::test()
         .with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()))
         .with_fork_block_number(Some(BLOCK_NUMBER))
+}
+
+#[derive(Clone, Copy)]
+enum ForkProbeFailure {
+    Stall,
+    RateLimit,
+}
+
+/// Stalls or rate-limits a probe after the given number of successful requests.
+async fn spawn_failing_fork_probe(
+    endpoint: String,
+    method: &'static str,
+    successful_calls: usize,
+    failure: ForkProbeFailure,
+) -> String {
+    let client = reqwest::Client::new();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let router = Router::new().route(
+        "/",
+        post(move |Json(request): Json<Value>| {
+            let client = client.clone();
+            let endpoint = endpoint.clone();
+            let calls = calls.clone();
+            async move {
+                if request.get("method").and_then(Value::as_str) == Some(method)
+                    && calls.fetch_add(1, Ordering::Relaxed) >= successful_calls
+                {
+                    return match failure {
+                        ForkProbeFailure::Stall => pending::<Json<Value>>().await,
+                        ForkProbeFailure::RateLimit => Json(json!({
+                            "jsonrpc": "2.0",
+                            "id": request["id"],
+                            "error": { "code": -32005, "message": "rate limit exceeded" },
+                        })),
+                    };
+                }
+                Json(
+                    client
+                        .post(endpoint)
+                        .json(&request)
+                        .send()
+                        .await
+                        .unwrap()
+                        .json::<Value>()
+                        .await
+                        .unwrap(),
+                )
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    format!("http://{address}")
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_ignores_initial_anvil_node_info_timeout() {
+    let (_api, origin) =
+        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64))).await;
+    let fork_url = spawn_failing_fork_probe(
+        origin.http_endpoint(),
+        "anvil_nodeInfo",
+        0,
+        ForkProbeFailure::Stall,
+    )
+    .await;
+    let (api, _handle) = tokio::time::timeout(
+        Duration::from_secs(5),
+        spawn(
+            NodeConfig::test()
+                .with_eth_rpc_url(Some(fork_url))
+                .fork_request_timeout(Some(Duration::from_secs(60))),
+        ),
+    )
+    .await
+    .expect("optional node-info probes must not wait for the normal RPC timeout");
+
+    assert_eq!(api.chain_id(), NamedChain::Mainnet as u64);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_bounds_anvil_node_info_retry_backoff() {
+    let (_api, origin) =
+        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64))).await;
+    let fork_url = spawn_failing_fork_probe(
+        origin.http_endpoint(),
+        "anvil_nodeInfo",
+        0,
+        ForkProbeFailure::RateLimit,
+    )
+    .await;
+    let (api, _handle) = tokio::time::timeout(
+        Duration::from_secs(5),
+        spawn(
+            NodeConfig::test()
+                .with_eth_rpc_url(Some(fork_url))
+                .fork_retry_backoff(Some(Duration::from_secs(60))),
+        ),
+    )
+    .await
+    .expect("the probe deadline must include retry backoff");
+    assert_eq!(api.chain_id(), NamedChain::Mainnet as u64);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_rejects_anvil_node_info_timeout_after_identification() {
+    let (_api, origin) = spawn(NodeConfig::test()).await;
+    let fork_url = spawn_failing_fork_probe(
+        origin.http_endpoint(),
+        "anvil_nodeInfo",
+        1,
+        ForkProbeFailure::Stall,
+    )
+    .await;
+    let result = tokio::time::timeout(
+        Duration::from_secs(5),
+        try_spawn(
+            NodeConfig::test()
+                .with_eth_rpc_url(Some(fork_url))
+                .fork_request_timeout(Some(Duration::from_secs(60))),
+        ),
+    )
+    .await
+    .expect("identified node-info probes must have a bounded deadline");
+    let Err(error) = result else { panic!("expected identified probe timeout to fail startup") };
+    assert_eq!(error.to_string(), "failed to determine network family from fork endpoint");
+    assert!(format!("{error:#}").contains("timed out retrieving anvil_nodeInfo"), "{error:#}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_rejects_anvil_metadata_timeout() {
+    let (_api, origin) = spawn(NodeConfig::test()).await;
+    let fork_url = spawn_failing_fork_probe(
+        origin.http_endpoint(),
+        "anvil_metadata",
+        0,
+        ForkProbeFailure::Stall,
+    )
+    .await;
+    let result = tokio::time::timeout(
+        Duration::from_secs(5),
+        try_spawn(
+            NodeConfig::test()
+                .with_eth_rpc_url(Some(fork_url))
+                .fork_request_timeout(Some(Duration::from_secs(60))),
+        ),
+    )
+    .await
+    .expect("metadata probes must have a bounded deadline");
+    let Err(error) = result else { panic!("expected metadata timeout to fail startup") };
+    assert_eq!(error.to_string(), "timed out retrieving Anvil fork source identity");
 }
 
 #[tokio::test(flavor = "multi_thread")]
