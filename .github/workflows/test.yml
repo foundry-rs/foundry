@@ -48,7 +48,8 @@ jobs:
       - name: Generate matrices
         id: gen
         env:
-          EVENT_NAME: ${{ github.event_name }}
+          # Temporarily exercise the full push matrix for Socket validation.
+          EVENT_NAME: push
           PROFILE: ${{ inputs.profile }}
         shell: bash
         run: |

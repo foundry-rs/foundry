@@ -113,7 +113,7 @@ jobs:
 
   touch-id-link:
     name: touch-id link (macOS)
-    if: github.event_name == 'push'
+    # Temporarily run on PRs too for Socket validation.
     runs-on: depot-macos-latest
     timeout-minutes: 45
     permissions:
@@ -383,5 +383,4 @@ jobs:
       - name: Decide whether the needed jobs succeeded or failed
         uses: re-actors/alls-green@b5b5b37504aa4183270bd3d855c52a67f212be35 # v1.3.0
         with:
-          allowed-skips: touch-id-link
           jobs: ${{ toJSON(needs) }}
