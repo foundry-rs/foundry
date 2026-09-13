@@ -3101,11 +3101,6 @@ forgetest!(lcov_false_condition_lines, |prj, cmd| {
         } else {
             value = 3;
         }
-        if (outer) value = 4;
-        if (outer)
-        {
-            value = 5;
-        }
     }
 }
 "#,
@@ -3140,21 +3135,68 @@ BRDA:7,1,1,-
 DA:8,0
 DA:10,0
 DA:13,1
-DA:15,1
-BRDA:15,2,0,0
-DA:16,1
-BRDA:16,3,0,0
-DA:18,0
 FNF:1
 FNH:1
-LF:9
-LH:5
-BRF:6
+LF:6
+LH:3
+BRF:4
 BRH:1
 end_of_record
 
 "#]],
     );
+});
+
+// Keep no-else conditions snapshot-only until implicit false branches are reported:
+// strict genhtml validation rejects hit lines with no evaluated branches.
+forgetest!(lcov_false_condition_lines_without_else, |prj, cmd| {
+    prj.add_source(
+        "Branches.sol",
+        r#"contract Branches {
+    uint256 public value;
+    function run(bool condition) public {
+        if (condition) value = 4;
+        if (condition)
+        {
+            value = 5;
+        }
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "Branches.t.sol",
+        r#"
+import "./Branches.sol";
+contract BranchesTest {
+    function test_false_conditions() public {
+        Branches branches = new Branches();
+        branches.run(false);
+        require(branches.value() == 0);
+    }
+}
+"#,
+    );
+    cmd.args(["coverage", "--report=lcov", "--report-file"]).assert_file(str![[r#"
+TN:
+SF:src/Branches.sol
+DA:5,1
+FN:5,Branches.run
+FNDA:1,Branches.run
+DA:6,1
+BRDA:6,0,0,0
+DA:7,1
+BRDA:7,1,0,0
+DA:9,0
+FNF:1
+FNH:1
+LF:4
+LH:3
+BRF:2
+BRH:0
+end_of_record
+
+"#]]);
 });
 
 // A hit assembly condition must include the outcome that skips its body, even without via-IR.
