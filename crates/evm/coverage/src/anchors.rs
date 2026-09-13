@@ -1,4 +1,6 @@
-use super::{CoverageItemKind, ExecutionAnchor, ExecutionAnchorKind, ItemAnchor, SourceLocation};
+use super::{
+    CoverageItemKind, ExecutionAnchor, ExecutionAnchorKind, ItemAnchor, ItemAnchors, SourceLocation,
+};
 use crate::analysis::{EmptySpecialFunctionKind, SourceAnalysis};
 use alloy_primitives::map::rustc_hash::FxHashSet;
 use eyre::ensure;
@@ -12,7 +14,13 @@ pub fn find_anchors(
     source_map: &SourceMap,
     ic_pc_map: &IcPcMap,
     analysis: &SourceAnalysis,
-) -> Vec<ItemAnchor> {
+) -> ItemAnchors {
+    let mut anchors = ItemAnchors::default();
+    let select_branch = |(fallthrough, taken): (ItemAnchor, ItemAnchor), path_id| match path_id {
+        0 => (fallthrough, None),
+        1 => (taken, Some(fallthrough.instruction - 1)),
+        _ => panic!("too many path IDs for branch"),
+    };
     let mut seen_sources = FxHashSet::default();
     source_map
         .iter()
@@ -28,31 +36,30 @@ pub fn find_anchors(
                 CoverageItemKind::Branch { path_id, is_first_opcode: true, .. }
                     if item.anchor_loc.is_some() =>
                 {
-                    find_anchor_simple(source_map, ic_pc_map, item_id, anchor_loc).or_else(|_| {
-                        find_anchor_branch(bytecode, source_map, item_id, &item.loc).map(
-                            |anchors| match path_id {
-                                0 => anchors.0,
-                                1 => anchors.1,
-                                _ => panic!("too many path IDs for branch"),
-                            },
-                        )
-                    })
+                    find_anchor_simple(source_map, ic_pc_map, item_id, anchor_loc)
+                        .map(|anchor| (anchor, None))
+                        .or_else(|_| {
+                            find_anchor_branch(bytecode, source_map, item_id, &item.loc)
+                                .map(|anchors| select_branch(anchors, path_id))
+                        })
                 }
                 CoverageItemKind::Branch { path_id, is_first_opcode: false, .. } => {
-                    find_anchor_branch(bytecode, source_map, item_id, anchor_loc).map(|anchors| {
-                        match path_id {
-                            0 => anchors.0,
-                            1 => anchors.1,
-                            _ => panic!("too many path IDs for branch"),
-                        }
-                    })
+                    find_anchor_branch(bytecode, source_map, item_id, anchor_loc)
+                        .map(|anchors| select_branch(anchors, path_id))
                 }
-                _ => find_anchor_simple(source_map, ic_pc_map, item_id, anchor_loc),
+                _ => find_anchor_simple(source_map, ic_pc_map, item_id, anchor_loc)
+                    .map(|anchor| (anchor, None)),
             }
             .inspect_err(|err| warn!(%item, %err, "could not find anchor"))
             .ok()
         })
-        .collect()
+        .for_each(|(anchor, jump)| {
+            if let Some(jump) = jump {
+                anchors.jumps.insert(anchors.anchors.len(), jump);
+            }
+            anchors.anchors.push(anchor);
+        });
+    anchors
 }
 
 /// Finds execution-based anchors for empty constructors, receive functions, and fallbacks in a
@@ -162,7 +169,7 @@ pub fn find_anchor_branch(
                     ItemAnchor {
                         item_id,
                         // The first branch is the opcode directly after JUMPI
-                        instruction: (next_pc + 1) as u32,
+                        instruction: (next_pc + 1).try_into()?,
                     },
                     ItemAnchor { item_id, instruction: pc_jump },
                 ));

@@ -14,6 +14,7 @@ use crate::{
         apply_chain_specific_tx_replay_env_changes_for_chain, get_blob_base_fee_update_fraction,
     },
 };
+use alloy_chains::Chain;
 use alloy_consensus::{BlockHeader, Typed2718};
 use alloy_eips::BlockNumHash;
 use alloy_evm::{Evm, EvmEnv, EvmFactory, precompiles::PrecompilesMap};
@@ -27,7 +28,8 @@ use eyre::Context;
 use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender};
 use foundry_evm_networks::{NetworkConfigs, apply_bsc_p256_precompile};
 pub use foundry_fork_db::{
-    BlockchainDb, ForkBlock, ForkBlockEnv, SharedBackend, cache::BlockchainDbMeta,
+    AccountFetchPolicy, BlockchainDb, ForkBlock, ForkBlockEnv, SharedBackend,
+    cache::BlockchainDbMeta,
 };
 use revm::{
     Database, DatabaseCommit, JournalEntry,
@@ -3133,6 +3135,20 @@ pub(crate) fn merge_account_data<ExtDB: DatabaseRef, N: Network, B: ForkBlockEnv
     }
 
     *active_journaled_state = target_fork.journaled_state.clone();
+}
+
+/// Returns the account-loading policy required by a fork source.
+///
+/// A recognized source chain ID is authoritative. The endpoint's execution profile is only a
+/// source hint for custom chain IDs, where the chain ID cannot identify the RPC semantics.
+pub fn account_fetch_policy_for_source(
+    source_chain_id: ChainId,
+    network_profile: NetworkConfigs,
+) -> AccountFetchPolicy {
+    let source_chain = Chain::from_id(source_chain_id);
+    let is_tempo =
+        source_chain.is_tempo() || (source_chain.named().is_none() && network_profile.is_tempo());
+    if is_tempo { AccountFetchPolicy::RequireAccountInfo } else { AccountFetchPolicy::Auto }
 }
 
 /// Clones the account data from the `active_journaled_state`  into the `fork_journaled_state`
