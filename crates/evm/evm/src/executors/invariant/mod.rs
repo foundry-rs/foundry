@@ -6,7 +6,7 @@ use crate::{
             FuzzCampaign, FuzzCampaignMode,
         },
         corpus::{
-            CorpusInsertionMode, DynamicTargetCtx, ReplayTarget, WorkerCorpus, WorkerCorpusSeed,
+            DynamicTargetCtx, ObservedCallDepth, ReplayTarget, WorkerCorpus, WorkerCorpusSeed,
             persist_campaign_optimization,
         },
         fuzz::{
@@ -1148,7 +1148,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             let failures_revision = failures_checkpoint.revision();
             let mut stop_after_run = false;
             let mut run_cancelled = false;
-            let mut observed_call_entries = Vec::<(Vec<ObservedCall>, BasicTxDetails)>::new();
+            let mut observed_call_entries = Vec::<Vec<ObservedCall>>::new();
 
             let call_campaign = FuzzCampaign::new(FuzzCampaignMode::Invariant {
                 check_interval: config.check_interval,
@@ -1238,7 +1238,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             }
                             let observed_calls = std::mem::take(&mut call_result.observed_calls);
                             if new_call_coverage && !observed_calls.is_empty() {
-                                observed_call_entries.push((observed_calls, current_tx.clone()));
+                                observed_call_entries.push(observed_calls);
                             }
                         }
                         CampaignEvent::Check { result, kind, should_check } => {
@@ -1470,12 +1470,11 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 campaign_state.sync_handler_failures(&invariant_test.test_data.failures);
             }
 
-            for (observed_calls, parent_tx) in observed_call_entries {
-                corpus_manager.hoist_observed_calls(
+            for observed_calls in observed_call_entries {
+                corpus_manager.observe_calls(
                     &observed_calls,
-                    &parent_tx,
                     &invariant_test.targeted_contracts,
-                    CorpusInsertionMode::Live,
+                    ObservedCallDepth::All,
                 );
             }
 
