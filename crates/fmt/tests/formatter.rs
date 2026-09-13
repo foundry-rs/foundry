@@ -1,4 +1,4 @@
-use forge_fmt::FormatterConfig;
+use forge_fmt::{DocCommentStyle, FormatterConfig};
 use foundry_config::fmt::IndentStyle;
 use foundry_test_utils::init_tracing;
 use snapbox::{Data, assert_data_eq};
@@ -171,6 +171,49 @@ fn statement_trailing_blank_line_is_idempotent() {
         format(source, Path::new("test.sol"), Arc::new(FormatterConfig::default())),
         expected
     );
+}
+
+#[test]
+fn source_offsets_with_unicode_and_crlf() {
+    let source = r#"// 😀 文
+contract C {
+    /// First line.
+    /// Second line.
+    function f() external {
+        // forgefmt: disable-next-line
+        uint  x =  1; // Comment.
+    }
+}
+"#
+    .replace('\n', "\r\n");
+    let path = Path::new("offset.sol");
+    let mut compiler = Compiler::new(
+        solar::interface::Session::builder().with_buffer_emitter(Default::default()).build(),
+    );
+    forge_fmt::format_source(
+        "// Different file with Unicode: 😀\ncontract Prefix {}",
+        Some(Path::new("prefix.sol")),
+        Arc::new(FormatterConfig::default()),
+        &mut compiler,
+    )
+    .into_result()
+    .unwrap();
+
+    for config in [
+        FormatterConfig::default(),
+        FormatterConfig {
+            wrap_comments: true,
+            docs_style: DocCommentStyle::Block,
+            ..Default::default()
+        },
+    ] {
+        let config = Arc::new(config);
+        let expected = format(&source, path, config.clone());
+        let actual = forge_fmt::format_source(&source, Some(path), config, &mut compiler)
+            .into_result()
+            .unwrap();
+        assert_eq!(actual, expected);
+    }
 }
 
 // <https://github.com/foundry-rs/foundry/issues/3831>

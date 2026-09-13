@@ -2734,7 +2734,7 @@ impl<'ast> State<'_, 'ast> {
     fn is_inline_stmt(&self, stmt: &'ast ast::Stmt<'ast>, cond_len: usize) -> bool {
         if let ast::StmtKind::If(cond, then, els_opt) = &stmt.kind {
             let if_span = cond.span.to(then.span);
-            if self.sm.is_multiline(if_span)
+            if !self.same_source_line(if_span.lo(), if_span.hi())
                 && matches!(
                     self.config.single_line_statement_blocks,
                     config::SingleLineBlockStyle::Preserve
@@ -2754,7 +2754,7 @@ impl<'ast> State<'_, 'ast> {
             if matches!(
                 self.config.single_line_statement_blocks,
                 config::SingleLineBlockStyle::Preserve
-            ) && self.sm.is_multiline(stmt.span)
+            ) && !self.same_source_line(stmt.span.lo(), stmt.span.hi())
             {
                 return false;
             }
@@ -2772,7 +2772,7 @@ impl<'ast> State<'_, 'ast> {
         then: &'ast ast::Stmt<'ast>,
     ) -> bool {
         let span_between = cond.span.between(then.span);
-        if let Ok(snip) = self.sm.span_to_snippet(span_between) {
+        if let Some(snip) = self.snippet(span_between) {
             // Check for newlines after the closing parenthesis of the `if (...)`.
             if let Some((_, after_paren)) = snip.split_once(')') {
                 return after_paren.lines().count() > 1;
@@ -2867,8 +2867,8 @@ impl<'ast> State<'_, 'ast> {
 
         // Check for multiline block.span first.
         // Block can spans multipline because of comments.
-        if self.sm.is_multiline(block.span)
-            && let Ok(snip) = self.sm.span_to_snippet(block.span)
+        if !self.same_source_line(block.span.lo(), block.span.hi())
+            && let Some(snip) = self.snippet(block.span)
         {
             let code_lines = snip.lines().filter(|line| {
                 let trimmed = line.trim();
@@ -3450,13 +3450,7 @@ mod tests {
                     Comments::new(&source_obj.file, gcx.sess.source_map(), true, false, None);
                 let config = Arc::new(FormatterConfig::default());
                 let inline_config = InlineConfig::default();
-                let mut state = State::new(
-                    gcx.sess.source_map(),
-                    source_obj.file.start_pos,
-                    config,
-                    inline_config,
-                    comments,
-                );
+                let mut state = State::new(&source_obj.file, config, inline_config, comments);
 
                 // Extract the first function header (either top-level or inside a contract)
                 let func = ast
