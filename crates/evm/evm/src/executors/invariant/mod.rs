@@ -763,9 +763,8 @@ struct InvariantTestRun<FEN: FoundryEvmNetwork> {
     optimization_prefix_len: usize,
 }
 
-/// Recorder-only call history which preserves accepted reverted calls without changing the
-/// canonical campaign inputs consumed by corpus and failure reporting.
-struct InvariantFrontierRun {
+/// Recorded call sequence used by corpus feedback and frontier recording.
+struct RecordedCallSequence {
     inputs: Vec<BasicTxDetails>,
     cmp_seq: Vec<Vec<crate::inspectors::CmpOperands>>,
 }
@@ -1162,7 +1161,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             let run_depth =
                 invariant_run_depth(&config, &mut invariant_test.test_data.branch_runner);
 
-            let mut frontier_run = (frontier_limit > 0).then(|| InvariantFrontierRun {
+            let mut corpus_run = Option::<RecordedCallSequence>::None;
+            let mut frontier_run = (frontier_limit > 0).then(|| RecordedCallSequence {
                 inputs: Vec::with_capacity(run_depth as usize),
                 cmp_seq: Vec::with_capacity(run_depth as usize),
             });
@@ -1182,6 +1182,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             }
 
             let mut call_cmp_values = Vec::new();
+            let mut call_new_coverage = false;
             let mut assertion_failure = false;
             let mut pre_merge_edges_hash = None;
             let mut handler = None;
@@ -1232,12 +1233,12 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             pre_merge_edges_hash = assertion_failure
                                 .then(|| error::snapshot_edge_fingerprint(call_result))
                                 .flatten();
-                            let new_call_coverage = corpus_manager.merge_edge_coverage(call_result);
-                            if new_call_coverage {
+                            call_new_coverage = corpus_manager.merge_edge_coverage(call_result);
+                            if call_new_coverage {
                                 current_run.new_coverage = true;
                             }
                             let observed_calls = std::mem::take(&mut call_result.observed_calls);
-                            if new_call_coverage && !observed_calls.is_empty() {
+                            if call_new_coverage && !observed_calls.is_empty() {
                                 observed_call_entries.push((observed_calls, current_tx.clone()));
                             }
                         }
@@ -1270,6 +1271,35 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                                         .clone(),
                                 );
                                 frontier_run.cmp_seq.push(call_cmp_values.clone());
+                            }
+                            if config.corpus.is_coverage_guided() {
+                                let preserve_revert =
+                                    invariant_contract.is_optimization() || config.has_delay();
+                                let retain_for_corpus =
+                                    !result.reverted || preserve_revert || call_new_coverage;
+                                if let Some(corpus_run) = &mut corpus_run {
+                                    if retain_for_corpus {
+                                        corpus_run.inputs.push(
+                                            current_run
+                                                .inputs
+                                                .last()
+                                                .expect("accepted call has a campaign input")
+                                                .clone(),
+                                        );
+                                        corpus_run
+                                            .cmp_seq
+                                            .push(std::mem::take(&mut call_cmp_values));
+                                    }
+                                } else if result.reverted && !preserve_revert && call_new_coverage {
+                                    let mut cmp_seq = std::mem::take(&mut current_run.cmp_seq);
+                                    cmp_seq.push(std::mem::take(&mut call_cmp_values));
+                                    corpus_run = Some(RecordedCallSequence {
+                                        inputs: current_run.inputs.clone(),
+                                        cmp_seq,
+                                    });
+                                } else if !result.reverted || preserve_revert {
+                                    current_run.cmp_seq.push(std::mem::take(&mut call_cmp_values));
+                                }
                             }
                             let (handler_target, handler_selector) =
                                 handler.take().expect("feedback precedes campaign checks");
@@ -1373,9 +1403,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 
                             if run_cancelled {
                                 return Ok(CampaignControl::Stop);
-                            }
-                            if current_run.cmp_seq.len() < current_run.inputs.len() {
-                                current_run.cmp_seq.push(std::mem::take(&mut call_cmp_values));
                             }
                             if !continues || current_run.depth == run_depth - 1 {
                                 current_run.save_last_run_inputs = true;
@@ -1487,17 +1514,22 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 let prefix = current_run.inputs[..current_run.optimization_prefix_len].to_vec();
                 (v, prefix)
             });
+            let corpus_inputs = corpus_run
+                .as_ref()
+                .map_or(current_run.inputs.as_slice(), |history| history.inputs.as_slice());
+            let corpus_cmp_seq =
+                corpus_run.as_ref().map_or(&[][..], |history| history.cmp_seq.as_slice());
             if worker_count > 1 {
                 corpus_manager.process_inputs_for_campaign(
-                    &current_run.inputs,
-                    &current_run.cmp_seq,
+                    corpus_inputs,
+                    corpus_cmp_seq,
                     current_run.new_coverage,
                     optimization,
                 );
             } else {
                 corpus_manager.process_inputs(
-                    &current_run.inputs,
-                    &current_run.cmp_seq,
+                    corpus_inputs,
+                    corpus_cmp_seq,
                     current_run.new_coverage,
                     optimization,
                 );

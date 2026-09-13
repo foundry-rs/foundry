@@ -1,4 +1,4 @@
-use alloy_primitives::U256;
+use alloy_primitives::{U256, keccak256};
 use foundry_test_utils::{
     TestCommand, forgetest_init, snapbox::cmd::OutputAssert, str, util::OutputExt,
 };
@@ -1350,6 +1350,58 @@ Ran 3 test suites [ELAPSED]: 6 tests passed, 0 failed, 0 skipped (6 total tests)
     assert!(
         prj.root().join("fuzz_corpus").join("Counter2Test").join("testFuzz_SetNumber").exists()
     );
+});
+
+forgetest_init!(invariant_corpus_retains_coverage_winning_reverts, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 1;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(1).unwrap());
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+        config.invariant.corpus.corpus_gzip = false;
+    });
+    prj.add_test(
+        "RevertingCorpusTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract RevertingCorpusHandler {
+    uint256 public credit;
+
+    function spend(uint256 amount) external {
+        require(amount <= credit, "over credit");
+        require(amount > credit, "under credit");
+        credit = amount;
+    }
+}
+
+contract RevertingCorpusTest is Test {
+    function setUp() public {
+        RevertingCorpusHandler handler = new RevertingCorpusHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_ok() public pure {}
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mc", "RevertingCorpusTest", "--fuzz-seed", "0x574"]).assert_success();
+
+    let corpus_dir = prj.root().join("invariant_corpus/RevertingCorpusTest/worker0/corpus");
+    let selector = &keccak256("spend(uint256)")[..4];
+    let retained = std::fs::read_dir(corpus_dir)
+        .unwrap()
+        .flatten()
+        .map(|entry| std::fs::read_to_string(entry.path()).unwrap())
+        .map(|contents| {
+            serde_json::from_str::<Vec<foundry_evm::fuzz::BasicTxDetails>>(&contents).unwrap()
+        })
+        .any(|sequence| {
+            sequence.len() == 1 && sequence[0].call_details.calldata.starts_with(selector)
+        });
+    assert!(retained, "coverage-winning reverted call was not retained in the corpus");
 });
 
 forgetest_init!(parallel_invariant_corpus_uses_worker_dirs, |prj, cmd| {
