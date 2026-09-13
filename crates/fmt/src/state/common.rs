@@ -466,7 +466,7 @@ impl<'ast> State<'_, 'ast> {
                     let span = self.cursor.span(cmnt_span.lo());
                     self.inline_config.is_disabled(span)
                         // NOTE: necessary workaround to patch this edgecase due to lack of spans for the commas.
-                        && self.sm.span_to_snippet(span).is_ok_and(|snip| !snip.contains(','))
+                        && self.snippet(span).is_some_and(|snip| !snip.contains(','))
                 }) {
                     self.print_comments(
                         next_pos,
