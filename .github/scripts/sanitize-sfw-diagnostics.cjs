@@ -1,4 +1,4 @@
-// Temporary, build-only Socket diagnostics. Never upload the raw directory.
+// Temporary fetch/build Socket diagnostics. Never upload the raw directories.
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -18,19 +18,20 @@ function redact(text, env = process.env) {
     .split('\n').map(line => sensitive.test(line) && /[:=]/.test(line) ? '[REDACTED SENSITIVE LINE]' : line).join('\n');
 }
 
-function collect() {
+function collect(phase = 'build') {
+  if (!['fetch', 'build'].includes(phase)) throw new Error('Unknown diagnostic phase');
   const temporary = fs.realpathSync(process.env.RUNNER_TEMP);
-  const raw = path.join(temporary, 'sfw-mpp-raw');
-  const output = path.join(temporary, 'sfw-mpp-diagnostics');
-  const logPath = path.join(raw, 'build.log');
+  const raw = path.join(temporary, `sfw-mpp-${phase}-raw`);
+  const output = path.join(temporary, 'sfw-mpp-diagnostics', phase);
+  const logPath = path.join(raw, `${phase}.log`);
   if (!fs.existsSync(logPath)) {
-    console.log('No Socket build log: the build step did not start.');
+    console.log(`No Socket ${phase} log: the ${phase} step did not start.`);
     return;
   }
   const log = fs.readFileSync(logPath, 'utf8');
   fs.mkdirSync(output, { recursive: true });
   const cleanLog = redact(log);
-  fs.writeFileSync(path.join(output, 'build.log'), cleanLog);
+  fs.writeFileSync(path.join(output, `${phase}.log`), cleanLog);
   // Keep the error visible without interpreting log text as workflow commands.
   const marker = require('node:crypto').randomUUID();
   console.log(`::stop-commands::${marker}`);
@@ -38,7 +39,7 @@ function collect() {
   console.log(`::${marker}::`);
 
   // Some Socket versions choose their own report path. Only accept a JSON file
-  // explicitly identified by this build, inside this job's temporary directory.
+  // explicitly identified by this phase, inside this job's temporary directory.
   const reports = new Set([path.join(raw, 'report.json')]);
   for (const match of log.matchAll(/sfw report written to:\s*([^\r\n\x1b]+\.json)/g)) reports.add(match[1].trim());
   let count = 0;
@@ -50,8 +51,8 @@ function collect() {
     const clean = JSON.stringify(data, (key, value) => sensitive.test(key) ? '[REDACTED]' : typeof value === 'string' ? redact(value) : value, 2);
     fs.writeFileSync(path.join(output, `report-${++count}.json`), clean + '\n');
   }
-  console.log(`Collected the build log and ${count} Socket JSON report(s).`);
+  console.log(`Collected the ${phase} log and ${count} Socket JSON report(s).`);
 }
 
-if (require.main === module) collect();
+if (require.main === module) collect(process.argv[2]);
 module.exports = { redact, collect };
