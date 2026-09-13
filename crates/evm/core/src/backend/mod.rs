@@ -67,20 +67,6 @@ pub use snapshot::{BackendStateSnapshot, RevertStateSnapshotAction, StateSnapsho
 // A `revm::Database` that is used in forking mode
 type ForkDB<N, B> = CacheDB<SharedBackend<N, B>>;
 
-/// Returns the account-loading policy required by a fork source.
-///
-/// A recognized source chain ID is authoritative. The endpoint's execution profile is only a
-/// source hint for custom chain IDs, where the chain ID cannot identify the RPC semantics.
-pub fn account_fetch_policy_for_source(
-    source_chain_id: ChainId,
-    network_profile: NetworkConfigs,
-) -> AccountFetchPolicy {
-    let source_chain = Chain::from_id(source_chain_id);
-    let is_tempo =
-        source_chain.is_tempo() || (source_chain.named().is_none() && network_profile.is_tempo());
-    if is_tempo { AccountFetchPolicy::RequireAccountInfo } else { AccountFetchPolicy::Auto }
-}
-
 /// Represents a numeric `ForkId` valid only for the existence of the `Backend`.
 ///
 /// The difference between `ForkId` and `LocalForkId` is that `ForkId` tracks pairs of `endpoint +
@@ -3149,6 +3135,20 @@ pub(crate) fn merge_account_data<ExtDB: DatabaseRef, N: Network, B: ForkBlockEnv
     }
 
     *active_journaled_state = target_fork.journaled_state.clone();
+}
+
+/// Returns the account-loading policy required by a fork source.
+///
+/// A recognized source chain ID is authoritative. The endpoint's execution profile is only a
+/// source hint for custom chain IDs, where the chain ID cannot identify the RPC semantics.
+pub fn account_fetch_policy_for_source(
+    source_chain_id: ChainId,
+    network_profile: NetworkConfigs,
+) -> AccountFetchPolicy {
+    let source_chain = Chain::from_id(source_chain_id);
+    let is_tempo =
+        source_chain.is_tempo() || (source_chain.named().is_none() && network_profile.is_tempo());
+    if is_tempo { AccountFetchPolicy::RequireAccountInfo } else { AccountFetchPolicy::Auto }
 }
 
 /// Clones the account data from the `active_journaled_state`  into the `fork_journaled_state`

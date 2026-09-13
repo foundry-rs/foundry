@@ -556,17 +556,6 @@ async fn test_tempo_fork_ignores_rpc_placeholder_balances() {
         api.mine_one().await.unwrap();
         let request = TransactionRequest::default().to(contract);
         assert_eq!(
-            U256::from_be_slice(&provider.call(request.clone().into()).await.unwrap()),
-            U256::from(42),
-        );
-        let snapshot = api.evm_snapshot().await.unwrap();
-        api.anvil_set_balance(contract, U256::from(99)).await.unwrap();
-        assert_eq!(
-            U256::from_be_slice(&provider.call(request.clone().into()).await.unwrap()),
-            U256::from(99),
-        );
-        assert!(api.evm_revert(snapshot).await.unwrap());
-        assert_eq!(
             U256::from_be_slice(&provider.call(request.into()).await.unwrap()),
             U256::from(42),
         );

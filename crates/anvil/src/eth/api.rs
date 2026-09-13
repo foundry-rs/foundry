@@ -2473,6 +2473,7 @@ impl EthApi<FoundryNetwork> {
         if let Some(fork) = self.get_fork() {
             let block_request = self.block_request(block_number).await?;
             if let BlockRequest::Number(number) = block_request {
+                trace!(target: "node", "get_account_info: fork block {}, requested block {number}", fork.block_number());
                 if !reads_current && fork.predates_fork_inclusive(number) {
                     if fork.requires_account_info() {
                         return Ok(fork.get_account_info(address, number).await?);
