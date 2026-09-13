@@ -35,6 +35,17 @@ use forking must contain `fork` in their name. Forge and Cast CLI tests live und
 `crates/forge/tests/cli/` and `crates/cast/tests/cli/`; shared integration fixtures live in
 `crates/test-utils`, and Solidity fixtures live under `testdata/`.
 
+The Forge coverage tests can also validate LCOV snapshots by rendering them with `genhtml`:
+
+```sh
+FOUNDRY_TEST_GENHTML=genhtml cargo nextest run -p forge --test cli -E 'test(coverage::)'
+```
+
+Use LCOV 2.3.1 or newer for its branch consistency checks. Linux CI pins LCOV 2.3.1 and
+requires this validation; local runs omit it unless `FOUNDRY_TEST_GENHTML` names an executable.
+The validator runs with branch coverage enabled and no ignored errors, checks the exit status,
+and requires an HTML index. Snapshots still assert the exact coverage counts on all platforms.
+
 ## Maintained guides
 
 - [Cheatcodes](./cheatcodes.md) explains cheatcode generation, dispatch, and implementation.

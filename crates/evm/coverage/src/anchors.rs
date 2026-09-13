@@ -94,6 +94,7 @@ pub fn find_anchor_simple(
             eyre::eyre!("We found an anchor, but we can't translate it to a program counter")
         })?,
         item_id,
+        jump: None,
     })
 }
 
@@ -163,8 +164,9 @@ pub fn find_anchor_branch(
                         item_id,
                         // The first branch is the opcode directly after JUMPI
                         instruction: (next_pc + 1) as u32,
+                        jump: None,
                     },
-                    ItemAnchor { item_id, instruction: pc_jump },
+                    ItemAnchor { item_id, instruction: pc_jump, jump: Some(next_pc as u32) },
                 ));
             }
         }

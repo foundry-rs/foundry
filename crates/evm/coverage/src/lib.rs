@@ -169,7 +169,7 @@ impl CoverageReport {
         if let Some(anchors) = self.anchors.get(contract_id) {
             let anchors = if is_deployed_code { &anchors.1 } else { &anchors.0 };
             for anchor in anchors {
-                if let Some(hits) = hit_map.get(anchor.instruction) {
+                if let Some(hits) = anchor.hits(hit_map) {
                     self.analyses
                         .get_mut(&contract_id.build_id)
                         .and_then(|items| items.all_items_mut().get_mut(anchor.item_id as usize))
@@ -204,7 +204,7 @@ impl CoverageReport {
 
         let mut hits_by_item = BTreeMap::<u32, u32>::new();
         for anchor in anchors {
-            if let Some(hits) = hit_map.get(anchor.instruction) {
+            if let Some(hits) = anchor.hits(hit_map) {
                 *hits_by_item.entry(anchor.item_id).or_default() += hits.get();
             }
         }
@@ -465,6 +465,23 @@ pub struct ItemAnchor {
     pub instruction: u32,
     /// The item ID this anchor points to.
     pub item_id: u32,
+    /// The conditional jump whose taken edge this anchor represents, if any.
+    ///
+    /// The destination may also be reached through the other branch. Count executions of the
+    /// jump minus executions of its fall-through instruction instead of destination hits.
+    pub jump: Option<u32>,
+}
+
+impl ItemAnchor {
+    fn hits(&self, hit_map: &HitMap) -> Option<NonZeroU32> {
+        let hits = hit_map.get(self.jump.unwrap_or(self.instruction))?.get();
+        let hits = if let Some(jump) = self.jump {
+            hits.saturating_sub(hit_map.get(jump + 1).map_or(0, NonZeroU32::get))
+        } else {
+            hits
+        };
+        NonZeroU32::new(hits)
+    }
 }
 
 impl fmt::Display for ItemAnchor {

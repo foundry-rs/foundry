@@ -443,10 +443,13 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
             }
             StmtKind::If(..) => {
                 let branch_id = self.next_branch_id();
-                self.push_item_kind(
-                    CoverageItemKind::Branch { branch_id, path_id: 0, is_first_opcode: false },
-                    stmt.span,
-                );
+                // Track both outcomes, including the implicit path that skips the body.
+                for path_id in 0..2 {
+                    self.push_item_kind(
+                        CoverageItemKind::Branch { branch_id, path_id, is_first_opcode: false },
+                        stmt.span,
+                    );
+                }
             }
             StmtKind::For(yul::StmtFor { body, .. }) => {
                 self.push_stmt(body.span);
