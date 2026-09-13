@@ -61,15 +61,28 @@ jobs:
       # Start outside Socket so the cache daemon keeps its own proxy settings.
       - run: sccache --start-server
 
-      # Build and install binaries
+      # Isolate downloads from compilation, retaining the same Socket wrapper.
+      - name: Fetch dependencies through Socket
+        env:
+          SFW_DEBUG: "true"
+          SFW_JSON_REPORT_PATH: ${{ runner.temp }}/sfw-mpp-fetch-raw/report.json
+        run: |
+          mkdir -p "$RUNNER_TEMP/sfw-mpp-fetch-raw"
+          cargo fetch --locked > "$RUNNER_TEMP/sfw-mpp-fetch-raw/fetch.log" 2>&1
+
+      - name: Collect sanitized Socket fetch diagnostics
+        if: always()
+        run: node .github/scripts/sanitize-sfw-diagnostics.cjs fetch
+
+      # Build and install binaries.
       - name: Build and install Foundry binaries
         env:
           # Temporary diagnostics for the repeated Socket download termination.
           SFW_DEBUG: "true"
-          SFW_JSON_REPORT_PATH: ${{ runner.temp }}/sfw-mpp-raw/report.json
+          SFW_JSON_REPORT_PATH: ${{ runner.temp }}/sfw-mpp-build-raw/report.json
         run: |
-          mkdir -p "$RUNNER_TEMP/sfw-mpp-raw"
-          cargo build --profile dev --locked --bin forge --bin cast --bin anvil --bin chisel > "$RUNNER_TEMP/sfw-mpp-raw/build.log" 2>&1
+          mkdir -p "$RUNNER_TEMP/sfw-mpp-build-raw"
+          cargo build --profile dev --locked --bin forge --bin cast --bin anvil --bin chisel > "$RUNNER_TEMP/sfw-mpp-build-raw/build.log" 2>&1
           echo "${{ github.workspace }}/target/debug" >> "$GITHUB_PATH"
 
       - name: Collect sanitized Socket diagnostics
