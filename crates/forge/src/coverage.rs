@@ -196,7 +196,7 @@ impl CoverageReporter for LcovReporter {
                     CoverageItemKind::Line | CoverageItemKind::Statement
                         if recorded_lines.insert(line) =>
                     {
-                        writeln!(out, "DA:{line},{hits}")?;
+                        writeln!(out, "DA:{line},{}", line_hits[&line])?;
                     }
                     CoverageItemKind::Branch { branch_id, path_id, .. } => {
                         // Per LCOV spec: "-" means the expression was never evaluated (line not

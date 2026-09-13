@@ -197,7 +197,14 @@ impl<'gcx> SourceVisitor<'gcx> {
             while items.peek().is_some_and(|item| item.loc.lines.start < line) {
                 items.next();
             }
-            if let Some(reference_item) = items.peek().filter(|item| item.loc.lines.start == line) {
+            if let Some(mut reference_item) = items.next_if(|item| item.loc.lines.start == line) {
+                // Anchor the line to its earliest source item, not the shortest span or a
+                // statement in a conditional body that may never execute.
+                while let Some(item) = items.next_if(|item| item.loc.lines.start == line) {
+                    if item.loc.bytes.start < reference_item.loc.bytes.start {
+                        reference_item = item;
+                    }
+                }
                 lines.push(CoverageItem {
                     kind: CoverageItemKind::Line,
                     loc: reference_item.loc.clone(),
@@ -329,12 +336,14 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
                 if stmt_has_statements(then_stmt)
                     || else_stmt.as_ref().is_some_and(|s| stmt_has_statements(s))
                 {
-                    // The branch instruction is mapped to the first opcode within the true
-                    // body source range.
+                    // Report the branch at the condition, but count hits in the true body.
+                    // Line coverage uses the reported span so it also sees false conditions.
+                    let anchor_loc = self.source_location_for(then_stmt.span);
                     self.push_item_kind(
                         CoverageItemKind::Branch { branch_id, path_id: 0, is_first_opcode: true },
-                        then_stmt.span,
-                    );
+                        stmt.span,
+                    )
+                    .anchor_loc = Some(anchor_loc);
                     if let Some(else_stmt) = else_stmt {
                         let is_first_opcode = stmt_has_statements(else_stmt);
                         let anchor_loc =
