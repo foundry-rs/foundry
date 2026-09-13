@@ -71,10 +71,7 @@ jobs:
     env:
       NODE_OPTIONS: --no-network-family-autoselection
       SFW_UNKNOWN_HOST_ACTION: ignore
-      # macOS test RPC clients reject Socket's inspection CA (UnknownIssuer).
-      # Match the compiler-host split: wrap Linux, bypass macOS/Windows RPC hosts.
-      # Retain normal TLS verification and package screening.
-      SFW_CUSTOM_REGISTRIES: ${{ contains(matrix.target, 'linux') && 'wrap:binaries.soliditylang.org,wrap:raw.githubusercontent.com/nikitastupin/solc,wrap:raw.githubusercontent.com/alloy-rs/solc-builds' || 'bypass:binaries.soliditylang.org,bypass:raw.githubusercontent.com' }},${{ format('{0}:ethereum.reth.rs,{0}:bsc-dataseed.binance.org,{0}:bsc-testnet.bnbchain.org,{0}:mainnet.base.org,{0}:sepolia.base.org,{0}:mainnet.optimism.io,{0}:forno.celo.org,{0}:api.avax-test.network,{0}:rpc.viction.xyz,{0}:rpc.moderato.tempo.xyz,{0}:dawn-intensive-sun.ethereum-sepolia.quiknode.pro,{0}:rpc.tempo.xyz', contains(matrix.target, 'linux') && 'wrap' || 'bypass') }},wrap:api.4byte.sourcify.dev,wrap:api.soldeer.xyz,wrap:soldeer-revisions.s3.amazonaws.com
+      SFW_CUSTOM_REGISTRIES: ${{ contains(matrix.target, 'linux') && 'wrap:binaries.soliditylang.org,wrap:raw.githubusercontent.com/nikitastupin/solc,wrap:raw.githubusercontent.com/alloy-rs/solc-builds' || 'bypass:binaries.soliditylang.org,bypass:raw.githubusercontent.com' }},wrap:ethereum.reth.rs,wrap:bsc-dataseed.binance.org,wrap:bsc-testnet.bnbchain.org,wrap:mainnet.base.org,wrap:sepolia.base.org,wrap:mainnet.optimism.io,wrap:forno.celo.org,wrap:api.avax-test.network,wrap:rpc.viction.xyz,wrap:rpc.moderato.tempo.xyz,wrap:dawn-intensive-sun.ethereum-sepolia.quiknode.pro,wrap:api.4byte.sourcify.dev,wrap:rpc.tempo.xyz,wrap:api.soldeer.xyz,wrap:soldeer-revisions.s3.amazonaws.com
       # Socket's proxy certificates lack revocation endpoints; Windows-only setting.
       CARGO_HTTP_CHECK_REVOKE: ${{ contains(matrix.target, 'windows') && 'false' || 'true' }}
     defaults:
