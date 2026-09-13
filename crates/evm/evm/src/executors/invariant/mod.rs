@@ -1517,8 +1517,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             let corpus_inputs = corpus_run
                 .as_ref()
                 .map_or(current_run.inputs.as_slice(), |history| history.inputs.as_slice());
-            let corpus_cmp_seq =
-                corpus_run.as_ref().map_or(&[][..], |history| history.cmp_seq.as_slice());
+            let corpus_cmp_seq = corpus_run
+                .as_ref()
+                .map_or(current_run.cmp_seq.as_slice(), |history| history.cmp_seq.as_slice());
             if worker_count > 1 {
                 corpus_manager.process_inputs_for_campaign(
                     corpus_inputs,

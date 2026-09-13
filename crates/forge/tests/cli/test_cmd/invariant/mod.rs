@@ -1404,6 +1404,64 @@ contract RevertingCorpusTest is Test {
     assert!(retained, "coverage-winning reverted call was not retained in the corpus");
 });
 
+forgetest_init!(invariant_corpus_reuses_comparison_hints, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 10;
+        config.invariant.depth = 1;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(1).unwrap());
+        config.invariant.dictionary.dictionary_weight = 0;
+        config.invariant.dictionary.include_storage = false;
+        config.invariant.dictionary.include_push_bytes = false;
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+        config.invariant.corpus.corpus_random_sequence_weight = 0;
+        config.invariant.corpus.mutation_weights = foundry_config::FuzzCorpusMutationWeights {
+            mutation_weight_splice: 0,
+            mutation_weight_repeat: 0,
+            mutation_weight_interleave: 0,
+            mutation_weight_prefix: 0,
+            mutation_weight_suffix: 0,
+            mutation_weight_abi: 0,
+            mutation_weight_cmp: 1,
+        };
+    });
+    prj.add_test(
+        "ComparisonCorpusTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ComparisonCorpusHandler {
+    bool public reached;
+
+    function compare(uint256 value) external {
+        if (value >= type(uint256).max - 100) reached = true;
+    }
+}
+
+contract ComparisonCorpusTest is Test {
+    ComparisonCorpusHandler handler;
+
+    function setUp() public {
+        handler = new ComparisonCorpusHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_comparison_is_reached() public view {
+        assertFalse(handler.reached());
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mc", "ComparisonCorpusTest", "--fuzz-seed", "0x574"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: assertion failed]
+...
+"#]]);
+});
+
 forgetest_init!(parallel_invariant_corpus_uses_worker_dirs, |prj, cmd| {
     prj.update_config(|config| {
         config.invariant.runs = 2;
