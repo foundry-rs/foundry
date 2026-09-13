@@ -27,21 +27,20 @@ env:
   RUSTC_WRAPPER: "sccache"
 
 jobs:
-  cargo-cooldown:
-    permissions:
-      contents: read
-    uses: ./.github/workflows/cargo-cooldown.yml
-
   mpp-check:
     # Skip on PRs from forks (only run for branches in foundry-rs/foundry, i.e. maintainer PRs).
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository
-    needs: cargo-cooldown
     runs-on: depot-ubuntu-latest
     timeout-minutes: 60
     permissions:
+      id-token: write
       contents: read
+    env:
+      NODE_OPTIONS: --no-network-family-autoselection
+      SFW_UNKNOWN_HOST_ACTION: ignore
+      SFW_CUSTOM_REGISTRIES: wrap:binaries.soliditylang.org,wrap:raw.githubusercontent.com/nikitastupin/solc,wrap:raw.githubusercontent.com/alloy-rs/solc-builds
     steps:
       # Checkout the repository
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -51,7 +50,16 @@ jobs:
         with:
           toolchain: stable
 
+      - name: Secure Linux runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@5338a3746a2ac2ddd88cbede733c79f907aca3a0
+        with:
+          egress-policy: audit
+      - name: Verify Socket Cargo interception
+        uses: ./.github/actions/check-socket-shim
+
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      # Start outside Socket so the cache daemon keeps its own proxy settings.
+      - run: sccache --start-server
 
       # Build and install binaries
       - name: Build and install Foundry binaries
