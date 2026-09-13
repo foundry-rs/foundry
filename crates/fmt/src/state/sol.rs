@@ -1189,6 +1189,13 @@ impl<'ast> State<'_, 'ast> {
             }
             ast::TypeKind::Array(ast::TypeArray { element, size }) => {
                 self.print_ty(element);
+                let open_bracket = self
+                    .find_uncommented_char(Span::new(element.span.hi(), ty.span.hi()), '[')
+                    .unwrap();
+                self.print_comments(
+                    open_bracket,
+                    CommentConfig::skip_ws().mixed_prev_space().mixed_post_nbsp(),
+                );
                 if let Some(size) = size {
                     self.word("[");
                     self.print_expr(size);
@@ -2377,7 +2384,7 @@ impl<'ast> State<'_, 'ast> {
                 expr.span.lo(),
                 CommentConfig::skip_ws().mixed_no_break().mixed_prev_space().mixed_post_nbsp(),
             ) {
-                Some(cmnt) if cmnt.is_trailing() && !is_simple => self.s.offset(self.ind),
+                Some(_) if !is_simple => self.s.offset(self.ind),
                 None => self.print_sep(Separator::SpaceOrNbsp(allow_break)),
                 _ => {}
             }

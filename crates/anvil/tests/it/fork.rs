@@ -45,9 +45,9 @@ use foundry_evm::hardfork::OpHardfork;
 use foundry_evm_networks::{NetworkConfigs, arbitrum};
 use foundry_primitives::{FoundryNetwork, FoundryReceiptEnvelope};
 use foundry_test_utils::rpc::{
-    self, next_http_rpc_endpoint, next_rpc_endpoint, spawn_rpc_proxy_internal_error_after,
-    spawn_rpc_proxy_method_not_found_before, spawn_rpc_proxy_rejecting_method_after,
-    spawn_rpc_proxy_rejecting_method_when_enabled,
+    self, next_http_rpc_endpoint, next_rpc_endpoint, spawn_rpc_proxy_canned_method,
+    spawn_rpc_proxy_internal_error_after, spawn_rpc_proxy_method_not_found_before,
+    spawn_rpc_proxy_rejecting_method_after, spawn_rpc_proxy_rejecting_method_when_enabled,
     spawn_rpc_proxy_retyping_first_block_transaction,
 };
 use futures::StreamExt;
@@ -55,7 +55,7 @@ use revm::{
     context::BlockEnv, context_interface::block::BlobExcessGasAndPrice,
     precompile::PrecompileStatus, primitives::hardfork::SpecId,
 };
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::{Arc, atomic::Ordering},
@@ -109,6 +109,21 @@ async fn test_fork_ignores_initial_anvil_node_info_rpc_error() {
     let (api, _handle) = spawn(NodeConfig::test().with_eth_rpc_url(Some(fork_url))).await;
 
     assert_eq!(api.chain_id(), NamedChain::Mainnet as u64);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_skips_anvil_node_info_when_disabled() {
+    let (_api, origin) =
+        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64))).await;
+    let (fork_url, node_info_calls) =
+        spawn_rpc_proxy_canned_method(origin.http_endpoint(), "anvil_nodeInfo", json!({})).await;
+
+    let (api, _handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(fork_url)).with_no_fork_node_info(true))
+            .await;
+
+    assert_eq!(api.chain_id(), NamedChain::Mainnet as u64);
+    assert_eq!(node_info_calls.load(Ordering::Relaxed), 0);
 }
 
 #[tokio::test(flavor = "multi_thread")]
