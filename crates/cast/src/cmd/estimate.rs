@@ -12,6 +12,7 @@ use foundry_cli::{
     utils::{LoadConfig, parse_ether_value},
 };
 use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
+use foundry_config::Config;
 use foundry_wallets::{BrowserWalletOpts, WalletOpts};
 use std::str::FromStr;
 use tempo_alloy::TempoNetwork;
@@ -89,14 +90,17 @@ pub enum EstimateSubcommands {
 
 impl EstimateArgs {
     pub async fn run(self) -> Result<()> {
-        if self.tx.tempo.is_tempo() {
-            self.run_with_network::<TempoNetwork>().await
+        let config = self.rpc.load_config()?;
+        let requires_tempo = self.tx.tempo.is_tempo() || self.tx.tempo.session_id()?.is_some();
+        let network = super::resolve_transaction_network(&config, requires_tempo).await?;
+        if network.is_tempo() {
+            self.run_with_network::<TempoNetwork>(config).await
         } else {
-            self.run_with_network::<Ethereum>().await
+            self.run_with_network::<Ethereum>(config).await
         }
     }
 
-    async fn run_with_network<N: Network>(self) -> Result<()>
+    async fn run_with_network<N: Network>(self, config: Config) -> Result<()>
     where
         N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
@@ -110,13 +114,17 @@ impl EstimateArgs {
             wallet,
             browser,
             force,
-            rpc,
+            rpc: _,
             command,
         } = self;
 
-        let config = rpc.load_config()?;
         let provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
-        let (sender, is_browser) = read_only_sender::<N>(&browser, wallet).await?;
+        let chain_id = match config.chain {
+            Some(chain) => chain.id(),
+            None => provider.get_chain_id().await?,
+        };
+        let (sender, is_browser) =
+            read_only_sender::<N>(&browser, wallet, &tx.tempo, chain_id).await?;
 
         let code = if let Some(EstimateSubcommands::Create {
             code,

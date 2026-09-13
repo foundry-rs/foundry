@@ -27,6 +27,117 @@ impl SymbolicExecutor {
         Ok(CheatcodeOutcome::Continue(Vec::new()))
     }
 
+    pub(super) fn handle_full_word_array_assertion(
+        &mut self,
+        state: &mut PathState,
+        selector: [u8; 4],
+        input_offset: &SymExpr,
+        input_size: &SymExpr,
+        maximum_input_size: usize,
+    ) -> Result<CheatcodeOutcome, SymbolicError> {
+        const HEAD_SIZE: usize = 4 + 2 * 32;
+        if maximum_input_size < HEAD_SIZE {
+            return Err(SymbolicError::Unsupported("short symbolic array assertion CALL"));
+        }
+
+        let minimum_offset = state.lower_bound_usize(input_offset);
+        let maximum_offset = state.upper_bound_usize(&mut self.cx, input_offset);
+        let mut required_size = HEAD_SIZE;
+        let mut layouts = [(0usize, 0usize); 2];
+
+        for (index, layout) in layouts.iter_mut().enumerate() {
+            let head_offset = 4 + index * 32;
+            let offset = state.memory.load_word_offset_with_bounds(
+                &mut self.cx,
+                input_offset,
+                head_offset,
+                minimum_offset,
+                maximum_offset,
+            );
+            let offset = self
+                .constrained_word_with_solver(state, &offset)?
+                .and_then(|offset| usize::try_from(offset).ok())
+                .ok_or(SymbolicError::Unsupported("symbolic array assertion offset"))?;
+
+            let length_offset = 4usize
+                .checked_add(offset)
+                .ok_or(SymbolicError::Unsupported("symbolic array assertion ABI decode"))?;
+            let elements_offset = length_offset
+                .checked_add(32)
+                .ok_or(SymbolicError::Unsupported("symbolic array assertion ABI decode"))?;
+            if elements_offset > maximum_input_size {
+                return Err(SymbolicError::Unsupported("short symbolic array assertion CALL"));
+            }
+            let length = state.memory.load_word_offset_with_bounds(
+                &mut self.cx,
+                input_offset,
+                length_offset,
+                minimum_offset,
+                maximum_offset,
+            );
+            let length = self
+                .constrained_word_with_solver(state, &length)?
+                .and_then(|length| usize::try_from(length).ok())
+                .ok_or(SymbolicError::Unsupported("symbolic array assertion length"))?;
+            let byte_length = length
+                .checked_mul(32)
+                .ok_or(SymbolicError::Unsupported("symbolic array assertion ABI decode"))?;
+            let end = elements_offset
+                .checked_add(byte_length)
+                .ok_or(SymbolicError::Unsupported("symbolic array assertion ABI decode"))?;
+            if end > maximum_input_size {
+                return Err(SymbolicError::Unsupported("short symbolic array assertion CALL"));
+            }
+            required_size = required_size.max(end);
+            *layout = (elements_offset, length);
+        }
+
+        if !self.proves_expr_at_least(state, input_size, required_size)? {
+            return Err(SymbolicError::Unsupported("symbolic array assertion CALL input size"));
+        }
+
+        let [(left_offset, left_len), (right_offset, right_len)] = layouts;
+        let mut condition = if left_len == right_len {
+            let mut equal = Vec::with_capacity(left_len);
+            for element in 0..left_len {
+                let offset = element
+                    .checked_mul(32)
+                    .ok_or(SymbolicError::Unsupported("symbolic array assertion ABI decode"))?;
+                let left = state.memory.load_word_offset_with_bounds(
+                    &mut self.cx,
+                    input_offset,
+                    left_offset
+                        .checked_add(offset)
+                        .ok_or(SymbolicError::Unsupported("symbolic array assertion ABI decode"))?,
+                    minimum_offset,
+                    maximum_offset,
+                );
+                let right = state.memory.load_word_offset_with_bounds(
+                    &mut self.cx,
+                    input_offset,
+                    right_offset
+                        .checked_add(offset)
+                        .ok_or(SymbolicError::Unsupported("symbolic array assertion ABI decode"))?,
+                    minimum_offset,
+                    maximum_offset,
+                );
+                equal.push(SymBoolExpr::eq(&mut self.cx, left, right));
+            }
+            SymBoolExpr::and(&mut self.cx, equal)
+        } else {
+            SymBoolExpr::constant(&mut self.cx, false)
+        };
+        if matches!(
+            selector,
+            assertNotEq_16Call::SELECTOR
+                | assertNotEq_18Call::SELECTOR
+                | assertNotEq_22Call::SELECTOR
+        ) {
+            condition = condition.not(&mut self.cx);
+        }
+        self.handle_assertion(state, condition)
+    }
+
     pub(super) fn set_expected_revert(
         &mut self,
         state: &mut PathState,
@@ -174,6 +285,7 @@ impl SymbolicExecutor {
             return Ok(StepOutcome::Revert);
         }
 
+        self.stateless_retry_safe = false;
         let mut initcode = artifact_code(&artifact, false)?;
         initcode.extend_from_slice(&constructor_args);
         let initcode = SymCode::concrete(&mut self.cx, initcode);
@@ -474,9 +586,15 @@ impl SymbolicExecutor {
         executor: &Executor<FEN>,
         state: &mut PathState,
         selector: [u8; 4],
-        in_offset: usize,
+        in_offset: &SymExpr,
+        input_size: &SymExpr,
         in_size: usize,
     ) -> Result<CheatcodeOutcome, SymbolicError> {
+        if is_full_word_array_assertion(selector) {
+            return self
+                .handle_full_word_array_assertion(state, selector, in_offset, input_size, in_size);
+        }
+        let in_offset = in_offset.as_usize_or("symbolic cheatcode CALL input offset")?;
         let args_offset = in_offset + 4;
         match selector {
             assumeCall::SELECTOR => {
@@ -1931,6 +2049,7 @@ impl SymbolicExecutor {
                     0,
                     "symbolic vm.getCode",
                 )?;
+                self.stateless_retry_safe = false;
                 let code = artifact_code(&artifact, selector == getDeployedCodeCall::SELECTOR)?;
                 return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
                     &mut self.cx,
@@ -2359,6 +2478,7 @@ impl SymbolicExecutor {
                 )));
             }
             projectRootCall::SELECTOR => {
+                self.stateless_retry_safe = false;
                 let root = std::env::current_dir()
                     .map_err(|_| SymbolicError::Unsupported("symbolic vm.projectRoot"))?;
                 return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
@@ -2367,6 +2487,7 @@ impl SymbolicExecutor {
                 )));
             }
             unixTimeCall::SELECTOR => {
+                self.stateless_retry_safe = false;
                 let milliseconds = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .map_err(|_| SymbolicError::Unsupported("symbolic vm.unixTime"))?
@@ -2684,6 +2805,7 @@ impl SymbolicExecutor {
                     0,
                     "symbolic vm.envExists",
                 )?;
+                self.stateless_retry_safe = false;
                 return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(
                     &mut self.cx,
                     U256::from(std::env::var_os(name).is_some()),
@@ -2697,6 +2819,7 @@ impl SymbolicExecutor {
                     0,
                     "symbolic vm.envBool",
                 )?;
+                self.stateless_retry_safe = false;
                 let value = std::env::var(name)
                     .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
                 return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(
@@ -2712,6 +2835,7 @@ impl SymbolicExecutor {
                     0,
                     "symbolic vm.envUint",
                 )?;
+                self.stateless_retry_safe = false;
                 let value = std::env::var(name)
                     .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
                 return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(
@@ -2727,6 +2851,7 @@ impl SymbolicExecutor {
                     0,
                     "symbolic vm.envInt",
                 )?;
+                self.stateless_retry_safe = false;
                 let value = std::env::var(name)
                     .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
                 return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(
@@ -2742,6 +2867,7 @@ impl SymbolicExecutor {
                     0,
                     "symbolic vm.envAddress",
                 )?;
+                self.stateless_retry_safe = false;
                 let value = std::env::var(name)
                     .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
                 let address = parse_env_address(&value)?;
@@ -2758,6 +2884,7 @@ impl SymbolicExecutor {
                     0,
                     "symbolic vm.envBytes32",
                 )?;
+                self.stateless_retry_safe = false;
                 let value = std::env::var(name)
                     .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
                 return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(
@@ -2773,6 +2900,7 @@ impl SymbolicExecutor {
                     0,
                     "symbolic vm.envString",
                 )?;
+                self.stateless_retry_safe = false;
                 let value = std::env::var(name)
                     .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
                 return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
@@ -2788,6 +2916,7 @@ impl SymbolicExecutor {
                     0,
                     "symbolic vm.envBytes",
                 )?;
+                self.stateless_retry_safe = false;
                 let value = std::env::var(name)
                     .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
                 let bytes = parse_env_bytes(&value)?;
@@ -2812,6 +2941,7 @@ impl SymbolicExecutor {
                 )?;
                 let name = dyn_string(&values[0])?;
                 let delimiter = dyn_string(&values[1])?;
+                self.stateless_retry_safe = false;
                 let value = std::env::var(name)
                     .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
                 let value = if selector == envBool_1Call::SELECTOR {
@@ -2842,6 +2972,7 @@ impl SymbolicExecutor {
                     0,
                     "symbolic vm.envOr",
                 )?;
+                self.stateless_retry_safe = false;
                 let value = match std::env::var(name) {
                     Ok(value) => U256::from(parse_env_bool(&value)?),
                     Err(_) => read_abi_concrete_word_arg(
@@ -2875,6 +3006,7 @@ impl SymbolicExecutor {
                     1,
                     "symbolic vm.envOr",
                 )?;
+                self.stateless_retry_safe = false;
                 let value = match std::env::var(name) {
                     Ok(value) if selector == envOr_1Call::SELECTOR => parse_env_uint(&value)?,
                     Ok(value) if selector == envOr_2Call::SELECTOR => parse_env_int(&value)?,
@@ -2898,6 +3030,7 @@ impl SymbolicExecutor {
                     vec![DynSolType::String, DynSolType::String],
                 )?;
                 let name = dyn_string(&values[0])?;
+                self.stateless_retry_safe = false;
                 let value = std::env::var(name).unwrap_or(dyn_string(&values[1])?);
                 return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
                     &mut self.cx,
@@ -2913,6 +3046,7 @@ impl SymbolicExecutor {
                     vec![DynSolType::String, DynSolType::Bytes],
                 )?;
                 let name = dyn_string(&values[0])?;
+                self.stateless_retry_safe = false;
                 let value = match std::env::var(name) {
                     Ok(value) => parse_env_bytes(&value)?,
                     Err(_) => dyn_bytes(&values[1])?,
@@ -2957,6 +3091,7 @@ impl SymbolicExecutor {
                 )?;
                 let name = dyn_string(&values[0])?;
                 let delimiter = dyn_string(&values[1])?;
+                self.stateless_retry_safe = false;
                 let value = match std::env::var(name) {
                     Ok(value) if selector == envOr_7Call::SELECTOR => {
                         parse_env_array(&value, &delimiter, parse_env_bool_value)?
@@ -2999,6 +3134,7 @@ impl SymbolicExecutor {
                 if args.is_empty() || args[0].is_empty() {
                     return Err(SymbolicError::Unsupported("symbolic ffi empty command"));
                 }
+                self.stateless_retry_safe = false;
                 let output = Command::new(&args[0])
                     .args(&args[1..])
                     .output()

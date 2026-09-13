@@ -65,7 +65,9 @@ impl TraceContext {
         self
     }
 
-    /// Returns the hardfork to use while decoding this context's traces.
+    /// Completes metadata for a remotely executed trace before decoding.
+    /// Locally executed traces must use [`Self::hardfork`] directly, including `None`, so a
+    /// configured hardfork cannot replace an explicit execution-spec override.
     pub fn decoding_hardfork(self, config: &Config) -> Option<FoundryHardfork> {
         let execution_network = self.networks.execution_network();
         let mut hardfork = self
@@ -827,6 +829,9 @@ mod tests {
                 gas_refund_counter: 0,
                 gas_used: 0,
                 gas_cost: 0,
+                state_gas_cost: None,
+                state_gas_reservoir: None,
+                state_gas_spent: 0,
                 storage_change: Some(Box::new(StorageChange {
                     key: U256::from(1),
                     value: U256::from(2),

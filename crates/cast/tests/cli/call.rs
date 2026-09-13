@@ -998,6 +998,16 @@ casttest!(curl_call, |_prj, cmd| {
     assert!(output.contains(rpc));
 });
 
+casttest!(curl_call_accepts_named_chain_config, |prj, cmd| {
+    let rpc = "https://eth.example.com";
+    prj.create_file("foundry.toml", "[profile.default]\nchain_id = \"sepolia\"\n");
+
+    cmd.current_dir(prj.root())
+        .args(["call", "0xdead000000000000000000000000000000000000", "--rpc-url", rpc, "--curl"])
+        .assert_success()
+        .stderr_eq(str![""]);
+});
+
 // https://github.com/foundry-rs/foundry/issues/11584
 // Tests that invalid hex with uppercase 0X prefix also produces clear error
 casttest!(cast_call_invalid_hex_uppercase_prefix, |_prj, cmd| {

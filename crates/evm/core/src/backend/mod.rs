@@ -3209,6 +3209,7 @@ fn update_env_block<N: Network, SPEC: Into<SpecId> + Copy, BLOCK: FoundryBlock>(
     block_env.set_basefee(header.base_fee_per_gas().unwrap_or_default());
     block_env.set_gas_limit(header.gas_limit());
     block_env.set_number(U256::from(header.number()));
+    block_env.set_slot_num(header.slot_number().unwrap_or_default());
 
     if let Some(excess_blob_gas) = header.excess_blob_gas() {
         evm_env.block_env.set_blob_excess_gas_and_price(
@@ -3896,6 +3897,29 @@ mod tests {
         assert_eq!(before_second.after_transaction(block, parent_block.hash, 2, 3), None);
         assert_eq!(before_second.after_transaction(block, parent_block.hash, 1, 1), None);
         assert_eq!(parent.after_transaction(block, parent_block.hash, 0, 0), None);
+    }
+
+    #[test]
+    fn fork_block_env_updates_slot_number() {
+        let mut evm_env =
+            EvmEnv::new(revm::context::CfgEnv::<SpecId>::default(), BlockEnv::default());
+        for slot_number in [Some(42), Some(u64::MAX), None, Some(0)] {
+            let header = AnyHeader { slot_number, ..Default::default() };
+            let block = AnyRpcBlock::new(
+                Block::new(
+                    AnyRpcHeader::from_sealed(header.seal(B256::ZERO)),
+                    BlockTransactions::Full(Vec::new()),
+                )
+                .into(),
+            );
+            update_env_block::<AnyNetwork, _, _>(
+                &mut evm_env,
+                &block,
+                NamedChain::Mainnet as u64,
+                NetworkConfigs::default(),
+            );
+            assert_eq!(evm_env.block_env.slot_num, slot_number.unwrap_or_default());
+        }
     }
 
     #[test]

@@ -19,6 +19,10 @@ ignore = [
     # https://rustsec.org/advisories/RUSTSEC-2026-0247 bitmaps is unmaintained.
     # No fixed imbl release is available yet: https://github.com/jneem/imbl/issues/170
     "RUSTSEC-2026-0247",
+    # RUSTSEC-2025-0167 affects bitmaps byte-slice conversion and mutation APIs.
+    # Our only consumers, imbl and imbl-sized-chunks, do not call those APIs.
+    # Remove when imbl replaces bitmaps: https://github.com/jneem/imbl/issues/170
+    "RUSTSEC-2025-0167",
 ]
 
 # This section is considered when running `cargo deny check bans`.
@@ -105,6 +109,8 @@ unknown-registry = "warn"
 # in the allow list is encountered
 unknown-git = "deny"
 allow-git = [
+    # Temporary: alloy-chains until HyperliquidTestnet is released.
+    "https://github.com/alloy-rs/chains",
     "https://github.com/foundry-rs/foundry-core",
     "https://github.com/paradigmxyz/solar",
     # Only for tests.

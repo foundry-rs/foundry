@@ -10,8 +10,12 @@ use foundry_evm_core::{
     fork::CreateFork,
     opts::{EvmOpts, ExecutionSpecContext, resolve_execution_spec},
 };
-use foundry_evm_hardforks::{FoundryHardfork, TempoHardfork};
-use foundry_evm_networks::NetworkConfigs;
+use foundry_evm_hardforks::FoundryHardfork;
+use foundry_evm_networks::{
+    NetworkConfigs,
+    celo::transfer::{CELO_TRANSFER_ADDRESS, CELO_TRANSFER_LABEL},
+    resolved_precompile_labels,
+};
 use foundry_evm_traces::{TraceContext, TraceRequirements};
 use revm::state::Bytecode;
 use std::ops::{Deref, DerefMut};
@@ -38,7 +42,6 @@ impl<FEN: FoundryEvmNetwork> TracingFork<FEN> {
     pub fn resolve_spec(&mut self, config: &Config, evm_version: Option<EvmVersion>) {
         let hardfork = TracingExecutor::<FEN>::resolve_spec_for_chain(
             config,
-            self.context.networks(),
             self.context.chain().id(),
             self.context.hardfork(),
             &mut self.evm_env,
@@ -126,41 +129,20 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
         self.executor.spec_id()
     }
 
-    /// Resolves and applies the execution spec for the effective block environment.
-    pub fn resolve_spec(
-        config: &Config,
-        networks: NetworkConfigs,
-        evm_env: &mut EvmEnvFor<FEN>,
-        evm_version: Option<EvmVersion>,
-    ) -> Option<FoundryHardfork> {
-        Self::resolve_spec_for_chain(
-            config,
-            networks,
-            evm_env.cfg_env.chain_id,
-            None,
-            evm_env,
-            evm_version,
-        )
-    }
-
     /// Resolves and applies the execution spec using the source chain's hardfork schedule.
     pub fn resolve_spec_for_chain(
         config: &Config,
-        networks: NetworkConfigs,
         source_chain_id: ChainId,
         endpoint_hardfork: Option<FoundryHardfork>,
         evm_env: &mut EvmEnvFor<FEN>,
         evm_version: Option<EvmVersion>,
     ) -> Option<FoundryHardfork> {
-        let explicit_hardfork =
-            evm_version.and_then(|version| network_hardfork_from_evm_version(networks, version));
         resolve_execution_spec(
-            config,
-            networks,
+            config.evm_version,
+            config.hardfork,
             evm_env,
             ExecutionSpecContext::historical(source_chain_id, endpoint_hardfork),
             evm_version.map(evm_spec_id::<SpecFor<FEN>>),
-            explicit_hardfork,
         )
     }
 
@@ -170,7 +152,11 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
         networks: NetworkConfigs,
         resolved_hardfork: Option<FoundryHardfork>,
     ) {
-        config.labels.extend(networks.precompiles_label(resolved_hardfork));
+        config.labels.extend(resolved_precompile_labels(resolved_hardfork));
+        // Celo shares the Ethereum spec and remains a separate inspector configuration.
+        if networks.is_celo() {
+            config.labels.insert(CELO_TRANSFER_ADDRESS, CELO_TRANSFER_LABEL.to_string());
+        }
     }
 
     /// Resolves the fork state and trace context using the fork block number from the config.
@@ -245,22 +231,6 @@ fn apply_state_overrides<FEN: FoundryEvmNetwork>(
     Ok(())
 }
 
-fn network_hardfork_from_evm_version(
-    networks: NetworkConfigs,
-    evm_version: EvmVersion,
-) -> Option<FoundryHardfork> {
-    if networks.is_tempo() {
-        return Some(FoundryHardfork::Tempo(evm_spec_id::<TempoHardfork>(evm_version)));
-    }
-    #[cfg(feature = "monad")]
-    if networks.is_monad() {
-        return Some(FoundryHardfork::Monad(evm_spec_id::<foundry_evm_hardforks::MonadHardfork>(
-            evm_version,
-        )));
-    }
-    None
-}
-
 impl<FEN: FoundryEvmNetwork> Deref for TracingExecutor<FEN> {
     type Target = Executor<FEN>;
 
@@ -281,6 +251,63 @@ mod tests {
     use alloy_rpc_types::state::AccountOverride;
     use foundry_evm_core::{FoundryTransaction, evm::EthEvmNetwork};
     use revm::context::Transaction;
+
+    fn assert_trace_spec_authority<FEN>(
+        networks: NetworkConfigs,
+        configured: FoundryHardfork,
+        evm_version: EvmVersion,
+        expected_spec: SpecFor<FEN>,
+        expected_hardfork: Option<FoundryHardfork>,
+    ) where
+        FEN: FoundryEvmNetwork,
+        SpecFor<FEN>: std::fmt::Debug + PartialEq,
+    {
+        let mut config = Config { networks, hardfork: Some(configured), ..Default::default() };
+        let mut env = EvmEnvFor::<FEN>::default();
+        env.cfg_env.chain_id = 999_999;
+        let hardfork = TracingExecutor::<FEN>::resolve_spec_for_chain(
+            &config,
+            1,
+            Some(configured),
+            &mut env,
+            Some(evm_version),
+        );
+        assert_eq!(env.cfg_env.spec, expected_spec);
+        assert_eq!(hardfork, expected_hardfork);
+        assert_eq!(env.cfg_env.chain_id, 999_999);
+
+        TracingExecutor::<FEN>::extend_precompile_labels(&mut config, networks, hardfork);
+        assert_eq!(config.labels, resolved_precompile_labels(expected_hardfork));
+        let context = TraceContext::new(Chain::from_id(1), networks, hardfork);
+        let decoder = foundry_evm_traces::CallTraceDecoderBuilder::new()
+            .with_networks(context.networks())
+            .with_hardfork(context.hardfork())
+            .build();
+        assert_eq!(decoder.hardfork(), expected_hardfork);
+    }
+
+    #[test]
+    fn trace_spec_ethereum_override_preserves_absent_metadata() {
+        assert_trace_spec_authority::<EthEvmNetwork>(
+            NetworkConfigs::default(),
+            "ethereum:shanghai".parse().unwrap(),
+            EvmVersion::Cancun,
+            revm::primitives::hardfork::SpecId::CANCUN,
+            None,
+        );
+    }
+
+    #[test]
+    fn trace_spec_tempo_override_reports_executed_hardfork() {
+        let spec = evm_spec_id::<foundry_evm_hardforks::TempoHardfork>(EvmVersion::Cancun);
+        assert_trace_spec_authority::<foundry_evm_core::evm::TempoEvmNetwork>(
+            NetworkConfigs::with_tempo(),
+            "tempo:T3".parse().unwrap(),
+            EvmVersion::Cancun,
+            spec,
+            Some(spec.into()),
+        );
+    }
 
     #[test]
     fn state_override_nonce_does_not_modify_transaction_nonce() {

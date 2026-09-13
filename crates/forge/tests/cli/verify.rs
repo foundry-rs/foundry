@@ -483,7 +483,7 @@ const ROBINHOOD_TESTNET_BLOCKSCOUT_URL: &str = "https://explorer.testnet.chain.r
 ///
 /// Etherscan v2 covers Hoodi, Sepolia, Base Sepolia, Arbitrum Sepolia and Monad testnet. Robinhood
 /// testnet is not on the v2 chainlist, so it is covered by Sourcify and its own Blockscout instance
-/// instead.
+/// instead. HyperEVM testnet (998) is covered by Sourcify.
 macro_rules! deploy_verify_tests {
     ($($name:ident: $chain:expr, $network:literal, $verifier:literal, $url:expr;)*) => {$(
         forgetest!($name, |prj, cmd| {
@@ -497,6 +497,8 @@ macro_rules! deploy_verify_tests {
 }
 
 deploy_verify_tests! {
+    deploy_verify_hyperevm_testnet_sourcify: NamedChain::HyperliquidTestnet, "hyperevm-testnet", "sourcify", None;
+
     deploy_verify_hoodi_etherscan: NamedChain::Hoodi, "hoodi", "etherscan", None;
     deploy_verify_hoodi_sourcify: NamedChain::Hoodi, "hoodi", "sourcify", None;
 

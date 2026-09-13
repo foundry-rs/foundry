@@ -1,6 +1,6 @@
 //! Integration tests for `forge fmt` command
 
-use foundry_test_utils::{forgetest, forgetest_init};
+use foundry_test_utils::forgetest;
 
 const UNFORMATTED: &str = r#"// SPDX-License-Identifier: MIT
 pragma         solidity  =0.8.33    ;
@@ -24,7 +24,7 @@ contract Test {
 }
 "#;
 
-forgetest_init!(fmt_exclude_libs_in_recursion, |prj, cmd| {
+forgetest!(fmt_exclude_libs_in_recursion, |prj, cmd| {
     prj.update_config(|config| config.fmt.ignore = vec!["src/ignore/".to_string()]);
 
     prj.add_lib("SomeLib.sol", UNFORMATTED);
@@ -37,7 +37,7 @@ forgetest_init!(fmt_exclude_libs_in_recursion, |prj, cmd| {
 });
 
 // Test that fmt can format a simple contract file
-forgetest_init!(fmt_file, |prj, cmd| {
+forgetest!(fmt_file, |prj, cmd| {
     prj.add_raw_source("FmtTest.sol", UNFORMATTED);
     cmd.arg("fmt").arg("src/FmtTest.sol");
     cmd.assert_success().stdout_eq(str![""]).stderr_eq(str![[r#"
@@ -56,16 +56,17 @@ forgetest!(fmt_stdin, |_prj, cmd| {
     cmd.stdin(UNFORMATTED.as_bytes());
     cmd.assert_success().stdout_eq(FORMATTED);
 
-    // stdin with `--raw` returns formatted code
+    // Already formatted stdin is returned unchanged.
+    // <https://github.com/foundry-rs/foundry/issues/11871>
     cmd.stdin(FORMATTED.as_bytes());
-    cmd.assert_success().stdout_eq(FORMATTED);
+    cmd.assert_success().stdout_eq(FORMATTED.as_bytes());
 
     // stdin with `--check` and without `--raw`returns diff
     cmd.forge_fuse().args(["fmt", "-", "--check"]);
     cmd.assert_success().stdout_eq("");
 });
 
-forgetest_init!(fmt_check_mode, |prj, cmd| {
+forgetest!(fmt_check_mode, |prj, cmd| {
     // Run fmt --check on a well-formatted file
     prj.add_raw_source("Test.sol", FORMATTED);
     cmd.arg("fmt").arg("--check").arg("src/Test.sol");
@@ -107,17 +108,8 @@ Diff in stdin:
 "#]]);
 });
 
-// Test that original is returned if read from stdin and no diff.
-// <https://github.com/foundry-rs/foundry/issues/11871>
-forgetest!(fmt_stdin_original, |_prj, cmd| {
-    cmd.args(["fmt", "-", "--raw"]);
-
-    cmd.stdin(FORMATTED.as_bytes());
-    cmd.assert_success().stdout_eq(FORMATTED.as_bytes());
-});
-
 // Test that fmt can format a simple contract file
-forgetest_init!(fmt_file_config_parms_first, |prj, cmd| {
+forgetest!(fmt_file_config_parms_first, |prj, cmd| {
     prj.create_file(
         "foundry.toml",
         r#"
@@ -245,7 +237,7 @@ Error: `--nearest` cannot be used when `FOUNDRY_CONFIG` is set
 });
 
 // https://github.com/foundry-rs/foundry/issues/12000
-forgetest_init!(fmt_only_cmnts_file, |prj, cmd| {
+forgetest!(fmt_only_cmnts_file, |prj, cmd| {
     // Only line breaks
     prj.add_raw_source("FmtTest.sol", "\n\n");
 
@@ -269,7 +261,7 @@ forgetest_init!(fmt_only_cmnts_file, |prj, cmd| {
 });
 
 // <https://github.com/foundry-rs/foundry/issues/16268>
-forgetest_init!(fmt_keeps_disable_directive_in_every_file, |prj, cmd| {
+forgetest!(fmt_keeps_disable_directive_in_every_file, |prj, cmd| {
     const NAMES: [&str; 4] = ["A", "B", "C", "D"];
     const SOURCE: &str = "// forgefmt: disable-next-line\ncontract  Disabled {}\n";
 

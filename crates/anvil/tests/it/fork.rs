@@ -118,10 +118,9 @@ async fn test_fork_skips_anvil_node_info_when_disabled() {
     let (fork_url, node_info_calls) =
         spawn_rpc_proxy_canned_method(origin.http_endpoint(), "anvil_nodeInfo", json!({})).await;
 
-    let (api, _handle) = spawn(
-        NodeConfig::test().with_eth_rpc_url(Some(fork_url)).with_no_fork_node_info(true),
-    )
-    .await;
+    let (api, _handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(fork_url)).with_no_fork_node_info(true))
+            .await;
 
     assert_eq!(api.chain_id(), NamedChain::Mainnet as u64);
     assert_eq!(node_info_calls.load(Ordering::Relaxed), 0);

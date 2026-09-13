@@ -128,15 +128,24 @@ impl SendTxArgs {
     }
 
     pub async fn run(self) -> Result<()> {
-        if self.tx.tempo.session_id()?.is_some() {
-            return self.run_generic::<TempoNetwork>(None, None).await;
+        if self.to.is_none() && matches!(self.command, Some(SendTxSubcommands::Create { .. })) {
+            if !self.tx.auth.is_empty() {
+                eyre::bail!(
+                    "EIP-7702 transactions can't be CREATE transactions and require a destination address"
+                );
+            }
+            if self.path.is_some() {
+                eyre::bail!(
+                    "EIP-4844 transactions can't be CREATE transactions and require a destination address"
+                );
+            }
         }
 
-        let (is_tempo, signer, tempo_access_key) =
+        let (network, signer, tempo_access_key) =
             tempo::resolve_transaction_network_and_signer(&self.tx.tempo, &self.send_tx.eth)
                 .await?;
 
-        if is_tempo {
+        if network.is_tempo() {
             self.run_generic::<TempoNetwork>(signer, tempo_access_key).await
         } else {
             self.run_generic::<Ethereum>(signer, None).await
@@ -225,18 +234,6 @@ impl SendTxArgs {
             args: constructor_args,
         }) = command
         {
-            // 7702 and 4844 transactions require a target, so they can't be CREATE transactions.
-            if to.is_none() && !tx.auth.is_empty() {
-                return Err(eyre!(
-                    "EIP-7702 transactions can't be CREATE transactions and require a destination address"
-                ));
-            }
-            if to.is_none() && blob_data.is_some() {
-                return Err(eyre!(
-                    "EIP-4844 transactions can't be CREATE transactions and require a destination address"
-                ));
-            }
-
             sig = constructor_sig;
             args = constructor_args;
             Some(code)

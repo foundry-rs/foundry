@@ -1,7 +1,5 @@
 //! ERC-2612 signed approvals.
 
-use std::str::FromStr;
-
 use crate::{
     cmd::send::SendTxArgs,
     tempo,
@@ -19,7 +17,7 @@ use clap::Args;
 use eyre::{Result, WrapErr, ensure};
 use foundry_cli::{
     json::{print_json_success, print_scalar},
-    utils::{LoadConfig, get_chain, get_provider},
+    utils::{LoadConfig, get_provider},
 };
 use foundry_common::{
     FoundryTransactionBuilder,
@@ -31,6 +29,7 @@ use foundry_config::Config;
 use foundry_wallets::WalletSigner;
 use serde::Serialize;
 use serde_json::json;
+use std::str::FromStr;
 use tempo_alloy::TempoNetwork;
 
 sol! {
@@ -101,16 +100,14 @@ impl PermitArgs {
             config.chain.is_none_or(|chain| chain.id() == rpc_chain_id),
             "Configured chain does not match the RPC chain"
         );
-        let rpc_is_tempo = get_chain(config.chain, &provider).await?.is_tempo();
-        let (resolved_tempo, signer, access_key) =
+        let (network, signer, access_key) =
             tempo::resolve_transaction_network_and_signer(&self.tx.tempo, &self.send_tx.eth)
                 .await?;
         ensure!(
             access_key.is_none(),
             "Tempo access keys cannot sign ERC-2612 permits; use a root account signer"
         );
-        let is_tempo = resolved_tempo || (self.send_tx.browser.browser && rpc_is_tempo);
-        if is_tempo {
+        if network.is_tempo() {
             self.run_generic::<TempoNetwork>(signer, config, rpc_chain_id).await
         } else {
             self.run_generic::<Ethereum>(signer, config, rpc_chain_id).await

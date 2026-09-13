@@ -50,14 +50,14 @@ impl SafeSendOpts {
     ) -> Result<SafeSendResult> {
         let Self { rpc, wallet, tx } = self;
         let eth = EthereumOpts { rpc: *rpc, wallet: *wallet, ..Default::default() };
-        let (is_tempo, signer, access_key) =
+        let (network, signer, access_key) =
             tempo::resolve_transaction_network_and_signer(&tx.tempo, &eth).await?;
         ensure!(
             access_key.is_none(),
             "Tempo Accounts sessions are not yet supported by `cast safe create` or `cast safe execute`"
         );
         let call = SafeCall { to, data, confirmations, timeout, poll_interval };
-        if is_tempo {
+        if network.is_tempo() {
             call.send::<TempoNetwork>(eth, *tx, signer).await
         } else {
             call.send::<Ethereum>(eth, *tx, signer).await

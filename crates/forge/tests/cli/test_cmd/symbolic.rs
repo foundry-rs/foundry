@@ -780,6 +780,238 @@ contract SymbolicQuadraticQuote {
     assert_eq!(result["symbolic"]["solver"]["stats"]["heuristic_witnesses"], 0);
 });
 
+forgetest_init!(symbolic_retries_deferred_nested_arithmetic, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_retries_deferred_nested_arithmetic because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicDeferredExternalCall.t.sol",
+        r#"
+interface Vm {
+    function assume(bool condition) external pure;
+    function unixTime() external returns (uint256);
+}
+
+contract SymbolicConversionTarget {
+    function convert(uint256 base, uint256 coefficient) external pure returns (uint256) {
+        return (base * coefficient + 9) / 10;
+    }
+}
+
+contract SymbolicCreatedConversion {
+    uint256 public value;
+
+    constructor(uint256 base, uint256 coefficient) {
+        value = (base * coefficient + 9) / 10;
+    }
+}
+
+contract SymbolicDeferredExternalCall {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    SymbolicConversionTarget target;
+
+    function setUp() public {
+        target = new SymbolicConversionTarget();
+    }
+
+    /// forge-config: default.symbolic.timeout = 5
+    function checkExternalConversion(uint256 base, uint256 coefficient) external view {
+        vm.assume(base > 0 && base < 1_000);
+        vm.assume(coefficient >= 10 && coefficient <= 100);
+        assert(target.convert(base, coefficient) > 0);
+    }
+
+    /// forge-config: default.symbolic.timeout = 5
+    function checkCreatedConversion(uint256 base, uint256 coefficient) external {
+        vm.assume(base > 0 && base < 1_000);
+        vm.assume(coefficient >= 10 && coefficient <= 100);
+        SymbolicCreatedConversion created = new SymbolicCreatedConversion(base, coefficient);
+        assert(created.value() > 0);
+    }
+
+    /// forge-config: default.symbolic.timeout = 5
+    function checkNondeterministicExternalConversion(uint256 base, uint256 coefficient) external {
+        vm.unixTime();
+        vm.assume(base > 0 && base < 1_000);
+        vm.assume(coefficient >= 10 && coefficient <= 100);
+        assert(target.convert(base, coefficient) > 0);
+    }
+
+    /// forge-config: default.symbolic.max_solver_queries = 16
+    function checkQueryLimitedExternalConversion(uint256 base, uint256 coefficient) external view {
+        vm.assume(base > 0 && base < 1_000);
+        vm.assume(coefficient >= 10 && coefficient <= 100);
+        assert(target.convert(base, coefficient) > 0);
+    }
+}
+"#,
+    );
+
+    for (test, signature) in [
+        ("checkExternalConversion", "checkExternalConversion(uint256,uint256)"),
+        ("checkCreatedConversion", "checkCreatedConversion(uint256,uint256)"),
+    ] {
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--optimize", "--match-test", test])
+            .assert_success()
+            .get_output()
+            .stdout
+            .clone();
+        let result = json_test_result(&output, signature);
+        assert_eq!(result["symbolic"]["status"], "pass");
+        assert!(result["symbolic"]["solver"]["stats"]["smt_queries"].as_u64().unwrap() > 0);
+    }
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--optimize",
+            "--match-test",
+            "checkNondeterministicExternalConversion",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result =
+        json_test_result(&output, "checkNondeterministicExternalConversion(uint256,uint256)");
+    assert_eq!(result["symbolic"]["status"], "incomplete");
+    assert!(
+        result["symbolic"]["incomplete"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("nested hard arithmetic")
+    );
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--optimize",
+            "--match-test",
+            "checkQueryLimitedExternalConversion",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkQueryLimitedExternalConversion(uint256,uint256)");
+    assert_eq!(result["symbolic"]["status"], "incomplete");
+    assert!(
+        result["symbolic"]["incomplete"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("solver query limit exceeded (16)")
+    );
+    assert_eq!(result["symbolic"]["solver"]["stats"]["solver_queries"], 16);
+    assert!(result["symbolic"]["solver"]["stats"]["paths"].as_u64().unwrap() > 2);
+});
+
+forgetest_init!(symbolic_preserves_completed_external_call_counterexamples, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_preserves_completed_external_call_counterexamples because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicDeferredExternalPriority.t.sol",
+        r#"
+interface SymbolicDeferredPriorityVm {
+    function assume(bool condition) external pure;
+    function unixTime() external returns (uint256);
+}
+
+contract SymbolicDeferredPriorityTarget {
+    function evaluate(uint256 x, uint256 y) external pure returns (uint256) {
+        unchecked {
+            uint256 value = (x * y + 9) / 10;
+            if (value == 37) return 1;
+            if (value == 38) return 2;
+        }
+        return 0;
+    }
+}
+
+contract SymbolicDeferredExternalPriority {
+    SymbolicDeferredPriorityVm constant vm = SymbolicDeferredPriorityVm(
+        address(uint160(uint256(keccak256("hevm cheat code"))))
+    );
+    SymbolicDeferredPriorityTarget target;
+
+    function setUp() public {
+        target = new SymbolicDeferredPriorityTarget();
+    }
+
+    /// forge-config: default.symbolic.max_solver_queries = 16
+    function checkCompletedCallBfs(uint256 x, uint256 y) external view {
+        vm.assume(x >= 11 && x <= 18);
+        vm.assume(y >= 19 && y <= 30);
+        assert(target.evaluate(x, y) == 0);
+    }
+
+    /// forge-config: default.symbolic.max_solver_queries = 16
+    /// forge-config: default.symbolic.exploration_order = "dfs"
+    function checkCompletedCallDfs(uint256 x, uint256 y) external view {
+        vm.assume(x >= 11 && x <= 18);
+        vm.assume(y >= 19 && y <= 30);
+        assert(target.evaluate(x, y) == 0);
+    }
+
+    function checkDeferredHostRead(uint256 x, uint256 y) external {
+        vm.assume(x >= 11 && x <= 18);
+        vm.assume(y >= 19 && y <= 30);
+        uint256 value = target.evaluate(x, y);
+        if (value != 0) vm.unixTime();
+        assert(value <= 2);
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--optimize",
+            "--match-contract",
+            "SymbolicDeferredExternalPriority",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    for signature in
+        ["checkCompletedCallBfs(uint256,uint256)", "checkCompletedCallDfs(uint256,uint256)"]
+    {
+        let result = json_test_result(&output, signature);
+        assert_eq!(result["symbolic"]["status"], "fail_counterexample");
+        assert_eq!(result["symbolic"]["replay"]["status"], "confirmed");
+        assert!(result["symbolic"]["solver"]["stats"]["smt_queries"].as_u64().unwrap() > 0);
+    }
+
+    let result = json_test_result(&output, "checkDeferredHostRead(uint256,uint256)");
+    assert_eq!(result["symbolic"]["status"], "incomplete");
+    assert!(
+        result["symbolic"]["incomplete"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("nested hard arithmetic")
+    );
+});
+
 forgetest_init!(symbolic_proves_saturating_mul_equivalence, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(
@@ -1758,6 +1990,175 @@ contract SymbolicNativeArrayLengths {
 [PASS] checkArray(uint256[])
 "#]],
     );
+});
+
+forgetest_init!(symbolic_handles_array_assertions_from_symbolic_memory, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_handles_array_assertions_from_symbolic_memory because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicArrayAssertions.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicArrayAssertions is Test {
+    function checkArrayCopy(uint256[] memory values) public pure {
+        uint256[] memory copy = new uint256[](values.length);
+        for (uint256 i; i < values.length; ++i) copy[i] = values[i];
+        assertEq(values, copy);
+    }
+
+    function checkCorruptedArrayCopy(uint256[] memory values) public pure {
+        uint256[] memory copy = new uint256[](values.length);
+        for (uint256 i; i < values.length; ++i) copy[i] = values[i];
+        if (copy.length != 0) copy[0] ^= 1;
+        assertEq(values, copy);
+    }
+
+    function checkConcretePointerWithSymbolicSize(bool padded) public view {
+        assembly {
+            mstore(0x80, shl(224, 0x975d5a12))
+            mstore(0x84, 0x40)
+            mstore(0xa4, 0x60)
+            mstore(0xc4, 0)
+            mstore(0xe4, 0)
+            let size := add(0x84, shl(5, padded))
+            if iszero(staticcall(gas(), 0x7109709ECfa91a80626fF3989D68f67F5b1DD12D, 0x80, size, 0, 0)) {
+                revert(0, 0)
+            }
+        }
+    }
+
+    function checkArrayCallResultTracksInputSize(bool complete, uint256 value) public view {
+        bool success;
+        assembly {
+            mstore(0x80, shl(224, 0x975d5a12))
+            mstore(0x84, 0x40)
+            mstore(0xa4, 0x80)
+            mstore(0xc4, 1)
+            mstore(0xe4, value)
+            mstore(0x104, 1)
+            mstore(0x124, value)
+            let size := add(4, mul(0xc0, complete))
+            success := staticcall(gas(), 0x7109709ECfa91a80626fF3989D68f67F5b1DD12D, 0x80, size, 0, 0)
+        }
+        assertTrue(success);
+    }
+
+    function checkNoncanonicalArrayEncoding(bool shifted) public view {
+        bool success;
+        assembly {
+            let start := add(0x80, shl(5, shifted))
+            mstore(start, shl(224, 0x975d5a12))
+            mstore(add(start, 4), 0x60)
+            mstore(add(start, 0x24), 0x60)
+            mstore(add(start, 0x64), 1)
+            mstore(add(start, 0x84), 7)
+            success := staticcall(gas(), 0x7109709ECfa91a80626fF3989D68f67F5b1DD12D, start, 0xa4, 0, 0)
+        }
+        assertTrue(success);
+    }
+
+    function checkZeroLengthMcopy(uint256 dest, uint256 size) public view {
+        vm.assume(size <= 2);
+        uint256 byteAtZero;
+        assembly {
+            mstore8(0, 0xaa)
+            mstore8(0x20, 0xbb)
+            mcopy(dest, 0x1f, size)
+            byteAtZero := byte(0, mload(0))
+        }
+        assert(size != 0 || byteAtZero == 0xaa);
+    }
+}
+"#,
+    );
+
+    let args = [
+        "test",
+        "--symbolic",
+        "--symbolic-max-paths",
+        "20",
+        "--symbolic-max-solver-queries",
+        "50",
+        "--symbolic-max-depth",
+        "5000",
+        "--symbolic-timeout",
+        "1",
+    ];
+    let stdout = cmd
+        .args(args)
+        .args(["--symbolic-array-lengths", "1"])
+        .args(["--match-test", "^checkArrayCopy\\("])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert_relevant_lines(&stdout, str![["[PASS] checkArrayCopy(uint256[])"]]);
+
+    let stdout = cmd
+        .forge_fuse()
+        .args(args)
+        .args(["--symbolic-array-lengths", "1"])
+        .args(["--match-test", "^checkCorruptedArrayCopy\\("])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert_relevant_lines(
+        &stdout,
+        str![[r#"
+[FAIL: assertion failed: [0] != [1]; counterexample:
+args=[[0]]] checkCorruptedArrayCopy(uint256[])
+"#]],
+    );
+
+    let stdout = cmd
+        .forge_fuse()
+        .args(args)
+        .args(["--match-test", "^checkConcretePointerWithSymbolicSize\\("])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert_relevant_lines(&stdout, str![["[PASS] checkConcretePointerWithSymbolicSize(bool)"]]);
+
+    let stdout = cmd
+        .forge_fuse()
+        .args(args)
+        .args(["--match-test", "^checkArrayCallResultTracksInputSize\\("])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert_relevant_lines(
+        &stdout,
+        str![[
+            "[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic array assertion CALL input size] checkArrayCallResultTracksInputSize(bool,uint256)"
+        ]],
+    );
+
+    let output = cmd
+        .forge_fuse()
+        .args(args)
+        .args(["--json", "--match-test", "^checkNoncanonicalArrayEncoding\\("])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkNoncanonicalArrayEncoding(bool)");
+    assert_eq!(result["symbolic"]["status"], "pass");
+
+    let output = cmd
+        .forge_fuse()
+        .args(args)
+        .args(["--json", "--match-test", "^checkZeroLengthMcopy\\("])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkZeroLengthMcopy(uint256,uint256)");
+    assert_eq!(result["symbolic"]["status"], "pass");
 });
 
 forgetest_init!(symbolic_uses_legacy_halmos_array_lengths, |prj, cmd| {

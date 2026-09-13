@@ -309,6 +309,14 @@ impl ScriptArgs {
         mut evm_opts: EvmOpts,
     ) -> Result<(Config, EvmOpts)> {
         if self.tempo.is_tempo() || self.has_tempo_session()? {
+            if evm_opts.networks.has_network_selection() {
+                let network = evm_opts.networks.execution_network();
+                eyre::ensure!(
+                    network.is_tempo(),
+                    "Tempo transaction options conflict with configured network `{}`",
+                    evm_opts.networks.execution_profile_name()
+                );
+            }
             // If Tempo tx options or a session are set, select the Tempo network.
             evm_opts.networks = NetworkConfigs::with_tempo();
         }
@@ -1206,11 +1214,10 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         let fork_hardfork = fork_context.and_then(|context| context.hardfork);
         self.source_chain_id = fork_chain_id;
         self.hardfork = resolve_execution_spec(
-            &self.config,
-            self.evm_opts.networks,
+            self.config.evm_version,
+            self.config.hardfork,
             &mut evm_env,
             ExecutionSpecContext::local_or_fork(fork_chain_id, fork_hardfork),
-            None,
             None,
         );
         Ok((resolved, evm_env, tx_env))
@@ -2308,6 +2315,33 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(state.script_config.evm_opts.sender, root);
+    }
+
+    #[tokio::test]
+    async fn tempo_options_preserve_explicit_script_network() {
+        let temp = tempdir().unwrap();
+        let _guard = TempoHomeGuard::set(temp.path()).await;
+        for options in [
+            vec!["--tempo.fee-token", "0x20c0000000000000000000000000000000000000"],
+            vec![
+                "--tempo.session",
+                "0x4444444444444444444444444444444444444444444444444444444444444444",
+            ],
+        ] {
+            let args =
+                ScriptArgs::parse_from(["foundry-cli", "Contract.sol"].into_iter().chain(options));
+            for (networks, name) in [
+                (NetworkConfigs::with_ethereum(), "ethereum"),
+                (NetworkConfigs::with_celo(), "celo"),
+            ] {
+                let evm_opts = EvmOpts { networks, ..Default::default() };
+                let err = args.resolved_evm_opts(Config::default(), evm_opts).await.unwrap_err();
+                assert_eq!(
+                    err.to_string(),
+                    format!("Tempo transaction options conflict with configured network `{name}`")
+                );
+            }
+        }
     }
 
     #[tokio::test]

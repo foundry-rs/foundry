@@ -5,15 +5,15 @@ use foundry_fork_db::DatabaseError;
 use revm::{
     context::{
         Journal,
-        result::{EVMError, HaltReason, ResultAndState},
+        result::{EVMError, ResultAndState},
     },
     handler::{EvmTr, FrameResult},
     inspector::InspectorHandler,
-    interpreter::{FrameInput, InstructionResult},
+    interpreter::FrameInput,
     state::Bytecode,
 };
 use tempo_alloy::TempoNetwork;
-use tempo_evm::{TempoBlockEnv, TempoEvmFactory, TempoHaltReason, evm::TempoEvm};
+use tempo_evm::{TempoBlockEnv, TempoEvmFactory, evm::TempoEvm};
 use tempo_precompiles::{
     extend_tempo_precompiles,
     storage::{StorageActions, StorageCtx},
@@ -27,10 +27,7 @@ use crate::{
     FoundryContextExt, FoundryInspectorExt,
     backend::{DatabaseExt, JournaledState},
     constants::{CALLER, SYSTEM_PRECOMPILE_STUB, TEST_CONTRACT_ADDRESS},
-    evm::{
-        FoundryEvmFactory, FoundryEvmNetwork, IntoInstructionResult, NestedEvm, NestedEvmFor,
-        run_inspected_frame,
-    },
+    evm::{FoundryEvmFactory, FoundryEvmNetwork, NestedEvm, NestedEvmFor, run_inspected_frame},
     tempo::{TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS, initialize_tempo_test_genesis_inner},
 };
 
@@ -43,15 +40,6 @@ impl FoundryEvmNetwork for TempoEvmNetwork {
 
 // Will be removed when the next revm release includes bluealloy/revm#3518.
 pub type TempoRevmEvm<'db, I> = tempo_revm::TempoEvm<&'db mut dyn DatabaseExt<TempoEvmFactory>, I>;
-
-impl IntoInstructionResult for TempoHaltReason {
-    fn into_instruction_result(self) -> InstructionResult {
-        match self {
-            Self::Ethereum(eth) => eth.into(),
-            _ => InstructionResult::PrecompileError,
-        }
-    }
-}
 
 impl FoundryEvmFactory for TempoEvmFactory {
     type Chain = ();
@@ -140,11 +128,6 @@ impl<'db, I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmF
 
         let mut handler = TempoEvmHandler::new();
         let result = handler.inspect_run(self).map_err(map_tempo_error)?;
-
-        let result = result.map_haltreason(|h| match h {
-            TempoHaltReason::Ethereum(eth) => eth,
-            _ => HaltReason::PrecompileError,
-        });
 
         Ok(ResultAndState::new(result, self.ctx.journaled_state.inner.state.clone()))
     }

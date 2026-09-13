@@ -3,7 +3,7 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{Severity, SolLint},
 };
-use alloy_primitives::U256;
+use alloy_primitives::{U256, uint};
 use solar::{
     ast::{BinOp, BinOpKind},
     sema::{
@@ -111,7 +111,7 @@ impl<'gcx> Visit<'gcx> for PredictableSourceFinder<'gcx> {
 
 /// `block.timestamp % <multiple of one day>`.
 fn is_timestamp_time_bucket(gcx: Gcx<'_>, lhs: &Expr<'_>, rhs: &Expr<'_>) -> bool {
-    const SECONDS_PER_DAY: U256 = U256::from_limbs([24 * 60 * 60, 0, 0, 0]);
+    const SECONDS_PER_DAY: U256 = uint!(86400_U256);
     gcx.resolved_builtin(lhs) == Some(Builtin::BlockTimestamp)
         && gcx
             .try_eval_const(rhs)

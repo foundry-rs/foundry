@@ -230,11 +230,13 @@ impl<'ast> CommentGatherer<'ast> {
                 };
                 let kind = CommentKind::Block;
 
-                // Count the number of chars since the start of the line by rescanning.
+                // Measure the opening column, expanding tabs for non-doc comments.
                 let pos_in_file = self.start_bpos + BytePos(self.pos as u32);
                 let line_begin_in_file = line_begin_pos(self.sf, pos_in_file);
                 let line_begin_pos = (line_begin_in_file - self.start_bpos).to_usize();
-                let mut col = CharPos(self.text[line_begin_pos..self.pos].chars().count());
+                let tab_width = if is_doc { 1 } else { self.tab_width.unwrap_or(1) };
+                let mut col =
+                    CharPos(estimate_line_width(&self.text[line_begin_pos..self.pos], tab_width));
 
                 // To preserve alignment in multi-line non-doc comments, normalize the block based
                 // on its least-indented line.
@@ -244,7 +246,10 @@ impl<'ast> CommentGatherer<'ast> {
                             return min;
                         }
                         std::cmp::min(
-                            CharPos(line.chars().count() - line.trim_start().chars().count()),
+                            CharPos(estimate_line_width(
+                                &line[..line.len() - line.trim_start().len()],
+                                tab_width,
+                            )),
                             min,
                         )
                     })
@@ -312,6 +317,22 @@ impl<'ast> CommentGatherer<'ast> {
         }
 
         for (pos, line) in lines.delimited() {
+            let indent_end = line.len() - line.trim_start().len();
+            let mut expanded = String::new();
+            let line = if !is_doc
+                && let Some(tab_width) = self.tab_width
+                && line[..indent_end].contains('\t')
+            {
+                // Trim tab indentation in the same display columns used by the printer.
+                expanded.extend(std::iter::repeat_n(
+                    ' ',
+                    estimate_line_width(&line[..indent_end], tab_width),
+                ));
+                expanded.push_str(&line[indent_end..]);
+                expanded.as_str()
+            } else {
+                line
+            };
             let line = normalize_block_comment_ws(line, col).trim_end().to_string();
             if !is_doc {
                 res.push(line);

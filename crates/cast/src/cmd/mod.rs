@@ -5,7 +5,7 @@
 //! implement `figment::Provider` which allows the subcommand to override the config's defaults, see
 //! [`foundry_config::Config`].
 
-use alloy_network::Network;
+use alloy_network::{AnyNetwork, Network};
 use alloy_primitives::{Address, Bytes, map::AddressHashMap};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
@@ -15,9 +15,13 @@ use foundry_cli::{
     opts::RpcOpts,
     utils::{LoadConfig, get_provider, load_config_from_provider},
 };
-use foundry_common::{provider::RetryProvider, shell};
+use foundry_common::{
+    provider::{ProviderBuilder, RetryProvider},
+    shell,
+};
 use foundry_config::{Config, figment::Figment};
 use foundry_evm::{core::bytecode::InstIter, opts::EvmOpts};
+use foundry_evm_networks::NetworkVariant;
 use futures::StreamExt;
 use serde::Serialize;
 use serde_json::Value;
@@ -144,18 +148,40 @@ pub mod txpool;
 pub mod vaddr;
 pub mod wallet;
 
-#[cfg(all(test, feature = "monad"))]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn normalized_hardfork_network_is_applied_to_evm_opts() {
-        let figment = Config::figment().merge(("hardfork", "monad:MonadNine"));
-        let (config, evm_opts) = load_cast_config_and_evm_opts(figment).unwrap();
-
-        assert!(config.networks.is_monad());
-        assert!(evm_opts.networks.is_monad());
+/// Validates a Tempo transaction requirement against an explicit execution family.
+pub(crate) fn validate_tempo_network(config: &Config, requires_tempo: bool) -> Result<()> {
+    if requires_tempo && config.networks.has_network_selection() {
+        let network = config.networks.execution_network();
+        eyre::ensure!(
+            network.is_tempo(),
+            "Tempo transaction options conflict with configured network `{}`",
+            config.networks.execution_profile_name()
+        );
     }
+    Ok(())
+}
+
+/// Resolves the RPC request family before typed transaction construction.
+pub(crate) async fn resolve_transaction_network(
+    config: &Config,
+    requires_tempo: bool,
+) -> Result<NetworkVariant> {
+    validate_tempo_network(config, requires_tempo)?;
+    if requires_tempo {
+        return Ok(NetworkVariant::Tempo);
+    }
+    if config.networks.has_network_selection() {
+        return Ok(config.networks.execution_network());
+    }
+    if let Some(chain) = config.chain {
+        return Ok(chain.id().into());
+    }
+    if config.eth_rpc_curl {
+        return Ok(NetworkVariant::Ethereum);
+    }
+
+    let provider = ProviderBuilder::<AnyNetwork>::from_config(config)?.build()?;
+    Ok(provider.get_chain_id().await?.into())
 }
 
 pub(crate) fn disassemble(code: &[u8]) -> Result<String> {
@@ -164,4 +190,55 @@ pub(crate) fn disassemble(code: &[u8]) -> Result<String> {
         writeln!(output, "{pc:08x}: {inst}")?;
     }
     Ok(output)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn transaction_network_respects_explicit_selection() {
+        for network in [NetworkVariant::Ethereum, NetworkVariant::Tempo] {
+            let config =
+                Config { networks: network.into(), eth_rpc_curl: true, ..Default::default() };
+            assert_eq!(resolve_transaction_network(&config, false).await.unwrap(), network);
+            assert_eq!(
+                resolve_transaction_network(&config, true).await.is_ok(),
+                network.is_tempo()
+            );
+        }
+        let config = Config { eth_rpc_curl: true, ..Default::default() };
+        assert_eq!(
+            resolve_transaction_network(&config, true).await.unwrap(),
+            NetworkVariant::Tempo
+        );
+        assert_eq!(
+            resolve_transaction_network(&config, false).await.unwrap(),
+            NetworkVariant::Ethereum
+        );
+
+        let config = Config {
+            networks: foundry_evm_networks::NetworkConfigs::with_celo(),
+            eth_rpc_curl: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_transaction_network(&config, false).await.unwrap(),
+            NetworkVariant::Ethereum
+        );
+        assert_eq!(
+            resolve_transaction_network(&config, true).await.unwrap_err().to_string(),
+            "Tempo transaction options conflict with configured network `celo`"
+        );
+    }
+
+    #[cfg(feature = "monad")]
+    #[test]
+    fn normalized_hardfork_network_is_applied_to_evm_opts() {
+        let figment = Config::figment().merge(("hardfork", "monad:MonadNine"));
+        let (config, evm_opts) = load_cast_config_and_evm_opts(figment).unwrap();
+
+        assert!(config.networks.is_monad());
+        assert!(evm_opts.networks.is_monad());
+    }
 }

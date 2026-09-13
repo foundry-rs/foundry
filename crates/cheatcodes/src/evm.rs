@@ -707,6 +707,29 @@ impl Cheatcode for getBlockNumberCall {
     }
 }
 
+impl Cheatcode for rollSlotCall {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        ensure!(
+            ccx.ecx.cfg().spec().into() >= SpecId::AMSTERDAM,
+            "`rollSlot` is not supported before the Amsterdam hard fork; \
+             see EIP-7843: https://eips.ethereum.org/EIPS/eip-7843"
+        );
+        ccx.ecx.block_mut().set_slot_num(self.newSlotNumber);
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for getSlotNumberCall {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        ensure!(
+            ccx.ecx.cfg().spec().into() >= SpecId::AMSTERDAM,
+            "`getSlotNumber` is not supported before the Amsterdam hard fork; \
+             see EIP-7843: https://eips.ethereum.org/EIPS/eip-7843"
+        );
+        Ok(ccx.ecx.block().slot_num().abi_encode())
+    }
+}
+
 impl Cheatcode for txGasPriceCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { newGasPrice } = self;

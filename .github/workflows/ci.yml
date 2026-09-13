@@ -32,6 +32,7 @@ jobs:
       ETHERSCAN_API_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
       ARBITRUM_RPC: ${{ secrets.ARBITRUM_RPC }}
       ETH_SEPOLIA_RPC: ${{ secrets.ETH_SEPOLIA_RPC }}
+      TEMPO_MAINNET_RPC_URL: ${{ secrets.TEMPO_MAINNET_RPC_URL }}
 
   docs:
     uses: ./.github/workflows/docs.yml

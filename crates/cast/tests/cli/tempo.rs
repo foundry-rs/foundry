@@ -1149,3 +1149,86 @@ casttest!(channel_id_defaults, async |_prj, cmd| {
     .assert_success()
     .stdout_eq(format!("{expected:#x}\n"));
 });
+
+casttest!(tempo_options_reject_conflicting_network, |prj, cmd| {
+    prj.update_config(|config| {
+        config.networks = foundry_evm_networks::NetworkVariant::Ethereum.into();
+    });
+    for command in ["access-list", "estimate", "send", "mktx", "call"] {
+        cmd.cast_fuse()
+            .current_dir(prj.root())
+            .args([
+                command,
+                "0x0000000000000000000000000000000000000001",
+                "--tempo.fee-token",
+                "0x20c0000000000000000000000000000000000000",
+                "--rpc-url",
+                "http://127.0.0.1:1",
+            ])
+            .assert_failure()
+            .stderr_eq(str![[r#"
+Error: Tempo transaction options conflict with configured network `ethereum`
+
+"#]]);
+    }
+});
+
+casttest!(tempo_sessions_reject_conflicting_network, |prj, cmd| {
+    prj.update_config(|config| {
+        config.networks = foundry_evm_networks::NetworkVariant::Ethereum.into();
+    });
+    for command in ["access-list", "estimate", "send", "mktx", "call"] {
+        cmd.cast_fuse()
+            .current_dir(prj.root())
+            .args([
+                command,
+                "0x0000000000000000000000000000000000000001",
+                "--tempo.session",
+                "0x4444444444444444444444444444444444444444444444444444444444444444",
+                "--rpc-url",
+                "http://127.0.0.1:1",
+            ])
+            .assert_failure()
+            .stderr_eq(str![[r#"
+Error: Tempo transaction options conflict with configured network `ethereum`
+
+"#]]);
+    }
+});
+
+casttest!(tempo_mktx_selects_network_without_tempo_options, async |prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo().with_chain_id(Some(4217u64))).await;
+    let rpc = handle.http_endpoint();
+    for network in [
+        None,
+        Some(foundry_evm_networks::NetworkVariant::Tempo),
+        Some(foundry_evm_networks::NetworkVariant::Ethereum),
+    ] {
+        prj.update_config(|config| {
+            config.networks = network.map(Into::into).unwrap_or_default();
+        });
+        let expected = if network == Some(foundry_evm_networks::NetworkVariant::Ethereum) {
+            str![[r#"
+0x02[..]
+
+"#]]
+        } else {
+            str![[r#"
+0x76[..]
+
+"#]]
+        };
+        cmd.cast_fuse()
+            .current_dir(prj.root())
+            .args([
+                "mktx",
+                "0x0000000000000000000000000000000000000001",
+                "--private-key",
+                "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+                "--rpc-url",
+                &rpc,
+            ])
+            .assert_success()
+            .stdout_eq(expected);
+    }
+});

@@ -397,7 +397,6 @@ where
 #[cfg(all(test, feature = "monad"))]
 fn resolve_runtime_spec<FEN>(
     config: &Config,
-    networks: NetworkConfigs,
     source_chain_id: ChainId,
     endpoint_hardfork: Option<FoundryHardfork>,
     evm_env: &mut EvmEnvFor<FEN>,
@@ -407,7 +406,6 @@ where
 {
     TracingExecutor::<FEN>::resolve_spec_for_chain(
         config,
-        networks,
         source_chain_id,
         endpoint_hardfork,
         evm_env,
@@ -768,7 +766,6 @@ contract Broken {
         before_env.cfg_env.chain_id = NamedChain::Mainnet as u64;
         let before = resolve_runtime_spec::<foundry_evm::core::evm::MonadEvmNetwork>(
             &before_config,
-            NetworkConfigs::with_monad(),
             NamedChain::Monad as u64,
             None,
             &mut before_env,
@@ -788,7 +785,6 @@ contract Broken {
         let mut after_env = monad_env(monad_nine_timestamp);
         let after = resolve_runtime_spec::<foundry_evm::core::evm::MonadEvmNetwork>(
             &after_config,
-            NetworkConfigs::with_monad(),
             NamedChain::Monad as u64,
             None,
             &mut after_env,
@@ -817,7 +813,6 @@ contract Broken {
 
         let resolved = resolve_runtime_spec::<foundry_evm::core::evm::MonadEvmNetwork>(
             &config,
-            networks,
             NamedChain::Monad as u64,
             Some(foundry_evm::hardforks::MonadHardfork::MonadNine.into()),
             &mut env,

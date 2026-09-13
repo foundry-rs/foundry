@@ -152,7 +152,9 @@ use revm::{
     context_interface::{
         JournalTr,
         block::BlobExcessGasAndPrice,
-        result::{ExecutionResult, HaltReason, Output, ResultAndState},
+        result::{
+            EVMError, ExecutionResult, HaltReason, InvalidTransaction, Output, ResultAndState,
+        },
         transaction::TransactionType,
     },
     database::{
@@ -183,14 +185,14 @@ use std::{
     time::Duration,
 };
 use storage::{Blockchain, DEFAULT_HISTORY_LIMIT, MinedTransaction};
-use tempo_evm::evm::TempoEvmFactory;
+use tempo_evm::{TempoPoolValidationEvm, evm::TempoEvmFactory};
 use tempo_hardfork::TempoHardfork;
 use tempo_precompiles::{
     NONCE_PRECOMPILE_ADDRESS, TIP_FEE_MANAGER_ADDRESS, extend_tempo_precompiles,
     nonce::NonceManager,
     storage::{Handler, StorageActions, StorageCtx},
     tip_fee_manager::{IFeeManager, TipFeeManager},
-    tip20::{ISSUER_ROLE, ITIP20, TIP20Token},
+    tip20::{ITIP20, TIP20Token},
     tip20_factory::TIP20Factory,
 };
 use tempo_primitives::{
@@ -201,7 +203,7 @@ use tempo_primitives::{
     },
 };
 use tempo_revm::{
-    ExecutionContext, TempoBatchCallEnv, TempoBlockEnv, TempoHaltReason, TempoTxEnv,
+    ExecutionContext, TempoBatchCallEnv, TempoBlockEnv, TempoInvalidTransaction, TempoTxEnv,
     evm::TempoContext, gas_params::tempo_gas_params,
 };
 use tokio::{sync::RwLock as AsyncRwLock, task::JoinSet};
@@ -2623,14 +2625,7 @@ impl<N: Network> Backend<N> {
             inspector,
         );
         self.inject_tempo_precompiles(&mut evm, evm_env);
-        let result = evm.transact(tx_env)?;
-        Ok(ResultAndState {
-            result: result.result.map_haltreason(|h| match h {
-                TempoHaltReason::Ethereum(eth) => eth,
-                _ => HaltReason::PrecompileError,
-            }),
-            state: result.state,
-        })
+        Ok(evm.transact(tx_env)?)
     }
 
     /// Creates a concrete EVM + [`AnvilBlockExecutor`], runs pre-execution changes, and
@@ -3080,7 +3075,6 @@ impl<N: Network> Backend<N> {
                 tx_hash: B256::ZERO,
                 valid_before: request.valid_before.map(|value| value.get()),
                 valid_after: request.valid_after.map(|value| value.get()),
-                subblock_transaction: false,
                 override_key_id: key_id,
                 expiring_nonce_idx: None,
             })),
@@ -3589,7 +3583,14 @@ impl<N: Network> Backend<N> {
             && let Some(fork) = self.get_fork()
             && fork.predates_fork(*number)
         {
-            return Ok(fork.trace_call(request, trace_types, block_id).await?);
+            // Delegate the resolved block number so tags (`latest`/`pending`/`safe`/
+            // `finalized`) are resolved against the fork's head instead of drifting with
+            // the upstream chain. Hashes are forwarded unchanged.
+            let resolved = match block_id {
+                BlockId::Hash(_) => block_id,
+                _ => BlockId::number(*number),
+            };
+            return Ok(fork.trace_call(request, trace_types, resolved).await?);
         }
 
         self.with_database_at_and_context(Some(block_request), |state, block, mut monad_context| {
@@ -6620,7 +6621,14 @@ where
         if let Some(fork) = self.get_fork() {
             let number = self.ensure_block_number(Some(block_id)).await?;
             if fork.predates_fork_inclusive(number) {
-                return Ok(fork.trace_block_opcode_gas(block_id).await?);
+                // Delegate the resolved block number so tags (`latest`/`pending`/`safe`/
+                // `finalized`) are resolved against the fork's head instead of drifting with
+                // the upstream chain. Hashes are forwarded unchanged.
+                let resolved = match block_id {
+                    BlockId::Hash(_) => block_id,
+                    _ => BlockId::number(number),
+                };
+                return Ok(fork.trace_block_opcode_gas(resolved).await?);
             }
         }
 
@@ -8679,7 +8687,9 @@ impl Backend<FoundryNetwork> {
             // grant_role_internal bypasses the caller check, matching genesis seeding.
             for &token_address in &[user_token, validator_token] {
                 let mut token = TIP20Token::from_address(token_address).map_err(tempo_db_err)?;
-                token.grant_role_internal(admin, *ISSUER_ROLE).map_err(tempo_db_err)?;
+                token
+                    .grant_role_internal(admin, TIP20Token::issuer_role())
+                    .map_err(tempo_db_err)?;
                 token.mint(admin, ITIP20::mintCall { to: admin, amount }).map_err(tempo_db_err)?;
             }
             let mut fee_manager = TipFeeManager::new();
@@ -8792,6 +8802,49 @@ where
 
         self.validate_pool_transaction_for(&pool_tx.pending_transaction, account, evm_env)
     }
+
+    /// Runs Tempo's transaction-pool validation for `pending` against the latest state.
+    ///
+    /// This is the pipeline the node runs before admitting a transaction: it resolves the fee
+    /// token the way execution will, including a token inferred from the called TIP20 or DEX
+    /// swap and a preference the transaction itself sets, charges intrinsic gas, and checks the
+    /// fee payer's balance against the maximum fee with execution's rounding, all without
+    /// committing state.
+    async fn validate_tempo_pool_transaction(
+        &self,
+        pending: &PendingTransaction<FoundryTxEnvelope>,
+        evm_env: &EvmEnv,
+    ) -> Result<(), BlockchainError> {
+        let tx = pending.transaction.as_ref();
+        let tx_env: TempoTxEnv =
+            FromTxWithEncoded::from_encoded_tx(tx, *pending.sender(), tx.encoded_2718().into());
+        let evm_env = evm_env.clone();
+        self.with_database_at(None, move |state, _| {
+            let cache_db = CacheDB::new(state);
+            let mut inspector = self.build_inspector();
+            let mut evm = TempoEvmFactory::default().create_evm_with_inspector(
+                WrapDatabaseRef(&cache_db),
+                self.build_tempo_evm_env(&evm_env),
+                &mut inspector,
+            );
+            self.inject_tempo_precompiles(&mut evm, &evm_env);
+            evm.configure_for_pool();
+            let (result, _) = evm.validate_pool_transaction(tx_env);
+            result.map(drop).map_err(|err| match err {
+                // Tempo reports a fee token shortfall through the native funds error; name the
+                // token balance instead, since the sender holds no native balance to speak of.
+                EVMError::Transaction(TempoInvalidTransaction::EthInvalidTransaction(
+                    InvalidTransaction::LackOfFundForMaxFee { fee, balance },
+                )) => InvalidTransactionError::TempoInsufficientFeeTokenBalance {
+                    balance: *balance,
+                    required: *fee,
+                }
+                .into(),
+                err => err.into(),
+            })
+        })
+        .await?
+    }
 }
 
 #[async_trait::async_trait]
@@ -8807,7 +8860,7 @@ where
         let account = self.get_account(address).await?;
         let evm_env = self.next_evm_env();
 
-        // Tempo AA: validate time bounds and fee token balance (async checks)
+        // Tempo AA: validate time bounds (async checks)
         if let FoundryTxEnvelope::Tempo(aa_tx) = tx.transaction.as_ref() {
             let tempo_tx = aa_tx.tx();
             let current_time = evm_env.block_env.timestamp.saturating_to::<u64>();
@@ -8851,28 +8904,17 @@ where
                     .into());
                 }
             }
-
-            // Fee token balance check
-            let fee_payer = tempo_tx.recover_fee_payer(address).unwrap_or(address);
-            let fee_token =
-                tempo_tx.fee_token.unwrap_or(foundry_evm::core::tempo::PATH_USD_ADDRESS);
-
-            // gas_limit * max_fee_per_gas in wei, scaled to 6-decimal token units
-            let required_wei =
-                U256::from(tempo_tx.gas_limit).saturating_mul(U256::from(tempo_tx.max_fee_per_gas));
-            let required = required_wei / U256::from(10u64.pow(12));
-
-            let balance = self.get_fee_token_balance(fee_token, fee_payer).await?;
-            if balance < required {
-                return Err(InvalidTransactionError::TempoInsufficientFeeTokenBalance {
-                    balance,
-                    required,
-                }
-                .into());
-            }
         }
 
-        Ok(self.validate_pool_transaction_for(tx, &account, &evm_env)?)
+        self.validate_pool_transaction_for(tx, &account, &evm_env)?;
+
+        // Tempo charges gas in a fee token for every transaction type, never in the native token,
+        // so the node's own pool validation replaces the native balance check skipped above.
+        if self.is_tempo() && !self.disable_pool_balance_checks {
+            self.validate_tempo_pool_transaction(tx, &evm_env).await?;
+        }
+
+        Ok(())
     }
 
     fn validate_pool_transaction_for(
@@ -9052,6 +9094,11 @@ where
                 FoundryTxEnvelope::Tempo(_) => {
                     // Tempo AA transactions pay gas with fee tokens, not ETH.
                     // Fee token balance is validated in validate_pool_transaction (async).
+                }
+                _ if self.is_tempo() => {
+                    // Every transaction on Tempo pays gas in a fee token; forked mainnet senders
+                    // hold no native balance at all. The fee token balance is validated in
+                    // validate_pool_transaction (async).
                 }
                 #[cfg(feature = "monad")]
                 _ if self.validate_monad_transaction_funds(pending, account, evm_env)? => {}

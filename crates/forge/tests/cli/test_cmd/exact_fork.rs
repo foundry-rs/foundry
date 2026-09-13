@@ -96,8 +96,7 @@ forgetest_async!(fork_execution_uses_exact_ancestry_after_reorg, |prj, cmd| {
                     request["params"]
                         .as_array()
                         .and_then(|params| params.last())
-                        .and_then(|block| block.get("blockHash"))
-                        .and_then(Value::as_str)
+                        .and_then(|block| block.get("blockHash").unwrap_or(block).as_str())
                 } else {
                     None
                 };
