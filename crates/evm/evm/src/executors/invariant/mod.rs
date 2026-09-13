@@ -3071,6 +3071,9 @@ mod tests {
             mutation_weight_cmp: 0,
             mutation_weight_crossover_insert: 1,
             mutation_weight_crossover_replace: 1,
+            mutation_weight_insert: 0,
+            mutation_weight_delete: 0,
+            mutation_weight_swap: 0,
         };
         assert!(!invariant_worker_collects_evm_cmp_log(&config, 0, 1));
 
@@ -3085,6 +3088,9 @@ mod tests {
             mutation_weight_cmp: 0,
             mutation_weight_crossover_insert: 0,
             mutation_weight_crossover_replace: 0,
+            mutation_weight_insert: 0,
+            mutation_weight_delete: 0,
+            mutation_weight_swap: 0,
         };
         assert!(invariant_worker_collects_evm_cmp_log(&config, 0, 1));
 
