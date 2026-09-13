@@ -2468,42 +2468,26 @@ impl EthApi<FoundryNetwork> {
     ) -> Result<alloy_rpc_types::eth::AccountInfo> {
         node_info!("eth_getAccountInfo");
 
-        if let Some(fork) = self.get_fork() {
-            let block_request = self.block_request(block_number).await?;
-            // check if the number predates the fork, if in fork mode
-            if let BlockRequest::Number(number) = block_request {
-                trace!(target: "node", "get_account_info: fork block {}, requested block {number}", fork.block_number());
-                return if fork.predates_fork(number) {
-                    // if this predates the fork we need to fetch balance, nonce, code individually
-                    // because the provider might not support this endpoint
-                    let balance = fork.get_balance(address, number).map_err(BlockchainError::from);
-                    let code = fork.get_code(address, number).map_err(BlockchainError::from);
-                    let nonce = self.get_transaction_count(address, Some(number.into()));
-                    let (balance, code, nonce) = try_join!(balance, code, nonce)?;
-
-                    Ok(alloy_rpc_types::eth::AccountInfo { balance, nonce, code })
-                } else {
-                    // Anvil node is at the same block or higher than the fork block,
-                    // return account info from backend to reflect current state.
-                    let account_info = self.backend.get_account(address).await?;
-                    let code = self.backend.get_code(address, Some(block_request)).await?;
-                    Ok(alloy_rpc_types::eth::AccountInfo {
-                        balance: account_info.balance,
-                        nonce: account_info.nonce,
-                        code,
-                    })
-                };
+        let block_request = self.block_request(block_number).await?;
+        if let BlockRequest::Number(number) = block_request
+            && let Some(fork) = self.get_fork()
+        {
+            trace!(target: "node", "get_account_info: fork block {}, requested block {number}", fork.block_number());
+            if block_number.is_some_and(|block| !block.is_latest())
+                && fork.predates_fork_inclusive(number)
+            {
+                if fork.requires_account_info() {
+                    return Ok(fork.get_account_info(address, number).await?);
+                }
+                let balance = fork.get_balance(address, number).map_err(BlockchainError::from);
+                let code = fork.get_code(address, number).map_err(BlockchainError::from);
+                let nonce = fork.get_nonce(address, number).map_err(BlockchainError::from);
+                let (balance, code, nonce) = try_join!(balance, code, nonce)?;
+                return Ok(alloy_rpc_types::eth::AccountInfo { balance, nonce, code });
             }
         }
 
-        let account = self.get_account(address, block_number);
-        let code = self.get_code(address, block_number);
-        let (account, code) = try_join!(account, code)?;
-        Ok(alloy_rpc_types::eth::AccountInfo {
-            balance: account.balance,
-            nonce: account.nonce,
-            code,
-        })
+        self.backend.get_account_info_at_block(address, Some(block_request)).await
     }
     /// Returns content of the storage at given address.
     ///

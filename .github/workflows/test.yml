@@ -83,6 +83,20 @@ jobs:
       - name: Install Linux system dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install --yes libudev-dev
+      - name: Check out LCOV
+        if: runner.os == 'Linux' && !contains(matrix.name, 'external')
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: linux-test-project/lcov
+          ref: 5186f7394417292537d17b9a9a30f8c06bedc16c # v2.3.1
+          path: .lcov
+          persist-credentials: false
+      - name: Set up LCOV report validation
+        if: runner.os == 'Linux' && !contains(matrix.name, 'external')
+        run: |
+          sudo apt-get install --yes libcapture-tiny-perl libdatetime-perl libtimedate-perl
+          echo "FOUNDRY_TEST_GENHTML=$GITHUB_WORKSPACE/.lcov/bin/genhtml" >> "$GITHUB_ENV"
+          .lcov/bin/genhtml --version
       # External tests dependencies
       - name: Setup Node.js
         if: contains(matrix.name, 'external')
