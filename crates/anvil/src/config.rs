@@ -43,7 +43,9 @@ use foundry_common::{
 };
 use foundry_config::Config;
 use foundry_evm::{
-    backend::{BlockchainDb, BlockchainDbMeta, ForkBlock, SharedBackend},
+    backend::{
+        BlockchainDb, BlockchainDbMeta, ForkBlock, SharedBackend, account_fetch_policy_for_source,
+    },
     constants::DEFAULT_CREATE2_DEPLOYER,
     hardfork::FoundryHardfork,
     utils::{apply_chain_and_block_specific_env_changes_for_chain, block_env_from_header},
@@ -2087,8 +2089,10 @@ latest block number: {latest_block}"
         }
 
         let source_id = fork_source_id(&self.fork_urls, &self.fork_headers);
+        let account_fetch_policy = account_fetch_policy_for_source(source_chain_id, target_profile);
         let meta = BlockchainDbMeta::new(cache_block_env, eth_rpc_url.clone())
-            .with_fork_identity(block_hash, source_id);
+            .with_fork_identity(block_hash, source_id)
+            .with_account_fetch_policy(account_fetch_policy);
         let cache_path =
             self.block_cache_path_for_rpc(source_chain_id, fork_block_number, &eth_rpc_url);
         let block_chain_db = BlockchainDb::new(meta, cache_path);
