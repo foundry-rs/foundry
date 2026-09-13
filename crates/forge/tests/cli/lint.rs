@@ -2161,3 +2161,87 @@ note[pragma-inconsistent]: 2 different Solidity pragma version requirements are 
 "#]
     ]);
 });
+
+// A suppression that does not suppress any diagnostic is only reported with the opt-in flag, at the
+// directive's own location.
+forgetest!(report_unused_suppressions_reports_unused, |prj, cmd| {
+    prj.add_source(
+        "Unused",
+        r#"
+contract Unused {
+    function f() public pure returns (uint256) {
+        // forge-lint: disable-next-line(divide-before-multiply)
+        return 42;
+    }
+}
+"#,
+    );
+
+    // Without the flag nothing is reported.
+    cmd.args(["lint", "--only-lint", "divide-before-multiply"]).assert_success().stderr_eq("");
+
+    cmd.forge_fuse()
+        .args(["lint", "--only-lint", "divide-before-multiply", "--report-unused-suppressions"])
+        .assert_success()
+        .stderr_eq(str![[r#"
+warning: unused lint suppression for 'divide-before-multiply'
+  [FILE]:6:9
+  │
+6 │         // forge-lint: disable-next-line(divide-before-multiply)
+  ╰╴        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+"#]]);
+});
+
+// A suppression that actually silences a diagnostic is not reported as unused.
+forgetest!(report_unused_suppressions_ignores_used, |prj, cmd| {
+    prj.add_source(
+        "Used",
+        r#"
+contract Used {
+    function f() public pure returns (uint256) {
+        // forge-lint: disable-next-line(divide-before-multiply)
+        return (1 / 2) * 3;
+    }
+}
+"#,
+    );
+
+    cmd.args(["lint", "--only-lint", "divide-before-multiply", "--report-unused-suppressions"])
+        .assert_success()
+        .stderr_eq("");
+});
+
+// For a directive listing several ids, only the ids that suppressed nothing are reported.
+forgetest!(report_unused_suppressions_reports_individual_ids, |prj, cmd| {
+    prj.add_source(
+        "Partial",
+        r#"
+contract Partial {
+    function f() public pure returns (uint256) {
+        // forge-lint: disable-next-line(divide-before-multiply, incorrect-shift)
+        return (1 / 2) * 3;
+    }
+}
+"#,
+    );
+
+    cmd.args([
+        "lint",
+        "--only-lint",
+        "divide-before-multiply",
+        "incorrect-shift",
+        "--report-unused-suppressions",
+    ])
+    .assert_success()
+    .stderr_eq(str![[r#"
+warning: unused lint suppression for 'incorrect-shift'
+  [FILE]:6:9
+  │
+6 │         // forge-lint: disable-next-line(divide-before-multiply, incorrect-shift)
+  ╰╴        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+"#]]);
+});

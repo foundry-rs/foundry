@@ -3,13 +3,15 @@ use solar::{
     parse::ast::{self, Visit},
 };
 use std::{
+    borrow::Borrow,
     collections::{HashMap, hash_map::Entry},
     hash::Hash,
     ops::ControlFlow,
+    sync::atomic::{AtomicBool, Ordering},
 };
 
 /// A disabled formatting range.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 struct DisabledRange<T = BytePos> {
     /// Start position, inclusive.
     lo: T,
@@ -17,11 +19,24 @@ struct DisabledRange<T = BytePos> {
     hi: T,
     /// Whether the range stems from a `disable-start`/`disable-end` block.
     block: bool,
+    /// Span of the directive comment that created this range, used to report unused suppressions.
+    directive: Span,
+    /// Whether this range suppressed at least one diagnostic during the run.
+    used: AtomicBool,
 }
 
 impl DisabledRange<BytePos> {
     fn includes(&self, span: Span) -> bool {
         span.lo() >= self.lo && span.hi() <= self.hi
+    }
+
+    /// Marks the range as having suppressed a diagnostic and reports whether it includes `span`.
+    fn mark_if_includes(&self, span: Span) -> bool {
+        if self.includes(span) {
+            self.used.store(true, Ordering::Relaxed);
+            return true;
+        }
+        false
     }
 }
 
@@ -173,8 +188,8 @@ impl<I: ItemIdIterator> InlineConfig<I> {
             cfg.disable_item(sp, item, source_map, &mut disabled_blocks, &mut find_next_item);
         }
 
-        for (id, (_, lo, hi)) in disabled_blocks {
-            cfg.disable(id, DisabledRange { lo, hi, block: true });
+        for (id, (_, lo, hi, directive)) in disabled_blocks {
+            cfg.disable(id, lo, hi, true, directive);
         }
 
         cfg
@@ -184,14 +199,20 @@ impl<I: ItemIdIterator> InlineConfig<I> {
         Self { disabled_ranges: HashMap::new() }
     }
 
-    fn disable_many(&mut self, ids: I, range: DisabledRange) {
+    fn disable_many(&mut self, ids: I, lo: BytePos, hi: BytePos, block: bool, directive: Span) {
         for id in ids.into_iter() {
-            self.disable(id, range);
+            self.disable(id, lo, hi, block, directive);
         }
     }
 
-    fn disable(&mut self, id: I::Item, range: DisabledRange) {
-        self.disabled_ranges.entry(id).or_default().push(range);
+    fn disable(&mut self, id: I::Item, lo: BytePos, hi: BytePos, block: bool, directive: Span) {
+        self.disabled_ranges.entry(id).or_default().push(DisabledRange {
+            lo,
+            hi,
+            block,
+            directive,
+            used: AtomicBool::new(false),
+        });
     }
 
     fn disable_item(
@@ -199,7 +220,7 @@ impl<I: ItemIdIterator> InlineConfig<I> {
         span: Span,
         item: InlineConfigItem<I>,
         source_map: &SourceMap,
-        disabled_blocks: &mut HashMap<I::Item, (usize, BytePos, BytePos)>,
+        disabled_blocks: &mut HashMap<I::Item, (usize, BytePos, BytePos, Span)>,
         find_next_item: &mut dyn FnMut(BytePos) -> Option<Span>,
     ) {
         let result = source_map.span_to_source(span).unwrap();
@@ -211,10 +232,7 @@ impl<I: ItemIdIterator> InlineConfig<I> {
         match item {
             InlineConfigItem::DisableNextItem(ids) => {
                 if let Some(next_item) = find_next_item(span.hi()) {
-                    self.disable_many(
-                        ids,
-                        DisabledRange { lo: next_item.lo(), hi: next_item.hi(), block: false },
-                    );
+                    self.disable_many(ids, next_item.lo(), next_item.hi(), false, span);
                 }
             }
             InlineConfigItem::DisableLine(ids) => {
@@ -224,11 +242,10 @@ impl<I: ItemIdIterator> InlineConfig<I> {
                     .map_or(src.len(), |i| comment_range.end + i);
                 self.disable_many(
                     ids,
-                    DisabledRange {
-                        lo: file.absolute_position(RelativeBytePos::from_usize(start)),
-                        hi: file.absolute_position(RelativeBytePos::from_usize(end)),
-                        block: false,
-                    },
+                    file.absolute_position(RelativeBytePos::from_usize(start)),
+                    file.absolute_position(RelativeBytePos::from_usize(end)),
+                    false,
+                    span,
                 );
             }
             InlineConfigItem::DisableNextLine(ids) => {
@@ -238,13 +255,12 @@ impl<I: ItemIdIterator> InlineConfig<I> {
                         let end = src[next_line..].find('\n').map_or(src.len(), |i| next_line + i);
                         self.disable_many(
                             ids,
-                            DisabledRange {
-                                lo: file.absolute_position(RelativeBytePos::from_usize(
-                                    comment_range.start,
-                                )),
-                                hi: file.absolute_position(RelativeBytePos::from_usize(end)),
-                                block: false,
-                            },
+                            file.absolute_position(RelativeBytePos::from_usize(
+                                comment_range.start,
+                            )),
+                            file.absolute_position(RelativeBytePos::from_usize(end)),
+                            false,
+                            span,
                         );
                     }
                 }
@@ -252,25 +268,29 @@ impl<I: ItemIdIterator> InlineConfig<I> {
 
             InlineConfigItem::DisableStart(ids) => {
                 for id in ids.into_iter() {
-                    disabled_blocks.entry(id).and_modify(|(depth, _, _)| *depth += 1).or_insert((
-                        1,
-                        span.lo(),
-                        // Use file end as fallback for unclosed blocks
-                        file.absolute_position(RelativeBytePos::from_usize(src.len())),
-                    ));
+                    disabled_blocks.entry(id).and_modify(|(depth, _, _, _)| *depth += 1).or_insert(
+                        (
+                            1,
+                            span.lo(),
+                            // Use file end as fallback for unclosed blocks
+                            file.absolute_position(RelativeBytePos::from_usize(src.len())),
+                            span,
+                        ),
+                    );
                 }
             }
             InlineConfigItem::DisableEnd(ids) => {
                 for id in ids.into_iter() {
                     if let Entry::Occupied(mut entry) = disabled_blocks.entry(id) {
-                        let (depth, lo, _) = entry.get_mut();
+                        let (depth, lo, _, directive) = entry.get_mut();
                         *depth = depth.saturating_sub(1);
 
                         if *depth == 0 {
                             let lo = *lo;
+                            let directive = *directive;
                             let (id, _) = entry.remove_entry();
 
-                            self.disable(id, DisabledRange { lo, hi: span.hi(), block: true });
+                            self.disable(id, lo, span.hi(), true, directive);
                         }
                     }
                 }
@@ -300,7 +320,7 @@ impl InlineConfig<()> {
 
 impl<I: ItemIdIterator> InlineConfig<I>
 where
-    I::Item: std::borrow::Borrow<str>,
+    I::Item: Borrow<str>,
 {
     /// Checks if a span is disabled for a specific id. Also checks against "all", which disables
     /// all rules.
@@ -310,13 +330,37 @@ where
     }
 
     fn is_id_disabled_inner(&self, span: Span, id: &str) -> bool {
-        if let Some(ranges) = self.disabled_ranges.get(id)
-            && ranges.iter().any(|range| range.includes(span))
-        {
-            return true;
+        let Some(ranges) = self.disabled_ranges.get(id) else { return false };
+        // Mark every matching range as used, not just the first, so overlapping suppressions are
+        // all credited when reporting unused ones.
+        let mut disabled = false;
+        for range in ranges {
+            disabled |= range.mark_if_includes(span);
         }
+        disabled
+    }
 
-        false
+    /// Returns the directive span and lint id of each suppression that never suppressed a
+    /// diagnostic during the run.
+    ///
+    /// Only suppressions for ids in `active` (or the catch-all `"all"`) are reported, so severity
+    /// filters and excluded lints do not produce false positives. Results are sorted by directive
+    /// location for stable output.
+    pub fn unused_suppressions(&self, active: &[&str]) -> Vec<(Span, String)> {
+        let mut unused = Vec::new();
+        for (id, ranges) in &self.disabled_ranges {
+            let id = id.borrow();
+            if id != "all" && !active.contains(&id) {
+                continue;
+            }
+            for range in ranges {
+                if !range.used.load(Ordering::Relaxed) {
+                    unused.push((range.directive, id.to_string()));
+                }
+            }
+        }
+        unused.sort_by(|(a, ida), (b, idb)| a.lo().cmp(&b.lo()).then_with(|| ida.cmp(idb)));
+        unused
     }
 }
 
@@ -381,11 +425,13 @@ mod tests {
     use super::*;
 
     impl DisabledRange<usize> {
-        fn to_byte_pos(self) -> DisabledRange<BytePos> {
+        fn to_byte_pos(&self) -> DisabledRange<BytePos> {
             DisabledRange::<BytePos> {
                 lo: BytePos::from_usize(self.lo),
                 hi: BytePos::from_usize(self.hi),
                 block: self.block,
+                directive: Span::DUMMY,
+                used: AtomicBool::new(false),
             }
         }
 
@@ -399,7 +445,13 @@ mod tests {
 
     #[test]
     fn test_disabled_range_includes() {
-        let strict = DisabledRange { lo: 10, hi: 20, block: false };
+        let strict = DisabledRange {
+            lo: 10,
+            hi: 20,
+            block: false,
+            directive: Span::DUMMY,
+            used: AtomicBool::new(false),
+        };
         assert!(strict.includes(10..20));
         assert!(strict.includes(12..18));
         assert!(!strict.includes(5..15)); // Partial overlap fails
