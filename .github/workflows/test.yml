@@ -107,8 +107,12 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           # Taiki installs beside Cargo; the next Bash step restores Socket interception.
-          cargo_bin="$(cygpath -u "${CARGO_HOME:-$USERPROFILE/.cargo}")/bin"
-          test -x "$cargo_bin/cargo.exe"
+          # Resolve the selected toolchain directly, independent of Cargo home and Socket shims.
+          cargo_path="$(rustup which cargo)"
+          cargo_path="$(cygpath -u "$cargo_path")"
+          test -x "$cargo_path"
+          cargo_bin="$(dirname "$cargo_path")"
+          printf 'Cargo installer directory: %s\n' "$cargo_bin"
           cygpath -w "$cargo_bin" >> "$GITHUB_PATH"
       - uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
         with:
