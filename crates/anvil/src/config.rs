@@ -112,7 +112,8 @@ const FORK_IDENTITY_PROBE_TIMEOUT: Duration = Duration::from_millis(500);
 /// Before the first successful `anvil_nodeInfo` response, any probe failure means that the
 /// optional capability is unavailable. Mandatory standard RPC reads still expose endpoint-wide
 /// failures. Once a response or cached endpoint identity identifies Anvil, every later probe
-/// failure is returned so it cannot hide an endpoint reset or execution-profile change.
+/// RPC failure is returned so it cannot hide an endpoint reset or execution-profile change.
+/// Probe timeouts always mean that the optional capability is unavailable.
 #[derive(Clone, Copy, Debug, Default)]
 struct AnvilNodeInfoProbe {
     identified: bool,
@@ -124,13 +125,14 @@ impl AnvilNodeInfoProbe {
     }
 
     async fn request(&mut self, provider: &RetryProvider) -> Result<Option<NodeInfo>> {
-        let response = tokio::time::timeout(
+        let Ok(response) = tokio::time::timeout(
             FORK_IDENTITY_PROBE_TIMEOUT,
             provider.raw_request::<_, NodeInfo>("anvil_nodeInfo".into(), ()),
         )
         .await
-        .wrap_err("timed out retrieving anvil_nodeInfo")
-        .and_then(|response| response.map_err(eyre::Report::from));
+        else {
+            return Ok(None);
+        };
         match response {
             Ok(node_info) => {
                 self.identified = true;
@@ -1598,9 +1600,8 @@ impl NodeConfig {
             provider.raw_request::<_, Metadata>("anvil_metadata".into(), ()),
         )
         .await
-        .wrap_err("timed out retrieving Anvil fork source identity")?
         {
-            Ok(metadata) => (
+            Ok(Ok(metadata)) => (
                 metadata.chain_id,
                 source_chain_id_override.unwrap_or_else(|| {
                     metadata.forked_network.map(|fork| fork.chain_id).unwrap_or(metadata.chain_id)
@@ -1609,15 +1610,19 @@ impl NodeConfig {
                 metadata.forked_network.map(|fork| fork.fork_block_number),
                 metadata.forked_network.map(|fork| fork.fork_block_hash),
             ),
-            Err(error) if is_rpc_method_not_found(&error) => (
-                fallback_execution_chain_id,
-                source_chain_id_override.unwrap_or(fallback_execution_chain_id),
-                None,
-                None,
-                None,
-            ),
-            Err(error) => {
-                return Err(error).wrap_err("failed to retrieve Anvil fork source identity");
+            response => {
+                if let Ok(Err(error)) = response
+                    && !is_rpc_method_not_found(&error)
+                {
+                    return Err(error).wrap_err("failed to retrieve Anvil fork source identity");
+                }
+                (
+                    fallback_execution_chain_id,
+                    source_chain_id_override.unwrap_or(fallback_execution_chain_id),
+                    None,
+                    None,
+                    None,
+                )
             }
         };
         let identity_chain_id =

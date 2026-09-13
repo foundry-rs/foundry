@@ -206,7 +206,7 @@ async fn test_fork_bounds_anvil_node_info_retry_backoff() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_fork_rejects_anvil_node_info_timeout_after_identification() {
+async fn test_fork_ignores_anvil_node_info_timeout_after_identification() {
     let (_api, origin) = spawn(NodeConfig::test()).await;
     let fork_url = spawn_failing_fork_probe(
         origin.http_endpoint(),
@@ -225,13 +225,12 @@ async fn test_fork_rejects_anvil_node_info_timeout_after_identification() {
     )
     .await
     .expect("identified node-info probes must have a bounded deadline");
-    let Err(error) = result else { panic!("expected identified probe timeout to fail startup") };
-    assert_eq!(error.to_string(), "failed to determine network family from fork endpoint");
-    assert!(format!("{error:#}").contains("timed out retrieving anvil_nodeInfo"), "{error:#}");
+    let (api, _handle) = result.expect("node-info timeout must fall back after identification");
+    assert_eq!(api.chain_id(), origin.http_provider().get_chain_id().await.unwrap());
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_fork_rejects_anvil_metadata_timeout() {
+async fn test_fork_ignores_anvil_metadata_timeout() {
     let (_api, origin) = spawn(NodeConfig::test()).await;
     let fork_url = spawn_failing_fork_probe(
         origin.http_endpoint(),
@@ -250,8 +249,8 @@ async fn test_fork_rejects_anvil_metadata_timeout() {
     )
     .await
     .expect("metadata probes must have a bounded deadline");
-    let Err(error) = result else { panic!("expected metadata timeout to fail startup") };
-    assert_eq!(error.to_string(), "timed out retrieving Anvil fork source identity");
+    let (api, _handle) = result.expect("metadata timeout must use the fallback identity");
+    assert_eq!(api.chain_id(), origin.http_provider().get_chain_id().await.unwrap());
 }
 
 #[tokio::test(flavor = "multi_thread")]
