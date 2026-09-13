@@ -112,6 +112,33 @@ fn for_keyword_comment_is_idempotent() {
 }
 
 #[test]
+fn block_opening_comment_run_is_idempotent() {
+    let source = r#"contract C {
+    function f() external {
+        if (a) {} else { // First.
+            // Second.
+            f();
+        }
+    }
+}
+"#;
+    let expected = r#"contract C {
+    function f() external {
+        if (a) {} else {
+            // First.
+            // Second.
+            f();
+        }
+    }
+}
+"#;
+    for wrap_comments in [false, true] {
+        let config = Arc::new(FormatterConfig { wrap_comments, ..Default::default() });
+        assert_eq!(format(source, Path::new("test.sol"), config), expected);
+    }
+}
+
+#[test]
 fn chained_named_call_layout_ignores_source_spacing() {
     let path = Path::new("test.sol");
 

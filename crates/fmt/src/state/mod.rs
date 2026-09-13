@@ -581,7 +581,7 @@ impl<'sess> State<'sess, '_> {
             }
 
             // Handle disabled comments
-            let Some(cmnt) = self.handle_comment(
+            let Some(mut cmnt) = self.handle_comment(
                 cmnt,
                 if style_cache.is_isolated() {
                     config.iso_no_break
@@ -618,6 +618,12 @@ impl<'sess> State<'sess, '_> {
                 && matches!(cmnt.kind, ast::CommentKind::Line)
             {
                 self.hardbreak_if_not_bol();
+            }
+
+            // A trailing comment moved onto its own line is isolated on the next run.
+            // Use that style now so following comments receive the same indentation.
+            if cmnt.style.is_trailing() && self.is_bol_or_only_ind() {
+                cmnt.style = CommentStyle::Isolated;
             }
 
             // Handle mixed with follow-up comment
