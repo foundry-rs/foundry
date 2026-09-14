@@ -5,10 +5,8 @@ contract C is Contract {
         A,
         B
     }
-
     event Event(uint256 a);
     error Error(uint256 a);
-
     using {f, f2} for uint256;
 
     constructor(uint256 a) {}

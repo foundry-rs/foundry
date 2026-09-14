@@ -37,9 +37,18 @@ fn trailing_comma_comments_and_strings() {
 }
 "#;
     let expected = r#"contract C {
-    function f(uint256 a /* parameter */) external {
-        g("comma,) stays" /* argument */);
-        uint256[2] memory values = [uint256(1), 2 /* array */];
+    function f(
+        uint256 a /* parameter */
+    )
+        external
+    {
+        g(
+            "comma,) stays" /* argument */
+        );
+        uint256[2] memory values = [
+            uint256(1),
+            2 /* array */
+        ];
     }
 }
 "#;
