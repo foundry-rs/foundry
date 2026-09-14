@@ -6,4 +6,4 @@ cast: patch
 chisel: patch
 ---
 
-Use a generic TIP20 label for long or malformed token names instead of panicking or displaying storage metadata during Tempo execution.
+Decode Tempo token names up to 256 bytes in trace labels, falling back to TIP20 for larger, malformed, or unreadable names instead of panicking or displaying storage metadata.
