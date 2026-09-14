@@ -1890,27 +1890,6 @@ impl<N: Network> Backend<N> {
         self.get_block_with_hash(id).map(|(block, _)| block)
     }
 
-    /// Returns a rollback ancestor, including the remote base of a Monad transaction-hash fork.
-    pub async fn rollback_block(&self, number: u64) -> Result<Option<Block>, BlockchainError> {
-        if let Some(block) = self.get_block(number) {
-            return Ok(Some(block));
-        }
-
-        let Some(fork) = self.get_fork().filter(|fork| {
-            self.is_monad()
-                && fork.transaction_hash().is_some()
-                && fork.predates_fork_inclusive(number)
-        }) else {
-            return Ok(None);
-        };
-        let Some(block) = fork.block_by_number(number).await? else {
-            return Ok(None);
-        };
-        let header = Header::try_from(block.header().inner.clone())
-            .map_err(|err| BlockchainError::Internal(err.to_string()))?;
-        Ok(Some(Block { header: foundry_header(&self.networks, header), body: Default::default() }))
-    }
-
     pub fn get_block_by_hash(&self, hash: B256) -> Option<Block> {
         self.blockchain.get_block_by_hash(&hash)
     }

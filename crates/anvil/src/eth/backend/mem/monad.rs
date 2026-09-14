@@ -2,7 +2,7 @@
 
 use super::{
     AnvilInspector, Backend, ClientFork, DatabaseRef, EnvelopeExecutionKind, MonadExecutionContext,
-    storage::BlockchainStorage,
+    foundry_header, storage::BlockchainStorage,
 };
 use crate::eth::{
     backend::{
@@ -20,8 +20,9 @@ use crate::eth::{
     pool::transactions::PoolTransaction,
 };
 use alloy_consensus::{
-    BlockHeader, Transaction as _, constants::EMPTY_ROOT_HASH, transaction::Recovered,
+    BlockHeader, Header, Transaction as _, constants::EMPTY_ROOT_HASH, transaction::Recovered,
 };
+use alloy_eips::eip1559::BaseFeeParams;
 use alloy_evm::{
     Database, Evm, EvmEnv, EvmFactory, RecoveredTx,
     block::{BlockExecutionError, BlockExecutionResult, BlockExecutor, StateDB},
@@ -204,6 +205,26 @@ pub(super) fn rollback_transaction<DB: alloy_evm::Database>(
 }
 
 impl<N: Network> Backend<N> {
+    /// Returns the remote rollback ancestor for a Monad transaction-hash fork.
+    pub(crate) async fn monad_rollback_block(
+        &self,
+        number: u64,
+    ) -> Result<Option<Block>, BlockchainError> {
+        let Some(fork) = self.get_fork().filter(|fork| {
+            self.is_monad()
+                && fork.transaction_hash().is_some()
+                && fork.predates_fork_inclusive(number)
+        }) else {
+            return Ok(None);
+        };
+        let Some(block) = fork.block_by_number(number).await? else {
+            return Ok(None);
+        };
+        let header = Header::try_from(block.header().inner.clone())
+            .map_err(|err| BlockchainError::Internal(err.to_string()))?;
+        Ok(Some(Block { header: foundry_header(&self.networks, header), body: Default::default() }))
+    }
+
     /// Prepares the Monad-specific inputs for replaying a historical transaction prefix.
     pub(super) async fn prepare_monad_fork_replay(
         &self,
@@ -312,15 +333,14 @@ impl<N: Network> Backend<N> {
         let block_base_fee = common_block.header.base_fee_per_gas.unwrap_or_default();
 
         let fees = self.fees.detached();
-        fees.set_execution_rules(spec_id, self.networks.base_fee_params(timestamp), None);
+        fees.set_execution_rules(spec_id, BaseFeeParams::ethereum(), None);
         fees.set_blob_params(blob_params);
         // The fee manager stores values for the next block. Seed it with the retained block while
         // deriving those values so the zero-base-fee sentinel and Osaka blob target are applied to
         // the correct parent.
         fees.set_base_fee(block_base_fee);
         let next_block_base_fee = fees.get_next_block_base_fee_from_header(&common_block.header);
-        let next_block_excess_blob_gas = self.networks.next_block_blob_excess_gas(
-            blob_params,
+        let next_block_excess_blob_gas = blob_params.next_block_excess_blob_gas_osaka(
             common_block.header.excess_blob_gas.unwrap_or_default(),
             common_block.header.blob_gas_used.unwrap_or_default(),
             block_base_fee,

@@ -84,7 +84,7 @@ use alloy_sol_types::{SolCall, SolValue, sol};
 use anvil_core::{
     eth::{
         EthRequest,
-        block::{BlockInfo, canonical_block},
+        block::{Block, BlockInfo, canonical_block},
         transaction::{MaybeImpersonatedTransaction, PendingTransaction},
     },
     types::{ReorgOptions, TransactionData},
@@ -1708,6 +1708,22 @@ impl EthApi<FoundryNetwork> {
         Ok(())
     }
 
+    /// Returns a locally stored rollback ancestor, or the remote base of a Monad transaction-hash
+    /// fork when that integration is enabled.
+    async fn rollback_block(&self, number: u64) -> Result<Option<Block>> {
+        if let Some(block) = self.backend.get_block(number) {
+            return Ok(Some(block));
+        }
+        #[cfg(feature = "monad")]
+        {
+            self.backend.monad_rollback_block(number).await
+        }
+        #[cfg(not(feature = "monad"))]
+        {
+            Ok(None)
+        }
+    }
+
     /// Rollback the chain to a specific depth.
     ///
     /// e.g depth = 3
@@ -1732,11 +1748,8 @@ impl EthApi<FoundryNetwork> {
         ))?;
 
         // Get the common ancestor block
-        let common_block = self
-            .backend
-            .rollback_block(common_height)
-            .await?
-            .ok_or(BlockchainError::BlockNotFound)?;
+        let common_block =
+            self.rollback_block(common_height).await?.ok_or(BlockchainError::BlockNotFound)?;
 
         self.backend.rollback(common_block).await?;
         Ok(())
@@ -4236,11 +4249,8 @@ impl EthApi<FoundryNetwork> {
         ))?;
 
         // Get the common ancestor block
-        let common_block = self
-            .backend
-            .rollback_block(common_height)
-            .await?
-            .ok_or(BlockchainError::BlockNotFound)?;
+        let common_block =
+            self.rollback_block(common_height).await?.ok_or(BlockchainError::BlockNotFound)?;
 
         // Convert the transaction requests to pool transactions if they exist, otherwise use empty
         // hashmap
