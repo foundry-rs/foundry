@@ -50,6 +50,38 @@ Formatted [..]/src/FmtTest.sol
     );
 });
 
+forgetest!(fmt_trailing_commas, |prj, cmd| {
+    let source = "contract C { function f(uint256 a,) external { g(a,); (a,) = h(); } }";
+    let expected = str![[r#"
+contract C {
+    function f(uint256 a) external {
+        g(a);
+        (a,) = h();
+    }
+}
+
+"#]];
+    prj.add_raw_source("Commas.sol", source);
+
+    cmd.args(["fmt", "src/Commas.sol", "--check", "--raw"]);
+    cmd.assert_failure().code(1).stdout_eq(expected).stderr_eq("");
+    assert_eq!(std::fs::read_to_string(prj.root().join("src/Commas.sol")).unwrap(), source);
+
+    cmd.forge_fuse().args(["fmt", "src/Commas.sol"]);
+    cmd.assert_success().stdout_eq("").stderr_eq(str![[r#"
+Formatted [..]/src/Commas.sol
+
+"#]]);
+    assert_data_eq!(std::fs::read_to_string(prj.root().join("src/Commas.sol")).unwrap(), expected);
+
+    cmd.forge_fuse().args(["fmt", "src/Commas.sol", "--check"]);
+    cmd.assert_success().stdout_eq("").stderr_eq("");
+
+    cmd.forge_fuse().args(["fmt", "-", "--raw"]);
+    cmd.stdin(source.as_bytes());
+    cmd.assert_success().stdout_eq(expected).stderr_eq("");
+});
+
 // Test that fmt can format from stdin
 forgetest!(fmt_stdin, |_prj, cmd| {
     cmd.args(["fmt", "-", "--raw"]);

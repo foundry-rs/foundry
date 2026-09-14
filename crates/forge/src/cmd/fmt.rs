@@ -200,6 +200,7 @@ impl FmtArgs {
         compiler.enter_mut(|compiler| {
             let mut pcx = compiler.parse();
             pcx.set_resolve_imports(false);
+            pcx.set_allow_trailing_commas(true);
             match input {
                 Input::Paths(paths) if paths.is_empty() => {
                     sh_warn!(

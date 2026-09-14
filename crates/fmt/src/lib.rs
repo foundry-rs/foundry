@@ -200,6 +200,7 @@ fn format_once(
     let res = compiler.enter_mut(|c| -> solar::interface::Result<String> {
         let mut pcx = c.parse();
         pcx.set_resolve_imports(false);
+        pcx.set_allow_trailing_commas(true);
         let file = mk_file(c.sess())?;
         pcx.add_file(file.clone());
         pcx.parse();

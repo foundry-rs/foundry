@@ -28,6 +28,38 @@ fn assert_eof(content: &str) {
 }
 
 #[test]
+fn trailing_comma_comments_and_strings() {
+    let source = r#"contract C {
+    function f(uint256 a, /* parameter */) external {
+        g("comma,) stays", /* argument */);
+        uint256[2] memory values = [uint256(1), 2, /* array */];
+    }
+}
+"#;
+    let expected = r#"contract C {
+    function f(uint256 a /* parameter */) external {
+        g("comma,) stays" /* argument */);
+        uint256[2] memory values = [uint256(1), 2 /* array */];
+    }
+}
+"#;
+    let formatted = format(source, Path::new("test.sol"), Arc::default());
+    assert_data_eq!(formatted, expected);
+}
+
+#[test]
+fn trailing_comma_recovery_rejects_other_errors() {
+    for source in [
+        "contract C { function f(uint256 a,,) external {} }",
+        "contract C { function f() external { g(1,,); } }",
+        "contract C { function f() external { uint256[2] memory a = [1,,]; } }",
+        "contract C { function f() external { g(1,; } }",
+    ] {
+        assert!(forge_fmt::format(source, FormatterConfig::default()).is_err(), "{source}");
+    }
+}
+
+#[test]
 fn binary_assignment_layout_ignores_operator_spacing() {
     for (line_length, source, expected) in [
         (
@@ -687,7 +719,6 @@ fmt_tests! {
     StructDefinition,
     StructFieldAccess,
     ThisExpression,
-    #[ignore = "Solar errors when parsing inputs with trailing commas"]
     TrailingComma,
     TryStatement,
     TypeDefinition,
