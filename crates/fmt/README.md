@@ -4,6 +4,10 @@ Solidity formatter that respects (some parts of)
 the [Style Guide](https://docs.soliditylang.org/en/latest/style-guide.html) and
 is tested on the [Prettier Solidity Plugin](https://github.com/prettier-solidity/prettier-plugin-solidity) cases.
 
+Formatting accepts and removes optional trailing commas in lists, such as `f(a,)`
+and `[a, b,]`. Tuple omissions such as `(a,) = f()` are preserved. This recovery
+applies only to formatting; compilation still requires valid Solidity syntax.
+
 ## Architecture
 
 The formatter is built on top of [Solar](https://github.com/paradigmxyz/solar), and the architecture is based on a Wadler-style pretty-printing engine. The formatting process consists of two main steps:
