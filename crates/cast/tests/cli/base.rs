@@ -12,7 +12,7 @@ casttest!(cast_call_trace_selects_base_network, async |prj, cmd| {
         config.hardfork = Some("base:Beryl".parse().unwrap());
         config.chain = Some(foundry_config::Chain::from_id(8453));
     });
-    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let (_api, handle) = anvil::spawn(NodeConfig::test().with_chain_id(Some(8453u64))).await;
     let rpc = handle.http_endpoint();
 
     let output = cmd
