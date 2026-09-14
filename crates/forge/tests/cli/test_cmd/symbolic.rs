@@ -3939,6 +3939,7 @@ contract SymbolicInvariantFrontierSeed is Test {
 
     cmd.forge_fuse();
     cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+    cmd.env("FOUNDRY_INVARIANT_FAILURE_PERSIST_DIR", "covered_invariant_failures");
     cmd.args([
         "test",
         "--match-contract",
@@ -3973,6 +3974,7 @@ contract SymbolicInvariantFrontierSeed is Test {
 
     cmd.forge_fuse();
     cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+    cmd.env("FOUNDRY_INVARIANT_FAILURE_PERSIST_DIR", "payable_invariant_failures");
     cmd.args([
         "test",
         "--match-contract",
@@ -4022,6 +4024,7 @@ contract SymbolicInvariantFrontierSeed is Test {
 
         cmd.forge_fuse();
         cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+        cmd.env("FOUNDRY_INVARIANT_FAILURE_PERSIST_DIR", format!("{frontier_dir}_failures"));
         cmd.args([
             "test",
             "--match-contract",
@@ -4053,6 +4056,7 @@ contract SymbolicInvariantFrontierSeed is Test {
 
     cmd.forge_fuse();
     cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+    cmd.env("FOUNDRY_INVARIANT_FAILURE_PERSIST_DIR", "invariant_failures");
     cmd.args([
         "test",
         "--match-contract",
@@ -4095,6 +4099,7 @@ contract SymbolicInvariantFrontierSeed is Test {
 
     cmd.forge_fuse();
     cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+    cmd.env("FOUNDRY_INVARIANT_FAILURE_PERSIST_DIR", "filtered_invariant_failures");
     cmd.args([
         "test",
         "--match-contract",
@@ -4129,6 +4134,7 @@ contract SymbolicInvariantFrontierSeed is Test {
 
     cmd.forge_fuse();
     cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+    cmd.env("FOUNDRY_INVARIANT_FAILURE_PERSIST_DIR", "alternate_anchor_failures");
     cmd.args([
         "test",
         "--match-contract",
@@ -4272,7 +4278,7 @@ contract SymbolicInvariantRevertedPrefixTest is Test {
         "--symbolic-frontier-limit",
         "1",
     ])
-    .assert_success();
+    .assert_failure();
 
     cmd.forge_fuse()
         .args([
@@ -4618,23 +4624,32 @@ contract SymbolicInvariantCandidateSeed is Test {
 
         cmd.forge_fuse();
         cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
-        cmd.args([
-            "test",
-            "--match-contract",
-            "SymbolicInvariantCandidateSeed",
-            "--threads",
-            "1",
-            "--invariant-frontier-dir",
-            "candidate_frontiers",
-            "--invariant-corpus-dir",
-            "candidate_corpus",
-            "--symbolic-use-fuzz-frontiers",
-            "--symbolic-frontier-limit",
-            "1",
-            "--symbolic-frontier-ids",
-            &target_frontier_id,
-        ])
-        .assert_success();
+        let output = cmd
+            .args([
+                "test",
+                "--match-contract",
+                "SymbolicInvariantCandidateSeed",
+                "--threads",
+                "1",
+                "--invariant-frontier-dir",
+                "candidate_frontiers",
+                "--invariant-corpus-dir",
+                "candidate_corpus",
+                "--symbolic-use-fuzz-frontiers",
+                "--symbolic-frontier-limit",
+                "1",
+                "--symbolic-frontier-ids",
+                &target_frontier_id,
+            ])
+            .assert_failure()
+            .get_output()
+            .clone();
+        assert!(
+            output.stdout_lossy().contains("invariant_notBroken"),
+            "stdout={}\nstderr={}",
+            output.stdout_lossy(),
+            output.stderr_lossy()
+        );
 
         let output = cmd
             .forge_fuse()
@@ -4826,7 +4841,7 @@ contract SymbolicInvariantPropertySeed is Test {
             "--symbolic-frontier-ids",
             &target_frontier_id,
         ])
-        .assert_success()
+        .assert_failure()
         .get_output()
         .clone();
     let stderr = output.stderr_lossy();
@@ -4881,8 +4896,9 @@ contract SymbolicInvariantPropertySeed is Test {
             .assert_success();
     }
 
-    let output = cmd
-        .forge_fuse()
+    let symbolic_cmd = cmd.forge_fuse();
+    symbolic_cmd.env("FOUNDRY_INVARIANT_FAILURE_PERSIST_DIR", "isolated_symbolic_failures");
+    let output = symbolic_cmd
         .args([
             "test",
             "--symbolic",
@@ -5005,7 +5021,7 @@ contract SymbolicInvariantHookSeed is Test {
             "--symbolic-frontier-limit",
             "1",
         ])
-        .assert_success()
+        .assert_failure()
         .get_output()
         .clone();
     let corpus_path = prj
