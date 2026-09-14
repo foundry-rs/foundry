@@ -1687,6 +1687,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         // and broadcasts. Keep the trace lifecycle ordering, but remember the node so its caller
         // can be synchronized with the inputs that are actually executed.
         let trace_idx = self.tracer.as_ref().map(|tracer| tracer.traces().nodes().len() - 1);
+        let isolate = self.enable_isolation && !self.in_inner_context && ecx.journal().depth() == 1;
         let mut cheatcode_outcome = None;
         if let Some(cheatcodes) = self.cheatcodes.as_deref_mut() {
             // Handle mocked functions, replace bytecode address with mock if matched.
@@ -1709,7 +1710,12 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                 }
             }
 
-            cheatcode_outcome = cheatcodes.call_with_executor(ecx, call, self.inner);
+            cheatcode_outcome = cheatcodes.call_with_executor(
+                ecx,
+                call,
+                self.inner,
+                isolate && call.scheme == CallScheme::Call,
+            );
         }
 
         if let Some(trace_idx) = trace_idx
@@ -1736,7 +1742,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
             pending.executed_address = Some(call.bytecode_address);
         }
 
-        if self.enable_isolation && !self.in_inner_context && ecx.journal().depth() == 1 {
+        if isolate {
             match call.scheme {
                 // Isolate CALLs
                 CallScheme::Call => {

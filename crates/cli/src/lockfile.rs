@@ -6,10 +6,41 @@ use eyre::{Context, OptionExt, Result};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, hash_map::Entry},
+    fmt::Write,
+    io::ErrorKind,
     path::{Path, PathBuf},
 };
 
 pub const FOUNDRY_LOCK: &str = "foundry.lock";
+
+/// Validates direct Git dependencies before consuming a project's sources or artifacts.
+///
+/// Without an explicit lock requirement, projects without a lockfile are unchanged.
+/// This never installs dependencies or updates the lockfile.
+pub fn check_foundry_lock(root: &Path, required: bool) -> Result<()> {
+    let path = root.join(FOUNDRY_LOCK);
+    if !required && !path_entry_exists(&path).wrap_err("Failed to access foundry.lock")? {
+        return Ok(());
+    }
+    let git = Git::new(root);
+    let mismatches = Lockfile::new(root).with_git(&git).check()?;
+    if mismatches.is_empty() {
+        return Ok(());
+    }
+    let mut message = String::from("foundry.lock does not match installed dependencies:");
+    for mismatch in mismatches {
+        write!(message, "\n  {mismatch}")?;
+    }
+    eyre::bail!(message)
+}
+
+fn path_entry_exists(path: &Path) -> std::io::Result<bool> {
+    match path.symlink_metadata() {
+        Ok(_) => Ok(true),
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(false),
+        Err(err) => Err(err),
+    }
+}
 
 /// A type alias for a HashMap of dependencies keyed by relative path to the submodule dir.
 pub type DepMap = HashMap<PathBuf, DepIdentifier>;
@@ -183,7 +214,7 @@ impl<'a> Lockfile<'a> {
 
     /// Checks whether the lockfile matches dependency submodules without modifying either.
     pub fn check(&mut self) -> Result<Vec<LockfileMismatch>> {
-        let lockfile_exists = self.exists();
+        let lockfile_exists = self.try_exists()?;
         if lockfile_exists {
             self.read().wrap_err("Failed to read foundry.lock")?;
         } else {
@@ -286,7 +317,7 @@ impl<'a> Lockfile<'a> {
     ///
     /// Throws an error if the lockfile does not exist.
     pub fn read(&mut self) -> Result<()> {
-        if !self.lockfile_path.exists() {
+        if !path_entry_exists(&self.lockfile_path)? {
             return Err(eyre::eyre!("Lockfile not found at {}", self.lockfile_path.display()));
         }
 
@@ -373,6 +404,11 @@ impl<'a> Lockfile<'a> {
 
     pub fn exists(&self) -> bool {
         self.lockfile_path.exists()
+    }
+
+    /// Returns whether a directory entry exists at the lockfile path.
+    pub(crate) fn try_exists(&self) -> Result<bool> {
+        Ok(path_entry_exists(&self.lockfile_path)?)
     }
 }
 
@@ -519,6 +555,9 @@ mod tests {
     use std::fs;
     use tempfile::tempdir;
 
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink;
+
     #[test]
     fn serde_dep_identifier() {
         let branch = DepIdentifier::Branch {
@@ -615,5 +654,17 @@ mod tests {
   }
 }"#;
         assert_eq!(contents.trim(), expected.trim());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dangling_lockfile_symlink_is_not_absent() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join(FOUNDRY_LOCK);
+        symlink("missing-lock-target", &path).unwrap();
+
+        let err = check_foundry_lock(dir.path(), false).unwrap_err();
+        assert!(err.to_string().contains("Failed to read foundry.lock"));
+        assert_eq!(fs::read_link(path).unwrap(), Path::new("missing-lock-target"));
     }
 }

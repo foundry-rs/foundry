@@ -288,6 +288,11 @@ impl SymbolicExecutor {
                             let mut out_of_bounds_constraints = state.constraints.clone();
                             out_of_bounds_constraints.push(condition.not(&mut self.cx));
                             if self.is_sat_with_state(&state, &out_of_bounds_constraints)? {
+                                if *completed_paths >= path_limit {
+                                    return Err(SymbolicError::Unsupported(
+                                        "symbolic path limit exceeded",
+                                    ));
+                                }
                                 let mut halted = state.clone();
                                 halted.constraints = out_of_bounds_constraints;
                                 *completed_paths += 1;
@@ -307,6 +312,9 @@ impl SymbolicExecutor {
                 let op = match op {
                     CallPathOpcode::Execute(op) => op,
                     CallPathOpcode::Halt => {
+                        if *completed_paths >= path_limit {
+                            return Err(SymbolicError::Unsupported("symbolic path limit exceeded"));
+                        }
                         *completed_paths += 1;
                         let status = self.successful_call_status(kind, &state);
                         outcomes.push(CallOutcome { status, state });
@@ -328,17 +336,26 @@ impl SymbolicExecutor {
                 )? {
                     StepOutcome::Continue => {}
                     StepOutcome::Halt => {
+                        if *completed_paths >= path_limit {
+                            return Err(SymbolicError::Unsupported("symbolic path limit exceeded"));
+                        }
                         *completed_paths += 1;
                         let status = self.successful_call_status(kind, &state);
                         outcomes.push(CallOutcome { status, state });
                         break;
                     }
                     StepOutcome::Revert => {
+                        if *completed_paths >= path_limit {
+                            return Err(SymbolicError::Unsupported("symbolic path limit exceeded"));
+                        }
                         *completed_paths += 1;
                         outcomes.push(CallOutcome { status: CallStatus::Revert, state });
                         break;
                     }
                     StepOutcome::Failure => {
+                        if *completed_paths >= path_limit {
+                            return Err(SymbolicError::Unsupported("symbolic path limit exceeded"));
+                        }
                         *completed_paths += 1;
                         outcomes.push(CallOutcome { status: CallStatus::Failure, state });
                         break;
