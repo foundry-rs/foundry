@@ -64,7 +64,7 @@ contract C {
     prj.add_raw_source("Commas.sol", source);
 
     cmd.args(["fmt", "src/Commas.sol", "--check", "--raw"]);
-    cmd.assert_failure().code(1).stdout_eq(expected).stderr_eq("");
+    cmd.assert_failure().code(1).stdout_eq(expected.clone()).stderr_eq("");
     assert_eq!(std::fs::read_to_string(prj.root().join("src/Commas.sol")).unwrap(), source);
 
     cmd.forge_fuse().args(["fmt", "src/Commas.sol"]);
@@ -72,7 +72,10 @@ contract C {
 Formatted [..]/src/Commas.sol
 
 "#]]);
-    assert_data_eq!(std::fs::read_to_string(prj.root().join("src/Commas.sol")).unwrap(), expected);
+    assert_data_eq!(
+        std::fs::read_to_string(prj.root().join("src/Commas.sol")).unwrap(),
+        expected.clone()
+    );
 
     cmd.forge_fuse().args(["fmt", "src/Commas.sol", "--check"]);
     cmd.assert_success().stdout_eq("").stderr_eq("");
