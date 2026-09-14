@@ -5,6 +5,7 @@
 //! execution helpers.
 
 use eyre::Result;
+use foundry_cli::lockfile::check_foundry_lock;
 use foundry_compilers::{
     Artifact, ProjectCompileOutput,
     artifacts::{ConfigurableContractArtifact, Source, Sources},
@@ -423,6 +424,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
     ///
     /// A new instance of [SessionSource]
     pub fn new(mut config: SessionSourceConfig<FEN>) -> Result<Self> {
+        check_foundry_lock(&config.foundry_config.root, false)?;
         config.detect_solc()?;
         Ok(Self {
             file_name: "ReplContract.sol".to_string(),
@@ -528,6 +530,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
 
     /// Compiles the source if necessary.
     pub fn build(&self) -> Result<&GeneratedOutput> {
+        check_foundry_lock(&self.config.foundry_config.root, false)?;
         // TODO: mimics `get_or_try_init`
         if let Some(output) = self.output.get() {
             return Ok(output);
@@ -668,6 +671,54 @@ mod tests {
     use foundry_compilers::artifacts::remappings::{RelativeRemapping, RelativeRemappingPathBuf};
     use foundry_evm::core::evm::EthEvmNetwork;
     use std::fs;
+
+    fn test_config(root: &std::path::Path) -> SessionSourceConfig<EthEvmNetwork> {
+        SessionSourceConfig {
+            foundry_config: Config {
+                root: root.to_path_buf(),
+                solc: Some(SolcReq::Version(Version::new(0, 8, 29))),
+                ..Default::default()
+            },
+            no_vm: true,
+            ..Default::default()
+        }
+    }
+
+    fn assert_invalid_lock(err: eyre::Report) {
+        assert!(err.to_string().contains("Failed to read foundry.lock"), "{err:?}");
+    }
+
+    #[test]
+    fn new_checks_lock_before_compiler_detection() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join("foundry.lock"), "not json").unwrap();
+        let mut config = test_config(tmp.path());
+        config.foundry_config.solc = None;
+
+        assert_invalid_lock(SessionSource::new(config).unwrap_err());
+    }
+
+    #[test]
+    fn cached_build_rechecks_lock() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = SessionSource::new(test_config(tmp.path())).unwrap();
+        source.build().unwrap();
+        fs::write(tmp.path().join("foundry.lock"), "not json").unwrap();
+
+        assert_invalid_lock(source.build().unwrap_err());
+    }
+
+    #[test]
+    fn deserialized_cold_build_checks_lock() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = SessionSource::new(test_config(tmp.path())).unwrap();
+        let encoded = serde_json::to_string(&source).unwrap();
+        let mut source = serde_json::from_str::<SessionSource<EthEvmNetwork>>(&encoded).unwrap();
+        source.config.foundry_config.root = tmp.path().to_path_buf();
+        fs::write(tmp.path().join("foundry.lock"), "not json").unwrap();
+
+        assert_invalid_lock(source.build().unwrap_err());
+    }
 
     #[test]
     fn initialize_local_context_migrates_legacy_session() {

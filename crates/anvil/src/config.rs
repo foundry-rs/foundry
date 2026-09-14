@@ -43,7 +43,9 @@ use foundry_common::{
 };
 use foundry_config::Config;
 use foundry_evm::{
-    backend::{BlockchainDb, BlockchainDbMeta, ForkBlock, SharedBackend},
+    backend::{
+        BlockchainDb, BlockchainDbMeta, ForkBlock, SharedBackend, account_fetch_policy_for_source,
+    },
     constants::DEFAULT_CREATE2_DEPLOYER,
     hardfork::FoundryHardfork,
     utils::{apply_chain_and_block_specific_env_changes_for_chain, block_env_from_header},
@@ -141,14 +143,18 @@ struct StableForkSnapshot {
 #[derive(Clone, Copy, Debug, Default)]
 struct AnvilNodeInfoProbe {
     identified: bool,
+    skip: bool,
 }
 
 impl AnvilNodeInfoProbe {
-    const fn new(identified: bool) -> Self {
-        Self { identified }
+    const fn new(identified: bool, skip: bool) -> Self {
+        Self { identified, skip }
     }
 
     async fn request(&mut self, provider: &RetryProvider) -> Result<Option<NodeInfo>> {
+        if self.skip {
+            return Ok(None);
+        }
         match provider.raw_request::<_, NodeInfo>("anvil_nodeInfo".into(), ()).await {
             Ok(node_info) => {
                 self.identified = true;
@@ -245,6 +251,8 @@ pub struct NodeConfig {
     pub fork_headers: Vec<String>,
     /// specifies chain id for cache to skip fetching from remote in offline-start mode
     pub fork_chain_id: Option<U256>,
+    /// Skip `anvil_nodeInfo` / `anvil_metadata` probes against the fork URL.
+    pub no_fork_node_info: bool,
     /// Address fork state reads by block number instead of by block hash.
     pub fork_state_by_number: bool,
     /// Chain ID discovered from the active fork source.
@@ -641,6 +649,7 @@ impl Default for NodeConfig {
             fork_request_retries: 5,
             fork_retry_backoff: Duration::from_millis(1_000),
             fork_chain_id: None,
+            no_fork_node_info: false,
             fork_state_by_number: false,
             fork_source_chain_id: None,
             fork_execution_chain_id: None,
@@ -1108,6 +1117,17 @@ impl NodeConfig {
     pub const fn with_fork_chain_id(mut self, fork_chain_id: Option<U256>) -> Self {
         self.fork_chain_id = fork_chain_id;
         self
+    }
+
+    /// Skip `anvil_nodeInfo` / `anvil_metadata` probes against the fork URL.
+    #[must_use]
+    pub const fn with_no_fork_node_info(mut self, no_fork_node_info: bool) -> Self {
+        self.no_fork_node_info = no_fork_node_info;
+        self
+    }
+
+    const fn node_info_probe(&self, identified: bool) -> AnvilNodeInfoProbe {
+        AnvilNodeInfoProbe::new(identified, self.no_fork_node_info)
     }
 
     /// Sets the `fork_headers` to use with fork RPC endpoints
@@ -1712,7 +1732,7 @@ impl NodeConfig {
         serving_instance_id: B256,
     ) -> Result<(Arc<RetryProvider>, ForkEndpointIdentity)> {
         let provider = Arc::new(self.fork_provider(eth_rpc_url)?);
-        let mut node_info_probe = AnvilNodeInfoProbe::default();
+        let mut node_info_probe = self.node_info_probe(false);
         for _ in 0..3 {
             let before =
                 self.resolved_fork_endpoint_identity(&provider, &mut node_info_probe).await?;
@@ -1750,7 +1770,7 @@ impl NodeConfig {
         provider: &Arc<RetryProvider>,
         fork_overrides: ForkOverrides,
     ) -> Result<StableForkSnapshot> {
-        let mut node_info_probe = AnvilNodeInfoProbe::new(self.fork_endpoint_is_anvil);
+        let mut node_info_probe = self.node_info_probe(self.fork_endpoint_is_anvil);
         for _ in 0..3 {
             let before =
                 self.resolved_fork_endpoint_identity(provider, &mut node_info_probe).await?;
@@ -1800,7 +1820,7 @@ impl NodeConfig {
         block_hash: B256,
     ) -> Result<bool> {
         let provider = self.fork_provider(eth_rpc_url)?;
-        let mut node_info_probe = AnvilNodeInfoProbe::new(expected.is_authoritative());
+        let mut node_info_probe = self.node_info_probe(expected.is_authoritative());
         for _ in 0..3 {
             let before =
                 self.resolved_fork_endpoint_identity(&provider, &mut node_info_probe).await?;
@@ -2120,8 +2140,10 @@ latest block number: {latest_block}"
         }
 
         let source_id = fork_source_id(&self.fork_urls, &self.fork_headers);
+        let account_fetch_policy = account_fetch_policy_for_source(source_chain_id, target_profile);
         let meta = BlockchainDbMeta::new(cache_block_env, eth_rpc_url.clone())
-            .with_fork_identity(block_hash, source_id);
+            .with_fork_identity(block_hash, source_id)
+            .with_account_fetch_policy(account_fetch_policy);
         let cache_path =
             self.block_cache_path_for_rpc(source_chain_id, fork_block_number, &eth_rpc_url);
         let block_chain_db = BlockchainDb::new(meta, cache_path);
