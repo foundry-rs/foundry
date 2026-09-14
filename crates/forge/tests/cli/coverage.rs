@@ -1440,13 +1440,13 @@ contract AContractTest is DSTest {
         .assert_success()
         .stdout_eq(str![[r#"
 ...
-╭-------------------+--------------+--------------+--------------+---------------╮
-| File              | % Lines      | % Statements | % Branches   | % Funcs       |
-+================================================================================+
-| src/AContract.sol | 62.50% (5/8) | 57.14% (4/7) | 50.00% (3/6) | 100.00% (1/1) |
-|-------------------+--------------+--------------+--------------+---------------|
-| Total             | 62.50% (5/8) | 57.14% (4/7) | 50.00% (3/6) | 100.00% (1/1) |
-╰-------------------+--------------+--------------+--------------+---------------╯
+╭-------------------+---------------+--------------+--------------+---------------╮
+| File              | % Lines       | % Statements | % Branches   | % Funcs       |
++=================================================================================+
+| src/AContract.sol | 100.00% (8/8) | 57.14% (4/7) | 50.00% (3/6) | 100.00% (1/1) |
+|-------------------+---------------+--------------+--------------+---------------|
+| Total             | 100.00% (8/8) | 57.14% (4/7) | 50.00% (3/6) | 100.00% (1/1) |
+╰-------------------+---------------+--------------+--------------+---------------╯
 
 "#]]);
 
@@ -1620,9 +1620,9 @@ contract AContractTest is DSTest {
 ╭-------------------+--------------+--------------+--------------+---------------╮
 | File              | % Lines      | % Statements | % Branches   | % Funcs       |
 +================================================================================+
-| src/AContract.sol | 60.00% (3/5) | 80.00% (4/5) | 50.00% (1/2) | 100.00% (1/1) |
+| src/AContract.sol | 80.00% (4/5) | 80.00% (4/5) | 50.00% (1/2) | 100.00% (1/1) |
 |-------------------+--------------+--------------+--------------+---------------|
-| Total             | 60.00% (3/5) | 80.00% (4/5) | 50.00% (1/2) | 100.00% (1/1) |
+| Total             | 80.00% (4/5) | 80.00% (4/5) | 50.00% (1/2) | 100.00% (1/1) |
 ╰-------------------+--------------+--------------+--------------+---------------╯
 
 "#]]);
@@ -3084,6 +3084,121 @@ end_of_record
     );
 });
 
+// A false condition still executes its line, even when the true body is the first
+// coverage item on that line. Unreached nested conditions must remain uncovered.
+forgetest!(lcov_false_condition_lines, |prj, cmd| {
+    prj.add_source(
+        "Branches.sol",
+        r#"contract Branches {
+    uint256 public value;
+    function run(bool outer, bool inner) public {
+        if (outer) { value = 6;
+            if (inner) {
+                value = 1;
+            } else {
+                value = 2;
+            }
+        } else {
+            value = 3;
+        }
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "Branches.t.sol",
+        r#"
+import "./Branches.sol";
+contract BranchesTest {
+    function test_false_conditions() public {
+        Branches branches = new Branches();
+        branches.run(false, true);
+        require(branches.value() == 3);
+    }
+}
+"#,
+    );
+    assert_lcov(
+        cmd.arg("coverage"),
+        str![[r#"
+TN:
+SF:src/Branches.sol
+DA:5,1
+FN:5,Branches.run
+FNDA:1,Branches.run
+DA:6,1
+BRDA:6,0,0,0
+BRDA:6,0,1,1
+DA:7,0
+BRDA:7,1,0,-
+BRDA:7,1,1,-
+DA:8,0
+DA:10,0
+DA:13,1
+FNF:1
+FNH:1
+LF:6
+LH:3
+BRF:4
+BRH:1
+end_of_record
+
+"#]],
+    );
+});
+
+// Keep no-else conditions snapshot-only until implicit false branches are reported:
+// strict genhtml validation rejects hit lines with no evaluated branches.
+forgetest!(lcov_false_condition_lines_without_else, |prj, cmd| {
+    prj.add_source(
+        "Branches.sol",
+        r#"contract Branches {
+    uint256 public value;
+    function run(bool condition) public {
+        if (condition) value = 4;
+        if (condition)
+        {
+            value = 5;
+        }
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "Branches.t.sol",
+        r#"
+import "./Branches.sol";
+contract BranchesTest {
+    function test_false_conditions() public {
+        Branches branches = new Branches();
+        branches.run(false);
+        require(branches.value() == 0);
+    }
+}
+"#,
+    );
+    cmd.args(["coverage", "--report=lcov", "--report-file"]).assert_file(str![[r#"
+TN:
+SF:src/Branches.sol
+DA:5,1
+FN:5,Branches.run
+FNDA:1,Branches.run
+DA:6,1
+BRDA:6,0,0,0
+DA:7,1
+BRDA:7,1,0,0
+DA:9,0
+FNF:1
+FNH:1
+LF:4
+LH:3
+BRF:2
+BRH:0
+end_of_record
+
+"#]]);
+});
+
 // A hit assembly condition must include the outcome that skips its body, even without via-IR.
 forgetest!(yul_if_lcov, |prj, cmd| {
     prj.add_source(
@@ -3146,7 +3261,7 @@ BRDA:11,1,1,0
 DA:14,3
 FN:14,Guard.mixed
 FNDA:3,Guard.mixed
-DA:15,2
+DA:15,3
 BRDA:15,2,0,2
 BRDA:15,2,1,1
 DA:18,0

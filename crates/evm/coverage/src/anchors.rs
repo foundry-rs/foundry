@@ -33,14 +33,14 @@ pub fn find_anchors(
             }
             let anchor_loc = item.anchor_loc.as_ref().unwrap_or(&item.loc);
             match item.kind {
-                CoverageItemKind::Branch { path_id, is_first_opcode: true, .. }
+                CoverageItemKind::Branch { path_id: 1, is_first_opcode: true, .. }
                     if item.anchor_loc.is_some() =>
                 {
                     find_anchor_simple(source_map, ic_pc_map, item_id, anchor_loc)
                         .map(|anchor| (anchor, None))
                         .or_else(|_| {
                             find_anchor_branch(bytecode, source_map, item_id, &item.loc)
-                                .map(|anchors| select_branch(anchors, path_id))
+                                .map(|anchors| select_branch(anchors, 1))
                         })
                 }
                 CoverageItemKind::Branch { path_id, is_first_opcode: false, .. } => {
