@@ -145,6 +145,57 @@ contract SymbolicCreateInitcodeOffset is Test {
     assert!(!stdout.contains("symbolic bytecode opcode"), "{stdout}");
 });
 
+forgetest_init!(symbolic_create_size_respects_path_width, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_create_size_respects_path_width because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicCreateSize.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicCreateSize is Test {
+    function checkCreateSizeRespectsPathWidth(uint256 size) public {
+        vm.assume(size <= 2);
+        bytes memory code = hex"5b5b";
+        address created;
+        assembly {
+            created := create(0, add(code, 0x20), size)
+        }
+        assert(created != address(0));
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--symbolic-width",
+            "2",
+            "--match-test",
+            "checkCreateSizeRespectsPathWidth",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+(paths: 2,
+incomplete symbolic execution (Stuck)
+symbolic path limit exceeded
+checkCreateSizeRespectsPathWidth(uint256)
+"#]],
+    );
+});
+
 forgetest_init!(symbolic_create2_deploys_and_calls_helper, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(
