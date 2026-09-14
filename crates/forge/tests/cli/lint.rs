@@ -2245,3 +2245,262 @@ warning: unused lint suppression for 'incorrect-shift'
 
 "#]]);
 });
+
+// Every supported directive kind receives credit when it suppresses a diagnostic, including all
+// overlapping ranges.
+forgetest!(report_unused_suppressions_supports_all_directive_kinds, |prj, cmd| {
+    prj.add_source(
+        "DirectiveKinds",
+        r#"
+contract DirectiveKinds {
+    function line() public pure returns (uint256) {
+        return (1 / 2) * 3; // forge-lint: disable-line(divide-before-multiply)
+    }
+
+    function nextLine() public pure returns (uint256) {
+        // forge-lint: disable-next-line(all, divide-before-multiply)
+        return (1 / 2) * 3;
+    }
+
+    // forge-lint: disable-next-item(divide-before-multiply)
+    function nextItem() public pure returns (uint256) {
+        return (1 / 2) * 3;
+    }
+
+    // forge-lint: disable-start(all)
+    // forge-lint: disable-start(divide-before-multiply)
+    function blockRange() public pure returns (uint256) {
+        return (1 / 2) * 3;
+    }
+    // forge-lint: disable-end(divide-before-multiply)
+    // forge-lint: disable-end(all)
+}
+"#,
+    );
+
+    cmd.args(["lint", "--only-lint", "divide-before-multiply", "--report-unused-suppressions"])
+        .assert_success()
+        .stderr_eq("");
+});
+
+// Nested blocks retain separate directive identities, so an unused inner block is reported even
+// when the outer block suppresses a diagnostic.
+forgetest!(report_unused_suppressions_reports_unused_nested_block, |prj, cmd| {
+    prj.add_source(
+        "Nested",
+        r#"
+contract Nested {
+    // forge-lint: disable-start(divide-before-multiply)
+    function usedOuter() public pure returns (uint256) {
+        return (1 / 2) * 3;
+    }
+    // forge-lint: disable-start(divide-before-multiply)
+    function unusedInner() public pure returns (uint256) {
+        return 42;
+    }
+    // forge-lint: disable-end(divide-before-multiply)
+    // forge-lint: disable-end(divide-before-multiply)
+}
+"#,
+    );
+
+    cmd.args(["lint", "--only-lint", "divide-before-multiply", "--report-unused-suppressions"])
+        .assert_success()
+        .stderr_eq(str![[r#"
+warning: unused lint suppression for 'divide-before-multiply'
+  [FILE]:9:5
+  │
+9 │     // forge-lint: disable-start(divide-before-multiply)
+  ╰╴    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+"#]]);
+});
+
+// Directives without a target are still tracked and reported as unused.
+forgetest!(report_unused_suppressions_reports_missing_targets, |prj, cmd| {
+    prj.add_source(
+        "MissingTargets",
+        concat!(
+            "contract MissingTargets {}\n",
+            "// forge-lint: disable-next-item(divide-before-multiply)\n",
+            "// forge-lint: disable-next-line(divide-before-multiply)",
+        ),
+    );
+
+    cmd.args(["lint", "--only-lint", "divide-before-multiply", "--report-unused-suppressions"])
+        .assert_success()
+        .stderr_eq(str![[r#"
+warning: unused lint suppression for 'divide-before-multiply'
+  [FILE]:4:1
+  │
+4 │ // forge-lint: disable-next-item(divide-before-multiply)
+  ╰╴━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+warning: unused lint suppression for 'divide-before-multiply'
+  [FILE]:5:1
+  │
+5 │ // forge-lint: disable-next-line(divide-before-multiply)
+  ╰╴━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+"#]]);
+});
+
+// Catch-all suppressions are not assessed in a source where the selected lint is ineligible.
+forgetest!(report_unused_suppressions_ignores_sources_without_active_lints, |prj, cmd| {
+    let script = prj.add_script(
+        "NoActiveLints",
+        r#"
+contract NoActiveLints {
+    function f() public pure returns (uint256) {
+        // forge-lint: disable-next-line(all)
+        return 42;
+    }
+}
+"#,
+    );
+
+    cmd.args([
+        "lint",
+        script.to_str().unwrap(),
+        "--only-lint",
+        "divide-before-multiply",
+        "--report-unused-suppressions",
+    ])
+    .assert_success()
+    .stderr_eq("");
+});
+
+// Only suppressions for rules active in the current run are assessed, while import diagnostics
+// still credit the importing file's directive.
+forgetest!(report_unused_suppressions_respects_active_lints_and_import_spans, |prj, cmd| {
+    prj.add_source("Imported", "contract Imported {}\n");
+    prj.add_source(
+        "Importer",
+        r#"
+// forge-lint: disable-next-line(unused-import)
+import { Imported } from "./Imported.sol";
+
+contract Importer {
+    // forge-lint: disable-next-line(unsafe-typecast)
+    function f() public pure returns (uint256) { return 42; }
+}
+"#,
+    );
+
+    cmd.args(["lint", "--only-lint", "unused-import", "--report-unused-suppressions"])
+        .assert_success()
+        .stderr_eq("");
+});
+
+// Repeated paths share one suppression state and cannot create a false unused warning.
+forgetest!(report_unused_suppressions_deduplicates_input_paths, |prj, cmd| {
+    let source = prj.add_source(
+        "Duplicate",
+        r#"
+contract Duplicate {
+    function f() public pure returns (uint256) {
+        // forge-lint: disable-next-line(divide-before-multiply)
+        return (1 / 2) * 3;
+    }
+}
+"#,
+    );
+    let source = source.to_str().unwrap();
+
+    cmd.args([
+        "lint",
+        source,
+        source,
+        "--only-lint",
+        "divide-before-multiply",
+        "--report-unused-suppressions",
+    ])
+    .assert_success()
+    .stderr_eq("");
+});
+
+// Unused suppression warnings use the regular diagnostic emitter and participate in deny handling.
+forgetest!(report_unused_suppressions_supports_json_and_deny, |prj, cmd| {
+    prj.add_source(
+        "Json",
+        r#"
+contract Json {
+    // forge-lint: disable-next-item(divide-before-multiply)
+    function f() public pure returns (uint256) { return 42; }
+}
+"#,
+    );
+
+    cmd.args([
+        "lint",
+        "--only-lint",
+        "divide-before-multiply",
+        "--report-unused-suppressions",
+        "--deny",
+        "warnings",
+    ])
+    .assert_failure()
+    .stderr_eq(str![[r#"
+warning: unused lint suppression for 'divide-before-multiply'
+  [FILE]:5:5
+  │
+5 │     // forge-lint: disable-next-item(divide-before-multiply)
+  ╰╴    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Error: aborting due to 1 linter warning(s)
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args([
+            "lint",
+            "--only-lint",
+            "divide-before-multiply",
+            "--report-unused-suppressions",
+            "--json",
+            "--deny",
+            "warnings",
+        ])
+        .assert_json_stdout_with_status(
+            false,
+            str![[r#"
+{
+  "$message_type": "diagnostic",
+  "message": "unused lint suppression for 'divide-before-multiply'",
+  "code": null,
+  "level": "warning",
+  "spans": [
+    {
+      "file_name": "src/Json.sol",
+      "byte_start": 92,
+      "byte_end": 148,
+      "line_start": 5,
+      "line_end": 5,
+      "column_start": 5,
+      "column_end": 61,
+      "is_primary": true,
+      "text": [
+        {
+          "text": "    // forge-lint: disable-next-item(divide-before-multiply)",
+          "highlight_start": 5,
+          "highlight_end": 61
+        }
+      ],
+      "label": null,
+      "suggested_replacement": null,
+      "suggestion_applicability": null,
+      "expansion": null
+    }
+  ],
+  "children": [],
+  "rendered": "warning: unused lint suppression for 'divide-before-multiply'\n  ╭▸ src/Json.sol:5:5\n  │\n5 │     // forge-lint: disable-next-item(divide-before-multiply)\n  ╰╴    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+}
+"#]],
+        )
+        .stderr_eq(str![[r#"
+Error: aborting due to 1 linter warning(s)
+
+"#]]);
+});

@@ -1,5 +1,6 @@
 ---
 forge: minor
+forge-lint: minor
 foundry-common: minor
 ---
 

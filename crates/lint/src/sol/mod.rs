@@ -22,6 +22,7 @@ use solar::{
 };
 use solar_lint::{LintRegistry, LintRunContext, LintRunError, LintSource, LintSuite, run_lints};
 use std::{
+    collections::HashSet,
     path::{Path, PathBuf},
     sync::{Arc, LazyLock},
 };
@@ -333,13 +334,16 @@ impl<'a> Linter for SolidityLinter<'a> {
 
             let gcx = compiler.gcx();
             let mut targets = Vec::with_capacity(input.len());
+            let mut seen_sources = HashSet::new();
             for path in input {
                 let path = self.path_config.root.join(path);
-                if gcx.get_ast_source(&path).is_none() {
+                let Some((_, source)) = gcx.get_ast_source(&path) else {
                     // Issue a warning rather than panicking when some input files use old
                     // Solidity versions that Solar does not support.
                     _ = sh_warn!("AST source not found for {}", path.display());
-                } else {
+                    continue;
+                };
+                if seen_sources.insert(source.file.start_pos) {
                     targets.push(path);
                 }
             }

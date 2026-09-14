@@ -4,19 +4,17 @@ use solar::{
 };
 use std::{
     borrow::Borrow,
-    collections::{HashMap, hash_map::Entry},
+    collections::{HashMap, HashSet},
     hash::Hash,
     ops::ControlFlow,
     sync::atomic::{AtomicBool, Ordering},
 };
 
-/// A disabled formatting range.
+/// An inline suppression and its optional target range.
 #[derive(Debug)]
 struct DisabledRange<T = BytePos> {
-    /// Start position, inclusive.
-    lo: T,
-    /// End position, inclusive.
-    hi: T,
+    /// Disabled range, or `None` if the directive has no target.
+    range: Option<(T, T)>,
     /// Whether the range stems from a `disable-start`/`disable-end` block.
     block: bool,
     /// Span of the directive comment that created this range, used to report unused suppressions.
@@ -27,7 +25,7 @@ struct DisabledRange<T = BytePos> {
 
 impl DisabledRange<BytePos> {
     fn includes(&self, span: Span) -> bool {
-        span.lo() >= self.lo && span.hi() <= self.hi
+        self.range.is_some_and(|(lo, hi)| span.lo() >= lo && span.hi() <= hi)
     }
 
     /// Marks the range as having suppressed a diagnostic and reports whether it includes `span`.
@@ -59,7 +57,7 @@ impl InlineConfigItem<Vec<String>> {
     /// Parse an inline config item from a string. Validates IDs against available IDs.
     pub fn parse(s: &str, available_ids: &[&str]) -> Result<Self, InvalidInlineConfigItem> {
         let (disable, relevant) = s.split_once('(').unwrap_or((s, ""));
-        let ids = if relevant.is_empty() || relevant == "all)" {
+        let mut ids = if relevant.is_empty() || relevant == "all)" {
             vec!["all".to_string()]
         } else {
             match relevant.split_once(')') {
@@ -67,6 +65,8 @@ impl InlineConfigItem<Vec<String>> {
                 None => return Err(InvalidInlineConfigItem::Syntax(s.into())),
             }
         };
+        let mut seen = HashSet::new();
+        ids.retain(|id| seen.insert(id.clone()));
 
         // Validate IDs
         let mut invalid_ids = Vec::new();
@@ -176,7 +176,7 @@ impl<I: ItemIdIterator> InlineConfig<I> {
         mut find_next_item: impl FnMut(BytePos) -> Option<Span>,
     ) -> Self {
         let mut cfg = Self::new();
-        let mut disabled_blocks = HashMap::new();
+        let mut disabled_blocks = HashMap::<I::Item, Vec<(BytePos, BytePos, Span)>>::new();
 
         let mut prev_sp = Span::DUMMY;
         for (sp, item) in items {
@@ -188,8 +188,10 @@ impl<I: ItemIdIterator> InlineConfig<I> {
             cfg.disable_item(sp, item, source_map, &mut disabled_blocks, &mut find_next_item);
         }
 
-        for (id, (_, lo, hi, directive)) in disabled_blocks {
-            cfg.disable(id, lo, hi, true, directive);
+        for (id, blocks) in disabled_blocks {
+            for (lo, hi, directive) in blocks {
+                cfg.disable(id.clone(), Some((lo, hi)), true, directive);
+            }
         }
 
         cfg
@@ -199,16 +201,27 @@ impl<I: ItemIdIterator> InlineConfig<I> {
         Self { disabled_ranges: HashMap::new() }
     }
 
-    fn disable_many(&mut self, ids: I, lo: BytePos, hi: BytePos, block: bool, directive: Span) {
+    fn disable_many(
+        &mut self,
+        ids: I,
+        range: Option<(BytePos, BytePos)>,
+        block: bool,
+        directive: Span,
+    ) {
         for id in ids.into_iter() {
-            self.disable(id, lo, hi, block, directive);
+            self.disable(id, range, block, directive);
         }
     }
 
-    fn disable(&mut self, id: I::Item, lo: BytePos, hi: BytePos, block: bool, directive: Span) {
+    fn disable(
+        &mut self,
+        id: I::Item,
+        range: Option<(BytePos, BytePos)>,
+        block: bool,
+        directive: Span,
+    ) {
         self.disabled_ranges.entry(id).or_default().push(DisabledRange {
-            lo,
-            hi,
+            range,
             block,
             directive,
             used: AtomicBool::new(false),
@@ -220,7 +233,7 @@ impl<I: ItemIdIterator> InlineConfig<I> {
         span: Span,
         item: InlineConfigItem<I>,
         source_map: &SourceMap,
-        disabled_blocks: &mut HashMap<I::Item, (usize, BytePos, BytePos, Span)>,
+        disabled_blocks: &mut HashMap<I::Item, Vec<(BytePos, BytePos, Span)>>,
         find_next_item: &mut dyn FnMut(BytePos) -> Option<Span>,
     ) {
         let result = source_map.span_to_source(span).unwrap();
@@ -231,9 +244,8 @@ impl<I: ItemIdIterator> InlineConfig<I> {
         #[allow(clippy::collapsible_match)]
         match item {
             InlineConfigItem::DisableNextItem(ids) => {
-                if let Some(next_item) = find_next_item(span.hi()) {
-                    self.disable_many(ids, next_item.lo(), next_item.hi(), false, span);
-                }
+                let range = find_next_item(span.hi()).map(|item| (item.lo(), item.hi()));
+                self.disable_many(ids, range, false, span);
             }
             InlineConfigItem::DisableLine(ids) => {
                 let start = src[..comment_range.start].rfind('\n').unwrap_or(0);
@@ -242,56 +254,47 @@ impl<I: ItemIdIterator> InlineConfig<I> {
                     .map_or(src.len(), |i| comment_range.end + i);
                 self.disable_many(
                     ids,
-                    file.absolute_position(RelativeBytePos::from_usize(start)),
-                    file.absolute_position(RelativeBytePos::from_usize(end)),
+                    Some((
+                        file.absolute_position(RelativeBytePos::from_usize(start)),
+                        file.absolute_position(RelativeBytePos::from_usize(end)),
+                    )),
                     false,
                     span,
                 );
             }
             InlineConfigItem::DisableNextLine(ids) => {
-                if let Some(offset) = src[comment_range.end..].find('\n') {
+                let range = src[comment_range.end..].find('\n').and_then(|offset| {
                     let next_line = comment_range.end + offset + 1;
-                    if next_line < src.len() {
+                    (next_line < src.len()).then(|| {
                         let end = src[next_line..].find('\n').map_or(src.len(), |i| next_line + i);
-                        self.disable_many(
-                            ids,
+                        (
                             file.absolute_position(RelativeBytePos::from_usize(
                                 comment_range.start,
                             )),
                             file.absolute_position(RelativeBytePos::from_usize(end)),
-                            false,
-                            span,
-                        );
-                    }
-                }
+                        )
+                    })
+                });
+                self.disable_many(ids, range, false, span);
             }
 
             InlineConfigItem::DisableStart(ids) => {
                 for id in ids.into_iter() {
-                    disabled_blocks.entry(id).and_modify(|(depth, _, _, _)| *depth += 1).or_insert(
-                        (
-                            1,
-                            span.lo(),
-                            // Use file end as fallback for unclosed blocks
-                            file.absolute_position(RelativeBytePos::from_usize(src.len())),
-                            span,
-                        ),
-                    );
+                    disabled_blocks.entry(id).or_default().push((
+                        span.lo(),
+                        // Use file end as fallback for unclosed blocks
+                        file.absolute_position(RelativeBytePos::from_usize(src.len())),
+                        span,
+                    ));
                 }
             }
             InlineConfigItem::DisableEnd(ids) => {
                 for id in ids.into_iter() {
-                    if let Entry::Occupied(mut entry) = disabled_blocks.entry(id) {
-                        let (depth, lo, _, directive) = entry.get_mut();
-                        *depth = depth.saturating_sub(1);
-
-                        if *depth == 0 {
-                            let lo = *lo;
-                            let directive = *directive;
-                            let (id, _) = entry.remove_entry();
-
-                            self.disable(id, lo, span.hi(), true, directive);
-                        }
+                    // An unmatched end closes no suppression and is ignored.
+                    if let Some(blocks) = disabled_blocks.get_mut(&id)
+                        && let Some((lo, _, directive)) = blocks.pop()
+                    {
+                        self.disable(id, Some((lo, span.hi())), true, directive);
                     }
                 }
             }
@@ -325,8 +328,9 @@ where
     /// Checks if a span is disabled for a specific id. Also checks against "all", which disables
     /// all rules.
     pub fn is_id_disabled(&self, span: Span, id: &str) -> bool {
-        self.is_id_disabled_inner(span, id)
-            || (id != "all" && self.is_id_disabled_inner(span, "all"))
+        let id_disabled = self.is_id_disabled_inner(span, id);
+        let all_disabled = id != "all" && self.is_id_disabled_inner(span, "all");
+        id_disabled || all_disabled
     }
 
     fn is_id_disabled_inner(&self, span: Span, id: &str) -> bool {
@@ -347,6 +351,9 @@ where
     /// filters and excluded lints do not produce false positives. Results are sorted by directive
     /// location for stable output.
     pub fn unused_suppressions(&self, active: &[&str]) -> Vec<(Span, String)> {
+        if active.is_empty() {
+            return Vec::new();
+        }
         let mut unused = Vec::new();
         for (id, ranges) in &self.disabled_ranges {
             let id = id.borrow();
@@ -427,8 +434,9 @@ mod tests {
     impl DisabledRange<usize> {
         fn to_byte_pos(&self) -> DisabledRange<BytePos> {
             DisabledRange::<BytePos> {
-                lo: BytePos::from_usize(self.lo),
-                hi: BytePos::from_usize(self.hi),
+                range: self
+                    .range
+                    .map(|(lo, hi)| (BytePos::from_usize(lo), BytePos::from_usize(hi))),
                 block: self.block,
                 directive: Span::DUMMY,
                 used: AtomicBool::new(false),
@@ -446,8 +454,7 @@ mod tests {
     #[test]
     fn test_disabled_range_includes() {
         let strict = DisabledRange {
-            lo: 10,
-            hi: 20,
+            range: Some((10, 20)),
             block: false,
             directive: Span::DUMMY,
             used: AtomicBool::new(false),
@@ -455,6 +462,50 @@ mod tests {
         assert!(strict.includes(10..20));
         assert!(strict.includes(12..18));
         assert!(!strict.includes(5..15)); // Partial overlap fails
+    }
+
+    #[test]
+    fn test_unused_suppressions_credits_all_overlapping_ranges() {
+        let mut config = InlineConfig::<Vec<String>>::new();
+        config.disable(
+            "lint1".to_string(),
+            Some((BytePos::from_usize(10), BytePos::from_usize(20))),
+            false,
+            Span::new(BytePos::from_usize(1), BytePos::from_usize(2)),
+        );
+        config.disable(
+            "all".to_string(),
+            Some((BytePos::from_usize(5), BytePos::from_usize(25))),
+            true,
+            Span::new(BytePos::from_usize(3), BytePos::from_usize(4)),
+        );
+        config.disable(
+            "lint1".to_string(),
+            Some((BytePos::from_usize(5), BytePos::from_usize(25))),
+            true,
+            Span::new(BytePos::from_usize(5), BytePos::from_usize(6)),
+        );
+
+        assert!(
+            config.is_id_disabled(
+                Span::new(BytePos::from_usize(12), BytePos::from_usize(18)),
+                "lint1"
+            )
+        );
+        assert!(config.unused_suppressions(&["lint1"]).is_empty());
+    }
+
+    #[test]
+    fn test_unused_suppressions_tracks_missing_targets_and_active_lints() {
+        let mut config = InlineConfig::<Vec<String>>::new();
+        let directive = Span::new(BytePos::from_usize(1), BytePos::from_usize(2));
+        config.disable_many(vec!["lint1".to_string(), "all".to_string()], None, false, directive);
+
+        assert!(config.unused_suppressions(&[]).is_empty());
+        assert_eq!(
+            config.unused_suppressions(&["lint1"]),
+            vec![(directive, "all".to_string()), (directive, "lint1".to_string())]
+        );
     }
 
     #[test]
@@ -497,6 +548,12 @@ mod tests {
         // Multiple lints with spaces
         match InlineConfigItem::parse("disable-end(lint1, lint2)", &lint_ids).unwrap() {
             InlineConfigItem::DisableEnd(lints) => assert_eq!(lints, vec!["lint1", "lint2"]),
+            _ => panic!("Wrong type"),
+        }
+
+        // Duplicate lint IDs are normalized within a directive.
+        match InlineConfigItem::parse("disable-line(lint1, lint1)", &lint_ids).unwrap() {
+            InlineConfigItem::DisableLine(lints) => assert_eq!(lints, vec!["lint1"]),
             _ => panic!("Wrong type"),
         }
 
