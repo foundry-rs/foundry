@@ -1406,11 +1406,16 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         }
     }
 
+    /// Handles a call, accounting for whether the executor will isolate it as a transaction.
+    ///
+    /// If `isolate_call` is true, the executor owns the transaction nonce increment when the call
+    /// proceeds to execution.
     pub fn call_with_executor(
         &mut self,
         ecx: &mut FoundryContextFor<'_, FEN>,
         call: &mut CallInputs,
         executor: &mut dyn CheatcodesExecutor<FEN>,
+        isolate_call: bool,
     ) -> Option<CallOutcome> {
         // Apply custom execution evm version.
         if let Some(spec_id) = self.execution_evm_version {
@@ -1767,8 +1772,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     });
                     debug!(target: "cheatcodes", tx=?self.broadcastable_transactions.back().unwrap(), "broadcastable call");
 
-                    // Explicitly increment nonce if calls are not isolated.
-                    if !self.config.evm_opts.isolate {
+                    // Isolated transactions increment the nonce during execution. Nested
+                    // broadcasts do not start a separate transaction and need this increment.
+                    if !isolate_call {
                         let prev = account.info.nonce;
                         account.info.nonce += 1;
                         debug!(target: "cheatcodes", address=%broadcast.new_origin, nonce=prev+1, prev, "incremented nonce");
@@ -2417,7 +2423,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         if self.is_storage_hook_callback(ecx, inputs) {
             return None;
         }
-        Self::call_with_executor(self, ecx, inputs, &mut TransparentCheatcodesExecutor)
+        Self::call_with_executor(self, ecx, inputs, &mut TransparentCheatcodesExecutor, false)
     }
 
     fn call_end(
