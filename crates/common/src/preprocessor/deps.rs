@@ -465,13 +465,14 @@ fn handle_call_expr(
         let name_loc = span_to_range(source_map, ty_new.span);
         let name = &src[name_loc];
 
-        // Calculate offset to remove named args, e.g. for an expression like
-        // `new Counter {value: 333} (  address(this))`
-        // the offset will be used to replace `{value: 333} (  ` with `(`
-        let call_args_offset = if call_options.is_some() && !call_args.is_empty() {
-            (call_args.span.lo() - ty_new.span.hi()).to_usize()
-        } else {
+        // Calculate the offset to remove call options and parentheses between the new type and
+        // constructor arguments. For example, in `new Counter {value: 333} (address(this))`, the
+        // offset is used to replace `{value: 333} (` with `(`. This also removes closing
+        // parentheses around the callee when no call options are present.
+        let call_args_offset = if call_args.is_empty() {
             0
+        } else {
+            (call_args.span.lo() - ty_new.span.hi()).to_usize()
         };
 
         let args_len = parent_expr.span.hi() - ty_new.span.hi();
@@ -484,7 +485,8 @@ fn handle_call_expr(
                 salt: named_arg(src, call_options, "salt", source_map),
                 try_stmt: None,
             },
-            loc: span_to_range(source_map, call_expr.span),
+            // The HIR callee excludes parentheses, so start at the full call expression.
+            loc: span_to_range(source_map, parent_expr.span.with_hi(call_expr.span.hi())),
             referenced_contract: contract_id,
         });
     }
