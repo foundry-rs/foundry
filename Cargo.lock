@@ -1276,6 +1276,7 @@ dependencies = [
  "ethereum_ssz",
  "eyre",
  "fdlimit",
+ "figment2",
  "flate2",
  "foundry-cli",
  "foundry-common",

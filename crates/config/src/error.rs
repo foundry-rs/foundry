@@ -1,8 +1,13 @@
 //! error handling and solc error codes
 use alloy_primitives::map::HashSet;
-use figment::providers::{Format, Toml};
+use figment::{
+    error::Kind,
+    providers::{Format, Toml},
+};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{error::Error, fmt, str::FromStr};
+
+pub(crate) const UNKNOWN_CONFIG_KEY_EXPECTED: &[&str] = &["known Foundry configuration key"];
 
 /// Represents a failed attempt to extract `Config` from a `Figment`
 #[derive(Clone, PartialEq)]
@@ -15,6 +20,13 @@ impl ExtractConfigError {
     /// Wraps the figment error.
     pub const fn new(error: figment::Error) -> Self {
         Self { error }
+    }
+
+    /// Returns whether this error reports unknown keys in a Foundry TOML file.
+    pub fn contains_unknown_keys(&self) -> bool {
+        self.error.clone().into_iter().any(|err| {
+            matches!(err.kind, Kind::UnknownField(_, expected) if expected == UNKNOWN_CONFIG_KEY_EXPECTED)
+        })
     }
 }
 
@@ -70,7 +82,13 @@ pub enum FoundryConfigError {
 impl fmt::Display for FoundryConfigError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let fmt_err = |err: &figment::Error, f: &mut fmt::Formatter<'_>| {
-            write!(f, "{err}")?;
+            if let Kind::UnknownField(message, expected) = &err.kind
+                && *expected == UNKNOWN_CONFIG_KEY_EXPECTED
+            {
+                f.write_str(message)?;
+            } else {
+                write!(f, "{err}")?;
+            }
             if !err.path.is_empty() {
                 // the path will contain the setting value like `["etherscan_api_key"]`
                 write!(f, " for setting `{}`", err.path.join("."))?;

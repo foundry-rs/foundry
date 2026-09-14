@@ -1,3 +1,4 @@
+use super::strict::{StrictValidationError, validate_toml_keys_classified};
 use crate::{Config, extend, utils};
 use figment::{
     Error, Figment, Metadata, Profile, Provider,
@@ -56,7 +57,27 @@ pub(crate) struct TomlFileProvider {
     env_var: Option<&'static str>,
     env_val: OnceCell<Option<String>>,
     default: PathBuf,
-    cache: OnceCell<Result<Map<Profile, Dict>, Error>>,
+    cache: OnceCell<Result<Map<Profile, Dict>, TomlFileProviderError>>,
+}
+
+#[derive(Clone)]
+pub(crate) enum TomlFileProviderError {
+    Provider(Error),
+    UnknownKeys(Error),
+}
+
+impl TomlFileProviderError {
+    fn into_error(self) -> Error {
+        match self {
+            Self::Provider(err) | Self::UnknownKeys(err) => err,
+        }
+    }
+}
+
+impl From<Error> for TomlFileProviderError {
+    fn from(err: Error) -> Self {
+        Self::Provider(err)
+    }
 }
 
 impl TomlFileProvider {
@@ -83,31 +104,42 @@ impl TomlFileProvider {
     }
 
     /// Reads and processes the TOML configuration file, handling inheritance if configured.
-    fn read(&self) -> Result<Map<Profile, Dict>, Error> {
+    pub(crate) fn data_classified(&self) -> Result<Map<Profile, Dict>, TomlFileProviderError> {
+        self.cache.get_or_init(|| self.read()).clone()
+    }
+
+    fn read(&self) -> Result<Map<Profile, Dict>, TomlFileProviderError> {
         use serde::de::Error as _;
 
         // Get the config file path and validate it exists
         let local_path = self.file();
         if !local_path.exists() {
             if let Some(file) = self.env_val() {
-                return Err(Error::custom(format!(
+                return Err(TomlFileProviderError::Provider(Error::custom(format!(
                     "Config file `{}` set in env var `{}` does not exist",
                     file,
                     self.env_var.unwrap()
-                )));
+                ))));
             }
             return Ok(Map::new());
         }
 
-        // Create a provider for the local config file
-        let local_provider = Toml::file(local_path.clone()).nested();
-
         // Parse the local config to check for extends field
         let local_path_str = local_path.to_string_lossy();
-        let local_content = std::fs::read_to_string(&local_path)
-            .map_err(|e| Error::custom(e.to_string()).with_path(&local_path_str))?;
-        let partial_config: extend::ExtendsPartialConfig = toml::from_str(&local_content)
-            .map_err(|e| Error::custom(e.to_string()).with_path(&local_path_str))?;
+        let local_content = std::fs::read_to_string(&local_path).map_err(|e| {
+            TomlFileProviderError::Provider(Error::custom(e.to_string()).with_path(&local_path_str))
+        })?;
+        validate_toml_keys_classified(&local_content, &local_path).map_err(|err| match err {
+            StrictValidationError::Provider(err) => TomlFileProviderError::Provider(err),
+            StrictValidationError::UnknownKeys(err) => TomlFileProviderError::UnknownKeys(err),
+        })?;
+        let local_provider = Toml::string(&local_content).nested();
+        let partial_config: extend::ExtendsPartialConfig =
+            toml::from_str(&local_content).map_err(|e| {
+                TomlFileProviderError::Provider(
+                    Error::custom(e.to_string()).with_path(&local_path_str),
+                )
+            })?;
 
         // Check if the currently active profile has an 'extends' field
         let selected_profile = Config::selected_profile();
@@ -128,21 +160,22 @@ impl TomlFileProvider {
                 ))
             })?;
 
+            let preflight_base_path = local_dir.join(&relative_base_path);
             let base_path =
-                foundry_compilers::utils::canonicalize(local_dir.join(&relative_base_path))
-                    .map_err(|e| {
-                        Error::custom(format!(
-                            "Failed to resolve inherited config path: {}: {e}",
-                            relative_base_path.display()
-                        ))
-                    })?;
+                foundry_compilers::utils::canonicalize(&preflight_base_path).map_err(|e| {
+                    Error::custom(format!(
+                        "Failed to resolve inherited config path: {}: {e}",
+                        relative_base_path.display()
+                    ))
+                })?;
 
             // Validate the base config file exists
             if !base_path.is_file() {
                 return Err(Error::custom(format!(
                     "Inherited config file does not exist or is not a file: {}",
                     base_path.display()
-                )));
+                ))
+                .into());
             }
 
             // Prevent self-inheritance which would cause infinite recursion
@@ -151,13 +184,21 @@ impl TomlFileProvider {
                 return Err(Error::custom(format!(
                     "Config file {} cannot inherit from itself.",
                     local_path.display()
-                )));
+                ))
+                .into());
             }
 
             // Parse the base config to check for nested inheritance
             let base_path_str = base_path.to_string_lossy();
-            let base_content = std::fs::read_to_string(&base_path)
-                .map_err(|e| Error::custom(e.to_string()).with_path(&base_path_str))?;
+            let base_content = std::fs::read_to_string(&base_path).map_err(|e| {
+                TomlFileProviderError::Provider(
+                    Error::custom(e.to_string()).with_path(&base_path_str),
+                )
+            })?;
+            validate_toml_keys_classified(&base_content, &base_path).map_err(|err| match err {
+                StrictValidationError::Provider(err) => TomlFileProviderError::Provider(err),
+                StrictValidationError::UnknownKeys(err) => TomlFileProviderError::UnknownKeys(err),
+            })?;
             let base_partial: extend::ExtendsPartialConfig = toml::from_str(&base_content)
                 .map_err(|e| Error::custom(e.to_string()).with_path(&base_path_str))?;
 
@@ -176,14 +217,15 @@ impl TomlFileProvider {
                 return Err(Error::custom(format!(
                     "Nested inheritance is not allowed. Base file '{}' cannot have an 'extends' field in profile '{selected_profile}'.",
                     base_path.display()
-                )));
+                ))
+                .into());
             }
 
             // Normalize standalone sections before merging so equivalent profile-qualified values
             // have the same shape across inherited files.
             let base_provider = NormalizeSymbolicProvider::new(
                 NormalizeTracingProvider::new(
-                    Toml::file(base_path).nested().legacy_labels(),
+                    Toml::string(&base_content).nested().legacy_labels(),
                     selected_profile.clone(),
                 ),
                 selected_profile.clone(),
@@ -203,13 +245,21 @@ impl TomlFileProvider {
                     // - Arrays are concatenated (base elements + local elements)
                     // - Other values are replaced (local values override base values)
                     // - The extends field is preserved in the final configuration
-                    Figment::new().merge(base_provider).admerge(local_provider).data()
+                    Figment::new()
+                        .merge(base_provider)
+                        .admerge(local_provider)
+                        .data()
+                        .map_err(Into::into)
                 }
                 extend::ExtendStrategy::ReplaceArrays => {
                     // Using 'merge' strategy:
                     // - Arrays are replaced entirely (local arrays replace base arrays)
                     // - Other values are replaced (local values override base values)
-                    Figment::new().merge(base_provider).merge(local_provider).data()
+                    Figment::new()
+                        .merge(base_provider)
+                        .merge(local_provider)
+                        .data()
+                        .map_err(Into::into)
                 }
                 extend::ExtendStrategy::NoCollision => {
                     // Check for key collisions between base and local configs
@@ -239,18 +289,23 @@ impl TomlFileProvider {
                                 return Err(Error::custom(format!(
                                     "Key collision detected in profile '{profile_str}' when extending '{extends_path}'. \
                                     Conflicting keys: {collisions:?}. Use 'extends.strategy' or 'extends_strategy' to specify how to handle conflicts."
-                                )));
+                                ))
+                                .into());
                             }
                         }
                     }
 
                     // Safe to merge the configs without collisions
-                    Figment::new().merge(base_provider).merge(local_provider).data()
+                    Figment::new()
+                        .merge(base_provider)
+                        .merge(local_provider)
+                        .data()
+                        .map_err(Into::into)
                 }
             }
         } else {
             // No inheritance - return the local config as-is
-            local_provider.data()
+            local_provider.data().map_err(Into::into)
         }
     }
 }
@@ -380,7 +435,7 @@ impl Provider for TomlFileProvider {
     }
 
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
-        self.cache.get_or_init(|| self.read()).clone()
+        self.data_classified().map_err(TomlFileProviderError::into_error)
     }
 }
 

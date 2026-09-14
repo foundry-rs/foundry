@@ -8,3 +8,5 @@ pub use remappings::*;
 
 mod warnings;
 pub use warnings::*;
+
+mod strict;

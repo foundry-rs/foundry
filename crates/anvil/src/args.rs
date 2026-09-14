@@ -11,7 +11,7 @@ pub fn run() -> Result<()> {
 
     let mut args = Anvil::parse();
     args.global.init()?;
-    args.node.evm.resolve_rpc_alias();
+    args.node.evm.resolve_rpc_alias()?;
 
     run_command(args)
 }

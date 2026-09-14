@@ -1,6 +1,7 @@
 use crate::{
-    Config, FigmentProviders, foundry_toml_dir_entries, remappings_from_env_var,
-    remappings_from_newline,
+    Config, FigmentProviders, foundry_toml_dir_entries,
+    providers::{TomlFileProvider, TomlFileProviderError},
+    remappings_from_env_var, remappings_from_newline,
 };
 use figment::{
     Error, Figment, Metadata, Profile, Provider,
@@ -531,7 +532,14 @@ impl RemappingsProvider<'_> {
 }
 
 fn load_nested_config(root: &Path) -> Result<Option<CachedNestedConfig>, Error> {
-    let figment = Config::with_root(root).to_figment(FigmentProviders::Cast);
+    let provider = TomlFileProvider::new(None, root.join(Config::FILE_NAME));
+    match provider.data_classified() {
+        Ok(_) => {}
+        Err(TomlFileProviderError::UnknownKeys(err)) => return Err(err),
+        Err(TomlFileProviderError::Provider(_)) => return Ok(None),
+    }
+    let figment =
+        Config::with_root(root).to_figment_with_provider(FigmentProviders::Cast, provider);
     let Ok(config) = Config::from_figment_fallback(figment) else { return Ok(None) };
     let src = config.src.clone();
     let libs = config.libs.clone();

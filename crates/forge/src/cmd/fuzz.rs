@@ -263,7 +263,7 @@ pub struct FuzzShowArgs {
 
 impl FuzzShowArgs {
     fn run(&self) -> Result<()> {
-        let decoder = CorpusDecoder::load();
+        let decoder = CorpusDecoder::load()?;
         let entries = read_entries(&self.corpus, self.limit, &decoder)?;
         match self.format {
             CorpusShowFormat::Human => {
@@ -1151,8 +1151,12 @@ struct CorpusDecoder {
 }
 
 impl CorpusDecoder {
-    fn load() -> Self {
-        Config::load().ok().map(|config| Self::from_artifacts(&config.out)).unwrap_or_default()
+    fn load() -> Result<Self> {
+        match Config::load() {
+            Ok(config) => Ok(Self::from_artifacts(&config.out)),
+            Err(err) if err.contains_unknown_keys() => Err(err.into()),
+            Err(_) => Ok(Self::default()),
+        }
     }
 
     fn from_artifacts(out: &Path) -> Self {

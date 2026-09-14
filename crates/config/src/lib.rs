@@ -972,6 +972,16 @@ impl Config {
     /// This will merge various providers, such as env,toml,remappings into the figment if
     /// requested.
     pub fn to_figment(&self, providers: FigmentProviders) -> Figment {
+        let provider =
+            TomlFileProvider::new(Some("FOUNDRY_CONFIG"), self.root.join(Self::FILE_NAME));
+        self.to_figment_with_provider(providers, provider)
+    }
+
+    fn to_figment_with_provider(
+        &self,
+        providers: FigmentProviders,
+        local_provider: TomlFileProvider,
+    ) -> Figment {
         // Note that `Figment::from` here is a method on `Figment` rather than the `From` impl below
 
         if providers.is_none() {
@@ -992,11 +1002,7 @@ impl Config {
             );
         }
         // merge local foundry.toml file
-        figment = Self::merge_toml_provider(
-            figment,
-            TomlFileProvider::new(Some("FOUNDRY_CONFIG"), root.join(Self::FILE_NAME)),
-            profile.clone(),
-        );
+        figment = Self::merge_toml_provider(figment, local_provider, profile.clone());
 
         // merge environment variables
         figment = figment
@@ -3438,7 +3444,7 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r"
-                [foo.baz]
+                [external.foo.baz]
                 libs = ['node_modules', 'lib']
 
                 [profile.default]
@@ -3912,7 +3918,7 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_etherscan_with_versions() {
+    fn test_resolve_multiple_etherscan_entries() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "foundry.toml",
@@ -3920,8 +3926,8 @@ mod tests {
                 [profile.default]
 
                 [etherscan]
-                mainnet = { key = "FX42Z3BBJJEWXWGYV2X1CIPRSCN", api_version = "v2" }
-                moonbeam = { key = "${_CONFIG_ETHERSCAN_MOONBEAM}", api_version = "v1" }
+                mainnet = { key = "FX42Z3BBJJEWXWGYV2X1CIPRSCN" }
+                moonbeam = { key = "${_CONFIG_ETHERSCAN_MOONBEAM}" }
             "#,
             )?;
 
@@ -5668,27 +5674,36 @@ mod tests {
     }
 
     #[test]
-    fn test_implicit_profile_loads() {
+    fn legacy_default_profile_remains_supported() {
         figment::Jail::expect_with(|jail| {
-            jail.create_file(
-                "foundry.toml",
-                r"
-                [default]
-                src = 'my-src'
-                out = 'my-out'
-            ",
-            )?;
-            let loaded = Config::load().unwrap().sanitized();
-            assert_eq!(loaded.src.file_name().unwrap(), "my-src");
-            assert_eq!(loaded.out.file_name().unwrap(), "my-out");
+            jail.create_file("foundry.toml", "[default]\nsrc = 'my-src'\n")?;
+            let config = Config::load().unwrap().sanitized();
+            assert_eq!(config.src.file_name().unwrap(), "my-src");
             assert_eq!(
-                loaded.warnings,
+                config.warnings,
                 vec![Warning::UnknownSection {
                     unknown_section: Profile::new("default"),
                     source: Some("foundry.toml".into())
                 }]
             );
+            Ok(())
+        });
+    }
 
+    #[test]
+    fn legacy_non_default_profiles_remain_supported() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                "[default]\nsrc = 'default-src'\n[ci]\nsrc = 'ci-src'\n[release]\noptimizer = true\n",
+            )?;
+            jail.set_env("FOUNDRY_PROFILE", "ci");
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.src, PathBuf::from("ci-src"));
+            for profile in ["default", "ci", "release"] {
+                assert!(config.warnings.iter().any(|warning| matches!(warning, Warning::UnknownSection { unknown_section, .. } if unknown_section.as_str() == profile)));
+            }
             Ok(())
         });
     }
@@ -7547,7 +7562,7 @@ mod tests {
                     # engine and targets are inherited
 
                     [profile.default.optimizer_details]
-                    jumpdest_remover = true  # Adds new field
+                    jumpdestRemover = true  # Adds new field
                     # peephole and inliner are inherited
                     "#,
             )?;
@@ -7586,7 +7601,7 @@ mod tests {
             // optimizer_details table is actually merged, not replaced
             assert_eq!(config.optimizer_details.as_ref().unwrap().peephole, Some(true));
             assert_eq!(config.optimizer_details.as_ref().unwrap().inliner, Some(true));
-            assert_eq!(config.optimizer_details.as_ref().unwrap().jumpdest_remover, None);
+            assert_eq!(config.optimizer_details.as_ref().unwrap().jumpdest_remover, Some(true));
 
             Ok(())
         });
@@ -7704,16 +7719,16 @@ mod tests {
                     [profile.default.optimizer_details]
                     peephole = true
                     inliner = false
-                    jumpdest_remover = true
-                    order_literals = false
+                    jumpdestRemover = true
+                    orderLiterals = false
                     deduplicate = true
                     cse = true
-                    constant_optimizer = true
+                    constantOptimizer = true
                     yul = true
 
-                    [profile.default.optimizer_details.yul_details]
-                    stack_allocation = true
-                    optimizer_steps = "dhfoDgvulfnTUtnIf"
+                    [profile.default.optimizer_details.yulDetails]
+                    stackAllocation = true
+                    optimizerSteps = "dhfoDgvulfnTUtnIf"
                     "#,
             )?;
 
@@ -7744,18 +7759,17 @@ mod tests {
             let details = config.optimizer_details.as_ref().unwrap();
             assert_eq!(details.peephole, Some(true));
             assert_eq!(details.inliner, Some(true));
-            assert_eq!(details.jumpdest_remover, None);
-            assert_eq!(details.order_literals, None);
+            assert_eq!(details.jumpdest_remover, Some(true));
+            assert_eq!(details.order_literals, Some(false));
             assert_eq!(details.deduplicate, Some(true));
             assert_eq!(details.cse, Some(true));
-            assert_eq!(details.constant_optimizer, None);
+            assert_eq!(details.constant_optimizer, Some(true));
             assert_eq!(details.yul, Some(true));
 
             // Check yul details - inherited from base
-            if let Some(yul_details) = details.yul_details.as_ref() {
-                assert_eq!(yul_details.stack_allocation, Some(true));
-                assert_eq!(yul_details.optimizer_steps, Some("dhfoDgvulfnTUtnIf".to_string()));
-            }
+            let yul_details = details.yul_details.as_ref().unwrap();
+            assert_eq!(yul_details.stack_allocation, Some(true));
+            assert_eq!(yul_details.optimizer_steps, Some("dhfoDgvulfnTUtnIf".to_string()));
 
             Ok(())
         });
@@ -8248,6 +8262,20 @@ mod tests {
     }
 
     #[test]
+    fn accepts_and_warns_on_deprecated_cancun_keys_in_all_profiles() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                "[profile.default]\ncancun = true\n[profile.ci]\ncancun = false\n",
+            )?;
+
+            let config = Config::load().unwrap();
+            assert!(config.warnings.iter().any(|warning| matches!(warning, Warning::DeprecatedKey { old, new } if old == "cancun" && new == "evm_version = Cancun")));
+            Ok(())
+        });
+    }
+
+    #[test]
     fn warns_on_deprecated_profile_names() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
@@ -8272,20 +8300,49 @@ mod tests {
     }
 
     #[test]
-    fn warns_on_unknown_keys_in_profile() {
+    fn rejects_unknown_keys_in_inactive_profile() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file("foundry.toml", "[profile.ci]\noptimizer_run = 123\n")?;
+            let err = Config::load().unwrap_err().to_string();
+            assert!(err.contains("profile.ci.optimizer_run"), "{err}");
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn accepts_case_insensitive_reserved_sections() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "foundry.toml",
-                r#"
-                [profile.default]
-                unknown_key_xyz = 123
-                "#,
+                "[FMT]\nline_length = 101\n[PROFILE.default]\noptimizer = true\n[EXTERNAL.custom_tool]\nanything = true\n",
             )?;
+            let config = Config::load().unwrap();
+            assert_eq!(config.fmt.line_length, 101);
+            assert_eq!(config.optimizer, Some(true));
+            Ok(())
+        });
+    }
 
-            let cfg = Config::load().unwrap();
-            assert!(cfg.warnings.iter().any(
-                |w| matches!(w, crate::Warning::UnknownKey { key, .. } if key == "unknown_key_xyz")
-            ));
+    #[test]
+    fn case_insensitive_sections_preserve_diagnostic_spelling() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file("foundry.toml", "[FMT]\nline_lenght = 101\n")?;
+            let err = Config::load().unwrap_err().to_string();
+            assert!(err.contains("FMT.line_lenght"), "{err}");
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn rejects_unknown_keys_in_inactive_global_profile() {
+        figment::Jail::expect_with(|jail| {
+            jail.set_env("HOME", jail.directory().display().to_string());
+            jail.create_dir(".foundry")?;
+            jail.create_file(".foundry/foundry.toml", "[profile.inactive]\noptimizer_run = 123\n")?;
+            jail.create_file("foundry.toml", "[profile.default]\noptimizer_runs = 200\n")?;
+            let err = Config::load().unwrap_err().to_string();
+            assert!(err.contains(".foundry/foundry.toml"), "{err}");
+            assert!(err.contains("profile.inactive.optimizer_run"), "{err}");
             Ok(())
         });
     }
@@ -8365,24 +8422,11 @@ mod tests {
 
     #[test]
     #[cfg(not(feature = "monad"))]
-    fn warns_for_monad_alias_without_monad_support() {
+    fn rejects_monad_alias_without_monad_support() {
         figment::Jail::expect_with(|jail| {
-            jail.create_file(
-                "foundry.toml",
-                r#"
-                [profile.default]
-                monad = true
-                "#,
-            )?;
-
-            let cfg = Config::load().unwrap();
-            assert!(
-                cfg.warnings
-                    .iter()
-                    .any(|w| matches!(w, crate::Warning::UnknownKey { key, .. } if key == "monad")),
-                "expected UnknownKey warning for `monad`, got: {:?}",
-                cfg.warnings
-            );
+            jail.create_file("foundry.toml", "[profile.default]\nmonad = true\n")?;
+            let err = Config::load().unwrap_err().to_string();
+            assert!(err.contains("profile.default.monad"), "{err}");
             Ok(())
         });
     }
@@ -8441,313 +8485,299 @@ mod tests {
     }
 
     #[test]
-    fn warns_on_unknown_keys_in_all_config_sections() {
+    fn rejects_unknown_keys_recursively() {
         figment::Jail::expect_with(|jail| {
-            jail.create_file(
-                "foundry.toml",
-                r#"
-                [profile.default]
-                src = "src"
-                unknown_profile_key = "should_warn"
-
-                # Standalone sections with unknown keys
-                [fmt]
-                line_length = 120
-                unknown_fmt_key = "should_warn"
-
-                [lint]
-                severity = ["high"]
-                unknown_lint_key = "should_warn"
-
-                [doc]
-                out = "docs"
-                unknown_doc_key = "should_warn"
-
-                [fuzz]
-                runs = 256
-                unknown_fuzz_key = "should_warn"
-
-                [invariant]
-                runs = 256
-                unknown_invariant_key = "should_warn"
-
-                [symbolic]
-                enabled = true
-                depth = 128
-                unknown_symbolic_key = "should_warn"
-
-                [mutation]
-                unknown_mutation_key = "should_warn"
-
-                [vyper]
-                unknown_vyper_key = "should_warn"
-
-                [bind_json]
-                out = "bindings.sol"
-                unknown_bind_json_key = "should_warn"
-
-                # Nested profile sections with unknown keys
-                [profile.default.fmt]
-                line_length = 100
-                unknown_nested_fmt_key = "should_warn"
-
-                [profile.default.lint]
-                severity = ["low"]
-                unknown_nested_lint_key = "should_warn"
-
-                [profile.default.doc]
-                out = "documentation"
-                unknown_nested_doc_key = "should_warn"
-
-                [profile.default.fuzz]
-                runs = 512
-                unknown_nested_fuzz_key = "should_warn"
-
-                [profile.default.invariant]
-                runs = 512
-                unknown_nested_invariant_key = "should_warn"
-
-                [profile.default.symbolic]
-                max_paths = 512
-                unknown_nested_symbolic_key = "should_warn"
-
-                [profile.default.mutation]
-                unknown_nested_mutation_key = "should_warn"
-
-                [profile.default.vyper]
-                unknown_nested_vyper_key = "should_warn"
-
-                [profile.default.bind_json]
-                out = "nested_bindings.sol"
-                unknown_nested_bind_json_key = "should_warn"
-
-                # Array sections with unknown keys
-                [[profile.default.compilation_restrictions]]
-                paths = "src/*.sol"
-                unknown_compilation_key = "should_warn"
-
-                [[profile.default.additional_compiler_profiles]]
-                name = "via-ir"
-                via_ir = true
-                unknown_compiler_profile_key = "should_warn"
-                "#,
-            )?;
-
-            let cfg = Config::load().unwrap();
-
-            // Expected warnings for profile-level unknown key
-            assert!(
-                cfg.warnings.iter().any(|w| matches!(
-                    w,
-                    crate::Warning::UnknownKey { key, .. } if key == "unknown_profile_key"
-                )),
-                "Expected warning for 'unknown_profile_key' in profile, got: {:?}",
-                cfg.warnings
-            );
-
-            // Expected warnings for standalone sections
-            let standalone_expected = [
-                ("unknown_fmt_key", "fmt"),
-                ("unknown_lint_key", "lint"),
-                ("unknown_doc_key", "doc"),
-                ("unknown_fuzz_key", "fuzz"),
-                ("unknown_invariant_key", "invariant"),
-                ("unknown_symbolic_key", "symbolic"),
-                ("unknown_mutation_key", "mutation"),
-                ("unknown_vyper_key", "vyper"),
-                ("unknown_bind_json_key", "bind_json"),
-            ];
-
-            for (expected_key, expected_section) in standalone_expected {
-                assert!(
-                    cfg.warnings.iter().any(|w| matches!(
-                        w,
-                        crate::Warning::UnknownSectionKey { key, section, .. }
-                        if key == expected_key && section == expected_section
-                    )),
-                    "Expected warning for '{}' in standalone section '{}', got: {:?}",
-                    expected_key,
-                    expected_section,
-                    cfg.warnings
-                );
+            for section in [
+                "fmt",
+                "lint",
+                "doc",
+                "fuzz",
+                "invariant",
+                "symbolic",
+                "mutation",
+                "vyper",
+                "bind_json",
+                "coverage",
+                "tracing",
+            ] {
+                for path in [section.to_string(), format!("profile.default.{section}")] {
+                    jail.create_file(
+                        "foundry.toml",
+                        &format!("[{path}]\nunknown_option = true\n"),
+                    )?;
+                    let err = Config::load().unwrap_err().to_string();
+                    assert!(err.contains(&format!("{path}.unknown_option")), "{err}");
+                }
             }
-
-            // Expected warnings for nested profile sections
-            let nested_expected = [
-                ("unknown_nested_fmt_key", "fmt"),
-                ("unknown_nested_lint_key", "lint"),
-                ("unknown_nested_doc_key", "doc"),
-                ("unknown_nested_fuzz_key", "fuzz"),
-                ("unknown_nested_invariant_key", "invariant"),
-                ("unknown_nested_symbolic_key", "symbolic"),
-                ("unknown_nested_mutation_key", "mutation"),
-                ("unknown_nested_vyper_key", "vyper"),
-                ("unknown_nested_bind_json_key", "bind_json"),
-            ];
-
-            for (expected_key, expected_section) in nested_expected {
-                assert!(
-                    cfg.warnings.iter().any(|w| matches!(
-                        w,
-                        crate::Warning::UnknownSectionKey { key, section, .. }
-                        if key == expected_key && section == expected_section
-                    )),
-                    "Expected warning for '{}' in nested section '{}', got: {:?}",
-                    expected_key,
-                    expected_section,
-                    cfg.warnings
-                );
+            for (toml, path) in [
+                (
+                    "[profile.default.optimizer_details.yulDetails]\noptimizerStep = 'u'",
+                    "profile.default.optimizer_details.yulDetails.optimizerStep",
+                ),
+                (
+                    "[[profile.default.compilation_restrictions]]\npaths = 'src/**'\noptimiser_runs = 200",
+                    "profile.default.compilation_restrictions[0].optimiser_runs",
+                ),
+                (
+                    "[[profile.default.additional_compiler_profiles]]\nname = 'foo'\nvia_irr = true",
+                    "profile.default.additional_compiler_profiles[0].via_irr",
+                ),
+                (
+                    "[rpc_endpoints.custom]\nurl = 'http://localhost:8545'\nretreis = 3",
+                    "rpc_endpoints.custom.retreis",
+                ),
+                (
+                    "[dependencies.custom]\nversion = '1'\nrevison = 'abc'",
+                    "dependencies.custom.revison",
+                ),
+                (
+                    "[profile.default.vyper.venom]\ndisable_sccpp = true",
+                    "profile.default.vyper.venom.disable_sccpp",
+                ),
+            ] {
+                jail.create_file("foundry.toml", toml)?;
+                let err = Config::load().unwrap_err().to_string();
+                assert!(err.contains(path), "{err}");
             }
-
-            // Expected warnings for array item sections
-            let array_expected = [
-                ("unknown_compilation_key", "compilation_restrictions"),
-                ("unknown_compiler_profile_key", "additional_compiler_profiles"),
-            ];
-
-            for (expected_key, expected_section) in array_expected {
-                assert!(
-                    cfg.warnings.iter().any(|w| matches!(
-                        w,
-                        crate::Warning::UnknownSectionKey { key, section, .. }
-                        if key == expected_key && section == expected_section
-                    )),
-                    "Expected warning for '{}' in array section '{}', got: {:?}",
-                    expected_key,
-                    expected_section,
-                    cfg.warnings
-                );
-            }
-
-            // Verify total count of unknown key warnings
-            let unknown_key_warnings: Vec<_> = cfg
-                .warnings
-                .iter()
-                .filter(|w| {
-                    matches!(w, crate::Warning::UnknownKey { .. })
-                        || matches!(w, crate::Warning::UnknownSectionKey { .. })
-                })
-                .collect();
-
-            // 1 profile key + 9 standalone + 9 nested + 2 array = 21 total
-            assert_eq!(
-                unknown_key_warnings.len(),
-                21,
-                "Expected 21 unknown key warnings (1 profile + 9 standalone + 9 nested + 2 array), got {}: {:?}",
-                unknown_key_warnings.len(),
-                unknown_key_warnings
-            );
-
             Ok(())
         });
     }
 
     #[test]
-    fn warns_on_unknown_keys_in_extended_config() {
+    fn rejects_unknown_keys_in_dependency_configs() {
         figment::Jail::expect_with(|jail| {
-            // Create base config with unknown keys
+            jail.create_dir("lib/dependency")?;
+            jail.create_file("foundry.toml", "[profile.default]\nlibs = ['lib']\n")?;
+            jail.create_file("lib/dependency/foundry.toml", "[profile.default]\nremaping = []\n")?;
+            let err = Config::load().unwrap_err().to_string();
+            assert!(err.contains("dependency/foundry.toml"), "{err}");
+            assert!(err.contains("profile.default.remaping"), "{err}");
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn rejects_unknown_keys_in_legacy_dependency_profiles() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_dir("lib/dependency")?;
+            jail.create_file("foundry.toml", "[profile.default]\nlibs = ['lib']\n")?;
+            jail.create_file("lib/dependency/foundry.toml", "[ci]\nremaping = []\n")?;
+            let err = Config::load().unwrap_err().to_string();
+            assert!(err.contains("dependency/foundry.toml"), "{err}");
+            assert!(err.contains("ci.remaping"), "{err}");
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn dependency_configs_ignore_project_config_override() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_dir("lib/dependency")?;
+            jail.create_file("project.toml", "[profile.default]\nlibs = ['lib']\n")?;
             jail.create_file(
-                "base.toml",
-                r#"
-                [profile.default]
-                optimizer_runs = 800
-                unknown_base_profile_key = "should_warn"
+                "lib/dependency/foundry.toml",
+                "[profile.default]\ndependency_typo = true\n",
+            )?;
+            jail.set_env("FOUNDRY_CONFIG", "project.toml");
 
-                [lint]
-                severity = ["high"]
-                unknown_base_lint_key = "should_warn"
+            let err = Config::load().unwrap_err().to_string();
+            assert!(err.contains("lib/dependency/foundry.toml"), "{err}");
+            assert!(err.contains("profile.default.dependency_typo"), "{err}");
+            Ok(())
+        });
+    }
 
-                [fmt]
-                line_length = 100
-                unknown_base_fmt_key = "should_warn"
-                "#,
+    #[test]
+    fn skips_dependency_config_on_unrelated_extraction_error() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_dir("lib/dependency/src")?;
+            jail.create_file("foundry.toml", "[profile.default]\nlibs = ['lib']\n")?;
+            jail.create_file(
+                "lib/dependency/foundry.toml",
+                "[profile.default]\noptimizer_runs = 4294967296\nremappings = ['from-config/=vendor/']\n",
             )?;
 
-            // Create local config that extends base with its own unknown keys
+            let config = Config::load().unwrap();
+            assert!(
+                config.remappings.iter().all(|remapping| remapping.name != "from-config/"),
+                "dependency config should have been skipped: {:?}",
+                config.remappings
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn skips_dependency_config_with_invalid_extends() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_dir("lib/dependency/src")?;
+            jail.create_file("foundry.toml", "[profile.default]\nlibs = ['lib']\n")?;
+            jail.create_file(
+                "lib/dependency/foundry.toml",
+                "[profile.default]\nextends = 1\nremappings = ['from-config/=vendor/']\n",
+            )?;
+
+            let config = Config::load().unwrap();
+            assert!(
+                config.remappings.iter().all(|remapping| remapping.name != "from-config/"),
+                "dependency config should have been skipped: {:?}",
+                config.remappings
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn skips_dependency_config_with_invalid_utf8() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_dir("lib/dependency/src")?;
+            jail.create_file("foundry.toml", "[profile.default]\nlibs = ['lib']\n")?;
+            fs::write("lib/dependency/foundry.toml", [0xff, 0xfe])
+                .map_err(|err| err.to_string())?;
+
+            Config::load().unwrap();
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn skips_dependency_config_with_malformed_inherited_toml() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_dir("lib/dependency/src")?;
+            jail.create_file("foundry.toml", "[profile.default]\nlibs = ['lib']\n")?;
+            jail.create_file(
+                "lib/dependency/foundry.toml",
+                "[profile.default]\nextends = 'base.toml'\n",
+            )?;
+            jail.create_file("lib/dependency/base.toml", "[profile.default\nsrc = 'src'")?;
+
+            Config::load().unwrap();
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn skips_dependency_config_with_invalid_extends_strategy() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_dir("lib/dependency/src")?;
+            jail.create_file("foundry.toml", "[profile.default]\nlibs = ['lib']\n")?;
+            jail.create_file(
+                "lib/dependency/foundry.toml",
+                "[profile.default]\nextends = { path = 'base.toml', strategy = 'invalid' }\n",
+            )?;
+
+            Config::load().unwrap();
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn rejects_unknown_keys_in_inherited_dependency_profiles_before_array_replacement() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_dir("lib/dependency/src")?;
+            jail.create_file("foundry.toml", "[profile.default]\nlibs = ['lib']\n")?;
+            jail.create_file(
+                "lib/dependency/foundry.toml",
+                "[profile.default]\nextends = { path = 'base.toml', strategy = 'replace-arrays' }\nadditional_compiler_profiles = []\n",
+            )?;
+            jail.create_file(
+                "lib/dependency/base.toml",
+                "[profile.ci]\noptimiser_runs = 1\n[[profile.default.additional_compiler_profiles]]\nname = 'base'\nvia_irr = true\n",
+            )?;
+
+            let err = Config::load().unwrap_err().to_string();
+            assert!(err.contains("lib/dependency/base.toml"), "{err}");
+            assert!(err.contains("profile.ci.optimiser_runs"), "{err}");
+            assert!(
+                err.contains("profile.default.additional_compiler_profiles[0].via_irr"),
+                "{err}"
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn rejects_unknown_keys_before_inheritance_replaces_them() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file("base.toml", "[[profile.default.additional_compiler_profiles]]\nname = 'base'\noptimiser = true\n")?;
             jail.create_file(
                 "foundry.toml",
                 r#"
                 [profile.default]
-                extends = "base.toml"
-                src = "src"
-                unknown_local_profile_key = "should_warn"
+                extends = { path = "base.toml", strategy = "replace-arrays" }
+                additional_compiler_profiles = []
+            "#,
+            )?;
+            let err = Config::load().unwrap_err().to_string();
+            assert!(err.contains("base.toml"), "{err}");
+            assert!(
+                err.contains("profile.default.additional_compiler_profiles[0].optimiser"),
+                "{err}"
+            );
+            Ok(())
+        });
+    }
 
-                [lint]
-                unknown_local_lint_key = "should_warn"
-
-                [fuzz]
-                runs = 512
-                unknown_local_fuzz_key = "should_warn"
-
-                [[profile.default.compilation_restrictions]]
-                paths = "src/*.sol"
-                unknown_local_restriction_key = "should_warn"
-                "#,
+    #[test]
+    fn ignores_unavailable_inactive_inherited_path() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                "[profile.default]\nsrc = 'src'\n[profile.ci]\nextends = 'missing.toml'\n",
             )?;
 
-            let cfg = Config::load().unwrap();
+            let config = Config::load().unwrap();
+            assert_eq!(config.src, PathBuf::from("src"));
+            Ok(())
+        });
+    }
 
-            // Verify base config values are inherited
-            assert_eq!(cfg.optimizer_runs, Some(800));
+    #[test]
+    fn dependency_config_keeps_settings_with_unavailable_inactive_inherited_path() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_dir("lib/dependency/src")?;
+            jail.create_file("foundry.toml", "[profile.default]\nlibs = ['lib']\n")?;
+            jail.create_file(
+                "lib/dependency/foundry.toml",
+                "[profile.default]\nsrc = 'src'\nremappings = ['from-config/=vendor/']\n[profile.ci]\nextends = 'missing.toml'\n",
+            )?;
 
-            // Unknown keys from both base and local configs should be detected.
-            // Note: Due to how figment merges configs before validation, the source
-            // will show the local config file for all warnings. This is a known
-            // limitation - proper source attribution for extended configs would
-            // require validating each file before the merge.
-
-            // Verify all expected unknown keys are detected
-            let expected_unknown_keys = ["unknown_base_profile_key", "unknown_local_profile_key"];
-            for expected_key in expected_unknown_keys {
-                assert!(
-                    cfg.warnings.iter().any(|w| matches!(
-                        w,
-                        crate::Warning::UnknownKey { key, .. } if key == expected_key
-                    )),
-                    "Expected warning for '{}', got: {:?}",
-                    expected_key,
-                    cfg.warnings
-                );
-            }
-
-            let expected_section_keys = [
-                ("unknown_base_lint_key", "lint"),
-                ("unknown_base_fmt_key", "fmt"),
-                ("unknown_local_lint_key", "lint"),
-                ("unknown_local_fuzz_key", "fuzz"),
-                ("unknown_local_restriction_key", "compilation_restrictions"),
-            ];
-            for (expected_key, expected_section) in expected_section_keys {
-                assert!(
-                    cfg.warnings.iter().any(|w| matches!(
-                        w,
-                        crate::Warning::UnknownSectionKey { key, section, .. }
-                        if key == expected_key && section == expected_section
-                    )),
-                    "Expected warning for '{}' in section '{}', got: {:?}",
-                    expected_key,
-                    expected_section,
-                    cfg.warnings
-                );
-            }
-
-            // Verify total: 2 profile keys + 5 section keys = 7 warnings
-            let unknown_warnings: Vec<_> = cfg
-                .warnings
-                .iter()
-                .filter(|w| {
-                    matches!(w, crate::Warning::UnknownKey { .. })
-                        || matches!(w, crate::Warning::UnknownSectionKey { .. })
-                })
-                .collect();
-            assert_eq!(
-                unknown_warnings.len(),
-                7,
-                "Expected 7 unknown key warnings, got {}: {:?}",
-                unknown_warnings.len(),
-                unknown_warnings
+            let config = Config::load().unwrap();
+            assert!(
+                config.remappings.iter().any(|remapping| remapping.name == "from-config/"),
+                "dependency config remapping was discarded: {:?}",
+                config.remappings
             );
+            Ok(())
+        });
+    }
 
+    #[test]
+    fn attributes_inherited_malformed_toml_to_its_path() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file("base.toml", "[profile.default\nsrc = 'src'\n")?;
+            jail.create_file("foundry.toml", "[profile.default]\nextends = 'base.toml'\n")?;
+
+            let err = Config::load().unwrap_err().to_string();
+            assert!(err.contains("base.toml"), "{err}");
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn figment_builder_reuses_preclassified_provider_cache() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file("base.toml", "[profile.default]\nsrc = 'cached-src'\n")?;
+            jail.create_file("foundry.toml", "[profile.default]\nextends = 'base.toml'\n")?;
+            let provider = TomlFileProvider::new(None, PathBuf::from("foundry.toml"));
+            assert!(provider.data_classified().is_ok());
+            jail.create_file("foundry.toml", "[profile.default]\nunknown_key = true\n")?;
+            jail.create_file("base.toml", "[profile.default]\nsrc = 'changed-src'\n")?;
+
+            let figment =
+                Config::default().to_figment_with_provider(FigmentProviders::Cast, provider);
+            let config = Config::from_figment(figment).unwrap();
+            assert_eq!(config.src, PathBuf::from("cached-src"));
             Ok(())
         });
     }
@@ -8911,31 +8941,11 @@ mod tests {
 
     // Test for issue #13316: unknown vyper keys should still warn
     #[test]
-    fn warns_on_unknown_vyper_keys() {
+    fn rejects_unknown_vyper_keys() {
         figment::Jail::expect_with(|jail| {
-            jail.create_file(
-                "foundry.toml",
-                r#"
-                [profile.default]
-                src = "src"
-
-                [vyper]
-                optimize = "gas"
-                unknown_vyper_option = true
-                "#,
-            )?;
-
-            let cfg = Config::load().unwrap();
-            assert!(
-                cfg.warnings.iter().any(|w| matches!(
-                    w,
-                    crate::Warning::UnknownSectionKey { key, section, .. }
-                    if key == "unknown_vyper_option" && section == "vyper"
-                )),
-                "Unknown vyper key should trigger warning, got: {:?}",
-                cfg.warnings
-            );
-
+            jail.create_file("foundry.toml", "[vyper]\nunknown_vyper_option = true\n")?;
+            let err = Config::load().unwrap_err().to_string();
+            assert!(err.contains("vyper.unknown_vyper_option"), "{err}");
             Ok(())
         });
     }

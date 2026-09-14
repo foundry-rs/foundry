@@ -405,6 +405,18 @@ impl Serialize for NetworkConfigs {
 }
 
 impl NetworkConfigs {
+    /// Returns whether `key` is accepted when deserializing a flattened network configuration.
+    pub fn is_config_key(key: &str) -> bool {
+        match key {
+            "network" | "celo" | "tempo" | "bypass_prevrandao" => true,
+            #[cfg(feature = "optimism")]
+            "optimism" => true,
+            #[cfg(feature = "monad")]
+            "monad" => true,
+            _ => false,
+        }
+    }
+
     /// Validates that all configured network selectors resolve to the same execution profile.
     ///
     /// Canonical and legacy selectors for the same family remain compatible. Selectors for

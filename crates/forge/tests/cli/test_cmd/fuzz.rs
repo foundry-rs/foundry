@@ -1846,6 +1846,30 @@ corpus/00000000-0000-0000-0000-000000000002-2.json (1 txs)
     assert!(stdout.contains("[PASS] testFuzz_setNumber(uint256) (replay: 2 entries"), "{stdout}");
 });
 
+forgetest_init!(forge_fuzz_show_rejects_unknown_config_keys, |prj, cmd| {
+    std::fs::write(prj.config(), "[profile.default]\noptimizer_run = 123\n").unwrap();
+    std::fs::create_dir(prj.root().join("corpus")).unwrap();
+
+    cmd.args(["fuzz", "show", "corpus"]).assert_failure().stderr_eq(str![[r#"
+Error: failed to extract foundry config:
+foundry config error: Unknown configuration keys in [..]foundry.toml: profile.default.optimizer_run
+
+"#]]);
+});
+
+forgetest_init!(forge_fuzz_show_ignores_unrelated_config_errors, |prj, cmd| {
+    std::fs::write(prj.config(), "[profile.default]\noptimizer_runs = 4294967296\n").unwrap();
+    let corpus = prj.root().join("corpus");
+    std::fs::create_dir(&corpus).unwrap();
+    write_corpus_entry(
+        &corpus,
+        "00000000-0000-0000-0000-000000000001-1.json",
+        "0x938872f7000000000000000000000000000000000000000000000000000000000000002a",
+    );
+
+    cmd.args(["fuzz", "show", "corpus"]).assert_success();
+});
+
 forgetest_init!(forge_fuzz_cmin_keeps_coverage_adding_entries, |prj, cmd| {
     prj.add_test(
         "ForgeFuzzCminTarget.t.sol",

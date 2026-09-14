@@ -11,7 +11,7 @@ use anvil_server::ServerConfig;
 use clap::Parser;
 use core::fmt;
 use foundry_common::shell;
-use foundry_config::{Chain, Config, FigmentProviders};
+use foundry_config::{Chain, Config, FigmentProviders, error::ExtractConfigError};
 use foundry_evm::hardfork::FoundryHardfork;
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::FoundryReceiptEnvelope;
@@ -723,42 +723,46 @@ pub struct AnvilEvmArgs {
 /// When an alias maps to an `RpcEndpoint` with multiple `endpoints`, all URLs are expanded
 /// into additional `--fork-url` entries for multi-endpoint load balancing.
 impl AnvilEvmArgs {
-    pub fn resolve_rpc_alias(&mut self) {
-        if let Ok(config) = Config::load_with_providers(FigmentProviders::Anvil) {
-            let mut resolved_urls = Vec::new();
-            for fork_url in &self.fork_url {
-                let mut endpoints = config.rpc_endpoints.clone().resolved();
-                if let Some(endpoint) = endpoints.remove(&fork_url.url) {
-                    // Alias matched — expand all URLs from the endpoint config
-                    match endpoint.all_urls() {
-                        Ok(urls) => {
-                            for (i, url) in urls.into_iter().enumerate() {
-                                resolved_urls.push(ForkUrl {
-                                    url,
-                                    // Only the first URL inherits the block suffix
-                                    block: if i == 0 { fork_url.block } else { None },
-                                });
-                            }
-                        }
-                        Err(e) => {
-                            warn!(target: "node", alias=%fork_url.url, %e, "could not resolve all endpoints, using primary endpoint only");
-                            if let Ok(url) = endpoint.url() {
-                                resolved_urls.push(ForkUrl { url, block: fork_url.block });
-                            } else {
-                                resolved_urls.push(fork_url.clone());
-                            }
+    pub fn resolve_rpc_alias(&mut self) -> Result<(), ExtractConfigError> {
+        let config = match Config::load_with_providers(FigmentProviders::Anvil) {
+            Ok(config) => config,
+            Err(err) if err.contains_unknown_keys() => return Err(err),
+            Err(_) => return Ok(()),
+        };
+        let mut resolved_urls = Vec::new();
+        for fork_url in &self.fork_url {
+            let mut endpoints = config.rpc_endpoints.clone().resolved();
+            if let Some(endpoint) = endpoints.remove(&fork_url.url) {
+                // Alias matched — expand all URLs from the endpoint config.
+                match endpoint.all_urls() {
+                    Ok(urls) => {
+                        for (i, url) in urls.into_iter().enumerate() {
+                            resolved_urls.push(ForkUrl {
+                                url,
+                                // Only the first URL inherits the block suffix.
+                                block: if i == 0 { fork_url.block } else { None },
+                            });
                         }
                     }
-                } else if let Some(Ok(url)) = config.get_rpc_url_with_alias(&fork_url.url) {
-                    // Try mesc or other resolution
-                    resolved_urls.push(ForkUrl { url: url.to_string(), block: fork_url.block });
-                } else {
-                    // Not an alias — keep as-is
-                    resolved_urls.push(fork_url.clone());
+                    Err(e) => {
+                        warn!(target: "node", alias=%fork_url.url, %e, "could not resolve all endpoints, using primary endpoint only");
+                        if let Ok(url) = endpoint.url() {
+                            resolved_urls.push(ForkUrl { url, block: fork_url.block });
+                        } else {
+                            resolved_urls.push(fork_url.clone());
+                        }
+                    }
                 }
+            } else if let Some(Ok(url)) = config.get_rpc_url_with_alias(&fork_url.url) {
+                // Try MESC or other resolution.
+                resolved_urls.push(ForkUrl { url: url.to_string(), block: fork_url.block });
+            } else {
+                // Not an alias — keep as-is.
+                resolved_urls.push(fork_url.clone());
             }
-            self.fork_url = resolved_urls;
         }
+        self.fork_url = resolved_urls;
+        Ok(())
     }
 }
 
@@ -948,6 +952,7 @@ fn duration_from_secs_f64(s: &str) -> Result<Duration, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use figment::Jail;
     use foundry_evm::hardfork::EthereumHardfork;
     use std::{env, net::Ipv4Addr};
     use tempo_hardfork::TempoHardfork;
@@ -983,6 +988,39 @@ mod tests {
             fork,
             ForkUrl { url: "wss://user:password@example.com/".to_string(), block: Some(100000) }
         );
+    }
+
+    #[test]
+    fn rpc_alias_resolution_propagates_invalid_config() {
+        Jail::expect_with(|jail| {
+            jail.create_file("foundry.toml", "[profile.default]\noptimizer_run = 123\n")?;
+            let mut args = NodeArgs::parse_from(["anvil"]).evm;
+            let err = args.resolve_rpc_alias().unwrap_err().to_string();
+            assert!(err.contains("profile.default.optimizer_run"), "{err}");
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn rpc_alias_resolution_ignores_unrelated_config_errors() {
+        Jail::expect_with(|jail| {
+            jail.create_file("foundry.toml", "[profile.default]\noptimizer_runs = 4294967296\n")?;
+            let mut args =
+                NodeArgs::parse_from(["anvil", "--fork-url", "http://localhost:8545"]).evm;
+            args.resolve_rpc_alias().unwrap();
+            assert_eq!(args.fork_url[0].url, "http://localhost:8545");
+            Ok(())
+        });
+    }
+
+    #[cfg(feature = "optimism")]
+    #[test]
+    fn rpc_alias_resolution_accepts_enabled_network_config() {
+        Jail::expect_with(|jail| {
+            jail.create_file("foundry.toml", "[profile.default]\noptimism = true\n")?;
+            NodeArgs::parse_from(["anvil"]).evm.resolve_rpc_alias().unwrap();
+            Ok(())
+        });
     }
 
     #[test]

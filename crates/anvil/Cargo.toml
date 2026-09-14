@@ -121,6 +121,7 @@ fdlimit = { version = "0.3", optional = true }
 [dev-dependencies]
 alloy-provider = { workspace = true, features = ["txpool-api"] }
 alloy-pubsub.workspace = true
+figment = { workspace = true, features = ["test"] }
 rand.workspace = true
 reqwest.workspace = true
 foundry-test-utils.workspace = true
