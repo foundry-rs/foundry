@@ -420,6 +420,20 @@ fn add_zero_invalid_support_vars(vars: &mut SymbolicVars, constraints: &[SymBool
         if constraint.eval_model(&zero_model).unwrap_or(false) {
             continue;
         }
+        // Scalar bounds can be completed constructively. Spending a search slot on them can
+        // miss a valid endpoint (e.g. int256::MAX + 1) that is outside the candidate budget.
+        let (inner, inverted) = match constraint.kind() {
+            SymBoolExprKind::Not(inner) => (inner, true),
+            _ => (constraint, false),
+        };
+        if let SymBoolExprKind::Cmp(op, left, right) = inner.kind()
+            && support_cmp_op(*op, inverted)
+                .is_some_and(|op| !matches!(op, SymCmpOp::Slt | SymCmpOp::Sgt))
+            && (support_bound_has_searched_inputs(left, right, vars)
+                || support_bound_has_searched_inputs(right, left, vars))
+        {
+            continue;
+        }
 
         let mut constraint_vars = SymbolicVars::default();
         constraint.collect_vars(&mut constraint_vars);
@@ -430,6 +444,19 @@ fn add_zero_invalid_support_vars(vars: &mut SymbolicVars, constraints: &[SymBool
         }
         vars.extend(missing);
     }
+}
+
+fn support_bound_has_searched_inputs(
+    variable: &SymExpr,
+    bound: &SymExpr,
+    searched: &SymbolicVars,
+) -> bool {
+    if !matches!(variable.kind(), SymExprKind::Var(_)) {
+        return false;
+    }
+    let mut dependencies = SymbolicVars::default();
+    bound.collect_eval_vars(&mut dependencies);
+    dependencies.is_subset(searched)
 }
 
 fn fallback_candidates_for_var(
@@ -500,11 +527,22 @@ impl FallbackSearch<'_> {
             }
             let mut completed = model.clone();
             let mut remaining_support_visits = usize::MAX;
-            return complete_fallback_support_model(
+            if complete_fallback_support_model(
                 self.constraints,
                 &mut completed,
                 &mut remaining_support_visits,
-            )
+            ) {
+                return Some(completed);
+            }
+            // Greedy completion can choose one endpoint before seeing a tighter bound. Retry
+            // from the search assignment after intersecting all currently evaluable bounds.
+            let mut completed = model.clone();
+            return (seed_bounded_support_vars(self.constraints, &mut completed)
+                && complete_fallback_support_model(
+                    self.constraints,
+                    &mut completed,
+                    &mut remaining_support_visits,
+                ))
             .then_some(completed);
         }
 
@@ -534,6 +572,70 @@ fn fallback_model_satisfies_all_constraints(
     model: &(impl SymbolicModelLookup + ?Sized),
 ) -> bool {
     eval_model_constraints(constraints, model)
+}
+
+/// Seeds only unassigned scalar variables; every resulting witness is still fully validated.
+fn seed_bounded_support_vars(constraints: &[SymBoolExpr], model: &mut SymbolicModel) -> bool {
+    let mut bounds: HashMap<Symbol, (U256, U256)> = HashMap::default();
+    for constraint in constraints {
+        let (constraint, inverted) = match constraint.kind() {
+            SymBoolExprKind::Not(inner) => (inner, true),
+            _ => (constraint, false),
+        };
+        let SymBoolExprKind::Cmp(op, left, right) = constraint.kind() else { continue };
+        let Some(mut op) = support_cmp_op(*op, inverted) else { continue };
+        if matches!(op, SymCmpOp::Slt | SymCmpOp::Sgt) {
+            continue;
+        }
+        let (var, known) = if let SymExprKind::Var(var) = left.kind()
+            && !model.contains_name(*var)
+            && let Ok(Some(value)) = right.eval_model_if_complete(model)
+        {
+            (*var, value)
+        } else if let SymExprKind::Var(var) = right.kind()
+            && !model.contains_name(*var)
+            && let Ok(Some(value)) = left.eval_model_if_complete(model)
+        {
+            op = match op {
+                SymCmpOp::Ult => SymCmpOp::Ugt,
+                SymCmpOp::Ule => SymCmpOp::Uge,
+                SymCmpOp::Ugt => SymCmpOp::Ult,
+                SymCmpOp::Uge => SymCmpOp::Ule,
+                other => other,
+            };
+            (*var, value)
+        } else {
+            continue;
+        };
+        let (lower, upper) = bounds.entry(var).or_insert((U256::ZERO, U256::MAX));
+        match op {
+            SymCmpOp::Eq => {
+                *lower = (*lower).max(known);
+                *upper = (*upper).min(known);
+            }
+            SymCmpOp::Ule => *upper = (*upper).min(known),
+            SymCmpOp::Uge => *lower = (*lower).max(known),
+            SymCmpOp::Ult => {
+                let Some(value) = known.checked_sub(U256::ONE) else { return false };
+                *upper = (*upper).min(value);
+            }
+            SymCmpOp::Ugt => {
+                let Some(value) = known.checked_add(U256::ONE) else { return false };
+                *lower = (*lower).max(value);
+            }
+            SymCmpOp::Slt | SymCmpOp::Sgt => continue,
+        }
+        if lower > upper {
+            return false;
+        }
+    }
+    if bounds.is_empty() {
+        return false;
+    }
+    for (var, (lower, _)) in bounds {
+        model.insert(var, lower);
+    }
+    true
 }
 
 fn complete_fallback_support_model(
@@ -1442,6 +1544,91 @@ mod tests {
             checked_mul_guard_branch_model(&cx, &normalized, &original, &SymbolicVars::default(),)
                 .is_none()
         );
+    }
+
+    #[test]
+    fn support_bounds_are_intersected_before_assigning_a_witness() {
+        let mut cx = SymCx::new();
+        let credits = SymExpr::var(&mut cx, "credits");
+        let supply = SymExpr::var(&mut cx, "supply");
+        let maximum = U256::MAX >> 1;
+        let constraints = vec![
+            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ule, &credits, maximum),
+            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Uge, &supply, U256::ONE),
+            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ule, &credits, maximum - U256::ONE),
+            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ugt, &supply, maximum),
+        ];
+        for constraints in [constraints.clone(), constraints.into_iter().rev().collect()] {
+            let mut model = SymbolicModel::default();
+            assert!(seed_bounded_support_vars(&constraints, &mut model));
+            assert!(fallback_model_satisfies_all_constraints(&constraints, &model));
+            assert_eq!(credits.eval_model(&model).unwrap(), U256::ZERO);
+            assert_eq!(supply.eval_model(&model).unwrap(), maximum + U256::ONE);
+        }
+        let impossible = [
+            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ult, &credits, U256::ONE),
+            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Uge, &credits, U256::ONE),
+        ];
+        assert!(!seed_bounded_support_vars(&impossible, &mut SymbolicModel::default()));
+    }
+
+    #[test]
+    fn fallback_completes_signed_global_bounds_after_rounded_conversion() {
+        let mut cx = SymCx::new();
+        let balance = SymExpr::var(&mut cx, "storage_balance");
+        let rate = SymExpr::var(&mut cx, "storage_rate");
+        let credits = SymExpr::var(&mut cx, "storage_credits");
+        let supply = SymExpr::var(&mut cx, "storage_supply");
+        let account = SymExpr::var(&mut cx, "calldata_0");
+        let state = SymExpr::var(&mut cx, "storage_state");
+        let fixed = SymExpr::var(&mut cx, "storage_fixed");
+        let scale_value = U256::from(1_000_000_000_000_000_000u64);
+        let scale = SymExpr::constant(&mut cx, scale_value);
+        let one = SymExpr::one(&mut cx);
+        let zero = SymExpr::zero(&mut cx);
+        let max = U256::MAX >> 1;
+        let max_word = SymExpr::constant(&mut cx, max);
+        let product = SymExpr::binop(&mut cx, SymBinOp::Mul, balance.clone(), rate.clone());
+        let rounded = SymExpr::binop(&mut cx, SymBinOp::Add, product, scale.clone());
+        let rounded = SymExpr::binop(&mut cx, SymBinOp::Sub, rounded, one.clone());
+        let rounded = SymExpr::binop(&mut cx, SymBinOp::UDiv, rounded, scale.clone());
+        let room = SymExpr::binop(&mut cx, SymBinOp::Sub, max_word, rounded);
+        let mask = SymExpr::constant(&mut cx, U256::from(255));
+        let masked_state = SymExpr::binop(&mut cx, SymBinOp::And, state, mask);
+        let mut constraints = vec![
+            SymBoolExpr::eq(&mut cx, balance.clone(), zero.clone()).not(&mut cx),
+            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ugt, &supply, max),
+            SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, credits.clone(), room.clone()),
+            SymBoolExpr::eq(&mut cx, fixed, scale),
+            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ult, &balance, U256::from(u128::MAX)),
+            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ult, &account, U256::ONE << 160),
+            SymBoolExpr::eq(&mut cx, masked_state, one),
+            SymBoolExpr::cmp_word_const(
+                &mut cx,
+                SymCmpOp::Ule,
+                &rate,
+                scale_value * U256::from(1_000_000_000),
+            ),
+            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ule, &credits, max),
+            SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, balance, supply),
+            SymBoolExpr::eq(&mut cx, account, zero).not(&mut cx),
+            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Uge, &rate, scale_value),
+        ];
+        for overflow in [false, true] {
+            constraints[2] = SymBoolExpr::cmp(
+                &mut cx,
+                if overflow { SymCmpOp::Ugt } else { SymCmpOp::Ule },
+                credits.clone(),
+                room.clone(),
+            );
+            for _ in 0..2 {
+                let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
+                let model =
+                    hard_arith_fallback_model(&cx, &normalized).expect("bounded global witness");
+                assert!(fallback_model_satisfies_all_constraints(&constraints, &model));
+                constraints.reverse();
+            }
+        }
     }
 
     #[test]

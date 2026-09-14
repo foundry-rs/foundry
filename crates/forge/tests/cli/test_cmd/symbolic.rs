@@ -798,7 +798,10 @@ interface Vm {
 
 contract SymbolicConversionTarget {
     function convert(uint256 base, uint256 coefficient) external pure returns (uint256) {
-        return (base * coefficient + 9) / 10;
+        // A square cannot equal two, but interval bounds alone cannot establish that.
+        coefficient;
+        require(base * base != 2);
+        return base;
     }
 }
 
@@ -806,7 +809,9 @@ contract SymbolicCreatedConversion {
     uint256 public value;
 
     constructor(uint256 base, uint256 coefficient) {
-        value = (base * coefficient + 9) / 10;
+        coefficient;
+        require(base * base != 2);
+        value = base;
     }
 }
 
@@ -841,7 +846,7 @@ contract SymbolicDeferredExternalCall {
         assert(target.convert(base, coefficient) > 0);
     }
 
-    /// forge-config: default.symbolic.max_solver_queries = 16
+    /// forge-config: default.symbolic.max_solver_queries = 10
     function checkQueryLimitedExternalConversion(uint256 base, uint256 coefficient) external view {
         vm.assume(base > 0 && base < 1_000);
         vm.assume(coefficient >= 10 && coefficient <= 100);
@@ -911,9 +916,9 @@ contract SymbolicDeferredExternalCall {
         result["symbolic"]["incomplete"]["reason"]
             .as_str()
             .unwrap()
-            .contains("solver query limit exceeded (16)")
+            .contains("solver query limit exceeded (10)")
     );
-    assert_eq!(result["symbolic"]["solver"]["stats"]["solver_queries"], 16);
+    assert_eq!(result["symbolic"]["solver"]["stats"]["solver_queries"], 10);
     assert!(result["symbolic"]["solver"]["stats"]["paths"].as_u64().unwrap() > 2);
 });
 
@@ -6431,4 +6436,170 @@ contract SymbolicInvalidJump is Test {
 [PASS] checkUntakenJumpiIgnoresSymbolicDestination(uint256)
 "#]],
     );
+});
+
+forgetest_init!(symbolic_bounded_fixed_point_round_trip, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_bounded_fixed_point_round_trip because z3 is not available"
+        );
+        return;
+    }
+    prj.add_test(
+        "FixedPointRoundTrip.t.sol",
+        r#"
+interface Vm {
+    function assume(bool condition) external pure;
+    function prank(address sender) external;
+    function setArbitraryStorage(address target, bool overwrite) external;
+    function store(address target, bytes32 slot, bytes32 value) external;
+}
+
+contract OptInTarget {
+    uint256 public cpt;
+    uint256 public rebasingCredits;
+    uint256 public nonRebasingSupply;
+    mapping(address => uint256) public credits;
+    mapping(address => uint256) public fixedCpt;
+    mapping(address => uint8) public state;
+
+    function balanceOf(address account) public view returns (uint256) {
+        uint256 rate = fixedCpt[account];
+        return credits[account] * 1e18 / (rate == 0 ? cpt : rate);
+    }
+
+    function toInt(uint256 value) internal pure returns (int256) {
+        require(value <= uint256(type(int256).max));
+        return int256(value);
+    }
+
+    function toUint(int256 value) internal pure returns (uint256) {
+        require(value >= 0);
+        return uint256(value);
+    }
+
+    function optIn() external {
+        uint256 balance = balanceOf(msg.sender);
+        require(state[msg.sender] == 1 && fixedCpt[msg.sender] == 1e18);
+        uint256 newCredits = (balance * cpt + 1e18 - 1) / 1e18;
+        credits[msg.sender] = newCredits;
+        fixedCpt[msg.sender] = 0;
+        state[msg.sender] = 2;
+        int256 creditDiff = toInt(newCredits);
+        int256 supplyDiff = -toInt(balance);
+        if (creditDiff != 0) rebasingCredits = toUint(toInt(rebasingCredits) + creditDiff);
+        if (supplyDiff != 0) nonRebasingSupply = toUint(toInt(nonRebasingSupply) + supplyDiff);
+    }
+}
+
+contract FixedPointRoundTripTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    OptInTarget target;
+
+    function setUp() public {
+        target = new OptInTarget();
+        vm.setArbitraryStorage(address(target), true);
+    }
+
+    function checkRoundTrip(uint128 balance, uint256 cpt) external pure {
+        require(balance > 0 && balance < type(uint128).max);
+        require(cpt >= 1e18 && cpt <= 1e27);
+        uint256 credits = (uint256(balance) * cpt + 1e18 - 1) / 1e18;
+        assert(credits * 1e18 / cpt == balance);
+    }
+
+    function checkOptIn(address account) external {
+        vm.assume(account != address(0) && account != address(target));
+        vm.assume(target.cpt() >= 1e18 && target.cpt() <= 1e27);
+        vm.assume(target.state(account) == 1);
+        vm.assume(target.fixedCpt(account) == 1e18);
+        vm.assume(target.credits(account) > 0 && target.credits(account) < type(uint128).max);
+        uint256 balance = target.balanceOf(account);
+        vm.assume(target.nonRebasingSupply() >= balance);
+        vm.prank(account);
+        target.optIn();
+        assert(target.balanceOf(account) == balance);
+        assert(target.fixedCpt(account) == 0);
+        assert(target.state(account) == 2);
+    }
+
+    function testOptInConcreteWitness() external {
+        address account = address(0xB0B);
+        vm.store(address(target), bytes32(uint256(0)), bytes32(uint256(1e18 + 1)));
+        vm.store(address(target), bytes32(uint256(1)), bytes32(uint256(100)));
+        vm.store(address(target), bytes32(uint256(2)), bytes32(uint256(1)));
+        vm.store(address(target), keccak256(abi.encode(account, uint256(3))), bytes32(uint256(1)));
+        vm.store(address(target), keccak256(abi.encode(account, uint256(4))), bytes32(uint256(1e18)));
+        vm.store(address(target), keccak256(abi.encode(account, uint256(5))), bytes32(uint256(1)));
+        this.checkOptIn(account);
+        assert(target.credits(account) == 2);
+        assert(target.rebasingCredits() == 102);
+        assert(target.nonRebasingSupply() == 0);
+    }
+
+    function checkLowRate(uint128 balance) external pure {
+        require(balance > 0 && balance < 100);
+        uint256 credits = (uint256(balance) * 1 + 2 - 1) / 2;
+        assert(credits * 2 / 1 == balance);
+    }
+
+    function checkWrapping(uint256 balance) external pure {
+        require(balance >= 1 << 255);
+        unchecked {
+            uint256 credits = (balance * 2 + 2 - 1) / 2;
+            assert(credits * 2 / 2 == balance);
+        }
+    }
+}
+"#,
+    );
+    for (test, signature) in [
+        ("checkRoundTrip", "checkRoundTrip(uint128,uint256)"),
+        ("checkOptIn", "checkOptIn(address)"),
+    ] {
+        let output = cmd
+            .forge_fuse()
+            .args([
+                "test",
+                "--symbolic",
+                "--json",
+                "--optimize",
+                "--symbolic-timeout",
+                "30",
+                "--match-test",
+                test,
+            ])
+            .assert_success()
+            .get_output()
+            .stdout
+            .clone();
+        let result = json_test_result(&output, signature);
+        assert_eq!(result["symbolic"]["status"], "pass");
+    }
+    cmd.forge_fuse()
+        .args(["test", "--optimize", "--match-test", "testOptInConcreteWitness"])
+        .assert_success();
+
+    for (test, signature) in
+        [("checkLowRate", "checkLowRate(uint128)"), ("checkWrapping", "checkWrapping(uint256)")]
+    {
+        let output = cmd
+            .forge_fuse()
+            .args([
+                "test",
+                "--symbolic",
+                "--json",
+                "--optimize",
+                "--symbolic-timeout",
+                "30",
+                "--match-test",
+                test,
+            ])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        let result = json_test_result(&output, signature);
+        assert_eq!(result["symbolic"]["status"], "fail_counterexample");
+    }
 });
