@@ -69,6 +69,7 @@ class Expanded:
 
 
 is_pr = os.environ.get("EVENT_NAME") == "pull_request"
+windows_pr = is_pr and os.environ.get("PR_NUMBER") == "16822"
 t_linux_x86 = Target(
     "depot-ubuntu-latest-16", "x86_64-unknown-linux-gnu", "linux-amd64"
 )
@@ -78,7 +79,7 @@ t_linux_arm = Target(
 t_macos = Target("depot-macos-latest", "aarch64-apple-darwin", "macosx-aarch64")
 t_windows = Target("depot-windows-latest-16", "x86_64-pc-windows-msvc", "windows-amd64")
 if is_pr:
-    targets = [t_linux_x86]
+    targets = [t_linux_x86, t_windows] if windows_pr else [t_linux_x86]
 else:
     targets = [t_linux_x86, t_linux_arm, t_macos, t_windows]
 
@@ -102,7 +103,11 @@ def main():
     expanded = []
     for target in targets:
         for case in config:
-            if is_pr and (not case.pr_cross_platform and target != t_linux_x86):
+            if (
+                is_pr
+                and not windows_pr
+                and (not case.pr_cross_platform and target != t_linux_x86)
+            ):
                 continue
 
             for partition in range(1, case.n_partitions + 1):

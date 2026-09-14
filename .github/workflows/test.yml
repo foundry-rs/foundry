@@ -54,6 +54,7 @@ jobs:
         id: gen
         env:
           EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           PROFILE: ${{ inputs.profile }}
         shell: bash
         run: |
@@ -144,6 +145,14 @@ jobs:
           git config --global user.name "GitHub Actions Bot"
           git config --global user.email "<>"
           git config --global url."https://github.com/".insteadOf "git@github.com:"
+      - name: Check Windows release build for PR 16822
+        if: github.event.pull_request.number == 16822 && runner.os == 'Windows' && !contains(matrix.name, 'external')
+        env:
+          SVM_TARGET_PLATFORM: ${{ matrix.svm_target_platform }}
+        shell: bash
+        run: |
+          cargo build --locked --target x86_64-pc-windows-msvc --profile dist \
+            --no-default-features --features aws-kms,gcp-kms,turnkey,cli,asm-keccak,js-tracer,monad,optimism --bins
       - name: Test
         env:
           SVM_TARGET_PLATFORM: ${{ matrix.svm_target_platform }}
