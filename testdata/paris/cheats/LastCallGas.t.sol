@@ -100,6 +100,12 @@ contract RevertingConstructor {
     }
 }
 
+contract RefundingConstructor {
+    constructor(Target target) {
+        target.resetValue();
+    }
+}
+
 contract NestedRevertingTarget {
     RevertingTarget public target;
 
@@ -284,6 +290,52 @@ contract LastCallGasIsolatedTest is LastCallGasFixture {
         _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 26180, gasMemoryUsed: 0, gasRefunded: 4800}));
         assertEq(vm.snapshotGasLastCall("isolated refund call"), 21380);
         assertEq(vm.snapshotGasLastFrame("isolated refund frame"), 21380);
+    }
+
+    function testSnapshotGasSectionRefund() public {
+        _snapshotResetValue(1);
+    }
+
+    function testSnapshotGasSectionNoRefund() public {
+        _snapshotResetValue(0);
+    }
+
+    function testSnapshotGasSectionAfterRefund() public {
+        _setup();
+        _performRefund();
+        _snapshotResetValue(0);
+    }
+
+    function testSnapshotGasSectionMultipleRefunds() public {
+        _setup();
+        Target other = new Target();
+        target.setValue(1);
+        other.setValue(1);
+        vm.startSnapshotGas("isolated multiple refunds");
+        target.resetValue();
+        other.resetValue();
+        // Recorded with v1.8.1, including both finalized transaction refunds.
+        assertEq(vm.stopSnapshotGas(), 43648);
+    }
+
+    function testSnapshotGasSectionCreateRefund() public {
+        _setup();
+        target.setValue(1);
+        vm.startSnapshotGas("isolated create refund");
+        new RefundingConstructor(target);
+        uint256 section = vm.stopSnapshotGas();
+        // Preserve the pre-v1.8.2 CREATE and snapshot overhead.
+        assertEq(section, vm.snapshotGasLastFrame("isolated create frame") + 32366);
+    }
+
+    function _snapshotResetValue(uint256 initialValue) internal {
+        _setup();
+        target.setValue(initialValue);
+        vm.startSnapshotGas("isolated section");
+        target.resetValue();
+        uint256 section = vm.stopSnapshotGas();
+        // Preserve the pre-v1.8.2 region overhead for both refunding and non-refunding calls.
+        assertEq(section, vm.snapshotGasLastCall("isolated section call") + 543);
     }
 
     function testSnapshotGasForFailedCharge() public {
