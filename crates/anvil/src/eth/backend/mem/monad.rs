@@ -8,7 +8,7 @@ use crate::eth::{
     backend::{
         db::MonadBlockReplayProfile,
         executor::{
-            AnvilBlockExecutor, ExecutedPoolTransactions, PoolTransactionHooks, PoolTxGasConfig,
+            AnvilBlockExecutor, AnvilTxResult, ExecutedPoolTransactions, PoolTxGasConfig,
             build_tx_env_for_pending, execute_pool_transactions,
         },
         replay::{
@@ -127,6 +127,49 @@ pub(super) async fn cache_fork_context(fork: &ClientFork) -> Result<(), Blockcha
         fork.block_by_hash_full(parent_hash).await?.ok_or(BlockchainError::BlockNotFound)?;
     }
     Ok(())
+}
+
+/// Executes one Monad pool candidate and restores its context if execution fails before inclusion.
+fn execute_pool_transaction<DB>(
+    executor: &mut AnvilBlockExecutor<MonadEvm<DB, AnvilInspector>>,
+    tx_env: TxEnv,
+    recovered: Recovered<FoundryTxEnvelope>,
+    is_replay: bool,
+) -> Result<AnvilTxResult<HaltReason>, BlockExecutionError>
+where
+    DB: StateDB<Error = DatabaseError>,
+{
+    prepare_transaction(executor.evm_mut(), &tx_env);
+    let result = (|| {
+        if !is_replay {
+            return executor.execute_transaction_without_commit((tx_env, recovered));
+        }
+        match protocol_system_call(&tx_env) {
+            Ok(None) => return executor.execute_transaction_without_commit((tx_env, recovered)),
+            Ok(Some(_)) => {}
+            Err(err) => return Err(BlockExecutionError::msg(err)),
+        }
+        executor.execute_transaction_without_commit_with(
+            (tx_env, recovered),
+            |evm, tx_env, transaction_hash| {
+                try_transact_monad_system_replay(evm, &tx_env)
+                    .map_err(|err| {
+                        BlockExecutionError::msg(format!(
+                            "failed to replay Monad transaction {transaction_hash}: {err}"
+                        ))
+                    })?
+                    .ok_or_else(|| {
+                        BlockExecutionError::msg(format!(
+                            "Monad transaction {transaction_hash} is not a canonical replay envelope"
+                        ))
+                    })
+            },
+        )
+    })();
+    if result.is_err() {
+        rollback_transaction(executor.evm_mut());
+    }
+    result
 }
 
 /// Adds a candidate transaction to the current Monad block context.
@@ -349,42 +392,6 @@ impl<N: Network> Backend<N> {
         executor
             .apply_pre_execution_changes()
             .map_err(|err| BlockchainError::Internal(err.to_string()))?;
-        let mut hooks = PoolTransactionHooks {
-            before_transaction: prepare_transaction,
-            execute_transaction: |executor: &mut AnvilBlockExecutor<_>,
-                                  tx_env: TxEnv,
-                                  recovered: Recovered<FoundryTxEnvelope>,
-                                  is_replay: bool| {
-                if !is_replay {
-                    return executor.execute_transaction_without_commit((tx_env, recovered));
-                }
-                match protocol_system_call(&tx_env) {
-                    Ok(None) => {
-                        return executor.execute_transaction_without_commit((tx_env, recovered));
-                    }
-                    Ok(Some(_)) => {}
-                    Err(err) => return Err(BlockExecutionError::msg(err)),
-                }
-                executor.execute_transaction_without_commit_with(
-                    (tx_env, recovered),
-                    |evm, tx_env, transaction_hash| {
-                        try_transact_monad_system_replay(evm, &tx_env)
-                            .map_err(|err| {
-                                BlockExecutionError::msg(format!(
-                                    "failed to replay Monad transaction {transaction_hash}: {err}"
-                                ))
-                            })?
-                            .ok_or_else(|| {
-                                BlockExecutionError::msg(format!(
-                                    "Monad transaction {transaction_hash} is not a canonical replay \
-                                     envelope"
-                                ))
-                            })
-                    },
-                )
-            },
-            on_execution_error: rollback_transaction,
-        };
         let pool_result = execute_pool_transactions(
             &mut executor,
             pool_transactions,
@@ -392,7 +399,7 @@ impl<N: Network> Backend<N> {
             inspector_tx_config,
             self.cheats(),
             validator,
-            &mut hooks,
+            &mut execute_pool_transaction,
         );
         let (evm, block_result) =
             executor.finish().map_err(|err| BlockchainError::Internal(err.to_string()))?;
