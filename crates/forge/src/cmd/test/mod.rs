@@ -3106,7 +3106,7 @@ impl Provider for TestArgs {
 /// - 3: only display traces for failed tests.
 /// - 4: also display the setup trace for failed tests.
 /// - 5..: display all traces for all tests, including storage changes.
-fn should_include_trace(kind: &TraceKind, trace_verbosity: u8, test_failed: bool) -> bool {
+const fn should_include_trace(kind: &TraceKind, trace_verbosity: u8, test_failed: bool) -> bool {
     match kind {
         TraceKind::Execution => (trace_verbosity == 3 && test_failed) || trace_verbosity >= 4,
         TraceKind::Setup => (trace_verbosity == 4 && test_failed) || trace_verbosity >= 5,
