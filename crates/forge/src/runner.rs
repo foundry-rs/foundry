@@ -4218,7 +4218,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         // predicate as the replay anchor because merged invariant suites persist failures per
         // predicate, while campaign runs use a stable suite anchor.
         let mut replayed_persisted_invariant = false;
-        let mut replayed_secondary_failures = Vec::new();
+        let mut replayed_predicate_failures = Vec::new();
         let mut confirmed_persisted_invariants = HashSet::default();
         let replay_candidates = invariant_contract
             .invariant_fns
@@ -4285,7 +4285,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     _ => continue,
                 };
                 confirmed_persisted_invariants.insert(replay_anchor_idx);
-                replayed_secondary_failures.push((
+                replayed_predicate_failures.push((
                     replay_invariant.name.clone(),
                     InvariantFuzzError::from_replayed_invariant(
                         self.address,
@@ -4319,8 +4319,14 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     return self.result;
                 }
             };
+            let mut replay_config = invariant_config.clone();
+            if failure_site.is_some() {
+                // A persisted site is exact; generic shrinking only preserves failure and
+                // could replay a different failure into the reported traces.
+                replay_config.shrink_run_limit = 0;
+            }
             match self.replay_error(
-                invariant_config.clone(),
+                replay_config,
                 trace_executor,
                 &txes,
                 None,
@@ -4447,46 +4453,21 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     &[],
                     Some(expected_failure_site),
                 );
-                if replay_invariant != anchor {
-                    replayed_secondary_failures.push((
-                        replay_invariant.name.clone(),
-                        InvariantFuzzError::from_replayed_invariant(
-                            self.address,
-                            replay_invariant,
-                            txes,
-                            replay.reason,
-                            invariant_config,
-                            fail_on_revert,
-                            false,
-                            false,
-                        ),
-                        Vec::new(),
-                        expected_failure_site,
-                    ));
-                    continue;
-                }
-
-                self.result.invariant_replay_fail(
-                    replay,
-                    &replay_invariant.name,
-                    None,
-                    call_sequence.clone(),
-                );
-                let signature = replay_invariant.signature();
-                if let Some(artifact) = self.persist_sequence_artifact(
-                    &signature,
-                    &format!("{signature}-replay"),
-                    self.sequence_calls(&call_sequence),
-                    self.config.invariant.fail_on_revert,
-                    &[],
-                    Some(SymbolicInvariantArtifactFailure::Predicate {
-                        name: replay_invariant.name.clone(),
-                        site: Some(expected_failure_site),
-                    }),
-                ) {
-                    self.result.add_counterexample_artifact(artifact);
-                }
-                return self.result;
+                replayed_predicate_failures.push((
+                    replay_invariant.name.clone(),
+                    InvariantFuzzError::from_replayed_invariant(
+                        self.address,
+                        replay_invariant,
+                        txes,
+                        replay.reason,
+                        invariant_config,
+                        fail_on_revert,
+                        false,
+                        false,
+                    ),
+                    Vec::new(),
+                    expected_failure_site,
+                ));
             }
         }
 
@@ -4508,7 +4489,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             return self.result;
         }
 
-        if self.config.symbolic.enabled && !is_optimization {
+        let confirmed_anchor_failure =
+            replayed_predicate_failures.iter().any(|(name, ..)| name == &anchor.name);
+        // Do not record a symbolic PASS for an anchor already confirmed to fail concretely.
+        if self.config.symbolic.enabled && !is_optimization && !confirmed_anchor_failure {
             let anchor_fail_on_revert = invariant_contract.invariant_fns[anchor_idx].1;
             let after_invariant = call_after_invariant
                 .then(|| {
@@ -4762,7 +4746,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         is_anchor: true,
                     }];
                     for (invariant, _) in &invariant_contract.invariant_fns {
-                        if let Some((_, error, _, _)) = replayed_secondary_failures
+                        if let Some((_, error, _, _)) = replayed_predicate_failures
                             .iter()
                             .find(|(name, ..)| name == &invariant.name)
                             && let Some(calls) = failed_invariant_calls(error)
@@ -4830,10 +4814,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 return self.result;
             }
         };
-        let mut replayed_secondary_metadata = BTreeMap::new();
-        for (name, failure, storage, failure_site) in replayed_secondary_failures {
+        let mut replayed_predicate_metadata = BTreeMap::new();
+        for (name, failure, storage, failure_site) in replayed_predicate_failures {
             if let Entry::Vacant(entry) = invariant_result.errors.entry(name) {
-                replayed_secondary_metadata.insert(entry.key().clone(), (storage, failure_site));
+                replayed_predicate_metadata.insert(entry.key().clone(), (storage, failure_site));
                 entry.insert(failure);
             }
         }
@@ -4934,7 +4918,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     }
                     _ => continue,
                 };
-                let replayed_metadata = replayed_secondary_metadata.get(&invariant.name);
+                let replayed_metadata = replayed_predicate_metadata.get(&invariant.name);
 
                 // On Ctrl+C: skip the (potentially long) secondary replay+shrink, but still
                 // persist the un-shrunk sequence so the next run targeting this invariant picks

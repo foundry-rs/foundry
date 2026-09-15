@@ -4578,7 +4578,9 @@ contract SymbolicInvariantCandidateSeed is Test {
         targetContract(address(target));
     }
 
-    function invariant_anchor() public pure {}
+    function invariant_anchor() public view {
+        assertFalse(target.broken());
+    }
 
     function invariant_notBroken() public view {
         assertFalse(target.broken());
@@ -4656,23 +4658,40 @@ contract SymbolicInvariantCandidateSeed is Test {
 
         cmd.forge_fuse();
         cmd.env("FOUNDRY_INVARIANT_FAILURE_PERSIST_DIR", "existing_failures");
-        cmd.args([
-            "test",
-            "--match-contract",
-            "SymbolicInvariantCandidateSeed",
-            "--threads",
-            "1",
-            "--invariant-frontier-dir",
-            "candidate_frontiers",
-            "--invariant-corpus-dir",
-            "existing_failure_corpus",
-            "--symbolic-use-fuzz-frontiers",
-            "--symbolic-frontier-limit",
-            "1",
-            "--symbolic-frontier-ids",
-            &target_frontier_id,
-        ])
-        .assert_failure();
+        let output = cmd
+            .args([
+                "test",
+                "--match-contract",
+                "SymbolicInvariantCandidateSeed",
+                "--json",
+                "--threads",
+                "1",
+                "--invariant-frontier-dir",
+                "candidate_frontiers",
+                "--invariant-corpus-dir",
+                "existing_failure_corpus",
+                "--symbolic-use-fuzz-frontiers",
+                "--symbolic-frontier-limit",
+                "1",
+                "--symbolic-frontier-ids",
+                &target_frontier_id,
+            ])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        let result = json_test_result(&output, "invariant_anchor()");
+        let failures = result["invariant_failures"].as_array().expect("invariant failures");
+        let names =
+            failures.iter().map(|failure| failure["name"].as_str().unwrap()).collect::<Vec<_>>();
+        assert_eq!(names, ["invariant_anchor", "invariant_notBroken"]);
+        for failure in failures {
+            assert!(failure["counterexample"].is_object(), "{failure}");
+        }
+        let anchor_failure_file = prj.root().join(
+            "existing_failures/failures/SymbolicInvariantCandidateSeed/invariants/invariant_anchor",
+        );
+        assert!(anchor_failure_file.is_file(), "{}", anchor_failure_file.display());
         let failure_file = prj
             .root()
             .join("existing_failures/failures/SymbolicInvariantCandidateSeed/invariants/invariant_notBroken");
@@ -4741,6 +4760,147 @@ contract SymbolicInvariantCandidateSeed is Test {
         );
     }
 );
+
+forgetest_init!(symbolic_invariant_frontier_seeding_replays_exact_failure_site, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_invariant_frontier_seeding_replays_exact_failure_site because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicInvariantExactSite.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicInvariantExactSiteTarget {
+    bool public armed;
+    bool public broken;
+
+    function arm() external {
+        armed = true;
+    }
+
+    function act(uint256 value) external {
+        if (value < 10 && value == 7) {
+            require(armed, "unarmed");
+            broken = true;
+        }
+    }
+}
+
+contract SymbolicInvariantExactSite is Test {
+    SymbolicInvariantExactSiteTarget target;
+
+    function setUp() public {
+        target = new SymbolicInvariantExactSiteTarget();
+        targetContract(address(target));
+    }
+
+    function invariant_notBroken() public view {
+        assertFalse(target.broken());
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "run",
+            "--match-contract",
+            "SymbolicInvariantExactSite",
+            "--runs",
+            "50",
+            "--depth",
+            "1",
+            "--seed",
+            "0x1234",
+            "--dictionary-weight",
+            "0",
+            "--threads",
+            "1",
+            "--frontier-dir",
+            "exact_site_frontiers",
+        ])
+        .assert_success();
+
+    let frontier_path = find_stateful_frontier_artifact(&prj.root().join("exact_site_frontiers"));
+    let frontier = keep_only_matching_frontier(&frontier_path, "value < 10", |frontier| {
+        frontier["call_index"] == 0
+            && frontier["site"]["opcode_name"] == "LT"
+            && frontier["operands"]["result"] == false
+            && (frontier["operands"]["lhs"] == "0xa" || frontier["operands"]["rhs"] == "0xa")
+    });
+    let frontier_id = frontier["id"].as_u64().unwrap().to_string();
+    let mut artifact: Value =
+        serde_json::from_slice(&std::fs::read(&frontier_path).unwrap()).unwrap();
+    let sequence_index = artifact["frontiers"][0]["sequence_index"].as_u64().unwrap() as usize;
+    let mut arm_call = artifact["sequences"][sequence_index][0].clone();
+    arm_call["calldata"] = Value::from(format!("0x{}", hex::encode(&keccak256(b"arm()")[..4])));
+    artifact["sequences"][sequence_index].as_array_mut().unwrap().insert(0, arm_call);
+    artifact["frontiers"][0]["call_index"] = Value::from(1);
+    std::fs::write(&frontier_path, serde_json::to_vec_pretty(&artifact).unwrap()).unwrap();
+
+    cmd.forge_fuse();
+    cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+    cmd.env("FOUNDRY_INVARIANT_FAILURE_PERSIST_DIR", "exact_site_failures");
+    cmd.args([
+        "test",
+        "--match-contract",
+        "SymbolicInvariantExactSite",
+        "--invariant-depth",
+        "2",
+        "--threads",
+        "1",
+        "--invariant-frontier-dir",
+        "exact_site_frontiers",
+        "--invariant-corpus-dir",
+        "exact_site_corpus",
+        "--symbolic-use-fuzz-frontiers",
+        "--symbolic-frontier-limit",
+        "1",
+        "--symbolic-frontier-ids",
+        &frontier_id,
+    ])
+    .assert_failure();
+
+    let failure_file = prj.root().join(
+        "exact_site_failures/failures/SymbolicInvariantExactSite/invariants/invariant_notBroken",
+    );
+    let failure: Value = serde_json::from_slice(&std::fs::read(&failure_file).unwrap()).unwrap();
+    assert_eq!(failure["call_sequence"].as_array().unwrap().len(), 2, "{failure}");
+    assert_eq!(
+        failure["call_sequence"][0]["calldata"],
+        format!("0x{}", hex::encode(&keccak256(b"arm()")[..4]))
+    );
+    assert!(failure["failure_site"].is_object(), "{failure}");
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--match-contract",
+            "SymbolicInvariantExactSite",
+            "--invariant-depth",
+            "2",
+            "--threads",
+            "1",
+            "-vvvv",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let output = String::from_utf8_lossy(&output);
+    let arm_trace = output.find("SymbolicInvariantExactSiteTarget::arm()").expect(&output);
+    let act_trace = output.find("SymbolicInvariantExactSiteTarget::act(7)").expect(&output);
+    assert!(arm_trace < act_trace, "{output}");
+    assert!(output.contains("invariant_notBroken"), "{output}");
+    assert!(output.contains("assertion failed"), "{output}");
+    assert!(!output.contains("unarmed"), "{output}");
+});
 
 forgetest_init!(symbolic_invariant_frontier_seeding_checks_property_from_prefix, |prj, cmd| {
     if !z3_available() {
