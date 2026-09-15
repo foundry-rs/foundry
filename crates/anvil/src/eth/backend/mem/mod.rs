@@ -2657,7 +2657,7 @@ impl<N: Network> Backend<N> {
                 evm_env,
                 parent_hash,
                 spec_id,
-                hardfork,
+                hardfork.into(),
                 pool_transactions,
                 gas_config,
                 inspector_tx_config,
@@ -5245,10 +5245,11 @@ where
                 db,
                 evm_env,
                 parent_hash,
-                hardfork,
+                hardfork.into(),
                 transactions,
                 inspector_tx_config,
-                monad_context,
+                monad_context
+                    .ok_or_else(|| eyre::eyre!("Monad replay ancestor context is unavailable"))?,
             );
         }
 

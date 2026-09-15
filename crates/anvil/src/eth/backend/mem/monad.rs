@@ -361,7 +361,7 @@ impl<N: Network> Backend<N> {
         evm_env: &EvmEnv,
         parent_hash: B256,
         spec_id: SpecId,
-        hardfork: FoundryHardfork,
+        hardfork: MonadHardfork,
         pool_transactions: &[Arc<PoolTransaction<FoundryTxEnvelope>>],
         gas_config: &PoolTxGasConfig,
         inspector_tx_config: &crate::mem::inspector::InspectorTxConfig,
@@ -376,7 +376,6 @@ impl<N: Network> Backend<N> {
     where
         DB: StateDB<Error = DatabaseError>,
     {
-        let hardfork = MonadHardfork::from(hardfork);
         let monad_env = Self::build_monad_evm_env(evm_env, hardfork);
         let inspector = self.build_mining_inspector();
         let mut evm =
@@ -414,21 +413,19 @@ impl<N: Network> Backend<N> {
         db: DB,
         evm_env: &EvmEnv,
         parent_hash: B256,
-        hardfork: FoundryHardfork,
+        hardfork: MonadHardfork,
         transactions: &[HistoricalReplayTransaction],
         inspector_tx_config: &crate::mem::inspector::InspectorTxConfig,
-        transaction_context: Option<MonadChainContext>,
+        transaction_context: MonadChainContext,
     ) -> Result<ExecutedHistoricalReplay>
     where
         DB: StateDB<Error = DatabaseError>,
     {
-        let hardfork = MonadHardfork::from(hardfork);
         let monad_env = Self::build_monad_evm_env(evm_env, hardfork);
         let inspector = self.build_mining_inspector();
         let mut evm =
             MonadEvmFactory::default().create_evm_with_inspector(db, monad_env, inspector);
-        evm.ctx_mut().chain = transaction_context
-            .ok_or_else(|| eyre::eyre!("Monad replay ancestor context is unavailable"))?;
+        evm.ctx_mut().chain = transaction_context;
         self.inject_precompiles(evm.precompiles_mut(), evm_env);
 
         let mut executor = AnvilBlockExecutor::new(evm, parent_hash, *evm_env.spec_id(), None)
