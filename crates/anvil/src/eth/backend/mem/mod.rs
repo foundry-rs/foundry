@@ -11,10 +11,10 @@ use crate::{
             },
             executor::{
                 AnvilBlockExecutor, BlockExecutionKind, EthereumBlockTransitions,
-                ExecutedPoolTransactions, FoundryReceiptBuilder, PoolTransactionHooks,
-                PoolTxGasConfig, apply_ethereum_post_execution_changes,
-                apply_ethereum_pre_execution_changes, block_blob_gas_limit,
-                build_tx_env_for_pending, execute_pool_transaction, execute_pool_transactions,
+                ExecutedPoolTransactions, FoundryReceiptBuilder, PoolTxGasConfig,
+                apply_ethereum_post_execution_changes, apply_ethereum_pre_execution_changes,
+                block_blob_gas_limit, build_tx_env_for_pending, execute_pool_transaction,
+                execute_pool_transactions,
             },
             fork::{ClientFork, ForkEndpointIdentity},
             genesis::GenesisConfig,
@@ -515,10 +515,6 @@ const fn next_monad_context(context: &mut MonadReplayContext) -> MonadExecutionC
 const fn next_monad_context(_context: &mut MonadReplayContext) -> MonadExecutionContext<'_> {
     MonadExecutionContext { _marker: std::marker::PhantomData }
 }
-
-const fn noop_before_transaction<E, T>(_evm: &mut E, _tx: &T) {}
-
-const fn noop_on_execution_error<E>(_evm: &mut E) {}
 
 /// Maximum cumulative gas available to one `eth_simulateV1` request.
 const SIMULATE_GAS_CAP: u64 = 50_000_000;
@@ -2674,12 +2670,7 @@ impl<N: Network> Backend<N> {
             self.ethereum_block_transitions(hardfork, parent_beacon_block_root, execution_kind);
 
         macro_rules! run {
-            (
-                $evm:expr,
-                $before_transaction:expr,
-                $execute_transaction:expr,
-                $on_execution_error:expr
-            ) => {{
+            ($evm:expr) => {{
                 self.inject_precompiles($evm.precompiles_mut(), evm_env);
                 let mut executor =
                     AnvilBlockExecutor::new($evm, parent_hash, spec_id, ethereum_transitions)
@@ -2691,11 +2682,6 @@ impl<N: Network> Backend<N> {
                 executor
                     .apply_pre_execution_changes()
                     .map_err(|err| BlockchainError::Internal(err.to_string()))?;
-                let mut hooks = PoolTransactionHooks {
-                    before_transaction: $before_transaction,
-                    execute_transaction: $execute_transaction,
-                    on_execution_error: $on_execution_error,
-                };
                 let pool_result = execute_pool_transactions(
                     &mut executor,
                     pool_transactions,
@@ -2703,7 +2689,7 @@ impl<N: Network> Backend<N> {
                     inspector_tx_config,
                     self.cheats(),
                     validator,
-                    &mut hooks,
+                    &mut execute_pool_transaction,
                 );
                 let (evm, block_result) =
                     executor.finish().map_err(|err| BlockchainError::Internal(err.to_string()))?;
@@ -2720,28 +2706,18 @@ impl<N: Network> Backend<N> {
             );
             let mut evm =
                 OpEvmFactory::<OpTx>::default().create_evm_with_inspector(db, op_env, inspector);
-            return run!(
-                evm,
-                noop_before_transaction,
-                execute_pool_transaction,
-                noop_on_execution_error
-            );
+            return run!(evm);
         }
 
         if self.is_tempo() {
             let tempo_env = self.build_tempo_evm_env(evm_env);
             let mut evm =
                 TempoEvmFactory::default().create_evm_with_inspector(db, tempo_env, inspector);
-            return run!(
-                evm,
-                noop_before_transaction,
-                execute_pool_transaction,
-                noop_on_execution_error
-            );
+            return run!(evm);
         }
         let mut evm =
             EthEvmFactory::default().create_evm_with_inspector(db, evm_env.clone(), inspector);
-        run!(evm, noop_before_transaction, execute_pool_transaction, noop_on_execution_error)
+        run!(evm)
     }
 
     /// Applies Ethereum block-start transitions to a disposable simulation candidate.
