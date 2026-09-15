@@ -72,6 +72,7 @@ tracing.workspace = true
 url.workspace = true
 walkdir.workspace = true
 yansi.workspace = true
+tempfile.workspace = true
 
 anstream.workspace = true
 anstyle.workspace = true
@@ -95,7 +96,6 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 axum = { workspace = true }
 foundry-evm-hardforks.workspace = true
 k256 = { workspace = true }
-tempfile.workspace = true
 
 [features]
 default = ["optimism"]
