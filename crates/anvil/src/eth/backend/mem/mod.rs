@@ -11,10 +11,10 @@ use crate::{
             },
             executor::{
                 AnvilBlockExecutor, BlockExecutionKind, EthereumBlockTransitions,
-                ExecutedPoolTransactions, FoundryReceiptBuilder, PoolTransactionHooks,
-                PoolTxGasConfig, apply_ethereum_post_execution_changes,
-                apply_ethereum_pre_execution_changes, block_blob_gas_limit,
-                build_tx_env_for_pending, execute_pool_transaction, execute_pool_transactions,
+                ExecutedPoolTransactions, FoundryReceiptBuilder, PoolTxGasConfig,
+                apply_ethereum_post_execution_changes, apply_ethereum_pre_execution_changes,
+                block_blob_gas_limit, build_tx_env_for_pending, execute_pool_transaction,
+                execute_pool_transactions,
             },
             fork::{ClientFork, ForkEndpointIdentity},
             genesis::GenesisConfig,
@@ -515,10 +515,6 @@ const fn next_monad_context(context: &mut MonadReplayContext) -> MonadExecutionC
 const fn next_monad_context(_context: &mut MonadReplayContext) -> MonadExecutionContext<'_> {
     MonadExecutionContext { _marker: std::marker::PhantomData }
 }
-
-const fn noop_before_transaction<E, T>(_evm: &mut E, _tx: &T) {}
-
-const fn noop_on_execution_error<E>(_evm: &mut E) {}
 
 /// Maximum cumulative gas available to one `eth_simulateV1` request.
 const SIMULATE_GAS_CAP: u64 = 50_000_000;
@@ -2661,7 +2657,7 @@ impl<N: Network> Backend<N> {
                 evm_env,
                 parent_hash,
                 spec_id,
-                hardfork,
+                hardfork.into(),
                 pool_transactions,
                 gas_config,
                 inspector_tx_config,
@@ -2682,21 +2678,11 @@ impl<N: Network> Backend<N> {
         }
 
         macro_rules! run_prepared {
-            (
-                $executor:expr,
-                $before_transaction:expr,
-                $execute_transaction:expr,
-                $on_execution_error:expr
-            ) => {{
+            ($executor:expr) => {{
                 let mut executor = $executor;
                 executor
                     .apply_pre_execution_changes()
                     .map_err(|err| BlockchainError::Internal(err.to_string()))?;
-                let mut hooks = PoolTransactionHooks {
-                    before_transaction: $before_transaction,
-                    execute_transaction: $execute_transaction,
-                    on_execution_error: $on_execution_error,
-                };
                 let pool_result = execute_pool_transactions(
                     &mut executor,
                     pool_transactions,
@@ -2704,7 +2690,7 @@ impl<N: Network> Backend<N> {
                     inspector_tx_config,
                     self.cheats(),
                     validator,
-                    &mut hooks,
+                    &mut execute_pool_transaction,
                 );
                 let (evm, block_result) =
                     executor.finish().map_err(|err| BlockchainError::Internal(err.to_string()))?;
@@ -2723,33 +2709,18 @@ impl<N: Network> Backend<N> {
                 OpEvmFactory::<OpTx>::default().create_evm_with_inspector(db, op_env, inspector);
             let mut executor = prepare!(evm);
             executor.set_optimism_hardfork(hardfork.into());
-            return run_prepared!(
-                executor,
-                noop_before_transaction,
-                execute_pool_transaction,
-                noop_on_execution_error
-            );
+            return run_prepared!(executor);
         }
 
         if self.is_tempo() {
             let tempo_env = self.build_tempo_evm_env(evm_env);
             let mut evm =
                 TempoEvmFactory::default().create_evm_with_inspector(db, tempo_env, inspector);
-            return run_prepared!(
-                prepare!(evm),
-                noop_before_transaction,
-                execute_pool_transaction,
-                noop_on_execution_error
-            );
+            return run_prepared!(prepare!(evm));
         }
         let mut evm =
             EthEvmFactory::default().create_evm_with_inspector(db, evm_env.clone(), inspector);
-        run_prepared!(
-            prepare!(evm),
-            noop_before_transaction,
-            execute_pool_transaction,
-            noop_on_execution_error
-        )
+        run_prepared!(prepare!(evm))
     }
 
     /// Applies Ethereum block-start transitions to a disposable simulation candidate.
@@ -5277,10 +5248,11 @@ where
                 db,
                 evm_env,
                 parent_hash,
-                hardfork,
+                hardfork.into(),
                 transactions,
                 inspector_tx_config,
-                monad_context,
+                monad_context
+                    .ok_or_else(|| eyre::eyre!("Monad replay ancestor context is unavailable"))?,
             );
         }
 

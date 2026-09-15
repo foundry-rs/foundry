@@ -18,6 +18,7 @@ struct CallOutcome {
 enum CallStatus {
     Success,
     Revert,
+    ExceptionalHalt,
     Failure,
 }
 
@@ -26,6 +27,7 @@ enum JoinedCallOutcome {
     ExpectedRevert { parent: PathState, child: PathState },
     Success { parent: PathState, child: PathState },
     Revert { parent: PathState, child: PathState },
+    ExceptionalHalt(PathState),
     Failure(PathState),
 }
 
@@ -163,7 +165,7 @@ impl SymbolicExecutor {
         if let Some(mut expected) = parent.expected_revert.clone() {
             match outcome.status {
                 CallStatus::Success => return Ok(JoinedCallOutcome::Failure(parent)),
-                CallStatus::Revert | CallStatus::Failure => {
+                CallStatus::Revert | CallStatus::ExceptionalHalt | CallStatus::Failure => {
                     if !self.expected_revert_matches(
                         &mut parent,
                         &expected,
@@ -185,6 +187,7 @@ impl SymbolicExecutor {
         Ok(match outcome.status {
             CallStatus::Success => JoinedCallOutcome::Success { parent, child: outcome.state },
             CallStatus::Revert => JoinedCallOutcome::Revert { parent, child: outcome.state },
+            CallStatus::ExceptionalHalt => JoinedCallOutcome::ExceptionalHalt(parent),
             CallStatus::Failure => JoinedCallOutcome::Failure(parent),
         })
     }
@@ -350,6 +353,14 @@ impl SymbolicExecutor {
                         }
                         *completed_paths += 1;
                         outcomes.push(CallOutcome { status: CallStatus::Revert, state });
+                        break;
+                    }
+                    StepOutcome::ExceptionalHalt => {
+                        if *completed_paths >= path_limit {
+                            return Err(SymbolicError::Unsupported("symbolic path limit exceeded"));
+                        }
+                        *completed_paths += 1;
+                        outcomes.push(CallOutcome { status: CallStatus::ExceptionalHalt, state });
                         break;
                     }
                     StepOutcome::Failure => {
