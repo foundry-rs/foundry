@@ -1,7 +1,7 @@
 //! Forge test runner for multiple contracts.
 
 use crate::{
-    ContractRunner, TestFilter,
+    ContractRunner, TestFilter, TracePrefetcher,
     progress::TestsProgress,
     result::{SuiteResult, SymbolicCounterexampleArtifact, SymbolicCounterexampleArtifactKind},
     runner::{
@@ -89,6 +89,8 @@ pub struct MultiContractRunner<FEN: FoundryEvmNetwork> {
 
     /// The fork to use at launch
     pub fork: Option<CreateFork>,
+    /// Starts external trace identification for each test as it finishes.
+    pub trace_prefetch: Option<Arc<TracePrefetcher>>,
 
     /// The base configuration for the test runner.
     pub tcfg: TestRunnerConfig<FEN>,
@@ -954,6 +956,7 @@ impl MultiContractRunnerBuilder {
             },
 
             fork: self.fork,
+            trace_prefetch: None,
         })
     }
 }

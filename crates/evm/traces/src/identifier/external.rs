@@ -20,19 +20,22 @@ use std::{
     borrow::Cow,
     pin::Pin,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
 };
-use tokio::time::{Duration, Interval};
+use tokio::{
+    sync::Notify,
+    time::{Duration, Interval},
+};
 
 /// A trace identifier that tries to identify addresses using Etherscan.
 pub struct ExternalIdentifier {
-    fetchers: Vec<Arc<dyn ExternalFetcherT>>,
-    /// Cached contracts.
-    contracts: HashMap<Address, (FetcherKind, Option<Metadata>)>,
-    /// Remaining time external identification may block trace rendering.
-    remaining_budget: Duration,
+    fetchers: Arc<[Arc<dyn ExternalFetcherT>]>,
+    /// Lookup results, shared with every [`ExternalPrefetcher`] created from this identifier.
+    cache: Arc<Cache>,
+    /// Time a single background prefetch may run before it is abandoned.
+    prefetch_timeout: Duration,
 }
 
 impl ExternalIdentifier {
@@ -80,11 +83,33 @@ impl ExternalIdentifier {
             return Ok(None);
         }
 
-        Ok(Some(Self {
-            fetchers,
-            contracts: Default::default(),
-            remaining_budget: Duration::from_secs(timeout),
-        }))
+        let timeout = Duration::from_secs(timeout);
+        Ok(Some(Self::with_fetchers(fetchers, timeout)))
+    }
+
+    fn with_fetchers(fetchers: Vec<Arc<dyn ExternalFetcherT>>, timeout: Duration) -> Self {
+        Self {
+            fetchers: fetchers.into(),
+            cache: Arc::new(Cache::new(timeout)),
+            prefetch_timeout: timeout,
+        }
+    }
+
+    /// Returns a handle that schedules lookups on `handle` ahead of [`identify_addresses`].
+    ///
+    /// [`identify_addresses`]: TraceIdentifier::identify_addresses
+    pub fn prefetcher(&self, handle: tokio::runtime::Handle) -> ExternalPrefetcher {
+        ExternalPrefetcher {
+            fetchers: Arc::clone(&self.fetchers),
+            cache: Arc::clone(&self.cache),
+            timeout: self.prefetch_timeout,
+            handle,
+        }
+    }
+
+    /// Returns the remaining time external identification may block trace rendering.
+    pub fn remaining_budget(&self) -> Duration {
+        self.cache.state().remaining_budget
     }
 
     /// Goes over the list of contracts we have pulled from the traces, clones their source from
@@ -92,6 +117,8 @@ impl ExternalIdentifier {
     pub async fn get_compiled_contracts(&self) -> eyre::Result<ContractSources> {
         // Collect contract info upfront so we can reference it in error messages
         let contracts_info: Vec<_> = self
+            .cache
+            .state()
             .contracts
             .iter()
             // filter out vyper files and contracts without metadata
@@ -99,7 +126,7 @@ impl ExternalIdentifier {
                 if let Some(metadata) = metadata.as_ref()
                     && !metadata.is_vyper()
                 {
-                    Some((*addr, metadata))
+                    Some((*addr, metadata.clone()))
                 } else {
                     None
                 }
@@ -141,11 +168,7 @@ impl ExternalIdentifier {
         Ok(sources)
     }
 
-    fn identify_from_metadata(
-        &self,
-        address: Address,
-        metadata: &Metadata,
-    ) -> IdentifiedAddress<'static> {
+    fn identify_from_metadata(address: Address, metadata: &Metadata) -> IdentifiedAddress<'static> {
         let label = metadata.contract_name.clone();
         let abi = metadata.abi().ok().map(Cow::Owned);
         IdentifiedAddress {
@@ -158,56 +181,28 @@ impl ExternalIdentifier {
         }
     }
 
-    fn cache_fetched(&mut self, address: Address, value: (FetcherKind, Option<Metadata>)) {
-        match self.contracts.entry(address) {
-            Entry::Occupied(mut occupied_entry) => {
-                let old = occupied_entry.get();
-                // Only override when the new result is strictly better:
-                // - new has metadata and old doesn't, OR
-                // - both have metadata but new is from Etherscan and old is not.
-                // Never downgrade a successful lookup to None.
-                let should_replace = match (&old.1, &value.1) {
-                    (None, Some(_)) => true,
-                    (Some(_), None) => false,
-                    _ => {
-                        matches!(value.0, FetcherKind::Etherscan)
-                            && !matches!(old.0, FetcherKind::Etherscan)
-                    }
-                };
-                if should_replace {
-                    occupied_entry.insert(value);
-                }
-            }
-            Entry::Vacant(vacant_entry) => {
-                vacant_entry.insert(value);
-            }
-        }
-    }
-
+    /// Resolves `addresses` that are not cached yet, blocking for at most the remaining budget.
+    ///
+    /// Addresses with a prefetch in flight are awaited rather than fetched again. Time spent here
+    /// is charged to the budget, and a timeout spends all of it.
     async fn fetch_addresses_async(&mut self, addresses: &[Address]) {
-        if addresses.is_empty() || self.remaining_budget.is_zero() {
+        let budget = self.remaining_budget();
+        if addresses.is_empty() || budget.is_zero() {
             return;
         }
 
-        let fetchers = self
-            .fetchers
-            .clone()
-            .into_iter()
-            .map(|fetcher| ExternalFetcher::new(fetcher, addresses));
+        let (to_fetch, to_await) = self.cache.claim(addresses);
         let started = tokio::time::Instant::now();
-        let timed_out = tokio::time::timeout(self.remaining_budget, async {
-            let mut fetched = futures::stream::select_all(fetchers);
-            while let Some((address, value)) = fetched.next().await {
-                self.cache_fetched(address, value);
-            }
-        })
+        let timed_out = tokio::time::timeout(
+            budget,
+            futures::future::join(
+                fetch_batch(&self.fetchers, &self.cache, to_fetch),
+                self.cache.settled(&to_await),
+            ),
+        )
         .await
         .is_err();
-        self.remaining_budget = self.remaining_budget.saturating_sub(started.elapsed());
-        if timed_out {
-            self.remaining_budget = Duration::ZERO;
-            warn!(target: "evm::traces::external", "external identification timed out; disabling it for the remainder of this session");
-        }
+        self.cache.spend(started.elapsed(), timed_out);
     }
 
     /// Fetches all verified ABIs and whether each proxy chain was fully resolved.
@@ -235,16 +230,20 @@ impl ExternalIdentifier {
             .collect::<Vec<_>>();
 
         for _ in 0..MAX_PROXY_DEPTH {
-            let to_fetch = chains
-                .iter()
-                .filter_map(|chain| chain.current)
-                .filter(|address| !self.contracts.contains_key(address))
-                .collect::<HashSet<_>>()
-                .into_iter()
-                .collect::<Vec<_>>();
+            let to_fetch = {
+                let state = self.cache.state();
+                chains
+                    .iter()
+                    .filter_map(|chain| chain.current)
+                    .filter(|address| !state.contracts.contains_key(address))
+                    .collect::<HashSet<_>>()
+                    .into_iter()
+                    .collect::<Vec<_>>()
+            };
             self.fetch_addresses_async(&to_fetch).await;
 
             let mut has_next = false;
+            let state = self.cache.state();
             for chain in &mut chains {
                 let Some(current) = chain.current else { continue };
                 if !chain.visited.insert(current) {
@@ -252,7 +251,7 @@ impl ExternalIdentifier {
                     chain.complete = false;
                     continue;
                 }
-                let Some((_, Some(metadata))) = self.contracts.get(&current) else {
+                let Some((_, Some(metadata))) = state.contracts.get(&current) else {
                     chain.current = None;
                     chain.complete = false;
                     continue;
@@ -301,23 +300,26 @@ impl TraceIdentifier for ExternalIdentifier {
         let mut to_fetch = AddressSet::default();
 
         // Check cache first.
-        for &node in nodes {
-            let address = node.trace.address;
-            if let Some((_, metadata)) = self.contracts.get(&address) {
-                if let Some(metadata) = metadata {
-                    identities.push(self.identify_from_metadata(address, metadata));
+        {
+            let state = self.cache.state();
+            for &node in nodes {
+                let address = node.trace.address;
+                if let Some((_, metadata)) = state.contracts.get(&address) {
+                    if let Some(metadata) = metadata {
+                        identities.push(Self::identify_from_metadata(address, metadata));
+                    } else {
+                        // Do nothing. We know that this contract was not verified.
+                    }
                 } else {
-                    // Do nothing. We know that this contract was not verified.
+                    to_fetch.insert(address);
                 }
-            } else {
-                to_fetch.insert(address);
             }
         }
 
         if to_fetch.is_empty() {
             return identities;
         }
-        if self.remaining_budget.is_zero() {
+        if self.remaining_budget().is_zero() {
             return identities;
         }
         trace!(target: "evm::traces::external", "fetching {} addresses", to_fetch.len());
@@ -325,9 +327,10 @@ impl TraceIdentifier for ExternalIdentifier {
         let to_fetch = to_fetch.into_iter().collect::<Vec<_>>();
         foundry_common::block_on(self.fetch_addresses_async(&to_fetch));
 
+        let state = self.cache.state();
         for address in to_fetch {
-            if let Some((_, Some(metadata))) = self.contracts.get(&address) {
-                identities.push(self.identify_from_metadata(address, metadata));
+            if let Some((_, Some(metadata))) = state.contracts.get(&address) {
+                identities.push(Self::identify_from_metadata(address, metadata));
             }
         }
         trace!(target: "evm::traces::external", "identified {} addresses", identities.len());
@@ -335,8 +338,200 @@ impl TraceIdentifier for ExternalIdentifier {
     }
 }
 
+/// Schedules external lookups before the traces that need them reach the identifier.
+///
+/// Results land in the cache shared with the [`ExternalIdentifier`] this handle was created from,
+/// so a later [`identify_addresses`] call for the same addresses finds them, or waits for the
+/// in-flight lookup, instead of fetching again. Nothing is scheduled once the identifier's budget
+/// is spent.
+///
+/// [`identify_addresses`]: TraceIdentifier::identify_addresses
+#[derive(Clone)]
+pub struct ExternalPrefetcher {
+    fetchers: Arc<[Arc<dyn ExternalFetcherT>]>,
+    cache: Arc<Cache>,
+    /// Time a single prefetch may run before it is abandoned.
+    timeout: Duration,
+    /// The runtime prefetches are spawned on.
+    handle: tokio::runtime::Handle,
+}
+
+impl std::fmt::Debug for ExternalPrefetcher {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExternalPrefetcher").field("timeout", &self.timeout).finish_non_exhaustive()
+    }
+}
+
+impl ExternalPrefetcher {
+    /// Starts fetching `addresses` that are neither cached nor already in flight.
+    pub fn prefetch(&self, addresses: impl IntoIterator<Item = Address>) {
+        let addresses = self.cache.claim_new(addresses);
+        if addresses.is_empty() {
+            return;
+        }
+        trace!(target: "evm::traces::external", "prefetching {} addresses", addresses.len());
+
+        let fetchers = Arc::clone(&self.fetchers);
+        let cache = Arc::clone(&self.cache);
+        let timeout = self.timeout;
+        self.handle.spawn(async move {
+            if tokio::time::timeout(timeout, fetch_batch(&fetchers, &cache, addresses))
+                .await
+                .is_err()
+            {
+                warn!(target: "evm::traces::external", "external prefetch timed out");
+            }
+        });
+    }
+}
+
+/// Lookup results shared between an [`ExternalIdentifier`] and its [`ExternalPrefetcher`]s.
+struct Cache {
+    state: Mutex<CacheState>,
+    /// Signalled whenever an in-flight lookup settles.
+    notify: Notify,
+}
+
+#[derive(Default)]
+struct CacheState {
+    /// Fetched contracts, including negative results.
+    contracts: HashMap<Address, (FetcherKind, Option<Metadata>)>,
+    /// Addresses with a lookup in progress.
+    in_flight: AddressSet,
+    /// Remaining time external identification may block trace rendering.
+    remaining_budget: Duration,
+}
+
+impl Cache {
+    fn new(budget: Duration) -> Self {
+        Self {
+            state: Mutex::new(CacheState { remaining_budget: budget, ..Default::default() }),
+            notify: Notify::new(),
+        }
+    }
+
+    fn state(&self) -> std::sync::MutexGuard<'_, CacheState> {
+        self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Splits `addresses` into the ones to fetch now, marking them in flight, and the ones with
+    /// a lookup already in flight.
+    fn claim(&self, addresses: &[Address]) -> (Vec<Address>, Vec<Address>) {
+        let mut state = self.state();
+        addresses.iter().copied().partition(|address| state.in_flight.insert(*address))
+    }
+
+    /// Marks the addresses of `addresses` that are neither cached nor in flight as in flight and
+    /// returns them. Returns nothing once the budget is spent.
+    fn claim_new(&self, addresses: impl IntoIterator<Item = Address>) -> Vec<Address> {
+        let mut state = self.state();
+        if state.remaining_budget.is_zero() {
+            return Vec::new();
+        }
+        addresses
+            .into_iter()
+            .filter(|address| {
+                !state.contracts.contains_key(address) && state.in_flight.insert(*address)
+            })
+            .collect()
+    }
+
+    fn insert(&self, address: Address, value: (FetcherKind, Option<Metadata>)) {
+        let mut state = self.state();
+        match state.contracts.entry(address) {
+            Entry::Occupied(mut occupied_entry) => {
+                let old = occupied_entry.get();
+                // Only override when the new result is strictly better:
+                // - new has metadata and old doesn't, OR
+                // - both have metadata but new is from Etherscan and old is not.
+                // Never downgrade a successful lookup to None.
+                let should_replace = match (&old.1, &value.1) {
+                    (None, Some(_)) => true,
+                    (Some(_), None) => false,
+                    _ => {
+                        matches!(value.0, FetcherKind::Etherscan)
+                            && !matches!(old.0, FetcherKind::Etherscan)
+                    }
+                };
+                if should_replace {
+                    occupied_entry.insert(value);
+                }
+            }
+            Entry::Vacant(vacant_entry) => {
+                vacant_entry.insert(value);
+            }
+        }
+        state.in_flight.remove(&address);
+        drop(state);
+        self.notify.notify_waiters();
+    }
+
+    /// Releases in-flight marks for lookups that ended without a result.
+    fn release(&self, addresses: &[Address]) {
+        let mut state = self.state();
+        for address in addresses {
+            state.in_flight.remove(address);
+        }
+        drop(state);
+        self.notify.notify_waiters();
+    }
+
+    /// Resolves once none of `addresses` has a lookup in flight.
+    async fn settled(&self, addresses: &[Address]) {
+        loop {
+            let notified = self.notify.notified();
+            if addresses.iter().all(|address| !self.state().in_flight.contains(address)) {
+                return;
+            }
+            notified.await;
+        }
+    }
+
+    /// Charges `elapsed` to the budget; a timeout spends all of it.
+    fn spend(&self, elapsed: Duration, timed_out: bool) {
+        let mut state = self.state();
+        state.remaining_budget = state.remaining_budget.saturating_sub(elapsed);
+        if timed_out {
+            state.remaining_budget = Duration::ZERO;
+            warn!(target: "evm::traces::external", "external identification timed out; disabling it for the remainder of this session");
+        }
+    }
+}
+
+/// Runs every fetcher over `addresses` and records each result in `cache`.
+///
+/// Addresses still in flight when this future completes or is dropped are released, so a
+/// cancelled batch never leaves a waiter behind.
+async fn fetch_batch(
+    fetchers: &[Arc<dyn ExternalFetcherT>],
+    cache: &Cache,
+    addresses: Vec<Address>,
+) {
+    if addresses.is_empty() {
+        return;
+    }
+    let _release = ReleaseOnDrop { cache, addresses: &addresses };
+    let fetchers =
+        fetchers.iter().map(|fetcher| ExternalFetcher::new(Arc::clone(fetcher), &addresses));
+    let mut fetched = futures::stream::select_all(fetchers);
+    while let Some((address, value)) = fetched.next().await {
+        cache.insert(address, value);
+    }
+}
+
+struct ReleaseOnDrop<'a> {
+    cache: &'a Cache,
+    addresses: &'a [Address],
+}
+
+impl Drop for ReleaseOnDrop<'_> {
+    fn drop(&mut self) {
+        self.cache.release(self.addresses);
+    }
+}
+
 type FetchFuture =
-    Pin<Box<dyn Future<Output = (Address, Result<Option<Metadata>, EtherscanError>)>>>;
+    Pin<Box<dyn Future<Output = (Address, Result<Option<Metadata>, EtherscanError>)> + Send>>;
 
 /// Maximum number of times a single address is retried through a transient Cloudflare
 /// block before we give up on it. Bounded so a persistent block can't loop forever.
@@ -656,10 +851,7 @@ mod tests {
     use std::{
         collections::HashSet as StdHashSet,
         future::pending,
-        sync::{
-            Mutex,
-            atomic::{AtomicUsize, Ordering as AtomicOrdering},
-        },
+        sync::atomic::{AtomicUsize, Ordering as AtomicOrdering},
     };
 
     struct TestFetcher {
@@ -742,7 +934,7 @@ mod tests {
         fetchers: Vec<Arc<dyn ExternalFetcherT>>,
         remaining_budget: Duration,
     ) -> ExternalIdentifier {
-        ExternalIdentifier { fetchers, contracts: Default::default(), remaining_budget }
+        ExternalIdentifier::with_fetchers(fetchers, remaining_budget)
     }
 
     #[test]
@@ -823,9 +1015,10 @@ mod tests {
 
         identifier.fetch_addresses_async(&[address]).await;
 
-        assert!(identifier.remaining_budget.is_zero());
+        assert!(identifier.remaining_budget().is_zero());
+        assert!(identifier.cache.state().in_flight.is_empty());
         assert_eq!(
-            identifier.contracts[&address].1.as_ref().unwrap().contract_name,
+            identifier.cache.state().contracts[&address].1.as_ref().unwrap().contract_name,
             "PartialResult"
         );
         assert_eq!(successful_calls.load(AtomicOrdering::Relaxed), 1);
@@ -879,12 +1072,12 @@ mod tests {
         let second = Address::with_last_byte(2);
 
         identifier.fetch_addresses_async(&[first]).await;
-        assert!(identifier.contracts[&first].1.is_some());
-        assert!(identifier.remaining_budget < Duration::from_millis(15));
+        assert!(identifier.cache.state().contracts[&first].1.is_some());
+        assert!(identifier.remaining_budget() < Duration::from_millis(15));
 
         identifier.fetch_addresses_async(&[second]).await;
-        assert!(identifier.remaining_budget.is_zero());
-        assert!(!identifier.contracts.contains_key(&second));
+        assert!(identifier.remaining_budget().is_zero());
+        assert!(!identifier.cache.state().contracts.contains_key(&second));
         assert_eq!(calls.load(AtomicOrdering::Relaxed), 2);
     }
 
@@ -899,27 +1092,27 @@ mod tests {
 
         identifier.fetch_addresses_async(&[Address::with_last_byte(1)]).await;
 
-        assert!(identifier.remaining_budget.is_zero());
+        assert!(identifier.remaining_budget().is_zero());
         assert!(calls.load(AtomicOrdering::Relaxed) > 1);
     }
 
     #[test]
     fn etherscan_metadata_takes_precedence() {
         let address = Address::with_last_byte(1);
-        let mut identifier = test_identifier(Vec::new(), Duration::ZERO);
+        let identifier = test_identifier(Vec::new(), Duration::ZERO);
 
-        identifier
-            .cache_fetched(address, (FetcherKind::Sourcify, Some(metadata("SourcifyResult"))));
-        identifier.cache_fetched(address, (FetcherKind::Etherscan, None));
+        identifier.cache.insert(address, (FetcherKind::Sourcify, Some(metadata("SourcifyResult"))));
+        identifier.cache.insert(address, (FetcherKind::Etherscan, None));
         assert_eq!(
-            identifier.contracts[&address].1.as_ref().unwrap().contract_name,
+            identifier.cache.state().contracts[&address].1.as_ref().unwrap().contract_name,
             "SourcifyResult"
         );
 
         identifier
-            .cache_fetched(address, (FetcherKind::Etherscan, Some(metadata("EtherscanResult"))));
+            .cache
+            .insert(address, (FetcherKind::Etherscan, Some(metadata("EtherscanResult"))));
         assert_eq!(
-            identifier.contracts[&address].1.as_ref().unwrap().contract_name,
+            identifier.cache.state().contracts[&address].1.as_ref().unwrap().contract_name,
             "EtherscanResult"
         );
     }
@@ -938,11 +1131,12 @@ mod tests {
             r#"[{"anonymous":false,"inputs":[],"name":"ImplementationEvent","type":"event"}]"#
                 .to_string();
         let mut identifier = test_identifier(Vec::new(), Duration::from_secs(1));
-        let identity = identifier.identify_from_metadata(proxy, &proxy_metadata);
+        let identity = ExternalIdentifier::identify_from_metadata(proxy, &proxy_metadata);
         assert_eq!(identity.contract.as_deref(), Some("Proxy"));
-        identifier.cache_fetched(proxy, (FetcherKind::Etherscan, Some(proxy_metadata)));
+        identifier.cache.insert(proxy, (FetcherKind::Etherscan, Some(proxy_metadata)));
         identifier
-            .cache_fetched(implementation_address, (FetcherKind::Etherscan, Some(implementation)));
+            .cache
+            .insert(implementation_address, (FetcherKind::Etherscan, Some(implementation)));
 
         let mut results = identifier.get_abis(&[proxy]).await;
         let (result_address, result) = results.pop().unwrap();
@@ -954,10 +1148,121 @@ mod tests {
         assert!(complete);
         assert_eq!(event_names, ["ImplementationEvent", "ProxyEvent"]);
 
-        identifier.contracts.remove(&implementation_address);
+        identifier.cache.state().contracts.remove(&implementation_address);
         let (_, result) = identifier.get_abis(&[proxy]).await.pop().unwrap();
         let (abis, complete) = result.unwrap();
         assert_eq!(abis.len(), 1);
         assert!(!complete);
+    }
+
+    fn test_fetcher(
+        delay: Option<Duration>,
+        contract_name: Option<&'static str>,
+        calls: &Arc<AtomicUsize>,
+    ) -> Arc<dyn ExternalFetcherT> {
+        Arc::new(TestFetcher {
+            kind: FetcherKind::Sourcify,
+            delay,
+            contract_name,
+            calls: Arc::clone(calls),
+            invalid: AtomicBool::new(false),
+        })
+    }
+
+    fn node(address: Address) -> CallTraceNode {
+        let mut node = CallTraceNode::default();
+        node.trace.address = address;
+        node
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn prefetched_address_is_served_from_cache() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let fetcher = test_fetcher(Some(Duration::ZERO), Some("Prefetched"), &calls);
+        let mut identifier = test_identifier(vec![fetcher], Duration::from_secs(1));
+        let address = Address::with_last_byte(1);
+
+        identifier.prefetcher(tokio::runtime::Handle::current()).prefetch([address]);
+        tokio::time::timeout(Duration::from_secs(1), identifier.cache.settled(&[address]))
+            .await
+            .unwrap();
+        let budget = identifier.remaining_budget();
+
+        let identities = identifier.identify_addresses(&[&node(address)]);
+
+        assert_eq!(identities.len(), 1);
+        assert_eq!(identities[0].label.as_deref(), Some("Prefetched"));
+        assert_eq!(calls.load(AtomicOrdering::Relaxed), 1);
+        assert_eq!(identifier.remaining_budget(), budget);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn identify_waits_for_in_flight_prefetch_instead_of_refetching() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let fetcher = test_fetcher(Some(Duration::from_millis(50)), Some("InFlight"), &calls);
+        let mut identifier = test_identifier(vec![fetcher], Duration::from_secs(5));
+        let address = Address::with_last_byte(1);
+
+        identifier.prefetcher(tokio::runtime::Handle::current()).prefetch([address]);
+        let identities = identifier.identify_addresses(&[&node(address)]);
+
+        assert_eq!(identities.len(), 1);
+        assert_eq!(identities[0].label.as_deref(), Some("InFlight"));
+        assert_eq!(calls.load(AtomicOrdering::Relaxed), 1);
+        let budget = identifier.remaining_budget();
+        assert!(!budget.is_zero());
+        assert!(budget < Duration::from_secs(5), "waiting is charged to the budget");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn prefetch_skips_cached_and_in_flight_addresses() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let fetcher = test_fetcher(Some(Duration::from_millis(10)), Some("Once"), &calls);
+        let identifier = test_identifier(vec![fetcher], Duration::from_secs(1));
+        let prefetcher = identifier.prefetcher(tokio::runtime::Handle::current());
+        let address = Address::with_last_byte(1);
+
+        prefetcher.prefetch([address, address]);
+        prefetcher.prefetch([address]);
+        tokio::time::timeout(Duration::from_secs(1), identifier.cache.settled(&[address]))
+            .await
+            .unwrap();
+        prefetcher.prefetch([address]);
+
+        assert_eq!(calls.load(AtomicOrdering::Relaxed), 1);
+        assert!(identifier.cache.state().in_flight.is_empty());
+    }
+
+    #[tokio::test]
+    async fn prefetch_is_disabled_once_budget_is_spent() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let fetcher = test_fetcher(Some(Duration::ZERO), Some("Never"), &calls);
+        let identifier = test_identifier(vec![fetcher], Duration::ZERO);
+        let address = Address::with_last_byte(1);
+
+        identifier.prefetcher(tokio::runtime::Handle::current()).prefetch([address]);
+        tokio::task::yield_now().await;
+
+        assert_eq!(calls.load(AtomicOrdering::Relaxed), 0);
+        assert!(identifier.cache.state().in_flight.is_empty());
+        assert!(!identifier.cache.state().contracts.contains_key(&address));
+    }
+
+    #[tokio::test]
+    async fn prefetch_timeout_releases_in_flight_addresses_without_spending_budget() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let fetcher = test_fetcher(None, None, &calls);
+        let identifier = test_identifier(vec![fetcher], Duration::from_millis(20));
+        let address = Address::with_last_byte(1);
+
+        identifier.prefetcher(tokio::runtime::Handle::current()).prefetch([address]);
+        tokio::time::timeout(Duration::from_secs(1), identifier.cache.settled(&[address]))
+            .await
+            .unwrap();
+
+        assert_eq!(calls.load(AtomicOrdering::Relaxed), 1);
+        assert!(identifier.cache.state().in_flight.is_empty());
+        assert!(!identifier.cache.state().contracts.contains_key(&address));
+        assert_eq!(identifier.remaining_budget(), Duration::from_millis(20));
     }
 }

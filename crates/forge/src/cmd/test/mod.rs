@@ -1,6 +1,6 @@
 use super::{fuzz::FuzzRunArgs, watch::WatchArgs};
 use crate::{
-    MultiContractRunner, MultiContractRunnerBuilder, brutalizer,
+    MultiContractRunner, MultiContractRunnerBuilder, TracePrefetcher, brutalizer,
     decode::decode_console_logs,
     gas_report::GasReport,
     multi_runner::{
@@ -2388,15 +2388,6 @@ impl TestArgs {
         let extra_cheatcode_addresses = runner.tcfg.executor_builder.extra_cheatcode_addresses();
         let decode_internal = runner.decode_internal != InternalTraceMode::None;
 
-        // Run tests in a streaming fashion.
-        let (tx, rx) = channel::<(String, SuiteResult)>();
-        let timer = Instant::now();
-        let show_progress = config.show_progress;
-        let handle = tokio::task::spawn_blocking({
-            let filter = filter.clone();
-            move || runner.test(&filter, tx, show_progress).map(|()| runner)
-        });
-
         // Set up trace identifiers.
         let mut identifier = TraceIdentifiers::new().with_local(&known_contracts);
 
@@ -2406,6 +2397,46 @@ impl TestArgs {
         if !self.gas_report && remote_chain.is_some() {
             identifier = identifier.with_external(&config, remote_chain)?;
         }
+
+        // Some outputs need trace identities even if the textual trace is not rendered.
+        let always_identify_traces = self.gas_report
+            || self.debug
+            || self.flamegraph
+            || self.flamechart
+            || self.evm_profile.is_some();
+
+        // Start external lookups as each test finishes rather than when its suite is rendered.
+        runner.trace_prefetch = identifier.external.as_ref().map(|external| {
+            let decoder = CallTraceDecoderBuilder::new()
+                .with_networks(networks)
+                .with_chain_id(remote_chain.map(|c| c.id()))
+                .with_hardfork(resolved_hardfork)
+                .build();
+            let suppress_successful_traces = self.suppress_successful_traces;
+            Arc::new(TracePrefetcher::new(
+                external.prefetcher(tokio::runtime::Handle::current()),
+                decoder,
+                known_contracts.clone(),
+                Box::new(move |result| {
+                    always_identify_traces
+                        || renders_trace(
+                            result,
+                            trace_verbosity,
+                            silent,
+                            suppress_successful_traces,
+                        )
+                }),
+            ))
+        });
+
+        // Run tests in a streaming fashion.
+        let (tx, rx) = channel::<(String, SuiteResult)>();
+        let timer = Instant::now();
+        let show_progress = config.show_progress;
+        let handle = tokio::task::spawn_blocking({
+            let filter = filter.clone();
+            move || runner.test(&filter, tx, show_progress).map(|()| runner)
+        });
 
         // Build the trace decoder.
         let mut builder = CallTraceDecoderBuilder::new()
@@ -2440,13 +2471,6 @@ impl TestArgs {
         let mut outcome = TestOutcome::empty(None, self.allow_failure);
         outcome.fuzz_seed = fuzz_seed;
 
-        // Some outputs need trace identities even if the textual trace is not rendered.
-        let always_identify_traces = self.gas_report
-            || self.debug
-            || self.flamegraph
-            || self.flamechart
-            || self.evm_profile.is_some();
-
         let mut any_test_failed = false;
         let mut backtrace_builder = None;
         while let Ok((contract_name, mut suite_result)) = rx.recv() {
@@ -2480,23 +2504,10 @@ impl TestArgs {
             for (name, result) in tests {
                 let test_failed = result.status.is_failure();
                 let show_traces = !self.suppress_successful_traces || test_failed;
-                // Trace verbosity.
-                // - 0..3: nothing.
-                // - 3: only display traces for failed tests.
-                // - 4: also display the setup trace for failed tests.
-                // - 5..: display all traces for all tests, including storage changes.
-                let should_include_trace = |kind: &TraceKind| match kind {
-                    TraceKind::Execution => {
-                        (trace_verbosity == 3 && test_failed) || trace_verbosity >= 4
-                    }
-                    TraceKind::Setup => {
-                        (trace_verbosity == 4 && test_failed) || trace_verbosity >= 5
-                    }
-                    TraceKind::Deployment => false,
-                };
-                let renders_trace = !silent
-                    && show_traces
-                    && result.traces.iter().any(|(kind, _)| should_include_trace(kind));
+                let should_include_trace =
+                    |kind: &TraceKind| should_include_trace(kind, trace_verbosity, test_failed);
+                let renders_trace =
+                    renders_trace(result, trace_verbosity, silent, self.suppress_successful_traces);
                 let identify_addresses = always_identify_traces || renders_trace;
 
                 if !silent {
@@ -3087,6 +3098,37 @@ impl Provider for TestArgs {
         }
         Ok(Map::from([(Config::selected_profile(), dict)]))
     }
+}
+
+/// Whether a trace of `kind` is rendered at `trace_verbosity`.
+///
+/// - 0..3: nothing.
+/// - 3: only display traces for failed tests.
+/// - 4: also display the setup trace for failed tests.
+/// - 5..: display all traces for all tests, including storage changes.
+const fn should_include_trace(kind: &TraceKind, trace_verbosity: u8, test_failed: bool) -> bool {
+    match kind {
+        TraceKind::Execution => (trace_verbosity == 3 && test_failed) || trace_verbosity >= 4,
+        TraceKind::Setup => (trace_verbosity == 4 && test_failed) || trace_verbosity >= 5,
+        TraceKind::Deployment => false,
+    }
+}
+
+/// Whether any of `result`'s traces are rendered.
+fn renders_trace(
+    result: &TestResult,
+    trace_verbosity: u8,
+    silent: bool,
+    suppress_successful_traces: bool,
+) -> bool {
+    let test_failed = result.status.is_failure();
+    let show_traces = !suppress_successful_traces || test_failed;
+    !silent
+        && show_traces
+        && result
+            .traces
+            .iter()
+            .any(|(kind, _)| should_include_trace(kind, trace_verbosity, test_failed))
 }
 
 fn parse_opcode(s: &str) -> Result<OpCode, String> {
