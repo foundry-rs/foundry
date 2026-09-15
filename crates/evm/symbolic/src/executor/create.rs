@@ -163,6 +163,8 @@ impl SymbolicExecutor {
                         };
                         if first_byte == U256::from(0xef) {
                             parent.world = failure_world.clone();
+                            parent.call_mocks = child.call_mocks;
+                            parent.function_mocks = child.function_mocks;
                             parent.stack.push(SymExpr::zero(&mut self.cx))?;
                             parents.push_back(parent);
                             continue;

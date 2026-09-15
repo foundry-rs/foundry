@@ -146,8 +146,34 @@ contract SymbolicCreateEip3541 is Test {
         assert(block.timestamp == 123);
     }
 
+    function checkRejectedPrefixPreservesMockProgress() public {
+        checkMockProgress(address(0x1001), false);
+        checkMockProgress(address(0x1002), true);
+    }
+
     function warp(uint256 timestamp) external {
         vm.warp(timestamp);
+    }
+
+    function checkMockProgress(address target, bool useCreate2) internal {
+        bytes[] memory returnValues = new bytes[](2);
+        returnValues[0] = abi.encode(uint256(1));
+        returnValues[1] = abi.encode(uint256(2));
+        vm.mockCalls(target, abi.encodeCall(IMockSequenceTarget.value, ()), returnValues);
+
+        bytes memory initcode = abi.encodePacked(type(ConsumeMockThenReject).creationCode, abi.encode(target));
+        address created;
+        if (useCreate2) {
+            assembly ("memory-safe") {
+                created := create2(0, add(initcode, 32), mload(initcode), 1)
+            }
+        } else {
+            assembly ("memory-safe") {
+                created := create(0, add(initcode, 32), mload(initcode))
+            }
+        }
+        assert(created == address(0));
+        assertEq(IMockSequenceTarget(target).value(), 2);
     }
 
     function checkAllowedPrefixBeforeLondon() public {
@@ -192,6 +218,20 @@ contract WarpThenReject {
         }
     }
 }
+
+interface IMockSequenceTarget {
+    function value() external returns (uint256);
+}
+
+contract ConsumeMockThenReject {
+    constructor(IMockSequenceTarget target) {
+        require(target.value() == 1);
+        assembly ("memory-safe") {
+            mstore(0, shl(248, 0xef))
+            return(0, 1)
+        }
+    }
+}
 "#,
     );
 
@@ -199,6 +239,10 @@ contract WarpThenReject {
 
     cmd.forge_fuse();
     cmd.args(["test", "--symbolic", "--match-test", "checkRejectedPrefixPreservesWarp"])
+        .assert_success();
+
+    cmd.forge_fuse();
+    cmd.args(["test", "--symbolic", "--match-test", "checkRejectedPrefixPreservesMockProgress"])
         .assert_success();
 
     cmd.forge_fuse();
