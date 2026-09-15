@@ -4,7 +4,7 @@ use super::{
 };
 use crate::coverage::{
     BytecodeReporter, ContractId, CoverageAttributionReporter, CoverageReport, CoverageReporter,
-    CoverageSummaryReporter, DebugReporter, ItemAnchor, LcovReporter, ResolvedHitMap,
+    CoverageSummaryReporter, DebugReporter, ItemAnchors, LcovReporter, ResolvedHitMap,
     ResolvedHitMaps,
     analysis::{SourceAnalysis, SourceFiles},
     anchors::{find_anchors, find_execution_anchors},
@@ -600,7 +600,7 @@ impl BytecodeData {
         Self { source_map, bytecode, ic_pc_map }
     }
 
-    pub fn find_anchors(&self, source_analysis: &SourceAnalysis) -> Vec<ItemAnchor> {
+    pub fn find_anchors(&self, source_analysis: &SourceAnalysis) -> ItemAnchors {
         find_anchors(&self.bytecode, &self.source_map, &self.ic_pc_map, source_analysis)
     }
 }

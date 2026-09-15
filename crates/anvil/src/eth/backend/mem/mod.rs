@@ -6408,6 +6408,19 @@ where
         .await?
     }
 
+    pub async fn get_account_info_at_block(
+        &self,
+        address: Address,
+        block_request: Option<BlockRequest<FoundryTxEnvelope>>,
+    ) -> Result<RpcAccountInfo, BlockchainError> {
+        self.with_database_at(block_request, |db, _| {
+            let account = db.basic_ref(address)?.unwrap_or_default();
+            let code = self.get_code_with_state(&db, address)?;
+            Ok(RpcAccountInfo { balance: account.balance, nonce: account.nonce, code })
+        })
+        .await?
+    }
+
     /// Returns the nonce of the address
     ///
     /// If the requested number predates the fork then this will fetch it from the endpoint

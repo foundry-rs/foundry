@@ -196,11 +196,15 @@ forge test --match-test invariant_ \
 Forge replays each recorded prefix into a fresh EVM, symbolically solves only
 the call that reached the retained comparison, and writes a branch candidate
 only when concrete replay observes the opposite result at that exact comparison
-site. Reverting candidates are retained only when they contain an assertion
-failure or the invariant suite enables `fail_on_revert`. Target calls carrying
-nonzero value are currently skipped because symbolic root calls do not yet apply
-the corresponding balance transfer. Replay the
-resulting corpus to check every persisted sequence deterministically:
+site. Every accepted input produced by that solve is also replayed against each
+remaining invariant predicate and the suite hook, and exact failures are
+retained before Forge keeps one general branch-flipping seed. This uses the
+existing solver results; it does not issue additional symbolic queries.
+Reverting candidates are retained only when they contain an assertion failure
+or the invariant suite enables `fail_on_revert`. Target calls carrying nonzero
+value are currently skipped because symbolic root calls do not yet apply the
+corresponding balance transfer. Replay the resulting corpus to check every
+persisted sequence deterministically:
 
 ```sh
 forge fuzz replay --match-test invariant_ --corpus-dir fuzz_corpus
