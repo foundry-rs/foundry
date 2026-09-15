@@ -48,6 +48,8 @@ use foundry_evm::core::evm::MonadEvmNetwork;
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
 
+const MUTATION_STACK_SIZE: usize = 16 * 1024 * 1024;
+
 /// Result of testing a single mutant.
 #[derive(Debug, Clone)]
 pub struct MutantTestResult {
@@ -245,7 +247,7 @@ pub fn run_mutations_parallel_with_progress(
     // Configure rayon thread pool
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(num_workers)
-        .stack_size(16 * 1024 * 1024) // 16MB stack to avoid overflow in deep call chains
+        .stack_size(MUTATION_STACK_SIZE)
         .build()
         .map_err(|e| eyre::eyre!("Failed to create thread pool: {}", e))?;
 
@@ -500,18 +502,23 @@ fn run_compile_and_test_with_timeout(
     let selected_sources_for_worker = Arc::clone(&selected_sources_relative);
 
     let spawn_result = std::thread::Builder::new()
-        .stack_size(16 * 1024 * 1024)
+        .stack_size(MUTATION_STACK_SIZE)
         .name("mutation-worker".to_string())
         .spawn(move || {
+            // `test_collect` uses Rayon internally. Because this timeout worker
+            // is not itself a Rayon worker, nested parallel iterators would
+            // otherwise escape to the global pool and its default-sized stacks.
             let res = panic::catch_unwind(AssertUnwindSafe(|| {
-                compile_and_test(
-                    &cfg,
-                    &evm,
-                    &filter_for_worker,
-                    rerun_for_worker.as_ref().as_deref(),
-                    &selected_sources_for_worker,
-                    isolate,
-                )
+                with_mutation_test_pool(|| {
+                    compile_and_test(
+                        &cfg,
+                        &evm,
+                        &filter_for_worker,
+                        rerun_for_worker.as_ref().as_deref(),
+                        &selected_sources_for_worker,
+                        isolate,
+                    )
+                })
             }))
             .unwrap_or_else(|_| Err(eyre::eyre!("worker panicked")));
             let _ = tx.send(res);
@@ -549,6 +556,16 @@ fn run_compile_and_test_with_timeout(
             MutationResult::TimedOut
         }
     }
+}
+
+fn with_mutation_test_pool<T: Send>(op: impl FnOnce() -> Result<T> + Send) -> Result<T> {
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .stack_size(MUTATION_STACK_SIZE)
+        .thread_name(|_| "mutation-test".to_string())
+        .build()
+        .map_err(|err| eyre::eyre!("failed to create mutation test pool: {err}"))?
+        .install(op)
 }
 
 /// Apply a mutation to a source file.
@@ -760,6 +777,35 @@ fn compile_and_test_inner<FEN: FoundryEvmNetwork>(
 mod tests {
     use super::*;
     use alloy_primitives::U256;
+
+    #[test]
+    fn timeout_tests_keep_nested_rayon_work_in_owned_pool() {
+        let observations = std::thread::spawn(|| {
+            with_mutation_test_pool(|| {
+                let runtime = tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(1)
+                    .enable_all()
+                    .build()?;
+                runtime.block_on(async {
+                    Ok((0..8)
+                        .into_par_iter()
+                        .map(|_| {
+                            (
+                                rayon::current_num_threads(),
+                                std::thread::current().name().map(str::to_owned),
+                            )
+                        })
+                        .collect::<Vec<_>>())
+                })
+            })
+        })
+        .join()
+        .unwrap()
+        .unwrap();
+
+        assert!(observations.iter().all(|(threads, _)| *threads == 1));
+        assert!(observations.iter().all(|(_, name)| name.as_deref() == Some("mutation-test")));
+    }
 
     #[test]
     fn park_timed_out_worker_bounds_pending_handles() {
