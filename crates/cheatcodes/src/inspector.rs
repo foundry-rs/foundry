@@ -508,7 +508,12 @@ impl GasMetering {
     }
 
     /// Preserve post-refund region snapshots without changing the interpreter's gross gas usage.
-    fn record_isolated_refund(&mut self, depth: usize, gas: &Gas, snapshot_gas_used: Option<u64>) {
+    const fn record_isolated_refund(
+        &mut self,
+        depth: usize,
+        gas: &Gas,
+        snapshot_gas_used: Option<u64>,
+    ) {
         if self.recording
             && let Some(snapshot_gas_used) = snapshot_gas_used
         {

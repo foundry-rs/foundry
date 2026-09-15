@@ -318,14 +318,21 @@ contract LastCallGasIsolatedTest is LastCallGasFixture {
         assertEq(vm.stopSnapshotGas(), 43648);
     }
 
+    /// forge-config: default.evm_version = "cancun"
     function testSnapshotGasSectionCreateRefund() public {
         _setup();
         target.setValue(1);
+        // Prepare the init code before measuring so compiler-dependent copying is excluded.
+        bytes memory initCode = abi.encodePacked(type(RefundingConstructor).creationCode, abi.encode(target));
         vm.startSnapshotGas("isolated create refund");
-        new RefundingConstructor(target);
+        assembly {
+            pop(create(0, add(initCode, 32), mload(initCode)))
+        }
         uint256 section = vm.stopSnapshotGas();
-        // Preserve the pre-v1.8.2 CREATE and snapshot overhead.
-        assertEq(section, vm.snapshotGasLastFrame("isolated create frame") + 32366);
+        // CREATE costs 32000 gas; the remaining 20 gas is the pre-v1.8.2 snapshot overhead.
+        // EIP-3860 additionally charges 2 gas per init code word outside the isolated frame.
+        uint256 initCodeCost = 2 * ((initCode.length + 31) / 32);
+        assertEq(section, vm.snapshotGasLastFrame("isolated create frame") + 32020 + initCodeCost);
     }
 
     function _snapshotResetValue(uint256 initialValue) internal {
