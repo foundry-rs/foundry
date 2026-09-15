@@ -43,8 +43,9 @@ pub fn find_anchors(
                                 .map(|anchors| select_branch(anchors, 1))
                         })
                 }
-                CoverageItemKind::Branch { path_id, is_first_opcode: false, .. } => {
-                    find_anchor_branch(bytecode, source_map, item_id, anchor_loc)
+                CoverageItemKind::Branch { branch_id, path_id, is_first_opcode: false } => {
+                    let exact = analysis.is_ternary_branch(item.loc.source_id as u32, branch_id);
+                    find_anchor_branch_inner(bytecode, source_map, item_id, anchor_loc, exact)
                         .map(|anchors| select_branch(anchors, path_id))
                 }
                 _ => find_anchor_simple(source_map, ic_pc_map, item_id, anchor_loc)
@@ -138,6 +139,17 @@ pub fn find_anchor_branch(
     item_id: u32,
     loc: &SourceLocation,
 ) -> eyre::Result<(ItemAnchor, ItemAnchor)> {
+    find_anchor_branch_inner(bytecode, source_map, item_id, loc, false)
+}
+
+/// Matches exact ternary spans to exclude nested decisions.
+fn find_anchor_branch_inner(
+    bytecode: &[u8],
+    source_map: &SourceMap,
+    item_id: u32,
+    loc: &SourceLocation,
+    exact: bool,
+) -> eyre::Result<(ItemAnchor, ItemAnchor)> {
     let mut anchors: Option<(ItemAnchor, ItemAnchor)> = None;
     for (ic, (pc, inst)) in InstIter::new(bytecode).with_pc().enumerate() {
         // We found a push, so we do some PC -> IC translation accounting, but we also check if
@@ -156,7 +168,15 @@ pub fn find_anchor_branch(
             let next_pc = pc + inst.immediate.len() + 1;
             let push_size = inst.immediate.len();
             if bytecode.get(next_pc).copied() == Some(opcode::JUMPI)
-                && is_in_source_range(element, loc)
+                && if exact {
+                    source_map.get(ic + 1).is_some_and(|jump| {
+                        jump.index() == Some(loc.source_id as u32)
+                            && jump.offset() == loc.bytes.start
+                            && jump.length() == loc.len()
+                    })
+                } else {
+                    is_in_source_range(element, loc)
+                }
             {
                 // We do not support program counters bigger than u32.
                 ensure!(push_size <= 4, "jump destination overflow");
@@ -198,4 +218,20 @@ fn is_in_source_range(element: &SourceElement, location: &SourceLocation) -> boo
     let end_of_ranges =
         (location.bytes.start + location.len()).min(element.offset() + element.length());
     start_of_ranges <= end_of_ranges
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use foundry_compilers::artifacts::sourcemap;
+
+    #[test]
+    fn ternary_anchor_rejects_missing_node_mapping() {
+        let loc =
+            SourceLocation { source_id: 0, contract_name: "T".into(), bytes: 10..30, lines: 1..2 };
+        let bytecode = [opcode::PUSH1, 6, opcode::JUMPI, opcode::PUSH1, 7, opcode::JUMPI];
+        // A contained inner span must never substitute for the missing outer decision.
+        let inner_only = sourcemap::parse("15:5:0;;;").unwrap();
+        assert!(find_anchor_branch_inner(&bytecode, &inner_only, 0, &loc, true).is_err());
+    }
 }
