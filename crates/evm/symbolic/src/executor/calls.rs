@@ -34,8 +34,8 @@ impl SymbolicExecutor {
         }
 
         let gas = state.stack.pop()?;
-        if gas.contains_gasleft() && !gas.is_raw_gasleft() {
-            return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
+        if !gas.is_raw_gasleft() {
+            return Err(SymbolicError::Unsupported("explicit CALL gas limit not modeled"));
         }
         let target = state.stack.pop()?;
         ensure_expr_not_gasleft(&target)?;
