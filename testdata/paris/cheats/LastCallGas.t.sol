@@ -341,7 +341,7 @@ contract LastCallGasIsolatedTest is LastCallGasFixture {
         vm.startSnapshotGas("isolated section");
         target.resetValue();
         uint256 section = vm.stopSnapshotGas();
-        // Preserve the pre-v1.8.2 region overhead for both refunding and non-refunding calls.
+        // Preserve the pre-v1.8.3 region overhead for both refunding and non-refunding calls.
         assertEq(section, vm.snapshotGasLastCall("isolated section call") + 543);
     }
 
