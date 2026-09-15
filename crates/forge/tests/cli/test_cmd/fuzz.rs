@@ -911,8 +911,6 @@ contract ForgeFuzzReplayInvariantTest is Test {
    "#,
     );
 
-    cmd.env("FOUNDRY_INVARIANT_CORPUS_DIR", "replay_corpus");
-    cmd.env("FOUNDRY_SYMBOLIC_USE_FUZZ_FRONTIERS", "true");
     cmd.args(["fuzz", "replay", "--mc", "ForgeFuzzReplayInvariantTest"])
         .assert_success()
         .stdout_eq(str![[r#"

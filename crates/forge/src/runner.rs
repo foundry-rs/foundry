@@ -4220,11 +4220,12 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         let mut replayed_persisted_invariant = false;
         let mut replayed_predicate_failures = Vec::new();
         let mut confirmed_persisted_invariants = HashSet::default();
+        // Normal campaigns must collect secondaries before the anchor's early exit.
         let replay_candidates = invariant_contract
             .invariant_fns
             .iter()
             .copied()
-            .sorted_by_key(|(invariant, _)| (*invariant == anchor) == fuzz_failure_replay)
+            .sorted_by_key(|(invariant, _)| (*invariant == anchor) != fuzz_failure_replay)
             .collect::<Vec<_>>();
         for (replay_invariant, fail_on_revert) in replay_candidates {
             let Some(InvariantPersistedFailure {
@@ -4301,6 +4302,31 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     confirmed_failure_site,
                 ));
                 continue;
+            }
+            if is_campaign && !fuzz_failure_replay {
+                let is_revert = matches!(
+                    confirmed_failure_site,
+                    SymbolicInvariantFailureSite::SequenceCall { .. }
+                ) && fail_on_revert
+                    && !replay.sequence_assertion_failure;
+                confirmed_persisted_invariants.insert(replay_anchor_idx);
+                replayed_predicate_failures.push((
+                    replay_invariant.name.clone(),
+                    InvariantFuzzError::from_replayed_invariant(
+                        self.address,
+                        replay_invariant,
+                        txes,
+                        replay.reason,
+                        invariant_config,
+                        fail_on_revert,
+                        assertion_failure,
+                        is_revert,
+                    ),
+                    storage,
+                    confirmed_failure_site,
+                ));
+                evm.skip_fresh_runs();
+                break;
             }
             let warn = "Replayed invariant failure from persisted file. \nRun `forge clean` or remove file to ignore failure and to continue invariant test campaign.";
             if let Some(progress) = &progress {
@@ -4408,6 +4434,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 &dynamic_target_ctx,
                 &confirmed_persisted_invariants,
             );
+            let mut reported_fresh_invariants = HashSet::<usize>::default();
             for ConfirmedFrontierInvariantFailure {
                 invariant_idx,
                 call_sequence: txes,
@@ -4442,6 +4469,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     || replay.failure_site.map(SymbolicInvariantFailureSite::from)
                         != Some(expected_failure_site)
                 {
+                    continue;
+                }
+                // The result map keeps the first failure per predicate; persist that same one.
+                if !reported_fresh_invariants.insert(invariant_idx) {
                     continue;
                 }
 
