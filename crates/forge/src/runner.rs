@@ -1563,6 +1563,10 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                 );
                 res.duration = start.elapsed();
 
+                if let Some(prefetch) = &self.mcr.trace_prefetch {
+                    prefetch.prefetch(&res);
+                }
+
                 // Record test failure for early exit (only triggers if fail-fast is enabled).
                 if res.status.is_failure() {
                     early_exit.record_failure();

@@ -35,6 +35,8 @@ pub use runner::ContractRunner;
 
 mod progress;
 pub mod result;
+mod trace_prefetch;
+pub use trace_prefetch::{IdentifiesTraces, TracePrefetcher};
 mod symbolic_minimizer;
 mod symbolic_regression;
 
