@@ -143,6 +143,22 @@ impl SymbolicExecutor {
                 }
                 JoinedCallOutcome::Success { mut parent, child } => {
                     parent.return_data = SymReturnData::empty(&mut self.cx);
+                    let runtime = &child.frame.return_data;
+                    let spec_id: SpecId = executor.spec_id().into();
+                    if spec_id >= SpecId::LONDON && runtime.len() > 0 {
+                        let first_byte = runtime.byte(&mut self.cx, 0);
+                        let Some(first_byte) = first_byte.as_const() else {
+                            return Err(SymbolicError::Unsupported(
+                                "CREATE with symbolic runtime prefix not modeled",
+                            ));
+                        };
+                        if first_byte == U256::from(0xef) {
+                            parent.world = failure_world.clone();
+                            parent.stack.push(SymExpr::zero(&mut self.cx))?;
+                            parents.push_back(parent);
+                            continue;
+                        }
+                    }
                     parent.world = child.world;
                     parent.block = child.block;
                     parent.expected_emit = child.expected_emit;

@@ -51,6 +51,76 @@ checkCreate(uint256)
     assert!(!stdout.contains("unsupported opcode: 0xf0"), "{stdout}");
 });
 
+forgetest_init!(symbolic_create_respects_eip3541_runtime_prefix, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_create_respects_eip3541_runtime_prefix because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicCreateEip3541.t.sol",
+        r#"
+contract SymbolicCreateEip3541 {
+    function checkRejectedPrefix() public {
+        assert(deployCreate(0xef) == address(0));
+        assert(deployCreate2(0xef) == address(0));
+    }
+
+    function checkAllowedPrefixBeforeLondon() public {
+        address created = deployCreate(0xef);
+        address created2 = deployCreate2(0xef);
+        assert(created != address(0));
+        assert(created2 != address(0));
+        assert(created.code.length == 1);
+        assert(created2.code.length == 1);
+    }
+
+    function checkAdjacentPrefixStillAllowed() public {
+        address created = deployCreate(0xee);
+        address created2 = deployCreate2(0xee);
+        assert(created != address(0));
+        assert(created2 != address(0));
+        assert(created.code.length == 1);
+        assert(created2.code.length == 1);
+    }
+
+    function deployCreate(uint256 runtimeByte) internal returns (address created) {
+        assembly ("memory-safe") {
+            mstore(0, shl(176, or(0x600060005360016000f3, shl(64, runtimeByte))))
+            created := create(0, 0, 10)
+        }
+    }
+
+    function deployCreate2(uint256 runtimeByte) internal returns (address created) {
+        assembly ("memory-safe") {
+            mstore(0, shl(176, or(0x600060005360016000f3, shl(64, runtimeByte))))
+            created := create2(0, 0, 10, 123)
+        }
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--symbolic", "--match-test", "checkRejectedPrefix"]).assert_success();
+
+    cmd.forge_fuse();
+    cmd.args(["test", "--symbolic", "--match-test", "checkAdjacentPrefixStillAllowed"])
+        .assert_success();
+
+    cmd.forge_fuse();
+    cmd.args([
+        "test",
+        "--symbolic",
+        "--evm-version",
+        "berlin",
+        "--match-test",
+        "checkAllowedPrefixBeforeLondon",
+    ])
+    .assert_success();
+});
+
 forgetest_init!(symbolic_create_preserves_symbolic_constructor_args, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(
