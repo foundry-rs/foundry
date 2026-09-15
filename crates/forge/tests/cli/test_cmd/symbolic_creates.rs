@@ -4,6 +4,40 @@ use foundry_test_utils::{forgetest_init, util::OutputExt};
 
 use super::symbolic_helpers::z3_available;
 
+forgetest_init!(symbolic_create_contains_invalid_initcode_halt, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_create_contains_invalid_initcode_halt because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicInvalidInitcode.t.sol",
+        r#"
+contract SymbolicInvalidInitcode {
+    uint256 marker;
+
+    function checkInvalidInitcode() public {
+        marker = 19;
+        address created;
+        uint256 returnSize;
+        assembly ("memory-safe") {
+            mstore8(0, 0xfe)
+            created := create(0, 0, 1)
+            returnSize := returndatasize()
+        }
+        assert(created == address(0));
+        assert(returnSize == 0);
+        assert(marker == 19);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--symbolic", "--match-test", "checkInvalidInitcode"]).assert_success();
+});
+
 forgetest_init!(symbolic_create_respects_configured_runtime_code_limit, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(
