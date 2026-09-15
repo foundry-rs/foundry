@@ -63,12 +63,12 @@ teardown_case() {
   rm -f "$exec_marker"
 }
 
-# A `download` that writes a fake foundryup-init.sh installing a working fake
+# A helper that writes a fake foundryup-init.sh installing a working fake
 # binary into the staging FOUNDRY_DIR. `$fake_bin_body` controls the binary.
 fake_bin_body='#!/usr/bin/env sh
 echo "foundryup 0.0.8 (test 2020)"'
-download() {
-  cat > "$2" <<EOF
+write_fake_installer() {
+  cat > "$1" <<EOF
 #!/usr/bin/env sh
 echo "installer chatter that must not reach stdout"
 mkdir -p "\$FOUNDRY_DIR/bin"
@@ -77,6 +77,45 @@ $fake_bin_body
 BIN
 chmod +x "\$FOUNDRY_DIR/bin/foundryup"
 EOF
+}
+download() {
+  write_fake_installer "$2"
+  return 0
+}
+
+# --- signal cancellation --------------------------------------------------
+
+setup_case
+signal_to_send=TERM
+download() {
+  kill -"$signal_to_send" "$BASHPID"
+  write_fake_installer "$2"
+  return 0
+}
+rc=0; ( bootstrap 2>/dev/null ) || rc=$?
+check_eq "SIGTERM aborts bootstrap with conventional status" "143" "$rc"
+check_eq "SIGTERM leaves launcher untouched" \
+  "original-launcher" "$(cat "$FOUNDRY_BIN_PATH")"
+check_eq "SIGTERM does not exec" "" "$(cat "$exec_marker")"
+teardown_case
+
+setup_case
+signal_to_send=INT
+download() {
+  kill -"$signal_to_send" "$BASHPID"
+  write_fake_installer "$2"
+  return 0
+}
+rc=0; ( bootstrap 2>/dev/null ) || rc=$?
+check_eq "SIGINT aborts bootstrap with conventional status" "130" "$rc"
+check_eq "SIGINT leaves launcher untouched" \
+  "original-launcher" "$(cat "$FOUNDRY_BIN_PATH")"
+check_eq "SIGINT does not exec" "" "$(cat "$exec_marker")"
+teardown_case
+
+unset signal_to_send
+download() {
+  write_fake_installer "$2"
   return 0
 }
 
