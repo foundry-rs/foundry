@@ -143,6 +143,21 @@ impl SymbolicExecutor {
                 }
                 JoinedCallOutcome::Success { mut parent, child } => {
                     parent.return_data = SymReturnData::empty(&mut self.cx);
+                    let runtime = &child.frame.return_data;
+                    let spec_id: SpecId = executor.spec_id().into();
+                    if spec_id >= SpecId::SPURIOUS_DRAGON
+                        && !runtime.has_symbolic_len()
+                        && executor
+                            .evm_env()
+                            .cfg_env
+                            .limit_contract_code_size
+                            .is_some_and(|limit| runtime.len() > limit)
+                    {
+                        parent.world = failure_world.clone();
+                        parent.stack.push(SymExpr::zero(&mut self.cx))?;
+                        parents.push_back(parent);
+                        continue;
+                    }
                     parent.world = child.world;
                     parent.block = child.block;
                     parent.expected_emit = child.expected_emit;
@@ -150,16 +165,9 @@ impl SymbolicExecutor {
                     parent.expected_creates = pending_expected_creates.clone();
                     parent.call_mocks = child.call_mocks;
                     parent.function_mocks = child.function_mocks;
-                    self.observe_expected_create(
-                        &mut parent,
-                        state.address,
-                        kind,
-                        &child.frame.return_data,
-                    )?;
+                    self.observe_expected_create(&mut parent, state.address, kind, runtime)?;
                     if !parent.world.is_destroyed(created) {
-                        parent
-                            .world
-                            .install_code(created, child.frame.return_data.to_code(&mut self.cx)?);
+                        parent.world.install_code(created, runtime.to_code(&mut self.cx)?);
                         parent.world.set_nonce(created, 1);
                     }
                     parent.stack.push(created_word.clone())?;

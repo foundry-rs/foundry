@@ -4,6 +4,35 @@ use foundry_test_utils::{forgetest_init, util::OutputExt};
 
 use super::symbolic_helpers::z3_available;
 
+forgetest_init!(symbolic_create_respects_configured_runtime_code_limit, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_create_respects_configured_runtime_code_limit because z3 is not available"
+        );
+        return;
+    }
+
+    prj.update_config(|config| config.code_size_limit = Some(24_576));
+    prj.add_test(
+        "SymbolicCreateCodeLimit.t.sol",
+        r#"
+contract SymbolicCreateCodeLimit {
+    function checkRuntimeCodeLimit() public {
+        address created;
+        assembly ("memory-safe") {
+            mstore(0, shl(208, 0x6160016000f3))
+            created := create(0, 0, 6)
+        }
+        assert(created == address(0));
+        assert(created.code.length == 0);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--symbolic", "--match-test", "checkRuntimeCodeLimit"]).assert_success();
+});
+
 forgetest_init!(symbolic_create_deploys_and_calls_helper, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(
