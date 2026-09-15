@@ -1,15 +1,5 @@
 use super::*;
 
-fn runtime_exceeds_code_size_limit(
-    cfg: &impl Cfg,
-    spec_id: SpecId,
-    runtime: &SymReturnData,
-) -> bool {
-    spec_id >= SpecId::SPURIOUS_DRAGON
-        && !runtime.has_symbolic_len()
-        && runtime.len() > cfg.max_code_size()
-}
-
 impl SymbolicExecutor {
     pub(super) fn create<FEN: FoundryEvmNetwork>(
         &mut self,
@@ -208,6 +198,16 @@ impl SymbolicExecutor {
             CallPathKind::External,
         )
     }
+}
+
+fn runtime_exceeds_code_size_limit(
+    cfg: &impl Cfg,
+    spec_id: SpecId,
+    runtime: &SymReturnData,
+) -> bool {
+    spec_id >= SpecId::SPURIOUS_DRAGON
+        && !runtime.has_symbolic_len()
+        && runtime.len() > cfg.max_code_size()
 }
 
 #[cfg(test)]
