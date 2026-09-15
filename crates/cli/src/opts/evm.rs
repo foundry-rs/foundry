@@ -1,7 +1,9 @@
 //! CLI arguments for configuring the EVM settings.
 
+use crate::opts::RpcCommonOpts;
 use alloy_primitives::{Address, B256, U256};
 use clap::Parser;
+use foundry_common::shell;
 use foundry_config::{
     Chain, Config, FoundryHardfork,
     figment::{
@@ -12,9 +14,6 @@ use foundry_config::{
 };
 use foundry_evm_networks::NetworkConfigs;
 use serde::Serialize;
-
-use crate::opts::RpcCommonOpts;
-use foundry_common::shell;
 
 /// `EvmArgs` and `EnvArgs` take the highest precedence in the Config/Figment hierarchy.
 ///
@@ -364,6 +363,17 @@ mod tests {
 
         let env = EnvArgs::parse_from(["foundry-cli", "--chain-id", "goerli"]);
         assert_eq!(env.chain, Some(NamedChain::Goerli.into()));
+    }
+
+    #[cfg(feature = "base")]
+    #[test]
+    fn can_parse_namespaced_base_hardfork() {
+        let args = EvmArgs::parse_from(["foundry-cli", "--hardfork", "base:Beryl"]);
+        assert_eq!(args.hardfork.map(String::from).as_deref(), Some("base:Beryl"));
+
+        let config = Config::from_provider(Config::figment().merge(args)).unwrap();
+        assert!(config.networks.is_base());
+        assert_eq!(config.hardfork.map(String::from).as_deref(), Some("base:Beryl"));
     }
 
     #[test]

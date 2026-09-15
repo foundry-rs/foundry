@@ -68,8 +68,9 @@ pub use endpoints::{
 };
 
 mod etherscan;
-pub use etherscan::EtherscanConfigError;
 use etherscan::{EtherscanConfigs, EtherscanEnvProvider, ResolvedEtherscanConfig};
+
+pub use etherscan::EtherscanConfigError;
 
 pub mod resolve;
 pub use resolve::UnresolvedEnvVarError;
@@ -84,11 +85,13 @@ pub mod lint;
 pub use lint::{LinterConfig, Severity as LintSeverity};
 
 pub mod fs_permissions;
-pub use fs_permissions::FsPermissions;
 use fs_permissions::PathPermission;
+
+pub use fs_permissions::FsPermissions;
 
 pub mod error;
 use error::ExtractConfigError;
+
 pub use error::SolidityErrorCode;
 
 pub mod doc;
@@ -107,8 +110,9 @@ pub use alloy_chains::{Chain, NamedChain};
 pub use figment;
 
 pub mod providers;
-pub use providers::Remappings;
 use providers::*;
+
+pub use providers::Remappings;
 
 mod fuzz;
 pub use fuzz::{FuzzConfig, FuzzCorpusConfig, FuzzCorpusMutationWeights, FuzzDictionaryConfig};
@@ -148,8 +152,8 @@ pub use compilation::{CompilationRestrictions, SettingsOverrides};
 
 pub mod extend;
 use extend::Extends;
-
 use foundry_evm_networks::NetworkConfigs;
+
 pub use semver;
 
 #[cfg(not(test))]
@@ -3300,6 +3304,9 @@ mod tests {
     };
     use tempfile::tempdir;
 
+    #[cfg(feature = "base")]
+    use foundry_evm_hardforks::BaseUpgrade;
+
     // Helper function to clear `__warnings` in config, since it will be populated during loading
     // from file, causing testing problem when comparing to those created from `default()`, etc.
     fn clear_warning(config: &mut Config) {
@@ -5770,6 +5777,26 @@ mod tests {
             let config = Config::load().unwrap();
             assert_eq!(config.hardfork, Some(FoundryHardfork::Tempo(TempoHardfork::T3)));
             assert!(config.networks.is_tempo());
+
+            Ok(())
+        });
+    }
+
+    #[cfg(feature = "base")]
+    #[test]
+    fn base_upgrade_infers_base_network() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                hardfork = "base:Beryl"
+            "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.hardfork, Some(FoundryHardfork::Base(BaseUpgrade::Beryl)));
+            assert!(config.networks.is_base());
 
             Ok(())
         });

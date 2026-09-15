@@ -1,16 +1,31 @@
 //! OP-stack receipt construction for the Anvil block executor.
 
-use alloy_consensus::{Eip658Value, Receipt, ReceiptWithBloom, Transaction};
-use alloy_eips::Encodable2718;
+use alloy_consensus::{Eip658Value, Receipt, ReceiptWithBloom};
 use alloy_primitives::{Address, Log};
-use foundry_evm::hardfork::{FoundryHardfork, OpHardfork};
-use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope};
+use foundry_evm::hardfork::FoundryHardfork;
+use foundry_primitives::FoundryReceiptEnvelope;
 use op_alloy_consensus::{OpDepositReceipt, OpDepositReceiptWithBloom};
-use op_revm::{L1BlockInfo, estimate_tx_compressed_size};
-use revm::{Database, context_interface::result::ExecutionResult, state::EvmState};
+use revm::{context_interface::result::ExecutionResult, state::EvmState};
 
+#[cfg(feature = "base")]
+use foundry_evm::hardforks::BaseUpgrade;
+
+#[cfg(feature = "optimism")]
 use super::AnvilBlockExecutor;
+#[cfg(feature = "optimism")]
+use alloy_consensus::Transaction;
+#[cfg(feature = "optimism")]
+use alloy_eips::Encodable2718;
+#[cfg(feature = "optimism")]
+use foundry_evm::hardfork::OpHardfork;
+#[cfg(feature = "optimism")]
+use foundry_primitives::FoundryTxEnvelope;
+#[cfg(feature = "optimism")]
+use op_revm::{L1BlockInfo, estimate_tx_compressed_size};
+#[cfg(feature = "optimism")]
+use revm::Database;
 
+#[cfg(feature = "optimism")]
 impl<E> AnvilBlockExecutor<E> {
     /// Configures OP-specific block accounting without changing the shared constructor.
     pub(crate) fn set_optimism_hardfork(&mut self, hardfork: FoundryHardfork) {
@@ -19,6 +34,7 @@ impl<E> AnvilBlockExecutor<E> {
 }
 
 /// Returns the blob gas accounted for by an OP transaction under the active hardfork.
+#[cfg(feature = "optimism")]
 pub(crate) fn blob_gas_used<DB: Database>(
     db: &mut DB,
     tx: &FoundryTxEnvelope,
@@ -53,13 +69,35 @@ pub(crate) fn build_simulated_deposit_receipt<H>(
     logs: Vec<Log>,
     cumulative_gas_used: u64,
 ) -> FoundryReceiptEnvelope {
-    let hardfork = OpHardfork::from(hardfork);
-    let deposit_nonce = (hardfork >= OpHardfork::Regolith).then_some(caller_nonce);
-    let deposit_receipt_version = (hardfork >= OpHardfork::Canyon).then_some(1);
+    let (deposit_nonce, deposit_receipt_version) = deposit_metadata(hardfork, caller_nonce);
     let receipt =
         Receipt { status: Eip658Value::Eip658(result.is_success()), cumulative_gas_used, logs }
             .with_bloom();
     wrap_deposit_receipt(receipt, deposit_nonce, deposit_receipt_version)
+}
+
+/// Resolves the deposit nonce and receipt version active at `hardfork`.
+///
+/// Base is an OP-stack chain, so it gates the same two fields on its own upgrade names.
+fn deposit_metadata(hardfork: FoundryHardfork, caller_nonce: u64) -> (Option<u64>, Option<u64>) {
+    #[cfg(feature = "base")]
+    if matches!(hardfork, FoundryHardfork::Base(_)) {
+        let upgrade = BaseUpgrade::from(hardfork);
+        return (
+            (upgrade >= BaseUpgrade::Regolith).then_some(caller_nonce),
+            (upgrade >= BaseUpgrade::Canyon).then_some(1),
+        );
+    }
+    #[cfg(feature = "optimism")]
+    {
+        let hardfork = OpHardfork::from(hardfork);
+        (
+            (hardfork >= OpHardfork::Regolith).then_some(caller_nonce),
+            (hardfork >= OpHardfork::Canyon).then_some(1),
+        )
+    }
+    #[cfg(not(feature = "optimism"))]
+    (None, None)
 }
 
 fn build_deposit_receipt<H>(
