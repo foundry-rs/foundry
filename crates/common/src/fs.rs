@@ -8,12 +8,23 @@ use std::{
     io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write},
     path::{Component, Path, PathBuf},
 };
+use tempfile::NamedTempFile;
 
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 /// The [`fs`](self) result type.
 pub type Result<T> = std::result::Result<T, FsPathError>;
+
+/// Controls whether atomic publication may replace an existing artifact.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PublishMode {
+    /// Atomically replace the destination if it exists.
+    Replace,
+    /// Publish only if the destination does not exist.
+    CreateNew,
+}
 
 /// Wrapper for [`File::create`].
 pub fn create_file(path: impl AsRef<Path>) -> Result<fs::File> {
@@ -96,9 +107,46 @@ pub fn write_json_file<T: Serialize>(path: &Path, obj: &T) -> Result<()> {
     writer.flush().map_err(|e| FsPathError::write(e, path))
 }
 
+/// Atomically publishes an object as compact JSON.
+///
+/// The destination's parent directory must already exist. Concurrent replacement writers are
+/// last-publication-wins, and readers observe either the complete old file or the complete new
+/// file when all writers use atomic publication. This does not provide read-modify-write locking
+/// or power-loss durability. Publication replaces the destination directory entry rather than
+/// preserving its inode or following an existing symlink; newly published files use the temporary
+/// file's owner-only permissions on Unix.
+pub fn write_json_file_atomic<T: Serialize + ?Sized>(
+    path: &Path,
+    obj: &T,
+    mode: PublishMode,
+) -> Result<()> {
+    write_atomic_with(path, mode, |file| {
+        let mut writer = BufWriter::new(file);
+        serde_json::to_writer(&mut writer, obj)
+            .map_err(|source| FsPathError::WriteJson { source, path: path.into() })?;
+        writer.flush().map_err(|err| FsPathError::write(err, path))
+    })
+}
+
 /// Writes the object as a pretty JSON object.
 pub fn write_pretty_json_file<T: Serialize>(path: &Path, obj: &T) -> Result<()> {
     write_pretty_json(path, obj, create_file(path)?)
+}
+
+/// Atomically publishes an object as pretty JSON.
+///
+/// See [`write_json_file_atomic`] for publication guarantees.
+pub fn write_pretty_json_file_atomic<T: Serialize + ?Sized>(
+    path: &Path,
+    obj: &T,
+    mode: PublishMode,
+) -> Result<()> {
+    write_atomic_with(path, mode, |file| {
+        let mut writer = BufWriter::new(file);
+        serde_json::to_writer_pretty(&mut writer, obj)
+            .map_err(|source| FsPathError::WriteJson { source, path: path.into() })?;
+        writer.flush().map_err(|err| FsPathError::write(err, path))
+    })
 }
 
 /// Writes an object as pretty JSON with owner-only permissions on Unix.
@@ -136,10 +184,58 @@ pub fn write_json_gzip_file<T: Serialize>(path: &Path, obj: &T) -> Result<()> {
     Ok(())
 }
 
+/// Atomically publishes an object as gzip-compressed JSON.
+///
+/// See [`write_json_file_atomic`] for publication guarantees.
+pub fn write_json_gzip_file_atomic<T: Serialize + ?Sized>(
+    path: &Path,
+    obj: &T,
+    mode: PublishMode,
+) -> Result<()> {
+    write_atomic_with(path, mode, |file| {
+        let writer = BufWriter::new(file);
+        let mut encoder = GzEncoder::new(writer, Compression::default());
+        serde_json::to_writer(&mut encoder, obj)
+            .map_err(|source| FsPathError::WriteJson { source, path: path.into() })?;
+        let mut writer = encoder.finish().map_err(|err| FsPathError::write(err, path))?;
+        writer.flush().map_err(|err| FsPathError::write(err, path))
+    })
+}
+
 /// Wrapper for `std::fs::write`
 pub fn write(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> Result<()> {
     let path = path.as_ref();
     fs::write(path, contents).map_err(|err| FsPathError::write(err, path))
+}
+
+/// Atomically publishes raw bytes.
+///
+/// See [`write_json_file_atomic`] for publication guarantees.
+pub fn write_atomic(path: &Path, contents: &[u8], mode: PublishMode) -> Result<()> {
+    write_atomic_with(path, mode, |file| {
+        file.write_all(contents).map_err(|err| FsPathError::write(err, path))?;
+        file.flush().map_err(|err| FsPathError::write(err, path))
+    })
+}
+
+fn write_atomic_with(
+    path: &Path,
+    mode: PublishMode,
+    write: impl FnOnce(&mut File) -> Result<()>,
+) -> Result<()> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let mut temp =
+        NamedTempFile::new_in(parent).map_err(|err| FsPathError::create_file(err, path))?;
+    write(temp.as_file_mut())?;
+
+    let published = match mode {
+        PublishMode::Replace => temp.persist(path),
+        PublishMode::CreateNew => temp.persist_noclobber(path),
+    };
+    published.map(|_| ()).map_err(|err| FsPathError::write(err.error, path))
 }
 
 /// Writes all content in an exclusive locked file.
@@ -286,6 +382,92 @@ pub fn canonicalize_path(path: impl AsRef<Path>) -> std::io::Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde::ser::SerializeSeq;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+
+    struct FailingSerialize;
+
+    impl Serialize for FailingSerialize {
+        fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            let mut sequence = serializer.serialize_seq(Some(2))?;
+            sequence.serialize_element("partial")?;
+            Err(serde::ser::Error::custom("injected serialization failure"))
+        }
+    }
+
+    #[test]
+    fn atomic_writers_replace_complete_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let raw = dir.path().join("raw");
+        let compact = dir.path().join("compact.json");
+        let pretty = dir.path().join("pretty.json");
+        let gzip = dir.path().join("gzip.json.gz");
+
+        write_atomic(&raw, b"old", PublishMode::Replace).unwrap();
+        write_atomic(&raw, b"new", PublishMode::Replace).unwrap();
+        write_json_file_atomic(&compact, &vec![1, 2], PublishMode::Replace).unwrap();
+        write_pretty_json_file_atomic(&pretty, &vec![3, 4], PublishMode::Replace).unwrap();
+        write_json_gzip_file_atomic(&gzip, &vec![5, 6], PublishMode::Replace).unwrap();
+
+        assert_eq!(read(&raw).unwrap(), b"new");
+        assert_eq!(read_json_file::<Vec<u8>>(&compact).unwrap(), [1, 2]);
+        assert!(read_to_string(&pretty).unwrap().contains("\n  3,"));
+        assert_eq!(read_json_gzip_file::<Vec<u8>>(&gzip).unwrap(), [5, 6]);
+    }
+
+    #[test]
+    fn atomic_serialization_failure_preserves_destination() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("artifact.json");
+        std::fs::write(&path, "previous").unwrap();
+
+        assert!(write_json_file_atomic(&path, &FailingSerialize, PublishMode::Replace).is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "previous");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn atomic_create_new_does_not_replace_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("artifact");
+        write_atomic(&path, b"winner", PublishMode::CreateNew).unwrap();
+
+        let error = write_atomic(&path, b"loser", PublishMode::CreateNew).unwrap_err();
+
+        assert_eq!(std::fs::read(&path).unwrap(), b"winner");
+        assert_eq!(std::io::Error::from(error).kind(), std::io::ErrorKind::AlreadyExists);
+    }
+
+    #[test]
+    fn concurrent_readers_only_observe_complete_replacements() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = Arc::new(dir.path().join("artifact.json"));
+        let writing = Arc::new(AtomicBool::new(true));
+        write_json_file_atomic(&path, &vec![0_u8; 4096], PublishMode::Replace).unwrap();
+
+        let writer_path = Arc::clone(&path);
+        let writer_running = Arc::clone(&writing);
+        let writer = std::thread::spawn(move || {
+            for value in 1..=100_u8 {
+                write_json_file_atomic(&writer_path, &vec![value; 4096], PublishMode::Replace)
+                    .unwrap();
+            }
+            writer_running.store(false, Ordering::Release);
+        });
+
+        while writing.load(Ordering::Acquire) {
+            let value = read_json_file::<Vec<u8>>(&path).unwrap();
+            assert_eq!(value.len(), 4096);
+            assert!(value.iter().all(|byte| *byte == value[0]));
+        }
+        writer.join().unwrap();
+    }
 
     #[cfg(unix)]
     #[test]

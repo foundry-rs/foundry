@@ -40,7 +40,8 @@ use foundry_cli::{
 use foundry_common::{
     ContractsByArtifact, EmptyTestFilter, TestFilter, TestFunctionExt, TestFunctionKind,
     compile::{ProjectCompiler, compile_abi_project, compile_abi_project_cached},
-    fs, sh_status, sh_warn, shell,
+    fs::{self, PublishMode},
+    sh_status, sh_warn, shell,
 };
 use foundry_compilers::{
     Artifact, ArtifactId, ProjectCompileOutput,
@@ -3311,7 +3312,7 @@ fn last_run_failures(config: &Config) -> LastRunFailures {
 
 /// Persist filter with last test run failures (only if there's any failure).
 fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
-    if outcome.failed() > 0 && fs::create_file(&config.test_failures_file).is_ok() {
+    if outcome.failed() > 0 {
         let failures = outcome
             .results
             .iter()
@@ -3325,9 +3326,11 @@ fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
             })
             .collect::<Vec<_>>();
 
-        if let Ok(output) = serde_json::to_string(&RerunFailures { version: 1, failures }) {
-            let _ = fs::write(&config.test_failures_file, output);
-        }
+        let _ = fs::write_json_file_atomic(
+            &config.test_failures_file,
+            &RerunFailures { version: 1, failures },
+            PublishMode::Replace,
+        );
     }
 }
 
