@@ -123,7 +123,15 @@ impl SymbolicExecutor {
         }
 
         let mut parents = VecDeque::with_capacity(outcomes.len());
-        for outcome in outcomes {
+        for mut outcome in outcomes {
+            let runtime = &outcome.state.frame.return_data;
+            let spec_id: SpecId = executor.spec_id().into();
+            if matches!(outcome.status, CallStatus::Success)
+                && runtime_exceeds_code_size_limit(&executor.evm_env().cfg_env, spec_id, runtime)
+            {
+                outcome.status = CallStatus::Revert;
+                outcome.state.frame.return_data = SymReturnData::empty(&mut self.cx);
+            }
             match self.join_call_outcome(state, outcome, created)? {
                 JoinedCallOutcome::Rejected => {}
                 JoinedCallOutcome::Failure(mut parent) => {
@@ -166,16 +174,9 @@ impl SymbolicExecutor {
                     parent.expected_creates = pending_expected_creates.clone();
                     parent.call_mocks = child.call_mocks;
                     parent.function_mocks = child.function_mocks;
-                    self.observe_expected_create(
-                        &mut parent,
-                        state.address,
-                        kind,
-                        &child.frame.return_data,
-                    )?;
+                    self.observe_expected_create(&mut parent, state.address, kind, runtime)?;
                     if !parent.world.is_destroyed(created) {
-                        parent
-                            .world
-                            .install_code(created, child.frame.return_data.to_code(&mut self.cx)?);
+                        parent.world.install_code(created, runtime.to_code(&mut self.cx)?);
                         parent.world.set_nonce(created, 1);
                     }
                     parent.stack.push(created_word.clone())?;
@@ -211,5 +212,31 @@ impl SymbolicExecutor {
             completed_paths,
             CallPathKind::External,
         )
+    }
+}
+
+fn runtime_exceeds_code_size_limit(
+    cfg: &impl Cfg,
+    spec_id: SpecId,
+    runtime: &SymReturnData,
+) -> bool {
+    spec_id >= SpecId::SPURIOUS_DRAGON
+        && !runtime.has_symbolic_len()
+        && runtime.len() > cfg.max_code_size()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use foundry_evm::revm::context::CfgEnv;
+
+    #[test]
+    fn runtime_code_limit_uses_fork_default_without_override() {
+        let mut cx = SymCx::default();
+        let runtime = SymReturnData::from_concrete_bytes(&mut cx, vec![0; 24_577]);
+        let cfg = CfgEnv::<SpecId>::default();
+
+        assert!(runtime_exceeds_code_size_limit(&cfg, SpecId::SHANGHAI, &runtime));
+        assert!(!runtime_exceeds_code_size_limit(&cfg, SpecId::HOMESTEAD, &runtime));
     }
 }

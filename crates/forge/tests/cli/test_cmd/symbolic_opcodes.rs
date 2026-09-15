@@ -321,6 +321,88 @@ contract SymbolicGasCallOperand {
     assert!(!stdout.contains("GAS/gasleft() not modeled"), "{stdout}");
 });
 
+forgetest_init!(symbolic_explicit_call_gas_reports_unsupported, |prj, cmd| {
+    skip_unless_z3!("symbolic_explicit_call_gas_reports_unsupported");
+
+    prj.add_test(
+        "SymbolicExplicitCallGas.t.sol",
+        r#"
+contract SymbolicExplicitCallGasTarget {
+    function ping() external pure returns (uint256) {
+        return 1;
+    }
+}
+
+contract SymbolicExplicitCallGas {
+    SymbolicExplicitCallGasTarget target;
+
+    function setUp() public {
+        target = new SymbolicExplicitCallGasTarget();
+    }
+
+    function checkCallGasZero() public {
+        (bool ok,) = address(target).call{gas: 0}("");
+        assert(ok);
+    }
+
+    function checkCallGasOne() public {
+        (bool ok,) = address(target).call{gas: 1}("");
+        assert(ok);
+    }
+
+    function checkCallGasThirtyTwo() public {
+        (bool ok,) = address(target).call{gas: 32}("");
+        assert(ok);
+    }
+
+    function checkStaticCallGasLarge() public view {
+        address targetAddress = address(target);
+        assembly {
+            if iszero(staticcall(100000, targetAddress, 0, 0, 0, 0)) { revert(0, 0) }
+        }
+    }
+
+    function checkDelegateCallGasSymbolic(uint256 gasLimit) public {
+        address targetAddress = address(target);
+        assembly {
+            if iszero(delegatecall(gasLimit, targetAddress, 0, 0, 0, 0)) { revert(0, 0) }
+        }
+    }
+
+    function checkCallCodeGasComputed(uint256 gasLimit) public {
+        address targetAddress = address(target);
+        assembly {
+            if iszero(callcode(add(gasLimit, 1), targetAddress, 0, 0, 0, 0, 0)) { revert(0, 0) }
+        }
+    }
+
+    function checkTransferGasCap() public {
+        payable(address(1)).transfer(0);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-test", "check"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: explicit CALL gas limit not modeled] checkCallCodeGasComputed(uint256)
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: explicit CALL gas limit not modeled] checkCallGasOne()
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: explicit CALL gas limit not modeled] checkCallGasThirtyTwo()
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: explicit CALL gas limit not modeled] checkCallGasZero()
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: explicit CALL gas limit not modeled] checkDelegateCallGasSymbolic(uint256)
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: explicit CALL gas limit not modeled] checkStaticCallGasLarge()
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: explicit CALL gas limit not modeled] checkTransferGasCap()
+"#]],
+    );
+});
+
 forgetest_init!(symbolic_gas_derived_call_operand_reports_unsupported, |prj, cmd| {
     skip_unless_z3!("symbolic_gas_derived_call_operand_reports_unsupported");
 
@@ -364,7 +446,7 @@ contract SymbolicDerivedGasCallOperand {
     assert_relevant_lines(
         &stdout,
         foundry_test_utils::str![[r#"
-incomplete symbolic execution (Stuck): unsupported symbolic execution feature: GAS/gasleft() not modeled
+incomplete symbolic execution (Stuck): unsupported symbolic execution feature: explicit CALL gas limit not modeled
 "#]],
     );
 });
