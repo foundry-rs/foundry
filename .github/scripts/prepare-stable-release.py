@@ -560,6 +560,13 @@ def prepare(
 
     stable_version, tags = tag_state(root)
     stable = ".".join(str(part) for part in stable_version)
+    if operation == "stable" and checked_version[:3] <= stable_version:
+        set_output("changed", "false")
+        print(
+            f"Checked-in candidate {checked} is not newer than latest stable v{stable}; "
+            "automatic stable reconciliation is waiting for the candidate to advance."
+        )
+        return
     source, target = transition(operation, checked, stable_version, tags, source_tag, target_tag)
     if operation in ("advance", "promote"):
         verify_ancestor(root, source, "HEAD")

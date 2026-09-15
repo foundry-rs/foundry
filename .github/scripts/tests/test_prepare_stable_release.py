@@ -383,6 +383,45 @@ class WorkspaceTests(unittest.TestCase):
                 output.read_text(), "base_branch=master\noperation=stable\nchanged=false\n"
             )
 
+    def test_stable_waits_for_new_candidate_after_release(self) -> None:
+        for checked in ("1.8.2", "1.8.1"):
+            with self.subTest(checked=checked), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / ".changelog").mkdir()
+                fragment = root / ".changelog" / "pending.md"
+                fragment.write_text("---\nforge: patch\n---\n\nPending fix.\n")
+                manifest = root / "Cargo.toml"
+                original = f'[workspace.package]\nversion = "{checked}"\n'
+                manifest.write_text(original)
+                subprocess.run(["git", "init", "-q", str(root)], check=True)
+                subprocess.run(
+                    ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com",
+                     "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-qm", "Initial"],
+                    cwd=root, check=True,
+                )
+                subprocess.run(["git", "tag", "v1.8.2"], cwd=root, check=True)
+                output = root / "output"
+                with patch.dict(os.environ, {"GITHUB_OUTPUT": str(output)}), patch.object(
+                    prepare_stable_release, "metadata"
+                ) as metadata:
+                    prepare_stable_release.prepare(root, root / "missing-changelogs")
+                metadata.assert_not_called()
+                self.assertEqual(
+                    output.read_text(), "base_branch=master\noperation=stable\nchanged=false\n"
+                )
+                self.assertEqual(manifest.read_text(), original)
+                self.assertEqual(fragment.read_text(), "---\nforge: patch\n---\n\nPending fix.\n")
+
+    def test_release_transition_rejects_already_released_candidate(self) -> None:
+        for operation in ("stable", "start"):
+            with self.subTest(operation=operation), self.assertRaisesRegex(
+                prepare_stable_release.ReleaseError, "must be newer"
+            ):
+                prepare_stable_release.transition(
+                    operation, "1.8.2", (1, 8, 2), {"v1.8.2": (1, 8, 2, None)},
+                    "v1.8.2", "v1.8.2-rc1" if operation == "start" else None,
+                )
+
     def test_lock_change_accepts_only_workspace_versions(self) -> None:
         before = [
             {"name": "forge", "version": "1.7.2", "dependencies": ["cast 1.7.2"]},

@@ -21,6 +21,9 @@ the check action's built-in AI installer, which does not pin the installed CLI.
   directly to `v1.7.2`.
 - Nightlies use the candidate version, keeping `1.7.2-nightly` SemVer-newer than stable
   `1.7.1`. The candidate must advance when stable advances.
+- Automatic stable preparation waits without consuming fragments while the checked-in
+  candidate is at or behind the latest stable tag. Advance the candidate to resume
+  preparation; explicit release transitions still require a newer candidate.
 - A stable `vX.Y.Z` tag must point to a commit whose workspace version is exactly `X.Y.Z`.
 - Generated `CHANGELOG.md` history starts at adoption. Historical releases are not
   backfilled.
