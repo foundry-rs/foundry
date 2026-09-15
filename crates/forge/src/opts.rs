@@ -74,9 +74,7 @@ pub enum ForgeSubcommand {
     /// - forge build --watch (rebuild on file changes)
     #[command(verbatim_doc_comment, visible_aliases = ["b", "compile"])]
     Build {
-        /// Require foundry.lock to match direct Git dependency submodules even when absent.
-        ///
-        /// Existing foundry.lock files are always checked before building.
+        /// Require foundry.lock to match direct Git dependency submodules.
         #[arg(long)]
         locked: bool,
         #[command(flatten)]
