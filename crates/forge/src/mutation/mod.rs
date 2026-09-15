@@ -1,9 +1,8 @@
 use std::{
     collections::{BTreeMap, HashSet, hash_map::DefaultHasher},
     hash::{Hash, Hasher},
-    io,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 
 use crate::mutation::{
@@ -16,7 +15,6 @@ pub use crate::mutation::{
     reporter::MutationReporter,
     runner::run_mutations_parallel_with_progress,
 };
-use alloy_primitives::keccak256;
 use eyre::eyre;
 use foundry_common::sh_warn;
 use serde::{Deserialize, Serialize};
@@ -41,86 +39,6 @@ struct CachedMutationResults {
     mutant_count: usize,
     mutant_hash: u64,
     results: Vec<(Mutant, MutationResult)>,
-}
-
-/// Crash-consistent per-file mutation results.
-pub struct MutationCheckpoint {
-    path: PathBuf,
-    mutant_count: usize,
-    mutant_hash: u64,
-    results: Mutex<Vec<(Mutant, MutationResult)>>,
-}
-
-impl MutationCheckpoint {
-    fn new(path: PathBuf, mutants: &[Mutant]) -> io::Result<Self> {
-        let mut seen = HashSet::with_capacity(mutants.len());
-        for mutant in mutants {
-            if !seen.insert(mutant_id(mutant)?) {
-                return Err(io::Error::other("mutation manifest contains duplicate mutants"));
-            }
-        }
-
-        let mutant_count = mutants.len();
-        let mutant_hash = mutant_set_hash(mutants);
-        let results = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|data| serde_json::from_str::<CachedMutationResults>(&data).ok())
-            .filter(|cached| {
-                cached.mutant_count == mutant_count
-                    && cached.mutant_hash == mutant_hash
-                    && validate_cached_results(mutants, &cached.results)
-            })
-            .map(|cached| cached.results)
-            .unwrap_or_default();
-
-        Ok(Self { path, mutant_count, mutant_hash, results: Mutex::new(results) })
-    }
-
-    /// Returns results that were durably committed by this or a prior run.
-    pub fn results(&self) -> io::Result<Vec<(Mutant, MutationResult)>> {
-        self.results
-            .lock()
-            .map(|results| results.clone())
-            .map_err(|_| io::Error::other("checkpoint poisoned"))
-    }
-
-    /// Returns mutants without a durably committed result.
-    pub fn pending(&self, mutants: &[Mutant]) -> io::Result<Vec<Mutant>> {
-        let results = self.results.lock().map_err(|_| io::Error::other("checkpoint poisoned"))?;
-        let completed = results
-            .iter()
-            .map(|(mutant, _)| mutant_id(mutant))
-            .collect::<io::Result<HashSet<_>>>()?;
-        mutants
-            .iter()
-            .filter_map(|mutant| match mutant_id(mutant) {
-                Ok(id) if !completed.contains(&id) => Some(Ok(mutant.clone())),
-                Ok(_) => None,
-                Err(err) => Some(Err(err)),
-            })
-            .collect()
-    }
-
-    /// Atomically commits one result before it is acknowledged in memory.
-    pub fn record(&self, mutant: Mutant, result: MutationResult) -> io::Result<()> {
-        let id = mutant_id(&mutant)?;
-        let mut results =
-            self.results.lock().map_err(|_| io::Error::other("checkpoint poisoned"))?;
-        if results.iter().any(|(existing, _)| mutant_id(existing).is_ok_and(|other| other == id)) {
-            return Ok(());
-        }
-
-        results.push((mutant, result));
-        results.sort_by(|(a, _), (b, _)| {
-            a.span.lo().0.cmp(&b.span.lo().0).then_with(|| a.span.hi().0.cmp(&b.span.hi().0))
-        });
-        let cached = CachedMutationResults {
-            mutant_count: self.mutant_count,
-            mutant_hash: self.mutant_hash,
-            results: results.clone(),
-        };
-        persist_checkpoint(&self.path, &cached)
-    }
 }
 
 pub mod mutant;
@@ -555,21 +473,8 @@ impl MutationHandler {
             mutant_hash: mutant_set_hash(mutants),
             results: results.to_vec(),
         };
-        persist_checkpoint(&cache_file, &cached)
-    }
-
-    /// Opens the incremental result checkpoint for a mutation file.
-    pub fn mutation_checkpoint(
-        &self,
-        hash: &str,
-        execution_key: &str,
-        mutants: &[Mutant],
-    ) -> io::Result<MutationCheckpoint> {
-        let cache_file = self.cache_file_path(hash, CacheKind::Results { execution_key });
-        if let Some(dir) = cache_file.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
-        MutationCheckpoint::new(cache_file, mutants)
+        let json = serde_json::to_string_pretty(&cached).map_err(std::io::Error::other)?;
+        std::fs::write(cache_file, json)
     }
 
     /// Read a source string, and for each contract found, gets its ast and visit it to list
@@ -639,11 +544,8 @@ impl MutationHandler {
         let cache_file = self.cache_file_path(hash, CacheKind::Results { execution_key });
         let data = std::fs::read_to_string(cache_file).ok()?;
         let cached: CachedMutationResults = serde_json::from_str(&data).ok()?;
-        (cached.mutant_count == mutants.len()
-            && cached.mutant_hash == mutant_set_hash(mutants)
-            && cached.results.len() == mutants.len()
-            && validate_cached_results(mutants, &cached.results))
-        .then_some(cached.results)
+        (cached.mutant_count == mutants.len() && cached.mutant_hash == mutant_set_hash(mutants))
+            .then_some(cached.results)
     }
 
     /// Mark a span as having a surviving mutation
@@ -705,35 +607,6 @@ fn mutant_set_hash(mutants: &[Mutant]) -> u64 {
         entry.hash(&mut hasher);
     }
     hasher.finish()
-}
-
-fn mutant_id(mutant: &Mutant) -> io::Result<String> {
-    serde_json::to_vec(mutant)
-        .map(|encoded| keccak256(encoded).to_string())
-        .map_err(io::Error::other)
-}
-
-fn validate_cached_results(mutants: &[Mutant], results: &[(Mutant, MutationResult)]) -> bool {
-    let Ok(expected) = mutants.iter().map(mutant_id).collect::<io::Result<HashSet<_>>>() else {
-        return false;
-    };
-    let Ok(actual) =
-        results.iter().map(|(mutant, _)| mutant_id(mutant)).collect::<io::Result<Vec<_>>>()
-    else {
-        return false;
-    };
-    let unique = actual.iter().collect::<HashSet<_>>();
-    unique.len() == actual.len() && actual.iter().all(|id| expected.contains(id))
-}
-
-fn persist_checkpoint(path: &Path, cached: &CachedMutationResults) -> io::Result<()> {
-    let dir = path.parent().ok_or_else(|| io::Error::other("checkpoint path has no parent"))?;
-    std::fs::create_dir_all(dir)?;
-    let mut temp = tempfile::NamedTempFile::new_in(dir)?;
-    serde_json::to_writer_pretty(temp.as_file_mut(), cached).map_err(io::Error::other)?;
-    temp.as_file_mut().sync_all()?;
-    temp.persist(path).map_err(|err| err.error)?;
-    Ok(())
 }
 
 #[cfg(test)]
@@ -854,46 +727,6 @@ mod tests {
         assert!(
             handler.retrieve_cached_mutant_results("build", "exec", &changed_mutants).is_none()
         );
-    }
-
-    #[test]
-    fn checkpoint_resumes_only_uncommitted_mutants() {
-        let (_temp, config) = test_config();
-        let handler = test_handler(config);
-        let mutants = vec![mutant(10, 20, "first"), mutant(30, 40, "second")];
-        let checkpoint = handler.mutation_checkpoint("build", "exec", &mutants).unwrap();
-
-        checkpoint.record(mutants[0].clone(), MutationResult::Dead).unwrap();
-
-        let resumed = handler.mutation_checkpoint("build", "exec", &mutants).unwrap();
-        assert_eq!(resumed.results().unwrap().len(), 1);
-        let pending = resumed.pending(&mutants).unwrap();
-        assert_eq!(pending.len(), 1);
-        assert_eq!(pending[0].original, "second");
-        assert!(handler.retrieve_cached_mutant_results("build", "exec", &mutants).is_none());
-
-        resumed.record(mutants[1].clone(), MutationResult::Alive).unwrap();
-        assert_eq!(
-            handler.retrieve_cached_mutant_results("build", "exec", &mutants).unwrap().len(),
-            2
-        );
-    }
-
-    #[test]
-    fn result_cache_rejects_duplicate_entries() {
-        let (_temp, config) = test_config();
-        let handler = test_handler(config);
-        let mutants = vec![mutant(10, 20, "first"), mutant(30, 40, "second")];
-        let duplicate = vec![
-            (mutants[0].clone(), MutationResult::Dead),
-            (mutants[0].clone(), MutationResult::Alive),
-        ];
-
-        handler.persist_cached_results("build", "exec", &mutants, &duplicate).unwrap();
-
-        assert!(handler.retrieve_cached_mutant_results("build", "exec", &mutants).is_none());
-        let checkpoint = handler.mutation_checkpoint("build", "exec", &mutants).unwrap();
-        assert!(checkpoint.results().unwrap().is_empty());
     }
 
     #[test]
