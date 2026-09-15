@@ -4,6 +4,43 @@ use foundry_test_utils::{forgetest_init, util::OutputExt};
 
 use super::symbolic_helpers::z3_available;
 
+forgetest_init!(symbolic_call_contains_invalid_child_halt, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_call_contains_invalid_child_halt because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicInvalidChildCall.t.sol",
+        r#"
+contract InvalidChild {
+    fallback() external {
+        assembly ("memory-safe") {
+            invalid()
+        }
+    }
+}
+
+contract SymbolicInvalidChildCall {
+    uint256 marker;
+
+    function checkInvalidChildCall() public {
+        InvalidChild child = new InvalidChild();
+        marker = 17;
+        (bool success, bytes memory output) = address(child).call("");
+        assert(!success);
+        assert(output.length == 0);
+        assert(marker == 17);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--symbolic", "--match-test", "checkInvalidChildCall"]).assert_success();
+});
+
 forgetest_init!(symbolic_calldataload_accepts_symbolic_offset, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(

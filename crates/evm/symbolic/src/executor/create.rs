@@ -131,6 +131,12 @@ impl SymbolicExecutor {
                     *state = parent;
                     return Ok(StepOutcome::Failure);
                 }
+                JoinedCallOutcome::ExceptionalHalt(mut parent) => {
+                    parent.return_data = SymReturnData::empty(&mut self.cx);
+                    parent.world = failure_world.clone();
+                    parent.stack.push(SymExpr::zero(&mut self.cx))?;
+                    parents.push_back(parent);
+                }
                 JoinedCallOutcome::ExpectedRevert { mut parent, child } => {
                     parent.return_data = SymReturnData::empty(&mut self.cx);
                     parent.expected_calls = child.expected_calls;
