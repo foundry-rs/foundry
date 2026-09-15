@@ -190,7 +190,3 @@ User-facing selection, configuration, and workflows belong in the
 [Foundry Book](https://getfoundry.sh). CLI option text belongs in the Clap definitions and is
 generated into the book. Trait, context, and state invariants belong in Rustdoc next to their
 implementation. Cross-crate integration guidance belongs here.
-
-Add a changelog fragment for user-visible behavior. If a change only reorganizes contributor
-documentation or CI and has no release-facing effect, use the repository's `L-ignore` label instead
-of inventing a package release note.
