@@ -91,6 +91,7 @@ impl BaseFeeRules {
         }
     }
 
+    #[allow(clippy::missing_const_for_fn)] // Optimism extra-data encoding is not const.
     fn extra_data(self) -> Bytes {
         match self {
             Self::Standard(_) => Bytes::new(),
