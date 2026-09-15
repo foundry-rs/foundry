@@ -141,8 +141,6 @@ That said, if you have a number of commits that are "checkpoints" and don't repr
 
 From within GitHub, opening a new pull request will present you with a template that should be filled out. Please try your best at filling out the details, but feel free to skip parts if you're not sure what to put.
 
-Pull requests must add or update a `.changelog/*.md` entry unless a maintainer applies the `L-ignore` label; see the [changelog instructions](.changelog/README.md#pull-requests).
-
 #### Discuss and update
 
 You will probably get feedback or requests for changes to your pull request.

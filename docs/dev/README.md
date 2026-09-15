@@ -14,7 +14,6 @@ Keep each fact in the source that owns it and link to that source elsewhere:
 | Crate and module APIs, invariants, and implementation details | Source Rustdoc, published as [Foundry Rustdoc][foundry-rustdoc] |
 | Cross-crate contributor workflows | `docs/dev/` or [`CONTRIBUTING.md`](../../CONTRIBUTING.md) |
 | Agent-only repository instructions | [`AGENTS.md`](../../AGENTS.md) |
-| Release-facing changes | [Changelog fragments](../../.changelog/README.md) |
 
 Do not copy generated CLI reference text or crate dependency lists into `docs/dev`. Update CLI help
 or Rustdoc at the source, then link to the generated documentation.
