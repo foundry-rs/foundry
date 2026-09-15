@@ -143,6 +143,7 @@ impl SymbolicExecutor {
                 }
                 JoinedCallOutcome::Success { mut parent, child } => {
                     parent.return_data = SymReturnData::empty(&mut self.cx);
+                    parent.block = child.block.clone();
                     let runtime = &child.frame.return_data;
                     let spec_id: SpecId = executor.spec_id().into();
                     if spec_id >= SpecId::LONDON && runtime.len() > 0 {
@@ -160,7 +161,6 @@ impl SymbolicExecutor {
                         }
                     }
                     parent.world = child.world;
-                    parent.block = child.block;
                     parent.expected_emit = child.expected_emit;
                     parent.expected_calls = child.expected_calls;
                     parent.expected_creates = pending_expected_creates.clone();

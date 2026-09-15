@@ -62,10 +62,26 @@ forgetest_init!(symbolic_create_respects_eip3541_runtime_prefix, |prj, cmd| {
     prj.add_test(
         "SymbolicCreateEip3541.t.sol",
         r#"
-contract SymbolicCreateEip3541 {
+import "forge-std/Test.sol";
+
+contract SymbolicCreateEip3541 is Test {
     function checkRejectedPrefix() public {
         assert(deployCreate(0xef) == address(0));
         assert(deployCreate2(0xef) == address(0));
+    }
+
+    function checkRejectedPrefixPreservesWarp() public {
+        bytes memory initcode = abi.encodePacked(type(WarpThenReject).creationCode, abi.encode(address(this)));
+        address created;
+        assembly ("memory-safe") {
+            created := create(0, add(initcode, 32), mload(initcode))
+        }
+        assert(created == address(0));
+        assert(block.timestamp == 123);
+    }
+
+    function warp(uint256 timestamp) external {
+        vm.warp(timestamp);
     }
 
     function checkAllowedPrefixBeforeLondon() public {
@@ -100,10 +116,24 @@ contract SymbolicCreateEip3541 {
         }
     }
 }
+
+contract WarpThenReject {
+    constructor(SymbolicCreateEip3541 test) {
+        test.warp(123);
+        assembly ("memory-safe") {
+            mstore(0, shl(248, 0xef))
+            return(0, 1)
+        }
+    }
+}
 "#,
     );
 
     cmd.args(["test", "--symbolic", "--match-test", "checkRejectedPrefix"]).assert_success();
+
+    cmd.forge_fuse();
+    cmd.args(["test", "--symbolic", "--match-test", "checkRejectedPrefixPreservesWarp"])
+        .assert_success();
 
     cmd.forge_fuse();
     cmd.args(["test", "--symbolic", "--match-test", "checkAdjacentPrefixStillAllowed"])
