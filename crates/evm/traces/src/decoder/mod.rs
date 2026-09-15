@@ -542,22 +542,31 @@ impl CallTraceDecoder {
         arena: &CallTraceArena,
         identifier: &'a mut impl TraceIdentifier,
     ) -> Vec<IdentifiedAddress<'a>> {
-        let nodes = arena.nodes().iter().filter(|node| {
-            // Skip precompile addresses, they will never resolve externally.
-            if node.is_precompile()
-                || precompiles::is_known_precompile_call(
-                    &node.trace,
-                    self.networks,
-                    self.chain_id,
-                    self.hardfork,
-                )
-            {
-                return false;
-            }
-            let address = &node.trace.address;
-            !self.labels.contains_key(address) || !self.contracts.contains_key(address)
-        });
-        identifier.identify_addresses(&nodes.collect::<Vec<_>>())
+        identifier.identify_addresses(&self.unidentified_nodes(arena))
+    }
+
+    /// Returns the nodes of `arena` whose address this decoder would still ask an identifier
+    /// about: not a precompile, and lacking either a label or a contract.
+    pub fn unidentified_nodes<'a>(&self, arena: &'a CallTraceArena) -> Vec<&'a CallTraceNode> {
+        arena
+            .nodes()
+            .iter()
+            .filter(|node| {
+                // Skip precompile addresses, they will never resolve externally.
+                if node.is_precompile()
+                    || precompiles::is_known_precompile_call(
+                        &node.trace,
+                        self.networks,
+                        self.chain_id,
+                        self.hardfork,
+                    )
+                {
+                    return false;
+                }
+                let address = &node.trace.address;
+                !self.labels.contains_key(address) || !self.contracts.contains_key(address)
+            })
+            .collect()
     }
 
     /// Adds a single event to the decoder.
