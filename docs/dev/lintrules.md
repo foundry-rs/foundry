@@ -192,7 +192,7 @@ The testing framework runs the linter on the `.sol` file and compares its standa
   cargo test -p forge --test ui
 
   // using nextest
-  cargo nextest run -p forge test ui
+  cargo nextest run -p forge --test ui
   ```
 
 - If you need to generate / bless (re-generate) the output files:
