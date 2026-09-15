@@ -4,6 +4,72 @@ use foundry_test_utils::{forgetest_init, util::OutputExt};
 
 use super::symbolic_helpers::z3_available;
 
+forgetest_init!(symbolic_create_respects_configured_runtime_code_limit, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_create_respects_configured_runtime_code_limit because z3 is not available"
+        );
+        return;
+    }
+
+    prj.update_config(|config| config.code_size_limit = Some(24_576));
+    prj.add_test(
+        "SymbolicCreateCodeLimit.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicCreateCodeLimit is Test {
+    function checkRuntimeCodeLimit() public {
+        address created;
+        assembly ("memory-safe") {
+            mstore(0, shl(208, 0x6160016000f3))
+            created := create(0, 0, 6)
+        }
+        assert(created == address(0));
+        assert(created.code.length == 0);
+    }
+
+    function checkConfiguredRuntimeCodeLimit() public {
+        address created;
+        assembly ("memory-safe") {
+            mstore(0, shl(208, 0x6160006000f3))
+            created := create(0, 0, 6)
+        }
+        assert(created == address(0));
+        assert(created.code.length == 0);
+    }
+
+    function checkExpectRevertRuntimeCodeLimit() public {
+        vm.expectRevert();
+        new OversizedRuntime();
+
+        vm.expectRevert();
+        new OversizedRuntime{salt: bytes32(uint256(1))}();
+    }
+}
+
+contract OversizedRuntime {
+    constructor() {
+        assembly ("memory-safe") {
+            return(0, 24577)
+        }
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--symbolic", "--match-test", "checkRuntimeCodeLimit"]).assert_success();
+
+    cmd.forge_fuse();
+    cmd.args(["test", "--symbolic", "--match-test", "checkExpectRevertRuntimeCodeLimit"])
+        .assert_success();
+
+    prj.update_config(|config| config.code_size_limit = Some(24_575));
+    cmd.forge_fuse();
+    cmd.args(["test", "--symbolic", "--match-test", "checkConfiguredRuntimeCodeLimit"])
+        .assert_success();
+});
+
 forgetest_init!(symbolic_create_deploys_and_calls_helper, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(
