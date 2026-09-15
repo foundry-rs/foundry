@@ -7,7 +7,7 @@ use crate::{
             arg_for_param, branch_always_exits, expr_is_address, is_address_like_cast,
             is_address_self, is_address_type, is_elementary, is_msg_sender, is_require_or_assert,
             loop_update, modifier_prefix, receiver_contract_id, state_lhs_vars, tuple_elems,
-            underlying_var,
+            underlying_var, underlying_var_through_numeric_casts,
         },
     },
 };
@@ -261,7 +261,7 @@ impl<'gcx> Analyzer<'gcx> {
             // A fact about a rewritten parameter says nothing about the caller's variable.
             if !a.written.contains(&param)
                 && let Some(caller) = arg_for_param(self.gcx, fid, param, &m.args)
-                    .and_then(|expr| underlying_var(self.gcx, expr))
+                    .and_then(|expr| underlying_var_through_numeric_casts(self.gcx, expr))
                 && self.is_safe_target(caller)
             {
                 if a.state.safe_vars.contains(&param) {
@@ -326,7 +326,7 @@ impl<'gcx> Analyzer<'gcx> {
         Rhs {
             safe: self.is_safe(rhs),
             is_self: self.is_self_expr(rhs),
-            alias: underlying_var(self.gcx, rhs).map(|v| self.canonical(v)),
+            alias: underlying_var_through_numeric_casts(self.gcx, rhs).map(|v| self.canonical(v)),
             sum: sum_operands(self.gcx, rhs),
         }
     }
@@ -357,7 +357,7 @@ impl<'gcx> Analyzer<'gcx> {
     fn assign_lhs(&mut self, lhs: &Expr<'_>, rhs: Option<&Expr<'_>>) {
         // Writing `cfg.token` drops permits keyed on that field.
         if let ExprKind::Member(base, ident) = &lhs.peel_parens().kind
-            && let Some(base) = underlying_var(self.gcx, base)
+            && let Some(base) = underlying_var_through_numeric_casts(self.gcx, base)
         {
             let key = TokenKey::Field(self.canonical(base), ident.name);
             self.state.permits.retain(|p| p.token != key);
@@ -402,7 +402,7 @@ impl<'gcx> Analyzer<'gcx> {
                     self.state = after_lhs.meet(&self.state);
                 } else if op.kind == eq {
                     for (a, b) in [(lhs, rhs), (rhs, lhs)] {
-                        if let Some(v) = underlying_var(self.gcx, b)
+                        if let Some(v) = underlying_var_through_numeric_casts(self.gcx, b)
                             && self.is_safe_target(v)
                         {
                             if self.is_safe(a) {
@@ -447,12 +447,14 @@ impl<'gcx> Analyzer<'gcx> {
         }
         Some(PermitRecord {
             token: self.canonical_key(token_key(self.gcx, token)?),
-            owner: self.canonical(underlying_var(self.gcx, owner)?),
+            owner: self.canonical(underlying_var_through_numeric_casts(self.gcx, owner)?),
         })
     }
 
     fn permit_covers(&self, sink: &Sink<'_>) -> bool {
-        let (Some(token), Some(owner)) = (sink.token, underlying_var(self.gcx, sink.from)) else {
+        let (Some(token), Some(owner)) =
+            (sink.token, underlying_var_through_numeric_casts(self.gcx, sink.from))
+        else {
             return false;
         };
         self.state.permits.contains(&PermitRecord {
@@ -473,7 +475,7 @@ impl<'gcx> Analyzer<'gcx> {
     /// receiver back to `address(this)`.
     fn consume_repayment(&mut self, sink: &Sink<'_>) -> bool {
         let (Some(from), Some(TokenKey::Var(token))) =
-            (underlying_var(self.gcx, sink.from), sink.token)
+            (underlying_var_through_numeric_casts(self.gcx, sink.from), sink.token)
         else {
             return false;
         };
@@ -710,12 +712,12 @@ fn sum_operands(gcx: Gcx<'_>, expr: &Expr<'_>) -> Option<(VariableId, VariableId
 
 /// `token` or `cfg.token` receiver key, through casts and `payable(..)`.
 fn token_key(gcx: Gcx<'_>, expr: &Expr<'_>) -> Option<TokenKey> {
-    if let Some(v) = underlying_var(gcx, expr) {
+    if let Some(v) = underlying_var_through_numeric_casts(gcx, expr) {
         return Some(TokenKey::Var(v));
     }
     match &expr.peel_parens().kind {
         ExprKind::Member(base, ident) => {
-            Some(TokenKey::Field(underlying_var(gcx, base)?, ident.name))
+            Some(TokenKey::Field(underlying_var_through_numeric_casts(gcx, base)?, ident.name))
         }
         _ => None,
     }
@@ -754,8 +756,8 @@ fn match_flash_loan_call<'gcx>(gcx: Gcx<'gcx>, expr: &Expr<'gcx>) -> Option<Pend
         return None;
     }
     Some(PendingRepayment {
-        receiver: underlying_var(gcx, recv)?,
-        token: underlying_var(gcx, a[1])?,
+        receiver: underlying_var_through_numeric_casts(gcx, recv)?,
+        token: underlying_var_through_numeric_casts(gcx, a[1])?,
         amount: underlying_var(gcx, a[2])?,
         fee: underlying_var(gcx, a[3])?,
     })
