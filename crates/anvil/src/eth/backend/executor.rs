@@ -154,12 +154,16 @@ impl FoundryReceiptBuilder {
             FoundryTxType::Eip1559 => FoundryReceiptEnvelope::Eip1559(receipt),
             FoundryTxType::Eip4844 => FoundryReceiptEnvelope::Eip4844(receipt),
             FoundryTxType::Eip7702 => FoundryReceiptEnvelope::Eip7702(receipt),
-            #[cfg(feature = "optimism")]
+            #[cfg(any(feature = "base", feature = "optimism"))]
             FoundryTxType::Deposit => {
                 panic!("deposit receipts require fork-specific metadata")
             }
             #[cfg(feature = "optimism")]
             FoundryTxType::PostExec => FoundryReceiptEnvelope::PostExec(receipt),
+            #[cfg(feature = "base")]
+            FoundryTxType::Eip8130 => {
+                panic!("Base transactions are rejected before execution")
+            }
             FoundryTxType::Tempo => FoundryReceiptEnvelope::Tempo(receipt),
         }
     }

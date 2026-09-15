@@ -296,3 +296,34 @@ casttest!(base_fee, async |_prj, cmd| {
         .assert_success()
         .stdout_eq("123456789\n");
 });
+
+casttest!(cast_tx_curl_skips_network_probe, |_prj, cmd| {
+    cmd.args([
+        "tx",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "--rpc-url",
+        "http://127.0.0.1:1",
+        "--curl",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+curl -X POST -H 'Content-Type: application/json' --data-raw '{"method":"eth_getTransactionByHash","params":["0x0000000000000000000000000000000000000000000000000000000000000001"],"id":0,"jsonrpc":"2.0"}' 'http://127.0.0.1:1/'
+
+"#]])
+    .stderr_eq(str![""]);
+});
+
+casttest!(cast_raw_block_curl_skips_network_probe, |prj, cmd| {
+    for raw in ["--raw", "--field=raw"] {
+        cmd.cast_fuse().current_dir(prj.root())
+            .args(["block", "latest"])
+            .arg(raw)
+            .args(["--rpc-url", "http://127.0.0.1:1", "--curl"])
+            .assert_success()
+            .stdout_eq(str![[r#"
+curl -X POST -H 'Content-Type: application/json' --data-raw '{"method":"eth_getBlockByNumber","params":["latest",false],"id":0,"jsonrpc":"2.0"}' 'http://127.0.0.1:1/'
+
+"#]])
+            .stderr_eq(str![""]);
+    }
+});
