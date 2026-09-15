@@ -65,6 +65,33 @@ pub(crate) fn cache_block_hash(block_hashes: &mut U256Map<B256>, number: U256, h
     head
 }
 
+/// Internal lossless representation of a historical state moved to disk.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DiskStateSnapshot {
+    pub(crate) state: StateSnapshot,
+    pub(crate) local_accounts: Option<AddressMap<DbAccount>>,
+    pub(crate) local_block_hashes: Option<U256Map<B256>>,
+}
+
+impl DiskStateSnapshot {
+    const fn from_state(state: StateSnapshot) -> Self {
+        Self { state, local_accounts: None, local_block_hashes: None }
+    }
+
+    pub(crate) fn into_state_snapshot(mut self) -> StateSnapshot {
+        if let Some(accounts) = self.local_accounts {
+            for (address, account) in accounts {
+                self.state.accounts.insert(address, account.info);
+                self.state.storage.insert(address, account.storage);
+            }
+        }
+        if let Some(block_hashes) = self.local_block_hashes {
+            self.state.block_hashes.extend(block_hashes);
+        }
+        self.state
+    }
+}
+
 /// Helper trait get access to the full state data of the database
 pub trait MaybeFullDatabase: DatabaseRef<Error = DatabaseError> + Debug {
     fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
@@ -84,6 +111,11 @@ pub trait MaybeFullDatabase: DatabaseRef<Error = DatabaseError> + Debug {
     /// Clear the state and move it into a new `StateSnapshot`.
     fn clear_into_state_snapshot(&mut self) -> StateSnapshot;
 
+    /// Clear the state into its lossless internal disk representation.
+    fn clear_into_disk_state(&mut self) -> DiskStateSnapshot {
+        DiskStateSnapshot::from_state(self.clear_into_state_snapshot())
+    }
+
     /// Read the state snapshot.
     ///
     /// This clones all the states and returns a new `StateSnapshot`.
@@ -94,6 +126,11 @@ pub trait MaybeFullDatabase: DatabaseRef<Error = DatabaseError> + Debug {
 
     /// Reverses `clear_into_snapshot` by initializing the db's state with the state snapshot.
     fn init_from_state_snapshot(&mut self, state_snapshot: StateSnapshot);
+
+    /// Reverses `clear_into_disk_state` after loading an internal historical state.
+    fn init_from_disk_state(&mut self, disk_state: DiskStateSnapshot) {
+        self.init_from_state_snapshot(disk_state.into_state_snapshot());
+    }
 }
 
 impl<'a, T: 'a + MaybeFullDatabase + ?Sized> MaybeFullDatabase for &'a T
@@ -116,6 +153,10 @@ where
         unreachable!("never called for DatabaseRef")
     }
 
+    fn clear_into_disk_state(&mut self) -> DiskStateSnapshot {
+        unreachable!("never called for DatabaseRef")
+    }
+
     fn read_as_state_snapshot(&self) -> StateSnapshot {
         unreachable!("never called for DatabaseRef")
     }
@@ -123,6 +164,8 @@ where
     fn clear(&mut self) {}
 
     fn init_from_state_snapshot(&mut self, _state_snapshot: StateSnapshot) {}
+
+    fn init_from_disk_state(&mut self, _disk_state: DiskStateSnapshot) {}
 }
 
 impl<T: MaybeFullDatabase + ?Sized> MaybeFullDatabase for Box<T>
@@ -145,6 +188,10 @@ where
         T::clear_into_state_snapshot(self)
     }
 
+    fn clear_into_disk_state(&mut self) -> DiskStateSnapshot {
+        T::clear_into_disk_state(self)
+    }
+
     fn read_as_state_snapshot(&self) -> StateSnapshot {
         T::read_as_state_snapshot(self)
     }
@@ -155,6 +202,10 @@ where
 
     fn init_from_state_snapshot(&mut self, state_snapshot: StateSnapshot) {
         T::init_from_state_snapshot(self, state_snapshot)
+    }
+
+    fn init_from_disk_state(&mut self, disk_state: DiskStateSnapshot) {
+        T::init_from_disk_state(self, disk_state)
     }
 }
 
@@ -253,6 +304,9 @@ pub trait Db:
 {
     /// Inserts an account
     fn insert_account(&mut self, address: Address, account: AccountInfo);
+
+    /// Replaces all locally cached accounts with a retained historical state.
+    fn replace_state(&mut self, accounts: AddressMap<DbAccount>);
 
     /// Sets the nonce of the given address
     fn set_nonce(&mut self, address: Address, nonce: u64) -> DatabaseResult<()> {
@@ -365,6 +419,10 @@ where
         self.insert_account_info(address, account)
     }
 
+    fn replace_state(&mut self, accounts: AddressMap<DbAccount>) {
+        replace_cache_state(self, accounts);
+    }
+
     fn set_storage_at(&mut self, address: Address, slot: B256, val: B256) -> DatabaseResult<()> {
         self.insert_account_storage(address, slot.into(), val.into())
     }
@@ -402,6 +460,15 @@ where
 
     fn current_state(&self) -> StateDb {
         StateDb::new(MemDb::default())
+    }
+}
+
+/// Replaces a cache with complete account state while rebuilding its bytecode index.
+pub(crate) fn replace_cache_state<T>(db: &mut CacheDB<T>, accounts: AddressMap<DbAccount>) {
+    db.cache = Default::default();
+    for (address, mut account) in accounts {
+        db.insert_contract(&mut account.info);
+        db.cache.accounts.insert(address, account);
     }
 }
 
@@ -565,6 +632,10 @@ impl MaybeFullDatabase for StateDb {
         self.0.clear_into_state_snapshot()
     }
 
+    fn clear_into_disk_state(&mut self) -> DiskStateSnapshot {
+        self.0.clear_into_disk_state()
+    }
+
     fn read_as_state_snapshot(&self) -> StateSnapshot {
         self.0.read_as_state_snapshot()
     }
@@ -575,6 +646,10 @@ impl MaybeFullDatabase for StateDb {
 
     fn init_from_state_snapshot(&mut self, state_snapshot: StateSnapshot) {
         self.0.init_from_state_snapshot(state_snapshot)
+    }
+
+    fn init_from_disk_state(&mut self, disk_state: DiskStateSnapshot) {
+        self.0.init_from_disk_state(disk_state)
     }
 }
 
@@ -980,6 +1055,32 @@ mod test {
             cache.maybe_full_db().map(|accounts| crate::mem::state::state_root(&accounts)),
             Some(crate::mem::state::state_root(&expected))
         );
+    }
+
+    #[test]
+    fn replace_cache_state_preserves_code_and_cleared_storage() {
+        let contract = Address::with_last_byte(1);
+        let stale_slot = U256::from(1);
+        let code = Bytecode::new_raw(Bytes::from_static(&[0x00]));
+        let code_hash = keccak256(code.original_bytes());
+        let mut base = MemDb::default();
+        base.insert_account(contract, AccountInfo::from_balance(U256::from(1)));
+        base.set_storage_at(contract, stale_slot.into(), B256::from(U256::from(2))).unwrap();
+        let mut cache = CacheDB::new(base);
+        let accounts = AddressMap::from_iter([(
+            contract,
+            DbAccount {
+                info: AccountInfo { code_hash, code: Some(code.clone()), ..Default::default() },
+                account_state: AccountState::StorageCleared,
+                ..Default::default()
+            },
+        )]);
+
+        replace_cache_state(&mut cache, accounts);
+
+        assert_eq!(cache.code_by_hash_ref(code_hash).unwrap(), code);
+        assert_eq!(cache.storage_ref(contract, stale_slot).unwrap(), U256::ZERO);
+        assert_eq!(cache.cache.accounts[&contract].account_state, AccountState::StorageCleared);
     }
 
     #[test]

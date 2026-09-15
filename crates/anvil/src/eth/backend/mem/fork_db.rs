@@ -1,7 +1,7 @@
 use crate::eth::backend::db::{
-    Db, MaybeForkedDatabase, MaybeFullDatabase, SerializableAccountRecord, SerializableBlock,
-    SerializableHistoricalStates, SerializableState, SerializableTransaction, StateDb,
-    cache_block_hash,
+    Db, DiskStateSnapshot, MaybeForkedDatabase, MaybeFullDatabase, SerializableAccountRecord,
+    SerializableBlock, SerializableHistoricalStates, SerializableState, SerializableTransaction,
+    StateDb, cache_block_hash, replace_cache_state,
 };
 use alloy_network::Network;
 use alloy_primitives::{Address, B256, U256, map::AddressMap};
@@ -37,6 +37,12 @@ impl<N: Network> MaybeFullDatabase for SharedBackend<N> {
 impl<N: Network> Db for ForkedDatabase<N> {
     fn insert_account(&mut self, address: Address, account: AccountInfo) {
         self.database_mut().insert_account(address, account)
+    }
+
+    fn replace_state(&mut self, accounts: AddressMap<DbAccount>) {
+        self.flush_cache();
+        self.clear_into_state_snapshot();
+        replace_cache_state(self.database_mut(), accounts);
     }
 
     fn set_storage_at(&mut self, address: Address, slot: B256, val: B256) -> DatabaseResult<()> {
@@ -169,6 +175,23 @@ impl<N: Network> MaybeFullDatabase for ForkDbStateSnapshot<N> {
         state_snapshot
     }
 
+    fn clear_into_disk_state(&mut self) -> DiskStateSnapshot {
+        let mut local_accounts = std::mem::take(&mut self.local.cache.accounts);
+        for account in local_accounts.values_mut() {
+            if account.info.code.is_none() {
+                account.info.code =
+                    self.local.cache.contracts.get(&account.info.code_hash).cloned();
+            }
+        }
+        let local_block_hashes = std::mem::take(&mut self.local.cache.block_hashes);
+        self.local.cache = Default::default();
+        DiskStateSnapshot {
+            state: std::mem::take(&mut self.state_snapshot),
+            local_accounts: Some(local_accounts),
+            local_block_hashes: Some(local_block_hashes),
+        }
+    }
+
     fn read_as_state_snapshot(&self) -> StateSnapshot {
         let mut state_snapshot = self.state_snapshot.clone();
         let local_state_snapshot = self.local.read_as_state_snapshot();
@@ -185,6 +208,13 @@ impl<N: Network> MaybeFullDatabase for ForkDbStateSnapshot<N> {
 
     fn init_from_state_snapshot(&mut self, state_snapshot: StateSnapshot) {
         self.state_snapshot = state_snapshot;
+    }
+
+    fn init_from_disk_state(&mut self, disk_state: DiskStateSnapshot) {
+        let DiskStateSnapshot { state, local_accounts, local_block_hashes } = disk_state;
+        self.state_snapshot = state;
+        replace_cache_state(&mut self.local, local_accounts.unwrap_or_default());
+        self.local.cache.block_hashes = local_block_hashes.unwrap_or_default();
     }
 }
 

@@ -6869,7 +6869,16 @@ where
                     let state_db = db.ok_or(BlockchainError::DataUnavailable)?;
                     let db_full =
                         state_db.maybe_as_full_db().ok_or(BlockchainError::DataUnavailable)?;
-                    Ok(db_full.clone())
+                    let mut db_full = db_full.clone();
+                    for account in db_full.values_mut() {
+                        if account.info.code.is_none() {
+                            account.info.code = Some(revm::DatabaseRef::code_by_hash_ref(
+                                state_db,
+                                account.info.code_hash,
+                            )?);
+                        }
+                    }
+                    Ok(db_full)
                 };
 
             let read_guard = self.states.upgradable_read();
@@ -6935,15 +6944,7 @@ where
 
             // Acquire db lock once for the entire restore operation to reduce lock churn.
             let mut db = self.db.write().await;
-            db.clear();
-
-            // Insert account info before storage to prevent fork-mode RPC fetches after clear.
-            for (address, acc) in common_state {
-                db.insert_account(address, acc.info);
-                for (key, value) in acc.storage {
-                    db.set_storage_at(address, key.into(), value.into())?;
-                }
-            }
+            db.replace_state(common_state);
 
             // Restore block hashes from blockchain storage (now unwound, contains only valid
             // blocks).

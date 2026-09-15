@@ -72,6 +72,7 @@ const BALANCE_PROBE_ADDRESS: Address = address!("0x00000000000000000000000000000
 const CHAIN_ID_PROBE_ADDRESS: Address = address!("0x0000000000000000000000000000000000002002");
 const CLZ_PROBE_ADDRESS: Address = address!("0x0000000000000000000000000000000000002003");
 const STORAGE_GAS_PROBE_ADDRESS: Address = address!("0x0000000000000000000000000000000000002004");
+const ROLLBACK_RECIPIENT: Address = address!("0x0000000000000000000000000000000000002005");
 const DIPPED_INTO_RESERVE_SELECTOR: [u8; 4] = hex!("3a61584e");
 const RESERVE_RETURN_PROBE_CODE: [u8; 25] =
     hex!("633a61584e5f5260205f6004601c5f6110015af15060205ff3");
@@ -1431,6 +1432,7 @@ async fn monad_fork_transaction_hash_rollback_restores_inferred_profile() {
     assert_eq!(api.anvil_node_info().await.unwrap().hard_fork, "MonadNine");
     assert_eq!(api.backend.spec_id(), SpecId::OSAKA);
     assert_eq!(provider.call(reserve_balance_call()).await.unwrap(), Bytes::from(vec![0; 32]));
+    assert_eq!(provider.get_balance(ROLLBACK_RECIPIENT).await.unwrap(), U256::ONE);
 
     let replay_block_number = provider.get_block_number().await.unwrap();
     let parent = provider
@@ -1443,6 +1445,7 @@ async fn monad_fork_transaction_hash_rollback_restores_inferred_profile() {
     assert_eq!(api.anvil_node_info().await.unwrap().hard_fork, "MonadEight");
     assert_eq!(api.backend.spec_id(), SpecId::PRAGUE);
     assert!(provider.call(reserve_balance_call()).await.unwrap().is_empty());
+    assert_eq!(provider.get_balance(ROLLBACK_RECIPIENT).await.unwrap(), U256::ZERO);
     assert_eq!(api.backend.chain_id(), U256::ONE);
     assert_eq!(
         api.backend.blob_params(),
@@ -1461,6 +1464,10 @@ async fn monad_fork_transaction_hash_rollback_restores_inferred_profile() {
             BaseFeeParams::ethereum(),
         )
     );
+
+    api.mine_one().await.unwrap();
+    api.anvil_rollback(Some(1)).await.unwrap();
+    assert_eq!(provider.get_balance(ROLLBACK_RECIPIENT).await.unwrap(), U256::ZERO);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1475,11 +1482,13 @@ async fn monad_fork_transaction_hash_reorg_restores_inferred_profile() {
     let provider = handle.http_provider();
 
     assert_eq!(api.anvil_node_info().await.unwrap().hard_fork, "MonadNine");
+    assert_eq!(provider.get_balance(ROLLBACK_RECIPIENT).await.unwrap(), U256::ONE);
     api.anvil_reorg(ReorgOptions { depth: 1, tx_block_pairs: Vec::new() }).await.unwrap();
 
     assert_eq!(api.anvil_node_info().await.unwrap().hard_fork, "MonadEight");
     assert_eq!(api.backend.spec_id(), SpecId::PRAGUE);
     assert!(provider.call(reserve_balance_call()).await.unwrap().is_empty());
+    assert_eq!(provider.get_balance(ROLLBACK_RECIPIENT).await.unwrap(), U256::ZERO);
     let block = provider.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
     assert_eq!(
         api.backend.blob_params(),
@@ -2449,7 +2458,7 @@ async fn monad_rollback_boundary_origin() -> (NodeHandle, String, B256) {
         .send_transaction(
             TransactionRequest::default()
                 .with_from(accounts[0])
-                .with_to(accounts[1])
+                .with_to(ROLLBACK_RECIPIENT)
                 .with_value(U256::ONE)
                 .into(),
         )
