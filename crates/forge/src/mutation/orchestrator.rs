@@ -249,35 +249,39 @@ pub async fn run_mutation_testing(
             continue;
         }
 
-        // Check for cached results only after the current mutant set is known.
-        // The result cache carries a count/hash of that set so stale or partial
-        // caches cannot suppress newly generated mutants.
-        if let Some(prior) =
-            handler.retrieve_cached_mutant_results(&build_id, &execution_cache_key, &mutants)
-        {
+        // Sort mutations by span for optimal adaptive testing.
+        mutants.sort_by(|a, b| {
+            a.span.lo().0.cmp(&b.span.lo().0).then_with(|| b.span.hi().0.cmp(&a.span.hi().0))
+        });
+
+        // Open the per-file checkpoint only after the full mutant set is known.
+        // Its loader validates every stored mutant against this manifest, so a
+        // partial checkpoint can resume work without being mistaken for a
+        // complete cached result.
+        let checkpoint =
+            Arc::new(handler.mutation_checkpoint(&build_id, &execution_cache_key, &mutants)?);
+        let prior = checkpoint.results()?;
+        for (mutant, status) in &prior {
+            add_mutation_result(&mut handler, mutant.clone(), status.clone());
+        }
+        if prior.len() == mutants.len() {
             if !mutation_config.show_progress && !json_output {
                 sh_println!("  Using cached results for {} mutants", prior.len())?;
-            }
-            for (mutant, status) in prior {
-                match status {
-                    MutationResult::Dead => handler.add_dead_mutant(mutant),
-                    MutationResult::Alive => handler.add_survived_mutant(mutant),
-                    MutationResult::Invalid => handler.add_invalid_mutant(mutant),
-                    MutationResult::Skipped => handler.add_skipped_mutant(mutant),
-                    MutationResult::TimedOut => handler.add_timed_out_mutant(mutant),
-                }
             }
             mutation_summary.merge(handler.get_report());
             continue;
         }
 
-        // Sort mutations by span for optimal adaptive testing
-        mutants.sort_by(|a, b| {
-            a.span.lo().0.cmp(&b.span.lo().0).then_with(|| b.span.hi().0.cmp(&a.span.hi().0))
-        });
-
+        let pending = checkpoint.pending(&mutants)?;
         let (mutants_to_test, skipped_results) =
-            partition_adaptively_skipped_mutants(&mut handler, &mutants);
+            partition_adaptively_skipped_mutants(&mut handler, &pending);
+        for (mutant, result) in &skipped_results {
+            checkpoint.record(mutant.clone(), result.clone())?;
+        }
+
+        if !prior.is_empty() && !mutation_config.show_progress && !json_output {
+            sh_println!("  Resuming from {} completed mutants", prior.len())?;
+        }
 
         // Create progress display if enabled (not in JSON mode)
         let progress = if mutation_config.show_progress && !json_output {
@@ -318,56 +322,16 @@ pub async fn run_mutation_testing(
             Arc::new(selected_sources_relative.clone()),
             mutation_config.isolate,
             Arc::clone(&cancellation_requested),
+            Arc::clone(&checkpoint),
         )?;
         let file_cancelled = batch.cancelled;
 
-        // Collect results for caching
-        let mut results_vec = Vec::with_capacity(skipped_results.len() + batch.results.len());
-        results_vec.extend(skipped_results);
         for result in batch.results {
-            results_vec.push((result.mutant.clone(), result.result.clone()));
-            match result.result {
-                MutationResult::Dead => handler.add_dead_mutant(result.mutant),
-                MutationResult::Alive => {
-                    handler.mark_span_survived(result.mutant.span);
-                    handler.add_survived_mutant(result.mutant);
-                }
-                MutationResult::Invalid => handler.add_invalid_mutant(result.mutant),
-                MutationResult::Skipped => handler.add_skipped_mutant(result.mutant),
-                MutationResult::TimedOut => handler.add_timed_out_mutant(result.mutant),
-            }
+            add_mutation_result(&mut handler, result.mutant, result.result);
         }
 
-        // Detect cancellation early so we can decide whether the result set is
-        // complete before persisting it. Without this guard a Ctrl+C mid-run
-        // would write a *partial* results vector to the cache and the next run
-        // would treat that subset as the full answer for this file.
-        let complete_run = !file_cancelled && results_vec.len() == mutants.len();
-
-        // Persist results for caching only when the run for this file is
-        // complete. Partial caches are silent correctness bugs:
-        //   - cancelled runs would be reloaded as authoritative
-        //   - non-cancelled-but-short result vectors indicate a bug, not a hit
-        // The mutants list itself is fine to persist (it's deterministic from
-        // the AST + operator set) and so are survived spans (best-effort hint).
-        //
-        // Sort the persisted result vector by mutant span so the on-disk
-        // cache is independent of rayon worker completion order; otherwise
-        // the cache file changes content-hash run-to-run even when the
-        // outcomes are identical, defeating diffing and reproducibility.
-        results_vec.sort_by(|(a, _), (b, _)| {
-            a.span.lo().0.cmp(&b.span.lo().0).then_with(|| a.span.hi().0.cmp(&b.span.hi().0))
-        });
         if !mutants.is_empty() && !build_id.is_empty() {
             let _ = handler.persist_cached_mutants(&build_id, &mutants);
-            if complete_run {
-                let _ = handler.persist_cached_results(
-                    &build_id,
-                    &execution_cache_key,
-                    &mutants,
-                    &results_vec,
-                );
-            }
             let _ = handler.persist_survived_spans(&build_id, &execution_cache_key);
         }
 
@@ -546,6 +510,19 @@ fn partition_adaptively_skipped_mutants(
         .collect();
 
     (mutants_to_test, skipped_results)
+}
+
+fn add_mutation_result(handler: &mut MutationHandler, mutant: Mutant, result: MutationResult) {
+    match result {
+        MutationResult::Dead => handler.add_dead_mutant(mutant),
+        MutationResult::Alive => {
+            handler.mark_span_survived(mutant.span);
+            handler.add_survived_mutant(mutant);
+        }
+        MutationResult::Invalid => handler.add_invalid_mutant(mutant),
+        MutationResult::Skipped => handler.add_skipped_mutant(mutant),
+        MutationResult::TimedOut => handler.add_timed_out_mutant(mutant),
+    }
 }
 
 /// Resolve which paths to mutate based on configuration.

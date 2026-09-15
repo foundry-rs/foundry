@@ -7,7 +7,7 @@ use crate::{
     MultiContractRunnerBuilder,
     cmd::test::{FilterArgs, RerunFailure},
     mutation::{
-        SurvivedSpans,
+        MutationCheckpoint, SurvivedSpans,
         mutant::{Mutant, MutationResult},
         progress::MutationProgress,
     },
@@ -47,6 +47,8 @@ use foundry_evm::core::evm::MonadEvmNetwork;
 
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
+
+const MUTATION_STACK_SIZE: usize = 16 * 1024 * 1024;
 
 /// Result of testing a single mutant.
 #[derive(Debug, Clone)]
@@ -191,6 +193,7 @@ pub fn run_mutations_parallel_with_progress(
     selected_sources_relative: Arc<Vec<PathBuf>>,
     isolate: bool,
     cancellation_requested: Arc<AtomicBool>,
+    checkpoint: Arc<MutationCheckpoint>,
 ) -> Result<MutationBatchResult> {
     let total = mutants.len();
     if total == 0 {
@@ -245,13 +248,15 @@ pub fn run_mutations_parallel_with_progress(
     // Configure rayon thread pool
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(num_workers)
-        .stack_size(16 * 1024 * 1024) // 16MB stack to avoid overflow in deep call chains
+        .stack_size(MUTATION_STACK_SIZE)
+        .thread_name(|index| format!("mutation-{index}"))
         .build()
         .map_err(|e| eyre::eyre!("Failed to create thread pool: {}", e))?;
 
     // Use a thread-safe collection to store results as they complete
     let completed_results: Arc<Mutex<Vec<MutantTestResult>>> =
         Arc::new(Mutex::new(Vec::with_capacity(total)));
+    let checkpoint_error = Arc::new(Mutex::new(None));
 
     let filter_args = Arc::new(filter_args);
     let rerun_failures = Arc::new(rerun_failures);
@@ -291,6 +296,21 @@ pub fn run_mutations_parallel_with_progress(
                 }
             };
 
+            if let Err(err) =
+                checkpoint.record(test_result.mutant.clone(), test_result.result.clone())
+            {
+                shared_state.cancel();
+                if let Ok(mut checkpoint_error) = checkpoint_error.lock()
+                    && checkpoint_error.is_none()
+                {
+                    *checkpoint_error = Some(err);
+                }
+                return;
+            }
+            if matches!(test_result.result, MutationResult::Alive) {
+                shared_state.mark_span_survived(test_result.mutant.span);
+            }
+
             // Store result immediately
             if let Ok(mut results) = completed_results.lock() {
                 results.push(test_result);
@@ -325,6 +345,10 @@ pub fn run_mutations_parallel_with_progress(
     }
     for handle in pending {
         let _ = handle.join();
+    }
+
+    if let Some(err) = checkpoint_error.lock().ok().and_then(|mut error| error.take()) {
+        return Err(err.into());
     }
 
     let cancelled = shared_state.is_cancelled();
@@ -455,18 +479,21 @@ fn test_single_mutant_isolated(
         }
     };
 
-    // Track adaptive survived spans only for genuinely Alive mutants; TimedOut
-    // is unresolved and must not mask other mutations on the same span.
-    if matches!(result, MutationResult::Alive) {
-        shared_state.mark_span_survived(mutant.span);
-    }
-
     // Update progress
     if let Some(ref progress) = shared_state.progress {
         progress.complete_mutant(&mutant, &result);
     }
 
     MutantTestResult { mutant, result }
+}
+
+fn mutation_test_pool() -> Result<rayon::ThreadPool> {
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .stack_size(MUTATION_STACK_SIZE)
+        .thread_name(|_| "mutation-test".to_string())
+        .build()
+        .map_err(|err| eyre::eyre!("failed to create mutation test pool: {err}"))
 }
 
 /// Run `compile_and_test` on a worker thread and wait at most `budget` for it
@@ -500,20 +527,27 @@ fn run_compile_and_test_with_timeout(
     let selected_sources_for_worker = Arc::clone(&selected_sources_relative);
 
     let spawn_result = std::thread::Builder::new()
-        .stack_size(16 * 1024 * 1024)
+        .stack_size(MUTATION_STACK_SIZE)
         .name("mutation-worker".to_string())
         .spawn(move || {
-            let res = panic::catch_unwind(AssertUnwindSafe(|| {
-                compile_and_test(
-                    &cfg,
-                    &evm,
-                    &filter_for_worker,
-                    rerun_for_worker.as_ref().as_deref(),
-                    &selected_sources_for_worker,
-                    isolate,
-                )
-            }))
-            .unwrap_or_else(|_| Err(eyre::eyre!("worker panicked")));
+            // `test_collect` uses Rayon internally. Because this timeout worker
+            // is not itself a Rayon worker, nested parallel iterators would
+            // otherwise escape to the global pool and its default-sized stacks.
+            let res = mutation_test_pool().and_then(|pool| {
+                panic::catch_unwind(AssertUnwindSafe(|| {
+                    pool.install(|| {
+                        compile_and_test(
+                            &cfg,
+                            &evm,
+                            &filter_for_worker,
+                            rerun_for_worker.as_ref().as_deref(),
+                            &selected_sources_for_worker,
+                            isolate,
+                        )
+                    })
+                }))
+                .unwrap_or_else(|_| Err(eyre::eyre!("worker panicked")))
+            });
             let _ = tx.send(res);
             // Keep `temp_dir` alive until *after* the worker is done with the
             // workspace. Dropping here (vs at function entry on timeout)
@@ -760,6 +794,17 @@ fn compile_and_test_inner<FEN: FoundryEvmNetwork>(
 mod tests {
     use super::*;
     use alloy_primitives::U256;
+
+    #[test]
+    fn timeout_tests_use_owned_rayon_pool() {
+        let pool = mutation_test_pool().unwrap();
+        let (threads, name) = pool.install(|| {
+            (rayon::current_num_threads(), std::thread::current().name().map(str::to_owned))
+        });
+
+        assert_eq!(threads, 1);
+        assert_eq!(name.as_deref(), Some("mutation-test"));
+    }
 
     #[test]
     fn park_timed_out_worker_bounds_pending_handles() {
