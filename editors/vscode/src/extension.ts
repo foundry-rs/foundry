@@ -40,8 +40,14 @@ export function activate(context: vscode.ExtensionContext) {
     context.extensionMode === vscode.ExtensionMode.Test)
     ? process.env.FOUNDRY_LSP_FORGE
     : undefined;
-  // Start the LSP server.
-  void restartLanguageServer();
+  // Starting the Forge LSP executes workspace-configured commands (flychecks),
+  // so wait until the workspace has been trusted before launching it.
+  const trustListener = vscode.workspace.onDidGrantWorkspaceTrust(() => {
+    void restartLanguageServer();
+  });
+  if (vscode.workspace.isTrusted) {
+    void restartLanguageServer();
+  }
 
   // Register the format document command.
   const formatCommand = vscode.commands.registerCommand(
@@ -120,6 +126,7 @@ export function activate(context: vscode.ExtensionContext) {
     formatCommand,
     formatOnSave,
     configListener,
+    trustListener,
     copySelectorCommand,
     showReferencesCommand,
     showTypeHierarchyCommand,
@@ -132,7 +139,7 @@ function restartLanguageServer(): Promise<void> {
       await stopLanguageServer();
 
       const config = vscode.workspace.getConfiguration("solarLsp");
-      if (config.get<boolean>("enable", true)) {
+      if (vscode.workspace.isTrusted && config.get<boolean>("enable", true)) {
         await startLanguageServer();
       }
     })
@@ -154,6 +161,9 @@ async function stopLanguageServer(): Promise<void> {
 }
 
 async function startLanguageServer() {
+  if (!vscode.workspace.isTrusted) {
+    return;
+  }
   const config = vscode.workspace.getConfiguration("solarLsp");
   const oldSetting = config.inspect<string>("serverPath");
   if ([oldSetting?.globalValue, oldSetting?.workspaceValue, oldSetting?.workspaceFolderValue]
@@ -416,12 +426,14 @@ async function formatDocumentWithForge(
     let stdout = "";
     let stderr = "";
 
+    forgeProcess.stdout.setEncoding("utf8");
     forgeProcess.stdout.on("data", (data) => {
-      stdout += data.toString();
+      stdout += data;
     });
 
+    forgeProcess.stderr.setEncoding("utf8");
     forgeProcess.stderr.on("data", (data) => {
-      stderr += data.toString();
+      stderr += data;
     });
 
     forgeProcess.on("close", (code) => {

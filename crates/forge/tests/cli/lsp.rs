@@ -44,7 +44,7 @@ forgetest!(lsp_vscode_opens_current_project_with_bundled_extension, |prj, cmd| {
         r#"#!/bin/sh
 printf '%s\n' "$@" > "$FORGE_LSP_TEST_ARGS"
 printf '%s\n' "$FOUNDRY_PROFILE" "$FOUNDRY_LSP_FORGE" > "$FORGE_LSP_TEST_PROFILE"
-printf '%s\n' "${VSCODE_APPDATA-unset}" "${VSCODE_EXTENSIONS-unset}" "${VSCODE_PORTABLE-unset}" > "$FORGE_LSP_TEST_ENV"
+printf '%s\n' "${VSCODE_APPDATA-unset}" "${VSCODE_EXTENSIONS-unset}" "${VSCODE_PORTABLE-unset}" "${VSCODE_IPC_HOOK_CLI-unset}" > "$FORGE_LSP_TEST_ENV"
 "#,
     )
     .unwrap();
@@ -63,6 +63,7 @@ printf '%s\n' "${VSCODE_APPDATA-unset}" "${VSCODE_EXTENSIONS-unset}" "${VSCODE_P
     cmd.env("VSCODE_APPDATA", "/stale/appdata");
     cmd.env("VSCODE_EXTENSIONS", "/stale/extensions");
     cmd.env("VSCODE_PORTABLE", "/stale/portable");
+    cmd.env("VSCODE_IPC_HOOK_CLI", "/stale/ipc-hook");
     cmd.args(["lsp", "--vscode", "--profile", "editor", "--code-path"]).arg(&code);
     cmd.assert_empty_stdout();
 
@@ -101,7 +102,7 @@ printf '%s\n' "${VSCODE_APPDATA-unset}" "${VSCODE_EXTENSIONS-unset}" "${VSCODE_P
         fs::read_to_string(&captured_profile).unwrap(),
         format!("editor\n{}\n", forge.display())
     );
-    assert_eq!(fs::read_to_string(&captured_env).unwrap(), "unset\nunset\nunset\n");
+    assert_eq!(fs::read_to_string(&captured_env).unwrap(), "unset\nunset\nunset\nunset\n");
     assert!(!project.join(".vscode").exists());
 
     // A terminal needs only `forge lsp`, and reopening preserves the managed profile's settings.
