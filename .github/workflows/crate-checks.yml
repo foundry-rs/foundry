@@ -16,20 +16,25 @@ env:
   RUSTC_WRAPPER: "sccache"
 
 jobs:
-  cargo-cooldown:
-    if: github.event_name != 'schedule' || github.repository == 'foundry-rs/foundry'
-    permissions:
-      contents: read
-    uses: ./.github/workflows/cargo-cooldown.yml
-
   crate-checks:
-    needs: cargo-cooldown
     if: github.event_name != 'schedule' || github.repository == 'foundry-rs/foundry'
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
+      id-token: write
       contents: read
+    env:
+      NODE_OPTIONS: --no-network-family-autoselection
+      SFW_UNKNOWN_HOST_ACTION: ignore
+      SFW_CUSTOM_REGISTRIES: wrap:binaries.soliditylang.org,wrap:raw.githubusercontent.com/nikitastupin/solc,wrap:raw.githubusercontent.com/alloy-rs/solc-builds
+    defaults:
+      run:
+        shell: bash
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@6e62935eb0bfeac202d19c425f742dc1dcd88f5d
+        with:
+          egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -37,18 +42,19 @@ jobs:
         with:
           toolchain: stable
       - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
-      - uses: taiki-e/install-action@d438492cf8a250514fa2d34b30bc3c0dc37c65ff # v2.87.8
-        with:
-          tool: cargo-hack
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      # Start outside Socket so the cache daemon keeps its own proxy settings.
+      - run: sccache --start-server
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Install cargo-hack
+        run: cargo install --locked --version 0.6.45 cargo-hack
       - run: cargo hack check --locked
 
   issue:
     name: Open an issue
     runs-on: ubuntu-latest
-    needs: [cargo-cooldown, crate-checks]
-    if: failure()
+    needs: [crate-checks]
+    if: failure() && github.event_name == 'schedule'
     permissions:
       contents: read
       issues: write

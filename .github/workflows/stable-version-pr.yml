@@ -42,9 +42,20 @@ jobs:
     if: github.repository == 'foundry-rs/foundry' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     permissions:
+      id-token: write
       contents: read
       pull-requests: read
+    env:
+      NODE_OPTIONS: --no-network-family-autoselection
+      SFW_UNKNOWN_HOST_ACTION: ignore
+    defaults:
+      run:
+        shell: bash
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@6e62935eb0bfeac202d19c425f742dc1dcd88f5d
+        with:
+          egress-policy: audit
       - name: Checkout master
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
