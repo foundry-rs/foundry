@@ -50,6 +50,13 @@ use foundry_evm::core::evm::OpEvmNetwork;
 
 const MUTATION_STACK_SIZE: usize = 16 * 1024 * 1024;
 
+#[cfg(test)]
+const MUTATION_STACK_PROBE_ENV: &str = "FOUNDRY_MUTATION_STACK_PROBE";
+#[cfg(test)]
+const MUTATION_STACK_PROBE_MARKER_ENV: &str = "FOUNDRY_MUTATION_STACK_PROBE_MARKER";
+#[cfg(test)]
+static MUTATION_STACK_PROBE_RAN: AtomicBool = AtomicBool::new(false);
+
 /// Result of testing a single mutant.
 #[derive(Debug, Clone)]
 pub struct MutantTestResult {
@@ -565,7 +572,28 @@ fn with_mutation_test_pool<T: Send>(op: impl FnOnce() -> Result<T> + Send) -> Re
         .thread_name(|_| "mutation-test".to_string())
         .build()
         .map_err(|err| eyre::eyre!("failed to create mutation test pool: {err}"))?
-        .install(op)
+        .install(|| {
+            #[cfg(test)]
+            if std::env::var_os(MUTATION_STACK_PROBE_ENV).is_some() {
+                std::hint::black_box(mutation_stack_probe(1024));
+                MUTATION_STACK_PROBE_RAN.store(true, Ordering::Release);
+            }
+            op()
+        })
+}
+
+#[cfg(test)]
+#[inline(never)]
+fn mutation_stack_probe(depth: usize) -> usize {
+    let frame = [depth as u8; 8 * 1024];
+    std::hint::black_box(&frame);
+    if depth == 0 {
+        frame[0] as usize
+    } else {
+        let result = mutation_stack_probe(depth - 1).wrapping_add(frame[depth % frame.len()] as _);
+        std::hint::black_box(&frame);
+        result
+    }
 }
 
 /// Apply a mutation to a source file.
@@ -777,34 +805,69 @@ fn compile_and_test_inner<FEN: FoundryEvmNetwork>(
 mod tests {
     use super::*;
     use alloy_primitives::U256;
+    use std::process::Command;
 
     #[test]
-    fn timeout_tests_keep_nested_rayon_work_in_owned_pool() {
-        let observations = std::thread::spawn(|| {
-            with_mutation_test_pool(|| {
-                let runtime = tokio::runtime::Builder::new_multi_thread()
-                    .worker_threads(1)
-                    .enable_all()
-                    .build()?;
-                runtime.block_on(async {
-                    Ok((0..8)
-                        .into_par_iter()
-                        .map(|_| {
-                            (
-                                rayon::current_num_threads(),
-                                std::thread::current().name().map(str::to_owned),
-                            )
-                        })
-                        .collect::<Vec<_>>())
-                })
-            })
-        })
-        .join()
-        .unwrap()
-        .unwrap();
+    fn timeout_path_uses_enlarged_test_worker_stack() {
+        if std::env::var_os(MUTATION_STACK_PROBE_ENV).is_some() {
+            let workspace = TempDir::new().unwrap();
+            let source = PathBuf::from("src/StackProbe.t.sol");
+            fs::create_dir_all(workspace.path().join("src")).unwrap();
+            fs::write(
+                workspace.path().join(&source),
+                "contract StackProbeTest { function test_stackProbe() public {} }",
+            )
+            .unwrap();
+            let mut config = Config::with_root(workspace.path());
+            config.out = workspace.path().join("out");
+            config.cache_path = workspace.path().join("cache/solidity-files-cache.json");
+            let config = Arc::new(config);
+            let evm = MutationEvmConfig {
+                opts: EvmOpts::default(),
+                resolved_fork: None,
+                create2_deployer_available: false,
+            };
+            let shared_state = Arc::new(SharedMutationState::default());
 
-        assert!(observations.iter().all(|(threads, _)| *threads == 1));
-        assert!(observations.iter().all(|(_, name)| name.as_deref() == Some("mutation-test")));
+            let result = run_compile_and_test_with_timeout(
+                config,
+                &evm,
+                Duration::from_secs(60),
+                workspace,
+                &shared_state,
+                Arc::new(FilterArgs::default()),
+                Arc::new(None),
+                Arc::new(vec![source]),
+                false,
+            );
+
+            assert!(!matches!(result, MutationResult::TimedOut), "unexpected result: {result:?}");
+            assert!(MUTATION_STACK_PROBE_RAN.load(Ordering::Acquire));
+            fs::write(std::env::var_os(MUTATION_STACK_PROBE_MARKER_ENV).unwrap(), b"ok").unwrap();
+            return;
+        }
+
+        let marker_dir = TempDir::new().unwrap();
+        let marker = marker_dir.path().join("completed");
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "mutation::runner::tests::timeout_path_uses_enlarged_test_worker_stack",
+            ])
+            .env(MUTATION_STACK_PROBE_ENV, "1")
+            .env(MUTATION_STACK_PROBE_MARKER_ENV, &marker)
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert!(
+            output.status.success(),
+            "stack-pressure child failed:\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr
+        );
+        assert!(marker.exists(), "stack-pressure child did not complete the production path");
     }
 
     #[test]
