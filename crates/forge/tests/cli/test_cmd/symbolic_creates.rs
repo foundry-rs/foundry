@@ -16,7 +16,9 @@ forgetest_init!(symbolic_create_respects_configured_runtime_code_limit, |prj, cm
     prj.add_test(
         "SymbolicCreateCodeLimit.t.sol",
         r#"
-contract SymbolicCreateCodeLimit {
+import "forge-std/Test.sol";
+
+contract SymbolicCreateCodeLimit is Test {
     function checkRuntimeCodeLimit() public {
         address created;
         assembly ("memory-safe") {
@@ -26,11 +28,46 @@ contract SymbolicCreateCodeLimit {
         assert(created == address(0));
         assert(created.code.length == 0);
     }
+
+    function checkConfiguredRuntimeCodeLimit() public {
+        address created;
+        assembly ("memory-safe") {
+            mstore(0, shl(208, 0x6160006000f3))
+            created := create(0, 0, 6)
+        }
+        assert(created == address(0));
+        assert(created.code.length == 0);
+    }
+
+    function checkExpectRevertRuntimeCodeLimit() public {
+        vm.expectRevert();
+        new OversizedRuntime();
+
+        vm.expectRevert();
+        new OversizedRuntime{salt: bytes32(uint256(1))}();
+    }
+}
+
+contract OversizedRuntime {
+    constructor() {
+        assembly ("memory-safe") {
+            return(0, 24577)
+        }
+    }
 }
 "#,
     );
 
     cmd.args(["test", "--symbolic", "--match-test", "checkRuntimeCodeLimit"]).assert_success();
+
+    cmd.forge_fuse();
+    cmd.args(["test", "--symbolic", "--match-test", "checkExpectRevertRuntimeCodeLimit"])
+        .assert_success();
+
+    prj.update_config(|config| config.code_size_limit = Some(24_575));
+    cmd.forge_fuse();
+    cmd.args(["test", "--symbolic", "--match-test", "checkConfiguredRuntimeCodeLimit"])
+        .assert_success();
 });
 
 forgetest_init!(symbolic_create_deploys_and_calls_helper, |prj, cmd| {

@@ -1,5 +1,15 @@
 use super::*;
 
+fn runtime_exceeds_code_size_limit(
+    cfg: &impl Cfg,
+    spec_id: SpecId,
+    runtime: &SymReturnData,
+) -> bool {
+    spec_id >= SpecId::SPURIOUS_DRAGON
+        && !runtime.has_symbolic_len()
+        && runtime.len() > cfg.max_code_size()
+}
+
 impl SymbolicExecutor {
     pub(super) fn create<FEN: FoundryEvmNetwork>(
         &mut self,
@@ -123,7 +133,15 @@ impl SymbolicExecutor {
         }
 
         let mut parents = VecDeque::with_capacity(outcomes.len());
-        for outcome in outcomes {
+        for mut outcome in outcomes {
+            let runtime = &outcome.state.frame.return_data;
+            let spec_id: SpecId = executor.spec_id().into();
+            if matches!(outcome.status, CallStatus::Success)
+                && runtime_exceeds_code_size_limit(&executor.evm_env().cfg_env, spec_id, runtime)
+            {
+                outcome.status = CallStatus::Revert;
+                outcome.state.frame.return_data = SymReturnData::empty(&mut self.cx);
+            }
             match self.join_call_outcome(state, outcome, created)? {
                 JoinedCallOutcome::Rejected => {}
                 JoinedCallOutcome::Failure(mut parent) => {
@@ -144,20 +162,6 @@ impl SymbolicExecutor {
                 JoinedCallOutcome::Success { mut parent, child } => {
                     parent.return_data = SymReturnData::empty(&mut self.cx);
                     let runtime = &child.frame.return_data;
-                    let spec_id: SpecId = executor.spec_id().into();
-                    if spec_id >= SpecId::SPURIOUS_DRAGON
-                        && !runtime.has_symbolic_len()
-                        && executor
-                            .evm_env()
-                            .cfg_env
-                            .limit_contract_code_size
-                            .is_some_and(|limit| runtime.len() > limit)
-                    {
-                        parent.world = failure_world.clone();
-                        parent.stack.push(SymExpr::zero(&mut self.cx))?;
-                        parents.push_back(parent);
-                        continue;
-                    }
                     parent.world = child.world;
                     parent.block = child.block;
                     parent.expected_emit = child.expected_emit;
@@ -203,5 +207,21 @@ impl SymbolicExecutor {
             completed_paths,
             CallPathKind::External,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use foundry_evm::revm::context::CfgEnv;
+
+    #[test]
+    fn runtime_code_limit_uses_fork_default_without_override() {
+        let mut cx = SymCx::default();
+        let runtime = SymReturnData::from_concrete_bytes(&mut cx, vec![0; 24_577]);
+        let cfg = CfgEnv::<SpecId>::default();
+
+        assert!(runtime_exceeds_code_size_limit(&cfg, SpecId::SHANGHAI, &runtime));
+        assert!(!runtime_exceeds_code_size_limit(&cfg, SpecId::HOMESTEAD, &runtime));
     }
 }
