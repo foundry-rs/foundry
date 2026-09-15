@@ -151,7 +151,7 @@ impl SymbolicExecutor {
         parent.take_call_outcome_state(&mut outcome.state);
 
         if let Some(assumption) = parent.assume_no_revert_next_call.take()
-            && matches!(outcome.status, CallStatus::Revert | CallStatus::ExceptionalHalt)
+            && matches!(outcome.status, CallStatus::Revert)
             && self.assume_no_revert_rejects(
                 &mut parent,
                 &assumption,
