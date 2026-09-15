@@ -1452,7 +1452,7 @@ impl<N: Network> Backend<N> {
     }
 
     #[cfg(not(feature = "optimism"))]
-    fn is_optimism_jovian_at_header<H: BlockHeader>(
+    const fn is_optimism_jovian_at_header<H: BlockHeader>(
         &self,
         _header: &H,
         _decoded: Option<bool>,

@@ -863,9 +863,7 @@ mod tests {
 
         assert!(
             output.status.success(),
-            "stack-pressure child failed:\nstdout:\n{}\nstderr:\n{}",
-            stdout,
-            stderr
+            "stack-pressure child failed:\nstdout:\n{stdout}\nstderr:\n{stderr}"
         );
         assert!(marker.exists(), "stack-pressure child did not complete the production path");
     }
