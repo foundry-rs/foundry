@@ -5,9 +5,10 @@
 
 use crate::prelude::{SessionSource, SessionSourceConfig};
 use eyre::Result;
+use foundry_config::find_project_root;
 use foundry_evm::{core::evm::FoundryEvmNetwork, executors::ExecutorBuilder};
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use time::{OffsetDateTime, format_description};
 
 /// Rejects a session id that would let `chisel-<id>.json` escape the cache directory when
@@ -32,12 +33,19 @@ pub struct ChiselSession<FEN: FoundryEvmNetwork> {
     pub source: SessionSource<FEN>,
     /// The current session's identifier
     pub id: Option<String>,
+    /// The project that owned this session when it was saved.
+    #[serde(default)]
+    project_root: Option<PathBuf>,
 }
 
 // ChiselSession Common Associated Functions
 impl<FEN: FoundryEvmNetwork> ChiselSession<FEN> {
     fn deserialize_cached(contents: &str, executor_builder: ExecutorBuilder<FEN>) -> Result<Self> {
         let mut session: Self = serde_json::from_str(contents)?;
+        // Legacy caches did not retain `Config::root`; bind those to the project in which Chisel
+        // is currently running rather than silently validating `.`.
+        session.source.config.foundry_config.root =
+            session.project_root.clone().map_or_else(|| find_project_root(None), Ok)?;
         // A session load must not run project cleanup requested by cached configuration.
         session.source.config.foundry_config.force = false;
         session.source.config.executor_builder = executor_builder;
@@ -54,8 +62,9 @@ impl<FEN: FoundryEvmNetwork> ChiselSession<FEN> {
     ///
     /// A new instance of [ChiselSession]
     pub fn new(config: SessionSourceConfig<FEN>) -> Result<Self> {
+        let project_root = Some(config.foundry_config.root.clone());
         // Return initialized ChiselSession with set solc version
-        Ok(Self { source: SessionSource::new(config)?, id: None })
+        Ok(Self { source: SessionSource::new(config)?, id: None, project_root })
     }
 
     /// Render the full source code for the current session.
@@ -113,6 +122,12 @@ impl<FEN: FoundryEvmNetwork> ChiselSession<FEN> {
         let cache_dir = Self::cache_dir()?;
         std::fs::create_dir_all(&cache_dir)?;
 
+        self.write_to(&cache_dir)
+    }
+
+    fn write_to(&mut self, cache_dir: &str) -> Result<String> {
+        self.project_root = Some(self.source.config.foundry_config.root.clone());
+
         let cache_file_name = match self.id.as_ref() {
             Some(id) => {
                 // ID is already set- use the existing cache file.
@@ -121,7 +136,7 @@ impl<FEN: FoundryEvmNetwork> ChiselSession<FEN> {
             }
             None => {
                 // Get the next session cache ID / file
-                let (id, file_name) = Self::next_cached_session()?;
+                let (id, file_name) = Self::next_cached_session_in(cache_dir)?;
                 // Set the session's ID
                 self.id = Some(id);
                 // Return the new session's cache file name
@@ -301,6 +316,7 @@ mod tests {
     use foundry_config::{Config, SolcReq};
     use foundry_evm::core::evm::EthEvmNetwork;
     use semver::Version;
+    use std::process::Command;
 
     #[cfg(feature = "monad")]
     use foundry_evm::core::{constants::MONAD_CHEATCODE_ADDRESS, evm::MonadEvmNetwork};
@@ -364,6 +380,69 @@ mod tests {
         .unwrap();
 
         assert!(!session.source.config.foundry_config.force);
+    }
+
+    #[test]
+    fn loaded_session_checks_lock_in_owning_project() {
+        let project = tempfile::tempdir().unwrap();
+        assert_ne!(std::env::current_dir().unwrap(), project.path());
+        assert!(
+            Command::new("git")
+                .args(["init", "-q"])
+                .current_dir(project.path())
+                .status()
+                .unwrap()
+                .success()
+        );
+
+        let cache = tempfile::tempdir().unwrap();
+        let cache_dir = format!("{}/", cache.path().display());
+        let mut session = ChiselSession::<EthEvmNetwork>::new(SessionSourceConfig {
+            foundry_config: Config {
+                root: project.path().to_path_buf(),
+                solc: Some(SolcReq::Version(Version::new(0, 8, 29))),
+                ..Default::default()
+            },
+            no_vm: true,
+            ..Default::default()
+        })
+        .unwrap();
+        session.write_to(&cache_dir).unwrap();
+
+        // Introduce a valid lock entry that cannot match the project's installed dependencies.
+        std::fs::write(
+            project.path().join("foundry.lock"),
+            r#"{"lib/missing":{"rev":"0000000000000000000000000000000000000000"}}"#,
+        )
+        .unwrap();
+        let loaded = ChiselSession::<EthEvmNetwork>::load_from(
+            session.id.as_deref().unwrap(),
+            &cache_dir,
+            ExecutorBuilder::<EthEvmNetwork>::new(),
+        )
+        .unwrap();
+
+        assert_eq!(loaded.source.config.foundry_config.root, project.path());
+        let err = loaded.source.build().unwrap_err();
+        assert!(
+            err.to_string().contains("foundry.lock does not match installed dependencies"),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn legacy_session_uses_current_project_root() {
+        let session = session_for_normalization_tests();
+        let mut value = serde_json::to_value(session).unwrap();
+        value.as_object_mut().unwrap().remove("project_root");
+
+        let loaded = ChiselSession::<EthEvmNetwork>::deserialize_cached(
+            &serde_json::to_string(&value).unwrap(),
+            ExecutorBuilder::<EthEvmNetwork>::new(),
+        )
+        .unwrap();
+
+        assert_eq!(loaded.source.config.foundry_config.root, find_project_root(None).unwrap());
     }
 
     #[cfg(feature = "monad")]

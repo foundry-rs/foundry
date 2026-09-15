@@ -3392,6 +3392,33 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         }
     }
 
+    fn invariant_sequence_failure_site(
+        &self,
+        invariant_contract: &InvariantContract<'_>,
+        invariant_idx: usize,
+        sequence: &[BasicTxDetails],
+        replay_order: &[usize],
+        call_after_invariant: bool,
+    ) -> Option<CheckSequenceFailureSite> {
+        let policy = invariant_contract.invariant_fns[invariant_idx].1;
+        let outcome = check_sequence(
+            self.clone_executor(),
+            sequence,
+            replay_order,
+            invariant_contract.address,
+            invariant_contract.invariant_calldata(invariant_idx),
+            CheckSequenceOptions {
+                accumulate_warp_roll: false,
+                fail_on_revert: policy,
+                expect_assertion_failure: false,
+                call_after_invariant,
+                rd: Some(self.revert_decoder()),
+            },
+        )
+        .ok()?;
+        (!outcome.success && outcome.replayed_entirely).then_some(outcome.failure_site).flatten()
+    }
+
     fn solve_invariants_from_frontier_prefix(
         &self,
         invariant_contract: &InvariantContract<'_>,
@@ -3400,7 +3427,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         target: &SymbolicInvariantTarget,
         sender: Address,
         prefix: &[BasicTxDetails],
-    ) -> Vec<(usize, Vec<BasicTxDetails>)> {
+    ) -> Vec<(usize, CheckSequenceFailureSite, Vec<BasicTxDetails>)> {
         let after_invariant = invariant_contract
             .call_after_invariant
             .then(|| {
@@ -3451,38 +3478,25 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         value: None,
                     },
                 };
-                let policy = invariant_contract.invariant_fns[invariant_idx].1;
-                let outcome = check_sequence(
-                    prefix_executor.clone(),
-                    std::slice::from_ref(&call),
-                    &[0],
-                    invariant_contract.address,
-                    invariant_contract.invariant_calldata(invariant_idx),
-                    CheckSequenceOptions {
-                        accumulate_warp_roll: false,
-                        fail_on_revert: policy,
-                        expect_assertion_failure: false,
-                        call_after_invariant: after_invariant.is_some(),
-                        rd: Some(self.revert_decoder()),
-                    },
-                )
-                .ok()?;
-                let exact_failure = match outcome.failure_site {
-                    Some(CheckSequenceFailureSite::Invariant { selector, .. }) => {
+                let mut sequence = Vec::with_capacity(prefix.len() + 1);
+                sequence.extend_from_slice(prefix);
+                sequence.push(call);
+                let replay_order = (0..sequence.len()).collect::<Vec<_>>();
+                let failure_site = self.invariant_sequence_failure_site(
+                    invariant_contract,
+                    invariant_idx,
+                    &sequence,
+                    &replay_order,
+                    after_invariant.is_some(),
+                )?;
+                let exact_failure = match failure_site {
+                    CheckSequenceFailureSite::Invariant { selector, .. } => {
                         selector == invariant_contract.invariant_fns[invariant_idx].0.selector()
                     }
-                    Some(CheckSequenceFailureSite::AfterInvariant { .. }) => {
-                        after_invariant.is_some()
-                    }
-                    _ => false,
+                    CheckSequenceFailureSite::AfterInvariant { .. } => true,
+                    CheckSequenceFailureSite::SequenceCall { .. } => false,
                 };
-                if outcome.success || !outcome.replayed_entirely || !exact_failure {
-                    return None;
-                }
-                let mut calls = Vec::with_capacity(prefix.len() + 1);
-                calls.extend_from_slice(prefix);
-                calls.push(call);
-                Some((invariant_idx, calls))
+                exact_failure.then_some((invariant_idx, failure_site, sequence))
             })
             .collect()
     }
@@ -3508,6 +3522,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
 
         let mut checked_property_calls = HashSet::<(usize, usize)>::default();
         let mut seeded_invariants = HashSet::<usize>::default();
+        let mut after_invariant_seeded = false;
         let fail_on_revert = invariant_contract.invariant_fns.iter().any(|(_, policy)| *policy);
         for (frontier, sequence) in
             self.import_symbolic_invariant_frontiers(invariant_contract, invariant_config)
@@ -3580,13 +3595,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
 
             let input =
                 SymbolicConcreteInput { args, calldata: call.call_details.calldata.clone() };
-            let all_properties_seeded = if invariant_contract.call_after_invariant {
-                seeded_invariants.contains(&invariant_contract.anchor_idx)
+            let property_target_seeded = if invariant_contract.call_after_invariant {
+                seeded_invariants.contains(&invariant_contract.anchor_idx) || after_invariant_seeded
             } else {
                 seeded_invariants.len() == invariant_contract.invariant_fns.len()
             };
             if self.config.symbolic.check_invariant_frontiers
-                && !all_properties_seeded
+                && !property_target_seeded
                 && checked_property_calls.insert((
                     frontier.sequence_index.expect("frontier sequence index was validated"),
                     call_index,
@@ -3603,20 +3618,31 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     let rotation = (checked_property_calls.len() - 1) % invariant_indexes.len();
                     invariant_indexes.rotate_left(rotation);
                 }
-                for (invariant_idx, solved_sequence) in self.solve_invariants_from_frontier_prefix(
-                    invariant_contract,
-                    &invariant_indexes,
-                    &prefix_executor,
-                    &invariant_target,
-                    call.sender,
-                    &sequence[..call_index],
-                ) {
+                for (invariant_idx, failure_site, solved_sequence) in self
+                    .solve_invariants_from_frontier_prefix(
+                        invariant_contract,
+                        &invariant_indexes,
+                        &prefix_executor,
+                        &invariant_target,
+                        call.sender,
+                        &sequence[..call_index],
+                    )
+                {
                     match persist_corpus_seed(&invariant_config.corpus, solved_sequence) {
-                        Ok(Some(path)) => {
-                            seeded_invariants.insert(invariant_idx);
-                            debug!(id, path = %path.display(), "persisted property-directed invariant frontier seed");
+                        Ok(path) => {
+                            match failure_site {
+                                CheckSequenceFailureSite::Invariant { .. } => {
+                                    seeded_invariants.insert(invariant_idx);
+                                }
+                                CheckSequenceFailureSite::AfterInvariant { .. } => {
+                                    after_invariant_seeded = true;
+                                }
+                                CheckSequenceFailureSite::SequenceCall { .. } => unreachable!(),
+                            }
+                            if let Some(path) = path {
+                                debug!(id, path = %path.display(), "persisted property-directed invariant frontier seed");
+                            }
                         }
-                        Ok(None) => {}
                         Err(err) => {
                             warn!(%err, id, "failed to persist property-directed invariant frontier seed");
                         }
@@ -3655,6 +3681,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             }
 
             let mut selected_branch_seed = None;
+            let mut selected_failure_seed = false;
             for solved_input in search.candidates {
                 let mut solved_sequence = sequence[..=call_index].to_vec();
                 solved_sequence[call_index].call_details.calldata = solved_input.calldata;
@@ -3688,11 +3715,65 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     );
                     continue;
                 }
-                if assertion_failure || replay_result.reverted {
-                    selected_branch_seed = Some(solved_sequence);
-                    break;
+
+                let replay_order = (0..solved_sequence.len()).collect::<Vec<_>>();
+                let broken_invariants = (0..invariant_contract.invariant_fns.len())
+                    .filter(|idx| !seeded_invariants.contains(idx))
+                    .filter(|&invariant_idx| {
+                        matches!(
+                            self.invariant_sequence_failure_site(
+                                invariant_contract,
+                                invariant_idx,
+                                &solved_sequence,
+                                &replay_order,
+                                false,
+                            ),
+                            Some(CheckSequenceFailureSite::Invariant { selector, .. })
+                                if selector == invariant_contract.invariant_fns[invariant_idx].0.selector()
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                let after_invariant_failure = invariant_contract.call_after_invariant
+                    && !after_invariant_seeded
+                    && matches!(
+                        self.invariant_sequence_failure_site(
+                            invariant_contract,
+                            invariant_contract.anchor_idx,
+                            &solved_sequence,
+                            &replay_order,
+                            true,
+                        ),
+                        Some(CheckSequenceFailureSite::AfterInvariant { .. })
+                    );
+                if !broken_invariants.is_empty() || after_invariant_failure {
+                    match persist_corpus_seed(&invariant_config.corpus, solved_sequence.clone()) {
+                        Ok(path) => {
+                            seeded_invariants.extend(broken_invariants.iter().copied());
+                            after_invariant_seeded |= after_invariant_failure;
+                            if let Some(path) = path {
+                                debug!(
+                                    id,
+                                    ?broken_invariants,
+                                    after_invariant_failure,
+                                    path = %path.display(),
+                                    "persisted property-breaking branch frontier seed"
+                                );
+                            }
+                        }
+                        Err(err) => {
+                            warn!(%err, id, "failed to persist property-breaking branch frontier seed");
+                        }
+                    }
                 }
-                selected_branch_seed.get_or_insert(solved_sequence);
+
+                if assertion_failure || replay_result.reverted {
+                    if !selected_failure_seed {
+                        selected_branch_seed = Some(solved_sequence);
+                        selected_failure_seed = true;
+                    }
+                } else {
+                    selected_branch_seed.get_or_insert(solved_sequence);
+                }
             }
             if let Some(sequence) = selected_branch_seed {
                 match persist_corpus_seed(&invariant_config.corpus, sequence) {

@@ -293,8 +293,8 @@ impl<'ast> State<'_, 'ast> {
         if block.stmts.is_empty() {
             return false;
         }
-        if self.sm.is_multiline(block.span)
-            && let Ok(snip) = self.sm.span_to_snippet(block.span)
+        if !self.same_source_line(block.span.lo(), block.span.hi())
+            && let Some(snip) = self.snippet(block.span)
         {
             let code_lines = snip.lines().filter(|line| {
                 let trimmed = line.trim();

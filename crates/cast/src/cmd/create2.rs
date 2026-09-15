@@ -4,6 +4,7 @@ use clap::{Args, Parser, Subcommand};
 use eyre::{Result, WrapErr};
 use foundry_cli::{
     json::print_scalar,
+    lockfile::check_foundry_lock,
     opts::BuildOpts,
     utils::{LoadConfig, find_contract_artifacts, parse_constructor_args},
 };
@@ -41,6 +42,7 @@ struct InitCodeHashArgs {
 impl InitCodeHashArgs {
     fn run(&self) -> Result<()> {
         let config = self.load_config()?;
+        check_foundry_lock(&config.root, false)?;
         let project = config.project()?;
         let target_path = if let Some(path) = &self.contract.path {
             canonicalize(project.root().join(path))?

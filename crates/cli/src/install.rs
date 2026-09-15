@@ -1,7 +1,7 @@
 //! Dependency installation shared by Forge commands.
 
 use crate::{
-    lockfile::{DepIdentifier, DepMap, FOUNDRY_LOCK, Lockfile},
+    lockfile::{DepIdentifier, DepMap, FOUNDRY_LOCK, Lockfile, check_foundry_lock},
     opts::Dependency,
     utils::{Git, LoadConfig},
 };
@@ -280,7 +280,7 @@ impl DependencyInstallOpts {
 
                 if new_insertion
                     || out_of_sync_deps.as_ref().is_some_and(|o| !o.is_empty())
-                    || !lockfile.exists()
+                    || !lockfile.try_exists()?
                 {
                     lockfile.write()?;
                 }
@@ -337,14 +337,15 @@ impl DependencyInstallOpts {
 }
 
 /// Installs missing dependencies and reloads config only to discover new remappings.
-pub fn install_missing_dependencies<E>(
+pub fn install_missing_dependencies<E: Into<eyre::Report>>(
     config: &mut Config,
     reload: impl FnOnce() -> Result<Config, E>,
-) -> Result<(), E> {
+) -> Result<()> {
+    check_foundry_lock(&config.root, false)?;
     if DependencyInstallOpts::default().install_missing_dependencies(config)
         && config.auto_detect_remappings
     {
-        *config = reload()?;
+        *config = reload().map_err(Into::into)?;
     }
     Ok(())
 }

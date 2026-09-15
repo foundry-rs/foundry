@@ -714,6 +714,7 @@ fn source_import(root: &Path, index: usize, path: &Path) -> Result<String> {
 /// Compile the project in the root directory, and return the compilation result.
 pub fn compile_project(root: &Path) -> Result<ProjectCompileOutput> {
     let mut config = Config::load_with_root(root)?.sanitized();
+    foundry_cli::lockfile::check_foundry_lock(&config.root, false)?;
     config.extra_output.push(ContractOutputSelection::StorageLayout);
     let mut project = config.project()?;
     project.no_artifacts = true;

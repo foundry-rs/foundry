@@ -1,5 +1,8 @@
 use alloy_primitives::{Bytes, map::AddressHashMap};
-use foundry_cli::utils::{TraceResult, print_traces};
+use foundry_cli::{
+    lockfile::check_foundry_lock,
+    utils::{TraceResult, print_traces},
+};
 use foundry_common::{ContractsByArtifactBuilder, compile::ProjectCompiler};
 use foundry_compilers::artifacts::output_selection::ContractOutputSelection;
 use foundry_config::{Config, FoundryHardfork, TracingConfig};
@@ -64,6 +67,7 @@ pub(crate) async fn handle_traces(
     debug: bool,
 ) -> eyre::Result<()> {
     let (known_contracts, mut sources) = if with_local_artifacts {
+        check_foundry_lock(&config.root, false)?;
         // Status prose goes to stderr so `--json` output on stdout stays machine-readable.
         let _ = sh_status!("Compiling project to generate artifacts");
         let mut config = config.clone();
