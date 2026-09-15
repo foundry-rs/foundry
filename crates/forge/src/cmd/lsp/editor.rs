@@ -217,9 +217,6 @@ fn default_code_path() -> PathBuf {
 mod tests {
     use std::path::Path;
 
-    #[cfg(not(target_os = "macos"))]
-    use super::vscode_session_dir;
-
     #[cfg(target_os = "macos")]
     use std::os::unix::fs::PermissionsExt;
 
