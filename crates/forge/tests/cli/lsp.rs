@@ -56,6 +56,7 @@ printf '%s\n' "${VSCODE_APPDATA-unset}" "${VSCODE_EXTENSIONS-unset}" "${VSCODE_P
     standalone.current_dir(&project).env("NO_COLOR", "1");
     cmd.set_cmd(standalone);
     cmd.env("HOME", home.path());
+    cmd.env("XDG_DATA_HOME", home.path().join("data"));
     cmd.env("PATH", executables.path());
     cmd.env("FORGE_LSP_TEST_ARGS", &captured_args);
     cmd.env("FORGE_LSP_TEST_PROFILE", &captured_profile);
@@ -85,6 +86,23 @@ printf '%s\n' "${VSCODE_APPDATA-unset}" "${VSCODE_EXTENSIONS-unset}" "${VSCODE_P
         .find(|pair| pair[0] == "--user-data-dir")
         .map(|pair| Path::new(pair[1]))
         .expect("VS Code must use a dedicated profile");
+    let session = user_data.parent().unwrap();
+    let durable_session = dunce::canonicalize(session).unwrap();
+    let data_home = if cfg!(target_os = "macos") {
+        home.path().join("Library/Application Support")
+    } else {
+        home.path().join("data")
+    };
+    assert_eq!(
+        durable_session.parent().unwrap(),
+        dunce::canonicalize(data_home.join("foundry/lsp/vscode")).unwrap()
+    );
+    assert!(fs::symlink_metadata(session).unwrap().file_type().is_symlink());
+    let extensions = arguments
+        .windows(2)
+        .find(|pair| pair[0] == "--extensions-dir")
+        .map(|pair| Path::new(pair[1]))
+        .expect("VS Code must preserve installed extensions in the managed profile");
     assert_data_eq!(
         fs::read_to_string(user_data.join("User/settings.json"))
             .unwrap()
@@ -108,15 +126,33 @@ printf '%s\n' "${VSCODE_APPDATA-unset}" "${VSCODE_EXTENSIONS-unset}" "${VSCODE_P
     );
     assert!(!project.join(".vscode").exists());
 
-    // A terminal needs only `forge lsp`, and reopening preserves the managed profile's settings.
+    // Cache and temporary-link cleanup must preserve the managed profile's editor state.
     let settings = user_data.join("User/settings.json");
     let custom_settings = "{\"editor.fontSize\":17}\n";
     fs::write(&settings, custom_settings).unwrap();
+    let history = user_data.join("User/History/entry.sol");
+    fs::create_dir_all(history.parent().unwrap()).unwrap();
+    fs::write(&history, "contract PreviousVersion {}\n").unwrap();
+    let installed_extension = extensions.join("installed-extension.txt");
+    fs::write(&installed_extension, "user-installed extension\n").unwrap();
+    cmd.forge_fuse();
+    cmd.env("HOME", home.path());
+    cmd.env("XDG_DATA_HOME", home.path().join("data"));
+    cmd.args(["cache", "clean", "all"]).assert_empty_stdout();
+    assert!(!Path::new(extension).exists());
+    fs::remove_file(session).unwrap();
+    assert_eq!(
+        fs::read_to_string(durable_session.join("user-data/User/settings.json")).unwrap(),
+        custom_settings
+    );
+
+    // A terminal needs only `forge lsp`, and reopening restores the short profile link.
     symlink(&code, executables.path().join("code")).unwrap();
     let mut terminal = Command::new(&forge);
     terminal
         .current_dir(&project)
         .env("HOME", home.path())
+        .env("XDG_DATA_HOME", home.path().join("data"))
         .env("PATH", executables.path())
         .env("FOUNDRY_PROFILE", "editor")
         .env("FORGE_LSP_TEST_ARGS", &captured_args)
@@ -136,6 +172,10 @@ printf '%s\n' "${VSCODE_APPDATA-unset}" "${VSCODE_EXTENSIONS-unset}" "${VSCODE_P
     assert!(matches!(terminal.process.wait().unwrap(), WaitStatus::Exited(_, 0)));
     assert_eq!(fs::read_to_string(captured_args).unwrap(), captured);
     assert_eq!(fs::read_to_string(settings).unwrap(), custom_settings);
+    assert_eq!(fs::read_to_string(history).unwrap(), "contract PreviousVersion {}\n");
+    assert_eq!(fs::read_to_string(installed_extension).unwrap(), "user-installed extension\n");
+    assert_eq!(dunce::canonicalize(session).unwrap(), durable_session);
+    assert!(Path::new(extension).join("out/extension.js").is_file());
 });
 
 forgetest!(lsp_stdio_rejects_editor_launch_options, |_prj, cmd| {
@@ -155,6 +195,7 @@ For more information, try '--help'.
 forgetest!(lsp_code_path_reports_missing_editor, |prj, cmd| {
     let home = tempfile::tempdir().unwrap();
     cmd.env("HOME", home.path());
+    cmd.env("XDG_DATA_HOME", home.path().join("data"));
     cmd.args(["lsp", "--code-path"]).arg(prj.root().join("missing-vscode"));
     cmd.assert_failure().stdout_eq(str![""]).stderr_eq(str![[r#"
 Opening VS Code with Forge Solidity support: [..]

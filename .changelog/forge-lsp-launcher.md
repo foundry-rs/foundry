@@ -8,4 +8,6 @@ Use `forge lsp --stdio` to run the language server directly, or `--vscode` to op
 VS Code when input is redirected.
 
 Launcher sessions use private per-user directories on Unix and remain isolated
-when using portable VS Code installations.
+when using portable VS Code installations. Editor profiles now live in durable
+platform data storage, while Unix uses a short-lived symlink only for socket
+path limits.

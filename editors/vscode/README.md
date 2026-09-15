@@ -31,12 +31,13 @@ Use `forge lsp --vscode` to force an editor window. Supplying a project path or
 which always selects the server and cannot be combined with launcher options.
 
 The launcher caches the bundled extension under
-`~/.foundry/cache/lsp/extensions/<asset-hash>` and creates a persistent VS Code
-profile under `~/.foundry/cache/lsp/vscode/<session-hash>` on Windows. On Unix,
-`/tmp/foundry-lsp-<uid>/<session-hash>` keeps socket paths short. The Unix
-directories are private to the current user and reject unsafe permissions or
-symbolic links. Portable VS Code installations also use this isolated profile.
-Profiles are reused until removed, including by operating-system temporary-directory cleanup.
+`~/.foundry/cache/lsp/extensions/<asset-hash>`. Editor state is stored in the
+platform data directory under `foundry/lsp/vscode/<session-hash>`, outside the
+Foundry cache. On Unix, `/tmp/foundry-lsp-<uid>/` contains only a private
+symlink to that durable profile so VS Code's socket path stays short. The link
+is recreated after temporary-directory cleanup, while settings, history and
+installed extensions remain. Portable VS Code installations also use this
+isolated profile. Profiles are reused until removed.
 Sessions are keyed by
 project directory, Forge executable path and selected Foundry profile. Normal
 VS Code settings are untouched. The launched client always uses the Forge
