@@ -64,7 +64,9 @@ jobs:
       - run: cargo build --locked -p forge --bin forge
       - run: cargo test --locked -p forge --test cli 'lsp::'
       - name: Real Forge in VS Code Extension Development Host
-        run: xvfb-run -a npm run test:host
+        run: |
+          xvfb-run -a npm run test:host
+          xvfb-run -a npm run test:launcher
         working-directory: editors/vscode
         env:
           FORGE_PATH: ${{ github.workspace }}/target/debug/forge

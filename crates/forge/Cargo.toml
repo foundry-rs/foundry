@@ -107,6 +107,9 @@ soldeer-core.workspace = true
 quick-junit = "0.7.0"
 tempfile.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", features = ["process"] }
+
 [dev-dependencies]
 async-lsp.workspace = true
 tokio-util.workspace = true

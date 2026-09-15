@@ -51,6 +51,16 @@ test("--version success cannot hide a build without forge lsp", async (t) => {
   await assert.rejects(validateForgeLsp(forge), /does not support.*forge lsp --stdio.*upgrade Foundry/);
 });
 
+test("Forge capability checks use the project cwd for version-manager shims", async (t) => {
+  const directory = await fixture(t);
+  const workspace = path.join(directory, "project");
+  await mkdir(workspace);
+  await writeFile(path.join(workspace, ".forge-version"), "local\n");
+  const forge = await executable(directory, "forge", 'test -f .forge-version && test "$*" = "lsp --stdio --help"');
+  await assert.rejects(validateForgeLsp(forge, directory), /could not run its LSP capability check/);
+  await validateForgeLsp(forge, workspace);
+});
+
 test("legacy formatting uses the nearest project config, with a workspace fallback", async (t) => {
   const directory = await fixture(t);
   const nested = path.join(directory, "nested");

@@ -11,8 +11,8 @@ use std::{
     process::{Command, Stdio},
 };
 
-#[cfg(target_os = "macos")]
-use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+#[cfg(unix)]
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
 
 const CLIENT: &[u8] = include_bytes!("../../../../../editors/vscode/dist/extension.js.gz");
 const ASSETS: &[(&str, &[u8])] = &[
@@ -55,8 +55,8 @@ pub(super) fn launch(path: Option<&Path>, code_path: Option<&Path>) -> Result<()
     // Separate projects, executables and profiles cannot inherit a stale VS Code process
     // environment.
     let session_key = keccak256(serde_json::to_vec(&(&project, &forge, &profile))?);
-    // VS Code appends a Unix socket name to the user-data directory. Keep this path short on
-    // macOS, where the socket limit is only 103 bytes.
+    // Portable VS Code appends a Unix socket name to user-data even when XDG_RUNTIME_DIR is set.
+    // Keep the complete path below the Unix socket limits (103 bytes on macOS).
     let session = vscode_session_dir(&cache, &format!("{session_key:x}")[..16])?;
     let user_data = session.join("user-data");
     let extensions = session.join("extensions");
@@ -93,7 +93,8 @@ pub(super) fn launch(path: Option<&Path>, code_path: Option<&Path>) -> Result<()
         .arg(&project)
         .env_remove("VSCODE_APPDATA")
         .env_remove("VSCODE_EXTENSIONS")
-        .env_remove("VSCODE_PORTABLE")
+        // Portable installations otherwise override --user-data-dir during autodetection.
+        .env("VSCODE_PORTABLE", &session)
         .env_remove("VSCODE_IPC_HOOK_CLI")
         .env("FOUNDRY_LSP_FORGE", &forge)
         .env("FOUNDRY_PROFILE", &profile)
@@ -113,50 +114,50 @@ pub(super) fn launch(path: Option<&Path>, code_path: Option<&Path>) -> Result<()
     Ok(())
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(unix)]
 fn vscode_session_dir(_cache: &Path, key: &str) -> Result<PathBuf> {
-    vscode_session_dir_with_temp(key, &std::env::temp_dir())
+    // TMPDIR can be shared or too long for VS Code's Unix socket. Use a short per-user root.
+    vscode_session_dir_with_temp(key, Path::new("/tmp"))
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(unix)]
 fn vscode_session_dir_with_temp(key: &str, temp: &Path) -> Result<PathBuf> {
-    // VS Code appends `<version>-main.sock` to this directory. Prefer the user's private
-    // temporary directory, but fall back to a short, private root if its path is too long.
-    let private = temp.join("foundry-lsp").join(key);
-    let socket = private.join("user-data/1.13-main.sock");
-    if socket.to_string_lossy().len() < 103 {
-        Ok(private)
-    } else {
-        // Create the deterministic session directory atomically so a pre-existing symlink cannot
-        // redirect the profile. Keeping this path stable preserves VS Code settings across runs.
-        let root = PathBuf::from("/tmp").join(format!("foundry-lsp-{key}"));
-        if let Err(error) = fs::symlink_metadata(&root) {
-            if error.kind() == io::ErrorKind::NotFound {
-                let mut builder = fs::DirBuilder::new();
-                builder.mode(0o700).create(&root).or_else(|error| {
-                    (error.kind() == io::ErrorKind::AlreadyExists).then_some(()).ok_or(error)
-                })?;
-            } else {
-                return Err(error.into());
-            }
-        }
-        let metadata = fs::symlink_metadata(&root)?;
-        ensure!(
-            metadata.file_type().is_dir(),
-            "VS Code session path is not a directory: {}",
-            root.display()
-        );
-        let mode = metadata.permissions().mode();
-        ensure!(
-            mode & 0o700 == 0o700 && mode & 0o077 == 0,
-            "VS Code session path is not private: {}",
-            root.display()
-        );
-        Ok(root)
-    }
+    let uid = rustix::process::geteuid().as_raw();
+    let root = temp.join(format!("foundry-lsp-{uid}"));
+    create_private_dir(&root, uid)?;
+    let session = root.join(key);
+    create_private_dir(&session, uid)?;
+    Ok(session)
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(unix)]
+fn create_private_dir(path: &Path, uid: u32) -> Result<()> {
+    // Atomic creation and no-follow metadata reject directories planted by another user.
+    if let Err(error) = fs::DirBuilder::new().mode(0o700).create(path)
+        && error.kind() != io::ErrorKind::AlreadyExists
+    {
+        return Err(error.into());
+    }
+    let metadata = fs::symlink_metadata(path)?;
+    ensure!(
+        metadata.file_type().is_dir(),
+        "VS Code session path is not a directory: {}",
+        path.display()
+    );
+    ensure!(
+        metadata.uid() == uid,
+        "VS Code session path is not owned by the current user: {}",
+        path.display()
+    );
+    ensure!(
+        metadata.permissions().mode() & 0o777 == 0o700,
+        "VS Code session path is not private: {}",
+        path.display()
+    );
+    Ok(())
+}
+
+#[cfg(not(unix))]
 fn vscode_session_dir(cache: &Path, key: &str) -> Result<PathBuf> {
     Ok(cache.join("vscode").join(key))
 }
@@ -217,15 +218,89 @@ fn default_code_path() -> PathBuf {
 mod tests {
     use std::path::Path;
 
-    #[cfg(target_os = "macos")]
-    use std::os::unix::fs::PermissionsExt;
+    #[cfg(unix)]
+    use std::{
+        fs,
+        os::unix::fs::{PermissionsExt, symlink},
+    };
 
-    #[cfg(target_os = "macos")]
+    #[cfg(unix)]
     #[test]
-    fn vscode_session_path_fits_macos_socket_limit() {
-        let session = super::vscode_session_dir_with_temp(
-            "0123456789abcdef",
+    fn vscode_session_rejects_symlink_root() {
+        let temp = tempfile::Builder::new().prefix("fl-").tempdir_in("/tmp").unwrap();
+        let redirected = tempfile::tempdir().unwrap();
+        let session = super::vscode_session_dir_with_temp("0123456789abcdef", temp.path()).unwrap();
+        let root = session.parent().unwrap();
+        fs::remove_dir_all(root).unwrap();
+        symlink(redirected.path(), root).unwrap();
+
+        assert!(super::vscode_session_dir_with_temp("0123456789abcdef", temp.path()).is_err());
+        assert_eq!(fs::read_dir(redirected.path()).unwrap().count(), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn vscode_session_rejects_symlink_session() {
+        let temp = tempfile::Builder::new().prefix("fl-").tempdir_in("/tmp").unwrap();
+        let redirected = tempfile::tempdir().unwrap();
+        let session = super::vscode_session_dir_with_temp("0123456789abcdef", temp.path()).unwrap();
+        fs::remove_dir(&session).unwrap();
+        symlink(redirected.path(), &session).unwrap();
+
+        assert!(super::vscode_session_dir_with_temp("0123456789abcdef", temp.path()).is_err());
+        assert_eq!(fs::read_dir(redirected.path()).unwrap().count(), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn vscode_session_rejects_shared_permissions() {
+        let temp = tempfile::Builder::new().prefix("fl-").tempdir_in("/tmp").unwrap();
+        let session = super::vscode_session_dir_with_temp("0123456789abcdef", temp.path()).unwrap();
+        for directory in [&session, session.parent().unwrap()] {
+            fs::set_permissions(directory, fs::Permissions::from_mode(0o755)).unwrap();
+            assert!(super::vscode_session_dir_with_temp("0123456789abcdef", temp.path()).is_err());
+            fs::set_permissions(directory, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn vscode_session_rejects_another_owner() {
+        let temp = tempfile::Builder::new().prefix("fl-").tempdir_in("/tmp").unwrap();
+        let uid = rustix::process::geteuid().as_raw();
+        let error = super::create_private_dir(temp.path(), uid.wrapping_add(1)).unwrap_err();
+        assert!(
+            error.to_string().starts_with("VS Code session path is not owned by the current user:")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn vscode_session_allows_concurrent_launches() {
+        let temp = tempfile::Builder::new().prefix("fl-").tempdir_in("/tmp").unwrap();
+        std::thread::scope(|scope| {
+            let threads = (0..8)
+                .map(|_| {
+                    scope.spawn(|| {
+                        super::vscode_session_dir_with_temp("0123456789abcdef", temp.path())
+                            .unwrap()
+                    })
+                })
+                .collect::<Vec<_>>();
+            let expected =
+                super::vscode_session_dir_with_temp("0123456789abcdef", temp.path()).unwrap();
+            for thread in threads {
+                assert_eq!(thread.join().unwrap(), expected);
+            }
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn vscode_session_path_fits_unix_socket_limit() {
+        let session = super::vscode_session_dir(
             Path::new("/Users/this-is-a-very-long-account-name/.foundry/cache"),
+            "0123456789abcdef",
         )
         .unwrap();
         let socket = session.join("user-data/1.13-main.sock");
@@ -233,20 +308,22 @@ mod tests {
         assert!(length < 103, "{length} bytes");
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(unix)]
     #[test]
-    fn vscode_session_fallback_uses_private_stable_root() {
-        let temp = Path::new("/Users/this-is-a-very-long-account-name/.foundry/cache");
-        let session = super::vscode_session_dir_with_temp("fedcba9876543210", temp).unwrap();
-        let root = session;
-        assert_eq!(root.parent(), Some(Path::new("/tmp")), "{}", root.display());
-        assert_eq!(root.file_name().unwrap(), "foundry-lsp-fedcba9876543210");
-        #[cfg(unix)]
-        assert_eq!(std::fs::metadata(&root).unwrap().permissions().mode() & 0o777, 0o700);
-        let _ = std::fs::remove_dir_all(root);
+    fn vscode_session_uses_private_stable_root() {
+        let temp = tempfile::Builder::new().prefix("fl-").tempdir_in("/tmp").unwrap();
+        let session = super::vscode_session_dir_with_temp("fedcba9876543210", temp.path()).unwrap();
+        assert_eq!(
+            super::vscode_session_dir_with_temp("fedcba9876543210", temp.path()).unwrap(),
+            session
+        );
+        assert_eq!(session.file_name().unwrap(), "fedcba9876543210");
+        for directory in [&session, session.parent().unwrap()] {
+            assert_eq!(fs::metadata(directory).unwrap().permissions().mode() & 0o777, 0o700);
+        }
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(unix))]
     #[test]
     fn vscode_session_path_uses_foundry_cache() {
         let cache = Path::new("/tmp/foundry-cache");

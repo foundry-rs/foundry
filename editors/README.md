@@ -27,8 +27,13 @@ open VS Code. A project path or `--code-path` also selects the launcher.
 `forge lsp --stdio` always runs the language server for an editor client; bare
 `forge lsp` with redirected input preserves that behavior.
 
-The launcher uses dedicated persistent VS Code profiles under
-`~/.foundry/cache/lsp/vscode`, leaving normal VS Code settings untouched.
+The launcher uses dedicated VS Code profiles under `~/.foundry/cache/lsp/vscode`
+on Windows, or `/tmp/foundry-lsp-<uid>` on Unix to fit the socket path limits.
+The Unix root and session directories are private to the
+current user and reject unsafe permissions or symbolic links. Normal VS Code
+settings are left untouched, including when using a portable installation.
+Profiles are reused across launches until their directories are removed, including
+by operating-system temporary-directory cleanup on Unix.
 Each project, Forge executable path and selected Foundry profile gets its own
 profile. Bundled extension assets are cached by content under
 `~/.foundry/cache/lsp/extensions`. No extension store installation or standalone

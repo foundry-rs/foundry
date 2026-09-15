@@ -6,3 +6,6 @@ Running `forge lsp` in a terminal now opens the current Solidity project in VS C
 with a bundled extension, without a Foundry checkout or Node.js installation.
 Use `forge lsp --stdio` to run the language server directly, or `--vscode` to open
 VS Code when input is redirected.
+
+Launcher sessions use private per-user directories on Unix and remain isolated
+when using portable VS Code installations.

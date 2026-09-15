@@ -102,7 +102,10 @@ printf '%s\n' "${VSCODE_APPDATA-unset}" "${VSCODE_EXTENSIONS-unset}" "${VSCODE_P
         fs::read_to_string(&captured_profile).unwrap(),
         format!("editor\n{}\n", forge.display())
     );
-    assert_eq!(fs::read_to_string(&captured_env).unwrap(), "unset\nunset\nunset\nunset\n");
+    assert_eq!(
+        fs::read_to_string(&captured_env).unwrap(),
+        format!("unset\nunset\n{}\nunset\n", user_data.parent().unwrap().display())
+    );
     assert!(!project.join(".vscode").exists());
 
     // A terminal needs only `forge lsp`, and reopening preserves the managed profile's settings.

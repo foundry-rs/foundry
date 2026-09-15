@@ -2,7 +2,7 @@ use std::{collections::HashMap, path::Path};
 use zed::LanguageServerId;
 use zed_extension_api::{self as zed, Result, serde_json, settings::LspSettings};
 
-const INSTALL_GUIDANCE: &str = "Install or upgrade Foundry from https://getfoundry.sh with an LSP-enabled Forge. Verify `forge lsp --stdio --help` succeeds; for this checkout, run `cargo build --locked -p forge --bin forge`. Set lsp.solar.settings.forgePath to its absolute path.";
+const INSTALL_GUIDANCE: &str = "Install or upgrade Foundry from https://getfoundry.sh with an LSP-enabled Forge. Verify `forge lsp --stdio --help` succeeds from the worktree directory; for this checkout, run `cargo build --locked -p forge --bin forge`. Set lsp.solar.settings.forgePath to its absolute path.";
 const LEGACY_BINARY_GUIDANCE: &str = "Remove lsp.solar.binary.path and binary.arguments, which override the language server command in Zed. Set lsp.solar.settings.forgePath to an absolute Forge path instead. A former Solar path is not a Forge path.";
 
 struct SolarExtension {
@@ -12,12 +12,7 @@ struct SolarExtension {
 impl SolarExtension {
     fn command(&mut self, worktree: &zed::Worktree) -> Result<zed::Command> {
         let settings = LspSettings::for_worktree("solar", worktree)?;
-        let command = forge_command(
-            &settings,
-            worktree.shell_env(),
-            |name| worktree.which(name),
-            |command| command.output(),
-        )?;
+        let command = forge_command(&settings, worktree.shell_env(), |name| worktree.which(name))?;
         self.forge_paths.insert(worktree.id(), command.command.clone());
         Ok(command)
     }
@@ -77,7 +72,6 @@ fn forge_command(
     settings: &LspSettings,
     mut env: Vec<(String, String)>,
     which: impl FnOnce(&str) -> Option<String>,
-    run: impl FnOnce(&mut zed::process::Command) -> Result<zed::process::Output>,
 ) -> Result<zed::Command> {
     check_binary_settings(settings)?;
     let configured_path = settings.settings.as_ref().and_then(|settings| settings.get("forgePath"));
@@ -96,19 +90,7 @@ fn forge_command(
             env.push((key.clone(), value.clone()));
         }
     }
-    let mut probe = zed::process::Command::new(&forge_path)
-        .args(["lsp", "--stdio", "--help"])
-        .envs(env.clone());
-    let output = run(&mut probe).map_err(|error| {
-        format!("Cannot run Forge at {forge_path}: {error}. {INSTALL_GUIDANCE}")
-    })?;
-    if output.status != Some(0) {
-        return Err(format!(
-            "Forge at {forge_path} does not support `forge lsp --stdio` (status {:?}). {} {INSTALL_GUIDANCE}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr).trim(),
-        ));
-    }
+    // Zed starts the server in the worktree. Its process API cannot set that cwd for a probe.
     Ok(zed::Command { command: forge_path, args: vec!["lsp".into(), "--stdio".into()], env })
 }
 
@@ -143,8 +125,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_command_resolves_forge_and_checks_lsp_support() {
-        let mut probes = Vec::new();
+    fn worktree_dependent_forge_shim_is_not_probed_before_launch() {
+        let settings = LspSettings {
+            initialization_options: Some(serde_json::json!({ "flycheck": { "enabled": false } })),
+            ..Default::default()
+        };
+        let command =
+            forge_command(&settings, vec![("PWD".into(), "/workspace/project".into())], |_| {
+                Some("/tools/shims/forge".into())
+            })
+            .unwrap();
+        assert_eq!(command.command, "/tools/shims/forge");
+        assert_eq!(command.args, ["lsp", "--stdio"]);
+        assert_eq!(command.env, [("PWD".into(), "/workspace/project".into())]);
+        assert_eq!(
+            initialization_options(&settings, &command.command).unwrap(),
+            serde_json::json!({
+                "forgePath": "/tools/shims/forge",
+                "flycheck": { "enabled": false }
+            })
+        );
+    }
+
+    #[test]
+    fn default_command_resolves_forge_and_preserves_worktree_environment() {
         let command = forge_command(
             &zed::settings::LspSettings::default(),
             vec![("FOUNDRY_PROFILE".into(), "editor".into())],
@@ -152,20 +156,8 @@ mod tests {
                 assert_eq!(name, "forge");
                 Some("/tools/forge".into())
             },
-            |command| {
-                probes.push((command.command.clone(), command.args.clone()));
-                Ok(zed::process::Output {
-                    status: Some(0),
-                    stdout: b"Usage: forge lsp [OPTIONS]".to_vec(),
-                    stderr: Vec::new(),
-                })
-            },
         )
         .unwrap();
-        assert_eq!(
-            probes,
-            [("/tools/forge".into(), vec!["lsp".into(), "--stdio".into(), "--help".into()])]
-        );
         assert_eq!(command.command, "/tools/forge");
         assert_eq!(command.args, ["lsp", "--stdio"]);
         assert_eq!(command.env, [("FOUNDRY_PROFILE".into(), "editor".into())]);
@@ -182,12 +174,9 @@ mod tests {
                 })),
                 ..Default::default()
             };
-            let command = forge_command(
-                &settings,
-                Vec::new(),
-                |_| panic!("custom Forge must not consult PATH"),
-                |_| Ok(supported_lsp()),
-            )
+            let command = forge_command(&settings, Vec::new(), |_| {
+                panic!("custom Forge must not consult PATH")
+            })
             .unwrap();
             assert_eq!(command.command, forge_path);
             assert_eq!(command.args, ["lsp", "--stdio"]);
@@ -202,27 +191,14 @@ mod tests {
         }
     }
 
-    fn supported_lsp() -> zed::process::Output {
-        zed::process::Output {
-            status: Some(0),
-            stdout: b"Usage: forge lsp [OPTIONS]\n    --stdio".to_vec(),
-            stderr: Vec::new(),
-        }
-    }
-
     #[test]
     fn solar_on_path_never_changes_default_forge_selection() {
         for solar_available in [false, true] {
-            let command = forge_command(
-                &LspSettings::default(),
-                Vec::new(),
-                |name| match name {
-                    "forge" => Some("/tools/forge".into()),
-                    "solar" if solar_available => panic!("Solar must not be probed"),
-                    other => panic!("unexpected executable lookup: {other}"),
-                },
-                |_| Ok(supported_lsp()),
-            )
+            let command = forge_command(&LspSettings::default(), Vec::new(), |name| match name {
+                "forge" => Some("/tools/forge".into()),
+                "solar" if solar_available => panic!("Solar must not be probed"),
+                other => panic!("unexpected executable lookup: {other}"),
+            })
             .unwrap();
             assert_eq!(command.command, "/tools/forge");
         }
@@ -230,62 +206,12 @@ mod tests {
 
     #[test]
     fn missing_forge_reports_installation_guidance_without_running_solar() {
-        let error = forge_command(
-            &LspSettings::default(),
-            Vec::new(),
-            |name| {
-                assert_eq!(name, "forge");
-                None
-            },
-            |_| panic!("missing Forge must not run a command"),
-        )
+        let error = forge_command(&LspSettings::default(), Vec::new(), |name| {
+            assert_eq!(name, "forge");
+            None
+        })
         .unwrap_err();
         assert_eq!(error, format!("Forge was not found on PATH. {INSTALL_GUIDANCE}"));
-    }
-
-    #[test]
-    fn failing_lsp_probe_is_rejected() {
-        for status in [Some(1), None] {
-            let error = forge_command(
-                &LspSettings::default(),
-                Vec::new(),
-                |_| Some("/tools/forge".into()),
-                |command| {
-                    assert_eq!(command.args, ["lsp", "--stdio", "--help"]);
-                    Ok(zed::process::Output {
-                        status,
-                        stdout: b"forge Version: 1.0.0".to_vec(),
-                        stderr: b"unsupported".to_vec(),
-                    })
-                },
-            )
-            .unwrap_err();
-            assert_eq!(
-                error,
-                format!(
-                    "Forge at /tools/forge does not support `forge lsp --stdio` (status {status:?}). unsupported {INSTALL_GUIDANCE}"
-                )
-            );
-        }
-    }
-
-    #[test]
-    fn missing_custom_executable_reports_its_path() {
-        let settings = LspSettings {
-            settings: Some(serde_json::json!({ "forgePath": "/missing/forge" })),
-            ..Default::default()
-        };
-        let error = forge_command(
-            &settings,
-            Vec::new(),
-            |_| panic!("custom Forge must not fall back to PATH"),
-            |_| Err("No such file".into()),
-        )
-        .unwrap_err();
-        assert_eq!(
-            error,
-            format!("Cannot run Forge at /missing/forge: No such file. {INSTALL_GUIDANCE}")
-        );
     }
 
     #[test]
@@ -297,12 +223,9 @@ mod tests {
             let settings =
                 serde_json::from_value::<LspSettings>(serde_json::json!({ "binary": binary }))
                     .unwrap();
-            let error = forge_command(
-                &settings,
-                Vec::new(),
-                |_| panic!("legacy configuration must be migrated first"),
-                |_| panic!("legacy configuration must be migrated first"),
-            )
+            let error = forge_command(&settings, Vec::new(), |_| {
+                panic!("legacy configuration must be migrated first")
+            })
             .unwrap_err();
             assert_eq!(error, LEGACY_BINARY_GUIDANCE);
         }
@@ -314,13 +237,8 @@ mod tests {
             initialization_options: Some(serde_json::json!({ "forgePath": "/other/forge" })),
             ..Default::default()
         };
-        let error = forge_command(
-            &settings,
-            Vec::new(),
-            |_| Some("/tools/forge".into()),
-            |_| panic!("mismatched Forge must not be launched"),
-        )
-        .unwrap_err();
+        let error =
+            forge_command(&settings, Vec::new(), |_| Some("/tools/forge".into())).unwrap_err();
         assert_eq!(
             error,
             "Remove lsp.solar.initialization_options.forgePath and set lsp.solar.settings.forgePath instead, so the language server, formatter, and checks use the same Forge."
@@ -328,21 +246,16 @@ mod tests {
     }
 
     #[test]
-    fn configured_environment_is_shared_by_probe_and_server() {
+    fn configured_environment_overrides_worktree_environment() {
         let settings = serde_json::from_value::<LspSettings>(serde_json::json!({
             "binary": { "env": { "FOUNDRY_PROFILE": "editor" } }
         }))
         .unwrap();
-        let command = forge_command(
-            &settings,
-            vec![("FOUNDRY_PROFILE".into(), "default".into())],
-            |_| Some("/tools/forge".into()),
-            |probe| {
-                assert_eq!(probe.env, [("FOUNDRY_PROFILE".into(), "editor".into())]);
-                Ok(supported_lsp())
-            },
-        )
-        .unwrap();
+        let command =
+            forge_command(&settings, vec![("FOUNDRY_PROFILE".into(), "default".into())], |_| {
+                Some("/tools/forge".into())
+            })
+            .unwrap();
         assert_eq!(command.env, [("FOUNDRY_PROFILE".into(), "editor".into())]);
     }
 }

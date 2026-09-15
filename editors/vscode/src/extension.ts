@@ -6,6 +6,9 @@ import {
   DocumentFormattingRequest,
   ServerOptions,
   State,
+  TypeHierarchyPrepareRequest,
+  TypeHierarchySubtypesRequest,
+  TypeHierarchySupertypesRequest,
 } from "vscode-languageclient/node";
 import { spawn } from "node:child_process";
 import {
@@ -173,11 +176,13 @@ async function startLanguageServer() {
       "Remove it and configure solarLsp.forgePath with a Forge executable; Solar paths are not reinterpreted as Forge paths.",
     );
   }
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  const cwd = workspaceFolder?.uri.scheme === "file" ? workspaceFolder.uri.fsPath : undefined;
   const forgePath = await resolveForge(
     launcherForgePath || config.get<string>("forgePath", "forge"),
-    vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+    cwd,
   );
-  await validateForgeLsp(forgePath);
+  await validateForgeLsp(forgePath, cwd);
   const flychecks = config.get("flychecks");
   const codeLens = {
     enable: config.get<boolean>("codeLens.enable", true),
@@ -190,6 +195,7 @@ async function startLanguageServer() {
   const serverOptions: ServerOptions = {
     command: forgePath,
     args: ["lsp", "--stdio"],
+    options: { cwd },
     // The default executable transport is stdio; setting it explicitly appends a second --stdio.
   };
 
@@ -294,7 +300,11 @@ async function showReferences(argument: unknown): Promise<void> {
 
 async function showTypeHierarchy(argument: unknown): Promise<void> {
   const location = parseCodeLensLocation(argument);
-  if (!location || !argument || typeof argument !== "object") {
+  const runningClient = client;
+  if (
+    !location || !argument || typeof argument !== "object" ||
+    runningClient?.state !== State.Running
+  ) {
     return;
   }
 
@@ -304,19 +314,30 @@ async function showTypeHierarchy(argument: unknown): Promise<void> {
   }
 
   try {
-    const range = new vscode.Range(location.position, location.position);
-    const editor = await vscode.window.showTextDocument(location.uri, {
-      selection: range,
+    const items = await runningClient.sendRequest(TypeHierarchyPrepareRequest.type, {
+      textDocument: { uri: location.uri.toString() },
+      position: { line: location.position.line, character: location.position.character },
     });
-    editor.revealRange(
-      range,
-      vscode.TextEditorRevealType.InCenterIfOutsideViewport,
+    const request = direction === "supertypes"
+      ? TypeHierarchySupertypesRequest.type
+      : TypeHierarchySubtypesRequest.type;
+    const related = await Promise.all(
+      (items ?? []).map((item) => runningClient.sendRequest(request, { item })),
     );
-    await vscode.commands.executeCommand("editor.showTypeHierarchy");
+    const locations = await runningClient.protocol2CodeConverter.asReferences(
+      related.flatMap((items) => items ?? []).map((item) => ({
+        uri: item.uri,
+        range: item.selectionRange,
+      })),
+    );
+    // VS Code's hierarchy widget cannot await readiness or accept an initial direction.
+    // Resolve the requested relatives first and show them through the supported peek command.
     await vscode.commands.executeCommand(
-      direction === "supertypes"
-        ? "editor.showSupertypes"
-        : "editor.showSubtypes",
+      "editor.action.peekLocations",
+      location.uri,
+      location.position,
+      locations,
+      "peek",
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

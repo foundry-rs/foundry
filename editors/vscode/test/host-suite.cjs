@@ -14,6 +14,52 @@ async function eventually(check, description) {
   throw new Error(`Timed out: ${description}`);
 }
 
+async function checkInheritanceCodeLens(prototype) {
+  const uri = vscode.Uri.joinPath(vscode.workspace.workspaceFolders[0].uri, "nested/src/Hierarchy.sol");
+  await writeFile(uri.fsPath, "pragma solidity ^0.8.0;\ncontract Base {}\ncontract Derived is Base {}\n");
+  await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(uri));
+  const lenses = await eventually(async () => {
+    const result = await vscode.commands.executeCommand("vscode.executeCodeLensProvider", uri);
+    return result?.filter((lens) => lens.command?.command === "solar.showTypeHierarchy").length === 2
+      ? result : undefined;
+  }, "inheritance CodeLenses");
+  const locations = [];
+  const peek = vscode.commands.registerCommand("editor.action.peekLocations", (origin, position, targets) => {
+    locations.push({ origin, position, targets });
+  });
+  const requests = [];
+  const original = prototype?.sendRequest;
+  if (prototype) {
+    prototype.sendRequest = async function (type, ...args) {
+      const method = typeof type === "string" ? type : type.method;
+      if (method.includes("ypeHierarchy")) requests.push(method);
+      // Opening the native hierarchy widget does not await this preparation.
+      if (method === "textDocument/prepareTypeHierarchy") {
+        await new Promise((resolve) => setTimeout(resolve, 700));
+      }
+      return original.call(this, type, ...args);
+    };
+  }
+  try {
+    for (const [direction, line] of [["supertypes", 1], ["subtypes", 2]]) {
+      locations.length = 0;
+      requests.length = 0;
+      const lens = lenses.find((entry) => entry.command?.arguments?.[0]?.direction === direction);
+      assert.ok(lens, `Missing ${direction} CodeLens`);
+      await vscode.commands.executeCommand(lens.command.command, ...lens.command.arguments);
+      assert.equal(locations.length, 1, "Inheritance navigation must await hierarchy preparation");
+      assert.equal(locations[0].origin.toString(), uri.toString());
+      assert.deepEqual(locations[0].targets.map((target) => ({
+        uri: target.uri.toString(), line: target.range.start.line,
+      })), [{ uri: uri.toString(), line }]);
+      if (prototype) assert.deepEqual(requests, ["textDocument/prepareTypeHierarchy", `typeHierarchy/${direction}`]);
+    }
+  } finally {
+    peek.dispose();
+    if (prototype) prototype.sendRequest = original;
+  }
+}
+
 async function run() {
   const extensionPath = process.env.FOUNDRY_EDITOR_TEST_EXTENSION;
   const forgePath = process.env.FOUNDRY_EDITOR_TEST_FORGE;
@@ -91,6 +137,7 @@ async function run() {
   for (const command of ["solar.copySelector", "solar.showReferences", "solar.showTypeHierarchy", "solar.clearCache", "solar.reindex"]) {
     assert.ok(commands.includes(command), `${command} must match server protocol commands`);
   }
+  await checkInheritanceCodeLens(prototype);
   let serverProcesses = [];
   if (process.platform !== "win32") {
     const processes = execFileSync("/bin/ps", ["-axo", "pid=,ppid=,command="], { encoding: "utf8" });
@@ -113,7 +160,7 @@ async function run() {
     forgeVersion: execFileSync(forgePath, ["--version"], { encoding: "utf8" }).trim(),
     vscodeVersion: vscode.version,
     serverProcesses,
-    checks: ["development extension path", "initialize", "syntax diagnostics", "unsaved document symbols", "hover", "LSP formatting", "nested foundry.toml tab_width = 2", "legacy formatting command", "legacy format on save", launcher ? "language-scoped save formatting output" : "language-scoped save formats exactly once", "solar.* command compatibility", "actual Forge child process", ...(launcher ? ["launcher overrides conflicting workspace Forge path", "no runtime node_modules"] : [])],
+    checks: ["development extension path", "initialize", "syntax diagnostics", "unsaved document symbols", "hover", "LSP formatting", "nested foundry.toml tab_width = 2", "legacy formatting command", "legacy format on save", launcher ? "language-scoped save formatting output" : "language-scoped save formats exactly once", "solar.* command compatibility", launcher ? "inheritance CodeLens directions" : "inheritance CodeLens directions with delayed preparation", "actual Forge child process", ...(launcher ? ["launcher overrides conflicting workspace Forge path", "no runtime node_modules"] : [])],
     hoverCount: hovers.length,
     isolatedProfile: process.env.FOUNDRY_EDITOR_TEST_ROOT,
   }, null, 2) + "\n");

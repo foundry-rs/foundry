@@ -11,7 +11,7 @@ async function main() {
   let extensionPath = sourceExtensionPath;
   let forgePath = await realpath(process.env.FORGE_PATH || path.resolve(sourceExtensionPath, "../../target/debug/forge"));
   // macOS places VS Code's Unix socket under user-data; its path must fit 103 bytes.
-  const testRoot = await realpath(await mkdtemp(launcher && process.platform === "darwin"
+  const testRoot = await realpath(await mkdtemp(process.platform === "darwin"
     ? "/tmp/fl-"
     : path.join(os.tmpdir(), "foundry-vscode-host-")));
   const workspace = path.join(testRoot, "workspace");
@@ -53,7 +53,7 @@ async function main() {
   if (launcher) {
     const capture = path.join(testRoot, "launcher.json");
     const recorder = path.join(testRoot, "record-code.cjs");
-    await writeFile(recorder, `require("node:fs").writeFileSync(${JSON.stringify(capture)}, JSON.stringify({ args: process.argv.slice(2), forge: process.env.FOUNDRY_LSP_FORGE, profile: process.env.FOUNDRY_PROFILE }));\n`);
+    await writeFile(recorder, `require("node:fs").writeFileSync(${JSON.stringify(capture)}, JSON.stringify({ args: process.argv.slice(2), forge: process.env.FOUNDRY_LSP_FORGE, profile: process.env.FOUNDRY_PROFILE, portable: process.env.VSCODE_PORTABLE }));\n`);
     const code = path.join(testRoot, process.platform === "win32" ? "code.cmd" : "code");
     const quote = (value) => "'" + value.replaceAll("'", "'\\''") + "'";
     await writeFile(code, process.platform === "win32"
@@ -77,7 +77,9 @@ async function main() {
     await assert.rejects(access(path.join(extensionPath, "node_modules")), { code: "ENOENT" });
     launchArgs = [...captured.args];
     launchArgs.splice(developmentIndex, 2);
-    Object.assign(launcherEnv, { HOME: testHome, USERPROFILE: testHome, FOUNDRY_LSP_FORGE: captured.forge, FOUNDRY_PROFILE: captured.profile });
+    const userData = captured.args[captured.args.indexOf("--user-data-dir") + 1];
+    assert.equal(path.join(captured.portable, "user-data"), userData, "Portable VS Code must use the isolated session");
+    Object.assign(launcherEnv, { HOME: testHome, USERPROFILE: testHome, FOUNDRY_LSP_FORGE: captured.forge, FOUNDRY_PROFILE: captured.profile, VSCODE_PORTABLE: captured.portable });
   }
   launchArgs.push("--disable-extensions", "--disable-workspace-trust", "--skip-welcome", "--skip-release-notes");
   if (launcher) Object.assign(process.env, launcherEnv);

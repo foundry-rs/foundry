@@ -32,7 +32,12 @@ which always selects the server and cannot be combined with launcher options.
 
 The launcher caches the bundled extension under
 `~/.foundry/cache/lsp/extensions/<asset-hash>` and creates a persistent VS Code
-profile under `~/.foundry/cache/lsp/vscode/<session-hash>`. Sessions are keyed by
+profile under `~/.foundry/cache/lsp/vscode/<session-hash>` on Windows. On Unix,
+`/tmp/foundry-lsp-<uid>/<session-hash>` keeps socket paths short. The Unix
+directories are private to the current user and reject unsafe permissions or
+symbolic links. Portable VS Code installations also use this isolated profile.
+Profiles are reused until removed, including by operating-system temporary-directory cleanup.
+Sessions are keyed by
 project directory, Forge executable path and selected Foundry profile. Normal
 VS Code settings are untouched. The launched client always uses the Forge
 executable that opened it, including for formatting and background checks.
@@ -175,8 +180,9 @@ then select `solarLsp.trace.server` `messages` or `verbose` for server execution
 tracing. Language-client wire tracing includes request and response payloads.
 
 CodeLens supports selectors, references and inheritance. Select a selector to
-copy it, references to open Peek References, or inheritance to open Type
-Hierarchy. `solarLsp.codeLens.enable`, `.selectors`, `.references` and
+copy it, references to open Peek References, or inheritance to peek the base or
+derived contracts. The editor's Type Hierarchy action provides recursive browsing.
+`solarLsp.codeLens.enable`, `.selectors`, `.references` and
 `.inheritance` restart the server when changed. Server-returned `solar.*`
 command IDs are registered without renaming them.
 

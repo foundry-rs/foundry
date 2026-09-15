@@ -12,12 +12,15 @@ dependency.
 
 ## Configuration
 
-By default, the extension resolves `forge` from the worktree's shell `PATH` and
-checks `forge lsp --stdio --help` before launch. Merely supporting `forge --version` is
-insufficient. Missing and incompatible Forge installations produce an actionable
-error in Zed's language server status/log. The probe passes `--stdio` explicitly:
-Forge accepts it even though it is hidden from help output. The manifest grants
-only this probe's argument list permission to execute at a user-selected path.
+By default, the extension resolves `forge` from the worktree's shell `PATH`.
+Zed launches `forge lsp --stdio` in the worktree directory, allowing version-manager
+shims to select the project's Forge installation. The extension does not run a
+separate capability probe because Zed's process API cannot set its working
+directory. Missing Forge on `PATH` produces installation guidance; missing custom
+executables and incompatible builds are reported by Zed's language server
+status/log during startup. To check an installation, run
+`forge lsp --stdio --help` from the worktree directory. Forge accepts `--stdio`
+even though it is hidden from help output.
 
 To select a specific Forge installation, set its absolute path in your Zed user
 or project settings:

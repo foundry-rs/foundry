@@ -11,6 +11,7 @@ test("only a development host honors the Forge launcher executable", async () =>
     [2, undefined, "/workspace/forge"],
   ]) {
     const commands = [];
+    const probes = [];
     const disposables = () => ({ dispose() {} });
     const config = {
       get: (key, fallback) => key === "forgePath" ? "/workspace/forge" : fallback,
@@ -20,6 +21,7 @@ test("only a development host honors the Forge launcher executable", async () =>
       ExtensionMode: { Production: 1, Development: 2 },
       workspace: {
         isTrusted: true,
+        workspaceFolders: [{ uri: { scheme: "file", fsPath: "/project" } }],
         getConfiguration: () => config,
         onWillSaveTextDocument: disposables,
         onDidChangeConfiguration: disposables,
@@ -34,7 +36,7 @@ test("only a development host honors the Forge launcher executable", async () =>
         state = 2;
         initializeResult = { capabilities: { documentFormattingProvider: true } };
         outputChannel = { appendLine() {} };
-        constructor(_id, _name, options) { commands.push(options.command); }
+        constructor(_id, _name, options) { commands.push({ command: options.command, cwd: options.options?.cwd }); }
         async start() {}
         async dispose() {}
       },
@@ -47,13 +49,17 @@ test("only a development host honors the Forge launcher executable", async () =>
       require: (name) => {
         if (name === "vscode") return vscode;
         if (name === "vscode-languageclient/node") return languageclient;
-        if (name === "./forge") return { resolveForge: async (command) => command, validateForgeLsp: async () => {} };
+        if (name === "./forge") return {
+          resolveForge: async (command) => command,
+          validateForgeLsp: async (command, cwd) => { probes.push({ command, cwd }); },
+        };
         return require(name);
       },
     });
     exports.activate({ extensionMode: mode, subscriptions: [] });
     await exports.deactivate();
-    assert.deepEqual(commands, [expected]);
+    assert.deepEqual(commands, [{ command: expected, cwd: "/project" }]);
+    assert.deepEqual(probes, commands);
   }
 });
 

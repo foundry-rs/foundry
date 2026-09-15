@@ -52,12 +52,12 @@ export async function resolveForge(
 }
 
 /** A successful --version does not establish that this build includes LSP. */
-export async function validateForgeLsp(forgePath: string): Promise<void> {
+export async function validateForgeLsp(forgePath: string, cwd?: string): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     execFile(
       forgePath,
       ["lsp", "--stdio", "--help"],
-      { windowsHide: true, timeout: 10_000, maxBuffer: 1024 * 1024 },
+      { cwd, windowsHide: true, timeout: 10_000, maxBuffer: 1024 * 1024 },
       (error) => {
         if (error) {
           reject(new Error(
