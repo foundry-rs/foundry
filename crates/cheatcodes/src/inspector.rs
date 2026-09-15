@@ -462,6 +462,9 @@ pub struct GasMetering {
     /// Post-refund gas used by the isolated transaction wrapping the current frame.
     isolated_snapshot_gas_used: Option<u64>,
 
+    /// Isolated transaction refund to exclude from the next region sample at the caller's depth.
+    pending_isolated_refund: Option<(usize, u64)>,
+
     /// True if gas recording is enabled.
     pub recording: bool,
     /// The gas used in the last frame.
@@ -474,6 +477,7 @@ impl GasMetering {
     /// Start the gas recording.
     pub const fn start(&mut self) {
         self.recording = true;
+        self.pending_isolated_refund = None;
     }
 
     /// Stop the gas recording.
@@ -501,6 +505,21 @@ impl GasMetering {
     /// Preserves the historical gas snapshot value for an isolated transaction.
     pub const fn set_isolated_snapshot_gas_used(&mut self, gas_used: u64) {
         self.isolated_snapshot_gas_used = Some(gas_used);
+    }
+
+    /// Preserve post-refund region snapshots without changing the interpreter's gross gas usage.
+    const fn record_isolated_refund(
+        &mut self,
+        depth: usize,
+        gas: &Gas,
+        snapshot_gas_used: Option<u64>,
+    ) {
+        if self.recording
+            && let Some(snapshot_gas_used) = snapshot_gas_used
+        {
+            self.pending_isolated_refund =
+                Some((depth, gas.total_gas_spent().saturating_sub(snapshot_gas_used)));
+        }
     }
 }
 
@@ -2433,6 +2452,11 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         outcome: &mut CallOutcome,
     ) {
         let isolated_snapshot_gas_used = self.gas_metering.isolated_snapshot_gas_used.take();
+        self.gas_metering.record_isolated_refund(
+            ecx.journal().depth(),
+            &outcome.result.gas,
+            isolated_snapshot_gas_used,
+        );
         if self.finish_storage_hook_call(ecx, call, outcome) {
             return;
         }
@@ -3042,6 +3066,11 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         outcome: &mut CreateOutcome,
     ) {
         let isolated_snapshot_gas_used = self.gas_metering.isolated_snapshot_gas_used.take();
+        self.gas_metering.record_isolated_refund(
+            ecx.journal().depth(),
+            &outcome.result.gas,
+            isolated_snapshot_gas_used,
+        );
         let call = Some(call);
         let curr_depth = ecx.journal().depth();
 
@@ -3252,8 +3281,15 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         ecx: &mut FoundryContextFor<'_, FEN>,
     ) {
         if interpreter.bytecode.action.as_ref().and_then(|i| i.instruction_result()).is_none() {
+            let curr_depth = ecx.journal().depth();
+            let isolated_refund = match self.gas_metering.pending_isolated_refund {
+                Some((depth, refund)) if depth == curr_depth => {
+                    self.gas_metering.pending_isolated_refund = None;
+                    refund
+                }
+                _ => 0,
+            };
             self.gas_metering.gas_records.iter_mut().for_each(|record| {
-                let curr_depth = ecx.journal().depth();
                 if curr_depth == record.depth {
                     // Skip the first opcode of the first call frame as it includes the gas cost of
                     // creating the snapshot.
@@ -3261,7 +3297,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                         let gas_diff = interpreter
                             .gas
                             .total_gas_spent()
-                            .saturating_sub(self.gas_metering.last_gas_used);
+                            .saturating_sub(self.gas_metering.last_gas_used)
+                            .saturating_sub(isolated_refund);
                         record.gas_used = record.gas_used.saturating_add(gas_diff);
                     }
 
