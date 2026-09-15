@@ -241,6 +241,24 @@ contract GasComparisonTest is Test {
         assertEq(a, b);
     }
 
+    /// forge-config: default.isolate = false
+    function testGasComparisonExternalRefund() public {
+        TargetB target = new TargetB();
+        target.update(1);
+
+        vm.startSnapshotGas("ComparisonGroup", "external refund");
+        target.update(0);
+        uint256 a = vm.stopSnapshotGas();
+
+        target.update(1);
+        _snapStart();
+        target.update(0);
+        uint256 b = _snapEnd();
+
+        // Non-isolated regions still measure gross gas, even when storage is cleared.
+        assertEq(a, b);
+    }
+
     function testGasComparisonCreate() public {
         // Start a cheatcode snapshot.
         vm.startSnapshotGas("ComparisonGroup", "testGasComparisonCreateA");
