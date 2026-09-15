@@ -8,7 +8,6 @@ use std::{
     io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write},
     path::{Component, Path, PathBuf},
 };
-use tempfile::NamedTempFile;
 
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
@@ -113,8 +112,8 @@ pub fn write_json_file<T: Serialize>(path: &Path, obj: &T) -> Result<()> {
 /// last-publication-wins, and readers observe either the complete old file or the complete new
 /// file when all writers use atomic publication. This does not provide read-modify-write locking
 /// or power-loss durability. Publication replaces the destination directory entry rather than
-/// preserving its inode or following an existing symlink; newly published files use the temporary
-/// file's owner-only permissions on Unix.
+/// preserving its inode or following an existing symlink; newly published files use the process's
+/// normal file creation permissions.
 pub fn write_json_file_atomic<T: Serialize + ?Sized>(
     path: &Path,
     obj: &T,
@@ -227,8 +226,11 @@ fn write_atomic_with(
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
+    let mut builder = tempfile::Builder::new();
+    #[cfg(unix)]
+    builder.permissions(fs::Permissions::from_mode(0o666));
     let mut temp =
-        NamedTempFile::new_in(parent).map_err(|err| FsPathError::create_file(err, path))?;
+        builder.tempfile_in(parent).map_err(|err| FsPathError::create_file(err, path))?;
     write(temp.as_file_mut())?;
 
     let published = match mode {
@@ -467,6 +469,20 @@ mod tests {
             assert!(value.iter().all(|byte| *byte == value[0]));
         }
         writer.join().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_writers_use_normal_creation_permissions() {
+        let dir = tempfile::tempdir().unwrap();
+        let regular = dir.path().join("regular");
+        let atomic = dir.path().join("atomic");
+        create_file(&regular).unwrap();
+
+        write_atomic(&atomic, b"contents", PublishMode::Replace).unwrap();
+
+        let mode = |path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(atomic), mode(regular));
     }
 
     #[cfg(unix)]

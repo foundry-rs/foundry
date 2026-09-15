@@ -45,9 +45,7 @@ use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, I256, U256};
 use eyre::{Result, eyre};
-use foundry_common::{
-    ContractsByAddress, ContractsByArtifact, TestFunctionExt, fs::PublishMode, sh_warn,
-};
+use foundry_common::{ContractsByAddress, ContractsByArtifact, TestFunctionExt, sh_warn};
 use foundry_config::FuzzCorpusConfig;
 use foundry_evm_core::{constants::CALLER, evm::FoundryEvmNetwork, utils::StateChangeset};
 use foundry_evm_fuzz::{
@@ -147,16 +145,22 @@ impl CorpusEntry {
         let should_gzip = self.should_gzip(can_gzip);
         let file_name = self.file_name(should_gzip);
         let path = dir.join(&file_name);
+        let temp_path = dir.join(format!(".{file_name}.{}.tmp", Uuid::new_v4()));
 
-        if should_gzip {
-            foundry_common::fs::write_json_gzip_file_atomic(
-                &path,
-                &self.tx_seq,
-                PublishMode::Replace,
-            )
+        let write_result = if should_gzip {
+            foundry_common::fs::write_json_gzip_file(&temp_path, &self.tx_seq)
         } else {
-            foundry_common::fs::write_json_file_atomic(&path, &self.tx_seq, PublishMode::Replace)
-        }?;
+            foundry_common::fs::write_json_file(&temp_path, &self.tx_seq)
+        };
+        if let Err(err) = write_result {
+            let _ = foundry_common::fs::remove_file(&temp_path);
+            return Err(err);
+        }
+
+        if let Err(err) = std::fs::rename(&temp_path, &path) {
+            let _ = foundry_common::fs::remove_file(&temp_path);
+            return Err(foundry_common::errors::FsPathError::write(err, &path));
+        }
 
         Ok(path)
     }
