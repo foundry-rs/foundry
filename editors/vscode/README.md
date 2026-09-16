@@ -38,10 +38,14 @@ symlink to that durable profile so VS Code's socket path stays short. The link
 is recreated after temporary-directory cleanup, while settings, history and
 installed extensions remain. Portable VS Code installations also use this
 isolated profile. Profiles are reused until removed.
-Sessions are keyed by
-project directory, Forge executable path and selected Foundry profile. Normal
-VS Code settings are untouched. The launched client always uses the Forge
-executable that opened it, including for formatting and background checks.
+Sessions are keyed by project directory, resolved VS Code CLI launcher path and
+target, Forge executable path and selected Foundry profile. The same launcher
+path and target reuse a session; distinct symlink entry points stay isolated,
+and repointing a launcher symlink selects a separate profile. Upgrading from a
+launcher that shared profiles across editors creates fresh profiles and preserves
+the old directories without automatic migration; see the [editor overview](../README.md).
+Normal VS Code settings are untouched. The launched client always uses the
+Forge executable that opened it, including for formatting and background checks.
 
 A separately installed extension resolves `forge` from `PATH`, or uses an
 explicit executable:
