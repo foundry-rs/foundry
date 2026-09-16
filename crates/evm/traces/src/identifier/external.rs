@@ -183,8 +183,8 @@ impl ExternalIdentifier {
 
     /// Fully resolves `addresses`, blocking for at most the remaining budget.
     ///
-    /// Foreground work cancels unfinished prefetches before reclaiming their addresses. Time spent
-    /// here is charged to the budget, and a timeout spends all of it.
+    /// Addresses with a prefetch in flight are awaited rather than fetched again. Time spent here
+    /// is charged to the budget, and a timeout spends all of it.
     async fn fetch_addresses_async(&mut self, addresses: &[Address]) {
         let budget = self.remaining_budget();
         if addresses.is_empty() || budget.is_zero() {
@@ -192,7 +192,6 @@ impl ExternalIdentifier {
         }
 
         let started = tokio::time::Instant::now();
-        let _foreground = Foreground::enter(&self.cache);
         let timed_out = tokio::time::timeout(budget, async {
             loop {
                 let (to_fetch, to_await) = self.cache.claim(addresses);
@@ -349,9 +348,9 @@ impl TraceIdentifier for ExternalIdentifier {
 /// Schedules external lookups before the traces that need them reach the identifier.
 ///
 /// Results land in the cache shared with the [`ExternalIdentifier`] this handle was created from,
-/// so a later [`identify_addresses`] call finds completed results. Unfinished speculative work is
-/// cancelled when foreground identification starts. Nothing is scheduled once the identifier's
-/// budget is spent.
+/// so a later [`identify_addresses`] call for the same addresses finds them, or waits for the
+/// in-flight lookup, instead of fetching again. Nothing is scheduled once the identifier's budget
+/// is spent.
 ///
 /// [`identify_addresses`]: TraceIdentifier::identify_addresses
 #[derive(Clone)]
@@ -380,18 +379,11 @@ impl ExternalPrefetcher {
         trace!(target: "evm::traces::external", "prefetching {} addresses", addresses.len());
 
         let fetchers = Arc::clone(&self.fetchers);
-        let cache = Arc::clone(&self.cache);
         let timeout = self.timeout;
-        let claim = Claim { cache: Arc::clone(&cache), addresses };
+        let claim = Claim { cache: Arc::clone(&self.cache), addresses };
         self.handle.spawn(async move {
-            tokio::select! {
-                biased;
-                _ = cache.foreground_started() => {}
-                result = tokio::time::timeout(timeout, fetch_batch(&fetchers, claim)) => {
-                    if result.is_err() {
-                        warn!(target: "evm::traces::external", "external prefetch timed out");
-                    }
-                }
+            if tokio::time::timeout(timeout, fetch_batch(&fetchers, claim)).await.is_err() {
+                warn!(target: "evm::traces::external", "external prefetch timed out");
             }
         });
     }
@@ -412,8 +404,6 @@ struct CacheState {
     in_flight: AddressSet,
     /// Addresses for which every fetcher has finished.
     completed: AddressSet,
-    /// Whether blocking foreground identification is active.
-    foreground: bool,
     /// Remaining time external identification may block trace rendering.
     remaining_budget: Duration,
 }
@@ -451,7 +441,7 @@ impl Cache {
     /// returns them. Returns nothing once the budget is spent.
     fn claim_new(&self, addresses: impl IntoIterator<Item = Address>) -> Vec<Address> {
         let mut state = self.state();
-        if state.remaining_budget.is_zero() || state.foreground {
+        if state.remaining_budget.is_zero() {
             return Vec::new();
         }
         addresses
@@ -524,17 +514,6 @@ impl Cache {
         }
     }
 
-    /// Resolves when foreground identification starts.
-    async fn foreground_started(&self) {
-        loop {
-            let notified = self.notify.notified();
-            if self.state().foreground {
-                return;
-            }
-            notified.await;
-        }
-    }
-
     /// Charges `elapsed` to the budget; a timeout spends all of it.
     fn spend(&self, elapsed: Duration, timed_out: bool) {
         let mut state = self.state();
@@ -555,26 +534,6 @@ struct Claim {
 impl Drop for Claim {
     fn drop(&mut self) {
         self.cache.release(&self.addresses);
-    }
-}
-
-/// Gives blocking identification exclusive admission over background prefetches.
-struct Foreground {
-    cache: Arc<Cache>,
-}
-
-impl Foreground {
-    fn enter(cache: &Arc<Cache>) -> Self {
-        cache.state().foreground = true;
-        cache.notify.notify_waiters();
-        Self { cache: Arc::clone(cache) }
-    }
-}
-
-impl Drop for Foreground {
-    fn drop(&mut self) {
-        self.cache.state().foreground = false;
-        self.cache.notify.notify_waiters();
     }
 }
 
@@ -1530,7 +1489,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn foreground_restarts_partial_prefetch_for_preferred_result() {
+    async fn identify_waits_for_preferred_fetcher_after_partial_result() {
         let sourcify_calls = Arc::new(AtomicUsize::new(0));
         let etherscan_calls = Arc::new(AtomicUsize::new(0));
         let fetchers: Vec<Arc<dyn ExternalFetcherT>> = vec![
@@ -1568,8 +1527,8 @@ mod tests {
         let identities = identifier.identify_addresses(&[&node(address)]);
 
         assert_eq!(identities[0].label.as_deref(), Some("EtherscanResult"));
-        assert_eq!(sourcify_calls.load(AtomicOrdering::Relaxed), 2);
-        assert_eq!(etherscan_calls.load(AtomicOrdering::Relaxed), 2);
+        assert_eq!(sourcify_calls.load(AtomicOrdering::Relaxed), 1);
+        assert_eq!(etherscan_calls.load(AtomicOrdering::Relaxed), 1);
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1673,34 +1632,6 @@ mod tests {
         assert_eq!(sourcify_calls.load(AtomicOrdering::Relaxed), 2);
         assert_eq!(etherscan_calls.load(AtomicOrdering::Relaxed), 2);
         assert!(!identifier.remaining_budget().is_zero());
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn foreground_cancels_unrelated_prefetch_holding_provider_permit() {
-        let calls = Arc::new(AtomicUsize::new(0));
-        let fetcher: Arc<dyn ExternalFetcherT> = Arc::new(AbandonedFetcher {
-            kind: FetcherKind::Sourcify,
-            calls: Arc::clone(&calls),
-            invalid: AtomicBool::new(false),
-        });
-        let mut identifier = test_identifier(vec![fetcher], Duration::from_secs(1));
-        let prefetched = Address::with_last_byte(1);
-        let foreground = Address::with_last_byte(2);
-
-        identifier.prefetcher(tokio::runtime::Handle::current()).prefetch([prefetched]);
-        tokio::time::timeout(Duration::from_secs(1), async {
-            while calls.load(AtomicOrdering::Relaxed) == 0 {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .unwrap();
-
-        let identities = identifier.identify_addresses(&[&node(foreground)]);
-
-        assert_eq!(identities[0].label.as_deref(), Some("Retried"));
-        assert_eq!(calls.load(AtomicOrdering::Relaxed), 2);
-        assert!(!identifier.cache.state().completed.contains(&prefetched));
     }
 
     #[test]
