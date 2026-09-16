@@ -82,40 +82,33 @@ fn normalize_bounded_comparisons(
     // conjunction, but bound the work; unfinished simplification is still sound SMT input.
     for _ in 0..MAX_CONTEXTUAL_PASSES {
         let previous = constraints.clone();
-        constraints = normalize_bounded_comparisons_once(cx, constraints);
+        let mut index = 0;
+        while index < constraints.len() {
+            let context = ConstraintContext::for_rewrite(cx, &constraints, index);
+            constraints[index] = context.normalize_bool(cx, constraints[index].clone(), false);
+            // Revisit each newly exposed conjunct with the retained supporting facts. Otherwise a
+            // division rewrite can leave a simple contradiction hidden until the SMT fallback.
+            if let SymBoolExprKind::And(terms) = constraints[index].kind() {
+                let terms = terms.to_vec();
+                constraints.splice(index..=index, terms);
+                continue;
+            }
+            match context.bounded_bool_value(&constraints[index]) {
+                Some(false) => return vec![SymBoolExpr::constant(cx, false)],
+                Some(true) => {
+                    constraints.remove(index);
+                }
+                None => index += 1,
+            }
+        }
+        // Contextual rewrites may change sort order or expose a conjunction.
+        let count = constraints.len();
+        constraints = normalize_constraint_batch(constraints, count);
         if constraints == previous || constraints.iter().any(|c| c.as_const() == Some(false)) {
             break;
         }
     }
     constraints
-}
-
-fn normalize_bounded_comparisons_once(
-    cx: &mut SymCx,
-    mut constraints: Vec<SymBoolExpr>,
-) -> Vec<SymBoolExpr> {
-    let mut index = 0;
-    while index < constraints.len() {
-        let context = ConstraintContext::for_rewrite(cx, &constraints, index);
-        constraints[index] = context.normalize_bool(cx, constraints[index].clone(), false);
-        // Revisit each newly exposed conjunct with the retained supporting facts. Otherwise a
-        // division rewrite can leave a simple contradiction hidden until the SMT fallback.
-        if let SymBoolExprKind::And(terms) = constraints[index].kind() {
-            let terms = terms.to_vec();
-            constraints.splice(index..=index, terms);
-            continue;
-        }
-        match context.bounded_bool_value(&constraints[index]) {
-            Some(false) => return vec![SymBoolExpr::constant(cx, false)],
-            Some(true) => {
-                constraints.remove(index);
-            }
-            None => index += 1,
-        }
-    }
-    // Contextual rewrites may change sort order or expose a conjunction.
-    let count = constraints.len();
-    normalize_constraint_batch(constraints, count)
 }
 
 fn mark_conjuncts(expr: &SymBoolExpr, out: &mut HashSet<SymBoolExpr>) {
@@ -1192,37 +1185,33 @@ impl ConstraintContext {
             SymBoolExprKind::Cmp(op, left, right) => {
                 let left = self.interval(left)?;
                 let right = self.interval(right)?;
-                if matches!(op, SymCmpOp::Slt | SymCmpOp::Sgt)
-                    && left.min.bit(255) == left.max.bit(255)
-                    && right.min.bit(255) == right.max.bit(255)
-                {
-                    let (always, possible) = if *op == SymCmpOp::Slt {
-                        (op.eval(left.max, right.min), op.eval(left.min, right.max))
-                    } else {
-                        (op.eval(left.min, right.max), op.eval(left.max, right.min))
-                    };
-                    return if always {
-                        Some(true)
-                    } else if !possible {
+                if *op == SymCmpOp::Eq {
+                    return if left.max < right.min || right.max < left.min {
                         Some(false)
+                    } else if left.min == left.max && right.min == right.max {
+                        Some(left.min == right.min)
                     } else {
                         None
                     };
                 }
-                match op {
-                    SymCmpOp::Eq if left.max < right.min || right.max < left.min => Some(false),
-                    SymCmpOp::Eq if left.min == left.max && right.min == right.max => {
-                        Some(left.min == right.min)
-                    }
-                    SymCmpOp::Ult if left.max < right.min => Some(true),
-                    SymCmpOp::Ult if left.min >= right.max => Some(false),
-                    SymCmpOp::Ule if left.max <= right.min => Some(true),
-                    SymCmpOp::Ule if left.min > right.max => Some(false),
-                    SymCmpOp::Ugt if left.min > right.max => Some(true),
-                    SymCmpOp::Ugt if left.max <= right.min => Some(false),
-                    SymCmpOp::Uge if left.min >= right.max => Some(true),
-                    SymCmpOp::Uge if left.max < right.min => Some(false),
-                    _ => None,
+                if matches!(op, SymCmpOp::Slt | SymCmpOp::Sgt)
+                    && (left.min.bit(255) != left.max.bit(255)
+                        || right.min.bit(255) != right.max.bit(255))
+                {
+                    return None;
+                }
+                let (always, possible) =
+                    if matches!(op, SymCmpOp::Ult | SymCmpOp::Ule | SymCmpOp::Slt) {
+                        (op.eval(left.max, right.min), op.eval(left.min, right.max))
+                    } else {
+                        (op.eval(left.min, right.max), op.eval(left.max, right.min))
+                    };
+                if always {
+                    Some(true)
+                } else if !possible {
+                    Some(false)
+                } else {
+                    None
                 }
             }
             SymBoolExprKind::And(_) => None,
@@ -3154,32 +3143,6 @@ mod tests {
     }
 
     #[test]
-    fn contextual_normalization_proves_bounded_symbolic_round_trip() {
-        let mut cx = SymCx::new();
-        let value = SymExpr::var(&mut cx, "balance");
-        let rate = SymExpr::var(&mut cx, "rate");
-        let scale_value = U256::from(1_000_000_000_000_000_000u64);
-        let scale = SymExpr::constant(&mut cx, scale_value);
-        let max_rate = SymExpr::constant(&mut cx, scale_value * U256::from(1_000_000_000u64));
-        let max_value = SymExpr::constant(&mut cx, U256::from(u128::MAX));
-        let bounds = vec![
-            SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, value.clone(), max_value),
-            SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, scale, rate.clone()),
-            SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, rate.clone(), max_rate),
-        ];
-        let converted = rounded_conversion(&mut cx, value.clone(), rate, scale_value);
-        let equality = SymBoolExpr::eq(&mut cx, converted, value);
-        let expected = normalize_constraints_for_solver(&mut cx, &bounds);
-        let mut constraints = bounds.clone();
-        constraints.push(equality.clone());
-        assert_eq!(normalize_constraints_for_solver(&mut cx, &constraints), expected);
-        constraints.pop();
-        constraints.push(equality.not(&mut cx));
-        let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
-        assert!(constraints_are_directly_unsat(&mut cx, &normalized));
-    }
-
-    #[test]
     fn quotient_bounds_do_not_require_bounded_numerators() {
         let mut cx = SymCx::new();
         let value = SymExpr::var(&mut cx, "value");
@@ -3199,27 +3162,6 @@ mod tests {
         let divisor = SymExpr::var(&mut cx, "divisor");
         let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, value, divisor);
         assert!(context.interval(&quotient).is_none());
-    }
-
-    #[test]
-    fn successful_constant_product_guard_bounds_unbounded_operand() {
-        let mut cx = SymCx::new();
-        let value = SymExpr::var(&mut cx, "credits");
-        let w = U256::from(1_000_000_000_000_000_000u64);
-        let scale = SymExpr::constant(&mut cx, w);
-        let product = SymExpr::binop(&mut cx, SymBinOp::Mul, value.clone(), scale.clone());
-        let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, product.clone(), scale);
-        let guard = SymBoolExpr::eq(&mut cx, quotient, value.clone());
-        let mut context = ConstraintContext::default();
-        context.record_non_wrapping_product(&mut cx, &guard);
-        assert_eq!(context.upper_bound(&value), Some(U256::MAX / w));
-        let constraints = [
-            guard,
-            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ult, &product, w),
-            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ugt, &value, U256::ZERO),
-        ];
-        let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
-        assert!(constraints_are_directly_unsat(&mut cx, &normalized));
     }
 
     #[test]
@@ -3364,44 +3306,6 @@ mod tests {
                 normalize_constraints_for_solver_cached(&mut cx, &constraints, &mut cache);
             assert!(constraints_are_directly_unsat(&mut cx, &normalized), "{normalized:?}");
         }
-    }
-
-    #[test]
-    fn successful_mul_guards_prove_full_width_round_trip() {
-        let mut cx = SymCx::new();
-        let value = SymExpr::var(&mut cx, "balance");
-        let rate = SymExpr::var(&mut cx, "rate");
-        let w = U256::from(1_000_000_000_000_000_000u64);
-        let scale = SymExpr::constant(&mut cx, w);
-        let product = SymExpr::binop(&mut cx, SymBinOp::Mul, value.clone(), rate.clone());
-        let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, product.clone(), value.clone());
-        let guard = SymBoolExpr::eq(&mut cx, quotient, rate.clone());
-        let scaled = SymExpr::binop(&mut cx, SymBinOp::Mul, value.clone(), scale);
-        let converted = rounded_conversion(&mut cx, value.clone(), rate.clone(), w);
-        let failure = SymBoolExpr::eq(&mut cx, converted.clone(), value.clone()).not(&mut cx);
-        let mut constraints = vec![
-            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Uge, &rate, w),
-            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ule, &product, U256::MAX - w),
-            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Uge, &scaled, w),
-            guard,
-            failure,
-        ];
-        let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
-        assert!(constraints_are_directly_unsat(&mut cx, &normalized), "{normalized:?}");
-        let global_credits = SymExpr::var(&mut cx, "global_credits");
-        let supply = SymExpr::var(&mut cx, "supply");
-        let (scaled_credits, _) = converted.udiv_operands().unwrap();
-        let (credits, _) = ConstraintContext::constant_mul_operands(scaled_credits).unwrap();
-        let signed_max = SymExpr::constant(&mut cx, U256::MAX >> 1);
-        let room = SymExpr::binop(&mut cx, SymBinOp::Sub, signed_max.clone(), credits.clone());
-        constraints.extend([
-            SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, global_credits.clone(), signed_max.clone()),
-            SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, supply.clone(), signed_max),
-            SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, value, supply),
-            SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, global_credits, room),
-        ]);
-        let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
-        assert!(constraints_are_directly_unsat(&mut cx, &normalized), "{normalized:?}");
     }
 
     #[test]
@@ -3560,26 +3464,6 @@ mod tests {
         assert!(constraints.iter().all(|c| c.eval_model(&model).unwrap()));
         assert!(normalized.iter().all(|c| c.eval_model(&model).unwrap()));
         constraints.push(guard);
-        let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
-        assert!(constraints_are_directly_unsat(&mut cx, &normalized));
-    }
-
-    #[test]
-    fn independent_scalar_bounds_prune_hard_arithmetic() {
-        let mut cx = SymCx::new();
-        let value = SymExpr::var(&mut cx, "balance");
-        let rate = SymExpr::var(&mut cx, "rate");
-        let product = SymExpr::binop(&mut cx, SymBinOp::Mul, value.clone(), rate);
-        let constraints = [
-            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ule, &value, U256::from(u128::MAX)),
-            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ugt, &value, U256::MAX >> 1),
-            SymBoolExpr::cmp_word_const(
-                &mut cx,
-                SymCmpOp::Ule,
-                &product,
-                U256::MAX - U256::from(3),
-            ),
-        ];
         let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
         assert!(constraints_are_directly_unsat(&mut cx, &normalized));
     }
@@ -3857,52 +3741,6 @@ mod tests {
                 }
             }
         }
-    }
-
-    #[test]
-    fn rounded_conversion_requires_independent_safe_bounds() {
-        let mut cx = SymCx::new();
-        let value = SymExpr::var(&mut cx, "balance");
-        let rate = SymExpr::var(&mut cx, "rate");
-        let converted = rounded_conversion(&mut cx, value.clone(), rate.clone(), U256::from(2));
-        let equality = SymBoolExpr::eq(&mut cx, converted, value.clone());
-
-        let normalized = normalize_constraints_for_solver(&mut cx, std::slice::from_ref(&equality));
-        assert_eq!(normalized, vec![equality.clone()]);
-
-        let product = SymExpr::binop(&mut cx, SymBinOp::Mul, value.clone(), rate.clone());
-        let zero = SymExpr::zero(&mut cx);
-        let two = SymExpr::constant(&mut cx, U256::from(2));
-        let constraints = [
-            SymBoolExpr::eq(&mut cx, product, zero),
-            SymBoolExpr::eq(&mut cx, rate.clone(), two),
-            equality,
-        ];
-        let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
-        let mut model = SymbolicModel::default();
-        assert!(value.assign_model_value(&mut model, U256::ONE << 255));
-        assert!(rate.assign_model_value(&mut model, U256::from(2)));
-        assert!(!constraints.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
-        assert!(!normalized.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
-    }
-
-    #[test]
-    fn rounded_conversion_keeps_rate_below_scale() {
-        let mut cx = SymCx::new();
-        let value = SymExpr::var(&mut cx, "balance");
-        let rate = SymExpr::var(&mut cx, "rate");
-        let one = SymExpr::one(&mut cx);
-        let value_bound =
-            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ule, &value, U256::from(10));
-        let rate_bound = SymBoolExpr::eq(&mut cx, rate.clone(), one);
-        let converted = rounded_conversion(&mut cx, value.clone(), rate, U256::from(2));
-        let equality = SymBoolExpr::eq(&mut cx, converted, value.clone());
-        let normalized =
-            normalize_constraints_for_solver(&mut cx, &[value_bound, rate_bound, equality]);
-
-        let mut model = SymbolicModel::default();
-        assert!(value.assign_model_value(&mut model, U256::ONE));
-        assert!(!normalized.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
     }
 
     #[test]

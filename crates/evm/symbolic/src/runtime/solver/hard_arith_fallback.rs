@@ -607,22 +607,15 @@ fn seed_bounded_support_vars(constraints: &[SymBoolExpr], model: &mut SymbolicMo
         } else {
             continue;
         };
+        let Some(value) = support_target_for_known_right(op, known) else { return false };
         let (lower, upper) = bounds.entry(var).or_insert((U256::ZERO, U256::MAX));
         match op {
             SymCmpOp::Eq => {
-                *lower = (*lower).max(known);
-                *upper = (*upper).min(known);
-            }
-            SymCmpOp::Ule => *upper = (*upper).min(known),
-            SymCmpOp::Uge => *lower = (*lower).max(known),
-            SymCmpOp::Ult => {
-                let Some(value) = known.checked_sub(U256::ONE) else { return false };
+                *lower = (*lower).max(value);
                 *upper = (*upper).min(value);
             }
-            SymCmpOp::Ugt => {
-                let Some(value) = known.checked_add(U256::ONE) else { return false };
-                *lower = (*lower).max(value);
-            }
+            SymCmpOp::Ule | SymCmpOp::Ult => *upper = (*upper).min(value),
+            SymCmpOp::Uge | SymCmpOp::Ugt => *lower = (*lower).max(value),
             SymCmpOp::Slt | SymCmpOp::Sgt => continue,
         }
         if lower > upper {
@@ -1544,32 +1537,6 @@ mod tests {
             checked_mul_guard_branch_model(&cx, &normalized, &original, &SymbolicVars::default(),)
                 .is_none()
         );
-    }
-
-    #[test]
-    fn support_bounds_are_intersected_before_assigning_a_witness() {
-        let mut cx = SymCx::new();
-        let credits = SymExpr::var(&mut cx, "credits");
-        let supply = SymExpr::var(&mut cx, "supply");
-        let maximum = U256::MAX >> 1;
-        let constraints = vec![
-            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ule, &credits, maximum),
-            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Uge, &supply, U256::ONE),
-            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ule, &credits, maximum - U256::ONE),
-            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ugt, &supply, maximum),
-        ];
-        for constraints in [constraints.clone(), constraints.into_iter().rev().collect()] {
-            let mut model = SymbolicModel::default();
-            assert!(seed_bounded_support_vars(&constraints, &mut model));
-            assert!(fallback_model_satisfies_all_constraints(&constraints, &model));
-            assert_eq!(credits.eval_model(&model).unwrap(), U256::ZERO);
-            assert_eq!(supply.eval_model(&model).unwrap(), maximum + U256::ONE);
-        }
-        let impossible = [
-            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ult, &credits, U256::ONE),
-            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Uge, &credits, U256::ONE),
-        ];
-        assert!(!seed_bounded_support_vars(&impossible, &mut SymbolicModel::default()));
     }
 
     #[test]

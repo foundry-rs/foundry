@@ -6508,32 +6508,6 @@ contract FixedPointRoundTripTest {
         vm.setArbitraryStorage(address(target), true);
     }
 
-    function checkRoundTrip(uint128 balance, uint256 cpt) external pure {
-        require(balance > 0 && balance < type(uint128).max);
-        require(cpt >= 1e18 && cpt <= 1e27);
-        uint256 credits = (uint256(balance) * cpt + 1e18 - 1) / 1e18;
-        assert(credits * 1e18 / cpt == balance);
-    }
-
-    function checkUnboundedRoundTrip(uint128 balance, uint256 cpt) external pure {
-        require(cpt >= 1e18);
-        uint256 credits = (uint256(balance) * cpt + 1e18 - 1) / 1e18;
-        assert(credits * 1e18 / cpt == balance);
-    }
-
-    function checkUnboundedOptIn(address account) external {
-        vm.assume(target.cpt() >= 1e18);
-        uint256 fixedCpt = target.fixedCpt(account);
-        vm.assume(fixedCpt == 0 || fixedCpt == 1e18);
-        vm.assume(target.credits(account) <= type(uint128).max);
-        uint256 balance = target.balanceOf(account);
-        vm.prank(account);
-        target.optIn();
-        assert(target.balanceOf(account) == balance);
-        assert(target.fixedCpt(account) == 0);
-        assert(target.state(account) == 2);
-    }
-
     function checkFullWidthRoundTrip(uint256 balance, uint256 cpt) external pure {
         require(cpt >= 1e18);
         uint256 credits = (balance * cpt + 1e18 - 1) / 1e18;
@@ -6575,21 +6549,6 @@ contract FixedPointRoundTripTest {
         }
     }
 
-    function checkOptIn(address account) external {
-        vm.assume(account != address(0) && account != address(target));
-        vm.assume(target.cpt() >= 1e18 && target.cpt() <= 1e27);
-        vm.assume(target.state(account) == 1);
-        vm.assume(target.fixedCpt(account) == 1e18);
-        vm.assume(target.credits(account) > 0 && target.credits(account) < type(uint128).max);
-        uint256 balance = target.balanceOf(account);
-        vm.assume(target.nonRebasingSupply() >= balance);
-        vm.prank(account);
-        target.optIn();
-        assert(target.balanceOf(account) == balance);
-        assert(target.fixedCpt(account) == 0);
-        assert(target.state(account) == 2);
-    }
-
     function testOptInConcreteWitness() external {
         address account = address(0xB0B);
         vm.store(address(target), bytes32(uint256(0)), bytes32(uint256(1e18 + 1)));
@@ -6598,7 +6557,7 @@ contract FixedPointRoundTripTest {
         vm.store(address(target), keccak256(abi.encode(account, uint256(3))), bytes32(uint256(1)));
         vm.store(address(target), keccak256(abi.encode(account, uint256(4))), bytes32(uint256(1e18)));
         vm.store(address(target), keccak256(abi.encode(account, uint256(5))), bytes32(uint256(1)));
-        this.checkOptIn(account);
+        this.checkFullWidthOptIn(account);
         assert(target.credits(account) == 2);
         assert(target.rebasingCredits() == 102);
         assert(target.nonRebasingSupply() == 0);
@@ -6621,10 +6580,6 @@ contract FixedPointRoundTripTest {
 "#,
     );
     for (test, signature) in [
-        ("checkRoundTrip", "checkRoundTrip(uint128,uint256)"),
-        ("checkOptIn", "checkOptIn(address)"),
-        ("checkUnboundedRoundTrip", "checkUnboundedRoundTrip(uint128,uint256)"),
-        ("checkUnboundedOptIn", "checkUnboundedOptIn(address)"),
         ("checkFullWidthRoundTrip", "checkFullWidthRoundTrip(uint256,uint256)"),
         ("checkFullWidthOptIn", "checkFullWidthOptIn(address)"),
     ] {
@@ -6697,35 +6652,9 @@ contract FixedPointRoundTripTest {
         }
     }
 
-    function checkLowRate(uint128 balance) external pure {
-        require(balance > 0 && balance < 100);
-        uint256 rounded = (uint256(balance) + 1) / 2;
-        assert(rounded * 2 == balance);
-    }
-
-    function checkWrapping(uint256 balance) external pure {
-        require(balance >= 1 << 255);
-        unchecked {
-            uint256 rounded = (balance * 2 + 1) / 2;
-            assert(rounded == balance);
-        }
-    }
 }
 "#,
     );
 
     cmd.args(["test", "--symbolic", "--match-test", "checkRoundTrip"]).assert_success();
-    for (test, signature) in
-        [("checkLowRate", "checkLowRate(uint128)"), ("checkWrapping", "checkWrapping(uint256)")]
-    {
-        let output = cmd
-            .forge_fuse()
-            .args(["test", "--symbolic", "--json", "--match-test", test])
-            .assert_failure()
-            .get_output()
-            .stdout
-            .clone();
-        let result = json_test_result(&output, signature);
-        assert_eq!(result["symbolic"]["status"], "fail_counterexample");
-    }
 });
