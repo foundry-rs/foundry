@@ -40,7 +40,6 @@ pub struct Params<T> {
 }
 
 /// Parameters accepted by `eth_getTransactionCount`.
-#[cfg(feature = "base")]
 #[derive(Clone, Debug, serde::Deserialize)]
 #[serde(untagged)]
 pub enum TransactionCountParams {
@@ -49,16 +48,17 @@ pub enum TransactionCountParams {
     /// Standard address and block query.
     Standard((Address, Option<BlockId>)),
     /// EIP-8130 address, block, and nonce-key query.
+    #[cfg(feature = "base")]
     Eip8130((Address, Option<BlockId>, U256)),
 }
 
-#[cfg(feature = "base")]
 impl TransactionCountParams {
     /// Splits the request into address, block, and optional EIP-8130 nonce key.
     pub const fn into_parts(self) -> (Address, Option<BlockId>, Option<U256>) {
         match self {
             Self::Address((address,)) => (address, None, None),
             Self::Standard((address, block)) => (address, block, None),
+            #[cfg(feature = "base")]
             Self::Eip8130((address, block, nonce_key)) => (address, block, Some(nonce_key)),
         }
     }
@@ -163,13 +163,8 @@ pub enum EthRequest {
     #[serde(rename = "eth_getBlockAccessListRaw", with = "sequence")]
     EthGetBlockAccessListRaw(BlockId),
 
-    #[cfg(feature = "base")]
     #[serde(rename = "eth_getTransactionCount")]
     EthGetTransactionCount(TransactionCountParams),
-
-    #[cfg(not(feature = "base"))]
-    #[serde(rename = "eth_getTransactionCount")]
-    EthGetTransactionCount(Address, #[serde(default)] Option<BlockId>),
 
     #[serde(rename = "eth_getBlockTransactionCountByHash", with = "sequence")]
     EthGetTransactionCountByHash(B256),
@@ -2119,14 +2114,6 @@ true}]}"#;
         ];
 
         for request in requests {
-            #[cfg(not(feature = "base"))]
-            if let EthRequest::EthGetTransactionCount(_, block) =
-                serde_json::from_str::<EthRequest>(request).unwrap()
-            {
-                assert!(block.is_none());
-                continue;
-            }
-            #[cfg(feature = "base")]
             if let EthRequest::EthGetTransactionCount(params) =
                 serde_json::from_str::<EthRequest>(request).unwrap()
             {
@@ -2144,6 +2131,24 @@ true}]}"#;
                     | EthRequest::EthGetProof(_, _, None)
             ));
         }
+    }
+
+    #[test]
+    fn test_serde_transaction_count_nonce_key_is_base_gated() {
+        let request = r#"{"method":"eth_getTransactionCount","params":["0x295a70b2de5e3953354a6a8344e616ed314d7251","latest","0x7"]}"#;
+        let result = serde_json::from_str::<EthRequest>(request);
+
+        #[cfg(feature = "base")]
+        {
+            let EthRequest::EthGetTransactionCount(params) = result.unwrap() else {
+                panic!("unexpected request variant")
+            };
+            let (_, block, nonce_key) = params.into_parts();
+            assert_eq!(block, Some(BlockId::latest()));
+            assert_eq!(nonce_key, Some(U256::from(7)));
+        }
+        #[cfg(not(feature = "base"))]
+        assert!(result.is_err());
     }
 
     #[test]

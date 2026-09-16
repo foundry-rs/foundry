@@ -43,11 +43,7 @@ thiserror.workspace = true
 
 [features]
 default = ["optimism"]
-base = [
-    "foundry-primitives/base",
-    "foundry-common/base",
-    "foundry-evm/base",
-]
+base = []
 optimism = [
     "foundry-primitives/optimism",
     "foundry-common/optimism",

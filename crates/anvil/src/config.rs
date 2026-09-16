@@ -91,6 +91,36 @@ pub const DEFAULT_SLOTS_IN_AN_EPOCH: u64 = 32;
 /// Default mnemonic for dev accounts
 pub const DEFAULT_MNEMONIC: &str = "test test test test test test test test test test test junk";
 
+/// Resolves source-chain upgrades without changing another execution family's historical lookup.
+pub(crate) fn source_hardfork(
+    _execution_network: NetworkVariant,
+    chain_id: u64,
+    timestamp: u64,
+) -> Option<FoundryHardfork> {
+    #[cfg(feature = "base")]
+    if _execution_network.is_base() {
+        return _execution_network.historical_hardfork(chain_id, timestamp);
+    }
+    #[cfg(feature = "optimism")]
+    if _execution_network.is_optimism()
+        && let Some(hardfork) = _execution_network.historical_hardfork(chain_id, timestamp)
+    {
+        return Some(hardfork);
+    }
+    #[cfg(feature = "base")]
+    if matches!(NamedChain::try_from(chain_id), Ok(NamedChain::Base | NamedChain::BaseSepolia)) {
+        #[cfg(feature = "optimism")]
+        return foundry_evm::hardfork::OpHardfork::from_chain_and_timestamp(
+            Chain::from_id(chain_id),
+            timestamp,
+        )
+        .map(FoundryHardfork::Optimism);
+        #[cfg(not(feature = "optimism"))]
+        return None;
+    }
+    FoundryHardfork::from_chain_and_timestamp(chain_id, timestamp)
+}
+
 #[derive(Clone, Copy, Debug)]
 struct ForkOverrides {
     gas_limit: Option<u64>,
@@ -1596,7 +1626,7 @@ impl NodeConfig {
     ) -> Result<(Arc<TokioRwLock<Box<dyn Db>>>, Option<ClientFork>, Option<ForkTransactionReplay>)>
     {
         let (db, config, replay) =
-            self.setup_fork_db_config_with_replay(eth_rpc_url, evm_env, fees).await?;
+            self.setup_fork_db_config_with_replay(eth_rpc_url, evm_env, fees, None).await?;
         let db: Arc<TokioRwLock<Box<dyn Db>>> = Arc::new(TokioRwLock::new(Box::new(db)));
         let fork = ClientFork::new(config, Arc::clone(&db));
         Ok((db, Some(fork), replay))
@@ -1901,7 +1931,22 @@ impl NodeConfig {
         fees: &FeeManager,
     ) -> Result<(ForkedDatabase<AnyNetwork>, ClientForkConfig)> {
         let (db, config, replay) =
-            self.setup_fork_db_config_with_replay(eth_rpc_url, evm_env, fees).await?;
+            self.setup_fork_db_config_with_replay(eth_rpc_url, evm_env, fees, None).await?;
+        eyre::ensure!(replay.is_none(), "transaction-hash fork replay requires full node startup");
+        Ok((db, config))
+    }
+
+    /// Configures a replacement fork while preserving the already-instantiated execution profile.
+    pub(crate) async fn setup_fork_db_config_for_reset(
+        &mut self,
+        eth_rpc_url: String,
+        evm_env: &mut EvmEnv,
+        fees: &FeeManager,
+        execution_profile: NetworkConfigs,
+    ) -> Result<(ForkedDatabase<AnyNetwork>, ClientForkConfig)> {
+        let (db, config, replay) = self
+            .setup_fork_db_config_with_replay(eth_rpc_url, evm_env, fees, Some(execution_profile))
+            .await?;
         eyre::ensure!(replay.is_none(), "transaction-hash fork replay requires full node startup");
         Ok((db, config))
     }
@@ -1911,6 +1956,7 @@ impl NodeConfig {
         eth_rpc_url: String,
         evm_env: &mut EvmEnv,
         fees: &FeeManager,
+        fixed_execution_profile: Option<NetworkConfigs>,
     ) -> Result<(ForkedDatabase<AnyNetwork>, ClientForkConfig, Option<ForkTransactionReplay>)> {
         debug!(target: "node", eth_rpc_url=%redact_url(&eth_rpc_url), "setting up fork db");
         if self.fork_chain_id.is_some() {
@@ -1944,10 +1990,20 @@ impl NodeConfig {
 
         let target_network = fork_identity.network.unwrap_or(NetworkVariant::Ethereum);
         let target_profile = fork_identity.network_profile.unwrap_or_default();
-        if self.inferred_fork_network.is_some()
-            && !self.networks.supports_fork_source(&target_profile)
-        {
-            eyre::bail!(
+        if let Some(execution_profile) = fixed_execution_profile {
+            if !self.has_explicit_network_selection() {
+                eyre::ensure!(
+                    execution_profile.supports_fork_source(&target_profile),
+                    "cannot reset Anvil across network families ({} -> {}); start a new instance \
+                     with matching network configuration",
+                    execution_profile.execution_profile_name(),
+                    target_profile.execution_profile_name()
+                );
+            }
+            self.networks = execution_profile;
+        } else if self.inferred_fork_network.is_some() {
+            eyre::ensure!(
+                self.networks.supports_fork_source(&target_profile),
                 "cannot reset Anvil across network families ({} -> {}); start a new instance \
                  with matching network configuration",
                 self.networks.execution_profile_name(),
@@ -1957,7 +2013,7 @@ impl NodeConfig {
         let source_chain_id = fork_identity.source_chain_id;
         self.fork_source_chain_id = Some(source_chain_id);
         self.fork_execution_chain_id = Some(fork_identity.execution_chain_id);
-        if !self.has_explicit_network_selection() {
+        if fixed_execution_profile.is_none() && !self.has_explicit_network_selection() {
             self.networks = self.networks.with_rpc_profile(target_profile);
             self.inferred_fork_network = Some(target_network);
             self.chain_id_network_base = None;
@@ -2036,15 +2092,16 @@ latest block number: {latest_block}"
         // config lets a later reset re-resolve timestamp-based activations.
         let effective_network =
             self.networks.resolved_network().unwrap_or(NetworkVariant::Ethereum);
-        let endpoint_matches_execution = fork_identity.network == Some(effective_network);
-        let source_hardfork = fork_identity.hardfork.or_else(|| {
-            FoundryHardfork::from_chain_and_timestamp(source_chain_id, block.header.timestamp())
+        let endpoint_hardfork = fork_identity
+            .hardfork
+            .filter(|hardfork| hardfork.namespace() == effective_network.hardfork_namespace());
+        let inferred_hardfork = endpoint_hardfork.or_else(|| {
+            effective_network.historical_hardfork(source_chain_id, block.header.timestamp())
         });
-        let inferred_hardfork = source_hardfork.filter(|hardfork| {
-            endpoint_matches_execution
-                && hardfork.namespace() == effective_network.hardfork_namespace()
+        let source_protocol_hardfork = fork_identity.hardfork.or_else(|| {
+            source_hardfork(effective_network, source_chain_id, block.header.timestamp())
         });
-        let source_may_omit_blob_fields = source_hardfork
+        let source_may_omit_blob_fields = source_protocol_hardfork
             .map_or(self.hardfork.is_some(), |hardfork| SpecId::from(hardfork) < SpecId::CANCUN);
         let fork_hardfork = self.hardfork.or(inferred_hardfork);
         let effective_hardfork = fork_hardfork.unwrap_or_else(|| self.get_hardfork());

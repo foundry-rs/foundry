@@ -2,7 +2,7 @@
 use self::{in_memory_db::StateRootDb, state::trie_storage};
 use crate::{
     ForkChoice, NodeConfig, PrecompileFactory,
-    config::{ForkTransactionReplay, PruneStateHistoryConfig},
+    config::{ForkTransactionReplay, PruneStateHistoryConfig, source_hardfork},
     eth::{
         backend::{
             cheats::{CheatEcrecover, CheatsManager},
@@ -252,6 +252,8 @@ use revm::inspector::NoOpInspector;
 use alloy_op_evm::{OpEvmContext, OpEvmFactory, OpTx};
 #[cfg(feature = "optimism")]
 use foundry_evm::hardfork::OpHardfork;
+#[cfg(feature = "optimism")]
+use foundry_evm_networks::NetworkVariant;
 #[cfg(feature = "optimism")]
 use op_alloy_consensus::POST_EXEC_TX_TYPE_ID;
 #[cfg(feature = "optimism")]
@@ -1610,7 +1612,8 @@ impl<N: Network> Backend<N> {
             return false;
         }
         let hardfork = if self.get_fork().is_some() {
-            FoundryHardfork::from_chain_and_timestamp(self.protocol_chain_id(), header.timestamp())
+            NetworkVariant::Optimism
+                .historical_hardfork(self.protocol_chain_id(), header.timestamp())
                 .unwrap_or_else(|| self.hardfork())
         } else {
             self.hardfork()
@@ -4783,7 +4786,12 @@ impl<N: Network> Backend<N> {
         staged_config.apply_tempo_fork_beneficiary_default(&mut staged_env);
         let staged_fees = self.fees.detached();
         let (mut staged_db, staged_client_config) = staged_config
-            .setup_fork_db_config(target_rpc_url.clone(), &mut staged_env, &staged_fees)
+            .setup_fork_db_config_for_reset(
+                target_rpc_url.clone(),
+                &mut staged_env,
+                &staged_fees,
+                self.networks,
+            )
             .await?;
         let cache_lease = StagedForkCacheLease::for_db(staged_db.inner());
         let cache_identity_changed = previous_source.as_ref().is_some_and(|source| {
@@ -5500,7 +5508,7 @@ where
         let inspector_tx_config = self.inspector_tx_config();
 
         let scheduled_hardfork =
-            FoundryHardfork::from_chain_and_timestamp(source_chain_id, timestamp);
+            source_hardfork(self.networks.execution_network(), source_chain_id, timestamp);
         #[cfg(feature = "monad")]
         let mut monad_replay = self
             .prepare_monad_fork_replay(
@@ -5520,15 +5528,18 @@ where
         let hardfork = scheduled_hardfork.unwrap_or_else(|| self.hardfork());
         if !self.is_optimism() && !self.is_tempo() {
             replay_env.cfg_env.spec = SpecId::from(hardfork);
-            // Cancun requires blob excess gas even for non-blob txs.
-            if replay_env.cfg_env.spec >= SpecId::CANCUN
-                && replay_env.block_env.blob_excess_gas_and_price.is_none()
-            {
-                replay_env.block_env.blob_excess_gas_and_price = Some(BlobExcessGasAndPrice::new(
-                    0,
-                    get_blob_base_fee_update_fraction_by_spec_id(replay_env.cfg_env.spec),
-                ));
-            }
+        }
+        let replay_spec = SpecId::from(hardfork);
+        // Cancun-family execution requires blob excess gas even for non-blob transactions. Some
+        // OP Stack source headers omit it, so use the neutral value for historical replay.
+        if !self.is_tempo()
+            && replay_spec >= SpecId::CANCUN
+            && replay_env.block_env.blob_excess_gas_and_price.is_none()
+        {
+            replay_env.block_env.blob_excess_gas_and_price = Some(BlobExcessGasAndPrice::new(
+                0,
+                get_blob_base_fee_update_fraction_by_spec_id(replay_spec),
+            ));
         }
 
         #[cfg(feature = "monad")]
@@ -10210,6 +10221,13 @@ mod tests {
     #[cfg(feature = "base")]
     use foundry_evm::{hardforks::BaseUpgrade, traces::CallTraceDecoderBuilder};
 
+    #[cfg(all(feature = "base", feature = "optimism"))]
+    use alloy_consensus::Header;
+    #[cfg(all(feature = "base", feature = "optimism"))]
+    use foundry_evm::hardfork::OpHardfork;
+    #[cfg(all(feature = "base", feature = "optimism"))]
+    use foundry_evm_networks::NetworkConfigs;
+
     fn test_cache_db(cache_path: std::path::PathBuf) -> BlockchainDb {
         let db = BlockchainDb::new(BlockchainDbMeta::default(), Some(cache_path));
         db.block_hashes().write().insert(U256::ZERO, B256::repeat_byte(0x11));
@@ -10230,6 +10248,31 @@ mod tests {
         block.other.insert("l1BlockNumber".to_string(), serde_json::json!("0x10276d3"));
 
         assert_eq!(arbitrum_replay_block_number(&block), U256::from(16_938_707));
+    }
+
+    #[cfg(all(feature = "base", feature = "optimism"))]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn optimism_fork_uses_optimism_schedule_for_base_headers() {
+        let timestamp = 1_710_374_401;
+        let (_, origin) = spawn(
+            NodeConfig::test_base()
+                .with_hardfork(Some(BaseUpgrade::Ecotone.into()))
+                .with_genesis_timestamp(Some(timestamp)),
+        )
+        .await;
+        let (api, _) = spawn(
+            NodeConfig::test()
+                .with_networks(NetworkConfigs::with_optimism())
+                .with_eth_rpc_url(Some(origin.http_endpoint())),
+        )
+        .await;
+
+        assert!(api.backend.is_optimism());
+        assert_eq!(api.backend.hardfork(), OpHardfork::Ecotone.into());
+        assert!(
+            !api.backend
+                .is_optimism_jovian_at_header(&Header { timestamp, ..Default::default() }, None)
+        );
     }
 
     #[tokio::test]

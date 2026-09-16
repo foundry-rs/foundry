@@ -2067,14 +2067,21 @@ impl EthApi<FoundryNetwork> {
             EthRequest::EthGetBlockAccessListRaw(block_id) => {
                 self.block_access_list_raw(block_id).await.to_rpc_result()
             }
-            #[cfg(feature = "base")]
             EthRequest::EthGetTransactionCount(params) => {
                 let (address, block, nonce_key) = params.into_parts();
-                self.transaction_count_with_key(address, block, nonce_key).await.to_rpc_result()
-            }
-            #[cfg(not(feature = "base"))]
-            EthRequest::EthGetTransactionCount(addr, block) => {
-                self.transaction_count(addr, block).await.to_rpc_result()
+                #[cfg(feature = "base")]
+                {
+                    self.transaction_count_with_key(address, block, nonce_key).await.to_rpc_result()
+                }
+                #[cfg(not(feature = "base"))]
+                {
+                    if nonce_key.is_some() {
+                        return ResponseResult::Error(RpcError::invalid_params(
+                            "nonce-key transaction counts require Base support",
+                        ));
+                    }
+                    self.transaction_count(address, block).await.to_rpc_result()
+                }
             }
             EthRequest::EthGetTransactionCountByHash(hash) => {
                 self.block_transaction_count_by_hash(hash).await.to_rpc_result()

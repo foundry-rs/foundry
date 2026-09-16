@@ -17,6 +17,9 @@ use op_alloy_consensus::{OpDepositReceipt, OpDepositReceiptWithBloom, TxDeposit}
 use op_alloy_rpc_types::OpTransactionFields;
 use serde_json::{Value, json};
 
+#[cfg(feature = "base")]
+use foundry_evm::hardforks::BaseUpgrade;
+
 #[tokio::test(flavor = "multi_thread")]
 async fn inferred_optimism_forks_allow_non_monad_source_resets() {
     let (_optimism_api, optimism_handle) = spawn(NodeConfig::test().with_optimism()).await;
@@ -51,6 +54,44 @@ async fn inferred_optimism_forks_allow_non_monad_source_resets() {
     let node_info = optimism_api.anvil_node_info().await.unwrap();
     assert_eq!(node_info.network.as_deref(), Some("optimism"));
     assert_eq!(node_info.fork_config.fork_url, Some(ethereum_origin.http_endpoint()));
+}
+
+#[cfg(feature = "base")]
+#[tokio::test(flavor = "multi_thread")]
+async fn inferred_optimism_fork_reset_to_base_preserves_execution_hardfork() {
+    let timestamp = 1_710_374_401u64;
+    let (_, optimism_origin) = spawn(
+        NodeConfig::test()
+            .with_optimism()
+            .with_hardfork(Some(OpHardfork::Ecotone.into()))
+            .with_genesis_timestamp(Some(timestamp)),
+    )
+    .await;
+    let (api, _) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(optimism_origin.http_endpoint()))
+            .with_fork_block_number(Some(0u64)),
+    )
+    .await;
+    assert!(api.backend.is_optimism());
+    assert_eq!(api.backend.hardfork(), OpHardfork::Ecotone.into());
+
+    let (_, base_origin) = spawn(
+        NodeConfig::test_base()
+            .with_hardfork(Some(BaseUpgrade::Ecotone.into()))
+            .with_genesis_timestamp(Some(timestamp)),
+    )
+    .await;
+    api.anvil_reset(Some(Forking {
+        json_rpc_url: Some(base_origin.http_endpoint()),
+        block_number: Some(0),
+    }))
+    .await
+    .unwrap();
+
+    assert!(api.backend.is_optimism());
+    assert_eq!(api.backend.hardfork(), OpHardfork::Ecotone.into());
+    api.mine_one().await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]
