@@ -2,7 +2,7 @@
 use self::{in_memory_db::StateRootDb, state::trie_storage};
 use crate::{
     ForkChoice, NodeConfig, PrecompileFactory,
-    config::{ForkTransactionReplay, PruneStateHistoryConfig},
+    config::{ForkTransactionReplay, PruneStateHistoryConfig, source_hardfork},
     eth::{
         backend::{
             cheats::{CheatEcrecover, CheatsManager},
@@ -1403,10 +1403,7 @@ impl<N: Network> Backend<N> {
             configured
             @ (EthereumHardfork::Osaka | EthereumHardfork::Bpo1 | EthereumHardfork::Bpo2),
         ) = configured_hardfork
-            && let Some(hardfork) = FoundryHardfork::from_chain_and_timestamp(
-                self.evm_env.read().cfg_env.chain_id,
-                timestamp,
-            )
+            && let Some(hardfork) = source_hardfork(self.evm_env.read().cfg_env.chain_id, timestamp)
             && let FoundryHardfork::Ethereum(
                 scheduled @ (EthereumHardfork::Osaka
                 | EthereumHardfork::Bpo1
@@ -1439,7 +1436,7 @@ impl<N: Network> Backend<N> {
             return false;
         }
         let hardfork = if self.get_fork().is_some() {
-            FoundryHardfork::from_chain_and_timestamp(self.protocol_chain_id(), header.timestamp())
+            source_hardfork(self.protocol_chain_id(), header.timestamp())
                 .unwrap_or_else(|| self.hardfork())
         } else {
             self.hardfork()
@@ -1487,7 +1484,7 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns an error if op-stack deposits are not active
-    #[cfg(feature = "optimism")]
+    #[cfg(any(feature = "base", feature = "optimism"))]
     pub const fn ensure_op_deposits_active(&self) -> Result<(), BlockchainError> {
         if self.is_optimism() {
             return Ok(());
@@ -1536,8 +1533,11 @@ impl<N: Network> Backend<N> {
         let blob_params = self.blob_params();
         PoolTxGasConfig {
             disable_block_gas_limit: evm_env.cfg_env.disable_block_gas_limit,
-            tx_gas_limit_cap: evm_env.cfg_env.tx_gas_limit_cap,
-            tx_gas_limit_cap_resolved: self.tx_gas_limit_cap(evm_env),
+            enforced_tx_gas_limit_cap: evm_env
+                .cfg_env
+                .tx_gas_limit_cap
+                .is_none()
+                .then(|| self.tx_gas_limit_cap(evm_env)),
             max_blob_gas_per_block: blob_params.max_blob_gas_per_block(),
             is_cancun,
         }
@@ -2560,7 +2560,9 @@ impl<N: Network> Backend<N> {
             let op_tx: OpTransaction<TxEnv> =
                 FromTxWithEncoded::from_encoded_tx(tx, sender, tx.encoded_2718().into());
             let base = op_tx.base.clone();
-            let result = self.transact_op_with_inspector_ref(db, evm_env, inspector, op_tx)?;
+            let spec = self.hardfork().into();
+            let result =
+                self.transact_op_with_inspector_ref(db, evm_env, inspector, op_tx, spec)?;
             return Ok((result, base));
         }
         let tx_env: TxEnv = build_tx_env_for_pending(pending, self.cheats());
@@ -2589,8 +2591,10 @@ impl<N: Network> Backend<N> {
 
     /// Builds the Tempo [`EvmEnv`] (spec, gas params, [`TempoBlockEnv`]) from a base
     /// env.
-    fn build_tempo_evm_env(&self, evm_env: &EvmEnv) -> EvmEnvFor<TempoEvmNetwork> {
-        let hardfork = self.tempo_hardfork();
+    fn build_tempo_evm_env(
+        evm_env: &EvmEnv,
+        hardfork: TempoHardfork,
+    ) -> EvmEnvFor<TempoEvmNetwork> {
         EvmEnv::new(
             evm_env.cfg_env.clone().with_spec_and_gas_params(hardfork, tempo_gas_params(hardfork)),
             TempoBlockEnv {
@@ -2614,7 +2618,7 @@ impl<N: Network> Backend<N> {
         I: Inspector<TempoContext<WrapDatabaseRef<&'db DB>>>,
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
-        let tempo_env = self.build_tempo_evm_env(evm_env);
+        let tempo_env = Self::build_tempo_evm_env(evm_env, self.tempo_hardfork());
         let mut evm = TempoEvmFactory::default().create_evm_with_inspector(
             WrapDatabaseRef(db),
             tempo_env,
@@ -2710,7 +2714,7 @@ impl<N: Network> Backend<N> {
         }
 
         if self.is_tempo() {
-            let tempo_env = self.build_tempo_evm_env(evm_env);
+            let tempo_env = Self::build_tempo_evm_env(evm_env, self.tempo_hardfork());
             let mut evm =
                 TempoEvmFactory::default().create_evm_with_inspector(db, tempo_env, inspector);
             return run!(evm);
@@ -2947,6 +2951,15 @@ impl<N: Network> Backend<N> {
         request: WithOtherFields<TransactionRequest>,
     ) -> Result<FoundryTransactionRequest, BlockchainError> {
         let transaction_type = request.transaction_type;
+        #[cfg(feature = "base")]
+        if transaction_type == Some(foundry_primitives::FoundryTxType::Eip8130.into())
+            || matches!(
+                FoundryTransactionRequest::try_from(request.clone()),
+                Ok(FoundryTransactionRequest::Base(_))
+            )
+        {
+            return Err(BlockchainError::BaseTransactionUnsupported);
+        }
         if !self.is_tempo() && transaction_type != Some(TEMPO_TX_TYPE_ID) {
             #[cfg(feature = "optimism")]
             if transaction_type == Some(DEPOSIT_TX_TYPE_ID)
@@ -2975,9 +2988,9 @@ impl<N: Network> Backend<N> {
     }
 
     fn build_tempo_request_env(
-        &self,
         request: TempoTransactionRequest,
         mut base: TxEnv,
+        hardfork: TempoHardfork,
     ) -> Result<(TempoTxEnv, AASigned), BlockchainError> {
         let fee_payer = request.fee_payer_signature.map(|_| {
             request.clone().build_aa().ok().and_then(|tx| tx.recover_fee_payer(base.caller).ok())
@@ -3007,13 +3020,8 @@ impl<N: Network> Backend<N> {
         let key_type = request.key_type.unwrap_or(SignatureType::Secp256k1);
         let key_data = request.key_data.clone();
         let key_id = request.key_id;
-        let signature = mock_tempo_signature(
-            key_type,
-            key_data,
-            key_id,
-            base.caller,
-            self.tempo_hardfork().is_t1c(),
-        );
+        let signature =
+            mock_tempo_signature(key_type, key_data, key_id, base.caller, hardfork.is_t1c());
         let mut calls = request.calls;
         if let Some(to) = request.inner.to {
             calls.push(Call {
@@ -3078,6 +3086,8 @@ impl<N: Network> Backend<N> {
         base_evm_env: Option<&EvmEnv>,
     ) -> Result<PreparedCall, BlockchainError> {
         match request {
+            #[cfg(feature = "base")]
+            FoundryTransactionRequest::Base(_) => Err(BlockchainError::BaseTransactionUnsupported),
             FoundryTransactionRequest::Tempo(tempo_request) => {
                 self.ensure_tempo_active()?;
                 let mut tempo_request = *tempo_request;
@@ -3093,7 +3103,7 @@ impl<N: Network> Backend<N> {
                 let (evm_env, base, _) =
                     self.build_call_env_with_base(inner, fee_details, block_env, base_evm_env);
                 let (tx_env, simulated_tempo_tx) =
-                    self.build_tempo_request_env(tempo_request, base)?;
+                    Self::build_tempo_request_env(tempo_request, base, self.tempo_hardfork())?;
                 Ok(PreparedCall {
                     evm_env,
                     tx_env: CallTxEnv::Tempo(tx_env),
@@ -3107,7 +3117,7 @@ impl<N: Network> Backend<N> {
                     block_env,
                     base_evm_env,
                 )),
-            #[cfg(feature = "optimism")]
+            #[cfg(any(feature = "base", feature = "optimism"))]
             FoundryTransactionRequest::Op(request) => Ok(self.prepare_base_call_env_with_base(
                 request,
                 fee_details,
@@ -3179,7 +3189,8 @@ impl<N: Network> Backend<N> {
             }
             #[cfg(feature = "optimism")]
             CallTxEnv::Op(tx_env) => {
-                self.transact_op_with_inspector_ref(db, evm_env, inspector, tx_env)
+                let spec = self.hardfork().into();
+                self.transact_op_with_inspector_ref(db, evm_env, inspector, tx_env, spec)
             }
             CallTxEnv::Tempo(tx_env) => {
                 self.transact_tempo_with_inspector_ref(db, evm_env, inspector, tx_env)
@@ -5076,8 +5087,7 @@ where
         apply_chain_specific_tx_replay_env_changes_for_chain(&mut replay_env, source_chain_id);
         let inspector_tx_config = self.inspector_tx_config();
 
-        let scheduled_hardfork =
-            FoundryHardfork::from_chain_and_timestamp(source_chain_id, timestamp);
+        let scheduled_hardfork = source_hardfork(source_chain_id, timestamp);
         #[cfg(feature = "monad")]
         let mut monad_replay = self
             .prepare_monad_fork_replay(
@@ -5316,7 +5326,7 @@ where
         }
 
         if self.is_tempo() {
-            let tempo_env = self.build_tempo_evm_env(evm_env);
+            let tempo_env = Self::build_tempo_evm_env(evm_env, self.tempo_hardfork());
             let mut evm =
                 TempoEvmFactory::default().create_evm_with_inspector(db, tempo_env, inspector);
             return run!(evm);
@@ -8814,7 +8824,7 @@ where
             let mut inspector = self.build_inspector();
             let mut evm = TempoEvmFactory::default().create_evm_with_inspector(
                 WrapDatabaseRef(&cache_db),
-                self.build_tempo_evm_env(&evm_env),
+                Self::build_tempo_evm_env(&evm_env, self.tempo_hardfork()),
                 &mut inspector,
             );
             self.inject_tempo_precompiles(&mut evm, &evm_env);

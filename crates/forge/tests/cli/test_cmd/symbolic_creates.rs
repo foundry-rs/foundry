@@ -151,6 +151,172 @@ checkCreate(uint256)
     assert!(!stdout.contains("unsupported opcode: 0xf0"), "{stdout}");
 });
 
+forgetest_init!(symbolic_create_respects_eip3541_runtime_prefix, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_create_respects_eip3541_runtime_prefix because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicCreateEip3541.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicCreateEip3541 is Test {
+    function checkRejectedPrefix() public {
+        assert(deployCreate(0xef) == address(0));
+        assert(deployCreate2(0xef) == address(0));
+    }
+
+    function checkRejectedPrefixPreservesWarp() public {
+        bytes memory initcode = abi.encodePacked(type(WarpThenReject).creationCode, abi.encode(address(this)));
+        address created;
+        assembly ("memory-safe") {
+            created := create(0, add(initcode, 32), mload(initcode))
+        }
+        assert(created == address(0));
+        assert(block.timestamp == 123);
+    }
+
+    function checkRejectedPrefixPreservesMockProgress() public {
+        checkMockProgress(address(0x1001), false);
+        checkMockProgress(address(0x1002), true);
+    }
+
+    function checkRejectedPrefixExpectedCallsAndRevert() public {
+        checkExpectedCallAndRevert(address(0x2001), false);
+        checkExpectedCallAndRevert(address(0x2002), true);
+    }
+
+    function warp(uint256 timestamp) external {
+        vm.warp(timestamp);
+    }
+
+    function checkMockProgress(address target, bool useCreate2) internal {
+        bytes[] memory returnValues = new bytes[](2);
+        returnValues[0] = abi.encode(uint256(1));
+        returnValues[1] = abi.encode(uint256(2));
+        vm.mockCalls(target, abi.encodeCall(IMockSequenceTarget.value, ()), returnValues);
+
+        bytes memory initcode = abi.encodePacked(type(ConsumeMockThenReject).creationCode, abi.encode(target));
+        address created;
+        if (useCreate2) {
+            assembly ("memory-safe") {
+                created := create2(0, add(initcode, 32), mload(initcode), 1)
+            }
+        } else {
+            assembly ("memory-safe") {
+                created := create(0, add(initcode, 32), mload(initcode))
+            }
+        }
+        assert(created == address(0));
+        assertEq(IMockSequenceTarget(target).value(), 2);
+    }
+
+    function checkExpectedCallAndRevert(address target, bool useCreate2) internal {
+        bytes memory callData = abi.encodeCall(IMockSequenceTarget.value, ());
+        vm.mockCall(target, callData, abi.encode(uint256(1)));
+        vm.expectCall(target, callData);
+        bytes memory rejectedRuntime = hex"ef";
+        vm.expectRevert(rejectedRuntime);
+        if (useCreate2) {
+            new ConsumeMockThenReject{salt: bytes32(uint256(2))}(IMockSequenceTarget(target));
+        } else {
+            new ConsumeMockThenReject(IMockSequenceTarget(target));
+        }
+    }
+
+    function checkAllowedPrefixBeforeLondon() public {
+        address created = deployCreate(0xef);
+        address created2 = deployCreate2(0xef);
+        assert(created != address(0));
+        assert(created2 != address(0));
+        assert(created.code.length == 1);
+        assert(created2.code.length == 1);
+    }
+
+    function checkAdjacentPrefixStillAllowed() public {
+        address created = deployCreate(0xee);
+        address created2 = deployCreate2(0xee);
+        assert(created != address(0));
+        assert(created2 != address(0));
+        assert(created.code.length == 1);
+        assert(created2.code.length == 1);
+    }
+
+    function deployCreate(uint256 runtimeByte) internal returns (address created) {
+        assembly ("memory-safe") {
+            mstore(0, shl(176, or(0x600060005360016000f3, shl(64, runtimeByte))))
+            created := create(0, 0, 10)
+        }
+    }
+
+    function deployCreate2(uint256 runtimeByte) internal returns (address created) {
+        assembly ("memory-safe") {
+            mstore(0, shl(176, or(0x600060005360016000f3, shl(64, runtimeByte))))
+            created := create2(0, 0, 10, 123)
+        }
+    }
+}
+
+contract WarpThenReject {
+    constructor(SymbolicCreateEip3541 test) {
+        test.warp(123);
+        assembly ("memory-safe") {
+            mstore(0, shl(248, 0xef))
+            return(0, 1)
+        }
+    }
+}
+
+interface IMockSequenceTarget {
+    function value() external returns (uint256);
+}
+
+contract ConsumeMockThenReject {
+    constructor(IMockSequenceTarget target) {
+        require(target.value() == 1);
+        assembly ("memory-safe") {
+            mstore(0, shl(248, 0xef))
+            return(0, 1)
+        }
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--symbolic", "--match-test", "checkRejectedPrefix"]).assert_success();
+
+    cmd.forge_fuse();
+    cmd.args(["test", "--symbolic", "--match-test", "checkRejectedPrefixPreservesWarp"])
+        .assert_success();
+
+    cmd.forge_fuse();
+    cmd.args(["test", "--symbolic", "--match-test", "checkRejectedPrefixPreservesMockProgress"])
+        .assert_success();
+
+    cmd.forge_fuse();
+    cmd.args(["test", "--symbolic", "--match-test", "checkRejectedPrefixExpectedCallsAndRevert"])
+        .assert_success();
+
+    cmd.forge_fuse();
+    cmd.args(["test", "--symbolic", "--match-test", "checkAdjacentPrefixStillAllowed"])
+        .assert_success();
+
+    cmd.forge_fuse();
+    cmd.args([
+        "test",
+        "--symbolic",
+        "--evm-version",
+        "berlin",
+        "--match-test",
+        "checkAllowedPrefixBeforeLondon",
+    ])
+    .assert_success();
+});
+
 forgetest_init!(symbolic_create_preserves_symbolic_constructor_args, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(

@@ -19,7 +19,7 @@ use foundry_evm_core::{
     evm::{
         BlockEnvFor, ChainFor, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, FoundryContextFor,
         FoundryEvmFactory, FoundryEvmNetwork, TxEnvFor, get_create2_factory_call_inputs,
-        with_cloned_context,
+        merge_child_state, prepare_child_state, with_inherited_evm,
     },
     precompiles::P256_VERIFY,
     refresh_chain_journal,
@@ -43,7 +43,7 @@ use revm::{
         return_ok,
     },
     primitives::KECCAK_EMPTY,
-    state::{Account, AccountStatus},
+    state::Account,
 };
 use std::{
     ops::{Deref, DerefMut},
@@ -506,42 +506,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         f: NestedEvmClosureFor<'_, FEN>,
     ) -> Result<(), EVMError<DatabaseError>> {
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
-        let factory = FEN::EvmFactory::default();
-        let chain_context = ecx.chain().clone();
-        #[cfg(feature = "monad")]
-        let state = foundry_evm_core::FoundryJournal::capture_reserve_balance(ecx.journal());
-        let mut nested_chain_context = None;
-        #[cfg(feature = "monad")]
-        let mut reserve_balance = None;
-        with_cloned_context(ecx, |db, evm_env, journaled_state| {
-            let mut evm = factory.create_nested_evm_with_inspector(db, evm_env, &mut inspector);
-            *evm.chain_mut() = chain_context;
-            *evm.journal_inner_mut() = journaled_state;
-            #[cfg(feature = "monad")]
-            {
-                foundry_evm_core::FoundryJournal::restore_reserve_balance(evm.journal_mut(), state);
-                foundry_evm_core::evm::refresh_nested_chain_journal(&mut *evm);
-            }
-            f(&mut *evm)?;
-            nested_chain_context = Some(evm.chain_mut().clone());
-            #[cfg(feature = "monad")]
-            {
-                reserve_balance = Some(foundry_evm_core::FoundryJournal::capture_reserve_balance(
-                    evm.journal_mut(),
-                ));
-            }
-            let sub_inner = evm.journal_inner_mut().clone();
-            let sub_evm_env = evm.to_evm_env();
-            Ok((sub_evm_env, sub_inner))
-        })?;
-        *ecx.chain_mut() = nested_chain_context.expect("nested EVM chain context was captured");
-        #[cfg(feature = "monad")]
-        foundry_evm_core::FoundryJournal::restore_reserve_balance(
-            ecx.journal_mut(),
-            reserve_balance.expect("nested EVM state was captured"),
-        );
-        refresh_chain_journal(ecx);
-        Ok(())
+        with_inherited_evm::<FEN::EvmFactory, _>(ecx, &mut inspector, f)
     }
 
     fn with_fresh_nested_evm(
@@ -1083,26 +1048,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let factory = FEN::EvmFactory::default();
         let chain_context = ecx.chain().clone();
 
-        let isolated_state = {
-            let journal = ecx.journal_inner();
-            let mut state = journal.state.clone();
-            for (addr, acc_mut) in &mut state {
-                // Preserve revm's per-transaction creation flag for accounts created in
-                // the parent context in initialize_interp. A cold load in the nested
-                // context clears local flags, but keeping accounts cold preserves gas
-                // accounting for isolated calls.
-                if journal.warm_addresses.is_cold(addr) {
-                    acc_mut.mark_cold();
-                }
-
-                // Mark all slots cold.
-                for slot_mut in acc_mut.storage.values_mut() {
-                    slot_mut.is_cold = true;
-                    slot_mut.original_value = slot_mut.present_value;
-                }
-            }
-            state
-        };
+        let isolated_state = prepare_child_state(ecx.journal_inner());
 
         #[cfg(feature = "monad")]
         let state = foundry_evm_core::FoundryJournal::capture_reserve_balance(ecx.journal());
@@ -1195,30 +1141,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
 
         let rolled_back = !res.result.is_success();
 
-        for (addr, mut acc) in res.state {
-            let Some(acc_mut) = ecx.journal_mut().evm_state_mut().get_mut(&addr) else {
-                ecx.journal_mut().evm_state_mut().insert(addr, acc);
-                continue;
-            };
-
-            // make sure accounts that were warmed earlier do not become cold
-            if acc.status.contains(AccountStatus::Cold)
-                && !acc_mut.status.contains(AccountStatus::Cold)
-            {
-                acc.status -= AccountStatus::Cold;
-            }
-            acc_mut.info = acc.info;
-            acc_mut.status |= acc.status;
-
-            for (key, val) in acc.storage {
-                let Some(slot_mut) = acc_mut.storage.get_mut(&key) else {
-                    acc_mut.storage.insert(key, val);
-                    continue;
-                };
-                slot_mut.present_value = val.present_value;
-                slot_mut.is_cold &= val.is_cold;
-            }
-        }
+        merge_child_state(ecx.journal_mut().evm_state_mut(), res.state);
         #[cfg(feature = "monad")]
         foundry_evm_core::FoundryJournal::restore_reserve_balance(
             ecx.journal_mut(),

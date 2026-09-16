@@ -17,16 +17,15 @@ use std::{
 };
 
 #[cfg(unix)]
+use foundry_test_utils::snapbox::{IntoData, data::DataFormat};
+#[cfg(unix)]
+use rexpect::{Encoding, process::wait::WaitStatus, reader::Options, spawn_with_options};
+#[cfg(unix)]
 use std::{
     os::unix::fs::{PermissionsExt, symlink},
     path::Path,
     process::Command,
 };
-
-#[cfg(unix)]
-use foundry_test_utils::snapbox::{IntoData, data::DataFormat};
-#[cfg(unix)]
-use rexpect::{Encoding, process::wait::WaitStatus, reader::Options, spawn_with_options};
 
 const SYMBOL_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -265,7 +264,7 @@ forgetest!(lsp_stdio_rejects_editor_launch_options, |_prj, cmd| {
         r#"
 error: the argument '--stdio' cannot be used with '--vscode'
 
-Usage: forge lsp --stdio [PATH]
+Usage: forge[..] lsp --stdio [PATH]
 
 For more information, try '--help'.
 

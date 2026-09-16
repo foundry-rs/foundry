@@ -19,6 +19,11 @@ use op_revm::OpSpecId;
 pub use alloy_hardforks::EthereumHardfork;
 pub use tempo_hardfork::TempoHardfork;
 
+#[cfg(feature = "base")]
+pub use base_common_evm::BaseSpecId;
+#[cfg(feature = "base")]
+pub use base_common_genesis::BaseUpgrade;
+
 #[cfg(feature = "monad")]
 pub use monad_revm::MonadHardfork;
 
@@ -31,6 +36,8 @@ pub enum FoundryHardfork {
     Ethereum(EthereumHardfork),
     #[cfg(feature = "optimism")]
     Optimism(OpHardfork),
+    #[cfg(feature = "base")]
+    Base(BaseUpgrade),
     Tempo(TempoHardfork),
     #[cfg(feature = "monad")]
     Monad(MonadHardfork),
@@ -42,6 +49,8 @@ impl From<FoundryHardfork> for String {
             FoundryHardfork::Ethereum(h) => format!("{h}"),
             #[cfg(feature = "optimism")]
             FoundryHardfork::Optimism(h) => format!("optimism:{h}"),
+            #[cfg(feature = "base")]
+            FoundryHardfork::Base(h) => format!("base:{h}"),
             FoundryHardfork::Tempo(h) => format!("tempo:{h}"),
             #[cfg(feature = "monad")]
             FoundryHardfork::Monad(h) => format!("monad:{h}"),
@@ -84,6 +93,11 @@ impl FromStr for FoundryHardfork {
                 .map(Self::Optimism)
                 .map_err(|_| format!("unknown optimism hardfork '{fork_raw}'")),
 
+            #[cfg(feature = "base")]
+            "base" => BaseUpgrade::from_str(&fork)
+                .map(Self::Base)
+                .map_err(|_| format!("unknown base hardfork '{fork_raw}'")),
+
             "t" | "tempo" => TempoHardfork::from_str(&fork)
                 .map(Self::Tempo)
                 .map_err(|_| format!("unknown tempo hardfork '{fork_raw}'")),
@@ -109,6 +123,11 @@ impl FoundryHardfork {
         Self::Optimism(h)
     }
 
+    #[cfg(feature = "base")]
+    pub const fn base(h: BaseUpgrade) -> Self {
+        Self::Base(h)
+    }
+
     pub const fn tempo(h: TempoHardfork) -> Self {
         Self::Tempo(h)
     }
@@ -124,6 +143,8 @@ impl FoundryHardfork {
             Self::Ethereum(h) => format!("{h}"),
             #[cfg(feature = "optimism")]
             Self::Optimism(h) => format!("{h}"),
+            #[cfg(feature = "base")]
+            Self::Base(h) => format!("{h}"),
             Self::Tempo(h) => format!("{h}"),
             #[cfg(feature = "monad")]
             Self::Monad(h) => format!("{h}"),
@@ -138,6 +159,8 @@ impl FoundryHardfork {
             Self::Ethereum(_) => None,
             #[cfg(feature = "optimism")]
             Self::Optimism(_) => Some("optimism"),
+            #[cfg(feature = "base")]
+            Self::Base(_) => Some("base"),
             Self::Tempo(_) => Some("tempo"),
             #[cfg(feature = "monad")]
             Self::Monad(_) => Some("monad"),
@@ -151,6 +174,10 @@ impl FoundryHardfork {
         let chain = Chain::from_id(chain_id);
         if let Some(fork) = EthereumHardfork::from_chain_and_timestamp(chain, timestamp) {
             return Some(Self::Ethereum(fork));
+        }
+        #[cfg(feature = "base")]
+        if let Some(fork) = BaseUpgrade::from_chain_and_timestamp(chain_id, timestamp) {
+            return Some(Self::Base(fork));
         }
         #[cfg(feature = "optimism")]
         if let Some(fork) = OpHardfork::from_chain_and_timestamp(chain, timestamp) {
@@ -199,6 +226,33 @@ impl From<FoundryHardfork> for OpHardfork {
     }
 }
 
+#[cfg(feature = "base")]
+impl From<BaseUpgrade> for FoundryHardfork {
+    fn from(value: BaseUpgrade) -> Self {
+        Self::Base(value)
+    }
+}
+
+#[cfg(feature = "base")]
+impl From<FoundryHardfork> for BaseUpgrade {
+    fn from(fork: FoundryHardfork) -> Self {
+        match fork {
+            FoundryHardfork::Base(upgrade) => upgrade,
+            _ => Self::default(),
+        }
+    }
+}
+
+#[cfg(feature = "base")]
+impl From<FoundryHardfork> for BaseSpecId {
+    fn from(fork: FoundryHardfork) -> Self {
+        match fork {
+            FoundryHardfork::Base(upgrade) => Self::new(upgrade),
+            _ => Self::default(),
+        }
+    }
+}
+
 impl From<TempoHardfork> for FoundryHardfork {
     fn from(value: TempoHardfork) -> Self {
         Self::Tempo(value)
@@ -237,6 +291,8 @@ impl From<FoundryHardfork> for SpecId {
             FoundryHardfork::Ethereum(hardfork) => spec_id_from_ethereum_hardfork(hardfork),
             #[cfg(feature = "optimism")]
             FoundryHardfork::Optimism(hardfork) => eth_spec_id_from_optimism_hardfork(hardfork),
+            #[cfg(feature = "base")]
+            FoundryHardfork::Base(hardfork) => BaseSpecId::new(hardfork).into_eth_spec(),
             FoundryHardfork::Tempo(hardfork) => spec_id_from_tempo_hardfork(hardfork),
             #[cfg(feature = "monad")]
             FoundryHardfork::Monad(hardfork) => hardfork.into(),
@@ -460,6 +516,11 @@ impl ExecutionSpec for OpSpecId {
             _ => None,
         }
     }
+
+    fn historical_hardfork(chain_id: u64, timestamp: u64) -> Option<FoundryHardfork> {
+        OpHardfork::from_chain_and_timestamp(Chain::from_id(chain_id), timestamp)
+            .map(FoundryHardfork::Optimism)
+    }
 }
 
 impl FromEvmVersion for TempoHardfork {
@@ -522,6 +583,54 @@ impl ExecutionSpec for MonadHardfork {
 
     fn reported_hardfork(self) -> Option<FoundryHardfork> {
         Some(self.into())
+    }
+}
+
+#[cfg(feature = "base")]
+impl FromEvmVersion for BaseSpecId {
+    fn from_evm_version(version: EvmVersion) -> Self {
+        let upgrade = match version {
+            EvmVersion::Homestead
+            | EvmVersion::TangerineWhistle
+            | EvmVersion::SpuriousDragon
+            | EvmVersion::Byzantium
+            | EvmVersion::Constantinople
+            | EvmVersion::Petersburg
+            | EvmVersion::Istanbul
+            | EvmVersion::Berlin
+            | EvmVersion::London
+            | EvmVersion::Paris => BaseUpgrade::Bedrock,
+            EvmVersion::Shanghai => BaseUpgrade::Canyon,
+            EvmVersion::Cancun => BaseUpgrade::Ecotone,
+            EvmVersion::Prague => BaseUpgrade::Isthmus,
+            EvmVersion::Osaka | EvmVersion::Amsterdam => BaseUpgrade::Azul,
+        };
+        Self::new(upgrade)
+    }
+}
+
+#[cfg(feature = "base")]
+impl ExecutionSpec for BaseSpecId {
+    // Returns the user-facing name for the active execution spec.
+    fn evm_version_name(&self) -> String {
+        self.to_string()
+    }
+
+    // Parses an unnamespaced Base hardfork name.
+    fn from_network_hardfork(hardfork: &str) -> Option<Self> {
+        Self::from_str(hardfork).ok()
+    }
+
+    // Converts only Base namespaced hardforks to a Base spec.
+    fn from_foundry_hardfork(hardfork: FoundryHardfork) -> Option<Self> {
+        match hardfork {
+            FoundryHardfork::Base(hardfork) => Some(Self::new(hardfork)),
+            _ => None,
+        }
+    }
+
+    fn reported_hardfork(self) -> Option<FoundryHardfork> {
+        Some(FoundryHardfork::Base(self.upgrade()))
     }
 }
 
@@ -843,9 +952,96 @@ mod tests {
         assert_eq!(FoundryHardfork::from_chain_and_timestamp(999999, 0), None);
     }
 
+    #[cfg(feature = "base")]
+    mod base {
+        use super::*;
+        use base_common_genesis::UpgradeConfig;
+
+        #[test]
+        fn test_base_hardfork_serialization() {
+            assert_eq!(String::from(FoundryHardfork::Base(BaseUpgrade::Azul)), "base:Azul");
+            assert_eq!(FoundryHardfork::Base(BaseUpgrade::Azul).namespace(), Some("base"));
+            assert_eq!(FoundryHardfork::Base(BaseUpgrade::Azul).name(), "Azul");
+        }
+
+        #[test]
+        fn test_base_hardfork_spec_id_mapping() {
+            assert_eq!(SpecId::from(FoundryHardfork::Base(BaseUpgrade::Azul)), SpecId::OSAKA);
+            assert_eq!(SpecId::from(FoundryHardfork::Base(BaseUpgrade::Jovian)), SpecId::PRAGUE);
+            assert_eq!(
+                BaseSpecId::from(FoundryHardfork::Base(BaseUpgrade::Azul)),
+                BaseSpecId::new(BaseUpgrade::Azul)
+            );
+        }
+
+        #[test]
+        fn test_base_hardfork_parsing() {
+            assert_eq!(
+                "base:Azul".parse::<FoundryHardfork>().unwrap(),
+                FoundryHardfork::Base(BaseUpgrade::Azul)
+            );
+            assert_eq!(
+                "base:Beryl".parse::<FoundryHardfork>().unwrap(),
+                FoundryHardfork::Base(BaseUpgrade::Beryl)
+            );
+        }
+
+        #[test]
+        fn test_base_hardfork_from_chain_and_timestamp() {
+            let mainnet_config = UpgradeConfig::BASE_MAINNET;
+            let sepolia_config = UpgradeConfig::BASE_SEPOLIA;
+            assert_eq!(
+                FoundryHardfork::from_chain_and_timestamp(8453, u64::MAX),
+                Some(FoundryHardfork::Base(BaseUpgrade::Beryl))
+            );
+            assert_eq!(
+                FoundryHardfork::from_chain_and_timestamp(84532, u64::MAX),
+                Some(FoundryHardfork::Base(BaseUpgrade::Beryl))
+            );
+            assert_eq!(
+                FoundryHardfork::from_chain_and_timestamp(8453, mainnet_config.base.azul.unwrap()),
+                Some(FoundryHardfork::Base(BaseUpgrade::Azul))
+            );
+            assert_eq!(
+                FoundryHardfork::from_chain_and_timestamp(84532, sepolia_config.base.azul.unwrap()),
+                Some(FoundryHardfork::Base(BaseUpgrade::Azul))
+            );
+            assert_eq!(
+                FoundryHardfork::from_chain_and_timestamp(
+                    8453,
+                    mainnet_config.base.azul.unwrap() - 1
+                ),
+                Some(FoundryHardfork::Base(BaseUpgrade::Jovian))
+            );
+            assert_eq!(
+                FoundryHardfork::from_chain_and_timestamp(
+                    84532,
+                    sepolia_config.base.azul.unwrap() - 1
+                ),
+                Some(FoundryHardfork::Base(BaseUpgrade::Jovian))
+            );
+        }
+
+        #[test]
+        fn test_evm_spec_id_from_str_parses_base_upgrades() {
+            assert_eq!(
+                evm_spec_id_from_str::<BaseSpecId>("Azul"),
+                Some(BaseSpecId::new(BaseUpgrade::Azul))
+            );
+            assert_eq!(
+                evm_spec_id_from_str::<BaseSpecId>("base:Beryl"),
+                Some(BaseSpecId::new(BaseUpgrade::Beryl))
+            );
+            assert_eq!(evm_spec_id_from_str::<BaseSpecId>("tempo:T3"), None);
+        }
+    }
+
     #[cfg(feature = "optimism")]
     mod optimism {
         use super::*;
+
+        #[cfg(feature = "base")]
+        use base_common_genesis::UpgradeConfig;
 
         #[test]
         fn test_optimism_spec_id_mapping() {
@@ -872,6 +1068,37 @@ mod tests {
         }
 
         #[test]
+        #[cfg(feature = "base")]
+        fn test_base_chain_historical_hardfork_is_execution_family_specific() {
+            let chains = [
+                (8453, UpgradeConfig::BASE_MAINNET.ecotone_time.unwrap()),
+                (84532, UpgradeConfig::BASE_SEPOLIA.ecotone_time.unwrap()),
+            ];
+
+            for (chain_id, timestamp) in chains {
+                assert_eq!(
+                    FoundryHardfork::from_chain_and_timestamp(chain_id, timestamp),
+                    Some(FoundryHardfork::Base(BaseUpgrade::Ecotone))
+                );
+                assert_eq!(
+                    BaseSpecId::historical_hardfork(chain_id, timestamp),
+                    Some(FoundryHardfork::Base(BaseUpgrade::Ecotone))
+                );
+                assert_eq!(
+                    OpSpecId::historical_hardfork(chain_id, timestamp),
+                    Some(FoundryHardfork::Optimism(OpHardfork::Ecotone))
+                );
+                assert_eq!(
+                    OpSpecId::fork_hardfork(chain_id, timestamp, None),
+                    Some(FoundryHardfork::Optimism(OpHardfork::Ecotone))
+                );
+            }
+        }
+
+        /// Base is an OP-stack chain, so without the `base` feature its chain IDs must still map
+        /// to an Optimism hardfork rather than resolving to nothing.
+        #[test]
+        #[cfg(not(feature = "base"))]
         fn test_from_chain_and_timestamp_base() {
             let base_chain_id = 8453;
             assert!(matches!(

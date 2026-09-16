@@ -154,12 +154,16 @@ impl FoundryReceiptBuilder {
             FoundryTxType::Eip1559 => FoundryReceiptEnvelope::Eip1559(receipt),
             FoundryTxType::Eip4844 => FoundryReceiptEnvelope::Eip4844(receipt),
             FoundryTxType::Eip7702 => FoundryReceiptEnvelope::Eip7702(receipt),
-            #[cfg(feature = "optimism")]
+            #[cfg(any(feature = "base", feature = "optimism"))]
             FoundryTxType::Deposit => {
                 panic!("deposit receipts require fork-specific metadata")
             }
             #[cfg(feature = "optimism")]
             FoundryTxType::PostExec => FoundryReceiptEnvelope::PostExec(receipt),
+            #[cfg(feature = "base")]
+            FoundryTxType::Eip8130 => {
+                panic!("Base transactions are rejected before execution")
+            }
             FoundryTxType::Tempo => FoundryReceiptEnvelope::Tempo(receipt),
         }
     }
@@ -198,10 +202,11 @@ impl ReceiptBuilder for FoundryReceiptBuilder {
 
 /// Result of executing a transaction in [`AnvilBlockExecutor`].
 ///
-/// Wraps [`EthTxResult`] with the sender address, needed for deposit nonce resolution.
+/// Wraps [`EthTxResult`] with the sender address when OP deposit nonce resolution is enabled.
 #[derive(Debug)]
 pub struct AnvilTxResult<H> {
     pub inner: EthTxResult<H, FoundryTxType>,
+    #[cfg(feature = "optimism")]
     pub sender: Address,
 }
 
@@ -340,6 +345,7 @@ where
             .into());
         }
 
+        #[cfg(feature = "optimism")]
         let sender = *tx.signer();
         let transaction_hash = tx.tx().trie_hash();
         #[cfg(feature = "optimism")]
@@ -362,6 +368,7 @@ where
 
         Ok(AnvilTxResult {
             inner: EthTxResult { result, blob_gas_used, tx_type: tx.tx().tx_type() },
+            #[cfg(feature = "optimism")]
             sender,
         })
     }
@@ -430,7 +437,7 @@ where
     fn commit_transaction(&mut self, output: Self::Result) -> GasOutput {
         let AnvilTxResult {
             inner: EthTxResult { result: ResultAndState { result, state }, blob_gas_used, tx_type },
-            #[cfg_attr(not(feature = "optimism"), allow(unused_variables))]
+            #[cfg(feature = "optimism")]
             sender,
         } = output;
 
@@ -527,8 +534,8 @@ pub struct ExecutedPoolTransactions<T> {
 /// before calling [`execute_pool_transactions`].
 pub struct PoolTxGasConfig {
     pub disable_block_gas_limit: bool,
-    pub tx_gas_limit_cap: Option<u64>,
-    pub tx_gas_limit_cap_resolved: u64,
+    /// Resolved transaction gas cap, or `None` when the caller disables this check.
+    pub enforced_tx_gas_limit_cap: Option<u64>,
     pub max_blob_gas_per_block: u64,
     pub is_cancun: bool,
 }
@@ -623,8 +630,8 @@ where
         }
 
         // Osaka EIP-7825 tx gas limit cap check
-        if gas_config.tx_gas_limit_cap.is_none()
-            && pending.transaction.gas_limit() > gas_config.tx_gas_limit_cap_resolved
+        if let Some(tx_gas_limit_cap) = gas_config.enforced_tx_gas_limit_cap
+            && pending.transaction.gas_limit() > tx_gas_limit_cap
         {
             trace!(target: "backend", tx_gas_limit = %pending.transaction.gas_limit(), ?pool_tx, "transaction gas limit exhausting, skipping transaction");
             continue;

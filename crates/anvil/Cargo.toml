@@ -138,6 +138,14 @@ monad = [
     "foundry-evm-networks/monad",
     "foundry-cli?/monad",
 ]
+base = [
+    "foundry-primitives/base",
+    "foundry-common/base",
+    "foundry-config/base",
+    "foundry-evm/base",
+    "foundry-evm-networks/base",
+    "foundry-cli?/base",
+]
 optimism = [
     "dep:op-alloy-consensus",
     "dep:op-alloy-rpc-types",
