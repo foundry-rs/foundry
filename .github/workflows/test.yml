@@ -19,6 +19,8 @@ on:
         required: false
       TEMPO_MAINNET_RPC_URL:
         required: false
+      TEMPO_TESTNET_RPC_URL:
+        required: false
 
 concurrency:
   group: tests-${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -151,6 +153,7 @@ jobs:
           ARBITRUM_RPC: ${{ secrets.ARBITRUM_RPC }}
           ETH_SEPOLIA_RPC: ${{ secrets.ETH_SEPOLIA_RPC }}
           TEMPO_MAINNET_RPC_URL: ${{ secrets.TEMPO_MAINNET_RPC_URL }}
+          TEMPO_TESTNET_RPC_URL: ${{ secrets.TEMPO_TESTNET_RPC_URL }}
           NEXTEST_FILTER: ${{ matrix.filter }}
           NEXTEST_PARTITION: ${{ matrix.partition_arg }}
         shell: bash

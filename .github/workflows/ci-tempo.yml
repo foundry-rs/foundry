@@ -74,6 +74,13 @@ jobs:
           cargo build --profile dev --locked --bin forge --bin cast --bin anvil --bin chisel
           echo "${{ github.workspace }}/target/debug" >> "$GITHUB_PATH"
 
+      - name: Replay Tempo transaction canaries
+        env:
+          TEMPO_MAINNET_RPC_URL: ${{ secrets.TEMPO_MAINNET_RPC_URL }}
+          TEMPO_TESTNET_RPC_URL: ${{ secrets.TEMPO_TESTNET_RPC_URL }}
+        run: |
+          cargo test --locked -p anvil --test it tempo_canary:: -- --test-threads=1
+
       - name: Check Tempo fork schedule compatibility
         env:
           TEMPO_MAINNET_RPC_URL: ${{ secrets.TEMPO_MAINNET_RPC_URL }}
