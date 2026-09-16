@@ -198,10 +198,11 @@ impl ReceiptBuilder for FoundryReceiptBuilder {
 
 /// Result of executing a transaction in [`AnvilBlockExecutor`].
 ///
-/// Wraps [`EthTxResult`] with the sender address, needed for deposit nonce resolution.
+/// Wraps [`EthTxResult`] with the sender address when OP deposit nonce resolution is enabled.
 #[derive(Debug)]
 pub struct AnvilTxResult<H> {
     pub inner: EthTxResult<H, FoundryTxType>,
+    #[cfg(feature = "optimism")]
     pub sender: Address,
 }
 
@@ -340,6 +341,7 @@ where
             .into());
         }
 
+        #[cfg(feature = "optimism")]
         let sender = *tx.signer();
         let transaction_hash = tx.tx().trie_hash();
         #[cfg(feature = "optimism")]
@@ -362,6 +364,7 @@ where
 
         Ok(AnvilTxResult {
             inner: EthTxResult { result, blob_gas_used, tx_type: tx.tx().tx_type() },
+            #[cfg(feature = "optimism")]
             sender,
         })
     }
@@ -430,7 +433,7 @@ where
     fn commit_transaction(&mut self, output: Self::Result) -> GasOutput {
         let AnvilTxResult {
             inner: EthTxResult { result: ResultAndState { result, state }, blob_gas_used, tx_type },
-            #[cfg_attr(not(feature = "optimism"), allow(unused_variables))]
+            #[cfg(feature = "optimism")]
             sender,
         } = output;
 
