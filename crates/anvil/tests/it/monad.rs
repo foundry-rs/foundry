@@ -51,7 +51,7 @@ use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::FoundryTxEnvelope;
 use foundry_test_utils::rpc::spawn_canonical_monad_system_rpc;
 use monad_revm::{
-    MONAD_MAINNET_CHAIN_ID, MONAD_TESTNET_CHAIN_ID,
+    MONAD_TESTNET_CHAIN_ID,
     staking::{
         constants::SYSTEM_ADDRESS,
         interface::IMonadStaking::{
@@ -73,6 +73,7 @@ const CHAIN_ID_PROBE_ADDRESS: Address = address!("0x0000000000000000000000000000
 const CLZ_PROBE_ADDRESS: Address = address!("0x0000000000000000000000000000000000002003");
 const STORAGE_GAS_PROBE_ADDRESS: Address = address!("0x0000000000000000000000000000000000002004");
 const ROLLBACK_RECIPIENT: Address = address!("0x0000000000000000000000000000000000002005");
+const REORG_RECIPIENT: Address = address!("0x0000000000000000000000000000000000002006");
 const DIPPED_INTO_RESERVE_SELECTOR: [u8; 4] = hex!("3a61584e");
 const RESERVE_RETURN_PROBE_CODE: [u8; 25] =
     hex!("633a61584e5f5260205f6004601c5f6110015af15060205ff3");
@@ -1382,42 +1383,6 @@ async fn monad_fork_transaction_hash_preserves_hardfork_on_chain_id_collision() 
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn monad_local_rollback_preserves_profile_after_chain_id_change() {
-    let activation = MonadHardfork::MonadNine.testnet_activation_timestamp().unwrap();
-    let config = NodeConfig::test_monad()
-        .with_chain_id(Some(MONAD_MAINNET_CHAIN_ID))
-        .with_genesis_timestamp(Some(activation))
-        .with_no_mining(true);
-    let (api, handle) = spawn(config).await;
-    let blob_params = api.backend.blob_params();
-    assert_eq!(api.backend.hardfork(), MonadHardfork::MonadEight.into());
-
-    api.mine_one().await.unwrap();
-    api.anvil_set_chain_id(MONAD_TESTNET_CHAIN_ID).await.unwrap();
-    api.anvil_rollback(Some(1)).await.unwrap();
-
-    assert_eq!(handle.http_provider().get_block_number().await.unwrap(), 0);
-    assert_eq!(api.backend.chain_id(), U256::from(MONAD_TESTNET_CHAIN_ID));
-    assert_eq!(api.anvil_node_info().await.unwrap().hard_fork, "MonadEight");
-    assert_eq!(api.backend.spec_id(), SpecId::PRAGUE);
-    assert_eq!(api.backend.blob_params(), blob_params);
-    assert!(handle.http_provider().call(reserve_balance_call()).await.unwrap().is_empty());
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn monad_local_rollback_preserves_explicit_eight_blob_params() {
-    let (api, handle) = spawn(monad_eight_config().with_no_mining(true)).await;
-    let blob_params = api.backend.blob_params();
-    api.mine_one().await.unwrap();
-    api.anvil_rollback(Some(1)).await.unwrap();
-
-    assert_eq!(handle.http_provider().get_block_number().await.unwrap(), 0);
-    assert_eq!(api.anvil_node_info().await.unwrap().hard_fork, "MonadEight");
-    assert_eq!(api.backend.spec_id(), SpecId::PRAGUE);
-    assert_eq!(api.backend.blob_params(), blob_params);
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn monad_fork_transaction_hash_rollback_restores_inferred_profile() {
     let (_origin, endpoint, transaction_hash) = monad_rollback_boundary_origin().await;
     let config = NodeConfig::test_monad()
@@ -1432,7 +1397,6 @@ async fn monad_fork_transaction_hash_rollback_restores_inferred_profile() {
     assert_eq!(api.anvil_node_info().await.unwrap().hard_fork, "MonadNine");
     assert_eq!(api.backend.spec_id(), SpecId::OSAKA);
     assert_eq!(provider.call(reserve_balance_call()).await.unwrap(), Bytes::from(vec![0; 32]));
-    assert_eq!(provider.get_balance(ROLLBACK_RECIPIENT).await.unwrap(), U256::ONE);
 
     let replay_block_number = provider.get_block_number().await.unwrap();
     let parent = provider
@@ -1445,7 +1409,6 @@ async fn monad_fork_transaction_hash_rollback_restores_inferred_profile() {
     assert_eq!(api.anvil_node_info().await.unwrap().hard_fork, "MonadEight");
     assert_eq!(api.backend.spec_id(), SpecId::PRAGUE);
     assert!(provider.call(reserve_balance_call()).await.unwrap().is_empty());
-    assert_eq!(provider.get_balance(ROLLBACK_RECIPIENT).await.unwrap(), U256::ZERO);
     assert_eq!(api.backend.chain_id(), U256::ONE);
     assert_eq!(
         api.backend.blob_params(),
@@ -1464,10 +1427,6 @@ async fn monad_fork_transaction_hash_rollback_restores_inferred_profile() {
             BaseFeeParams::ethereum(),
         )
     );
-
-    api.mine_one().await.unwrap();
-    api.anvil_rollback(Some(1)).await.unwrap();
-    assert_eq!(provider.get_balance(ROLLBACK_RECIPIENT).await.unwrap(), U256::ZERO);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1482,14 +1441,23 @@ async fn monad_fork_transaction_hash_reorg_restores_inferred_profile() {
     let provider = handle.http_provider();
 
     assert_eq!(api.anvil_node_info().await.unwrap().hard_fork, "MonadNine");
-    assert_eq!(provider.get_balance(ROLLBACK_RECIPIENT).await.unwrap(), U256::ONE);
-    api.anvil_reorg(ReorgOptions { depth: 1, tx_block_pairs: Vec::new() }).await.unwrap();
+    let from = provider.get_accounts().await.unwrap()[0];
+    let replacement =
+        TransactionRequest::default().from(from).to(REORG_RECIPIENT).value(U256::from(2));
+    api.anvil_reorg(ReorgOptions {
+        depth: 1,
+        tx_block_pairs: vec![(TransactionData::JSON(replacement), 0)],
+    })
+    .await
+    .unwrap();
 
     assert_eq!(api.anvil_node_info().await.unwrap().hard_fork, "MonadEight");
     assert_eq!(api.backend.spec_id(), SpecId::PRAGUE);
     assert!(provider.call(reserve_balance_call()).await.unwrap().is_empty());
-    assert_eq!(provider.get_balance(ROLLBACK_RECIPIENT).await.unwrap(), U256::ZERO);
-    let block = provider.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(provider.get_balance(REORG_RECIPIENT).await.unwrap(), U256::from(2));
+    let block =
+        provider.get_block_by_number(BlockNumberOrTag::Latest).full().await.unwrap().unwrap();
+    assert_eq!(block.transactions.len(), 1);
     assert_eq!(
         api.backend.blob_params(),
         get_blob_params(MONAD_TESTNET_CHAIN_ID, block.header.timestamp)

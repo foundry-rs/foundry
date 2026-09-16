@@ -2,7 +2,7 @@
 
 use super::{
     AnvilInspector, Backend, ClientFork, DatabaseRef, EnvelopeExecutionKind, MonadExecutionContext,
-    foundry_header, storage::BlockchainStorage,
+    storage::BlockchainStorage,
 };
 use crate::eth::{
     backend::{
@@ -211,9 +211,7 @@ impl<N: Network> Backend<N> {
         number: u64,
     ) -> Result<Option<Block>, BlockchainError> {
         let Some(fork) = self.get_fork().filter(|fork| {
-            self.is_monad()
-                && fork.transaction_hash().is_some()
-                && fork.predates_fork_inclusive(number)
+            fork.transaction_hash().is_some() && fork.predates_fork_inclusive(number)
         }) else {
             return Ok(None);
         };
@@ -222,7 +220,7 @@ impl<N: Network> Backend<N> {
         };
         let header = Header::try_from(block.header().inner.clone())
             .map_err(|err| BlockchainError::Internal(err.to_string()))?;
-        Ok(Some(Block { header: foundry_header(&self.networks, header), body: Default::default() }))
+        Ok(Some(Block { header: header.into(), body: Default::default() }))
     }
 
     /// Prepares the Monad-specific inputs for replaying a historical transaction prefix.
@@ -286,9 +284,6 @@ impl<N: Network> Backend<N> {
         &self,
         common_block: &Block,
     ) -> Option<MonadRollbackProfile> {
-        if !self.is_monad() {
-            return None;
-        }
         // Local nodes keep their configured profile, even when the execution chain ID changes.
         let fork = self.get_fork()?;
 
@@ -359,6 +354,44 @@ impl<N: Network> Backend<N> {
             }),
             publish_inferred_hardfork: explicit_hardfork.is_none(),
         })
+    }
+
+    /// Returns transaction fee defaults for the retained block's staged profile.
+    pub(crate) async fn monad_rollback_fee_defaults(
+        &self,
+        common_block: &Block,
+        suggested_tip: u128,
+    ) -> Option<(u128, u128)> {
+        let profile = self.prepare_monad_rollback_profile(common_block).await?;
+        let gas_price = if profile.fees.is_eip1559() {
+            let base_fee = profile.fees.base_fee() as u128;
+            if profile.fees.is_min_priority_fee_enforced() {
+                base_fee.saturating_add(suggested_tip)
+            } else {
+                base_fee
+            }
+        } else {
+            profile.fees.raw_gas_price()
+        };
+        Some((gas_price, profile.fees.get_next_block_blob_base_fee_per_gas()))
+    }
+
+    /// Rewinds state and publishes the Monad profile selected for the retained block.
+    pub(crate) async fn rollback_monad(
+        &self,
+        common_block: Block,
+        mining_guard: &tokio::sync::MutexGuard<'_, ()>,
+    ) -> Result<(), BlockchainError>
+    where
+        N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>,
+    {
+        let profile = self.prepare_monad_rollback_profile(&common_block).await;
+        self.rollback(common_block.clone(), mining_guard).await?;
+        if let Some(profile) = profile {
+            profile.apply_env(&mut self.evm_env.write(), &common_block);
+            self.publish_monad_rollback_profile(profile);
+        }
+        Ok(())
     }
 
     /// Publishes the staged Monad fee rules and inferred hardfork after a rewind.

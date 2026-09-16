@@ -427,13 +427,6 @@ impl Db for StateRootDb {
         Db::insert_account(&mut self.inner, address, account);
     }
 
-    fn replace_state(&mut self, accounts: AddressMap<DbAccount>) {
-        self.state_root.get_mut().invalidate();
-        self.history.get_mut().invalidate();
-        self.block_hash_head = None;
-        Db::replace_state(&mut self.inner, accounts);
-    }
-
     fn set_storage_at(&mut self, address: Address, slot: B256, val: B256) -> DatabaseResult<()> {
         let storage_slot = slot.into();
         self.state_root.get_mut().record_storage(address, storage_slot);
@@ -550,10 +543,6 @@ impl MaybeForkedDatabase for StateRootDb {
 impl Db for MemDb {
     fn insert_account(&mut self, address: Address, account: AccountInfo) {
         self.inner.insert_account_info(address, account)
-    }
-
-    fn replace_state(&mut self, accounts: AddressMap<DbAccount>) {
-        crate::eth::backend::db::replace_cache_state(&mut self.inner, accounts);
     }
 
     fn set_storage_at(&mut self, address: Address, slot: B256, val: B256) -> DatabaseResult<()> {

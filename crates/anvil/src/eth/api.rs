@@ -129,6 +129,12 @@ use tokio::{
 /// The client version: `anvil/v{major}.{minor}.{patch}`
 pub const CLIENT_VERSION: &str = concat!("anvil/v", env!("CARGO_PKG_VERSION"));
 
+#[derive(Clone, Copy)]
+struct TransactionFeeDefaults {
+    gas_price: u128,
+    blob_gas_price: u128,
+}
+
 /// The entry point for executing eth api RPC call - The Eth RPC interface.
 ///
 /// This type is cheap to clone and can be used concurrently
@@ -1716,12 +1722,29 @@ impl EthApi<FoundryNetwork> {
         }
         #[cfg(feature = "monad")]
         {
-            self.backend.monad_rollback_block(number).await
+            if self.backend.is_monad() {
+                self.backend.monad_rollback_block(number).await
+            } else {
+                Ok(None)
+            }
         }
         #[cfg(not(feature = "monad"))]
         {
             Ok(None)
         }
+    }
+
+    /// Rewinds through the selected execution family's recovery path.
+    async fn rollback_backend(
+        &self,
+        common_block: Block,
+        mining_guard: &tokio::sync::MutexGuard<'_, ()>,
+    ) -> Result<()> {
+        #[cfg(feature = "monad")]
+        if self.backend.is_monad() {
+            return self.backend.rollback_monad(common_block, mining_guard).await;
+        }
+        self.backend.rollback(common_block, mining_guard).await
     }
 
     /// Rollback the chain to a specific depth.
@@ -1737,6 +1760,7 @@ impl EthApi<FoundryNetwork> {
     pub async fn anvil_rollback(&self, depth: Option<u64>) -> Result<()> {
         node_info!("anvil_rollback");
         let _lifecycle = self.lifecycle_lock.write().await;
+        let mining_guard = self.backend.lock_mining().await;
         let depth = depth.unwrap_or(1);
 
         // Check reorg depth doesn't exceed current chain height
@@ -1751,7 +1775,7 @@ impl EthApi<FoundryNetwork> {
         let common_block =
             self.rollback_block(common_height).await?.ok_or(BlockchainError::BlockNotFound)?;
 
-        self.backend.rollback(common_block).await?;
+        self.rollback_backend(common_block, &mining_guard).await?;
         Ok(())
     }
 
@@ -4221,8 +4245,17 @@ impl EthApi<FoundryNetwork> {
     pub async fn anvil_reorg(&self, options: ReorgOptions) -> Result<()> {
         node_info!("anvil_reorg");
         let _lifecycle = self.lifecycle_lock.write().await;
+        let mining_guard = self.backend.lock_mining().await;
         let depth = options.depth;
-        let tx_block_pairs = options.tx_block_pairs;
+        let mut tx_block_pairs = options.tx_block_pairs;
+
+        if let Some((_, num)) = tx_block_pairs.iter().find(|(_, num)| *num >= depth) {
+            return Err(BlockchainError::RpcError(RpcError::invalid_params(format!(
+                "Block number for reorg tx will exceed the reorged chain height. Block number {num} must not exceed (depth-1) {}",
+                depth - 1
+            ))));
+        }
+        tx_block_pairs.sort_by_key(|a| a.1);
 
         // Check reorg depth doesn't exceed current chain height
         let current_height = self.backend.best_number();
@@ -4236,31 +4269,33 @@ impl EthApi<FoundryNetwork> {
         let common_block =
             self.rollback_block(common_height).await?.ok_or(BlockchainError::BlockNotFound)?;
 
+        #[cfg(feature = "monad")]
+        let fee_defaults = if self.backend.is_monad() {
+            self.backend
+                .monad_rollback_fee_defaults(&common_block, self.lowest_suggestion_tip())
+                .await
+                .map(|(gas_price, blob_gas_price)| TransactionFeeDefaults {
+                    gas_price,
+                    blob_gas_price,
+                })
+        } else {
+            None
+        };
+        #[cfg(not(feature = "monad"))]
+        let fee_defaults = None;
+
         // Convert the transaction requests to pool transactions if they exist, otherwise use empty
         // hashmap
         let block_pool_txs = if tx_block_pairs.is_empty() {
             HashMap::default()
         } else {
-            let mut pairs = tx_block_pairs;
-
-            // Check the maximum block supplied number will not exceed the reorged chain height
-            if let Some((_, num)) = pairs.iter().find(|(_, num)| *num >= depth) {
-                return Err(BlockchainError::RpcError(RpcError::invalid_params(format!(
-                    "Block number for reorg tx will exceed the reorged chain height. Block number {num} must not exceed (depth-1) {}",
-                    depth - 1
-                ))));
-            }
-
-            // Sort by block number to make it easier to manage new nonces
-            pairs.sort_by_key(|a| a.1);
-
             // Manage nonces for each signer
             // address -> cumulative nonce
             let mut nonces: HashMap<Address, u64> = HashMap::default();
 
             let mut txs: HashMap<u64, Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>> =
                 HashMap::default();
-            for pair in pairs {
+            for pair in tx_block_pairs {
                 let (tx_data, block_index) = pair;
 
                 let pending = match tx_data {
@@ -4303,7 +4338,13 @@ impl EthApi<FoundryNetwork> {
                         );
 
                         // Build typed transaction request
-                        let typed_tx = self.build_tx_request(request.into(), *curr_nonce).await?;
+                        let typed_tx = self
+                            .build_tx_request_with_fee_defaults(
+                                request.into(),
+                                *curr_nonce,
+                                fee_defaults,
+                            )
+                            .await?;
 
                         // Increment nonce
                         *curr_nonce += 1;
@@ -4345,7 +4386,8 @@ impl EthApi<FoundryNetwork> {
             txs
         };
 
-        self.backend.reorg(depth, block_pool_txs, common_block).await?;
+        self.rollback_backend(common_block, &mining_guard).await?;
+        self.backend.reorg(depth, block_pool_txs, &mining_guard).await?;
         Ok(())
     }
 
@@ -4820,8 +4862,17 @@ impl EthApi<FoundryNetwork> {
     /// to build a [`FoundryTypedTx`].
     async fn build_tx_request(
         &self,
+        request: FoundryTransactionRequest,
+        nonce: u64,
+    ) -> Result<FoundryTypedTx> {
+        self.build_tx_request_with_fee_defaults(request, nonce, None).await
+    }
+
+    async fn build_tx_request_with_fee_defaults(
+        &self,
         mut request: FoundryTransactionRequest,
         nonce: u64,
+        fee_defaults: Option<TransactionFeeDefaults>,
     ) -> Result<FoundryTypedTx> {
         let from = request.from().or(self.accounts()?.first().copied());
         if let Some(from) = from {
@@ -4857,8 +4908,9 @@ impl EthApi<FoundryNetwork> {
 
         // Fill missing tx type specific fields
         if let Err((tx_type, _)) = request.missing_keys() {
+            let gas_price = || fee_defaults.map_or_else(|| self.gas_price(), |fees| fees.gas_price);
             if tx_type.is_legacy() || tx_type.is_eip2930() {
-                request.gas_price().is_none().then(|| request.set_gas_price(self.gas_price()));
+                request.gas_price().is_none().then(|| request.set_gas_price(gas_price()));
             }
             if tx_type.is_eip2930() {
                 request
@@ -4874,7 +4926,7 @@ impl EthApi<FoundryNetwork> {
                 request
                     .max_fee_per_gas()
                     .is_none()
-                    .then(|| request.set_max_fee_per_gas(self.gas_price()));
+                    .then(|| request.set_max_fee_per_gas(gas_price()));
                 request
                     .max_priority_fee_per_gas()
                     .is_none()
@@ -4882,9 +4934,11 @@ impl EthApi<FoundryNetwork> {
             }
             if tx_type.is_eip4844() {
                 request.as_ref().max_fee_per_blob_gas().is_none().then(|| {
-                    request.as_mut().set_max_fee_per_blob_gas(
-                        self.backend.fees().get_next_block_blob_base_fee_per_gas(),
-                    )
+                    let blob_gas_price = fee_defaults.map_or_else(
+                        || self.backend.fees().get_next_block_blob_base_fee_per_gas(),
+                        |fees| fees.blob_gas_price,
+                    );
+                    request.as_mut().set_max_fee_per_blob_gas(blob_gas_price)
                 });
             }
         }

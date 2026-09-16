@@ -5411,6 +5411,14 @@ where
         pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
     ) -> Result<MinedBlockOutcome<FoundryTxEnvelope>, BlockchainError> {
         let _mining_guard = self.mining.lock().await;
+        self.do_mine_block_locked(pool_transactions).await
+    }
+
+    /// Mines a block while the caller holds the mining lock.
+    async fn do_mine_block_locked(
+        &self,
+        pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
+    ) -> Result<MinedBlockOutcome<FoundryTxEnvelope>, BlockchainError> {
         trace!(target: "backend", "creating new block with {} transactions", pool_transactions.len());
 
         let (outcome, header, block_hash) = {
@@ -5652,23 +5660,19 @@ where
         Ok(outcome)
     }
 
-    /// Reorg the chain to a common height and execute blocks to build new chain.
+    /// Mines replacement blocks after the caller has rewound the chain for a reorg.
     ///
-    /// The state of the chain is rewound using `rewind` to the common block, including the db,
-    /// storage, and env.
-    ///
-    /// Finally, `do_mine_block` is called to create the new chain.
+    /// The caller must hold the mining lock across ancestor selection, rollback, and this method.
     pub async fn reorg(
         &self,
         depth: u64,
         tx_pairs: HashMap<u64, Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>>,
-        common_block: Block,
+        _mining_guard: &tokio::sync::MutexGuard<'_, ()>,
     ) -> Result<(), BlockchainError> {
-        self.rollback(common_block).await?;
         // Create the new reorged chain, filling the blocks with transactions if supplied
         for i in 0..depth {
             let to_be_mined = tx_pairs.get(&i).cloned().unwrap_or_else(Vec::new);
-            let outcome = self.do_mine_block(to_be_mined).await?;
+            let outcome = self.do_mine_block_locked(to_be_mined).await?;
             node_info!(
                 "    Mined reorg block number {}. With {} valid txs and with invalid {} txs",
                 outcome.block_number,
@@ -6854,13 +6858,12 @@ where
     ///
     /// The state of the chain is rewound using `rewind` to the common block, including the db,
     /// storage, and env.
-    pub async fn rollback(&self, common_block: Block) -> Result<(), BlockchainError> {
-        #[cfg(feature = "monad")]
-        let _mining_guard = if self.is_monad() { Some(self.mining.lock().await) } else { None };
+    pub async fn rollback(
+        &self,
+        common_block: Block,
+        _mining_guard: &tokio::sync::MutexGuard<'_, ()>,
+    ) -> Result<(), BlockchainError> {
         let hash = common_block.header.hash_slow();
-
-        #[cfg(feature = "monad")]
-        let monad_profile = self.prepare_monad_rollback_profile(&common_block).await;
 
         // Get the database at the common block
         let common_state = {
@@ -6869,16 +6872,7 @@ where
                     let state_db = db.ok_or(BlockchainError::DataUnavailable)?;
                     let db_full =
                         state_db.maybe_as_full_db().ok_or(BlockchainError::DataUnavailable)?;
-                    let mut db_full = db_full.clone();
-                    for account in db_full.values_mut() {
-                        if account.info.code.is_none() {
-                            account.info.code = Some(revm::DatabaseRef::code_by_hash_ref(
-                                state_db,
-                                account.info.code_hash,
-                            )?);
-                        }
-                    }
-                    Ok(db_full)
+                    Ok(db_full.clone())
                 };
 
             let read_guard = self.states.upgradable_read();
@@ -6890,6 +6884,8 @@ where
             }
         };
 
+        // Acquire the only awaited mutation lock before publishing any part of the rewind.
+        let mut db = self.db.write().await;
         {
             // Collect the logs of the blocks that are about to be removed from the canonical
             // chain, while their transactions and receipts are still in storage
@@ -6917,45 +6913,37 @@ where
             env.block_env.gas_limit = common_block.header.gas_limit();
             env.block_env.difficulty = common_block.header.difficulty();
             env.block_env.prevrandao = common_block.header.mix_hash();
-            #[cfg(feature = "monad")]
-            if let Some(profile) = &monad_profile {
-                profile.apply_env(&mut env, &common_block);
-            }
 
             self.time.reset(env.block_env.timestamp.saturating_to());
             // drop any pending next-block prevrandao override so it does not leak into a block
             self.cheats.clear_next_block_prevrandao();
         }
 
-        {
-            // Collect block hashes before acquiring db lock to avoid holding blockchain storage
-            // lock across await. Only collect the last 256 blocks since that's all BLOCKHASH can
-            // access.
-            let block_hashes: Vec<_> = {
-                let storage = self.blockchain.storage.read();
-                let min_block = common_block.header.number().saturating_sub(256);
-                storage
-                    .hashes
-                    .iter()
-                    .filter(|(num, _)| **num >= min_block)
-                    .map(|(&num, &hash)| (num, hash))
-                    .collect()
-            };
+        // Only collect the last 256 block hashes since that's all BLOCKHASH can access.
+        let block_hashes: Vec<_> = {
+            let storage = self.blockchain.storage.read();
+            let min_block = common_block.header.number().saturating_sub(256);
+            storage
+                .hashes
+                .iter()
+                .filter(|(num, _)| **num >= min_block)
+                .map(|(&num, &hash)| (num, hash))
+                .collect()
+        };
 
-            // Acquire db lock once for the entire restore operation to reduce lock churn.
-            let mut db = self.db.write().await;
-            db.replace_state(common_state);
+        db.clear();
 
-            // Restore block hashes from blockchain storage (now unwound, contains only valid
-            // blocks).
-            for (block_num, hash) in block_hashes {
-                db.insert_block_hash(U256::from(block_num), hash);
+        // Insert account info before storage to prevent fork-mode RPC fetches after clear.
+        for (address, acc) in common_state {
+            db.insert_account(address, acc.info);
+            for (key, value) in acc.storage {
+                db.set_storage_at(address, key.into(), value.into())?;
             }
         }
 
-        #[cfg(feature = "monad")]
-        if let Some(profile) = monad_profile {
-            self.publish_monad_rollback_profile(profile);
+        // Restore block hashes from blockchain storage (now unwound, contains only valid blocks).
+        for (block_num, hash) in block_hashes {
+            db.insert_block_hash(U256::from(block_num), hash);
         }
 
         Ok(())

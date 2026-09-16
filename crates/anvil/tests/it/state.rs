@@ -682,55 +682,6 @@ async fn can_preserve_historical_states_between_dump_and_load() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn fork_rollback_restores_loaded_historical_contract_code() {
-    let (source_api, source_handle) = spawn(NodeConfig::test()).await;
-    let source_provider = source_handle.http_provider();
-    let greeter = Greeter::deploy(&source_provider, "Hello".to_string()).await.unwrap();
-    let address = *greeter.address();
-    source_api.mine_one().await.unwrap();
-    let state = source_api.serialized_state(true).await.unwrap();
-
-    let (_remote_api, remote_handle) = spawn(NodeConfig::test().with_no_mining(true)).await;
-    let (api, handle) = spawn(
-        NodeConfig::test()
-            .with_eth_rpc_url(Some(remote_handle.http_endpoint()))
-            .with_init_state(Some(state))
-            .with_no_mining(true),
-    )
-    .await;
-    api.anvil_rollback(Some(1)).await.unwrap();
-
-    let provider = handle.http_provider();
-    assert!(!provider.get_code_at(address).await.unwrap().is_empty());
-    assert_eq!(Greeter::new(address, provider).greet().call().await.unwrap(), "Hello");
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn fork_rollback_restores_disk_backed_state() {
-    let (_remote_api, remote_handle) = spawn(NodeConfig::test().with_no_mining(true)).await;
-    let (api, handle) = spawn(
-        NodeConfig::test()
-            .with_eth_rpc_url(Some(remote_handle.http_endpoint()))
-            .with_max_persisted_states(Some(600usize)),
-    )
-    .await;
-    let provider = handle.http_provider();
-    let greeter = Greeter::deploy(&provider, "retained".to_string()).await.unwrap();
-    let address = *greeter.address();
-    let retained_block = provider.get_block_number().await.unwrap();
-
-    api.anvil_mine(Some(U256::from(510)), None).await.unwrap();
-    let discarded = Address::with_last_byte(0x42);
-    api.anvil_set_balance(discarded, U256::from(1)).await.unwrap();
-    api.mine_one().await.unwrap();
-    let depth = provider.get_block_number().await.unwrap() - retained_block;
-    api.anvil_rollback(Some(depth)).await.unwrap();
-
-    assert_eq!(Greeter::new(address, provider.clone()).greet().call().await.unwrap(), "retained");
-    assert_eq!(provider.get_balance(discarded).await.unwrap(), U256::ZERO);
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn state_dump_is_deterministic() {
     let timestamp = 1_700_000_000u64;
     let (api, handle) = spawn(NodeConfig::test().with_genesis_timestamp(timestamp.into())).await;

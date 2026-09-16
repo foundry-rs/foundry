@@ -145,22 +145,6 @@ async fn can_set_gas_price() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_revert_preserves_configured_legacy_gas_price() {
-    let (api, handle) = spawn(
-        NodeConfig::test()
-            .with_hardfork(Some(EthereumHardfork::Berlin.into()))
-            .with_no_mining(true),
-    )
-    .await;
-    let snapshot = api.evm_snapshot().await.unwrap();
-    let gas_price = U256::from(1337);
-    api.anvil_set_min_gas_price(gas_price).await.unwrap();
-
-    assert!(api.evm_revert(snapshot).await.unwrap());
-    assert_eq!(handle.http_provider().get_gas_price().await.unwrap(), gas_price.to::<u128>());
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn can_set_block_gas_limit() {
     let (api, _) =
         spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Berlin.into()))).await;

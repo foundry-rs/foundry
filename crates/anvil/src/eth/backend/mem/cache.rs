@@ -1,5 +1,6 @@
-use crate::{config::anvil_tmp_dir, eth::backend::db::DiskStateSnapshot};
+use crate::config::anvil_tmp_dir;
 use alloy_primitives::B256;
+use foundry_evm::backend::StateSnapshot;
 use std::{
     io,
     path::{Path, PathBuf},
@@ -57,7 +58,7 @@ impl DiskStateCache {
     /// Stores the snapshot for the given hash synchronously.
     ///
     /// Returns `true` if the write was successful, `false` otherwise.
-    pub fn write(&mut self, hash: B256, state: &DiskStateSnapshot) -> bool {
+    pub fn write(&mut self, hash: B256, state: &StateSnapshot) -> bool {
         self.with_cache_file(hash, |file| match foundry_common::fs::write_json_file(&file, state) {
             Ok(_) => {
                 trace!(target: "backend", ?hash, "wrote state json file");
@@ -74,9 +75,9 @@ impl DiskStateCache {
     /// Loads the snapshot file for the given hash
     ///
     /// Returns None if it doesn't exist or deserialization failed
-    pub fn read(&mut self, hash: B256) -> Option<DiskStateSnapshot> {
+    pub fn read(&mut self, hash: B256) -> Option<StateSnapshot> {
         self.with_cache_file(hash, |file| {
-            match foundry_common::fs::read_json_file::<DiskStateSnapshot>(&file) {
+            match foundry_common::fs::read_json_file::<StateSnapshot>(&file) {
                 Ok(state) => {
                     trace!(target: "backend", ?hash,"loaded cached state");
                     Some(state)
