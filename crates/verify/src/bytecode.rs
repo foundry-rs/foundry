@@ -48,6 +48,9 @@ use foundry_evm_networks::NetworkVariant;
 use revm::{context::Block as _, state::AccountInfo};
 use std::path::PathBuf;
 
+#[cfg(feature = "base")]
+use foundry_evm::core::evm::BaseEvmNetwork;
+
 #[cfg(feature = "monad")]
 use foundry_evm::core::evm::{BlockContext, MonadEvmNetwork};
 
@@ -257,6 +260,16 @@ impl VerifyBytecodeArgs {
                     endpoint_identity,
                     network_was_inferred,
                     ExecutorBuilder::<EthEvmNetwork>::new(),
+                )
+                .await
+            }
+            #[cfg(feature = "base")]
+            NetworkVariant::Base => {
+                self.run_with_network::<BaseEvmNetwork>(
+                    config,
+                    endpoint_identity,
+                    network_was_inferred,
+                    ExecutorBuilder::<BaseEvmNetwork>::new(),
                 )
                 .await
             }
@@ -1379,6 +1392,16 @@ mod tests {
                 .unwrap()
                 .id(),
             1
+        );
+    }
+
+    #[cfg(feature = "base")]
+    #[test]
+    fn configured_network_preserves_base() {
+        let config = Config { networks: NetworkVariant::Base.into(), ..Default::default() };
+        assert_eq!(
+            VerifyBytecodeArgs::configured_network(None, &config),
+            Some(NetworkVariant::Base)
         );
     }
 }

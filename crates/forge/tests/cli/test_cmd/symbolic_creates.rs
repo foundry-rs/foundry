@@ -4,6 +4,106 @@ use foundry_test_utils::{forgetest_init, util::OutputExt};
 
 use super::symbolic_helpers::z3_available;
 
+forgetest_init!(symbolic_create_contains_invalid_initcode_halt, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_create_contains_invalid_initcode_halt because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicInvalidInitcode.t.sol",
+        r#"
+contract SymbolicInvalidInitcode {
+    uint256 marker;
+
+    function checkInvalidInitcode() public {
+        marker = 19;
+        address created;
+        uint256 returnSize;
+        assembly ("memory-safe") {
+            mstore8(0, 0xfe)
+            created := create(0, 0, 1)
+            returnSize := returndatasize()
+        }
+        assert(created == address(0));
+        assert(returnSize == 0);
+        assert(marker == 19);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--symbolic", "--match-test", "checkInvalidInitcode"]).assert_success();
+});
+
+forgetest_init!(symbolic_create_respects_configured_runtime_code_limit, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_create_respects_configured_runtime_code_limit because z3 is not available"
+        );
+        return;
+    }
+
+    prj.update_config(|config| config.code_size_limit = Some(24_576));
+    prj.add_test(
+        "SymbolicCreateCodeLimit.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicCreateCodeLimit is Test {
+    function checkRuntimeCodeLimit() public {
+        address created;
+        assembly ("memory-safe") {
+            mstore(0, shl(208, 0x6160016000f3))
+            created := create(0, 0, 6)
+        }
+        assert(created == address(0));
+        assert(created.code.length == 0);
+    }
+
+    function checkConfiguredRuntimeCodeLimit() public {
+        address created;
+        assembly ("memory-safe") {
+            mstore(0, shl(208, 0x6160006000f3))
+            created := create(0, 0, 6)
+        }
+        assert(created == address(0));
+        assert(created.code.length == 0);
+    }
+
+    function checkExpectRevertRuntimeCodeLimit() public {
+        vm.expectRevert();
+        new OversizedRuntime();
+
+        vm.expectRevert();
+        new OversizedRuntime{salt: bytes32(uint256(1))}();
+    }
+}
+
+contract OversizedRuntime {
+    constructor() {
+        assembly ("memory-safe") {
+            return(0, 24577)
+        }
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--symbolic", "--match-test", "checkRuntimeCodeLimit"]).assert_success();
+
+    cmd.forge_fuse();
+    cmd.args(["test", "--symbolic", "--match-test", "checkExpectRevertRuntimeCodeLimit"])
+        .assert_success();
+
+    prj.update_config(|config| config.code_size_limit = Some(24_575));
+    cmd.forge_fuse();
+    cmd.args(["test", "--symbolic", "--match-test", "checkConfiguredRuntimeCodeLimit"])
+        .assert_success();
+});
+
 forgetest_init!(symbolic_create_deploys_and_calls_helper, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(
@@ -49,6 +149,172 @@ checkCreate(uint256)
 "#]],
     );
     assert!(!stdout.contains("unsupported opcode: 0xf0"), "{stdout}");
+});
+
+forgetest_init!(symbolic_create_respects_eip3541_runtime_prefix, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_create_respects_eip3541_runtime_prefix because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicCreateEip3541.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicCreateEip3541 is Test {
+    function checkRejectedPrefix() public {
+        assert(deployCreate(0xef) == address(0));
+        assert(deployCreate2(0xef) == address(0));
+    }
+
+    function checkRejectedPrefixPreservesWarp() public {
+        bytes memory initcode = abi.encodePacked(type(WarpThenReject).creationCode, abi.encode(address(this)));
+        address created;
+        assembly ("memory-safe") {
+            created := create(0, add(initcode, 32), mload(initcode))
+        }
+        assert(created == address(0));
+        assert(block.timestamp == 123);
+    }
+
+    function checkRejectedPrefixPreservesMockProgress() public {
+        checkMockProgress(address(0x1001), false);
+        checkMockProgress(address(0x1002), true);
+    }
+
+    function checkRejectedPrefixExpectedCallsAndRevert() public {
+        checkExpectedCallAndRevert(address(0x2001), false);
+        checkExpectedCallAndRevert(address(0x2002), true);
+    }
+
+    function warp(uint256 timestamp) external {
+        vm.warp(timestamp);
+    }
+
+    function checkMockProgress(address target, bool useCreate2) internal {
+        bytes[] memory returnValues = new bytes[](2);
+        returnValues[0] = abi.encode(uint256(1));
+        returnValues[1] = abi.encode(uint256(2));
+        vm.mockCalls(target, abi.encodeCall(IMockSequenceTarget.value, ()), returnValues);
+
+        bytes memory initcode = abi.encodePacked(type(ConsumeMockThenReject).creationCode, abi.encode(target));
+        address created;
+        if (useCreate2) {
+            assembly ("memory-safe") {
+                created := create2(0, add(initcode, 32), mload(initcode), 1)
+            }
+        } else {
+            assembly ("memory-safe") {
+                created := create(0, add(initcode, 32), mload(initcode))
+            }
+        }
+        assert(created == address(0));
+        assertEq(IMockSequenceTarget(target).value(), 2);
+    }
+
+    function checkExpectedCallAndRevert(address target, bool useCreate2) internal {
+        bytes memory callData = abi.encodeCall(IMockSequenceTarget.value, ());
+        vm.mockCall(target, callData, abi.encode(uint256(1)));
+        vm.expectCall(target, callData);
+        bytes memory rejectedRuntime = hex"ef";
+        vm.expectRevert(rejectedRuntime);
+        if (useCreate2) {
+            new ConsumeMockThenReject{salt: bytes32(uint256(2))}(IMockSequenceTarget(target));
+        } else {
+            new ConsumeMockThenReject(IMockSequenceTarget(target));
+        }
+    }
+
+    function checkAllowedPrefixBeforeLondon() public {
+        address created = deployCreate(0xef);
+        address created2 = deployCreate2(0xef);
+        assert(created != address(0));
+        assert(created2 != address(0));
+        assert(created.code.length == 1);
+        assert(created2.code.length == 1);
+    }
+
+    function checkAdjacentPrefixStillAllowed() public {
+        address created = deployCreate(0xee);
+        address created2 = deployCreate2(0xee);
+        assert(created != address(0));
+        assert(created2 != address(0));
+        assert(created.code.length == 1);
+        assert(created2.code.length == 1);
+    }
+
+    function deployCreate(uint256 runtimeByte) internal returns (address created) {
+        assembly ("memory-safe") {
+            mstore(0, shl(176, or(0x600060005360016000f3, shl(64, runtimeByte))))
+            created := create(0, 0, 10)
+        }
+    }
+
+    function deployCreate2(uint256 runtimeByte) internal returns (address created) {
+        assembly ("memory-safe") {
+            mstore(0, shl(176, or(0x600060005360016000f3, shl(64, runtimeByte))))
+            created := create2(0, 0, 10, 123)
+        }
+    }
+}
+
+contract WarpThenReject {
+    constructor(SymbolicCreateEip3541 test) {
+        test.warp(123);
+        assembly ("memory-safe") {
+            mstore(0, shl(248, 0xef))
+            return(0, 1)
+        }
+    }
+}
+
+interface IMockSequenceTarget {
+    function value() external returns (uint256);
+}
+
+contract ConsumeMockThenReject {
+    constructor(IMockSequenceTarget target) {
+        require(target.value() == 1);
+        assembly ("memory-safe") {
+            mstore(0, shl(248, 0xef))
+            return(0, 1)
+        }
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--symbolic", "--match-test", "checkRejectedPrefix"]).assert_success();
+
+    cmd.forge_fuse();
+    cmd.args(["test", "--symbolic", "--match-test", "checkRejectedPrefixPreservesWarp"])
+        .assert_success();
+
+    cmd.forge_fuse();
+    cmd.args(["test", "--symbolic", "--match-test", "checkRejectedPrefixPreservesMockProgress"])
+        .assert_success();
+
+    cmd.forge_fuse();
+    cmd.args(["test", "--symbolic", "--match-test", "checkRejectedPrefixExpectedCallsAndRevert"])
+        .assert_success();
+
+    cmd.forge_fuse();
+    cmd.args(["test", "--symbolic", "--match-test", "checkAdjacentPrefixStillAllowed"])
+        .assert_success();
+
+    cmd.forge_fuse();
+    cmd.args([
+        "test",
+        "--symbolic",
+        "--evm-version",
+        "berlin",
+        "--match-test",
+        "checkAllowedPrefixBeforeLondon",
+    ])
+    .assert_success();
 });
 
 forgetest_init!(symbolic_create_preserves_symbolic_constructor_args, |prj, cmd| {
@@ -143,6 +409,57 @@ contract SymbolicCreateInitcodeOffset is Test {
     );
     assert!(!stdout.contains("symbolic CREATE initcode offset"), "{stdout}");
     assert!(!stdout.contains("symbolic bytecode opcode"), "{stdout}");
+});
+
+forgetest_init!(symbolic_create_size_respects_path_width, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_create_size_respects_path_width because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicCreateSize.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicCreateSize is Test {
+    function checkCreateSizeRespectsPathWidth(uint256 size) public {
+        vm.assume(size <= 2);
+        bytes memory code = hex"5b5b";
+        address created;
+        assembly {
+            created := create(0, add(code, 0x20), size)
+        }
+        assert(created != address(0));
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--symbolic-width",
+            "2",
+            "--match-test",
+            "checkCreateSizeRespectsPathWidth",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+(paths: 2,
+incomplete symbolic execution (Stuck)
+symbolic path limit exceeded
+checkCreateSizeRespectsPathWidth(uint256)
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_create2_deploys_and_calls_helper, |prj, cmd| {

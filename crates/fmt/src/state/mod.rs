@@ -11,7 +11,7 @@ use foundry_common::{
 use foundry_config::fmt::{DocCommentStyle, IndentStyle};
 use solar::parse::{
     ast::{self, Span},
-    interface::{BytePos, SourceMap},
+    interface::{BytePos, source_map::SourceFile},
     token,
 };
 use std::{borrow::Cow, ops::Deref, sync::Arc};
@@ -107,7 +107,7 @@ pub(super) struct State<'sess, 'ast> {
     pub(super) s: pp::Printer,
     ind: isize,
 
-    sm: &'sess SourceMap,
+    file: &'sess SourceFile,
     pub(super) comments: Comments,
     config: Arc<FormatterConfig>,
     inline_config: InlineConfig<()>,
@@ -208,8 +208,7 @@ impl Separator {
 /// Generic methods
 impl<'sess> State<'sess, '_> {
     pub(super) fn new(
-        sm: &'sess SourceMap,
-        start_pos: BytePos,
+        file: &'sess SourceFile,
         config: Arc<FormatterConfig>,
         inline_config: InlineConfig<()>,
         comments: Comments,
@@ -220,11 +219,11 @@ impl<'sess> State<'sess, '_> {
                 matches!(config.style, IndentStyle::Tab).then(|| config.tab_width),
             ),
             ind: config.tab_width as isize,
-            sm,
+            file,
             comments,
             config,
             inline_config,
-            cursor: SourcePos { pos: start_pos, enabled: true },
+            cursor: SourcePos { pos: file.start_pos, enabled: true },
             has_crlf: false,
             contract: None,
             single_line_stmt: None,
@@ -246,7 +245,7 @@ impl<'sess> State<'sess, '_> {
     /// If a `\r` is found, `self.has_crlf` is set to `true`. This is intended to be
     /// called once at the beginning of the formatting process for efficiency.
     fn check_crlf(&mut self, span: Span) {
-        if let Ok(snip) = self.sm.span_to_snippet(span)
+        if let Some(snip) = self.snippet(span)
             && snip.contains('\r')
         {
             self.has_crlf = true;
@@ -319,10 +318,20 @@ impl<'sess> State<'sess, '_> {
 }
 
 /// Span to source.
-impl State<'_, '_> {
+impl<'sess> State<'sess, '_> {
+    fn snippet(&self, span: Span) -> Option<&'sess str> {
+        let start = span.lo().0.checked_sub(self.file.start_pos.0)? as usize;
+        let end = span.hi().0.checked_sub(self.file.start_pos.0)? as usize;
+        self.file.src.get(start..end)
+    }
+
+    fn source_line(&self, pos: BytePos) -> usize {
+        self.file.lookup_line(self.file.relative_position(pos)).map_or(0, |line| line + 1)
+    }
+
     fn char_at(&self, pos: BytePos) -> Option<char> {
-        let res = self.sm.lookup_byte_offset(pos);
-        res.sf.src.get(res.pos.to_usize()..)?.chars().next()
+        let offset = pos.0.checked_sub(self.file.start_pos.0)? as usize;
+        self.file.src.get(offset..)?.chars().next()
     }
 
     /// Returns the position of the first `{` within the span, ignoring the ones inside comments.
@@ -332,7 +341,7 @@ impl State<'_, '_> {
 
     /// Returns the position of the first matching character within the span, ignoring comments.
     fn find_uncommented_char(&self, span: Span, needle: char) -> Option<BytePos> {
-        let snip = self.sm.span_to_snippet(span).ok()?;
+        let snip = self.snippet(span)?;
         let mut idx = 0;
         while idx < snip.len() {
             let rest = &snip[idx..];
@@ -351,13 +360,13 @@ impl State<'_, '_> {
     }
 
     fn print_span(&mut self, span: Span) {
-        match self.sm.span_to_snippet(span) {
-            Ok(s) => self.s.word(if matches!(self.config.style, IndentStyle::Tab) {
-                snippet_with_tabs(s, self.config.tab_width)
+        match self.snippet(span) {
+            Some(s) => self.s.word(if matches!(self.config.style, IndentStyle::Tab) {
+                snippet_with_tabs(s.to_owned(), self.config.tab_width)
             } else {
-                s
+                s.to_owned()
             }),
-            Err(e) => panic!("failed to print {span:?}: {e:#?}"),
+            None => panic!("failed to print {span:?}: invalid source span"),
         }
         // Drop comments that are included in the span.
         while let Some(cmnt) = self.peek_comment() {
@@ -447,7 +456,7 @@ impl State<'_, '_> {
     }
 
     fn estimate_size(&self, span: Span) -> usize {
-        if let Ok(snip) = self.sm.span_to_snippet(span) {
+        if let Some(snip) = self.snippet(span) {
             let (mut size, mut first, mut prev_needs_space) = (0, true, false);
 
             for line in snip.lines() {
@@ -501,7 +510,7 @@ impl State<'_, '_> {
     }
 
     fn same_source_line(&self, a: BytePos, b: BytePos) -> bool {
-        self.sm.lookup_char_pos(a).line == self.sm.lookup_char_pos(b).line
+        self.source_line(a) == self.source_line(b)
     }
 }
 
@@ -558,11 +567,11 @@ impl<'sess> State<'sess, '_> {
                 && cmnt.is_doc
                 && cmnt.kind == ast::CommentKind::Line
             {
-                let mut ref_line = self.sm.lookup_char_pos(cmnt.span.hi()).line;
+                let mut ref_line = self.source_line(cmnt.span.hi());
                 while let Some(next_cmnt) = self.peek_comment() {
                     if !next_cmnt.is_doc
                         || next_cmnt.kind != ast::CommentKind::Line
-                        || ref_line + 1 != self.sm.lookup_char_pos(next_cmnt.span.lo()).line
+                        || ref_line + 1 != self.source_line(next_cmnt.span.lo())
                     {
                         break;
                     }
@@ -581,7 +590,7 @@ impl<'sess> State<'sess, '_> {
             }
 
             // Handle disabled comments
-            let Some(cmnt) = self.handle_comment(
+            let Some(mut cmnt) = self.handle_comment(
                 cmnt,
                 if style_cache.is_isolated() {
                     config.iso_no_break
@@ -618,6 +627,12 @@ impl<'sess> State<'sess, '_> {
                 && matches!(cmnt.kind, ast::CommentKind::Line)
             {
                 self.hardbreak_if_not_bol();
+            }
+
+            // A trailing comment moved onto its own line is isolated on the next run.
+            // Use that style now so following comments receive the same indentation.
+            if cmnt.style.is_trailing() && self.is_bol_or_only_ind() {
+                cmnt.style = CommentStyle::Isolated;
             }
 
             // Handle mixed with follow-up comment
@@ -1070,7 +1085,7 @@ impl<'sess> State<'sess, '_> {
     where
         'sess: 'b,
     {
-        self.comments.peek_trailing(self.sm, span_pos, next_pos).map(|(cmnt, _)| cmnt)
+        self.comments.peek_trailing_in_file(self.file, span_pos, next_pos).map(|(cmnt, _)| cmnt)
     }
 
     fn print_trailing_comment_inner(
@@ -1080,7 +1095,7 @@ impl<'sess> State<'sess, '_> {
         config: Option<CommentConfig>,
     ) -> bool {
         let mut printed = 0;
-        if let Some((_, n)) = self.comments.peek_trailing(self.sm, span_pos, next_pos) {
+        if let Some((_, n)) = self.comments.peek_trailing_in_file(self.file, span_pos, next_pos) {
             let config =
                 config.unwrap_or(CommentConfig::skip_ws().mixed_no_break().mixed_prev_space());
             while printed <= n {

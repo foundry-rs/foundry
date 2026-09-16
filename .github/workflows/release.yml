@@ -21,7 +21,7 @@ env:
   # Keep the base features in sync with `docker-publish.yml`.
   # Platform-specific release features are added in the build step.
   RUST_PROFILE: dist
-  RUST_FEATURES: aws-kms,gcp-kms,turnkey,cli,asm-keccak,js-tracer,monad,optimism
+  RUST_FEATURES: aws-kms,gcp-kms,turnkey,cli,asm-keccak,js-tracer,base,monad,optimism
 
 jobs:
   cargo-cooldown:
@@ -359,7 +359,7 @@ jobs:
             svm_target_platform: macosx-amd64
             platform: darwin
             arch: amd64
-          - runner: macos-latest-large
+          - runner: macos-latest-xlarge
             target: aarch64-apple-darwin
             svm_target_platform: macosx-aarch64
             platform: darwin
@@ -386,9 +386,15 @@ jobs:
       - name: Apple Silicon setup
         if: matrix.target == 'aarch64-apple-darwin'
         run: |
-          printf 'SDKROOT=%s\n' "$(xcrun -sdk macosx --show-sdk-path)" >> "$GITHUB_ENV"
-          # Apple Silicon and the Touch ID shim require macOS 11 or newer.
-          printf 'MACOSX_DEPLOYMENT_TARGET=11.0\n' >> "$GITHUB_ENV"
+          {
+            printf 'SDKROOT=%s\n' "$(xcrun -sdk macosx --show-sdk-path)"
+            # Apple Silicon and the Touch ID shim require macOS 11 or newer.
+            printf 'MACOSX_DEPLOYMENT_TARGET=11.0\n'
+            # Keep the release independent of Homebrew's libusb installation.
+            printf 'LIBUSB_STATIC=1\n'
+            # The ARM64 runner has less memory than the Intel large runner.
+            printf 'CARGO_BUILD_JOBS=2\n'
+          } >> "$GITHUB_ENV"
 
       - name: cross setup
         if: contains(matrix.target, 'musl')
@@ -435,6 +441,7 @@ jobs:
             cargo build "${flags[@]}" --bins
           fi
 
+          host_target=$(rustc -vV | sed -n 's/^host: //p')
           bins=(anvil cast chisel forge solar)
           for name in "${bins[@]}"; do
             bin="$OUT_DIR/$name$ext"
@@ -442,7 +449,11 @@ jobs:
             file "$bin" || true
             du -h "$bin" || true
             ldd "$bin" || true
-            $bin --version || true
+            if [[ "$TARGET" == "$host_target" ]]; then
+              "$bin" --version
+            else
+              echo "Skipping execution of $name: target $TARGET differs from host $host_target"
+            fi
             printf '%s_bin_path=%s\n' "$name" "$bin" >> "$GITHUB_ENV"
           done
 

@@ -1992,6 +1992,175 @@ contract SymbolicNativeArrayLengths {
     );
 });
 
+forgetest_init!(symbolic_handles_array_assertions_from_symbolic_memory, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_handles_array_assertions_from_symbolic_memory because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicArrayAssertions.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicArrayAssertions is Test {
+    function checkArrayCopy(uint256[] memory values) public pure {
+        uint256[] memory copy = new uint256[](values.length);
+        for (uint256 i; i < values.length; ++i) copy[i] = values[i];
+        assertEq(values, copy);
+    }
+
+    function checkCorruptedArrayCopy(uint256[] memory values) public pure {
+        uint256[] memory copy = new uint256[](values.length);
+        for (uint256 i; i < values.length; ++i) copy[i] = values[i];
+        if (copy.length != 0) copy[0] ^= 1;
+        assertEq(values, copy);
+    }
+
+    function checkConcretePointerWithSymbolicSize(bool padded) public view {
+        assembly {
+            mstore(0x80, shl(224, 0x975d5a12))
+            mstore(0x84, 0x40)
+            mstore(0xa4, 0x60)
+            mstore(0xc4, 0)
+            mstore(0xe4, 0)
+            let size := add(0x84, shl(5, padded))
+            if iszero(staticcall(gas(), 0x7109709ECfa91a80626fF3989D68f67F5b1DD12D, 0x80, size, 0, 0)) {
+                revert(0, 0)
+            }
+        }
+    }
+
+    function checkArrayCallResultTracksInputSize(bool complete, uint256 value) public view {
+        bool success;
+        assembly {
+            mstore(0x80, shl(224, 0x975d5a12))
+            mstore(0x84, 0x40)
+            mstore(0xa4, 0x80)
+            mstore(0xc4, 1)
+            mstore(0xe4, value)
+            mstore(0x104, 1)
+            mstore(0x124, value)
+            let size := add(4, mul(0xc0, complete))
+            success := staticcall(gas(), 0x7109709ECfa91a80626fF3989D68f67F5b1DD12D, 0x80, size, 0, 0)
+        }
+        assertTrue(success);
+    }
+
+    function checkNoncanonicalArrayEncoding(bool shifted) public view {
+        bool success;
+        assembly {
+            let start := add(0x80, shl(5, shifted))
+            mstore(start, shl(224, 0x975d5a12))
+            mstore(add(start, 4), 0x60)
+            mstore(add(start, 0x24), 0x60)
+            mstore(add(start, 0x64), 1)
+            mstore(add(start, 0x84), 7)
+            success := staticcall(gas(), 0x7109709ECfa91a80626fF3989D68f67F5b1DD12D, start, 0xa4, 0, 0)
+        }
+        assertTrue(success);
+    }
+
+    function checkZeroLengthMcopy(uint256 dest, uint256 size) public view {
+        vm.assume(size <= 2);
+        uint256 byteAtZero;
+        assembly {
+            mstore8(0, 0xaa)
+            mstore8(0x20, 0xbb)
+            mcopy(dest, 0x1f, size)
+            byteAtZero := byte(0, mload(0))
+        }
+        assert(size != 0 || byteAtZero == 0xaa);
+    }
+}
+"#,
+    );
+
+    let args = [
+        "test",
+        "--symbolic",
+        "--symbolic-max-paths",
+        "20",
+        "--symbolic-max-solver-queries",
+        "50",
+        "--symbolic-max-depth",
+        "5000",
+        "--symbolic-timeout",
+        "1",
+    ];
+    let stdout = cmd
+        .args(args)
+        .args(["--symbolic-array-lengths", "1"])
+        .args(["--match-test", "^checkArrayCopy\\("])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert_relevant_lines(&stdout, str![["[PASS] checkArrayCopy(uint256[])"]]);
+
+    let stdout = cmd
+        .forge_fuse()
+        .args(args)
+        .args(["--symbolic-array-lengths", "1"])
+        .args(["--match-test", "^checkCorruptedArrayCopy\\("])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert_relevant_lines(
+        &stdout,
+        str![[r#"
+[FAIL: assertion failed: [0] != [1]; counterexample:
+args=[[0]]] checkCorruptedArrayCopy(uint256[])
+"#]],
+    );
+
+    let stdout = cmd
+        .forge_fuse()
+        .args(args)
+        .args(["--match-test", "^checkConcretePointerWithSymbolicSize\\("])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert_relevant_lines(&stdout, str![["[PASS] checkConcretePointerWithSymbolicSize(bool)"]]);
+
+    let stdout = cmd
+        .forge_fuse()
+        .args(args)
+        .args(["--match-test", "^checkArrayCallResultTracksInputSize\\("])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert_relevant_lines(
+        &stdout,
+        str![[
+            "[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic array assertion CALL input size] checkArrayCallResultTracksInputSize(bool,uint256)"
+        ]],
+    );
+
+    let output = cmd
+        .forge_fuse()
+        .args(args)
+        .args(["--json", "--match-test", "^checkNoncanonicalArrayEncoding\\("])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkNoncanonicalArrayEncoding(bool)");
+    assert_eq!(result["symbolic"]["status"], "pass");
+
+    let output = cmd
+        .forge_fuse()
+        .args(args)
+        .args(["--json", "--match-test", "^checkZeroLengthMcopy\\("])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkZeroLengthMcopy(uint256,uint256)");
+    assert_eq!(result["symbolic"]["status"], "pass");
+});
+
 forgetest_init!(symbolic_uses_legacy_halmos_array_lengths, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(
@@ -4371,6 +4540,125 @@ contract SymbolicInvariantAssertionSeed is Test {
         ])
         .assert_failure();
 });
+
+forgetest_init!(
+    symbolic_invariant_frontier_seeding_retains_property_breaking_candidate,
+    |prj, cmd| {
+        if !z3_available() {
+            let _ = sh_eprintln!(
+                "skipping symbolic_invariant_frontier_seeding_retains_property_breaking_candidate because z3 is not available"
+            );
+            return;
+        }
+
+        prj.add_test(
+            "SymbolicInvariantCandidateSeed.t.sol",
+            r#"
+import "forge-std/Test.sol";
+
+contract SymbolicInvariantCandidateTarget {
+    bool public broken;
+
+    function act(uint256 value) external {
+        if (value < 10 && value == 7) broken = true;
+    }
+}
+
+contract SymbolicInvariantCandidateSeed is Test {
+    SymbolicInvariantCandidateTarget target;
+
+    function setUp() public {
+        target = new SymbolicInvariantCandidateTarget();
+        targetContract(address(target));
+    }
+
+    function invariant_anchor() public pure {}
+
+    function invariant_notBroken() public view {
+        assertFalse(target.broken());
+    }
+
+    function afterInvariant() public pure {}
+}
+"#,
+        );
+
+        cmd.forge_fuse()
+            .args([
+                "fuzz",
+                "run",
+                "--match-contract",
+                "SymbolicInvariantCandidateSeed",
+                "--runs",
+                "1",
+                "--depth",
+                "1",
+                "--seed",
+                "0x1234",
+                "--dictionary-weight",
+                "0",
+                "--threads",
+                "1",
+                "--frontier-dir",
+                "candidate_frontiers",
+            ])
+            .assert_success();
+
+        let frontier_path =
+            find_stateful_frontier_artifact(&prj.root().join("candidate_frontiers"));
+        let target_frontier =
+            keep_only_matching_frontier(&frontier_path, "value < 10", |frontier| {
+                frontier["call_index"] == 0
+                    && frontier["site"]["opcode_name"] == "LT"
+                    && frontier["operands"]["result"] == false
+                    && (frontier["operands"]["lhs"] == "0xa"
+                        || frontier["operands"]["rhs"] == "0xa")
+            });
+        let target_frontier_id = target_frontier["id"].as_u64().unwrap().to_string();
+
+        cmd.forge_fuse();
+        cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+        cmd.args([
+            "test",
+            "--match-contract",
+            "SymbolicInvariantCandidateSeed",
+            "--threads",
+            "1",
+            "--invariant-frontier-dir",
+            "candidate_frontiers",
+            "--invariant-corpus-dir",
+            "candidate_corpus",
+            "--symbolic-use-fuzz-frontiers",
+            "--symbolic-frontier-limit",
+            "1",
+            "--symbolic-frontier-ids",
+            &target_frontier_id,
+        ])
+        .assert_success();
+
+        let output = cmd
+            .forge_fuse()
+            .args([
+                "fuzz",
+                "replay",
+                "--match-contract",
+                "SymbolicInvariantCandidateSeed",
+                "--match-test",
+                "invariant_notBroken",
+                "--corpus-dir",
+                "candidate_corpus",
+            ])
+            .assert_failure()
+            .get_output()
+            .clone();
+        assert!(
+            output.stdout_lossy().contains("invariant_notBroken"),
+            "stdout={}\nstderr={}",
+            output.stdout_lossy(),
+            output.stderr_lossy()
+        );
+    }
+);
 
 forgetest_init!(symbolic_invariant_frontier_seeding_checks_property_from_prefix, |prj, cmd| {
     if !z3_available() {

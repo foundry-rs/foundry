@@ -45,20 +45,23 @@ use foundry_evm::hardfork::OpHardfork;
 use foundry_evm_networks::{NetworkConfigs, arbitrum};
 use foundry_primitives::{FoundryNetwork, FoundryReceiptEnvelope};
 use foundry_test_utils::rpc::{
-    self, next_http_rpc_endpoint, next_rpc_endpoint, spawn_rpc_proxy_internal_error_after,
-    spawn_rpc_proxy_method_not_found_before, spawn_rpc_proxy_rejecting_method_after,
-    spawn_rpc_proxy_rejecting_method_when_enabled,
+    self, next_http_rpc_endpoint, next_rpc_endpoint, spawn_rpc_proxy_canned_method,
+    spawn_rpc_proxy_internal_error_after, spawn_rpc_proxy_method_not_found_before,
+    spawn_rpc_proxy_rejecting_method_after, spawn_rpc_proxy_rejecting_method_when_enabled,
     spawn_rpc_proxy_retyping_first_block_transaction,
 };
-use futures::StreamExt;
+use futures::{StreamExt, future::pending};
 use revm::{
     context::BlockEnv, context_interface::block::BlobExcessGasAndPrice,
     precompile::PrecompileStatus, primitives::hardfork::SpecId,
 };
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    sync::{Arc, atomic::Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::Duration,
 };
 
@@ -99,6 +102,157 @@ pub fn fork_config() -> NodeConfig {
         .with_fork_block_number(Some(BLOCK_NUMBER))
 }
 
+#[derive(Clone, Copy)]
+enum ForkProbeFailure {
+    Stall,
+    RateLimit,
+}
+
+/// Stalls or rate-limits a probe after the given number of successful requests.
+async fn spawn_failing_fork_probe(
+    endpoint: String,
+    method: &'static str,
+    successful_calls: usize,
+    failure: ForkProbeFailure,
+) -> String {
+    let client = reqwest::Client::new();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let router = Router::new().route(
+        "/",
+        post(move |Json(request): Json<Value>| {
+            let client = client.clone();
+            let endpoint = endpoint.clone();
+            let calls = calls.clone();
+            async move {
+                if request.get("method").and_then(Value::as_str) == Some(method)
+                    && calls.fetch_add(1, Ordering::Relaxed) >= successful_calls
+                {
+                    return match failure {
+                        ForkProbeFailure::Stall => pending::<Json<Value>>().await,
+                        ForkProbeFailure::RateLimit => Json(json!({
+                            "jsonrpc": "2.0",
+                            "id": request["id"],
+                            "error": { "code": -32005, "message": "rate limit exceeded" },
+                        })),
+                    };
+                }
+                Json(
+                    client
+                        .post(endpoint)
+                        .json(&request)
+                        .send()
+                        .await
+                        .unwrap()
+                        .json::<Value>()
+                        .await
+                        .unwrap(),
+                )
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    format!("http://{address}")
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_ignores_initial_anvil_node_info_timeout() {
+    let (_api, origin) =
+        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64))).await;
+    let fork_url = spawn_failing_fork_probe(
+        origin.http_endpoint(),
+        "anvil_nodeInfo",
+        0,
+        ForkProbeFailure::Stall,
+    )
+    .await;
+    let (api, _handle) = tokio::time::timeout(
+        Duration::from_secs(5),
+        spawn(
+            NodeConfig::test()
+                .with_eth_rpc_url(Some(fork_url))
+                .fork_request_timeout(Some(Duration::from_secs(60))),
+        ),
+    )
+    .await
+    .expect("optional node-info probes must not wait for the normal RPC timeout");
+
+    assert_eq!(api.chain_id(), NamedChain::Mainnet as u64);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_bounds_anvil_node_info_retry_backoff() {
+    let (_api, origin) =
+        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64))).await;
+    let fork_url = spawn_failing_fork_probe(
+        origin.http_endpoint(),
+        "anvil_nodeInfo",
+        0,
+        ForkProbeFailure::RateLimit,
+    )
+    .await;
+    let (api, _handle) = tokio::time::timeout(
+        Duration::from_secs(5),
+        spawn(
+            NodeConfig::test()
+                .with_eth_rpc_url(Some(fork_url))
+                .fork_retry_backoff(Some(Duration::from_secs(60))),
+        ),
+    )
+    .await
+    .expect("the probe deadline must include retry backoff");
+    assert_eq!(api.chain_id(), NamedChain::Mainnet as u64);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_ignores_anvil_node_info_timeout_after_identification() {
+    let (_api, origin) = spawn(NodeConfig::test()).await;
+    let fork_url = spawn_failing_fork_probe(
+        origin.http_endpoint(),
+        "anvil_nodeInfo",
+        1,
+        ForkProbeFailure::Stall,
+    )
+    .await;
+    let result = tokio::time::timeout(
+        Duration::from_secs(5),
+        try_spawn(
+            NodeConfig::test()
+                .with_eth_rpc_url(Some(fork_url))
+                .fork_request_timeout(Some(Duration::from_secs(60))),
+        ),
+    )
+    .await
+    .expect("identified node-info probes must have a bounded deadline");
+    let (api, _handle) = result.expect("node-info timeout must fall back after identification");
+    assert_eq!(api.chain_id(), origin.http_provider().get_chain_id().await.unwrap());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_ignores_anvil_metadata_timeout() {
+    let (_api, origin) = spawn(NodeConfig::test()).await;
+    let fork_url = spawn_failing_fork_probe(
+        origin.http_endpoint(),
+        "anvil_metadata",
+        0,
+        ForkProbeFailure::Stall,
+    )
+    .await;
+    let result = tokio::time::timeout(
+        Duration::from_secs(5),
+        try_spawn(
+            NodeConfig::test()
+                .with_eth_rpc_url(Some(fork_url))
+                .fork_request_timeout(Some(Duration::from_secs(60))),
+        ),
+    )
+    .await
+    .expect("metadata probes must have a bounded deadline");
+    let (api, _handle) = result.expect("metadata timeout must use the fallback identity");
+    assert_eq!(api.chain_id(), origin.http_provider().get_chain_id().await.unwrap());
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_ignores_initial_anvil_node_info_rpc_error() {
     let (_api, origin) =
@@ -109,6 +263,21 @@ async fn test_fork_ignores_initial_anvil_node_info_rpc_error() {
     let (api, _handle) = spawn(NodeConfig::test().with_eth_rpc_url(Some(fork_url))).await;
 
     assert_eq!(api.chain_id(), NamedChain::Mainnet as u64);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_skips_anvil_node_info_when_disabled() {
+    let (_api, origin) =
+        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64))).await;
+    let (fork_url, node_info_calls) =
+        spawn_rpc_proxy_canned_method(origin.http_endpoint(), "anvil_nodeInfo", json!({})).await;
+
+    let (api, _handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(fork_url)).with_no_fork_node_info(true))
+            .await;
+
+    assert_eq!(api.chain_id(), NamedChain::Mainnet as u64);
+    assert_eq!(node_info_calls.load(Ordering::Relaxed), 0);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -4122,6 +4291,18 @@ async fn test_fork_get_account_info() {
             code: Default::default(),
         }
     );
+
+    let snapshot = api.evm_snapshot().await.unwrap();
+    api.anvil_set_nonce(address!("0x19e53a7397bE5AA7908fE9eA991B03710bdC74Fd"), U256::from(123))
+        .await
+        .unwrap();
+    let info = provider
+        .get_account_info(address!("0x19e53a7397bE5AA7908fE9eA991B03710bdC74Fd"))
+        .number(BLOCK_NUMBER)
+        .await
+        .unwrap();
+    assert_eq!(info.nonce, 6690);
+    assert!(api.evm_revert(snapshot).await.unwrap());
 
     // Mine and check account info at new block number, see https://github.com/foundry-rs/foundry/issues/12148
     api.evm_mine(None).await.unwrap();
