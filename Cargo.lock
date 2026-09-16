@@ -5076,6 +5076,7 @@ dependencies = [
  "watchexec",
  "watchexec-events",
  "watchexec-signals",
+ "which",
  "yansi",
 ]
 

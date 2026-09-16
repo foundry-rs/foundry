@@ -47,14 +47,26 @@ pub(super) fn launch(path: Option<&Path>, code_path: Option<&Path>) -> Result<()
     ensure!(project.is_dir(), "Project path must be a directory: {}", project.display());
     let forge = std::env::current_exe()?;
     let profile = Config::selected_profile().to_string();
+    let code = code_path.map(Path::to_path_buf).unwrap_or_else(default_code_path);
+    let launch_error = || {
+        format!(
+            "Could not launch VS Code using {}. Install VS Code and its `code` command, \
+             or pass --code-path <PATH> to the VS Code CLI. \
+             Use `forge lsp --stdio` for another editor.",
+            code.display()
+        )
+    };
+    let code = which::which(&code).wrap_err_with(launch_error)?;
+    let code_target = dunce::canonicalize(&code).wrap_err_with(launch_error)?;
     let cache = Config::foundry_cache_dir()
         .ok_or_else(|| eyre!("Could not find the Foundry cache directory"))?
         .join("lsp");
     let extension = prepare_extension(&cache)?;
 
-    // Separate projects, executables and profiles cannot inherit a stale VS Code process
-    // environment.
-    let session_key = keccak256(serde_json::to_vec(&(&project, &forge, &profile))?);
+    // Keep launcher paths distinct for dispatchers such as Snap, even when their targets match.
+    // Include the target too so repointing a launcher symlink cannot reuse another editor's state.
+    let session_key =
+        keccak256(serde_json::to_vec(&(&project, &forge, &profile, &code, &code_target))?);
     let session =
         vscode_session_dir(&Config::data_dir()?.join("lsp"), &format!("{session_key:x}")[..16])?;
     // Portable VS Code appends a Unix socket name to user-data even when XDG_RUNTIME_DIR is set.
@@ -83,7 +95,6 @@ pub(super) fn launch(path: Option<&Path>, code_path: Option<&Path>) -> Result<()
         }
     }
 
-    let code = code_path.map(Path::to_path_buf).unwrap_or_else(default_code_path);
     sh_status!("Opening VS Code with Forge Solidity support: {}", project.display())?;
     let status = Command::new(&code)
         .arg("--new-window")
@@ -105,14 +116,7 @@ pub(super) fn launch(path: Option<&Path>, code_path: Option<&Path>) -> Result<()
         .stdout(Stdio::null())
         .stderr(Stdio::inherit())
         .status()
-        .wrap_err_with(|| {
-            format!(
-                "Could not launch VS Code using {}. Install VS Code and its `code` command, \
-                 or pass --code-path <PATH> to the VS Code CLI. \
-                 Use `forge lsp --stdio` for another editor.",
-                code.display()
-            )
-        })?;
+        .wrap_err_with(launch_error)?;
     ensure!(status.success(), "VS Code launcher exited with {status}");
     Ok(())
 }
