@@ -17,16 +17,15 @@ use std::{
 };
 
 #[cfg(unix)]
+use foundry_test_utils::snapbox::{IntoData, data::DataFormat};
+#[cfg(unix)]
+use rexpect::{Encoding, process::wait::WaitStatus, reader::Options, spawn_with_options};
+#[cfg(unix)]
 use std::{
     os::unix::fs::{PermissionsExt, symlink},
     path::Path,
     process::Command,
 };
-
-#[cfg(unix)]
-use foundry_test_utils::snapbox::{IntoData, data::DataFormat};
-#[cfg(unix)]
-use rexpect::{Encoding, process::wait::WaitStatus, reader::Options, spawn_with_options};
 
 const SYMBOL_TIMEOUT: Duration = Duration::from_secs(10);
 

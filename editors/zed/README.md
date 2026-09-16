@@ -19,8 +19,7 @@ separate capability probe because Zed's process API cannot set its working
 directory. Missing Forge on `PATH` produces installation guidance; missing custom
 executables and incompatible builds are reported by Zed's language server
 status/log during startup. To check an installation, run
-`forge lsp --stdio --help` from the worktree directory. Forge accepts `--stdio`
-even though it is hidden from help output.
+`forge lsp --stdio --help` from the worktree directory.
 
 To select a specific Forge installation, set its absolute path in your Zed user
 or project settings:

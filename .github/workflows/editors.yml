@@ -10,6 +10,8 @@ on:
       - ".github/workflows/editors.yml"
       - "Cargo.toml"
       - "Cargo.lock"
+      - "rustfmt.toml"
+      - "crates/forge/Cargo.toml"
       - "crates/forge/src/cmd/lsp.rs"
       - "crates/forge/src/cmd/lsp/**"
       - "crates/forge/src/opts.rs"
@@ -22,6 +24,8 @@ on:
       - ".github/workflows/editors.yml"
       - "Cargo.toml"
       - "Cargo.lock"
+      - "rustfmt.toml"
+      - "crates/forge/Cargo.toml"
       - "crates/forge/src/cmd/lsp.rs"
       - "crates/forge/src/cmd/lsp/**"
       - "crates/forge/src/opts.rs"
@@ -82,11 +86,18 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
+          toolchain: nightly
+          components: rustfmt
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
           toolchain: stable
+          components: clippy
           targets: wasm32-wasip2
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: editors/zed
           cache-bin: false
+      - run: cargo +nightly fmt --manifest-path editors/zed/Cargo.toml -- --check
+      - run: cargo clippy --locked --manifest-path editors/zed/Cargo.toml --all-targets -- -D warnings
       - run: cargo test --locked --manifest-path editors/zed/Cargo.toml
       - run: cargo build --locked --manifest-path editors/zed/Cargo.toml --target wasm32-wasip2 --release
