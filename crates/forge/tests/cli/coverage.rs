@@ -1813,6 +1813,53 @@ contract AContractTest is DSTest {
 "#]]);
 });
 
+forgetest!(ternary_array_copy, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    uint256[] values;
+
+    constructor() {
+        values.push(1);
+        values.push(2);
+    }
+
+    function execute(bool condition) external view returns (uint256[] memory) {
+        return condition ? new uint256[](0) : values;
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import {AContract} from "./AContract.sol";
+
+contract AContractTest is DSTest {
+    AContract a = new AContract();
+
+    function testCoverage() external view {
+        a.execute(false);
+    }
+}
+"#,
+    );
+    cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
+...
+╭-------------------+---------------+---------------+--------------+---------------╮
+| File              | % Lines       | % Statements  | % Branches   | % Funcs       |
++==================================================================================+
+| src/AContract.sol | 100.00% (5/5) | 100.00% (4/4) | 50.00% (1/2) | 100.00% (2/2) |
+|-------------------+---------------+---------------+--------------+---------------|
+| Total             | 100.00% (5/5) | 100.00% (4/4) | 50.00% (1/2) | 100.00% (2/2) |
+╰-------------------+---------------+---------------+--------------+---------------╯
+
+"#]]);
+});
+
 forgetest!(ternary_nested_partial, |prj, cmd| {
     prj.insert_ds_test();
     prj.add_source(

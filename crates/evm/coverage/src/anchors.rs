@@ -185,14 +185,19 @@ fn find_anchor_branch_inner(
                 let mut pc_bytes = [0u8; 4];
                 pc_bytes[4 - push_size..].copy_from_slice(inst.immediate);
                 let pc_jump = u32::from_be_bytes(pc_bytes);
-                anchors = Some((
+                let found = (
                     ItemAnchor {
                         item_id,
                         // The first branch is the opcode directly after JUMPI
                         instruction: (next_pc + 1).try_into()?,
                     },
                     ItemAnchor { item_id, instruction: pc_jump },
-                ));
+                );
+                if exact {
+                    // Generated branch code can contain later jumps mapped to the ternary span.
+                    return Ok(found);
+                }
+                anchors = Some(found);
             }
         }
     }
