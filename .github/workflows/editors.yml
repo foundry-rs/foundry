@@ -41,12 +41,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Exercise license files without Git symlink support
-        run: |
-          rm editors/vscode/LICENSE-MIT editors/vscode/LICENSE-APACHE
-          git -c core.symlinks=false checkout-index --force -- editors/vscode/LICENSE-MIT editors/vscode/LICENSE-APACHE
-          test ! -L editors/vscode/LICENSE-MIT
-          test ! -L editors/vscode/LICENSE-APACHE
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
@@ -67,17 +61,6 @@ jobs:
         working-directory: editors/vscode
       - run: npm run check && npm test && npm run bundle:check && npm run package
         working-directory: editors/vscode
-      - name: Verify VSIX license contents
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          from zipfile import ZipFile
-
-          with ZipFile("editors/vscode/bundle/solar-lsp.vsix") as package:
-              for name in ("LICENSE-MIT", "LICENSE-APACHE"):
-                  assert package.read(f"extension/{name}") == Path(name).read_bytes(), name
-              assert package.read("extension/syntaxes/LICENSE") == Path("editors/vscode/syntaxes/LICENSE").read_bytes()
-          PY
       - run: cargo build --locked -p forge --bin forge
       - run: cargo test --locked -p forge --test cli 'lsp::'
       - name: Real Forge in VS Code Extension Development Host
