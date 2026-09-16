@@ -96,31 +96,7 @@ fn normalize_bounded_comparisons_once(
 ) -> Vec<SymBoolExpr> {
     let mut index = 0;
     while index < constraints.len() {
-        let mut context = ConstraintContext::from_constraints(
-            constraints.iter().enumerate().filter_map(|(i, value)| (i != index).then_some(value)),
-            constraints.len() - 1,
-        );
-        // Keep the supporting guards in the conjunction, and never use the current predicate
-        // to justify its own rewrite. Sequential replacement also prevents circular proofs.
-        // One guard may bound the operand used in another guard's scaled zero check.
-        for _ in 0..MAX_CONTEXTUAL_PASSES {
-            let mut changed = false;
-            for (i, constraint) in constraints.iter().enumerate() {
-                if i != index {
-                    changed |= context.record_non_wrapping_product(cx, constraint);
-                }
-            }
-            if !changed {
-                break;
-            }
-        }
-        // Successful product guards can turn a scaled zero check into an exact operand fact.
-        // As with the guards, only other retained conjuncts may justify this inference.
-        for (i, constraint) in constraints.iter().enumerate() {
-            if i != index {
-                context.record_scaled_zero_fact(cx, constraint);
-            }
-        }
+        let context = ConstraintContext::for_rewrite(cx, &constraints, index);
         constraints[index] = context.normalize_bool(cx, constraints[index].clone(), false);
         // Revisit each newly exposed conjunct with the retained supporting facts. Otherwise a
         // division rewrite can leave a simple contradiction hidden until the SMT fallback.
@@ -890,6 +866,30 @@ impl ConstraintContext {
         Self::from_constraints_with_lower_bounds(constraints, constraint_count, true)
     }
 
+    /// Builds a rewrite context from the other retained conjuncts, never the predicate itself.
+    fn for_rewrite(cx: &mut SymCx, constraints: &[SymBoolExpr], index: usize) -> Self {
+        let supporting = constraints
+            .iter()
+            .enumerate()
+            .filter_map(|(i, constraint)| (i != index).then_some(constraint));
+        let mut context = Self::from_constraints(supporting.clone(), constraints.len() - 1);
+        // One successful product guard may bound an operand used in another guard.
+        for _ in 0..MAX_CONTEXTUAL_PASSES {
+            let mut changed = false;
+            for constraint in supporting.clone() {
+                changed |= context.record_non_wrapping_product(cx, constraint);
+            }
+            if !changed {
+                break;
+            }
+        }
+        // Product bounds can then turn scaled zero checks into exact operand facts.
+        for constraint in supporting {
+            context.record_scaled_zero_fact(cx, constraint);
+        }
+        context
+    }
+
     fn from_constraints_with_lower_bounds<'a>(
         constraints: impl Clone + Iterator<Item = &'a SymBoolExpr>,
         constraint_count: usize,
@@ -900,15 +900,7 @@ impl ConstraintContext {
             context.record_exact_value_constraint(constraint);
             context.record_upper_bound_constraint(constraint);
             context.record_lower_bound_constraint(constraint);
-            context.record_unsigned_lower_bound_constraint(constraint);
-            // The batch pass keeps unsigned theorem bounds separate from general intervals.
-            // Sequential rewrites may promote bounds because their context excludes the current
-            // predicate and retains every supporting conjunct.
-            if promote_unsigned_bounds
-                && let Some((expr, bound)) = context.unsigned_lower_bound_constraint(constraint)
-            {
-                context.record_lower_bound(expr.clone(), bound);
-            }
+            context.record_unsigned_lower_bound_constraint(constraint, promote_unsigned_bounds);
         }
         // A bounded number of rounds closes ordinary order chains. Relational propagation keeps
         // strict comparisons weak (`a < b` propagates only `a <= upper(b)`), so inconsistent
@@ -965,7 +957,7 @@ impl ConstraintContext {
         root_candidate
             || expr.visit_unique_bool(|word| {
                 Self::mul_div_operands(word).is_some()
-                    || Self::ceil_div_shape(word)
+                    || Self::ceil_div_product(word).is_some()
                     || matches!(word.kind(), SymExprKind::Ite(_, _, _))
             })
     }
@@ -1083,7 +1075,7 @@ impl ConstraintContext {
     fn may_normalize_word(&self, expr: &SymExpr) -> bool {
         if self.exact_values.contains_key(expr)
             || Self::mul_div_operands(expr).is_some()
-            || Self::ceil_div_shape(expr)
+            || Self::ceil_div_product(expr).is_some()
         {
             return true;
         }
@@ -1137,11 +1129,9 @@ impl ConstraintContext {
             let factor = SymExpr::constant(cx, inner_factor.wrapping_mul(outer_factor));
             return SymExpr::binop(cx, SymBinOp::Mul, value.clone(), factor);
         }
-        if let Some((value, factor)) = self.exact_ceil_div_factor(&expr) {
-            let factor = SymExpr::constant(cx, factor);
-            return SymExpr::binop(cx, SymBinOp::Mul, value.clone(), factor);
-        }
-        if let Some((value, factor)) = self.exact_scaled_div_factor(&expr) {
+        if let Some((value, factor)) =
+            self.exact_ceil_div_factor(&expr).or_else(|| self.exact_scaled_div_factor(&expr))
+        {
             let factor = SymExpr::constant(cx, factor);
             return SymExpr::binop(cx, SymBinOp::Mul, value.clone(), factor);
         }
@@ -1158,20 +1148,10 @@ impl ConstraintContext {
     fn round_up_round_trip<'a>(&self, expr: &'a SymExpr) -> Option<&'a SymExpr> {
         let (scaled, rate) = expr.udiv_operands()?;
         let (rounded, scale) = Self::constant_mul_operands(scaled)?;
-        let (numerator, divisor) = rounded.udiv_operands()?;
-        if scale.is_zero()
-            || divisor.as_const() != Some(scale)
+        let (product, divisor) = Self::ceil_div_product(rounded)?;
+        if divisor != scale
             || rate.as_const().or_else(|| self.unsigned_lower_bounds.get(rate).copied())? < scale
         {
-            return None;
-        }
-        let SymExprKind::BinOp(SymBinOp::Sub, sum, one) = numerator.kind() else {
-            return None;
-        };
-        let SymExprKind::BinOp(SymBinOp::Add, product, rounding) = sum.kind() else {
-            return None;
-        };
-        if one.as_const() != Some(U256::ONE) || rounding.as_const() != Some(scale) {
             return None;
         }
         let SymExprKind::BinOp(SymBinOp::Mul, left, right) = product.kind() else {
@@ -1312,44 +1292,27 @@ impl ConstraintContext {
     }
 
     fn exact_ceil_div_factor<'a>(&self, expr: &'a SymExpr) -> Option<(&'a SymExpr, U256)> {
-        let (numerator, denominator) = expr.udiv_operands()?;
-        let denominator = denominator.as_const().filter(|value| !value.is_zero())?;
-        let SymExprKind::BinOp(SymBinOp::Sub, sum, one) = numerator.kind() else {
-            return None;
-        };
-        if one.as_const() != Some(U256::from(1)) {
-            return None;
-        }
-        let SymExprKind::BinOp(SymBinOp::Add, product, rounding) = sum.kind() else {
-            return None;
-        };
-        if rounding.as_const() != Some(denominator) {
-            return None;
-        }
+        let (product, denominator) = Self::ceil_div_product(expr)?;
         let (value, multiplier) = Self::constant_mul_operands(product)?;
         self.max_scaled_product(value, multiplier)?.checked_add(denominator)?;
         let factor = multiplier.checked_div(denominator)?;
         (multiplier % denominator).is_zero().then_some((value, factor))
     }
 
-    fn ceil_div_shape(expr: &SymExpr) -> bool {
-        let Some((numerator, denominator)) = expr.udiv_operands() else {
-            return false;
-        };
-        let Some(denominator) = denominator.as_const().filter(|value| !value.is_zero()) else {
-            return false;
-        };
-        matches!(
-            numerator.kind(),
-            SymExprKind::BinOp(SymBinOp::Sub, sum, one)
-                if one.as_const() == Some(U256::from(1))
-                    && matches!(
-                        sum.kind(),
-                        SymExprKind::BinOp(SymBinOp::Add, product, rounding)
-                            if rounding.as_const() == Some(denominator)
-                                && matches!(product.kind(), SymExprKind::BinOp(SymBinOp::Mul, _, _))
-                    )
-        )
+    /// Recognizes `(product + scale - 1) / scale` without assuming the arithmetic cannot wrap.
+    fn ceil_div_product(expr: &SymExpr) -> Option<(&SymExpr, U256)> {
+        let (numerator, denominator) = expr.udiv_operands()?;
+        let scale = denominator.as_const().filter(|value| !value.is_zero())?;
+        if let SymExprKind::BinOp(SymBinOp::Sub, sum, one) = numerator.kind()
+            && one.as_const() == Some(U256::ONE)
+            && let SymExprKind::BinOp(SymBinOp::Add, product, rounding) = sum.kind()
+            && rounding.as_const() == Some(scale)
+            && matches!(product.kind(), SymExprKind::BinOp(SymBinOp::Mul, _, _))
+        {
+            Some((product, scale))
+        } else {
+            None
+        }
     }
 
     fn exact_scaled_div_factor<'a>(&self, expr: &'a SymExpr) -> Option<(&'a SymExpr, U256)> {
@@ -1442,10 +1405,20 @@ impl ConstraintContext {
         }
     }
 
-    fn record_unsigned_lower_bound_constraint(&mut self, constraint: &SymBoolExpr) {
+    fn record_unsigned_lower_bound_constraint(
+        &mut self,
+        constraint: &SymBoolExpr,
+        promote_to_interval: bool,
+    ) {
         if let Some((expr, bound)) = self.unsigned_lower_bound_constraint(constraint) {
             let entry = self.unsigned_lower_bounds.entry(expr.clone()).or_default();
             *entry = (*entry).max(bound);
+            // Batch normalization keeps theorem bounds separate from general intervals.
+            // A rewrite supported only by other retained conjuncts may also use these bounds
+            // for interval deductions.
+            if promote_to_interval {
+                self.record_lower_bound(expr.clone(), bound);
+            }
         }
     }
 
@@ -2566,43 +2539,34 @@ impl ConstraintContext {
         let SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) = expr.kind() else {
             return false;
         };
-        self.checked_mul_guard_side(left, right, zero_operand)
-            || self.checked_mul_guard_side(right, left, zero_operand)
+        [(left, right), (right, left)].into_iter().any(|(quotient, expected)| {
+            matches!(quotient.kind(), SymExprKind::Ite(_, _, _))
+                && self
+                    .checked_quotient_factors(quotient, expected, Some(zero_operand))
+                    .is_some_and(|(left, right)| self.mul_cannot_overflow_256(left, right))
+        })
     }
 
-    fn checked_mul_guard_side(
+    /// Matches the quotient side shared by multiplication guard proofs and retained guard facts.
+    fn checked_quotient_factors<'a>(
         &self,
-        div_expr: &SymExpr,
+        quotient: &'a SymExpr,
         expected: &SymExpr,
-        zero_operand: &SymExpr,
-    ) -> bool {
-        let SymExprKind::Ite(condition, then_expr, else_expr) = div_expr.kind() else {
-            return false;
-        };
-        if self.bounded_zero_check_operand(condition).is_none_or(|operand| operand != zero_operand)
-        {
-            return false;
-        }
-        if !then_expr.as_const().is_some_and(|value| value.is_zero()) {
-            return false;
-        }
-        let Some((numerator, denominator)) = else_expr.udiv_operands() else {
-            return false;
-        };
-        if denominator != zero_operand {
-            return false;
-        }
-        let SymExprKind::BinOp(SymBinOp::Mul, left, right) = numerator.kind() else {
-            return false;
-        };
-        let other = if left == zero_operand {
-            right
-        } else if right == zero_operand {
-            left
+        zero_operand: Option<&SymExpr>,
+    ) -> Option<(&'a SymExpr, &'a SymExpr)> {
+        let quotient = if let SymExprKind::Ite(condition, zero, quotient) = quotient.kind() {
+            if zero.as_const() != Some(U256::ZERO)
+                || zero_operand.is_none()
+                || self.bounded_zero_check_operand(condition) != zero_operand
+            {
+                return None;
+            }
+            quotient
         } else {
-            return false;
+            quotient
         };
-        other == expected && self.mul_cannot_overflow_256(zero_operand, other)
+        let (divisor, other) = Self::mul_div_identity_operands(quotient, expected)?;
+        zero_operand.is_none_or(|zero| zero == divisor).then_some((divisor, other))
     }
 
     /// Learns multiplication safety from a retained successful Solidity overflow check.
@@ -2654,20 +2618,8 @@ impl ConstraintContext {
             return None;
         };
         for (quotient, expected) in [(left, right), (right, left)] {
-            let quotient = if let SymExprKind::Ite(condition, zero, quotient) = quotient.kind() {
-                if zero.as_const() != Some(U256::ZERO)
-                    || zero_operand.is_none()
-                    || self.bounded_zero_check_operand(condition) != zero_operand
-                {
-                    continue;
-                }
-                quotient
-            } else {
-                quotient
-            };
-            if let Some((divisor, other)) = Self::mul_div_operands(quotient)
-                && other == expected
-                && zero_operand.is_none_or(|zero| zero == divisor)
+            if let Some((divisor, other)) =
+                self.checked_quotient_factors(quotient, expected, zero_operand)
             {
                 // For divisor > 0, (divisor * other mod 2^256) / divisor == other
                 // implies the true product fits. For divisor == 0 the product is zero.
