@@ -30,6 +30,7 @@ use revm::{
         interpreter_action::FrameInit,
     },
     primitives::hardfork::SpecId,
+    state::{AccountStatus, EvmState},
 };
 use serde::{Deserialize, Serialize};
 use std::{fmt::Debug, ops::DerefMut};
@@ -296,6 +297,55 @@ where
     Ok(())
 }
 
+/// Prepares account state for execution across a synthetic transaction boundary.
+///
+/// Preserve account flags, including local creation, while making accounts outside the protocol
+/// warm-address set cold. All storage starts cold with its current value as the child's original
+/// value. The parent's state is unchanged.
+pub fn prepare_child_state(journal: &JournaledState) -> EvmState {
+    let mut state = journal.state.clone();
+    for (address, account) in &mut state {
+        if journal.warm_addresses.is_cold(address) {
+            account.mark_cold();
+        }
+        for slot in account.storage.values_mut() {
+            slot.is_cold = true;
+            slot.original_value = slot.present_value;
+        }
+    }
+    state
+}
+
+/// Merges a child's returned account state into its suspended parent.
+///
+/// Preserve parent warmth and original storage values, import child account flags and current
+/// values, and retain untouched parent accounts and slots. Newly loaded accounts and slots keep
+/// their child metadata. This operates on the EVM's returned state, not on an unfiltered write set;
+/// the caller retains responsibility for execution errors and family-specific reconciliation.
+pub fn merge_child_state(parent: &mut EvmState, child: EvmState) {
+    for (address, mut account) in child {
+        let Some(parent_account) = parent.get_mut(&address) else {
+            parent.insert(address, account);
+            continue;
+        };
+        if account.status.contains(AccountStatus::Cold)
+            && !parent_account.status.contains(AccountStatus::Cold)
+        {
+            account.status -= AccountStatus::Cold;
+        }
+        parent_account.info = account.info;
+        parent_account.status |= account.status;
+        for (key, slot) in account.storage {
+            let Some(parent_slot) = parent_account.storage.get_mut(&key) else {
+                parent_account.storage.insert(key, slot);
+                continue;
+            };
+            parent_slot.present_value = slot.present_value;
+            parent_slot.is_cold &= slot.is_cold;
+        }
+    }
+}
+
 /// Runs a nested frame with inspection and settles its gas into the parent frame.
 pub(crate) fn run_inspected_frame<H>(
     evm: &mut H::Evm,
@@ -351,7 +401,7 @@ mod tests {
     use alloy_evm::EthEvmFactory;
     use revm::{
         context::Transaction,
-        state::{Account, AccountInfo},
+        state::{Account, AccountInfo, EvmStorageSlot, TransactionId},
     };
 
     #[cfg(feature = "monad")]
@@ -447,6 +497,75 @@ mod tests {
                     parent.journaled_state.inner.state[&sender].info.balance,
                     U256::from(12)
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn preparation_preserves_creation_and_protocol_warmth() {
+        let address = Address::with_last_byte(0x42);
+        let protocol_address = Address::with_last_byte(0x43);
+        let key = U256::ONE;
+        let mut account = Account::from(AccountInfo::default());
+        account.mark_created_locally();
+        account.mark_touch();
+        account.storage.insert(
+            key,
+            EvmStorageSlot::new_changed(U256::from(3), U256::from(7), TransactionId::ZERO),
+        );
+        let mut journal = JournaledState::default();
+        journal.state.insert(address, account.clone());
+        journal.state.insert(protocol_address, account);
+        journal.warm_addresses.set_coinbase(protocol_address);
+        let before = journal.state.clone();
+
+        let child = prepare_child_state(&journal);
+
+        assert_eq!(journal.state, before);
+        assert!(child[&address].is_created_locally());
+        assert!(child[&address].is_touched());
+        assert!(child[&address].status.contains(AccountStatus::Cold));
+        assert!(!child[&protocol_address].status.contains(AccountStatus::Cold));
+        for account in child.values() {
+            assert_eq!(account.storage[&key].original_value, U256::from(7));
+            assert_eq!(account.storage[&key].present_value, U256::from(7));
+            assert!(account.storage[&key].is_cold);
+        }
+    }
+
+    #[test]
+    fn settlement_preserves_parent_original_values_and_combines_warmth() {
+        let address = Address::with_last_byte(0x42);
+        let key = U256::ONE;
+        for parent_cold in [false, true] {
+            for child_cold in [false, true] {
+                let mut account = Account::from(AccountInfo::default());
+                account.status.set(AccountStatus::Cold, parent_cold);
+                account.mark_created_locally();
+                let mut slot =
+                    EvmStorageSlot::new_changed(U256::from(3), U256::from(7), TransactionId::ZERO);
+                slot.is_cold = parent_cold;
+                account.storage.insert(key, slot);
+                let mut parent = EvmState::from_iter([(address, account)]);
+                let mut account = Account::from(AccountInfo::from_balance(U256::from(9)));
+                account.status.set(AccountStatus::Cold, child_cold);
+                account.mark_touch();
+                let mut slot =
+                    EvmStorageSlot::new_changed(U256::from(7), U256::from(11), TransactionId::ZERO);
+                slot.is_cold = child_cold;
+                account.storage.insert(key, slot);
+
+                merge_child_state(&mut parent, EvmState::from_iter([(address, account)]));
+
+                let account = &parent[&address];
+                assert!(account.is_created_locally());
+                assert!(account.is_touched());
+                assert_eq!(account.info.balance, U256::from(9));
+                // Account flags are unioned; a cold parent retains its flag until journal access.
+                assert_eq!(account.status.contains(AccountStatus::Cold), parent_cold);
+                assert_eq!(account.storage[&key].original_value, U256::from(3));
+                assert_eq!(account.storage[&key].present_value, U256::from(11));
+                assert_eq!(account.storage[&key].is_cold, parent_cold && child_cold);
             }
         }
     }
