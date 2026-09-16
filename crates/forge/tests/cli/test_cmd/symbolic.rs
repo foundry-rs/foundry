@@ -6462,10 +6462,16 @@ contract OptInTarget {
     mapping(address => uint256) public credits;
     mapping(address => uint256) public fixedCpt;
     mapping(address => uint8) public state;
+    mapping(address => address) public yieldFrom;
 
     function balanceOf(address account) public view returns (uint256) {
+        uint8 accountState = state[account];
+        require(accountState <= 4);
+        if (accountState == 3) return credits[account];
         uint256 rate = fixedCpt[account];
-        return credits[account] * 1e18 / (rate == 0 ? cpt : rate);
+        uint256 balance = credits[account] * 1e18 / (rate == 0 ? cpt : rate);
+        if (accountState == 4) return balance - credits[yieldFrom[account]];
+        return balance;
     }
 
     function toInt(uint256 value) internal pure returns (int256) {
@@ -6480,7 +6486,8 @@ contract OptInTarget {
 
     function optIn() external {
         uint256 balance = balanceOf(msg.sender);
-        require(state[msg.sender] == 1 && fixedCpt[msg.sender] == 1e18);
+        require(fixedCpt[msg.sender] > 0 || credits[msg.sender] == 0);
+        require(state[msg.sender] == 0 || state[msg.sender] == 1);
         uint256 newCredits = (balance * cpt + 1e18 - 1) / 1e18;
         credits[msg.sender] = newCredits;
         fixedCpt[msg.sender] = 0;
@@ -6525,6 +6532,39 @@ contract FixedPointRoundTripTest {
         assert(target.balanceOf(account) == balance);
         assert(target.fixedCpt(account) == 0);
         assert(target.state(account) == 2);
+    }
+
+    function checkFullWidthRoundTrip(uint256 balance, uint256 cpt) external pure {
+        require(cpt >= 1e18);
+        uint256 credits = (balance * cpt + 1e18 - 1) / 1e18;
+        assert(credits * 1e18 / cpt == balance);
+    }
+
+    function checkFullWidthOptIn(address account) external {
+        vm.assume(target.cpt() >= 1e18);
+        uint256 fixedCpt = target.fixedCpt(account);
+        vm.assume(fixedCpt == 0 || fixedCpt == 1e18);
+        uint256 balance = target.balanceOf(account);
+        vm.prank(account);
+        target.optIn();
+        assert(target.balanceOf(account) == balance);
+        assert(target.fixedCpt(account) == 0);
+        assert(target.state(account) == 2);
+    }
+
+    function testOptInConcreteWitnessAboveUint128() external {
+        address account = address(0xB0B);
+        uint256 balance = uint256(type(uint128).max) + 1;
+        vm.store(address(target), bytes32(uint256(0)), bytes32(uint256(1e18)));
+        vm.store(address(target), bytes32(uint256(1)), bytes32(uint256(0)));
+        vm.store(address(target), bytes32(uint256(2)), bytes32(balance));
+        vm.store(address(target), keccak256(abi.encode(account, uint256(3))), bytes32(balance));
+        vm.store(address(target), keccak256(abi.encode(account, uint256(4))), bytes32(uint256(1e18)));
+        vm.store(address(target), keccak256(abi.encode(account, uint256(5))), bytes32(uint256(1)));
+        this.checkFullWidthOptIn(account);
+        assert(target.credits(account) == balance);
+        assert(target.rebasingCredits() == balance);
+        assert(target.nonRebasingSupply() == 0);
     }
 
     function checkUncheckedRounding(uint256 cpt) external pure {
@@ -6585,6 +6625,8 @@ contract FixedPointRoundTripTest {
         ("checkOptIn", "checkOptIn(address)"),
         ("checkUnboundedRoundTrip", "checkUnboundedRoundTrip(uint128,uint256)"),
         ("checkUnboundedOptIn", "checkUnboundedOptIn(address)"),
+        ("checkFullWidthRoundTrip", "checkFullWidthRoundTrip(uint256,uint256)"),
+        ("checkFullWidthOptIn", "checkFullWidthOptIn(address)"),
     ] {
         let output = cmd
             .forge_fuse()

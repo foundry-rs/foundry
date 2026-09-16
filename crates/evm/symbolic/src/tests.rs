@@ -3941,10 +3941,20 @@ fn solver_normalizes_udiv_comparisons_only_at_safe_product_boundaries() {
         assert_eq!(normalized.len(), 1);
         assert!(!normalized[0].smt(&cx).contains("bvudiv"));
     }
-    for condition in overflowing {
+    for (condition, expected) in overflowing.into_iter().zip([true, false]) {
         let normalized =
             normalize_constraints_for_solver(&mut cx, std::slice::from_ref(&condition));
-        assert_eq!(normalized, vec![condition]);
+        // Cross-multiplication would overflow, but the uint256 quotient bound decides
+        // these comparisons directly without constructing an overflowing product.
+        if expected {
+            assert!(normalized.is_empty());
+        } else {
+            assert_eq!(normalized, vec![SymBoolExpr::constant(&mut cx, false)]);
+        }
+        for numerator in [U256::ZERO, U256::ONE, U256::MAX - U256::ONE, U256::MAX] {
+            let model = symbolic_model(&mut cx, [("numerator", numerator)]);
+            assert_eq!(condition.eval_model(&model).unwrap(), expected);
+        }
     }
 
     let threshold = SymExpr::constant(&mut cx, U256::MAX / divisor_value - U256::ONE);
