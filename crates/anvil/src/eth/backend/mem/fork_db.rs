@@ -144,10 +144,6 @@ impl<N: Network> MaybeFullDatabase for ForkedDatabase<N> {
     fn clear(&mut self) {
         self.flush_cache();
         self.clear_into_state_snapshot();
-        let cache = &mut self.database_mut().cache;
-        cache.accounts.clear();
-        cache.logs.clear();
-        cache.block_hashes.clear();
     }
 
     fn init_from_state_snapshot(&mut self, state_snapshot: StateSnapshot) {

@@ -6843,7 +6843,7 @@ where
         let hash = common_block.header.hash_slow();
 
         // Get the database at the common block
-        let common_state = {
+        let (common_state, replace_accounts) = {
             let return_state_or_throw_err =
                 |db: Option<&StateDb>| -> Result<AddressMap<DbAccount>, BlockchainError> {
                     let state_db = db.ok_or(BlockchainError::DataUnavailable)?;
@@ -6854,10 +6854,10 @@ where
 
             let read_guard = self.states.upgradable_read();
             if let Some(db) = read_guard.get_state(&hash) {
-                return_state_or_throw_err(Some(db))?
+                (return_state_or_throw_err(Some(db))?, true)
             } else {
                 let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
-                return_state_or_throw_err(write_guard.get_on_disk_state(&hash))?
+                (return_state_or_throw_err(write_guard.get_on_disk_state(&hash))?, false)
             }
         };
 
@@ -6910,7 +6910,7 @@ where
 
         db.clear();
 
-        if let Some(accounts) = db.maybe_as_full_db_mut() {
+        if replace_accounts && let Some(accounts) = db.maybe_as_full_db_mut() {
             *accounts = common_state;
         } else {
             // Insert account info before storage to prevent fork-mode RPC fetches after clear.
