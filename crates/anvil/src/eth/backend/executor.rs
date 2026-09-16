@@ -246,6 +246,7 @@ pub struct AnvilBlockExecutor<E> {
     /// Maximum blob gas available to transactions in this block.
     max_blob_gas_per_block: u64,
     /// Whether OP Jovian repurposes `blobGasUsed` for the DA footprint.
+    #[cfg(feature = "optimism")]
     optimism_jovian: bool,
     /// State changes captured for deferred publication.
     state_changes: Option<Vec<EvmState>>,
@@ -261,8 +262,9 @@ impl<E: fmt::Debug> fmt::Debug for AnvilBlockExecutor<E> {
             .field("ethereum_transitions", &self.ethereum_transitions)
             .field("gas_used", &self.gas_used)
             .field("blob_gas_used", &self.blob_gas_used)
-            .field("max_blob_gas_per_block", &self.max_blob_gas_per_block)
-            .field("optimism_jovian", &self.optimism_jovian);
+            .field("max_blob_gas_per_block", &self.max_blob_gas_per_block);
+        #[cfg(feature = "optimism")]
+        debug.field("optimism_jovian", &self.optimism_jovian);
         debug.field("receipts", &self.receipts.len()).finish_non_exhaustive()
     }
 }
@@ -285,6 +287,7 @@ impl<E> AnvilBlockExecutor<E> {
             gas_used: 0,
             blob_gas_used: 0,
             max_blob_gas_per_block: u64::MAX,
+            #[cfg(feature = "optimism")]
             optimism_jovian: false,
             state_changes: None,
         }
@@ -348,11 +351,14 @@ where
             optimism::blob_gas_used(self.evm.db_mut(), tx.tx(), self.optimism_jovian)?;
         #[cfg(not(feature = "optimism"))]
         let blob_gas_used = tx.tx().blob_gas_used().unwrap_or_default();
+        #[cfg(feature = "optimism")]
         let blob_gas_limit = block_blob_gas_limit(
             self.optimism_jovian,
             self.evm.block().gas_limit(),
             self.max_blob_gas_per_block,
         );
+        #[cfg(not(feature = "optimism"))]
+        let blob_gas_limit = self.max_blob_gas_per_block;
         if self.blob_gas_used.saturating_add(blob_gas_used) > blob_gas_limit {
             return Err(BlockExecutionError::msg("block blob gas limit exceeded"));
         }

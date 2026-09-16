@@ -1,0 +1,13 @@
+[package]
+name = "zed-solar"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+zed_extension_api = "=0.5.0"

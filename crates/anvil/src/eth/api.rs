@@ -2985,8 +2985,6 @@ impl EthApi<FoundryNetwork> {
         self.backend.validate_pool_transaction(&pending_transaction).await?;
 
         let from = *pending_transaction.sender();
-        let priority = self.transaction_priority(&pending_transaction.transaction);
-
         // Tempo txs use a 2D nonce system — no sequential ordering by account nonce.
         let (requires, provides) = if let Some((requires, provides)) =
             tempo_parallel_nonce_markers(&pending_transaction)
@@ -2998,12 +2996,7 @@ impl EthApi<FoundryNetwork> {
             (required_marker(nonce, on_chain_nonce, from), vec![to_marker(nonce, from)])
         };
 
-        let pool_transaction =
-            PoolTransaction { requires, provides, pending_transaction, priority, is_replay: false };
-
-        let tx = self.pool.add_transaction(pool_transaction)?;
-        trace!(target: "node", "Added transaction: [{:?}] sender={:?}", tx.hash(), from);
-        Ok(*tx.hash())
+        self.add_pending_transaction(pending_transaction, requires, provides)
     }
 
     /// Sends a signed transaction with an ignored transaction condition.

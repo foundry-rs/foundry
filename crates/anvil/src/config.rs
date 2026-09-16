@@ -1466,7 +1466,7 @@ impl NodeConfig {
         );
         #[cfg(feature = "optimism")]
         if self.networks.is_optimism() {
-            fees.set_optimism_hardfork(self.get_hardfork());
+            fees.set_optimism_hardfork(self.get_hardfork().into());
         }
 
         let (db, fork, fork_transaction_replay) =

@@ -63,8 +63,9 @@ use revm::{
 use std::sync::Arc;
 use tracing::debug;
 
+/// Resolved Monad inputs, including a transaction context for standalone calls.
 pub(super) struct PreparedExecution {
-    pub(super) context: Option<MonadChainContext>,
+    pub(super) context: MonadChainContext,
     pub(super) kind: EnvelopeExecutionKind,
     pub(super) hardfork: MonadHardfork,
 }
@@ -191,14 +192,14 @@ pub(super) fn prepare_transaction<DB: alloy_evm::Database>(
 pub(super) fn resolve_execution_context(
     context: Option<MonadExecutionContext<'_>>,
     tx: &TxEnv,
-) -> Option<MonadChainContext> {
+) -> MonadChainContext {
     match context {
-        Some(MonadExecutionContext::Exact(context)) => Some(*context),
+        Some(MonadExecutionContext::Exact(context)) => *context,
         Some(MonadExecutionContext::Next(context)) => {
             append_transaction(context, tx);
-            Some(context.clone())
+            context.clone()
         }
-        None => None,
+        None => MonadChainContext::for_transaction(tx),
     }
 }
 
@@ -737,10 +738,8 @@ impl<N: Network> Backend<N> {
     {
         let monad_env = Self::build_monad_evm_env(evm_env, execution.hardfork);
         let factory = MonadEvmFactory::default();
-        let context =
-            execution.context.unwrap_or_else(|| MonadChainContext::for_transaction(&tx_env));
         let mut evm = factory.create_evm_with_inspector(WrapDatabaseRef(db), monad_env, inspector);
-        evm.ctx_mut().chain = context;
+        evm.ctx_mut().chain = execution.context;
         self.inject_configured_precompiles(evm.precompiles_mut(), evm_env);
         match execution.kind {
             EnvelopeExecutionKind::Transaction => Ok(evm.transact(tx_env)?),

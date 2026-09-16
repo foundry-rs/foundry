@@ -4636,7 +4636,7 @@ impl<N: Network> Backend<N> {
         );
         #[cfg(feature = "optimism")]
         if self.networks.is_optimism() {
-            staged_fees.set_optimism_hardfork(local_hardfork);
+            staged_fees.set_optimism_hardfork(local_hardfork.into());
         }
         staged_fees.set_blob_params(local_blob_params);
         staged_fees.set_blob_excess_gas_and_price(local_blob_excess_gas_and_price);
@@ -8327,7 +8327,7 @@ impl Backend<FoundryNetwork> {
                     #[cfg(feature = "optimism")]
                     let receipt = if tx.as_ref().is_deposit() {
                         crate::eth::backend::executor::optimism::build_simulated_deposit_receipt(
-                            self.hardfork(),
+                            self.hardfork().into(),
                             caller_nonce,
                             &result,
                             canonical_logs.clone(),
