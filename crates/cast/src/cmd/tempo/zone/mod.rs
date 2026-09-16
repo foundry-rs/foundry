@@ -17,7 +17,9 @@ use tempo_contracts::precompiles::{ITIP20, PATH_USD_ADDRESS};
 
 mod abi;
 mod auth;
+mod earn;
 mod encryption;
+mod l1;
 
 /// Tempo zone operations.
 #[derive(Debug, Parser)]
@@ -36,6 +38,8 @@ enum ZoneSubcommand {
     ///
     /// --rpc-url selects the zone RPC. The receipt confirms the request, not L1 settlement.
     Withdraw(WithdrawArgs),
+    /// Build encrypted callbacks for the scoped Earn router.
+    Earn(earn::EarnArgs),
 }
 
 #[derive(Debug, Parser)]
@@ -84,15 +88,25 @@ struct WithdrawArgs {
     /// L1 callback gas limit. Zero disables the callback.
     #[arg(long, default_value_t = 0)]
     callback_gas_limit: u64,
-    /// Zone recipient for bounced withdrawals if L1 execution fails. Defaults to --to.
+    /// Zone recipient for bounced withdrawals if L1 execution fails. Defaults to the signing
+    /// wallet.
     #[arg(long)]
     fallback_recipient: Option<Address>,
-    /// L1 callback calldata.
+    /// Data passed to the L1 receiver's withdrawal callback, without a function selector.
     #[arg(long, default_value = "0x")]
     callback_data: Bytes,
     /// Compressed secp256k1 key for revealing the withdrawal sender.
     #[arg(long, default_value = "0x")]
     reveal_to: Bytes,
+    /// Wait for successful L1 delivery, including callback execution. Does not wait for a return
+    /// deposit.
+    #[arg(long)]
+    wait_l1: bool,
+    /// Maximum seconds to wait for L1 settlement after zone inclusion.
+    #[arg(long, default_value_t = 180, value_parser = clap::value_parser!(u64).range(1..))]
+    wait_timeout: u64,
+    #[command(flatten)]
+    l1: l1::L1Args,
     #[command(flatten)]
     transfer: TransferArgs,
 }
@@ -102,6 +116,7 @@ impl ZoneArgs {
         match self.command {
             ZoneSubcommand::Deposit(args) => args.run().await,
             ZoneSubcommand::Withdraw(args) => args.run().await,
+            ZoneSubcommand::Earn(args) => args.run().await,
         }
     }
 }
@@ -199,6 +214,10 @@ impl DepositArgs {
 
 impl WithdrawArgs {
     async fn run(self) -> Result<()> {
+        ensure!(
+            self.callback_data.is_empty() || self.callback_gas_limit > 0,
+            "--callback-data requires a nonzero --callback-gas-limit"
+        );
         ensure!(self.zone_id != 0, "--zone-id must be nonzero");
         ensure!(self.zone_chain_id != 0, "--zone-chain-id must be nonzero");
         if !self.reveal_to.is_empty() {
@@ -231,6 +250,14 @@ impl WithdrawArgs {
             provider.get_chain_id().await? == self.zone_chain_id,
             "zone RPC chain ID differs from --zone-chain-id"
         );
+        // Snapshot L1 before submitting, so fast settlement cannot be missed.
+        let wait = if self.wait_l1 {
+            let l1_provider = self.l1.provider(self.zone_chain_id, self.zone_id).await?;
+            let from_block = l1_provider.get_block_number().await?;
+            Some((l1_provider, from_block))
+        } else {
+            None
+        };
         let outbox = abi::IZoneOutbox::new(abi::OUTBOX, &provider);
         let fee =
             outbox.calculateWithdrawalFee(self.callback_gas_limit).from(sender).call().await?;
@@ -252,7 +279,7 @@ impl WithdrawArgs {
                 self.transfer.amount,
                 self.transfer.memo,
                 self.callback_gas_limit,
-                self.fallback_recipient.unwrap_or(to),
+                self.fallback_recipient.unwrap_or(sender),
                 self.callback_data,
                 self.reveal_to,
             )
@@ -265,8 +292,31 @@ impl WithdrawArgs {
             .get_receipt()
             .await?;
         ensure!(receipt.status(), "withdrawal reverted: {}", receipt.transaction_hash());
-        sh_status!("Withdrawal requested on the zone; L1 settlement is asynchronous.")?;
-        print_receipt(&receipt)
+        print_receipt(&receipt)?;
+        if let Some((l1_provider, from_block)) = wait {
+            let hash = receipt.transaction_hash();
+            sh_status!("Withdrawal requested: {hash}; waiting for L1 delivery.")?;
+            let result = l1::wait_for_withdrawal(
+                &provider,
+                &l1_provider,
+                self.l1.portal()?,
+                from_block,
+                receipt.block_number().ok_or_else(|| eyre::eyre!("missing zone receipt block"))?,
+                hash,
+            );
+            let l1_hash = tokio::time::timeout(Duration::from_secs(self.wait_timeout), result)
+                .await
+                .wrap_err_with(|| {
+                    format!(
+                        "L1 wait timed out; withdrawal {hash} is already submitted; do not resubmit"
+                    )
+                })?
+                .wrap_err_with(|| format!("L1 wait failed for submitted withdrawal {hash}"))?;
+            sh_status!("Withdrawal delivered on L1: {l1_hash}")?;
+        } else {
+            sh_status!("Withdrawal requested on the zone; L1 settlement is asynchronous.")?;
+        }
+        Ok(())
     }
 }
 

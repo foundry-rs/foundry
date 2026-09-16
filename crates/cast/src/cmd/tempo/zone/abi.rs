@@ -20,6 +20,9 @@ sol! {
 
     #[sol(rpc)]
     interface IZonePortal {
+        function zoneId() external view returns (uint32);
+        event WithdrawalProcessed(address indexed to, bytes32 indexed senderTag,
+            address token, uint128 amount, bool callbackSuccess);
         function encryptionKeyAtBlock(uint64 tempoBlockNumber)
             external view returns (bytes32 x, uint8 yParity, uint256 keyIndex);
         function deposit(address token, uint128 amount, uint256 keyIndex,
@@ -30,6 +33,9 @@ sol! {
     #[sol(rpc)]
     #[allow(clippy::too_many_arguments, reason = "matches the zone protocol ABI")]
     interface IZoneOutbox {
+        event WithdrawalRequested(uint64 indexed withdrawalIndex, address indexed sender,
+            address token, address to, uint128 amount, uint128 fee, bytes32 memo,
+            uint64 gasLimit, uint64 fallbackNonce, bytes data, bytes revealTo);
         function calculateWithdrawalFee(uint64 gasLimit) external view returns (uint128 fee);
         function requestWithdrawal(address token, address to, uint128 amount, bytes32 memo,
             uint64 gasLimit, address fallbackRecipient, bytes callbackData, bytes revealTo)

@@ -1249,3 +1249,25 @@ Error: amount must be greater than zero
 "#]]);
     }
 });
+
+casttest!(tempo_zone_rejects_callback_without_gas, |_prj, cmd| {
+    cmd.args([
+        "tempo",
+        "zone",
+        "withdraw",
+        "--zone-id",
+        "7",
+        "--zone-chain-id",
+        "421700007",
+        "--amount",
+        "1",
+        "--callback-data",
+        "0x1234",
+    ])
+    .assert_failure()
+    .stdout_eq("")
+    .stderr_eq(str![[r#"
+Error: --callback-data requires a nonzero --callback-gas-limit
+
+"#]]);
+});
