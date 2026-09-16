@@ -183,8 +183,8 @@ impl ExternalIdentifier {
 
     /// Fully resolves `addresses`, blocking for at most the remaining budget.
     ///
-    /// Addresses with a prefetch in flight are awaited rather than fetched again. Time spent here
-    /// is charged to the budget, and a timeout spends all of it.
+    /// Foreground work cancels unfinished prefetches before reclaiming their addresses. Time spent
+    /// here is charged to the budget, and a timeout spends all of it.
     async fn fetch_addresses_async(&mut self, addresses: &[Address]) {
         let budget = self.remaining_budget();
         if addresses.is_empty() || budget.is_zero() {
@@ -192,6 +192,7 @@ impl ExternalIdentifier {
         }
 
         let started = tokio::time::Instant::now();
+        let _foreground = Foreground::enter(&self.cache);
         let timed_out = tokio::time::timeout(budget, async {
             loop {
                 let (to_fetch, to_await) = self.cache.claim(addresses);
@@ -199,7 +200,10 @@ impl ExternalIdentifier {
                     break;
                 }
                 futures::future::join(
-                    fetch_batch(&self.fetchers, &self.cache, to_fetch),
+                    fetch_batch(
+                        &self.fetchers,
+                        Claim { cache: Arc::clone(&self.cache), addresses: to_fetch },
+                    ),
                     self.cache.settled(&to_await),
                 )
                 .await;
@@ -345,9 +349,9 @@ impl TraceIdentifier for ExternalIdentifier {
 /// Schedules external lookups before the traces that need them reach the identifier.
 ///
 /// Results land in the cache shared with the [`ExternalIdentifier`] this handle was created from,
-/// so a later [`identify_addresses`] call for the same addresses finds them, or waits for the
-/// in-flight lookup, instead of fetching again. Nothing is scheduled once the identifier's budget
-/// is spent.
+/// so a later [`identify_addresses`] call finds completed results. Unfinished speculative work is
+/// cancelled when foreground identification starts. Nothing is scheduled once the identifier's
+/// budget is spent.
 ///
 /// [`identify_addresses`]: TraceIdentifier::identify_addresses
 #[derive(Clone)]
@@ -378,12 +382,16 @@ impl ExternalPrefetcher {
         let fetchers = Arc::clone(&self.fetchers);
         let cache = Arc::clone(&self.cache);
         let timeout = self.timeout;
+        let claim = Claim { cache: Arc::clone(&cache), addresses };
         self.handle.spawn(async move {
-            if tokio::time::timeout(timeout, fetch_batch(&fetchers, &cache, addresses))
-                .await
-                .is_err()
-            {
-                warn!(target: "evm::traces::external", "external prefetch timed out");
+            tokio::select! {
+                biased;
+                _ = cache.foreground_started() => {}
+                result = tokio::time::timeout(timeout, fetch_batch(&fetchers, claim)) => {
+                    if result.is_err() {
+                        warn!(target: "evm::traces::external", "external prefetch timed out");
+                    }
+                }
             }
         });
     }
@@ -404,6 +412,8 @@ struct CacheState {
     in_flight: AddressSet,
     /// Addresses for which every fetcher has finished.
     completed: AddressSet,
+    /// Whether blocking foreground identification is active.
+    foreground: bool,
     /// Remaining time external identification may block trace rendering.
     remaining_budget: Duration,
 }
@@ -441,7 +451,7 @@ impl Cache {
     /// returns them. Returns nothing once the budget is spent.
     fn claim_new(&self, addresses: impl IntoIterator<Item = Address>) -> Vec<Address> {
         let mut state = self.state();
-        if state.remaining_budget.is_zero() {
+        if state.remaining_budget.is_zero() || state.foreground {
             return Vec::new();
         }
         addresses
@@ -452,7 +462,8 @@ impl Cache {
             .collect()
     }
 
-    fn insert(&self, address: Address, value: (FetcherKind, Option<Metadata>)) {
+    /// Records one provider's result and settles the address when it is the last provider.
+    fn record(&self, address: Address, value: (FetcherKind, Option<Metadata>), complete: bool) {
         let mut state = self.state();
         match state.contracts.entry(address) {
             Entry::Occupied(mut occupied_entry) => {
@@ -477,18 +488,15 @@ impl Cache {
                 vacant_entry.insert(value);
             }
         }
-    }
-
-    /// Records negative results for addresses no fetcher yielded and settles the batch.
-    fn complete(&self, addresses: &[Address]) {
-        let mut state = self.state();
-        for &address in addresses {
+        if complete {
             state.contracts.entry(address).or_insert((FetcherKind::Sourcify, None));
             state.in_flight.remove(&address);
             state.completed.insert(address);
         }
         drop(state);
-        self.notify.notify_waiters();
+        if complete {
+            self.notify.notify_waiters();
+        }
     }
 
     /// Releases in-flight marks for lookups that ended without a result.
@@ -505,7 +513,22 @@ impl Cache {
     async fn settled(&self, addresses: &[Address]) {
         loop {
             let notified = self.notify.notified();
-            if addresses.iter().all(|address| !self.state().in_flight.contains(address)) {
+            let settled = {
+                let state = self.state();
+                addresses.iter().all(|address| !state.in_flight.contains(address))
+            };
+            if settled {
+                return;
+            }
+            notified.await;
+        }
+    }
+
+    /// Resolves when foreground identification starts.
+    async fn foreground_started(&self) {
+        loop {
+            let notified = self.notify.notified();
+            if self.state().foreground {
                 return;
             }
             notified.await;
@@ -523,36 +546,61 @@ impl Cache {
     }
 }
 
+/// Releases every unfinished address if its lookup is dropped.
+struct Claim {
+    cache: Arc<Cache>,
+    addresses: Vec<Address>,
+}
+
+impl Drop for Claim {
+    fn drop(&mut self) {
+        self.cache.release(&self.addresses);
+    }
+}
+
+/// Gives blocking identification exclusive admission over background prefetches.
+struct Foreground {
+    cache: Arc<Cache>,
+}
+
+impl Foreground {
+    fn enter(cache: &Arc<Cache>) -> Self {
+        cache.state().foreground = true;
+        cache.notify.notify_waiters();
+        Self { cache: Arc::clone(cache) }
+    }
+}
+
+impl Drop for Foreground {
+    fn drop(&mut self) {
+        self.cache.state().foreground = false;
+        self.cache.notify.notify_waiters();
+    }
+}
+
 /// Runs every fetcher over `addresses` and records each result in `cache`.
 ///
 /// Addresses settle after every fetcher finishes. If this future is dropped, its in-flight marks
 /// are released so a cancelled batch never leaves a waiter behind.
-async fn fetch_batch(fetchers: &[Arc<SharedFetcher>], cache: &Cache, addresses: Vec<Address>) {
-    if addresses.is_empty() {
+async fn fetch_batch(fetchers: &[Arc<SharedFetcher>], claim: Claim) {
+    if claim.addresses.is_empty() {
         return;
     }
-    let mut release = ReleaseOnDrop { cache, addresses: &addresses, active: true };
+    if fetchers.is_empty() {
+        for &address in &claim.addresses {
+            claim.cache.record(address, (FetcherKind::Sourcify, None), true);
+        }
+        return;
+    }
+    let mut remaining =
+        claim.addresses.iter().map(|&address| (address, fetchers.len())).collect::<HashMap<_, _>>();
     let fetchers =
-        fetchers.iter().map(|fetcher| ExternalFetcher::new(Arc::clone(fetcher), &addresses));
+        fetchers.iter().map(|fetcher| ExternalFetcher::new(Arc::clone(fetcher), &claim.addresses));
     let mut fetched = futures::stream::select_all(fetchers);
     while let Some((address, value)) = fetched.next().await {
-        cache.insert(address, value);
-    }
-    cache.complete(&addresses);
-    release.active = false;
-}
-
-struct ReleaseOnDrop<'a> {
-    cache: &'a Cache,
-    addresses: &'a [Address],
-    active: bool,
-}
-
-impl Drop for ReleaseOnDrop<'_> {
-    fn drop(&mut self) {
-        if self.active {
-            self.cache.release(self.addresses);
-        }
+        let providers = remaining.get_mut(&address).expect("fetcher yielded an unknown address");
+        *providers -= 1;
+        claim.cache.record(address, value, *providers == 0);
     }
 }
 
@@ -631,6 +679,8 @@ struct ExternalFetcher {
     in_progress: FuturesUnordered<FetchFuture>,
     /// Per-address retry counter for transient Cloudflare blocks.
     attempts: HashMap<Address, u32>,
+    /// Addresses for which this provider has not produced a terminal result.
+    pending: AddressSet,
 }
 
 impl ExternalFetcher {
@@ -641,6 +691,7 @@ impl ExternalFetcher {
             queue: to_fetch.to_vec(),
             in_progress: FuturesUnordered::new(),
             attempts: HashMap::default(),
+            pending: to_fetch.iter().copied().collect(),
         }
     }
 
@@ -667,7 +718,13 @@ impl Stream for ExternalFetcher {
         let _guard = info_span!("evm::traces::external", ?kind, "ExternalFetcher").entered();
 
         if pin.fetcher.provider.invalid_api_key().load(Ordering::Relaxed) {
-            return Poll::Ready(None);
+            pin.queue.clear();
+            pin.in_progress.clear();
+            let Some(address) = pin.pending.iter().next().copied() else {
+                return Poll::Ready(None);
+            };
+            pin.pending.remove(&address);
+            return Poll::Ready(Some((address, (kind, None))));
         }
 
         loop {
@@ -676,14 +733,19 @@ impl Stream for ExternalFetcher {
             let mut made_progress_this_iter = false;
             match pin.in_progress.poll_next_unpin(cx) {
                 Poll::Pending => {}
-                Poll::Ready(None) => return Poll::Ready(None),
+                Poll::Ready(None) => {
+                    debug_assert!(pin.pending.is_empty());
+                    return Poll::Ready(None);
+                }
                 Poll::Ready(Some((addr, res))) => {
                     made_progress_this_iter = true;
                     match res {
                         Ok(metadata) => {
+                            pin.pending.remove(&addr);
                             return Poll::Ready(Some((addr, (kind, metadata))));
                         }
                         Err(EtherscanError::ContractCodeNotVerified(_)) => {
+                            pin.pending.remove(&addr);
                             return Poll::Ready(Some((addr, (kind, None))));
                         }
                         Err(EtherscanError::RateLimitExceeded) => {
@@ -694,7 +756,8 @@ impl Stream for ExternalFetcher {
                             warn!(target: "evm::traces::external", "invalid api key");
                             // mark key as invalid
                             pin.fetcher.provider.invalid_api_key().store(true, Ordering::Relaxed);
-                            return Poll::Ready(None);
+                            pin.pending.remove(&addr);
+                            return Poll::Ready(Some((addr, (kind, None))));
                         }
                         Err(EtherscanError::BlockedByCloudflare) => {
                             // A Cloudflare block is transient rate limiting (often triggered
@@ -712,12 +775,14 @@ impl Stream for ExternalFetcher {
                                 pin.queue.push(addr);
                             } else {
                                 warn!(target: "evm::traces::external", "blocked by cloudflare, giving up on address");
+                                pin.pending.remove(&addr);
                                 return Poll::Ready(Some((addr, (kind, None))));
                             }
                         }
                         Err(err) => {
                             warn!(target: "evm::traces::external", ?err, "could not get info");
                             // Cache the failure so we don't re-fetch on subsequent arenas.
+                            pin.pending.remove(&addr);
                             return Poll::Ready(Some((addr, (kind, None))));
                         }
                     }
@@ -1081,6 +1146,61 @@ mod tests {
         }
     }
 
+    struct AddressFetcher {
+        stalled: Address,
+        invalid: AtomicBool,
+    }
+
+    #[async_trait::async_trait]
+    impl ExternalFetcherT for AddressFetcher {
+        fn kind(&self) -> FetcherKind {
+            FetcherKind::Sourcify
+        }
+
+        fn timeout(&self) -> Duration {
+            Duration::from_millis(1)
+        }
+
+        fn concurrency(&self) -> usize {
+            1
+        }
+
+        fn invalid_api_key(&self) -> &AtomicBool {
+            &self.invalid
+        }
+
+        async fn fetch(&self, address: Address) -> Result<Option<Metadata>, EtherscanError> {
+            if address == self.stalled { pending().await } else { Ok(Some(metadata("Ready"))) }
+        }
+    }
+
+    struct InvalidKeyFetcher {
+        invalid: AtomicBool,
+    }
+
+    #[async_trait::async_trait]
+    impl ExternalFetcherT for InvalidKeyFetcher {
+        fn kind(&self) -> FetcherKind {
+            FetcherKind::Etherscan
+        }
+
+        fn timeout(&self) -> Duration {
+            Duration::from_millis(1)
+        }
+
+        fn concurrency(&self) -> usize {
+            1
+        }
+
+        fn invalid_api_key(&self) -> &AtomicBool {
+            &self.invalid
+        }
+
+        async fn fetch(&self, _address: Address) -> Result<Option<Metadata>, EtherscanError> {
+            Err(EtherscanError::InvalidApiKey)
+        }
+    }
+
     fn metadata(contract_name: &str) -> Metadata {
         SourcifyMetadata {
             abi: None,
@@ -1151,6 +1271,48 @@ mod tests {
         let got: StdHashSet<Address> = collected.into_iter().map(|(addr, _)| addr).collect();
         let want: StdHashSet<Address> = addrs.into_iter().collect();
         assert_eq!(got, want, "every address must be yielded despite a transient cloudflare block");
+    }
+
+    #[tokio::test]
+    async fn invalid_key_settles_every_queued_address() {
+        let addresses = (1u8..=4).map(Address::with_last_byte).collect::<Vec<_>>();
+        let fetcher: Arc<dyn ExternalFetcherT> =
+            Arc::new(InvalidKeyFetcher { invalid: AtomicBool::new(false) });
+
+        let results =
+            ExternalFetcher::new(SharedFetcher::new(fetcher), &addresses).collect::<Vec<_>>().await;
+
+        assert_eq!(results.len(), addresses.len());
+        assert_eq!(
+            results.into_iter().map(|(address, _)| address).collect::<StdHashSet<_>>(),
+            addresses.into_iter().collect()
+        );
+    }
+
+    #[tokio::test]
+    async fn address_settles_without_waiting_for_stalled_batch_sibling() {
+        let stalled = Address::with_last_byte(1);
+        let ready = Address::with_last_byte(2);
+        let fetcher: Arc<dyn ExternalFetcherT> =
+            Arc::new(AddressFetcher { stalled, invalid: AtomicBool::new(false) });
+        let identifier = test_identifier(vec![fetcher], Duration::from_secs(1));
+        let addresses = identifier.cache.claim_new([stalled, ready]);
+        let claim = Claim { cache: Arc::clone(&identifier.cache), addresses };
+        let fetchers = Arc::clone(&identifier.fetchers);
+        let task = tokio::spawn(async move { fetch_batch(&fetchers, claim).await });
+
+        tokio::time::timeout(Duration::from_secs(1), identifier.cache.settled(&[ready]))
+            .await
+            .unwrap();
+
+        {
+            let state = identifier.cache.state();
+            assert!(state.completed.contains(&ready));
+            assert!(state.in_flight.contains(&stalled));
+        }
+        task.abort();
+        assert!(task.await.is_err());
+        assert!(identifier.cache.state().in_flight.is_empty());
     }
 
     #[tokio::test(start_paused = true)]
@@ -1264,16 +1426,22 @@ mod tests {
         let address = Address::with_last_byte(1);
         let identifier = test_identifier(Vec::new(), Duration::ZERO);
 
-        identifier.cache.insert(address, (FetcherKind::Sourcify, Some(metadata("SourcifyResult"))));
-        identifier.cache.insert(address, (FetcherKind::Etherscan, None));
+        identifier.cache.record(
+            address,
+            (FetcherKind::Sourcify, Some(metadata("SourcifyResult"))),
+            false,
+        );
+        identifier.cache.record(address, (FetcherKind::Etherscan, None), false);
         assert_eq!(
             identifier.cache.state().contracts[&address].1.as_ref().unwrap().contract_name,
             "SourcifyResult"
         );
 
-        identifier
-            .cache
-            .insert(address, (FetcherKind::Etherscan, Some(metadata("EtherscanResult"))));
+        identifier.cache.record(
+            address,
+            (FetcherKind::Etherscan, Some(metadata("EtherscanResult"))),
+            false,
+        );
         assert_eq!(
             identifier.cache.state().contracts[&address].1.as_ref().unwrap().contract_name,
             "EtherscanResult"
@@ -1296,10 +1464,12 @@ mod tests {
         let mut identifier = test_identifier(Vec::new(), Duration::from_secs(1));
         let identity = ExternalIdentifier::identify_from_metadata(proxy, &proxy_metadata);
         assert_eq!(identity.contract.as_deref(), Some("Proxy"));
-        identifier.cache.insert(proxy, (FetcherKind::Etherscan, Some(proxy_metadata)));
-        identifier
-            .cache
-            .insert(implementation_address, (FetcherKind::Etherscan, Some(implementation)));
+        identifier.cache.record(proxy, (FetcherKind::Etherscan, Some(proxy_metadata)), false);
+        identifier.cache.record(
+            implementation_address,
+            (FetcherKind::Etherscan, Some(implementation)),
+            false,
+        );
 
         let mut results = identifier.get_abis(&[proxy]).await;
         let (result_address, result) = results.pop().unwrap();
@@ -1360,25 +1530,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn identify_waits_for_in_flight_prefetch_instead_of_refetching() {
-        let calls = Arc::new(AtomicUsize::new(0));
-        let fetcher = test_fetcher(Some(Duration::from_millis(50)), Some("InFlight"), &calls);
-        let mut identifier = test_identifier(vec![fetcher], Duration::from_secs(5));
-        let address = Address::with_last_byte(1);
-
-        identifier.prefetcher(tokio::runtime::Handle::current()).prefetch([address]);
-        let identities = identifier.identify_addresses(&[&node(address)]);
-
-        assert_eq!(identities.len(), 1);
-        assert_eq!(identities[0].label.as_deref(), Some("InFlight"));
-        assert_eq!(calls.load(AtomicOrdering::Relaxed), 1);
-        let budget = identifier.remaining_budget();
-        assert!(!budget.is_zero());
-        assert!(budget < Duration::from_secs(5), "waiting is charged to the budget");
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn identify_waits_for_preferred_fetcher_after_partial_result() {
+    async fn foreground_restarts_partial_prefetch_for_preferred_result() {
         let sourcify_calls = Arc::new(AtomicUsize::new(0));
         let etherscan_calls = Arc::new(AtomicUsize::new(0));
         let fetchers: Vec<Arc<dyn ExternalFetcherT>> = vec![
@@ -1416,8 +1568,8 @@ mod tests {
         let identities = identifier.identify_addresses(&[&node(address)]);
 
         assert_eq!(identities[0].label.as_deref(), Some("EtherscanResult"));
-        assert_eq!(sourcify_calls.load(AtomicOrdering::Relaxed), 1);
-        assert_eq!(etherscan_calls.load(AtomicOrdering::Relaxed), 1);
+        assert_eq!(sourcify_calls.load(AtomicOrdering::Relaxed), 2);
+        assert_eq!(etherscan_calls.load(AtomicOrdering::Relaxed), 2);
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1523,12 +1675,55 @@ mod tests {
         assert!(!identifier.remaining_budget().is_zero());
     }
 
+    #[tokio::test(flavor = "multi_thread")]
+    async fn foreground_cancels_unrelated_prefetch_holding_provider_permit() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let fetcher: Arc<dyn ExternalFetcherT> = Arc::new(AbandonedFetcher {
+            kind: FetcherKind::Sourcify,
+            calls: Arc::clone(&calls),
+            invalid: AtomicBool::new(false),
+        });
+        let mut identifier = test_identifier(vec![fetcher], Duration::from_secs(1));
+        let prefetched = Address::with_last_byte(1);
+        let foreground = Address::with_last_byte(2);
+
+        identifier.prefetcher(tokio::runtime::Handle::current()).prefetch([prefetched]);
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while calls.load(AtomicOrdering::Relaxed) == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+
+        let identities = identifier.identify_addresses(&[&node(foreground)]);
+
+        assert_eq!(identities[0].label.as_deref(), Some("Retried"));
+        assert_eq!(calls.load(AtomicOrdering::Relaxed), 2);
+        assert!(!identifier.cache.state().completed.contains(&prefetched));
+    }
+
+    #[test]
+    fn dropping_runtime_releases_claim_before_prefetch_first_poll() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let fetcher = test_fetcher(Some(Duration::ZERO), Some("NeverPolled"), &calls);
+        let identifier = test_identifier(vec![fetcher], Duration::from_secs(1));
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_time().build().unwrap();
+        let address = Address::with_last_byte(1);
+
+        identifier.prefetcher(runtime.handle().clone()).prefetch([address]);
+        assert!(identifier.cache.state().in_flight.contains(&address));
+        drop(runtime);
+
+        assert!(identifier.cache.state().in_flight.is_empty());
+        assert_eq!(calls.load(AtomicOrdering::Relaxed), 0);
+    }
+
     #[test]
     fn claim_skips_addresses_cached_after_the_initial_lookup() {
         let identifier = test_identifier(Vec::new(), Duration::from_secs(1));
         let address = Address::with_last_byte(1);
-        identifier.cache.insert(address, (FetcherKind::Sourcify, Some(metadata("Cached"))));
-        identifier.cache.complete(&[address]);
+        identifier.cache.record(address, (FetcherKind::Sourcify, Some(metadata("Cached"))), true);
 
         let (to_fetch, to_await) = identifier.cache.claim(&[address]);
 

@@ -64,9 +64,8 @@ impl TracePrefetcher {
         let mut addresses = AddressSet::default();
         for (_, arena) in &result.traces {
             decoder.identify(&arena.arena, &mut local);
-            addresses.extend(
-                decoder.unidentified_nodes(&arena.arena).iter().map(|node| node.trace.address),
-            );
+            addresses
+                .extend(decoder.unidentified_nodes(&arena.arena).map(|node| node.trace.address));
         }
         self.external.prefetch(addresses);
     }
