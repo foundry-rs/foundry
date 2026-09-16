@@ -139,6 +139,9 @@ pub enum BlockchainError {
         "tempo transaction received but is not supported.\n\nYou can use it by running anvil with '--tempo'."
     )]
     TempoTransactionUnsupported,
+    #[cfg(feature = "base")]
+    #[error("Base transactions require native Base execution; run Anvil with --network base")]
+    BaseTransactionUnsupported,
     #[error("Unknown transaction type not supported")]
     UnknownTransactionType,
     #[error("Excess blob gas not set.")]
@@ -633,6 +636,10 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                     RpcError::invalid_params(err.to_string())
                 }
                 err @ BlockchainError::DepositTransactionUnsupported => {
+                    RpcError::invalid_params(err.to_string())
+                }
+                #[cfg(feature = "base")]
+                err @ BlockchainError::BaseTransactionUnsupported => {
                     RpcError::invalid_params(err.to_string())
                 }
                 err @ BlockchainError::TempoTransactionUnsupported => {

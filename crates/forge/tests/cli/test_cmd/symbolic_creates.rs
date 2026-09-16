@@ -4,6 +4,106 @@ use foundry_test_utils::{forgetest_init, util::OutputExt};
 
 use super::symbolic_helpers::z3_available;
 
+forgetest_init!(symbolic_create_contains_invalid_initcode_halt, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_create_contains_invalid_initcode_halt because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicInvalidInitcode.t.sol",
+        r#"
+contract SymbolicInvalidInitcode {
+    uint256 marker;
+
+    function checkInvalidInitcode() public {
+        marker = 19;
+        address created;
+        uint256 returnSize;
+        assembly ("memory-safe") {
+            mstore8(0, 0xfe)
+            created := create(0, 0, 1)
+            returnSize := returndatasize()
+        }
+        assert(created == address(0));
+        assert(returnSize == 0);
+        assert(marker == 19);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--symbolic", "--match-test", "checkInvalidInitcode"]).assert_success();
+});
+
+forgetest_init!(symbolic_create_respects_configured_runtime_code_limit, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_create_respects_configured_runtime_code_limit because z3 is not available"
+        );
+        return;
+    }
+
+    prj.update_config(|config| config.code_size_limit = Some(24_576));
+    prj.add_test(
+        "SymbolicCreateCodeLimit.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicCreateCodeLimit is Test {
+    function checkRuntimeCodeLimit() public {
+        address created;
+        assembly ("memory-safe") {
+            mstore(0, shl(208, 0x6160016000f3))
+            created := create(0, 0, 6)
+        }
+        assert(created == address(0));
+        assert(created.code.length == 0);
+    }
+
+    function checkConfiguredRuntimeCodeLimit() public {
+        address created;
+        assembly ("memory-safe") {
+            mstore(0, shl(208, 0x6160006000f3))
+            created := create(0, 0, 6)
+        }
+        assert(created == address(0));
+        assert(created.code.length == 0);
+    }
+
+    function checkExpectRevertRuntimeCodeLimit() public {
+        vm.expectRevert();
+        new OversizedRuntime();
+
+        vm.expectRevert();
+        new OversizedRuntime{salt: bytes32(uint256(1))}();
+    }
+}
+
+contract OversizedRuntime {
+    constructor() {
+        assembly ("memory-safe") {
+            return(0, 24577)
+        }
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--symbolic", "--match-test", "checkRuntimeCodeLimit"]).assert_success();
+
+    cmd.forge_fuse();
+    cmd.args(["test", "--symbolic", "--match-test", "checkExpectRevertRuntimeCodeLimit"])
+        .assert_success();
+
+    prj.update_config(|config| config.code_size_limit = Some(24_575));
+    cmd.forge_fuse();
+    cmd.args(["test", "--symbolic", "--match-test", "checkConfiguredRuntimeCodeLimit"])
+        .assert_success();
+});
+
 forgetest_init!(symbolic_create_deploys_and_calls_helper, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(
@@ -143,6 +243,57 @@ contract SymbolicCreateInitcodeOffset is Test {
     );
     assert!(!stdout.contains("symbolic CREATE initcode offset"), "{stdout}");
     assert!(!stdout.contains("symbolic bytecode opcode"), "{stdout}");
+});
+
+forgetest_init!(symbolic_create_size_respects_path_width, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_create_size_respects_path_width because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicCreateSize.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicCreateSize is Test {
+    function checkCreateSizeRespectsPathWidth(uint256 size) public {
+        vm.assume(size <= 2);
+        bytes memory code = hex"5b5b";
+        address created;
+        assembly {
+            created := create(0, add(code, 0x20), size)
+        }
+        assert(created != address(0));
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--symbolic-width",
+            "2",
+            "--match-test",
+            "checkCreateSizeRespectsPathWidth",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+(paths: 2,
+incomplete symbolic execution (Stuck)
+symbolic path limit exceeded
+checkCreateSizeRespectsPathWidth(uint256)
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_create2_deploys_and_calls_helper, |prj, cmd| {

@@ -2285,39 +2285,6 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    #[cfg(feature = "base")]
-    async fn base_anvil_identity_uses_generic_network_and_hardfork_parsing() {
-        let (_api, handle) = anvil::spawn(
-            anvil::NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Beryl.into())),
-        )
-        .await;
-        let endpoint = handle.http_endpoint();
-        let provider = EvmOpts::default().fork_provider_with_url::<AnyNetwork>(&endpoint).unwrap();
-        let execution_chain_id = provider.get_chain_id().await.unwrap();
-        let node_info =
-            provider.raw_request::<_, NodeInfo>("anvil_nodeInfo".into(), ()).await.unwrap();
-        assert_eq!(node_info.network.as_deref(), Some("base"));
-        assert_eq!(node_info.hard_fork, "Beryl");
-
-        let identity = EvmOpts::resolve_fork_endpoint_identity(
-            &provider,
-            &endpoint,
-            execution_chain_id,
-            Some(node_info),
-            None,
-            EndpointHardforkPolicy::Required,
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(identity.network, NetworkVariant::Base);
-        assert!(identity.network_profile.is_base());
-        assert_eq!(identity.reported_hardfork.as_deref(), Some("Beryl"));
-        assert_eq!(identity.hardfork, Some(FoundryHardfork::Base(BaseUpgrade::Beryl)));
-        assert!(identity.instance_id.is_some());
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
     async fn fork_non_anvil_node_info_rpc_error_is_optional() {
         let (_api, handle) =
             anvil::spawn(anvil::NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64)))

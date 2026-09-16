@@ -641,11 +641,11 @@ impl NetworkConfigs {
     /// without rebuilding the instantiated EVM.
     ///
     /// Monad uses a distinct EVM factory and instruction provider, so forks cannot cross the
-    /// Monad boundary. Existing non-Monad fork-source compatibility remains unchanged.
+    /// Monad boundary. Base execution requires a Base source, while existing Ethereum, Optimism,
+    /// and Tempo execution can continue using Base as a state source without switching engines.
     pub const fn supports_fork_source(&self, source: &Self) -> bool {
-        // Base also has its own EVM factory, so its boundary is impassable too.
         #[cfg(feature = "base")]
-        if self.is_base() != source.is_base() {
+        if self.is_base() && !source.is_base() {
             return false;
         }
         self.is_monad() == source.is_monad()
@@ -1219,8 +1219,8 @@ mod tests {
 
     #[test]
     #[cfg(feature = "base")]
-    fn fork_sources_isolate_base() {
-        #[cfg_attr(not(any(feature = "optimism", feature = "monad")), allow(unused_mut))]
+    fn fork_sources_preserve_base_state_source_compatibility() {
+        #[cfg_attr(not(feature = "optimism"), allow(unused_mut))]
         let mut non_base = vec![
             NetworkConfigs::default(),
             NetworkConfigs::with_ethereum(),
@@ -1229,14 +1229,21 @@ mod tests {
         ];
         #[cfg(feature = "optimism")]
         non_base.push(NetworkConfigs::with_optimism());
-        #[cfg(feature = "monad")]
-        non_base.push(NetworkConfigs::with_monad());
-
-        for source in &non_base {
-            assert!(!NetworkConfigs::with_base().supports_fork_source(source));
-            assert!(!source.supports_fork_source(&NetworkConfigs::with_base()));
+        for execution in &non_base {
+            assert!(execution.supports_fork_source(&NetworkConfigs::with_base()));
+            assert!(!NetworkConfigs::with_base().supports_fork_source(execution));
         }
         assert!(NetworkConfigs::with_base().supports_fork_source(&NetworkConfigs::with_base()));
+
+        #[cfg(feature = "monad")]
+        {
+            assert!(
+                !NetworkConfigs::with_monad().supports_fork_source(&NetworkConfigs::with_base())
+            );
+            assert!(
+                !NetworkConfigs::with_base().supports_fork_source(&NetworkConfigs::with_monad())
+            );
+        }
     }
 
     #[test]

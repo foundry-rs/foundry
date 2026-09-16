@@ -448,8 +448,56 @@ pub trait FoundryChain<Tx>: Clone + Debug + Default + Send + Sync {
 
 impl<Tx> FoundryChain<Tx> for () {}
 
+/// Access to a configuration's underlying environment and hardfork updates.
+pub trait FoundryCfg:
+    Cfg<Spec: Into<SpecId> + Copy + Debug> + Clone + From<CfgEnv<Self::Spec>> + Into<CfgEnv<Self::Spec>>
+{
+    /// Reference to the underlying configuration.
+    fn cfg_env(&self) -> &CfgEnv<Self::Spec>;
+
+    /// Mutable reference to the underlying configuration.
+    fn cfg_env_mut(&mut self) -> &mut CfgEnv<Self::Spec>;
+
+    /// Updates the hardfork and its gas parameters.
+    fn set_spec_and_gas_params(&mut self, spec: Self::Spec) {
+        self.cfg_env_mut().set_spec_and_mainnet_gas_params(spec);
+    }
+}
+
+impl<SPEC: Into<SpecId> + Copy + Debug> FoundryCfg for CfgEnv<SPEC> {
+    fn cfg_env(&self) -> &Self {
+        self
+    }
+
+    fn cfg_env_mut(&mut self) -> &mut Self {
+        self
+    }
+}
+
+#[cfg(feature = "monad")]
+impl FoundryCfg for monad_revm::MonadCfgEnv {
+    fn cfg_env(&self) -> &CfgEnv<Self::Spec> {
+        self.inner()
+    }
+
+    fn cfg_env_mut(&mut self) -> &mut CfgEnv<Self::Spec> {
+        self.inner_mut()
+    }
+
+    fn set_spec_and_gas_params(&mut self, spec: Self::Spec) {
+        self.inner_mut().spec = spec;
+        self.inner_mut().set_gas_params(monad_revm::instructions::monad_gas_params(spec));
+    }
+}
+
 /// Foundry extension for Journal type
 pub trait FoundryJournal: JournalExt {
+    /// Mutable access to the database and journal inner.
+    fn db_journal_inner_mut(&mut self) -> (&mut Self::Database, &mut JournaledState);
+
+    /// Reference to the journal inner.
+    fn journal_inner(&self) -> &JournaledState;
+
     /// Captures Monad's reserve-balance tracker for the active transaction.
     #[cfg(feature = "monad")]
     fn capture_reserve_balance(
@@ -479,10 +527,26 @@ pub trait FoundryJournal: JournalExt {
     fn set_preserve_reserve_balance(&mut self, _preserve: bool) {}
 }
 
-impl<DB: Database> FoundryJournal for Journal<DB> {}
+impl<DB: Database> FoundryJournal for Journal<DB> {
+    fn db_journal_inner_mut(&mut self) -> (&mut DB, &mut JournaledState) {
+        (&mut self.database, &mut self.inner)
+    }
+
+    fn journal_inner(&self) -> &JournaledState {
+        &self.inner
+    }
+}
 
 #[cfg(feature = "monad")]
 impl<DB: Database> FoundryJournal for monad_revm::MonadJournal<DB> {
+    fn db_journal_inner_mut(&mut self) -> (&mut DB, &mut JournaledState) {
+        Journal::db_journal_inner_mut(self)
+    }
+
+    fn journal_inner(&self) -> &JournaledState {
+        Journal::journal_inner(self)
+    }
+
     fn capture_reserve_balance(
         &self,
     ) -> monad_revm::reserve_balance::tracker::ReserveBalanceTracker {
@@ -513,7 +577,7 @@ pub trait FoundryContextExt:
     ContextTr<
         Block: FoundryBlock + Clone,
         Tx: FoundryTransaction + Clone,
-        Cfg: Cfg<Spec = Self::Spec> + Clone + From<CfgEnv<Self::Spec>> + Into<CfgEnv<Self::Spec>>,
+        Cfg: FoundryCfg<Spec = Self::Spec>,
         Journal: FoundryJournal,
         Chain: FoundryChain<Self::Tx>,
     >
@@ -533,20 +597,28 @@ pub trait FoundryContextExt:
     fn cfg_mut(&mut self) -> &mut Self::Cfg;
 
     /// Reference to the underlying [`CfgEnv`].
-    fn cfg_env(&self) -> &CfgEnv<Self::Spec>;
+    fn cfg_env(&self) -> &CfgEnv<Self::Spec> {
+        self.cfg().cfg_env()
+    }
 
     /// Mutable reference to the underlying [`CfgEnv`].
-    fn cfg_env_mut(&mut self) -> &mut CfgEnv<Self::Spec>;
+    fn cfg_env_mut(&mut self) -> &mut CfgEnv<Self::Spec> {
+        self.cfg_mut().cfg_env_mut()
+    }
 
     /// Mutable reference to the db and the journal inner.
-    fn db_journal_inner_mut(&mut self) -> (&mut Self::Db, &mut JournaledState);
+    fn db_journal_inner_mut(&mut self) -> (&mut Self::Db, &mut JournaledState) {
+        self.journal_mut().db_journal_inner_mut()
+    }
 
     /// Reference to the journal inner.
-    fn journal_inner(&self) -> &JournaledState;
+    fn journal_inner(&self) -> &JournaledState {
+        self.journal().journal_inner()
+    }
 
     /// Sets the spec and refreshes gas params for the concrete EVM family.
     fn set_spec_and_gas_params(&mut self, spec: Self::Spec) {
-        self.cfg_env_mut().set_spec_and_mainnet_gas_params(spec);
+        self.cfg_mut().set_spec_and_gas_params(spec);
     }
 
     /// Sets block environment.
@@ -595,12 +667,14 @@ pub fn refresh_chain_journal<CTX: FoundryContextExt>(context: &mut CTX) {
 impl<
     BLOCK: FoundryBlock + Clone,
     TX: FoundryTransaction + Clone,
-    SPEC: Into<SpecId> + Copy + Debug,
+    CFG: FoundryCfg,
     DB: Database,
+    J: FoundryJournal<Database = DB>,
     C: FoundryChain<TX>,
-> FoundryContextExt for Context<BLOCK, TX, CfgEnv<SPEC>, DB, Journal<DB>, C>
+> FoundryContextExt for Context<BLOCK, TX, CFG, DB, J, C>
 {
     type Spec = <Self::Cfg as Cfg>::Spec;
+
     fn block_mut(&mut self) -> &mut Self::Block {
         &mut self.block
     }
@@ -611,71 +685,6 @@ impl<
 
     fn cfg_mut(&mut self) -> &mut Self::Cfg {
         &mut self.cfg
-    }
-
-    fn cfg_env(&self) -> &CfgEnv<Self::Spec> {
-        &self.cfg
-    }
-
-    fn cfg_env_mut(&mut self) -> &mut CfgEnv<Self::Spec> {
-        &mut self.cfg
-    }
-
-    fn db_journal_inner_mut(&mut self) -> (&mut Self::Db, &mut JournaledState) {
-        (&mut self.journaled_state.database, &mut self.journaled_state.inner)
-    }
-
-    fn journal_inner(&self) -> &JournaledState {
-        &self.journaled_state.inner
-    }
-}
-
-#[cfg(feature = "monad")]
-impl<DB: Database> FoundryContextExt
-    for Context<
-        BlockEnv,
-        TxEnv,
-        monad_revm::MonadCfgEnv,
-        DB,
-        monad_revm::MonadJournal<DB>,
-        monad_revm::MonadChainContext,
-    >
-{
-    type Spec = <Self::Cfg as Cfg>::Spec;
-    fn block_mut(&mut self) -> &mut Self::Block {
-        &mut self.block
-    }
-
-    fn tx_mut(&mut self) -> &mut Self::Tx {
-        &mut self.tx
-    }
-
-    fn cfg_mut(&mut self) -> &mut Self::Cfg {
-        &mut self.cfg
-    }
-
-    fn cfg_env(&self) -> &CfgEnv<Self::Spec> {
-        self.cfg.inner()
-    }
-
-    fn cfg_env_mut(&mut self) -> &mut CfgEnv<Self::Spec> {
-        self.cfg.inner_mut()
-    }
-
-    fn set_spec_and_gas_params(&mut self, spec: Self::Spec) {
-        let mut cfg = self.cfg.clone().into_inner();
-        cfg.spec = spec;
-        self.cfg = monad_revm::MonadCfgEnv::from(cfg);
-    }
-
-    fn db_journal_inner_mut(&mut self) -> (&mut Self::Db, &mut JournaledState) {
-        let journal: &mut Journal<DB> = std::ops::DerefMut::deref_mut(&mut self.journaled_state);
-        (&mut journal.database, &mut journal.inner)
-    }
-
-    fn journal_inner(&self) -> &JournaledState {
-        let journal: &Journal<DB> = std::ops::Deref::deref(&self.journaled_state);
-        &journal.inner
     }
 }
 
@@ -1196,6 +1205,12 @@ mod tests {
         evm.ctx_mut().set_tx(tx_env);
         let evm_env = evm.ctx().evm_clone();
         evm.ctx_mut().set_evm(evm_env);
+        evm.ctx_mut().journal_mut().set_preserve_reserve_balance(true);
+        let mut inner = evm.ctx().journal_inner().clone();
+        inner.depth = 2;
+        evm.ctx_mut().set_journal_inner(inner);
+        assert_eq!(evm.ctx().journal_inner().depth, 2);
+        assert!(evm.ctx().journal().preserves_reserve_balance());
     }
 
     #[test]
@@ -1213,9 +1228,17 @@ mod tests {
         evm.ctx_mut().set_spec_and_gas_params(monad_revm::MonadHardfork::MonadNine);
         assert_eq!(evm.ctx().cfg().inner().memory_limit, FOUNDRY_MEMORY_LIMIT);
         assert_eq!(evm.ctx().cfg().memory_limit(), monad_revm::cfg::MONAD_MEMORY_LIMIT);
+        assert_eq!(
+            evm.ctx().cfg().inner().gas_params,
+            monad_revm::instructions::monad_gas_params(monad_revm::MonadHardfork::MonadNine)
+        );
 
         evm.ctx_mut().set_spec_and_gas_params(monad_revm::MonadHardfork::MonadEight);
         assert_eq!(evm.ctx().cfg().memory_limit(), FOUNDRY_MEMORY_LIMIT);
+        assert_eq!(
+            evm.ctx().cfg().inner().gas_params,
+            monad_revm::instructions::monad_gas_params(monad_revm::MonadHardfork::MonadEight)
+        );
     }
 
     #[test]

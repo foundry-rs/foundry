@@ -11,10 +11,10 @@ use crate::{
             },
             executor::{
                 AnvilBlockExecutor, BlockExecutionKind, EthereumBlockTransitions,
-                ExecutedPoolTransactions, FoundryReceiptBuilder, PoolTransactionHooks,
-                PoolTxGasConfig, apply_ethereum_post_execution_changes,
-                apply_ethereum_pre_execution_changes, block_blob_gas_limit,
-                build_tx_env_for_pending, execute_pool_transaction, execute_pool_transactions,
+                ExecutedPoolTransactions, FoundryReceiptBuilder, PoolTxGasConfig,
+                apply_ethereum_post_execution_changes, apply_ethereum_pre_execution_changes,
+                block_blob_gas_limit, build_tx_env_for_pending, execute_pool_transaction,
+                execute_pool_transactions,
             },
             fork::{ClientFork, ForkEndpointIdentity},
             genesis::GenesisConfig,
@@ -549,10 +549,6 @@ const fn next_monad_context(context: &mut MonadReplayContext) -> MonadExecutionC
 const fn next_monad_context(_context: &mut MonadReplayContext) -> MonadExecutionContext<'_> {
     MonadExecutionContext { _marker: std::marker::PhantomData }
 }
-
-const fn noop_before_transaction<E, T>(_evm: &mut E, _tx: &T) {}
-
-const fn noop_on_execution_error<E>(_evm: &mut E) {}
 
 /// Maximum cumulative gas available to one `eth_simulateV1` request.
 const SIMULATE_GAS_CAP: u64 = 50_000_000;
@@ -1623,7 +1619,7 @@ impl<N: Network> Backend<N> {
     }
 
     #[cfg(not(feature = "optimism"))]
-    fn is_optimism_jovian_at_header<H: BlockHeader>(
+    const fn is_optimism_jovian_at_header<H: BlockHeader>(
         &self,
         _header: &H,
         _decoded: Option<bool>,
@@ -1742,8 +1738,11 @@ impl<N: Network> Backend<N> {
         let blob_params = self.blob_params();
         PoolTxGasConfig {
             disable_block_gas_limit: evm_env.cfg_env.disable_block_gas_limit,
-            tx_gas_limit_cap: evm_env.cfg_env.tx_gas_limit_cap,
-            tx_gas_limit_cap_resolved: self.tx_gas_limit_cap(evm_env),
+            enforced_tx_gas_limit_cap: evm_env
+                .cfg_env
+                .tx_gas_limit_cap
+                .is_none()
+                .then(|| self.tx_gas_limit_cap(evm_env)),
             max_blob_gas_per_block: blob_params.max_blob_gas_per_block(),
             is_cancun,
         }
@@ -2894,7 +2893,7 @@ impl<N: Network> Backend<N> {
                 evm_env,
                 parent_hash,
                 spec_id,
-                hardfork,
+                hardfork.into(),
                 pool_transactions,
                 gas_config,
                 inspector_tx_config,
@@ -2907,12 +2906,7 @@ impl<N: Network> Backend<N> {
             self.ethereum_block_transitions(hardfork, parent_beacon_block_root, execution_kind);
 
         macro_rules! run {
-            (
-                $evm:expr,
-                $before_transaction:expr,
-                $execute_transaction:expr,
-                $on_execution_error:expr
-            ) => {{
+            ($evm:expr) => {{
                 self.inject_precompiles($evm.precompiles_mut(), evm_env);
                 let mut executor =
                     AnvilBlockExecutor::new($evm, parent_hash, spec_id, ethereum_transitions)
@@ -2924,11 +2918,6 @@ impl<N: Network> Backend<N> {
                 executor
                     .apply_pre_execution_changes()
                     .map_err(|err| BlockchainError::Internal(err.to_string()))?;
-                let mut hooks = PoolTransactionHooks {
-                    before_transaction: $before_transaction,
-                    execute_transaction: $execute_transaction,
-                    on_execution_error: $on_execution_error,
-                };
                 let pool_result = execute_pool_transactions(
                     &mut executor,
                     pool_transactions,
@@ -2936,7 +2925,7 @@ impl<N: Network> Backend<N> {
                     inspector_tx_config,
                     self.cheats(),
                     validator,
-                    &mut hooks,
+                    &mut execute_pool_transaction,
                 );
                 let (evm, block_result) =
                     executor.finish().map_err(|err| BlockchainError::Internal(err.to_string()))?;
@@ -2962,12 +2951,7 @@ impl<N: Network> Backend<N> {
             let mut evm = BaseEvmFactory::new(activation_admin)
                 .create_evm_with_inspector(db, base_env, inspector);
             evm.ctx_mut().cfg.tx_chain_id_check = true;
-            return run!(
-                evm,
-                noop_before_transaction,
-                execute_pool_transaction,
-                noop_on_execution_error
-            );
+            return run!(evm);
         }
 
         #[cfg(feature = "optimism")]
@@ -2978,28 +2962,18 @@ impl<N: Network> Backend<N> {
             );
             let mut evm =
                 OpEvmFactory::<OpTx>::default().create_evm_with_inspector(db, op_env, inspector);
-            return run!(
-                evm,
-                noop_before_transaction,
-                execute_pool_transaction,
-                noop_on_execution_error
-            );
+            return run!(evm);
         }
 
         if self.is_tempo() {
             let tempo_env = self.build_tempo_evm_env(evm_env);
             let mut evm =
                 TempoEvmFactory::default().create_evm_with_inspector(db, tempo_env, inspector);
-            return run!(
-                evm,
-                noop_before_transaction,
-                execute_pool_transaction,
-                noop_on_execution_error
-            );
+            return run!(evm);
         }
         let mut evm =
             EthEvmFactory::default().create_evm_with_inspector(db, evm_env.clone(), inspector);
-        run!(evm, noop_before_transaction, execute_pool_transaction, noop_on_execution_error)
+        run!(evm)
     }
 
     /// Applies Ethereum block-start transitions to a disposable simulation candidate.
@@ -3278,6 +3252,15 @@ impl<N: Network> Backend<N> {
                 return Ok(FoundryTransactionRequest::Op(request));
             }
             return Ok(FoundryTransactionRequest::Ethereum(request.into_inner()));
+        }
+        #[cfg(feature = "base")]
+        if transaction_type == Some(foundry_primitives::FoundryTxType::Eip8130.into())
+            || matches!(
+                FoundryTransactionRequest::try_from(request.clone()),
+                Ok(FoundryTransactionRequest::Base(_))
+            )
+        {
+            return Err(BlockchainError::BaseTransactionUnsupported);
         }
         if !self.is_tempo() && transaction_type != Some(TEMPO_TX_TYPE_ID) {
             #[cfg(feature = "optimism")]
@@ -5068,7 +5051,7 @@ impl<N: Network> Backend<N> {
         );
         #[cfg(feature = "optimism")]
         if self.networks.is_optimism() {
-            staged_fees.set_optimism_hardfork(local_hardfork);
+            staged_fees.set_optimism_hardfork(local_hardfork.into());
         }
         staged_fees.set_blob_params(local_blob_params);
         staged_fees.set_blob_excess_gas_and_price(local_blob_excess_gas_and_price);
@@ -5685,10 +5668,11 @@ where
                 db,
                 evm_env,
                 parent_hash,
-                hardfork,
+                hardfork.into(),
                 transactions,
                 inspector_tx_config,
-                monad_context,
+                monad_context
+                    .ok_or_else(|| eyre::eyre!("Monad replay ancestor context is unavailable"))?,
             );
         }
 
@@ -6840,6 +6824,19 @@ where
             let balance = account.info.balance;
             let nonce = account.info.nonce;
             Ok(TrieAccount { balance, nonce, code_hash, storage_root })
+        })
+        .await?
+    }
+
+    pub async fn get_account_info_at_block(
+        &self,
+        address: Address,
+        block_request: Option<BlockRequest<FoundryTxEnvelope>>,
+    ) -> Result<RpcAccountInfo, BlockchainError> {
+        self.with_database_at(block_request, |db, _| {
+            let account = db.basic_ref(address)?.unwrap_or_default();
+            let code = self.get_code_with_state(&db, address)?;
+            Ok(RpcAccountInfo { balance: account.balance, nonce: account.nonce, code })
         })
         .await?
     }

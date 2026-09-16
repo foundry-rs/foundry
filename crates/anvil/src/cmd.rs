@@ -316,6 +316,7 @@ impl NodeArgs {
             })
             .with_fork_headers(self.evm.fork_headers)
             .with_fork_chain_id(self.evm.fork_chain_id.map(u64::from).map(U256::from))
+            .with_no_fork_node_info(self.evm.no_fork_node_info)
             .with_fork_state_by_number(self.evm.fork_state_by_number)
             .fork_request_timeout(self.evm.fork_request_timeout.map(Duration::from_millis))
             .fork_request_retries(self.evm.fork_request_retries)
@@ -582,6 +583,14 @@ pub struct AnvilEvmArgs {
         requires = "fork_block_number"
     )]
     pub fork_chain_id: Option<Chain>,
+
+    /// Do not probe the fork endpoint with `anvil_nodeInfo` / `anvil_metadata`.
+    ///
+    /// Those calls detect a nested Anvil. Some public RPCs retry unknown methods for tens of
+    /// seconds instead of returning method-not-found, which delays listen until the probe
+    /// finishes.
+    #[arg(long, requires = "fork_url", help_heading = "Fork config")]
+    pub no_fork_node_info: bool,
 
     /// Read fork state by block number instead of by block hash.
     ///
@@ -958,6 +967,22 @@ mod tests {
 
     #[cfg(feature = "optimism")]
     use foundry_evm::hardfork::OpHardfork;
+
+    #[cfg(feature = "base")]
+    #[test]
+    fn base_chain_ids_select_native_base_unless_overridden() {
+        for chain_id in ["8453", "84532"] {
+            let config =
+                NodeArgs::parse_from(["anvil", "--chain-id", chain_id]).into_node_config().unwrap();
+            assert!(config.networks.is_base());
+
+            let config =
+                NodeArgs::parse_from(["anvil", "--chain-id", chain_id, "--network", "ethereum"])
+                    .into_node_config()
+                    .unwrap();
+            assert!(config.networks.execution_network().is_ethereum());
+        }
+    }
 
     #[test]
     fn test_parse_fork_url() {
@@ -1500,6 +1525,19 @@ mod tests {
     }
 
     #[test]
+    fn can_parse_no_fork_node_info() {
+        let args = NodeArgs::parse_from([
+            "anvil",
+            "--fork-url",
+            "http://localhost:8545",
+            "--no-fork-node-info",
+        ]);
+        assert!(args.evm.no_fork_node_info);
+        let config = args.into_node_config().unwrap();
+        assert!(config.no_fork_node_info);
+    }
+
+    #[test]
     fn can_parse_multiple_fork_urls() {
         let args: NodeArgs = NodeArgs::parse_from([
             "anvil",
@@ -1553,6 +1591,7 @@ mod tests {
             vec!["anvil", "--retries", "3"],
             vec!["anvil", "--fork-block-number", "100"],
             vec!["anvil", "--fork-retry-backoff", "500"],
+            vec!["anvil", "--no-fork-node-info"],
         ];
         for args in &cases {
             let result = NodeArgs::try_parse_from(args);

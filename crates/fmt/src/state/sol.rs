@@ -884,7 +884,13 @@ impl<'ast> State<'_, 'ast> {
     ) {
         // Check if the total expression overflows but the RHS would fit alone on a new line.
         // This helps keep the RHS together on a single line when possible.
-        let rhs_size = self.estimate_size(rhs.span);
+        let rhs_size = if matches!(rhs.kind, ast::ExprKind::Binary(..))
+            && !self.has_comment_between(rhs.span.lo(), rhs.span.hi())
+        {
+            self.estimate_binary_size(rhs)
+        } else {
+            self.estimate_size(rhs.span)
+        };
         let overflows = lhs_size + rhs_size >= space_left;
         let fits_alone = rhs_size + self.config.tab_width < space_left;
         let fits_alone_no_cmnts =
@@ -1189,6 +1195,13 @@ impl<'ast> State<'_, 'ast> {
             }
             ast::TypeKind::Array(ast::TypeArray { element, size }) => {
                 self.print_ty(element);
+                let open_bracket = self
+                    .find_uncommented_char(Span::new(element.span.hi(), ty.span.hi()), '[')
+                    .unwrap();
+                self.print_comments(
+                    open_bracket,
+                    CommentConfig::skip_ws().mixed_prev_space().mixed_post_nbsp(),
+                );
                 if let Some(size) = size {
                     self.word("[");
                     self.print_expr(size);
@@ -2377,7 +2390,7 @@ impl<'ast> State<'_, 'ast> {
                 expr.span.lo(),
                 CommentConfig::skip_ws().mixed_no_break().mixed_prev_space().mixed_post_nbsp(),
             ) {
-                Some(cmnt) if cmnt.is_trailing() && !is_simple => self.s.offset(self.ind),
+                Some(_) if !is_simple => self.s.offset(self.ind),
                 None => self.print_sep(Separator::SpaceOrNbsp(allow_break)),
                 _ => {}
             }
@@ -2727,7 +2740,7 @@ impl<'ast> State<'_, 'ast> {
     fn is_inline_stmt(&self, stmt: &'ast ast::Stmt<'ast>, cond_len: usize) -> bool {
         if let ast::StmtKind::If(cond, then, els_opt) = &stmt.kind {
             let if_span = cond.span.to(then.span);
-            if self.sm.is_multiline(if_span)
+            if !self.same_source_line(if_span.lo(), if_span.hi())
                 && matches!(
                     self.config.single_line_statement_blocks,
                     config::SingleLineBlockStyle::Preserve
@@ -2747,7 +2760,7 @@ impl<'ast> State<'_, 'ast> {
             if matches!(
                 self.config.single_line_statement_blocks,
                 config::SingleLineBlockStyle::Preserve
-            ) && self.sm.is_multiline(stmt.span)
+            ) && !self.same_source_line(stmt.span.lo(), stmt.span.hi())
             {
                 return false;
             }
@@ -2765,7 +2778,7 @@ impl<'ast> State<'_, 'ast> {
         then: &'ast ast::Stmt<'ast>,
     ) -> bool {
         let span_between = cond.span.between(then.span);
-        if let Ok(snip) = self.sm.span_to_snippet(span_between) {
+        if let Some(snip) = self.snippet(span_between) {
             // Check for newlines after the closing parenthesis of the `if (...)`.
             if let Some((_, after_paren)) = snip.split_once(')') {
                 return after_paren.lines().count() > 1;
@@ -2860,8 +2873,8 @@ impl<'ast> State<'_, 'ast> {
 
         // Check for multiline block.span first.
         // Block can spans multipline because of comments.
-        if self.sm.is_multiline(block.span)
-            && let Ok(snip) = self.sm.span_to_snippet(block.span)
+        if !self.same_source_line(block.span.lo(), block.span.hi())
+            && let Some(snip) = self.snippet(block.span)
         {
             let code_lines = snip.lines().filter(|line| {
                 let trimmed = line.trim();
@@ -2969,6 +2982,27 @@ impl<'ast> State<'_, 'ast> {
             .fold(0, |len, p| if len != 0 { len + 2 } else { 2 } + self.estimate_size(p.span));
 
         kw + header.name.map_or(0, |name| self.estimate_size(name.span)) + std::cmp::max(2, params)
+    }
+
+    /// Estimates a comment-free binary expression using the printed operator spacing.
+    fn estimate_binary_size(&self, expr: &ast::Expr<'_>) -> usize {
+        match &expr.kind {
+            ast::ExprKind::Binary(lhs, op, rhs) => {
+                let spaces = if self.config.pow_no_space && matches!(op.kind, ast::BinOpKind::Pow) {
+                    0
+                } else {
+                    2
+                };
+                self.estimate_binary_size(lhs)
+                    + op.kind.to_str().len()
+                    + spaces
+                    + self.estimate_binary_size(rhs)
+            }
+            ast::ExprKind::Tuple(exprs) if let [SpannedOption::Some(inner)] = exprs.as_ref() => {
+                self.estimate_binary_size(inner) + 2
+            }
+            _ => self.estimate_size(expr.span),
+        }
     }
 
     fn estimate_lhs_size(&self, expr: &ast::Expr<'_>, parent_op: &ast::BinOp) -> usize {
@@ -3443,13 +3477,7 @@ mod tests {
                     Comments::new(&source_obj.file, gcx.sess.source_map(), true, false, None);
                 let config = Arc::new(FormatterConfig::default());
                 let inline_config = InlineConfig::default();
-                let mut state = State::new(
-                    gcx.sess.source_map(),
-                    source_obj.file.start_pos,
-                    config,
-                    inline_config,
-                    comments,
-                );
+                let mut state = State::new(&source_obj.file, config, inline_config, comments);
 
                 // Extract the first function header (either top-level or inside a contract)
                 let func = ast

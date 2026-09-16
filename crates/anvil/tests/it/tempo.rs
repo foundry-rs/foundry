@@ -33,8 +33,9 @@ use foundry_evm::core::tempo::{
     active_tempo_precompile_addresses,
 };
 use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope, TempoTransactionRequest};
+use foundry_test_utils::rpc::spawn_rpc_proxy_canned_method;
 use futures::StreamExt;
-use std::num::NonZeroU64;
+use std::{num::NonZeroU64, sync::atomic::Ordering};
 use tempo_alloy::{TempoNetwork, primitives::TempoTxEnvelope, rpc::TempoHeaderResponse};
 use tempo_hardfork::{
     TempoHardfork,
@@ -501,6 +502,84 @@ async fn test_tempo_fork_forwards_request_extensions() {
         .unwrap();
     assert_eq!(simulated[0]["calls"][0]["status"], "0x0");
     assert_eq!(simulated[0]["transactions"][0]["calls"], serde_json::to_value(calls).unwrap());
+}
+
+/// Forks must use real remote balances while preserving local balance edits and snapshots.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_fork_ignores_rpc_placeholder_balances() {
+    let (source, source_handle) =
+        spawn(NodeConfig::test_tempo().with_chain_id(Some(123456u64))).await;
+    let contract = Address::repeat_byte(0x42);
+    // Return SELFBALANCE, making the imported balance observable in EVM execution.
+    source.anvil_set_code(contract, alloy_primitives::bytes!("4760005260206000f3")).await.unwrap();
+    source.anvil_set_balance(contract, U256::from(42)).await.unwrap();
+    source.mine_one().await.unwrap();
+    let (proxy, balance_requests) = spawn_rpc_proxy_canned_method(
+        source_handle.http_endpoint(),
+        "eth_getBalance",
+        serde_json::json!("0xffff"),
+    )
+    .await;
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(proxy.clone()))
+            .with_fork_block_number(Some(1u64))
+            .with_chain_id(Some(31337u64))
+            .with_no_storage_caching(true),
+    )
+    .await;
+    let provider = handle.http_provider();
+    assert_eq!(
+        provider.get_account_info(contract).number(0).await.unwrap().balance,
+        U256::from(42),
+    );
+    for reset in [false, true] {
+        if reset {
+            api.anvil_reset(Some(Forking {
+                json_rpc_url: Some(proxy.clone()),
+                block_number: Some(1),
+            }))
+            .await
+            .unwrap();
+        }
+        let snapshot = api.evm_snapshot().await.unwrap();
+        let local_code = alloy_primitives::bytes!("6001");
+        api.anvil_set_balance(contract, U256::from(99)).await.unwrap();
+        api.anvil_set_nonce(contract, U256::from(7)).await.unwrap();
+        api.anvil_set_code(contract, local_code.clone()).await.unwrap();
+        let account = provider.get_account_info(contract).await.unwrap();
+        assert_eq!(account.balance, U256::from(99));
+        assert_eq!(account.nonce, 7);
+        assert_eq!(account.code, local_code);
+        assert!(api.evm_revert(snapshot).await.unwrap());
+
+        api.mine_one().await.unwrap();
+        let request = TransactionRequest::default().to(contract);
+        assert_eq!(
+            U256::from_be_slice(&provider.call(request.into()).await.unwrap()),
+            U256::from(42),
+        );
+    }
+    assert_eq!(balance_requests.load(Ordering::Relaxed), 0);
+
+    // A downstream fork must receive the historical balance, not this node's current state.
+    api.mine_one().await.unwrap();
+    let historical_block = provider.get_block_number().await.unwrap() - 1;
+    api.anvil_set_balance(contract, U256::from(99)).await.unwrap();
+    api.mine_one().await.unwrap();
+    let (_downstream_api, downstream_handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(handle.http_endpoint()))
+            .with_fork_block_number(Some(historical_block))
+            .with_no_storage_caching(true),
+    )
+    .await;
+    let balance = downstream_handle
+        .http_provider()
+        .call(TransactionRequest::default().to(contract).into())
+        .await
+        .unwrap();
+    assert_eq!(U256::from_be_slice(&balance), U256::from(42));
 }
 
 #[tokio::test(flavor = "multi_thread")]
