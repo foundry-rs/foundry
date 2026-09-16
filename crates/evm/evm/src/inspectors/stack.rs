@@ -19,7 +19,7 @@ use foundry_evm_core::{
     evm::{
         BlockEnvFor, ChainFor, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, FoundryContextFor,
         FoundryEvmFactory, FoundryEvmNetwork, TxEnvFor, get_create2_factory_call_inputs,
-        with_cloned_context,
+        with_inherited_evm,
     },
     precompiles::P256_VERIFY,
     refresh_chain_journal,
@@ -506,42 +506,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         f: NestedEvmClosureFor<'_, FEN>,
     ) -> Result<(), EVMError<DatabaseError>> {
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
-        let factory = FEN::EvmFactory::default();
-        let chain_context = ecx.chain().clone();
-        #[cfg(feature = "monad")]
-        let state = foundry_evm_core::FoundryJournal::capture_reserve_balance(ecx.journal());
-        let mut nested_chain_context = None;
-        #[cfg(feature = "monad")]
-        let mut reserve_balance = None;
-        with_cloned_context(ecx, |db, evm_env, journaled_state| {
-            let mut evm = factory.create_nested_evm_with_inspector(db, evm_env, &mut inspector);
-            *evm.chain_mut() = chain_context;
-            *evm.journal_inner_mut() = journaled_state;
-            #[cfg(feature = "monad")]
-            {
-                foundry_evm_core::FoundryJournal::restore_reserve_balance(evm.journal_mut(), state);
-                foundry_evm_core::evm::refresh_nested_chain_journal(&mut *evm);
-            }
-            f(&mut *evm)?;
-            nested_chain_context = Some(evm.chain_mut().clone());
-            #[cfg(feature = "monad")]
-            {
-                reserve_balance = Some(foundry_evm_core::FoundryJournal::capture_reserve_balance(
-                    evm.journal_mut(),
-                ));
-            }
-            let sub_inner = evm.journal_inner_mut().clone();
-            let sub_evm_env = evm.to_evm_env();
-            Ok((sub_evm_env, sub_inner))
-        })?;
-        *ecx.chain_mut() = nested_chain_context.expect("nested EVM chain context was captured");
-        #[cfg(feature = "monad")]
-        foundry_evm_core::FoundryJournal::restore_reserve_balance(
-            ecx.journal_mut(),
-            reserve_balance.expect("nested EVM state was captured"),
-        );
-        refresh_chain_journal(ecx);
-        Ok(())
+        with_inherited_evm::<FEN::EvmFactory, _>(ecx, &mut inspector, f)
     }
 
     fn with_fresh_nested_evm(
