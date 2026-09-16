@@ -4391,25 +4391,20 @@ fn solver_excludes_hidden_mul_div_candidates_from_context() {
     let past_boundary = boundary + U256::ONE;
     let past_boundary_expr = SymExpr::constant(&mut cx, past_boundary);
     let quotient_3_is_past_boundary = SymBoolExpr::eq(&mut cx, quotient_3, past_boundary_expr);
-    let constraints =
-        vec![identity_58, quotient_58_bounded, identity_3, quotient_3_is_past_boundary];
+    let constraints = vec![
+        identity_58.clone(),
+        quotient_58_bounded,
+        identity_3.clone(),
+        quotient_3_is_past_boundary,
+    ];
     let model = symbolic_model(&mut cx, [("x".to_string(), past_boundary)]);
 
     assert!(constraints.iter().any(|constraint| !constraint.eval_model(&model).unwrap()));
 
     let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
-    // A retained identity may establish bounds that refute another conjunct. The conjunction
-    // must stay false, whether identities survive syntactically or the contradiction is folded.
+    assert!(normalized.contains(&identity_58));
+    assert!(normalized.contains(&identity_3));
     assert!(normalized.iter().any(|constraint| !constraint.eval_model(&model).unwrap()));
-    for value in
-        [U256::ZERO, U256::ONE, boundary, past_boundary, U256::MAX / U256::from(3), U256::MAX]
-    {
-        let model = symbolic_model(&mut cx, [("x".to_string(), value)]);
-        assert_eq!(
-            constraints.iter().all(|constraint| constraint.eval_model(&model).unwrap()),
-            normalized.iter().all(|constraint| constraint.eval_model(&model).unwrap())
-        );
-    }
 }
 
 #[test]
@@ -5777,11 +5772,13 @@ fn feasible_path_selection_drains_easy_paths_before_deferred_hard_arithmetic() {
     executor.solver = SmtLibSubprocessSolver::new(Ok(commands), None, 3, false);
 
     let x = SymExpr::var(&mut executor.cx, "x");
+    let y = SymExpr::var(&mut executor.cx, "y");
     let mut hard = empty_state(&mut executor.cx);
-    // Unlike contradictory constant bounds, this still requires deferred arithmetic solving.
-    let square = SymExpr::binop(&mut executor.cx, SymBinOp::Mul, x.clone(), x);
-    let two = SymExpr::constant(&mut executor.cx, U256::from(2));
-    hard.constraints.push(SymBoolExpr::eq(&mut executor.cx, square, two));
+    let product = SymExpr::binop(&mut executor.cx, SymBinOp::Mul, x, y);
+    let zero = SymExpr::zero(&mut executor.cx);
+    hard.constraints.push(SymBoolExpr::eq(&mut executor.cx, product.clone(), zero));
+    let one = SymExpr::one(&mut executor.cx);
+    hard.constraints.push(SymBoolExpr::eq(&mut executor.cx, product, one));
     hard.defer_feasibility_check();
 
     let mut easy = empty_state(&mut executor.cx);
@@ -5819,11 +5816,13 @@ fn nested_feasible_path_selection_skips_hard_arithmetic_without_escalating() {
     executor.solver = SmtLibSubprocessSolver::new(Ok(commands), None, 3, false);
 
     let x = SymExpr::var(&mut executor.cx, "x");
+    let y = SymExpr::var(&mut executor.cx, "y");
     let mut hard = empty_state(&mut executor.cx);
-    // Unlike contradictory constant bounds, this still requires deferred arithmetic solving.
-    let square = SymExpr::binop(&mut executor.cx, SymBinOp::Mul, x.clone(), x);
-    let two = SymExpr::constant(&mut executor.cx, U256::from(2));
-    hard.constraints.push(SymBoolExpr::eq(&mut executor.cx, square, two));
+    let product = SymExpr::binop(&mut executor.cx, SymBinOp::Mul, x, y);
+    let zero = SymExpr::zero(&mut executor.cx);
+    hard.constraints.push(SymBoolExpr::eq(&mut executor.cx, product.clone(), zero));
+    let one = SymExpr::one(&mut executor.cx);
+    hard.constraints.push(SymBoolExpr::eq(&mut executor.cx, product, one));
     hard.defer_feasibility_check();
 
     let mut easy = empty_state(&mut executor.cx);

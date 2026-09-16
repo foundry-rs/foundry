@@ -62,49 +62,13 @@ fn normalize_constraints_for_solver_with(
         .filter(|constraint| !ConstraintContext::requires_independent_context(constraint));
     let context = ConstraintContext::from_constraints(retained, retained_count);
     let normalized_len = normalized.len();
-    let normalized = normalize_constraint_batch(
+    normalize_constraint_batch(
         normalized.into_iter().map(|constraint| {
             let changed = changed_conjuncts.contains(&constraint);
             context.normalize_bool(cx, constraint, changed)
         }),
         normalized_len,
-    );
-    normalize_bounded_comparisons(cx, normalized)
-}
-
-/// Removes bounded arithmetic predicates using only the other, still-retained conjuncts.
-fn normalize_bounded_comparisons(
-    cx: &mut SymCx,
-    mut constraints: Vec<SymBoolExpr>,
-) -> Vec<SymBoolExpr> {
-    let mut index = 0;
-    while index < constraints.len() {
-        if !constraints[index].visit_unique_bool(|word| {
-            matches!(
-                word.kind(),
-                SymExprKind::BinOp(
-                    SymBinOp::Add | SymBinOp::Sub | SymBinOp::Mul | SymBinOp::UDiv,
-                    _,
-                    _
-                )
-            )
-        }) {
-            index += 1;
-            continue;
-        }
-        let context = ConstraintContext::from_constraints(
-            constraints.iter().enumerate().filter_map(|(i, value)| (i != index).then_some(value)),
-            constraints.len() - 1,
-        );
-        match context.bounded_bool_value(&constraints[index]) {
-            Some(false) => return vec![SymBoolExpr::constant(cx, false)],
-            Some(true) => {
-                constraints.remove(index);
-            }
-            None => index += 1,
-        }
-    }
-    constraints
+    )
 }
 
 fn mark_conjuncts(expr: &SymBoolExpr, out: &mut HashSet<SymBoolExpr>) {
@@ -278,9 +242,7 @@ const fn expr_ternop_key(op: SymTernOp) -> u8 {
 pub(super) fn constraints_are_directly_unsat(cx: &mut SymCx, constraints: &[SymBoolExpr]) -> bool {
     let mut derived = Vec::new();
     for constraint in constraints {
-        let Some(fact) = bitwise_bool_word_fact(cx, constraint) else {
-            continue;
-        };
+        let Some(fact) = bitwise_bool_word_fact(cx, constraint) else { continue };
         if let SymBoolExprKind::And(values) = fact.kind() {
             // A positive conjunction implies each member independently. Retain the aggregate for
             // exact matches, but expose its members to the direct contradiction check as well.
@@ -316,9 +278,7 @@ fn bitwise_bool_word_fact(cx: &mut SymCx, constraint: &SymBoolExpr) -> Option<Sy
             left.bitwise_bool_word_condition(cx).map(|condition| condition.not(cx))
         }
         SymBoolExprKind::Not(inner) => {
-            let SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) = inner.kind() else {
-                return None;
-            };
+            let SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) = inner.kind() else { return None };
             if !right.as_const().is_some_and(|value| value.is_zero()) {
                 return None;
             }
@@ -487,9 +447,7 @@ impl SmtCsePlan {
 
     fn collect_expr_binding(&mut self, expr: &SymExpr) {
         {
-            let Some(visit) = self.expr_visits.get_mut(expr) else {
-                return;
-            };
+            let Some(visit) = self.expr_visits.get_mut(expr) else { return };
             if visit.collected {
                 return;
             }
@@ -522,9 +480,7 @@ impl SmtCsePlan {
 
     fn collect_bool_binding(&mut self, expr: &SymBoolExpr) {
         {
-            let Some(visit) = self.bool_visits.get_mut(expr) else {
-                return;
-            };
+            let Some(visit) = self.bool_visits.get_mut(expr) else { return };
             if visit.collected {
                 return;
             }
@@ -547,9 +503,7 @@ impl SmtCsePlan {
     }
 
     fn bind_expr(&mut self, expr: &SymExpr) {
-        let Some(visit) = self.expr_visits.get_mut(expr) else {
-            return;
-        };
+        let Some(visit) = self.expr_visits.get_mut(expr) else { return };
         if visit.count <= 1 || visit.binding.is_some() || !Self::expr_can_bind(expr) {
             return;
         }
@@ -559,9 +513,7 @@ impl SmtCsePlan {
     }
 
     fn bind_bool(&mut self, expr: &SymBoolExpr) {
-        let Some(visit) = self.bool_visits.get_mut(expr) else {
-            return;
-        };
+        let Some(visit) = self.bool_visits.get_mut(expr) else { return };
         if visit.count <= 1 || visit.binding.is_some() || !Self::bool_can_bind(expr) {
             return;
         }
@@ -808,6 +760,7 @@ fn normalize_cmp_for_solver(
 pub(super) struct ConstraintContext {
     upper_bounds: HashMap<SymExpr, U256>,
     lower_bounds: HashMap<SymExpr, U256>,
+    unsigned_lower_bounds: HashMap<SymExpr, U256>,
     exact_values: HashMap<SymExpr, U256>,
     conflicting_exact_values: HashSet<SymExpr>,
 }
@@ -854,6 +807,7 @@ impl ConstraintContext {
             context.record_exact_value_constraint(constraint);
             context.record_upper_bound_constraint(constraint);
             context.record_lower_bound_constraint(constraint);
+            context.record_unsigned_lower_bound_constraint(constraint);
         }
         // A bounded number of rounds closes ordinary order chains. Relational propagation keeps
         // strict comparisons weak (`a < b` propagates only `a <= upper(b)`), so inconsistent
@@ -891,8 +845,7 @@ impl ConstraintContext {
                 SymCmpOp::Ult | SymCmpOp::Ule => {
                     Self::udiv_comparison_operands(*op, left, right).is_some()
                 }
-                SymCmpOp::Slt | SymCmpOp::Sgt => true,
-                SymCmpOp::Ugt | SymCmpOp::Uge => false,
+                SymCmpOp::Ugt | SymCmpOp::Uge | SymCmpOp::Slt | SymCmpOp::Sgt => false,
             },
             SymBoolExprKind::Not(value) => match value.kind() {
                 SymBoolExprKind::Cmp(op, left, right)
@@ -900,7 +853,6 @@ impl ConstraintContext {
                 {
                     true
                 }
-                SymBoolExprKind::Cmp(SymCmpOp::Slt | SymCmpOp::Sgt, _, _) => true,
                 _ => value.zero_check_operand().is_some_and(|word| {
                     matches!(word.kind(), SymExprKind::BinOp(SymBinOp::Or, _, _))
                 }),
@@ -909,9 +861,7 @@ impl ConstraintContext {
         };
         root_candidate
             || expr.visit_unique_bool(|word| {
-                Self::mul_div_operands(word).is_some()
-                    || Self::ceil_div_shape(word)
-                    || matches!(word.kind(), SymExprKind::Ite(_, _, _))
+                Self::mul_div_operands(word).is_some() || Self::ceil_div_shape(word)
             })
     }
 
@@ -933,14 +883,6 @@ impl ConstraintContext {
         } else {
             expr
         };
-        if let Some(normalized) = self.normalize_signed_add_comparison(cx, &expr) {
-            return normalized;
-        }
-        if let SymBoolExprKind::Not(value) = expr.kind()
-            && let Some(normalized) = self.normalize_signed_add_comparison(cx, value)
-        {
-            return normalized.not(cx);
-        }
         if let SymBoolExprKind::Cmp(op, left, right) = expr.kind()
             && let Some(normalized) = self.normalize_udiv_comparison(cx, *op, left, right)
         {
@@ -1002,12 +944,8 @@ impl ConstraintContext {
     }
 
     fn record_exact_value_constraint(&mut self, constraint: &SymBoolExpr) {
-        let SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) = constraint.kind() else {
-            return;
-        };
-        let Some((expr, value)) = const_side_bound(left, right) else {
-            return;
-        };
+        let SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) = constraint.kind() else { return };
+        let Some((expr, value)) = const_side_bound(left, right) else { return };
         if !matches!(expr.kind(), SymExprKind::Var(_))
             || self.conflicting_exact_values.contains(expr)
         {
@@ -1033,7 +971,6 @@ impl ConstraintContext {
             return true;
         }
         match expr.kind() {
-            SymExprKind::Ite(_, _, _) => true,
             SymExprKind::BinOp(SymBinOp::Or, left, right) => {
                 left.as_const() == Some(U256::ONE) || right.as_const() == Some(U256::ONE)
             }
@@ -1051,21 +988,7 @@ impl ConstraintContext {
         if let Some(value) = self.exact_value(&expr) {
             return SymExpr::constant(cx, value);
         }
-        if let SymExprKind::Ite(condition, then_value, else_value) = expr.kind() {
-            if let Some(value) = self.bounded_bool_value(condition) {
-                return if value { then_value.clone() } else { else_value.clone() };
-            }
-            if let Some(condition) = self.normalize_signed_add_comparison(cx, condition) {
-                return SymExpr::ite(cx, condition, then_value.clone(), else_value.clone());
-            }
-        }
         if let Some(value) = self.round_up_round_trip(&expr) {
-            return value.clone();
-        }
-        if let SymExprKind::BinOp(SymBinOp::And, value, mask) = expr.kind()
-            && mask.as_const() == Some(U256::ONE)
-            && value.normalized_bool_word_condition(cx).is_some()
-        {
             return value.clone();
         }
         if let SymExprKind::BinOp(SymBinOp::Or, left, right) = expr.kind()
@@ -1104,7 +1027,9 @@ impl ConstraintContext {
         let (scaled, rate) = expr.udiv_operands()?;
         let (rounded, scale) = Self::constant_mul_operands(scaled)?;
         let (numerator, divisor) = rounded.udiv_operands()?;
-        if scale.is_zero() || divisor.as_const() != Some(scale) || self.interval(rate)?.min < scale
+        if scale.is_zero()
+            || divisor.as_const() != Some(scale)
+            || self.unsigned_lower_bounds.get(rate).copied()? < scale
         {
             return None;
         }
@@ -1127,136 +1052,22 @@ impl ConstraintContext {
         } else {
             return None;
         };
-        // Establish non-wrapping arithmetic for both conversions, including the rounding addition.
-        // Then value*rate <= ceil(value*rate/scale)*scale < value*rate + scale <= (value+1)*rate.
-        // A bound on the already-wrapped numerator is not evidence that its operands did not
-        // overflow. Establish each operation separately, starting with the original factors.
-        if !self.mul_cannot_overflow_256(value, rate) {
-            return None;
-        }
-        self.interval(product)?.max.checked_add(scale)?;
-        self.interval(rounded)?.max.checked_mul(scale)?;
+
+        // Prove the original product and rounding addition cannot wrap from independent operand
+        // bounds. Under those bounds, the rescaled product is smaller than the same checked sum.
+        let product_max = self.interval(value)?.max.checked_mul(self.interval(rate)?.max)?;
+        product_max.checked_add(scale)?;
         Some(value)
-    }
-
-    fn bounded_bool_value(&self, expr: &SymBoolExpr) -> Option<bool> {
-        match expr.kind() {
-            SymBoolExprKind::Const(value) => Some(*value),
-            SymBoolExprKind::Not(value) => self.bounded_bool_value(value).map(|value| !value),
-            SymBoolExprKind::Cmp(op, left, right) => {
-                let left = self.interval(left)?;
-                let right = self.interval(right)?;
-                if matches!(op, SymCmpOp::Slt | SymCmpOp::Sgt)
-                    && left.min.bit(255) == left.max.bit(255)
-                    && right.min.bit(255) == right.max.bit(255)
-                {
-                    let (always, possible) = if *op == SymCmpOp::Slt {
-                        (op.eval(left.max, right.min), op.eval(left.min, right.max))
-                    } else {
-                        (op.eval(left.min, right.max), op.eval(left.max, right.min))
-                    };
-                    return if always {
-                        Some(true)
-                    } else if !possible {
-                        Some(false)
-                    } else {
-                        None
-                    };
-                }
-                match op {
-                    SymCmpOp::Eq if left.max < right.min || right.max < left.min => Some(false),
-                    SymCmpOp::Eq if left.min == left.max && right.min == right.max => {
-                        Some(left.min == right.min)
-                    }
-                    SymCmpOp::Ult if left.max < right.min => Some(true),
-                    SymCmpOp::Ult if left.min >= right.max => Some(false),
-                    SymCmpOp::Ule if left.max <= right.min => Some(true),
-                    SymCmpOp::Ule if left.min > right.max => Some(false),
-                    SymCmpOp::Ugt if left.min > right.max => Some(true),
-                    SymCmpOp::Ugt if left.max <= right.min => Some(false),
-                    SymCmpOp::Uge if left.min >= right.max => Some(true),
-                    SymCmpOp::Uge if left.max < right.min => Some(false),
-                    _ => None,
-                }
-            }
-            SymBoolExprKind::And(_) => None,
-        }
-    }
-
-    /// Simplifies signed addition guards once the signs of the summands are established.
-    fn normalize_signed_add_comparison(
-        &self,
-        cx: &mut SymCx,
-        expr: &SymBoolExpr,
-    ) -> Option<SymBoolExpr> {
-        let SymBoolExprKind::Cmp(op, left, right) = expr.kind() else { return None };
-        let (sum, base) = match op {
-            SymCmpOp::Slt => (left, right),
-            SymCmpOp::Sgt => (right, left),
-            _ => return None,
-        };
-        let signed_max = U256::MAX >> 1;
-        if let Some((_, increment)) = sum.add_with_operand(base) {
-            let base_range = self.interval(base)?;
-            let increment_range = self.interval(increment)?;
-            // Opposite-sign addition cannot overflow: adding a nonnegative value cannot make
-            // a negative summand smaller, and adding a negative value makes a nonnegative one
-            // smaller.
-            if base_range.min > signed_max && increment_range.max <= signed_max {
-                return Some(SymBoolExpr::constant(cx, false));
-            }
-            if base_range.max <= signed_max && increment_range.min > signed_max {
-                return Some(SymBoolExpr::constant(cx, true));
-            }
-        } else if base.as_const() != Some(U256::ZERO) {
-            return None;
-        }
-        if base.as_const() == Some(U256::ZERO)
-            && let SymExprKind::BinOp(SymBinOp::Add, left, right) = sum.kind()
-        {
-            for (positive, negative) in [(left, right), (right, left)] {
-                if let SymExprKind::BinOp(SymBinOp::Sub, zero, amount) = negative.kind()
-                    && zero.as_const() == Some(U256::ZERO)
-                    && self.interval(positive).is_some_and(|range| range.max <= signed_max)
-                    && self.interval(amount).is_some_and(|range| range.max <= signed_max)
-                {
-                    // For a,b in [0, int256::MAX], signed(a + (-b)) < 0 iff a < b.
-                    return Some(SymBoolExpr::cmp(
-                        cx,
-                        SymCmpOp::Ult,
-                        positive.clone(),
-                        amount.clone(),
-                    ));
-                }
-            }
-        }
-        // Use the sum's canonical operand order for both the overflow guard and a subsequent
-        // signed-to-unsigned cast. Their conditions must normalize to the same predicate.
-        let SymExprKind::BinOp(SymBinOp::Add, increment, base) = sum.kind() else {
-            return None;
-        };
-        if self.interval(base)?.max > signed_max || self.interval(increment)?.max > signed_max {
-            return None;
-        }
-        // With nonnegative summands their unsigned sum cannot wrap. It is signed-less than a
-        // summand exactly when it crosses the signed maximum; equality (zero increment) is safe.
-        let limit = SymExpr::constant(cx, signed_max);
-        let remaining = SymExpr::binop(cx, SymBinOp::Sub, limit, base.clone());
-        Some(SymBoolExpr::cmp(cx, SymCmpOp::Ult, remaining, increment.clone()))
     }
 
     fn exact_ceil_div_factor<'a>(&self, expr: &'a SymExpr) -> Option<(&'a SymExpr, U256)> {
         let (numerator, denominator) = expr.udiv_operands()?;
         let denominator = denominator.as_const().filter(|value| !value.is_zero())?;
-        let SymExprKind::BinOp(SymBinOp::Sub, sum, one) = numerator.kind() else {
-            return None;
-        };
+        let SymExprKind::BinOp(SymBinOp::Sub, sum, one) = numerator.kind() else { return None };
         if one.as_const() != Some(U256::from(1)) {
             return None;
         }
-        let SymExprKind::BinOp(SymBinOp::Add, product, rounding) = sum.kind() else {
-            return None;
-        };
+        let SymExprKind::BinOp(SymBinOp::Add, product, rounding) = sum.kind() else { return None };
         if rounding.as_const() != Some(denominator) {
             return None;
         }
@@ -1267,9 +1078,7 @@ impl ConstraintContext {
     }
 
     fn ceil_div_shape(expr: &SymExpr) -> bool {
-        let Some((numerator, denominator)) = expr.udiv_operands() else {
-            return false;
-        };
+        let Some((numerator, denominator)) = expr.udiv_operands() else { return false };
         let Some(denominator) = denominator.as_const().filter(|value| !value.is_zero()) else {
             return false;
         };
@@ -1303,9 +1112,7 @@ impl ConstraintContext {
     }
 
     fn constant_mul_operands(expr: &SymExpr) -> Option<(&SymExpr, U256)> {
-        let SymExprKind::BinOp(SymBinOp::Mul, left, right) = expr.kind() else {
-            return None;
-        };
+        let SymExprKind::BinOp(SymBinOp::Mul, left, right) = expr.kind() else { return None };
         right
             .as_const()
             .map(|factor| (left, factor))
@@ -1339,9 +1146,7 @@ impl ConstraintContext {
     }
 
     fn masked_word_side_eq_self_shape(masked: &SymExpr, value: &SymExpr) -> Option<usize> {
-        let SymExprKind::BinOp(SymBinOp::And, left, right) = masked.kind() else {
-            return None;
-        };
+        let SymExprKind::BinOp(SymBinOp::And, left, right) = masked.kind() else { return None };
         let (source, mask) = right
             .as_const()
             .map(|mask| (left, mask))
@@ -1373,6 +1178,13 @@ impl ConstraintContext {
     fn record_lower_bound_constraint(&mut self, constraint: &SymBoolExpr) {
         if let Some((expr, bound)) = self.lower_bound_constraint(constraint) {
             self.record_lower_bound(expr.clone(), bound);
+        }
+    }
+
+    fn record_unsigned_lower_bound_constraint(&mut self, constraint: &SymBoolExpr) {
+        if let Some((expr, bound)) = self.unsigned_lower_bound_constraint(constraint) {
+            let entry = self.unsigned_lower_bounds.entry(expr.clone()).or_default();
+            *entry = (*entry).max(bound);
         }
     }
 
@@ -1487,6 +1299,28 @@ impl ConstraintContext {
         constraint: &'a SymBoolExpr,
     ) -> Option<(&'a SymExpr, U256)> {
         match constraint.kind() {
+            SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) => const_side_bound(left, right),
+            SymBoolExprKind::Not(value) => match value.kind() {
+                SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) => {
+                    if right.as_const().is_some_and(|value| value.is_zero()) {
+                        Some((left, U256::from(1)))
+                    } else if left.as_const().is_some_and(|value| value.is_zero()) {
+                        Some((right, U256::from(1)))
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn unsigned_lower_bound_constraint<'a>(
+        &self,
+        constraint: &'a SymBoolExpr,
+    ) -> Option<(&'a SymExpr, U256)> {
+        match constraint.kind() {
             SymBoolExprKind::Cmp(op, left, right) => match *op {
                 SymCmpOp::Eq => const_side_bound(left, right),
                 SymCmpOp::Ult => {
@@ -1500,15 +1334,6 @@ impl ConstraintContext {
                 SymCmpOp::Slt | SymCmpOp::Sgt => None,
             },
             SymBoolExprKind::Not(value) => match value.kind() {
-                SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) => {
-                    if right.as_const().is_some_and(|value| value.is_zero()) {
-                        Some((left, U256::from(1)))
-                    } else if left.as_const().is_some_and(|value| value.is_zero()) {
-                        Some((right, U256::from(1)))
-                    } else {
-                        None
-                    }
-                }
                 SymBoolExprKind::Cmp(SymCmpOp::Ult, left, right) => {
                     right.as_const().map(|bound| (left, bound))
                 }
@@ -1542,12 +1367,8 @@ impl ConstraintContext {
         {
             return true;
         }
-        let Some(left) = self.interval(left) else {
-            return false;
-        };
-        let Some(right) = self.interval(right) else {
-            return false;
-        };
+        let Some(left) = self.interval(left) else { return false };
+        let Some(right) = self.interval(right) else { return false };
         match op {
             SymCmpOp::Ult => left.max < right.min,
             SymCmpOp::Ule => left.max <= right.min,
@@ -1706,13 +1527,6 @@ impl ConstraintContext {
             SymExprKind::BinOp(SymBinOp::Sub, left, right) => {
                 let left = self.interval_cached(left, intervals, remaining)?;
                 let right = self.interval_cached(right, intervals, remaining)?;
-                if left.max < right.min {
-                    // Every subtraction wraps exactly once, so the unsigned image is contiguous.
-                    return Some(WordInterval {
-                        min: left.min.wrapping_sub(right.max),
-                        max: left.max.wrapping_sub(right.min),
-                    });
-                }
                 if left.min < right.max {
                     return None;
                 }
@@ -1727,17 +1541,6 @@ impl ConstraintContext {
                 Some(WordInterval {
                     min: left.min.checked_mul(right.min)?,
                     max: left.max.checked_mul(right.max)?,
-                })
-            }
-            SymExprKind::BinOp(SymBinOp::UDiv, numerator, denominator) => {
-                let numerator = self.interval_cached(numerator, intervals, remaining)?;
-                let denominator = self.interval_cached(denominator, intervals, remaining)?;
-                if denominator.min.is_zero() {
-                    return None;
-                }
-                Some(WordInterval {
-                    min: numerator.min / denominator.max,
-                    max: numerator.max / denominator.min,
                 })
             }
             SymExprKind::BinOp(SymBinOp::Shr, value, shift) => {
@@ -2112,9 +1915,6 @@ impl SymBoolExpr {
         left: &SymExpr,
         right: &SymExpr,
     ) -> Option<Self> {
-        if let Some(normalized) = Self::normalize_sub_underflow_cmp(cx, op, left, right) {
-            return Some(normalized);
-        }
         // Strict forms test overflow and non-strict forms its complement; addition wraps iff the
         // increment exceeds `~base`.
         let (base, increment, overflow) = match op {
@@ -2146,33 +1946,6 @@ impl SymBoolExpr {
             Self::cmp(cx, SymCmpOp::Ult, limit, increment.clone())
         } else {
             Self::cmp(cx, SymCmpOp::Ule, increment.clone(), limit)
-        })
-    }
-
-    fn normalize_sub_underflow_cmp(
-        cx: &mut SymCx,
-        op: SymCmpOp,
-        left: &SymExpr,
-        right: &SymExpr,
-    ) -> Option<Self> {
-        let (base, difference, underflow) = match op {
-            SymCmpOp::Ult => (left, right, true),
-            SymCmpOp::Ugt => (right, left, true),
-            SymCmpOp::Ule => (right, left, false),
-            SymCmpOp::Uge => (left, right, false),
-            _ => return None,
-        };
-        let SymExprKind::BinOp(SymBinOp::Sub, minuend, subtrahend) = difference.kind() else {
-            return None;
-        };
-        if minuend != base {
-            return None;
-        }
-        // Unsigned modular subtraction wraps exactly when the subtrahend exceeds the minuend.
-        Some(if underflow {
-            Self::cmp(cx, SymCmpOp::Ult, base.clone(), subtrahend.clone())
-        } else {
-            Self::cmp(cx, SymCmpOp::Ule, subtrahend.clone(), base.clone())
         })
     }
 
@@ -2296,9 +2069,7 @@ impl SymExpr {
     }
 
     fn add_with_operand<'a>(&'a self, operand: &Self) -> Option<(&'a Self, &'a Self)> {
-        let SymExprKind::BinOp(SymBinOp::Add, left, right) = self.kind() else {
-            return None;
-        };
+        let SymExprKind::BinOp(SymBinOp::Add, left, right) = self.kind() else { return None };
         if left == operand {
             Some((left, right))
         } else if right == operand {
@@ -2417,9 +2188,7 @@ impl ConstraintContext {
             return true;
         }
         for zero_term in &bool_terms {
-            let Some(zero_operand) = zero_term.zero_check_operand() else {
-                continue;
-            };
+            let Some(zero_operand) = zero_term.zero_check_operand() else { continue };
             if bool_terms.iter().any(|term| self.checked_mul_guard_for_operand(term, zero_operand))
             {
                 // `a == 0 || guarded_mul_div(a) => true`.
@@ -2452,9 +2221,7 @@ impl ConstraintContext {
         if !then_expr.as_const().is_some_and(|value| value.is_zero()) {
             return false;
         }
-        let Some((numerator, denominator)) = else_expr.udiv_operands() else {
-            return false;
-        };
+        let Some((numerator, denominator)) = else_expr.udiv_operands() else { return false };
         if denominator != zero_operand {
             return false;
         }
@@ -2873,54 +2640,6 @@ mod tests {
     }
 
     #[test]
-    fn subtraction_underflow_normalization_preserves_modular_boundaries() {
-        let mut cx = SymCx::new();
-        let base = SymExpr::var(&mut cx, "base");
-        let delta = SymExpr::var(&mut cx, "delta");
-        let difference = SymExpr::binop(&mut cx, SymBinOp::Sub, base.clone(), delta.clone());
-        let values = [
-            U256::ZERO,
-            U256::ONE,
-            U256::from(2),
-            U256::ONE << 255,
-            U256::MAX - U256::ONE,
-            U256::MAX,
-        ];
-        for (op, left, right) in [
-            (SymCmpOp::Ult, base.clone(), difference.clone()),
-            (SymCmpOp::Ugt, difference.clone(), base.clone()),
-            (SymCmpOp::Ule, difference.clone(), base.clone()),
-            (SymCmpOp::Uge, base.clone(), difference),
-        ] {
-            let original = SymBoolExpr::cmp(&mut cx, op, left, right);
-            let normalized = normalize_bool_for_solver(&mut cx, original.clone());
-            assert_ne!(normalized, original);
-            for a in values {
-                for b in values {
-                    let mut model = SymbolicModel::default();
-                    assert!(base.assign_model_value(&mut model, a));
-                    assert!(delta.assign_model_value(&mut model, b));
-                    assert_eq!(
-                        original.eval_model(&model).unwrap(),
-                        normalized.eval_model(&model).unwrap()
-                    );
-                }
-            }
-        }
-    }
-
-    fn rounded_conversion(cx: &mut SymCx, value: SymExpr, rate: SymExpr, scale: U256) -> SymExpr {
-        let scale = SymExpr::constant(cx, scale);
-        let product = SymExpr::binop(cx, SymBinOp::Mul, value, rate.clone());
-        let sum = SymExpr::binop(cx, SymBinOp::Add, product, scale.clone());
-        let one = SymExpr::one(cx);
-        let numerator = SymExpr::binop(cx, SymBinOp::Sub, sum, one);
-        let credits = SymExpr::binop(cx, SymBinOp::UDiv, numerator, scale.clone());
-        let scaled = SymExpr::binop(cx, SymBinOp::Mul, credits, scale);
-        SymExpr::binop(cx, SymBinOp::UDiv, scaled, rate)
-    }
-
-    #[test]
     fn contextual_normalization_proves_bounded_symbolic_round_trip() {
         let mut cx = SymCx::new();
         let value = SymExpr::var(&mut cx, "balance");
@@ -2935,11 +2654,13 @@ mod tests {
             SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, rate.clone(), max_rate),
         ];
         let converted = rounded_conversion(&mut cx, value.clone(), rate, scale_value);
-        let equality = SymBoolExpr::eq(&mut cx, converted, value);
+        let equality = SymBoolExpr::eq(&mut cx, converted, value.clone());
         let expected = normalize_constraints_for_solver(&mut cx, &bounds);
+
         let mut constraints = bounds.clone();
         constraints.push(equality.clone());
         assert_eq!(normalize_constraints_for_solver(&mut cx, &constraints), expected);
+
         constraints.pop();
         constraints.push(equality.not(&mut cx));
         let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
@@ -2947,200 +2668,49 @@ mod tests {
     }
 
     #[test]
-    fn rounded_conversion_does_not_assume_its_own_validity() {
+    fn rounded_conversion_requires_independent_safe_bounds() {
         let mut cx = SymCx::new();
         let value = SymExpr::var(&mut cx, "balance");
         let rate = SymExpr::var(&mut cx, "rate");
         let converted = rounded_conversion(&mut cx, value.clone(), rate.clone(), U256::from(2));
         let equality = SymBoolExpr::eq(&mut cx, converted, value.clone());
+
         let normalized = normalize_constraints_for_solver(&mut cx, std::slice::from_ref(&equality));
-        for (b, p) in [
-            (U256::ONE, U256::ONE),
-            (U256::ONE << 255, U256::from(2)),
-            (U256::MAX, U256::from(2)),
-            (U256::ONE, U256::ZERO),
-        ] {
-            let mut model = SymbolicModel::default();
-            assert!(value.assign_model_value(&mut model, b));
-            assert!(rate.assign_model_value(&mut model, p));
-            let expected = equality.eval_model(&model).unwrap();
-            assert!(!expected);
-            assert_eq!(normalized.iter().all(|c| c.eval_model(&model).unwrap()), expected);
-        }
-    }
+        assert_eq!(normalized, vec![equality.clone()]);
 
-    #[test]
-    fn bounded_comparisons_retain_their_own_assumptions() {
-        let mut cx = SymCx::new();
-        let x = SymExpr::var(&mut cx, "x");
-        let y = SymExpr::var(&mut cx, "y");
-        let product = SymExpr::binop(&mut cx, SymBinOp::Mul, x.clone(), y.clone());
-        let ten = SymExpr::constant(&mut cx, U256::from(10));
-        let constraint = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, product, ten);
-        let normalized =
-            normalize_constraints_for_solver(&mut cx, std::slice::from_ref(&constraint));
-        for a in 0..16 {
-            for b in 0..16 {
-                let mut model = SymbolicModel::default();
-                assert!(x.assign_model_value(&mut model, U256::from(a)));
-                assert!(y.assign_model_value(&mut model, U256::from(b)));
-                assert_eq!(
-                    normalized.iter().all(|c| c.eval_model(&model).unwrap()),
-                    constraint.eval_model(&model).unwrap()
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn rounded_conversion_rejects_bounds_on_wrapped_products() {
-        let mut cx = SymCx::new();
-        let value = SymExpr::var(&mut cx, "balance");
-        let rate = SymExpr::var(&mut cx, "rate");
         let product = SymExpr::binop(&mut cx, SymBinOp::Mul, value.clone(), rate.clone());
         let zero = SymExpr::zero(&mut cx);
         let two = SymExpr::constant(&mut cx, U256::from(2));
-        let wrapped_bound = SymBoolExpr::eq(&mut cx, product, zero);
-        let fixed_rate = SymBoolExpr::eq(&mut cx, rate.clone(), two);
-        let converted = rounded_conversion(&mut cx, value.clone(), rate.clone(), U256::from(2));
-        let equality = SymBoolExpr::eq(&mut cx, converted, value.clone());
-        let constraints = [wrapped_bound, fixed_rate, equality];
+        let constraints = [
+            SymBoolExpr::eq(&mut cx, product, zero),
+            SymBoolExpr::eq(&mut cx, rate.clone(), two),
+            equality,
+        ];
         let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
         let mut model = SymbolicModel::default();
         assert!(value.assign_model_value(&mut model, U256::ONE << 255));
         assert!(rate.assign_model_value(&mut model, U256::from(2)));
-        assert!(!constraints.iter().all(|c| c.eval_model(&model).unwrap()));
-        assert!(!normalized.iter().all(|c| c.eval_model(&model).unwrap()));
+        assert!(!constraints.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
+        assert!(!normalized.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
     }
 
     #[test]
-    fn nonnegative_signed_addition_preserves_overflow_paths() {
+    fn rounded_conversion_keeps_rate_below_scale() {
         let mut cx = SymCx::new();
-        let x = SymExpr::var(&mut cx, "x");
-        let y = SymExpr::var(&mut cx, "y");
-        let signed_max = U256::MAX >> 1;
-        let maximum = SymExpr::constant(&mut cx, signed_max);
-        let bounds = [
-            SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, x.clone(), maximum.clone()),
-            SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, y.clone(), maximum),
-        ];
-        let context = ConstraintContext::new(&bounds);
-        let sum = SymExpr::binop(&mut cx, SymBinOp::Add, x.clone(), y.clone());
-        let guard = SymBoolExpr::cmp(&mut cx, SymCmpOp::Slt, sum.clone(), x.clone());
-        let zero = SymExpr::zero(&mut cx);
-        let cast_guard = SymBoolExpr::cmp(&mut cx, SymCmpOp::Slt, sum, zero);
-        let normalized = context.normalize_signed_add_comparison(&mut cx, &guard).unwrap();
-        assert!(
-            ConstraintContext::default().normalize_signed_add_comparison(&mut cx, &guard).is_none()
-        );
-        assert_eq!(
-            context.normalize_signed_add_comparison(&mut cx, &cast_guard),
-            Some(normalized.clone())
-        );
-        for a in [U256::ZERO, U256::ONE, signed_max - U256::ONE, signed_max] {
-            for b in [U256::ZERO, U256::ONE, signed_max - U256::ONE, signed_max] {
-                let mut model = SymbolicModel::default();
-                assert!(x.assign_model_value(&mut model, a));
-                assert!(y.assign_model_value(&mut model, b));
-                assert_eq!(
-                    guard.eval_model(&model).unwrap(),
-                    normalized.eval_model(&model).unwrap()
-                );
-                assert_eq!(
-                    cast_guard.eval_model(&model).unwrap(),
-                    normalized.eval_model(&model).unwrap()
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn opposite_sign_addition_and_unsigned_cast_preserve_boundaries() {
-        let mut cx = SymCx::new();
-        let x = SymExpr::var(&mut cx, "x");
-        let y = SymExpr::var(&mut cx, "y");
-        let zero = SymExpr::zero(&mut cx);
-        let neg_y = SymExpr::binop(&mut cx, SymBinOp::Sub, zero.clone(), y.clone());
-        let sum = SymExpr::binop(&mut cx, SymBinOp::Add, x.clone(), neg_y.clone());
-        let maximum = U256::MAX >> 1;
-        let bounds = [
-            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ule, &x, maximum),
-            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ule, &y, maximum),
-            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ugt, &y, U256::ZERO),
-        ];
-        let context = ConstraintContext::new(&bounds);
-        for compared in [neg_y, x.clone(), zero] {
-            let guard = SymBoolExpr::cmp(&mut cx, SymCmpOp::Slt, sum.clone(), compared);
-            let rewritten = context.normalize_signed_add_comparison(&mut cx, &guard).unwrap();
-            assert!(
-                ConstraintContext::default()
-                    .normalize_signed_add_comparison(&mut cx, &guard)
-                    .is_none()
-            );
-            for a in [U256::ZERO, U256::ONE, maximum - U256::ONE, maximum] {
-                for b in [U256::ONE, maximum - U256::ONE, maximum] {
-                    let mut model = SymbolicModel::default();
-                    assert!(x.assign_model_value(&mut model, a));
-                    assert!(y.assign_model_value(&mut model, b));
-                    assert_eq!(
-                        guard.eval_model(&model).unwrap(),
-                        rewritten.eval_model(&model).unwrap()
-                    );
-                }
-            }
-        }
-        // A subtraction interval spanning both wrapping and non-wrapping results stays unknown.
-        let context = ConstraintContext::new(&bounds[..2]);
-        let zero = SymExpr::zero(&mut cx);
-        let neg_y = SymExpr::binop(&mut cx, SymBinOp::Sub, zero, y);
-        assert!(context.interval(&neg_y).is_none());
-    }
-
-    #[test]
-    fn signed_interval_checks_do_not_cross_the_sign_boundary() {
-        let mut cx = SymCx::new();
-        let x = SymExpr::var(&mut cx, "x");
-        let zero = SymExpr::zero(&mut cx);
-        let sign = SymExpr::constant(&mut cx, U256::ONE << 255);
-        let maximum = SymExpr::constant(&mut cx, U256::MAX >> 1);
-        let negative = SymBoolExpr::cmp(&mut cx, SymCmpOp::Slt, x.clone(), zero);
-        let positive_bound = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, x.clone(), maximum);
-        let negative_bound = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, sign, x);
-        assert_eq!(ConstraintContext::default().bounded_bool_value(&negative), None);
-        assert_eq!(
-            ConstraintContext::new(&[positive_bound]).bounded_bool_value(&negative),
-            Some(false)
-        );
-        assert_eq!(
-            ConstraintContext::new(&[negative_bound]).bounded_bool_value(&negative),
-            Some(true)
-        );
-    }
-
-    #[test]
-    fn contextual_boolean_word_mask_keeps_the_condition() {
-        let mut cx = SymCx::new();
-        let x = SymExpr::var(&mut cx, "x");
-        let y = SymExpr::var(&mut cx, "y");
-        let condition = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x.clone(), y.clone());
-        let word = SymExpr::bool_word(&mut cx, condition.clone());
+        let value = SymExpr::var(&mut cx, "balance");
+        let rate = SymExpr::var(&mut cx, "rate");
         let one = SymExpr::one(&mut cx);
-        let masked = SymExpr::from_kind(&mut cx, SymExprKind::BinOp(SymBinOp::And, word, one));
-        let zero = SymExpr::zero(&mut cx);
-        let constraint = SymBoolExpr::eq(&mut cx, masked, zero);
-        let normalized = normalize_constraints_for_solver(&mut cx, &[constraint]);
-        for a in [U256::ZERO, U256::ONE, U256::MAX] {
-            for b in [U256::ZERO, U256::ONE, U256::MAX] {
-                let mut model = SymbolicModel::default();
-                assert!(x.assign_model_value(&mut model, a));
-                assert!(y.assign_model_value(&mut model, b));
-                assert_eq!(
-                    normalized.iter().all(|c| c.eval_model(&model).unwrap()),
-                    !condition.eval_model(&model).unwrap()
-                );
-            }
-        }
-        assert_eq!(normalized, vec![condition.not(&mut cx)]);
+        let value_bound =
+            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ule, &value, U256::from(10));
+        let rate_bound = SymBoolExpr::eq(&mut cx, rate.clone(), one);
+        let converted = rounded_conversion(&mut cx, value.clone(), rate, U256::from(2));
+        let equality = SymBoolExpr::eq(&mut cx, converted, value.clone());
+        let normalized =
+            normalize_constraints_for_solver(&mut cx, &[value_bound, rate_bound, equality]);
+
+        let mut model = SymbolicModel::default();
+        assert!(value.assign_model_value(&mut model, U256::ONE));
+        assert!(!normalized.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
     }
 
     #[test]
@@ -3206,5 +2776,16 @@ mod tests {
         assert!(context.interval(&shifted).is_none());
         assert_eq!(context.unsigned_bits(&divided), 256);
         assert!(!context.mul_cannot_overflow_256(&divided, &divided));
+    }
+
+    fn rounded_conversion(cx: &mut SymCx, value: SymExpr, rate: SymExpr, scale: U256) -> SymExpr {
+        let scale = SymExpr::constant(cx, scale);
+        let product = SymExpr::binop(cx, SymBinOp::Mul, value, rate.clone());
+        let sum = SymExpr::binop(cx, SymBinOp::Add, product, scale.clone());
+        let one = SymExpr::one(cx);
+        let numerator = SymExpr::binop(cx, SymBinOp::Sub, sum, one);
+        let rounded = SymExpr::binop(cx, SymBinOp::UDiv, numerator, scale.clone());
+        let scaled = SymExpr::binop(cx, SymBinOp::Mul, rounded, scale);
+        SymExpr::binop(cx, SymBinOp::UDiv, scaled, rate)
     }
 }
