@@ -6910,11 +6910,15 @@ where
 
         db.clear();
 
-        // Insert account info before storage to prevent fork-mode RPC fetches after clear.
-        for (address, acc) in common_state {
-            db.insert_account(address, acc.info);
-            for (key, value) in acc.storage {
-                db.set_storage_at(address, key.into(), value.into())?;
+        if let Some(accounts) = db.maybe_as_full_db_mut() {
+            *accounts = common_state;
+        } else {
+            // Insert account info before storage to prevent fork-mode RPC fetches after clear.
+            for (address, acc) in common_state {
+                db.insert_account(address, acc.info);
+                for (key, value) in acc.storage {
+                    db.set_storage_at(address, key.into(), value.into())?;
+                }
             }
         }
 

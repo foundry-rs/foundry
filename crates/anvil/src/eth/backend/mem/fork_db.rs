@@ -117,6 +117,10 @@ impl<N: Network> MaybeFullDatabase for ForkedDatabase<N> {
         Some(&self.database().cache.accounts)
     }
 
+    fn maybe_as_full_db_mut(&mut self) -> Option<&mut AddressMap<DbAccount>> {
+        Some(&mut self.database_mut().cache.accounts)
+    }
+
     fn maybe_full_db(&self) -> Option<AddressMap<DbAccount>> {
         None
     }
@@ -140,6 +144,10 @@ impl<N: Network> MaybeFullDatabase for ForkedDatabase<N> {
     fn clear(&mut self) {
         self.flush_cache();
         self.clear_into_state_snapshot();
+        let cache = &mut self.database_mut().cache;
+        cache.accounts.clear();
+        cache.logs.clear();
+        cache.block_hashes.clear();
     }
 
     fn init_from_state_snapshot(&mut self, state_snapshot: StateSnapshot) {

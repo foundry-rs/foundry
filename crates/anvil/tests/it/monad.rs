@@ -1397,6 +1397,7 @@ async fn monad_fork_transaction_hash_rollback_restores_inferred_profile() {
     assert_eq!(api.anvil_node_info().await.unwrap().hard_fork, "MonadNine");
     assert_eq!(api.backend.spec_id(), SpecId::OSAKA);
     assert_eq!(provider.call(reserve_balance_call()).await.unwrap(), Bytes::from(vec![0; 32]));
+    assert_eq!(provider.get_balance(ROLLBACK_RECIPIENT).await.unwrap(), U256::ONE);
 
     let replay_block_number = provider.get_block_number().await.unwrap();
     let parent = provider
@@ -1409,6 +1410,7 @@ async fn monad_fork_transaction_hash_rollback_restores_inferred_profile() {
     assert_eq!(api.anvil_node_info().await.unwrap().hard_fork, "MonadEight");
     assert_eq!(api.backend.spec_id(), SpecId::PRAGUE);
     assert!(provider.call(reserve_balance_call()).await.unwrap().is_empty());
+    assert_eq!(provider.get_balance(ROLLBACK_RECIPIENT).await.unwrap(), U256::ZERO);
     assert_eq!(api.backend.chain_id(), U256::ONE);
     assert_eq!(
         api.backend.blob_params(),
@@ -1441,6 +1443,7 @@ async fn monad_fork_transaction_hash_reorg_restores_inferred_profile() {
     let provider = handle.http_provider();
 
     assert_eq!(api.anvil_node_info().await.unwrap().hard_fork, "MonadNine");
+    assert_eq!(provider.get_balance(ROLLBACK_RECIPIENT).await.unwrap(), U256::ONE);
     let from = provider.get_accounts().await.unwrap()[0];
     let replacement =
         TransactionRequest::default().from(from).to(REORG_RECIPIENT).value(U256::from(2));
@@ -1454,6 +1457,7 @@ async fn monad_fork_transaction_hash_reorg_restores_inferred_profile() {
     assert_eq!(api.anvil_node_info().await.unwrap().hard_fork, "MonadEight");
     assert_eq!(api.backend.spec_id(), SpecId::PRAGUE);
     assert!(provider.call(reserve_balance_call()).await.unwrap().is_empty());
+    assert_eq!(provider.get_balance(ROLLBACK_RECIPIENT).await.unwrap(), U256::ZERO);
     assert_eq!(provider.get_balance(REORG_RECIPIENT).await.unwrap(), U256::from(2));
     let block =
         provider.get_block_by_number(BlockNumberOrTag::Latest).full().await.unwrap().unwrap();

@@ -71,6 +71,10 @@ pub trait MaybeFullDatabase: DatabaseRef<Error = DatabaseError> + Debug {
         None
     }
 
+    fn maybe_as_full_db_mut(&mut self) -> Option<&mut AddressMap<DbAccount>> {
+        None
+    }
+
     /// Returns an owned, recursively merged view of all available accounts.
     fn maybe_full_db(&self) -> Option<AddressMap<DbAccount>> {
         self.maybe_as_full_db().cloned()
@@ -131,6 +135,10 @@ where
 {
     fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
         T::maybe_as_full_db(self)
+    }
+
+    fn maybe_as_full_db_mut(&mut self) -> Option<&mut AddressMap<DbAccount>> {
+        T::maybe_as_full_db_mut(self)
     }
 
     fn maybe_full_db(&self) -> Option<AddressMap<DbAccount>> {
