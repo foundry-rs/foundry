@@ -3631,6 +3631,23 @@ mod tests {
     }
 
     #[test]
+    fn mutually_supporting_bounds_retain_one_constraint() {
+        let mut cx = SymCx::new();
+        let x = SymExpr::var(&mut cx, "x");
+        let constraints = [
+            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ule, &x, U256::from(5)),
+            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ult, &x, U256::from(6)),
+        ];
+        let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
+
+        for (value, expected) in [(U256::from(5), true), (U256::from(6), false)] {
+            let mut model = SymbolicModel::default();
+            assert!(x.assign_model_value(&mut model, value));
+            assert_eq!(normalized.iter().all(|c| c.eval_model(&model).unwrap()), expected);
+        }
+    }
+
+    #[test]
     fn rounded_conversion_rejects_bounds_on_wrapped_products() {
         let mut cx = SymCx::new();
         let value = SymExpr::var(&mut cx, "balance");

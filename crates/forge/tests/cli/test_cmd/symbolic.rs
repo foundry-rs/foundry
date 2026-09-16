@@ -6715,7 +6715,17 @@ contract FixedPointRoundTripTest {
     );
 
     cmd.args(["test", "--symbolic", "--match-test", "checkRoundTrip"]).assert_success();
-    for test in ["checkLowRate", "checkWrapping"] {
-        cmd.forge_fuse().args(["test", "--symbolic", "--match-test", test]).assert_failure();
+    for (test, signature) in
+        [("checkLowRate", "checkLowRate(uint128)"), ("checkWrapping", "checkWrapping(uint256)")]
+    {
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-test", test])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        let result = json_test_result(&output, signature);
+        assert_eq!(result["symbolic"]["status"], "fail_counterexample");
     }
 });
