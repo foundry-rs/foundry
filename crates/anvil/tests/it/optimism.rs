@@ -644,7 +644,7 @@ async fn fork_transaction_replay_uses_jovian_da_footprint() {
 
         let wallet = origin.dev_wallets().next().unwrap();
         let provider = http_provider_with_signer(&origin.http_endpoint(), wallet.into());
-        origin_api.anvil_set_next_block_timestamp(timestamp).await.unwrap();
+        origin_api.evm_set_next_block_timestamp(timestamp).unwrap();
         let receipt = provider
             .send_transaction(WithOtherFields::new(
                 TransactionRequest::default().with_to(Address::random()).with_value(U256::ONE),

@@ -3,7 +3,7 @@
 use alloy_consensus::{Eip658Value, Receipt, ReceiptWithBloom, Transaction};
 use alloy_eips::Encodable2718;
 use alloy_primitives::{Address, Log};
-use foundry_evm::hardfork::{FoundryHardfork, OpHardfork};
+use foundry_evm::hardfork::OpHardfork;
 use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope};
 use op_alloy_consensus::{OpDepositReceipt, OpDepositReceiptWithBloom};
 use op_revm::{L1BlockInfo, estimate_tx_compressed_size};
