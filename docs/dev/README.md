@@ -73,3 +73,25 @@ For contribution policy and support channels, see [`CONTRIBUTING.md`](../../CONT
 [foundry-rustdoc]: https://foundry-rs.github.io/foundry/
 [nextest]: https://nexte.st/docs/installation/pre-built-binaries/#with-cargo-binstall
 [rust]: https://rustup.rs/
+
+## Automated dependency pull requests
+
+The Tempo, Solar, and forge-std update workflows use a repository-scoped GitHub App token to
+push their branches and create or update pull requests. GitHub requires manual approval for
+PR workflow runs triggered with `GITHUB_TOKEN`; using an App token lets the normal PR checks
+start automatically. See [GitHub's token documentation][github-token].
+
+Before enabling these workflows, install the automation App on `foundry-rs/foundry` with
+**Contents: read and write** and **Pull requests: read and write** repository permissions.
+Configure the repository Actions variable `FOUNDRY_RELEASE_APP_ID` with its App ID and the
+Actions secret `FOUNDRY_RELEASE_APP_PRIVATE_KEY` with its private key. These are the same
+credentials used by release automation. Each dependency job requests a short-lived token
+restricted to this repository and those two permissions; its built-in `GITHUB_TOKEN` is read-only.
+Missing or invalid App credentials fail the update instead of silently creating PRs whose CI
+needs approval. No personal access token or individual maintainer's account is required.
+
+After setup, dispatch a dependency update workflow when an upstream update is available and
+confirm that its PR checks start without approval. Check both a newly created PR and a later
+update to its branch. These workflows only create or update PRs; merging remains a separate step.
+
+[github-token]: https://docs.github.com/en/actions/concepts/security/github_token

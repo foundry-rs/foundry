@@ -15,17 +15,30 @@ jobs:
     if: github.repository == 'foundry-rs/foundry'
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Fetch and update forge-std tag
         run: curl 'https://api.github.com/repos/foundry-rs/forge-std/tags' | jq '.[0].commit.sha' -jr > testdata/forge-std-rev
+      # App-authenticated PRs start CI without manual workflow approval.
+      - name: Create repository-scoped App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.FOUNDRY_RELEASE_APP_ID }}
+          private-key: ${{ secrets.FOUNDRY_RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+
       - name: Create pull request
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
+          token: ${{ steps.app-token.outputs.token }}
+          branch-token: ${{ steps.app-token.outputs.token }}
           commit-message: "chore: bump forge-std version used for tests"
           title: "chore(tests): bump forge-std version"
           labels: L-ignore
