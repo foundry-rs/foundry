@@ -34,8 +34,8 @@ impl SymbolicExecutor {
         }
 
         let gas = state.stack.pop()?;
-        if gas.contains_gasleft() && !gas.is_raw_gasleft() {
-            return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
+        if !gas.is_raw_gasleft() {
+            return Err(SymbolicError::Unsupported("explicit CALL gas limit not modeled"));
         }
         let target = state.stack.pop()?;
         ensure_expr_not_gasleft(&target)?;
@@ -1123,6 +1123,13 @@ impl SymbolicExecutor {
                 JoinedCallOutcome::Failure(parent) => {
                     *state = parent;
                     return Ok(StepOutcome::Failure);
+                }
+                JoinedCallOutcome::ExceptionalHalt(mut parent) => {
+                    parent.world = original_world.clone();
+                    parent.return_data = SymReturnData::empty(&mut self.cx);
+                    parent.copy_call_output_offset(&mut self.cx, out_offset.clone(), &out_size)?;
+                    parent.stack.push(SymExpr::zero(&mut self.cx))?;
+                    parents.push_back(parent);
                 }
                 JoinedCallOutcome::ExpectedRevert { mut parent, child } => {
                     parent.expected_calls = child.expected_calls;

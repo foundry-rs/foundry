@@ -1,0 +1,6 @@
+# Cargo and Zed build outputs.
+/target/
+/grammars/
+/extension.wasm
+*.rs.bk
+*.pdb

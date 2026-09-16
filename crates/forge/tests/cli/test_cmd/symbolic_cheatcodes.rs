@@ -2763,7 +2763,7 @@ contract SymbolicExpectCall is Test {
             uint64(50000),
             abi.encodeWithSelector(SymbolicExpectedCallTarget.ping.selector, uint256(13))
         );
-        assertEq(target.ping{gas: 50000}(13), 14);
+        assertEq(target.ping(13), 14);
 
         vm.expectCallMinGas(
             address(target),
@@ -2771,7 +2771,7 @@ contract SymbolicExpectCall is Test {
             uint64(25000),
             abi.encodeWithSelector(SymbolicExpectedCallTarget.ping.selector, uint256(14))
         );
-        assertEq(target.ping{gas: 50000}(14), 15);
+        assertEq(target.ping(14), 15);
     }
 
     function checkExpectCallSymbolicCallee(address expectedCallee) public {

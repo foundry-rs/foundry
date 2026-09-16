@@ -6,6 +6,121 @@ use foundry_config::{CompilationRestrictions, SettingsOverrides};
 #[cfg(unix)]
 use foundry_compilers::artifacts::{SolcInput, output_selection::OutputSelection};
 
+// <https://github.com/foundry-rs/foundry/issues/16852>
+forgetest!(preprocess_parenthesized_new, |prj, cmd| {
+    prj.add_source(
+        "Target.sol",
+        r#"
+contract Empty {
+    constructor() payable {}
+}
+contract Target {
+    uint256 public immutable n;
+    constructor(uint256 number) payable { n = number; }
+}
+"#,
+    );
+    prj.add_test(
+        "Value.t.sol",
+        r#"
+import {Empty, Target} from "../src/Target.sol";
+contract ValueTest {
+    function test_empty() public {
+        Empty a = (new Empty){value: 1 ether}();
+        Empty b = ((new Empty)){value: 2 ether}();
+        Empty c = (new Empty)();
+        Empty d = new Empty{value: 3 ether}();
+        require(address(a).balance == 1 ether);
+        require(address(b).balance == 2 ether);
+        require(address(c).balance == 0);
+        require(address(d).balance == 3 ether);
+    }
+    function test_arguments() public {
+        Target a = (new Target){value: 1 ether}(42);
+        Target b = ((new Target)){value: 2 ether}({number: 7});
+        Target c = ((new Target))(8);
+        Target d = (new Target{value: 3 ether})(9);
+        require(a.n() == 42 && address(a).balance == 1 ether);
+        require(b.n() == 7 && address(b).balance == 2 ether);
+        require(c.n() == 8 && address(c).balance == 0);
+        require(d.n() == 9 && address(d).balance == 3 ether);
+    }
+    function test_salt() public {
+        Target target = (new Target){salt: bytes32(uint256(1)), value: 1 ether}(42);
+        address expected = address(uint160(uint256(keccak256(abi.encodePacked(
+            bytes1(0xff), address(this), bytes32(uint256(1)),
+            keccak256(abi.encodePacked(type(Target).creationCode, abi.encode(uint256(42))))
+        )))));
+        require(address(target) == expected);
+        require(target.n() == 42 && address(target).balance == 1 ether);
+    }
+    function test_try() public {
+        try (new Target){value: 1 ether}(42) returns (Target target) {
+            require(target.n() == 42 && address(target).balance == 1 ether);
+        } catch { revert("deployment failed"); }
+    }
+}
+"#,
+    );
+    for dynamic_test_linking in [false, true] {
+        prj.update_config(|config| config.dynamic_test_linking = dynamic_test_linking);
+        cmd.forge_fuse().args(["test", "--force"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 4 tests for test/Value.t.sol:ValueTest
+[PASS] test_arguments() ([GAS])
+[PASS] test_empty() ([GAS])
+[PASS] test_salt() ([GAS])
+[PASS] test_try() ([GAS])
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 4 tests passed, 0 failed, 0 skipped (4 total tests)
+
+"#]]);
+    }
+
+    cmd.forge_fuse()
+        .args(["test", "--match-test", "test_arguments", "-vvvv"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/Value.t.sol:ValueTest
+[PASS] test_arguments() ([GAS])
+Traces:
+  [30387] ValueTest::test_arguments()
+    ├─ [0] VM::deployCode("src/Target.sol:Target", 0x000000000000000000000000000000000000000000000000000000000000002a, 1000000000000000000 [1e18])
+    │   ├─ [41006] → new Target@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   │   └─ ← [Return] 203 bytes of code
+    │   └─ ← [Return] Target: [0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f]
+    ├─ [0] VM::deployCode("src/Target.sol:Target", 0x0000000000000000000000000000000000000000000000000000000000000007, 2000000000000000000 [2e18])
+    │   ├─ [41006] → new Target@0x2e234DAe75C793f67A35089C9d99245E1C58470b
+    │   │   └─ ← [Return] 203 bytes of code
+    │   └─ ← [Return] Target: [0x2e234DAe75C793f67A35089C9d99245E1C58470b]
+    ├─ [0] VM::deployCode("src/Target.sol:Target", 0x0000000000000000000000000000000000000000000000000000000000000008)
+    │   ├─ [41006] → new Target@0xF62849F9A0B5Bf2913b396098F7c7019b51A820a
+    │   │   └─ ← [Return] 203 bytes of code
+    │   └─ ← [Return] Target: [0xF62849F9A0B5Bf2913b396098F7c7019b51A820a]
+    ├─ [0] VM::deployCode("src/Target.sol:Target", 0x0000000000000000000000000000000000000000000000000000000000000009, 3000000000000000000 [3e18])
+    │   ├─ [41006] → new Target@0x5991A2dF15A8F6A256D3Ec51E99254Cd3fb576A9
+    │   │   └─ ← [Return] 203 bytes of code
+    │   └─ ← [Return] Target: [0x5991A2dF15A8F6A256D3Ec51E99254Cd3fb576A9]
+    ├─ [303] Target::n() [staticcall]
+    │   └─ ← [Return] 42
+    ├─ [303] Target::n() [staticcall]
+    │   └─ ← [Return] 7
+    ├─ [303] Target::n() [staticcall]
+    │   └─ ← [Return] 8
+    ├─ [303] Target::n() [staticcall]
+    │   └─ ← [Return] 9
+    └─ ← [Stop]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+});
+
 // <https://github.com/foundry-rs/foundry/issues/16682>
 forgetest!(preprocess_remapped_bytecode_dependencies, |prj, cmd| {
     prj.update_config(|config| {

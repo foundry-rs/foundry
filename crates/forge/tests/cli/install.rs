@@ -29,10 +29,6 @@ forgetest_init!(can_install_missing_deps_build, |prj, cmd| {
     prj.initialize_default_contracts();
     prj.clear();
 
-    // Record the pinned forge-std revision before exercising auto-install without a lockfile.
-    cmd.git_add();
-    fs::remove_file(prj.root().join("foundry.lock")).unwrap();
-
     // wipe forge-std
     let forge_std_dir = prj.root().join("lib/forge-std");
     pretty_err(&forge_std_dir, fs::remove_dir_all(&forge_std_dir));
@@ -68,10 +64,6 @@ forgetest_init!(can_install_missing_deps_test, |prj, cmd| {
     prj.initialize_default_contracts();
     prj.clear();
 
-    // Record the pinned forge-std revision before exercising auto-install without a lockfile.
-    cmd.git_add();
-    fs::remove_file(prj.root().join("foundry.lock")).unwrap();
-
     // wipe forge-std
     let forge_std_dir = prj.root().join("lib/forge-std");
     pretty_err(&forge_std_dir, fs::remove_dir_all(&forge_std_dir));
@@ -106,10 +98,6 @@ Missing dependencies found. Installing now...
 forgetest_init!(can_install_missing_deps_lint, |prj, cmd| {
     prj.initialize_default_contracts();
     prj.clear();
-
-    // Record the pinned forge-std revision before exercising auto-install without a lockfile.
-    cmd.git_add();
-    fs::remove_file(prj.root().join("foundry.lock")).unwrap();
 
     // Wipe forge-std.
     let forge_std_dir = prj.root().join("lib/forge-std");
