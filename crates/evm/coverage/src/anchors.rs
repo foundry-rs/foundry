@@ -231,6 +231,36 @@ mod tests {
     use foundry_compilers::artifacts::sourcemap;
 
     #[test]
+    fn ternary_anchor_uses_first_exact_jump_mapping() {
+        let loc =
+            SourceLocation { source_id: 0, contract_name: "T".into(), bytes: 10..30, lines: 1..2 };
+        let bytecode = [
+            opcode::PUSH1,
+            9,
+            opcode::JUMPI,
+            opcode::PUSH1,
+            10,
+            opcode::JUMPI,
+            opcode::PUSH1,
+            11,
+            opcode::JUMPI,
+            opcode::JUMPDEST,
+            opcode::JUMPDEST,
+            opcode::JUMPDEST,
+        ];
+        // The first PUSH matches exactly, but its JUMPI maps to an inner span.
+        // The next JUMPI matches exactly despite its PUSH mapping to the inner span.
+        // A later exact-span jump must not replace that first exact JUMPI.
+        let source_map = sourcemap::parse("10:20:0;15:5:0;15:5:0;10:20:0;10:20:0;10:20:0").unwrap();
+        let (fallthrough, taken) =
+            find_anchor_branch_inner(&bytecode, &source_map, 42, &loc, true).unwrap();
+        assert_eq!(fallthrough.instruction, 6);
+        assert_eq!(taken.instruction, 10);
+        assert_eq!(fallthrough.item_id, 42);
+        assert_eq!(taken.item_id, 42);
+    }
+
+    #[test]
     fn ternary_anchor_rejects_missing_node_mapping() {
         let loc =
             SourceLocation { source_id: 0, contract_name: "T".into(), bytes: 10..30, lines: 1..2 };

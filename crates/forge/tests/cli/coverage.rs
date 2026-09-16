@@ -1899,6 +1899,30 @@ contract AContractTest is DSTest {
 ╰-------------------+---------------+---------------+--------------+---------------╯
 
 "#]]);
+    // The outer false arm is unvisited; both inner arms are visited.
+    assert_lcov(
+        cmd.forge_fuse().arg("coverage"),
+        str![[r#"
+TN:
+SF:src/AContract.sol
+DA:5,2
+FN:5,AContract.execute
+FNDA:2,AContract.execute
+DA:6,2
+BRDA:6,0,0,0
+BRDA:6,0,1,2
+BRDA:6,1,0,1
+BRDA:6,1,1,1
+FNF:1
+FNH:1
+LF:2
+LH:2
+BRF:4
+BRH:3
+end_of_record
+
+"#]],
+    );
 });
 
 forgetest!(ternary_nested_outer_only, |prj, cmd| {
@@ -2039,6 +2063,57 @@ contract AContractTest is DSTest {
 ╰-------------------+-----------------+-----------------+---------------+---------------╯
 
 "#]]);
+    // Each expression context visits only the true arm (path 1).
+    assert_lcov(
+        cmd.forge_fuse().arg("coverage"),
+        str![[r#"
+TN:
+SF:src/AContract.sol
+DA:5,1
+FN:5,AContract.bare
+FNDA:1,AContract.bare
+DA:6,1
+BRDA:6,0,0,0
+BRDA:6,0,1,1
+DA:8,1
+FN:8,AContract.assignment
+FNDA:1,AContract.assignment
+DA:9,1
+BRDA:9,1,0,0
+BRDA:9,1,1,1
+DA:11,1
+FN:11,AContract.declaration
+FNDA:1,AContract.declaration
+DA:12,1
+BRDA:12,2,0,0
+BRDA:12,2,1,1
+DA:13,1
+DA:15,1
+FN:15,AContract.tuple
+FNDA:1,AContract.tuple
+DA:16,1
+BRDA:16,3,0,0
+BRDA:16,3,1,1
+DA:17,1
+DA:19,1
+FN:19,AContract.argument
+FNDA:1,AContract.argument
+DA:20,1
+BRDA:20,4,0,0
+BRDA:20,4,1,1
+DA:22,1
+FN:22,AContract.identity
+FNDA:1,AContract.identity
+FNF:6
+FNH:6
+LF:13
+LH:13
+BRF:10
+BRH:5
+end_of_record
+
+"#]],
+    );
 });
 
 forgetest!(ternary_modifier, |prj, cmd| {
