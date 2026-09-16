@@ -6075,12 +6075,17 @@ fn sat_cache_does_not_reuse_unsat_branch_complement_with_unsat_base() {
     let commands = vec![counted_solver_command(&marker, "unsat")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
     let x = SymExpr::var(&mut cx, "x");
-    let two = SymExpr::constant(&mut cx, U256::from(2));
-    let one = SymExpr::constant(&mut cx, U256::from(1));
-    let lower = SymBoolExpr::cmp(&mut cx, SymCmpOp::Uge, x.clone(), two);
-    let upper = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, x.clone(), one.clone());
-    let base = SymBoolExpr::and(&mut cx, vec![lower, upper]);
-    let condition = SymBoolExpr::eq(&mut cx, x, one);
+    let y = SymExpr::var(&mut cx, "y");
+    let z = SymExpr::var(&mut cx, "z");
+    let branch = SymExpr::var(&mut cx, "branch");
+    let one = SymExpr::one(&mut cx);
+    // A strict order cycle is unsatisfiable but has no independent scalar bounds. Keep the
+    // fixture beyond local interval pruning so it still exercises complement-cache safety.
+    let xy = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x.clone(), y.clone());
+    let yz = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, y, z.clone());
+    let zx = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, z, x);
+    let base = SymBoolExpr::and(&mut cx, vec![xy, yz, zx]);
+    let condition = SymBoolExpr::eq(&mut cx, branch, one);
 
     assert!(!solver.is_sat_branch(&mut cx, &[base.clone(), condition.clone()]).unwrap());
     let not_condition = condition.not(&mut cx);
@@ -6090,9 +6095,7 @@ fn sat_cache_does_not_reuse_unsat_branch_complement_with_unsat_base() {
     assert_eq!(stats.solver_queries, 2);
     assert_eq!(stats.sat_queries, 2);
     assert_eq!(stats.sat_cache_hits, 0);
-    // Exact-value propagation makes one contradictory branch local; the other still exercises
-    // the solver without reusing the unsatisfiable complement cache entry.
-    assert_eq!(counted_solver_invocations(&marker), 1);
+    assert_eq!(counted_solver_invocations(&marker), 2);
     let _ = std::fs::remove_file(&marker);
 }
 

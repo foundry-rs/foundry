@@ -6508,6 +6508,33 @@ contract FixedPointRoundTripTest {
         assert(credits * 1e18 / cpt == balance);
     }
 
+    function checkUnboundedRoundTrip(uint128 balance, uint256 cpt) external pure {
+        require(cpt >= 1e18);
+        uint256 credits = (uint256(balance) * cpt + 1e18 - 1) / 1e18;
+        assert(credits * 1e18 / cpt == balance);
+    }
+
+    function checkUnboundedOptIn(address account) external {
+        vm.assume(target.cpt() >= 1e18);
+        uint256 fixedCpt = target.fixedCpt(account);
+        vm.assume(fixedCpt == 0 || fixedCpt == 1e18);
+        vm.assume(target.credits(account) <= type(uint128).max);
+        uint256 balance = target.balanceOf(account);
+        vm.prank(account);
+        target.optIn();
+        assert(target.balanceOf(account) == balance);
+        assert(target.fixedCpt(account) == 0);
+        assert(target.state(account) == 2);
+    }
+
+    function checkUncheckedRounding(uint256 cpt) external pure {
+        require(cpt >= 1e18);
+        unchecked {
+            uint256 credits = (cpt + 1e18 - 1) / 1e18;
+            assert(credits * 1e18 / cpt == 1);
+        }
+    }
+
     function checkOptIn(address account) external {
         vm.assume(account != address(0) && account != address(target));
         vm.assume(target.cpt() >= 1e18 && target.cpt() <= 1e27);
@@ -6556,6 +6583,8 @@ contract FixedPointRoundTripTest {
     for (test, signature) in [
         ("checkRoundTrip", "checkRoundTrip(uint128,uint256)"),
         ("checkOptIn", "checkOptIn(address)"),
+        ("checkUnboundedRoundTrip", "checkUnboundedRoundTrip(uint128,uint256)"),
+        ("checkUnboundedOptIn", "checkUnboundedOptIn(address)"),
     ] {
         let output = cmd
             .forge_fuse()
@@ -6580,9 +6609,11 @@ contract FixedPointRoundTripTest {
         .args(["test", "--optimize", "--match-test", "testOptInConcreteWitness"])
         .assert_success();
 
-    for (test, signature) in
-        [("checkLowRate", "checkLowRate(uint128)"), ("checkWrapping", "checkWrapping(uint256)")]
-    {
+    for (test, signature) in [
+        ("checkLowRate", "checkLowRate(uint128)"),
+        ("checkWrapping", "checkWrapping(uint256)"),
+        ("checkUncheckedRounding", "checkUncheckedRounding(uint256)"),
+    ] {
         let output = cmd
             .forge_fuse()
             .args([

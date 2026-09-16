@@ -72,34 +72,25 @@ fn normalize_constraints_for_solver_with(
     normalize_bounded_comparisons(cx, normalized)
 }
 
-/// Removes bounded arithmetic predicates using only the other, still-retained conjuncts.
+/// Simplifies predicates using only the other, still-retained conjuncts.
 fn normalize_bounded_comparisons(
     cx: &mut SymCx,
     mut constraints: Vec<SymBoolExpr>,
 ) -> Vec<SymBoolExpr> {
     let mut index = 0;
     while index < constraints.len() {
-        if !constraints[index].visit_unique_bool(|word| {
-            matches!(
-                word.kind(),
-                SymExprKind::BinOp(
-                    SymBinOp::Add | SymBinOp::Sub | SymBinOp::Mul | SymBinOp::UDiv,
-                    _,
-                    _
-                )
-            )
-        }) {
-            index += 1;
-            continue;
-        }
-        let context = ConstraintContext::from_constraints(
+        let mut context = ConstraintContext::from_constraints(
             constraints.iter().enumerate().filter_map(|(i, value)| (i != index).then_some(value)),
             constraints.len() - 1,
         );
-        // Earlier rewrites can expose bounds needed by a signed arithmetic guard.
-        if let Some(normalized) = context.normalize_signed_add_comparison(cx, &constraints[index]) {
-            constraints[index] = normalized;
+        // Keep the supporting guards in the conjunction, and never use the current predicate
+        // to justify its own rewrite. Sequential replacement also prevents circular proofs.
+        for (i, constraint) in constraints.iter().enumerate() {
+            if i != index {
+                context.record_non_wrapping_product(cx, constraint);
+            }
         }
+        constraints[index] = context.normalize_bool(cx, constraints[index].clone(), false);
         match context.bounded_bool_value(&constraints[index]) {
             Some(false) => return vec![SymBoolExpr::constant(cx, false)],
             Some(true) => {
@@ -108,7 +99,9 @@ fn normalize_bounded_comparisons(
             None => index += 1,
         }
     }
-    constraints
+    // Contextual rewrites may change sort order or expose a conjunction.
+    let count = constraints.len();
+    normalize_constraint_batch(constraints, count)
 }
 
 fn mark_conjuncts(expr: &SymBoolExpr, out: &mut HashSet<SymBoolExpr>) {
@@ -814,6 +807,7 @@ pub(super) struct ConstraintContext {
     lower_bounds: HashMap<SymExpr, U256>,
     exact_values: HashMap<SymExpr, U256>,
     conflicting_exact_values: HashSet<SymExpr>,
+    non_wrapping_products: HashSet<(SymExpr, SymExpr)>,
 }
 
 #[derive(Clone, Copy)]
@@ -1726,11 +1720,17 @@ impl ConstraintContext {
                 })
             }
             SymExprKind::BinOp(SymBinOp::Mul, left, right) => {
+                let guarded = self.has_non_wrapping_product(left, right);
                 let left = self.interval_cached(left, intervals, remaining)?;
                 let right = self.interval_cached(right, intervals, remaining)?;
                 Some(WordInterval {
                     min: left.min.checked_mul(right.min)?,
-                    max: left.max.checked_mul(right.max)?,
+                    // A retained overflow guard correlates the factors. Their independent
+                    // maxima can overflow even though every feasible product fits.
+                    max: left
+                        .max
+                        .checked_mul(right.max)
+                        .or_else(|| guarded.then_some(U256::MAX))?,
                 })
             }
             SymExprKind::BinOp(SymBinOp::UDiv, numerator, denominator) => {
@@ -2493,7 +2493,74 @@ impl ConstraintContext {
         other == expected && self.mul_cannot_overflow_256(zero_operand, other)
     }
 
+    /// Learns multiplication safety from a retained successful Solidity overflow check.
+    fn record_non_wrapping_product(&mut self, cx: &mut SymCx, constraint: &SymBoolExpr) {
+        let fact = bitwise_bool_word_fact(cx, constraint).unwrap_or_else(|| constraint.clone());
+        let factors = if let Some(factors) = self.checked_product_factors(&fact, None) {
+            Some(factors)
+        } else if let SymBoolExprKind::Not(inner) = fact.kind()
+            && let SymBoolExprKind::And(terms) = inner.kind()
+            && terms.len() == 2
+        {
+            // Only the exact two-way disjunction is a multiplication guard. An additional
+            // alternative would let this predicate hold even when the product wraps.
+            let first = terms[0].clone().not(cx);
+            let second = terms[1].clone().not(cx);
+            self.bounded_zero_check_operand(&first)
+                .and_then(|zero| self.checked_product_factors(&second, Some(zero)))
+                .or_else(|| {
+                    self.bounded_zero_check_operand(&second)
+                        .and_then(|zero| self.checked_product_factors(&first, Some(zero)))
+                })
+        } else {
+            None
+        };
+        if let Some(factors) = factors {
+            self.non_wrapping_products.insert(factors);
+        }
+    }
+
+    fn checked_product_factors(
+        &self,
+        predicate: &SymBoolExpr,
+        zero_operand: Option<&SymExpr>,
+    ) -> Option<(SymExpr, SymExpr)> {
+        let SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) = predicate.kind() else {
+            return None;
+        };
+        for (quotient, expected) in [(left, right), (right, left)] {
+            let quotient = if let SymExprKind::Ite(condition, zero, quotient) = quotient.kind() {
+                if zero.as_const() != Some(U256::ZERO)
+                    || zero_operand.is_none()
+                    || self.bounded_zero_check_operand(condition) != zero_operand
+                {
+                    continue;
+                }
+                quotient
+            } else {
+                quotient
+            };
+            if let Some((divisor, other)) = Self::mul_div_operands(quotient)
+                && other == expected
+                && zero_operand.is_none_or(|zero| zero == divisor)
+            {
+                // For divisor > 0, (divisor * other mod 2^256) / divisor == other
+                // implies the true product fits. For divisor == 0 the product is zero.
+                return Some((divisor.clone(), other.clone()));
+            }
+        }
+        None
+    }
+
+    fn has_non_wrapping_product(&self, left: &SymExpr, right: &SymExpr) -> bool {
+        self.non_wrapping_products.contains(&(left.clone(), right.clone()))
+            || self.non_wrapping_products.contains(&(right.clone(), left.clone()))
+    }
+
     pub(super) fn mul_cannot_overflow_256(&self, left: &SymExpr, right: &SymExpr) -> bool {
+        if self.has_non_wrapping_product(left, right) {
+            return true;
+        }
         let mut intervals = HashMap::default();
         let mut remaining = MAX_LOCAL_ANALYSIS_NODES;
         if self
@@ -3031,6 +3098,186 @@ mod tests {
         assert_eq!(normalize_constraints_for_solver(&mut cx, &constraints), expected);
         constraints.pop();
         constraints.push(equality.not(&mut cx));
+        let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
+        assert!(constraints_are_directly_unsat(&mut cx, &normalized));
+    }
+
+    #[test]
+    fn successful_mul_guards_prove_round_trip_without_rate_cap() {
+        let mut cx = SymCx::new();
+        let value = SymExpr::var(&mut cx, "balance");
+        let rate = SymExpr::var(&mut cx, "rate");
+        let w = U256::from(1_000_000_000_000_000_000u64);
+        let scale = SymExpr::constant(&mut cx, w);
+        let zero = SymExpr::zero(&mut cx);
+        let product = SymExpr::binop(&mut cx, SymBinOp::Mul, value.clone(), rate.clone());
+        let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, product.clone(), value.clone());
+        let direct_guard = SymBoolExpr::eq(&mut cx, quotient.clone(), rate.clone());
+        let scaled = SymExpr::binop(&mut cx, SymBinOp::Mul, value.clone(), scale);
+        let is_zero = SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ult, &scaled, w);
+        let guarded = SymExpr::ite(&mut cx, is_zero.clone(), zero.clone(), quotient);
+        let exact = SymBoolExpr::eq(&mut cx, guarded, rate.clone());
+        let zero_word = SymExpr::bool_word(&mut cx, is_zero);
+        let exact_word = SymExpr::bool_word(&mut cx, exact);
+        let guard_word = SymExpr::binop(&mut cx, SymBinOp::Or, zero_word, exact_word);
+        let word_guard = SymBoolExpr::eq(&mut cx, guard_word, zero).not(&mut cx);
+        let converted = rounded_conversion(&mut cx, value.clone(), rate.clone(), w);
+        let identity = SymBoolExpr::eq(&mut cx, converted, value.clone());
+        let bounds = vec![
+            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ule, &value, U256::from(u128::MAX)),
+            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Uge, &rate, w),
+            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ule, &product, U256::MAX - w),
+        ];
+        for guard in [direct_guard, word_guard] {
+            // A successful multiplication does not establish safety of the rounding addition.
+            let mut missing_add_guard = bounds[..2].to_vec();
+            missing_add_guard.push(guard.clone());
+            missing_add_guard.push(identity.clone().not(&mut cx));
+            let normalized = normalize_constraints_for_solver(&mut cx, &missing_add_guard);
+            let mut model = SymbolicModel::default();
+            assert!(value.assign_model_value(&mut model, U256::ONE));
+            assert!(rate.assign_model_value(&mut model, U256::MAX));
+            assert!(missing_add_guard.iter().all(|c| c.eval_model(&model).unwrap()));
+            assert!(normalized.iter().all(|c| c.eval_model(&model).unwrap()));
+
+            let mut constraints = bounds.clone();
+            constraints.push(guard);
+            constraints.push(identity.clone().not(&mut cx));
+            let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
+            assert!(constraints_are_directly_unsat(&mut cx, &normalized));
+
+            // Retained premises must still reject wrapping multiplication or rounding addition.
+            constraints.pop();
+            constraints.push(identity.clone());
+            let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
+            for b in [U256::ZERO, U256::ONE, U256::from(2), U256::from(u128::MAX)] {
+                for p in [U256::ZERO, w - U256::ONE, w, w + U256::ONE, U256::MAX - w, U256::MAX] {
+                    let mut model = SymbolicModel::default();
+                    assert!(value.assign_model_value(&mut model, b));
+                    assert!(rate.assign_model_value(&mut model, p));
+                    assert_eq!(
+                        constraints.iter().all(|c| c.eval_model(&model).unwrap()),
+                        normalized.iter().all(|c| c.eval_model(&model).unwrap()),
+                        "balance={b}, rate={p}"
+                    );
+                }
+            }
+        }
+
+        // A bound on the modular product is insufficient without its successful overflow guard.
+        let mut constraints = bounds;
+        constraints.push(identity.not(&mut cx));
+        let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
+        let mut model = SymbolicModel::default();
+        assert!(value.assign_model_value(&mut model, U256::from(2)));
+        assert!(rate.assign_model_value(&mut model, U256::ONE << 255));
+        assert!(constraints.iter().all(|c| c.eval_model(&model).unwrap()));
+        assert!(normalized.iter().all(|c| c.eval_model(&model).unwrap()));
+    }
+
+    #[test]
+    fn multiplication_facts_require_exact_success_guards() {
+        let mut cx = SymCx::new();
+        let a = SymExpr::var(&mut cx, "a");
+        let b = SymExpr::var(&mut cx, "b");
+        let unrelated = SymExpr::var(&mut cx, "unrelated");
+        let zero = SymExpr::zero(&mut cx);
+        let product = SymExpr::binop(&mut cx, SymBinOp::Mul, a.clone(), b.clone());
+        let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, product, a.clone());
+        let exact = SymBoolExpr::eq(&mut cx, quotient.clone(), b.clone());
+        let a_zero = SymBoolExpr::eq(&mut cx, a.clone(), zero.clone());
+        let unrelated_zero = SymBoolExpr::eq(&mut cx, unrelated.clone(), zero.clone());
+        let valid_or = SymBoolExpr::or(&mut cx, vec![a_zero.clone(), exact.clone()]);
+        let extra_or =
+            SymBoolExpr::or(&mut cx, vec![a_zero.clone(), exact.clone(), unrelated_zero.clone()]);
+        let wrong_or = SymBoolExpr::or(&mut cx, vec![unrelated_zero.clone(), exact.clone()]);
+        let wrong_ite = SymExpr::ite(&mut cx, unrelated_zero, zero.clone(), quotient.clone());
+        let wrong_exact = SymBoolExpr::eq(&mut cx, wrong_ite, b.clone());
+        let wrong_guard = SymBoolExpr::or(&mut cx, vec![a_zero.clone(), wrong_exact]);
+        let guarded = SymExpr::ite(&mut cx, a_zero.clone(), zero, quotient);
+        let guarded_exact = SymBoolExpr::eq(&mut cx, guarded, b.clone());
+        let valid_guard = SymBoolExpr::or(&mut cx, vec![a_zero, guarded_exact.clone()]);
+        for (predicate, recognized) in [
+            (exact.clone(), true),
+            (valid_or, true),
+            (valid_guard, true),
+            (exact.not(&mut cx), false),
+            (extra_or, false),
+            (wrong_or, false),
+            (wrong_guard, false),
+            (guarded_exact, false),
+        ] {
+            let mut context = ConstraintContext::default();
+            context.record_non_wrapping_product(&mut cx, &predicate);
+            assert_eq!(context.mul_cannot_overflow_256(&a, &b), recognized);
+            // A guard cannot establish itself; even recognized guards must stay constrained.
+            let normalized =
+                normalize_constraints_for_solver(&mut cx, std::slice::from_ref(&predicate));
+            for av in [U256::ZERO, U256::ONE, U256::from(2), U256::ONE << 255, U256::MAX] {
+                for bv in [U256::ZERO, U256::ONE, U256::from(3), U256::MAX] {
+                    for uv in [U256::ZERO, U256::ONE] {
+                        let mut model = SymbolicModel::default();
+                        assert!(a.assign_model_value(&mut model, av));
+                        assert!(b.assign_model_value(&mut model, bv));
+                        assert!(unrelated.assign_model_value(&mut model, uv));
+                        assert_eq!(
+                            predicate.eval_model(&model).unwrap(),
+                            normalized.iter().all(|c| c.eval_model(&model).unwrap())
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn successful_product_guards_preserve_lower_bounds() {
+        let mut cx = SymCx::new();
+        let balance = SymExpr::var(&mut cx, "balance");
+        let rate = SymExpr::var(&mut cx, "rate");
+        let w = U256::from(1_000_000_000_000_000_000u64);
+        let product = SymExpr::binop(&mut cx, SymBinOp::Mul, balance.clone(), rate.clone());
+        let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, product.clone(), balance.clone());
+        let guard = SymBoolExpr::eq(&mut cx, quotient, rate.clone());
+        let scale = SymExpr::constant(&mut cx, w);
+        let sum = SymExpr::binop(&mut cx, SymBinOp::Add, product.clone(), scale);
+        let one = SymExpr::one(&mut cx);
+        let numerator = SymExpr::binop(&mut cx, SymBinOp::Sub, sum, one);
+        let mut constraints = vec![
+            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ugt, &balance, U256::ZERO),
+            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ule, &balance, U256::from(u128::MAX)),
+            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Uge, &rate, w),
+            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ule, &product, U256::MAX - w),
+            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ult, &numerator, w),
+        ];
+        let mut model = SymbolicModel::default();
+        assert!(balance.assign_model_value(&mut model, U256::from(2)));
+        assert!(rate.assign_model_value(&mut model, U256::ONE << 255));
+        // Without the guard, wrapping can turn a positive balance into zero credits.
+        let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
+        assert!(constraints.iter().all(|c| c.eval_model(&model).unwrap()));
+        assert!(normalized.iter().all(|c| c.eval_model(&model).unwrap()));
+        constraints.push(guard);
+        let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
+        assert!(constraints_are_directly_unsat(&mut cx, &normalized));
+    }
+
+    #[test]
+    fn independent_scalar_bounds_prune_hard_arithmetic() {
+        let mut cx = SymCx::new();
+        let value = SymExpr::var(&mut cx, "balance");
+        let rate = SymExpr::var(&mut cx, "rate");
+        let product = SymExpr::binop(&mut cx, SymBinOp::Mul, value.clone(), rate);
+        let constraints = [
+            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ule, &value, U256::from(u128::MAX)),
+            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ugt, &value, U256::MAX >> 1),
+            SymBoolExpr::cmp_word_const(
+                &mut cx,
+                SymCmpOp::Ule,
+                &product,
+                U256::MAX - U256::from(3),
+            ),
+        ];
         let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
         assert!(constraints_are_directly_unsat(&mut cx, &normalized));
     }
