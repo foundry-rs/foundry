@@ -2560,7 +2560,9 @@ impl<N: Network> Backend<N> {
             let op_tx: OpTransaction<TxEnv> =
                 FromTxWithEncoded::from_encoded_tx(tx, sender, tx.encoded_2718().into());
             let base = op_tx.base.clone();
-            let result = self.transact_op_with_inspector_ref(db, evm_env, inspector, op_tx)?;
+            let spec = self.hardfork().into();
+            let result =
+                self.transact_op_with_inspector_ref(db, evm_env, inspector, op_tx, spec)?;
             return Ok((result, base));
         }
         let tx_env: TxEnv = build_tx_env_for_pending(pending, self.cheats());
@@ -2589,8 +2591,10 @@ impl<N: Network> Backend<N> {
 
     /// Builds the Tempo [`EvmEnv`] (spec, gas params, [`TempoBlockEnv`]) from a base
     /// env.
-    fn build_tempo_evm_env(&self, evm_env: &EvmEnv) -> EvmEnvFor<TempoEvmNetwork> {
-        let hardfork = self.tempo_hardfork();
+    fn build_tempo_evm_env(
+        evm_env: &EvmEnv,
+        hardfork: TempoHardfork,
+    ) -> EvmEnvFor<TempoEvmNetwork> {
         EvmEnv::new(
             evm_env.cfg_env.clone().with_spec_and_gas_params(hardfork, tempo_gas_params(hardfork)),
             TempoBlockEnv {
@@ -2614,7 +2618,7 @@ impl<N: Network> Backend<N> {
         I: Inspector<TempoContext<WrapDatabaseRef<&'db DB>>>,
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
-        let tempo_env = self.build_tempo_evm_env(evm_env);
+        let tempo_env = Self::build_tempo_evm_env(evm_env, self.tempo_hardfork());
         let mut evm = TempoEvmFactory::default().create_evm_with_inspector(
             WrapDatabaseRef(db),
             tempo_env,
@@ -2710,7 +2714,7 @@ impl<N: Network> Backend<N> {
         }
 
         if self.is_tempo() {
-            let tempo_env = self.build_tempo_evm_env(evm_env);
+            let tempo_env = Self::build_tempo_evm_env(evm_env, self.tempo_hardfork());
             let mut evm =
                 TempoEvmFactory::default().create_evm_with_inspector(db, tempo_env, inspector);
             return run!(evm);
@@ -2984,9 +2988,9 @@ impl<N: Network> Backend<N> {
     }
 
     fn build_tempo_request_env(
-        &self,
         request: TempoTransactionRequest,
         mut base: TxEnv,
+        hardfork: TempoHardfork,
     ) -> Result<(TempoTxEnv, AASigned), BlockchainError> {
         let fee_payer = request.fee_payer_signature.map(|_| {
             request.clone().build_aa().ok().and_then(|tx| tx.recover_fee_payer(base.caller).ok())
@@ -3016,13 +3020,8 @@ impl<N: Network> Backend<N> {
         let key_type = request.key_type.unwrap_or(SignatureType::Secp256k1);
         let key_data = request.key_data.clone();
         let key_id = request.key_id;
-        let signature = mock_tempo_signature(
-            key_type,
-            key_data,
-            key_id,
-            base.caller,
-            self.tempo_hardfork().is_t1c(),
-        );
+        let signature =
+            mock_tempo_signature(key_type, key_data, key_id, base.caller, hardfork.is_t1c());
         let mut calls = request.calls;
         if let Some(to) = request.inner.to {
             calls.push(Call {
@@ -3104,7 +3103,7 @@ impl<N: Network> Backend<N> {
                 let (evm_env, base, _) =
                     self.build_call_env_with_base(inner, fee_details, block_env, base_evm_env);
                 let (tx_env, simulated_tempo_tx) =
-                    self.build_tempo_request_env(tempo_request, base)?;
+                    Self::build_tempo_request_env(tempo_request, base, self.tempo_hardfork())?;
                 Ok(PreparedCall {
                     evm_env,
                     tx_env: CallTxEnv::Tempo(tx_env),
@@ -3190,7 +3189,8 @@ impl<N: Network> Backend<N> {
             }
             #[cfg(feature = "optimism")]
             CallTxEnv::Op(tx_env) => {
-                self.transact_op_with_inspector_ref(db, evm_env, inspector, tx_env)
+                let spec = self.hardfork().into();
+                self.transact_op_with_inspector_ref(db, evm_env, inspector, tx_env, spec)
             }
             CallTxEnv::Tempo(tx_env) => {
                 self.transact_tempo_with_inspector_ref(db, evm_env, inspector, tx_env)
@@ -5326,7 +5326,7 @@ where
         }
 
         if self.is_tempo() {
-            let tempo_env = self.build_tempo_evm_env(evm_env);
+            let tempo_env = Self::build_tempo_evm_env(evm_env, self.tempo_hardfork());
             let mut evm =
                 TempoEvmFactory::default().create_evm_with_inspector(db, tempo_env, inspector);
             return run!(evm);
@@ -8824,7 +8824,7 @@ where
             let mut inspector = self.build_inspector();
             let mut evm = TempoEvmFactory::default().create_evm_with_inspector(
                 WrapDatabaseRef(&cache_db),
-                self.build_tempo_evm_env(&evm_env),
+                Self::build_tempo_evm_env(&evm_env, self.tempo_hardfork()),
                 &mut inspector,
             );
             self.inject_tempo_precompiles(&mut evm, &evm_env);
