@@ -151,6 +151,11 @@ contract SymbolicCreateEip3541 is Test {
         checkMockProgress(address(0x1002), true);
     }
 
+    function checkRejectedPrefixExpectedCallsAndRevert() public {
+        checkExpectedCallAndRevert(address(0x2001), false);
+        checkExpectedCallAndRevert(address(0x2002), true);
+    }
+
     function warp(uint256 timestamp) external {
         vm.warp(timestamp);
     }
@@ -174,6 +179,19 @@ contract SymbolicCreateEip3541 is Test {
         }
         assert(created == address(0));
         assertEq(IMockSequenceTarget(target).value(), 2);
+    }
+
+    function checkExpectedCallAndRevert(address target, bool useCreate2) internal {
+        bytes memory callData = abi.encodeCall(IMockSequenceTarget.value, ());
+        vm.mockCall(target, callData, abi.encode(uint256(1)));
+        vm.expectCall(target, callData);
+        bytes memory rejectedRuntime = hex"ef";
+        vm.expectRevert(rejectedRuntime);
+        if (useCreate2) {
+            new ConsumeMockThenReject{salt: bytes32(uint256(2))}(IMockSequenceTarget(target));
+        } else {
+            new ConsumeMockThenReject(IMockSequenceTarget(target));
+        }
     }
 
     function checkAllowedPrefixBeforeLondon() public {
@@ -243,6 +261,10 @@ contract ConsumeMockThenReject {
 
     cmd.forge_fuse();
     cmd.args(["test", "--symbolic", "--match-test", "checkRejectedPrefixPreservesMockProgress"])
+        .assert_success();
+
+    cmd.forge_fuse();
+    cmd.args(["test", "--symbolic", "--match-test", "checkRejectedPrefixExpectedCallsAndRevert"])
         .assert_success();
 
     cmd.forge_fuse();
