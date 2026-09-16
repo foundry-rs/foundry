@@ -26,7 +26,7 @@ use crate::cmd::{
     send::SendTxArgs,
     storage::StorageArgs,
     storage_credits::StorageCreditsSubcommand,
-    tempo::TempoSubcommand,
+    tempo::TempoArgs,
     tip20::Tip20Subcommand,
     tip403::Tip403Subcommand,
     trace::TraceArgs,
@@ -1430,11 +1430,8 @@ pub enum CastSubcommand {
         command: KeyAuthorizationSubcommand,
     },
 
-    /// Tempo wallet integration (login, etc.).
-    Tempo {
-        #[command(subcommand)]
-        command: TempoSubcommand,
-    },
+    /// Tempo wallet and zone operations.
+    Tempo(TempoArgs),
 
     /// TIP-1022 virtual address registry operations (Tempo).
     #[command(visible_alias = "vaddr")]

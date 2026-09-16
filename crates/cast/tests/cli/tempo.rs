@@ -1232,3 +1232,20 @@ casttest!(tempo_mktx_selects_network_without_tempo_options, async |prj, cmd| {
             .stdout_eq(expected);
     }
 });
+
+casttest!(tempo_zone_rejects_zero_amount, |_prj, cmd| {
+    for args in [
+        vec!["tempo", "zone", "deposit", "--portal", "0x1111111111111111111111111111111111111111"],
+        vec!["tempo", "zone", "withdraw", "--zone-id", "42", "--zone-chain-id", "1337"],
+    ] {
+        cmd.cast_fuse()
+            .args(args)
+            .args(["--amount", "0"])
+            .assert_failure()
+            .stdout_eq("")
+            .stderr_eq(str![[r#"
+Error: amount must be greater than zero
+
+"#]]);
+    }
+});

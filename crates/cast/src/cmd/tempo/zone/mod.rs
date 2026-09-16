@@ -1,0 +1,325 @@
+//! Deposits to Tempo L1 portals and authenticated zone withdrawals.
+
+use crate::tempo::tempo_provider;
+use alloy_network::{EthereumWallet, primitives::ReceiptResponse};
+use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_provider::{Provider, ProviderBuilder};
+use alloy_rpc_types::BlockId;
+use alloy_signer::Signer;
+use clap::Parser;
+use eyre::{Result, WrapErr, ensure};
+use foundry_cli::{json::print_scalar, opts::RpcOpts, utils::LoadConfig};
+use foundry_common::{sh_status, shell};
+use foundry_wallets::{WalletOpts, WalletSigner};
+use std::time::Duration;
+use tempo_alloy::TempoNetwork;
+use tempo_contracts::precompiles::{ITIP20, PATH_USD_ADDRESS};
+
+mod abi;
+mod auth;
+mod encryption;
+
+/// Tempo zone operations.
+#[derive(Debug, Parser)]
+pub struct ZoneArgs {
+    #[command(subcommand)]
+    command: ZoneSubcommand,
+}
+
+#[derive(Debug, Parser)]
+enum ZoneSubcommand {
+    /// Encrypt a deposit and submit it to a portal on Tempo L1.
+    ///
+    /// --rpc-url selects the L1 RPC. The receipt confirms L1 submission, not zone completion.
+    Deposit(DepositArgs),
+    /// Request a withdrawal using the authenticated zone RPC.
+    ///
+    /// --rpc-url selects the zone RPC. The receipt confirms the request, not L1 settlement.
+    Withdraw(WithdrawArgs),
+}
+
+#[derive(Debug, Parser)]
+struct TransferArgs {
+    /// TIP-20 token address on the source chain.
+    #[arg(long, default_value_t = PATH_USD_ADDRESS)]
+    token: Address,
+    /// Amount in the token's smallest units.
+    #[arg(long)]
+    amount: u128,
+    /// Destination address. Defaults to the signing wallet.
+    #[arg(long)]
+    to: Option<Address>,
+    /// Transfer memo.
+    #[arg(long, default_value_t = B256::ZERO)]
+    memo: B256,
+    /// Approve the required amount (including withdrawal fees) if allowance is insufficient.
+    #[arg(long)]
+    approve: bool,
+    #[command(flatten)]
+    rpc: RpcOpts,
+    #[command(flatten)]
+    wallet: WalletOpts,
+}
+
+#[derive(Debug, Parser)]
+struct DepositArgs {
+    /// Zone portal address on Tempo L1.
+    #[arg(long, env = "L1_PORTAL_ADDRESS")]
+    portal: Address,
+    /// Tempo L1 refund recipient if the deposit fails. Defaults to the signing wallet.
+    #[arg(long)]
+    refund_recipient: Option<Address>,
+    #[command(flatten)]
+    transfer: TransferArgs,
+}
+
+#[derive(Debug, Parser)]
+struct WithdrawArgs {
+    /// Zone ID used to scope the RPC authorization token.
+    #[arg(long, env = "ZONE_ID")]
+    zone_id: u32,
+    /// Zone chain ID used to sign the RPC authorization token before connecting.
+    #[arg(long, env = "ZONE_CHAIN_ID")]
+    zone_chain_id: u64,
+    /// L1 callback gas limit. Zero disables the callback.
+    #[arg(long, default_value_t = 0)]
+    callback_gas_limit: u64,
+    /// Zone recipient for bounced withdrawals if L1 execution fails. Defaults to --to.
+    #[arg(long)]
+    fallback_recipient: Option<Address>,
+    /// L1 callback calldata.
+    #[arg(long, default_value = "0x")]
+    callback_data: Bytes,
+    /// Compressed secp256k1 key for revealing the withdrawal sender.
+    #[arg(long, default_value = "0x")]
+    reveal_to: Bytes,
+    #[command(flatten)]
+    transfer: TransferArgs,
+}
+
+impl ZoneArgs {
+    pub async fn run(self) -> Result<()> {
+        match self.command {
+            ZoneSubcommand::Deposit(args) => args.run().await,
+            ZoneSubcommand::Withdraw(args) => args.run().await,
+        }
+    }
+}
+
+impl TransferArgs {
+    async fn signer(&self) -> Result<WalletSigner> {
+        ensure!(!self.rpc.curl, "zone operations do not support --curl");
+        ensure!(self.amount > 0, "amount must be greater than zero");
+        let signer = self.wallet.signer().await?;
+        if let Some(from) = self.wallet.from {
+            ensure!(from == signer.address(), "--from does not match the signing wallet");
+        }
+        Ok(signer)
+    }
+
+    async fn ensure_allowance(
+        &self,
+        provider: &impl Provider<TempoNetwork>,
+        sender: Address,
+        spender: Address,
+        amount: u128,
+        gas_price: Option<u128>,
+    ) -> Result<()> {
+        let token = ITIP20::new(self.token, provider);
+        let amount = U256::from(amount);
+        if token.allowance(sender, spender).from(sender).call().await? < amount {
+            ensure!(
+                self.approve,
+                "insufficient token allowance for {spender}; use --approve to approve the deposit or withdrawal amount"
+            );
+            sh_status!("Approving {} for {}", amount, spender)?;
+            let mut approval = token.approve(spender, amount).from(sender);
+            if let Some(gas_price) = gas_price {
+                approval = approval.max_fee_per_gas(gas_price).max_priority_fee_per_gas(0);
+            }
+            let receipt = approval
+                .send()
+                .await?
+                .with_timeout(Some(Duration::from_secs(120)))
+                .get_receipt()
+                .await?;
+            ensure!(receipt.status(), "token approval reverted: {}", receipt.transaction_hash());
+        }
+        Ok(())
+    }
+}
+
+impl DepositArgs {
+    async fn run(self) -> Result<()> {
+        let signer = self.transfer.signer().await?;
+        let sender = signer.address();
+        let (_, provider) = tempo_provider(&self.transfer.rpc)?;
+        let provider = ProviderBuilder::new_with_network::<TempoNetwork>()
+            .wallet(EthereumWallet::from(signer))
+            .connect_provider(provider);
+        let portal = abi::IZonePortal::new(self.portal, &provider);
+        let block = provider.get_block_number().await?;
+        let key = portal
+            .encryptionKeyAtBlock(block)
+            .block(BlockId::number(block))
+            .call()
+            .await
+            .wrap_err("failed to fetch portal encryption key")?;
+        let payload = encryption::encrypt_deposit(
+            key.x,
+            key.yParity,
+            self.transfer.to.unwrap_or(sender),
+            self.transfer.memo,
+            sender,
+            self.portal,
+            key.keyIndex,
+        )?;
+        self.transfer
+            .ensure_allowance(&provider, sender, self.portal, self.transfer.amount, None)
+            .await?;
+        let receipt = portal
+            .deposit(
+                self.transfer.token,
+                self.transfer.amount,
+                key.keyIndex,
+                payload,
+                self.refund_recipient.unwrap_or(sender),
+            )
+            .from(sender)
+            .send()
+            .await?
+            .with_timeout(Some(Duration::from_secs(120)))
+            .get_receipt()
+            .await?;
+        ensure!(receipt.status(), "deposit reverted: {}", receipt.transaction_hash());
+        sh_status!("Deposit submitted on L1; zone processing is asynchronous.")?;
+        print_receipt(&receipt)
+    }
+}
+
+impl WithdrawArgs {
+    async fn run(self) -> Result<()> {
+        ensure!(self.zone_id != 0, "--zone-id must be nonzero");
+        ensure!(self.zone_chain_id != 0, "--zone-chain-id must be nonzero");
+        if !self.reveal_to.is_empty() {
+            ensure!(
+                self.reveal_to.len() == 33
+                    && k256::PublicKey::from_sec1_bytes(&self.reveal_to).is_ok(),
+                "--reveal-to must be a compressed secp256k1 public key"
+            );
+        }
+        let signer = self.transfer.signer().await?;
+        let sender = signer.address();
+        let token = auth::sign_token(&signer, self.zone_id, self.zone_chain_id)
+            .await
+            .wrap_err("wallet could not sign zone RPC authorization")?;
+        let mut config = self.transfer.rpc.load_config()?;
+        let headers = config.eth_rpc_headers.get_or_insert_default();
+        headers.retain(|header| {
+            !header
+                .split_once(':')
+                .is_some_and(|(name, _)| name.trim().eq_ignore_ascii_case(auth::HEADER))
+        });
+        headers.push(format!("{}: {token}", auth::HEADER));
+        let provider =
+            foundry_common::provider::ProviderBuilder::<TempoNetwork>::from_config(&config)?
+                .build()?;
+        let provider = ProviderBuilder::new_with_network::<TempoNetwork>()
+            .wallet(EthereumWallet::from(signer))
+            .connect_provider(provider);
+        ensure!(
+            provider.get_chain_id().await? == self.zone_chain_id,
+            "zone RPC chain ID differs from --zone-chain-id"
+        );
+        let outbox = abi::IZoneOutbox::new(abi::OUTBOX, &provider);
+        let fee =
+            outbox.calculateWithdrawalFee(self.callback_gas_limit).from(sender).call().await?;
+        let total = self
+            .transfer
+            .amount
+            .checked_add(fee)
+            .ok_or_else(|| eyre::eyre!("withdrawal amount plus fee exceeds uint128"))?;
+        // Use the private RPC's gas-price quote without requiring fee-history support.
+        let gas_price = provider.get_gas_price().await?;
+        self.transfer
+            .ensure_allowance(&provider, sender, abi::OUTBOX, total, Some(gas_price))
+            .await?;
+        let to = self.transfer.to.unwrap_or(sender);
+        let receipt = outbox
+            .requestWithdrawal(
+                self.transfer.token,
+                to,
+                self.transfer.amount,
+                self.transfer.memo,
+                self.callback_gas_limit,
+                self.fallback_recipient.unwrap_or(to),
+                self.callback_data,
+                self.reveal_to,
+            )
+            .max_fee_per_gas(gas_price)
+            .max_priority_fee_per_gas(0)
+            .from(sender)
+            .send()
+            .await?
+            .with_timeout(Some(Duration::from_secs(120)))
+            .get_receipt()
+            .await?;
+        ensure!(receipt.status(), "withdrawal reverted: {}", receipt.transaction_hash());
+        sh_status!("Withdrawal requested on the zone; L1 settlement is asynchronous.")?;
+        print_receipt(&receipt)
+    }
+}
+
+fn print_receipt(receipt: &(impl ReceiptResponse + serde::Serialize)) -> Result<()> {
+    if shell::is_json() {
+        foundry_common::sh_println!("{}", serde_json::to_string(receipt)?)?;
+        Ok(())
+    } else {
+        print_scalar(receipt.transaction_hash())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cmd::tempo::{TempoArgs, TempoSubcommand};
+
+    #[test]
+    fn zone_commands_accept_cast_keystore_wallets() {
+        for args in [
+            vec![
+                "tempo",
+                "zone",
+                "deposit",
+                "--portal",
+                "0x1111111111111111111111111111111111111111",
+                "--amount",
+                "1000000",
+                "--account",
+                "zone-test",
+                "--password-file",
+                "/tmp/password",
+                "--approve",
+            ],
+            vec![
+                "tempo",
+                "zone",
+                "withdraw",
+                "--zone-id",
+                "42",
+                "--zone-chain-id",
+                "1337",
+                "--amount",
+                "1000000",
+                "--account",
+                "zone-test",
+                "--password-file",
+                "/tmp/password",
+                "--approve",
+            ],
+        ] {
+            let tempo = TempoArgs::try_parse_from(args).unwrap();
+            assert!(matches!(tempo.command, TempoSubcommand::Zone(_)));
+        }
+    }
+}

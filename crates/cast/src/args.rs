@@ -1261,7 +1261,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::StorageCredits { command } => command.run().await?,
         CastSubcommand::Keychain { command } => command.run().await?,
         CastSubcommand::KeyAuthorization { command } => command.run().await?,
-        CastSubcommand::Tempo { command } => command.run().await?,
+        CastSubcommand::Tempo(args) => args.run().await?,
         CastSubcommand::VirtualAddress { command } => command.run().await?,
         #[cfg(feature = "optimism")]
         CastSubcommand::DAEstimate(cmd) => cmd.run().await?,

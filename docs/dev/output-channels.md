@@ -97,6 +97,7 @@ Each row's status is one of:
 | ---------------------- | ---------------------------------------------------- | -------------------------------------------------------------- | ------ |
 | `cast call`            | Return value (hex / decoded)                         | JSON of return value                                           | migrated |
 | `cast send`            | Receipt (or tx hash with `--async`)                  | JSON receipt (or hex tx hash with `--async`)                   | migrated |
+| `cast tempo zone deposit/withdraw` | Source-chain transaction hash | Source-chain receipt | migrated |
 | `cast estimate`        | Gas estimate (decimal)                               | JSON `{ "gas": "…" }`                                          | migrated |
 | `cast rpc`             | RPC result (JSON)                                    | JSON                                                           | migrated |
 | `cast storage`         | Single slot value                                    | JSON of layout                                                 | migrated |
