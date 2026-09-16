@@ -5,7 +5,7 @@ use alloy_primitives::map::AddressSet;
 use foundry_common::ContractsByArtifact;
 use foundry_evm::traces::{
     CallTraceDecoder,
-    identifier::{ExternalPrefetcher, TraceIdentifier, TraceIdentifiers, unidentified_nodes},
+    identifier::{ExternalPrefetcher, TraceIdentifiers},
 };
 
 /// Decides whether a finished test's traces get identified when its suite is rendered.
@@ -22,6 +22,7 @@ pub struct TracePrefetcher {
     /// Applies the same node filter as the rendering decoder.
     decoder: CallTraceDecoder,
     known_contracts: ContractsByArtifact,
+    identify_from_bytecodes: bool,
     identifies_traces: IdentifiesTraces,
 }
 
@@ -38,9 +39,10 @@ impl TracePrefetcher {
         external: ExternalPrefetcher,
         decoder: CallTraceDecoder,
         known_contracts: ContractsByArtifact,
+        identify_from_bytecodes: bool,
         identifies_traces: IdentifiesTraces,
     ) -> Self {
-        Self { external, decoder, known_contracts, identifies_traces }
+        Self { external, decoder, known_contracts, identify_from_bytecodes, identifies_traces }
     }
 
     /// Schedules lookups for the addresses in `result`'s traces that local identification
@@ -49,13 +51,21 @@ impl TracePrefetcher {
         if !(self.identifies_traces)(result) {
             return;
         }
-        let mut local = TraceIdentifiers::new().with_local(&self.known_contracts);
+        let mut decoder = self.decoder.clone();
+        decoder
+            .labels
+            .extend(result.labels.iter().map(|(address, label)| (*address, label.clone())));
+        let mut local = if !self.identify_from_bytecodes || result.debug_bytecodes.is_empty() {
+            TraceIdentifiers::new().with_local(&self.known_contracts)
+        } else {
+            TraceIdentifiers::new()
+                .with_local_and_bytecodes(&self.known_contracts, &result.debug_bytecodes)
+        };
         let mut addresses = AddressSet::default();
         for (_, arena) in &result.traces {
-            let nodes = self.decoder.unidentified_nodes(&arena.arena);
-            let identities = local.identify_addresses(&nodes);
+            decoder.identify(&arena.arena, &mut local);
             addresses.extend(
-                unidentified_nodes(&nodes, &identities).iter().map(|node| node.trace.address),
+                decoder.unidentified_nodes(&arena.arena).iter().map(|node| node.trace.address),
             );
         }
         self.external.prefetch(addresses);

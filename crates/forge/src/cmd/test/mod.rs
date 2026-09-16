@@ -2417,6 +2417,7 @@ impl TestArgs {
                 external.prefetcher(tokio::runtime::Handle::current()),
                 decoder,
                 known_contracts.clone(),
+                self.debug,
                 Box::new(move |result| {
                     always_identify_traces
                         || renders_trace(

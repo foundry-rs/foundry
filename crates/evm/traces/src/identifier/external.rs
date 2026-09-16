@@ -25,13 +25,13 @@ use std::{
     },
 };
 use tokio::{
-    sync::Notify,
-    time::{Duration, Interval},
+    sync::{Notify, Semaphore},
+    time::Duration,
 };
 
 /// A trace identifier that tries to identify addresses using Etherscan.
 pub struct ExternalIdentifier {
-    fetchers: Arc<[Arc<dyn ExternalFetcherT>]>,
+    fetchers: Arc<[Arc<SharedFetcher>]>,
     /// Lookup results, shared with every [`ExternalPrefetcher`] created from this identifier.
     cache: Arc<Cache>,
     /// Time a single background prefetch may run before it is abandoned.
@@ -89,7 +89,7 @@ impl ExternalIdentifier {
 
     fn with_fetchers(fetchers: Vec<Arc<dyn ExternalFetcherT>>, timeout: Duration) -> Self {
         Self {
-            fetchers: fetchers.into(),
+            fetchers: fetchers.into_iter().map(SharedFetcher::new).collect(),
             cache: Arc::new(Cache::new(timeout)),
             prefetch_timeout: timeout,
         }
@@ -181,7 +181,7 @@ impl ExternalIdentifier {
         }
     }
 
-    /// Resolves `addresses` that are not cached yet, blocking for at most the remaining budget.
+    /// Fully resolves `addresses`, blocking for at most the remaining budget.
     ///
     /// Addresses with a prefetch in flight are awaited rather than fetched again. Time spent here
     /// is charged to the budget, and a timeout spends all of it.
@@ -191,15 +191,20 @@ impl ExternalIdentifier {
             return;
         }
 
-        let (to_fetch, to_await) = self.cache.claim(addresses);
         let started = tokio::time::Instant::now();
-        let timed_out = tokio::time::timeout(
-            budget,
-            futures::future::join(
-                fetch_batch(&self.fetchers, &self.cache, to_fetch),
-                self.cache.settled(&to_await),
-            ),
-        )
+        let timed_out = tokio::time::timeout(budget, async {
+            loop {
+                let (to_fetch, to_await) = self.cache.claim(addresses);
+                if to_fetch.is_empty() && to_await.is_empty() {
+                    break;
+                }
+                futures::future::join(
+                    fetch_batch(&self.fetchers, &self.cache, to_fetch),
+                    self.cache.settled(&to_await),
+                )
+                .await;
+            }
+        })
         .await
         .is_err();
         self.cache.spend(started.elapsed(), timed_out);
@@ -235,7 +240,7 @@ impl ExternalIdentifier {
                 chains
                     .iter()
                     .filter_map(|chain| chain.current)
-                    .filter(|address| !state.contracts.contains_key(address))
+                    .filter(|address| !state.completed.contains(address))
                     .collect::<HashSet<_>>()
                     .into_iter()
                     .collect::<Vec<_>>()
@@ -296,39 +301,38 @@ impl TraceIdentifier for ExternalIdentifier {
 
         trace!(target: "evm::traces::external", "identify {} addresses", nodes.len());
 
-        let mut identities = Vec::new();
-        let mut to_fetch = AddressSet::default();
+        let addresses = nodes.iter().map(|node| node.trace.address).collect::<AddressSet>();
+        let mut identities = Vec::with_capacity(addresses.len());
+        let mut unresolved = Vec::new();
 
         // Check cache first.
         {
             let state = self.cache.state();
-            for &node in nodes {
-                let address = node.trace.address;
-                if let Some((_, metadata)) = state.contracts.get(&address) {
+            for address in addresses {
+                if !state.completed.contains(&address) {
+                    unresolved.push(address);
+                } else if let Some((_, metadata)) = state.contracts.get(&address) {
                     if let Some(metadata) = metadata {
                         identities.push(Self::identify_from_metadata(address, metadata));
                     } else {
                         // Do nothing. We know that this contract was not verified.
                     }
                 } else {
-                    to_fetch.insert(address);
+                    unresolved.push(address);
                 }
             }
         }
 
-        if to_fetch.is_empty() {
+        if unresolved.is_empty() {
             return identities;
         }
-        if self.remaining_budget().is_zero() {
-            return identities;
+        if !self.remaining_budget().is_zero() {
+            trace!(target: "evm::traces::external", "fetching {} addresses", unresolved.len());
+            foundry_common::block_on(self.fetch_addresses_async(&unresolved));
         }
-        trace!(target: "evm::traces::external", "fetching {} addresses", to_fetch.len());
-
-        let to_fetch = to_fetch.into_iter().collect::<Vec<_>>();
-        foundry_common::block_on(self.fetch_addresses_async(&to_fetch));
 
         let state = self.cache.state();
-        for address in to_fetch {
+        for address in unresolved {
             if let Some((_, Some(metadata))) = state.contracts.get(&address) {
                 identities.push(Self::identify_from_metadata(address, metadata));
             }
@@ -348,7 +352,7 @@ impl TraceIdentifier for ExternalIdentifier {
 /// [`identify_addresses`]: TraceIdentifier::identify_addresses
 #[derive(Clone)]
 pub struct ExternalPrefetcher {
-    fetchers: Arc<[Arc<dyn ExternalFetcherT>]>,
+    fetchers: Arc<[Arc<SharedFetcher>]>,
     cache: Arc<Cache>,
     /// Time a single prefetch may run before it is abandoned.
     timeout: Duration,
@@ -398,6 +402,8 @@ struct CacheState {
     contracts: HashMap<Address, (FetcherKind, Option<Metadata>)>,
     /// Addresses with a lookup in progress.
     in_flight: AddressSet,
+    /// Addresses for which every fetcher has finished.
+    completed: AddressSet,
     /// Remaining time external identification may block trace rendering.
     remaining_budget: Duration,
 }
@@ -414,11 +420,21 @@ impl Cache {
         self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// Splits `addresses` into the ones to fetch now, marking them in flight, and the ones with
-    /// a lookup already in flight.
+    /// Splits unresolved `addresses` into the ones to fetch now, marking them in flight, and the
+    /// ones with a lookup already in flight. Completed addresses are omitted.
     fn claim(&self, addresses: &[Address]) -> (Vec<Address>, Vec<Address>) {
         let mut state = self.state();
-        addresses.iter().copied().partition(|address| state.in_flight.insert(*address))
+        let mut to_fetch = Vec::new();
+        let mut to_await = Vec::new();
+        for &address in addresses {
+            if state.in_flight.contains(&address) {
+                to_await.push(address);
+            } else if !state.completed.contains(&address) {
+                state.in_flight.insert(address);
+                to_fetch.push(address);
+            }
+        }
+        (to_fetch, to_await)
     }
 
     /// Marks the addresses of `addresses` that are neither cached nor in flight as in flight and
@@ -431,7 +447,7 @@ impl Cache {
         addresses
             .into_iter()
             .filter(|address| {
-                !state.contracts.contains_key(address) && state.in_flight.insert(*address)
+                !state.completed.contains(address) && state.in_flight.insert(*address)
             })
             .collect()
     }
@@ -461,7 +477,16 @@ impl Cache {
                 vacant_entry.insert(value);
             }
         }
-        state.in_flight.remove(&address);
+    }
+
+    /// Records negative results for addresses no fetcher yielded and settles the batch.
+    fn complete(&self, addresses: &[Address]) {
+        let mut state = self.state();
+        for &address in addresses {
+            state.contracts.entry(address).or_insert((FetcherKind::Sourcify, None));
+            state.in_flight.remove(&address);
+            state.completed.insert(address);
+        }
         drop(state);
         self.notify.notify_waiters();
     }
@@ -500,45 +525,96 @@ impl Cache {
 
 /// Runs every fetcher over `addresses` and records each result in `cache`.
 ///
-/// Addresses still in flight when this future completes or is dropped are released, so a
-/// cancelled batch never leaves a waiter behind.
-async fn fetch_batch(
-    fetchers: &[Arc<dyn ExternalFetcherT>],
-    cache: &Cache,
-    addresses: Vec<Address>,
-) {
+/// Addresses settle after every fetcher finishes. If this future is dropped, its in-flight marks
+/// are released so a cancelled batch never leaves a waiter behind.
+async fn fetch_batch(fetchers: &[Arc<SharedFetcher>], cache: &Cache, addresses: Vec<Address>) {
     if addresses.is_empty() {
         return;
     }
-    let _release = ReleaseOnDrop { cache, addresses: &addresses };
+    let mut release = ReleaseOnDrop { cache, addresses: &addresses, active: true };
     let fetchers =
         fetchers.iter().map(|fetcher| ExternalFetcher::new(Arc::clone(fetcher), &addresses));
     let mut fetched = futures::stream::select_all(fetchers);
     while let Some((address, value)) = fetched.next().await {
         cache.insert(address, value);
     }
+    cache.complete(&addresses);
+    release.active = false;
 }
 
 struct ReleaseOnDrop<'a> {
     cache: &'a Cache,
     addresses: &'a [Address],
+    active: bool,
 }
 
 impl Drop for ReleaseOnDrop<'_> {
     fn drop(&mut self) {
-        self.cache.release(self.addresses);
+        if self.active {
+            self.cache.release(self.addresses);
+        }
     }
 }
 
 type FetchFuture =
     Pin<Box<dyn Future<Output = (Address, Result<Option<Metadata>, EtherscanError>)> + Send>>;
 
-/// Maximum number of times a single address is retried through a transient Cloudflare
-/// block before we give up on it. Bounded so a persistent block can't loop forever.
+/// Maximum number of times a single address is retried through a transient Cloudflare block before
+/// we give up on it. Bounded so a persistent block can't loop forever.
 const MAX_CLOUDFLARE_RETRIES: u32 = 5;
 
-fn backoff_interval(period: Duration) -> Interval {
-    tokio::time::interval_at(tokio::time::Instant::now() + period, period)
+/// Shared concurrency and backoff state for one external provider.
+struct SharedFetcher {
+    provider: Arc<dyn ExternalFetcherT>,
+    permits: Semaphore,
+    backoff_until: Mutex<Option<tokio::time::Instant>>,
+}
+
+impl SharedFetcher {
+    fn new(provider: Arc<dyn ExternalFetcherT>) -> Arc<Self> {
+        Arc::new(Self {
+            permits: Semaphore::new(provider.concurrency()),
+            provider,
+            backoff_until: Mutex::new(None),
+        })
+    }
+
+    async fn fetch(&self, address: Address) -> Result<Option<Metadata>, EtherscanError> {
+        loop {
+            let backoff_deadline =
+                *self.backoff_until.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            if let Some(deadline) = backoff_deadline
+                && deadline > tokio::time::Instant::now()
+            {
+                tokio::time::sleep_until(deadline).await;
+            }
+
+            let permit = self.permits.acquire().await.expect("fetcher semaphore is never closed");
+            let backoff_deadline =
+                *self.backoff_until.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            if let Some(deadline) = backoff_deadline
+                && deadline > tokio::time::Instant::now()
+            {
+                drop(permit);
+                tokio::time::sleep_until(deadline).await;
+                continue;
+            }
+
+            let result = self.provider.fetch(address).await;
+            if matches!(
+                result,
+                Err(EtherscanError::RateLimitExceeded | EtherscanError::BlockedByCloudflare)
+            ) {
+                let deadline = tokio::time::Instant::now() + self.provider.timeout();
+                let mut backoff =
+                    self.backoff_until.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                if backoff.is_none_or(|current| current < deadline) {
+                    *backoff = Some(deadline);
+                }
+            }
+            return result;
+        }
+    }
 }
 
 /// A rate limit aware fetcher.
@@ -546,11 +622,7 @@ fn backoff_interval(period: Duration) -> Interval {
 /// Fetches information about multiple addresses concurrently, while respecting rate limits.
 struct ExternalFetcher {
     /// The fetcher
-    fetcher: Arc<dyn ExternalFetcherT>,
-    /// The time we wait if we hit the rate limit
-    timeout: Duration,
-    /// The interval we are currently waiting for before making a new request
-    backoff: Option<Interval>,
+    fetcher: Arc<SharedFetcher>,
     /// The maximum amount of requests to send concurrently
     concurrency: usize,
     /// The addresses we have yet to make requests for
@@ -562,11 +634,9 @@ struct ExternalFetcher {
 }
 
 impl ExternalFetcher {
-    fn new(fetcher: Arc<dyn ExternalFetcherT>, to_fetch: &[Address]) -> Self {
+    fn new(fetcher: Arc<SharedFetcher>, to_fetch: &[Address]) -> Self {
         Self {
-            timeout: fetcher.timeout(),
-            backoff: None,
-            concurrency: fetcher.concurrency(),
+            concurrency: fetcher.provider.concurrency(),
             fetcher,
             queue: to_fetch.to_vec(),
             in_progress: FuturesUnordered::new(),
@@ -592,23 +662,15 @@ impl Stream for ExternalFetcher {
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let pin = self.get_mut();
+        let kind = pin.fetcher.provider.kind();
 
-        let _guard =
-            info_span!("evm::traces::external", kind=?pin.fetcher.kind(), "ExternalFetcher")
-                .entered();
+        let _guard = info_span!("evm::traces::external", ?kind, "ExternalFetcher").entered();
 
-        if pin.fetcher.invalid_api_key().load(Ordering::Relaxed) {
+        if pin.fetcher.provider.invalid_api_key().load(Ordering::Relaxed) {
             return Poll::Ready(None);
         }
 
         loop {
-            if let Some(mut backoff) = pin.backoff.take()
-                && backoff.poll_tick(cx).is_pending()
-            {
-                pin.backoff = Some(backoff);
-                return Poll::Pending;
-            }
-
             pin.queue_next_reqs();
 
             let mut made_progress_this_iter = false;
@@ -619,20 +681,19 @@ impl Stream for ExternalFetcher {
                     made_progress_this_iter = true;
                     match res {
                         Ok(metadata) => {
-                            return Poll::Ready(Some((addr, (pin.fetcher.kind(), metadata))));
+                            return Poll::Ready(Some((addr, (kind, metadata))));
                         }
                         Err(EtherscanError::ContractCodeNotVerified(_)) => {
-                            return Poll::Ready(Some((addr, (pin.fetcher.kind(), None))));
+                            return Poll::Ready(Some((addr, (kind, None))));
                         }
                         Err(EtherscanError::RateLimitExceeded) => {
                             warn!(target: "evm::traces::external", "rate limit exceeded on attempt");
-                            pin.backoff = Some(backoff_interval(pin.timeout));
                             pin.queue.push(addr);
                         }
                         Err(EtherscanError::InvalidApiKey) => {
                             warn!(target: "evm::traces::external", "invalid api key");
                             // mark key as invalid
-                            pin.fetcher.invalid_api_key().store(true, Ordering::Relaxed);
+                            pin.fetcher.provider.invalid_api_key().store(true, Ordering::Relaxed);
                             return Poll::Ready(None);
                         }
                         Err(EtherscanError::BlockedByCloudflare) => {
@@ -648,17 +709,16 @@ impl Stream for ExternalFetcher {
                             };
                             if attempts <= MAX_CLOUDFLARE_RETRIES {
                                 warn!(target: "evm::traces::external", attempts, "blocked by cloudflare, backing off");
-                                pin.backoff = Some(backoff_interval(pin.timeout));
                                 pin.queue.push(addr);
                             } else {
                                 warn!(target: "evm::traces::external", "blocked by cloudflare, giving up on address");
-                                return Poll::Ready(Some((addr, (pin.fetcher.kind(), None))));
+                                return Poll::Ready(Some((addr, (kind, None))));
                             }
                         }
                         Err(err) => {
                             warn!(target: "evm::traces::external", ?err, "could not get info");
                             // Cache the failure so we don't re-fetch on subsequent arenas.
-                            return Poll::Ready(Some((addr, (pin.fetcher.kind(), None))));
+                            return Poll::Ready(Some((addr, (kind, None))));
                         }
                     }
                 }
@@ -919,6 +979,108 @@ mod tests {
         }
     }
 
+    struct ConcurrentFetcher {
+        active: Arc<AtomicUsize>,
+        max_active: Arc<AtomicUsize>,
+        calls: Arc<AtomicUsize>,
+        invalid: AtomicBool,
+    }
+
+    #[async_trait::async_trait]
+    impl ExternalFetcherT for ConcurrentFetcher {
+        fn kind(&self) -> FetcherKind {
+            FetcherKind::Sourcify
+        }
+
+        fn timeout(&self) -> Duration {
+            Duration::from_millis(1)
+        }
+
+        fn concurrency(&self) -> usize {
+            2
+        }
+
+        fn invalid_api_key(&self) -> &AtomicBool {
+            &self.invalid
+        }
+
+        async fn fetch(&self, _address: Address) -> Result<Option<Metadata>, EtherscanError> {
+            self.calls.fetch_add(1, AtomicOrdering::Relaxed);
+            let active = self.active.fetch_add(1, AtomicOrdering::Relaxed) + 1;
+            self.max_active.fetch_max(active, AtomicOrdering::Relaxed);
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            self.active.fetch_sub(1, AtomicOrdering::Relaxed);
+            Ok(None)
+        }
+    }
+
+    struct OnceRateLimitedFetcher {
+        calls: Arc<AtomicUsize>,
+        first_response: Arc<Notify>,
+        invalid: AtomicBool,
+    }
+
+    #[async_trait::async_trait]
+    impl ExternalFetcherT for OnceRateLimitedFetcher {
+        fn kind(&self) -> FetcherKind {
+            FetcherKind::Sourcify
+        }
+
+        fn timeout(&self) -> Duration {
+            Duration::from_millis(50)
+        }
+
+        fn concurrency(&self) -> usize {
+            1
+        }
+
+        fn invalid_api_key(&self) -> &AtomicBool {
+            &self.invalid
+        }
+
+        async fn fetch(&self, _address: Address) -> Result<Option<Metadata>, EtherscanError> {
+            if self.calls.fetch_add(1, AtomicOrdering::Relaxed) == 0 {
+                self.first_response.notified().await;
+                Err(EtherscanError::RateLimitExceeded)
+            } else {
+                Ok(None)
+            }
+        }
+    }
+
+    struct AbandonedFetcher {
+        kind: FetcherKind,
+        calls: Arc<AtomicUsize>,
+        invalid: AtomicBool,
+    }
+
+    #[async_trait::async_trait]
+    impl ExternalFetcherT for AbandonedFetcher {
+        fn kind(&self) -> FetcherKind {
+            self.kind
+        }
+
+        fn timeout(&self) -> Duration {
+            Duration::from_millis(1)
+        }
+
+        fn concurrency(&self) -> usize {
+            1
+        }
+
+        fn invalid_api_key(&self) -> &AtomicBool {
+            &self.invalid
+        }
+
+        async fn fetch(&self, _address: Address) -> Result<Option<Metadata>, EtherscanError> {
+            if self.calls.fetch_add(1, AtomicOrdering::Relaxed) == 0 {
+                pending().await
+            } else {
+                Ok(Some(metadata("Retried")))
+            }
+        }
+    }
+
     fn metadata(contract_name: &str) -> Metadata {
         SourcifyMetadata {
             abi: None,
@@ -983,7 +1145,8 @@ mod tests {
             invalid: AtomicBool::new(false),
         });
 
-        let collected: Vec<_> = ExternalFetcher::new(fetcher, &addrs).collect().await;
+        let collected: Vec<_> =
+            ExternalFetcher::new(SharedFetcher::new(fetcher), &addrs).collect().await;
 
         let got: StdHashSet<Address> = collected.into_iter().map(|(addr, _)| addr).collect();
         let want: StdHashSet<Address> = addrs.into_iter().collect();
@@ -1212,6 +1375,166 @@ mod tests {
         let budget = identifier.remaining_budget();
         assert!(!budget.is_zero());
         assert!(budget < Duration::from_secs(5), "waiting is charged to the budget");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn identify_waits_for_preferred_fetcher_after_partial_result() {
+        let sourcify_calls = Arc::new(AtomicUsize::new(0));
+        let etherscan_calls = Arc::new(AtomicUsize::new(0));
+        let fetchers: Vec<Arc<dyn ExternalFetcherT>> = vec![
+            Arc::new(TestFetcher {
+                kind: FetcherKind::Sourcify,
+                delay: Some(Duration::ZERO),
+                contract_name: Some("SourcifyResult"),
+                calls: Arc::clone(&sourcify_calls),
+                invalid: AtomicBool::new(false),
+            }),
+            Arc::new(TestFetcher {
+                kind: FetcherKind::Etherscan,
+                delay: Some(Duration::from_millis(50)),
+                contract_name: Some("EtherscanResult"),
+                calls: Arc::clone(&etherscan_calls),
+                invalid: AtomicBool::new(false),
+            }),
+        ];
+        let mut identifier = test_identifier(fetchers, Duration::from_secs(1));
+        let address = Address::with_last_byte(1);
+
+        identifier.prefetcher(tokio::runtime::Handle::current()).prefetch([address]);
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if identifier.cache.state().contracts.contains_key(&address) {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(identifier.cache.state().in_flight.contains(&address));
+
+        let identities = identifier.identify_addresses(&[&node(address)]);
+
+        assert_eq!(identities[0].label.as_deref(), Some("EtherscanResult"));
+        assert_eq!(sourcify_calls.load(AtomicOrdering::Relaxed), 1);
+        assert_eq!(etherscan_calls.load(AtomicOrdering::Relaxed), 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn prefetch_concurrency_is_shared_across_batches() {
+        let active = Arc::new(AtomicUsize::new(0));
+        let max_active = Arc::new(AtomicUsize::new(0));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let fetcher: Arc<dyn ExternalFetcherT> = Arc::new(ConcurrentFetcher {
+            active: Arc::clone(&active),
+            max_active: Arc::clone(&max_active),
+            calls: Arc::clone(&calls),
+            invalid: AtomicBool::new(false),
+        });
+        let identifier = test_identifier(vec![fetcher], Duration::from_secs(1));
+        let prefetcher = identifier.prefetcher(tokio::runtime::Handle::current());
+        let addresses = (1..=6).map(Address::with_last_byte).collect::<Vec<_>>();
+
+        for &address in &addresses {
+            prefetcher.prefetch([address]);
+        }
+        tokio::time::timeout(Duration::from_secs(1), identifier.cache.settled(&addresses))
+            .await
+            .unwrap();
+
+        assert_eq!(calls.load(AtomicOrdering::Relaxed), addresses.len());
+        assert_eq!(max_active.load(AtomicOrdering::Relaxed), 2);
+        assert_eq!(active.load(AtomicOrdering::Relaxed), 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn rate_limit_backoff_is_shared_across_batches() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let first_response = Arc::new(Notify::new());
+        let fetcher: Arc<dyn ExternalFetcherT> = Arc::new(OnceRateLimitedFetcher {
+            calls: Arc::clone(&calls),
+            first_response: Arc::clone(&first_response),
+            invalid: AtomicBool::new(false),
+        });
+        let identifier = test_identifier(vec![fetcher], Duration::from_secs(1));
+        let prefetcher = identifier.prefetcher(tokio::runtime::Handle::current());
+        let addresses = [Address::with_last_byte(1), Address::with_last_byte(2)];
+
+        prefetcher.prefetch([addresses[0]]);
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while calls.load(AtomicOrdering::Relaxed) == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        prefetcher.prefetch([addresses[1]]);
+        first_response.notify_one();
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        assert_eq!(calls.load(AtomicOrdering::Relaxed), 1);
+
+        tokio::time::timeout(Duration::from_secs(1), identifier.cache.settled(&addresses))
+            .await
+            .unwrap();
+        assert_eq!(calls.load(AtomicOrdering::Relaxed), 3);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn identify_retries_an_abandoned_prefetch_with_remaining_budget() {
+        let sourcify_calls = Arc::new(AtomicUsize::new(0));
+        let etherscan_calls = Arc::new(AtomicUsize::new(0));
+        let fetchers: Vec<Arc<dyn ExternalFetcherT>> = vec![
+            Arc::new(TestFetcher {
+                kind: FetcherKind::Sourcify,
+                delay: Some(Duration::ZERO),
+                contract_name: Some("Partial"),
+                calls: Arc::clone(&sourcify_calls),
+                invalid: AtomicBool::new(false),
+            }),
+            Arc::new(AbandonedFetcher {
+                kind: FetcherKind::Etherscan,
+                calls: Arc::clone(&etherscan_calls),
+                invalid: AtomicBool::new(false),
+            }),
+        ];
+        let mut identifier = test_identifier(fetchers, Duration::from_secs(1));
+        let prefetcher = ExternalPrefetcher {
+            fetchers: Arc::clone(&identifier.fetchers),
+            cache: Arc::clone(&identifier.cache),
+            timeout: Duration::from_millis(20),
+            handle: tokio::runtime::Handle::current(),
+        };
+        let address = Address::with_last_byte(1);
+
+        prefetcher.prefetch([address]);
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while etherscan_calls.load(AtomicOrdering::Relaxed) == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+
+        let identities = identifier.identify_addresses(&[&node(address)]);
+
+        assert_eq!(identities[0].label.as_deref(), Some("Retried"));
+        assert_eq!(sourcify_calls.load(AtomicOrdering::Relaxed), 2);
+        assert_eq!(etherscan_calls.load(AtomicOrdering::Relaxed), 2);
+        assert!(!identifier.remaining_budget().is_zero());
+    }
+
+    #[test]
+    fn claim_skips_addresses_cached_after_the_initial_lookup() {
+        let identifier = test_identifier(Vec::new(), Duration::from_secs(1));
+        let address = Address::with_last_byte(1);
+        identifier.cache.insert(address, (FetcherKind::Sourcify, Some(metadata("Cached"))));
+        identifier.cache.complete(&[address]);
+
+        let (to_fetch, to_await) = identifier.cache.claim(&[address]);
+
+        assert!(to_fetch.is_empty());
+        assert!(to_await.is_empty());
+        assert!(identifier.cache.state().in_flight.is_empty());
     }
 
     #[tokio::test(flavor = "multi_thread")]

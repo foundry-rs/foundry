@@ -71,20 +71,17 @@ impl TraceIdentifier for TraceIdentifiers<'_> {
             }
         }
         if let Some(external) = &mut self.external {
-            let nodes = unidentified_nodes(nodes, &identities);
+            let identified =
+                identities.iter().map(|identity| identity.address).collect::<AddressSet>();
+            let nodes = nodes
+                .iter()
+                .copied()
+                .filter(|node| !identified.contains(&node.trace.address))
+                .collect::<Vec<_>>();
             identities.extend(external.identify_addresses(&nodes));
         }
         identities
     }
-}
-
-/// Returns the nodes of `nodes` whose address has no entry in `identities`.
-pub fn unidentified_nodes<'n>(
-    nodes: &[&'n CallTraceNode],
-    identities: &[IdentifiedAddress<'_>],
-) -> Vec<&'n CallTraceNode> {
-    let identified = identities.iter().map(|identity| identity.address).collect::<AddressSet>();
-    nodes.iter().copied().filter(|node| !identified.contains(&node.trace.address)).collect()
 }
 
 impl<'a> TraceIdentifiers<'a> {
@@ -119,31 +116,5 @@ impl<'a> TraceIdentifiers<'a> {
     /// Returns `true` if there are no set identifiers.
     pub const fn is_empty(&self) -> bool {
         self.local.is_none() && self.external.is_none()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn unidentified_nodes_drops_identified_addresses() {
-        let mut identified = CallTraceNode::default();
-        identified.trace.address = Address::with_last_byte(1);
-        let mut unidentified = CallTraceNode::default();
-        unidentified.trace.address = Address::with_last_byte(2);
-        let identities = [IdentifiedAddress {
-            address: identified.trace.address,
-            label: None,
-            contract: None,
-            abi: None,
-            constructor_args_offset: None,
-            artifact_id: None,
-        }];
-
-        let remaining = unidentified_nodes(&[&identified, &unidentified], &identities);
-
-        assert_eq!(remaining.len(), 1);
-        assert_eq!(remaining[0].trace.address, unidentified.trace.address);
     }
 }
