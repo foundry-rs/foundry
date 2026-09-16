@@ -47,13 +47,12 @@ pub(crate) fn build_mined_deposit_receipt<H>(
 
 /// Builds an RPC-simulated OP deposit receipt and derives its fork-specific metadata.
 pub(crate) fn build_simulated_deposit_receipt<H>(
-    hardfork: FoundryHardfork,
+    hardfork: OpHardfork,
     caller_nonce: u64,
     result: &ExecutionResult<H>,
     logs: Vec<Log>,
     cumulative_gas_used: u64,
 ) -> FoundryReceiptEnvelope {
-    let hardfork = OpHardfork::from(hardfork);
     let deposit_nonce = (hardfork >= OpHardfork::Regolith).then_some(caller_nonce);
     let deposit_receipt_version = (hardfork >= OpHardfork::Canyon).then_some(1);
     let receipt =
