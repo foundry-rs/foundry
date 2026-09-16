@@ -1,0 +1,12 @@
+name = "Solidity"
+grammar = "solidity"
+path_suffixes = ["sol"]
+line_comments = ["// "]
+block_comment = ["/*", "*/"]
+autoclose_before = ";:.,=}])>"
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = true },
+    { start = "(", end = ")", close = true, newline = true },
+]
+word_characters = ["_", "$"]

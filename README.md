@@ -70,18 +70,25 @@ Read the [Foundry Docs][foundry-docs] to learn more.
 
 ### Solidity editor integration
 
-Configure your editor's Solidity language server command as `forge lsp`. The
-server is embedded in Forge, so the standalone `solar` executable is not
-required. Solar uses `foundry.toml`, workspace folders, remappings, and
-`evm_version` from the project automatically.
+With VS Code installed, run `forge lsp` from your Solidity project's terminal.
+Forge opens that project in a VS Code Extension Development Host with its bundled
+Solidity extension. No Foundry checkout, extension build, or separate Solar
+installation is needed. See the [editor guide](editors/README.md) for setup and
+client development.
+
+For other editors, configure the Solidity language server command as
+`forge lsp --stdio`. Bare `forge lsp` also retains server mode when standard input
+is redirected; `forge lsp --vscode` explicitly opens VS Code. Solar uses
+`foundry.toml`, workspace folders, remappings, and `evm_version` from the project
+automatically.
 
 Solar's default flycheck runs `forge lint --json` with the same Forge executable
 that started the server. Solar's existing `initializationOptions.forgePath`
 option overrides that executable.
 
 `forge lsp` follows Forge's normal environment setup, global-option parsing, and
-command dispatch. Project dotenv warnings use stderr, leaving stdout reserved
-for the LSP transport.
+command dispatch. In server mode, project dotenv warnings use stderr, leaving
+stdout reserved for the LSP transport.
 
 ## Contributing
 

@@ -5053,6 +5053,7 @@ dependencies = [
  "reqwest 0.13.4",
  "revm",
  "rexpect",
+ "rustix",
  "semver 1.0.28",
  "serde",
  "serde_json",
