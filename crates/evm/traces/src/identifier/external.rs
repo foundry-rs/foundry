@@ -194,15 +194,12 @@ impl ExternalIdentifier {
         let started = tokio::time::Instant::now();
         let timed_out = tokio::time::timeout(budget, async {
             loop {
-                let (to_fetch, to_await) = self.cache.claim(addresses);
-                if to_fetch.is_empty() && to_await.is_empty() {
+                let (claim, to_await) = self.cache.claim(addresses);
+                if claim.addresses.is_empty() && to_await.is_empty() {
                     break;
                 }
                 futures::future::join(
-                    fetch_batch(
-                        &self.fetchers,
-                        Claim { cache: Arc::clone(&self.cache), addresses: to_fetch },
-                    ),
+                    fetch_batch(&self.fetchers, claim),
                     self.cache.settled(&to_await),
                 )
                 .await;
@@ -372,15 +369,13 @@ impl std::fmt::Debug for ExternalPrefetcher {
 impl ExternalPrefetcher {
     /// Starts fetching `addresses` that are neither cached nor already in flight.
     pub fn prefetch(&self, addresses: impl IntoIterator<Item = Address>) {
-        let addresses = self.cache.claim_new(addresses);
-        if addresses.is_empty() {
+        let Some(claim) = self.cache.claim_new(addresses) else {
             return;
-        }
-        trace!(target: "evm::traces::external", "prefetching {} addresses", addresses.len());
+        };
+        trace!(target: "evm::traces::external", "prefetching {} addresses", claim.addresses.len());
 
         let fetchers = Arc::clone(&self.fetchers);
         let timeout = self.timeout;
-        let claim = Claim { cache: Arc::clone(&self.cache), addresses };
         self.handle.spawn(async move {
             if tokio::time::timeout(timeout, fetch_batch(&fetchers, claim)).await.is_err() {
                 warn!(target: "evm::traces::external", "external prefetch timed out");
@@ -422,7 +417,7 @@ impl Cache {
 
     /// Splits unresolved `addresses` into the ones to fetch now, marking them in flight, and the
     /// ones with a lookup already in flight. Completed addresses are omitted.
-    fn claim(&self, addresses: &[Address]) -> (Vec<Address>, Vec<Address>) {
+    fn claim(self: &Arc<Self>, addresses: &[Address]) -> (Claim, Vec<Address>) {
         let mut state = self.state();
         let mut to_fetch = Vec::new();
         let mut to_await = Vec::new();
@@ -434,22 +429,25 @@ impl Cache {
                 to_fetch.push(address);
             }
         }
-        (to_fetch, to_await)
+        drop(state);
+        (Claim { cache: Arc::clone(self), addresses: to_fetch }, to_await)
     }
 
     /// Marks the addresses of `addresses` that are neither cached nor in flight as in flight and
     /// returns them. Returns nothing once the budget is spent.
-    fn claim_new(&self, addresses: impl IntoIterator<Item = Address>) -> Vec<Address> {
+    fn claim_new(self: &Arc<Self>, addresses: impl IntoIterator<Item = Address>) -> Option<Claim> {
         let mut state = self.state();
         if state.remaining_budget.is_zero() {
-            return Vec::new();
+            return None;
         }
-        addresses
+        let addresses = addresses
             .into_iter()
             .filter(|address| {
                 !state.completed.contains(address) && state.in_flight.insert(*address)
             })
-            .collect()
+            .collect::<Vec<_>>();
+        drop(state);
+        if addresses.is_empty() { None } else { Some(Claim { cache: Arc::clone(self), addresses }) }
     }
 
     /// Records one provider's result and settles the address when it is the last provider.
@@ -491,6 +489,9 @@ impl Cache {
 
     /// Releases in-flight marks for lookups that ended without a result.
     fn release(&self, addresses: &[Address]) {
+        if addresses.is_empty() {
+            return;
+        }
         let mut state = self.state();
         for address in addresses {
             state.in_flight.remove(address);
@@ -541,7 +542,7 @@ impl Drop for Claim {
 ///
 /// Addresses settle after every fetcher finishes. If this future is dropped, its in-flight marks
 /// are released so a cancelled batch never leaves a waiter behind.
-async fn fetch_batch(fetchers: &[Arc<SharedFetcher>], claim: Claim) {
+async fn fetch_batch(fetchers: &[Arc<SharedFetcher>], mut claim: Claim) {
     if claim.addresses.is_empty() {
         return;
     }
@@ -549,17 +550,26 @@ async fn fetch_batch(fetchers: &[Arc<SharedFetcher>], claim: Claim) {
         for &address in &claim.addresses {
             claim.cache.record(address, (FetcherKind::Sourcify, None), true);
         }
+        claim.addresses.clear();
         return;
     }
     let mut remaining =
         claim.addresses.iter().map(|&address| (address, fetchers.len())).collect::<HashMap<_, _>>();
+    let mut unfinished = claim.addresses.len();
     let fetchers =
         fetchers.iter().map(|fetcher| ExternalFetcher::new(Arc::clone(fetcher), &claim.addresses));
     let mut fetched = futures::stream::select_all(fetchers);
     while let Some((address, value)) = fetched.next().await {
         let providers = remaining.get_mut(&address).expect("fetcher yielded an unknown address");
         *providers -= 1;
-        claim.cache.record(address, value, *providers == 0);
+        let complete = *providers == 0;
+        claim.cache.record(address, value, complete);
+        if complete {
+            unfinished -= 1;
+        }
+    }
+    if unfinished == 0 {
+        claim.addresses.clear();
     }
 }
 
@@ -1255,8 +1265,7 @@ mod tests {
         let fetcher: Arc<dyn ExternalFetcherT> =
             Arc::new(AddressFetcher { stalled, invalid: AtomicBool::new(false) });
         let identifier = test_identifier(vec![fetcher], Duration::from_secs(1));
-        let addresses = identifier.cache.claim_new([stalled, ready]);
-        let claim = Claim { cache: Arc::clone(&identifier.cache), addresses };
+        let claim = identifier.cache.claim_new([stalled, ready]).unwrap();
         let fetchers = Arc::clone(&identifier.fetchers);
         let task = tokio::spawn(async move { fetch_batch(&fetchers, claim).await });
 
@@ -1656,9 +1665,9 @@ mod tests {
         let address = Address::with_last_byte(1);
         identifier.cache.record(address, (FetcherKind::Sourcify, Some(metadata("Cached"))), true);
 
-        let (to_fetch, to_await) = identifier.cache.claim(&[address]);
+        let (claim, to_await) = identifier.cache.claim(&[address]);
 
-        assert!(to_fetch.is_empty());
+        assert!(claim.addresses.is_empty());
         assert!(to_await.is_empty());
         assert!(identifier.cache.state().in_flight.is_empty());
     }
