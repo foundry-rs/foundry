@@ -96,6 +96,10 @@ fn normalize_bounded_comparisons(
             constraints.iter().enumerate().filter_map(|(i, value)| (i != index).then_some(value)),
             constraints.len() - 1,
         );
+        // Earlier rewrites can expose bounds needed by a signed arithmetic guard.
+        if let Some(normalized) = context.normalize_signed_add_comparison(cx, &constraints[index]) {
+            constraints[index] = normalized;
+        }
         match context.bounded_bool_value(&constraints[index]) {
             Some(false) => return vec![SymBoolExpr::constant(cx, false)],
             Some(true) => {
@@ -2417,7 +2421,7 @@ impl ConstraintContext {
             return true;
         }
         for zero_term in &bool_terms {
-            let Some(zero_operand) = zero_term.zero_check_operand() else {
+            let Some(zero_operand) = self.bounded_zero_check_operand(zero_term) else {
                 continue;
             };
             if bool_terms.iter().any(|term| self.checked_mul_guard_for_operand(term, zero_operand))
@@ -2427,6 +2431,23 @@ impl ConstraintContext {
             }
         }
         false
+    }
+
+    /// Recognizes zero checks exposed by normalizing a scaled balance division.
+    fn bounded_zero_check_operand<'a>(&self, expr: &'a SymBoolExpr) -> Option<&'a SymExpr> {
+        if let Some(value) = expr.zero_check_operand() {
+            return Some(value);
+        }
+        let SymBoolExprKind::Cmp(SymCmpOp::Ult, product, limit) = expr.kind() else {
+            return None;
+        };
+        let (value, scale) = Self::constant_mul_operands(product)?;
+        // x * scale < scale iff x == 0, but only for a positive scale and no wrap.
+        if scale.is_zero() || limit.as_const() != Some(scale) {
+            return None;
+        }
+        self.max_scaled_product(value, scale)?;
+        Some(value)
     }
 
     fn checked_mul_guard_for_operand(&self, expr: &SymBoolExpr, zero_operand: &SymExpr) -> bool {
@@ -2446,7 +2467,8 @@ impl ConstraintContext {
         let SymExprKind::Ite(condition, then_expr, else_expr) = div_expr.kind() else {
             return false;
         };
-        if condition.zero_check_operand().is_none_or(|operand| operand != zero_operand) {
+        if self.bounded_zero_check_operand(condition).is_none_or(|operand| operand != zero_operand)
+        {
             return false;
         }
         if !then_expr.as_const().is_some_and(|value| value.is_zero()) {
@@ -2907,6 +2929,73 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn scaled_zero_check_requires_non_wrapping_positive_scale() {
+        let mut cx = SymCx::new();
+        let value = SymExpr::var(&mut cx, "balance");
+        let max_value = SymExpr::constant(&mut cx, U256::from(u128::MAX));
+        let bound = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, value.clone(), max_value);
+        let context = ConstraintContext::from_constraints(std::iter::once(&bound), 1);
+        for scale_value in
+            [U256::ZERO, U256::from(3), U256::from(1_000_000_000_000_000_000u64), U256::MAX]
+        {
+            let scale = SymExpr::constant(&mut cx, scale_value);
+            let product = SymExpr::binop(&mut cx, SymBinOp::Mul, value.clone(), scale.clone());
+            let condition = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, product, scale);
+            let recognized = context.bounded_zero_check_operand(&condition);
+            if !scale_value.is_zero() && U256::from(u128::MAX).checked_mul(scale_value).is_some() {
+                assert_eq!(recognized, Some(&value));
+                for balance in [U256::ZERO, U256::ONE, U256::from(u128::MAX)] {
+                    let mut model = SymbolicModel::default();
+                    assert!(value.assign_model_value(&mut model, balance));
+                    assert_eq!(condition.eval_model(&model).unwrap(), balance.is_zero());
+                }
+            } else {
+                assert!(recognized.is_none());
+            }
+            assert!(ConstraintContext::default().bounded_zero_check_operand(&condition).is_none());
+        }
+    }
+
+    #[test]
+    fn checked_multiplication_accepts_scaled_zero_guard_with_independent_bounds() {
+        let mut cx = SymCx::new();
+        let value = SymExpr::var(&mut cx, "balance");
+        let rate = SymExpr::var(&mut cx, "rate");
+        let scale_value = U256::from(1_000_000_000_000_000_000u64);
+        let scale = SymExpr::constant(&mut cx, scale_value);
+        let max_rate = SymExpr::constant(&mut cx, scale_value * U256::from(1_000_000_000u64));
+        let max_value = SymExpr::constant(&mut cx, U256::from(u128::MAX));
+        let mut bounds = vec![
+            SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, value.clone(), max_value),
+            SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, scale.clone(), rate.clone()),
+            SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, rate.clone(), max_rate),
+        ];
+        let scaled = SymExpr::binop(&mut cx, SymBinOp::Mul, value.clone(), scale.clone());
+        let is_zero = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, scaled, scale);
+        let product = SymExpr::binop(&mut cx, SymBinOp::Mul, value.clone(), rate.clone());
+        let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, product, value.clone());
+        let zero = SymExpr::zero(&mut cx);
+        let guarded = SymExpr::ite(&mut cx, is_zero.clone(), zero.clone(), quotient);
+        let exact = SymBoolExpr::eq(&mut cx, guarded, rate.clone());
+        let zero_word = SymExpr::bool_word(&mut cx, is_zero);
+        let exact_word = SymExpr::bool_word(&mut cx, exact);
+        let safe = SymExpr::binop(&mut cx, SymBinOp::Or, zero_word, exact_word);
+        let overflow = SymBoolExpr::eq(&mut cx, safe, zero);
+        bounds.push(overflow);
+        let normalized = normalize_constraints_for_solver(&mut cx, &bounds);
+        assert!(constraints_are_directly_unsat(&mut cx, &normalized));
+
+        // Without the independent value bound, modular multiplication can overflow.
+        bounds.remove(0);
+        let normalized = normalize_constraints_for_solver(&mut cx, &bounds);
+        let mut model = SymbolicModel::default();
+        assert!(value.assign_model_value(&mut model, (U256::ONE << 255) + U256::ONE));
+        assert!(rate.assign_model_value(&mut model, scale_value + U256::ONE));
+        assert!(bounds.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
+        assert!(normalized.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
     }
 
     fn rounded_conversion(cx: &mut SymCx, value: SymExpr, rate: SymExpr, scale: U256) -> SymExpr {
