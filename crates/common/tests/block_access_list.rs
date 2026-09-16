@@ -8,15 +8,15 @@ use alloy_transport::{
     TransportError, TransportErrorKind, TransportFut,
     mock::{Asserter, MockTransport},
 };
-use foundry_common::provider::block_access_list::{
-    BlockAccessListError, BlockAccessListOutcome, fetch_block_access_list,
-};
+use foundry_common::provider::block_access_list::fetch_block_access_list;
 use serde_json::{Value, json};
 use std::{
     collections::VecDeque,
     sync::{Arc, Mutex},
     task::{Context, Poll},
+    time::Duration,
 };
+use tokio::time::{Instant, sleep};
 use tower::Service;
 
 #[derive(Clone)]
@@ -24,6 +24,7 @@ struct RecordingTransport {
     inner: MockTransport,
     requests: Arc<Mutex<Vec<(String, Value)>>>,
     errors: Arc<Mutex<VecDeque<TransportError>>>,
+    delays: Arc<Mutex<VecDeque<Duration>>>,
 }
 
 impl RecordingTransport {
@@ -32,6 +33,7 @@ impl RecordingTransport {
             inner: MockTransport::new(asserter),
             requests: Default::default(),
             errors: Default::default(),
+            delays: Default::default(),
         }
     }
 
@@ -62,33 +64,51 @@ impl Service<RequestPacket> for RecordingTransport {
         if let Some(error) = self.errors.lock().unwrap().pop_front() {
             return Box::pin(async move { Err(error) });
         }
-        self.inner.call(request)
+        let response = self.inner.call(request);
+        let delay = self.delays.lock().unwrap().pop_front();
+        Box::pin(async move {
+            if let Some(delay) = delay {
+                sleep(delay).await;
+            }
+            response.await
+        })
     }
 }
 
 #[tokio::test]
-async fn probes_exact_method_and_block_without_activation_requests() {
+async fn uses_alloy_block_access_list_methods_without_activation_requests() {
     let asserter = Asserter::new();
     let transport = RecordingTransport::new(asserter.clone());
     let provider = RootProvider::<Ethereum>::new(RpcClient::new(transport.clone(), true));
     let hash = B256::repeat_byte(0x11);
     let cases = [
-        (BlockId::number(20_000_000), json!(["0x1312d00"])),
-        (BlockId::hash(hash), json!([hash])),
-        (BlockId::hash_canonical(hash), json!([{"blockHash": hash, "requireCanonical": true}])),
+        (BlockId::number(20_000_000), "eth_getBlockAccessListByBlockNumber", json!(["0x1312d00"])),
+        (BlockId::hash(hash), "eth_getBlockAccessListByBlockHash", json!([hash])),
     ];
     let mut expected = Vec::new();
 
-    for (block, params) in cases {
+    for (block, method, params) in cases {
         asserter.push_success(&json!([]));
-        assert_eq!(
-            fetch_block_access_list(&provider, block).await.unwrap(),
-            BlockAccessListOutcome::Available(Vec::new())
-        );
-        expected.push(("eth_getBlockAccessList".to_string(), params));
+        assert_eq!(fetch_block_access_list(&provider, block).await, Some(Vec::new()));
+        expected.push((method.to_string(), params));
         assert_eq!(*transport.requests.lock().unwrap(), expected);
         assert!(asserter.read_q().is_empty());
     }
+}
+
+#[tokio::test]
+async fn canonical_hash_requirement_does_not_get_silently_dropped() {
+    let asserter = Asserter::new();
+    asserter.push_success(&json!([]));
+    let transport = RecordingTransport::new(asserter.clone());
+    let provider = RootProvider::<Ethereum>::new(RpcClient::new(transport.clone(), true));
+    let hash = B256::repeat_byte(0x11);
+
+    assert_eq!(fetch_block_access_list(&provider, BlockId::hash_canonical(hash)).await, None);
+    assert!(transport.requests.lock().unwrap().is_empty());
+    assert_eq!(fetch_block_access_list(&provider, BlockId::hash(hash)).await, Some(vec![]));
+    assert_eq!(transport.requests.lock().unwrap().len(), 1);
+    assert!(asserter.read_q().is_empty());
 }
 
 #[tokio::test]
@@ -100,24 +120,46 @@ async fn transport_failure_does_not_disable_later_requests() {
     let provider = RootProvider::<Ethereum>::new(RpcClient::new(transport.clone(), true));
     let block = BlockId::number(20_000_000);
 
-    assert!(matches!(
-        fetch_block_access_list(&provider, block).await,
-        Err(BlockAccessListError::Request(TransportError::Transport(
-            TransportErrorKind::BackendGone
-        )))
-    ));
-    assert_eq!(
-        fetch_block_access_list(&provider, block).await.unwrap(),
-        BlockAccessListOutcome::Available(Vec::new())
-    );
+    assert_eq!(fetch_block_access_list(&provider, block).await, None);
+    assert_eq!(fetch_block_access_list(&provider, block).await, Some(Vec::new()));
     assert_eq!(
         *transport.requests.lock().unwrap(),
-        vec![("eth_getBlockAccessList".to_string(), json!(["0x1312d00"])); 2]
+        vec![("eth_getBlockAccessListByBlockNumber".to_string(), json!(["0x1312d00"])); 2]
     );
 }
 
+#[tokio::test(start_paused = true)]
+async fn response_before_timeout_is_returned() {
+    let asserter = Asserter::new();
+    asserter.push_success(&json!([]));
+    let transport = RecordingTransport::new(asserter);
+    transport.delays.lock().unwrap().push_back(Duration::from_millis(499));
+    let provider = RootProvider::<Ethereum>::new(RpcClient::new(transport, true));
+    let start = Instant::now();
+
+    assert_eq!(fetch_block_access_list(&provider, BlockId::number(20_000_000)).await, Some(vec![]));
+    assert_eq!(start.elapsed(), Duration::from_millis(499));
+}
+
+#[tokio::test(start_paused = true)]
+async fn request_timeout_does_not_disable_later_requests() {
+    let asserter = Asserter::new();
+    asserter.push_success(&json!([]));
+    let transport = RecordingTransport::new(asserter.clone());
+    transport.delays.lock().unwrap().push_back(Duration::from_secs(60));
+    let provider = RootProvider::<Ethereum>::new(RpcClient::new(transport.clone(), true));
+    let block = BlockId::number(20_000_000);
+    let start = Instant::now();
+
+    assert_eq!(fetch_block_access_list(&provider, block).await, None);
+    assert_eq!(start.elapsed(), Duration::from_millis(500));
+    assert_eq!(fetch_block_access_list(&provider, block).await, Some(vec![]));
+    assert_eq!(transport.requests.lock().unwrap().len(), 2);
+    assert!(asserter.read_q().is_empty());
+}
+
 #[tokio::test]
-async fn classifies_http_rpc_errors_without_disabling_provider() {
+async fn http_errors_do_not_disable_later_requests() {
     let cases = [
         (
             403,
@@ -125,16 +167,12 @@ async fn classifies_http_rpc_errors_without_disabling_provider() {
                 r#"{"jsonrpc":"2.0","error":{"code":-32601,"message":"method not found"}}"#,
                 "\n\nHTTP diagnostics:\nstatus: 403 Forbidden"
             ),
-            BlockAccessListOutcome::Unsupported,
         ),
-        (
-            404,
-            r#"{"jsonrpc":"2.0","error":{"code":-32001,"message":"block not found"}}"#,
-            BlockAccessListOutcome::Unavailable,
-        ),
+        (404, r#"{"jsonrpc":"2.0","error":{"code":-32001,"message":"block not found"}}"#),
+        (429, "Too many requests"),
     ];
 
-    for (status, body, expected) in cases {
+    for (status, body) in cases {
         let asserter = Asserter::new();
         asserter.push_success(&json!([]));
         let transport = RecordingTransport::new(asserter);
@@ -146,40 +184,10 @@ async fn classifies_http_rpc_errors_without_disabling_provider() {
         let provider = RootProvider::<Ethereum>::new(RpcClient::new(transport.clone(), true));
         let block = BlockId::number(20_000_000);
 
-        assert_eq!(fetch_block_access_list(&provider, block).await.unwrap(), expected);
-        assert_eq!(
-            fetch_block_access_list(&provider, block).await.unwrap(),
-            BlockAccessListOutcome::Available(Vec::new())
-        );
+        assert_eq!(fetch_block_access_list(&provider, block).await, None);
+        assert_eq!(fetch_block_access_list(&provider, block).await, Some(Vec::new()));
         assert_eq!(transport.requests.lock().unwrap().len(), 2);
     }
-}
-
-#[tokio::test]
-async fn http_rate_limit_remains_a_request_error() {
-    let asserter = Asserter::new();
-    asserter.push_success(&json!([]));
-    let transport = RecordingTransport::new(asserter);
-    transport
-        .errors
-        .lock()
-        .unwrap()
-        .push_back(TransportErrorKind::http_error(429, "Too many requests".to_string()));
-    let provider = RootProvider::<Ethereum>::new(RpcClient::new(transport.clone(), true));
-    let block = BlockId::number(20_000_000);
-
-    let error = fetch_block_access_list(&provider, block).await.unwrap_err();
-    let BlockAccessListError::Request(TransportError::Transport(error)) = error else {
-        panic!("expected the HTTP request error, got {error:?}");
-    };
-    let http = error.as_http_error().unwrap();
-    assert_eq!(http.status, 429);
-    assert_eq!(http.body, "Too many requests");
-    assert_eq!(
-        fetch_block_access_list(&provider, block).await.unwrap(),
-        BlockAccessListOutcome::Available(Vec::new())
-    );
-    assert_eq!(transport.requests.lock().unwrap().len(), 2);
 }
 
 #[tokio::test]
@@ -198,8 +206,8 @@ async fn retrieves_historical_block_access_list() {
     let provider = ProviderBuilder::new().connect_mocked_client(asserter);
 
     // Historical mainnet blocks must be probed even though Amsterdam was not active.
-    let outcome = fetch_block_access_list(&provider, BlockId::number(20_000_000)).await.unwrap();
-    assert_eq!(outcome, BlockAccessListOutcome::Available(expected));
+    let outcome = fetch_block_access_list(&provider, BlockId::number(20_000_000)).await;
+    assert_eq!(outcome, Some(expected));
 }
 
 #[tokio::test]
@@ -209,21 +217,14 @@ async fn missing_block_access_list_does_not_disable_later_requests() {
     asserter.push_success(&json!([]));
     let provider = ProviderBuilder::new().connect_mocked_client(asserter);
 
-    assert_eq!(
-        fetch_block_access_list(&provider, BlockId::number(20_000_000)).await.unwrap(),
-        BlockAccessListOutcome::Unavailable
-    );
-    assert_eq!(
-        fetch_block_access_list(&provider, BlockId::number(20_000_001)).await.unwrap(),
-        BlockAccessListOutcome::Available(vec![])
-    );
+    assert_eq!(fetch_block_access_list(&provider, BlockId::number(20_000_000)).await, None);
+    assert_eq!(fetch_block_access_list(&provider, BlockId::number(20_000_001)).await, Some(vec![]));
 }
 
 #[tokio::test]
-async fn distinguishes_rpc_errors_without_disabling_later_requests() {
+async fn rpc_errors_do_not_disable_later_requests() {
     for code in [-32601, -32001, -32602, -32603, -32000, -32005] {
         let asserter = Asserter::new();
-        // Classification must use the code, not a provider-specific message.
         asserter.push_failure(ErrorPayload {
             code,
             message: "block access list unavailable".into(),
@@ -233,19 +234,10 @@ async fn distinguishes_rpc_errors_without_disabling_later_requests() {
         let provider = ProviderBuilder::new().connect_mocked_client(asserter);
 
         let result = fetch_block_access_list(&provider, BlockId::number(20_000_000)).await;
-        match code {
-            -32601 => assert_eq!(result.unwrap(), BlockAccessListOutcome::Unsupported),
-            -32001 => assert_eq!(result.unwrap(), BlockAccessListOutcome::Unavailable),
-            _ => {
-                let BlockAccessListError::Request(error) = result.unwrap_err() else {
-                    panic!("expected a request error for code {code}");
-                };
-                assert_eq!(error.as_error_resp().unwrap().code, code);
-            }
-        }
+        assert_eq!(result, None, "RPC error code {code}");
         assert_eq!(
-            fetch_block_access_list(&provider, BlockId::number(20_000_001)).await.unwrap(),
-            BlockAccessListOutcome::Available(vec![])
+            fetch_block_access_list(&provider, BlockId::number(20_000_001)).await,
+            Some(vec![])
         );
     }
 }
@@ -286,12 +278,14 @@ async fn rejects_malformed_responses_without_disabling_later_requests() {
         asserter.push_success(&json!([]));
         let provider = ProviderBuilder::new().connect_mocked_client(asserter);
 
-        let error =
-            fetch_block_access_list(&provider, BlockId::number(20_000_000)).await.unwrap_err();
-        assert!(matches!(error, BlockAccessListError::InvalidResponse(_)), "{error:?}");
         assert_eq!(
-            fetch_block_access_list(&provider, BlockId::number(20_000_001)).await.unwrap(),
-            BlockAccessListOutcome::Available(vec![])
+            fetch_block_access_list(&provider, BlockId::number(20_000_000)).await,
+            None,
+            "malformed response: {response}"
+        );
+        assert_eq!(
+            fetch_block_access_list(&provider, BlockId::number(20_000_001)).await,
+            Some(vec![])
         );
     }
 }
