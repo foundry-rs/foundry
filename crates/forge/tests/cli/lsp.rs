@@ -81,6 +81,12 @@ printf '%s\n' "${VSCODE_APPDATA-unset}" "${VSCODE_EXTENSIONS-unset}" "${VSCODE_P
     assert!(Path::new(extension).join("package.json").is_file());
     assert!(Path::new(extension).join("out/extension.js").is_file());
     assert!(Path::new(extension).join("syntaxes/solidity.json").is_file());
+    for (name, expected) in [
+        ("LICENSE-MIT", include_bytes!("../../../../LICENSE-MIT").as_slice()),
+        ("LICENSE-APACHE", include_bytes!("../../../../LICENSE-APACHE").as_slice()),
+    ] {
+        assert_eq!(fs::read(Path::new(extension).join(name)).unwrap(), expected, "{name}");
+    }
     let user_data = arguments
         .windows(2)
         .find(|pair| pair[0] == "--user-data-dir")

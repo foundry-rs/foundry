@@ -104,14 +104,14 @@ be created without copying the Cargo target directory or grammar checkout:
 
 ```sh
 mkdir -p target/editor-dev
-tar -chzf target/editor-dev/zed-solar-local.tar.gz -C editors/zed \
+tar -czf target/editor-dev/zed-solar-local.tar.gz -C editors/zed \
   extension.toml extension.wasm languages grammars/solidity.wasm \
-  LICENSE-MIT LICENSE-APACHE GRAMMAR-LICENSE README.md
+  GRAMMAR-LICENSE README.md -C ../.. LICENSE-MIT LICENSE-APACHE
 ```
 
 This archive is for local inspection/distribution; store release and registration
-are separate maintainer tasks. The `-h` option includes the root license texts
-referenced by the extension's license symlinks.
+are separate maintainer tasks. The archive reads the license texts directly from
+the repository root, including in checkouts with `core.symlinks=false`.
 
 1. Launch Zed with a new `--user-data-dir`; its settings live in `config/` under
    that directory. On macOS, the normal CLI can forward to an existing instance
