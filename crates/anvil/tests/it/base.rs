@@ -527,25 +527,15 @@ async fn base_eip8130_estimate_prices_authentication_scheme() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn base_eip8130_estimate_is_rejected_before_zenith() {
-    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Cobalt.into()));
-    let (_api, handle) = spawn(config).await;
-    let sender = handle.dev_wallets().next().unwrap().address();
-
-    let error =
-        handle.http_provider().estimate_gas(eip8130_simulation_request(sender)).await.unwrap_err();
-
-    assert!(error.to_string().contains("not active before the Zenith hard fork"), "{error}");
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn base_eip8130_call_and_nonce_key_are_rejected_before_zenith() {
+async fn base_eip8130_simulation_and_nonce_key_are_rejected_before_zenith() {
     let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Cobalt.into()));
     let (_api, handle) = spawn(config).await;
     let provider = handle.http_provider();
     let sender = handle.dev_wallets().next().unwrap().address();
 
     let call_error = provider.call(eip8130_simulation_request(sender)).await.unwrap_err();
+    let estimate_error =
+        provider.estimate_gas(eip8130_simulation_request(sender)).await.unwrap_err();
     let access_list_error =
         provider.create_access_list(&eip8130_simulation_request(sender)).await.unwrap_err();
     let nonce_error = provider
@@ -553,36 +543,34 @@ async fn base_eip8130_call_and_nonce_key_are_rejected_before_zenith() {
         .await
         .unwrap_err();
 
-    for error in [call_error.to_string(), access_list_error.to_string(), nonce_error.to_string()] {
+    for error in [
+        call_error.to_string(),
+        estimate_error.to_string(),
+        access_list_error.to_string(),
+        nonce_error.to_string(),
+    ] {
         assert!(error.contains("not active before the Zenith hard fork"), "{error}");
     }
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn base_eip8130_estimate_rejects_missing_sender() {
-    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Zenith.into()));
-    let (_api, handle) = spawn(config).await;
-    let request = serde_json::from_value(serde_json::json!({
-        "type": "0x79",
-        "calls": [],
-        "maxFeePerGas": "0x3b9aca00",
-        "gas": "0x30d40"
-    }))
-    .unwrap();
-
-    let error = handle.http_provider().estimate_gas(request).await.unwrap_err();
-
-    assert!(error.to_string().contains("invalid EIP-8130 simulation request"), "{error}");
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn base_eip8130_estimate_accepts_sender_and_rejects_sender_mismatch() {
+async fn base_eip8130_estimate_validates_sender() {
     let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Zenith.into()));
     let (_api, handle) = spawn(config).await;
     let provider = handle.http_provider();
     let wallets: Vec<_> = handle.dev_wallets().collect();
     let sender = wallets[0].address();
     let other = wallets[1].address();
+    let missing = serde_json::from_value(serde_json::json!({
+        "type": "0x79",
+        "calls": [],
+        "maxFeePerGas": "0x3b9aca00",
+        "gas": "0x30d40"
+    }))
+    .unwrap();
+    let error = provider.estimate_gas(missing).await.unwrap_err();
+    assert!(error.to_string().contains("invalid EIP-8130 simulation request"), "{error}");
+
     let explicit_sender = serde_json::from_value(serde_json::json!({
         "sender": sender,
         "calls": [],
@@ -827,7 +815,7 @@ async fn base_eip8130_txpool_promotes_filled_channel_gap() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn base_eip8130_txpool_replaces_with_higher_fee_in_lane() {
+async fn base_eip8130_txpool_enforces_lane_replacement_price() {
     let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Zenith.into()));
     let (api, handle) = spawn(config).await;
     api.anvil_set_auto_mine(false).await.unwrap();
@@ -842,6 +830,16 @@ async fn base_eip8130_txpool_replaces_with_higher_fee_in_lane() {
         .await
         .unwrap();
     let original_hash = *original.tx_hash();
+    let error = provider
+        .send_raw_transaction(
+            &eip8130_envelope_with_nonce_and_fee(&signer, nonce_key, 0, 0, 1_050_000_000)
+                .encoded_2718(),
+        )
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("replacement transaction underpriced"), "{error}");
+    assert_eq!(provider.txpool_status().await.unwrap().pending, 1);
+
     let replacement = provider
         .send_raw_transaction(
             &eip8130_envelope_with_nonce_and_fee(&signer, nonce_key, 0, 0, 2_000_000_000)
@@ -856,34 +854,6 @@ async fn base_eip8130_txpool_replaces_with_higher_fee_in_lane() {
     api.mine_one().await.unwrap();
     assert!(provider.get_transaction_receipt(original_hash).await.unwrap().is_none());
     assert!(replacement.get_receipt().await.unwrap().status());
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn base_eip8130_txpool_rejects_underpriced_lane_replacement() {
-    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Zenith.into()));
-    let (api, handle) = spawn(config).await;
-    api.anvil_set_auto_mine(false).await.unwrap();
-    let provider = handle.http_provider();
-    let signer = handle.dev_wallets().next().unwrap().clone();
-    let nonce_key = U256::from(14);
-    let _original = provider
-        .send_raw_transaction(
-            &eip8130_envelope_with_nonce_and_fee(&signer, nonce_key, 0, 0, 1_000_000_000)
-                .encoded_2718(),
-        )
-        .await
-        .unwrap();
-
-    let error = provider
-        .send_raw_transaction(
-            &eip8130_envelope_with_nonce_and_fee(&signer, nonce_key, 0, 0, 1_050_000_000)
-                .encoded_2718(),
-        )
-        .await
-        .unwrap_err();
-
-    assert!(error.to_string().contains("replacement transaction underpriced"), "{error}");
-    assert_eq!(provider.txpool_status().await.unwrap().pending, 1);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1167,7 +1137,7 @@ async fn base_eip8130_rejects_protocol_nonce_replay_at_admission() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn base_eip8130_rejects_invalid_configured_auth_at_admission() {
+async fn base_eip8130_rejects_invalid_auth_at_admission() {
     let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Zenith.into()));
     let (_api, handle) = spawn(config).await;
     let provider = handle.http_provider();
@@ -1180,16 +1150,8 @@ async fn base_eip8130_rejects_invalid_configured_auth_at_admission() {
 
     assert!(error.to_string().contains("EIP-8130 transaction rejected"), "{error}");
     assert_eq!(provider.txpool_status().await.unwrap().pending, 0);
-}
 
-#[tokio::test(flavor = "multi_thread")]
-async fn base_eip8130_rejects_invalid_buffered_auth_at_admission() {
-    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Zenith.into()));
-    let (_api, handle) = spawn(config).await;
-    let provider = handle.http_provider();
-    let signer = handle.dev_wallets().next().unwrap().clone();
     let envelope = malformed_configured_eip8130_envelope_with_nonce(&signer, U256::ONE, 1);
-
     let error = provider.send_raw_transaction(&envelope.encoded_2718()).await.unwrap_err();
 
     assert!(error.to_string().contains("EIP-8130 transaction rejected"), "{error}");
@@ -1230,35 +1192,10 @@ async fn base_eip8130_sponsored_receipt_reports_payer() {
     let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Zenith.into()));
     let (_api, handle) = spawn(config).await;
     let provider = handle.http_provider();
-    let wallets: Vec<_> = handle.dev_wallets().collect();
-    let sender = &wallets[0];
-    let payer = &wallets[1];
-    let sender_before = provider.get_balance(sender.address()).await.unwrap();
-    let payer_before = provider.get_balance(payer.address()).await.unwrap();
-
-    let receipt = provider
-        .send_raw_transaction(&sponsored_eip8130_envelope(sender, payer).encoded_2718())
-        .await
-        .unwrap()
-        .get_receipt()
-        .await
-        .unwrap();
-    let value = serde_json::to_value(receipt).unwrap();
-
-    assert_eq!(value["payer"], serde_json::to_value(payer.address()).unwrap());
-    assert_eq!(provider.get_balance(sender.address()).await.unwrap(), sender_before);
-    assert!(provider.get_balance(payer.address()).await.unwrap() < payer_before);
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn base_eip8130_sponsored_tx_accepts_unfunded_sender() {
-    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Zenith.into()));
-    let (_api, handle) = spawn(config).await;
-    let provider = handle.http_provider();
     let sender = PrivateKeySigner::from_bytes(&B256::with_last_byte(0x42)).unwrap();
     let payer = handle.dev_wallets().next().unwrap().clone();
-    let payer_before = provider.get_balance(payer.address()).await.unwrap();
     assert_eq!(provider.get_balance(sender.address()).await.unwrap(), U256::ZERO);
+    let payer_before = provider.get_balance(payer.address()).await.unwrap();
 
     let receipt = provider
         .send_raw_transaction(&sponsored_eip8130_envelope(&sender, &payer).encoded_2718())
@@ -1267,8 +1204,10 @@ async fn base_eip8130_sponsored_tx_accepts_unfunded_sender() {
         .get_receipt()
         .await
         .unwrap();
-
     assert!(receipt.status());
+    let value = serde_json::to_value(receipt).unwrap();
+
+    assert_eq!(value["payer"], serde_json::to_value(payer.address()).unwrap());
     assert_eq!(provider.get_balance(sender.address()).await.unwrap(), U256::ZERO);
     assert!(provider.get_balance(payer.address()).await.unwrap() < payer_before);
 }

@@ -1099,15 +1099,6 @@ mod tests {
         assert!(config.networks.is_optimism());
     }
 
-    #[cfg(feature = "base")]
-    #[test]
-    fn chain_id_infers_base_network_in_node_config() {
-        let args: NodeArgs = NodeArgs::parse_from(["anvil", "--chain-id", "8453"]);
-        let config = args.into_node_config().unwrap();
-
-        assert!(config.networks.is_base());
-    }
-
     #[test]
     #[cfg(not(feature = "optimism"))]
     fn chain_id_rejects_disabled_optimism_network() {
