@@ -534,8 +534,8 @@ pub struct ExecutedPoolTransactions<T> {
 /// before calling [`execute_pool_transactions`].
 pub struct PoolTxGasConfig {
     pub disable_block_gas_limit: bool,
-    pub tx_gas_limit_cap: Option<u64>,
-    pub tx_gas_limit_cap_resolved: u64,
+    /// Resolved transaction gas cap, or `None` when the caller disables this check.
+    pub enforced_tx_gas_limit_cap: Option<u64>,
     pub max_blob_gas_per_block: u64,
     pub is_cancun: bool,
 }
@@ -630,8 +630,8 @@ where
         }
 
         // Osaka EIP-7825 tx gas limit cap check
-        if gas_config.tx_gas_limit_cap.is_none()
-            && pending.transaction.gas_limit() > gas_config.tx_gas_limit_cap_resolved
+        if let Some(tx_gas_limit_cap) = gas_config.enforced_tx_gas_limit_cap
+            && pending.transaction.gas_limit() > tx_gas_limit_cap
         {
             trace!(target: "backend", tx_gas_limit = %pending.transaction.gas_limit(), ?pool_tx, "transaction gas limit exhausting, skipping transaction");
             continue;

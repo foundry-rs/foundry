@@ -264,7 +264,7 @@ forgetest!(lsp_stdio_rejects_editor_launch_options, |_prj, cmd| {
         r#"
 error: the argument '--stdio' cannot be used with '--vscode'
 
-Usage: forge lsp --stdio [PATH]
+Usage: forge[..] lsp --stdio [PATH]
 
 For more information, try '--help'.
 
