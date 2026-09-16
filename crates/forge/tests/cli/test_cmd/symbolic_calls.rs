@@ -4,6 +4,89 @@ use foundry_test_utils::{forgetest_init, util::OutputExt};
 
 use super::symbolic_helpers::z3_available;
 
+forgetest_init!(symbolic_call_contains_invalid_child_halt, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_call_contains_invalid_child_halt because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicInvalidChildCall.t.sol",
+        r#"
+contract InvalidChild {
+    fallback() external {
+        assembly ("memory-safe") {
+            invalid()
+        }
+    }
+}
+
+contract SymbolicInvalidChildCall {
+    uint256 marker;
+
+    function checkInvalidChildCall() public {
+        InvalidChild child = new InvalidChild();
+        marker = 17;
+        (bool success, bytes memory output) = address(child).call("");
+        assert(!success);
+        assert(output.length == 0);
+        assert(marker == 17);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--symbolic", "--match-test", "checkInvalidChildCall"]).assert_success();
+});
+
+forgetest_init!(symbolic_assume_no_revert_does_not_prune_invalid_child_halt, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_assume_no_revert_does_not_prune_invalid_child_halt because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicAssumeNoRevertInvalidChild.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract InvalidAssumeNoRevertChild {
+    fallback() external {
+        assembly ("memory-safe") {
+            invalid()
+        }
+    }
+}
+
+contract SymbolicAssumeNoRevertInvalidChild is Test {
+    function checkAssumeNoRevertInvalidChild() public {
+        InvalidAssumeNoRevertChild child = new InvalidAssumeNoRevertChild();
+        vm.assumeNoRevert();
+        (bool success,) = address(child).call("");
+        assertTrue(success);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-test", "checkAssumeNoRevertInvalidChild"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL: assertion failed; counterexample:
+"#]],
+    );
+});
+
 forgetest_init!(symbolic_calldataload_accepts_symbolic_offset, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(

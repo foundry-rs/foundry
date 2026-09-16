@@ -242,6 +242,7 @@ pub struct AnvilBlockExecutor<E> {
     /// Maximum blob gas available to transactions in this block.
     max_blob_gas_per_block: u64,
     /// Whether OP Jovian repurposes `blobGasUsed` for the DA footprint.
+    #[cfg(feature = "optimism")]
     optimism_jovian: bool,
     /// State changes captured for deferred publication.
     state_changes: Option<Vec<EvmState>>,
@@ -257,8 +258,9 @@ impl<E: fmt::Debug> fmt::Debug for AnvilBlockExecutor<E> {
             .field("ethereum_transitions", &self.ethereum_transitions)
             .field("gas_used", &self.gas_used)
             .field("blob_gas_used", &self.blob_gas_used)
-            .field("max_blob_gas_per_block", &self.max_blob_gas_per_block)
-            .field("optimism_jovian", &self.optimism_jovian);
+            .field("max_blob_gas_per_block", &self.max_blob_gas_per_block);
+        #[cfg(feature = "optimism")]
+        debug.field("optimism_jovian", &self.optimism_jovian);
         debug.field("receipts", &self.receipts.len()).finish_non_exhaustive()
     }
 }
@@ -281,6 +283,7 @@ impl<E> AnvilBlockExecutor<E> {
             gas_used: 0,
             blob_gas_used: 0,
             max_blob_gas_per_block: u64::MAX,
+            #[cfg(feature = "optimism")]
             optimism_jovian: false,
             state_changes: None,
         }
@@ -344,11 +347,14 @@ where
             optimism::blob_gas_used(self.evm.db_mut(), tx.tx(), self.optimism_jovian)?;
         #[cfg(not(feature = "optimism"))]
         let blob_gas_used = tx.tx().blob_gas_used().unwrap_or_default();
+        #[cfg(feature = "optimism")]
         let blob_gas_limit = block_blob_gas_limit(
             self.optimism_jovian,
             self.evm.block().gas_limit(),
             self.max_blob_gas_per_block,
         );
+        #[cfg(not(feature = "optimism"))]
+        let blob_gas_limit = self.max_blob_gas_per_block;
         if self.blob_gas_used.saturating_add(blob_gas_used) > blob_gas_limit {
             return Err(BlockExecutionError::msg("block blob gas limit exceeded"));
         }
@@ -527,16 +533,6 @@ pub struct PoolTxGasConfig {
     pub is_cancun: bool,
 }
 
-/// Hooks invoked around each candidate transaction's execution.
-pub struct PoolTransactionHooks<BeforeTransaction, ExecuteTransaction, OnExecutionError> {
-    /// Runs after validation and immediately before execution.
-    pub before_transaction: BeforeTransaction,
-    /// Executes the candidate through the network-specific transaction entry point.
-    pub execute_transaction: ExecuteTransaction,
-    /// Runs when execution fails before the candidate can be included.
-    pub on_execution_error: OnExecutionError,
-}
-
 /// Executes a pool candidate through the block executor's ordinary transaction entry point.
 pub(crate) fn execute_pool_transaction<B>(
     executor: &mut B,
@@ -555,7 +551,7 @@ where
 ///
 /// This is the shared core of `do_mine_block` and `with_pending_block`.
 #[allow(clippy::type_complexity)]
-pub fn execute_pool_transactions<B, BeforeTransaction, ExecuteTransaction, OnExecutionError>(
+pub fn execute_pool_transactions<B, ExecuteTransaction>(
     executor: &mut B,
     pool_transactions: &[Arc<PoolTransaction<B::Transaction>>],
     gas_config: &PoolTxGasConfig,
@@ -565,7 +561,7 @@ pub fn execute_pool_transactions<B, BeforeTransaction, ExecuteTransaction, OnExe
         &PoolTransaction<B::Transaction>,
         &AccountInfo,
     ) -> Result<(), InvalidTransactionError>,
-    hooks: &mut PoolTransactionHooks<BeforeTransaction, ExecuteTransaction, OnExecutionError>,
+    execute_transaction: &mut ExecuteTransaction,
 ) -> ExecutedPoolTransactions<B::Transaction>
 where
     B: BlockExecutor<
@@ -575,14 +571,12 @@ where
     B::Receipt: TxReceipt,
     <B::Result as TxResult>::HaltReason: Clone + IntoInstructionResult,
     <B::Evm as Evm>::Tx: FromTxWithEncoded<B::Transaction> + FoundryTransaction,
-    BeforeTransaction: FnMut(&mut B::Evm, &<B::Evm as Evm>::Tx),
     ExecuteTransaction: FnMut(
         &mut B,
         <B::Evm as Evm>::Tx,
         Recovered<B::Transaction>,
         bool,
     ) -> Result<B::Result, BlockExecutionError>,
-    OnExecutionError: FnMut(&mut B::Evm),
 {
     let gas_limit = executor.evm().block().gas_limit();
 
@@ -653,10 +647,9 @@ where
 
         let nonce = account.nonce;
 
-        (hooks.before_transaction)(executor.evm_mut(), &tx_env);
         let recovered = Recovered::new_unchecked(pending.transaction.as_ref().clone(), sender);
         trace!(target: "backend", "[{:?}] executing", pool_tx.hash());
-        match (hooks.execute_transaction)(executor, tx_env, recovered, pool_tx.is_replay) {
+        match execute_transaction(executor, tx_env, recovered, pool_tx.is_replay) {
             Ok(result) => {
                 let exec_result = result.result().result.clone();
                 let gas_used = result.result().result.tx_gas_used();
@@ -715,7 +708,6 @@ where
                 transactions.push(pending.transaction.clone());
             }
             Err(err) => {
-                (hooks.on_execution_error)(executor.evm_mut());
                 executor.evm_mut().inspector_mut().discard_transaction(inspector_config);
                 if err.as_validation().is_some() {
                     warn!(target: "backend", "Skipping invalid tx [{:?}]: {}", pool_tx.hash(), err);
