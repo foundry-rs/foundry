@@ -309,7 +309,7 @@ impl CanaryNetwork {
         }
     }
 
-    fn explorer(self) -> &'static str {
+    const fn explorer(self) -> &'static str {
         match self {
             Self::Mainnet => "https://explore.tempo.xyz",
             Self::Testnet => "https://explore.testnet.tempo.xyz",
