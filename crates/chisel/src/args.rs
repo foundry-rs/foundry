@@ -17,6 +17,9 @@ use rustyline::{Editor, config::Configurer, error::ReadlineError};
 use std::{ops::ControlFlow, path::PathBuf};
 use yansi::Paint;
 
+#[cfg(feature = "base")]
+use foundry_evm::core::evm::BaseEvmNetwork;
+
 #[cfg(feature = "monad")]
 use foundry_evm::core::evm::MonadEvmNetwork;
 
@@ -70,6 +73,19 @@ pub async fn run_command(args: Chisel) -> Result<()> {
             config,
             evm_opts,
             ExecutorBuilder::<TempoEvmNetwork>::new(),
+            local_networks,
+            local_chain_id,
+        ))
+        .await;
+    }
+
+    #[cfg(feature = "base")]
+    if evm_opts.networks.is_base() {
+        return Box::pin(run_command_with_network::<BaseEvmNetwork>(
+            args,
+            config,
+            evm_opts,
+            ExecutorBuilder::<BaseEvmNetwork>::new(),
             local_networks,
             local_chain_id,
         ))
@@ -283,6 +299,18 @@ mod tests {
         Chisel::command().debug_assert();
     }
 
+    /// Base chain IDs resolved to Optimism before Base support existed, so a build without the
+    /// `base` feature — which is what release binaries ship — must keep resolving them that way.
+    #[test]
+    #[cfg(all(not(feature = "base"), feature = "optimism"))]
+    fn chain_id_without_base_still_resolves_to_optimism() {
+        for chain_id in [8453, 84532] {
+            let networks = infer_network_from_chain_id(NetworkConfigs::default(), Some(chain_id))
+                .unwrap_or_else(|error| panic!("chain ID {chain_id} must still resolve: {error}"));
+            assert!(networks.is_optimism(), "chain ID {chain_id} must resolve to Optimism");
+        }
+    }
+
     #[test]
     #[cfg(not(feature = "monad"))]
     fn chain_id_rejects_disabled_monad_network() {
@@ -298,9 +326,9 @@ mod tests {
     #[test]
     fn explicit_ethereum_overrides_chain_id_inference() {
         let ethereum = NetworkConfigs::with_ethereum();
-        let inferred = infer_network_from_chain_id(ethereum, Some(143)).unwrap();
-
-        assert_eq!(inferred, ethereum);
+        for chain_id in [8453, 143] {
+            assert_eq!(infer_network_from_chain_id(ethereum, Some(chain_id)).unwrap(), ethereum);
+        }
     }
 
     #[tokio::test]

@@ -44,8 +44,9 @@ use foundry_common::version::{LONG_VERSION, SHORT_VERSION};
 use foundry_evm_networks::NetworkVariant;
 use std::{path::PathBuf, str::FromStr};
 
-#[cfg(feature = "optimism")]
+#[cfg(any(feature = "base", feature = "optimism"))]
 use crate::cmd::da_estimate::DAEstimateArgs;
+
 /// A Swiss Army knife for interacting with Ethereum applications from the command line.
 #[derive(Parser)]
 #[command(
@@ -1370,7 +1371,7 @@ pub enum CastSubcommand {
         command: TxPoolSubcommands,
     },
     /// Estimates the data availability size of a given opstack block.
-    #[cfg(feature = "optimism")]
+    #[cfg(any(feature = "base", feature = "optimism"))]
     #[command(name = "da-estimate")]
     DAEstimate(DAEstimateArgs),
 
