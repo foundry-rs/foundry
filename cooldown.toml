@@ -73,6 +73,12 @@ package = [
     { crate = "syn-solidity", min-publish-age = "0" },
 ]
 
+# Temporary exact-version exception for the RUSTSEC-2026-0285 security fix.
+# Remove once rustls 0.23.45 clears the 7-day cooldown.
+[[allow.exact]]
+crate = "rustls"
+version = "0.23.45"
+
 # Exact-version exception for the RustCrypto release required by the updated dependency graph.
 [[allow.exact]]
 crate = "wnaf"

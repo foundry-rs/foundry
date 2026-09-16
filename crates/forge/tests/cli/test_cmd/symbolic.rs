@@ -6676,3 +6676,46 @@ contract FixedPointRoundTripTest {
         assert_eq!(result["symbolic"]["status"], "fail_counterexample");
     }
 });
+
+forgetest_init!(symbolic_independently_bounded_fixed_point_round_trip, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_independently_bounded_fixed_point_round_trip because z3 is not available"
+        );
+        return;
+    }
+    prj.add_test(
+        "FixedPointRoundTrip.t.sol",
+        r#"
+contract FixedPointRoundTripTest {
+    function checkRoundTrip(uint128 balance, uint256 rate) external pure {
+        require(balance > 0 && balance < type(uint128).max);
+        require(rate >= 1e18 && rate <= 1e27);
+        unchecked {
+            uint256 rounded = (uint256(balance) * rate + 1e18 - 1) / 1e18;
+            assert(rounded * 1e18 / rate == balance);
+        }
+    }
+
+    function checkLowRate(uint128 balance) external pure {
+        require(balance > 0 && balance < 100);
+        uint256 rounded = (uint256(balance) + 1) / 2;
+        assert(rounded * 2 == balance);
+    }
+
+    function checkWrapping(uint256 balance) external pure {
+        require(balance >= 1 << 255);
+        unchecked {
+            uint256 rounded = (balance * 2 + 1) / 2;
+            assert(rounded == balance);
+        }
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--symbolic", "--match-test", "checkRoundTrip"]).assert_success();
+    for test in ["checkLowRate", "checkWrapping"] {
+        cmd.forge_fuse().args(["test", "--symbolic", "--match-test", test]).assert_failure();
+    }
+});
