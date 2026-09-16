@@ -3117,6 +3117,9 @@ contract PersistedSecondaryShrinkTest is Test {
     let arm = calls.iter().find(|call| call["func_name"] == "arm").unwrap().clone();
     let trigger = calls.iter().find(|call| call["func_name"] == "trigger").unwrap().clone();
     persisted_json["call_sequence"] = serde_json::json!([arm, trigger]);
+    // Legacy persisted entries did not identify their failure site. Their confirmed replay must
+    // still bypass generic shrinking so the predicate reason, trace, and sequence stay aligned.
+    persisted_json.as_object_mut().unwrap().remove("failure_site");
     std::fs::write(&persisted, serde_json::to_vec_pretty(&persisted_json).unwrap()).unwrap();
     let _ = std::fs::remove_file(persisted.with_file_name("invariant_anchor"));
     let _ = std::fs::remove_dir_all(failure_root.join("handlers"));

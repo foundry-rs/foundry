@@ -5381,6 +5381,8 @@ contract SymbolicInvariantAnchorSites is Test {
         assert(target.stored() != 7);
     }
 
+    function invariant_secondary() public pure {}
+
     function afterInvariant() public view {
         assert(target.stored() != 11);
     }
@@ -5429,16 +5431,40 @@ contract SymbolicInvariantAnchorSites is Test {
                 .clone()
         })
         .collect::<Vec<_>>();
-    let frontier_ids = format!(
-        "{},{}",
-        frontiers[0]["id"].as_u64().unwrap(),
-        frontiers[1]["id"].as_u64().unwrap()
-    );
+    let anchor_frontier_id = frontiers[0]["id"].as_u64().unwrap().to_string();
+    let hook_frontier_id = frontiers[1]["id"].as_u64().unwrap().to_string();
     artifact["frontiers"] = Value::Array(frontiers);
     std::fs::write(&frontier_path, serde_json::to_vec_pretty(&artifact).unwrap()).unwrap();
 
     cmd.forge_fuse();
     cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+    cmd.env("FOUNDRY_INVARIANT_FAILURE_PERSIST_DIR", "anchor_sites_failures");
+    cmd.args([
+        "test",
+        "--match-contract",
+        "SymbolicInvariantAnchorSites",
+        "--threads",
+        "1",
+        "--invariant-frontier-dir",
+        "anchor_sites_frontiers",
+        "--invariant-corpus-dir",
+        "anchor_sites_corpus",
+        "--symbolic-use-fuzz-frontiers",
+        "--symbolic-frontier-limit",
+        "1",
+        "--symbolic-frontier-ids",
+        &anchor_frontier_id,
+    ])
+    .assert_failure();
+    let file = prj.root().join(
+        "anchor_sites_failures/failures/SymbolicInvariantAnchorSites/invariants/invariant_anchor",
+    );
+    let persisted_anchor: Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+    let persisted_anchor_calldata = persisted_anchor["call_sequence"][0]["calldata"].clone();
+
+    cmd.forge_fuse();
+    cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+    cmd.env("FOUNDRY_INVARIANT_TIMEOUT", "1");
     cmd.env("FOUNDRY_INVARIANT_FAILURE_PERSIST_DIR", "anchor_sites_failures");
     let output = cmd
         .args([
@@ -5454,9 +5480,9 @@ contract SymbolicInvariantAnchorSites is Test {
             "anchor_sites_corpus",
             "--symbolic-use-fuzz-frontiers",
             "--symbolic-frontier-limit",
-            "2",
+            "1",
             "--symbolic-frontier-ids",
-            &frontier_ids,
+            &hook_frontier_id,
         ])
         .assert_failure()
         .get_output()
@@ -5474,11 +5500,12 @@ contract SymbolicInvariantAnchorSites is Test {
         "expected both frontier inputs in {}: {result}",
         corpus_path.display()
     );
-    let file = prj.root().join(
-        "anchor_sites_failures/failures/SymbolicInvariantAnchorSites/invariants/invariant_anchor",
-    );
     let persisted: Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
     assert_eq!(persisted["call_sequence"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        persisted["call_sequence"][0]["calldata"], persisted_anchor_calldata,
+        "fresh afterInvariant failure overwrote persisted anchor: {persisted}"
+    );
     assert_eq!(
         persisted["call_sequence"][0]["calldata"],
         failures[0]["counterexample"]["Sequence"][1][0]["calldata"],

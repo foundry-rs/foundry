@@ -4346,11 +4346,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 }
             };
             let mut replay_config = invariant_config.clone();
-            if failure_site.is_some() {
-                // A persisted site is exact; generic shrinking only preserves failure and
-                // could replay a different failure into the reported traces.
-                replay_config.shrink_run_limit = 0;
-            }
+            // The persisted replay was confirmed at `confirmed_failure_site`; generic shrinking
+            // only preserves failure and could append diagnostics from a different failure before
+            // the later site check rejects it. This also applies to legacy entries without a site.
+            replay_config.shrink_run_limit = 0;
             match self.replay_error(
                 replay_config,
                 trace_executor,
@@ -4434,7 +4433,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 &dynamic_target_ctx,
                 &confirmed_persisted_invariants,
             );
-            let mut reported_fresh_invariants = HashSet::<usize>::default();
+            let mut reported_fresh_invariants = confirmed_persisted_invariants.clone();
             for ConfirmedFrontierInvariantFailure {
                 invariant_idx,
                 call_sequence: txes,
