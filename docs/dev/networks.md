@@ -138,6 +138,12 @@ or journal boundary. Do not rely on cloning the ordinary account database to pre
 another component. Do not add optional custom-family state to a generic context or return generic
 "context update" signals when only one concrete family can use them.
 
+Both cheatcode inspector adapters use
+[`with_inherited_evm`](../../crates/evm/core/src/evm/mod.rs) to pair inherited context setup
+with successful write-back. Inspector assembly stays with the adapter, and EVM factories retain
+construction ownership. This shared operation still uses the existing Monad journal bridge; it
+is not a replacement for the deferred native journal, snapshot, and fork lifecycle migrations.
+
 Historical replay retains the RPC envelope's system classification after transaction conversion.
 The default nested replay behavior deliberately skips system envelopes unsupported by the selected
 execution family without mutating state. A family that supports protocol system envelopes must

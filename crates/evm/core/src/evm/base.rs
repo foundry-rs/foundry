@@ -187,7 +187,7 @@ mod tests {
     use super::*;
     use crate::{
         backend::{Backend, CowBackend},
-        evm::with_cloned_context,
+        evm::with_inherited_evm,
         opts::EvmOpts,
     };
     use alloy_sol_types::SolCall;
@@ -294,9 +294,7 @@ mod tests {
                 .extend([0x60, 0xe0, 0x1b, 0x5f, 0x52, 0x60, 0x20, 0x5f, 0x60, 0x04, 0x5f, 0x73]);
             initcode.extend(ActivationRegistryStorage::ADDRESS.as_slice());
             initcode.extend([0x5a, 0xfa, 0x50, 0x60, 0x20, 0x5f, 0xf3]);
-            with_cloned_context(evm.ctx_mut(), |db, env, journal| {
-                let mut nested = BaseEvmFactory::default().create_nested_evm(db, env);
-                *nested.journal_inner_mut() = journal;
+            with_inherited_evm::<BaseEvmFactory, _>(evm.ctx_mut(), NoOpInspector, &mut |nested| {
                 let result = nested
                     .transact_raw(
                         BaseTransaction::builder()
@@ -305,7 +303,7 @@ mod tests {
                                     .chain_id(Some(chain_id))
                                     .nonce(1)
                                     .kind(TxKind::Create)
-                                    .data(Bytes::from(initcode))
+                                    .data(Bytes::from(initcode.clone()))
                                     .gas_limit(200_000),
                             )
                             .build_fill(),
@@ -319,7 +317,7 @@ mod tests {
                     .unwrap(),
                     expected
                 );
-                Ok((nested.to_evm_env(), nested.journal_inner_mut().clone()))
+                Ok(())
             })
             .unwrap();
         }
