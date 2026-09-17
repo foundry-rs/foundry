@@ -17,16 +17,15 @@ use std::{
 };
 
 #[cfg(unix)]
+use foundry_test_utils::snapbox::{IntoData, data::DataFormat};
+#[cfg(unix)]
+use rexpect::{Encoding, process::wait::WaitStatus, reader::Options, spawn_with_options};
+#[cfg(unix)]
 use std::{
     os::unix::fs::{PermissionsExt, symlink},
     path::Path,
     process::Command,
 };
-
-#[cfg(unix)]
-use foundry_test_utils::snapbox::{IntoData, data::DataFormat};
-#[cfg(unix)]
-use rexpect::{Encoding, process::wait::WaitStatus, reader::Options, spawn_with_options};
 
 const SYMBOL_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -38,7 +37,7 @@ forgetest!(lsp_vscode_opens_current_project_with_bundled_extension, |prj, cmd| {
     let forge = executables.path().join("standalone forge");
     fs::hard_link(env!("CARGO_BIN_EXE_forge"), &forge).unwrap();
     let forge = dunce::canonicalize(forge).unwrap();
-    let code = executables.path().join("mock code");
+    let code = executables.path().join("code");
     fs::write(
         &code,
         r#"#!/bin/sh
@@ -147,7 +146,6 @@ printf '%s\n' "${VSCODE_APPDATA-unset}" "${VSCODE_EXTENSIONS-unset}" "${VSCODE_P
     );
 
     // A terminal needs only `forge lsp`, and reopening restores the short profile link.
-    symlink(&code, executables.path().join("code")).unwrap();
     let mut terminal = Command::new(&forge);
     terminal
         .current_dir(&project)
@@ -178,12 +176,95 @@ printf '%s\n' "${VSCODE_APPDATA-unset}" "${VSCODE_EXTENSIONS-unset}" "${VSCODE_P
     assert!(Path::new(extension).join("out/extension.js").is_file());
 });
 
+#[cfg(unix)]
+forgetest!(lsp_vscode_sessions_follow_resolved_editor, |prj, cmd| {
+    let home = tempfile::tempdir().unwrap();
+    let editors = prj.root().join("editors");
+    let captured_session = editors.join("session");
+    let stable = editors.join("stable/code");
+    let insiders = editors.join("insiders/code");
+    for code in [&stable, &insiders] {
+        fs::create_dir_all(code.parent().unwrap()).unwrap();
+        fs::write(
+            code,
+            "#!/bin/sh\nprintf '%s' \"$VSCODE_PORTABLE\" > \"$FORGE_LSP_TEST_SESSION\"\n",
+        )
+        .unwrap();
+        fs::set_permissions(code, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    let mut launch = |code: &Path, search_path: &Path| {
+        cmd.forge_fuse();
+        cmd.env("HOME", home.path());
+        cmd.env("XDG_DATA_HOME", home.path().join("data"));
+        cmd.env("PATH", search_path);
+        cmd.env("FORGE_LSP_TEST_SESSION", &captured_session);
+        cmd.args(["lsp", "--code-path"]).arg(code).assert_empty_stdout();
+        dunce::canonicalize(fs::read_to_string(&captured_session).unwrap()).unwrap()
+    };
+    let stable_path = stable.parent().unwrap();
+    let insiders_path = insiders.parent().unwrap();
+    let stable_session = launch(&stable, stable_path);
+    let insiders_session = launch(&insiders, insiders_path);
+    assert_ne!(stable_session, insiders_session);
+    assert_eq!(launch(&stable, insiders_path), stable_session);
+    assert_eq!(launch(Path::new("code"), stable_path), stable_session);
+    assert_eq!(launch(Path::new("code"), insiders_path), insiders_session);
+    assert_eq!(launch(Path::new("editors/stable/code"), insiders_path), stable_session);
+    assert!(!prj.root().join(".vscode").exists());
+});
+
+#[cfg(unix)]
+forgetest!(lsp_vscode_preserves_symlink_launchers, |prj, cmd| {
+    let home = tempfile::tempdir().unwrap();
+    let dispatcher = prj.root().join("dispatcher");
+    let captured_launcher = prj.root().join("launcher");
+    let captured_session = prj.root().join("session");
+    fs::write(
+        &dispatcher,
+        r#"#!/bin/sh
+printf '%s' "$0" > "$FORGE_LSP_TEST_LAUNCHER"
+printf '%s' "$VSCODE_PORTABLE" > "$FORGE_LSP_TEST_SESSION"
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(&dispatcher, fs::Permissions::from_mode(0o755)).unwrap();
+    let stable = prj.root().join("code");
+    let insiders = prj.root().join("code-insiders");
+    symlink(&dispatcher, &stable).unwrap();
+    symlink(&dispatcher, &insiders).unwrap();
+
+    let mut launch = |code: &Path| {
+        cmd.forge_fuse();
+        cmd.env("HOME", home.path());
+        cmd.env("XDG_DATA_HOME", home.path().join("data"));
+        cmd.env("FORGE_LSP_TEST_LAUNCHER", &captured_launcher);
+        cmd.env("FORGE_LSP_TEST_SESSION", &captured_session);
+        cmd.args(["lsp", "--code-path"]).arg(code).assert_empty_stdout();
+        assert_eq!(fs::read_to_string(&captured_launcher).unwrap(), code.to_str().unwrap());
+        dunce::canonicalize(fs::read_to_string(&captured_session).unwrap()).unwrap()
+    };
+    let stable_session = launch(&stable);
+    let insiders_session = launch(&insiders);
+    assert_ne!(stable_session, insiders_session);
+    assert_eq!(launch(&stable), stable_session);
+
+    // Repointing the same launcher must not inherit the previous editor's profile.
+    let other_dispatcher = prj.root().join("other dispatcher");
+    fs::copy(&dispatcher, &other_dispatcher).unwrap();
+    fs::remove_file(&stable).unwrap();
+    symlink(&other_dispatcher, &stable).unwrap();
+    assert_ne!(launch(&stable), stable_session);
+    assert_eq!(launch(&insiders), insiders_session);
+    assert!(stable_session.join("user-data/User/settings.json").is_file());
+});
+
 forgetest!(lsp_stdio_rejects_editor_launch_options, |_prj, cmd| {
     cmd.args(["lsp", "--stdio", "--vscode"]).assert_code(2).stdout_eq(str![""]).stderr_eq(str![[
         r#"
 error: the argument '--stdio' cannot be used with '--vscode'
 
-Usage: forge lsp --stdio [PATH]
+Usage: forge[..] lsp --stdio [PATH]
 
 For more information, try '--help'.
 
@@ -198,11 +279,10 @@ forgetest!(lsp_code_path_reports_missing_editor, |prj, cmd| {
     cmd.env("XDG_DATA_HOME", home.path().join("data"));
     cmd.args(["lsp", "--code-path"]).arg(prj.root().join("missing-vscode"));
     cmd.assert_failure().stdout_eq(str![""]).stderr_eq(str![[r#"
-Opening VS Code with Forge Solidity support: [..]
 Error: Could not launch VS Code using [..]/missing-vscode. Install VS Code and its `code` command, or pass --code-path <PATH> to the VS Code CLI. Use `forge lsp --stdio` for another editor.
 
 Context:
-- No such file or directory (os error 2)
+- cannot find binary path
 
 "#]]);
     assert!(!prj.root().join(".vscode").exists());

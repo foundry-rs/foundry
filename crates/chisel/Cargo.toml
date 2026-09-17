@@ -77,6 +77,11 @@ monad = [
     "foundry-evm/monad",
     "foundry-cli/monad",
 ]
+base = [
+    "foundry-common/base",
+    "foundry-evm/base",
+    "foundry-cli/base",
+]
 optimism = [
     "foundry-common/optimism",
     "foundry-evm/optimism",

@@ -3941,10 +3941,20 @@ fn solver_normalizes_udiv_comparisons_only_at_safe_product_boundaries() {
         assert_eq!(normalized.len(), 1);
         assert!(!normalized[0].smt(&cx).contains("bvudiv"));
     }
-    for condition in overflowing {
+    for (condition, expected) in overflowing.into_iter().zip([true, false]) {
         let normalized =
             normalize_constraints_for_solver(&mut cx, std::slice::from_ref(&condition));
-        assert_eq!(normalized, vec![condition]);
+        // Cross-multiplication would overflow, but the uint256 quotient bound decides
+        // these comparisons directly without constructing an overflowing product.
+        if expected {
+            assert!(normalized.is_empty());
+        } else {
+            assert_eq!(normalized, vec![SymBoolExpr::constant(&mut cx, false)]);
+        }
+        for numerator in [U256::ZERO, U256::ONE, U256::MAX - U256::ONE, U256::MAX] {
+            let model = symbolic_model(&mut cx, [("numerator", numerator)]);
+            assert_eq!(condition.eval_model(&model).unwrap(), expected);
+        }
     }
 
     let threshold = SymExpr::constant(&mut cx, U256::MAX / divisor_value - U256::ONE);
@@ -4391,20 +4401,25 @@ fn solver_excludes_hidden_mul_div_candidates_from_context() {
     let past_boundary = boundary + U256::ONE;
     let past_boundary_expr = SymExpr::constant(&mut cx, past_boundary);
     let quotient_3_is_past_boundary = SymBoolExpr::eq(&mut cx, quotient_3, past_boundary_expr);
-    let constraints = vec![
-        identity_58.clone(),
-        quotient_58_bounded,
-        identity_3.clone(),
-        quotient_3_is_past_boundary,
-    ];
+    let constraints =
+        vec![identity_58, quotient_58_bounded, identity_3, quotient_3_is_past_boundary];
     let model = symbolic_model(&mut cx, [("x".to_string(), past_boundary)]);
 
     assert!(constraints.iter().any(|constraint| !constraint.eval_model(&model).unwrap()));
 
     let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
-    assert!(normalized.contains(&identity_58));
-    assert!(normalized.contains(&identity_3));
+    // A retained identity may establish bounds that refute another conjunct. The conjunction
+    // must stay false, whether identities survive syntactically or the contradiction is folded.
     assert!(normalized.iter().any(|constraint| !constraint.eval_model(&model).unwrap()));
+    for value in
+        [U256::ZERO, U256::ONE, boundary, past_boundary, U256::MAX / U256::from(3), U256::MAX]
+    {
+        let model = symbolic_model(&mut cx, [("x".to_string(), value)]);
+        assert_eq!(
+            constraints.iter().all(|constraint| constraint.eval_model(&model).unwrap()),
+            normalized.iter().all(|constraint| constraint.eval_model(&model).unwrap())
+        );
+    }
 }
 
 #[test]
@@ -5772,13 +5787,11 @@ fn feasible_path_selection_drains_easy_paths_before_deferred_hard_arithmetic() {
     executor.solver = SmtLibSubprocessSolver::new(Ok(commands), None, 3, false);
 
     let x = SymExpr::var(&mut executor.cx, "x");
-    let y = SymExpr::var(&mut executor.cx, "y");
     let mut hard = empty_state(&mut executor.cx);
-    let product = SymExpr::binop(&mut executor.cx, SymBinOp::Mul, x, y);
-    let zero = SymExpr::zero(&mut executor.cx);
-    hard.constraints.push(SymBoolExpr::eq(&mut executor.cx, product.clone(), zero));
-    let one = SymExpr::one(&mut executor.cx);
-    hard.constraints.push(SymBoolExpr::eq(&mut executor.cx, product, one));
+    // Unlike contradictory constant bounds, this still requires deferred arithmetic solving.
+    let square = SymExpr::binop(&mut executor.cx, SymBinOp::Mul, x.clone(), x);
+    let two = SymExpr::constant(&mut executor.cx, U256::from(2));
+    hard.constraints.push(SymBoolExpr::eq(&mut executor.cx, square, two));
     hard.defer_feasibility_check();
 
     let mut easy = empty_state(&mut executor.cx);
@@ -5816,13 +5829,11 @@ fn nested_feasible_path_selection_skips_hard_arithmetic_without_escalating() {
     executor.solver = SmtLibSubprocessSolver::new(Ok(commands), None, 3, false);
 
     let x = SymExpr::var(&mut executor.cx, "x");
-    let y = SymExpr::var(&mut executor.cx, "y");
     let mut hard = empty_state(&mut executor.cx);
-    let product = SymExpr::binop(&mut executor.cx, SymBinOp::Mul, x, y);
-    let zero = SymExpr::zero(&mut executor.cx);
-    hard.constraints.push(SymBoolExpr::eq(&mut executor.cx, product.clone(), zero));
-    let one = SymExpr::one(&mut executor.cx);
-    hard.constraints.push(SymBoolExpr::eq(&mut executor.cx, product, one));
+    // Unlike contradictory constant bounds, this still requires deferred arithmetic solving.
+    let square = SymExpr::binop(&mut executor.cx, SymBinOp::Mul, x.clone(), x);
+    let two = SymExpr::constant(&mut executor.cx, U256::from(2));
+    hard.constraints.push(SymBoolExpr::eq(&mut executor.cx, square, two));
     hard.defer_feasibility_check();
 
     let mut easy = empty_state(&mut executor.cx);
@@ -6074,12 +6085,17 @@ fn sat_cache_does_not_reuse_unsat_branch_complement_with_unsat_base() {
     let commands = vec![counted_solver_command(&marker, "unsat")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
     let x = SymExpr::var(&mut cx, "x");
-    let two = SymExpr::constant(&mut cx, U256::from(2));
-    let one = SymExpr::constant(&mut cx, U256::from(1));
-    let lower = SymBoolExpr::cmp(&mut cx, SymCmpOp::Uge, x.clone(), two);
-    let upper = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, x.clone(), one.clone());
-    let base = SymBoolExpr::and(&mut cx, vec![lower, upper]);
-    let condition = SymBoolExpr::eq(&mut cx, x, one);
+    let y = SymExpr::var(&mut cx, "y");
+    let z = SymExpr::var(&mut cx, "z");
+    let branch = SymExpr::var(&mut cx, "branch");
+    let one = SymExpr::one(&mut cx);
+    // A strict order cycle is unsatisfiable but has no independent scalar bounds. Keep the
+    // fixture beyond local interval pruning so it still exercises complement-cache safety.
+    let xy = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x.clone(), y.clone());
+    let yz = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, y, z.clone());
+    let zx = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, z, x);
+    let base = SymBoolExpr::and(&mut cx, vec![xy, yz, zx]);
+    let condition = SymBoolExpr::eq(&mut cx, branch, one);
 
     assert!(!solver.is_sat_branch(&mut cx, &[base.clone(), condition.clone()]).unwrap());
     let not_condition = condition.not(&mut cx);
@@ -6089,9 +6105,7 @@ fn sat_cache_does_not_reuse_unsat_branch_complement_with_unsat_base() {
     assert_eq!(stats.solver_queries, 2);
     assert_eq!(stats.sat_queries, 2);
     assert_eq!(stats.sat_cache_hits, 0);
-    // Exact-value propagation makes one contradictory branch local; the other still exercises
-    // the solver without reusing the unsatisfiable complement cache entry.
-    assert_eq!(counted_solver_invocations(&marker), 1);
+    assert_eq!(counted_solver_invocations(&marker), 2);
     let _ = std::fs::remove_file(&marker);
 }
 

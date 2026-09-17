@@ -6,7 +6,7 @@ use alloy_evm::{Database, Evm, EvmEnv, EvmFactory};
 use alloy_network::Network;
 use alloy_op_evm::{OpEvmContext, OpEvmFactory, OpTx};
 use foundry_evm::backend::DatabaseError;
-use op_revm::{OpHaltReason, OpTransaction};
+use op_revm::{OpHaltReason, OpSpecId, OpTransaction};
 use revm::{
     DatabaseRef, Inspector,
     context::{
@@ -27,6 +27,7 @@ impl<N: Network> Backend<N> {
         evm_env: &EvmEnv,
         inspector: &mut I,
         tx_env: OpTransaction<TxEnv>,
+        spec: OpSpecId,
     ) -> Result<ResultAndState<HaltReason>, BlockchainError>
     where
         DB: DatabaseRef + ?Sized,
@@ -34,7 +35,7 @@ impl<N: Network> Backend<N> {
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
         let op_env = EvmEnv::new(
-            evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(self.hardfork().into()),
+            evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(spec),
             evm_env.block_env.clone(),
         );
         let mut evm = OpEvmFactory::default().create_evm_with_inspector(
