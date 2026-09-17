@@ -163,6 +163,16 @@ pub fn next_tempo_mainnet_rpc_endpoint() -> String {
     url
 }
 
+/// Returns the HTTP RPC URL used to fork Tempo testnet.
+///
+/// Set `TEMPO_TESTNET_RPC_URL` to use a private archive endpoint instead of the public one.
+pub fn next_tempo_testnet_rpc_endpoint() -> String {
+    let url = env_rpc_url("TEMPO_TESTNET_RPC_URL")
+        .unwrap_or_else(|| "https://rpc.moderato.tempo.xyz".to_string());
+    test_debug!("next_tempo_testnet_rpc_endpoint() = {}", debug_url(&url));
+    url
+}
+
 /// Returns the next WS RPC URL.
 pub fn next_ws_endpoint(chain: NamedChain) -> String {
     next_url(true, chain)
