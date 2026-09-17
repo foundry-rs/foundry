@@ -16,7 +16,7 @@ use crate::{
 };
 use alloy_chains::Chain;
 use alloy_consensus::{BlockHeader, Typed2718};
-use alloy_eips::BlockNumHash;
+use alloy_eips::{BlockNumHash, eip4788::SYSTEM_ADDRESS};
 use alloy_evm::{Evm, EvmEnv, EvmFactory, precompiles::PrecompilesMap};
 use alloy_genesis::GenesisAccount;
 use alloy_network::{
@@ -63,6 +63,8 @@ pub use in_memory_db::{EmptyDBWrapper, FoundryEvmInMemoryDB, MemDb};
 
 mod snapshot;
 pub use snapshot::{BackendStateSnapshot, RevertStateSnapshotAction, StateSnapshot};
+
+mod bal;
 
 // A `revm::Database` that is used in forking mode
 type ForkDB<N, B> = CacheDB<SharedBackend<N, B>>;
@@ -1731,11 +1733,10 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         journaled_state: &mut JournaledState,
         persistent_accounts: &AddressSet,
     ) -> eyre::Result<Option<AnyRpcTransaction>> {
-        let ReplayInputs { fork_id, forks, evm_env, networks } = replay;
         trace!(?tx_hash, "replay until transaction");
         #[cfg(feature = "monad")]
         eyre::ensure!(
-            !networks.is_monad() || block_context.is_some(),
+            !replay.networks.is_monad() || block_context.is_some(),
             "block context is required to replay transactions for this network"
         );
 
@@ -1748,7 +1749,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         let Some(target_index) = transactions.iter().position(|tx| tx.tx_hash() == tx_hash) else {
             return Ok(None);
         };
-        if networks.is_monad() {
+        if replay.networks.is_monad() {
             eyre::ensure!(
                 fork.position
                     .after_transaction(
@@ -1763,6 +1764,23 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             );
         }
         let target_tx = transactions[target_index].clone();
+        match Self::try_apply_bal_prestate(
+            fork,
+            &replay,
+            full_block,
+            &target_tx,
+            journaled_state,
+            persistent_accounts,
+        ) {
+            Ok(true) => {
+                trace!(?tx_hash, "BAL prestate applied successfully, skipping fork replay");
+                return Ok(Some(target_tx));
+            }
+            Ok(false) => {}
+            Err(err) => trace!(%err, "BAL prestate unavailable, falling back to fork replay"),
+        }
+        let system_calls = Self::pre_block_system_calls(&replay, full_block, fork.source_chain_id);
+        let ReplayInputs { fork_id, forks, evm_env, networks } = replay;
         let factory = FEN::EvmFactory::default();
         let mut txs_to_replay = Vec::with_capacity(target_index);
         for (index, tx) in transactions[..target_index].iter().enumerate() {
@@ -1772,7 +1790,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         }
 
         // Replay all preceding transactions against a cloned ForkDB.
-        if !txs_to_replay.is_empty() {
+        if !txs_to_replay.is_empty() || !system_calls.is_empty() {
             let now = Instant::now();
 
             // Stage the prefix against one cloned fork cache. The temporary backend also
@@ -1786,6 +1804,17 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
                 journaled_state.clone(),
                 networks,
             )?;
+
+            if !system_calls.is_empty() {
+                let mut evm = factory.create_evm(&mut replay_backend, evm_env.clone());
+                inject_replay_precompiles(networks, evm.precompiles_mut(), chain_id, timestamp);
+                for (address, input) in system_calls {
+                    let result = evm
+                        .transact_system_call(SYSTEM_ADDRESS, address, input)
+                        .wrap_err("backend: failed replaying pre-block system call")?;
+                    evm.db_mut().commit(result.state);
+                }
+            }
 
             #[cfg(feature = "monad")]
             if let Some(context) = block_context {
@@ -3343,7 +3372,7 @@ mod tests {
         opts::EvmOpts,
     };
     use alloy_consensus::{Signed, TxEnvelope, TxLegacy, transaction::Recovered};
-    use alloy_eips::BlockNumHash;
+    use alloy_eips::{BlockNumHash, eip2935::HISTORY_STORAGE_ADDRESS};
     use alloy_evm::EvmEnv;
     use alloy_network::{
         AnyHeader, AnyNetwork, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope,
@@ -3393,8 +3422,11 @@ mod tests {
         );
         let (backend, handler) = SharedBackend::new(provider, db, None);
         drop(handler);
+        let mut db = CacheDB::new(backend);
+        // Replay includes Prague's pre-block call, which is a no-op without deployed code.
+        db.insert_account_info(HISTORY_STORAGE_ADDRESS, AccountInfo::default());
         Fork {
-            db: CacheDB::new(backend),
+            db,
             journaled_state: JournalInner::new(),
             source_chain_id: 1,
             position: ForkPosition::AfterBlock { block: BlockNumHash::default() },

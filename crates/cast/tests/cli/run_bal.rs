@@ -3,6 +3,7 @@
 use alloy_consensus::{BlockHeader, SignableTransaction, TxLegacy};
 use alloy_eips::{
     BlockId, Encodable2718,
+    eip2935::{HISTORY_STORAGE_ADDRESS, HISTORY_STORAGE_CODE},
     eip4788::BEACON_ROOTS_ADDRESS,
     eip7928::{
         AccountChanges, BalanceChange, BlockAccessIndex, BlockAccessList, CodeChange, NonceChange,
@@ -47,6 +48,7 @@ enum FixtureMode {
     ChainId,
     ParentStorage(U256),
     CallerBalance(EthereumHardfork),
+    History,
 }
 
 impl Fixture {
@@ -60,10 +62,13 @@ impl Fixture {
 
     async fn with_config(mode: FixtureMode, config: NodeConfig) -> Self {
         let capture_chain_id = matches!(mode, FixtureMode::ChainId);
-        let capture_balance = matches!(mode, FixtureMode::CallerBalance(_));
+        let capture_history = matches!(mode, FixtureMode::History);
+        let capture_balance = matches!(mode, FixtureMode::CallerBalance(_) | FixtureMode::History);
         let parent_storage =
             if let FixtureMode::ParentStorage(value) = mode { Some(value) } else { None };
-        let hardfork = if let FixtureMode::CallerBalance(hardfork) = mode {
+        let hardfork = if capture_history {
+            EthereumHardfork::Prague
+        } else if let FixtureMode::CallerBalance(hardfork) = mode {
             hardfork
         } else {
             EthereumHardfork::Cancun
@@ -87,6 +92,12 @@ impl Fixture {
             "3373fffffffffffffffffffffffffffffffffffffffe1460255760005460005260206000f35b60005460010160005500"
         );
         api.anvil_set_code(BEACON_ROOTS_ADDRESS, beacon_code.into()).await.unwrap();
+        if capture_history {
+            api.anvil_set_code(HISTORY_STORAGE_ADDRESS, HISTORY_STORAGE_CODE.clone())
+                .await
+                .unwrap();
+            api.anvil_set_nonce(HISTORY_STORAGE_ADDRESS, U256::from(1)).await.unwrap();
+        }
         api.mine_one().await.unwrap();
         let parent = provider.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
         let parent_hash = parent.header().hash();
@@ -94,12 +105,14 @@ impl Fixture {
             + U256::from(1);
 
         // No Solidity compiler or public selector service is needed for this fixture.
-        let read_storage = if capture_balance {
-            "3331"
+        let read_storage = if capture_history {
+            format!("60014303600052602060006020600073{HISTORY_STORAGE_ADDRESS:x}5afa50600051")
+        } else if capture_balance {
+            "3331".into()
         } else if capture_chain_id {
-            "600054"
+            "600054".into()
         } else {
-            "60005460010180600055"
+            "60005460010180600055".into()
         };
         let read_parent_storage = if parent_storage.is_some() { "600154604052" } else { "" };
         let return_size = if parent_storage.is_some() { "60" } else { "40" };
@@ -238,6 +251,21 @@ impl Fixture {
                 ..AccountChanges::new(BEACON_ROOTS_ADDRESS)
             },
         );
+        if capture_history {
+            accounts.insert(
+                HISTORY_STORAGE_ADDRESS,
+                AccountChanges {
+                    storage_changes: vec![SlotChanges::new(
+                        U256::from(parent.header().number() % 8191),
+                        vec![StorageChange::new(
+                            BlockAccessIndex::new(0),
+                            U256::from_be_bytes(parent_hash.0),
+                        )],
+                    )],
+                    ..AccountChanges::new(HISTORY_STORAGE_ADDRESS)
+                },
+            );
+        }
         let block_hash = block.header().hash();
         Self {
             handle,
@@ -272,6 +300,8 @@ struct ProxyOptions {
     wrong_transaction_index: bool,
     wrong_parent_hash: bool,
     unavailable_account: Option<Address>,
+    unavailable_proof: bool,
+    inconsistent_proof: bool,
 }
 
 impl ProxyOptions {
@@ -285,6 +315,8 @@ impl ProxyOptions {
             wrong_transaction_index: false,
             wrong_parent_hash: false,
             unavailable_account: None,
+            unavailable_proof: false,
+            inconsistent_proof: false,
         }
     }
 }
@@ -326,10 +358,11 @@ impl RpcProxy {
                                     future::pending::<Value>().await
                                 }
                             }
-                        } else if (options.reject_prestate
-                            && method == "debug_traceTransaction"
-                            && request.pointer("/params/1/tracer")
-                                == Some(&json!("prestateTracer")))
+                        } else if (options.unavailable_proof && method == "eth_getProof")
+                            || (options.reject_prestate
+                                && method == "debug_traceTransaction"
+                                && request.pointer("/params/1/tracer")
+                                    == Some(&json!("prestateTracer")))
                             || (options.unavailable_account.is_some_and(|address| {
                                 request.pointer("/params/0") == Some(&json!(address))
                             }) && matches!(
@@ -360,6 +393,9 @@ impl RpcProxy {
                             response["result"] = json!({
                                 "gas": 0, "failed": false, "returnValue": "0x", "structLogs": []
                             });
+                        }
+                        if options.inconsistent_proof && method == "eth_getProof" {
+                            response["result"]["storageHash"] = json!(B256::ZERO);
                         }
                         if let Some(hardfork) = options.reported_hardfork
                             && method == "anvil_nodeInfo"
@@ -494,14 +530,37 @@ casttest!(cast_run_fork_bal_matches_replay_at_every_position, async |_prj, cmd| 
     }
     let account_reads = proxy.requests("eth_getBalance");
     assert!(!account_reads.is_empty(), "BAL preparation must load unchanged parent fields");
-    for method in ["eth_getBalance", "eth_getCode", "eth_getTransactionCount", "eth_getStorageAt"] {
+    for method in [
+        "eth_getBalance",
+        "eth_getCode",
+        "eth_getTransactionCount",
+        "eth_getStorageAt",
+        "eth_getProof",
+    ] {
         for request in proxy.requests(method) {
-            let parameter = if method == "eth_getStorageAt" { 2 } else { 1 };
+            let parameter =
+                if matches!(method, "eth_getStorageAt" | "eth_getProof") { 2 } else { 1 };
             let block =
                 serde_json::from_value::<BlockId>(request["params"][parameter].clone()).unwrap();
             assert_eq!(block.as_block_hash(), Some(fixture.parent_hash));
         }
     }
+});
+
+casttest!(cast_run_fork_bal_matches_prague_history_system_state, async |_prj, cmd| {
+    let fixture =
+        Fixture::with_config(FixtureMode::History, NodeConfig::test().with_chain_id(Some(1u64)))
+            .await;
+    let proxy = RpcProxy::new(&fixture, ProxyOptions::with_bal(json!(fixture.bal))).await;
+    let hash = fixture.transactions[2];
+    let replay = run(&mut cmd, hash, &fixture.handle.http_endpoint(), &["--evm-version", "prague"]);
+    let restored = run(&mut cmd, hash, &proxy.endpoint, &[]);
+    assert_eq!(restored.stdout, replay.stdout);
+    OutputAssert::new(restored).stderr_eq("");
+    assert_eq!(proxy.requests(BAL_METHOD).len(), 1);
+    // Both local paths must agree with the node's target prestate as well as each other.
+    let canonical = run(&mut cmd, hash, &fixture.handle.http_endpoint(), &["--prestate-tracer"]);
+    assert_eq!(canonical.stdout, replay.stdout);
 });
 
 casttest!(cast_run_fork_bal_skips_mismatched_hardfork, async |_prj, cmd| {
@@ -527,6 +586,24 @@ casttest!(cast_run_fork_bal_skips_mismatched_hardfork, async |_prj, cmd| {
     }
 });
 
+casttest!(cast_run_fork_bal_skips_history_system_call_on_arbitrum, async |_prj, cmd| {
+    let fixture = Fixture::with_config(
+        FixtureMode::CallerBalance(EthereumHardfork::Prague),
+        NodeConfig::test().with_chain_id(Some(42161u64)),
+    )
+    .await;
+    let proxy = RpcProxy::new(&fixture, ProxyOptions::with_bal(json!(fixture.bal))).await;
+    run(&mut cmd, fixture.transactions[2], &proxy.endpoint, &["--evm-version", "prague"]);
+    assert!(proxy.requests(BAL_METHOD).is_empty());
+    // An Ethereum hardfork override does not add Ethereum's history system call to Arbitrum.
+    assert!(
+        proxy
+            .requests("eth_getCode")
+            .iter()
+            .all(|request| { request["params"][0] != json!(HISTORY_STORAGE_ADDRESS) })
+    );
+});
+
 casttest!(cast_run_fork_bal_failures_restore_clean_replay, async |_prj, cmd| {
     let fixture = Fixture::new().await;
     let hash = fixture.transactions[2];
@@ -536,6 +613,10 @@ casttest!(cast_run_fork_bal_failures_restore_clean_replay, async |_prj, cmd| {
     duplicate.insert(0, duplicate[0].clone());
     let mut out_of_range = fixture.bal.clone();
     out_of_range[0].nonce_changes.push(NonceChange::new(BlockAccessIndex::new(99), 1));
+    let mut missing_nonce = fixture.bal.clone();
+    for account in &mut missing_nonce {
+        account.nonce_changes.clear();
+    }
     let mut unavailable = fixture.bal.clone();
     // Force a failed read while staging real changes. Any partially applied BAL would run the
     // prefix against its own output and change the target's trace or fail CREATE.
@@ -547,6 +628,8 @@ casttest!(cast_run_fork_bal_failures_restore_clean_replay, async |_prj, cmd| {
 
     let cases = [
         ("missing", ProxyOptions::with_bal(Value::Null)),
+        ("empty", ProxyOptions::with_bal(json!([]))),
+        ("missing sender nonce", ProxyOptions::with_bal(json!(missing_nonce))),
         (
             "unsupported",
             ProxyOptions { bal: BalResponse::Unsupported, ..ProxyOptions::with_bal(Value::Null) },
@@ -575,6 +658,14 @@ casttest!(cast_run_fork_bal_failures_restore_clean_replay, async |_prj, cmd| {
                 unavailable_account: Some(unavailable_account),
                 ..ProxyOptions::with_bal(json!(unavailable))
             },
+        ),
+        (
+            "unavailable proof",
+            ProxyOptions { unavailable_proof: true, ..ProxyOptions::with_bal(json!(fixture.bal)) },
+        ),
+        (
+            "nonempty storage root",
+            ProxyOptions { inconsistent_proof: true, ..ProxyOptions::with_bal(json!(fixture.bal)) },
         ),
     ];
     for (name, options) in cases {

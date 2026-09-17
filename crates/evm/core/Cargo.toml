@@ -39,6 +39,7 @@ alloy-network.workspace = true
 alloy-consensus.workspace = true
 alloy-monad-evm = { workspace = true, optional = true }
 alloy-eips.workspace = true
+alloy-eip7928.workspace = true
 alloy-op-evm = { workspace = true, optional = true }
 alloy-rpc-types = { workspace = true, features = ["anvil"] }
 alloy-sol-types.workspace = true

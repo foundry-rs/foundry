@@ -3,16 +3,67 @@ use alloy_consensus::{SignableTransaction, TxLegacy, transaction::Recovered};
 use alloy_eip7928::{
     AccountChanges, BalanceChange, CodeChange, NonceChange, SlotChanges, StorageChange,
 };
-use alloy_primitives::{Address, Bytes, Signature, TxKind, U256, bytes};
+use alloy_primitives::{Bytes, Signature, TxKind, U256, bytes};
 use alloy_rpc_types::{Block, Transaction as RpcTransaction};
 use revm::{
     Context, DatabaseCommit, ExecuteCommitEvm, MainBuilder, MainContext,
     context::TxEnv,
     database::InMemoryDB,
     database_interface::{ErasedError, bal::BalDatabase},
-    state::{AccountInfo, Bytecode},
+    state::Bytecode,
 };
 use std::{cell::RefCell, io};
+
+trait ParentStorage: DatabaseRef {
+    fn parent(&self) -> &InMemoryDB;
+}
+
+impl ParentStorage for InMemoryDB {
+    fn parent(&self) -> &InMemoryDB {
+        self
+    }
+}
+
+impl ParentStorage for CountingDb {
+    fn parent(&self) -> &InMemoryDB {
+        &self.parent
+    }
+}
+
+impl ParentStorage for FailingDb {
+    fn parent(&self) -> &InMemoryDB {
+        &self.parent
+    }
+}
+
+fn prepare_prestate<DB: ParentStorage>(
+    db: &DB,
+    bal: BlockAccessList,
+    transaction_index: usize,
+    transaction_count: usize,
+    expected_hash: Option<B256>,
+    spec: SpecId,
+) -> Result<EvmState> {
+    let prepared = super::prepare_prestate(
+        db,
+        bal,
+        transaction_index,
+        transaction_count,
+        expected_hash,
+        spec,
+    )?;
+    for (address, _) in &prepared.possible_resets {
+        ensure!(
+            db.parent()
+                .cache
+                .accounts
+                .get(address)
+                .is_none_or(|account| account.storage.values().all(U256::is_zero)),
+            "possible storage reset"
+        );
+    }
+    Ok(prepared.state)
+}
 
 #[test]
 fn target_validation_binds_transaction_position_and_parent() {
@@ -131,7 +182,7 @@ fn prestate_restores_first_middle_and_last_transaction_boundaries() {
 }
 
 #[test]
-fn prestate_reads_each_needed_parent_account_once() {
+fn first_prestate_reads_only_accounts_with_system_writes() {
     let [created, existing, read_only, future_storage, future_account, untouched] =
         [1, 2, 3, 4, 5, 6].map(Address::with_last_byte);
     let slot = U256::ZERO;
@@ -170,11 +221,8 @@ fn prestate_reads_each_needed_parent_account_once() {
     ];
 
     let state = prepare_prestate(&db, bal, 0, 2, None, SpecId::CANCUN).unwrap();
-    assert_eq!(*db.basic_reads.borrow(), [created, existing, read_only, future_storage]);
-    assert_eq!(
-        *db.storage_reads.borrow(),
-        [(created, slot), (read_only, slot), (future_storage, slot)]
-    );
+    assert_eq!(*db.basic_reads.borrow(), [created, existing]);
+    assert!(db.storage_reads.borrow().is_empty());
     assert_eq!(state.len(), 2);
     assert_eq!(state[&created].storage[&slot].present_value, U256::from(11));
     assert_eq!(state[&existing].storage[&slot].present_value, U256::from(22));
@@ -355,6 +403,57 @@ fn prestate_rejects_storage_resets_without_prior_writes() {
         validate_block_access_list(&bal, 2).unwrap();
         assert!(prepare_prestate(&parent, bal, 1, 2, None, SpecId::CANCUN).is_err());
     }
+}
+
+#[test]
+fn prestate_requires_full_storage_check_for_unlisted_creation_slots() {
+    let caller = Address::with_last_byte(100);
+    let created = caller.create(0);
+    let slot = U256::from(99);
+    let mut parent = InMemoryDB::default();
+    parent.insert_account_info(caller, AccountInfo::from_balance(U256::from(1_000_000_000)));
+    parent.insert_account_info(created, AccountInfo::from_balance(U256::from(10)));
+    parent.insert_account_storage(created, slot, U256::from(77)).unwrap();
+    let db = BalDatabase::new(parent.clone()).with_bal_builder();
+    let mut evm = Context::mainnet()
+        .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(SpecId::CANCUN))
+        .with_db(db)
+        .build_mainnet();
+    evm.ctx.journaled_state.database.bal_state.bal_index = BlockAccessIndex::new(1);
+    // Deploy STOP without ever accessing slot 99. CREATE still clears that slot.
+    let deployment = evm
+        .transact_commit(
+            TxEnv::builder()
+                .caller(caller)
+                .kind(TxKind::Create)
+                .gas_limit(1_000_000)
+                .data(bytes!("6001600c60003960016000f300"))
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
+    assert!(deployment.is_success());
+    assert_eq!(evm.ctx.journaled_state.database.db.storage_ref(created, slot).unwrap(), U256::ZERO);
+    evm.ctx.journaled_state.database.bal_state.bal_index = BlockAccessIndex::new(2);
+    assert!(
+        evm.transact_commit(
+            TxEnv::builder()
+                .caller(caller)
+                .nonce(1)
+                .kind(TxKind::Call(created))
+                .gas_limit(1_000_000)
+                .build()
+                .unwrap()
+        )
+        .unwrap()
+        .is_success()
+    );
+    let list = evm.ctx.journaled_state.database.bal_state.take_built_alloy_bal().unwrap();
+    let account = list.iter().find(|account| account.address == created).unwrap();
+    assert!(account.storage_changes.is_empty());
+    assert!(account.storage_reads.is_empty());
+    assert!(prepare_prestate(&parent, list, 1, 2, None, SpecId::CANCUN).is_err());
+    assert_eq!(parent.storage_ref(created, slot).unwrap(), U256::from(77));
 }
 
 #[test]

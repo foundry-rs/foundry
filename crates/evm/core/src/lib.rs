@@ -35,6 +35,7 @@ pub mod env;
 pub use env::*;
 
 pub mod backend;
+pub mod bal;
 pub mod buffer;
 pub mod bytecode;
 pub mod constants;

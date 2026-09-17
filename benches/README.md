@@ -238,6 +238,58 @@ example symbolic solver queries, reported solver time, invariant throughput, or
 coverage relscore/relcov. If the delta is within noise, describe it as neutral
 or inconclusive.
 
+## Cast block-access-list prestate
+
+`scripts/cast-bal-bench.py` measures `cast run` against a deterministic local
+Cancun block. It needs Python 3 and existing `cast` and `anvil` binaries; it does
+not build them or contact a public RPC. The default workload contains 64 calls
+across 16 counter contracts, exercising repeated account and storage changes.
+Use `--contracts 1` for concentrated writes or `--contracts 64` for distinct
+accounts. A local proxy supplies the fixture's BAL before Amsterdam activation.
+
+```bash
+cargo build --profile profiling -p cast -p anvil --bin cast --bin anvil
+python3 benches/scripts/cast-bal-bench.py \
+  --cast target/profiling/cast --anvil target/profiling/anvil \
+  --output /tmp/cast-bal-candidate --runs 5 --warmups 1
+```
+
+The runner checks the first, middle and last transaction against replay, including
+full trace output, and checks gas against the mined receipt. It separately
+measures a supported BAL, an unsupported method, an unavailable (`null`) BAL and
+an unusable empty BAL. Replay uses the
+matching `--evm-version cancun` override to suppress the BAL probe. The runner
+checks that the BAL mode actually applies the prestate and that fallback modes
+do not accept unusable responses. Fork storage caching is disabled for every
+process. The proxy consistently rejects the optional `eth_getAccountInfo`
+extension, so account reads use standard Ethereum RPCs. `--latency-ms 10`
+optionally adds a fixed delay to every HTTP request; report this explicitly when
+presenting results.
+
+`results.json` retains individual wall times, RPC method counts (including
+`eth_getProof` storage-root checks), HTTP request counts, JSON request/generated
+response body bytes and whether BAL was applied. It also records binary versions,
+workload parameters and SHA-256 hashes of both binaries, the runner and fixture.
+Bytes exclude HTTP headers and transport framing; cancelled
+responses are counted separately when the socket reports a disconnect. `results.md`
+contains medians; `fixture.json` and per-run stdout/stderr support auditing trace
+equivalence. Setup, mining and proxy shutdown are outside the timed region.
+
+For branch-versus-base comparisons, build both Cast binaries with the `profiling`
+profile and run the script separately with identical workload, Anvil binary,
+repetition count and latency. A baseline without BAL support can use
+`--modes replay`; compare its replay samples to the candidate's BAL and fallback
+samples. Also report the candidate's replay samples to expose unrelated changes.
+An older BAL implementation that accepts empty lists can omit `unusable` from
+both runs with `--modes replay,bal,unsupported,unavailable`; run the candidate's
+empty-list check separately. Preserve binaries outside the Cargo target directory
+before building another revision, and record the source revision and build
+command beside each result. The embedded version alone may not identify uncommitted
+source changes or custom Cargo profiles.
+These synthetic local measurements isolate prestate work and RPC overhead; they
+do not establish mainnet-provider performance. Do not turn a noisy wall-time
+difference into a speedup claim.
+
 ## Running scfuzzbench Campaigns
 
 `foundry-scfuzzbench` runs a local scfuzzbench Foundry campaign, invokes the scfuzzbench

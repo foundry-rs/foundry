@@ -19,7 +19,6 @@ pub mod cmd;
 pub mod opts;
 pub mod tempo;
 
-mod bal;
 pub mod base;
 pub mod call_spec;
 pub(crate) mod debug;

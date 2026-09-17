@@ -1,6 +1,5 @@
 use super::fetch_code_via_rpc;
 use crate::{
-    bal,
     debug::{ensure_remote_trace_context_unchanged, handle_traces, resolve_remote_trace_hardfork},
     rpc_trace::{call_frame_to_arena, is_method_not_found_error, is_missing_state_error},
     traces::TraceKind,
@@ -46,7 +45,7 @@ use foundry_config::{
 };
 use foundry_evm::{
     core::{
-        FoundryBlock as _,
+        FoundryBlock as _, bal,
         env::FromAnyRpcTransaction as _,
         evm::{EthEvmNetwork, EvmEnvFor, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor},
     },
@@ -514,6 +513,12 @@ impl RunArgs {
         let spec_id = (*evm_env.cfg_env.spec()).into();
         let parent_beacon_block_root =
             parent_beacon_block_root_for_network(networks, spec_id, parent_beacon_block_root);
+        let parent_history_hash = (networks.execution_network().is_ethereum()
+            && !networks.is_celo()
+            && !chain.is_arbitrum()
+            && spec_id.is_enabled_in(SpecId::PRAGUE))
+        .then(|| block.as_ref().map(|block| block.header().parent_hash()))
+        .flatten();
 
         // Set the state to the moment right before the transaction.
         //
@@ -535,6 +540,9 @@ impl RunArgs {
                     Ok(pre_state_frame) => {
                         // Local overrides can access beacon storage omitted by the canonical
                         // trace. Apply system writes before overlaying its recorded prestate.
+                        if let Some(hash) = parent_history_hash {
+                            executor.apply_history_storage(hash)?;
+                        }
                         if let Some(root) = parent_beacon_block_root {
                             executor.apply_beacon_root(root)?;
                         }
@@ -598,15 +606,23 @@ impl RunArgs {
                     }),
                     "BAL prestate requires ordinary Ethereum transactions"
                 );
-                bal::prepare_prestate(
+                bal::validate_transaction_changes(&access_list, &transactions[..=index])?;
+                let prepared = bal::prepare_prestate(
                     executor.backend(),
                     access_list,
                     index,
                     transactions.len(),
                     block.header().block_access_list_hash(),
                     spec_id,
-                )
+                )?;
+                Ok::<_, eyre::Report>((prepared, parent_hash))
             })();
+            let prepared = match prepared {
+                Ok((prepared, parent_hash)) => {
+                    prepared.verify_storage_roots(&provider, parent_hash).await
+                }
+                Err(err) => Err(err),
+            };
             match prepared {
                 Ok(state) => {
                     executor.backend_mut().commit(state);
@@ -618,8 +634,13 @@ impl RunArgs {
         }
 
         // BAL includes system writes; debug prestate applied them before its overlay.
-        if !prestate_applied && let Some(parent_beacon_block_root) = parent_beacon_block_root {
-            executor.apply_beacon_root(parent_beacon_block_root)?;
+        if !prestate_applied {
+            if let Some(hash) = parent_history_hash {
+                executor.apply_history_storage(hash)?;
+            }
+            if let Some(parent_beacon_block_root) = parent_beacon_block_root {
+                executor.apply_beacon_root(parent_beacon_block_root)?;
+            }
         }
 
         Ok(PreparedRun {

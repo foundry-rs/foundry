@@ -840,6 +840,18 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         parent_beacon_block_root: alloy_primitives::B256,
     ) -> eyre::Result<()> {
         let calldata = Bytes::copy_from_slice(parent_beacon_block_root.as_slice());
+        self.apply_system_call(BEACON_ROOTS_ADDRESS, calldata)
+    }
+
+    /// Applies the EIP-2935 parent block hash system call (Prague+).
+    pub fn apply_history_storage(&mut self, parent_hash: B256) -> eyre::Result<()> {
+        self.apply_system_call(
+            HISTORY_STORAGE_ADDRESS,
+            Bytes::copy_from_slice(parent_hash.as_slice()),
+        )
+    }
+
+    fn apply_system_call(&mut self, address: Address, calldata: Bytes) -> eyre::Result<()> {
         let mut evm_env = self.evm_env.clone();
         let inspector = self.inspector().clone();
         let mut state = {
@@ -850,12 +862,11 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
                 inspector,
             );
             *evm.chain_mut() = ChainFor::<FEN>::for_transaction(&TxEnvFor::<FEN>::default());
-            let result =
-                evm.transact_system_call(SYSTEM_ADDRESS, BEACON_ROOTS_ADDRESS, calldata)?;
+            let result = evm.transact_system_call(SYSTEM_ADDRESS, address, calldata)?;
             evm_env = evm.finish().1;
             result.state
         };
-        state.retain(|address, _| *address == BEACON_ROOTS_ADDRESS);
+        state.retain(|changed_address, _| *changed_address == address);
 
         self.backend_mut().commit(state);
         self.inspector_mut().set_block(evm_env.block_env);
