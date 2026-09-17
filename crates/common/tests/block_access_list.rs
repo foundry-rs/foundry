@@ -1,3 +1,5 @@
+//! BAL provider requests, error recovery and timeout boundaries.
+
 use alloy_eips::{BlockId, eip7928::BlockAccessList};
 use alloy_json_rpc::{ErrorPayload, RequestPacket, ResponsePacket, SerializedRequest};
 use alloy_network::Ethereum;
@@ -12,6 +14,7 @@ use foundry_common::provider::block_access_list::fetch_block_access_list;
 use serde_json::{Value, json};
 use std::{
     collections::VecDeque,
+    fmt::Debug,
     sync::{Arc, Mutex},
     task::{Context, Poll},
     time::Duration,
@@ -40,6 +43,34 @@ impl RecordingTransport {
     fn record(&self, request: &SerializedRequest) {
         let params = serde_json::from_str(request.params().unwrap().get()).unwrap();
         self.requests.lock().unwrap().push((request.method().to_string(), params));
+    }
+
+    fn provider(&self) -> RootProvider<Ethereum> {
+        RootProvider::new(RpcClient::new(self.clone(), true))
+    }
+
+    async fn assert_recovers(&self, next_block: u64, case: impl Debug) {
+        self.inner.push_success(&json!([]));
+        let provider = self.provider();
+
+        assert_eq!(
+            fetch_block_access_list(&provider, BlockId::number(20_000_000)).await,
+            None,
+            "case: {case:?}"
+        );
+        assert_eq!(
+            fetch_block_access_list(&provider, BlockId::number(next_block)).await,
+            Some(vec![]),
+            "case: {case:?}"
+        );
+        assert_eq!(
+            *self.requests.lock().unwrap(),
+            [20_000_000, next_block].map(|block| {
+                ("eth_getBlockAccessListByBlockNumber".to_string(), json!([format!("0x{block:x}")]))
+            }),
+            "case: {case:?}"
+        );
+        assert!(self.inner.read_q().is_empty(), "case: {case:?}");
     }
 }
 
@@ -79,7 +110,7 @@ impl Service<RequestPacket> for RecordingTransport {
 async fn uses_alloy_block_access_list_methods_without_activation_requests() {
     let asserter = Asserter::new();
     let transport = RecordingTransport::new(asserter.clone());
-    let provider = RootProvider::<Ethereum>::new(RpcClient::new(transport.clone(), true));
+    let provider = transport.provider();
     let hash = B256::repeat_byte(0x11);
     let cases = [
         (BlockId::number(20_000_000), "eth_getBlockAccessListByBlockNumber", json!(["0x1312d00"])),
@@ -101,7 +132,7 @@ async fn canonical_hash_requirement_does_not_get_silently_dropped() {
     let asserter = Asserter::new();
     asserter.push_success(&json!([]));
     let transport = RecordingTransport::new(asserter.clone());
-    let provider = RootProvider::<Ethereum>::new(RpcClient::new(transport.clone(), true));
+    let provider = transport.provider();
     let hash = B256::repeat_byte(0x11);
 
     assert_eq!(fetch_block_access_list(&provider, BlockId::hash_canonical(hash)).await, None);
@@ -113,19 +144,9 @@ async fn canonical_hash_requirement_does_not_get_silently_dropped() {
 
 #[tokio::test]
 async fn transport_failure_does_not_disable_later_requests() {
-    let asserter = Asserter::new();
-    asserter.push_success(&json!([]));
-    let transport = RecordingTransport::new(asserter);
+    let transport = RecordingTransport::new(Asserter::new());
     transport.errors.lock().unwrap().push_back(TransportErrorKind::backend_gone());
-    let provider = RootProvider::<Ethereum>::new(RpcClient::new(transport.clone(), true));
-    let block = BlockId::number(20_000_000);
-
-    assert_eq!(fetch_block_access_list(&provider, block).await, None);
-    assert_eq!(fetch_block_access_list(&provider, block).await, Some(Vec::new()));
-    assert_eq!(
-        *transport.requests.lock().unwrap(),
-        vec![("eth_getBlockAccessListByBlockNumber".to_string(), json!(["0x1312d00"])); 2]
-    );
+    transport.assert_recovers(20_000_000, "backend gone").await;
 }
 
 #[tokio::test(start_paused = true)]
@@ -134,7 +155,7 @@ async fn response_before_timeout_is_returned() {
     asserter.push_success(&json!([]));
     let transport = RecordingTransport::new(asserter);
     transport.delays.lock().unwrap().push_back(Duration::from_millis(499));
-    let provider = RootProvider::<Ethereum>::new(RpcClient::new(transport, true));
+    let provider = transport.provider();
     let start = Instant::now();
 
     assert_eq!(fetch_block_access_list(&provider, BlockId::number(20_000_000)).await, Some(vec![]));
@@ -147,7 +168,7 @@ async fn request_timeout_does_not_disable_later_requests() {
     asserter.push_success(&json!([]));
     let transport = RecordingTransport::new(asserter.clone());
     transport.delays.lock().unwrap().push_back(Duration::from_secs(60));
-    let provider = RootProvider::<Ethereum>::new(RpcClient::new(transport.clone(), true));
+    let provider = transport.provider();
     let block = BlockId::number(20_000_000);
     let start = Instant::now();
 
@@ -173,20 +194,13 @@ async fn http_errors_do_not_disable_later_requests() {
     ];
 
     for (status, body) in cases {
-        let asserter = Asserter::new();
-        asserter.push_success(&json!([]));
-        let transport = RecordingTransport::new(asserter);
+        let transport = RecordingTransport::new(Asserter::new());
         transport
             .errors
             .lock()
             .unwrap()
             .push_back(TransportErrorKind::http_error(status, body.to_string()));
-        let provider = RootProvider::<Ethereum>::new(RpcClient::new(transport.clone(), true));
-        let block = BlockId::number(20_000_000);
-
-        assert_eq!(fetch_block_access_list(&provider, block).await, None);
-        assert_eq!(fetch_block_access_list(&provider, block).await, Some(Vec::new()));
-        assert_eq!(transport.requests.lock().unwrap().len(), 2);
+        transport.assert_recovers(20_000_000, (status, body)).await;
     }
 }
 
@@ -214,11 +228,7 @@ async fn retrieves_historical_block_access_list() {
 async fn missing_block_access_list_does_not_disable_later_requests() {
     let asserter = Asserter::new();
     asserter.push_success(&serde_json::Value::Null);
-    asserter.push_success(&json!([]));
-    let provider = ProviderBuilder::new().connect_mocked_client(asserter);
-
-    assert_eq!(fetch_block_access_list(&provider, BlockId::number(20_000_000)).await, None);
-    assert_eq!(fetch_block_access_list(&provider, BlockId::number(20_000_001)).await, Some(vec![]));
+    RecordingTransport::new(asserter).assert_recovers(20_000_001, Value::Null).await;
 }
 
 #[tokio::test]
@@ -230,15 +240,7 @@ async fn rpc_errors_do_not_disable_later_requests() {
             message: "block access list unavailable".into(),
             data: None,
         });
-        asserter.push_success(&json!([]));
-        let provider = ProviderBuilder::new().connect_mocked_client(asserter);
-
-        let result = fetch_block_access_list(&provider, BlockId::number(20_000_000)).await;
-        assert_eq!(result, None, "RPC error code {code}");
-        assert_eq!(
-            fetch_block_access_list(&provider, BlockId::number(20_000_001)).await,
-            Some(vec![])
-        );
+        RecordingTransport::new(asserter).assert_recovers(20_000_001, code).await;
     }
 }
 
@@ -275,17 +277,6 @@ async fn rejects_malformed_responses_without_disabling_later_requests() {
     ] {
         let asserter = Asserter::new();
         asserter.push_success(&response);
-        asserter.push_success(&json!([]));
-        let provider = ProviderBuilder::new().connect_mocked_client(asserter);
-
-        assert_eq!(
-            fetch_block_access_list(&provider, BlockId::number(20_000_000)).await,
-            None,
-            "malformed response: {response}"
-        );
-        assert_eq!(
-            fetch_block_access_list(&provider, BlockId::number(20_000_001)).await,
-            Some(vec![])
-        );
+        RecordingTransport::new(asserter).assert_recovers(20_000_001, response).await;
     }
 }
