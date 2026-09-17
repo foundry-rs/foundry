@@ -1,4 +1,4 @@
-//! SMT-LIB assertion emission with common-subexpression bindings.
+//! Query-level SMT-LIB assertion emission with common-subexpression bindings.
 
 use super::*;
 

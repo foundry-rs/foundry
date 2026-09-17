@@ -1,3 +1,5 @@
+//! Solver orchestration, query scheduling, caching, and model validation.
+
 use super::*;
 use std::{
     io::{BufRead, BufReader, Read},
@@ -7,31 +9,29 @@ use std::{
 };
 use wait_timeout::ChildExt;
 
-mod hard_arith_fallback;
-mod monotonic_product;
-mod opt;
+mod fallback;
+mod normalize;
+mod reasoning;
 mod smt;
 
-use hard_arith_fallback::{
-    checked_mul_guard_branch_model, constraints_prefer_hard_arith_fallback_first,
-};
-use monotonic_product::{product_monotonic_unsat_normalized, remove_implied_monotonic_constraints};
-use opt::{
+use fallback::{checked_mul_guard_branch_model, constraints_prefer_hard_arith_fallback_first};
+use normalize::{
     constraints_are_directly_unsat, normalize_constraints_for_solver_cached,
     sorted_bool_exprs_are_subset,
 };
+use reasoning::{product_monotonic_unsat_normalized, remove_implied_monotonic_constraints};
 use smt::write_smt_assertions;
 
-pub(crate) use hard_arith_fallback::{
+pub(crate) use fallback::{
     fallback_single_var_model, fallback_two_var_model, hard_arith_fallback_model,
 };
 
 #[cfg(test)]
-pub(crate) use monotonic_product::product_monotonic_unsat;
-#[cfg(test)]
-pub(crate) use opt::{
+pub(crate) use normalize::{
     normalize_bool_for_solver, normalize_constraints_for_solver, normalize_expr_for_solver,
 };
+#[cfg(test)]
+pub(crate) use reasoning::product_monotonic_unsat;
 
 const Z3_QUERY_END: &str = "foundry-query-complete";
 
