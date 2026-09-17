@@ -1,4 +1,4 @@
-//! Deterministic BAL replay coverage using an Anvil block and a recording RPC proxy.
+//! BAL replay coverage against a regular archive endpoint and deterministic Anvil fixtures.
 
 use alloy_consensus::{BlockHeader, SignableTransaction, TxLegacy};
 use alloy_eips::{
@@ -19,7 +19,9 @@ use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest};
 use alloy_signer::SignerSync;
 use anvil::{NodeConfig, NodeHandle};
 use axum::{Json, Router, routing::post};
-use foundry_test_utils::{TestCommand, snapbox::cmd::OutputAssert, str, util::OutputExt};
+use foundry_test_utils::{
+    TestCommand, rpc::next_ws_archive_rpc_url, snapbox::cmd::OutputAssert, str, util::OutputExt,
+};
 use futures::future;
 use serde_json::{Value, json};
 use std::{
@@ -404,6 +406,43 @@ fn run_command<'a>(
     ])
     .args(flags)
 }
+
+casttest!(flaky_cast_run_fork_bal_live_matches_replay, |_prj, cmd| {
+    let endpoint = next_ws_archive_rpc_url();
+    // Mainnet block 19,999,957, transaction index 1. The preceding transaction changes slot 0
+    // of pool 0x757d8d585ee1488097305bcb0fcec1ac4a55e9d6 used by this swap. The target and later
+    // transactions change it again, so restoring the correct transaction boundary matters.
+    let hash =
+        "0x2c74889b29089993fc9026e3039670624dd3696864a48c5ab56c706c39c6e0c0".parse().unwrap();
+
+    // A matching explicit hardfork forces ordinary replay under the same execution rules.
+    run_command(&mut cmd, hash, &endpoint, &["--evm-version", "cancun"]);
+    cmd.env("RUST_LOG", "off");
+    let replay = cmd
+        .with_no_redact()
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+...
+Transaction successfully executed.
+Gas used: 190596
+
+"#]])
+        .stderr_eq("Executing previous transactions from the block.\n")
+        .get_output()
+        .clone();
+
+    // Compare the entire trace, including logs, storage changes, return data and receipt gas.
+    // Require BAL application so an unsupported method or timeout cannot pass via fallback.
+    run_command(&mut cmd, hash, &endpoint, &[]);
+    cmd.env("RUST_LOG", "cast::cmd::run=trace");
+    cmd.with_no_redact().assert_success().stdout_eq(replay.stdout).stderr_eq(str![[r#"
+[..] TRACE cast::cmd::run: BAL prestate applied successfully, skipping block replay
+[..] TRACE cast::cmd::run: executing call transaction tx=0x2c74889b29089993fc9026e3039670624dd3696864a48c5ab56c706c39c6e0c0 to=0x3fc91a3afd70395cd496c647d5a6cc9d4b2b7fad
+[..] TRACE cast::cmd::run: completed block replay tx_hash=0x2c74889b29089993fc9026e3039670624dd3696864a48c5ab56c706c39c6e0c0
+
+"#]]);
+});
 
 casttest!(cast_run_fork_bal_matches_replay_at_every_position, async |_prj, cmd| {
     let fixture = Fixture::new().await;
