@@ -1,6 +1,7 @@
 version: 2
 multi-ecosystem-groups:
   code-weekly:
+    open-pull-requests-limit: 5
     schedule:
       interval: weekly
       day: monday
@@ -38,7 +39,6 @@ updates:
     multi-ecosystem-group: code-weekly
     cooldown:
       default-days: 7
-    open-pull-requests-limit: 5
     ignore:
       - dependency-name: syn
         update-types:
