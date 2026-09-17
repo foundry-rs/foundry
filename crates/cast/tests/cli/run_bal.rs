@@ -21,7 +21,11 @@ use alloy_signer::SignerSync;
 use anvil::{NodeConfig, NodeHandle};
 use axum::{Json, Router, routing::post};
 use foundry_test_utils::{
-    TestCommand, rpc::next_ws_archive_rpc_url, snapbox::cmd::OutputAssert, str, util::OutputExt,
+    TestCommand,
+    rpc::{next_ws_archive_rpc_url, spawn_rpc_server},
+    snapbox::cmd::OutputAssert,
+    str,
+    util::OutputExt,
 };
 use futures::future;
 use serde_json::{Value, json};
@@ -424,10 +428,7 @@ impl RpcProxy {
                 }
             }),
         );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-        Self { endpoint: format!("http://{address}"), requests }
+        Self { endpoint: spawn_rpc_server(router).await, requests }
     }
 
     fn requests(&self, method: &str) -> Vec<Value> {
@@ -470,41 +471,62 @@ fn run_command<'a>(
     .args(flags)
 }
 
-casttest!(flaky_cast_run_fork_bal_live_matches_replay, |_prj, cmd| {
+// Mainnet block 19,999,957 predates Amsterdam and has only 12 transactions (1.2M gas),
+// keeping full replay practical while covering the first, interior and last boundaries.
+fn assert_live_bal_matches_replay(cmd: &mut TestCommand, hash: &str, gas: u64) {
     let endpoint = next_ws_archive_rpc_url();
-    // Mainnet block 19,999,957, transaction index 1. The preceding transaction changes slot 0
-    // of pool 0x757d8d585ee1488097305bcb0fcec1ac4a55e9d6 used by this swap. The target and later
-    // transactions change it again, so restoring the correct transaction boundary matters.
-    let hash =
-        "0x2c74889b29089993fc9026e3039670624dd3696864a48c5ab56c706c39c6e0c0".parse().unwrap();
+    let hash = hash.parse().unwrap();
 
     // A matching explicit hardfork forces ordinary replay under the same execution rules.
-    run_command(&mut cmd, hash, &endpoint, &["--evm-version", "cancun"]);
+    run_command(cmd, hash, &endpoint, &["--evm-version", "cancun"]);
     cmd.env("RUST_LOG", "off");
     let replay = cmd
         .with_no_redact()
         .assert_success()
-        .stdout_eq(str![[r#"
-Traces:
-...
-Transaction successfully executed.
-Gas used: 190596
-
-"#]])
+        .stdout_eq(format!("Traces:\n...\nTransaction successfully executed.\nGas used: {gas}\n"))
         .stderr_eq("Executing previous transactions from the block.\n")
         .get_output()
         .clone();
 
     // Compare the entire trace, including logs, storage changes, return data and receipt gas.
     // Require BAL application so an unsupported method or timeout cannot pass via fallback.
-    run_command(&mut cmd, hash, &endpoint, &[]);
+    run_command(cmd, hash, &endpoint, &[]);
     cmd.env("RUST_LOG", "cast::cmd::run=trace");
     cmd.with_no_redact().assert_success().stdout_eq(replay.stdout).stderr_eq(str![[r#"
 [..] TRACE cast::cmd::run: BAL prestate applied successfully, skipping block replay
-[..] TRACE cast::cmd::run: executing call transaction tx=0x2c74889b29089993fc9026e3039670624dd3696864a48c5ab56c706c39c6e0c0 to=0x3fc91a3afd70395cd496c647d5a6cc9d4b2b7fad
-[..] TRACE cast::cmd::run: completed block replay tx_hash=0x2c74889b29089993fc9026e3039670624dd3696864a48c5ab56c706c39c6e0c0
+[..] TRACE cast::cmd::run: executing call transaction tx=[..] to=[..]
+[..] TRACE cast::cmd::run: completed block replay tx_hash=[..]
 
 "#]]);
+}
+
+casttest!(flaky_cast_run_fork_bal_live_matches_replay_first, |_prj, cmd| {
+    // Index 0: only pre-block system operations precede the target.
+    assert_live_bal_matches_replay(
+        &mut cmd,
+        "0x468fde537346cab6db0b2713ff2990566e6ff6fa26d94d70159d48672ed67b2d",
+        94755,
+    );
+});
+
+casttest!(flaky_cast_run_fork_bal_live_matches_replay, |_prj, cmd| {
+    // Index 1: the preceding transaction changes slot 0 of pool
+    // 0x757d8d585ee1488097305bcb0fcec1ac4a55e9d6 used by this swap. The target and later
+    // transactions change it again, so restoring the correct transaction boundary matters.
+    assert_live_bal_matches_replay(
+        &mut cmd,
+        "0x2c74889b29089993fc9026e3039670624dd3696864a48c5ab56c706c39c6e0c0",
+        190596,
+    );
+});
+
+casttest!(flaky_cast_run_fork_bal_live_matches_replay_last, |_prj, cmd| {
+    // Index 11: restore every preceding transaction, excluding post-block operations.
+    assert_live_bal_matches_replay(
+        &mut cmd,
+        "0xd5e334de03bfb9a6d7064089c2b27ce020e0b12b818651925e1274b399bea43a",
+        22111,
+    );
 });
 
 casttest!(cast_run_fork_bal_matches_replay_at_every_position, async |_prj, cmd| {

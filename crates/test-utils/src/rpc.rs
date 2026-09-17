@@ -390,6 +390,14 @@ pub async fn spawn_rpc_proxy_internal_error_after(
     .await
 }
 
+/// Spawns a local HTTP server for an RPC test router and returns its endpoint.
+pub async fn spawn_rpc_server(router: Router) -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    format!("http://{address}")
+}
+
 /// Spawns an RPC proxy that answers `method` with `result` instead of forwarding it upstream.
 ///
 /// All other methods are forwarded. The returned counter tracks how many `method` calls reached the
@@ -433,10 +441,7 @@ pub async fn spawn_rpc_proxy_canned_method(
             }
         }),
     );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-    (format!("http://{address}"), calls)
+    (spawn_rpc_server(router).await, calls)
 }
 
 /// Spawns an RPC proxy that reports the first transaction of every full block under `tx_type`.
