@@ -1,9 +1,9 @@
 //! Deposits to Tempo L1 portals and authenticated zone withdrawals.
 
 use crate::tempo::tempo_provider;
-use alloy_network::{EthereumWallet, primitives::ReceiptResponse};
+use alloy_network::{EthereumWallet, Network, primitives::ReceiptResponse};
 use alloy_primitives::{Address, B256, Bytes, U256};
-use alloy_provider::{Provider, ProviderBuilder};
+use alloy_provider::{PendingTransactionBuilder, Provider, ProviderBuilder};
 use alloy_rpc_types::BlockId;
 use alloy_signer::Signer;
 use clap::Parser;
@@ -20,6 +20,10 @@ mod auth;
 mod earn;
 mod encryption;
 mod l1;
+
+// Mirrored from zones/crates/primitives and zones/crates/precompiles at a1c15e9f.
+const MAX_CALLBACK_GAS_LIMIT: u64 = 10_000_000;
+const MAX_CALLBACK_DATA_SIZE: usize = 1024;
 
 /// Tempo zone operations.
 #[derive(Debug, Parser)]
@@ -152,12 +156,7 @@ impl TransferArgs {
             if let Some(gas_price) = gas_price {
                 approval = approval.max_fee_per_gas(gas_price).max_priority_fee_per_gas(0);
             }
-            let receipt = approval
-                .send()
-                .await?
-                .with_timeout(Some(Duration::from_secs(120)))
-                .get_receipt()
-                .await?;
+            let receipt = submitted_receipt("token approval", approval.send().await?).await?;
             ensure!(receipt.status(), "token approval reverted: {}", receipt.transaction_hash());
         }
         Ok(())
@@ -192,7 +191,7 @@ impl DepositArgs {
         self.transfer
             .ensure_allowance(&provider, sender, self.portal, self.transfer.amount, None)
             .await?;
-        let receipt = portal
+        let pending = portal
             .deposit(
                 self.transfer.token,
                 self.transfer.amount,
@@ -202,22 +201,17 @@ impl DepositArgs {
             )
             .from(sender)
             .send()
-            .await?
-            .with_timeout(Some(Duration::from_secs(120)))
-            .get_receipt()
             .await?;
+        let receipt = submitted_receipt("deposit", pending).await?;
         ensure!(receipt.status(), "deposit reverted: {}", receipt.transaction_hash());
-        sh_status!("Deposit submitted on L1; zone processing is asynchronous.")?;
+        let _ = sh_status!("Deposit submitted on L1; zone processing is asynchronous.");
         print_receipt(&receipt)
     }
 }
 
 impl WithdrawArgs {
     async fn run(self) -> Result<()> {
-        ensure!(
-            self.callback_data.is_empty() || self.callback_gas_limit > 0,
-            "--callback-data requires a nonzero --callback-gas-limit"
-        );
+        validate_callback(&self.callback_data, self.callback_gas_limit)?;
         ensure!(self.zone_id != 0, "--zone-id must be nonzero");
         ensure!(self.zone_chain_id != 0, "--zone-chain-id must be nonzero");
         if !self.reveal_to.is_empty() {
@@ -272,7 +266,7 @@ impl WithdrawArgs {
             .ensure_allowance(&provider, sender, abi::OUTBOX, total, Some(gas_price))
             .await?;
         let to = self.transfer.to.unwrap_or(sender);
-        let receipt = outbox
+        let pending = outbox
             .requestWithdrawal(
                 self.transfer.token,
                 to,
@@ -287,15 +281,12 @@ impl WithdrawArgs {
             .max_priority_fee_per_gas(0)
             .from(sender)
             .send()
-            .await?
-            .with_timeout(Some(Duration::from_secs(120)))
-            .get_receipt()
             .await?;
+        let receipt = submitted_receipt("withdrawal", pending).await?;
         ensure!(receipt.status(), "withdrawal reverted: {}", receipt.transaction_hash());
-        print_receipt(&receipt)?;
+        let hash = receipt.transaction_hash();
         if let Some((l1_provider, from_block)) = wait {
-            let hash = receipt.transaction_hash();
-            sh_status!("Withdrawal requested: {hash}; waiting for L1 delivery.")?;
+            let _ = sh_status!("Withdrawal requested: {hash}; waiting for L1 delivery.");
             let result = l1::wait_for_withdrawal(
                 &provider,
                 &l1_provider,
@@ -312,12 +303,44 @@ impl WithdrawArgs {
                     )
                 })?
                 .wrap_err_with(|| format!("L1 wait failed for submitted withdrawal {hash}"))?;
-            sh_status!("Withdrawal delivered on L1: {l1_hash}")?;
+            let _ = sh_status!("Withdrawal delivered on L1: {l1_hash}");
         } else {
-            sh_status!("Withdrawal requested on the zone; L1 settlement is asynchronous.")?;
+            let _ = sh_status!("Withdrawal requested on the zone; L1 settlement is asynchronous.");
         }
-        Ok(())
+        print_receipt(&receipt)
     }
+}
+
+async fn submitted_receipt(
+    action: &str,
+    pending: PendingTransactionBuilder<TempoNetwork>,
+) -> Result<<TempoNetwork as Network>::ReceiptResponse> {
+    let hash = *pending.tx_hash();
+    let receipt = pending.with_timeout(Some(Duration::from_secs(120))).get_receipt();
+    tokio::time::timeout(Duration::from_secs(120), receipt)
+        .await
+        .wrap_err_with(|| {
+            format!("{action} {hash} was submitted; receipt polling timed out; do not resubmit")
+        })?
+        .wrap_err_with(|| {
+            format!("{action} {hash} was submitted; receipt polling failed; do not resubmit")
+        })
+}
+
+fn validate_callback(data: &Bytes, gas_limit: u64) -> Result<()> {
+    ensure!(
+        data.is_empty() || gas_limit > 0,
+        "--callback-data requires a nonzero --callback-gas-limit"
+    );
+    ensure!(
+        data.len() <= MAX_CALLBACK_DATA_SIZE,
+        "--callback-data exceeds the protocol limit of {MAX_CALLBACK_DATA_SIZE} bytes"
+    );
+    ensure!(
+        gas_limit <= MAX_CALLBACK_GAS_LIMIT,
+        "--callback-gas-limit exceeds the protocol limit of {MAX_CALLBACK_GAS_LIMIT}"
+    );
+    Ok(())
 }
 
 fn print_receipt(receipt: &(impl ReceiptResponse + serde::Serialize)) -> Result<()> {
@@ -371,5 +394,32 @@ mod tests {
             let tempo = TempoArgs::try_parse_from(args).unwrap();
             assert!(matches!(tempo.command, TempoSubcommand::Zone(_)));
         }
+    }
+
+    #[test]
+    fn callback_limits_match_zone_protocol() {
+        assert!(validate_callback(&Bytes::from(vec![0; 1024]), 10_000_000).is_ok());
+        assert!(validate_callback(&Bytes::from(vec![0; 1025]), 10_000_000).is_err());
+        assert!(validate_callback(&Bytes::new(), 10_000_001).is_err());
+        assert!(validate_callback(&Bytes::from_static(&[1]), 0).is_err());
+    }
+
+    #[test]
+    fn parses_settlement_wait() {
+        assert!(
+            TempoArgs::try_parse_from([
+                "tempo",
+                "zone",
+                "withdraw",
+                "--zone-id",
+                "42",
+                "--zone-chain-id",
+                "1337",
+                "--amount",
+                "1",
+                "--wait-l1",
+            ])
+            .is_ok()
+        );
     }
 }

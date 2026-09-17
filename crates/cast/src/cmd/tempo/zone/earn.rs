@@ -81,9 +81,10 @@ struct BuilderArgs {
     /// Recipient of the encrypted return deposit inside the zone.
     #[arg(long)]
     recipient: Address,
-    /// Public L1 refund address if the return deposit fails. Defaults to --recipient.
+    /// Public L1 refund address if the return deposit fails. This is not encrypted and should not
+    /// identify --recipient when recipient privacy matters.
     #[arg(long)]
-    refund_recipient: Option<Address>,
+    refund_recipient: Address,
     /// Memo encrypted with the return recipient.
     #[arg(long, default_value_t = B256::ZERO)]
     memo: B256,
@@ -105,18 +106,24 @@ impl EarnArgs {
         let (args, flow, min_vault_assets, min_earn_shares, min_output_amount) = match self.command
         {
             EarnSubcommand::EncodeDeposit { args, min_vault_assets, min_earn_shares } => {
+                ensure!(
+                    min_vault_assets > 0 && min_earn_shares > 0,
+                    "Earn deposit minimum outputs must be greater than zero"
+                );
                 (args, 0, min_vault_assets, min_earn_shares, 0)
             }
             EarnSubcommand::EncodeRedeem { args, min_vault_assets, min_output_amount } => {
+                ensure!(
+                    min_vault_assets > 0 && min_output_amount > 0,
+                    "Earn redemption minimum outputs must be greater than zero"
+                );
                 (args, 1, min_vault_assets, 0, min_output_amount)
             }
         };
         ensure!(
-            !args.router.is_zero() && !args.recipient.is_zero(),
-            "router and recipient must be nonzero"
+            !args.router.is_zero() && !args.recipient.is_zero() && !args.refund_recipient.is_zero(),
+            "router, recipient, and refund recipient must be nonzero"
         );
-        let refund_recipient = args.refund_recipient.unwrap_or(args.recipient);
-        ensure!(!refund_recipient.is_zero(), "refund recipient must be nonzero");
         let provider = args.l1.provider(args.zone_chain_id, args.zone_id).await?;
         ensure!(
             IEarnRouter::new(args.router, &provider).allowedZoneId().call().await? == args.zone_id,
@@ -146,11 +153,12 @@ impl EarnArgs {
             zoneReturn: ZoneReturn {
                 keyIndex: key.keyIndex,
                 encrypted,
-                refundRecipient: refund_recipient,
+                refundRecipient: args.refund_recipient,
             },
         };
         sh_status!(
-            "Earn action ID: {action_id}. Use withdrawal --to {} with nonzero --callback-gas-limit.",
+            "Earn action ID: {action_id}. Use withdrawal --to {} with \
+             --callback-gas-limit 10000000.",
             args.router
         )?;
         // abi.encode(struct), including its dynamic tuple offset, without a function selector.
@@ -161,8 +169,83 @@ impl EarnArgs {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::U256;
-    use alloy_sol_types::SolType;
+    use alloy_primitives::{U256, hex};
+
+    const ROUTER: &str = "0x1111111111111111111111111111111111111111";
+    const RECIPIENT: &str = "0x2222222222222222222222222222222222222222";
+    const REFUND_RECIPIENT: &str = "0x3333333333333333333333333333333333333333";
+
+    #[test]
+    fn requires_public_refund_recipient() {
+        let args = [
+            "earn",
+            "encode-deposit",
+            "--min-vault-assets",
+            "1",
+            "--min-earn-shares",
+            "1",
+            "--router",
+            ROUTER,
+            "--recipient",
+            RECIPIENT,
+            "--zone-id",
+            "1",
+            "--zone-chain-id",
+            "421700001",
+            "--portal",
+            ROUTER,
+        ];
+        assert!(EarnArgs::try_parse_from(args).is_err());
+
+        let mut args = args.to_vec();
+        args.extend(["--refund-recipient", REFUND_RECIPIENT]);
+        assert!(EarnArgs::try_parse_from(args).is_ok());
+    }
+
+    #[tokio::test]
+    async fn rejects_zero_minimum_outputs() {
+        for (subcommand, command, expected) in [
+            (
+                "encode-deposit",
+                ["--min-vault-assets", "0", "--min-earn-shares", "1"],
+                "Earn deposit minimum outputs must be greater than zero",
+            ),
+            (
+                "encode-deposit",
+                ["--min-vault-assets", "1", "--min-earn-shares", "0"],
+                "Earn deposit minimum outputs must be greater than zero",
+            ),
+            (
+                "encode-redeem",
+                ["--min-vault-assets", "0", "--min-output-amount", "1"],
+                "Earn redemption minimum outputs must be greater than zero",
+            ),
+            (
+                "encode-redeem",
+                ["--min-vault-assets", "1", "--min-output-amount", "0"],
+                "Earn redemption minimum outputs must be greater than zero",
+            ),
+        ] {
+            let args = ["earn", subcommand].into_iter().chain(command).chain([
+                "--router",
+                ROUTER,
+                "--recipient",
+                RECIPIENT,
+                "--refund-recipient",
+                REFUND_RECIPIENT,
+                "--zone-id",
+                "1",
+                "--zone-chain-id",
+                "421700001",
+                "--portal",
+                ROUTER,
+            ]);
+            assert_eq!(
+                EarnArgs::try_parse_from(args).unwrap().run().await.unwrap_err().to_string(),
+                expected
+            );
+        }
+    }
 
     #[test]
     fn callback_matches_solidity_struct_encoding() {
@@ -175,32 +258,11 @@ mod tests {
         };
         let recipient = Address::repeat_byte(5);
         let action = B256::repeat_byte(6);
-        type Tuple = sol!((
-            uint8,
-            uint128,
-            uint128,
-            uint128,
-            bytes32,
-            (uint256, (bytes32, uint8, bytes, bytes12, bytes16), address)
-        ));
-        let expected = Tuple::abi_encode(&(
-            1u8,
-            7u128,
-            0u128,
-            9u128,
-            action,
-            (
-                U256::from(10),
-                (
-                    encrypted.ephemeralPubkeyX,
-                    encrypted.ephemeralPubkeyYParity,
-                    encrypted.ciphertext.clone(),
-                    encrypted.nonce,
-                    encrypted.tag,
-                ),
-                recipient,
-            ),
-        ));
+        // Generated by solc 0.8.35 from the EarnCallbackData definition pinned in the module docs.
+        // Keeping the independently generated bytes catches tuple, enum, and dynamic-offset drift.
+        let expected =
+            hex::decode(include_str!("../../../../tests/fixtures/tempo_earn_callback.hex").trim())
+                .unwrap();
         let encoded = CallbackData {
             flow: 1,
             minVaultAssets: 7,
