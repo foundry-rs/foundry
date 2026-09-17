@@ -16,7 +16,7 @@ use crate::{
 };
 use alloy_chains::Chain;
 use alloy_consensus::{BlockHeader, Typed2718};
-use alloy_eips::{BlockNumHash, eip4788::SYSTEM_ADDRESS};
+use alloy_eips::BlockNumHash;
 use alloy_evm::{Evm, EvmEnv, EvmFactory, precompiles::PrecompilesMap};
 use alloy_genesis::GenesisAccount;
 use alloy_network::{
@@ -37,6 +37,7 @@ use revm::{
     context::{Block, BlockEnv, CfgEnv, ContextTr, JournalInner, Transaction},
     context_interface::{journaled_state::account::JournaledAccountTr, result::ResultAndState},
     database::{AccountState, CacheDB, DatabaseRef, EmptyDB},
+    database_interface::bal::BalState,
     primitives::{AddressMap, HashMap as Map, KECCAK_EMPTY, Log, hardfork::SpecId},
     state::{Account, AccountInfo, EvmState, EvmStorageSlot, TransactionId},
 };
@@ -52,6 +53,8 @@ use crate::evm::monad::BlockContext;
 mod diagnostic;
 pub use diagnostic::RevertDiagnostic;
 
+mod bal;
+
 mod error;
 pub use error::{BackendError, BackendResult, DatabaseError, DatabaseResult};
 
@@ -63,8 +66,6 @@ pub use in_memory_db::{EmptyDBWrapper, FoundryEvmInMemoryDB, MemDb};
 
 mod snapshot;
 pub use snapshot::{BackendStateSnapshot, RevertStateSnapshotAction, StateSnapshot};
-
-mod bal;
 
 // A `revm::Database` that is used in forking mode
 type ForkDB<N, B> = CacheDB<SharedBackend<N, B>>;
@@ -644,6 +645,8 @@ pub struct Backend<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     active_fork_ids: Option<(LocalForkId, ForkLookupIndex)>,
     /// RPC block number exposed while executing a historical transaction in a temporary backend.
     fork_block_number_override: Option<u64>,
+    /// Optional BAL position for a single transaction against unchanged parent state.
+    bal: Option<BalState>,
     /// holds additional Backend data
     inner: BackendInner<FEN>,
 }
@@ -657,6 +660,7 @@ impl<FEN: FoundryEvmNetwork> Clone for Backend<FEN> {
             fork_init_journaled_state: self.fork_init_journaled_state.clone(),
             active_fork_ids: self.active_fork_ids,
             fork_block_number_override: self.fork_block_number_override,
+            bal: self.bal.clone(),
             inner: self.inner.clone(),
         }
     }
@@ -670,6 +674,7 @@ impl<FEN: FoundryEvmNetwork> Debug for Backend<FEN> {
             .field("mem_db", &self.mem_db)
             .field("fork_init_journaled_state", &self.fork_init_journaled_state)
             .field("active_fork_ids", &self.active_fork_ids)
+            .field("bal", &self.bal)
             .field("inner", &self.inner)
             .finish()
     }
@@ -706,6 +711,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             fork_init_journaled_state: inner.new_journaled_state(),
             active_fork_ids: None,
             fork_block_number_override: None,
+            bal: None,
             inner,
         };
 
@@ -773,6 +779,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             fork_init_journaled_state: self.inner.new_journaled_state(),
             active_fork_ids: None,
             fork_block_number_override: None,
+            bal: None,
             inner: Default::default(),
         }
     }
@@ -1733,10 +1740,11 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         journaled_state: &mut JournaledState,
         persistent_accounts: &AddressSet,
     ) -> eyre::Result<Option<AnyRpcTransaction>> {
+        let ReplayInputs { fork_id, forks, evm_env, networks } = replay;
         trace!(?tx_hash, "replay until transaction");
         #[cfg(feature = "monad")]
         eyre::ensure!(
-            !replay.networks.is_monad() || block_context.is_some(),
+            !networks.is_monad() || block_context.is_some(),
             "block context is required to replay transactions for this network"
         );
 
@@ -1749,7 +1757,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         let Some(target_index) = transactions.iter().position(|tx| tx.tx_hash() == tx_hash) else {
             return Ok(None);
         };
-        if replay.networks.is_monad() {
+        if networks.is_monad() {
             eyre::ensure!(
                 fork.position
                     .after_transaction(
@@ -1764,23 +1772,6 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             );
         }
         let target_tx = transactions[target_index].clone();
-        match Self::try_apply_bal_prestate(
-            fork,
-            &replay,
-            full_block,
-            &target_tx,
-            journaled_state,
-            persistent_accounts,
-        ) {
-            Ok(true) => {
-                trace!(?tx_hash, "BAL prestate applied successfully, skipping fork replay");
-                return Ok(Some(target_tx));
-            }
-            Ok(false) => {}
-            Err(err) => trace!(%err, "BAL prestate unavailable, falling back to fork replay"),
-        }
-        let system_calls = Self::pre_block_system_calls(&replay, full_block, fork.source_chain_id);
-        let ReplayInputs { fork_id, forks, evm_env, networks } = replay;
         let factory = FEN::EvmFactory::default();
         let mut txs_to_replay = Vec::with_capacity(target_index);
         for (index, tx) in transactions[..target_index].iter().enumerate() {
@@ -1790,7 +1781,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         }
 
         // Replay all preceding transactions against a cloned ForkDB.
-        if !txs_to_replay.is_empty() || !system_calls.is_empty() {
+        if !txs_to_replay.is_empty() {
             let now = Instant::now();
 
             // Stage the prefix against one cloned fork cache. The temporary backend also
@@ -1830,12 +1821,6 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
                 // need the nested replay operation; it borrows the same staged database.
                 let mut evm = factory.create_evm(&mut replay_backend, evm_env.clone());
                 inject_replay_precompiles(networks, evm.precompiles_mut(), chain_id, timestamp);
-                for (address, input) in system_calls {
-                    let result = evm
-                        .transact_system_call(SYSTEM_ADDRESS, address, input)
-                        .wrap_err("backend: failed replaying pre-block system call")?;
-                    evm.db_mut().commit(result.state);
-                }
                 for (_, tx, tx_env, is_system) in &txs_to_replay {
                     trace!(tx=?tx.tx_hash(), "committing transaction");
                     let state = if *is_system {
@@ -2647,11 +2632,13 @@ impl<FEN: FoundryEvmNetwork> DatabaseRef for Backend<FEN> {
     type Error = DatabaseError;
 
     fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        if let Some(db) = self.active_fork_db() {
-            db.basic_ref(address)
+        let mut account = if let Some(db) = self.active_fork_db() {
+            db.basic_ref(address)?
         } else {
-            Ok(self.mem_db.basic_ref(address)?)
-        }
+            self.mem_db.basic_ref(address)?
+        };
+        self.apply_bal_account(address, &mut account)?;
+        Ok(account)
     }
 
     fn code_by_hash_ref(&self, code_hash: B256) -> Result<Bytecode, Self::Error> {
@@ -2663,6 +2650,9 @@ impl<FEN: FoundryEvmNetwork> DatabaseRef for Backend<FEN> {
     }
 
     fn storage_ref(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
+        if let Some(value) = self.bal_storage(address, index)? {
+            return Ok(value);
+        }
         if let Some(db) = self.active_fork_db() {
             DatabaseRef::storage_ref(db, address, index)
         } else {
@@ -2681,6 +2671,15 @@ impl<FEN: FoundryEvmNetwork> DatabaseRef for Backend<FEN> {
 
 impl<FEN: FoundryEvmNetwork> DatabaseCommit for Backend<FEN> {
     fn commit(&mut self, changes: AddressMap<Account>) {
+        if self.bal.take().is_some() {
+            // Keep code read through BAL available for trace decoding. CacheDB's normal commit
+            // skips untouched accounts; touched accounts must retain the target's final values.
+            for (address, account) in &changes {
+                if !account.is_touched() && !account.is_loaded_as_not_existing() {
+                    self.insert_account_info(*address, account.info.clone());
+                }
+            }
+        }
         if let Some(db) = self.active_fork_db_mut() {
             db.commit(changes)
         } else {
@@ -2692,11 +2691,13 @@ impl<FEN: FoundryEvmNetwork> DatabaseCommit for Backend<FEN> {
 impl<FEN: FoundryEvmNetwork> Database for Backend<FEN> {
     type Error = DatabaseError;
     fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        if let Some(db) = self.active_fork_db_mut() {
-            Ok(db.basic(address)?)
+        let mut account = if let Some(db) = self.active_fork_db_mut() {
+            db.basic(address)?
         } else {
-            Ok(self.mem_db.basic(address)?)
-        }
+            self.mem_db.basic(address)?
+        };
+        self.apply_bal_account(address, &mut account)?;
+        Ok(account)
     }
 
     fn code_by_hash(&mut self, code_hash: B256) -> Result<Bytecode, Self::Error> {
@@ -2708,6 +2709,9 @@ impl<FEN: FoundryEvmNetwork> Database for Backend<FEN> {
     }
 
     fn storage(&mut self, address: Address, index: U256) -> Result<U256, Self::Error> {
+        if let Some(value) = self.bal_storage(address, index)? {
+            return Ok(value);
+        }
         if let Some(db) = self.active_fork_db_mut() {
             Ok(Database::storage(db, address, index)?)
         } else {
@@ -3367,7 +3371,7 @@ mod tests {
         opts::EvmOpts,
     };
     use alloy_consensus::{Signed, TxEnvelope, TxLegacy, transaction::Recovered};
-    use alloy_eips::{BlockNumHash, eip2935::HISTORY_STORAGE_ADDRESS};
+    use alloy_eips::BlockNumHash;
     use alloy_evm::EvmEnv;
     use alloy_network::{
         AnyHeader, AnyNetwork, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope,
@@ -3417,11 +3421,8 @@ mod tests {
         );
         let (backend, handler) = SharedBackend::new(provider, db, None);
         drop(handler);
-        let mut db = CacheDB::new(backend);
-        // Replay includes Prague's pre-block call, which is a no-op without deployed code.
-        db.insert_account_info(HISTORY_STORAGE_ADDRESS, AccountInfo::default());
         Fork {
-            db,
+            db: CacheDB::new(backend),
             journaled_state: JournalInner::new(),
             source_chain_id: 1,
             position: ForkPosition::AfterBlock { block: BlockNumHash::default() },

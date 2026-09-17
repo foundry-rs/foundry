@@ -9,7 +9,10 @@ use crate::{
     },
 };
 use alloy_consensus::{BlockHeader, Transaction, transaction::SignerRecoverable};
-use alloy_eips::BlockNumHash;
+use alloy_eips::{
+    BlockNumHash,
+    eip7928::{BlockAccessList, compute_block_access_list_hash, validate_block_access_list},
+};
 use alloy_network::{
     AnyNetwork, AnyRpcBlock, AnyRpcTransaction, AnyTxEnvelope, BlockResponse, Network,
     ReceiptResponse, TransactionResponse, primitives::HeaderResponse,
@@ -45,7 +48,7 @@ use foundry_config::{
 };
 use foundry_evm::{
     core::{
-        FoundryBlock as _, bal,
+        FoundryBlock as _,
         env::FromAnyRpcTransaction as _,
         evm::{EthEvmNetwork, EvmEnvFor, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor},
     },
@@ -56,7 +59,13 @@ use foundry_evm::{
 };
 use foundry_evm_networks::NetworkConfigs;
 use futures::TryFutureExt;
-use revm::{DatabaseCommit, DatabaseRef, context::Block, primitives::hardfork::SpecId};
+use revm::{
+    DatabaseRef,
+    context::Block,
+    primitives::hardfork::SpecId,
+    state::bal::{Bal, BlockAccessIndex},
+};
+use std::sync::Arc;
 
 #[cfg(feature = "monad")]
 use foundry_evm::core::evm::{BlockContext, ChainFor, MonadEvmNetwork};
@@ -176,6 +185,8 @@ struct PreparedRun<FEN: FoundryEvmNetwork> {
     executor: TracingExecutor<FEN>,
     trace_context: TraceContext,
     prestate_applied: bool,
+    block_access_list: Option<Arc<Bal>>,
+    parent_beacon_block_root: Option<B256>,
     #[cfg(feature = "monad")]
     monad: MonadPrepared,
 }
@@ -513,12 +524,6 @@ impl RunArgs {
         let spec_id = (*evm_env.cfg_env.spec()).into();
         let parent_beacon_block_root =
             parent_beacon_block_root_for_network(networks, spec_id, parent_beacon_block_root);
-        let parent_history_hash = (networks.execution_network().is_ethereum()
-            && !networks.is_celo()
-            && !chain.is_arbitrum()
-            && spec_id.is_enabled_in(SpecId::PRAGUE))
-        .then(|| block.as_ref().map(|block| block.header().parent_hash()))
-        .flatten();
 
         // Set the state to the moment right before the transaction.
         //
@@ -540,9 +545,6 @@ impl RunArgs {
                     Ok(pre_state_frame) => {
                         // Local overrides can access beacon storage omitted by the canonical
                         // trace. Apply system writes before overlaying its recorded prestate.
-                        if let Some(hash) = parent_history_hash {
-                            executor.apply_history_storage(hash)?;
-                        }
                         if let Some(root) = parent_beacon_block_root {
                             executor.apply_beacon_root(root)?;
                         }
@@ -560,7 +562,10 @@ impl RunArgs {
             }
         }
 
+        let mut block_access_list = None;
         if !self.quick
+            // Streaming opcode output cannot be discarded when BAL execution needs replay.
+            && !self.trace_printer
             && !prestate_applied
             && source_is_ethereum
             && !chain.is_arbitrum()
@@ -590,52 +595,24 @@ impl RunArgs {
             && let Some(access_list) =
                 fetch_block_access_list(&provider, BlockId::hash(block_hash)).await
         {
-            let prepared = async {
-                // The fork backend seeds this entry from its exact hash-pinned state anchor.
-                let parent_hash = executor.backend().block_hash_ref(parent_number)?;
-                let index = bal::validate_target(
-                    &tx,
-                    block,
-                    BlockNumHash::new(parent_number, parent_hash),
-                )?;
-                let transactions = full_transactions(block)?;
-                eyre::ensure!(
-                    transactions[..=index].iter().all(|tx| {
-                        matches!(&*tx.inner.inner, AnyTxEnvelope::Ethereum(_))
-                            && !is_system_transaction(tx)
-                    }),
-                    "BAL prestate requires ordinary Ethereum transactions"
-                );
-                bal::validate_transaction_changes(&access_list, &transactions[..=index])?;
-                let prepared = bal::prepare_prestate(
-                    executor.backend(),
-                    access_list,
-                    index,
-                    transactions.len(),
-                    block.header().block_access_list_hash(),
-                    spec_id,
-                )?;
-                prepared.verify_storage_roots(&provider, parent_hash).await
-            }
-            .await;
-            match prepared {
-                Ok(state) => {
-                    executor.backend_mut().commit(state);
-                    prestate_applied = true;
-                    trace!("BAL prestate applied successfully, skipping block replay");
-                }
-                Err(err) => trace!(%err, "BAL prestate unavailable, falling back to block replay"),
+            let bal = executor
+                .backend()
+                .block_hash_ref(parent_number)
+                .map_err(eyre::Report::from)
+                .and_then(|parent_hash| prepare_bal(access_list, &tx, block, parent_hash));
+            match bal {
+                Ok(bal) => block_access_list = Some(Arc::new(bal)),
+                Err(err) => trace!(%err, "BAL unavailable, falling back to block replay"),
             }
         }
 
-        // BAL includes system writes; debug prestate applied them before its overlay.
-        if !prestate_applied {
-            if let Some(hash) = parent_history_hash {
-                executor.apply_history_storage(hash)?;
-            }
-            if let Some(parent_beacon_block_root) = parent_beacon_block_root {
-                executor.apply_beacon_root(parent_beacon_block_root)?;
-            }
+        // BAL supplies index-zero system writes. Apply the existing system call only on the
+        // replay path; debug prestate already applied it before its overlay.
+        if !prestate_applied
+            && block_access_list.is_none()
+            && let Some(root) = parent_beacon_block_root
+        {
+            executor.apply_beacon_root(root)?;
         }
 
         Ok(PreparedRun {
@@ -648,10 +625,44 @@ impl RunArgs {
             executor,
             trace_context,
             prestate_applied,
+            block_access_list,
+            parent_beacon_block_root,
             #[cfg(feature = "monad")]
             monad: MonadPrepared { tx_block_number, compute_units_per_second },
         })
     }
+}
+
+/// Binds an RPC BAL to the target block before handing state reads to Revm.
+fn prepare_bal(
+    bal: BlockAccessList,
+    tx: &AnyRpcTransaction,
+    block: &AnyRpcBlock,
+    parent_hash: B256,
+) -> Result<Bal> {
+    let transactions = full_transactions(block)?;
+    let index = usize::try_from(
+        tx.transaction_index().ok_or_else(|| eyre::eyre!("missing transaction index"))?,
+    )?;
+    eyre::ensure!(
+        tx.block_hash() == Some(block.header().hash)
+            && tx.block_number() == Some(block.header().number())
+            && block.header().parent_hash() == parent_hash
+            && transactions.get(index).is_some_and(|t| t.tx_hash() == tx.tx_hash()),
+        "BAL transaction, block and fork parent do not agree"
+    );
+    eyre::ensure!(
+        transactions[..=index].iter().all(|tx| {
+            matches!(&*tx.inner.inner, AnyTxEnvelope::Ethereum(_)) && !is_system_transaction(tx)
+        }),
+        "BAL requires ordinary Ethereum transactions"
+    );
+    eyre::ensure!(!bal.is_empty(), "BAL is empty for a block containing transactions");
+    validate_block_access_list(&bal, transactions.len()).wrap_err("invalid block access list")?;
+    if let Some(hash) = block.header().block_access_list_hash() {
+        eyre::ensure!(compute_block_access_list_hash(&bal) == hash, "BAL hash mismatch");
+    }
+    Bal::try_from_alloy(bal).wrap_err("invalid BAL bytecode")
 }
 
 impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
@@ -734,6 +745,31 @@ impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
         let target_tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(&self.tx)?;
         let target_index = self.target_index()?;
         self.prepare_target();
+
+        if let Some(bal) = self.block_access_list.take() {
+            // Keep failed BAL reads and partial execution isolated from the replay fallback.
+            let mut executor = self.executor.clone();
+            executor
+                .backend_mut()
+                .set_bal(Some(bal), BlockAccessIndex::new(target_index as u64 + 1));
+            match executor.transact_with_ordinary_block_replay(
+                self.evm_env.clone(),
+                target_tx_env.clone(),
+                Vec::new(),
+            ) {
+                Ok(result) => {
+                    *self.executor = executor;
+                    trace!("BAL prestate applied successfully, skipping block replay");
+                    return Ok(TraceResult::from_raw(result, self.trace_kind()));
+                }
+                Err(err) => {
+                    trace!(%err, "BAL execution unavailable, falling back to block replay");
+                    if let Some(root) = self.parent_beacon_block_root {
+                        self.executor.apply_beacon_root(root)?;
+                    }
+                }
+            }
+        }
 
         let block_number = self.evm_env.block_env.number();
         let replay_system_txes = self.args.replay_system_txes;

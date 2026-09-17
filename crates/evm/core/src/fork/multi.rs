@@ -261,16 +261,6 @@ impl<
         self.handler.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
         Ok(rx.recv()?)
     }
-
-    /// Returns the resolved source options, retaining authentication and endpoint identity.
-    pub(crate) fn get_fork_config(&self, id: ForkId) -> eyre::Result<Option<CreateFork>> {
-        let (sender, rx) = oneshot_channel();
-        self.handler
-            .clone()
-            .try_send(Request::GetForkConfig(id, sender))
-            .map_err(|e| eyre::eyre!("{e:?}"))?;
-        Ok(rx.recv()?)
-    }
 }
 
 type CreateFuture<N, SPEC, BLOCK> = Pin<
@@ -308,8 +298,6 @@ enum Request<N: Network, SPEC, BLOCK: ForkBlockEnv> {
     ShutDown(OneshotSender<()>),
     /// Returns the Fork Url for the `ForkId` if it exists.
     GetForkUrl(ForkId, OneshotSender<Option<String>>),
-    /// Returns the resolved source options for an existing fork.
-    GetForkConfig(ForkId, OneshotSender<Option<CreateFork>>),
 }
 
 enum ForkTask<N: Network, SPEC, BLOCK: ForkBlockEnv> {
@@ -519,9 +507,6 @@ impl<
             Request::GetForkUrl(fork_id, sender) => {
                 let fork = self.forks.get(&fork_id).map(|f| f.opts.url.clone());
                 let _ = sender.send(fork);
-            }
-            Request::GetForkConfig(fork_id, sender) => {
-                let _ = sender.send(self.forks.get(&fork_id).map(|fork| fork.opts.clone()));
             }
         }
     }
