@@ -46,6 +46,10 @@ alloy-network.workspace = true
 op-alloy-network = { workspace = true, optional = true }
 op-alloy-rpc-types = { workspace = true, optional = true }
 
+# Base
+base-common-network = { workspace = true, optional = true, features = ["serde", "std"] }
+base-common-rpc-types = { workspace = true, optional = true, features = ["serde", "std"] }
+
 revm.workspace = true
 
 solar.workspace = true
@@ -100,6 +104,12 @@ tempfile.workspace = true
 [features]
 default = ["optimism"]
 monad = ["foundry-config/monad"]
+base = [
+    "dep:base-common-network",
+    "dep:base-common-rpc-types",
+    "foundry-common-fmt/base",
+    "foundry-config/base",
+]
 optimism = [
     "dep:op-alloy-network",
     "dep:op-alloy-rpc-types",

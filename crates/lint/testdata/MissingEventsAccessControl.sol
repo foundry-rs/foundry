@@ -38,6 +38,20 @@ contract MissingEventsAccessControl {
         _;
     }
 
+    modifier onlyOwnerViaReassignedAlias(address newOwner) {
+        address caller = msg.sender;
+        caller = newOwner;
+        require(caller == owner, "not owner");
+        _;
+    }
+
+    modifier onlyOwnerViaAliasBeforeReassign(address newOwner) {
+        address caller = msg.sender;
+        require(caller == owner, "not owner");
+        caller = newOwner;
+        _;
+    }
+
     modifier onlyOwnerViaCheck() {
         _checkOwner();
         _;
@@ -144,6 +158,20 @@ contract MissingEventsAccessControl {
     }
 
     function setOwnerViaSenderAlias(address newOwner) external onlyOwnerViaSenderAlias {
+        owner = newOwner; //~WARN: `owner` is changed without an event but is used for access control
+    }
+
+    function setOwnerViaReassignedAlias(address newOwner)
+        external
+        onlyOwnerViaReassignedAlias(newOwner)
+    {
+        owner = newOwner;
+    }
+
+    function setOwnerViaAliasBeforeReassign(address newOwner)
+        external
+        onlyOwnerViaAliasBeforeReassign(newOwner)
+    {
         owner = newOwner; //~WARN: `owner` is changed without an event but is used for access control
     }
 

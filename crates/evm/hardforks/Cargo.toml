@@ -19,6 +19,8 @@ alloy-hardforks = { workspace = true, features = ["serde"] }
 alloy-op-hardforks = { workspace = true, features = ["serde"], optional = true }
 alloy-rpc-types.workspace = true
 monad-revm = { workspace = true, optional = true }
+base-common-genesis = { workspace = true, optional = true }
+base-common-evm = { workspace = true, optional = true }
 op-revm = { workspace = true, optional = true }
 revm.workspace = true
 serde = { workspace = true, features = ["derive"] }
@@ -28,4 +30,5 @@ foundry-compilers.workspace = true
 [features]
 default = ["optimism"]
 monad = ["dep:monad-revm"]
+base = ["dep:base-common-genesis", "dep:base-common-evm"]
 optimism = ["dep:alloy-op-hardforks", "dep:op-revm"]

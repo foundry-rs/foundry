@@ -38,6 +38,8 @@ use forking must contain `fork` in their name. Forge and Cast CLI tests live und
 
 - [Cheatcodes](./cheatcodes.md) explains cheatcode generation, dispatch, and implementation.
 - [Debugging](./debugging.md) collects contributor debugging techniques.
+- [Editor integrations](../../editors/README.md) covers the VS Code Development Host,
+  independent client builds, local packaging and Zed installation.
 - [Lint rules](./lintrules.md) covers the lint registry, UI fixtures, and documentation contract.
 - [Custom EVM integrations](./networks.md) describes network selection, execution ownership,
   state lifecycles, tool dispatch, and CI coverage.
