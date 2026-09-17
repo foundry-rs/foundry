@@ -3198,6 +3198,9 @@ contract SymbolicInvariantSequenceMinimize is Test {
 "#,
     );
 
+    // Keep this focused on Forge's minimizer: native solving can produce the already-minimal
+    // values directly, leaving no successful shrink to report.
+    cmd.env("FOUNDRY_INTERNAL_SYMBOLIC_Z3_CONTROL", "1");
     let output = cmd
         .args([
             "test",
