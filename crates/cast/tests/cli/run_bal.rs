@@ -1,8 +1,8 @@
 //! Deterministic BAL replay coverage using an Anvil block and a recording RPC proxy.
 
-use alloy_consensus::BlockHeader;
+use alloy_consensus::{BlockHeader, SignableTransaction, TxLegacy};
 use alloy_eips::{
-    BlockId,
+    BlockId, Encodable2718,
     eip4788::BEACON_ROOTS_ADDRESS,
     eip7928::{
         AccountChanges, BalanceChange, BlockAccessIndex, BlockAccessList, CodeChange, NonceChange,
@@ -13,9 +13,10 @@ use alloy_hardforks::EthereumHardfork;
 use alloy_network::{
     BlockResponse, ReceiptResponse, TransactionBuilder, primitives::HeaderResponse,
 };
-use alloy_primitives::{Address, B256, Bytes, U256, hex};
+use alloy_primitives::{Address, B256, Bytes, TxKind, U256, hex};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest};
+use alloy_signer::SignerSync;
 use anvil::{NodeConfig, NodeHandle};
 use axum::{Json, Router, routing::post};
 use foundry_test_utils::{TestCommand, snapbox::cmd::OutputAssert, str, util::OutputExt};
@@ -29,8 +30,7 @@ use std::{
 
 const BAL_METHOD: &str = "eth_getBlockAccessListByBlockHash";
 
-/// A deployment followed by two calls in one block. Each call increments slot zero, reads the
-/// beacon-root contract, and both emits and returns the two values.
+/// A deployment followed by two calls in one block, with storage and beacon-root observations.
 struct Fixture {
     handle: NodeHandle,
     transactions: [B256; 3],
@@ -40,13 +40,35 @@ struct Fixture {
     bal: BlockAccessList,
 }
 
+enum FixtureMode {
+    Increment,
+    ChainId,
+    ParentStorage(U256),
+}
+
 impl Fixture {
     async fn new() -> Self {
+        Self::with_mode(FixtureMode::Increment).await
+    }
+
+    async fn with_mode(mode: FixtureMode) -> Self {
+        let capture_chain_id = matches!(mode, FixtureMode::ChainId);
+        let parent_storage =
+            if let FixtureMode::ParentStorage(value) = mode { Some(value) } else { None };
         let (api, handle) =
             anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Cancun.into())))
                 .await;
         let provider = handle.http_provider();
-        let sender = handle.dev_wallets().next().unwrap().address();
+        let wallet = handle.dev_wallets().next().unwrap();
+        let sender = wallet.address();
+        let chain_id = provider.get_chain_id().await.unwrap();
+        let nonce = provider.get_transaction_count(sender).await.unwrap();
+        let target = sender.create(nonce);
+        if let Some(value) = parent_storage {
+            // Custom genesis and RPC-mutated accounts can carry storage before CREATE.
+            api.anvil_set_balance(target, U256::from(1)).await.unwrap();
+            api.anvil_set_storage_at(target, U256::from(1), value.into()).await.unwrap();
+        }
 
         // System calls increment slot zero; ordinary calls return it. This makes executing the
         // block's system operation twice observable, unlike the idempotent standard contract.
@@ -61,22 +83,40 @@ impl Fixture {
             + U256::from(1);
 
         // No Solidity compiler or public selector service is needed for this fixture.
+        let read_storage = if capture_chain_id { "600054" } else { "60005460010180600055" };
+        let read_parent_storage = if parent_storage.is_some() { "600154604052" } else { "" };
+        let return_size = if parent_storage.is_some() { "60" } else { "40" };
         let runtime = hex::decode(format!(
-            "60005460010180600055600052602060206000600073{BEACON_ROOTS_ADDRESS:x}5afa5060406000a060406000f3"
+            "{read_storage}600052602060206000600073{BEACON_ROOTS_ADDRESS:x}5afa50{read_parent_storage}60{return_size}6000a060{return_size}6000f3"
         ))
         .unwrap();
+        let init_storage = if capture_chain_id { "46600055" } else { "6001600055" };
         let init = hex::decode(format!(
-            "600160005560{:02x}601160003960{:02x}6000f3{}",
+            "{init_storage}60{:02x}60{:02x}60003960{:02x}6000f3{}",
             runtime.len(),
+            init_storage.len() / 2 + 12,
             runtime.len(),
             hex::encode(&runtime),
         ))
         .unwrap();
-        let nonce = provider.get_transaction_count(sender).await.unwrap();
-        let target = sender.create(nonce);
         api.anvil_set_auto_mine(false).await.unwrap();
         let mut transactions = [B256::ZERO; 3];
         for (index, hash) in transactions.iter_mut().enumerate() {
+            if capture_chain_id {
+                // Unprotected legacy transactions remain valid with a CHAINID override.
+                let tx = TxLegacy {
+                    nonce: nonce + index as u64,
+                    gas_price: 2_000_000_000,
+                    gas_limit: 1_000_000,
+                    to: if index == 0 { TxKind::Create } else { target.into() },
+                    input: if index == 0 { Bytes::copy_from_slice(&init) } else { Bytes::new() },
+                    ..Default::default()
+                };
+                let signature = wallet.sign_hash_sync(&tx.signature_hash()).unwrap();
+                let encoded = tx.into_signed(signature).encoded_2718();
+                *hash = *provider.send_raw_transaction(&encoded).await.unwrap().tx_hash();
+                continue;
+            }
             let tx = TransactionRequest::default()
                 .from(sender)
                 .nonce(nonce + index as u64)
@@ -95,7 +135,13 @@ impl Fixture {
             provider.get_storage_at(BEACON_ROOTS_ADDRESS, U256::ZERO).await.unwrap(),
             system_value,
         );
-        assert_eq!(provider.get_storage_at(target, U256::ZERO).await.unwrap(), U256::from(3));
+        assert_eq!(
+            provider.get_storage_at(target, U256::ZERO).await.unwrap(),
+            U256::from(if capture_chain_id { chain_id } else { 3 }),
+        );
+        if parent_storage.is_some() {
+            assert_eq!(provider.get_storage_at(target, U256::from(1)).await.unwrap(), U256::ZERO);
+        }
 
         let beneficiary = block.header().beneficiary();
         let mut sender_balance =
@@ -137,12 +183,16 @@ impl Fixture {
                 code_changes: vec![CodeChange::new(BlockAccessIndex::new(1), runtime.into())],
                 storage_changes: vec![SlotChanges::new(
                     U256::ZERO,
-                    (1..=3)
+                    (1..=if capture_chain_id { 1 } else { 3 })
                         .map(|index| {
-                            StorageChange::new(BlockAccessIndex::new(index), U256::from(index))
+                            StorageChange::new(
+                                BlockAccessIndex::new(index),
+                                U256::from(if capture_chain_id { chain_id } else { index }),
+                            )
                         })
                         .collect(),
                 )],
+                storage_reads: if parent_storage.is_some() { vec![U256::from(1)] } else { vec![] },
                 ..AccountChanges::new(target)
             },
         );
@@ -328,6 +378,15 @@ fn rpc_error(request: &Value, code: i32) -> Value {
 }
 
 fn run(cmd: &mut TestCommand, hash: B256, endpoint: &str, flags: &[&str]) -> Output {
+    run_command(cmd, hash, endpoint, flags).assert_success().get_output().clone()
+}
+
+fn run_command<'a>(
+    cmd: &'a mut TestCommand,
+    hash: B256,
+    endpoint: &str,
+    flags: &[&str],
+) -> &'a mut TestCommand {
     let project_dir = cmd.cmd().get_current_dir().unwrap().to_path_buf();
     cmd.cast_fuse().current_dir(project_dir);
     cmd.env("FOUNDRY_NO_STORAGE_CACHING", "true");
@@ -341,9 +400,6 @@ fn run(cmd: &mut TestCommand, hash: B256, endpoint: &str, flags: &[&str]) -> Out
         "-vvvvv",
     ])
     .args(flags)
-    .assert_success()
-    .get_output()
-    .clone()
 }
 
 casttest!(cast_run_fork_bal_matches_replay_at_every_position, async |_prj, cmd| {
@@ -594,6 +650,58 @@ Executing previous transactions from the block.
             OutputAssert::new(output).stderr_eq("");
         } else {
             OutputAssert::new(output).stderr_eq(str![[r#"
+Executing previous transactions from the block.
+
+"#]]);
+        }
+    }
+});
+
+casttest!(cast_run_fork_bal_respects_chain_id_override, async |_prj, cmd| {
+    let fixture = Fixture::with_mode(FixtureMode::ChainId).await;
+    let hash = fixture.transactions[2];
+    let chain_id = fixture.handle.http_provider().get_chain_id().await.unwrap();
+    let canonical = run(&mut cmd, hash, &fixture.handle.http_endpoint(), &[]);
+
+    for override_id in [None, Some(chain_id), Some(chain_id + 1)] {
+        let proxy = RpcProxy::new(&fixture, ProxyOptions::with_bal(json!(fixture.bal))).await;
+        let [replay, restored] =
+            [&fixture.handle.http_endpoint(), &proxy.endpoint].map(|endpoint| {
+                run_command(&mut cmd, hash, endpoint, &[]);
+                if let Some(override_id) = override_id {
+                    cmd.env("FOUNDRY_CHAIN_ID", override_id.to_string());
+                }
+                cmd.assert_success().get_output().clone()
+            });
+        assert_eq!(restored.stdout, replay.stdout, "chain ID override: {override_id:?}");
+        if override_id.is_none_or(|id| id == chain_id) {
+            assert_eq!(restored.stdout, canonical.stdout);
+            assert_eq!(proxy.requests(BAL_METHOD).len(), 1);
+            OutputAssert::new(restored).stderr_eq("");
+        } else {
+            assert_ne!(replay.stdout, canonical.stdout, "the prefix must use the override");
+            assert!(proxy.requests(BAL_METHOD).is_empty());
+            OutputAssert::new(restored).stderr_eq(str![[r#"
+Executing previous transactions from the block.
+
+"#]]);
+        }
+    }
+});
+
+casttest!(cast_run_fork_bal_falls_back_for_creation_over_parent_storage, async |_prj, cmd| {
+    for parent_storage in [U256::ZERO, U256::from(77)] {
+        let fixture = Fixture::with_mode(FixtureMode::ParentStorage(parent_storage)).await;
+        let hash = fixture.transactions[1];
+        let replay = run(&mut cmd, hash, &fixture.handle.http_endpoint(), &[]);
+        let proxy = RpcProxy::new(&fixture, ProxyOptions::with_bal(json!(fixture.bal))).await;
+        let restored = run(&mut cmd, hash, &proxy.endpoint, &[]);
+        assert_eq!(restored.stdout, replay.stdout, "parent storage: {parent_storage}");
+        assert_eq!(proxy.requests(BAL_METHOD).len(), 1);
+        if parent_storage.is_zero() {
+            OutputAssert::new(restored).stderr_eq("");
+        } else {
+            OutputAssert::new(restored).stderr_eq(str![[r#"
 Executing previous transactions from the block.
 
 "#]]);

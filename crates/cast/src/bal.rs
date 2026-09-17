@@ -5,6 +5,8 @@
 //! index, including index-zero system writes. Only a fully prepared overlay is committed, so a
 //! failed read or validation leaves the parent ready for replay. A header commitment is checked
 //! when present; historical lists without one have the same RPC trust boundary as parent state.
+//! Creation-eligible parent accounts with nonzero BAL-listed storage require replay because a
+//! creation can reset those slots without recording a BAL write.
 
 use alloy_consensus::BlockHeader;
 use alloy_eip7928::{BlockAccessList, compute_block_access_list_hash, validate_block_access_list};
@@ -94,6 +96,19 @@ pub(crate) fn prepare_prestate<DB: DatabaseRef>(
     let mut state = EvmState::default();
 
     for (&address, changes) in &bal.accounts {
+        // CREATE can reset storage without a BAL write, including after create-and-selfdestruct.
+        // Check read-only and future-write entries too, before skipping unchanged accounts.
+        if !changes.storage.storage.is_empty()
+            && db.basic_ref(address)?.is_none_or(|info| info.has_no_code_and_nonce())
+        {
+            for &slot in changes.storage.storage.keys() {
+                ensure!(
+                    db.storage_ref(address, slot)?.is_zero(),
+                    "BAL cannot reconstruct a possible storage reset for {address}"
+                );
+            }
+        }
+
         // Read-only entries and writes at or after the target need no overlay.
         let has_prior_changes = changes.balance.get(index).is_some()
             || changes.nonce.get(index).is_some()
@@ -128,10 +143,11 @@ mod tests {
     use alloy_eip7928::{
         AccountChanges, BalanceChange, CodeChange, NonceChange, SlotChanges, StorageChange,
     };
-    use alloy_primitives::{Address, Bytes, Signature, U256};
+    use alloy_primitives::{Address, Bytes, Signature, TxKind, U256, bytes};
     use alloy_rpc_types::{Block, Transaction as RpcTransaction};
     use revm::{
-        DatabaseCommit,
+        Context, DatabaseCommit, ExecuteCommitEvm, MainBuilder, MainContext,
+        context::TxEnv,
         database::InMemoryDB,
         database_interface::ErasedError,
         state::{AccountInfo, Bytecode},
@@ -183,7 +199,7 @@ mod tests {
         let address = Address::with_last_byte(1);
         let slot = U256::ZERO;
         let mut db = InMemoryDB::default();
-        db.insert_account_info(address, AccountInfo::default());
+        db.insert_account_info(address, AccountInfo { nonce: 1, ..Default::default() });
         db.insert_account_storage(address, slot, U256::from(10)).unwrap();
         let bal = vec![AccountChanges {
             storage_changes: vec![SlotChanges::new(
@@ -252,6 +268,118 @@ mod tests {
                 assert_eq!(info.code_hash, code.hash_slow());
                 assert_eq!(db.code_by_hash_ref(info.code_hash).unwrap(), code);
             }
+        }
+    }
+
+    #[test]
+    fn prestate_rejects_creation_over_parent_storage() {
+        let caller = Address::with_last_byte(100);
+        let address = caller.create(0);
+        let mut parent = InMemoryDB::default();
+        parent.insert_account_info(caller, AccountInfo::from_balance(U256::from(1_000_000_000)));
+        parent.insert_account_info(address, AccountInfo::from_balance(U256::from(10)));
+        parent.insert_account_storage(address, U256::ZERO, U256::from(77)).unwrap();
+
+        let mut db = BalDatabase::new(parent.clone()).with_bal_builder();
+        db.bal_state.bal_index = BlockAccessIndex::new(1);
+        let mut evm = Context::mainnet()
+            .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(SpecId::CANCUN))
+            .with_db(db)
+            .build_mainnet();
+        // Deploy a contract that returns slot zero, without writing that slot in its constructor.
+        let creation = evm
+            .transact_commit(
+                TxEnv::builder()
+                    .caller(caller)
+                    .kind(TxKind::Create)
+                    .gas_limit(1_000_000)
+                    .data(bytes!("600b600c600039600b6000f360005460005260206000f3"))
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap();
+        assert!(creation.is_success());
+        evm.ctx.journaled_state.database.bal_state.bal_index = BlockAccessIndex::new(2);
+        let target = evm
+            .transact_commit(
+                TxEnv::builder()
+                    .caller(caller)
+                    .nonce(1)
+                    .kind(TxKind::Call(address))
+                    .gas_limit(1_000_000)
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap();
+        assert!(target.is_success());
+        assert_eq!(target.output().unwrap().as_ref(), &[0; 32]);
+
+        let bal = evm.ctx.journaled_state.database.bal_state.take_built_alloy_bal().unwrap();
+        let changes = bal.iter().find(|account| account.address == address).unwrap();
+        assert!(changes.storage_changes.is_empty());
+        assert_eq!(changes.storage_reads, [U256::ZERO]);
+        assert!(prepare_prestate(&parent, bal, 1, 2, None, SpecId::CANCUN).is_err());
+        assert_eq!(parent.storage_ref(address, U256::ZERO).unwrap(), U256::from(77));
+    }
+
+    #[test]
+    fn prestate_rejects_storage_resets_without_prior_writes() {
+        let address = Address::with_last_byte(1);
+        let mut parent = InMemoryDB::default();
+        parent.insert_account_info(address, AccountInfo::default());
+        parent.insert_account_storage(address, U256::ZERO, U256::from(77)).unwrap();
+
+        // Creation followed by SELFDESTRUCT can clear storage without any prior BAL writes.
+        // A slot the target only reads or first writes still needs the same parent-state check.
+        for read_only in [true, false] {
+            let mut account = AccountChanges::new(address);
+            if read_only {
+                account.storage_reads.push(U256::ZERO);
+            } else {
+                account.storage_changes.push(SlotChanges::new(
+                    U256::ZERO,
+                    vec![StorageChange::new(BlockAccessIndex::new(2), U256::from(1))],
+                ));
+            }
+            let bal = vec![account];
+            validate_block_access_list(&bal, 2).unwrap();
+            assert!(prepare_prestate(&parent, bal, 1, 2, None, SpecId::CANCUN).is_err());
+        }
+    }
+
+    #[test]
+    fn prestate_preserves_storage_when_delegation_is_installed_and_cleared() {
+        let address = Address::with_last_byte(1);
+        let delegation = Bytecode::new_eip7702(Address::with_last_byte(2));
+        let mut parent = InMemoryDB::default();
+        // An authority can retain storage after clearing a previous delegation.
+        parent.insert_account_info(address, AccountInfo { nonce: 1, ..Default::default() });
+        parent.insert_account_storage(address, U256::ZERO, U256::from(77)).unwrap();
+        let bal = vec![AccountChanges {
+            nonce_changes: vec![
+                NonceChange::new(BlockAccessIndex::new(1), 2),
+                NonceChange::new(BlockAccessIndex::new(2), 3),
+            ],
+            code_changes: vec![
+                CodeChange::new(BlockAccessIndex::new(1), delegation.original_bytes()),
+                CodeChange::new(BlockAccessIndex::new(2), Bytes::new()),
+            ],
+            storage_reads: vec![U256::ZERO],
+            ..AccountChanges::new(address)
+        }];
+
+        for (index, nonce, code) in
+            [(0, 1, Bytecode::default()), (1, 2, delegation), (2, 3, Bytecode::default())]
+        {
+            let state =
+                prepare_prestate(&parent, bal.clone(), index, 3, None, SpecId::PRAGUE).unwrap();
+            let mut db = parent.clone();
+            db.commit(state);
+            let info = db.basic_ref(address).unwrap().unwrap();
+            assert_eq!(info.nonce, nonce);
+            assert_eq!(info.code_hash, code.hash_slow());
+            assert_eq!(db.code_by_hash_ref(info.code_hash).unwrap(), code);
+            assert_eq!(db.storage_ref(address, U256::ZERO).unwrap(), U256::from(77));
         }
     }
 

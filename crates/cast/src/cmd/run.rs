@@ -445,6 +445,8 @@ impl RunArgs {
             endpoint.network_profile.execution_network().is_ethereum()
                 && !endpoint.network_profile.is_celo()
         });
+        let source_execution_chain_id =
+            evm_opts.fork_endpoint.as_ref().map(|endpoint| endpoint.execution_chain_id);
         let (block, mut fork) = tokio::try_join!(
             // fetch the block the transaction was mined in
             provider.get_block(tx_block_number.into()).full().into_future().map_err(Into::into),
@@ -570,6 +572,8 @@ impl RunArgs {
             && !chain.is_arbitrum()
             && networks.execution_network().is_ethereum()
             && !networks.is_celo()
+            // A CHAINID override can change the state produced by prefix transactions.
+            && source_execution_chain_id == Some(evm_env.cfg_env.chain_id)
             && self.evm_version.is_none()
             && config.hardfork.is_none()
             && spec_id.is_enabled_in(SpecId::CANCUN)
