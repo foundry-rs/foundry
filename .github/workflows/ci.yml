@@ -43,12 +43,9 @@ jobs:
     permissions:
       id-token: write
       contents: read
-    defaults:
-      run:
-        shell: bash
     steps:
       - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@2b4621c91988f43ccdeaad0a1e23cffbd341743b
+        uses: tempoxyz/gh-actions/actions/secure-runner@05c669ce878b8719779a28fe7375ba85822403f8
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -72,12 +69,9 @@ jobs:
     permissions:
       id-token: write
       contents: read
-    defaults:
-      run:
-        shell: bash
     steps:
       - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@2b4621c91988f43ccdeaad0a1e23cffbd341743b
+        uses: tempoxyz/gh-actions/actions/secure-runner@05c669ce878b8719779a28fe7375ba85822403f8
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -105,12 +99,9 @@ jobs:
       contents: read
     env:
       MACOSX_DEPLOYMENT_TARGET: "11.0"
-    defaults:
-      run:
-        shell: bash
     steps:
       - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@2b4621c91988f43ccdeaad0a1e23cffbd341743b
+        uses: tempoxyz/gh-actions/actions/secure-runner@05c669ce878b8719779a28fe7375ba85822403f8
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -181,12 +172,9 @@ jobs:
     permissions:
       id-token: write
       contents: read
-    defaults:
-      run:
-        shell: bash
     steps:
       - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@2b4621c91988f43ccdeaad0a1e23cffbd341743b
+        uses: tempoxyz/gh-actions/actions/secure-runner@05c669ce878b8719779a28fe7375ba85822403f8
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -224,12 +212,9 @@ jobs:
     permissions:
       id-token: write
       contents: read
-    defaults:
-      run:
-        shell: bash
     steps:
       - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@2b4621c91988f43ccdeaad0a1e23cffbd341743b
+        uses: tempoxyz/gh-actions/actions/secure-runner@05c669ce878b8719779a28fe7375ba85822403f8
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -258,12 +243,9 @@ jobs:
       id-token: write
     env:
       RUSTC_WRAPPER: ""
-    defaults:
-      run:
-        shell: bash
     steps:
       - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@2b4621c91988f43ccdeaad0a1e23cffbd341743b
+        uses: tempoxyz/gh-actions/actions/secure-runner@05c669ce878b8719779a28fe7375ba85822403f8
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false

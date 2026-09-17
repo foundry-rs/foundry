@@ -27,12 +27,9 @@ jobs:
     permissions:
       id-token: write
       contents: read
-    defaults:
-      run:
-        shell: bash
     steps:
       - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@2b4621c91988f43ccdeaad0a1e23cffbd341743b
+        uses: tempoxyz/gh-actions/actions/secure-runner@05c669ce878b8719779a28fe7375ba85822403f8
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -64,9 +61,7 @@ jobs:
           GNOSIS_RPC: ${{ secrets.GNOSIS_RPC }}
           HYPERLIQUID_RPC: ${{ secrets.HYPERLIQUID_RPC }}
           ROBINHOOD_RPC: ${{ secrets.ROBINHOOD_RPC }}
-        shell: bash
-        run: |
-          cargo nextest run --locked --profile flaky --no-fail-fast
+        run: cargo nextest run --locked --profile flaky --no-fail-fast
 
   # If any of the jobs fail, this will create a normal-priority issue to signal so.
   issue:

@@ -45,12 +45,9 @@ jobs:
       id-token: write
       contents: read
       pull-requests: read
-    defaults:
-      run:
-        shell: bash
     steps:
       - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@2b4621c91988f43ccdeaad0a1e23cffbd341743b
+        uses: tempoxyz/gh-actions/actions/secure-runner@05c669ce878b8719779a28fe7375ba85822403f8
       - name: Checkout master
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
