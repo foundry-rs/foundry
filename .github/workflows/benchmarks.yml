@@ -42,6 +42,11 @@ jobs:
           # Full history so the origin/master baseline can be built from source.
           fetch-depth: 0
 
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config z3
+
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
@@ -51,12 +56,6 @@ jobs:
       # worktree and benchmark it as the baseline (labelled 'master') against
       # this branch (labelled 'local'). This compares against master itself, not
       # the last stable release, so master-only regressions are not hidden.
-
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config z3
-
       - name: Prepare comparison
         id: prep
         env:

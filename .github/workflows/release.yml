@@ -373,7 +373,6 @@ jobs:
         with:
           toolchain: stable
           targets: ${{ matrix.target }}
-
       - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
 
       - name: Install LLVM profiling tools

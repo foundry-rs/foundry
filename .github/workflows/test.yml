@@ -77,6 +77,7 @@ jobs:
         with:
           toolchain: stable
           target: ${{ matrix.target }}
+      - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
       - name: Install Linux system dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install --yes libudev-dev
@@ -105,24 +106,16 @@ jobs:
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: latest
-      - name: Setup Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.14"
-      - uses: taiki-e/install-action@c3ec0de9ae7f1019cea21aa96aa0a895b9552063 # v2.87.9
-        with:
-          tool: nextest@0.9.140
-          checksum: true
-          fallback: none
-
       - name: Install pnpm for external fixtures
         if: contains(matrix.name, 'external')
         uses: tempoxyz/gh-actions/vendor/pnpm/action-setup@134b6c9105953bcf6d50ef0f3f70e31b7a3ec64f
         with:
           version: 11.8.0
           run_install: false
-
-      - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
       - name: Install Vyper
         # Also update vyper version in .devcontainer/Dockerfile.dev
         run: pip --version && pip install vyper==0.4.3
@@ -147,6 +140,9 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           cache-bin: false
+      - uses: taiki-e/install-action@c3ec0de9ae7f1019cea21aa96aa0a895b9552063 # v2.87.9
+        with:
+          tool: nextest
       - name: Setup Git config
         run: |
           git config --global user.name "GitHub Actions Bot"

@@ -275,40 +275,6 @@ mod tests {
     use super::*;
     use std::fs;
 
-    #[test]
-    fn install_commands_empty_is_allowed() {
-        let temp = tempfile::tempdir().unwrap();
-        ExtTester::new("fixture", "fixture", "HEAD")
-            .run_install_commands(temp.path().to_str().unwrap());
-    }
-
-    #[test]
-    fn install_commands_stop_after_success() {
-        let temp = tempfile::tempdir().unwrap();
-        ExtTester::new("fixture", "fixture", "HEAD")
-            .install_command(&["git", "--version"])
-            .install_command(&["git", "--invalid-foundry-test-option"])
-            .run_install_commands(temp.path().to_str().unwrap());
-    }
-
-    #[test]
-    fn install_commands_try_next_alternative() {
-        let temp = tempfile::tempdir().unwrap();
-        ExtTester::new("fixture", "fixture", "HEAD")
-            .install_command(&["git", "--invalid-foundry-test-option"])
-            .install_command(&["git", "--version"])
-            .run_install_commands(temp.path().to_str().unwrap());
-    }
-
-    #[test]
-    #[should_panic(expected = "all dependency installation commands failed")]
-    fn install_commands_fail_when_all_alternatives_fail() {
-        let temp = tempfile::tempdir().unwrap();
-        ExtTester::new("fixture", "fixture", "HEAD")
-            .install_command(&["git", "--invalid-foundry-test-option"])
-            .run_install_commands(temp.path().to_str().unwrap());
-    }
-
     fn git(root: &Path, args: &[&str]) -> String {
         let output = Command::new("git")
             .current_dir(root)

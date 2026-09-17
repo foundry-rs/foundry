@@ -28,20 +28,15 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
-        with:
-          toolchain: stable
-
-      - name: Setup Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: "24"
-
       - name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config z3
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
 
       - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
 
@@ -57,6 +52,11 @@ jobs:
 
       - name: Build benchmark binary
         run: cargo build --locked --release --bin foundry-bench
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
 
       - name: Install hyperfine
         run: |

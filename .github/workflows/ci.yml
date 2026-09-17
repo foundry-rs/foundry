@@ -52,7 +52,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
           toolchain: stable
-
       - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
       - name: Install Linux system dependencies
         run: sudo apt-get update && sudo apt-get install --yes libudev-dev
@@ -78,7 +77,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
           toolchain: stable
-
       - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
       - name: Install Linux system dependencies
         run: sudo apt-get update && sudo apt-get install --yes libudev-dev
@@ -109,7 +107,6 @@ jobs:
         with:
           toolchain: stable
           targets: aarch64-apple-darwin,x86_64-apple-darwin
-
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
@@ -182,14 +179,12 @@ jobs:
         with:
           toolchain: nightly
           components: clippy
-
       - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - name: Run Clippy
+      - run: cargo clippy --workspace --all-targets --all-features --locked
         env:
           RUSTFLAGS: -Dwarnings
-        run: cargo +nightly clippy --workspace --all-targets --all-features --locked
 
   rustfmt:
     runs-on: depot-ubuntu-latest
@@ -204,7 +199,7 @@ jobs:
         with:
           toolchain: nightly
           components: rustfmt
-      - run: cargo +nightly fmt --all --check
+      - run: cargo fmt --all --check
 
   forge-fmt:
     runs-on: depot-ubuntu-latest
@@ -221,7 +216,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
           toolchain: stable
-
       - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
       - name: Install Linux system dependencies
         run: sudo apt-get update && sudo apt-get install --yes libudev-dev
