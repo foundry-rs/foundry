@@ -3,6 +3,7 @@
 use super::*;
 
 mod polynomial;
+mod rounding;
 
 use polynomial::polynomial_identity;
 
@@ -575,6 +576,7 @@ impl ConstraintContext {
             || expr.visit_unique_bool(|word| {
                 Self::mul_div_operands(word).is_some()
                     || Self::ceil_div_product(word).is_some()
+                    || Self::rounded_product_operands(word).is_some()
                     || matches!(word.kind(), SymExprKind::Ite(_, _, _))
             })
     }
@@ -599,6 +601,9 @@ impl ConstraintContext {
         };
         if let Some(normalized) = self.normalize_signed_add_comparison(cx, &expr) {
             return normalized;
+        }
+        if let Some(value) = self.rounding_comparison_value(&expr) {
+            return SymBoolExpr::constant(cx, value);
         }
         if let SymBoolExprKind::Not(value) = expr.kind()
             && let Some(normalized) = self.normalize_signed_add_comparison(cx, value)
@@ -704,8 +709,9 @@ impl ConstraintContext {
             SymExprKind::BinOp(SymBinOp::Mul, _, _) => Self::constant_mul_operands(expr)
                 .is_some_and(|(value, _)| Self::constant_mul_operands(value).is_some()),
             SymExprKind::BinOp(SymBinOp::UDiv, numerator, denominator) => {
-                denominator.as_const().is_some_and(|value| !value.is_zero())
-                    && Self::constant_mul_operands(numerator).is_some()
+                Self::rounded_product_operands(numerator).is_some()
+                    || (denominator.as_const().is_some_and(|value| !value.is_zero())
+                        && Self::constant_mul_operands(numerator).is_some())
             }
             _ => false,
         }
@@ -723,7 +729,7 @@ impl ConstraintContext {
                 return SymExpr::ite(cx, condition, then_value.clone(), else_value.clone());
             }
         }
-        if let Some(value) = self.round_up_round_trip(&expr) {
+        if let Some(value) = self.quotient_of_rounded_product(&expr) {
             return value.clone();
         }
         if let SymExprKind::BinOp(SymBinOp::And, value, mask) = expr.kind()
@@ -759,47 +765,6 @@ impl ConstraintContext {
             return other.clone();
         }
         expr
-    }
-
-    /// `floor(ceil(value * rate / scale) * scale / rate) == value` when rate >= scale.
-    fn round_up_round_trip<'a>(&self, expr: &'a SymExpr) -> Option<&'a SymExpr> {
-        let (scaled, rate) = expr.udiv_operands()?;
-        let (rounded, scale) = Self::constant_mul_operands(scaled)?;
-        let (product, divisor) = Self::ceil_div_product(rounded)?;
-        if divisor != scale
-            || rate.as_const().or_else(|| self.unsigned_lower_bounds.get(rate).copied())? < scale
-        {
-            return None;
-        }
-        let SymExprKind::BinOp(SymBinOp::Mul, left, right) = product.kind() else {
-            return None;
-        };
-        let value = if left == rate {
-            right
-        } else if right == rate {
-            left
-        } else {
-            return None;
-        };
-        // Independent operand bounds prove the unsigned theorem without relying on Solidity
-        // overflow guards. The rescaled product is smaller than value * rate + scale.
-        if self.interval(value).zip(self.interval(rate)).is_some_and(|(value, rate)| {
-            value.max.checked_mul(rate.max).and_then(|product| product.checked_add(scale)).is_some()
-        }) {
-            return Some(value);
-        }
-        // Full-width operands instead require retained successful overflow guards. A bound on
-        // a modular product alone never proves the original multiplication safe.
-        // Establish non-wrapping arithmetic for both conversions, including the rounding addition.
-        // Then value*rate <= ceil(value*rate/scale)*scale < value*rate + scale <= (value+1)*rate.
-        // A bound on the already-wrapped numerator is not evidence that its operands did not
-        // overflow. Establish each operation separately, starting with the original factors.
-        if !self.mul_cannot_overflow_256(value, rate) {
-            return None;
-        }
-        self.interval(product)?.max.checked_add(scale)?;
-        self.interval(rounded)?.max.checked_mul(scale)?;
-        Some(value)
     }
 
     fn bounded_bool_value(&self, expr: &SymBoolExpr) -> Option<bool> {
@@ -1376,6 +1341,11 @@ impl ConstraintContext {
                 })
             }
             SymExprKind::BinOp(SymBinOp::Sub, left, right) => {
+                if let Some(interval) =
+                    self.rounding_error_interval(left, right, intervals, remaining)
+                {
+                    return Some(interval);
+                }
                 let left = self.interval_cached(left, intervals, remaining)?;
                 let right = self.interval_cached(right, intervals, remaining)?;
                 if left.max < right.min {

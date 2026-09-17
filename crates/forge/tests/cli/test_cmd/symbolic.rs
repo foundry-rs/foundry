@@ -6658,3 +6658,86 @@ contract FixedPointRoundTripTest {
 
     cmd.args(["test", "--symbolic", "--match-test", "checkRoundTrip"]).assert_success();
 });
+
+forgetest_init!(symbolic_rounded_product_relations, |prj, cmd| {
+    if !z3_available() {
+        let _ =
+            sh_eprintln!("skipping symbolic_rounded_product_relations because z3 is not available");
+        return;
+    }
+    prj.add_test(
+        "RoundedProduct.t.sol",
+        r#"
+contract RoundedProductTest {
+    function checkFloorError(uint256 value) external pure {
+        uint256 rounded = value / 37 * 37;
+        assert(rounded <= value);
+        assert(value - rounded < 37);
+    }
+
+    function checkCeilingError(uint256 value) external pure {
+        uint256 rounded = (value + 36) / 37 * 37;
+        assert(rounded >= value);
+        assert(rounded - value < 37);
+    }
+
+    function checkCeilingRoundTrip(uint128 value, uint128 rate) external pure {
+        require(rate >= 37);
+        uint256 rounded = (uint256(value) * rate + 36) / 37 * 37;
+        assert(rounded / rate == value);
+    }
+
+    function checkCeilingIsNotExact(uint256 value) external pure {
+        require(value < 100);
+        uint256 rounded = (value + 36) / 37 * 37;
+        assert(rounded == value);
+    }
+
+    function checkWrappingCeiling(uint256 value) external pure {
+        unchecked {
+            uint256 rounded = (value + 36) / 37 * 37;
+            assert(rounded >= value);
+        }
+    }
+
+    function checkReversedFloorError(uint256 value) external pure {
+        unchecked {
+            uint256 rounded = value / 37 * 37;
+            assert(rounded - value < 37);
+        }
+    }
+}
+"#,
+    );
+    cmd.args([
+        "test",
+        "--symbolic",
+        "--symbolic-timeout",
+        "30",
+        "--match-test",
+        "check(FloorError|CeilingError|CeilingRoundTrip)",
+        "--optimize",
+    ])
+    .assert_success();
+    for test in ["checkCeilingIsNotExact", "checkWrappingCeiling", "checkReversedFloorError"] {
+        let output = cmd
+            .forge_fuse()
+            .args([
+                "test",
+                "--symbolic",
+                "--json",
+                "--symbolic-timeout",
+                "30",
+                "--match-test",
+                test,
+                "--optimize",
+            ])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        let signature = format!("{test}(uint256)");
+        let result = json_test_result(&output, &signature);
+        assert_eq!(result["symbolic"]["status"], "fail_counterexample");
+    }
+});
