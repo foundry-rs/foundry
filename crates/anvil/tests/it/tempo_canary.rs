@@ -188,7 +188,9 @@ async fn test_tempo_canary_fork_testnet_dex_swap() {
         Some(&payout),
         "{replayed}: replay changed the DEX payout"
     );
-    replayed.assert_matches_source(GasCheck::Exact);
+    // The source transaction ran under T11. T12 changed DEX execution and reduces its gas by
+    // 529,300; this fixture must remain before that hardfork because it exercises corrupted state.
+    replayed.assert_matches_source(GasCheck::Offset(-529_300));
 }
 
 /// Relay's fills must keep replaying under the newest hardfork, see [`RELAY_USDCE_TRANSFER`].
