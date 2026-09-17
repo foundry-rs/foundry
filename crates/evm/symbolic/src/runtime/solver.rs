@@ -10,6 +10,7 @@ use wait_timeout::ChildExt;
 mod hard_arith_fallback;
 mod monotonic_product;
 mod opt;
+mod smt;
 
 use hard_arith_fallback::{
     checked_mul_guard_branch_model, constraints_prefer_hard_arith_fallback_first,
@@ -17,8 +18,9 @@ use hard_arith_fallback::{
 use monotonic_product::{product_monotonic_unsat_normalized, remove_implied_monotonic_constraints};
 use opt::{
     constraints_are_directly_unsat, normalize_constraints_for_solver_cached,
-    sorted_bool_exprs_are_subset, write_smt_assertions,
+    sorted_bool_exprs_are_subset,
 };
+use smt::write_smt_assertions;
 
 pub(crate) use hard_arith_fallback::{
     fallback_single_var_model, fallback_two_var_model, hard_arith_fallback_model,
