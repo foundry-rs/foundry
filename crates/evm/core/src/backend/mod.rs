@@ -37,6 +37,7 @@ use revm::{
     context::{Block, BlockEnv, CfgEnv, ContextTr, JournalInner, Transaction},
     context_interface::{journaled_state::account::JournaledAccountTr, result::ResultAndState},
     database::{AccountState, CacheDB, DatabaseRef, EmptyDB},
+    inspector::NoOpInspector,
     primitives::{AddressMap, HashMap as Map, KECCAK_EMPTY, Log, hardfork::SpecId},
     state::{Account, AccountInfo, EvmState, EvmStorageSlot, TransactionId},
 };
@@ -1811,9 +1812,13 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             #[cfg(not(feature = "monad"))]
             let replay_without_context = true;
             if replay_without_context {
-                // Keep one regular Alloy EVM for ordinary transactions. Only system envelopes
+                // Keep one Foundry EVM for ordinary transactions. Only system envelopes
                 // need the nested replay operation; it borrows the same staged database.
-                let mut evm = factory.create_evm(&mut replay_backend, evm_env.clone());
+                let mut evm = factory.create_foundry_evm_with_inspector(
+                    &mut replay_backend,
+                    evm_env.clone(),
+                    NoOpInspector,
+                );
                 inject_replay_precompiles(networks, evm.precompiles_mut(), chain_id, timestamp);
                 for (_, tx, tx_env, is_system) in &txs_to_replay {
                     trace!(tx=?tx.tx_hash(), "committing transaction");
@@ -3380,6 +3385,15 @@ mod tests {
         state::{Account, AccountInfo, EvmState, EvmStorageSlot, TransactionId},
     };
 
+    #[cfg(feature = "base")]
+    use crate::evm::{BaseEvmNetwork, base::base_code_sentinel_addresses};
+    #[cfg(feature = "base")]
+    use base_common_chains::ChainConfig;
+    #[cfg(feature = "base")]
+    use base_common_consensus::Predeploys;
+    #[cfg(feature = "base")]
+    use base_common_evm::{BaseSpecId, BaseUpgrade};
+
     #[cfg(feature = "monad")]
     use super::ensure_block_identity;
     #[cfg(feature = "monad")]
@@ -3447,6 +3461,80 @@ mod tests {
             effective_gas_price: None,
             block_timestamp: None,
         }))
+    }
+
+    #[cfg(feature = "base")]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn base_fork_prefix_replay_uses_source_chain_activation_admin() {
+        let sender = Address::with_last_byte(0x42);
+        let recorder = Address::with_last_byte(0x43);
+        let target = B256::with_last_byte(2);
+        let admin =
+            ChainConfig::activation_admin_address_for_upgrade_by_chain_id(8453, BaseUpgrade::Beryl)
+                .unwrap();
+        // Call ActivationRegistry.admin(), require success, and store its return value in slot 0.
+        let code = revm::bytecode::Bytecode::new_legacy(alloy_primitives::hex!(
+            "63f851a44060e01b60005260206000600460007384530000000000000000000000000000000000015afa60325760006000fd5b60005160005500"
+        ).into());
+        for chain_id in [8453, 31337, 84532] {
+            let forks = MultiFork::<AnyNetwork, BaseSpecId, BlockEnv>::spawn();
+            let mut fork = fork_with_closed_backend();
+            fork.source_chain_id = 8453;
+            fork.db.insert_account_info(
+                sender,
+                AccountInfo { balance: U256::from(10).pow(U256::from(18)), ..Default::default() },
+            );
+            fork.db.insert_account_info(
+                recorder,
+                AccountInfo {
+                    code_hash: code.hash_slow(),
+                    code: Some(code.clone()),
+                    ..Default::default()
+                },
+            );
+            for address in base_code_sentinel_addresses(BaseUpgrade::Beryl).chain([
+                Address::ZERO,
+                Predeploys::L1_BLOCK_INFO,
+                Predeploys::BASE_FEE_VAULT,
+                Predeploys::L1_FEE_VAULT,
+                Predeploys::OPERATOR_FEE_VAULT,
+            ]) {
+                fork.db.insert_account_info(address, AccountInfo::default());
+            }
+            for account in fork.db.cache.accounts.values_mut() {
+                account.account_state = AccountState::StorageCleared;
+            }
+            let mut block = rpc_block(1, B256::with_last_byte(1), B256::ZERO);
+            block.inner.transactions = BlockTransactions::Full(vec![
+                rpc_transaction(sender, 0, 0, 200_000, recorder, B256::with_last_byte(1)),
+                rpc_transaction(sender, 1, 0, 21_000, recorder, target),
+            ]);
+            let mut cfg = revm::context::CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Beryl));
+            cfg.chain_id = chain_id;
+            let result = Backend::<BaseEvmNetwork>::replay_until(
+                &mut fork,
+                ReplayInputs {
+                    fork_id: ForkId::new("http://localhost", Some(0)),
+                    forks,
+                    evm_env: EvmEnv::new(cfg, BlockEnv::default()),
+                    networks: NetworkConfigs::with_base(),
+                },
+                &block,
+                #[cfg(feature = "monad")]
+                None,
+                target,
+                &mut JournalInner::new(),
+                &AddressSet::default(),
+            )
+            .unwrap();
+            assert!(result.is_some());
+            assert_eq!(
+                fork.db.storage_ref(recorder, U256::ZERO).unwrap(),
+                U256::from_be_slice(admin.as_slice()),
+                "execution chain {chain_id}"
+            );
+            assert_eq!(fork.db.basic_ref(sender).unwrap().unwrap().nonce, 1);
+        }
     }
 
     #[test]
