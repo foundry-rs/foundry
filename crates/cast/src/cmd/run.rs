@@ -57,9 +57,7 @@ use foundry_evm::{
 };
 use foundry_evm_networks::NetworkConfigs;
 use futures::TryFutureExt;
-use revm::{
-    DatabaseCommit, DatabaseRef, context::Block, primitives::hardfork::SpecId, state::Bytecode,
-};
+use revm::{DatabaseCommit, DatabaseRef, context::Block, primitives::hardfork::SpecId};
 
 #[cfg(feature = "monad")]
 use foundry_evm::core::evm::{BlockContext, ChainFor, MonadEvmNetwork};
@@ -435,9 +433,7 @@ impl RunArgs {
             .ok_or_else(|| eyre::eyre!("tx may still be pending: {:?}", tx_hash))?;
 
         // we need to fork off the parent block
-        let parent_number = tx_block_number
-            .checked_sub(1)
-            .ok_or_else(|| eyre::eyre!("cannot replay a transaction in the genesis block"))?;
+        let parent_number = tx_block_number - 1;
         config.fork_block_number = Some(parent_number);
 
         let create2_deployer = evm_opts.create2_deployer;
@@ -481,10 +477,9 @@ impl RunArgs {
 
             // Unless explicitly configured, resolve the correct spec for the block using the same
             // approach as reth: walk known chain activation conditions to find the latest active
-            // fork. Falls back to a blob-gas heuristic only without endpoint or schedule metadata.
+            // fork. Falls back to a blob-gas heuristic for unknown chains.
             if evm_version.is_none()
                 && config.hardfork.is_none()
-                && source_hardfork.is_none()
                 && FoundryHardfork::from_chain_and_timestamp(chain.id(), block.header().timestamp())
                     .is_none()
                 && block.header().excess_blob_gas().is_some()
@@ -538,34 +533,14 @@ impl RunArgs {
             {
                 Ok(trace) => match trace.try_into_pre_state_frame() {
                     Ok(pre_state_frame) => {
-                        let prestate = pre_state_frame.into_pre_state();
-                        let original = executor.backend().clone();
-                        let applied = (|| {
-                            // Local overrides can access beacon storage omitted by the canonical
-                            // trace. Apply system writes before overlaying its recorded prestate.
-                            if let Some(root) = parent_beacon_block_root {
-                                executor.apply_beacon_root(root)?;
-                            }
-                            for code in
-                                prestate.values().filter_map(|account| account.code.as_ref())
-                            {
-                                Bytecode::new_raw_checked(code.clone())?;
-                            }
-                            executor.apply_prestate_trace(prestate)
-                        })();
-                        match applied {
-                            Ok(()) => {
-                                prestate_applied = true;
-                                trace!(
-                                    "prestate trace applied successfully, skipping block replay"
-                                );
-                            }
-                            Err(err) => {
-                                // BAL and replay must start from the unchanged parent state.
-                                *executor.backend_mut() = original;
-                                trace!(%err, "failed to apply prestate trace, trying BAL");
-                            }
+                        // Local overrides can access beacon storage omitted by the canonical
+                        // trace. Apply system writes before overlaying its recorded prestate.
+                        if let Some(root) = parent_beacon_block_root {
+                            executor.apply_beacon_root(root)?;
                         }
+                        executor.apply_prestate_trace(pre_state_frame.into_pre_state())?;
+                        prestate_applied = true;
+                        trace!("prestate trace applied successfully, skipping block replay");
                     }
                     Err(err) => {
                         trace!(%err, "failed to parse prestate trace response");

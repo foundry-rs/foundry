@@ -296,8 +296,6 @@ impl RpcProxy {
         let client = reqwest::Client::new();
         let endpoint = fixture.handle.http_endpoint();
         let block_hash = fixture.block_hash;
-        let target =
-            fixture.bal.iter().find(|account| !account.code_changes.is_empty()).unwrap().address;
         let router = Router::new().route(
             "/",
             post(move |Json(request): Json<Value>| {
@@ -358,8 +356,10 @@ impl RpcProxy {
                             && method == "debug_traceTransaction"
                             && request.pointer("/params/1/tracer") == Some(&json!("prestateTracer"))
                         {
-                            // Valid JSON and account structure, but invalid EIP-7702 bytecode.
-                            response["result"][format!("{target:#x}")]["code"] = json!("0xef01");
+                            // The node returned a default trace instead of the requested prestate.
+                            response["result"] = json!({
+                                "gas": 0, "failed": false, "returnValue": "0x", "structLogs": []
+                            });
                         }
                         if let Some(hardfork) = options.reported_hardfork
                             && method == "anvil_nodeInfo"
@@ -504,41 +504,26 @@ casttest!(cast_run_fork_bal_matches_replay_at_every_position, async |_prj, cmd| 
     }
 });
 
-casttest!(cast_run_fork_bal_preserves_endpoint_hardfork, async |_prj, cmd| {
-    for (hardfork, evm_version) in
-        [(EthereumHardfork::Prague, "prague"), (EthereumHardfork::Osaka, "osaka")]
-    {
+casttest!(cast_run_fork_bal_skips_mismatched_hardfork, async |_prj, cmd| {
+    for hardfork in [EthereumHardfork::Prague, EthereumHardfork::Osaka] {
         let fixture = Fixture::with_mode(FixtureMode::CallerBalance(hardfork)).await;
         let proxy = RpcProxy::new(&fixture, ProxyOptions::with_bal(json!(fixture.bal))).await;
-        // The final call observes the sender balance after a calldata-heavy prefix. Its fee
-        // differs between Cancun and Prague, even though both blocks have blob-gas fields.
+        // The existing replay heuristic selects Cancun for this unknown chain. The BAL's
+        // Prague/Osaka prefix fees differ, so it must not replace that replay state.
         for index in [2, 1] {
             let hash = fixture.transactions[index];
-            let canonical = run(
-                &mut cmd,
-                hash,
-                &fixture.handle.http_endpoint(),
-                &["--evm-version", evm_version],
-            );
-            let replay = run(&mut cmd, hash, &fixture.handle.http_endpoint(), &[]);
+            let replay =
+                run(&mut cmd, hash, &fixture.handle.http_endpoint(), &["--evm-version", "cancun"]);
             let restored = run(&mut cmd, hash, &proxy.endpoint, &[]);
             assert_eq!(
                 restored.stdout_lossy(),
                 replay.stdout_lossy(),
                 "{hardfork:?}, transaction {index}"
             );
-            assert_eq!(
-                restored.stdout_lossy(),
-                canonical.stdout_lossy(),
-                "{hardfork:?}, transaction {index}"
-            );
-            assert_eq!(
-                restored.stdout_lossy().lines().find_map(|line| line.strip_prefix("Gas used: ")),
-                Some(fixture.gas[index].to_string().as_str()),
-            );
-            OutputAssert::new(restored).stderr_eq("");
+            OutputAssert::new(restored)
+                .stderr_eq("Executing previous transactions from the block.\n");
         }
-        assert_eq!(proxy.requests(BAL_METHOD).len(), 2, "{hardfork:?}");
+        assert!(proxy.requests(BAL_METHOD).is_empty(), "{hardfork:?}");
     }
 });
 
@@ -809,9 +794,9 @@ casttest!(cast_run_fork_bal_skips_forwarded_history, async |_prj, cmd| {
             provider.raw_request::<_, Value>("evm_mine".into(), ()).await.unwrap();
         }
         let fork_block = provider.get_block_number().await.unwrap();
-        for (chain_id, hardfork, evm_version) in [
-            (source_chain_id + 1, EthereumHardfork::Cancun, "cancun"),
-            (source_chain_id, EthereumHardfork::Prague, "prague"),
+        for (chain_id, hardfork) in [
+            (source_chain_id + 1, EthereumHardfork::Cancun),
+            (source_chain_id, EthereumHardfork::Prague),
         ] {
             let proxy = RpcProxy::new(&fixture, ProxyOptions::with_bal(json!(fixture.bal))).await;
             let (_, fork) = anvil::spawn(
@@ -823,13 +808,13 @@ casttest!(cast_run_fork_bal_skips_forwarded_history, async |_prj, cmd| {
             )
             .await;
 
-            // Replay uses the endpoint's local rules. The forwarded BAL was produced with
-            // upstream rules, which can differ even when the chain IDs match.
+            // Preserve the existing Cancun replay heuristic for this unknown chain. The
+            // forwarded BAL's upstream context can differ from the local fork's settings.
             run_command(
                 &mut cmd,
                 hash,
                 &fixture.handle.http_endpoint(),
-                &["--evm-version", evm_version],
+                &["--evm-version", "cancun"],
             );
             cmd.env("FOUNDRY_CHAIN_ID", chain_id.to_string());
             let replay = cmd.assert_success().get_output().clone();
