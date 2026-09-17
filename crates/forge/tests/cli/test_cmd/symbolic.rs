@@ -1221,18 +1221,6 @@ contract SymbolicJsonPass {
     assert_eq!(symbolic["bounds"]["max_paths"], 1024);
     assert_eq!(symbolic["solver"]["name"], "z3");
     assert!(symbolic["solver"]["stats"]["paths"].as_u64().unwrap() >= 1);
-    assert!(symbolic["solver"].get("native_frontend").is_none());
-    for key in [
-        "native_queries",
-        "native_sat_queries",
-        "native_unsat_queries",
-        "native_unknown_queries",
-        "native_solver_time_ns",
-        "native_max_query_time_ns",
-    ] {
-        assert!(symbolic["solver"]["stats"].get(key).is_none());
-        assert!(result["kind"]["Symbolic"].get(key).is_none());
-    }
     assert_eq!(symbolic["assumptions"][0]["kind"], "bounded_exploration");
 });
 
@@ -1755,7 +1743,7 @@ contract SymbolicJsonIncomplete {
     assert!(symbolic["counterexample"].is_null());
 });
 
-forgetest_init!(symbolic_native_only_reports_incomplete_without_fallback, |prj, cmd| {
+forgetest_init!(symbolic_native_only_unhandled_query_is_incomplete, |prj, cmd| {
     prj.add_test(
         "SymbolicNativeOnlyIncomplete.t.sol",
         r#"
@@ -1788,8 +1776,8 @@ contract SymbolicNativeOnlyIncomplete {
     let result = json_test_result(&output, "checkUnsupportedProduct(uint256,uint256)");
     let symbolic = &result["symbolic"];
     assert_eq!(symbolic["status"], "incomplete");
-    assert_eq!(symbolic["incomplete"]["kind"], "timeout");
-    assert_eq!(symbolic["incomplete"]["reason"], "solver returned unknown");
+    assert_eq!(symbolic["incomplete"]["kind"], "revert_all");
+    assert_eq!(symbolic["incomplete"]["reason"], "all symbolic paths reverted");
     assert_eq!(symbolic["solver"]["name"], "native");
     assert!(symbolic["solver"]["command"].is_null());
     assert!(symbolic["solver"]["stats"]["solver_queries"].as_u64().unwrap() >= 1);

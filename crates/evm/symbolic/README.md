@@ -520,11 +520,6 @@ If the harness imports a smaller Hevm interface that does not expose this
 cheatcode, declare a local interface with `setArbitraryStorage(address)` and
 cast it to `address(vm)`.
 
-The two-argument overload is also honored. Use
-`vm.setArbitraryStorage(address(target), true)` when setup wrote nonzero slots
-that symbolic execution should be allowed to replace; the one-argument form
-preserves those concrete nonzero setup values.
-
 Keep this scoped to external dependencies that model the environment, such as
 token balances, token allowances, and oracle prices. Do not blanket-mark the
 invariant harness or protocol state as arbitrary; that can create unreachable
@@ -722,7 +717,6 @@ interface Svm {
     function createCalldata(string calldata name) external returns (bytes memory);
     function enableSymbolicStorage(address target) external;
     function setArbitraryStorage(address target) external;
-    function setArbitraryStorage(address target, bool overwrite) external;
     function snapshotStorage(address target) external returns (uint256);
     function snapshotState() external returns (uint256);
 }

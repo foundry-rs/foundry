@@ -10,15 +10,12 @@ use std::{
 use wait_timeout::ChildExt;
 
 mod fallback;
-mod fresh_z3_capture;
 mod native;
 mod normalize;
 mod reasoning;
 mod smt;
-mod trace;
 
 use fallback::{checked_mul_guard_branch_model, constraints_prefer_hard_arith_fallback_first};
-use fresh_z3_capture::FreshZ3Capture;
 use normalize::{
     constraints_are_directly_unsat, normalize_constraints_for_solver_cached,
     sorted_bool_exprs_are_subset,
@@ -220,7 +217,6 @@ pub(crate) struct SmtLibSubprocessSolver {
     smt_build_time: Duration,
     smt_max_query_time: Duration,
     z3_session: Option<Z3Session>,
-    fresh_z3_capture: Option<FreshZ3Capture>,
 }
 
 impl SmtLibSubprocessSolver {
@@ -265,7 +261,6 @@ impl SmtLibSubprocessSolver {
             smt_build_time: Duration::ZERO,
             smt_max_query_time: Duration::ZERO,
             z3_session: None,
-            fresh_z3_capture: None,
         }
     }
 
@@ -290,7 +285,6 @@ impl SmtLibSubprocessSolver {
             config.dump_smt,
         );
         solver.routing = routing;
-        solver.fresh_z3_capture = FreshZ3Capture::from_env();
         solver
     }
 
@@ -453,14 +447,7 @@ impl SmtLibSubprocessSolver {
         replayable_storage: &SymbolicVars,
     ) -> Result<SymbolicModel, SymbolicError> {
         let previous = std::mem::replace(&mut self.replayable_storage, replayable_storage.clone());
-        let result = self.model(cx, constraints).map(|mut model| {
-            // Model validation treats omitted variables as zero. Materialize that same choice for
-            // symbolic storage so replay cannot retain a different concrete setup value.
-            for symbol in replayable_storage {
-                model.entry(*symbol).or_default();
-            }
-            model
-        });
+        let result = self.model(cx, constraints);
         self.replayable_storage = previous;
         result
     }
@@ -479,7 +466,6 @@ impl SmtLibSubprocessSolver {
         self.model_queries += 1;
         let smt_constraints =
             normalize_constraints_for_solver_cached(cx, constraints, &mut self.normalization_cache);
-        trace::write_normalized_query_trace(&smt_constraints, true)?;
         let cache_key = smt_constraints.clone();
 
         if self.sat_cache.get(&cache_key) == Some(&false) {
@@ -542,9 +528,6 @@ impl SmtLibSubprocessSolver {
             self.cache_sat_result(cache_key.clone(), true);
             return Ok(model);
         }
-        if self.routing.native_enabled() {
-            trace::write_native_query_trace(&smt_constraints, true)?;
-        }
         match self.query_native(&smt_constraints, constraints, true) {
             native::NativeSolveResult::Sat(model) => {
                 trace!("model: native solver returned a validated model");
@@ -552,11 +535,8 @@ impl SmtLibSubprocessSolver {
                 self.cache_model_result(cache_key, model.clone());
                 return Ok(model);
             }
-            native::NativeSolveResult::Unsat => {
-                trace!("model: native solver proved the path unsatisfiable");
-                self.model_cache.remove(&cache_key);
-                self.cache_sat_result(cache_key, false);
-                return Err(SymbolicError::Solver("counterexample path became unsat".to_string()));
+            native::NativeSolveResult::UnsatCandidate => {
+                trace!("model: native solver found an unsat candidate; requiring SMT confirmation");
             }
             native::NativeSolveResult::Unknown => {}
         }
@@ -627,7 +607,6 @@ impl SmtLibSubprocessSolver {
         self.sat_queries += 1;
         let smt_constraints =
             normalize_sat_constraints(cx, constraints, &mut self.normalization_cache);
-        trace::write_normalized_query_trace(&smt_constraints, false)?;
         let cache_key = smt_constraints.clone();
         if let Some(result) = self.sat_cache.get(&cache_key) {
             self.sat_cache_hits += 1;
@@ -713,9 +692,6 @@ impl SmtLibSubprocessSolver {
             self.cache_sat_result(cache_key, true);
             return Ok(BranchFeasibility::Sat);
         }
-        if self.routing.native_enabled() {
-            trace::write_native_query_trace(&smt_constraints, false)?;
-        }
         match self.query_native(&smt_constraints, constraints, false) {
             native::NativeSolveResult::Sat(model) => {
                 trace!("is_sat: native solver returned a validated model");
@@ -723,10 +699,10 @@ impl SmtLibSubprocessSolver {
                 self.cache_model_result(cache_key, model);
                 return Ok(BranchFeasibility::Sat);
             }
-            native::NativeSolveResult::Unsat => {
-                trace!("is_sat: native solver proved the path unsatisfiable");
-                self.cache_sat_result(cache_key, false);
-                return Ok(BranchFeasibility::Unsat);
+            native::NativeSolveResult::UnsatCandidate => {
+                trace!(
+                    "is_sat: native solver found an unsat candidate; requiring SMT confirmation"
+                );
             }
             native::NativeSolveResult::Unknown => {}
         }
@@ -868,7 +844,7 @@ impl SmtLibSubprocessSolver {
         self.native_max_query_time = self.native_max_query_time.max(elapsed);
         match &result {
             native::NativeSolveResult::Sat(_) => self.native_sat_queries += 1,
-            native::NativeSolveResult::Unsat => self.native_unsat_queries += 1,
+            native::NativeSolveResult::UnsatCandidate => self.native_unsat_queries += 1,
             native::NativeSolveResult::Unknown => self.native_unknown_queries += 1,
         }
         result
@@ -919,76 +895,26 @@ impl SmtLibSubprocessSolver {
             self.emit_diagnostic(format_args!("--- symbolic SMT query {query} ---\n{smt}\n"));
         }
 
-        let capture_command = self
-            .fresh_z3_capture
-            .as_ref()
-            .map(|capture| capture.validate_command(&commands, self.timeout))
-            .transpose()?;
-        let capture_directory = self.fresh_z3_capture.as_ref().map(FreshZ3Capture::directory);
-        let pending_trace =
-            trace::capture_query_trace(smt_constraints, model, smt_bytes, capture_directory);
-        let (result, query_time, captured_bundle) = if let Some(command) = capture_command {
-            let occurrence = pending_trace
-                .as_ref()
-                .and_then(trace::PendingQueryTrace::occurrence)
-                .ok_or_else(|| {
-                    SymbolicError::Solver(
-                        "fresh Z3 capture failed to reserve a backend occurrence".to_string(),
-                    )
-                })?;
-            let capture = self.fresh_z3_capture.as_ref().ok_or_else(|| {
-                SymbolicError::Solver("fresh Z3 capture is unexpectedly disabled".to_string())
-            })?;
-            let captured = capture.run(
-                command,
-                smt.as_bytes(),
-                self.timeout.ok_or_else(|| {
-                    SymbolicError::Solver(
-                        "fresh Z3 capture is missing its validated timeout".to_string(),
-                    )
-                })?,
-                occurrence,
-            )?;
-            let query_time = captured.solver_elapsed;
-            let output = captured.outcome.into_result();
-            (SolverCommandRun { output, summaries: Vec::new() }, query_time, Some(captured.bundle))
+        let started = Instant::now();
+        let result = if let [command] = commands.as_slice()
+            && command.smt_timeout
+            && command.program == "z3"
+            && command.args == ["-in", "-smt2"]
+        {
+            let output = self.query_z3(command, &smt).into_result();
+            SolverCommandRun { output, summaries: Vec::new() }
         } else {
-            let started = Instant::now();
-            let result = if let [command] = commands.as_slice()
-                && command.smt_timeout
-                && command.program == "z3"
-                && command.args == ["-in", "-smt2"]
-            {
-                let output = self.query_z3(command, &smt).into_result();
-                SolverCommandRun { output, summaries: Vec::new() }
-            } else {
-                run_solver_commands(
-                    cx,
-                    &commands,
-                    &smt,
-                    self.timeout,
-                    model.then_some(model_constraints),
-                )
-            };
-            (result, started.elapsed(), None)
+            run_solver_commands(
+                cx,
+                &commands,
+                &smt,
+                self.timeout,
+                model.then_some(model_constraints),
+            )
         };
+        let query_time = started.elapsed();
         self.solver_time += query_time;
         self.smt_max_query_time = self.smt_max_query_time.max(query_time);
-        if let Some(pending_trace) = pending_trace {
-            if let Some(bundle) = captured_bundle {
-                let encoded = pending_trace.encode(&result.output, query_time)?;
-                self.fresh_z3_capture
-                    .as_mut()
-                    .ok_or_else(|| {
-                        SymbolicError::Solver(
-                            "fresh Z3 capture is unexpectedly disabled".to_string(),
-                        )
-                    })?
-                    .commit(bundle, encoded)?;
-            } else {
-                pending_trace.write(&result.output, query_time)?;
-            }
-        }
         self.portfolio_scheduler.record(&ordered_commands, &result.summaries);
         if self.dump_smt {
             self.portfolio_diagnostics.record(&result.summaries);

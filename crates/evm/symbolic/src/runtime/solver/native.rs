@@ -7,7 +7,7 @@ use std::hash::{Hash, Hasher};
 
 pub(super) enum NativeSolveResult {
     Sat(SymbolicModel),
-    Unsat,
+    UnsatCandidate,
     Unknown,
 }
 
@@ -24,7 +24,9 @@ pub(super) fn solve_native(
         model_satisfies_constraints(candidate, original_constraints)
     }) {
         SolveResult::Sat(model) => NativeSolveResult::Sat(model.into_values()),
-        SolveResult::Unsat => NativeSolveResult::Unsat,
+        // Keep native UNSAT non-authoritative until the independent differential corpus qualifies
+        // both the native bit-vector encoding and the handwritten word-level proof rules.
+        SolveResult::Unsat => NativeSolveResult::UnsatCandidate,
         SolveResult::Unknown => NativeSolveResult::Unknown,
     }
 }
@@ -515,7 +517,7 @@ mod tests {
         let constraints = [constraint];
         assert!(matches!(
             solve_native(&constraints, &constraints, false),
-            NativeSolveResult::Unsat
+            NativeSolveResult::UnsatCandidate
         ));
     }
 
@@ -536,7 +538,7 @@ mod tests {
         ];
         assert!(matches!(
             solve_native(&constraints, &constraints, false),
-            NativeSolveResult::Unsat
+            NativeSolveResult::UnsatCandidate
         ));
     }
 
@@ -590,27 +592,6 @@ mod tests {
     }
 
     #[test]
-    fn replay_model_materializes_a_missing_keccak_preimage_as_zero() {
-        let mut cx = SymCx::new();
-        let input = SymExpr::var(&mut cx, "storage_input");
-        let input_symbol = input.kind().get_var().unwrap();
-        let input_bytes = input.into_byte_exprs(&mut cx);
-        let hash = keccak_word(&mut cx, input_bytes);
-        let expected = U256::from_be_bytes(alloy_primitives::keccak256([0_u8; 32]).0);
-        let constraint = SymBoolExpr::eq_word_const(&mut cx, &hash, expected);
-        let constraints = [constraint];
-        let replayable_storage = [input_symbol].into_iter().collect();
-        let mut solver = SmtLibSubprocessSolver::from_config(&SymbolicConfig::default());
-
-        let model = solver
-            .model_with_replayable_storage(&mut cx, &constraints, &replayable_storage)
-            .unwrap();
-
-        assert_eq!(model.get(&input_symbol), Some(&U256::ZERO));
-        assert!(model_satisfies_constraints(&model, &constraints));
-    }
-
-    #[test]
     fn native_preserves_gasleft_as_an_smt_emission_error() {
         let mut cx = SymCx::new();
         let gas_left = SymExpr::gas_left(&mut cx, 0);
@@ -649,7 +630,7 @@ mod tests {
         assert_eq!(query.variable_capacity_hint(), 0);
         assert!(matches!(
             solve_native(&constraints, &constraints, false),
-            NativeSolveResult::Unsat
+            NativeSolveResult::UnsatCandidate
         ));
     }
 
@@ -690,29 +671,46 @@ mod tests {
     }
 
     #[test]
-    fn native_query_records_exact_unsat() {
+    fn native_unsat_candidate_requires_external_confirmation() {
         let mut cx = SymCx::new();
         let a = SymExpr::var(&mut cx, "a");
         let b = SymExpr::var(&mut cx, "b");
-        let sum = SymExpr::binop(&mut cx, SymBinOp::Add, a.clone(), b.clone());
+        let cap = SymExpr::constant(&mut cx, U256::from(10));
+        let residual =
+            SymExpr::from_kind(&mut cx, SymExprKind::BinOp(SymBinOp::Sub, cap.clone(), a.clone()));
+        let sum =
+            SymExpr::from_kind(&mut cx, SymExprKind::BinOp(SymBinOp::Add, a.clone(), b.clone()));
         let constraints = [
-            SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, sum.clone(), a),
-            SymBoolExpr::cmp(&mut cx, SymCmpOp::Uge, sum, b),
+            SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, a, cap.clone()),
+            SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, b, residual),
+            SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, sum, cap),
         ];
-        let mut solver = SmtLibSubprocessSolver::from_config(&SymbolicConfig::default());
+        let missing = SolverCommand::new(
+            vec!["foundry-symbolic-definitely-missing-solver".to_string()],
+            false,
+        )
+        .unwrap();
+        let mut solver = SmtLibSubprocessSolver::new(Ok(vec![missing]), None, 2, false);
+        solver.enable_native_for_test();
 
-        assert!(matches!(
-            solver.query_native(&constraints, &constraints, false),
-            NativeSolveResult::Unsat
-        ));
+        assert!(matches!(solver.is_sat(&mut cx, &constraints), Err(SymbolicError::Solver(_))));
 
         let stats = solver.stats();
         assert_eq!(stats.native_queries, 1);
         assert_eq!(stats.native_sat_queries, 0);
         assert_eq!(stats.native_unsat_queries, 1);
         assert_eq!(stats.native_unknown_queries, 0);
-        assert_eq!(stats.smt_queries, 0);
+        assert_eq!(stats.smt_queries, 1);
         assert!(stats.native_max_query_time_ns <= stats.native_solver_time_ns);
+
+        let config = SymbolicConfig { solver: "native".to_string(), ..Default::default() };
+        let mut native_only = SmtLibSubprocessSolver::from_config(&config);
+        assert!(matches!(
+            native_only.is_sat(&mut cx, &constraints),
+            Err(SymbolicError::SolverUnknown)
+        ));
+        assert_eq!(native_only.stats().native_unsat_queries, 1);
+        assert_eq!(native_only.stats().smt_queries, 0);
     }
 
     #[test]

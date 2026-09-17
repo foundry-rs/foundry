@@ -75,7 +75,6 @@ enum SymbolicVmCheatcode {
     CreateUint,
     CreateUintBits(usize),
     EnableSymbolicStorage,
-    EnableSymbolicStorageOverwrite,
     SnapshotStorage,
     SnapshotState,
 }
@@ -94,7 +93,6 @@ impl SymbolicVmCheatcode {
             SymbolicVm::createUintCall::SELECTOR => Some(Self::CreateUint),
             SymbolicVm::enableSymbolicStorageCall::SELECTOR
             | Vm::setArbitraryStorage_0Call::SELECTOR => Some(Self::EnableSymbolicStorage),
-            Vm::setArbitraryStorage_1Call::SELECTOR => Some(Self::EnableSymbolicStorageOverwrite),
             SymbolicVm::snapshotStorageCall::SELECTOR => Some(Self::SnapshotStorage),
             Vm::snapshotStateCall::SELECTOR => Some(Self::SnapshotState),
             _ => {
@@ -126,7 +124,6 @@ impl SymbolicVmCheatcode {
             | Self::CreateStringSized
             | Self::EnableSymbolicStorage
             | Self::SnapshotStorage => 1,
-            Self::EnableSymbolicStorageOverwrite => 2,
             Self::CreateAddress
             | Self::CreateBool
             | Self::CreateBytes
@@ -382,7 +379,7 @@ pub struct SymbolicStats {
     /// Number of native queries answered with an evaluator-validated model.
     #[serde(skip)]
     pub native_sat_queries: usize,
-    /// Number of native queries answered by an exact contradiction proof.
+    /// Number of native UNSAT candidates sent to the external SMT solver for confirmation.
     #[serde(skip)]
     pub native_unsat_queries: usize,
     /// Number of queries the native solver did not classify. These either reach the configured

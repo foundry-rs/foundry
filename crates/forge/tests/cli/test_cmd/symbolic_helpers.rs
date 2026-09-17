@@ -5,9 +5,6 @@ use foundry_test_utils::{
 use serde_json::Value;
 use std::{path::PathBuf, process::Command};
 
-const SYMBOLIC_ENGINE_METRICS: &str = r"paths: \d+, queries: \d+(?:, native: \d+ \(\d+ sat, \d+ unsat, \d+ unhandled, \d+ns\))?(?:, smt: \d+, sat: \d+ \(\d+ cached\), models: \d+ \(\d+ cached\), hard-arith: \d+, solver: \d+ms)?";
-const SYMBOLIC_OR_INVARIANT_METRICS: &str = r"(?:paths: \d+, queries: \d+(?:, native: \d+ \(\d+ sat, \d+ unsat, \d+ unhandled, \d+ns\))?(?:, smt: \d+, sat: \d+ \(\d+ cached\), models: \d+ \(\d+ cached\), hard-arith: \d+, solver: \d+ms)?|runs: \d+, calls: \d+, reverts: \d+)";
-
 pub fn z3_available() -> bool {
     Command::new("z3").arg("--version").output().is_ok_and(|output| output.status.success())
 }
@@ -31,7 +28,7 @@ macro_rules! skip_unless_z3 {
 ///   an unconstrained address pool.
 pub fn assert_symbolic(cmd: &mut TestCommand) -> OutputAssert {
     cmd.assert_with(&[
-        ("[METRICS]", SYMBOLIC_OR_INVARIANT_METRICS),
+        ("[METRICS]", r"(?:paths: \d+, queries: \d+(?:, smt: \d+, sat: \d+ \(\d+ cached\), models: \d+ \(\d+ cached\), hard-arith: \d+, solver: \d+ms)?|runs: \d+, calls: \d+, reverts: \d+)"),
         ("[SENDER]", r"(?:sender=|addr=(?:\[[^\]]+\])?)0x[0-9a-fA-F]{40}"),
     ])
 }
@@ -39,7 +36,7 @@ pub fn assert_symbolic(cmd: &mut TestCommand) -> OutputAssert {
 /// Run a symbolic test while requiring symbolic engine metrics rather than invariant fuzz metrics.
 pub fn assert_symbolic_engine(cmd: &mut TestCommand) -> OutputAssert {
     cmd.assert_with(&[
-        ("[METRICS]", SYMBOLIC_ENGINE_METRICS),
+        ("[METRICS]", r"paths: \d+, queries: \d+(?:, smt: \d+, sat: \d+ \(\d+ cached\), models: \d+ \(\d+ cached\), hard-arith: \d+, solver: \d+ms)?"),
         ("[SENDER]", r"(?:sender=|addr=(?:\[[^\]]+\])?)0x[0-9a-fA-F]{40}"),
     ])
 }
@@ -50,7 +47,7 @@ pub fn assert_symbolic_engine(cmd: &mut TestCommand) -> OutputAssert {
 /// *some* counterexample exists, not what it is.
 pub fn assert_symbolic_witness(cmd: &mut TestCommand) -> OutputAssert {
     cmd.assert_with(&[
-        ("[METRICS]", SYMBOLIC_OR_INVARIANT_METRICS),
+        ("[METRICS]", r"(?:paths: \d+, queries: \d+(?:, smt: \d+, sat: \d+ \(\d+ cached\), models: \d+ \(\d+ cached\), hard-arith: \d+, solver: \d+ms)?|runs: \d+, calls: \d+, reverts: \d+)"),
         ("[SENDER]", r"(?:sender=|addr=(?:\[[^\]]+\])?)0x[0-9a-fA-F]{40}"),
         ("[CALLDATA]", r"calldata=0x[0-9a-fA-F]+"),
         // `args=[...]` may contain nested scientific-notation brackets like
@@ -63,7 +60,7 @@ pub fn assert_symbolic_witness(cmd: &mut TestCommand) -> OutputAssert {
 /// accepting ordinary invariant fuzz campaign metrics.
 pub fn assert_symbolic_engine_witness(cmd: &mut TestCommand) -> OutputAssert {
     cmd.assert_with(&[
-        ("[METRICS]", SYMBOLIC_ENGINE_METRICS),
+        ("[METRICS]", r"paths: \d+, queries: \d+(?:, smt: \d+, sat: \d+ \(\d+ cached\), models: \d+ \(\d+ cached\), hard-arith: \d+, solver: \d+ms)?"),
         ("[SENDER]", r"(?:sender=|addr=(?:\[[^\]]+\])?)0x[0-9a-fA-F]{40}"),
         ("[CALLDATA]", r"calldata=0x[0-9a-fA-F]+"),
         ("[ARGS]", r"args=\[(?:[^\[\]]|\[[^\]]*\])*\]"),
