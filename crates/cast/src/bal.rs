@@ -16,18 +16,13 @@ use alloy_primitives::B256;
 use alloy_rpc_types::BlockTransactions;
 use eyre::{Result, WrapErr, ensure};
 use revm::{
-    Database, DatabaseRef,
-    database_interface::{
-        WrapDatabaseRef,
-        bal::{BalDatabase, BalState},
-    },
+    DatabaseRef,
     primitives::hardfork::SpecId,
     state::{
-        Account, EvmState, EvmStorageSlot,
-        bal::{Bal, BlockAccessIndex},
+        Account, AccountId, EvmState, EvmStorageSlot,
+        bal::{AccountInfoBal, BalWrites, BlockAccessIndex},
     },
 };
-use std::sync::Arc;
 
 /// Checks that the requested transaction and the fork parent belong to the fetched block.
 pub(crate) fn validate_target(
@@ -83,25 +78,46 @@ pub(crate) fn prepare_prestate<DB: DatabaseRef>(
         );
     }
 
-    let bal = Arc::new(Bal::try_from_alloy(bal).wrap_err("invalid BAL bytecode")?);
+    // Validate every bytecode entry before reading the parent, including future writes.
+    // Keep account fields in Revm's representation and consume storage slots directly.
+    let accounts = bal
+        .into_iter()
+        .map(|changes| {
+            let info = AccountInfoBal {
+                nonce: changes.nonce_changes.into(),
+                balance: changes.balance_changes.into(),
+                code: BalWrites::try_from(changes.code_changes).wrap_err("invalid BAL bytecode")?,
+            };
+            Ok((changes.address, info, changes.storage_changes, changes.storage_reads))
+        })
+        .collect::<Result<Vec<_>>>()?;
     let index = BlockAccessIndex::new(
         u64::try_from(transaction_index)?
             .checked_add(1)
             .ok_or_else(|| eyre::eyre!("BAL transaction position overflow"))?,
     );
-    let mut positioned = BalDatabase {
-        bal_state: BalState { bal: Some(bal.clone()), bal_index: index, ..Default::default() },
-        db: WrapDatabaseRef(db),
-    };
     let mut state = EvmState::default();
 
-    for (&address, changes) in &bal.accounts {
+    for (account_index, (address, changes, storage_changes, storage_reads)) in
+        accounts.into_iter().enumerate()
+    {
+        // Validation guarantees sorted writes, so their first index decides whether an overlay
+        // is needed without searching for values or cloning bytecode.
+        let has_prior_changes = has_prior_write(&changes.balance, index)
+            || has_prior_write(&changes.nonce, index)
+            || has_prior_write(&changes.code, index)
+            || storage_changes.iter().any(|slot| slot.changes[0].block_access_index < index);
+        let has_storage = !storage_changes.is_empty() || !storage_reads.is_empty();
+        if !has_prior_changes && !has_storage {
+            continue;
+        }
+
+        // Reuse the parent read for both reset detection and Revm's account overlay.
+        let info = db.basic_ref(address)?;
         // CREATE can reset storage without a BAL write, including after create-and-selfdestruct.
         // Check read-only and future-write entries too, before skipping unchanged accounts.
-        if !changes.storage.storage.is_empty()
-            && db.basic_ref(address)?.is_none_or(|info| info.has_no_code_and_nonce())
-        {
-            for &slot in changes.storage.storage.keys() {
+        if has_storage && info.as_ref().is_none_or(|info| info.has_no_code_and_nonce()) {
+            for slot in storage_changes.iter().map(|slot| slot.slot).chain(storage_reads) {
                 ensure!(
                     db.storage_ref(address, slot)?.is_zero(),
                     "BAL cannot reconstruct a possible storage reset for {address}"
@@ -110,23 +126,23 @@ pub(crate) fn prepare_prestate<DB: DatabaseRef>(
         }
 
         // Read-only entries and writes at or after the target need no overlay.
-        let has_prior_changes = changes.balance.get(index).is_some()
-            || changes.nonce.get(index).is_some()
-            || changes.code.get(index).is_some()
-            || changes.storage.storage.values().any(|writes| writes.get(index).is_some());
         if !has_prior_changes {
             continue;
         }
 
-        let info = positioned.basic(address)?.ok_or_else(|| {
-            eyre::eyre!("BAL contains storage changes for missing account {address}")
-        })?;
+        let was_missing = info.is_none();
+        let mut info = info.unwrap_or_default();
+        let changed = changes.populate_account_info(index, &mut info);
+        ensure!(
+            !was_missing || changed,
+            "BAL contains storage changes for missing account {address}"
+        );
+        info.account_id = Some(AccountId::new(account_index).expect("too many bals"));
         let mut account = Account::from(info);
         account.mark_touch();
-        for (&slot, writes) in &changes.storage.storage {
-            if writes.get(index).is_some() {
-                let value = positioned.storage(address, slot)?;
-                account.storage.insert(slot, EvmStorageSlot::new(value, Default::default()));
+        for slot in storage_changes {
+            if let Some(value) = BalWrites::from(slot.changes).get(index) {
+                account.storage.insert(slot.slot, EvmStorageSlot::new(value, Default::default()));
             }
         }
         state.insert(address, account);
@@ -134,6 +150,11 @@ pub(crate) fn prepare_prestate<DB: DatabaseRef>(
 
     // The caller commits only this completed overlay. A failed read leaves replay on parent state.
     Ok(state)
+}
+
+/// Whether a validated, sorted write list contains a value before the target.
+fn has_prior_write<T: PartialEq + Clone>(writes: &BalWrites<T>, index: BlockAccessIndex) -> bool {
+    writes.writes.first().is_some_and(|(first, _)| *first < index)
 }
 
 #[cfg(test)]

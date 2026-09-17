@@ -9,10 +9,10 @@ use revm::{
     Context, DatabaseCommit, ExecuteCommitEvm, MainBuilder, MainContext,
     context::TxEnv,
     database::InMemoryDB,
-    database_interface::ErasedError,
+    database_interface::{ErasedError, bal::BalDatabase},
     state::{AccountInfo, Bytecode},
 };
-use std::io;
+use std::{cell::RefCell, io};
 
 #[test]
 fn target_validation_binds_transaction_position_and_parent() {
@@ -128,6 +128,157 @@ fn prestate_restores_first_middle_and_last_transaction_boundaries() {
             assert_eq!(db.code_by_hash_ref(info.code_hash).unwrap(), code);
         }
     }
+}
+
+#[test]
+fn prestate_reads_each_needed_parent_account_once() {
+    let [created, existing, read_only, future_storage, future_account, untouched] =
+        [1, 2, 3, 4, 5, 6].map(Address::with_last_byte);
+    let slot = U256::ZERO;
+    let mut db = CountingDb::default();
+    db.parent.insert_account_info(created, AccountInfo::from_balance(U256::from(1)));
+    db.parent.insert_account_info(existing, AccountInfo { nonce: 1, ..Default::default() });
+    db.parent.insert_account_storage(existing, slot, U256::from(77)).unwrap();
+    let bal = vec![
+        AccountChanges {
+            storage_changes: vec![SlotChanges::new(
+                slot,
+                vec![StorageChange::new(BlockAccessIndex::new(0), U256::from(11))],
+            )],
+            ..AccountChanges::new(created)
+        },
+        AccountChanges {
+            storage_changes: vec![SlotChanges::new(
+                slot,
+                vec![StorageChange::new(BlockAccessIndex::new(0), U256::from(22))],
+            )],
+            ..AccountChanges::new(existing)
+        },
+        AccountChanges { storage_reads: vec![slot], ..AccountChanges::new(read_only) },
+        AccountChanges {
+            storage_changes: vec![SlotChanges::new(
+                slot,
+                vec![StorageChange::new(BlockAccessIndex::new(2), U256::from(33))],
+            )],
+            ..AccountChanges::new(future_storage)
+        },
+        AccountChanges {
+            balance_changes: vec![BalanceChange::new(BlockAccessIndex::new(2), U256::from(44))],
+            ..AccountChanges::new(future_account)
+        },
+        AccountChanges::new(untouched),
+    ];
+
+    let state = prepare_prestate(&db, bal, 0, 2, None, SpecId::CANCUN).unwrap();
+    assert_eq!(*db.basic_reads.borrow(), [created, existing, read_only, future_storage]);
+    assert_eq!(
+        *db.storage_reads.borrow(),
+        [(created, slot), (read_only, slot), (future_storage, slot)]
+    );
+    assert_eq!(state.len(), 2);
+    assert_eq!(state[&created].storage[&slot].present_value, U256::from(11));
+    assert_eq!(state[&existing].storage[&slot].present_value, U256::from(22));
+    assert_eq!(db.parent.storage_ref(existing, slot).unwrap(), U256::from(77));
+}
+
+#[test]
+fn prestate_preserves_sparse_write_boundaries() {
+    let address = Address::with_last_byte(1);
+    let slot = U256::ZERO;
+    let mut parent = InMemoryDB::default();
+    parent.insert_account_info(
+        address,
+        AccountInfo { balance: U256::from(99), nonce: 99, ..Default::default() },
+    );
+    parent.insert_account_storage(address, slot, U256::from(99)).unwrap();
+    let indices = [2, 4, 6, 8, 10, 12];
+    let bal = vec![AccountChanges {
+        balance_changes: indices
+            .iter()
+            .map(|&index| BalanceChange::new(BlockAccessIndex::new(index), U256::from(index)))
+            .collect(),
+        nonce_changes: indices
+            .iter()
+            .map(|&index| NonceChange::new(BlockAccessIndex::new(index), index))
+            .collect(),
+        storage_changes: vec![SlotChanges::new(
+            slot,
+            indices
+                .iter()
+                .map(|&index| StorageChange::new(BlockAccessIndex::new(index), U256::from(index)))
+                .collect(),
+        )],
+        ..AccountChanges::new(address)
+    }];
+
+    // Six writes exercise Revm's binary search, with targets on writes and in the gaps.
+    for (index, expected) in
+        [99, 99, 2, 2, 4, 4, 6, 6, 8, 8, 10, 10, 12, 12].into_iter().enumerate()
+    {
+        let state =
+            prepare_prestate(&parent, bal.clone(), index, 14, None, SpecId::CANCUN).unwrap();
+        assert_eq!(state.is_empty(), index < 2);
+        let mut db = parent.clone();
+        db.commit(state);
+        let info = db.basic_ref(address).unwrap().unwrap();
+        assert_eq!(info.balance, U256::from(expected));
+        assert_eq!(info.nonce, expected);
+        assert_eq!(db.storage_ref(address, slot).unwrap(), U256::from(expected));
+    }
+}
+
+#[test]
+fn prestate_requires_account_changes_to_create_a_missing_account() {
+    let address = Address::with_last_byte(1);
+    let parent = InMemoryDB::default();
+    let storage = vec![SlotChanges::new(
+        U256::ZERO,
+        vec![StorageChange::new(BlockAccessIndex::new(0), U256::from(10))],
+    )];
+    let account = AccountChanges { storage_changes: storage, ..AccountChanges::new(address) };
+    let error =
+        prepare_prestate(&parent, vec![account.clone()], 0, 1, None, SpecId::CANCUN).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        format!("BAL contains storage changes for missing account {address}")
+    );
+
+    let code = Bytecode::new_raw(bytes!("6001"));
+    for (changes, expected) in [
+        (
+            AccountChanges {
+                balance_changes: vec![BalanceChange::new(BlockAccessIndex::new(0), U256::from(1))],
+                ..account.clone()
+            },
+            AccountInfo::from_balance(U256::from(1)),
+        ),
+        (
+            AccountChanges {
+                nonce_changes: vec![NonceChange::new(BlockAccessIndex::new(0), 1)],
+                ..account.clone()
+            },
+            AccountInfo { nonce: 1, ..Default::default() },
+        ),
+        (
+            AccountChanges {
+                code_changes: vec![CodeChange::new(
+                    BlockAccessIndex::new(0),
+                    code.original_bytes(),
+                )],
+                ..account
+            },
+            AccountInfo { code_hash: code.hash_slow(), code: Some(code), ..Default::default() },
+        ),
+    ] {
+        let state = prepare_prestate(&parent, vec![changes], 0, 1, None, SpecId::CANCUN).unwrap();
+        assert_eq!(state[&address].info, expected);
+        assert!(state[&address].is_touched());
+        let mut db = parent.clone();
+        db.commit(state);
+        assert_eq!(db.basic_ref(address).unwrap(), Some(expected));
+        assert_eq!(db.storage_ref(address, U256::ZERO).unwrap(), U256::from(10));
+    }
+    assert!(parent.basic_ref(address).unwrap().is_none());
 }
 
 #[test]
@@ -258,14 +409,26 @@ fn prestate_rejects_invalid_structure_bytecode_and_commitment() {
     }];
     assert!(prepare_prestate(&db, duplicate_index, 0, 1, None, SpecId::CANCUN).is_err());
 
-    let invalid_code = vec![AccountChanges {
-        code_changes: vec![CodeChange::new(
-            BlockAccessIndex::new(1),
-            Bytes::from_static(&[0xef, 0x01]),
-        )],
-        ..account.clone()
-    }];
-    assert!(prepare_prestate(&db, invalid_code, 0, 1, None, SpecId::CANCUN).is_err());
+    for index in [0, 1, 2] {
+        let db = CountingDb::default();
+        // Validate the later account's bytecode before reading any earlier account's parent.
+        let invalid_code = vec![
+            AccountChanges {
+                balance_changes: vec![BalanceChange::new(BlockAccessIndex::new(0), U256::from(1))],
+                ..account.clone()
+            },
+            AccountChanges {
+                code_changes: vec![CodeChange::new(
+                    BlockAccessIndex::new(index),
+                    Bytes::from_static(&[0xef, 0x01]),
+                )],
+                ..AccountChanges::new(Address::with_last_byte(2))
+            },
+        ];
+        let error = prepare_prestate(&db, invalid_code, 0, 1, None, SpecId::CANCUN).unwrap_err();
+        assert_eq!(error.to_string(), "invalid BAL bytecode");
+        assert!(db.basic_reads.borrow().is_empty());
+    }
 
     let bal = vec![account];
     let hash = compute_block_access_list_hash(&bal);
@@ -299,6 +462,35 @@ fn prestate_read_failure_leaves_parent_state_untouched() {
     let error = prepare_prestate(&db, bal, 0, 1, None, SpecId::CANCUN).unwrap_err();
     assert!(error.to_string().contains("unavailable parent account"));
     assert_eq!(db.basic_ref(first).unwrap().unwrap().balance, U256::from(10));
+}
+
+#[derive(Default)]
+struct CountingDb {
+    parent: InMemoryDB,
+    basic_reads: RefCell<Vec<Address>>,
+    storage_reads: RefCell<Vec<(Address, U256)>>,
+}
+
+impl DatabaseRef for CountingDb {
+    type Error = ErasedError;
+
+    fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+        self.basic_reads.borrow_mut().push(address);
+        Ok(self.parent.basic_ref(address).unwrap())
+    }
+
+    fn code_by_hash_ref(&self, code_hash: B256) -> Result<Bytecode, Self::Error> {
+        Ok(self.parent.code_by_hash_ref(code_hash).unwrap())
+    }
+
+    fn storage_ref(&self, address: Address, slot: U256) -> Result<U256, Self::Error> {
+        self.storage_reads.borrow_mut().push((address, slot));
+        Ok(self.parent.storage_ref(address, slot).unwrap())
+    }
+
+    fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
+        Ok(self.parent.block_hash_ref(number).unwrap())
+    }
 }
 
 struct FailingDb {
