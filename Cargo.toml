@@ -351,6 +351,7 @@ svm = { package = "svm-rs", version = "0.5.28", default-features = false, featur
 alloy-consensus = { version = "2.4.2", default-features = false }
 alloy-contract = { version = "2.4.2", default-features = false }
 alloy-eips = { version = "2.4.2", default-features = false }
+alloy-eip7928 = { version = "0.4.11", default-features = false }
 alloy-eip5792 = { version = "2.4.2", default-features = false }
 alloy-ens = { version = "2.4.2", default-features = false }
 alloy-genesis = { version = "2.4.2", default-features = false }

@@ -1,5 +1,6 @@
 use super::fetch_code_via_rpc;
 use crate::{
+    bal,
     debug::{ensure_remote_trace_context_unchanged, handle_traces, resolve_remote_trace_hardfork},
     rpc_trace::{call_frame_to_arena, is_method_not_found_error, is_missing_state_error},
     traces::TraceKind,
@@ -32,7 +33,7 @@ use foundry_cli::{
 };
 use foundry_common::{
     SYSTEM_TRANSACTION_TYPE, is_known_system_sender,
-    provider::{ProviderBuilder, RetryProvider},
+    provider::{ProviderBuilder, RetryProvider, block_access_list::fetch_block_access_list},
     shell,
 };
 use foundry_compilers::artifacts::EvmVersion;
@@ -56,7 +57,9 @@ use foundry_evm::{
 };
 use foundry_evm_networks::NetworkConfigs;
 use futures::TryFutureExt;
-use revm::{DatabaseRef, context::Block, primitives::hardfork::SpecId};
+use revm::{
+    DatabaseCommit, DatabaseRef, context::Block, primitives::hardfork::SpecId, state::Bytecode,
+};
 
 #[cfg(feature = "monad")]
 use foundry_evm::core::evm::{BlockContext, ChainFor, MonadEvmNetwork};
@@ -81,6 +84,7 @@ pub struct RunArgs {
     /// Executes the transaction only with the state from the previous block.
     ///
     /// May result in different results than the live execution!
+    /// Skips both BAL state restoration and `--prestate-tracer`.
     #[arg(long)]
     quick: bool,
 
@@ -92,7 +96,8 @@ pub struct RunArgs {
     ///
     /// This is significantly faster than replaying all previous transactions in the block, but
     /// requires the node to expose the `debug_` namespace (most public RPCs don't). If the call
-    /// or response can't be used, cast silently falls back to replaying the block.
+    /// or response can't be used, cast tries a block access list (BAL), then falls back to
+    /// replaying the block. Ignored with `--quick`.
     #[arg(long, default_value_t = false)]
     prestate_tracer: bool,
 
@@ -198,7 +203,8 @@ impl RunArgs {
 
     /// Executes the transaction by replaying it
     ///
-    /// This replays the entire block the transaction was mined in unless `quick` is set to true
+    /// Restores transaction prestate from BAL when supported, otherwise replays the block prefix.
+    /// With `quick`, executes directly against the previous block's state.
     ///
     /// Note: This executes the transaction(s) as is: Cheatcodes are disabled
     pub async fn run(self) -> Result<()> {
@@ -429,9 +435,16 @@ impl RunArgs {
             .ok_or_else(|| eyre::eyre!("tx may still be pending: {:?}", tx_hash))?;
 
         // we need to fork off the parent block
-        config.fork_block_number = Some(tx_block_number - 1);
+        let parent_number = tx_block_number
+            .checked_sub(1)
+            .ok_or_else(|| eyre::eyre!("cannot replay a transaction in the genesis block"))?;
+        config.fork_block_number = Some(parent_number);
 
         let create2_deployer = evm_opts.create2_deployer;
+        let source_is_ethereum = evm_opts.fork_endpoint.as_ref().is_some_and(|endpoint| {
+            endpoint.network_profile.execution_network().is_ethereum()
+                && !endpoint.network_profile.is_celo()
+        });
         let (block, mut fork) = tokio::try_join!(
             // fetch the block the transaction was mined in
             provider.get_block(tx_block_number.into()).full().into_future().map_err(Into::into),
@@ -439,6 +452,7 @@ impl RunArgs {
         )?;
         let chain = fork.context().chain();
         let networks = fork.context().networks();
+        let source_hardfork = fork.context().hardfork();
 
         let mut evm_version = self.evm_version;
         // Mined transactions already passed the block gas limit check their chain applies, and
@@ -499,18 +513,12 @@ impl RunArgs {
 
         let spec_id = (*evm_env.cfg_env.spec()).into();
 
-        if let Some(parent_beacon_block_root) =
-            parent_beacon_block_root_for_network(networks, spec_id, parent_beacon_block_root)
-        {
-            executor.apply_beacon_root(parent_beacon_block_root)?;
-        }
-
         // Set the state to the moment right before the transaction.
         //
         // When `--prestate-tracer` is set, opportunistically try to fetch the prestate directly
         // via `debug_traceTransaction` (much faster than replaying the block). This requires the
         // `debug_` namespace, which most nodes don't expose, so it is opt-in and silently falls
-        // back to replaying previous transactions in the block if the call or parsing fails.
+        // back to BAL, then replay, if the call or parsing fails.
         let mut prestate_applied = false;
         if !self.quick && self.prestate_tracer {
             trace!(?tx_hash, "attempting to fetch prestate via debug_traceTransaction");
@@ -523,18 +531,105 @@ impl RunArgs {
             {
                 Ok(trace) => match trace.try_into_pre_state_frame() {
                     Ok(pre_state_frame) => {
-                        executor.apply_prestate_trace(pre_state_frame.into_pre_state())?;
-                        prestate_applied = true;
-                        trace!("prestate trace applied successfully, skipping block replay");
+                        let prestate = pre_state_frame.into_pre_state();
+                        let original = executor.backend().clone();
+                        let applied = prestate
+                            .values()
+                            .filter_map(|account| account.code.as_ref())
+                            .try_for_each(|code| {
+                                Bytecode::new_raw_checked(code.clone()).map(|_| ())
+                            })
+                            .map_err(Into::into)
+                            .and_then(|()| executor.apply_prestate_trace(prestate));
+                        match applied {
+                            Ok(()) => {
+                                prestate_applied = true;
+                                trace!(
+                                    "prestate trace applied successfully, skipping block replay"
+                                );
+                            }
+                            Err(err) => {
+                                *executor.backend_mut() = original;
+                                trace!(%err, "failed to apply prestate trace, trying BAL");
+                            }
+                        }
                     }
                     Err(err) => {
                         trace!(%err, "failed to parse prestate trace response");
                     }
                 },
                 Err(err) => {
-                    trace!(?err, "debug_traceTransaction failed, falling back to block replay");
+                    trace!(?err, "debug_traceTransaction failed, trying BAL before block replay");
                 }
             }
+        }
+
+        if !self.quick
+            && !prestate_applied
+            && source_is_ethereum
+            && !chain.is_arbitrum()
+            && networks.execution_network().is_ethereum()
+            && !networks.is_celo()
+            && self.evm_version.is_none()
+            && config.hardfork.is_none()
+            && spec_id.is_enabled_in(SpecId::CANCUN)
+            && let Some(block) = &block
+            && source_hardfork
+                .or_else(|| {
+                    FoundryHardfork::from_chain_and_timestamp(
+                        chain.id(),
+                        block.header().timestamp(),
+                    )
+                })
+                .is_some_and(|hardfork| {
+                    matches!(hardfork, FoundryHardfork::Ethereum(_))
+                        && SpecId::from(hardfork).is_enabled_in(SpecId::CANCUN)
+                })
+            && let Some(block_hash) = tx.block_hash()
+            && let Some(access_list) =
+                fetch_block_access_list(&provider, BlockId::hash(block_hash)).await
+        {
+            let prepared = (|| {
+                // The fork backend seeds this entry from its exact hash-pinned state anchor.
+                let parent_hash = executor.backend().block_hash_ref(parent_number)?;
+                let index = bal::validate_target(
+                    &tx,
+                    block,
+                    BlockNumHash::new(parent_number, parent_hash),
+                )?;
+                let transactions = full_transactions(block)?;
+                eyre::ensure!(
+                    transactions[..=index].iter().all(|tx| {
+                        matches!(&*tx.inner.inner, AnyTxEnvelope::Ethereum(_))
+                            && !is_system_transaction(tx)
+                    }),
+                    "BAL prestate requires ordinary Ethereum transactions"
+                );
+                bal::prepare_prestate(
+                    executor.backend(),
+                    access_list,
+                    index,
+                    transactions.len(),
+                    block.header().block_access_list_hash(),
+                    spec_id,
+                )
+            })();
+            match prepared {
+                Ok(state) => {
+                    executor.backend_mut().commit(state);
+                    prestate_applied = true;
+                    trace!("BAL prestate applied successfully, skipping block replay");
+                }
+                Err(err) => trace!(%err, "BAL prestate unavailable, falling back to block replay"),
+            }
+        }
+
+        // Restored prestate already includes block system writes.
+        if !prestate_applied
+            && let Some(parent_beacon_block_root) =
+                parent_beacon_block_root_for_network(networks, spec_id, parent_beacon_block_root)
+        {
+            executor.apply_beacon_root(parent_beacon_block_root)?;
         }
 
         Ok(PreparedRun {
