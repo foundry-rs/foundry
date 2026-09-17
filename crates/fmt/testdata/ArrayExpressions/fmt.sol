@@ -6,7 +6,7 @@ contract ArrayExpressions {
         uint256 length = 10;
         uint256[] memory sample2 = new uint256[](length);
 
-        uint256[] memory /* comment1 */ /* comment2 */ sample3; // comment3
+        uint256 /* comment1 */ [] memory /* comment2 */ sample3; // comment3
 
         /* ARRAY SLICE */
         msg.data[4:];

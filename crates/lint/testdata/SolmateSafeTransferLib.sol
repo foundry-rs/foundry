@@ -34,15 +34,15 @@ contract UsesSolmate {
     IToken internal token;
 
     function viaUsingFor(address to, uint256 amount) internal {
-        token.safeTransfer(to, amount); //~WARN: Solmate's `SafeTransferLib` does not check
+        token.safeTransfer(to, amount); //~WARN: the `SafeTransferLib` from Solmate does not check
     }
 
     function viaQualified(address from, address to, uint256 amount) internal {
-        SafeTransferLib.safeTransferFrom(token, from, to, amount); //~WARN: Solmate's `SafeTransferLib` does not check
+        SafeTransferLib.safeTransferFrom(token, from, to, amount); //~WARN: the `SafeTransferLib` from Solmate does not check
     }
 
     function viaApprove(address spender, uint256 amount) internal {
-        token.safeApprove(spender, amount); //~WARN: Solmate's `SafeTransferLib` does not check
+        token.safeApprove(spender, amount); //~WARN: the `SafeTransferLib` from Solmate does not check
     }
 
     function ethTransferIsClean(address to, uint256 amount) internal {
@@ -55,7 +55,7 @@ contract UsesAliasedImport {
 
     // The import alias renames the call site, not the declared library the call resolves to.
     function viaAlias(address to, uint256 amount) internal {
-        STL.safeTransfer(token, to, amount); //~WARN: Solmate's `SafeTransferLib` does not check
+        STL.safeTransfer(token, to, amount); //~WARN: the `SafeTransferLib` from Solmate does not check
     }
 }
 
@@ -81,7 +81,7 @@ contract GranularUsing {
     IToken internal token;
 
     function viaGranular(address to, uint256 amount) internal {
-        token.safeTransfer(to, amount); //~WARN: Solmate's `SafeTransferLib` does not check
+        token.safeTransfer(to, amount); //~WARN: the `SafeTransferLib` from Solmate does not check
     }
 }
 
@@ -92,11 +92,11 @@ contract EagerPayer {
     IToken internal token;
 
     constructor(address to) {
-        token.safeTransfer(to, 1); //~WARN: Solmate's `SafeTransferLib` does not check
+        token.safeTransfer(to, 1); //~WARN: the `SafeTransferLib` from Solmate does not check
     }
 
     modifier paying(address to, uint256 amount) {
-        token.safeTransfer(to, amount); //~WARN: Solmate's `SafeTransferLib` does not check
+        token.safeTransfer(to, amount); //~WARN: the `SafeTransferLib` from Solmate does not check
         _;
     }
 
@@ -105,13 +105,13 @@ contract EagerPayer {
 
 // A free function is analyzed like a contract function.
 function freePay(IToken token, address to, uint256 amount) {
-    SafeTransferLib.safeTransfer(token, to, amount); //~WARN: Solmate's `SafeTransferLib` does not check
+    SafeTransferLib.safeTransfer(token, to, amount); //~WARN: the `SafeTransferLib` from Solmate does not check
 }
 
 // A reference used as a value is a use of the unchecked operation too.
 contract RefUser {
     function pick() internal pure returns (function(IToken, address, uint256) internal) {
-        return SafeTransferLib.safeTransfer; //~WARN: Solmate's `SafeTransferLib` does not check
+        return SafeTransferLib.safeTransfer; //~WARN: the `SafeTransferLib` from Solmate does not check
     }
 }
 

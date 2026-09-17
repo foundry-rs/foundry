@@ -1,4 +1,4 @@
-note[unaliased-plain-import]: use named imports '{A, B}' or alias 'import ".." as X'
+note[unaliased-plain-import]: plain import has no alias; use named imports `{A, B}` or alias `import ".." as X`
    ╭▸ ROOT/testdata/Imports.sol:LL:CC
    │
 LL │ import "./auxiliary/ImportsSomeFile.sol";
@@ -6,7 +6,7 @@ LL │ import "./auxiliary/ImportsSomeFile.sol";
    │
    ╰ help: https://getfoundry.sh/forge/linting/unaliased-plain-import
 
-note[unaliased-plain-import]: use named imports '{A, B}' or alias 'import ".." as X'
+note[unaliased-plain-import]: plain import has no alias; use named imports `{A, B}` or alias `import ".." as X`
    ╭▸ ROOT/testdata/Imports.sol:LL:CC
    │
 LL │ import "./auxiliary/ImportsAnotherFile.sol";
@@ -14,7 +14,7 @@ LL │ import "./auxiliary/ImportsAnotherFile.sol";
    │
    ╰ help: https://getfoundry.sh/forge/linting/unaliased-plain-import
 
-note[unused-import]: unused imports should be removed
+note[unused-import]: unused import
    ╭▸ ROOT/testdata/Imports.sol:LL:CC
    │
 LL │     symbol2 as notUsed,
@@ -22,7 +22,7 @@ LL │     symbol2 as notUsed,
    │
    ╰ help: https://getfoundry.sh/forge/linting/unused-import
 
-note[unused-import]: unused imports should be removed
+note[unused-import]: unused import
    ╭▸ ROOT/testdata/Imports.sol:LL:CC
    │
 LL │     docSymbol,
@@ -30,7 +30,7 @@ LL │     docSymbol,
    │
    ╰ help: https://getfoundry.sh/forge/linting/unused-import
 
-note[unused-import]: unused imports should be removed
+note[unused-import]: unused import
    ╭▸ ROOT/testdata/Imports.sol:LL:CC
    │
 LL │     docSymbol2,
@@ -38,7 +38,7 @@ LL │     docSymbol2,
    │
    ╰ help: https://getfoundry.sh/forge/linting/unused-import
 
-note[unused-import]: unused imports should be removed
+note[unused-import]: unused import
    ╭▸ ROOT/testdata/Imports.sol:LL:CC
    │
 LL │     docSymbolWrongTag,
@@ -46,7 +46,7 @@ LL │     docSymbolWrongTag,
    │
    ╰ help: https://getfoundry.sh/forge/linting/unused-import
 
-note[unused-import]: unused imports should be removed
+note[unused-import]: unused import
    ╭▸ ROOT/testdata/Imports.sol:LL:CC
    │
 LL │     symbolNotUsed,
@@ -54,7 +54,7 @@ LL │     symbolNotUsed,
    │
    ╰ help: https://getfoundry.sh/forge/linting/unused-import
 
-note[unused-import]: unused imports should be removed
+note[unused-import]: unused import
    ╭▸ ROOT/testdata/Imports.sol:LL:CC
    │
 LL │     IContractNotUsed
@@ -62,7 +62,7 @@ LL │     IContractNotUsed
    │
    ╰ help: https://getfoundry.sh/forge/linting/unused-import
 
-note[unused-import]: unused imports should be removed
+note[unused-import]: unused import
    ╭▸ ROOT/testdata/Imports.sol:LL:CC
    │
 LL │     symbolNotUsed3
@@ -70,7 +70,7 @@ LL │     symbolNotUsed3
    │
    ╰ help: https://getfoundry.sh/forge/linting/unused-import
 
-note[unused-import]: unused imports should be removed
+note[unused-import]: unused import
    ╭▸ ROOT/testdata/Imports.sol:LL:CC
    │
 LL │     CONSTANT_1
@@ -78,7 +78,7 @@ LL │     CONSTANT_1
    │
    ╰ help: https://getfoundry.sh/forge/linting/unused-import
 
-note[unused-import]: unused imports should be removed
+note[unused-import]: unused import
    ╭▸ ROOT/testdata/Imports.sol:LL:CC
    │
 LL │     YetAnotherType
@@ -86,7 +86,7 @@ LL │     YetAnotherType
    │
    ╰ help: https://getfoundry.sh/forge/linting/unused-import
 
-note[unused-import]: unused imports should be removed
+note[unused-import]: unused import
    ╭▸ ROOT/testdata/Imports.sol:LL:CC
    │
 LL │ import "./auxiliary/ImportsAnotherFile2.sol" as AnotherFile2;
@@ -94,7 +94,7 @@ LL │ import "./auxiliary/ImportsAnotherFile2.sol" as AnotherFile2;
    │
    ╰ help: https://getfoundry.sh/forge/linting/unused-import
 
-note[unused-import]: unused imports should be removed
+note[unused-import]: unused import
    ╭▸ ROOT/testdata/Imports.sol:LL:CC
    │
 LL │ import * as OtherUtils from "./auxiliary/ImportsUtils2.sol";

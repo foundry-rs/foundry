@@ -190,4 +190,24 @@ contract TypeBasedTautology {
     function uintNegativeZeroLowerBoundaryOr(uint256 x) public pure returns (bool) {
         return x > -0 || x == -0; //~WARN: condition is always true or false based on the variable's type
     }
+
+    struct Amount {
+        uint256 value;
+    }
+
+    function structField(Amount memory amount) public pure returns (bool) {
+        return amount.value >= 0; //~WARN: condition is always true or false based on the variable's type
+    }
+
+    function arrayElement(uint256[] memory amounts) public pure returns (bool) {
+        return amounts[0] < 0; //~WARN: condition is always true or false based on the variable's type
+    }
+
+    function returnedValue() public pure returns (bool) {
+        return integerValue() >= 0; //~WARN: condition is always true or false based on the variable's type
+    }
+
+    function integerValue() internal pure returns (uint256) {
+        return 1;
+    }
 }

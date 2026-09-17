@@ -16,8 +16,9 @@ use std::{
     sync::Mutex,
 };
 
-const ALL_BENCHMARKS: [&str; 7] = [
+const ALL_BENCHMARKS: [&str; 8] = [
     "forge_test",
+    "forge_test_filtered",
     "forge_build_no_cache",
     "forge_build_with_cache",
     "forge_fuzz_test",
@@ -75,8 +76,8 @@ struct Cli {
     symbolic_sidecar_output: Option<PathBuf>,
 
     /// Run only specific benchmarks (comma-separated:
-    /// forge_test,forge_build_no_cache,forge_build_with_cache,forge_fuzz_test,forge_coverage,
-    /// forge_symbolic_test)
+    /// forge_test,forge_test_filtered,forge_build_no_cache,forge_build_with_cache,forge_fuzz_test,
+    /// forge_coverage, forge_symbolic_test)
     #[clap(long, value_delimiter = ',')]
     benchmarks: Option<Vec<String>>,
 

@@ -1,4 +1,4 @@
-note[screaming-snake-case-const]: constants should use SCREAMING_SNAKE_CASE
+note[screaming-snake-case-const]: constant name is not `SCREAMING_SNAKE_CASE`
    ╭▸ ROOT/testdata/ScreamingSnakeCase.sol:LL:CC
    │
 LL │     uint256 constant screamingSnakeCase = 0;
@@ -6,7 +6,7 @@ LL │     uint256 constant screamingSnakeCase = 0;
    │
    ╰ help: https://getfoundry.sh/forge/linting/screaming-snake-case-const
 
-note[screaming-snake-case-const]: constants should use SCREAMING_SNAKE_CASE
+note[screaming-snake-case-const]: constant name is not `SCREAMING_SNAKE_CASE`
    ╭▸ ROOT/testdata/ScreamingSnakeCase.sol:LL:CC
    │
 LL │     uint256 constant screaming_snake_case = 0;
@@ -14,7 +14,7 @@ LL │     uint256 constant screaming_snake_case = 0;
    │
    ╰ help: https://getfoundry.sh/forge/linting/screaming-snake-case-const
 
-note[screaming-snake-case-const]: constants should use SCREAMING_SNAKE_CASE
+note[screaming-snake-case-const]: constant name is not `SCREAMING_SNAKE_CASE`
    ╭▸ ROOT/testdata/ScreamingSnakeCase.sol:LL:CC
    │
 LL │     uint256 constant ScreamingSnakeCase = 0;
@@ -22,7 +22,7 @@ LL │     uint256 constant ScreamingSnakeCase = 0;
    │
    ╰ help: https://getfoundry.sh/forge/linting/screaming-snake-case-const
 
-note[screaming-snake-case-const]: constants should use SCREAMING_SNAKE_CASE
+note[screaming-snake-case-const]: constant name is not `SCREAMING_SNAKE_CASE`
    ╭▸ ROOT/testdata/ScreamingSnakeCase.sol:LL:CC
    │
 LL │     uint256 constant SCREAMING_snake_case = 0;
@@ -30,7 +30,7 @@ LL │     uint256 constant SCREAMING_snake_case = 0;
    │
    ╰ help: https://getfoundry.sh/forge/linting/screaming-snake-case-const
 
-note[screaming-snake-case-immutable]: immutables should use SCREAMING_SNAKE_CASE
+note[screaming-snake-case-immutable]: immutable name is not `SCREAMING_SNAKE_CASE`
    ╭▸ ROOT/testdata/ScreamingSnakeCase.sol:LL:CC
    │
 LL │     uint256 immutable screamingSnakeCase0 = 0;
@@ -38,7 +38,7 @@ LL │     uint256 immutable screamingSnakeCase0 = 0;
    │
    ╰ help: https://getfoundry.sh/forge/linting/screaming-snake-case-immutable
 
-note[screaming-snake-case-immutable]: immutables should use SCREAMING_SNAKE_CASE
+note[screaming-snake-case-immutable]: immutable name is not `SCREAMING_SNAKE_CASE`
    ╭▸ ROOT/testdata/ScreamingSnakeCase.sol:LL:CC
    │
 LL │     uint256 immutable screaming_snake_case0 = 0;
@@ -46,7 +46,7 @@ LL │     uint256 immutable screaming_snake_case0 = 0;
    │
    ╰ help: https://getfoundry.sh/forge/linting/screaming-snake-case-immutable
 
-note[screaming-snake-case-immutable]: immutables should use SCREAMING_SNAKE_CASE
+note[screaming-snake-case-immutable]: immutable name is not `SCREAMING_SNAKE_CASE`
    ╭▸ ROOT/testdata/ScreamingSnakeCase.sol:LL:CC
    │
 LL │     uint256 immutable ScreamingSnakeCase0 = 0;
@@ -54,7 +54,7 @@ LL │     uint256 immutable ScreamingSnakeCase0 = 0;
    │
    ╰ help: https://getfoundry.sh/forge/linting/screaming-snake-case-immutable
 
-note[screaming-snake-case-immutable]: immutables should use SCREAMING_SNAKE_CASE
+note[screaming-snake-case-immutable]: immutable name is not `SCREAMING_SNAKE_CASE`
    ╭▸ ROOT/testdata/ScreamingSnakeCase.sol:LL:CC
    │
 LL │     uint256 immutable SCREAMING_snake_case_0 = 0;

@@ -43,11 +43,11 @@ contract UsesSafeApprove {
     IERC20 internal token;
 
     function viaUsingFor(address spender, uint256 amount) internal {
-        token.safeApprove(spender, amount); //~WARN: OpenZeppelin deprecated this function
+        token.safeApprove(spender, amount); //~WARN: this OpenZeppelin function is deprecated
     }
 
     function viaQualified(address spender, uint256 amount) internal {
-        SafeERC20.safeApprove(token, spender, amount); //~WARN: OpenZeppelin deprecated this function
+        SafeERC20.safeApprove(token, spender, amount); //~WARN: this OpenZeppelin function is deprecated
     }
 
     function replacementsAreClean(address spender, uint256 amount) internal {
@@ -61,7 +61,7 @@ contract UsesAliasedImport {
 
     // The import alias renames the call site, not the declared library the call resolves to.
     function viaAlias(address spender, uint256 amount) internal {
-        S.safeApprove(token, spender, amount); //~WARN: OpenZeppelin deprecated this function
+        S.safeApprove(token, spender, amount); //~WARN: this OpenZeppelin function is deprecated
     }
 }
 
@@ -71,7 +71,7 @@ contract UsesUpgradeable {
     IERC20 internal token;
 
     function viaUpgradeable(address spender, uint256 amount) internal {
-        token.safeApprove(spender, amount); //~WARN: OpenZeppelin deprecated this function
+        token.safeApprove(spender, amount); //~WARN: this OpenZeppelin function is deprecated
     }
 }
 
@@ -100,7 +100,7 @@ contract UsesLocalSafeERC20 {
 
 contract Roles is AccessControl {
     constructor(address admin) {
-        _setupRole(bytes32(0), admin); //~WARN: OpenZeppelin deprecated this function
+        _setupRole(bytes32(0), admin); //~WARN: this OpenZeppelin function is deprecated
     }
 
     function grant(bytes32 role, address account) internal {
@@ -108,14 +108,14 @@ contract Roles is AccessControl {
     }
 
     function grantQualified(bytes32 role, address account) internal {
-        AccessControl._setupRole(role, account); //~WARN: OpenZeppelin deprecated this function
+        AccessControl._setupRole(role, account); //~WARN: this OpenZeppelin function is deprecated
     }
 }
 
 // The deprecated function is two levels up, through an extension that does not redeclare it.
 contract EnumRoles is AccessControlEnumerable {
     function setup(bytes32 role, address account) internal {
-        _setupRole(role, account); //~WARN: OpenZeppelin deprecated this function
+        _setupRole(role, account); //~WARN: this OpenZeppelin function is deprecated
     }
 }
 
@@ -123,7 +123,7 @@ contract EnumRoles is AccessControlEnumerable {
 // override is the dispatch target of plain calls, so only the `super` call reports.
 contract CustomRoles is AccessControl {
     function _setupRole(bytes32 role, address account) internal override {
-        super._setupRole(role, account); //~WARN: OpenZeppelin deprecated this function
+        super._setupRole(role, account); //~WARN: this OpenZeppelin function is deprecated
     }
 
     function setup(bytes32 role, address account) internal {
@@ -133,7 +133,7 @@ contract CustomRoles is AccessControl {
 
 contract UpgradeableRoles is AccessControlUpgradeable {
     function setup(bytes32 role, address account) internal {
-        _setupRole(role, account); //~WARN: OpenZeppelin deprecated this function
+        _setupRole(role, account); //~WARN: this OpenZeppelin function is deprecated
     }
 }
 
@@ -147,7 +147,7 @@ contract LocalRoles is LocalAccessControl {
 // A reference used as a value is a use of the deprecated function too.
 contract RefUser {
     function pick() internal pure returns (function(IERC20, address, uint256) internal) {
-        return SafeERC20.safeApprove; //~WARN: OpenZeppelin deprecated this function
+        return SafeERC20.safeApprove; //~WARN: this OpenZeppelin function is deprecated
     }
 }
 
@@ -191,7 +191,7 @@ contract ModifierArgRef {
 
     function act(address spender, uint256 amount)
         internal
-        runs(SafeERC20.safeApprove) //~WARN: OpenZeppelin deprecated this function
+        runs(SafeERC20.safeApprove) //~WARN: this OpenZeppelin function is deprecated
     {
         token.approve(spender, amount);
     }

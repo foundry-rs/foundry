@@ -58,34 +58,34 @@ contract UncheckedCall {
 
     // SHOULD FAIL: Unchecked low-level calls
     function uncheckedCall(address target, bytes memory data) public {
-        target.call(data); //~WARN: Low-level calls should check the success return value
+        target.call(data); //~WARN: low-level call does not check the success return value
     }
 
     function uncheckedCallWithValue(address payable target, uint256 value) public {
-        target.call{value: value}(""); //~WARN: Low-level calls should check the success return value
+        target.call{value: value}(""); //~WARN: low-level call does not check the success return value
     }
 
     function uncheckedDelegateCall(address target, bytes memory data) public {
-        target.delegatecall(data); //~WARN: Low-level calls should check the success return value
+        target.delegatecall(data); //~WARN: low-level call does not check the success return value
     }
 
     function uncheckedStaticCall(address target, bytes memory data) public {
-        target.staticcall(data); //~WARN: Low-level calls should check the success return value
+        target.staticcall(data); //~WARN: low-level call does not check the success return value
     }
 
     function multipleUncheckedCalls(address target1, address target2) public {
-        target1.call(""); //~WARN: Low-level calls should check the success return value
-        target2.delegatecall(""); //~WARN: Low-level calls should check the success return value
+        target1.call(""); //~WARN: low-level call does not check the success return value
+        target2.delegatecall(""); //~WARN: low-level call does not check the success return value
     }
 
     function ignoredReturnWithPartialTuple(address target) public {
-        (, bytes memory data) = target.call(""); //~WARN: Low-level calls should check the success return value
+        (, bytes memory data) = target.call(""); //~WARN: low-level call does not check the success return value
         // Only capturing data, not checking success
     }
 
     bytes existingData;
     function ignoredReturnExistingVar(address target) public {
-        (, existingData) = target.call(""); //~WARN: Low-level calls should check the success return value
+        (, existingData) = target.call(""); //~WARN: low-level call does not check the success return value
     }
 
 }

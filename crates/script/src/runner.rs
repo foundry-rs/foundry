@@ -353,10 +353,16 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                 value.unwrap_or(U256::ZERO),
                 None,
             );
-            let (
-                address,
-                RawCallResult { gas_used, logs, traces, debug_bytecodes, exit_reason, .. },
-            ) = match res {
+            self.deployment_result(res)
+        }
+    }
+
+    pub(crate) fn deployment_result(
+        &self,
+        res: Result<DeployResult<FEN>, EvmError<FEN>>,
+    ) -> Result<ScriptResult<FEN::Network>> {
+        let (address, RawCallResult { gas_used, logs, traces, debug_bytecodes, exit_reason, .. }) =
+            match res {
                 Ok(DeployResult { address, raw }) => (address, raw),
                 Err(EvmError::Execution(err)) => {
                     let ExecutionErr { raw, reason } = *err;
@@ -368,21 +374,18 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                 }
             };
 
-            Ok(ScriptResult {
-                returned: Bytes::new(),
-                success: address != Address::ZERO,
-                gas_used,
-                logs,
-                debug_bytecodes: self.maybe_debug_bytecodes(debug_bytecodes),
-                // Manually adjust gas for the trace to add back the stipend/real used gas
-                traces: traces
-                    .map(|traces| vec![(TraceKind::Execution, traces)])
-                    .unwrap_or_default(),
-                exit_reason,
-                address: Some(address),
-                ..Default::default()
-            })
-        }
+        Ok(ScriptResult {
+            returned: Bytes::new(),
+            success: address != Address::ZERO,
+            gas_used,
+            logs,
+            debug_bytecodes: self.maybe_debug_bytecodes(debug_bytecodes),
+            // Manually adjust gas for the trace to add back the stipend/real used gas
+            traces: traces.map(|traces| vec![(TraceKind::Execution, traces)]).unwrap_or_default(),
+            exit_reason,
+            address: Some(address),
+            ..Default::default()
+        })
     }
 
     /// Executes the call
@@ -433,6 +436,14 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
             }
         }
 
+        Ok(self.call_result(res, gas_used))
+    }
+
+    pub(crate) fn call_result(
+        &self,
+        res: RawCallResult<FEN>,
+        gas_used: u64,
+    ) -> ScriptResult<FEN::Network> {
         let RawCallResult {
             result,
             reverted,
@@ -447,7 +458,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
         } = res;
         let breakpoints = cheatcodes.map(|cheats| cheats.breakpoints).unwrap_or_default();
 
-        Ok(ScriptResult {
+        ScriptResult {
             returned: result,
             success: !reverted,
             gas_used,
@@ -465,7 +476,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
             exit_reason,
             address: None,
             breakpoints,
-        })
+        }
     }
 
     /// The executor will return the _exact_ gas value this transaction consumed, setting this value
@@ -487,41 +498,97 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
             // Store the current gas limit and reset it later.
             let init_gas_limit = self.executor.tx_env().gas_limit();
 
-            let mut highest_gas_limit = gas_used * 3;
-            let mut lowest_gas_limit = gas_used;
-            let mut last_highest_gas_limit = highest_gas_limit;
-            while (highest_gas_limit - lowest_gas_limit) > 1 {
-                let mid_gas_limit = (highest_gas_limit + lowest_gas_limit) / 2;
-                self.executor.tx_env_mut().set_gas_limit(mid_gas_limit);
+            let mut search = GasSearch::new(gas_used);
+            while let Some(limit) = search.next_limit() {
+                self.executor.tx_env_mut().set_gas_limit(limit);
                 let res = self.executor.call_raw(from, to, calldata.0.clone().into(), value)?;
-                match res.exit_reason {
-                    Some(
-                        InstructionResult::Revert
-                        | InstructionResult::OutOfGas
-                        | InstructionResult::OutOfFunds,
-                    ) => {
-                        lowest_gas_limit = mid_gas_limit;
-                    }
-                    _ => {
-                        highest_gas_limit = mid_gas_limit;
-                        // if last two successful estimations only vary by 10%, we consider this to
-                        // sufficiently accurate
-                        const ACCURACY: u64 = 10;
-                        if (last_highest_gas_limit - highest_gas_limit) * ACCURACY
-                            / last_highest_gas_limit
-                            < 1
-                        {
-                            // update the gas
-                            gas_used = highest_gas_limit;
-                            break;
-                        }
-                        last_highest_gas_limit = highest_gas_limit;
-                    }
-                }
+                search.record(limit, res.exit_reason);
             }
+            gas_used = search.gas_used();
             // Reset gas limit in the executor.
             self.executor.tx_env_mut().set_gas_limit(init_gas_limit);
         }
         Ok(gas_used)
+    }
+}
+
+/// Gas-search arithmetic shared by ordinary and Monad simulation.
+pub(crate) struct GasSearch {
+    gas_used: u64,
+    highest: u64,
+    lowest: u64,
+    last_highest: u64,
+    done: bool,
+}
+
+impl GasSearch {
+    pub(crate) const fn new(gas_used: u64) -> Self {
+        Self {
+            gas_used,
+            highest: gas_used * 3,
+            lowest: gas_used,
+            last_highest: gas_used * 3,
+            done: false,
+        }
+    }
+
+    pub(crate) const fn next_limit(&self) -> Option<u64> {
+        if !self.done && self.highest - self.lowest > 1 {
+            Some((self.highest + self.lowest) / 2)
+        } else {
+            None
+        }
+    }
+
+    pub(crate) const fn record(&mut self, limit: u64, exit_reason: Option<InstructionResult>) {
+        match exit_reason {
+            Some(
+                InstructionResult::Revert
+                | InstructionResult::OutOfGas
+                | InstructionResult::OutOfFunds,
+            ) => {
+                self.lowest = limit;
+            }
+            _ => {
+                self.highest = limit;
+                // Stop when successive successful estimates differ by less than ten percent.
+                if (self.last_highest - self.highest) * 10 / self.last_highest < 1 {
+                    self.gas_used = self.highest;
+                    self.done = true;
+                } else {
+                    self.last_highest = self.highest;
+                }
+            }
+        }
+    }
+
+    pub(crate) const fn gas_used(&self) -> u64 {
+        self.gas_used
+    }
+}
+
+#[cfg(test)]
+mod gas_search_tests {
+    use super::*;
+
+    #[test]
+    fn successful_probes_keep_existing_ten_percent_stop() {
+        let mut search = GasSearch::new(100);
+        for expected in [200, 150, 125, 112, 106] {
+            assert_eq!(search.next_limit(), Some(expected));
+            search.record(expected, Some(InstructionResult::Return));
+        }
+        assert_eq!(search.next_limit(), None);
+        assert_eq!(search.gas_used(), 106);
+    }
+
+    #[test]
+    fn unsuccessful_probes_keep_original_estimate() {
+        let mut search = GasSearch::new(100);
+        while let Some(limit) = search.next_limit() {
+            search.record(limit, Some(InstructionResult::OutOfGas));
+        }
+        assert_eq!(search.gas_used(), 100);
+        assert_eq!(GasSearch::new(0).next_limit(), None);
     }
 }

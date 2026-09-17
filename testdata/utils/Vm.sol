@@ -215,8 +215,10 @@ interface Vm {
     function dumpState(string calldata pathToStateJson) external;
     function ecAddAffine(uint256 pointX1, uint256 pointY1, uint256 pointX2, uint256 pointY2) external pure returns (uint256 resultX, uint256 resultY);
     function ecAddProjective(uint256 pointX1, uint256 pointY1, uint256 pointZ1, uint256 pointX2, uint256 pointY2, uint256 pointZ2) external pure returns (uint256 resultX, uint256 resultY, uint256 resultZ);
+    function ecAffineToProjective(uint256 pointX, uint256 pointY) external pure returns (uint256 resultX, uint256 resultY, uint256 resultZ);
     function ecMulAffine(uint256 pointX, uint256 pointY, uint256 scalar) external pure returns (uint256 resultX, uint256 resultY);
     function ecMulProjective(uint256 pointX, uint256 pointY, uint256 pointZ, uint256 scalar) external pure returns (uint256 resultX, uint256 resultY, uint256 resultZ);
+    function ecProjectiveToAffine(uint256 pointX, uint256 pointY, uint256 pointZ) external pure returns (uint256 resultX, uint256 resultY);
     function eip712HashStruct(string calldata typeNameOrDefinition, bytes calldata abiEncodedData) external pure returns (bytes32 typeHash);
     function eip712HashStruct(string calldata bindingsPath, string calldata typeName, bytes calldata abiEncodedData) external pure returns (bytes32 typeHash);
     function eip712HashType(string calldata typeNameOrDefinition) external pure returns (bytes32 typeHash);
@@ -337,6 +339,7 @@ interface Vm {
     function getRecordedLogs() external view returns (Log[] memory logs);
     function getRecordedLogsJson() external view returns (string memory logsJson);
     function getSelectors(string calldata artifactPath) external view returns (bytes4[] memory selectors);
+    function getSlotNumber() external view returns (uint64 slotNumber);
     function getStateDiff() external view returns (string memory diff);
     function getStateDiffJson() external view returns (string memory diff);
     function getStorageAccesses() external view returns (StorageAccess[] memory storageAccesses);
@@ -511,6 +514,7 @@ interface Vm {
     function rollFork(bytes32 txHash) external;
     function rollFork(uint256 forkId, uint256 blockNumber) external;
     function rollFork(uint256 forkId, bytes32 txHash) external;
+    function rollSlot(uint64 newSlotNumber) external;
     function rpcJson(string calldata method, string calldata params) external returns (string memory data);
     function rpcJson(string calldata urlOrAlias, string calldata method, string calldata params) external returns (string memory data);
     function rpcUrl(string calldata rpcAlias) external view returns (string memory json);

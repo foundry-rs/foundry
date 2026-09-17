@@ -1,11 +1,10 @@
 use super::{
-    install,
     test::{ProjectPathsAwareFilter, TestArgs, TestExecutionOptions},
     watch::WatchArgs,
 };
 use crate::coverage::{
     BytecodeReporter, ContractId, CoverageAttributionReporter, CoverageReport, CoverageReporter,
-    CoverageSummaryReporter, DebugReporter, ItemAnchor, LcovReporter, ResolvedHitMap,
+    CoverageSummaryReporter, DebugReporter, ItemAnchors, LcovReporter, ResolvedHitMap,
     ResolvedHitMaps,
     analysis::{SourceAnalysis, SourceFiles},
     anchors::{find_anchors, find_execution_anchors},
@@ -146,11 +145,7 @@ impl CoverageArgs {
         let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
 
         // install missing dependencies
-        if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
-        {
-            // need to re-configure here to also catch additional remappings
-            config = self.load_config()?;
-        }
+        self.install_missing_dependencies(&mut config)?;
 
         // Default to a static fuzz seed so coverage reports are deterministic,
         // but allow the user to override it via `--fuzz-seed` or `[fuzz] seed` in config.
@@ -605,7 +600,7 @@ impl BytecodeData {
         Self { source_map, bytecode, ic_pc_map }
     }
 
-    pub fn find_anchors(&self, source_analysis: &SourceAnalysis) -> Vec<ItemAnchor> {
+    pub fn find_anchors(&self, source_analysis: &SourceAnalysis) -> ItemAnchors {
         find_anchors(&self.bytecode, &self.source_map, &self.ic_pc_map, source_analysis)
     }
 }

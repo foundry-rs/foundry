@@ -11,12 +11,12 @@ contract AssertStateChange {
 
     // Bad: pre-increment of state variable inside assert
     function badPreIncrement(uint256 expected) external {
-        assert(++counter == expected); //~WARN: assert() argument contains a state-modifying expression
+        assert(++counter == expected); //~WARN: `assert()` argument contains a state-modifying expression
     }
 
     // Bad: post-increment of state variable inside assert
     function badPostIncrement(uint256 expected) external {
-        assert(counter++ == expected); //~WARN: assert() argument contains a state-modifying expression
+        assert(counter++ == expected); //~WARN: `assert()` argument contains a state-modifying expression
     }
 
     // Bad: call to state-mutating internal function
@@ -26,7 +26,7 @@ contract AssertStateChange {
     }
 
     function badMutatingCall() external {
-        assert(_toggleFlag()); //~WARN: assert() argument contains a state-modifying expression
+        assert(_toggleFlag()); //~WARN: `assert()` argument contains a state-modifying expression
     }
 
     // Bad: call to another state-mutating function
@@ -36,17 +36,17 @@ contract AssertStateChange {
     }
 
     function badDeposit() external payable {
-        assert(_deposit()); //~WARN: assert() argument contains a state-modifying expression
+        assert(_deposit()); //~WARN: `assert()` argument contains a state-modifying expression
     }
 
     // Bad: state variable assignment inside assert
     function badAssignment(uint256 val) external {
-        assert((counter = val) > 0); //~WARN: assert() argument contains a state-modifying expression
+        assert((counter = val) > 0); //~WARN: `assert()` argument contains a state-modifying expression
     }
 
     // Bad: mapping index assignment (state variable lvalue)
     function badMappingAssign(address user, uint256 amt) external {
-        assert((balances[user] = amt) > 0); //~WARN: assert() argument contains a state-modifying expression
+        assert((balances[user] = amt) > 0); //~WARN: `assert()` argument contains a state-modifying expression
     }
 
     // Good: pure comparison, no state change
@@ -89,6 +89,7 @@ interface IToken {
     // narrowing can correctly distinguish them.
     function update(address target, uint256 amount) external returns (bool);
     function update(uint256 n) external view returns (bool);
+    function update(address target) external returns (bool);
 }
 
 // Interface with view functions that share names with low-level address builtins.
@@ -107,12 +108,12 @@ contract AssertStateChangeExternal {
 
     // Bad: .send() always transfers ether (state-changing), returns bool
     function badSend() external {
-        assert(recipient.send(1 ether)); //~WARN: assert() argument contains a state-modifying expression
+        assert(recipient.send(1 ether)); //~WARN: `assert()` argument contains a state-modifying expression
     }
 
     // Bad: interface call to a non-view function
     function badInterfaceCall(address to, uint256 amt) external {
-        assert(token.transfer(to, amt)); //~WARN: assert() argument contains a state-modifying expression
+        assert(token.transfer(to, amt)); //~WARN: `assert()` argument contains a state-modifying expression
     }
 
     // Good: view function on an interface does not mutate state
@@ -126,10 +127,14 @@ contract AssertStateChangeExternal {
         assert(token.update(n));
     }
 
+    function badSameArityOverload(address target) external {
+        assert(token.update(target)); //~WARN: `assert()` argument contains a state-modifying expression
+    }
+
     // Bad: calling the 2-arg mutating overload `update(address,uint256)` — only
     // overload with this arity, so correctly flagged.
     function badOverloadMutating(address target, uint256 amt) external {
-        assert(token.update(target, amt)); //~WARN: assert() argument contains a state-modifying expression
+        assert(token.update(target, amt)); //~WARN: `assert()` argument contains a state-modifying expression
     }
 
     // Good: view functions on an interface that happen to be named send/call/transfer
@@ -193,13 +198,13 @@ contract AssertStateChangeUsingFor {
 
     // Bad: bump() writes to storage via a using-for library extension, must be flagged.
     function badLibraryExtension() external returns (bool) {
-        assert(items.bump()); //~WARN: assert() argument contains a state-modifying expression
+        assert(items.bump()); //~WARN: `assert()` argument contains a state-modifying expression
         return true;
     }
 
     // Bad: the function call returns the same storage array and must remain storage-backed.
     function badLibraryExtensionOnStorageReturn() external returns (bool) {
-        assert(getItems().bump()); //~WARN: assert() argument contains a state-modifying expression
+        assert(getItems().bump()); //~WARN: `assert()` argument contains a state-modifying expression
         return true;
     }
 
@@ -210,9 +215,7 @@ contract AssertStateChangeUsingFor {
     }
 }
 
-// ---- same-arity overloads: any-mutates policy ----
-// Both overloads have arity 1 but different param types. Since Solar does not resolve
-// which overload was selected, we flag whenever any candidate mutates state.
+// Same-arity overloads use the selected function's mutability.
 interface IOverloaded {
     function check(uint256 n) external returns (bool);   // mutating
     function check(address a) external view returns (bool); // view
@@ -221,14 +224,14 @@ interface IOverloaded {
 contract AssertStateChangeSameArityOverload {
     IOverloaded public o;
 
-    // Bad: `check(uint256)` mutates state; any-mutates policy must flag this.
+    // Bad: the selected `check(uint256)` overload mutates state.
     function badSameArityMutating(uint256 n) external {
-        assert(o.check(n)); //~WARN: assert() argument contains a state-modifying expression
+        assert(o.check(n)); //~WARN: `assert()` argument contains a state-modifying expression
     }
 
-    // Bad: `check(address)` is view but `check(uint256)` mutates; still flagged.
-    function badSameArityView(address a) external {
-        assert(o.check(a)); //~WARN: assert() argument contains a state-modifying expression
+    // Good: the selected `check(address)` overload only reads state.
+    function goodSameArityView(address a) external {
+        assert(o.check(a));
     }
 }
 
@@ -249,13 +252,13 @@ contract AssertStateChangeStorageAlias {
     // Bad: assignment through a storage-pointer local to an array element.
     function badStorageArrayAliasAssign() external {
         uint256[] storage xs = items;
-        assert((xs[0] = 1) > 0); //~WARN: assert() argument contains a state-modifying expression
+        assert((xs[0] = 1) > 0); //~WARN: `assert()` argument contains a state-modifying expression
     }
 
     // Bad: assignment through a storage-pointer local to a mapping slot.
     function badStorageMappingAlias(address user, uint256 amt) external {
         mapping(address => uint256) storage m = balances;
-        assert((m[user] = amt) > 0); //~WARN: assert() argument contains a state-modifying expression
+        assert((m[user] = amt) > 0); //~WARN: `assert()` argument contains a state-modifying expression
     }
 }
 
@@ -273,12 +276,12 @@ contract AssertStateChangeIndexedContractCall {
 
     // Bad: mutating call through an array-indexed contract variable.
     function badIndexedContractCall(uint256 i) external {
-        assert(tokens[i].mutate()); //~WARN: assert() argument contains a state-modifying expression
+        assert(tokens[i].mutate()); //~WARN: `assert()` argument contains a state-modifying expression
     }
 
     // Bad: mutating call through a mapping-indexed contract variable.
     function badMappingContractCall(address user) external {
-        assert(byUser[user].mutate()); //~WARN: assert() argument contains a state-modifying expression
+        assert(byUser[user].mutate()); //~WARN: `assert()` argument contains a state-modifying expression
     }
 
     // Good: view call through an array-indexed contract variable must NOT warn.
@@ -338,7 +341,7 @@ contract AssertStateChangeStructFieldReceiver {
 
     // Bad: mutating call through a struct-field contract variable.
     function badStructFieldCall(address to, uint256 amt) external {
-        assert(cfg.token.transfer(to, amt)); //~WARN: assert() argument contains a state-modifying expression
+        assert(cfg.token.transfer(to, amt)); //~WARN: `assert()` argument contains a state-modifying expression
     }
 
     // Good: view call through a struct-field contract variable must NOT warn.
@@ -359,7 +362,7 @@ contract AssertStateChangeFnReturnReceiver {
 
     // Bad: mutating call on the return value of a function.
     function badFnReturnCall(address to, uint256 amt) external {
-        assert(getToken().transfer(to, amt)); //~WARN: assert() argument contains a state-modifying expression
+        assert(getToken().transfer(to, amt)); //~WARN: `assert()` argument contains a state-modifying expression
     }
 
     // Good: view call on the return value of a function must NOT warn.
@@ -376,7 +379,7 @@ contract AssertStateChangeAddressMappingReceiver {
 
     // Bad: .send() on a mapping-indexed address value.
     function badMappingAddressSend(address user) external {
-        assert(payees[user].send(1 ether)); //~WARN: assert() argument contains a state-modifying expression
+        assert(payees[user].send(1 ether)); //~WARN: `assert()` argument contains a state-modifying expression
     }
 
     // Good: reading a mapping-indexed address value (no call) must NOT warn.
@@ -417,7 +420,7 @@ contract AssertStateChangeThisReceiver {
     }
 
     function badThisCall() external {
-        assert(this.mutate()); //~WARN: assert() argument contains a state-modifying expression
+        assert(this.mutate()); //~WARN: `assert()` argument contains a state-modifying expression
     }
 }
 
@@ -432,7 +435,7 @@ contract AssertStateChangeMemberReturnReceiver {
 
     // Bad: mutating call on the contract returned by a member function.
     function badMemberReturnCall(address to, uint256 amt) external {
-        assert(factory.token().transfer(to, amt)); //~WARN: assert() argument contains a state-modifying expression
+        assert(factory.token().transfer(to, amt)); //~WARN: `assert()` argument contains a state-modifying expression
     }
 
     // Good: view call on the contract returned by a member function must NOT warn.
@@ -451,6 +454,6 @@ contract AssertStateChangeAddressStructReceiver {
     Payee public payee;
 
     function badStructAddressSend() external {
-        assert(payee.recipient.send(1 ether)); //~WARN: assert() argument contains a state-modifying expression
+        assert(payee.recipient.send(1 ether)); //~WARN: `assert()` argument contains a state-modifying expression
     }
 }

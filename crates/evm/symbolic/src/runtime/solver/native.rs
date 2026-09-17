@@ -897,7 +897,7 @@ mod tests {
     }
 
     #[test]
-    fn native_unsat_precedes_deferred_hard_arithmetic_fallback() {
+    fn exact_unsat_precedes_native_and_deferred_fallback() {
         let missing = SolverCommand::new(
             vec!["foundry-symbolic-definitely-missing-solver".to_string()],
             false,
@@ -917,8 +917,8 @@ mod tests {
 
         assert!(!solver.is_sat_branch(&mut cx, &[x_is_zero, product_eq_one]).unwrap());
         let stats = solver.stats();
-        assert_eq!(stats.native_queries, 1);
-        assert_eq!(stats.native_unsat_queries, 1);
+        assert_eq!(stats.native_queries, 0);
+        assert_eq!(stats.native_unsat_queries, 0);
         assert_eq!(stats.native_unknown_queries, 0);
         assert_eq!(stats.smt_queries, 0);
     }

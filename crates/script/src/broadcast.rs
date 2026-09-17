@@ -318,6 +318,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
     pub async fn wait_for_pending(mut self) -> Result<Self> {
         let progress = ScriptProgress::default();
         let progress_ref = &progress;
+        let config = &self.script_config.config;
         let futs = self
             .sequence
             .sequences_mut()
@@ -325,7 +326,8 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
             .enumerate()
             .map(|(sequence_idx, sequence)| async move {
                 let rpc_url = sequence.rpc_url();
-                let provider = Arc::new(ProviderBuilder::new(rpc_url).build()?);
+                let provider =
+                    Arc::new(ProviderBuilder::from_config_with_url(config, rpc_url)?.build()?);
                 progress_ref
                     .wait_for_pending(
                         sequence_idx,
@@ -450,7 +452,13 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
         for i in 0..self.sequence.sequences().len() {
             let mut sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
-            let provider = Arc::new(ProviderBuilder::new(sequence.rpc_url()).build()?);
+            let provider = Arc::new(
+                ProviderBuilder::from_config_with_url(
+                    &self.script_config.config,
+                    sequence.rpc_url(),
+                )?
+                .build()?,
+            );
             let already_broadcasted = sequence.receipts.len();
 
             let seq_progress = progress.get_sequence_progress(i, sequence);
@@ -575,7 +583,6 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 // We send transactions and wait for receipts in batches of 100, since some networks
                 // cannot handle more than that.
                 let batch_size = if sequential_broadcast { 1 } else { 100 };
-                let mut index = already_broadcasted;
                 let sequence_chain = sequence.chain;
 
                 for (batch_number, batch) in transactions.chunks(batch_size).enumerate() {
@@ -586,8 +593,10 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                     ));
 
                     if !batch.is_empty() {
-                        let pending_transactions =
-                            batch.iter().map(|(kind, is_fixed_gas_limit)| {
+                        let pending_transactions = batch.iter().enumerate().map(
+                            |(position, (kind, is_fixed_gas_limit))| {
+                                let index =
+                                    already_broadcasted + batch_number * batch_size + position;
                                 let provider = provider.clone();
                                 let tempo_sponsor = tempo_sponsor.clone();
                                 async move {
@@ -603,10 +612,11 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                             Some(sequence_chain.into()),
                                         )
                                         .await;
-                                    (res, kind, *is_fixed_gas_limit, 0, None)
+                                    (res, kind, *is_fixed_gas_limit, 0, None, index)
                                 }
                                 .boxed()
-                            });
+                            },
+                        );
 
                         let mut buffer = pending_transactions.collect::<FuturesUnordered<_>>();
 
@@ -616,6 +626,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                             is_fixed_gas_limit,
                             attempt,
                             original_res,
+                            index,
                         )) = buffer.next().await
                         {
                             if res.is_err()
@@ -655,6 +666,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                         is_fixed_gas_limit,
                                         attempt,
                                         original_res.or(Some(res)),
+                                        index,
                                     )
                                 }));
 
@@ -678,7 +690,6 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                             sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
                             seq_progress.inner.write().tx_sent(tx_hash);
-                            index += 1;
                         }
 
                         // Checkpoint save
@@ -844,7 +855,13 @@ impl BundledState<TempoEvmNetwork> {
             );
         }
 
-        let provider = Arc::new(ProviderBuilder::<TempoNetwork>::new(sequence.rpc_url()).build()?);
+        let provider = Arc::new(
+            ProviderBuilder::<TempoNetwork>::from_config_with_url(
+                &self.script_config.config,
+                sequence.rpc_url(),
+            )?
+            .build()?,
+        );
 
         // Resume detection happens before signer resolution, gas estimation, and sponsor attachment
         // so that recovering an already-submitted batch tx never requires the original

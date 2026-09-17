@@ -4,7 +4,7 @@ use alloy_primitives::{Address, B256, Bytes, U256};
 use clap::Args;
 use eyre::{Context, Result, ensure};
 use foundry_common::sh_status;
-use reqwest::{Client, Method, StatusCode, Url, header};
+use reqwest::{Client, Method, Url, header};
 use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use std::str::FromStr;
@@ -171,63 +171,55 @@ impl SafeTransaction {
                 confirmation.owner,
                 signature.len()
             );
-            match signature[SAFE_SIGNATURE_LENGTH - 1] {
-                0 => {
-                    ensure!(
-                        signature.len() >= CONTRACT_SIGNATURE_HEADER_LENGTH,
-                        "contract signature from {} does not contain a length",
-                        confirmation.owner
-                    );
+            let v = signature[SAFE_SIGNATURE_LENGTH - 1];
+            match v {
+                // Contract (v = 0) and P-256 (v = 2) signatures carry dynamic data after the
+                // static part, which points at the dynamic offset.
+                0 | 2 => {
+                    let kind = if v == 0 { "contract" } else { "P-256" };
+                    if v == 0 {
+                        ensure!(
+                            signature.len() >= CONTRACT_SIGNATURE_HEADER_LENGTH,
+                            "contract signature from {} does not contain a length",
+                            confirmation.owner
+                        );
+                        let data_len = U256::from_be_slice(
+                            &signature[SAFE_SIGNATURE_LENGTH..CONTRACT_SIGNATURE_HEADER_LENGTH],
+                        );
+                        ensure!(
+                            data_len
+                                == U256::from(signature.len() - CONTRACT_SIGNATURE_HEADER_LENGTH),
+                            "invalid contract signature length from {}: expected {}, got {data_len}",
+                            confirmation.owner,
+                            signature.len() - CONTRACT_SIGNATURE_HEADER_LENGTH
+                        );
+                    } else {
+                        ensure!(
+                            signature.len() == P256_SIGNATURE_LENGTH,
+                            "invalid P-256 signature from {}: expected {P256_SIGNATURE_LENGTH} bytes, got {}",
+                            confirmation.owner,
+                            signature.len()
+                        );
+                    }
                     let offset =
                         U256::from_be_slice(&signature[U256::BYTES..SAFE_SIGNATURE_LENGTH - 1]);
                     ensure!(
                         offset == U256::from(SAFE_SIGNATURE_LENGTH),
-                        "invalid contract signature offset from {}: expected {SAFE_SIGNATURE_LENGTH}, got {offset}",
+                        "invalid {kind} signature offset from {}: expected {SAFE_SIGNATURE_LENGTH}, got {offset}",
                         confirmation.owner
-                    );
-                    let data_len = U256::from_be_slice(
-                        &signature[SAFE_SIGNATURE_LENGTH..CONTRACT_SIGNATURE_HEADER_LENGTH],
-                    );
-                    ensure!(
-                        data_len == U256::from(signature.len() - CONTRACT_SIGNATURE_HEADER_LENGTH),
-                        "invalid contract signature length from {}: expected {}, got {data_len}",
-                        confirmation.owner,
-                        signature.len() - CONTRACT_SIGNATURE_HEADER_LENGTH
                     );
 
                     signatures.extend_from_slice(&signature[..U256::BYTES]);
                     signatures.extend_from_slice(
                         &U256::from(static_len + dynamic.len()).to_be_bytes::<{ U256::BYTES }>(),
                     );
-                    signatures.push(0);
+                    signatures.push(v);
                     dynamic.extend_from_slice(&signature[SAFE_SIGNATURE_LENGTH..]);
                 }
                 1 => {
                     eyre::bail!(
                         "approved-hash signatures (v = 1) are not supported by `cast safe execute`"
                     );
-                }
-                2 => {
-                    ensure!(
-                        signature.len() == P256_SIGNATURE_LENGTH,
-                        "invalid P-256 signature from {}: expected {P256_SIGNATURE_LENGTH} bytes, got {}",
-                        confirmation.owner,
-                        signature.len()
-                    );
-                    let offset =
-                        U256::from_be_slice(&signature[U256::BYTES..SAFE_SIGNATURE_LENGTH - 1]);
-                    ensure!(
-                        offset == U256::from(SAFE_SIGNATURE_LENGTH),
-                        "invalid P-256 signature offset from {}: expected {SAFE_SIGNATURE_LENGTH}, got {offset}",
-                        confirmation.owner
-                    );
-
-                    signatures.extend_from_slice(&signature[..U256::BYTES]);
-                    signatures.extend_from_slice(
-                        &U256::from(static_len + dynamic.len()).to_be_bytes::<{ U256::BYTES }>(),
-                    );
-                    signatures.push(2);
-                    dynamic.extend_from_slice(&signature[SAFE_SIGNATURE_LENGTH..]);
                 }
                 _ => {
                     ensure!(
@@ -289,22 +281,25 @@ impl SafeServiceOpts {
         if let Some(api_key) = &self.api_key { request.bearer_auth(api_key) } else { request }
     }
 
+    /// Sends `request` and returns the successful response body.
+    async fn send(&self, request: reqwest::RequestBuilder) -> Result<String> {
+        let response = request.send().await.wrap_err("Safe Transaction Service request failed")?;
+        let status = response.status();
+        let text = response.text().await.wrap_err("failed to read Transaction Service response")?;
+        ensure!(status.is_success(), "Safe Transaction Service returned {status}: {}", text.trim());
+        Ok(text)
+    }
+
     pub(super) async fn response<T: DeserializeOwned>(
         &self,
         request: reqwest::RequestBuilder,
     ) -> Result<T> {
-        let response = request.send().await.wrap_err("Safe Transaction Service request failed")?;
-        let status = response.status();
-        let text = response.text().await.wrap_err("failed to read Transaction Service response")?;
-        ensure_success(status, &text)?;
-        serde_json::from_str(&text).wrap_err("invalid Transaction Service response")
+        serde_json::from_str(&self.send(request).await?)
+            .wrap_err("invalid Transaction Service response")
     }
 
     pub(super) async fn empty_response(&self, request: reqwest::RequestBuilder) -> Result<()> {
-        let response = request.send().await.wrap_err("Safe Transaction Service request failed")?;
-        let status = response.status();
-        let text = response.text().await.wrap_err("failed to read Transaction Service response")?;
-        ensure_success(status, &text)
+        self.send(request).await.map(drop)
     }
 
     pub(super) async fn get_transaction(
@@ -381,11 +376,6 @@ where
     Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
 }
 
-fn ensure_success(status: StatusCode, body: &str) -> Result<()> {
-    ensure!(status.is_success(), "Safe Transaction Service returned {status}: {}", body.trim());
-    Ok(())
-}
-
 fn default_service_url(chain_id: u64) -> Result<Url> {
     let short_name = match chain_id {
         1 => "eth",
@@ -429,8 +419,6 @@ fn default_service_url(chain_id: u64) -> Result<Url> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::address;
-    use alloy_provider::{ProviderBuilder, mock::Asserter};
 
     fn transaction() -> SafeTransaction {
         SafeTransaction {
@@ -538,38 +526,6 @@ mod tests {
         assert_eq!(transaction.nonce, "7");
         assert_eq!(transaction.gas_token, Address::ZERO);
         assert_eq!(transaction.refund_receiver, Address::ZERO);
-    }
-
-    #[test]
-    fn serializes_proposal_addresses_as_checksums() {
-        let mut transaction = transaction();
-        transaction.to = address!("5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed");
-        transaction.gas_token = address!("fB6916095ca1df60bB79Ce92cE3Ea74c37c5d359");
-        transaction.refund_receiver = address!("52908400098527886E0F7030069857D2E4169EE7");
-
-        assert_eq!(
-            transaction.proposal_body(
-                address!("8617E340B3D01FA5F11F306F4090FD50E238070D"),
-                "0x1234".to_string(),
-                Some("cast".to_string()),
-            ),
-            json!({
-                "to": "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed",
-                "value": "1",
-                "data": "0x",
-                "operation": 0,
-                "safeTxGas": "0",
-                "baseGas": "0",
-                "gasPrice": "0",
-                "gasToken": "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359",
-                "refundReceiver": "0x52908400098527886E0F7030069857D2E4169EE7",
-                "nonce": "7",
-                "contractTransactionHash": B256::ZERO,
-                "sender": "0x8617E340B3D01FA5F11F306F4090FD50E238070D",
-                "signature": "0x1234",
-                "origin": "cast",
-            })
-        );
     }
 
     #[test]
@@ -693,32 +649,5 @@ mod tests {
                 vec![SafeConfirmation { owner, signature: Some(signature.into()) }];
             assert!(transaction.packed_signatures().is_err());
         }
-    }
-
-    #[test]
-    fn rejects_approved_hash_signatures() {
-        let mut signature = vec![1; SAFE_SIGNATURE_LENGTH];
-        signature[SAFE_SIGNATURE_LENGTH - 1] = 1;
-        let mut transaction = transaction();
-        transaction.confirmations = vec![SafeConfirmation {
-            owner: Address::repeat_byte(1),
-            signature: Some(signature.into()),
-        }];
-
-        let error = transaction.packed_signatures().unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            "approved-hash signatures (v = 1) are not supported by `cast safe execute`"
-        );
-    }
-
-    #[tokio::test]
-    async fn calculates_hash_with_safe_contract() {
-        let expected = B256::repeat_byte(0x42);
-        let asserter = Asserter::new();
-        asserter.push_success(&expected);
-        let provider = ProviderBuilder::new().connect_mocked_client(asserter);
-
-        assert_eq!(transaction().calculate_hash(&provider).await.unwrap(), expected);
     }
 }

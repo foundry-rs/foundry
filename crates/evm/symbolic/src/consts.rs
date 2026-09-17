@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, U256, address};
+use alloy_primitives::{Address, U256, address, uint};
 use std::time::Duration;
 
 // HD wallet key derivation
@@ -18,7 +18,7 @@ pub(crate) const CONCRETE_BASE_SYMBOLIC_EXPONENT_LIMIT: u64 = 256;
 // Revert selectors and assertion constants
 pub(crate) const PANIC_SELECTOR: [u8; 4] = [0x4e, 0x48, 0x7b, 0x71];
 pub(crate) const ERROR_SELECTOR: [u8; 4] = [0x08, 0xc3, 0x79, 0xa0];
-pub(crate) const ASSERT_PANIC_CODE: U256 = U256::from_limbs([1, 0, 0, 0]);
+pub(crate) const ASSERT_PANIC_CODE: U256 = uint!(1_U256);
 pub(crate) const ASSERTION_FAILED_PREFIX: &str = "assertion failed";
 
 // ABI encoding lengths

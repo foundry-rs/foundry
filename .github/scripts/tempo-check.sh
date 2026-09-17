@@ -58,6 +58,27 @@ wallet_json_field() {
   jq -r --arg field "$field" '(.data // .)[0][$field]' <<<"$wallet_json"
 }
 
+# Fork initialization can outlast a single upstream RPC's 60-second timeout.
+wait_for_anvil() {
+  local pid="$1" port="$2" timeout="${3:-120}"
+  local deadline=$((SECONDS + timeout))
+
+  while (( SECONDS < deadline )); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      echo "ERROR: Anvil exited before serving RPC on port $port" >&2
+      return 1
+    fi
+    if cast client --rpc-url "http://127.0.0.1:$port" --rpc-timeout 1 >/dev/null 2>&1; then
+      echo "Anvil started successfully on port $port"
+      return 0
+    fi
+    sleep 1
+  done
+
+  echo "ERROR: Anvil did not serve RPC on port $port within ${timeout}s" >&2
+  return 1
+}
+
 echo -e "\n=== INIT TEMPO PROJECT ==="
 tmp_dir=$(mktemp -d)
 cd "$tmp_dir"
@@ -402,6 +423,53 @@ else
   echo -e "\n=== SKIPPING T6 receive-policy/admin-key tests (HARDFORK=$HARDFORK) ==="
 fi
 
+# --- T3+ set-scope tests ---
+if [[ ! "$HARDFORK_UPPER" =~ ^T(0|1|1B|2)$ ]]; then
+  echo -e "\n=== CAST KEYCHAIN: SET-SCOPE ==="
+  # Provision a fresh unrestricted key through the AccountKeychain precompile.
+  kc_ss_json="$(cast wallet new --json)"
+  KC_SS_PK="$(wallet_json_field "$kc_ss_json" private_key)"
+  KC_SS_ADDR="$(wallet_json_field "$kc_ss_json" address)"
+  cast keychain auth "$KC_SS_ADDR" secp256k1 1893456000 \
+    --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
+  fund_and_wait "$KC_SS_ADDR"
+
+  cast keychain ss "$KC_SS_ADDR" \
+    --scope 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D \
+    --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
+  echo "OK: set-scope applied"
+
+  echo -e "\n=== CAST KEYCHAIN: SET-SCOPE ALLOWED ==="
+  cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
+    0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' \
+    --tempo.access-key "$KC_SS_PK" --tempo.root-account "$ADDR"
+  echo "OK: set-scope key allowed to call permitted target"
+
+  echo -e "\n=== CAST KEYCHAIN: SET-SCOPE BLOCKED ==="
+  if cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
+    0x4ef5DFf69C1514f4Dbf85aA4F9D95F804F64275F 'doesNotExist()' \
+    --tempo.access-key "$KC_SS_PK" --tempo.root-account "$ADDR" 2>&1; then
+    echo "ERROR: set-scope key should have been blocked for disallowed target"
+    exit 1
+  fi
+  echo "OK: set-scope key correctly blocked for disallowed target"
+
+  echo -e "\n=== CAST KEYCHAIN: REMOVE-SCOPE ==="
+  cast keychain rs "$KC_SS_ADDR" 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D \
+    --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
+
+  echo -e "\n=== CAST KEYCHAIN: REMOVE-SCOPE BLOCKED ==="
+  if cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
+    0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' \
+    --tempo.access-key "$KC_SS_PK" --tempo.root-account "$ADDR" 2>&1; then
+    echo "ERROR: call should have been blocked after remove-scope"
+    exit 1
+  fi
+  echo "OK: call correctly blocked after remove-scope"
+else
+  echo -e "\n=== SKIPPING T3+ set-scope tests (HARDFORK=$HARDFORK) ==="
+fi
+
 # --- T3-only scope / call-restriction tests ---
 if [[ "$HARDFORK" == "T3" ]]; then
   echo -e "\n=== CAST KEYCHAIN: AUTHORIZE WITH --scope (ADDRESS ONLY, UNRESTRICTED) ==="
@@ -484,56 +552,6 @@ if [[ "$HARDFORK" == "T3" ]]; then
     0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' \
     --tempo.access-key "$KC_HEX_PK" --tempo.root-account "$ADDR"
   echo "OK: raw hex selector key allowed to call increment()"
-
-  echo -e "\n=== CAST KEYCHAIN: SET-SCOPE ==="
-  # Create a new unrestricted key, then add scope restrictions via set-scope
-  kc_ss_json="$(cast wallet new --json)"
-  KC_SS_PK="$(wallet_json_field "$kc_ss_json" private_key)"
-  KC_SS_ADDR="$(wallet_json_field "$kc_ss_json" address)"
-  cast keychain auth "$KC_SS_ADDR" secp256k1 1893456000 \
-    --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
-
-  # Now restrict it to only the counter contract
-  cast keychain ss "$KC_SS_ADDR" \
-    --scope 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D \
-    --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
-  echo "OK: set-scope applied"
-
-  echo -e "\n=== CAST KEYCHAIN: SET-SCOPE ALLOWED ==="
-  fund_and_wait "$KC_SS_ADDR"
-  cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
-    0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' \
-    --tempo.access-key "$KC_SS_PK" --tempo.root-account "$ADDR"
-  echo "OK: set-scope key allowed to call permitted target"
-
-  echo -e "\n=== CAST KEYCHAIN: SET-SCOPE BLOCKED ==="
-  if cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
-    0x4ef5DFf69C1514f4Dbf85aA4F9D95F804F64275F 'doesNotExist()' \
-    --tempo.access-key "$KC_SS_PK" --tempo.root-account "$ADDR" 2>&1; then
-    echo "ERROR: set-scope key should have been blocked for disallowed target"
-    exit 1
-  fi
-  echo "OK: set-scope key correctly blocked for disallowed target"
-
-  echo -e "\n=== CAST KEYCHAIN: REMOVE-SCOPE (BEFORE — CALL SUCCEEDS) ==="
-  cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
-    0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' \
-    --tempo.access-key "$KC_SS_PK" --tempo.root-account "$ADDR"
-  echo "OK: call to scoped target succeeds before remove-scope"
-
-  echo -e "\n=== CAST KEYCHAIN: REMOVE-SCOPE ==="
-  cast keychain rs "$KC_SS_ADDR" 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D \
-    --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
-  echo "OK: remove-scope applied"
-
-  echo -e "\n=== CAST KEYCHAIN: REMOVE-SCOPE (AFTER — CALL FAILS) ==="
-  if cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
-    0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' \
-    --tempo.access-key "$KC_SS_PK" --tempo.root-account "$ADDR" 2>&1; then
-    echo "ERROR: call should have been blocked after remove-scope"
-    exit 1
-  fi
-  echo "OK: call correctly blocked after remove-scope"
 
   echo -e "\n=== CAST KEYCHAIN: AUTHORIZE WITH RECIPIENT RESTRICTION ==="
   kc_recip_json="$(cast wallet new --json)"
@@ -904,18 +922,7 @@ ANVIL_PID=$!
 # Ensure anvil is stopped on script exit
 trap 'kill "$ANVIL_PID" 2>/dev/null || true' EXIT
 
-# Wait for anvil to be ready (max 10 seconds)
-for i in {1..10}; do
-  if cast client --rpc-url "http://127.0.0.1:$ANVIL_PORT" 2>/dev/null; then
-    echo "Anvil fork started successfully"
-    break
-  fi
-  if [[ $i -eq 10 ]]; then
-    echo "ERROR: Anvil fork failed to start"
-    exit 1
-  fi
-  sleep 1
-done
+wait_for_anvil "$ANVIL_PID" "$ANVIL_PORT"
 
 ALICE_PK="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 
@@ -979,18 +986,7 @@ ANVIL_PID=$!
 # Ensure anvil is stopped on script exit
 trap 'kill "$ANVIL_PID" 2>/dev/null || true' EXIT
 
-# Wait for anvil to be ready (max 10 seconds)
-for i in {1..10}; do
-  if cast client --rpc-url "http://127.0.0.1:$ANVIL_PORT" 2>/dev/null; then
-    echo "Anvil fork started successfully"
-    break
-  fi
-  if [[ $i -eq 10 ]]; then
-    echo "ERROR: Anvil fork failed to start"
-    exit 1
-  fi
-  sleep 1
-done
+wait_for_anvil "$ANVIL_PID" "$ANVIL_PORT"
 
 echo -e "\n=== ANVIL FORK: CHECK CLIENT VERSION ==="
 cast client --rpc-url http://127.0.0.1:$ANVIL_PORT

@@ -483,7 +483,7 @@ const ROBINHOOD_TESTNET_BLOCKSCOUT_URL: &str = "https://explorer.testnet.chain.r
 ///
 /// Etherscan v2 covers Hoodi, Sepolia, Base Sepolia, Arbitrum Sepolia and Monad testnet. Robinhood
 /// testnet is not on the v2 chainlist, so it is covered by Sourcify and its own Blockscout instance
-/// instead.
+/// instead. HyperEVM testnet (998) is covered by Sourcify.
 macro_rules! deploy_verify_tests {
     ($($name:ident: $chain:expr, $network:literal, $verifier:literal, $url:expr;)*) => {$(
         forgetest!($name, |prj, cmd| {
@@ -497,6 +497,8 @@ macro_rules! deploy_verify_tests {
 }
 
 deploy_verify_tests! {
+    deploy_verify_hyperevm_testnet_sourcify: NamedChain::HyperliquidTestnet, "hyperevm-testnet", "sourcify", None;
+
     deploy_verify_hoodi_etherscan: NamedChain::Hoodi, "hoodi", "etherscan", None;
     deploy_verify_hoodi_sourcify: NamedChain::Hoodi, "hoodi", "sourcify", None;
 
@@ -529,24 +531,40 @@ deploy_verify_tests! {
 
 // Tests that verify properly validates verifier arguments.
 // <https://github.com/foundry-rs/foundry/issues/11430>
-forgetest_init!(can_validate_verifier_settings, |prj, cmd| {
+forgetest_async!(can_validate_verifier_settings, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
     prj.initialize_default_contracts();
     // Build the project to create the cache.
     cmd.forge_fuse().arg("build").assert_success();
+    // Argument validation should not depend on a public block explorer being available.
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let verifier_url = format!("http://{}", listener.local_addr().unwrap());
+    let app = Router::new().fallback(|Query(query): Query<HashMap<String, String>>| async move {
+        assert_eq!(query.get("module").map(String::as_str), Some("contract"));
+        assert_eq!(query.get("action").map(String::as_str), Some("getabi"));
+        assert_eq!(
+            query["address"].parse::<Address>().unwrap(),
+            "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2".parse::<Address>().unwrap()
+        );
+        r#"{"status":"1","message":"OK","result":"[]"}"#
+    });
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    // Use the explicit chain ID so validation does not depend on a public RPC endpoint.
     // No verifier URL.
     cmd.forge_fuse()
         .args([
             "verify-contract",
-            "--rpc-url",
-            "https://rpc.sepolia-api.lisk.com",
+            "--chain-id",
+            "4202",
             "--verifier",
             "blockscout",
-            "0x19b248616E4964f43F611b5871CE1250f360E9d3",
+            "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
             "src/Counter.sol:Counter",
         ])
         .assert_failure()
         .stderr_eq(str![[r#"
-Start verifying contract `0x19b248616E4964f43F611b5871CE1250f360E9d3` deployed on 4202
+Start verifying contract `0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2` deployed on 4202
 Error: No verifier URL specified for verifier blockscout
 
 "#]]);
@@ -555,16 +573,16 @@ Error: No verifier URL specified for verifier blockscout
     cmd.forge_fuse()
         .args([
             "verify-contract",
-            "--rpc-url",
-            "https://rpc.sepolia-api.lisk.com",
+            "--chain-id",
+            "4202",
             "--verifier",
             "etherscan",
-            "0x19b248616E4964f43F611b5871CE1250f360E9d3",
+            "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
             "src/Counter.sol:Counter",
         ])
         .assert_failure()
         .stderr_eq(str![[r#"
-Start verifying contract `0x19b248616E4964f43F611b5871CE1250f360E9d3` deployed on 4202
+Start verifying contract `0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2` deployed on 4202
 Error: No known Etherscan API URL for chain `4202`. To fix this, please:
 1. Specify a `url` when using Etherscan verifier
 2. Verify the chain `4202` is correct
@@ -574,22 +592,22 @@ Error: No known Etherscan API URL for chain `4202`. To fix this, please:
     cmd.forge_fuse()
         .args([
             "verify-contract",
-            "--rpc-url",
-            "https://rpc.sepolia-api.lisk.com",
+            "--chain-id",
+            "4202",
             "--verifier",
             "blockscout",
             "--verifier-url",
-            "https://sepolia-blockscout.lisk.com/api",
-            "0x19b248616E4964f43F611b5871CE1250f360E9d3",
+            verifier_url.as_str(),
+            "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
             "src/Counter.sol:Counter",
         ])
         .assert_success()
         .stdout_eq(str![""])
         .stderr_eq(str![[r#"
-Start verifying contract `0x19b248616E4964f43F611b5871CE1250f360E9d3` deployed on 4202
+Start verifying contract `0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2` deployed on 4202
 
 Verifying on blockscout...
-Contract [src/Counter.sol:Counter] "0x19b248616E4964f43F611b5871CE1250f360E9d3" is already verified. Skipping verification.
+Contract [src/Counter.sol:Counter] "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2" is already verified. Skipping verification.
 
 "#]]);
 
@@ -600,24 +618,25 @@ Contract [src/Counter.sol:Counter] "0x19b248616E4964f43F611b5871CE1250f360E9d3" 
     cmd.env("ETHERSCAN_API_KEY", "dummy");
     cmd.args([
         "verify-contract",
-        "--rpc-url",
-        "https://rpc.sepolia-api.lisk.com",
+        "--chain-id",
+        "4202",
         "--verifier",
         "blockscout",
         "--verifier-url",
-        "https://sepolia-blockscout.lisk.com/api",
-        "0x19b248616E4964f43F611b5871CE1250f360E9d3",
+        verifier_url.as_str(),
+        "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
         "src/Counter.sol:Counter",
     ])
     .assert_success()
     .stdout_eq(str![""])
     .stderr_eq(str![[r#"
-Start verifying contract `0x19b248616E4964f43F611b5871CE1250f360E9d3` deployed on 4202
+Start verifying contract `0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2` deployed on 4202
 
 Verifying on blockscout...
-Contract [src/Counter.sol:Counter] "0x19b248616E4964f43F611b5871CE1250f360E9d3" is already verified. Skipping verification.
+Contract [src/Counter.sol:Counter] "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2" is already verified. Skipping verification.
 
 "#]]);
+    server.abort();
 });
 
 // Tests that `forge script --broadcast --verify` fails before broadcasting when

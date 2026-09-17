@@ -49,24 +49,26 @@ contract IfFuzzSimpleStateBuggy is Test {
     );
 
     // Magic numbers (1337, 7331, 12345) are forced by the branch structure.
-    // Symbolic senders are masked via the [SENDER] redaction in
-    // `assert_symbolic`.
+    // Symbolic senders and target addresses are masked via the [SENDER]
+    // redaction in `assert_symbolic`.
     assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "invariant_phaseUnderThree"]))
         .failure()
         .stdout_eq(str![[r#"
 ...
 Failing tests:
 Encountered 1 failing test in test/IfFuzzSimpleStateBuggy.t.sol:IfFuzzSimpleStateBuggy
-[FAIL: symbolic invariant counterexample]
+[FAIL: assertion failed: 3 >= 3]
 	[Sequence] (original: 3, shrunk: 3)
-		[SENDER] addr=[test/IfFuzzSimpleStateBuggy.t.sol:SimpleStateMachine]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=step1(uint256) args=[1337]
-		[SENDER] addr=[test/IfFuzzSimpleStateBuggy.t.sol:SimpleStateMachine]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=step2(uint256) args=[7331]
-		[SENDER] addr=[test/IfFuzzSimpleStateBuggy.t.sol:SimpleStateMachine]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=step3(uint256) args=[12345 [1.234e4]]
+		[SENDER] [SENDER] calldata=step1(uint256) args=[1337]
+		[SENDER] [SENDER] calldata=step2(uint256) args=[7331]
+		[SENDER] [SENDER] calldata=step3(uint256) args=[12345 [1.234e4]]
  invariant_phaseUnderThree() ([METRICS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
 
 "#]]);
 });

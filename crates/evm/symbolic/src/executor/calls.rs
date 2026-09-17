@@ -34,8 +34,8 @@ impl SymbolicExecutor {
         }
 
         let gas = state.stack.pop()?;
-        if gas.contains_gasleft() && !gas.is_raw_gasleft() {
-            return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
+        if !gas.is_raw_gasleft() {
+            return Err(SymbolicError::Unsupported("explicit CALL gas limit not modeled"));
         }
         let target = state.stack.pop()?;
         ensure_expr_not_gasleft(&target)?;
@@ -148,6 +148,11 @@ impl SymbolicExecutor {
         }
 
         let call_input = in_size.read_from_memory(&mut self.cx, &state.memory, in_offset.clone());
+        // Gas is not modeled, so calldata derived from `GAS` / `gasleft()` must fail closed instead
+        // of handing the callee a fabricated gas value.
+        if call_input.contains_gasleft(&mut self.cx) {
+            return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
+        }
 
         if let Some(to) = target_address {
             if !state.function_mocks.is_empty() {
@@ -803,16 +808,45 @@ impl SymbolicExecutor {
             if in_size < 4 {
                 return Err(SymbolicError::Unsupported("short cheatcode CALL"));
             }
-            let in_offset = in_offset.as_usize_or("symbolic cheatcode CALL input offset")?;
-            if !self.assume_expr_at_least(state, &in_size_word, 4)? {
-                return Ok(StepOutcome::AssumeRejected);
-            }
 
-            let selector = state
-                .memory
-                .read_concrete(&mut self.cx, in_offset, 4)?
-                .try_into()
-                .map_err(|_| SymbolicError::Unsupported("symbolic cheatcode selector"))?;
+            let has_symbolic_input_offset = in_offset.as_const().is_none();
+            let concrete_in_offset = if has_symbolic_input_offset {
+                None
+            } else {
+                Some(in_offset.as_usize_or("symbolic cheatcode CALL input offset")?)
+            };
+            let selector = if has_symbolic_input_offset {
+                let minimum_offset = state.lower_bound_usize(&in_offset);
+                let maximum_offset = state.upper_bound_usize(&mut self.cx, &in_offset);
+                let selector = state
+                    .memory
+                    .read_bytes_offset_with_bounds(
+                        &mut self.cx,
+                        in_offset.clone(),
+                        4,
+                        minimum_offset,
+                        maximum_offset,
+                    )
+                    .right_aligned_word(&mut self.cx, 0, 4);
+                self.constrained_word_with_solver(state, &selector)?
+                    .map(|selector| selector.to_be_bytes::<32>()[28..].try_into().unwrap())
+                    .ok_or(SymbolicError::Unsupported("symbolic cheatcode selector"))?
+            } else {
+                state
+                    .memory
+                    .read_concrete(
+                        &mut self.cx,
+                        concrete_in_offset.expect("ordinary cheatcode input offset is concrete"),
+                        4,
+                    )?
+                    .try_into()
+                    .map_err(|_| SymbolicError::Unsupported("symbolic cheatcode selector"))?
+            };
+            let full_word_array_assertion =
+                to == CHEATCODE_ADDRESS && is_full_word_array_assertion(selector);
+            if has_symbolic_input_offset && !full_word_array_assertion {
+                return Err(SymbolicError::Unsupported("symbolic cheatcode CALL input offset"));
+            }
             if has_symbolic_in_size {
                 let min_size = if to == CHEATCODE_ADDRESS {
                     foundry_cheatcode_min_input_size(selector)
@@ -825,17 +859,21 @@ impl SymbolicExecutor {
                 if min_size > in_size {
                     return Err(SymbolicError::Unsupported("symbolic cheatcode CALL input size"));
                 }
-                if !self.assume_expr_at_least(state, &in_size_word, min_size)? {
+                if !full_word_array_assertion
+                    && state.lower_bound_usize(&in_size_word) < min_size
+                    && !self.assume_expr_at_least(state, &in_size_word, min_size)?
+                {
                     return Ok(StepOutcome::AssumeRejected);
                 }
             }
 
             if to == CHEATCODE_ADDRESS
+                && let Some(concrete_in_offset) = concrete_in_offset
                 && let Some(outcome) = self.branch_accesses_cheatcode_if_needed(
                     state,
                     worklist,
                     selector,
-                    in_offset,
+                    concrete_in_offset,
                     out_offset.clone(),
                     &out_size,
                 )?
@@ -844,13 +882,14 @@ impl SymbolicExecutor {
             }
 
             if to == CHEATCODE_ADDRESS
+                && let Some(concrete_in_offset) = concrete_in_offset
                 && let Some(outcome) = self.deploy_code_cheatcode_if_needed(
                     executor,
                     state,
                     worklist,
                     completed_paths,
                     selector,
-                    in_offset,
+                    concrete_in_offset,
                     out_offset.clone(),
                     &out_size,
                 )?
@@ -859,9 +898,15 @@ impl SymbolicExecutor {
             }
 
             let return_data = if to == CHEATCODE_ADDRESS {
-                match self
-                    .handle_foundry_cheatcode(executor, state, selector, in_offset, in_size)?
-                {
+                let outcome = self.handle_foundry_cheatcode(
+                    executor,
+                    state,
+                    selector,
+                    &in_offset,
+                    &in_size_word,
+                    in_size,
+                )?;
+                match outcome {
                     CheatcodeOutcome::Continue(ret) => SymReturnData::from_words(&mut self.cx, ret),
                     CheatcodeOutcome::ContinueData(ret) => ret,
                     CheatcodeOutcome::Revert(ret) => {
@@ -874,7 +919,11 @@ impl SymbolicExecutor {
                     CheatcodeOutcome::Failure => return Ok(StepOutcome::Failure),
                 }
             } else if to == SYMBOLIC_VM_COMPAT_ADDRESS {
-                self.handle_symbolic_vm_cheatcode(state, selector, in_offset)?
+                self.handle_symbolic_vm_cheatcode(
+                    state,
+                    selector,
+                    concrete_in_offset.expect("symbolic vm input offset is concrete"),
+                )?
             } else {
                 return Err(SymbolicError::Unsupported("symbolic cheatcode address"));
             };
@@ -1062,105 +1111,61 @@ impl SymbolicExecutor {
             child.origin_word = origin_word;
         }
         self.apply_call_value_transfer(executor, &mut child, kind, to, call_caller, value);
-        child.expected_revert = None;
-        child.assume_no_revert_next_call = None;
         let outcomes = self.execute_external_call(executor, child, &child_code, completed_paths)?;
         if outcomes.is_empty() {
             return Ok(StepOutcome::AssumeRejected);
         }
 
         let mut parents = VecDeque::with_capacity(outcomes.len());
-        for mut outcome in outcomes {
-            let mut parent = state.clone();
-            parent.take_call_outcome_state(&mut outcome.state);
-
-            if let Some(assumption) = parent.assume_no_revert_next_call.take()
-                && matches!(outcome.status, CallStatus::Revert)
-                && self.assume_no_revert_rejects(
-                    &mut parent,
-                    &assumption,
-                    to,
-                    &outcome.state.frame.return_data,
-                )?
-            {
-                continue;
-            }
-
-            if let Some(mut expected) = parent.expected_revert.clone() {
-                match outcome.status {
-                    CallStatus::Success => {
-                        *state = parent;
-                        return Ok(StepOutcome::Failure);
-                    }
-                    CallStatus::Revert | CallStatus::Failure => {
-                        if !self.expected_revert_matches(
-                            &mut parent,
-                            &expected,
-                            to,
-                            &outcome.state.frame.return_data,
-                        )? {
-                            *state = parent;
-                            return Ok(StepOutcome::Failure);
-                        }
-                        if expected.consume_one() {
-                            parent.expected_revert = None;
-                        } else {
-                            parent.expected_revert = Some(expected);
-                        }
-                        parent.expected_calls = outcome.state.expected_calls;
-                        parent.expected_creates = outcome.state.expected_creates;
-                        parent.call_mocks = outcome.state.call_mocks;
-                        parent.function_mocks = outcome.state.function_mocks;
-                        parent.world = original_world.clone();
-                        parent.return_data = SymReturnData::empty(&mut self.cx);
-                        parent.copy_call_output_offset(
-                            &mut self.cx,
-                            out_offset.clone(),
-                            &out_size,
-                        )?;
-                        parent.stack.push(SymExpr::one(&mut self.cx))?;
-                        parents.push_back(parent);
-                        continue;
-                    }
-                }
-            }
-
-            parent.world = if matches!(outcome.status, CallStatus::Success) {
-                outcome.state.world
-            } else {
-                original_world.clone()
-            };
-            match outcome.status {
-                CallStatus::Success => {
-                    parent.block = outcome.state.block;
-                    parent.expected_emit = outcome.state.expected_emit;
-                    parent.expected_calls = outcome.state.expected_calls;
-                    parent.expected_creates = outcome.state.expected_creates;
-                    parent.call_mocks = outcome.state.call_mocks;
-                    parent.function_mocks = outcome.state.function_mocks;
-                }
-                CallStatus::Failure => {
+        for outcome in outcomes {
+            match self.join_call_outcome(state, outcome, to)? {
+                JoinedCallOutcome::Rejected => {}
+                JoinedCallOutcome::Failure(parent) => {
                     *state = parent;
                     return Ok(StepOutcome::Failure);
                 }
-                CallStatus::Revert => {}
+                JoinedCallOutcome::ExceptionalHalt(mut parent) => {
+                    parent.world = original_world.clone();
+                    parent.return_data = SymReturnData::empty(&mut self.cx);
+                    parent.copy_call_output_offset(&mut self.cx, out_offset.clone(), &out_size)?;
+                    parent.stack.push(SymExpr::zero(&mut self.cx))?;
+                    parents.push_back(parent);
+                }
+                JoinedCallOutcome::ExpectedRevert { mut parent, child } => {
+                    parent.expected_calls = child.expected_calls;
+                    parent.expected_creates = child.expected_creates;
+                    parent.call_mocks = child.call_mocks;
+                    parent.function_mocks = child.function_mocks;
+                    parent.world = original_world.clone();
+                    parent.return_data = SymReturnData::empty(&mut self.cx);
+                    parent.copy_call_output_offset(&mut self.cx, out_offset.clone(), &out_size)?;
+                    parent.stack.push(SymExpr::one(&mut self.cx))?;
+                    parents.push_back(parent);
+                }
+                JoinedCallOutcome::Success { mut parent, child } => {
+                    parent.world = child.world;
+                    parent.block = child.block;
+                    parent.expected_emit = child.expected_emit;
+                    parent.expected_calls = child.expected_calls;
+                    parent.expected_creates = child.expected_creates;
+                    parent.call_mocks = child.call_mocks;
+                    parent.function_mocks = child.function_mocks;
+                    parent.return_data = child.frame.return_data;
+                    parent.copy_call_output_offset(&mut self.cx, out_offset.clone(), &out_size)?;
+                    parent.stack.push(SymExpr::one(&mut self.cx))?;
+                    parents.push_back(parent);
+                }
+                JoinedCallOutcome::Revert { mut parent, child } => {
+                    parent.world = original_world.clone();
+                    parent.return_data = child.frame.return_data;
+                    parent.copy_call_output_offset(&mut self.cx, out_offset.clone(), &out_size)?;
+                    parent.stack.push(SymExpr::zero(&mut self.cx))?;
+                    parents.push_back(parent);
+                }
             }
-            parent.return_data = outcome.state.frame.return_data;
-            parent.copy_call_output_offset(&mut self.cx, out_offset.clone(), &out_size)?;
-            let success = SymExpr::constant(
-                &mut self.cx,
-                U256::from(matches!(outcome.status, CallStatus::Success)),
-            );
-            parent.stack.push(success)?;
-            parents.push_back(parent);
         }
 
-        let Some(first) = self.pop_next_path(&mut parents) else {
-            return Ok(StepOutcome::AssumeRejected);
-        };
-        *state = first;
-        worklist.extend(parents);
-        Ok(StepOutcome::Continue)
+        Ok(self.resume_parent_paths(state, worklist, parents))
     }
 
     #[expect(clippy::too_many_arguments)]

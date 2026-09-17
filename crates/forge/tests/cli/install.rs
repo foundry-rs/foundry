@@ -8,14 +8,15 @@ use foundry_test_utils::util::{
     ExtTester, FORGE_STD_REVISION, OutputExt, TestCommand, pretty_err, read_string,
 };
 use semver::Version;
-#[cfg(unix)]
-use std::os::unix::fs::symlink;
 use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
     str::FromStr,
 };
+
+#[cfg(unix)]
+use std::os::unix::fs::symlink;
 
 fn lockfile_get(root: &Path, dep_path: &Path) -> Option<DepIdentifier> {
     let mut l = Lockfile::new(root);
@@ -614,7 +615,10 @@ forgetest!(can_reinit_submodules, |prj, cmd| {
     cmd.env("GIT_ALLOW_PROTOCOL", "file");
     cmd.arg("reinit").assert_success();
     assert_eq!(dependency_git.head().unwrap(), second_rev);
-    assert_eq!(read_string(dependency.join("source.txt")), "second revision\n");
+    assert_eq!(
+        read_string(dependency.join("source.txt")).replace("\r\n", "\n"),
+        "second revision\n"
+    );
 });
 
 // test that we can repeatedly install the same dependency without changes

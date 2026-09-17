@@ -1,12 +1,15 @@
-//! Shared analysis primitives reused by Solidity lints.
-//!
-//! - [`primitives`]: HIR probes (`is_address_type`, `is_require_or_assert`,
-//!   `address_call_receiver`, `branch_always_exits`).
-//! - [`interface`]: contract/library function-shape matching (`is_elementary`,
-//!   `receiver_contract_id`).
-//!
-//! All helpers borrow HIR and never mutate it.
+//! Shared, side-effect-free HIR probes reused by Solidity lints.
 
-pub mod helper_cache;
-pub mod interface;
-pub mod primitives;
+mod access_control;
+mod exprs;
+mod helper_cache;
+mod modifier_outcome;
+mod stmts;
+mod types;
+
+pub use access_control::*;
+pub use exprs::*;
+pub use helper_cache::*;
+pub use modifier_outcome::*;
+pub use stmts::*;
+pub use types::*;

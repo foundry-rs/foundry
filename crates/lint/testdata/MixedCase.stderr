@@ -1,4 +1,4 @@
-note[mixed-case-variable]: mutable variables should use mixedCase
+note[mixed-case-variable]: mutable variable name is not `mixedCase`
    ╭▸ ROOT/testdata/MixedCase.sol:LL:CC
    │
 LL │     uint256 Variablemixedcase;
@@ -6,7 +6,7 @@ LL │     uint256 Variablemixedcase;
    │
    ╰ help: https://getfoundry.sh/forge/linting/mixed-case-variable
 
-note[mixed-case-variable]: mutable variables should use mixedCase
+note[mixed-case-variable]: mutable variable name is not `mixedCase`
    ╭▸ ROOT/testdata/MixedCase.sol:LL:CC
    │
 LL │     uint256 VARIABLE_MIXED_CASE;
@@ -14,7 +14,7 @@ LL │     uint256 VARIABLE_MIXED_CASE;
    │
    ╰ help: https://getfoundry.sh/forge/linting/mixed-case-variable
 
-note[mixed-case-variable]: mutable variables should use mixedCase
+note[mixed-case-variable]: mutable variable name is not `mixedCase`
    ╭▸ ROOT/testdata/MixedCase.sol:LL:CC
    │
 LL │     uint256 VariableMixedCase;
@@ -22,7 +22,7 @@ LL │     uint256 VariableMixedCase;
    │
    ╰ help: https://getfoundry.sh/forge/linting/mixed-case-variable
 
-note[mixed-case-variable]: mutable variables should use mixedCase
+note[mixed-case-variable]: mutable variable name is not `mixedCase`
    ╭▸ ROOT/testdata/MixedCase.sol:LL:CC
    │
 LL │         uint256 testVAL;
@@ -30,7 +30,7 @@ LL │         uint256 testVAL;
    │
    ╰ help: https://getfoundry.sh/forge/linting/mixed-case-variable
 
-note[mixed-case-variable]: mutable variables should use mixedCase
+note[mixed-case-variable]: mutable variable name is not `mixedCase`
    ╭▸ ROOT/testdata/MixedCase.sol:LL:CC
    │
 LL │         uint256 TestVal;
@@ -38,7 +38,7 @@ LL │         uint256 TestVal;
    │
    ╰ help: https://getfoundry.sh/forge/linting/mixed-case-variable
 
-note[mixed-case-variable]: mutable variables should use mixedCase
+note[mixed-case-variable]: mutable variable name is not `mixedCase`
    ╭▸ ROOT/testdata/MixedCase.sol:LL:CC
    │
 LL │         uint256 TESTVAL;
@@ -46,7 +46,7 @@ LL │         uint256 TESTVAL;
    │
    ╰ help: https://getfoundry.sh/forge/linting/mixed-case-variable
 
-note[mixed-case-function]: function names should use mixedCase
+note[mixed-case-function]: function name is not `mixedCase`
    ╭▸ ROOT/testdata/MixedCase.sol:LL:CC
    │
 LL │     function Functionmixedcase() public {}
@@ -54,7 +54,7 @@ LL │     function Functionmixedcase() public {}
    │
    ╰ help: https://getfoundry.sh/forge/linting/mixed-case-function
 
-note[mixed-case-function]: function names should use mixedCase
+note[mixed-case-function]: function name is not `mixedCase`
    ╭▸ ROOT/testdata/MixedCase.sol:LL:CC
    │
 LL │     function FUNCTION_MIXED_CASE() public {}
@@ -62,7 +62,7 @@ LL │     function FUNCTION_MIXED_CASE() public {}
    │
    ╰ help: https://getfoundry.sh/forge/linting/mixed-case-function
 
-note[mixed-case-function]: function names should use mixedCase
+note[mixed-case-function]: function name is not `mixedCase`
    ╭▸ ROOT/testdata/MixedCase.sol:LL:CC
    │
 LL │     function FunctionMixedCase() public {}
@@ -70,7 +70,7 @@ LL │     function FunctionMixedCase() public {}
    │
    ╰ help: https://getfoundry.sh/forge/linting/mixed-case-function
 
-note[mixed-case-function]: function names should use mixedCase
+note[mixed-case-function]: function name is not `mixedCase`
    ╭▸ ROOT/testdata/MixedCase.sol:LL:CC
    │
 LL │     function function_mixed_case() public {}
@@ -78,7 +78,7 @@ LL │     function function_mixed_case() public {}
    │
    ╰ help: https://getfoundry.sh/forge/linting/mixed-case-function
 
-note[mixed-case-function]: function names should use mixedCase
+note[mixed-case-function]: function name is not `mixedCase`
    ╭▸ ROOT/testdata/MixedCase.sol:LL:CC
    │
 LL │     function invariantBalance_MixedCase_Enabled() public {}
@@ -86,7 +86,7 @@ LL │     function invariantBalance_MixedCase_Enabled() public {}
    │
    ╰ help: https://getfoundry.sh/forge/linting/mixed-case-function
 
-note[mixed-case-function]: function names should use mixedCase
+note[mixed-case-function]: function name is not `mixedCase`
    ╭▸ ROOT/testdata/MixedCase.sol:LL:CC
    │
 LL │     function invariantbalance_mixedcase_enabled() public {}
@@ -94,7 +94,23 @@ LL │     function invariantbalance_mixedcase_enabled() public {}
    │
    ╰ help: https://getfoundry.sh/forge/linting/mixed-case-function
 
-note[mixed-case-function]: function names should use mixedCase
+note[mixed-case-function]: function name is not `mixedCase`
+   ╭▸ ROOT/testdata/MixedCase.sol:LL:CC
+   │
+LL │     function __rescueERC20() public {}
+   │              ━━━━━━━━━━━━━ help: consider using: `_rescueErc20`
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/mixed-case-function
+
+note[mixed-case-function]: function name is not `mixedCase`
+   ╭▸ ROOT/testdata/MixedCase.sol:LL:CC
+   │
+LL │     function rescueERC20__() public {}
+   │              ━━━━━━━━━━━━━ help: consider using: `rescueErc20_`
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/mixed-case-function
+
+note[mixed-case-function]: function name is not `mixedCase`
    ╭▸ ROOT/testdata/MixedCase.sol:LL:CC
    │
 LL │     function ERC20_DoSomething() public {} // invalid because of the underscore
@@ -102,7 +118,7 @@ LL │     function ERC20_DoSomething() public {} // invalid because of the unde
    │
    ╰ help: https://getfoundry.sh/forge/linting/mixed-case-function
 
-note[mixed-case-function]: function names should use mixedCase
+note[mixed-case-function]: function name is not `mixedCase`
    ╭▸ ROOT/testdata/MixedCase.sol:LL:CC
    │
 LL │     function HAS_PARAMS(address addr) external view returns (uint256) {}
@@ -110,7 +126,7 @@ LL │     function HAS_PARAMS(address addr) external view returns (uint256) {}
    │
    ╰ help: https://getfoundry.sh/forge/linting/mixed-case-function
 
-note[mixed-case-function]: function names should use mixedCase
+note[mixed-case-function]: function name is not `mixedCase`
    ╭▸ ROOT/testdata/MixedCase.sol:LL:CC
    │
 LL │     function HAS_NO_RETURN() external view {}
@@ -118,7 +134,7 @@ LL │     function HAS_NO_RETURN() external view {}
    │
    ╰ help: https://getfoundry.sh/forge/linting/mixed-case-function
 
-note[mixed-case-function]: function names should use mixedCase
+note[mixed-case-function]: function name is not `mixedCase`
    ╭▸ ROOT/testdata/MixedCase.sol:LL:CC
    │
 LL │     function HAS_MORE_THAN_ONE_RETURN() external view returns (uint256, uint256) {}
@@ -126,7 +142,7 @@ LL │     function HAS_MORE_THAN_ONE_RETURN() external view returns (uint256, u
    │
    ╰ help: https://getfoundry.sh/forge/linting/mixed-case-function
 
-note[mixed-case-function]: function names should use mixedCase
+note[mixed-case-function]: function name is not `mixedCase`
    ╭▸ ROOT/testdata/MixedCase.sol:LL:CC
    │
 LL │     function NOT_ELEMENTARY_RETURN() external view returns (uint256[] memory) {}
@@ -134,7 +150,31 @@ LL │     function NOT_ELEMENTARY_RETURN() external view returns (uint256[] mem
    │
    ╰ help: https://getfoundry.sh/forge/linting/mixed-case-function
 
-note[multi-contract-file]: prefer having only one contract, interface or library per file
+note[mixed-case-function]: function name is not `mixedCase`
+   ╭▸ ROOT/testdata/MixedCase.sol:LL:CC
+   │
+LL │     function PUBLIC_WITH_PARAM(uint256 value) public view returns (uint256) { return value; }
+   │              ━━━━━━━━━━━━━━━━━ help: consider using: `publicWithParam`
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/mixed-case-function
+
+note[mixed-case-function]: function name is not `mixedCase`
+   ╭▸ ROOT/testdata/MixedCase.sol:LL:CC
+   │
+LL │     function INTERNAL_GETTER() internal view returns (bytes32) { return separator; }
+   │              ━━━━━━━━━━━━━━━ help: consider using: `internalGetter`
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/mixed-case-function
+
+note[mixed-case-function]: function name is not `mixedCase`
+   ╭▸ ROOT/testdata/MixedCase.sol:LL:CC
+   │
+LL │     function PUBLIC_MUTATOR() public returns (bytes32) { separator = bytes32(uint256(1)); return separator; }
+   │              ━━━━━━━━━━━━━━ help: consider using: `publicMutator`
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/mixed-case-function
+
+note[multi-contract-file]: file contains multiple contracts, interfaces or libraries
    ╭▸ ROOT/testdata/MixedCase.sol:LL:CC
    │
 LL │ interface IERC20 {
@@ -142,11 +182,19 @@ LL │ interface IERC20 {
    │
    ╰ help: https://getfoundry.sh/forge/linting/multi-contract-file
 
-note[multi-contract-file]: prefer having only one contract, interface or library per file
+note[multi-contract-file]: file contains multiple contracts, interfaces or libraries
    ╭▸ ROOT/testdata/MixedCase.sol:LL:CC
    │
 LL │ contract MixedCaseTest {
    │          ━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/multi-contract-file
+
+note[multi-contract-file]: file contains multiple contracts, interfaces or libraries
+   ╭▸ ROOT/testdata/MixedCase.sol:LL:CC
+   │
+LL │ contract PublicConstantGetters {
+   │          ━━━━━━━━━━━━━━━━━━━━━
    │
    ╰ help: https://getfoundry.sh/forge/linting/multi-contract-file
 

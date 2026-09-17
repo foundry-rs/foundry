@@ -3,13 +3,11 @@
 **Severity**: `Med`
 **ID**: `boolean-cst`
 
-Flags expressions where a boolean constant (`true`/`false`) is used as a control-flow condition
-or operand of a boolean operator, which usually indicates dead code or a leftover debug toggle.
-
 ## What it does
 
-Reports `if (true)`, `if (false)`, `while (true)` outside of intentional infinite loops, and
+Reports literal boolean conditions in `if`, `for`, and `do while`, `while (false)`, and
 boolean operators (`&&`, `||`) where one side is a literal `true`/`false`.
+The idiomatic infinite loop `while (true)` is exempt.
 
 ## Why is this bad?
 
@@ -18,8 +16,6 @@ preserves a forgotten debug shortcut that bypasses real checks.
 
 ## Example
 
-### Bad
-
 ```solidity
 if (true) { // always taken
     doSomething();
@@ -27,7 +23,7 @@ if (true) { // always taken
 require(condition && true, "unreachable"); // 'true' is redundant
 ```
 
-### Good
+Use instead:
 
 ```solidity
 if (condition) {

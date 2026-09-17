@@ -55,7 +55,42 @@ impl<T> JsonEnvelope<T> {
             warnings,
         }
     }
+
+    /// Creates a failed envelope with command-specific data and structured errors.
+    pub const fn failure_with_data(data: T, errors: Vec<JsonMessage>) -> Self {
+        Self {
+            schema_version: JSON_SCHEMA_VERSION,
+            success: false,
+            data: Some(data),
+            errors,
+            warnings: Vec::new(),
+        }
+    }
 }
+
+/// A terminal JSON command failure that preserves command-specific output data.
+#[derive(Debug)]
+pub struct JsonError {
+    /// Command-specific payload to include in the failure envelope.
+    pub data: Value,
+    /// Structured errors emitted by the command.
+    pub errors: Vec<JsonMessage>,
+}
+
+impl JsonError {
+    /// Creates a terminal JSON failure with command-specific data and one error.
+    pub fn new(data: impl Serialize, error: JsonMessage) -> serde_json::Result<Self> {
+        Ok(Self { data: serde_json::to_value(data)?, errors: vec![error] })
+    }
+}
+
+impl std::fmt::Display for JsonError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.errors.first().map_or("JSON command failed", |error| &error.message))
+    }
+}
+
+impl std::error::Error for JsonError {}
 
 impl JsonEnvelope<()> {
     /// Creates a failed envelope with one structured error.
@@ -277,5 +312,18 @@ mod tests {
         assert_eq!(value["errors"][0]["code"], "config.invalid");
         assert_eq!(value["errors"][0]["details"]["path"], "foundry.toml");
         assert_eq!(value["warnings"], json!([]));
+    }
+
+    #[test]
+    fn failure_with_data_envelope_preserves_data() {
+        let envelope = JsonEnvelope::failure_with_data(
+            json!({ "compatible": false }),
+            vec![JsonMessage::error("compatibility.failed", "compatibility check failed")],
+        );
+        let value = to_value(envelope).unwrap();
+
+        assert_eq!(value["success"], false);
+        assert_eq!(value["data"]["compatible"], false);
+        assert_eq!(value["errors"][0]["code"], "compatibility.failed");
     }
 }

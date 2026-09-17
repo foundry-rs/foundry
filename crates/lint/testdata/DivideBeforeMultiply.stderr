@@ -1,4 +1,4 @@
-note[custom-errors]: prefer using custom errors on revert and require calls
+note[custom-errors]: `revert` or `require` call does not use a custom error
    ╭▸ ROOT/testdata/DivideBeforeMultiply.sol:LL:CC
    │
 LL │             revert("done");
@@ -6,7 +6,7 @@ LL │             revert("done");
    │
    ╰ help: https://getfoundry.sh/forge/linting/custom-errors
 
-note[inline-assembly]: inline assembly used; review for memory safety and side effects
+note[inline-assembly]: inline assembly used
    ╭▸ ROOT/testdata/DivideBeforeMultiply.sol:LL:CC
    │
 LL │         assembly {
@@ -14,7 +14,7 @@ LL │         assembly {
    │
    ╰ help: https://getfoundry.sh/forge/linting/inline-assembly
 
-note[inline-assembly]: inline assembly used; review for memory safety and side effects
+note[inline-assembly]: inline assembly used
    ╭▸ ROOT/testdata/DivideBeforeMultiply.sol:LL:CC
    │
 LL │         assembly {
@@ -22,7 +22,7 @@ LL │         assembly {
    │
    ╰ help: https://getfoundry.sh/forge/linting/inline-assembly
 
-warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
+warning[divide-before-multiply]: division before multiplication may lose precision
    ╭▸ ROOT/testdata/DivideBeforeMultiply.sol:LL:CC
    │
 LL │         (1 / 2) * 3;
@@ -30,7 +30,7 @@ LL │         (1 / 2) * 3;
    │
    ╰ help: https://getfoundry.sh/forge/linting/divide-before-multiply
 
-warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
+warning[divide-before-multiply]: division before multiplication may lose precision
    ╭▸ ROOT/testdata/DivideBeforeMultiply.sol:LL:CC
    │
 LL │         3 * (1 / 2);
@@ -38,7 +38,7 @@ LL │         3 * (1 / 2);
    │
    ╰ help: https://getfoundry.sh/forge/linting/divide-before-multiply
 
-warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
+warning[divide-before-multiply]: division before multiplication may lose precision
    ╭▸ ROOT/testdata/DivideBeforeMultiply.sol:LL:CC
    │
 LL │         4 * ((1 + 2) / 3);
@@ -46,7 +46,7 @@ LL │         4 * ((1 + 2) / 3);
    │
    ╰ help: https://getfoundry.sh/forge/linting/divide-before-multiply
 
-warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
+warning[divide-before-multiply]: division before multiplication may lose precision
    ╭▸ ROOT/testdata/DivideBeforeMultiply.sol:LL:CC
    │
 LL │         ((1 / 2) * 3) * 4;
@@ -54,7 +54,7 @@ LL │         ((1 / 2) * 3) * 4;
    │
    ╰ help: https://getfoundry.sh/forge/linting/divide-before-multiply
 
-warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
+warning[divide-before-multiply]: division before multiplication may lose precision
    ╭▸ ROOT/testdata/DivideBeforeMultiply.sol:LL:CC
    │
 LL │         ((1 * 2) / 3) * 4;
@@ -62,7 +62,7 @@ LL │         ((1 * 2) / 3) * 4;
    │
    ╰ help: https://getfoundry.sh/forge/linting/divide-before-multiply
 
-warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
+warning[divide-before-multiply]: division before multiplication may lose precision
    ╭▸ ROOT/testdata/DivideBeforeMultiply.sol:LL:CC
    │
 LL │         (1 / 2 / 3) * 4;
@@ -70,7 +70,7 @@ LL │         (1 / 2 / 3) * 4;
    │
    ╰ help: https://getfoundry.sh/forge/linting/divide-before-multiply
 
-warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
+warning[divide-before-multiply]: division before multiplication may lose precision
    ╭▸ ROOT/testdata/DivideBeforeMultiply.sol:LL:CC
    │
 LL │         (1 / (2 + 3)) * 4;
@@ -78,7 +78,7 @@ LL │         (1 / (2 + 3)) * 4;
    │
    ╰ help: https://getfoundry.sh/forge/linting/divide-before-multiply
 
-warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
+warning[divide-before-multiply]: division before multiplication may lose precision
    ╭▸ ROOT/testdata/DivideBeforeMultiply.sol:LL:CC
    │
 LL │         1 / ((2 / 3) * 3);
@@ -86,7 +86,7 @@ LL │         1 / ((2 / 3) * 3);
    │
    ╰ help: https://getfoundry.sh/forge/linting/divide-before-multiply
 
-warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
+warning[divide-before-multiply]: division before multiplication may lose precision
    ╭▸ ROOT/testdata/DivideBeforeMultiply.sol:LL:CC
    │
 LL │         result = q * c;
@@ -94,7 +94,7 @@ LL │         result = q * c;
    │
    ╰ help: https://getfoundry.sh/forge/linting/divide-before-multiply
 
-warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
+warning[divide-before-multiply]: division before multiplication may lose precision
    ╭▸ ROOT/testdata/DivideBeforeMultiply.sol:LL:CC
    │
 LL │         return c * copy;
@@ -102,7 +102,7 @@ LL │         return c * copy;
    │
    ╰ help: https://getfoundry.sh/forge/linting/divide-before-multiply
 
-warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
+warning[divide-before-multiply]: division before multiplication may lose precision
    ╭▸ ROOT/testdata/DivideBeforeMultiply.sol:LL:CC
    │
 LL │         return q * c;
@@ -110,7 +110,7 @@ LL │         return q * c;
    │
    ╰ help: https://getfoundry.sh/forge/linting/divide-before-multiply
 
-warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
+warning[divide-before-multiply]: division before multiplication may lose precision
    ╭▸ ROOT/testdata/DivideBeforeMultiply.sol:LL:CC
    │
 LL │         return q * c;
@@ -118,7 +118,7 @@ LL │         return q * c;
    │
    ╰ help: https://getfoundry.sh/forge/linting/divide-before-multiply
 
-warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
+warning[divide-before-multiply]: division before multiplication may lose precision
    ╭▸ ROOT/testdata/DivideBeforeMultiply.sol:LL:CC
    │
 LL │         q *= c;
@@ -126,7 +126,7 @@ LL │         q *= c;
    │
    ╰ help: https://getfoundry.sh/forge/linting/divide-before-multiply
 
-warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
+warning[divide-before-multiply]: division before multiplication may lose precision
    ╭▸ ROOT/testdata/DivideBeforeMultiply.sol:LL:CC
    │
 LL │         q *= c;
@@ -134,7 +134,7 @@ LL │         q *= c;
    │
    ╰ help: https://getfoundry.sh/forge/linting/divide-before-multiply
 
-warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
+warning[divide-before-multiply]: division before multiplication may lose precision
    ╭▸ ROOT/testdata/DivideBeforeMultiply.sol:LL:CC
    │
 LL │         x = x * c;
@@ -142,7 +142,7 @@ LL │         x = x * c;
    │
    ╰ help: https://getfoundry.sh/forge/linting/divide-before-multiply
 
-warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
+warning[divide-before-multiply]: division before multiplication may lose precision
    ╭▸ ROOT/testdata/DivideBeforeMultiply.sol:LL:CC
    │
 LL │             result := mul(div(a, b), c)
@@ -150,7 +150,7 @@ LL │             result := mul(div(a, b), c)
    │
    ╰ help: https://getfoundry.sh/forge/linting/divide-before-multiply
 
-warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
+warning[divide-before-multiply]: division before multiplication may lose precision
    ╭▸ ROOT/testdata/DivideBeforeMultiply.sol:LL:CC
    │
 LL │             result := mul(c, sdiv(a, b))
@@ -158,7 +158,7 @@ LL │             result := mul(c, sdiv(a, b))
    │
    ╰ help: https://getfoundry.sh/forge/linting/divide-before-multiply
 
-warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
+warning[divide-before-multiply]: division before multiplication may lose precision
    ╭▸ ROOT/testdata/DivideBeforeMultiply.sol:LL:CC
    │
 LL │             result := mul(q, c)

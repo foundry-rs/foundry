@@ -3,8 +3,6 @@
 **Severity**: `High`
 **ID**: `erc20-unchecked-transfer`
 
-Flags calls to ERC20 `transfer` and `transferFrom` where the boolean return value is ignored.
-
 ## What it does
 
 Warns when a function with the same signature as
@@ -20,14 +18,12 @@ explicitly.
 
 ## Example
 
-### Bad
-
 ```solidity
 token.transfer(to, amount);
 token.transferFrom(from, to, amount);
 ```
 
-### Good
+Use instead:
 
 ```solidity
 require(token.transfer(to, amount), "transfer failed");
@@ -36,8 +32,3 @@ require(token.transferFrom(from, to, amount), "transferFrom failed");
 // or use SafeERC20
 SafeERC20.safeTransfer(token, to, amount);
 ```
-
-## Notes
-
-This lint can produce false positives when the callee does not strictly conform to the ERC20
-interface (e.g. tokens that revert on failure rather than returning `false`).

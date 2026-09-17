@@ -1,4 +1,6 @@
 //! Contains tests for checking forge execution context cheatcodes
+use std::process::Command;
+
 const FORGE_TEST_CONTEXT_CONTRACT: &str = r#"
 import "./test.sol";
 interface Vm {
@@ -62,6 +64,31 @@ forgetest!(can_set_forge_test_coverage_context, |prj, cmd| {
     prj.insert_ds_test();
     prj.add_source("ForgeContextTest.t.sol", FORGE_TEST_CONTEXT_CONTRACT);
     cmd.args(["coverage", "--match-test", "testForgeCoverageContext"]).assert_success();
+});
+
+forgetest!(symbolic_uses_actual_forge_context, |prj, cmd| {
+    if !Command::new("z3").arg("--version").output().is_ok_and(|output| output.status.success()) {
+        return;
+    }
+    prj.insert_ds_test();
+    prj.add_source(
+        "ForgeContextTest.t.sol",
+        &FORGE_TEST_CONTEXT_CONTRACT.replace("testForge", "checkForge"),
+    );
+    prj.update_config(|config| config.symbolic.enabled = true);
+    for (command, test) in [
+        ("test", "checkForgeTestContext"),
+        ("coverage", "checkForgeCoverageContext"),
+        ("snapshot", "checkForgeSnapshotContext"),
+    ] {
+        cmd.forge_fuse().args([command, "--match-test", test]).assert_success().stdout_eq(
+            foundry_test_utils::str![[r#"
+...
+[PASS] checkForge[..] (paths: [..])
+...
+"#]],
+        );
+    }
 });
 
 // tests that context properly set for `forge script` command

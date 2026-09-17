@@ -3,45 +3,20 @@
 **Severity**: `Gas`
 **ID**: `external-function`
 
-`public` functions that are never called from inside the contract (or any of its
-derivatives) can be declared `external`. External functions read their reference-type
-arguments directly from `calldata` instead of copying them into `memory`, which saves
-gas at every call site.
-
 ## What it does
 
-Flags a `public` function declaration when **all** of the following hold:
-
-- The function is `public` (not `external`, `internal`, or `private`).
-- It is an ordinary function (not a constructor, fallback, receive, or modifier).
-- It has at least one parameter that is a reference type (`struct`, array, `bytes`, or
-  `string`) currently located in `memory`.
-- It is not an `override` of another function (the base must be migrated first).
-- It has a body (not abstract or interface-only).
-- It does not write to any of its parameters inside the body.
-- It is never called from inside the contract or any contract that derives from it,
-  whether directly (`foo()`), via `super.foo(...)`, or via a function-pointer reference
-  (`fn = foo;`).
-
-The lint runs in the `Gas` severity bucket and is automatically skipped on Foundry
-test and script files.
+Flags implemented `public` functions with reference-type `memory` parameters that are
+never called internally and do not modify their parameters. Overrides are excluded.
 
 ## Why is this bad?
 
-Calling a `public` function from outside the contract is more expensive than calling
-the equivalent `external` function:
-
-- Each reference-type parameter is copied from `calldata` into `memory` before the
-  function body executes, even though `external`-only callers never need that copy.
-- The opcode shim that allows the function to be called both internally and externally
-  adds a few bytes of bytecode and an extra branch on every entry.
-
-When the function is never called internally, switching `public` to `external` removes
-both costs at no semantic change.
+Reference-type parameters declared `memory` require a copy when read from external call data.
+Using `calldata` can avoid that copy when the function only reads the parameters. Changing
+visibility alone does not change their data location, and modern Solidity also permits `calldata`
+on public functions. Verify callers and inheritance before removing the internal entry point,
+and measure savings with the project's compiler settings.
 
 ## Example
-
-### Bad
 
 ```solidity
 contract Vault {
@@ -55,10 +30,7 @@ contract Vault {
 }
 ```
 
-`deposit` is never called from inside `Vault`, but its `memory` arrays force an
-unnecessary calldata-to-memory copy on every external call.
-
-### Good
+Use instead:
 
 ```solidity
 contract Vault {
@@ -71,6 +43,3 @@ contract Vault {
     }
 }
 ```
-
-When you migrate `public` to `external`, also change reference-type parameters from
-`memory` to `calldata` to capture the full gas saving.

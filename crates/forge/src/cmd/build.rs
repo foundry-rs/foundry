@@ -1,4 +1,4 @@
-use super::{install, watch::WatchArgs};
+use super::watch::WatchArgs;
 use crate::Lockfile;
 use clap::Parser;
 use eyre::Result;
@@ -97,11 +97,7 @@ impl BuildArgs {
             self.check_foundry_lock_consistency(&config)?;
         }
 
-        if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
-        {
-            // need to re-configure here to also catch additional remappings
-            config = self.load_config()?;
-        }
+        self.install_missing_dependencies(&mut config)?;
 
         self.check_soldeer_lock_consistency(&config).await;
 

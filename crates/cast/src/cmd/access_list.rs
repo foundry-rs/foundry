@@ -1,10 +1,8 @@
-use super::auth::confirm_auth_rpc_disclosure;
-use crate::{
-    Cast,
-    tx::{CastTxBuilder, SenderKind},
-};
+use super::auth::confirm_and_build;
+use crate::tx::{CastTxBuilder, read_only_sender};
 use alloy_ens::NameOrAddress;
 use alloy_network::{Ethereum, Network};
+use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
 use clap::Parser;
 use eyre::Result;
@@ -12,10 +10,14 @@ use foundry_cli::{
     opts::{RpcOpts, TransactionOpts},
     utils::LoadConfig,
 };
-use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
+use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder, shell};
+use foundry_config::Config;
 use foundry_wallets::{BrowserWalletOpts, WalletOpts};
 use std::str::FromStr;
 use tempo_alloy::TempoNetwork;
+
+#[cfg(feature = "base")]
+use base_common_network::Base;
 
 /// CLI arguments for `cast access-list`.
 #[derive(Debug, Parser)]
@@ -67,47 +69,63 @@ pub struct AccessListArgs {
 
 impl AccessListArgs {
     pub async fn run(self) -> Result<()> {
-        if self.tx.tempo.is_tempo() {
-            self.run_with_network::<TempoNetwork>().await
-        } else {
-            self.run_with_network::<Ethereum>().await
+        let config = self.rpc.load_config()?;
+        let requires_tempo = self.tx.tempo.is_tempo() || self.tx.tempo.session_id()?.is_some();
+        let network = super::resolve_transaction_network(&config, requires_tempo).await?;
+        if network.is_tempo() {
+            return self.run_with_network::<TempoNetwork>(config).await;
         }
+        #[cfg(feature = "base")]
+        if network.is_base() {
+            super::validate_base_transaction_options(&self.tx)?;
+            return self.run_with_network::<Base>(config).await;
+        }
+        self.run_with_network::<Ethereum>(config).await
     }
 
-    pub async fn run_with_network<N: Network + Unpin>(self) -> Result<()>
+    async fn run_with_network<N: Network + Unpin>(self, config: Config) -> Result<()>
     where
         N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
-        let Self { to, mut sig, args, data, tx, force, rpc, wallet, browser, block } = self;
+        let Self { to, sig, args, data, tx, force, rpc: _, wallet, browser, block } = self;
 
-        if let Some(data) = data {
-            sig = Some(data);
-        }
-
-        let config = rpc.load_config()?;
         let provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
-        let sender = if let Some(browser) = browser.run::<N>().await? {
-            browser.address().into()
-        } else {
-            SenderKind::from_wallet_opts(wallet).await?
+        let chain_id = match config.chain {
+            Some(chain) => chain.id(),
+            None => provider.get_chain_id().await?,
         };
+        let (sender, _) = read_only_sender::<N>(&browser, wallet, &tx.tempo, chain_id).await?;
 
         let builder = CastTxBuilder::new(&provider, tx, &config)
             .await?
             .with_to(to)
             .await?
-            .with_code_sig_and_args(None, sig, args)
+            .with_code_sig_and_args(None, data.or(sig), args)
             .await?
             .raw();
-        if builder.has_auth() && !confirm_auth_rpc_disclosure(&builder, &sender, force)? {
+        let Some(tx) = confirm_and_build(builder, sender, force, None, true).await? else {
             return Ok(());
-        }
-        let (tx, _) = builder.build(sender).await?;
+        };
 
-        let access_list: String = Cast::new(&provider).access_list(&tx, block).await?;
-
+        let access_list =
+            provider.create_access_list(&tx).block_id(block.unwrap_or_default()).await?;
+        let access_list = if shell::is_json() {
+            serde_json::to_string(&access_list)?
+        } else {
+            let mut s =
+                vec![format!("gas used: {}", access_list.gas_used), "access list:".to_string()];
+            for al in access_list.access_list.0 {
+                s.push(format!("- address: {}", al.address.to_checksum(None)));
+                if !al.storage_keys.is_empty() {
+                    s.push("  keys:".to_string());
+                    for key in al.storage_keys {
+                        s.push(format!("    {key:?}"));
+                    }
+                }
+            }
+            s.join("\n")
+        };
         sh_println!("{access_list}")?;
-
         Ok(())
     }
 }
@@ -115,19 +133,7 @@ impl AccessListArgs {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::hex;
     use clap::error::ErrorKind;
-
-    #[test]
-    fn can_parse_access_list_data() {
-        let data = hex::encode("hello");
-        let args = AccessListArgs::parse_from(["foundry-cli", "--data", data.as_str()]);
-        assert_eq!(args.data, Some(data));
-
-        let data = hex::encode_prefixed("hello");
-        let args = AccessListArgs::parse_from(["foundry-cli", "--data", data.as_str()]);
-        assert_eq!(args.data, Some(data));
-    }
 
     #[test]
     fn data_conflicts_with_sig_and_args() {

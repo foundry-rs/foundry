@@ -48,7 +48,9 @@ impl SolMacroGen {
 
     pub fn get_sol_input(&self) -> Result<SolInput> {
         let path = self.path.to_string_lossy().into_owned();
-        let name = proc_macro2::Ident::new(&self.name, Span::call_site());
+        let name: syn::Ident = syn::parse_str(&self.name).wrap_err_with(|| {
+            format!("`{}` is not a valid Rust identifier for generated bindings", self.name)
+        })?;
         let tokens = quote::quote! {
             #[sol(ignore_unlinked)]
             #name,
@@ -555,5 +557,13 @@ mod tests {
             adapter("alloy::sol_types::private::Vec<[u64; 48]>"),
             Some("::std::vec::Vec<[::serde_with::Same; 48]>".to_string())
         );
+    }
+
+    #[test]
+    fn get_sol_input_rejects_invalid_identifier_instead_of_panicking() {
+        // `$` is valid in Solidity identifiers but not Rust identifiers.
+        let instance =
+            super::SolMacroGen::new(std::path::PathBuf::from("Foo.json"), "Foo$Bar".to_string());
+        assert!(instance.get_sol_input().is_err());
     }
 }

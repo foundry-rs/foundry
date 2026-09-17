@@ -43,6 +43,10 @@ library ReceiverLib {
         self;
         return value;
     }
+
+    function notify(IReceiver self, uint256 value) public {
+        self.ping(value);
+    }
 }
 
 struct Target {
@@ -169,6 +173,25 @@ contract CallsLoop {
 
     function noLoopCall() external {
         receiver.ping(0);
+    }
+
+    function externalFunctionPointer(function(uint256) external returns (bool) callback) external {
+        for (uint256 i; i < 1; ++i) {
+            callback(i);
+        }
+    }
+
+    function externalViewFunctionPointer(function(uint256) external view returns (bool) callback) external view {
+        for (uint256 i; i < 1; ++i) {
+            callback(i);
+        }
+    }
+
+    function publicLibraryCalls() external {
+        for (uint256 i; i < 1; ++i) {
+            receiver.notify(i);
+            ReceiverLib.notify(receiver, i);
+        }
     }
 
     function internalLibraryCallsAreIgnored() external {

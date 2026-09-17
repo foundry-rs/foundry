@@ -30,7 +30,7 @@ contract Complexity {
     }
 
     // 11 decision points: complexity 12, above the threshold.
-    function elevenBranches(uint256 x) internal { //~NOTE: this function has a cyclomatic complexity above 11
+    function elevenBranches(uint256 x) internal { //~NOTE: function has a cyclomatic complexity above 11
         if (x > 0) count++;
         if (x > 1) count++;
         if (x > 2) count++;
@@ -47,7 +47,7 @@ contract Complexity {
     // Mixed forms, 11 decision points: a while, a do-while, a conditioned for (one each
     // through their condition), a condition-less for (nothing), two ternaries, two catch
     // clauses and four ifs. Complexity 12, above the threshold.
-    function mixedForms(uint256 x) internal { //~NOTE: this function has a cyclomatic complexity above 11
+    function mixedForms(uint256 x) internal { //~NOTE: function has a cyclomatic complexity above 11
         uint256 i = 0;
         while (i < x) {
             i++;
@@ -85,7 +85,7 @@ contract Complexity {
 
     // Eleven real Yul cases without a `default`: 11 decisions, complexity 12, above the
     // threshold. The `default` clause never counts, so adding one changes nothing.
-    function yulSwitchNoDefault(uint256 x) internal { //~NOTE: this function has a cyclomatic complexity above 11
+    function yulSwitchNoDefault(uint256 x) internal { //~NOTE: function has a cyclomatic complexity above 11
         uint256 r;
         assembly {
             switch x
@@ -145,7 +145,7 @@ contract Complexity {
 
     // Decision points in modifier-invocation arguments count toward the function: ten body
     // ifs plus the ternary in the modifier argument make complexity 12.
-    function modifierArgTernary(uint256 x) internal complexModifier(x == 0 ? 1 : 2) { //~NOTE: this function has a cyclomatic complexity above 11
+    function modifierArgTernary(uint256 x) internal complexModifier(x == 0 ? 1 : 2) { //~NOTE: function has a cyclomatic complexity above 11
         if (x > 0) count++;
         if (x > 1) count++;
         if (x > 2) count++;
@@ -168,7 +168,7 @@ contract ComplexityBase {
 contract ComplexityDerived is ComplexityBase {
     uint256 internal count;
 
-    constructor(uint256 x) ComplexityBase(x == 0 ? 1 : 2) { //~NOTE: this function has a cyclomatic complexity above 11
+    constructor(uint256 x) ComplexityBase(x == 0 ? 1 : 2) { //~NOTE: function has a cyclomatic complexity above 11
         if (x > 0) count++;
         if (x > 1) count++;
         if (x > 2) count++;
@@ -188,7 +188,7 @@ contract ComplexityDerived is ComplexityBase {
 contract ComplexityYulHelper {
     function throughHelper(uint256 x) internal pure returns (uint256 r) {
         assembly {
-            function helper(v) -> o { //~NOTE: this function has a cyclomatic complexity above 11
+            function helper(v) -> o { //~NOTE: function has a cyclomatic complexity above 11
                 if gt(v, 0) { o := add(o, 1) }
                 if gt(v, 1) { o := add(o, 1) }
                 if gt(v, 2) { o := add(o, 1) }

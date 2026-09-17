@@ -44,7 +44,11 @@ use std::{
 
 mod frontier;
 mod types;
-use frontier::{FuzzBranchFrontier, FuzzBranchFrontierArtifact, FuzzFrontierRecorder};
+use frontier::FuzzBranchFrontierArtifact;
+pub(super) use frontier::{
+    FuzzBranchFrontier, FuzzFrontierRecorder, StatefulFuzzBranchFrontierArtifact, merge_frontiers,
+    write_frontier_artifact,
+};
 pub use types::{CaseOutcome, CounterExampleOutcome, FuzzOutcome};
 
 /// Corpus syncs across workers every `SYNC_INTERVAL` runs.
@@ -351,7 +355,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             self.config.fail_on_revert,
             address,
             call.reverter,
-            self.executor_f.inspector().networks.extra_cheatcode_addresses(),
+            self.executor_f.inspector().extra_cheatcode_addresses(),
         ) || self.executor_f.is_raw_call_mut_success(address, &mut call, false);
 
         let mut result = FuzzTestResult {
@@ -465,9 +469,10 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             // `merge_edge_coverage` always returns `false`, so record it as unknown for frontiers.
             let frontier_new_coverage =
                 self.config.corpus.collect_edge_coverage().then_some(new_coverage);
-            frontier_recorder.capture_stateless_call(
+            frontier_recorder.capture_call(
                 fuzz_run,
-                &tx,
+                std::slice::from_ref(&tx),
+                0,
                 &cmp_values,
                 frontier_new_coverage,
             );
@@ -490,7 +495,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             self.config.fail_on_revert,
             address,
             call.reverter,
-            state.0.inspector().networks.extra_cheatcode_addresses(),
+            state.0.inspector().extra_cheatcode_addresses(),
         ) || state.0.is_raw_call_mut_success(address, &mut call, false);
 
         if success {

@@ -134,11 +134,7 @@ impl ExtTester {
             let commit = stdout.lines().next().unwrap().split_whitespace().nth(1).unwrap();
             panic!("pin to latest commit: {commit}");
         }
-        let mut git = Command::new("git");
-        git.current_dir(root).args(["checkout", self.rev]);
-        test_debug!("$ {git:?}");
-        let status = git.status().unwrap();
-        assert!(status.success(), "git checkout failed: {status}");
+        checkout_revision(root, self.rev, recursive);
 
         // Export fixture-local Python packages, vyper, and forge in the test command.
         let mut new_paths = Vec::new();
@@ -230,5 +226,220 @@ impl ExtTester {
         test_cmd.env("FOUNDRY_ALLOW_INTERNAL_EXPECT_REVERT", "true");
 
         test_cmd.assert_success();
+    }
+}
+
+/// Checks out a fixture revision and restores its pinned submodule revisions.
+fn checkout_revision(root: &str, rev: &str, recursive: bool) {
+    checkout_revision_inner(root, rev, recursive, None);
+}
+
+fn checkout_revision_inner(root: &str, rev: &str, recursive: bool, allowed_protocol: Option<&str>) {
+    let mut git = Command::new("git");
+    if let Some(protocol) = allowed_protocol {
+        git.env("GIT_ALLOW_PROTOCOL", protocol);
+    }
+    git.current_dir(root).args(["checkout", rev]);
+    test_debug!("$ {git:?}");
+    let status = git.status().unwrap();
+    assert!(status.success(), "git checkout failed: {status}");
+
+    if recursive {
+        // The clone initialized submodules from the default branch, not the pinned revision.
+        for args in [
+            &["-c", "submodule.recurse=false", "submodule", "sync"][..],
+            &["-c", "submodule.recurse=false", "submodule", "update", "--init", "--checkout"][..],
+            &[
+                "submodule",
+                "foreach",
+                "--recursive",
+                "git -c submodule.recurse=false submodule sync && git -c submodule.recurse=false \
+                 submodule update --init --checkout",
+            ][..],
+        ] {
+            let mut git = Command::new("git");
+            if let Some(protocol) = allowed_protocol {
+                git.env("GIT_ALLOW_PROTOCOL", protocol);
+            }
+            git.current_dir(root).args(args);
+            test_debug!("$ {git:?}");
+            let status = git.status().unwrap();
+            assert!(status.success(), "git {args:?} failed: {status}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn git(root: &Path, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .current_dir(root)
+            .args([
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "-c",
+                "commit.gpgsign=false",
+            ])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{args:?}: {}", String::from_utf8_lossy(&output.stderr));
+        String::from_utf8(output.stdout).unwrap().trim().to_string()
+    }
+
+    #[test]
+    fn checkout_revision_restores_pinned_submodule() {
+        let temp = tempfile::tempdir().unwrap();
+        let dependency = temp.path().join("dependency");
+        let fixture = temp.path().join("fixture");
+        fs::create_dir(&dependency).unwrap();
+        fs::create_dir(&fixture).unwrap();
+        git(&dependency, &["init"]);
+        fs::write(dependency.join("draft.sol"), "old interface").unwrap();
+        git(&dependency, &["add", "."]);
+        git(&dependency, &["commit", "-m", "old interface"]);
+        let pinned_dependency = git(&dependency, &["rev-parse", "HEAD"]);
+
+        git(&fixture, &["init"]);
+        git(
+            &fixture,
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                dependency.to_str().unwrap(),
+                "lib/dependency",
+            ],
+        );
+        git(&fixture, &["commit", "-am", "pin old dependency"]);
+        let pinned_fixture = git(&fixture, &["rev-parse", "HEAD"]);
+        git(&fixture, &["config", "submodule.recurse", "false"]);
+
+        let submodule = fixture.join("lib/dependency");
+        git(&submodule, &["mv", "draft.sol", "interface.sol"]);
+        git(&submodule, &["commit", "-m", "rename interface"]);
+        git(&fixture, &["commit", "-am", "update dependency"]);
+        let updated_fixture = git(&fixture, &["rev-parse", "HEAD"]);
+
+        // Checking out only the parent leaves the dependency at the newer revision.
+        checkout_revision(fixture.to_str().unwrap(), &pinned_fixture, false);
+        assert!(!submodule.join("draft.sol").exists());
+        assert!(submodule.join("interface.sol").exists());
+
+        checkout_revision(fixture.to_str().unwrap(), &updated_fixture, false);
+        git(&fixture, &["config", "submodule.lib/dependency.update", "merge"]);
+        checkout_revision(fixture.to_str().unwrap(), &pinned_fixture, true);
+        assert_eq!(git(&submodule, &["rev-parse", "HEAD"]), pinned_dependency);
+        assert!(submodule.join("draft.sol").exists());
+        assert!(!submodule.join("interface.sol").exists());
+        assert!(git(&fixture, &["status", "--porcelain"]).is_empty());
+    }
+
+    #[test]
+    fn checkout_revision_syncs_nested_submodule_after_parent_checkout() {
+        let temp = tempfile::tempdir().unwrap();
+        let old_nested = temp.path().join("old-nested");
+        let new_nested = temp.path().join("new-nested");
+        let dependency = temp.path().join("dependency");
+        let fixture = temp.path().join("fixture");
+        let checkout = temp.path().join("checkout");
+
+        for (repository, file) in [(&old_nested, "old.sol"), (&new_nested, "new.sol")] {
+            fs::create_dir(repository).unwrap();
+            git(repository, &["init"]);
+            fs::write(repository.join(file), file).unwrap();
+            git(repository, &["add", "."]);
+            git(repository, &["commit", "-m", file]);
+        }
+        let pinned_nested = git(&old_nested, &["rev-parse", "HEAD"]);
+
+        fs::create_dir(&dependency).unwrap();
+        git(&dependency, &["init"]);
+        git(
+            &dependency,
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                old_nested.to_str().unwrap(),
+                "lib/nested",
+            ],
+        );
+        git(&dependency, &["commit", "-am", "pin old nested dependency"]);
+        let pinned_dependency = git(&dependency, &["rev-parse", "HEAD"]);
+
+        fs::create_dir(&fixture).unwrap();
+        git(&fixture, &["init"]);
+        git(
+            &fixture,
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                dependency.to_str().unwrap(),
+                "lib/dependency",
+            ],
+        );
+        git(&fixture, &["commit", "-am", "pin old dependency"]);
+        let pinned_fixture = git(&fixture, &["rev-parse", "HEAD"]);
+
+        git(
+            &dependency,
+            &[
+                "config",
+                "--file",
+                ".gitmodules",
+                "submodule.lib/nested.url",
+                new_nested.to_str().unwrap(),
+            ],
+        );
+        git(&dependency, &["submodule", "sync"]);
+        let nested = dependency.join("lib/nested");
+        let updated_nested = git(&new_nested, &["rev-parse", "HEAD"]);
+        git(&nested, &["fetch", "origin"]);
+        git(&nested, &["checkout", &updated_nested]);
+        git(&dependency, &["add", "."]);
+        git(&dependency, &["commit", "-m", "use new nested dependency"]);
+        let updated_dependency = git(&dependency, &["rev-parse", "HEAD"]);
+        let fixture_dependency = fixture.join("lib/dependency");
+        git(&fixture_dependency, &["fetch", "origin"]);
+        git(&fixture_dependency, &["checkout", &updated_dependency]);
+        git(&fixture, &["add", "lib/dependency"]);
+        git(&fixture, &["commit", "-m", "update dependency"]);
+
+        git(
+            temp.path(),
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "clone",
+                "--recursive",
+                fixture.to_str().unwrap(),
+                checkout.to_str().unwrap(),
+            ],
+        );
+        git(&checkout, &["config", "submodule.recurse", "false"]);
+
+        checkout_revision_inner(checkout.to_str().unwrap(), &pinned_fixture, true, Some("file"));
+
+        let checked_out_dependency = checkout.join("lib/dependency");
+        let checked_out_nested = checked_out_dependency.join("lib/nested");
+        assert_eq!(git(&checked_out_dependency, &["rev-parse", "HEAD"]), pinned_dependency);
+        assert_eq!(git(&checked_out_nested, &["rev-parse", "HEAD"]), pinned_nested);
+        assert_eq!(
+            git(&checked_out_nested, &["remote", "get-url", "origin"]),
+            old_nested.to_str().unwrap()
+        );
+        assert!(checked_out_nested.join("old.sol").exists());
+        assert!(!checked_out_nested.join("new.sol").exists());
+        assert!(git(&checkout, &["status", "--porcelain"]).is_empty());
     }
 }

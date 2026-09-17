@@ -705,7 +705,7 @@ fn fuzz_replay_call_succeeded<FEN: FoundryEvmNetwork>(
         fail_on_revert,
         target_addr,
         call_result.reverter,
-        executor.inspector().networks.extra_cheatcode_addresses(),
+        executor.inspector().extra_cheatcode_addresses(),
     ) || executor.is_raw_call_mut_success(target_addr, call_result, false)
 }
 

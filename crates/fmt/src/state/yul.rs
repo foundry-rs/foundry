@@ -29,8 +29,14 @@ impl<'ast> State<'_, 'ast> {
             yul::StmtKind::Block(stmts) => self.print_yul_block(stmts, span, false, 0),
             yul::StmtKind::AssignSingle(path, expr) => {
                 self.print_path(path, false);
-                self.word(" := ");
+                self.word(" :=");
                 self.neverbreak();
+                if self
+                    .print_comments(expr.span.lo(), CommentConfig::skip_ws().mixed_prev_space())
+                    .is_none()
+                {
+                    self.nbsp();
+                }
                 self.cursor.advance_to(expr.span.lo(), self.cursor.enabled);
                 self.print_yul_expr(expr);
             }
@@ -287,8 +293,8 @@ impl<'ast> State<'_, 'ast> {
         if block.stmts.is_empty() {
             return false;
         }
-        if self.sm.is_multiline(block.span)
-            && let Ok(snip) = self.sm.span_to_snippet(block.span)
+        if !self.same_source_line(block.span.lo(), block.span.hi())
+            && let Some(snip) = self.snippet(block.span)
         {
             let code_lines = snip.lines().filter(|line| {
                 let trimmed = line.trim();

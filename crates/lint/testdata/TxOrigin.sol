@@ -11,44 +11,44 @@ contract TxOrigin {
     }
 
     modifier onlyOwner() {
-        require(tx.origin == owner, "not owner"); //~WARN: `tx.origin` should not be used for authorization
+        require(tx.origin == owner, "not owner"); //~WARN: `tx.origin` is used for authorization
         _;
     }
 
     function guardedByIf() external view {
-        if (tx.origin != owner) { //~WARN: `tx.origin` should not be used for authorization
+        if (tx.origin != owner) { //~WARN: `tx.origin` is used for authorization
             revert("not owner");
         }
     }
 
     function guardedByPredicate() external view {
-        assert(isOwner(tx.origin)); //~WARN: `tx.origin` should not be used for authorization
+        assert(isOwner(tx.origin)); //~WARN: `tx.origin` is used for authorization
     }
 
     function guardedByWhile() external view {
-        while (tx.origin == owner) { //~WARN: `tx.origin` should not be used for authorization
+        while (tx.origin == owner) { //~WARN: `tx.origin` is used for authorization
             break;
         }
     }
 
     function guardedByFor() external view {
-        for (; tx.origin == owner;) { //~WARN: `tx.origin` should not be used for authorization
+        for (; tx.origin == owner;) { //~WARN: `tx.origin` is used for authorization
             break;
         }
     }
 
     function guardedByDoWhile() external view {
         do {
-        } while (tx.origin == owner); //~WARN: `tx.origin` should not be used for authorization
+        } while (tx.origin == owner); //~WARN: `tx.origin` is used for authorization
     }
 
     function guardedByMapping() external view {
-        require(allowed[tx.origin], "not allowed"); //~WARN: `tx.origin` should not be used for authorization
-        require(allowed[tx.origin] == true, "not allowed"); //~WARN: `tx.origin` should not be used for authorization
+        require(allowed[tx.origin], "not allowed"); //~WARN: `tx.origin` is used for authorization
+        require(allowed[tx.origin] == true, "not allowed"); //~WARN: `tx.origin` is used for authorization
     }
 
     function guardedByTernary() external view {
-        require(tx.origin == owner ? true : false, "not owner"); //~WARN: `tx.origin` should not be used for authorization
+        require(tx.origin == owner ? true : false, "not owner"); //~WARN: `tx.origin` is used for authorization
     }
 
     function readForLogging() external view returns (address) {

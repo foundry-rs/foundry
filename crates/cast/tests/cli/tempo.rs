@@ -1,7 +1,7 @@
 //! CLI tests for shared Tempo transaction options.
 
 use alloy_network::{ReceiptResponse, TransactionBuilder};
-use alloy_primitives::{Address, B256, U256, hex};
+use alloy_primitives::{Address, B256, U256, address, b256, hex, keccak256};
 use alloy_provider::Provider;
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
@@ -11,7 +11,7 @@ use foundry_evm::core::tempo::PATH_USD_ADDRESS;
 use foundry_test_utils::util::OutputExt;
 use tempo_contracts::precompiles::{
     CURRENT_COMMITTEE_ADDRESS, ICurrentCommittee, IReceivePolicyGuard, ITIP20, ITIP403Registry,
-    TIP403_REGISTRY_ADDRESS,
+    TIP20_CHANNEL_RESERVE_ADDRESS, TIP403_REGISTRY_ADDRESS,
 };
 use tempo_hardfork::TempoHardfork;
 
@@ -1111,4 +1111,163 @@ casttest!(tip20_logo_set_validates_logo_uri_before_network_setup, |_prj, cmd| {
         .stderr_lossy();
 
     assert!(output.contains("client-side validation failed: InvalidLogoURI"), "got:\n{output}");
+});
+
+casttest!(channel_id_defaults, async |_prj, cmd| {
+    let (_api, handle) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T5.into()))).await;
+    let provider = handle.http_provider();
+    let chain_id = provider.get_chain_id().await.unwrap();
+
+    let payer = address!("0000000000000000000000000000000000000101");
+    let payee = address!("0000000000000000000000000000000000000202");
+    let salt = b256!("0000000000000000000000000000000000000000000000000000000000000042");
+    let expected = keccak256(
+        (
+            payer,
+            payee,
+            Address::ZERO,
+            PATH_USD_ADDRESS,
+            salt,
+            Address::ZERO,
+            B256::ZERO,
+            TIP20_CHANNEL_RESERVE_ADDRESS,
+            U256::from(chain_id),
+        )
+            .abi_encode(),
+    );
+
+    cmd.args([
+        "channel-id",
+        &payer.to_string(),
+        &payee.to_string(),
+        &PATH_USD_ADDRESS.to_string(),
+        &salt.to_string(),
+        "--rpc-url",
+        handle.http_endpoint().as_str(),
+    ])
+    .assert_success()
+    .stdout_eq(format!("{expected:#x}\n"));
+});
+
+casttest!(tempo_options_reject_conflicting_network, |prj, cmd| {
+    prj.update_config(|config| {
+        config.networks = foundry_evm_networks::NetworkVariant::Ethereum.into();
+    });
+    for command in ["access-list", "estimate", "send", "mktx", "call"] {
+        cmd.cast_fuse()
+            .current_dir(prj.root())
+            .args([
+                command,
+                "0x0000000000000000000000000000000000000001",
+                "--tempo.fee-token",
+                "0x20c0000000000000000000000000000000000000",
+                "--rpc-url",
+                "http://127.0.0.1:1",
+            ])
+            .assert_failure()
+            .stderr_eq(str![[r#"
+Error: Tempo transaction options conflict with configured network `ethereum`
+
+"#]]);
+    }
+});
+
+casttest!(tempo_sessions_reject_conflicting_network, |prj, cmd| {
+    prj.update_config(|config| {
+        config.networks = foundry_evm_networks::NetworkVariant::Ethereum.into();
+    });
+    for command in ["access-list", "estimate", "send", "mktx", "call"] {
+        cmd.cast_fuse()
+            .current_dir(prj.root())
+            .args([
+                command,
+                "0x0000000000000000000000000000000000000001",
+                "--tempo.session",
+                "0x4444444444444444444444444444444444444444444444444444444444444444",
+                "--rpc-url",
+                "http://127.0.0.1:1",
+            ])
+            .assert_failure()
+            .stderr_eq(str![[r#"
+Error: Tempo transaction options conflict with configured network `ethereum`
+
+"#]]);
+    }
+});
+
+casttest!(tempo_mktx_selects_network_without_tempo_options, async |prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo().with_chain_id(Some(4217u64))).await;
+    let rpc = handle.http_endpoint();
+    for network in [
+        None,
+        Some(foundry_evm_networks::NetworkVariant::Tempo),
+        Some(foundry_evm_networks::NetworkVariant::Ethereum),
+    ] {
+        prj.update_config(|config| {
+            config.networks = network.map(Into::into).unwrap_or_default();
+        });
+        let expected = if network == Some(foundry_evm_networks::NetworkVariant::Ethereum) {
+            str![[r#"
+0x02[..]
+
+"#]]
+        } else {
+            str![[r#"
+0x76[..]
+
+"#]]
+        };
+        cmd.cast_fuse()
+            .current_dir(prj.root())
+            .args([
+                "mktx",
+                "0x0000000000000000000000000000000000000001",
+                "--private-key",
+                "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+                "--rpc-url",
+                &rpc,
+            ])
+            .assert_success()
+            .stdout_eq(expected);
+    }
+});
+
+casttest!(tempo_zone_rejects_zero_amount, |_prj, cmd| {
+    for args in [
+        vec!["tempo", "zone", "deposit", "--portal", "0x1111111111111111111111111111111111111111"],
+        vec!["tempo", "zone", "withdraw", "--zone-id", "42", "--zone-chain-id", "1337"],
+    ] {
+        cmd.cast_fuse()
+            .args(args)
+            .args(["--amount", "0"])
+            .assert_failure()
+            .stdout_eq("")
+            .stderr_eq(str![[r#"
+Error: amount must be greater than zero
+
+"#]]);
+    }
+});
+
+casttest!(tempo_zone_rejects_callback_without_gas, |_prj, cmd| {
+    cmd.args([
+        "tempo",
+        "zone",
+        "withdraw",
+        "--zone-id",
+        "7",
+        "--zone-chain-id",
+        "421700007",
+        "--amount",
+        "1",
+        "--callback-data",
+        "0x1234",
+    ])
+    .assert_failure()
+    .stdout_eq("")
+    .stderr_eq(str![[r#"
+Error: --callback-data requires a nonzero --callback-gas-limit
+
+"#]]);
 });

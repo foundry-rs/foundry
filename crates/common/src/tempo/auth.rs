@@ -13,8 +13,6 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use eyre::Result;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-#[cfg(any(unix, windows))]
-use std::process::Command;
 use std::{
     env,
     sync::LazyLock,
@@ -23,6 +21,9 @@ use std::{
 use tempo_alloy::accounts::{TempoAccountsKeyAuthorization, TempoAccountsStore};
 use tempo_primitives::transaction::{SignatureType, SignedKeyAuthorization};
 use tokio::sync::Mutex;
+
+#[cfg(any(unix, windows))]
+use std::process::Command;
 
 /// Default device-code service URL (production wallet.tempo.xyz).
 const DEFAULT_CLI_AUTH_URL: &str = "https://wallet.tempo.xyz/cli-auth";

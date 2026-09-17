@@ -155,6 +155,7 @@ fn replace_at_span(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use solar::{ast::Span, interface::BytePos};
 
     #[test]
     fn test_opcode_mutations_exist() {
@@ -196,47 +197,21 @@ mod tests {
     }
 
     #[test]
-    fn test_replace_at_span_valid() {
-        use solar::interface::BytePos;
-        let original = "add(a, b)";
-        let outer = solar::ast::Span::new(BytePos(10), BytePos(19));
-        let target = solar::ast::Span::new(BytePos(10), BytePos(13));
-        let result = replace_at_span(original, outer, target, "add", "sub");
-        assert_eq!(result, Some("sub(a, b)".to_string()));
-    }
-
-    #[test]
-    fn test_replace_at_span_target_outside_outer() {
-        use solar::interface::BytePos;
-        let original = "add(a, b)";
-        let outer = solar::ast::Span::new(BytePos(20), BytePos(29));
-        let target = solar::ast::Span::new(BytePos(10), BytePos(13));
-        assert!(replace_at_span(original, outer, target, "add", "sub").is_none());
-    }
-
-    #[test]
-    fn test_replace_at_span_target_exceeds_length() {
-        use solar::interface::BytePos;
-        let original = "add(a, b)";
-        let outer = solar::ast::Span::new(BytePos(10), BytePos(19));
-        let target = solar::ast::Span::new(BytePos(10), BytePos(30));
-        assert!(replace_at_span(original, outer, target, "add", "sub").is_none());
-    }
-
-    #[test]
-    fn test_replace_at_span_opcode_mismatch() {
-        use solar::interface::BytePos;
-        let original = "mul(a, b)";
-        let outer = solar::ast::Span::new(BytePos(10), BytePos(19));
-        let target = solar::ast::Span::new(BytePos(10), BytePos(13));
-        assert!(replace_at_span(original, outer, target, "add", "sub").is_none());
-    }
-
-    #[test]
-    fn test_replace_at_span_empty_original() {
-        use solar::interface::BytePos;
-        let outer = solar::ast::Span::new(BytePos(10), BytePos(19));
-        let target = solar::ast::Span::new(BytePos(10), BytePos(13));
-        assert!(replace_at_span("", outer, target, "add", "sub").is_none());
+    fn test_replace_at_span() {
+        for (case, original, outer, target, expected) in [
+            ("valid", "add(a, b)", (10, 19), (10, 13), Some("sub(a, b)")),
+            ("target outside outer", "add(a, b)", (20, 29), (10, 13), None),
+            ("target exceeds length", "add(a, b)", (10, 19), (10, 30), None),
+            ("opcode mismatch", "mul(a, b)", (10, 19), (10, 13), None),
+            ("empty original", "", (10, 19), (10, 13), None),
+        ] {
+            let outer = Span::new(BytePos(outer.0), BytePos(outer.1));
+            let target = Span::new(BytePos(target.0), BytePos(target.1));
+            assert_eq!(
+                replace_at_span(original, outer, target, "add", "sub").as_deref(),
+                expected,
+                "{case}",
+            );
+        }
     }
 }

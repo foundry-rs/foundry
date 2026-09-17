@@ -58,23 +58,22 @@ class CompareBenchmarkThresholdsTests(unittest.TestCase):
         self.assertEqual(uncalibrated.returncode, 0)
         self.assertIn("Uncalibrated", uncalibrated.stdout)
 
-    def test_missing_nightly_alerts_but_missing_baseline_does_not(self):
+    def test_missing_results_are_execution_errors(self):
         rules = {
             "alerting": self.rule(5, 10),
             "advisory": self.rule(5, 10, False),
         }
         missing_nightly = self.run_compare({"alerting": 1, "advisory": 1}, {}, rules)
-        self.assertEqual(missing_nightly.returncode, 1)
-        self.assertIn("❌ Missing nightly result", missing_nightly.stdout)
-        self.assertIn("⚠️ Inconclusive (missing side)", missing_nightly.stdout)
+        self.assertEqual(missing_nightly.returncode, 2)
+        self.assertIn("⚠️ Incomplete benchmark", missing_nightly.stdout)
 
         missing_nightly_file = self.run_compare({"alerting": 1}, {}, rules, False)
-        self.assertEqual(missing_nightly_file.returncode, 1)
-        self.assertIn("❌ Missing nightly result", missing_nightly_file.stdout)
+        self.assertEqual(missing_nightly_file.returncode, 2)
+        self.assertIn("⚠️ Incomplete benchmark", missing_nightly_file.stdout)
 
         missing_baseline = self.run_compare({}, {"alerting": 1}, rules)
-        self.assertEqual(missing_baseline.returncode, 0)
-        self.assertIn("⚠️ Inconclusive (missing side)", missing_baseline.stdout)
+        self.assertEqual(missing_baseline.returncode, 2)
+        self.assertIn("⚠️ Incomplete benchmark", missing_baseline.stdout)
 
     def test_malformed_config_and_input_exit_two(self):
         config = self.run_compare({"key": 1}, {"key": 2}, {"key": self.rule(10, 5)})

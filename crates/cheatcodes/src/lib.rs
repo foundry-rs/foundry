@@ -43,7 +43,7 @@ mod crypto;
 mod version;
 
 mod env;
-pub use env::set_execution_context;
+pub use env::{current_execution_context, set_execution_context};
 
 mod evm;
 

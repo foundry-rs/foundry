@@ -157,12 +157,7 @@ impl UintStrategy {
         };
 
         // init U256 from 2 randoms
-        let mut inner: [u64; 4] = [0; 4];
-        inner[0] = lower as u64;
-        inner[1] = (lower >> 64) as u64;
-        inner[2] = higher as u64;
-        inner[3] = (higher >> 64) as u64;
-        let start: U256 = U256::from_limbs(inner);
+        let start = (U256::from(higher) << 128) | U256::from(lower);
 
         Ok(UintValueTree::new(start, false))
     }

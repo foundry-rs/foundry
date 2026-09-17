@@ -1,71 +1,89 @@
 use super::{
-    contracts::{ISafe, ISimulateTxAccessor},
+    contracts::{ISafe, ISimulateTxAccessor, SIMULATE_TX_ACCESSOR_V1_4_1},
     deploy::ensure_contract,
+    rpc_provider,
     service::{SafeServiceOpts, SafeTransaction},
 };
-use alloy_network::{Ethereum, TransactionBuilder};
+use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, B256, Bytes, U256, hex};
 use alloy_provider::Provider;
 use alloy_rpc_types::TransactionRequest;
 use alloy_sol_types::{SolCall, SolValue};
+use clap::Args;
 use eyre::{Context, Result, ensure};
-use foundry_cli::{json::print_json_object, opts::RpcOpts, utils::LoadConfig};
-use foundry_common::provider::ProviderBuilder;
+use foundry_cli::{json::print_json_object, opts::RpcOpts};
 use serde_json::json;
 
-pub(super) async fn run(
+/// CLI arguments for `cast safe simulate`.
+#[derive(Args, Debug)]
+pub struct SimulateArgs {
+    /// Safe account address.
     safe: Address,
-    safe_tx_hash: B256,
-    from: Address,
-    accessor: Address,
-    service: SafeServiceOpts,
-    rpc: RpcOpts,
-) -> Result<()> {
-    let config = rpc.load_config()?;
-    let provider = ProviderBuilder::<Ethereum>::from_config(&config)?.build()?;
-    let chain_id = provider.get_chain_id().await?;
-    let transaction = service.get_transaction(chain_id, "v2", safe_tx_hash).await?;
-    transaction.verify_hash(safe, &provider).await?;
-    transaction.show_transaction_summary()?;
-    ensure!(
-        SafeTransaction::number(&transaction.gas_price, "gasPrice")?.is_zero(),
-        "cannot simulate reimbursed Safe transactions (gasPrice > 0): SimulateTxAccessor does not enforce safeTxGas"
-    );
-    ensure_contract(&provider, accessor, "SimulateTxAccessor", "--accessor").await?;
 
-    let accessor_call: Bytes = ISimulateTxAccessor::simulateCall {
-        to: transaction.to,
-        value: SafeTransaction::number(&transaction.value, "value")?,
-        data: transaction.data.clone(),
-        operation: transaction.operation,
+    /// Safe transaction hash from the Transaction Service.
+    safe_tx_hash: B256,
+
+    /// Address that will execute the Safe transaction. Used as the simulation's tx.origin.
+    #[arg(long, env = "ETH_FROM", value_name = "ADDRESS")]
+    from: Address,
+
+    /// SimulateTxAccessor address.
+    #[arg(long, default_value_t = SIMULATE_TX_ACCESSOR_V1_4_1)]
+    accessor: Address,
+
+    #[command(flatten)]
+    service: Box<SafeServiceOpts>,
+
+    #[command(flatten)]
+    rpc: Box<RpcOpts>,
+}
+
+impl SimulateArgs {
+    pub(super) async fn run(self) -> Result<()> {
+        let Self { safe, safe_tx_hash, from, accessor, service, rpc } = self;
+        let (provider, chain_id) = rpc_provider(&rpc).await?;
+        let transaction = service.get_transaction(chain_id, "v2", safe_tx_hash).await?;
+        transaction.verify_hash(safe, &provider).await?;
+        transaction.show_transaction_summary()?;
+        ensure!(
+            SafeTransaction::number(&transaction.gas_price, "gasPrice")?.is_zero(),
+            "cannot simulate reimbursed Safe transactions (gasPrice > 0): SimulateTxAccessor does not enforce safeTxGas"
+        );
+        ensure_contract(&provider, accessor, "SimulateTxAccessor", "--accessor").await?;
+
+        let accessor_call = ISimulateTxAccessor::simulateCall {
+            to: transaction.to,
+            value: SafeTransaction::number(&transaction.value, "value")?,
+            data: transaction.data.clone(),
+            operation: transaction.operation,
+        }
+        .abi_encode();
+        let simulation_call = ISafe::simulateAndRevertCall {
+            targetContract: accessor,
+            calldataPayload: accessor_call.into(),
+        }
+        .abi_encode();
+        let request =
+            TransactionRequest::default().with_from(from).with_to(safe).with_input(simulation_call);
+        let Err(error) = provider.call(request).await else {
+            eyre::bail!("Safe simulateAndRevert unexpectedly returned successfully");
+        };
+        let revert_data = error
+            .as_error_resp()
+            .and_then(|payload| payload.as_revert_data())
+            .ok_or_else(|| eyre::eyre!("Safe simulation failed without revert data: {error}"))?;
+        let (gas_used, success, return_data) = decode_result(&revert_data)?;
+        ensure!(
+            success,
+            "Safe transaction simulation failed after {gas_used} gas; return data: {return_data}"
+        );
+        print_json_object(json!({
+            "safeTxHash": safe_tx_hash,
+            "success": true,
+            "gasUsed": gas_used.to_string(),
+            "returnData": return_data,
+        }))
     }
-    .abi_encode()
-    .into();
-    let simulation_call: Bytes =
-        ISafe::simulateAndRevertCall { targetContract: accessor, calldataPayload: accessor_call }
-            .abi_encode()
-            .into();
-    let request =
-        TransactionRequest::default().with_from(from).with_to(safe).with_input(simulation_call);
-    let Err(error) = provider.call(request).await else {
-        eyre::bail!("Safe simulateAndRevert unexpectedly returned successfully");
-    };
-    let revert_data = error
-        .as_error_resp()
-        .and_then(|payload| payload.as_revert_data())
-        .ok_or_else(|| eyre::eyre!("Safe simulation failed without revert data: {error}"))?;
-    let (gas_used, success, return_data) = decode_result(&revert_data)?;
-    ensure!(
-        success,
-        "Safe transaction simulation failed after {gas_used} gas; return data: {return_data}"
-    );
-    print_json_object(json!({
-        "safeTxHash": safe_tx_hash,
-        "success": true,
-        "gasUsed": gas_used.to_string(),
-        "returnData": return_data,
-    }))?;
-    Ok(())
 }
 
 fn decode_result(revert_data: &[u8]) -> Result<(U256, bool, Bytes)> {

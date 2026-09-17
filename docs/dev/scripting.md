@@ -84,6 +84,14 @@ end
 Executor::call-. BroadcastableTransactions .->ScriptArgs::handle_broadcastable_transactions;
 ```
 
+Script execution protection is installed after deploying the script contract. Alongside the
+`ADDRESS` check, the cheatcode inspector rejects `CALLER` in the main script's broadcasting frame
+when its actual caller differs from the broadcast sender. Called contracts and deeper callbacks
+retain their own caller semantics. Setting `script_execution_protection = false` disables both
+checks. This is an opcode guard: it does not track sender values cached before broadcasting or
+reads moved outside the broadcast by the compiler. Scripts should pass an explicit deployer
+address when constructing transaction arguments.
+
 ## Nonce Management
 
 During the first execution stage on `forge script`, foundry has to adjust the nonce from the sender to make sure the execution and state are as close as possible to its on-chain representation.

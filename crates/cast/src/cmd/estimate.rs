@@ -1,5 +1,5 @@
-use super::auth::confirm_auth_rpc_disclosure;
-use crate::tx::{CastTxBuilder, SenderKind};
+use super::{auth::confirm_and_build, print_result_line};
+use crate::tx::{CastTxBuilder, read_only_sender};
 use alloy_ens::NameOrAddress;
 use alloy_network::{Ethereum, Network};
 use alloy_primitives::U256;
@@ -8,15 +8,17 @@ use alloy_rpc_types::BlockId;
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
-    json::print_scalar,
     opts::{RpcOpts, TransactionOpts},
     utils::{LoadConfig, parse_ether_value},
 };
-use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder, shell};
+use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
+use foundry_config::Config;
 use foundry_wallets::{BrowserWalletOpts, WalletOpts};
-use serde::Serialize;
-use std::{fmt::Display, str::FromStr};
+use std::str::FromStr;
 use tempo_alloy::TempoNetwork;
+
+#[cfg(feature = "base")]
+use base_common_network::Base;
 
 /// CLI arguments for `cast estimate`.
 #[derive(Debug, Parser)]
@@ -91,14 +93,21 @@ pub enum EstimateSubcommands {
 
 impl EstimateArgs {
     pub async fn run(self) -> Result<()> {
-        if self.tx.tempo.is_tempo() {
-            self.run_with_network::<TempoNetwork>().await
-        } else {
-            self.run_with_network::<Ethereum>().await
+        let config = self.rpc.load_config()?;
+        let requires_tempo = self.tx.tempo.is_tempo() || self.tx.tempo.session_id()?.is_some();
+        let network = super::resolve_transaction_network(&config, requires_tempo).await?;
+        if network.is_tempo() {
+            return self.run_with_network::<TempoNetwork>(config).await;
         }
+        #[cfg(feature = "base")]
+        if network.is_base() {
+            super::validate_base_transaction_options(&self.tx)?;
+            return self.run_with_network::<Base>(config).await;
+        }
+        self.run_with_network::<Ethereum>(config).await
     }
 
-    pub async fn run_with_network<N: Network>(self) -> Result<()>
+    async fn run_with_network<N: Network>(self, config: Config) -> Result<()>
     where
         N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
@@ -112,18 +121,17 @@ impl EstimateArgs {
             wallet,
             browser,
             force,
-            rpc,
+            rpc: _,
             command,
         } = self;
 
-        let config = rpc.load_config()?;
         let provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
-        let browser = browser.run::<N>().await?;
-        let sender = if let Some(browser) = &browser {
-            browser.address().into()
-        } else {
-            SenderKind::from_wallet_opts(wallet).await?
+        let chain_id = match config.chain {
+            Some(chain) => chain.id(),
+            None => provider.get_chain_id().await?,
         };
+        let (sender, is_browser) =
+            read_only_sender::<N>(&browser, wallet, &tx.tempo, chain_id).await?;
 
         let code = if let Some(EstimateSubcommands::Create {
             code,
@@ -149,45 +157,17 @@ impl EstimateArgs {
             .with_code_sig_and_args(code, sig, args)
             .await?
             .raw();
-        if builder.has_auth() && !confirm_auth_rpc_disclosure(&builder, &sender, force)? {
+        let Some(tx) = confirm_and_build(builder, sender, force, None, true).await? else {
             return Ok(());
-        }
-        let (tx, _) = builder.build(sender).await?;
+        };
 
-        let tx = if browser.is_some() { tx.browser_wallet_gas_estimation_request() } else { tx };
+        let tx = if is_browser { tx.browser_wallet_gas_estimation_request() } else { tx };
         let gas = provider.estimate_gas(tx).block(block.unwrap_or_default()).await?;
         if cost {
-            let gas_price_wei = provider.get_gas_price().await?;
-            let cost = gas_price_wei * gas as u128;
-            let cost_eth = cost as f64 / 1e18;
-            print_estimate_result(cost_eth)?;
+            let cost = provider.get_gas_price().await? * gas as u128;
+            print_result_line(cost as f64 / 1e18)
         } else {
-            print_estimate_result(gas)?;
+            print_result_line(gas)
         }
-        Ok(())
-    }
-}
-
-fn print_estimate_result(value: impl Serialize + Display) -> Result<()> {
-    if shell::is_json() {
-        print_scalar(value)
-    } else {
-        // Bypass the shell verbosity layer so `--quiet` does not suppress the primary result.
-        let mut shell = shell::Shell::get();
-        let out = shell.out();
-        writeln!(out, "{value}")?;
-        out.flush()?;
-        Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_estimate_value() {
-        let args: EstimateArgs = EstimateArgs::parse_from(["foundry-cli", "--value", "100"]);
-        assert!(args.tx.value.is_some());
     }
 }
