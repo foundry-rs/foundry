@@ -128,6 +128,7 @@ forgetest!(preprocess_remapped_bytecode_dependencies, |prj, cmd| {
         config.remappings = vec!["@p/=src/".parse::<Remapping>().unwrap().into()];
     });
     let source = r#"
+pragma solidity ^0.8.0;
 contract Impl {
     constructor(uint256) {}
     function v() external pure returns (uint256) { return 111; }
@@ -187,6 +188,670 @@ Encountered 2 failing tests in test/Impl.t.sol:ImplTest
 [FAIL: stale implementation] test_new() ([GAS])
 
 Encountered a total of 2 failing tests, 0 tests succeeded
+...
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/16901>
+forgetest!(preprocess_external_bytecode_dependencies, |prj, cmd| {
+    prj.update_config(|config| {
+        config.dynamic_test_linking = true;
+        config.remappings = vec!["@dep/=lib/dep/src/".parse::<Remapping>().unwrap().into()];
+    });
+    let source = r#"
+pragma solidity ^0.8.0;
+contract Impl {
+    function v() external pure returns (uint256) { return 111; }
+}
+"#;
+    prj.create_file("lib/dep/src/RemappedImpl.sol", source);
+    prj.create_file("external/RelativeImpl.sol", source);
+    prj.add_test(
+        "ExternalImpl.t.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {Impl as RemappedImpl} from "@dep/RemappedImpl.sol";
+import {Impl as RelativeImpl} from "../external/RelativeImpl.sol";
+contract ExternalImplTest {
+    function test_remapped() public {
+        require(new RemappedImpl().v() == 111, "stale remapped implementation");
+    }
+    function test_relative() public {
+        require(new RelativeImpl().v() == 111, "stale relative implementation");
+    }
+}
+"#,
+    );
+    cmd.args(["test"]).assert_success();
+
+    // External deployments remain native, so body-only edits must rebuild their importer.
+    let changed = source.replace("return 111", "return 222");
+    prj.create_file("lib/dep/src/RemappedImpl.sol", &changed);
+    prj.create_file("external/RelativeImpl.sol", &changed);
+    cmd.forge_fuse().arg("test").with_no_redact().assert_failure().stdout_eq(str![[r#"
+Compiling 3 files with [..]
+[..]
+Compiler run successful!
+...
+[FAIL: stale relative implementation] test_relative() ([..])
+[FAIL: stale remapped implementation] test_remapped() ([..])
+...
+"#]]);
+});
+
+forgetest!(preprocess_external_dependencies_invalidate_independently, |prj, cmd| {
+    prj.update_config(|config| {
+        config.dynamic_test_linking = true;
+        config.remappings = vec!["@dep/=lib/dep/src/".parse::<Remapping>().unwrap().into()];
+    });
+    let source = r#"
+pragma solidity ^0.8.0;
+contract Impl { function v() external pure returns (uint256) { return 111; } }
+"#;
+    prj.create_file("lib/dep/src/RemappedImpl.sol", source);
+    prj.create_file("external/RelativeImpl.sol", source);
+    let remapped_test = |expected| {
+        format!(
+            r#"
+pragma solidity ^0.8.0;
+import {{Impl}} from "@dep/RemappedImpl.sol";
+contract RemappedTest {{
+    function test_remapped() public {{
+        require(new Impl().v() == {expected}, "stale remapped implementation");
+    }}
+}}
+"#,
+        )
+    };
+    prj.add_test("Remapped.t.sol", &remapped_test(111));
+    prj.add_test(
+        "Relative.t.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {Impl} from "../external/RelativeImpl.sol";
+contract RelativeTest {
+    function test_relative() public {
+        require(new Impl().v() == 111, "stale relative implementation");
+    }
+}
+"#,
+    );
+    cmd.args(["test"]).assert_success();
+
+    let changed = source.replace("return 111", "return 222");
+    prj.create_file("lib/dep/src/RemappedImpl.sol", &changed);
+    cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: stale remapped implementation] test_remapped() ([..])
+...
+"#]]);
+
+    // Make the first importer green without touching the second, then verify the relative edge.
+    prj.add_test("Remapped.t.sol", &remapped_test(222));
+    prj.create_file("external/RelativeImpl.sol", &changed);
+    cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: stale relative implementation] test_relative() ([..])
+...
+"#]]);
+});
+
+forgetest!(preprocess_native_bytecode_forms, |prj, cmd| {
+    prj.update_config(|config| config.dynamic_test_linking = true);
+    let source = r#"
+pragma solidity ^0.8.0;
+contract Impl {
+    function v() external pure returns (uint256) { return 111; }
+}
+"#;
+    prj.add_source("Impl.sol", source);
+    prj.add_test(
+        "Native.t.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {Impl} from "../src/Impl.sol";
+interface Vm { function etch(address, bytes calldata) external; }
+function make() returns (Impl) { return new Impl(); }
+contract NativeTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    function test_runtime_code() public {
+        address target = address(0xBEEF);
+        vm.etch(target, type(Impl).runtimeCode);
+        (bool ok, bytes memory out) = target.staticcall(abi.encodeCall(Impl.v, ()));
+        require(ok && abi.decode(out, (uint256)) == 111, "stale runtime bytecode");
+    }
+    function test_free_function() public {
+        require(make().v() == 111, "stale free function bytecode");
+    }
+}
+"#,
+    );
+    cmd.args(["test"]).assert_success();
+
+    prj.add_source("Impl.sol", &source.replace("return 111", "return 222"));
+    cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: stale free function bytecode] test_free_function() ([..])
+[FAIL: stale runtime bytecode] test_runtime_code() ([..])
+...
+"#]]);
+});
+
+forgetest!(preprocess_same_file_free_function_dependency, |prj, cmd| {
+    prj.update_config(|config| config.dynamic_test_linking = true);
+    let source = r#"
+pragma solidity ^0.8.0;
+contract Impl { function v() external pure returns (uint256) { return 111; } }
+"#;
+    prj.add_source("Impl.sol", source);
+    prj.add_test(
+        "FreeFunction.t.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {Impl} from "../src/Impl.sol";
+function make() returns (Impl) { return new Impl(); }
+contract FreeFunctionTest {
+    function test_free_function() public {
+        require(make().v() == 111, "stale free function bytecode");
+    }
+}
+"#,
+    );
+    cmd.args(["test"]).assert_success();
+
+    prj.add_source("Impl.sol", &source.replace("return 111", "return 222"));
+    cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: stale free function bytecode] test_free_function() ([..])
+...
+"#]]);
+});
+
+forgetest!(preprocess_script_native_dependency, |prj, cmd| {
+    prj.update_config(|config| config.dynamic_test_linking = true);
+    let source = r#"
+pragma solidity ^0.8.0;
+contract Impl { function v() external pure returns (uint256) { return 111; } }
+"#;
+    prj.add_source("Impl.sol", source);
+    prj.add_script(
+        "Native.s.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {Impl} from "../src/Impl.sol";
+contract NativeScript {
+    function run() public {
+        require(new Impl().v() == 111, "stale script bytecode");
+    }
+}
+"#,
+    );
+    cmd.args(["script", "script/Native.s.sol:NativeScript"]).assert_success();
+
+    prj.add_source("Impl.sol", &source.replace("return 111", "return 222"));
+    cmd.forge_fuse().args(["script", "script/Native.s.sol:NativeScript"]).assert_failure();
+});
+
+forgetest!(preprocess_imported_free_function_dependency, |prj, cmd| {
+    prj.update_config(|config| config.dynamic_test_linking = true);
+    let source = r#"
+pragma solidity ^0.8.0;
+contract Impl { function v() external pure returns (uint256) { return 111; } }
+"#;
+    prj.add_source("Impl.sol", source);
+    prj.add_source(
+        "Factory.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {Impl} from "./Impl.sol";
+/*
+This padding deliberately places the imported function's expression beyond the end of the test
+source. Recursive dependency analysis must use the callee's source map rather than slicing the
+importer with the callee's offsets.
+....................................................................................................
+....................................................................................................
+....................................................................................................
+*/
+function make() returns (Impl) { return new Impl(); }
+"#,
+    );
+    prj.add_test(
+        "FreeFunction.t.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {make} from "../src/Factory.sol";
+contract FreeFunctionTest {
+    function test_free_function() public {
+        require(make().v() == 111, "stale imported free function bytecode");
+    }
+}
+"#,
+    );
+    cmd.args(["test"]).assert_success();
+
+    prj.add_source("Impl.sol", &source.replace("return 111", "return 222"));
+    cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: stale imported free function bytecode] test_free_function() ([..])
+...
+"#]]);
+});
+
+forgetest!(preprocess_function_reference_dependencies, |prj, cmd| {
+    prj.update_config(|config| config.dynamic_test_linking = true);
+    let source = r#"
+pragma solidity ^0.8.0;
+contract Impl { function v() external pure returns (uint256) { return 111; } }
+"#;
+    prj.add_source("Impl.sol", source);
+    prj.add_source(
+        "Factory.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {Impl} from "./Impl.sol";
+function makeRef() returns (Impl) { return new Impl(); }
+function make() returns (Impl) { return new Impl(); }
+function make(uint256) returns (Impl) { return new Impl(); }
+"#,
+    );
+    prj.add_test(
+        "FunctionReference.t.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {Impl} from "../src/Impl.sol";
+import {make, makeRef} from "../src/Factory.sol";
+contract FunctionReferenceTest {
+    function test_function_reference() public {
+        function () internal returns (Impl) factory = makeRef;
+        require(factory().v() == 111, "stale function reference bytecode");
+    }
+    function test_overloaded_function() public {
+        require(make().v() == 111, "stale overloaded function bytecode");
+    }
+}
+"#,
+    );
+    cmd.args(["test"]).assert_success();
+
+    prj.add_source("Impl.sol", &source.replace("return 111", "return 222"));
+    cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: stale function reference bytecode] test_function_reference() ([..])
+[FAIL: stale overloaded function bytecode] test_overloaded_function() ([..])
+...
+"#]]);
+});
+
+forgetest!(preprocess_shared_free_function_is_not_rewritten, |prj, cmd| {
+    prj.update_config(|config| config.dynamic_test_linking = true);
+    prj.add_source("Impl.sol", "contract Impl {}");
+    prj.add_test(
+        "SharedFreeFunction.t.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {Impl} from "../src/Impl.sol";
+function make() returns (Impl) { return new Impl(); }
+contract FirstTest {
+    function test_first() public { require(address(make()) != address(0)); }
+}
+contract SecondTest {
+    function test_second() public { require(address(make()) != address(0)); }
+}
+"#,
+    );
+
+    cmd.args(["test"]).assert_success();
+});
+
+forgetest!(preprocess_try_call_option_dependency_is_not_rewritten, |prj, cmd| {
+    prj.update_config(|config| config.dynamic_test_linking = true);
+    prj.add_source("Created.sol", "contract Created {}");
+    prj.add_source("Salt.sol", "contract Salt {}");
+    prj.add_test(
+        "TryCallOption.t.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {Created} from "../src/Created.sol";
+import {Salt} from "../src/Salt.sol";
+contract TryCallOptionTest {
+    function test_try_call_option() public {
+        try new Created{salt: keccak256(type(Salt).creationCode)}() returns (Created created) {
+            require(address(created) != address(0));
+        } catch { revert(); }
+    }
+}
+"#,
+    );
+
+    cmd.args(["test"]).assert_success();
+});
+
+forgetest!(preprocess_internal_library_dependency, |prj, cmd| {
+    prj.update_config(|config| config.dynamic_test_linking = true);
+    let source = r#"
+pragma solidity ^0.8.0;
+contract Impl { function v() external pure returns (uint256) { return 111; } }
+"#;
+    prj.add_source("Impl.sol", source);
+    prj.add_source(
+        "FactoryLib.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {Impl} from "./Impl.sol";
+library FactoryLib {
+    function make() internal returns (Impl) { return new Impl(); }
+}
+"#,
+    );
+    prj.add_test(
+        "Library.t.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {FactoryLib} from "../src/FactoryLib.sol";
+contract LibraryTest {
+    function test_library() public {
+        require(FactoryLib.make().v() == 111, "stale library bytecode");
+    }
+}
+"#,
+    );
+    cmd.args(["test"]).assert_success();
+
+    prj.add_source("Impl.sol", &source.replace("return 111", "return 222"));
+    cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: stale library bytecode] test_library() ([..])
+...
+"#]]);
+});
+
+forgetest!(preprocess_namespace_library_dependency, |prj, cmd| {
+    prj.update_config(|config| config.dynamic_test_linking = true);
+    let source = r#"
+pragma solidity ^0.8.0;
+contract Impl { function v() external pure returns (uint256) { return 111; } }
+"#;
+    prj.add_source("Impl.sol", source);
+    prj.add_source(
+        "FactoryLib.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {Impl} from "./Impl.sol";
+library FactoryLib {
+    function make() internal returns (Impl) { return new Impl(); }
+}
+"#,
+    );
+    prj.add_test(
+        "NamespaceLibrary.t.sol",
+        r#"
+pragma solidity ^0.8.0;
+import "../src/FactoryLib.sol" as Factories;
+contract NamespaceLibraryTest {
+    function test_namespace_library() public {
+        require(
+            Factories.FactoryLib.make().v() == 111,
+            "stale namespace library bytecode"
+        );
+    }
+}
+"#,
+    );
+    cmd.args(["test"]).assert_success();
+
+    prj.add_source("Impl.sol", &source.replace("return 111", "return 222"));
+    cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: stale namespace library bytecode] test_namespace_library() ([..])
+...
+"#]]);
+});
+
+forgetest!(preprocess_using_library_dependency, |prj, cmd| {
+    prj.update_config(|config| config.dynamic_test_linking = true);
+    let source = r#"
+pragma solidity ^0.8.0;
+contract Impl { function v() external pure returns (uint256) { return 111; } }
+"#;
+    prj.add_source("Impl.sol", source);
+    prj.add_source(
+        "FactoryLib.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {Impl} from "./Impl.sol";
+library FactoryLib {
+    function make(uint256) internal returns (Impl) { return new Impl(); }
+}
+"#,
+    );
+    prj.add_test(
+        "UsingLibrary.t.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {FactoryLib} from "../src/FactoryLib.sol";
+contract UsingLibraryTest {
+    using FactoryLib for uint256;
+    function test_using_library() public {
+        require(uint256(0).make().v() == 111, "stale using library bytecode");
+    }
+}
+"#,
+    );
+    cmd.args(["test"]).assert_success();
+
+    prj.add_source("Impl.sol", &source.replace("return 111", "return 222"));
+    cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: stale using library bytecode] test_using_library() ([..])
+...
+"#]]);
+});
+
+forgetest!(preprocess_try_constructor_argument_dependencies, |prj, cmd| {
+    prj.update_config(|config| config.dynamic_test_linking = true);
+    let source = r#"
+pragma solidity ^0.8.0;
+contract Impl { function v() external pure returns (uint256) { return 111; } }
+"#;
+    prj.add_source("Impl.sol", source);
+    prj.add_source(
+        "FactoryLib.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {Impl} from "./Impl.sol";
+library FactoryLib {
+    function make() internal returns (Impl) { return new Impl(); }
+}
+"#,
+    );
+    prj.add_source(
+        "Receiver.sol",
+        r#"
+pragma solidity ^0.8.0;
+contract Receiver {
+    uint256 public immutable value;
+    constructor(uint256 value_) { value = value_; }
+}
+"#,
+    );
+    prj.add_test(
+        "TryPlainLibrary.t.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {FactoryLib} from "../src/FactoryLib.sol";
+import {Receiver} from "../src/Receiver.sol";
+contract TryPlainLibraryTest {
+    function test_try_plain_library() public {
+        try new Receiver(FactoryLib.make().v()) returns (Receiver receiver) {
+            require(receiver.value() == 111, "stale try plain library bytecode");
+        } catch { revert(); }
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "TryNamespaceLibrary.t.sol",
+        r#"
+pragma solidity ^0.8.0;
+import "../src/FactoryLib.sol" as Factories;
+import {Receiver} from "../src/Receiver.sol";
+contract TryNamespaceLibraryTest {
+    function test_try_namespace_library() public {
+        try new Receiver(Factories.FactoryLib.make().v()) returns (Receiver receiver) {
+            require(receiver.value() == 111, "stale try namespace library bytecode");
+        } catch { revert(); }
+    }
+}
+"#,
+    );
+    cmd.args(["test"]).assert_success();
+
+    prj.add_source("Impl.sol", &source.replace("return 111", "return 222"));
+    cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: stale try namespace library bytecode] test_try_namespace_library() ([..])
+...
+[FAIL: stale try plain library bytecode] test_try_plain_library() ([..])
+...
+"#]]);
+});
+
+forgetest!(preprocess_external_inheritance_dependency, |prj, cmd| {
+    prj.update_config(|config| config.dynamic_test_linking = true);
+    let source = r#"
+pragma solidity ^0.8.0;
+contract Base { function v() public pure returns (uint256) { return 111; } }
+"#;
+    prj.create_file("external/Base.sol", source);
+    prj.add_test(
+        "Inheritance.t.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {Base} from "../external/Base.sol";
+contract InheritanceTest is Base {
+    function test_inherited() public pure {
+        require(v() == 111, "stale inherited bytecode");
+    }
+}
+"#,
+    );
+    cmd.args(["test"]).assert_success();
+
+    prj.create_file("external/Base.sol", &source.replace("return 111", "return 222"));
+    cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: stale inherited bytecode] test_inherited() ([..])
+...
+"#]]);
+});
+
+forgetest!(preprocess_expanded_source_context_invalidates_prior_artifacts, |prj, cmd| {
+    prj.update_config(|config| config.dynamic_test_linking = true);
+    let source = r#"
+pragma solidity ^0.8.0;
+contract Impl { function v() external pure returns (uint256) { return 111; } }
+"#;
+    prj.add_source("Impl.sol", source);
+    prj.create_file("vendor/pkg/src/Impl.sol", source);
+    prj.add_test(
+        "A.t.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {Impl} from "../src/Impl.sol";
+contract ATest {
+    function test_a() public { require(new Impl().v() == 111, "stale A bytecode"); }
+}
+"#,
+    );
+    prj.add_test(
+        "B.t.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {Impl} from "../vendor/pkg/src/Impl.sol";
+contract BTest { function test_b() public { new Impl(); } }
+"#,
+    );
+
+    cmd.args(["build", "test/A.t.sol"]).assert_success();
+    cmd.forge_fuse().args(["build", "test/B.t.sol"]).assert_success();
+
+    prj.add_source("Impl.sol", &source.replace("return 111", "return 222"));
+    cmd.forge_fuse().args(["test", "--match-path", "test/A.t.sol"]).assert_failure().stdout_eq(
+        str![[r#"
+...
+[FAIL: stale A bytecode] test_a() ([..])
+...
+"#]],
+    );
+});
+
+forgetest!(preprocess_nested_absolute_imports, |prj, cmd| {
+    prj.update_config(|config| {
+        config.dynamic_test_linking = true;
+        config.remappings = vec!["dep/=lib/dep/".parse::<Remapping>().unwrap().into()];
+    });
+    prj.create_file(
+        "lib/dep/src/Child.sol",
+        r#"
+pragma solidity ^0.8.0;
+contract Child {}
+"#,
+    );
+    prj.create_file(
+        "lib/dep/src/Base.sol",
+        r#"
+pragma solidity ^0.8.0;
+import "src/Child.sol";
+contract Base { function make() external returns (Child) { return new Child(); } }
+"#,
+    );
+    prj.add_test(
+        "Nested.t.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {Base} from "dep/src/Base.sol";
+contract NestedTest { function test_nested() public { new Base(); } }
+"#,
+    );
+
+    cmd.args(["test"]).assert_success();
+});
+
+forgetest!(preprocess_analysis_failure_is_conservative, |prj, cmd| {
+    prj.update_config(|config| config.dynamic_test_linking = true);
+    let source = r#"
+pragma solidity ^0.8.0;
+contract Impl { function v() external pure returns (uint256) { return 111; } }
+"#;
+    prj.add_source("Impl.sol", source);
+    prj.add_source(
+        "Derived.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {Impl} from "./Impl.sol";
+contract Derived is Impl {}
+"#,
+    );
+    prj.add_test(
+        "Fallback.t.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {Impl} from "../src/Impl.sol";
+import {Derived} from "../src/Derived.sol";
+contract FallbackTest {
+    function test_fallback() public {
+        new Derived();
+        require(new Impl().v() == 111, "stale conservative bytecode");
+    }
+}
+"#,
+    );
+    cmd.args(["test"]).assert_success();
+
+    prj.add_source("Impl.sol", &source.replace("return 111", "return 222"));
+    cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: stale conservative bytecode] test_fallback() ([..])
 ...
 "#]]);
 });
@@ -370,8 +1035,9 @@ contract ImplTest {
     prj.add_test("Impl.t.sol", test);
     cmd.args(["test"]).assert_success();
 
-    // A narrower test-only compilation must retain the native fallback classification.
+    // A genuinely narrower request must retain the native fallback classification.
     prj.add_test("Impl.t.sol", &format!("\n{test}"));
+    cmd.forge_fuse().args(["build", "test/Impl.t.sol"]).assert_success();
     cmd.forge_fuse().arg("test").assert_success();
 
     prj.add_source("Impl.sol", &source.replace("return 111", "return 222"));
