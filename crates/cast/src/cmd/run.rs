@@ -481,9 +481,10 @@ impl RunArgs {
 
             // Unless explicitly configured, resolve the correct spec for the block using the same
             // approach as reth: walk known chain activation conditions to find the latest active
-            // fork. Falls back to a blob-gas heuristic for unknown chains.
+            // fork. Falls back to a blob-gas heuristic only without endpoint or schedule metadata.
             if evm_version.is_none()
                 && config.hardfork.is_none()
+                && source_hardfork.is_none()
                 && FoundryHardfork::from_chain_and_timestamp(chain.id(), block.header().timestamp())
                     .is_none()
                 && block.header().excess_blob_gas().is_some()
@@ -516,6 +517,8 @@ impl RunArgs {
         evm_env.cfg_env.set_spec_and_mainnet_gas_params(executor.spec_id());
 
         let spec_id = (*evm_env.cfg_env.spec()).into();
+        let parent_beacon_block_root =
+            parent_beacon_block_root_for_network(networks, spec_id, parent_beacon_block_root);
 
         // Set the state to the moment right before the transaction.
         //
@@ -537,14 +540,19 @@ impl RunArgs {
                     Ok(pre_state_frame) => {
                         let prestate = pre_state_frame.into_pre_state();
                         let original = executor.backend().clone();
-                        let applied = prestate
-                            .values()
-                            .filter_map(|account| account.code.as_ref())
-                            .try_for_each(|code| {
-                                Bytecode::new_raw_checked(code.clone()).map(|_| ())
-                            })
-                            .map_err(Into::into)
-                            .and_then(|()| executor.apply_prestate_trace(prestate));
+                        let applied = (|| {
+                            // Local overrides can access beacon storage omitted by the canonical
+                            // trace. Apply system writes before overlaying its recorded prestate.
+                            if let Some(root) = parent_beacon_block_root {
+                                executor.apply_beacon_root(root)?;
+                            }
+                            for code in
+                                prestate.values().filter_map(|account| account.code.as_ref())
+                            {
+                                Bytecode::new_raw_checked(code.clone())?;
+                            }
+                            executor.apply_prestate_trace(prestate)
+                        })();
                         match applied {
                             Ok(()) => {
                                 prestate_applied = true;
@@ -553,6 +561,7 @@ impl RunArgs {
                                 );
                             }
                             Err(err) => {
+                                // BAL and replay must start from the unchanged parent state.
                                 *executor.backend_mut() = original;
                                 trace!(%err, "failed to apply prestate trace, trying BAL");
                             }
@@ -592,7 +601,7 @@ impl RunArgs {
                 })
                 .is_some_and(|hardfork| {
                     matches!(hardfork, FoundryHardfork::Ethereum(_))
-                        && SpecId::from(hardfork).is_enabled_in(SpecId::CANCUN)
+                        && SpecId::from(hardfork) == spec_id
                 })
             && let Some(block_hash) = tx.block_hash()
             && let Some(access_list) =
@@ -633,11 +642,8 @@ impl RunArgs {
             }
         }
 
-        // Restored prestate already includes block system writes.
-        if !prestate_applied
-            && let Some(parent_beacon_block_root) =
-                parent_beacon_block_root_for_network(networks, spec_id, parent_beacon_block_root)
-        {
+        // BAL includes system writes; debug prestate applied them before its overlay.
+        if !prestate_applied && let Some(parent_beacon_block_root) = parent_beacon_block_root {
             executor.apply_beacon_root(parent_beacon_block_root)?;
         }
 

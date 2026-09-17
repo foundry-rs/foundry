@@ -32,7 +32,7 @@ use std::{
 
 const BAL_METHOD: &str = "eth_getBlockAccessListByBlockHash";
 
-/// A deployment followed by two calls in one block, with storage and beacon-root observations.
+/// A deployment followed by two transactions, with balance, storage and beacon-root observations.
 struct Fixture {
     handle: NodeHandle,
     transactions: [B256; 3],
@@ -46,6 +46,7 @@ enum FixtureMode {
     Increment,
     ChainId,
     ParentStorage(U256),
+    CallerBalance(EthereumHardfork),
 }
 
 impl Fixture {
@@ -59,10 +60,15 @@ impl Fixture {
 
     async fn with_config(mode: FixtureMode, config: NodeConfig) -> Self {
         let capture_chain_id = matches!(mode, FixtureMode::ChainId);
+        let capture_balance = matches!(mode, FixtureMode::CallerBalance(_));
         let parent_storage =
             if let FixtureMode::ParentStorage(value) = mode { Some(value) } else { None };
-        let (api, handle) =
-            anvil::spawn(config.with_hardfork(Some(EthereumHardfork::Cancun.into()))).await;
+        let hardfork = if let FixtureMode::CallerBalance(hardfork) = mode {
+            hardfork
+        } else {
+            EthereumHardfork::Cancun
+        };
+        let (api, handle) = anvil::spawn(config.with_hardfork(Some(hardfork.into()))).await;
         let provider = handle.http_provider();
         let wallet = handle.dev_wallets().next().unwrap();
         let sender = wallet.address();
@@ -88,7 +94,13 @@ impl Fixture {
             + U256::from(1);
 
         // No Solidity compiler or public selector service is needed for this fixture.
-        let read_storage = if capture_chain_id { "600054" } else { "60005460010180600055" };
+        let read_storage = if capture_balance {
+            "3331"
+        } else if capture_chain_id {
+            "600054"
+        } else {
+            "60005460010180600055"
+        };
         let read_parent_storage = if parent_storage.is_some() { "600154604052" } else { "" };
         let return_size = if parent_storage.is_some() { "60" } else { "40" };
         let runtime = hex::decode(format!(
@@ -126,8 +138,13 @@ impl Fixture {
                 .from(sender)
                 .nonce(nonce + index as u64)
                 .gas_limit(1_000_000);
+            let tx = if capture_balance { tx.gas_price(2_000_000_000) } else { tx };
             let tx = if index == 0 {
                 tx.with_deploy_code(Bytes::copy_from_slice(&init))
+            } else if capture_balance && index == 1 {
+                // Prague's calldata floor changes the fee paid by this prefix transaction.
+                tx.to(handle.dev_wallets().nth(1).unwrap().address())
+                    .input(Bytes::from(vec![0; 1_000]).into())
             } else {
                 tx.to(target)
             };
@@ -142,7 +159,13 @@ impl Fixture {
         );
         assert_eq!(
             provider.get_storage_at(target, U256::ZERO).await.unwrap(),
-            U256::from(if capture_chain_id { chain_id } else { 3 }),
+            U256::from(if capture_chain_id {
+                chain_id
+            } else if capture_balance {
+                1
+            } else {
+                3
+            }),
         );
         if parent_storage.is_some() {
             assert_eq!(provider.get_storage_at(target, U256::from(1)).await.unwrap(), U256::ZERO);
@@ -181,6 +204,10 @@ impl Fixture {
                 .balance_changes
                 .push(BalanceChange::new(bal_index, beneficiary_balance));
         }
+        if capture_balance {
+            assert_eq!(provider.get_balance(sender).await.unwrap(), sender_balance);
+            assert_eq!(gas[1], 31_000);
+        }
         accounts.insert(
             target,
             AccountChanges {
@@ -188,7 +215,7 @@ impl Fixture {
                 code_changes: vec![CodeChange::new(BlockAccessIndex::new(1), runtime.into())],
                 storage_changes: vec![SlotChanges::new(
                     U256::ZERO,
-                    (1..=if capture_chain_id { 1 } else { 3 })
+                    (1..=if capture_chain_id || capture_balance { 1 } else { 3 })
                         .map(|index| {
                             StorageChange::new(
                                 BlockAccessIndex::new(index),
@@ -474,6 +501,44 @@ casttest!(cast_run_fork_bal_matches_replay_at_every_position, async |_prj, cmd| 
                 serde_json::from_value::<BlockId>(request["params"][parameter].clone()).unwrap();
             assert_eq!(block.as_block_hash(), Some(fixture.parent_hash));
         }
+    }
+});
+
+casttest!(cast_run_fork_bal_preserves_endpoint_hardfork, async |_prj, cmd| {
+    for (hardfork, evm_version) in
+        [(EthereumHardfork::Prague, "prague"), (EthereumHardfork::Osaka, "osaka")]
+    {
+        let fixture = Fixture::with_mode(FixtureMode::CallerBalance(hardfork)).await;
+        let proxy = RpcProxy::new(&fixture, ProxyOptions::with_bal(json!(fixture.bal))).await;
+        // The final call observes the sender balance after a calldata-heavy prefix. Its fee
+        // differs between Cancun and Prague, even though both blocks have blob-gas fields.
+        for index in [2, 1] {
+            let hash = fixture.transactions[index];
+            let canonical = run(
+                &mut cmd,
+                hash,
+                &fixture.handle.http_endpoint(),
+                &["--evm-version", evm_version],
+            );
+            let replay = run(&mut cmd, hash, &fixture.handle.http_endpoint(), &[]);
+            let restored = run(&mut cmd, hash, &proxy.endpoint, &[]);
+            assert_eq!(
+                restored.stdout_lossy(),
+                replay.stdout_lossy(),
+                "{hardfork:?}, transaction {index}"
+            );
+            assert_eq!(
+                restored.stdout_lossy(),
+                canonical.stdout_lossy(),
+                "{hardfork:?}, transaction {index}"
+            );
+            assert_eq!(
+                restored.stdout_lossy().lines().find_map(|line| line.strip_prefix("Gas used: ")),
+                Some(fixture.gas[index].to_string().as_str()),
+            );
+            OutputAssert::new(restored).stderr_eq("");
+        }
+        assert_eq!(proxy.requests(BAL_METHOD).len(), 2, "{hardfork:?}");
     }
 });
 

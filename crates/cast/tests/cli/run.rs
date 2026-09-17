@@ -1,6 +1,104 @@
 //! CLI tests for run commands.
 
 use super::*;
+use alloy_consensus::{SignableTransaction, TxLegacy};
+use alloy_eips::{Encodable2718, eip4788::BEACON_ROOTS_ADDRESS};
+use alloy_provider::ext::DebugApi;
+use alloy_rpc_types::trace::geth::{GethDebugTracingOptions, PreStateConfig};
+use alloy_signer::SignerSync;
+
+// A CHAINID override can read beacon storage omitted by the canonical prestate trace.
+casttest!(cast_run_fork_prestate_preserves_beacon_update, async |prj, cmd| {
+    let (api, handle) = anvil::spawn(
+        NodeConfig::test()
+            .with_hardfork(Some(EthereumHardfork::Cancun.into()))
+            .with_genesis_timestamp(Some(1_000u64)),
+    )
+    .await;
+    let provider = handle.http_provider();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let target = address!("0000000000000000000000000000000000001234");
+
+    // On chain 31337 return zero without reading beacon storage. On chain 31338, query the
+    // standard EIP-4788 contract at the current timestamp and return its success flag and root.
+    let runtime = hex::decode(format!(
+        "46617a6a14601257600060005260206000f35b42600052602060206020600073{BEACON_ROOTS_ADDRESS:x}5afa60005260406000f3"
+    ))
+    .unwrap();
+    api.anvil_set_code(target, runtime.into()).await.unwrap();
+    api.evm_set_next_block_timestamp(1_001).unwrap();
+    api.mine_one().await.unwrap();
+    assert_eq!(
+        provider.get_storage_at(BEACON_ROOTS_ADDRESS, U256::from(1_002)).await.unwrap(),
+        U256::ZERO,
+    );
+
+    // An unprotected legacy transaction is valid under both chain IDs. Make it the first
+    // transaction so only the block's system operation can supply the missing beacon storage.
+    api.evm_set_next_block_timestamp(1_002).unwrap();
+    let tx = TxLegacy {
+        gas_price: 2_000_000_000,
+        gas_limit: 100_000,
+        to: target.into(),
+        ..Default::default()
+    };
+    let signature = wallet.sign_hash_sync(&tx.signature_hash()).unwrap();
+    let receipt = provider
+        .send_raw_transaction(&tx.into_signed(signature).encoded_2718())
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert!(receipt.status());
+    assert_eq!(receipt.transaction_index(), Some(0));
+    assert_eq!(
+        provider.get_storage_at(BEACON_ROOTS_ADDRESS, U256::from(1_002)).await.unwrap(),
+        U256::from(1_002),
+    );
+    let prestate = provider
+        .debug_trace_transaction(
+            receipt.transaction_hash,
+            GethDebugTracingOptions::prestate_tracer(PreStateConfig::default()),
+        )
+        .await
+        .unwrap()
+        .try_into_pre_state_frame()
+        .unwrap();
+    assert!(!prestate.pre_state().contains_key(&BEACON_ROOTS_ADDRESS));
+
+    let endpoint = handle.http_endpoint();
+    let tx_hash = receipt.transaction_hash.to_string();
+    let args = ["run", &tx_hash, "--rpc-url", &endpoint, "--disable-external-identification"];
+    cmd.env("FOUNDRY_CHAIN_ID", "31338");
+    cmd.env("FOUNDRY_NO_STORAGE_CACHING", "true");
+    cmd.env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "true");
+    let replay = cmd
+        .args(args)
+        .with_no_redact()
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [6985] 0x0000000000000000000000000000000000001234::fallback()
+    ├─ [4320] 0x000F3df6D732807Ef1319fB7B8bB8522d0Beac02::00000000(000000000000000000000000000000000000000000000000000003ea) [staticcall]
+    │   └─ ← [Return] 0x0000000000000000000000000000000000000000000000000000000000000000
+    └─ ← [Return] 0x00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000
+
+
+Transaction successfully executed.
+Gas used: 27985
+
+"#]])
+        .stderr_eq("Executing previous transactions from the block.\n")
+        .get_output()
+        .clone();
+
+    cmd.cast_fuse().current_dir(prj.root());
+    cmd.env("FOUNDRY_CHAIN_ID", "31338");
+    cmd.env("FOUNDRY_NO_STORAGE_CACHING", "true");
+    cmd.env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "true");
+    cmd.args(args).arg("--prestate-tracer").assert_success().stdout_eq(replay.stdout).stderr_eq("");
+});
 
 // <https://github.com/foundry-rs/foundry/issues/2705>
 casttest!(run_succeeds, |_prj, cmd| {
