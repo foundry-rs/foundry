@@ -429,8 +429,14 @@ fn add_zero_invalid_support_vars(vars: &mut SymbolicVars, constraints: &[SymBool
         if let SymBoolExprKind::Cmp(op, left, right) = inner.kind()
             && support_cmp_op(*op, inverted)
                 .is_some_and(|op| !matches!(op, SymCmpOp::Slt | SymCmpOp::Sgt))
-            && (support_bound_has_searched_inputs(left, right, vars)
-                || support_bound_has_searched_inputs(right, left, vars))
+            && [(left, right), (right, left)].into_iter().any(|(variable, bound)| {
+                if !matches!(variable.kind(), SymExprKind::Var(_)) {
+                    return false;
+                }
+                let mut dependencies = SymbolicVars::default();
+                bound.collect_eval_vars(&mut dependencies);
+                dependencies.is_subset(vars)
+            })
         {
             continue;
         }
@@ -444,19 +450,6 @@ fn add_zero_invalid_support_vars(vars: &mut SymbolicVars, constraints: &[SymBool
         }
         vars.extend(missing);
     }
-}
-
-fn support_bound_has_searched_inputs(
-    variable: &SymExpr,
-    bound: &SymExpr,
-    searched: &SymbolicVars,
-) -> bool {
-    if !matches!(variable.kind(), SymExprKind::Var(_)) {
-        return false;
-    }
-    let mut dependencies = SymbolicVars::default();
-    bound.collect_eval_vars(&mut dependencies);
-    dependencies.is_subset(searched)
 }
 
 fn fallback_candidates_for_var(
