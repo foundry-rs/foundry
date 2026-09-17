@@ -246,6 +246,38 @@ casttest!(cast_run_fork_bal_matches_replay_at_every_position, async |_prj, cmd| 
     assert_eq!(calls.load(Ordering::Relaxed), 3);
 });
 
+casttest!(cast_run_fork_bal_rejects_invalid_transaction_index, async |_prj, cmd| {
+    let fixture = Fixture::new(false).await;
+    let hash = fixture.transactions[2];
+    let replay = run(&mut cmd, hash, &fixture.handle.http_endpoint(), &[]);
+    let mut transaction = serde_json::to_value(
+        fixture.handle.http_provider().get_transaction_by_hash(hash).await.unwrap().unwrap(),
+    )
+    .unwrap();
+    let (bal_endpoint, calls) = spawn_rpc_proxy_canned_method(
+        fixture.handle.http_endpoint(),
+        BAL_METHOD,
+        json!(fixture.bal),
+    )
+    .await;
+
+    // Missing, out-of-range and mismatched indices must fall back to locating the target by hash.
+    for (attempt, index) in [Value::Null, json!("0x3"), json!("0x0")].into_iter().enumerate() {
+        transaction["transactionIndex"] = index;
+        let (endpoint, _) = spawn_rpc_proxy_canned_method(
+            bal_endpoint.clone(),
+            "eth_getTransactionByHash",
+            transaction.clone(),
+        )
+        .await;
+        let output = run(&mut cmd, hash, &endpoint, &[]);
+        OutputAssert::new(output)
+            .stdout_eq(replay.stdout.clone())
+            .stderr_eq("Executing previous transactions from the block.\n");
+        assert_eq!(calls.load(Ordering::Relaxed), attempt + 1);
+    }
+});
+
 casttest!(cast_run_fork_bal_failures_restore_clean_replay, async |_prj, cmd| {
     let fixture = Fixture::new(false).await;
     let hash = fixture.transactions[2];

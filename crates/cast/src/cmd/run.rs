@@ -185,7 +185,8 @@ struct PreparedRun<FEN: FoundryEvmNetwork> {
     executor: TracingExecutor<FEN>,
     trace_context: TraceContext,
     prestate_applied: bool,
-    block_access_list: Option<Arc<Bal>>,
+    /// The validated BAL and the target transaction's index in its block.
+    block_access_list: Option<(Arc<Bal>, usize)>,
     parent_beacon_block_root: Option<B256>,
     #[cfg(feature = "monad")]
     monad: MonadPrepared,
@@ -601,7 +602,7 @@ impl RunArgs {
                 .map_err(eyre::Report::from)
                 .and_then(|parent_hash| prepare_bal(access_list, &tx, block, parent_hash));
             match bal {
-                Ok(bal) => block_access_list = Some(Arc::new(bal)),
+                Ok((bal, index)) => block_access_list = Some((Arc::new(bal), index)),
                 Err(err) => trace!(%err, "BAL unavailable, falling back to block replay"),
             }
         }
@@ -639,7 +640,7 @@ fn prepare_bal(
     tx: &AnyRpcTransaction,
     block: &AnyRpcBlock,
     parent_hash: B256,
-) -> Result<Bal> {
+) -> Result<(Bal, usize)> {
     let transactions = full_transactions(block)?;
     let index = usize::try_from(
         tx.transaction_index().ok_or_else(|| eyre::eyre!("missing transaction index"))?,
@@ -662,7 +663,7 @@ fn prepare_bal(
     if let Some(hash) = block.header().block_access_list_hash() {
         eyre::ensure!(compute_block_access_list_hash(&bal) == hash, "BAL hash mismatch");
     }
-    Bal::try_from_alloy(bal).wrap_err("invalid BAL bytecode")
+    Ok((Bal::try_from_alloy(bal).wrap_err("invalid BAL bytecode")?, index))
 }
 
 impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
@@ -743,10 +744,9 @@ impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
         // Decode the target transaction before replaying the block: an envelope this build
         // can't decode should fail fast.
         let target_tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(&self.tx)?;
-        let target_index = self.target_index()?;
         self.prepare_target();
 
-        if let Some(bal) = self.block_access_list.take() {
+        if let Some((bal, target_index)) = self.block_access_list.take() {
             // Keep failed BAL reads and partial execution isolated from the replay fallback.
             let mut executor = self.executor.clone();
             executor
@@ -771,6 +771,7 @@ impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
             }
         }
 
+        let target_index = self.target_index()?;
         let block_number = self.evm_env.block_env.number();
         let replay_system_txes = self.args.replay_system_txes;
         let mut replay = Vec::new();
