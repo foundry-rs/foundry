@@ -590,12 +590,8 @@ impl ConstraintContext {
             SymBoolExprKind::Const(_) | SymBoolExprKind::And(_) => false,
         };
         root_candidate
-            || expr.visit_unique_bool(|word| {
-                Self::mul_div_operands(word).is_some()
-                    || Self::ceil_div_product(word).is_some()
-                    || Self::rounded_product_operands(word).is_some()
-                    || matches!(word.kind(), SymExprKind::Ite(_, _, _))
-            })
+            || expr.contains_udiv()
+            || expr.visit_unique_bool(|word| matches!(word.kind(), SymExprKind::Ite(_, _, _)))
     }
 
     fn normalize_bool(

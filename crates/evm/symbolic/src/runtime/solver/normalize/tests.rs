@@ -60,6 +60,37 @@ fn cached_normalization_keeps_udiv_rewrites_contextual() {
 }
 
 #[test]
+fn symbolic_divisor_rounding_preserves_its_own_premise() {
+    let mut cx = SymCx::new();
+    let value = SymExpr::var(&mut cx, "value");
+    let divisor = SymExpr::var(&mut cx, "divisor");
+    let offset = SymExpr::constant(&mut cx, U256::from(36));
+    let numerator = SymExpr::binop(&mut cx, SymBinOp::Add, value.clone(), offset);
+    let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, numerator, divisor.clone());
+    let rounded = SymExpr::binop(&mut cx, SymBinOp::Mul, quotient, divisor.clone());
+    let divisor_value = SymExpr::constant(&mut cx, U256::from(37));
+    let fixed_divisor = SymBoolExpr::eq(&mut cx, divisor.clone(), divisor_value);
+    let rounded_bound =
+        SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ule, &rounded, U256::from(100));
+    let premise = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, value.clone(), rounded);
+    let constraints = vec![fixed_divisor, rounded_bound, premise];
+    let mut model = SymbolicModel::default();
+    assert!(value.assign_model_value(&mut model, U256::MAX));
+    assert!(divisor.assign_model_value(&mut model, U256::from(37)));
+    assert!(!constraints.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
+
+    let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
+    assert!(!normalized.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
+
+    let mut cache = HashMap::default();
+    let normalized = normalize_constraints_for_solver_cached(&mut cx, &constraints, &mut cache);
+    assert!(!normalized.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
+    let normalized =
+        normalize_constraints_for_solver_cached(&mut cx, &constraints[1..], &mut cache);
+    assert!(!normalized.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
+}
+
+#[test]
 fn direct_contradiction_uses_members_of_derived_positive_conjunction() {
     let mut cx = SymCx::new();
     let x = SymExpr::var(&mut cx, "x");
