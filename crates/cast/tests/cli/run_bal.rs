@@ -327,6 +327,7 @@ impl ProxyOptions {
 
 impl RpcProxy {
     async fn new(fixture: &Fixture, options: ProxyOptions) -> Self {
+        let options = Arc::new(options);
         let requests = Arc::new(Mutex::new(Vec::new()));
         let recorded = Arc::clone(&requests);
         let client = reqwest::Client::new();
@@ -337,7 +338,7 @@ impl RpcProxy {
             post(move |Json(request): Json<Value>| {
                 let client = client.clone();
                 let endpoint = endpoint.clone();
-                let options = options.clone();
+                let options = Arc::clone(&options);
                 let recorded = Arc::clone(&recorded);
                 async move {
                     // The proxy handles batches too, because fork account reads are batched.
