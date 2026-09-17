@@ -68,6 +68,14 @@ functionality from `RUST_FEATURES` in `.github/workflows/release.yml` and
 `.github/workflows/docker-publish.yml`. Keep those lists aligned with the default `FEATURES` in the
 root `Makefile` so published binaries expose the same surface as local release builds.
 
+Maintainers select stable and release-candidate versions, update the workspace version and
+`Cargo.lock`, and push the corresponding `vX.Y.Z` or `vX.Y.Z-rcN` tag at the intended commit.
+The [release workflow](../../.github/workflows/release.yml) builds the artifacts and generates
+PR-based notes in a draft GitHub release. After reviewing the notes and successful build, run the
+[finalization workflow](../../.github/workflows/finalize-release.yml) from `master` with that exact
+tag. It verifies the tagged workflow and recorded Docker digest before publishing and promoting
+eligible Docker aliases. Nightlies continue through the scheduled release workflow.
+
 For contribution policy and support channels, see [`CONTRIBUTING.md`](../../CONTRIBUTING.md).
 
 [foundry-book]: https://getfoundry.sh
