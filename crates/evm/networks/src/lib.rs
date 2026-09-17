@@ -307,35 +307,50 @@ impl NetworkVariant {
         format!("{}:{hardfork}", self.name()).parse()
     }
 
+    /// Returns this network's hardfork at a historical source-chain timestamp.
+    ///
+    /// Unknown source chains return `None`; the selected network owns the lookup so a chain ID
+    /// shared by multiple execution families cannot select another family's hardfork.
+    pub fn historical_hardfork(self, chain_id: ChainId, timestamp: u64) -> Option<FoundryHardfork> {
+        match self {
+            Self::Ethereum => {
+                EthereumHardfork::from_chain_and_timestamp(Chain::from_id(chain_id), timestamp)
+                    .map(Into::into)
+            }
+            Self::Tempo => {
+                TempoHardfork::from_chain_and_timestamp(chain_id, timestamp).map(Into::into)
+            }
+            #[cfg(feature = "optimism")]
+            Self::Optimism => {
+                OpHardfork::from_chain_and_timestamp(Chain::from_id(chain_id), timestamp)
+                    .map(Into::into)
+            }
+            #[cfg(feature = "monad")]
+            Self::Monad => {
+                MonadHardfork::from_chain_and_timestamp(chain_id, timestamp).map(Into::into)
+            }
+            #[cfg(feature = "base")]
+            Self::Base => {
+                BaseUpgrade::from_chain_and_timestamp(chain_id, timestamp).map(Into::into)
+            }
+        }
+    }
+
     /// Returns the active hardfork for this network at the given chain and timestamp.
     ///
     /// Unknown chain IDs fall back to the network's default hardfork. The selected network owns
     /// the lookup so an explicit network choice is not overridden by the chain ID's family.
     pub fn hardfork_at(self, chain_id: ChainId, timestamp: u64) -> FoundryHardfork {
-        match self {
-            Self::Ethereum => {
-                EthereumHardfork::from_chain_and_timestamp(Chain::from_id(chain_id), timestamp)
-                    .unwrap_or_default()
-                    .into()
-            }
-            Self::Tempo => TempoHardfork::from_chain_and_timestamp(chain_id, timestamp)
-                .unwrap_or_else(latest_active_tempo_hardfork)
-                .into(),
+        self.historical_hardfork(chain_id, timestamp).unwrap_or_else(|| match self {
+            Self::Ethereum => EthereumHardfork::default().into(),
+            Self::Tempo => latest_active_tempo_hardfork().into(),
             #[cfg(feature = "optimism")]
-            Self::Optimism => {
-                OpHardfork::from_chain_and_timestamp(Chain::from_id(chain_id), timestamp)
-                    .unwrap_or_default()
-                    .into()
-            }
+            Self::Optimism => OpHardfork::default().into(),
             #[cfg(feature = "monad")]
-            Self::Monad => MonadHardfork::from_chain_and_timestamp(chain_id, timestamp)
-                .unwrap_or_default()
-                .into(),
+            Self::Monad => MonadHardfork::default().into(),
             #[cfg(feature = "base")]
-            Self::Base => BaseUpgrade::from_chain_and_timestamp(chain_id, timestamp)
-                .unwrap_or_default()
-                .into(),
-        }
+            Self::Base => BaseUpgrade::default().into(),
+        })
     }
 
     /// Returns `true` if this is the Ethereum network variant.
@@ -1193,6 +1208,29 @@ mod tests {
             assert!(!NetworkVariant::Base.is_optimism());
             assert!(!NetworkVariant::Base.is_tempo());
         }
+    }
+
+    #[test]
+    #[cfg(all(feature = "base", feature = "optimism"))]
+    fn historical_hardfork_uses_selected_execution_family() {
+        let timestamp = 1_710_374_401;
+
+        assert_eq!(
+            NetworkVariant::Base.historical_hardfork(NamedChain::Base as u64, timestamp),
+            Some(BaseUpgrade::Ecotone.into())
+        );
+        assert_eq!(
+            NetworkVariant::Optimism.historical_hardfork(NamedChain::Base as u64, timestamp),
+            Some(OpHardfork::Ecotone.into())
+        );
+        assert_eq!(
+            NetworkVariant::Ethereum.historical_hardfork(NamedChain::Base as u64, timestamp),
+            None
+        );
+        assert_eq!(
+            NetworkVariant::Tempo.historical_hardfork(NamedChain::Base as u64, timestamp),
+            None
+        );
     }
 
     #[test]

@@ -126,30 +126,31 @@ pub fn access_check_polarity<'gcx>(
     }
 }
 
-/// Locals initialized or assigned from a value that reads `msg.sender`.
-pub fn sender_aliases<'gcx>(
+/// Applies `stmt` to the set of locals holding a `msg.sender`-derived value: a local initialized
+/// or assigned from a value that reads the sender becomes an alias, and one reassigned from
+/// anything else stops being one.
+fn update_sender_aliases<'gcx>(
     gcx: Gcx<'gcx>,
-    stmts: impl IntoIterator<Item = &'gcx Stmt<'gcx>>,
-) -> HashSet<VariableId> {
-    let mut aliases = HashSet::new();
-    let _ = visit_stmts(&gcx.hir, stmts, |stmt| {
-        let (var_id, value) = match stmt.kind {
-            StmtKind::DeclSingle(var_id) => (Some(var_id), gcx.hir.variable(var_id).initializer),
-            StmtKind::Expr(expr) => match &expr.peel_parens().kind {
-                ExprKind::Assign(lhs, _, rhs) => (lhs_local_var(gcx, lhs), Some(*rhs)),
-                _ => (None, None),
-            },
+    stmt: &Stmt<'gcx>,
+    aliases: &mut HashSet<VariableId>,
+) {
+    let (var_id, value) = match stmt.kind {
+        StmtKind::DeclSingle(var_id) => (Some(var_id), gcx.hir.variable(var_id).initializer),
+        StmtKind::Expr(expr) => match &expr.peel_parens().kind {
+            ExprKind::Assign(lhs, _, rhs) => (lhs_local_var(gcx, lhs), Some(*rhs)),
             _ => (None, None),
-        };
-        if let Some(var_id) = var_id
-            && let Some(value) = value
-            && expr_reads_sender(gcx, value, &mut HashSet::new(), &aliases)
-        {
+        },
+        _ => (None, None),
+    };
+    if let Some(var_id) = var_id
+        && let Some(value) = value
+    {
+        if expr_reads_sender(gcx, value, &mut HashSet::new(), aliases) {
             aliases.insert(var_id);
+        } else {
+            aliases.remove(&var_id);
         }
-        ControlFlow::Continue(())
-    });
-    aliases
+    }
 }
 
 /// Whether `expr` reads `msg.sender`/`tx.origin`, one of `aliases`, or calls a user function that
@@ -254,7 +255,10 @@ fn for_each_guard<'gcx>(
 ) -> ControlFlow<()> {
     let mut stmts = Vec::new();
     let _ = dominating_stmts(body.stmts, &mut stmts);
-    let aliases = sender_aliases(gcx, stmts.iter().copied());
+    // Aliases as of each statement: a check is evaluated against the locals that read the sender
+    // at that point, so a reassignment neither validates a later check nor invalidates an earlier
+    // one.
+    let mut aliases = HashSet::new();
     for stmt in stmts {
         if let StmtKind::If(cond, then_stmt, else_stmt) = stmt.kind {
             let exits = match access_check_polarity(gcx, cond, &aliases) {
@@ -267,6 +271,7 @@ fn for_each_guard<'gcx>(
             }
             continue;
         }
+        update_sender_aliases(gcx, stmt, &mut aliases);
         let Some(expr) = stmt_expr(&gcx.hir, stmt) else { continue };
         expr.visit(&mut |e| {
             match &e.kind {

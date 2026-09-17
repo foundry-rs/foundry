@@ -144,7 +144,7 @@ impl Signer<foundry_primitives::FoundryNetwork> for DevSigner {
             }
             #[cfg(feature = "base")]
             FoundryTypedTx::Eip8130(_) => {
-                return Err(BlockchainError::BaseTransactionUnsupported);
+                unreachable!("EIP-8130 requires a signed raw transaction envelope")
             }
             FoundryTypedTx::Tempo(mut t) => {
                 let sig = signer.sign_transaction_sync(&mut t)?;
