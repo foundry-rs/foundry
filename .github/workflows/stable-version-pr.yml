@@ -47,7 +47,7 @@ jobs:
       pull-requests: read
     steps:
       - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@05c669ce878b8719779a28fe7375ba85822403f8
+        uses: tempoxyz/gh-actions/actions/secure-runner@b61457a6d6d06485b118a3c0e9637c94186c8c5a
       - name: Checkout master
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
