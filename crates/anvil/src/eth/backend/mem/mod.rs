@@ -2867,6 +2867,23 @@ impl<N: Network> Backend<N> {
         Ok(evm.transact(tx_env)?)
     }
 
+    fn prepare_mining_block_executor<E>(
+        &self,
+        mut evm: E,
+        evm_env: &EvmEnv,
+        parent_hash: B256,
+        spec_id: SpecId,
+        ethereum_transitions: Option<EthereumBlockTransitions>,
+        max_blob_gas_per_block: u64,
+    ) -> AnvilBlockExecutor<E>
+    where
+        E: Evm<Precompiles = PrecompilesMap>,
+    {
+        self.inject_precompiles(evm.precompiles_mut(), evm_env);
+        AnvilBlockExecutor::new(evm, parent_hash, spec_id, ethereum_transitions)
+            .with_max_blob_gas_per_block(max_blob_gas_per_block)
+    }
+
     /// Creates a concrete EVM + [`AnvilBlockExecutor`], runs pre-execution changes, and
     /// executes pool transactions. Returns the execution results and drops the EVM.
     #[allow(clippy::too_many_arguments, clippy::type_complexity)]
@@ -2912,14 +2929,6 @@ impl<N: Network> Backend<N> {
         let ethereum_transitions =
             self.ethereum_block_transitions(hardfork, parent_beacon_block_root, execution_kind);
 
-        macro_rules! prepare {
-            ($evm:ident) => {{
-                self.inject_precompiles($evm.precompiles_mut(), evm_env);
-                AnvilBlockExecutor::new($evm, parent_hash, spec_id, ethereum_transitions)
-                    .with_max_blob_gas_per_block(gas_config.max_blob_gas_per_block)
-            }};
-        }
-
         macro_rules! run_prepared {
             ($executor:expr) => {{
                 let mut executor = $executor;
@@ -2959,7 +2968,15 @@ impl<N: Network> Backend<N> {
             let mut evm = BaseEvmFactory::new(activation_admin)
                 .create_evm_with_inspector(db, base_env, inspector);
             evm.ctx_mut().cfg.tx_chain_id_check = true;
-            return run_prepared!(prepare!(evm));
+            let executor = self.prepare_mining_block_executor(
+                evm,
+                evm_env,
+                parent_hash,
+                spec_id,
+                ethereum_transitions,
+                gas_config.max_blob_gas_per_block,
+            );
+            return run_prepared!(executor);
         }
 
         #[cfg(feature = "optimism")]
@@ -2968,22 +2985,45 @@ impl<N: Network> Backend<N> {
                 evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(hardfork.into()),
                 evm_env.block_env.clone(),
             );
-            let mut evm =
+            let evm =
                 OpEvmFactory::<OpTx>::default().create_evm_with_inspector(db, op_env, inspector);
-            let mut executor = prepare!(evm);
+            let mut executor = self.prepare_mining_block_executor(
+                evm,
+                evm_env,
+                parent_hash,
+                spec_id,
+                ethereum_transitions,
+                gas_config.max_blob_gas_per_block,
+            );
             executor.set_optimism_hardfork(hardfork.into());
             return run_prepared!(executor);
         }
 
         if self.is_tempo() {
             let tempo_env = Self::build_tempo_evm_env(evm_env, self.tempo_hardfork());
-            let mut evm =
+            let evm =
                 TempoEvmFactory::default().create_evm_with_inspector(db, tempo_env, inspector);
-            return run_prepared!(prepare!(evm));
+            let executor = self.prepare_mining_block_executor(
+                evm,
+                evm_env,
+                parent_hash,
+                spec_id,
+                ethereum_transitions,
+                gas_config.max_blob_gas_per_block,
+            );
+            return run_prepared!(executor);
         }
-        let mut evm =
+        let evm =
             EthEvmFactory::default().create_evm_with_inspector(db, evm_env.clone(), inspector);
-        run_prepared!(prepare!(evm))
+        let executor = self.prepare_mining_block_executor(
+            evm,
+            evm_env,
+            parent_hash,
+            spec_id,
+            ethereum_transitions,
+            gas_config.max_blob_gas_per_block,
+        );
+        run_prepared!(executor)
     }
 
     /// Applies Ethereum block-start transitions to a disposable simulation candidate.
@@ -5658,6 +5698,26 @@ where
         Ok(())
     }
 
+    fn prepare_replay_block_executor<E>(
+        &self,
+        mut evm: E,
+        evm_env: &EvmEnv,
+        parent_hash: B256,
+        ethereum_transitions: Option<EthereumBlockTransitions>,
+        arbitrum_rpc_block_number: Option<u64>,
+    ) -> AnvilBlockExecutor<E>
+    where
+        E: Evm<Precompiles = PrecompilesMap>,
+    {
+        self.inject_precompiles(evm.precompiles_mut(), evm_env);
+        if let Some(block_number) = arbitrum_rpc_block_number {
+            self.inject_arbitrum_precompile_at_block(evm.precompiles_mut(), block_number);
+        }
+        // Historical replay has no local blob budget.
+        AnvilBlockExecutor::new(evm, parent_hash, *evm_env.spec_id(), ethereum_transitions)
+            .with_state_changes()
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn execute_with_replay_block_executor<DB>(
         &self,
@@ -5697,32 +5757,14 @@ where
             BlockExecutionKind::TransactionPrefix,
         );
 
-        // Historical replay has no local blob budget. OP still configures its Jovian DA budget.
-        macro_rules! prepare {
-            ($evm:ident) => {{
-                self.inject_precompiles($evm.precompiles_mut(), evm_env);
-                if let Some(block_number) = arbitrum_rpc_block_number {
-                    self.inject_arbitrum_precompile_at_block($evm.precompiles_mut(), block_number);
-                }
-                AnvilBlockExecutor::new($evm, parent_hash, *evm_env.spec_id(), ethereum_transitions)
-                    .with_state_changes()
-            }};
-        }
-
         macro_rules! run_prepared {
             ($executor:expr) => {{
-                run_prepared!($executor, |executor| execute_historical_replay(
-                    executor,
-                    transactions,
-                    inspector_tx_config,
-                ))
-            }};
-            ($executor:expr, $execute:expr) => {{
                 let mut executor = $executor;
                 executor
                     .apply_pre_execution_changes()
                     .wrap_err("failed to apply replay block-start transitions")?;
-                let (stored_transactions, transaction_infos) = $execute(&mut executor)?;
+                let (stored_transactions, transaction_infos) =
+                    execute_historical_replay(&mut executor, transactions, inspector_tx_config)?;
                 let state_changes = executor.take_state_changes();
                 let (evm, block_result) =
                     executor.finish().wrap_err("failed to finish replay block execution")?;
@@ -5753,7 +5795,14 @@ where
             let mut evm = BaseEvmFactory::new(activation_admin)
                 .create_evm_with_inspector(db, base_env, inspector);
             evm.ctx_mut().cfg.tx_chain_id_check = true;
-            return run_prepared!(prepare!(evm));
+            let executor = self.prepare_replay_block_executor(
+                evm,
+                evm_env,
+                parent_hash,
+                ethereum_transitions,
+                arbitrum_rpc_block_number,
+            );
+            return run_prepared!(executor);
         }
 
         #[cfg(feature = "optimism")]
@@ -5762,23 +5811,44 @@ where
                 evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(hardfork.into()),
                 evm_env.block_env.clone(),
             );
-            let mut evm =
+            let evm =
                 OpEvmFactory::<OpTx>::default().create_evm_with_inspector(db, op_env, inspector);
-            let mut executor = prepare!(evm);
+            let mut executor = self.prepare_replay_block_executor(
+                evm,
+                evm_env,
+                parent_hash,
+                ethereum_transitions,
+                arbitrum_rpc_block_number,
+            );
+            // OP still configures its Jovian DA budget.
             executor.set_optimism_hardfork(hardfork.into());
             return run_prepared!(executor);
         }
 
         if self.is_tempo() {
             let tempo_env = Self::build_tempo_evm_env(evm_env, self.tempo_hardfork());
-            let mut evm =
+            let evm =
                 TempoEvmFactory::default().create_evm_with_inspector(db, tempo_env, inspector);
-            return run_prepared!(prepare!(evm));
+            let executor = self.prepare_replay_block_executor(
+                evm,
+                evm_env,
+                parent_hash,
+                ethereum_transitions,
+                arbitrum_rpc_block_number,
+            );
+            return run_prepared!(executor);
         }
 
-        let mut evm =
+        let evm =
             EthEvmFactory::default().create_evm_with_inspector(db, evm_env.clone(), inspector);
-        run_prepared!(prepare!(evm))
+        let executor = self.prepare_replay_block_executor(
+            evm,
+            evm_env,
+            parent_hash,
+            ethereum_transitions,
+            arbitrum_rpc_block_number,
+        );
+        run_prepared!(executor)
     }
 
     /// Builds a [`BlockInfo`] from the EVM environment, execution results, and transactions.
