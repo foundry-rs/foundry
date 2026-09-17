@@ -1,4 +1,4 @@
-use super::{opt::ConstraintContext, *};
+use super::*;
 
 type LessThanFacts<'a> = HashSet<(&'a SymExpr, &'a SymExpr)>;
 type LessOrEqualFacts<'a> = HashSet<(&'a SymExpr, &'a SymExpr)>;
@@ -46,7 +46,7 @@ pub(crate) fn product_monotonic_unsat_normalized(constraints: &[SymBoolExpr]) ->
 ///
 /// This keeps a sound monotonic success path from falling through to the heuristic witness
 /// search, whose satisfiable models are useful for counterexamples but cannot establish a proof.
-pub(super) fn remove_implied_monotonic_constraints(
+pub(in super::super) fn remove_implied_monotonic_constraints(
     mut constraints: Vec<SymBoolExpr>,
 ) -> Vec<SymBoolExpr> {
     // Remove constraints one at a time so two candidates cannot justify each other and then both

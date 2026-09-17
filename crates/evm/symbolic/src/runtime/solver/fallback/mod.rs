@@ -1,3 +1,5 @@
+//! Bounded fallback model generation for hard arithmetic constraints.
+
 use super::*;
 
 impl SymBoolExpr {
