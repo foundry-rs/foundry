@@ -2959,7 +2959,7 @@ impl<N: Network> Backend<N> {
             let mut evm = BaseEvmFactory::new(activation_admin)
                 .create_evm_with_inspector(db, base_env, inspector);
             evm.ctx_mut().cfg.tx_chain_id_check = true;
-            return run!(evm);
+            return run_prepared!(prepare!(evm));
         }
 
         #[cfg(feature = "optimism")]
@@ -5753,7 +5753,7 @@ where
             let mut evm = BaseEvmFactory::new(activation_admin)
                 .create_evm_with_inspector(db, base_env, inspector);
             evm.ctx_mut().cfg.tx_chain_id_check = true;
-            return run!(evm);
+            return run_prepared!(prepare!(evm));
         }
 
         #[cfg(feature = "optimism")]
