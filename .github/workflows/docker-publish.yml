@@ -47,7 +47,7 @@ jobs:
       digest: ${{ steps.select.outputs.digest }}
     steps:
       - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@b61457a6d6d06485b118a3c0e9637c94186c8c5a
+        uses: tempoxyz/gh-actions/actions/secure-runner@27b9d9cb079918e6be16c8660f82bb0cf7fef6ea
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
