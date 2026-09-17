@@ -1,6 +1,6 @@
 //! Differential lifecycle coverage using BALs collected from actual EVM execution.
 
-use super::{PreparedPrestate, prepare_prestate};
+use crate::bal::{PreparedPrestate, prepare_prestate};
 use alloy_consensus::proofs::storage_root_unhashed;
 use alloy_eip7928::{BlockAccessIndex, BlockAccessList};
 use alloy_eips::eip7702::{Authorization, RecoveredAuthority, RecoveredAuthorization};

@@ -10,9 +10,11 @@ use revm::{
     context::TxEnv,
     database::InMemoryDB,
     database_interface::{ErasedError, bal::BalDatabase},
-    state::Bytecode,
+    state::{AccountId, Bytecode},
 };
 use std::{cell::RefCell, io};
+
+mod lifecycle;
 
 trait ParentStorage: DatabaseRef {
     fn parent(&self) -> &InMemoryDB;
@@ -133,10 +135,11 @@ fn prestate_includes_system_writes_and_excludes_target_writes() {
 fn prestate_restores_first_middle_and_last_transaction_boundaries() {
     let address = Address::with_last_byte(1);
     let code = Bytecode::new_raw(Bytes::from_static(&[0x60, 0x01]));
+    let account_id = AccountId::new(7);
     let mut parent = InMemoryDB::default();
     parent.insert_account_info(
         address,
-        AccountInfo { balance: U256::from(100), nonce: 5, ..Default::default() },
+        AccountInfo { balance: U256::from(100), nonce: 5, account_id, ..Default::default() },
     );
     parent.insert_account_storage(address, U256::ZERO, U256::from(10)).unwrap();
     parent.insert_account_storage(address, U256::from(1), U256::from(77)).unwrap();
@@ -172,6 +175,7 @@ fn prestate_restores_first_middle_and_last_transaction_boundaries() {
         let info = db.basic_ref(address).unwrap().unwrap();
         assert_eq!(info.balance, U256::from(balance));
         assert_eq!(info.nonce, nonce);
+        assert_eq!(info.account_id, account_id);
         assert_eq!(db.storage_ref(address, U256::ZERO).unwrap(), U256::from(value));
         assert_eq!(db.storage_ref(address, U256::from(1)).unwrap(), U256::from(77));
         if index > 0 {
@@ -271,6 +275,7 @@ fn prestate_preserves_sparse_write_boundaries() {
         let info = db.basic_ref(address).unwrap().unwrap();
         assert_eq!(info.balance, U256::from(expected));
         assert_eq!(info.nonce, expected);
+        assert!(info.account_id.is_none());
         assert_eq!(db.storage_ref(address, slot).unwrap(), U256::from(expected));
     }
 }

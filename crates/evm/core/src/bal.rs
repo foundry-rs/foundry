@@ -22,7 +22,7 @@ use revm::{
     DatabaseRef,
     primitives::hardfork::SpecId,
     state::{
-        Account, AccountId, AccountInfo, EvmState, EvmStorageSlot,
+        Account, AccountInfo, EvmState, EvmStorageSlot,
         bal::{AccountInfoBal, BalWrites, BlockAccessIndex},
     },
 };
@@ -53,8 +53,9 @@ impl PreparedPrestate {
         P: Provider<N> + ?Sized,
         N: Network,
     {
-        let checks =
-            stream::iter(self.possible_resets.into_iter().map(|(address, info)| async move {
+        let checks = stream::iter(self.possible_resets).map(Ok).try_for_each_concurrent(
+            16,
+            |(address, info)| async move {
                 let proof = provider
                     .get_proof(address, Vec::new())
                     .block_id(BlockId::hash(parent_hash))
@@ -71,9 +72,8 @@ impl PreparedPrestate {
                     "BAL cannot exclude a storage reset for {address}"
                 );
                 Ok::<_, eyre::Report>(())
-            }))
-            .buffer_unordered(16)
-            .try_collect::<Vec<_>>();
+            },
+        );
         timeout(Duration::from_millis(500), checks)
             .await
             .wrap_err("BAL storage root checks timed out")??;
@@ -188,7 +188,7 @@ pub fn prepare_prestate<DB: DatabaseRef>(
     let mut state = EvmState::default();
     let mut possible_resets = Vec::new();
 
-    for (account_index, (address, changes, storage_changes)) in accounts.into_iter().enumerate() {
+    for (address, changes, storage_changes) in accounts {
         // Validation guarantees sorted writes, so their first index decides whether an overlay
         // is needed without searching for values or cloning bytecode.
         let has_prior_changes = has_prior_write(&changes.balance, index)
@@ -203,10 +203,12 @@ pub fn prepare_prestate<DB: DatabaseRef>(
 
         // Reuse the parent read for both reset detection and Revm's account overlay.
         let info = db.basic_ref(address)?;
+        let was_missing = info.is_none();
+        let mut info = info.unwrap_or_default();
         // Even an account with no writes can have been created and destroyed in the prefix.
         // A whole-trie root check covers unlisted slots too, including custom genesis state.
-        if transaction_index > 0 && info.as_ref().is_none_or(|info| info.has_no_code_and_nonce()) {
-            possible_resets.push((address, info.clone().unwrap_or_default()));
+        if transaction_index > 0 && info.has_no_code_and_nonce() {
+            possible_resets.push((address, info.clone()));
         }
 
         // Read-only entries and writes at or after the target need no overlay.
@@ -214,14 +216,11 @@ pub fn prepare_prestate<DB: DatabaseRef>(
             continue;
         }
 
-        let was_missing = info.is_none();
-        let mut info = info.unwrap_or_default();
         let changed = changes.populate_account_info(index, &mut info);
         ensure!(
             !was_missing || changed,
             "BAL contains storage changes for missing account {address}"
         );
-        info.account_id = Some(AccountId::new(account_index).expect("too many bals"));
         let mut account = Account::from(info);
         account.mark_touch();
         for slot in storage_changes {
@@ -243,6 +242,3 @@ fn has_prior_write<T: PartialEq + Clone>(writes: &BalWrites<T>, index: BlockAcce
 
 #[cfg(test)]
 mod tests;
-
-#[cfg(test)]
-mod lifecycle;

@@ -1805,17 +1805,6 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
                 networks,
             )?;
 
-            if !system_calls.is_empty() {
-                let mut evm = factory.create_evm(&mut replay_backend, evm_env.clone());
-                inject_replay_precompiles(networks, evm.precompiles_mut(), chain_id, timestamp);
-                for (address, input) in system_calls {
-                    let result = evm
-                        .transact_system_call(SYSTEM_ADDRESS, address, input)
-                        .wrap_err("backend: failed replaying pre-block system call")?;
-                    evm.db_mut().commit(result.state);
-                }
-            }
-
             #[cfg(feature = "monad")]
             if let Some(context) = block_context {
                 for (index, tx, tx_env, is_system) in &txs_to_replay {
@@ -1841,6 +1830,12 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
                 // need the nested replay operation; it borrows the same staged database.
                 let mut evm = factory.create_evm(&mut replay_backend, evm_env.clone());
                 inject_replay_precompiles(networks, evm.precompiles_mut(), chain_id, timestamp);
+                for (address, input) in system_calls {
+                    let result = evm
+                        .transact_system_call(SYSTEM_ADDRESS, address, input)
+                        .wrap_err("backend: failed replaying pre-block system call")?;
+                    evm.db_mut().commit(result.state);
+                }
                 for (_, tx, tx_env, is_system) in &txs_to_replay {
                     trace!(tx=?tx.tx_hash(), "committing transaction");
                     let state = if *is_system {

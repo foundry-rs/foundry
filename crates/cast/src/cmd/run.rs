@@ -590,7 +590,7 @@ impl RunArgs {
             && let Some(access_list) =
                 fetch_block_access_list(&provider, BlockId::hash(block_hash)).await
         {
-            let prepared = (|| {
+            let prepared = async {
                 // The fork backend seeds this entry from its exact hash-pinned state anchor.
                 let parent_hash = executor.backend().block_hash_ref(parent_number)?;
                 let index = bal::validate_target(
@@ -615,14 +615,9 @@ impl RunArgs {
                     block.header().block_access_list_hash(),
                     spec_id,
                 )?;
-                Ok::<_, eyre::Report>((prepared, parent_hash))
-            })();
-            let prepared = match prepared {
-                Ok((prepared, parent_hash)) => {
-                    prepared.verify_storage_roots(&provider, parent_hash).await
-                }
-                Err(err) => Err(err),
-            };
+                prepared.verify_storage_roots(&provider, parent_hash).await
+            }
+            .await;
             match prepared {
                 Ok(state) => {
                     executor.backend_mut().commit(state);
