@@ -19,7 +19,10 @@ use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest};
 use anvil::{NodeConfig, NodeHandle};
 use foundry_test_utils::{
     TestCommand,
-    rpc::{spawn_rpc_proxy_canned_method, spawn_rpc_proxy_method_not_found_before},
+    rpc::{
+        spawn_rpc_proxy_canned_method, spawn_rpc_proxy_method_not_found_before,
+        spawn_rpc_proxy_retyping_first_block_transaction,
+    },
     snapbox::cmd::OutputAssert,
     str,
 };
@@ -261,8 +264,8 @@ casttest!(cast_run_fork_bal_rejects_invalid_transaction_index, async |_prj, cmd|
     )
     .await;
 
-    // Missing, out-of-range and mismatched indices must fall back to locating the target by hash.
-    for (attempt, index) in [Value::Null, json!("0x3"), json!("0x0")].into_iter().enumerate() {
+    // Missing, out-of-range and mismatched indices must skip BAL and locate the target by hash.
+    for index in [Value::Null, json!("0x3"), json!("0x0")] {
         transaction["transactionIndex"] = index;
         let (endpoint, _) = spawn_rpc_proxy_canned_method(
             bal_endpoint.clone(),
@@ -274,7 +277,66 @@ casttest!(cast_run_fork_bal_rejects_invalid_transaction_index, async |_prj, cmd|
         OutputAssert::new(output)
             .stdout_eq(replay.stdout.clone())
             .stderr_eq("Executing previous transactions from the block.\n");
-        assert_eq!(calls.load(Ordering::Relaxed), attempt + 1);
+        assert_eq!(calls.load(Ordering::Relaxed), 0);
+    }
+});
+
+casttest!(cast_run_fork_bal_skips_mismatched_block_hash, async |_prj, cmd| {
+    let fixture = Fixture::new(false).await;
+    let hash = fixture.transactions[2];
+    let replay = run(&mut cmd, hash, &fixture.handle.http_endpoint(), &[]);
+    let mut transaction = serde_json::to_value(
+        fixture.handle.http_provider().get_transaction_by_hash(hash).await.unwrap().unwrap(),
+    )
+    .unwrap();
+    transaction["blockHash"] = json!(B256::ZERO);
+    let (endpoint, calls) = spawn_rpc_proxy_canned_method(
+        fixture.handle.http_endpoint(),
+        BAL_METHOD,
+        json!(fixture.bal),
+    )
+    .await;
+    let (endpoint, _) =
+        spawn_rpc_proxy_canned_method(endpoint, "eth_getTransactionByHash", transaction).await;
+    let output = run(&mut cmd, hash, &endpoint, &[]);
+    OutputAssert::new(output).stdout_eq(replay.stdout).stderr_eq(replay.stderr);
+    assert_eq!(calls.load(Ordering::Relaxed), 0);
+});
+
+casttest!(cast_run_fork_bal_skips_non_ethereum_prefix, async |_prj, cmd| {
+    let fixture = Fixture::new(false).await;
+    let hash = fixture.transactions[2];
+    let ordinary = run(&mut cmd, hash, &fixture.handle.http_endpoint(), &[]);
+    for tx_type in ["0x7e", "0x7f"] {
+        let endpoint = spawn_rpc_proxy_retyping_first_block_transaction(
+            fixture.handle.http_endpoint(),
+            tx_type,
+        )
+        .await;
+        let replay = run_command(&mut cmd, hash, &endpoint, &[]).assert();
+        let replay = if tx_type == "0x7e" {
+            let replay = replay.success();
+            // Skipping the retyped system transaction must change the counter's trace.
+            assert_ne!(replay.get_output().stdout, ordinary.stdout);
+            replay
+        } else {
+            replay.failure().stdout_eq("").stderr_eq(str![[r#"
+Executing previous transactions from the block.
+Error: Failed to prepare transaction: [..] in block [..]
+
+Context:
+- cannot convert unknown transaction type to TxEnv
+
+"#]])
+        };
+        let replay = replay.get_output().clone();
+        let (endpoint, calls) =
+            spawn_rpc_proxy_canned_method(endpoint, BAL_METHOD, json!(fixture.bal)).await;
+        run_command(&mut cmd, hash, &endpoint, &[])
+            .assert_code(replay.status.code().unwrap())
+            .stdout_eq(replay.stdout)
+            .stderr_eq(replay.stderr);
+        assert_eq!(calls.load(Ordering::Relaxed), 0, "prefix type: {tx_type}");
     }
 });
 

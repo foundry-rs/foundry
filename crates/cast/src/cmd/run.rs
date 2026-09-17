@@ -11,7 +11,7 @@ use crate::{
 use alloy_consensus::{BlockHeader, Transaction, transaction::SignerRecoverable};
 use alloy_eips::{
     BlockNumHash,
-    eip7928::{BlockAccessList, compute_block_access_list_hash, validate_block_access_list},
+    eip7928::{compute_block_access_list_hash, validate_block_access_list},
 };
 use alloy_network::{
     AnyNetwork, AnyRpcBlock, AnyRpcTransaction, AnyTxEnvelope, BlockResponse, Network,
@@ -592,17 +592,13 @@ impl RunArgs {
                     matches!(hardfork, FoundryHardfork::Ethereum(_))
                         && SpecId::from(hardfork) == spec_id
                 })
-            && let Some(block_hash) = tx.block_hash()
-            && let Some(access_list) =
-                fetch_block_access_list(&provider, BlockId::hash(block_hash)).await
         {
-            let bal = executor
-                .backend()
-                .block_hash_ref(parent_number)
-                .map_err(eyre::Report::from)
-                .and_then(|parent_hash| prepare_bal(access_list, &tx, block, parent_hash));
+            let bal = match executor.backend().block_hash_ref(parent_number) {
+                Ok(parent_hash) => prepare_bal(&provider, &tx, block, parent_hash).await,
+                Err(err) => Err(err.into()),
+            };
             match bal {
-                Ok((bal, index)) => block_access_list = Some((Arc::new(bal), index)),
+                Ok(bal) => block_access_list = bal.map(|(bal, index)| (Arc::new(bal), index)),
                 Err(err) => trace!(%err, "BAL unavailable, falling back to block replay"),
             }
         }
@@ -634,13 +630,13 @@ impl RunArgs {
     }
 }
 
-/// Binds an RPC BAL to the target block before handing state reads to Revm.
-fn prepare_bal(
-    bal: BlockAccessList,
+/// Checks the target block before fetching and validating its BAL for Revm state reads.
+async fn prepare_bal(
+    provider: &RetryProvider,
     tx: &AnyRpcTransaction,
     block: &AnyRpcBlock,
     parent_hash: B256,
-) -> Result<(Bal, usize)> {
+) -> Result<Option<(Bal, usize)>> {
     let transactions = full_transactions(block)?;
     let index = usize::try_from(
         tx.transaction_index().ok_or_else(|| eyre::eyre!("missing transaction index"))?,
@@ -658,12 +654,16 @@ fn prepare_bal(
         }),
         "BAL requires ordinary Ethereum transactions"
     );
+    let Some(bal) = fetch_block_access_list(provider, BlockId::hash(block.header().hash)).await
+    else {
+        return Ok(None);
+    };
     eyre::ensure!(!bal.is_empty(), "BAL is empty for a block containing transactions");
     validate_block_access_list(&bal, transactions.len()).wrap_err("invalid block access list")?;
     if let Some(hash) = block.header().block_access_list_hash() {
         eyre::ensure!(compute_block_access_list_hash(&bal) == hash, "BAL hash mismatch");
     }
-    Ok((Bal::try_from_alloy(bal).wrap_err("invalid BAL bytecode")?, index))
+    Ok(Some((Bal::try_from_alloy(bal).wrap_err("invalid BAL bytecode")?, index)))
 }
 
 impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
