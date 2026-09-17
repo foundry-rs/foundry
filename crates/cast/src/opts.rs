@@ -1301,6 +1301,7 @@ pub enum CastSubcommand {
     /// Restores transaction prestate from a block access list (BAL) when available, otherwise
     /// replays earlier transactions. BAL requires supported Ethereum Cancun-or-later semantics,
     /// a matching execution chain ID, and no explicit EVM version or hardfork override.
+    /// Upstream blocks at or before an Anvil endpoint's fork block bypass BAL.
     /// `--prestate-tracer` tries the debug API first, then BAL, then replay. `--quick` skips both
     /// prestate paths; `--debug-trace-transaction` uses remote tracing exclusively.
     ///

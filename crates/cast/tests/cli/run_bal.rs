@@ -52,12 +52,15 @@ impl Fixture {
     }
 
     async fn with_mode(mode: FixtureMode) -> Self {
+        Self::with_config(mode, NodeConfig::test()).await
+    }
+
+    async fn with_config(mode: FixtureMode, config: NodeConfig) -> Self {
         let capture_chain_id = matches!(mode, FixtureMode::ChainId);
         let parent_storage =
             if let FixtureMode::ParentStorage(value) = mode { Some(value) } else { None };
         let (api, handle) =
-            anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Cancun.into())))
-                .await;
+            anvil::spawn(config.with_hardfork(Some(EthereumHardfork::Cancun.into()))).await;
         let provider = handle.http_provider();
         let wallet = handle.dev_wallets().next().unwrap();
         let sender = wallet.address();
@@ -687,6 +690,83 @@ Executing previous transactions from the block.
 "#]]);
         }
     }
+});
+
+casttest!(cast_run_fork_bal_skips_forwarded_history, async |_prj, cmd| {
+    let fixture = Fixture::with_mode(FixtureMode::ChainId).await;
+    let hash = fixture.transactions[2];
+    let provider = fixture.handle.http_provider();
+    let source_chain_id = provider.get_chain_id().await.unwrap();
+    let canonical = run(&mut cmd, hash, &fixture.handle.http_endpoint(), &[]);
+
+    // Cover both the fork anchor itself and an earlier upstream block.
+    for extra_blocks in [0, 1] {
+        if extra_blocks > 0 {
+            provider.raw_request::<_, Value>("evm_mine".into(), ()).await.unwrap();
+        }
+        let fork_block = provider.get_block_number().await.unwrap();
+        for (chain_id, hardfork, evm_version) in [
+            (source_chain_id + 1, EthereumHardfork::Cancun, "cancun"),
+            (source_chain_id, EthereumHardfork::Prague, "prague"),
+        ] {
+            let proxy = RpcProxy::new(&fixture, ProxyOptions::with_bal(json!(fixture.bal))).await;
+            let (_, fork) = anvil::spawn(
+                NodeConfig::test()
+                    .with_eth_rpc_url(Some(proxy.endpoint.clone()))
+                    .with_fork_block_number(Some(fork_block))
+                    .with_chain_id(Some(chain_id))
+                    .with_hardfork(Some(hardfork.into())),
+            )
+            .await;
+
+            // Replay uses the endpoint's local rules. The forwarded BAL was produced with
+            // upstream rules, which can differ even when the chain IDs match.
+            run_command(
+                &mut cmd,
+                hash,
+                &fixture.handle.http_endpoint(),
+                &["--evm-version", evm_version],
+            );
+            cmd.env("FOUNDRY_CHAIN_ID", chain_id.to_string());
+            let replay = cmd.assert_success().get_output().clone();
+            if chain_id != source_chain_id {
+                assert_ne!(replay.stdout, canonical.stdout);
+            }
+
+            let output = run(&mut cmd, hash, &fork.http_endpoint(), &[]);
+            assert!(
+                proxy.requests(BAL_METHOD).is_empty(),
+                "forwarded historical BAL must not be fetched"
+            );
+            OutputAssert::new(output)
+                .stdout_eq(String::from_utf8(replay.stdout).unwrap())
+                .stderr_eq(str![[r#"
+Executing previous transactions from the block.
+
+"#]]);
+        }
+    }
+});
+
+casttest!(cast_run_fork_bal_applies_to_locally_mined_blocks, async |_prj, cmd| {
+    let (_, origin) = anvil::spawn(NodeConfig::test()).await;
+    let source_chain_id = origin.http_provider().get_chain_id().await.unwrap();
+    let fixture = Fixture::with_config(
+        FixtureMode::ChainId,
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(origin.http_endpoint()))
+            .with_fork_block_number(Some(0u64))
+            .with_chain_id(Some(source_chain_id + 1)),
+    )
+    .await;
+    let hash = fixture.transactions[2];
+    let replay = run(&mut cmd, hash, &fixture.handle.http_endpoint(), &[]);
+    let proxy = RpcProxy::new(&fixture, ProxyOptions::with_bal(json!(fixture.bal))).await;
+
+    // Blocks mined after the anchor use the local rules, so BAL can still replace replay.
+    let output = run(&mut cmd, hash, &proxy.endpoint, &[]);
+    assert_eq!(proxy.requests(BAL_METHOD).len(), 1);
+    OutputAssert::new(output).stdout_eq(String::from_utf8(replay.stdout).unwrap()).stderr_eq("");
 });
 
 casttest!(cast_run_fork_bal_falls_back_for_creation_over_parent_storage, async |_prj, cmd| {
