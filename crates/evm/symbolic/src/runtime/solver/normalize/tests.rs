@@ -231,6 +231,53 @@ fn subtraction_underflow_normalization_preserves_modular_boundaries() {
 }
 
 #[test]
+fn complemented_constant_comparisons_preserve_word_boundaries() {
+    let mut cx = SymCx::new();
+    let value = SymExpr::var(&mut cx, "value");
+    let complement = SymExpr::not(&mut cx, value.clone());
+    let samples = [
+        U256::ZERO,
+        U256::ONE,
+        U256::from(36),
+        U256::from(37),
+        (U256::ONE << 255) - U256::ONE,
+        U256::ONE << 255,
+        U256::MAX - U256::from(36),
+        U256::MAX,
+    ];
+    for limit in samples {
+        let constant = SymExpr::constant(&mut cx, limit);
+        for op in [
+            SymCmpOp::Eq,
+            SymCmpOp::Ult,
+            SymCmpOp::Ule,
+            SymCmpOp::Ugt,
+            SymCmpOp::Uge,
+            SymCmpOp::Slt,
+            SymCmpOp::Sgt,
+        ] {
+            for (left, right) in
+                [(complement.clone(), constant.clone()), (constant.clone(), complement.clone())]
+            {
+                let comparison = SymBoolExpr::cmp(&mut cx, op, left, right);
+                for original in [comparison.clone(), comparison.not(&mut cx)] {
+                    let normalized = normalize_bool_for_solver(&mut cx, original.clone());
+                    for input in samples {
+                        let mut model = SymbolicModel::default();
+                        assert!(value.assign_model_value(&mut model, input));
+                        assert_eq!(
+                            original.eval_model(&model).unwrap(),
+                            normalized.eval_model(&model).unwrap(),
+                            "op={op:?}, limit={limit}, input={input}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn scaled_zero_check_requires_non_wrapping_positive_scale() {
     let mut cx = SymCx::new();
     let value = SymExpr::var(&mut cx, "balance");
@@ -295,6 +342,110 @@ fn checked_multiplication_accepts_scaled_zero_guard_with_independent_bounds() {
     assert!(rate.assign_model_value(&mut model, scale_value + U256::ONE));
     assert!(bounds.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
     assert!(normalized.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
+}
+
+#[test]
+fn quotient_zero_check_requires_matching_unsigned_positive_divisor() {
+    let mut cx = SymCx::new();
+    let value = SymExpr::var(&mut cx, "value");
+    let other = SymExpr::var(&mut cx, "other");
+    let scale = SymExpr::constant(&mut cx, U256::from(37));
+    let zero = SymExpr::zero(&mut cx);
+    let context = ConstraintContext::default();
+    // Keep raw division nodes for zero and symbolic denominators so the matcher itself is tested,
+    // independently of constructor simplification.
+    for denominator in [scale.clone(), zero, other.clone()] {
+        let quotient = SymExpr::from_kind(
+            &mut cx,
+            SymExprKind::BinOp(SymBinOp::UDiv, value.clone(), denominator.clone()),
+        );
+        for numerator in [value.clone(), other.clone()] {
+            for limit in [scale.clone(), denominator.clone()] {
+                for op in [SymCmpOp::Ult, SymCmpOp::Ule, SymCmpOp::Slt] {
+                    let condition = SymBoolExpr::cmp(&mut cx, op, numerator.clone(), limit.clone());
+                    assert_eq!(
+                        context.zero_check_for_operand(&condition, &quotient),
+                        denominator == scale
+                            && numerator == value
+                            && limit == scale
+                            && op == SymCmpOp::Ult
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn checked_multiplication_preserves_normalized_quotient_zero_guards() {
+    let mut cx = SymCx::new();
+    let value = SymExpr::var(&mut cx, "value");
+    let rate = SymExpr::var(&mut cx, "rate");
+    let scale = SymExpr::constant(&mut cx, U256::from(37));
+    let operand = SymExpr::binop(&mut cx, SymBinOp::UDiv, value.clone(), scale.clone());
+    let zero = SymExpr::zero(&mut cx);
+    let is_zero = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, value.clone(), scale.clone());
+    let wrong_zero = SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ult, &value, U256::from(38));
+    let direct_zero = SymBoolExpr::eq(&mut cx, operand.clone(), zero.clone());
+    let mut cache = HashMap::default();
+    for factor in [scale.clone(), rate.clone()] {
+        let product = SymExpr::binop(&mut cx, SymBinOp::Mul, operand.clone(), factor.clone());
+        let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, product, operand.clone());
+        for outer in [&is_zero, &direct_zero, &wrong_zero] {
+            for inner in [&is_zero, &direct_zero, &wrong_zero] {
+                let guarded = SymExpr::ite(&mut cx, inner.clone(), zero.clone(), quotient.clone());
+                let exact = SymBoolExpr::eq(&mut cx, guarded, factor.clone());
+                let zero_word = SymExpr::bool_word(&mut cx, outer.clone());
+                let exact_word = SymExpr::bool_word(&mut cx, exact.clone());
+                let safe = SymExpr::binop(&mut cx, SymBinOp::Or, zero_word, exact_word);
+                let failure = SymBoolExpr::eq(&mut cx, safe, zero.clone());
+                let valid = outer != &wrong_zero && inner != &wrong_zero;
+                if factor == scale && valid {
+                    let normalized =
+                        normalize_constraints_for_solver(&mut cx, std::slice::from_ref(&failure));
+                    assert!(constraints_are_directly_unsat(&mut cx, &normalized));
+                }
+                // Retained guard inference and guard elimination share the same zero matching, but
+                // still need independent support.
+                let mut context = ConstraintContext::default();
+                let guard = failure.clone().not(&mut cx);
+                assert_eq!(context.record_non_wrapping_product(&mut cx, &guard), valid);
+                // A third alternative must not establish product safety.
+                let extra = SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Eq, &value, U256::MAX);
+                let loose = SymBoolExpr::or(&mut cx, vec![outer.clone(), exact, extra]);
+                assert!(!ConstraintContext::default().record_non_wrapping_product(&mut cx, &loose));
+                for predicate in [guard, failure] {
+                    let normalized = normalize_constraints_for_solver_cached(
+                        &mut cx,
+                        std::slice::from_ref(&predicate),
+                        &mut cache,
+                    );
+                    for input in [
+                        U256::ZERO,
+                        U256::ONE,
+                        U256::from(36),
+                        U256::from(37),
+                        U256::from(38),
+                        U256::ONE << 255,
+                        U256::MAX,
+                    ] {
+                        for multiplier in
+                            [U256::ZERO, U256::ONE, U256::from(37), U256::from(38), U256::MAX]
+                        {
+                            let mut model = SymbolicModel::default();
+                            assert!(value.assign_model_value(&mut model, input));
+                            assert!(rate.assign_model_value(&mut model, multiplier));
+                            assert_eq!(
+                                predicate.eval_model(&model).unwrap(),
+                                normalized.iter().all(|c| c.eval_model(&model).unwrap()),
+                                "valid={valid}, input={input}, multiplier={multiplier}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn rounded_conversion(cx: &mut SymCx, value: SymExpr, rate: SymExpr, scale: U256) -> SymExpr {

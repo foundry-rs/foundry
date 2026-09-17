@@ -6675,6 +6675,23 @@ contract RoundedProductTest {
         assert(value - rounded < 37);
     }
 
+    function checkDividendRelation(uint256 value) external pure {
+        require(value <= type(uint256).max - 36);
+        uint256 dividend = value + 36;
+        uint256 rounded = dividend / 37 * 37;
+        assert(rounded <= dividend);
+        assert(dividend - rounded < 37);
+    }
+
+    function checkWrappingDividendRelation(uint256 value) external pure {
+        unchecked {
+            uint256 dividend = value + 36;
+            uint256 rounded = dividend / 37 * 37;
+            assert(rounded <= dividend);
+            assert(dividend - rounded < 37);
+        }
+    }
+
     function checkCeilingError(uint256 value) external pure {
         uint256 rounded = (value + 36) / 37 * 37;
         assert(rounded >= value);
@@ -6709,17 +6726,17 @@ contract RoundedProductTest {
 }
 "#,
     );
-    cmd.args([
-        "test",
-        "--symbolic",
-        "--symbolic-timeout",
-        "30",
-        "--match-test",
-        "check(FloorError|CeilingError|CeilingRoundTrip)",
-        "--optimize",
-    ])
-    .assert_success();
-    for test in ["checkCeilingIsNotExact", "checkWrappingCeiling", "checkReversedFloorError"] {
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        cmd.forge_fuse().args([
+            "test",
+            "--symbolic",
+            "--symbolic-timeout",
+            "30",
+            "--match-test",
+            "check(FloorError|DividendRelation|WrappingDividendRelation|CeilingError|CeilingRoundTrip)",
+        ])
+        .assert_success();
         let output = cmd
             .forge_fuse()
             .args([
@@ -6729,15 +6746,19 @@ contract RoundedProductTest {
                 "--symbolic-timeout",
                 "30",
                 "--match-test",
-                test,
-                "--optimize",
+                "check(CeilingIsNotExact|WrappingCeiling|ReversedFloorError)",
             ])
             .assert_failure()
             .get_output()
             .stdout
             .clone();
-        let signature = format!("{test}(uint256)");
-        let result = json_test_result(&output, &signature);
-        assert_eq!(result["symbolic"]["status"], "fail_counterexample");
+        for test in ["checkCeilingIsNotExact", "checkWrappingCeiling", "checkReversedFloorError"] {
+            let signature = format!("{test}(uint256)");
+            let result = json_test_result(&output, &signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "{test}, optimized={optimized}"
+            );
+        }
     }
 });

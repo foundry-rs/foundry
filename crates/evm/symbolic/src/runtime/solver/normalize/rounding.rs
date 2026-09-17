@@ -23,14 +23,22 @@ impl ConstraintContext {
         (divisor.as_const() == Some(factor) && !factor.is_zero()).then_some((dividend, factor))
     }
 
-    fn rounding_bounds<'a>(&self, expr: &'a SymExpr) -> Option<RoundingBounds<'a>> {
+    // Requesting an anchor preserves the raw dividend relation even when a safe
+    // offset also exposes a relation to the pre-offset value. With no requested
+    // anchor, prefer the shifted relation for quotient cancellation.
+    fn rounding_bounds<'a>(
+        &self,
+        expr: &'a SymExpr,
+        anchor: Option<&SymExpr>,
+    ) -> Option<RoundingBounds<'a>> {
         let mut remaining = MAX_LOCAL_ANALYSIS_NODES;
-        self.rounding_bounds_cached(expr, &mut HashMap::default(), &mut remaining)
+        self.rounding_bounds_cached(expr, anchor, &mut HashMap::default(), &mut remaining)
     }
 
     fn rounding_bounds_cached<'a>(
         &self,
         expr: &'a SymExpr,
+        anchor: Option<&SymExpr>,
         intervals: &mut HashMap<SymExpr, Option<WordInterval>>,
         remaining: &mut usize,
     ) -> Option<RoundingBounds<'a>> {
@@ -38,6 +46,10 @@ impl ConstraintContext {
         // Euclidean division: q*d = dividend - remainder, 0 <= remainder < d.
         // In particular, q*d <= dividend <= MAX, so the rescaling cannot wrap.
         let width = divisor - U256::ONE;
+        let raw = RoundingBounds { anchor: dividend, below: width, above: U256::ZERO };
+        if anchor == Some(dividend) {
+            return Some(raw);
+        }
         let offset = match dividend.kind() {
             SymExprKind::BinOp(SymBinOp::Add, anchor, bias)
                 if let Some(bias) = bias.as_const()
@@ -65,13 +77,13 @@ impl ConstraintContext {
         }
         // An unproved offset remains opaque. A bound on a wrapped sum cannot
         // justify removing that sum from the relation.
-        Some(RoundingBounds { anchor: dividend, below: width, above: U256::ZERO })
+        Some(raw)
     }
 
     /// A nonnegative rounding error smaller than a divisor preserves its quotient.
     pub(super) fn quotient_of_rounded_product<'a>(&self, expr: &'a SymExpr) -> Option<&'a SymExpr> {
         let (numerator, divisor) = expr.udiv_operands()?;
-        let bounds = self.rounding_bounds(numerator)?;
+        let bounds = self.rounding_bounds(numerator, None)?;
         let minimum =
             divisor.as_const().or_else(|| self.unsigned_lower_bounds.get(divisor).copied())?;
         if !bounds.below.is_zero() || bounds.above >= minimum {
@@ -111,7 +123,7 @@ impl ConstraintContext {
                 },
             ),
         ] {
-            if let Some(bounds) = self.rounding_bounds(rounded)
+            if let Some(bounds) = self.rounding_bounds(rounded, Some(anchor))
                 && bounds.anchor == anchor
             {
                 match op {
@@ -134,13 +146,13 @@ impl ConstraintContext {
         intervals: &mut HashMap<SymExpr, Option<WordInterval>>,
         remaining: &mut usize,
     ) -> Option<WordInterval> {
-        if let Some(bounds) = self.rounding_bounds_cached(left, intervals, remaining)
+        if let Some(bounds) = self.rounding_bounds_cached(left, Some(right), intervals, remaining)
             && bounds.anchor == right
             && bounds.below.is_zero()
         {
             return Some(WordInterval { min: U256::ZERO, max: bounds.above });
         }
-        if let Some(bounds) = self.rounding_bounds_cached(right, intervals, remaining)
+        if let Some(bounds) = self.rounding_bounds_cached(right, Some(left), intervals, remaining)
             && bounds.anchor == left
             && bounds.above.is_zero()
         {
@@ -175,37 +187,69 @@ mod tests {
     }
 
     #[test]
-    fn floor_rounding_proves_order_and_remainder_without_operand_bounds() {
-        let mut cx = SymCx::new();
-        let value = SymExpr::var(&mut cx, "value");
-        let rounded = rounded(&mut cx, &value, U256::from(37), U256::ZERO, false);
-        let error = SymExpr::binop(&mut cx, SymBinOp::Sub, value.clone(), rounded.clone());
-        let order = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, rounded, value);
-        let remainder = SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ult, &error, U256::from(37));
-        for property in [order, remainder] {
-            let failure = property.not(&mut cx);
-            let normalized = normalize_constraints_for_solver(&mut cx, &[failure]);
-            assert_eq!(normalized, vec![SymBoolExpr::constant(&mut cx, false)]);
-        }
-    }
-
-    #[test]
     fn ceiling_rounding_proves_order_and_error_for_both_addition_forms() {
         let mut cx = SymCx::new();
         let value = SymExpr::var(&mut cx, "value");
         let bound =
             SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ule, &value, U256::MAX - U256::from(37));
-        for split in [false, true] {
-            let rounded = rounded(&mut cx, &value, U256::from(37), U256::from(36), split);
-            let error = SymExpr::binop(&mut cx, SymBinOp::Sub, rounded.clone(), value.clone());
-            let order = SymBoolExpr::cmp(&mut cx, SymCmpOp::Uge, rounded, value.clone());
-            let error_bound =
-                SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ult, &error, U256::from(37));
-            for property in [order, error_bound] {
-                let failure = property.not(&mut cx);
-                let normalized =
-                    normalize_constraints_for_solver(&mut cx, &[bound.clone(), failure]);
-                assert_eq!(normalized, vec![SymBoolExpr::constant(&mut cx, false)]);
+        let complement = SymExpr::not(&mut cx, value.clone());
+        let complement_bound =
+            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Uge, &complement, U256::from(37));
+        for bound in [bound, complement_bound] {
+            for split in [false, true] {
+                let rounded = rounded(&mut cx, &value, U256::from(37), U256::from(36), split);
+                let error = SymExpr::binop(&mut cx, SymBinOp::Sub, rounded.clone(), value.clone());
+                let order = SymBoolExpr::cmp(&mut cx, SymCmpOp::Uge, rounded, value.clone());
+                let error_bound =
+                    SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ult, &error, U256::from(37));
+                for property in [order, error_bound] {
+                    let failure = property.not(&mut cx);
+                    let normalized =
+                        normalize_constraints_for_solver(&mut cx, &[bound.clone(), failure]);
+                    assert_eq!(normalized, vec![SymBoolExpr::constant(&mut cx, false)]);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn safe_offsets_preserve_dividend_order_and_remainder() {
+        let mut cx = SymCx::new();
+        let value = SymExpr::var(&mut cx, "value");
+        let safe =
+            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ule, &value, U256::MAX - U256::from(37));
+        let mut cache = HashMap::default();
+        for bias in [U256::ZERO, U256::from(18), U256::from(36)] {
+            for split in [false, true] {
+                let rounded = rounded(&mut cx, &value, U256::from(37), bias, split);
+                let (dividend, _) = ConstraintContext::rounded_product_operands(&rounded).unwrap();
+                let error =
+                    SymExpr::binop(&mut cx, SymBinOp::Sub, dividend.clone(), rounded.clone());
+                let order =
+                    SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, rounded.clone(), dividend.clone());
+                let remainder =
+                    SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ult, &error, U256::from(37));
+                for property in [order, remainder] {
+                    for bounded in [true, false, true] {
+                        let mut constraints = vec![property.clone().not(&mut cx)];
+                        if bounded {
+                            constraints.push(safe.clone());
+                        }
+                        for _ in 0..2 {
+                            let normalized = normalize_constraints_for_solver_cached(
+                                &mut cx,
+                                &constraints,
+                                &mut cache,
+                            );
+                            assert_eq!(
+                                normalized,
+                                vec![SymBoolExpr::constant(&mut cx, false)],
+                                "bias={bias}, split={split}, bounded={bounded}"
+                            );
+                            constraints.reverse();
+                        }
+                    }
+                }
             }
         }
     }
@@ -220,7 +264,7 @@ mod tests {
                     SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ule, &value, U256::MAX - bias);
                 let context = ConstraintContext::new(&[bound]);
                 let rounded = rounded(&mut cx, &value, divisor, bias, false);
-                let relation = context.rounding_bounds(&rounded).unwrap_or_else(|| {
+                let relation = context.rounding_bounds(&rounded, None).unwrap_or_else(|| {
                     panic!(
                         "missing relation: divisor={divisor}, bias={bias}, expression={rounded:?}"
                     )
