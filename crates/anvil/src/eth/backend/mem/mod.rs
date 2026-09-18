@@ -2888,7 +2888,7 @@ impl<N: Network> Backend<N> {
         BlockchainError,
     >
     where
-        DB: StateDB<Error = DatabaseError>,
+        DB: StateDB<Error = DatabaseError> + alloy_evm::block::BalIndexedDatabase,
     {
         let spec_id = *evm_env.spec_id();
         #[cfg(feature = "monad")]
@@ -5430,6 +5430,23 @@ where
             })
             .collect()
     }
+
+    /// Returns the EIP-7928 block access list stored for a locally mined block hash.
+    pub fn block_access_list_by_hash(
+        &self,
+        hash: B256,
+    ) -> Option<alloy_eips::eip7928::BlockAccessList> {
+        self.blockchain.storage.read().block_access_lists.get(&hash).cloned()
+    }
+
+    /// Returns the EIP-7928 block access list stored for a locally mined block number.
+    pub fn block_access_list_by_number(
+        &self,
+        number: u64,
+    ) -> Option<alloy_eips::eip7928::BlockAccessList> {
+        let storage = self.blockchain.storage.read();
+        storage.hashes.get(&number).and_then(|hash| storage.block_access_lists.get(hash)).cloned()
+    }
 }
 
 // Mining methods — generic over N: Network, with Foundry-associated-type bounds for now.
@@ -5575,6 +5592,7 @@ where
                 transactions,
                 transaction_infos,
                 parent_beacon_block_root,
+                None,
             );
             let block_hash = block_info.block.header.hash_slow();
             (block_info, state_changes, block_hash)
@@ -5670,7 +5688,7 @@ where
         >,
     ) -> Result<ExecutedHistoricalReplay>
     where
-        DB: StateDB<Error = DatabaseError>,
+        DB: StateDB<Error = DatabaseError> + alloy_evm::block::BalIndexedDatabase,
     {
         #[cfg(feature = "monad")]
         if self.is_monad() {
@@ -5791,6 +5809,7 @@ where
         transactions: Vec<MaybeImpersonatedTransaction<FoundryTxEnvelope>>,
         transaction_infos: Vec<TransactionInfo>,
         parent_beacon_block_root: Option<B256>,
+        block_access_list: Option<&alloy_eips::eip7928::BlockAccessList>,
     ) -> BlockInfo<N> {
         let spec_id = *evm_env.spec_id();
         let is_shanghai = spec_id >= SpecId::SHANGHAI;
@@ -5827,7 +5846,8 @@ where
             excess_blob_gas: if is_cancun { evm_env.block_env.blob_excess_gas() } else { None },
             withdrawals_root: is_shanghai.then_some(EMPTY_WITHDRAWALS),
             requests_hash: is_prague.then(|| block_result.requests.requests_hash()),
-            block_access_list_hash: None,
+            block_access_list_hash: block_access_list
+                .map(|bal| compute_block_access_list_hash(bal.as_slice())),
             slot_number: None,
         };
 
@@ -5876,7 +5896,15 @@ where
             evm_env.block_env.prevrandao =
                 Some(next_prevrandao.map_or_else(|| keccak256(input), |pending| pending.value));
 
-            let (block_info, included, invalid, not_yet_valid, block_hash, parent_state) = {
+            let (
+                block_info,
+                included,
+                invalid,
+                not_yet_valid,
+                block_hash,
+                parent_state,
+                block_access_list,
+            ) = {
                 let mut db = self.db.write().await;
 
                 // finally set the next block timestamp, this is done just before execution, because
@@ -5899,6 +5927,15 @@ where
                 let gas_config = self.pool_tx_gas_config(&mining_evm_env);
 
                 let mut candidate_db = AnvilCacheDB::new(&**db);
+                if self.networks.execution_network().is_ethereum()
+                    && matches!(
+                        hardfork,
+                        FoundryHardfork::Ethereum(hardfork)
+                            if hardfork >= EthereumHardfork::Amsterdam
+                    )
+                {
+                    candidate_db.enable_bal_recording();
+                }
                 let (pool_result, block_result) = self.execute_with_block_executor(
                     &mut candidate_db,
                     &mining_evm_env,
@@ -5915,6 +5952,7 @@ where
                         self.validate_mining_pool_transaction_for(pool_tx, account, validation_env)
                     },
                 )?;
+                let block_access_list = candidate_db.take_block_access_list();
 
                 let included = pool_result.included;
                 let invalid = pool_result.invalid;
@@ -5936,6 +5974,7 @@ where
                     pool_result.txs,
                     pool_result.tx_info,
                     Some(B256::ZERO),
+                    block_access_list.as_ref(),
                 );
 
                 // Update the new blockhash in the db itself.
@@ -5946,7 +5985,15 @@ where
                     self.cheats.consume_next_block_prevrandao(pending);
                 }
 
-                (block_info, included, invalid, not_yet_valid, block_hash, parent_state)
+                (
+                    block_info,
+                    included,
+                    invalid,
+                    not_yet_valid,
+                    block_hash,
+                    parent_state,
+                    block_access_list,
+                )
             };
 
             // create the new block with the current timestamp
@@ -5991,6 +6038,9 @@ where
 
             storage.blocks.insert(block_hash, block);
             storage.hashes.insert(block_number, block_hash);
+            if let Some(block_access_list) = block_access_list {
+                storage.block_access_lists.insert(block_hash, block_access_list);
+            }
             #[cfg(feature = "monad")]
             if let Some(participants) = monad_participants {
                 monad::store_block_metadata(
@@ -6166,6 +6216,7 @@ where
             pool_result.txs,
             pool_result.tx_info,
             Some(B256::ZERO),
+            None,
         );
 
         Ok(f(Box::new(cache_db), block_info))

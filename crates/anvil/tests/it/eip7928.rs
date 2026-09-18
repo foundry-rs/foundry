@@ -1,13 +1,16 @@
 //! EIP-7928 block access list tests.
 //!
-//! Anvil does not build block access lists itself; the endpoints exist for fork compatibility and
-//! forward to the forked node for blocks that predate the fork. Everything else answers `null`.
+//! Anvil builds block access lists for locally mined Amsterdam blocks and forwards requests for
+//! blocks that predate a fork to the upstream node.
 
-use alloy_network::Network;
-use alloy_primitives::{B256, Bytes};
+use alloy_eips::eip7928::{BlockAccessIndex, BlockAccessList, compute_block_access_list_hash};
+use alloy_network::{Network, TransactionBuilder};
+use alloy_primitives::{B256, Bytes, U256};
 use alloy_provider::Provider;
-use alloy_rpc_types::{BlockId, BlockNumberOrTag};
+use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest};
+use alloy_serde::WithOtherFields;
 use anvil::{NodeConfig, spawn};
+use foundry_evm::hardfork::EthereumHardfork;
 use foundry_test_utils::rpc::spawn_rpc_proxy_canned_method;
 use serde_json::{Value, json};
 use std::sync::atomic::Ordering;
@@ -41,7 +44,7 @@ async fn assert_all_null<N: Network>(provider: &impl Provider<N>, hash: B256, nu
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn block_access_list_is_null_without_a_fork() {
+async fn block_access_list_is_null_before_amsterdam() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
@@ -49,6 +52,95 @@ async fn block_access_list_is_null_without_a_fork() {
     let block = provider.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
     assert_all_null(&provider, block.header.hash, block.header.number).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn block_access_list_is_null_for_non_ethereum_execution() {
+    let (api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(EthereumHardfork::Amsterdam.into())))
+            .await;
+    let provider = handle.http_provider();
+
+    api.mine_one().await.unwrap();
+    let block = provider.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_all_null(&provider, block.header.hash, block.header.number).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn locally_mined_amsterdam_block_has_access_list() {
+    let (api, handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Amsterdam.into()))).await;
+    let provider = handle.http_provider();
+
+    api.mine_one().await.unwrap();
+    let block = provider.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    let number = block.header.number;
+    let hash = block.header.hash;
+
+    let by_id: BlockAccessList = provider
+        .client()
+        .request::<_, Option<BlockAccessList>>("eth_getBlockAccessList", (BlockId::number(number),))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!by_id.is_empty(), "Amsterdam system calls should produce BAL entries");
+
+    let by_hash = provider.get_block_access_list_by_hash(hash).await.unwrap().unwrap();
+    let by_number = provider
+        .get_block_access_list_by_number(BlockNumberOrTag::Number(number))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(by_hash, by_id);
+    assert_eq!(by_number, by_id);
+
+    let raw = provider.get_block_access_list_raw(BlockId::number(number)).await.unwrap().unwrap();
+    let mut expected_raw = Vec::new();
+    alloy_rlp::encode_list(&by_id, &mut expected_raw);
+    assert_eq!(raw.as_ref(), expected_raw);
+    assert_eq!(block.header.block_access_list_hash, Some(compute_block_access_list_hash(&by_id)));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn locally_mined_transactions_use_ordered_bal_indices() {
+    let (api, handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Amsterdam.into()))).await;
+    let provider = handle.http_provider();
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let accounts = provider.get_accounts().await.unwrap();
+    let from = accounts[0];
+    let to = accounts[1];
+
+    for nonce in 0..2 {
+        let tx = TransactionRequest::default()
+            .with_from(from)
+            .with_to(to)
+            .with_value(U256::from(nonce + 1))
+            .with_nonce(nonce);
+        let _ = provider.send_transaction(WithOtherFields::new(tx)).await.unwrap();
+    }
+    api.mine_one().await.unwrap();
+
+    let bal =
+        provider.get_block_access_list_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    let sender = bal.iter().find(|account| account.address == from).unwrap();
+    let indices =
+        sender.nonce_changes.iter().map(|change| change.block_access_index).collect::<Vec<_>>();
+    assert_eq!(indices, [BlockAccessIndex::new(1), BlockAccessIndex::new(2)]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn reverting_snapshot_removes_local_block_access_list() {
+    let (api, handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Amsterdam.into()))).await;
+    let snapshot = api.evm_snapshot().await.unwrap();
+    api.mine_one().await.unwrap();
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert!(api.block_access_list_by_hash(block.header.hash).await.unwrap().is_some());
+
+    assert!(api.evm_revert(snapshot).await.unwrap());
+    assert_eq!(api.block_access_list_by_hash(block.header.hash).await.unwrap(), None);
+    assert_eq!(handle.http_provider().get_block_number().await.unwrap(), 0);
 }
 
 #[tokio::test(flavor = "multi_thread")]

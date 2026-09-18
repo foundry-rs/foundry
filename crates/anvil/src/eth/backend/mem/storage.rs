@@ -10,6 +10,7 @@ use crate::eth::{
     pool::transactions::PoolTransaction,
 };
 use alloy_consensus::BlockHeader;
+use alloy_eips::eip7928::BlockAccessList;
 use alloy_network::Network;
 use alloy_primitives::{
     B256, Bytes, U256,
@@ -296,6 +297,8 @@ impl Default for InMemoryBlockStates {
 pub struct BlockchainStorage<N: Network> {
     /// all stored blocks (block hash -> block)
     pub blocks: B256HashMap<Block>,
+    /// EIP-7928 block access lists for locally mined blocks.
+    pub block_access_lists: B256HashMap<BlockAccessList>,
     /// mapping from block number -> block hash
     pub hashes: HashMap<u64, B256>,
     /// The current best hash
@@ -342,6 +345,7 @@ impl<N: Network> BlockchainStorage<N> {
         hashes.insert(best_number, genesis_hash);
         Self {
             blocks,
+            block_access_lists: Default::default(),
             hashes,
             best_hash,
             best_number,
@@ -362,6 +366,7 @@ impl<N: Network> BlockchainStorage<N> {
 
         Self {
             blocks: B256HashMap::default(),
+            block_access_lists: Default::default(),
             hashes,
             best_hash: block_hash,
             best_number: block_number,
@@ -392,6 +397,7 @@ impl<N: Network> BlockchainStorage<N> {
                 if let Some(block) = self.blocks.remove(&hash) {
                     removed.push(block);
                 }
+                self.block_access_lists.remove(&hash);
                 #[cfg(feature = "monad")]
                 self.remove_monad_block_metadata(&hash);
                 self.hashes.remove(&i);
@@ -405,6 +411,7 @@ impl<N: Network> BlockchainStorage<N> {
     pub fn empty() -> Self {
         Self {
             blocks: Default::default(),
+            block_access_lists: Default::default(),
             hashes: Default::default(),
             best_hash: Default::default(),
             best_number: Default::default(),
@@ -428,6 +435,7 @@ impl<N: Network> BlockchainStorage<N> {
 
     /// Removes all stored transactions for the given block hash
     pub fn remove_block_transactions(&mut self, block_hash: B256) {
+        self.block_access_lists.remove(&block_hash);
         if let Some(block) = self.blocks.get_mut(&block_hash) {
             for tx in &block.body.transactions {
                 self.transactions.remove(&tx.hash());
@@ -445,7 +453,14 @@ impl<N: Network> BlockchainStorage<N> {
             let is_canonical = self.hashes.get(&number).is_some_and(|canonical| *canonical == hash);
             (number, is_canonical, hash)
         });
-        blocks.into_iter().map(|(_, block)| block.clone().into()).collect()
+        blocks
+            .into_iter()
+            .map(|(hash, block)| {
+                let mut serialized = SerializableBlock::from(block.clone());
+                serialized.block_access_list = self.block_access_lists.get(hash).cloned();
+                serialized
+            })
+            .collect()
     }
 
     /// Adds a block to storage and returns its hash.
@@ -472,12 +487,16 @@ impl<N: Network> BlockchainStorage<N> {
         serializable_blocks: Vec<SerializableBlock>,
         fork_boundary: Option<u64>,
     ) {
-        for serializable_block in serializable_blocks {
+        for mut serializable_block in serializable_blocks {
+            let block_access_list = serializable_block.block_access_list.take();
             let block: Block = serializable_block.into();
             if fork_boundary.is_some_and(|boundary| block.header.number() <= boundary) {
                 continue;
             }
-            self.insert_block(block);
+            let block_hash = self.insert_block(block);
+            if let Some(block_access_list) = block_access_list {
+                self.block_access_lists.insert(block_hash, block_access_list);
+            }
         }
     }
 
@@ -686,6 +705,7 @@ mod tests {
     use super::*;
     use crate::eth::backend::{db::Db, mem::in_memory_db::StateRootDb};
     use alloy_consensus::Header;
+    use alloy_eips::eip7928::AccountChanges;
     use alloy_primitives::{Address, hex};
     use alloy_rlp::Decodable;
     use foundry_primitives::FoundryNetwork;
@@ -889,6 +909,8 @@ mod tests {
         let block = create_block(header.clone().into(), vec![tx.clone()]);
         let block_hash = block.header.hash_slow();
         dump_storage.blocks.insert(block_hash, block);
+        let block_access_list = vec![AccountChanges::new(Address::ZERO)];
+        dump_storage.block_access_lists.insert(block_hash, block_access_list.clone());
 
         let serialized_blocks = dump_storage.serialized_blocks();
         let serialized_transactions = dump_storage.serialized_transactions();
@@ -902,6 +924,7 @@ mod tests {
         assert_eq!(loaded_block.header.gas_limit(), header.gas_limit());
         let loaded_tx = loaded_block.body.transactions.first().unwrap();
         assert_eq!(loaded_tx, &tx);
+        assert_eq!(load_storage.block_access_lists.get(&block_hash), Some(&block_access_list));
     }
 
     #[test]
