@@ -774,7 +774,7 @@ pub(crate) fn remove_bytecode_dependencies(
         );
         // `address(uint160(uint256(keccak256("hevm cheat code"))))`
         let vm = format!("{vm_interface_name}(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D)");
-        let mut try_catch_helpers: HashSet<&str> = HashSet::default();
+        let mut try_catch_helpers = BTreeMap::new();
 
         for dep in deps {
             let Some(ContractData { artifact, constructor_data, .. }) =
@@ -805,9 +805,14 @@ pub(crate) fn remove_bytecode_dependencies(
                 } => {
                     let (mut update, closing_seq) = if let Some(has_ret) = try_stmt {
                         if *has_ret {
-                            // try this.addressToCounter1() returns (Counter c)
-                            try_catch_helpers.insert(name);
-                            (format!("this.addressTo{name}{id}(", id = contract_id.index()), "}))")
+                            let adapter =
+                                try_catch_helpers.entry(name.clone()).or_insert_with(|| {
+                                    unique_identifier(
+                                        source.file.src.as_str(),
+                                        format!("addressTo{name}{id}", id = contract_id.index()),
+                                    )
+                                });
+                            (format!("this.{adapter}("), "}))")
                         } else {
                             (String::new(), "})")
                         }
@@ -867,14 +872,13 @@ pub(crate) fn remove_bytecode_dependencies(
                 span_to_range(gcx.sess.source_map(), gcx.hir.function(last_fn_id).span);
             let to_address_fns = try_catch_helpers
                 .iter()
-                .map(|ty| {
+                .map(|(ty, adapter)| {
                     format!(
                         r#"
-                            function addressTo{ty}{id}(address addr) public pure returns ({ty}) {{
+                            function {adapter}(address addr) public pure returns ({ty}) {{
                                 return {ty}(addr);
                             }}
-                        "#,
-                        id = contract_id.index()
+                        "#
                     )
                 })
                 .collect::<String>();
