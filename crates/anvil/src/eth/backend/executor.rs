@@ -18,8 +18,8 @@ use alloy_eips::{
 use alloy_evm::{
     Evm, FromRecoveredTx, FromTxWithEncoded, RecoveredTx,
     block::{
-        BlockExecutionError, BlockExecutionResult, BlockExecutor, BlockValidationError,
-        ExecutableTx, GasOutput, StateDB, SystemCaller, TxResult,
+        BalIndexedDatabase, BlockExecutionError, BlockExecutionResult, BlockExecutor,
+        BlockValidationError, ExecutableTx, GasOutput, StateDB, SystemCaller, TxResult,
     },
     eth::{
         EthTxResult,
@@ -322,7 +322,7 @@ impl<E> AnvilBlockExecutor<E> {
 impl<E> AnvilBlockExecutor<E>
 where
     E: Evm<
-            DB: StateDB,
+            DB: StateDB + BalIndexedDatabase,
             Tx: FromRecoveredTx<FoundryTxEnvelope> + FromTxWithEncoded<FoundryTxEnvelope>,
         >,
 {
@@ -384,7 +384,7 @@ where
 impl<E> BlockExecutor for AnvilBlockExecutor<E>
 where
     E: Evm<
-            DB: StateDB,
+            DB: StateDB + BalIndexedDatabase,
             Tx: FromRecoveredTx<FoundryTxEnvelope> + FromTxWithEncoded<FoundryTxEnvelope>,
         >,
 {
@@ -480,6 +480,9 @@ where
             state_changes.push(state.clone());
         }
         self.receipts.push(receipt);
+        // EIP-7928 block access index 0 holds the pre-block system writes, transaction `i` is
+        // index `i + 1` and the post-block system writes follow the last transaction.
+        self.evm.db_mut().set_bal_index(self.receipts.len() as u64);
         self.evm.db_mut().commit(state);
 
         GasOutput::new(gas_used)
@@ -489,6 +492,7 @@ where
         mut self,
     ) -> Result<(Self::Evm, BlockExecutionResult<FoundryReceiptEnvelope>), BlockExecutionError>
     {
+        self.evm.db_mut().set_bal_index(self.receipts.len() as u64 + 1);
         let requests = match self.ethereum_transitions {
             Some(transitions) if transitions.execution_kind == BlockExecutionKind::Complete => {
                 apply_ethereum_post_execution_changes(&mut self.evm, transitions, &self.receipts)?

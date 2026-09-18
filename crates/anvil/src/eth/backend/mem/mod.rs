@@ -59,11 +59,11 @@ use alloy_eips::{
     eip7685::EMPTY_REQUESTS_HASH,
     eip7840::BlobParams,
     eip7910::SystemContract,
-    eip7928::{EMPTY_BLOCK_ACCESS_LIST_HASH, compute_block_access_list_hash},
+    eip7928::{BlockAccessList, EMPTY_BLOCK_ACCESS_LIST_HASH, compute_block_access_list_hash},
 };
 use alloy_evm::{
     Database, EthEvmFactory, Evm, EvmEnv, EvmFactory, FromTxWithEncoded,
-    block::{BlockExecutionResult, BlockExecutor, StateDB},
+    block::{BalIndexedDatabase, BlockExecutionResult, BlockExecutor, StateDB},
     eth::{EthEvm, EthEvmContext},
     overrides::{OverrideBlockHashes, apply_state_overrides},
     precompiles::{DynPrecompile, MovePrecompileError, Precompile, PrecompilesMap},
@@ -1944,7 +1944,6 @@ impl<N: Network> Backend<N> {
     {
         let mut cache_db = AnvilCacheDB::new(db);
         let (evm_env, hardfork) = self.tx_replay_evm_env(block);
-        let spec_id = *evm_env.spec_id();
         let inspector_tx_config = self.inspector_tx_config();
         let gas_config = self.pool_tx_gas_config(&evm_env);
 
@@ -1952,7 +1951,6 @@ impl<N: Network> Backend<N> {
             &mut cache_db,
             &evm_env,
             block.header.parent_hash,
-            spec_id,
             hardfork,
             block.header.parent_beacon_block_root,
             BlockExecutionKind::TransactionPrefix,
@@ -2875,7 +2873,6 @@ impl<N: Network> Backend<N> {
         db: DB,
         evm_env: &EvmEnv,
         parent_hash: B256,
-        spec_id: SpecId,
         hardfork: FoundryHardfork,
         parent_beacon_block_root: Option<B256>,
         execution_kind: BlockExecutionKind,
@@ -2891,8 +2888,9 @@ impl<N: Network> Backend<N> {
         BlockchainError,
     >
     where
-        DB: StateDB<Error = DatabaseError>,
+        DB: StateDB<Error = DatabaseError> + BalIndexedDatabase,
     {
+        let spec_id = *evm_env.spec_id();
         #[cfg(feature = "monad")]
         if self.is_monad() {
             return self.execute_with_monad_block_executor(
@@ -2909,19 +2907,12 @@ impl<N: Network> Backend<N> {
         }
 
         let inspector = self.build_mining_inspector();
-        let ethereum_transitions =
+        let transitions =
             self.ethereum_block_transitions(hardfork, parent_beacon_block_root, execution_kind);
 
-        macro_rules! run {
-            ($evm:expr) => {{
-                self.inject_precompiles($evm.precompiles_mut(), evm_env);
-                let mut executor =
-                    AnvilBlockExecutor::new($evm, parent_hash, spec_id, ethereum_transitions)
-                        .with_max_blob_gas_per_block(gas_config.max_blob_gas_per_block);
-                #[cfg(feature = "optimism")]
-                if self.is_optimism() {
-                    executor.set_optimism_hardfork(hardfork);
-                }
+        macro_rules! execute {
+            ($executor:expr) => {{
+                let mut executor = $executor;
                 executor
                     .apply_pre_execution_changes()
                     .map_err(|err| BlockchainError::Internal(err.to_string()))?;
@@ -2934,9 +2925,8 @@ impl<N: Network> Backend<N> {
                     validator,
                     &mut execute_pool_transaction,
                 );
-                let (evm, block_result) =
+                let (_, block_result) =
                     executor.finish().map_err(|err| BlockchainError::Internal(err.to_string()))?;
-                drop(evm);
                 Ok((pool_result, block_result))
             }};
         }
@@ -2945,20 +2935,19 @@ impl<N: Network> Backend<N> {
         if self.is_base() {
             let upgrade =
                 self.base_upgrade_at_timestamp(evm_env.block_env.timestamp.saturating_to());
-            let base_env = EvmEnv::new(
-                evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(BaseSpecId::new(upgrade)),
-                evm_env.block_env.clone(),
-            );
+            let cfg =
+                evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(BaseSpecId::new(upgrade));
             let activation_admin = self.base_activation_admin().or_else(|| {
-                ChainConfig::activation_admin_address_for_upgrade_by_chain_id(
-                    base_env.cfg_env.chain_id,
-                    upgrade,
-                )
+                ChainConfig::activation_admin_address_for_upgrade_by_chain_id(cfg.chain_id, upgrade)
             });
+            let base_env = EvmEnv::new(cfg, evm_env.block_env.clone());
             let mut evm = BaseEvmFactory::new(activation_admin)
                 .create_evm_with_inspector(db, base_env, inspector);
             evm.ctx_mut().cfg.tx_chain_id_check = true;
-            return run!(evm);
+            self.inject_precompiles(evm.precompiles_mut(), evm_env);
+            let executor = AnvilBlockExecutor::new(evm, parent_hash, spec_id, transitions)
+                .with_max_blob_gas_per_block(gas_config.max_blob_gas_per_block);
+            return execute!(executor);
         }
 
         #[cfg(feature = "optimism")]
@@ -2969,18 +2958,28 @@ impl<N: Network> Backend<N> {
             );
             let mut evm =
                 OpEvmFactory::<OpTx>::default().create_evm_with_inspector(db, op_env, inspector);
-            return run!(evm);
+            self.inject_precompiles(evm.precompiles_mut(), evm_env);
+            let mut executor = AnvilBlockExecutor::new(evm, parent_hash, spec_id, transitions)
+                .with_max_blob_gas_per_block(gas_config.max_blob_gas_per_block);
+            executor.set_optimism_hardfork(hardfork.into());
+            return execute!(executor);
         }
 
         if self.is_tempo() {
             let tempo_env = Self::build_tempo_evm_env(evm_env, self.tempo_hardfork());
             let mut evm =
                 TempoEvmFactory::default().create_evm_with_inspector(db, tempo_env, inspector);
-            return run!(evm);
+            self.inject_precompiles(evm.precompiles_mut(), evm_env);
+            let executor = AnvilBlockExecutor::new(evm, parent_hash, spec_id, transitions)
+                .with_max_blob_gas_per_block(gas_config.max_blob_gas_per_block);
+            return execute!(executor);
         }
         let mut evm =
             EthEvmFactory::default().create_evm_with_inspector(db, evm_env.clone(), inspector);
-        run!(evm)
+        self.inject_precompiles(evm.precompiles_mut(), evm_env);
+        let executor = AnvilBlockExecutor::new(evm, parent_hash, spec_id, transitions)
+            .with_max_blob_gas_per_block(gas_config.max_blob_gas_per_block);
+        execute!(executor)
     }
 
     /// Applies Ethereum block-start transitions to a disposable simulation candidate.
@@ -5431,6 +5430,17 @@ where
             })
             .collect()
     }
+
+    /// Returns the EIP-7928 block access list stored for a locally mined block hash.
+    pub fn block_access_list_by_hash(&self, hash: B256) -> Option<BlockAccessList> {
+        self.blockchain.storage.read().block_access_lists.get(&hash).cloned()
+    }
+
+    /// Returns the EIP-7928 block access list stored for a locally mined block number.
+    pub fn block_access_list_by_number(&self, number: u64) -> Option<BlockAccessList> {
+        let storage = self.blockchain.storage.read();
+        storage.hashes.get(&number).and_then(|hash| storage.block_access_lists.get(hash)).cloned()
+    }
 }
 
 // Mining methods — generic over N: Network, with Foundry-associated-type bounds for now.
@@ -5576,6 +5586,7 @@ where
                 transactions,
                 transaction_infos,
                 parent_beacon_block_root,
+                None,
             );
             let block_hash = block_info.block.header.hash_slow();
             (block_info, state_changes, block_hash)
@@ -5671,7 +5682,7 @@ where
         >,
     ) -> Result<ExecutedHistoricalReplay>
     where
-        DB: StateDB<Error = DatabaseError>,
+        DB: StateDB<Error = DatabaseError> + BalIndexedDatabase,
     {
         #[cfg(feature = "monad")]
         if self.is_monad() {
@@ -5688,47 +5699,24 @@ where
         }
 
         let inspector = self.build_mining_inspector();
-        let ethereum_transitions = self.ethereum_block_transitions(
+        let spec_id = *evm_env.spec_id();
+        let transitions = self.ethereum_block_transitions(
             hardfork,
             parent_beacon_block_root,
             BlockExecutionKind::TransactionPrefix,
         );
 
-        macro_rules! run {
-            ($evm:expr) => {{
-                run!($evm, |executor| execute_historical_replay(
-                    executor,
-                    transactions,
-                    inspector_tx_config,
-                ))
-            }};
-            ($evm:expr, $execute:expr) => {{
-                self.inject_precompiles($evm.precompiles_mut(), evm_env);
-                if let Some(block_number) = arbitrum_rpc_block_number {
-                    self.inject_arbitrum_precompile_at_block($evm.precompiles_mut(), block_number);
-                }
-                // Replay re-executes an already-valid historical prefix, so it does not apply the
-                // local EIP-4844 budget. Jovian still uses the source block's gas limit as its DA
-                // budget through `set_optimism_hardfork` below.
-                let mut executor = AnvilBlockExecutor::new(
-                    $evm,
-                    parent_hash,
-                    *evm_env.spec_id(),
-                    ethereum_transitions,
-                )
-                .with_state_changes();
-                #[cfg(feature = "optimism")]
-                if self.is_optimism() {
-                    executor.set_optimism_hardfork(hardfork);
-                }
+        macro_rules! execute {
+            ($executor:expr) => {{
+                let mut executor = $executor;
                 executor
                     .apply_pre_execution_changes()
                     .wrap_err("failed to apply replay block-start transitions")?;
-                let (stored_transactions, transaction_infos) = $execute(&mut executor)?;
+                let (stored_transactions, transaction_infos) =
+                    execute_historical_replay(&mut executor, transactions, inspector_tx_config)?;
                 let state_changes = executor.take_state_changes();
-                let (evm, block_result) =
+                let (_, block_result) =
                     executor.finish().wrap_err("failed to finish replay block execution")?;
-                drop(evm);
                 Ok(ExecutedHistoricalReplay {
                     block_result,
                     transactions: stored_transactions,
@@ -5742,20 +5730,22 @@ where
         if self.is_base() {
             let upgrade =
                 self.base_upgrade_at_timestamp(evm_env.block_env.timestamp.saturating_to());
-            let base_env = EvmEnv::new(
-                evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(BaseSpecId::new(upgrade)),
-                evm_env.block_env.clone(),
-            );
+            let cfg =
+                evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(BaseSpecId::new(upgrade));
             let activation_admin = self.base_activation_admin().or_else(|| {
-                ChainConfig::activation_admin_address_for_upgrade_by_chain_id(
-                    base_env.cfg_env.chain_id,
-                    upgrade,
-                )
+                ChainConfig::activation_admin_address_for_upgrade_by_chain_id(cfg.chain_id, upgrade)
             });
+            let base_env = EvmEnv::new(cfg, evm_env.block_env.clone());
             let mut evm = BaseEvmFactory::new(activation_admin)
                 .create_evm_with_inspector(db, base_env, inspector);
             evm.ctx_mut().cfg.tx_chain_id_check = true;
-            return run!(evm);
+            self.inject_precompiles(evm.precompiles_mut(), evm_env);
+            if let Some(block_number) = arbitrum_rpc_block_number {
+                self.inject_arbitrum_precompile_at_block(evm.precompiles_mut(), block_number);
+            }
+            let executor = AnvilBlockExecutor::new(evm, parent_hash, spec_id, transitions)
+                .with_state_changes();
+            return execute!(executor);
         }
 
         #[cfg(feature = "optimism")]
@@ -5766,19 +5756,39 @@ where
             );
             let mut evm =
                 OpEvmFactory::<OpTx>::default().create_evm_with_inspector(db, op_env, inspector);
-            return run!(evm);
+            self.inject_precompiles(evm.precompiles_mut(), evm_env);
+            if let Some(block_number) = arbitrum_rpc_block_number {
+                self.inject_arbitrum_precompile_at_block(evm.precompiles_mut(), block_number);
+            }
+            // Historical replay has no local blob budget. OP still configures its Jovian DA budget.
+            let mut executor = AnvilBlockExecutor::new(evm, parent_hash, spec_id, transitions)
+                .with_state_changes();
+            executor.set_optimism_hardfork(hardfork.into());
+            return execute!(executor);
         }
 
         if self.is_tempo() {
             let tempo_env = Self::build_tempo_evm_env(evm_env, self.tempo_hardfork());
             let mut evm =
                 TempoEvmFactory::default().create_evm_with_inspector(db, tempo_env, inspector);
-            return run!(evm);
+            self.inject_precompiles(evm.precompiles_mut(), evm_env);
+            if let Some(block_number) = arbitrum_rpc_block_number {
+                self.inject_arbitrum_precompile_at_block(evm.precompiles_mut(), block_number);
+            }
+            let executor = AnvilBlockExecutor::new(evm, parent_hash, spec_id, transitions)
+                .with_state_changes();
+            return execute!(executor);
         }
 
         let mut evm =
             EthEvmFactory::default().create_evm_with_inspector(db, evm_env.clone(), inspector);
-        run!(evm)
+        self.inject_precompiles(evm.precompiles_mut(), evm_env);
+        if let Some(block_number) = arbitrum_rpc_block_number {
+            self.inject_arbitrum_precompile_at_block(evm.precompiles_mut(), block_number);
+        }
+        let executor =
+            AnvilBlockExecutor::new(evm, parent_hash, spec_id, transitions).with_state_changes();
+        execute!(executor)
     }
 
     /// Builds a [`BlockInfo`] from the EVM environment, execution results, and transactions.
@@ -5793,6 +5803,7 @@ where
         transactions: Vec<MaybeImpersonatedTransaction<FoundryTxEnvelope>>,
         transaction_infos: Vec<TransactionInfo>,
         parent_beacon_block_root: Option<B256>,
+        block_access_list: Option<&BlockAccessList>,
     ) -> BlockInfo<N> {
         let spec_id = *evm_env.spec_id();
         let is_shanghai = spec_id >= SpecId::SHANGHAI;
@@ -5829,7 +5840,8 @@ where
             excess_blob_gas: if is_cancun { evm_env.block_env.blob_excess_gas() } else { None },
             withdrawals_root: is_shanghai.then_some(EMPTY_WITHDRAWALS),
             requests_hash: is_prague.then(|| block_result.requests.requests_hash()),
-            block_access_list_hash: None,
+            block_access_list_hash: block_access_list
+                .map(|bal| compute_block_access_list_hash(bal.as_slice())),
             slot_number: None,
         };
 
@@ -5878,7 +5890,15 @@ where
             evm_env.block_env.prevrandao =
                 Some(next_prevrandao.map_or_else(|| keccak256(input), |pending| pending.value));
 
-            let (block_info, included, invalid, not_yet_valid, block_hash, parent_state) = {
+            let (
+                block_info,
+                included,
+                invalid,
+                not_yet_valid,
+                block_hash,
+                parent_state,
+                block_access_list,
+            ) = {
                 let mut db = self.db.write().await;
 
                 // finally set the next block timestamp, this is done just before execution, because
@@ -5897,17 +5917,20 @@ where
                     );
                 }
 
-                let spec_id = *mining_evm_env.spec_id();
-
                 let inspector_tx_config = self.inspector_tx_config();
                 let gas_config = self.pool_tx_gas_config(&mining_evm_env);
 
                 let mut candidate_db = AnvilCacheDB::new(&**db);
+                if matches!(
+                    hardfork,
+                    FoundryHardfork::Ethereum(hardfork) if hardfork >= EthereumHardfork::Amsterdam
+                ) {
+                    candidate_db.enable_bal_recording();
+                }
                 let (pool_result, block_result) = self.execute_with_block_executor(
                     &mut candidate_db,
                     &mining_evm_env,
                     best_hash,
-                    spec_id,
                     hardfork,
                     Some(B256::ZERO),
                     BlockExecutionKind::Complete,
@@ -5920,6 +5943,7 @@ where
                         self.validate_mining_pool_transaction_for(pool_tx, account, validation_env)
                     },
                 )?;
+                let block_access_list = candidate_db.take_block_access_list();
 
                 let included = pool_result.included;
                 let invalid = pool_result.invalid;
@@ -5941,6 +5965,7 @@ where
                     pool_result.txs,
                     pool_result.tx_info,
                     Some(B256::ZERO),
+                    block_access_list.as_ref(),
                 );
 
                 // Update the new blockhash in the db itself.
@@ -5951,7 +5976,15 @@ where
                     self.cheats.consume_next_block_prevrandao(pending);
                 }
 
-                (block_info, included, invalid, not_yet_valid, block_hash, parent_state)
+                (
+                    block_info,
+                    included,
+                    invalid,
+                    not_yet_valid,
+                    block_hash,
+                    parent_state,
+                    block_access_list,
+                )
             };
 
             // create the new block with the current timestamp
@@ -5996,6 +6029,9 @@ where
 
             storage.blocks.insert(block_hash, block);
             storage.hashes.insert(block_number, block_hash);
+            if let Some(block_access_list) = block_access_list {
+                storage.block_access_lists.insert(block_hash, block_access_list);
+            }
             #[cfg(feature = "monad")]
             if let Some(participants) = monad_participants {
                 monad::store_block_metadata(
@@ -6139,8 +6175,6 @@ where
 
         let parent_hash = self.blockchain.storage.read().best_hash;
 
-        let spec_id = *evm_env.spec_id();
-
         let inspector_tx_config = self.inspector_tx_config();
         let gas_config = self.pool_tx_gas_config(&evm_env);
 
@@ -6148,7 +6182,6 @@ where
             &mut cache_db,
             &evm_env,
             parent_hash,
-            spec_id,
             self.hardfork(),
             Some(B256::ZERO),
             BlockExecutionKind::Complete,
@@ -6174,6 +6207,7 @@ where
             pool_result.txs,
             pool_result.tx_info,
             Some(B256::ZERO),
+            None,
         );
 
         Ok(f(Box::new(cache_db), block_info))

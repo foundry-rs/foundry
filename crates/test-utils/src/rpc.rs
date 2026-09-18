@@ -163,6 +163,16 @@ pub fn next_tempo_mainnet_rpc_endpoint() -> String {
     url
 }
 
+/// Returns the HTTP RPC URL used to fork Tempo testnet.
+///
+/// Set `TEMPO_TESTNET_RPC_URL` to use a private archive endpoint instead of the public one.
+pub fn next_tempo_testnet_rpc_endpoint() -> String {
+    let url = env_rpc_url("TEMPO_TESTNET_RPC_URL")
+        .unwrap_or_else(|| "https://rpc.moderato.tempo.xyz".to_string());
+    test_debug!("next_tempo_testnet_rpc_endpoint() = {}", debug_url(&url));
+    url
+}
+
 /// Returns the next WS RPC URL.
 pub fn next_ws_endpoint(chain: NamedChain) -> String {
     next_url(true, chain)
@@ -479,6 +489,47 @@ pub async fn spawn_rpc_proxy_retyping_first_block_transaction(
                     }
                 }
                 Json(response).into_response()
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    format!("http://{address}")
+}
+
+/// Spawns an RPC proxy that forwards every request upstream and passes each `method` result,
+/// together with the request params, through `map` before returning it.
+pub async fn spawn_rpc_proxy_mapping_method(
+    endpoint: String,
+    method: &'static str,
+    map: impl Fn(&Value, Value) -> Value + Send + Sync + 'static,
+) -> String {
+    let client = reqwest::Client::new();
+    let map = Arc::new(map);
+    let router = Router::new().route(
+        "/",
+        post(move |Json(request): Json<Value>| {
+            let client = client.clone();
+            let endpoint = endpoint.clone();
+            let map = map.clone();
+            async move {
+                let mut response = client
+                    .post(endpoint)
+                    .json(&request)
+                    .send()
+                    .await
+                    .unwrap()
+                    .json::<Value>()
+                    .await
+                    .unwrap();
+                if request.get("method").and_then(Value::as_str) == Some(method)
+                    && let Some(result) = response.get_mut("result")
+                {
+                    let params = request.get("params").cloned().unwrap_or(Value::Null);
+                    *result = map(&params, result.take());
+                }
+                Json(response)
             }
         }),
     );

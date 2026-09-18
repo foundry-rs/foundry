@@ -17,14 +17,10 @@ env:
   RUSTC_WRAPPER: "sccache"
 
 jobs:
-  cargo-cooldown:
-    permissions:
-      contents: read
-    uses: ./.github/workflows/cargo-cooldown.yml
-
   test:
     uses: ./.github/workflows/test.yml
     permissions:
+      id-token: write
       contents: read
     with:
       profile: default
@@ -33,6 +29,7 @@ jobs:
       ARBITRUM_RPC: ${{ secrets.ARBITRUM_RPC }}
       ETH_SEPOLIA_RPC: ${{ secrets.ETH_SEPOLIA_RPC }}
       TEMPO_MAINNET_RPC_URL: ${{ secrets.TEMPO_MAINNET_RPC_URL }}
+      TEMPO_TESTNET_RPC_URL: ${{ secrets.TEMPO_TESTNET_RPC_URL }}
 
   docs:
     uses: ./.github/workflows/docs.yml
@@ -42,12 +39,14 @@ jobs:
       id-token: write
 
   doctest:
-    needs: cargo-cooldown
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
+      id-token: write
       contents: read
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@ce5deead22108ccc6aafba0ca47d2a9e6d1a40e8
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -65,12 +64,14 @@ jobs:
       - run: cargo test --workspace --doc --locked
 
   no-default-features:
-    needs: cargo-cooldown
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
+      id-token: write
       contents: read
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@ce5deead22108ccc6aafba0ca47d2a9e6d1a40e8
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -90,14 +91,16 @@ jobs:
   touch-id-link:
     name: touch-id link (macOS)
     if: github.event_name == 'push'
-    needs: cargo-cooldown
     runs-on: depot-macos-latest
     timeout-minutes: 45
     permissions:
+      id-token: write
       contents: read
     env:
       MACOSX_DEPLOYMENT_TARGET: "11.0"
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@ce5deead22108ccc6aafba0ca47d2a9e6d1a40e8
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -159,15 +162,16 @@ jobs:
       - name: Test GitHub scripts
         run: |
           python3 -m unittest discover -s .github/scripts/tests -p 'test_*.py'
-          node --test .github/scripts/tests/test-create-tag.js
 
   clippy:
-    needs: cargo-cooldown
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
+      id-token: write
       contents: read
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@ce5deead22108ccc6aafba0ca47d2a9e6d1a40e8
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -198,12 +202,14 @@ jobs:
       - run: cargo fmt --all --check
 
   forge-fmt:
-    needs: cargo-cooldown
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
+      id-token: write
       contents: read
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@ce5deead22108ccc6aafba0ca47d2a9e6d1a40e8
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -223,17 +229,29 @@ jobs:
         run: ./.github/scripts/format.sh --check
 
   deny:
-    needs: cargo-cooldown
-    uses: tempoxyz/gh-actions/.github/workflows/rust-lint.yml@5aecd9fd9dca5935851b94f7cb853465e7f9158f # main
+    name: cargo deny check
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
-    secrets:
-      STEP_SECURITY_API_KEY: ${{ secrets.STEP_SECURITY_API_KEY }}
-    with:
-      run-clippy: false
-      run-fmt: false
-      run-typos: false
-      deny-rust-toolchain: nightly
+      id-token: write
+    env:
+      RUSTC_WRAPPER: ""
+    steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@ce5deead22108ccc6aafba0ca47d2a9e6d1a40e8
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: nightly
+      - uses: taiki-e/install-action@c3ec0de9ae7f1019cea21aa96aa0a895b9552063 # v2.87.9
+        with:
+          tool: cargo-deny@0.20.2
+          checksum: true
+          fallback: none
+      - run: cargo deny --all-features --locked check all
 
   codeql:
     name: analyze (${{ matrix.language }})
@@ -279,7 +297,6 @@ jobs:
     if: always()
     permissions: {}
     needs:
-      - cargo-cooldown
       - test
       - docs
       - doctest

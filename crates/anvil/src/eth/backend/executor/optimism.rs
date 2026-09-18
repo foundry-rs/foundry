@@ -28,8 +28,8 @@ use revm::Database;
 #[cfg(feature = "optimism")]
 impl<E> AnvilBlockExecutor<E> {
     /// Configures OP-specific block accounting without changing the shared constructor.
-    pub(crate) fn set_optimism_hardfork(&mut self, hardfork: FoundryHardfork) {
-        self.optimism_jovian = OpHardfork::from(hardfork) >= OpHardfork::Jovian;
+    pub(crate) fn set_optimism_hardfork(&mut self, hardfork: OpHardfork) {
+        self.optimism_jovian = hardfork >= OpHardfork::Jovian;
     }
 }
 
