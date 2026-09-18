@@ -513,6 +513,45 @@ fn quotient_bounds_do_not_require_bounded_numerators() {
 }
 
 #[test]
+fn constant_mul_div_guard_becomes_exact_overflow_bound() {
+    let mut cx = SymCx::new();
+    let value = SymExpr::var(&mut cx, "value");
+    for factor in
+        [U256::from(10), U256::from(3), U256::from(1_000_000_000_000_000_000u64), U256::MAX]
+    {
+        let scale = SymExpr::constant(&mut cx, factor);
+        let product = SymExpr::binop(&mut cx, SymBinOp::Mul, value.clone(), scale.clone());
+        let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, product, scale);
+        let guard = SymBoolExpr::eq(&mut cx, quotient, value.clone());
+        let expected =
+            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ule, &value, U256::MAX / factor);
+        for (original, expected) in
+            [(guard.clone(), expected.clone()), (guard.not(&mut cx), expected.not(&mut cx))]
+        {
+            let normalized = normalize_bool_for_solver(&mut cx, original.clone());
+            assert_eq!(normalized, expected, "factor={factor}");
+            for input in [
+                U256::ZERO,
+                U256::ONE,
+                U256::from(2),
+                U256::MAX / factor,
+                U256::MAX / factor + U256::ONE,
+                U256::ONE << 255,
+                U256::MAX,
+            ] {
+                let mut model = SymbolicModel::default();
+                assert!(value.assign_model_value(&mut model, input));
+                assert_eq!(
+                    original.eval_model(&model).unwrap(),
+                    normalized.eval_model(&model).unwrap(),
+                    "factor={factor}, input={input}",
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn scaled_zero_branch_proves_full_width_round_trip() {
     let mut cx = SymCx::new();
     let value = SymExpr::var(&mut cx, "credits");

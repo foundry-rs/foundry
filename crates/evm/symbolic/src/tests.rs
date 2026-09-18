@@ -4301,18 +4301,29 @@ fn solver_normalizes_mul_div_at_exact_no_wrap_boundary() {
 }
 
 #[test]
-fn solver_does_not_normalize_wrapping_mul_div_identity() {
+fn solver_preserves_wrapping_mul_div_counterexamples() {
     let mut cx = SymCx::new();
     let value = SymExpr::var(&mut cx, "value");
-    let factor = SymExpr::constant(&mut cx, U256::from(58));
+    let factor_value = U256::from(58);
+    let factor = SymExpr::constant(&mut cx, factor_value);
     let product = SymExpr::binop(&mut cx, SymBinOp::Mul, value.clone(), factor.clone());
     let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, product, factor);
-    let identity = SymBoolExpr::eq(&mut cx, quotient, value);
+    let identity = SymBoolExpr::eq(&mut cx, quotient, value.clone());
+    let normalized = normalize_constraints_for_solver(&mut cx, std::slice::from_ref(&identity));
+    let expected =
+        SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ule, &value, U256::MAX / factor_value);
+    assert_eq!(normalized, vec![expected]);
 
-    assert_eq!(
-        normalize_constraints_for_solver(&mut cx, std::slice::from_ref(&identity)),
-        vec![identity]
-    );
+    let failure = identity.clone().not(&mut cx);
+    let normalized_failure =
+        normalize_constraints_for_solver(&mut cx, std::slice::from_ref(&failure));
+    for input in [U256::MAX / factor_value + U256::ONE, U256::MAX] {
+        let model = symbolic_model(&mut cx, [("value", input)]);
+        assert!(!identity.eval_model(&model).unwrap());
+        assert!(normalized.iter().any(|constraint| !constraint.eval_model(&model).unwrap()));
+        assert!(failure.eval_model(&model).unwrap());
+        assert!(normalized_failure.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
+    }
 }
 
 #[test]
