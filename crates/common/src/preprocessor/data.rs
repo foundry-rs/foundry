@@ -59,19 +59,18 @@ impl ContractData {
                 let mut struct_fields = vec![];
                 let mut arg_index = 0;
                 for param_id in ctor.parameters {
-                    let src = source.file.src.as_str();
-                    let loc =
-                        span_to_range(gcx.sess.source_map(), gcx.hir.variable(*param_id).span);
-                    let mut new_src = src[loc].replace(" memory ", " ").replace(" calldata ", " ");
-                    if let Some(ident) = gcx.hir.variable(*param_id).name {
-                        abi_encode_args.push(format!("args.{}", ident.name));
+                    let param = gcx.hir.variable(*param_id);
+                    let loc = span_to_range(gcx.sess.source_map(), param.ty.span);
+                    let ty = &source.file.src[loc];
+                    let name = if let Some(ident) = param.name {
+                        ident.name.to_string()
                     } else {
-                        // Generate an unique name if constructor arg doesn't have one.
+                        // Generate a unique name if the constructor arg does not have one.
                         arg_index += 1;
-                        abi_encode_args.push(format!("args.foundry_pp_ctor_arg{arg_index}"));
-                        new_src.push_str(&format!(" foundry_pp_ctor_arg{arg_index}"));
-                    }
-                    struct_fields.push(new_src);
+                        format!("foundry_pp_ctor_arg{arg_index}")
+                    };
+                    abi_encode_args.push(format!("args.{name}"));
+                    struct_fields.push(format!("{ty} {name}"));
                 }
 
                 ContractConstructorData {

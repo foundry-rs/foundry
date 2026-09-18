@@ -3523,3 +3523,66 @@ Suite result: FAILED. 0 passed; 4 failed; 0 skipped; [ELAPSED]
         cmd.forge_fuse().args(["test", "--force"]).assert_failure();
     }
 });
+
+// Constructor helper fields use type spans, independent of parameter data-location spelling.
+forgetest!(preprocess_constructor_parameter_types, |prj, cmd| {
+    let target = r#"
+contract Target {
+    uint256 public value;
+    constructor(
+        bytes
+        memory
+        a,
+        string/* before */memory/* after */b,
+        uint256[]	memory	c,
+        bytes memory,
+        function(bytes memory) external returns (bytes memory) callback
+    ) {
+        require(a.length == 1 && bytes(b).length == 2 && c.length == 3);
+        require(callback(a).length == 1);
+        value = 111;
+    }
+}
+contract Named {
+    uint256 public value;
+    constructor(bytes/* before */memory/* after */data) {
+        require(data.length == 1);
+        value = 111;
+    }
+}
+"#;
+    prj.add_source("Target.sol", target);
+    prj.add_test(
+        "Parameters.t.sol",
+        r#"
+import {Target, Named} from "../src/Target.sol";
+contract ParametersTest {
+    function echo(bytes memory data) external pure returns (bytes memory) { return data; }
+    function test_positional() public {
+        Target target = new Target(hex"01", "ab", new uint256[](3), hex"", this.echo);
+        require(target.value() == 111, "changed positional");
+    }
+    function test_named() public {
+        Named target = new Named({data: hex"01"});
+        require(target.value() == 111, "changed named");
+    }
+}
+"#,
+    );
+    for dynamic_test_linking in [false, true] {
+        prj.update_config(|config| config.dynamic_test_linking = dynamic_test_linking);
+        prj.add_source("Target.sol", target);
+        cmd.forge_fuse().args(["test", "--force"]).assert_success();
+        cmd.forge_fuse().arg("test").assert_success();
+        prj.add_source("Target.sol", &target.replace("value = 111", "value = 222"));
+        cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+Ran 2 tests for test/Parameters.t.sol:ParametersTest
+[FAIL: changed named] test_named() ([GAS])
+[FAIL: changed positional] test_positional() ([GAS])
+Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+        cmd.forge_fuse().args(["test", "--force"]).assert_failure();
+    }
+});
