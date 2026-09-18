@@ -1,0 +1,74 @@
+name: Tag release
+
+permissions: {}
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: tag-release
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - name: Require release branch
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          if [[ "$REF_TYPE" != branch || ! "$BRANCH" =~ ^release-(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc([1-9][0-9]*))?$ ]]; then
+            echo "::error::Tag release must run from release-X.Y.Z[-rcN]."
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate release version
+        id: release
+        env:
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          version=$(python3 .github/scripts/tag-release.py validate --branch "$BRANCH")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  test:
+    needs: validate
+    permissions:
+      contents: read
+    uses: ./.github/workflows/test.yml
+    with:
+      profile: default
+    secrets:
+      ETHERSCAN_API_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
+      ARBITRUM_RPC: ${{ secrets.ARBITRUM_RPC }}
+      ETH_SEPOLIA_RPC: ${{ secrets.ETH_SEPOLIA_RPC }}
+      TEMPO_MAINNET_RPC_URL: ${{ secrets.TEMPO_MAINNET_RPC_URL }}
+      TEMPO_TESTNET_RPC_URL: ${{ secrets.TEMPO_TESTNET_RPC_URL }}
+
+  tag:
+    needs: [validate, test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Create tag and start release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.validate.outputs.version }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          python3 .github/scripts/tag-release.py tag --version "$VERSION" --commit "$COMMIT"
+          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "v$VERSION"
