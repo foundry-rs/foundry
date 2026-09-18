@@ -70,6 +70,11 @@ op-alloy-consensus = { workspace = true, features = ["k256"], optional = true }
 op-alloy-flz = { workspace = true, optional = true }
 op-alloy-network = { workspace = true, optional = true }
 
+aes-gcm = "0.10"
+hkdf = "0.12"
+k256.workspace = true
+sha2 = "0.10"
+
 chrono.workspace = true
 eyre.workspace = true
 futures.workspace = true

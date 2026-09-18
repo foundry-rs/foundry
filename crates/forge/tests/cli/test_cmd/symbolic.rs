@@ -798,7 +798,10 @@ interface Vm {
 
 contract SymbolicConversionTarget {
     function convert(uint256 base, uint256 coefficient) external pure returns (uint256) {
-        return (base * coefficient + 9) / 10;
+        // A square cannot equal two, but interval bounds alone cannot establish that.
+        coefficient;
+        require(base * base != 2);
+        return base;
     }
 }
 
@@ -806,7 +809,9 @@ contract SymbolicCreatedConversion {
     uint256 public value;
 
     constructor(uint256 base, uint256 coefficient) {
-        value = (base * coefficient + 9) / 10;
+        coefficient;
+        require(base * base != 2);
+        value = base;
     }
 }
 
@@ -841,7 +846,7 @@ contract SymbolicDeferredExternalCall {
         assert(target.convert(base, coefficient) > 0);
     }
 
-    /// forge-config: default.symbolic.max_solver_queries = 16
+    /// forge-config: default.symbolic.max_solver_queries = 10
     function checkQueryLimitedExternalConversion(uint256 base, uint256 coefficient) external view {
         vm.assume(base > 0 && base < 1_000);
         vm.assume(coefficient >= 10 && coefficient <= 100);
@@ -911,9 +916,9 @@ contract SymbolicDeferredExternalCall {
         result["symbolic"]["incomplete"]["reason"]
             .as_str()
             .unwrap()
-            .contains("solver query limit exceeded (16)")
+            .contains("solver query limit exceeded (10)")
     );
-    assert_eq!(result["symbolic"]["solver"]["stats"]["solver_queries"], 16);
+    assert_eq!(result["symbolic"]["solver"]["stats"]["solver_queries"], 10);
     assert!(result["symbolic"]["solver"]["stats"]["paths"].as_u64().unwrap() > 2);
 });
 
@@ -6431,4 +6436,329 @@ contract SymbolicInvalidJump is Test {
 [PASS] checkUntakenJumpiIgnoresSymbolicDestination(uint256)
 "#]],
     );
+});
+
+forgetest_init!(symbolic_bounded_fixed_point_round_trip, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_bounded_fixed_point_round_trip because z3 is not available"
+        );
+        return;
+    }
+    prj.add_test(
+        "FixedPointRoundTrip.t.sol",
+        r#"
+interface Vm {
+    function assume(bool condition) external pure;
+    function prank(address sender) external;
+    function setArbitraryStorage(address target, bool overwrite) external;
+    function store(address target, bytes32 slot, bytes32 value) external;
+}
+
+contract OptInTarget {
+    uint256 public cpt;
+    uint256 public rebasingCredits;
+    uint256 public nonRebasingSupply;
+    mapping(address => uint256) public credits;
+    mapping(address => uint256) public fixedCpt;
+    mapping(address => uint8) public state;
+    mapping(address => address) public yieldFrom;
+
+    function balanceOf(address account) public view returns (uint256) {
+        uint8 accountState = state[account];
+        require(accountState <= 4);
+        if (accountState == 3) return credits[account];
+        uint256 rate = fixedCpt[account];
+        uint256 balance = credits[account] * 1e18 / (rate == 0 ? cpt : rate);
+        if (accountState == 4) return balance - credits[yieldFrom[account]];
+        return balance;
+    }
+
+    function toInt(uint256 value) internal pure returns (int256) {
+        require(value <= uint256(type(int256).max));
+        return int256(value);
+    }
+
+    function toUint(int256 value) internal pure returns (uint256) {
+        require(value >= 0);
+        return uint256(value);
+    }
+
+    function optIn() external {
+        uint256 balance = balanceOf(msg.sender);
+        require(fixedCpt[msg.sender] > 0 || credits[msg.sender] == 0);
+        require(state[msg.sender] == 0 || state[msg.sender] == 1);
+        uint256 newCredits = (balance * cpt + 1e18 - 1) / 1e18;
+        credits[msg.sender] = newCredits;
+        fixedCpt[msg.sender] = 0;
+        state[msg.sender] = 2;
+        int256 creditDiff = toInt(newCredits);
+        int256 supplyDiff = -toInt(balance);
+        if (creditDiff != 0) rebasingCredits = toUint(toInt(rebasingCredits) + creditDiff);
+        if (supplyDiff != 0) nonRebasingSupply = toUint(toInt(nonRebasingSupply) + supplyDiff);
+    }
+}
+
+contract FixedPointRoundTripTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    OptInTarget target;
+
+    function setUp() public {
+        target = new OptInTarget();
+        vm.setArbitraryStorage(address(target), true);
+    }
+
+    function checkFullWidthRoundTrip(uint256 balance, uint256 cpt) external pure {
+        require(cpt >= 1e18);
+        uint256 credits = (balance * cpt + 1e18 - 1) / 1e18;
+        assert(credits * 1e18 / cpt == balance);
+    }
+
+    function checkFullWidthOptIn(address account) external {
+        vm.assume(target.cpt() >= 1e18);
+        uint256 fixedCpt = target.fixedCpt(account);
+        vm.assume(fixedCpt == 0 || fixedCpt == 1e18);
+        uint256 balance = target.balanceOf(account);
+        vm.prank(account);
+        target.optIn();
+        assert(target.balanceOf(account) == balance);
+        assert(target.fixedCpt(account) == 0);
+        assert(target.state(account) == 2);
+    }
+
+    function testOptInConcreteWitnessAboveUint128() external {
+        address account = address(0xB0B);
+        uint256 balance = uint256(type(uint128).max) + 1;
+        vm.store(address(target), bytes32(uint256(0)), bytes32(uint256(1e18)));
+        vm.store(address(target), bytes32(uint256(1)), bytes32(uint256(0)));
+        vm.store(address(target), bytes32(uint256(2)), bytes32(balance));
+        vm.store(address(target), keccak256(abi.encode(account, uint256(3))), bytes32(balance));
+        vm.store(address(target), keccak256(abi.encode(account, uint256(4))), bytes32(uint256(1e18)));
+        vm.store(address(target), keccak256(abi.encode(account, uint256(5))), bytes32(uint256(1)));
+        this.checkFullWidthOptIn(account);
+        assert(target.credits(account) == balance);
+        assert(target.rebasingCredits() == balance);
+        assert(target.nonRebasingSupply() == 0);
+    }
+
+    function checkUncheckedRounding(uint256 cpt) external pure {
+        require(cpt >= 1e18);
+        unchecked {
+            uint256 credits = (cpt + 1e18 - 1) / 1e18;
+            assert(credits * 1e18 / cpt == 1);
+        }
+    }
+
+    function testOptInConcreteWitness() external {
+        address account = address(0xB0B);
+        vm.store(address(target), bytes32(uint256(0)), bytes32(uint256(1e18 + 1)));
+        vm.store(address(target), bytes32(uint256(1)), bytes32(uint256(100)));
+        vm.store(address(target), bytes32(uint256(2)), bytes32(uint256(1)));
+        vm.store(address(target), keccak256(abi.encode(account, uint256(3))), bytes32(uint256(1)));
+        vm.store(address(target), keccak256(abi.encode(account, uint256(4))), bytes32(uint256(1e18)));
+        vm.store(address(target), keccak256(abi.encode(account, uint256(5))), bytes32(uint256(1)));
+        this.checkFullWidthOptIn(account);
+        assert(target.credits(account) == 2);
+        assert(target.rebasingCredits() == 102);
+        assert(target.nonRebasingSupply() == 0);
+    }
+
+    function checkLowRate(uint128 balance) external pure {
+        require(balance > 0 && balance < 100);
+        uint256 credits = (uint256(balance) * 1 + 2 - 1) / 2;
+        assert(credits * 2 / 1 == balance);
+    }
+
+    function checkWrapping(uint256 balance) external pure {
+        require(balance >= 1 << 255);
+        unchecked {
+            uint256 credits = (balance * 2 + 2 - 1) / 2;
+            assert(credits * 2 / 2 == balance);
+        }
+    }
+}
+"#,
+    );
+    for (test, signature) in [
+        ("checkFullWidthRoundTrip", "checkFullWidthRoundTrip(uint256,uint256)"),
+        ("checkFullWidthOptIn", "checkFullWidthOptIn(address)"),
+    ] {
+        let output = cmd
+            .forge_fuse()
+            .args([
+                "test",
+                "--symbolic",
+                "--json",
+                "--optimize",
+                "--symbolic-timeout",
+                "30",
+                "--match-test",
+                test,
+            ])
+            .assert_success()
+            .get_output()
+            .stdout
+            .clone();
+        let result = json_test_result(&output, signature);
+        assert_eq!(result["symbolic"]["status"], "pass");
+    }
+    cmd.forge_fuse()
+        .args(["test", "--optimize", "--match-test", "testOptInConcreteWitness"])
+        .assert_success();
+
+    for (test, signature) in [
+        ("checkLowRate", "checkLowRate(uint128)"),
+        ("checkWrapping", "checkWrapping(uint256)"),
+        ("checkUncheckedRounding", "checkUncheckedRounding(uint256)"),
+    ] {
+        let output = cmd
+            .forge_fuse()
+            .args([
+                "test",
+                "--symbolic",
+                "--json",
+                "--optimize",
+                "--symbolic-timeout",
+                "30",
+                "--match-test",
+                test,
+            ])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        let result = json_test_result(&output, signature);
+        assert_eq!(result["symbolic"]["status"], "fail_counterexample");
+    }
+});
+
+forgetest_init!(symbolic_independently_bounded_fixed_point_round_trip, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_independently_bounded_fixed_point_round_trip because z3 is not available"
+        );
+        return;
+    }
+    prj.add_test(
+        "FixedPointRoundTrip.t.sol",
+        r#"
+contract FixedPointRoundTripTest {
+    function checkRoundTrip(uint128 balance, uint256 rate) external pure {
+        require(balance > 0 && balance < type(uint128).max);
+        require(rate >= 1e18 && rate <= 1e27);
+        unchecked {
+            uint256 rounded = (uint256(balance) * rate + 1e18 - 1) / 1e18;
+            assert(rounded * 1e18 / rate == balance);
+        }
+    }
+
+}
+"#,
+    );
+
+    cmd.args(["test", "--symbolic", "--match-test", "checkRoundTrip"]).assert_success();
+});
+
+forgetest_init!(symbolic_rounded_product_relations, |prj, cmd| {
+    if !z3_available() {
+        let _ =
+            sh_eprintln!("skipping symbolic_rounded_product_relations because z3 is not available");
+        return;
+    }
+    prj.add_test(
+        "RoundedProduct.t.sol",
+        r#"
+contract RoundedProductTest {
+    function checkFloorError(uint256 value) external pure {
+        uint256 rounded = value / 37 * 37;
+        assert(rounded <= value);
+        assert(value - rounded < 37);
+    }
+
+    function checkDividendRelation(uint256 value) external pure {
+        require(value <= type(uint256).max - 36);
+        uint256 dividend = value + 36;
+        uint256 rounded = dividend / 37 * 37;
+        assert(rounded <= dividend);
+        assert(dividend - rounded < 37);
+    }
+
+    function checkWrappingDividendRelation(uint256 value) external pure {
+        unchecked {
+            uint256 dividend = value + 36;
+            uint256 rounded = dividend / 37 * 37;
+            assert(rounded <= dividend);
+            assert(dividend - rounded < 37);
+        }
+    }
+
+    function checkCeilingError(uint256 value) external pure {
+        uint256 rounded = (value + 36) / 37 * 37;
+        assert(rounded >= value);
+        assert(rounded - value < 37);
+    }
+
+    function checkCeilingRoundTrip(uint128 value, uint128 rate) external pure {
+        require(rate >= 37);
+        uint256 rounded = (uint256(value) * rate + 36) / 37 * 37;
+        assert(rounded / rate == value);
+    }
+
+    function checkCeilingIsNotExact(uint256 value) external pure {
+        require(value < 100);
+        uint256 rounded = (value + 36) / 37 * 37;
+        assert(rounded == value);
+    }
+
+    function checkWrappingCeiling(uint256 value) external pure {
+        unchecked {
+            uint256 rounded = (value + 36) / 37 * 37;
+            assert(rounded >= value);
+        }
+    }
+
+    function checkReversedFloorError(uint256 value) external pure {
+        unchecked {
+            uint256 rounded = value / 37 * 37;
+            assert(rounded - value < 37);
+        }
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        cmd.forge_fuse().args([
+            "test",
+            "--symbolic",
+            "--symbolic-timeout",
+            "30",
+            "--match-test",
+            "check(FloorError|DividendRelation|WrappingDividendRelation|CeilingError|CeilingRoundTrip)",
+        ])
+        .assert_success();
+        let output = cmd
+            .forge_fuse()
+            .args([
+                "test",
+                "--symbolic",
+                "--json",
+                "--symbolic-timeout",
+                "30",
+                "--match-test",
+                "check(CeilingIsNotExact|WrappingCeiling|ReversedFloorError)",
+            ])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        for test in ["checkCeilingIsNotExact", "checkWrappingCeiling", "checkReversedFloorError"] {
+            let signature = format!("{test}(uint256)");
+            let result = json_test_result(&output, &signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "{test}, optimized={optimized}"
+            );
+        }
+    }
 });

@@ -252,6 +252,7 @@ mod tests {
     async fn fork_activation_admin_uses_source_chain_in_nested_deployment() {
         let (_api, handle) =
             anvil::spawn(anvil::NodeConfig::test().with_chain_id(Some(8453u64))).await;
+        let caller = handle.genesis_accounts().next().unwrap();
         let expected =
             ChainConfig::activation_admin_address_for_upgrade_by_chain_id(8453, BaseUpgrade::Beryl)
                 .unwrap();
@@ -275,6 +276,7 @@ mod tests {
             let tx = BaseTransaction::builder()
                 .base(
                     TxEnv::builder()
+                        .caller(caller)
                         .chain_id(Some(chain_id))
                         .kind(TxKind::Call(ActivationRegistryStorage::ADDRESS))
                         .data(Bytes::from(IActivationRegistry::adminCall {}.abi_encode()))
@@ -300,6 +302,7 @@ mod tests {
                         BaseTransaction::builder()
                             .base(
                                 TxEnv::builder()
+                                    .caller(caller)
                                     .chain_id(Some(chain_id))
                                     .nonce(1)
                                     .kind(TxKind::Create)

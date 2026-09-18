@@ -1,9 +1,10 @@
-//! Canary tests replaying Tempo mainnet transactions under the newest hardfork anvil knows.
+//! Canary tests replaying Tempo mainnet and testnet transactions under the newest hardfork anvil
+//! knows.
 //!
-//! Every test forks Tempo mainnet at the parent of a pinned transaction's block, forces the
+//! Every test forks its source network at the parent of a pinned transaction's block, forces the
 //! hardfork to [`TempoHardfork::latest`], and re-submits the transaction's original signed bytes
-//! at the block's timestamp. The local receipt must reproduce mainnet: the same status, the same
-//! logs, and, unless a case documents a known change, the same gas.
+//! at the block's timestamp. The local receipt must reproduce the source receipt: the same status,
+//! the same logs, and, unless a case documents a known change, the same gas.
 //!
 //! The pinned transactions come from the services that keep Tempo busy: Relay's solver and
 //! router, Tempo AA payout senders, an ERC-4337 bundler, an ERC-7821 relayer for EIP-7702
@@ -14,32 +15,29 @@
 //! what these tests do for every hardfork the pinned `tempo` revision adds; see
 //! <https://github.com/tempoxyz/tempo/pull/7598> for the fix that ships in T12.
 //!
-//! Each pinned transaction is alone in its block, which is asserted, so replaying it on a fork of
-//! the parent reproduces the state it executed against. Gas is compared exactly, so the pinned
-//! blocks must have been executed under the hardfork that is active on mainnet: a hardfork may
-//! change gas accounting, and T11 did for precompile calldata. When the newest hardfork changes
-//! it again, record the exact change for the affected case with [`GasCheck::Offset`] and the
-//! reason next to it, then re-pin the transaction past the activation once it is live and restore
-//! the exact check.
+//! Mainnet transactions are alone in their blocks, which is asserted. Testnet cases can pin a
+//! transaction index and replay the entire prefix in source order in a single block.
+//! Gas is compared exactly, so the pinned blocks must have been executed under the hardfork that is
+//! active on the source network: a hardfork may change gas accounting, and T11 did for precompile
+//! calldata. When the newest hardfork changes it again, record the exact change for the affected
+//! case with [`GasCheck::Offset`] and the reason next to it, then re-pin the transaction past the
+//! activation once it is live and restore the exact check.
 //!
-//! The upstream defaults to the public endpoint and honours `TEMPO_MAINNET_RPC_URL`, see
-//! [`next_tempo_mainnet_rpc_endpoint`]. The canaries run in a single-threaded nextest group
+//! The upstream defaults to public endpoints and honours `TEMPO_MAINNET_RPC_URL` and
+//! `TEMPO_TESTNET_RPC_URL`. The canaries run in a single-threaded nextest group
 //! because the public endpoint rate limits concurrent replays.
 
 use crate::utils::http_provider;
 use alloy_consensus::Transaction;
 use alloy_network::{ReceiptResponse, TransactionResponse};
-use alloy_primitives::{Address, B256, Bytes, b256};
+use alloy_primitives::{Address, B256, Bytes, U256, address, b256};
 use alloy_provider::{Provider, ext::DebugApi};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, Log};
-use anvil::{NodeConfig, spawn};
-use foundry_test_utils::rpc::next_tempo_mainnet_rpc_endpoint;
+use anvil::{NodeConfig, eth::pool::transactions::TransactionOrder, spawn};
+use foundry_test_utils::rpc::{next_tempo_mainnet_rpc_endpoint, next_tempo_testnet_rpc_endpoint};
 use std::fmt;
 use tempo_hardfork::TempoHardfork;
 use tempo_precompiles::TIP_FEE_MANAGER_ADDRESS;
-
-/// Base URL of the Tempo mainnet explorer, used to link replayed blocks and transactions.
-const EXPLORER: &str = "https://explore.tempo.xyz";
 
 /// Topic of the TIP20 `Transfer(address,address,uint256)` event.
 const TRANSFER_TOPIC: B256 =
@@ -156,12 +154,51 @@ const ERC7821_EXECUTE: PinnedTransaction = PinnedTransaction::new(
     b256!("0x140b39136cb50902bd6ebeed2b6485a4aca20868542ae85be83d5b86a332d4d7"),
 );
 
+/// Batched approval and `swapExactAmountIn` whose DEX payout changed after tempo#6614.
+/// The canonical payout is 76,171,603,026 raw units; the regression paid 76,701,714,247.
+///
+/// <https://explore.testnet.tempo.xyz/tx/0x812f96c663e27b5112f2818e2cf49a12c184ac6547a07b289049f9dfa3e99591>.
+const TESTNET_DEX_SWAP: PinnedTransaction = PinnedTransaction {
+    network: CanaryNetwork::Testnet,
+    block: 35_497_031,
+    hash: b256!("0x812f96c663e27b5112f2818e2cf49a12c184ac6547a07b289049f9dfa3e99591"),
+    transaction_index: Some(13),
+};
+
+/// Replays the preceding transactions before checking the testnet DEX payout regression.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_canary_fork_testnet_dex_swap() {
+    let replayed = replay(TESTNET_DEX_SWAP, TempoHardfork::latest()).await;
+    let payout = LogRecord {
+        address: address!("20c0000000000000000000000000000000000000"),
+        topics: vec![
+            TRANSFER_TOPIC,
+            address!("dec0000000000000000000000000000000000000").into_word(),
+            address!("41b982fbc063339a9b4d5827e7b51705c462402e").into_word(),
+        ],
+        data: U256::from(76_171_603_026u64).to_be_bytes::<32>().into(),
+    };
+    assert!(replayed.source_success, "{replayed}: canonical swap must succeed");
+    assert!(replayed.source_logs.contains(&payout), "{replayed}: canonical DEX payout changed");
+    assert_eq!(
+        replayed
+            .logs
+            .iter()
+            .find(|log| log.address == payout.address && log.topics == payout.topics),
+        Some(&payout),
+        "{replayed}: replay changed the DEX payout"
+    );
+    // The source transaction ran under T11. T12 changed DEX execution and reduces its gas by
+    // 529,300; this fixture must remain before that hardfork because it exercises corrupted state.
+    replayed.assert_matches_source(GasCheck::Offset(-529_300));
+}
+
 /// Relay's fills must keep replaying under the newest hardfork, see [`RELAY_USDCE_TRANSFER`].
 #[tokio::test(flavor = "multi_thread")]
 async fn test_tempo_canary_fork_relay_usdce_transfer() {
     replay(RELAY_USDCE_TRANSFER, TempoHardfork::latest())
         .await
-        .assert_matches_mainnet(GasCheck::Exact);
+        .assert_matches_source(GasCheck::Exact);
 }
 
 /// The T10-era fill, see [`RELAY_T10_TRANSFER_WITH_REQUEST_ID`], must reproduce mainnet exactly
@@ -170,13 +207,13 @@ async fn test_tempo_canary_fork_relay_usdce_transfer() {
 async fn test_tempo_canary_fork_relay_t10_transfer_with_request_id() {
     replay(RELAY_T10_TRANSFER_WITH_REQUEST_ID, TempoHardfork::T10)
         .await
-        .assert_matches_mainnet(GasCheck::Exact);
+        .assert_matches_source(GasCheck::Exact);
 
     // T11 raised the gas of precompile calldata, which charges this call 96 gas more than mainnet
     // did under T10. The change is permanent for a T10-era transaction, so it is expected here.
     replay(RELAY_T10_TRANSFER_WITH_REQUEST_ID, TempoHardfork::latest())
         .await
-        .assert_matches_mainnet(GasCheck::Offset(96));
+        .assert_matches_source(GasCheck::Offset(96));
 }
 
 /// The T11 incident fill, see [`RELAY_TRANSFER_WITH_REQUEST_ID`], replayed under the hardforks
@@ -192,7 +229,7 @@ async fn test_tempo_canary_fork_relay_transfer_trailing_bytes_across_hardforks()
 async fn test_tempo_canary_fork_relay_path_usd_transfer() {
     replay(RELAY_PATH_USD_TRANSFER, TempoHardfork::latest())
         .await
-        .assert_matches_mainnet(GasCheck::Exact);
+        .assert_matches_source(GasCheck::Exact);
 }
 
 /// Relay's router swaps must keep replaying, see [`RELAY_ROUTER_PERMIT2_MULTICALL`].
@@ -200,7 +237,7 @@ async fn test_tempo_canary_fork_relay_path_usd_transfer() {
 async fn test_tempo_canary_fork_relay_router_permit2_multicall() {
     replay(RELAY_ROUTER_PERMIT2_MULTICALL, TempoHardfork::latest())
         .await
-        .assert_matches_mainnet(GasCheck::Exact);
+        .assert_matches_source(GasCheck::Exact);
 }
 
 /// The ERC-8021 approval T11 rejected, see [`ERC8021_ATTRIBUTED_APPROVE`], replayed under the
@@ -213,9 +250,7 @@ async fn test_tempo_canary_fork_erc8021_attribution_suffix_across_hardforks() {
 /// AA payouts must keep replaying, see [`AA_TIP20_TRANSFER`].
 #[tokio::test(flavor = "multi_thread")]
 async fn test_tempo_canary_fork_aa_tip20_transfer() {
-    replay(AA_TIP20_TRANSFER, TempoHardfork::latest())
-        .await
-        .assert_matches_mainnet(GasCheck::Exact);
+    replay(AA_TIP20_TRANSFER, TempoHardfork::latest()).await.assert_matches_source(GasCheck::Exact);
 }
 
 /// Sponsored AA transfers must keep replaying, see [`AA_SPONSORED_TRANSFER_WITH_MEMO`].
@@ -223,7 +258,7 @@ async fn test_tempo_canary_fork_aa_tip20_transfer() {
 async fn test_tempo_canary_fork_aa_sponsored_transfer_with_memo() {
     replay(AA_SPONSORED_TRANSFER_WITH_MEMO, TempoHardfork::latest())
         .await
-        .assert_matches_mainnet(GasCheck::Exact);
+        .assert_matches_source(GasCheck::Exact);
 }
 
 /// Allowance pulls must keep replaying, see [`AA_TIP20_TRANSFER_FROM`].
@@ -231,7 +266,7 @@ async fn test_tempo_canary_fork_aa_sponsored_transfer_with_memo() {
 async fn test_tempo_canary_fork_aa_tip20_transfer_from() {
     replay(AA_TIP20_TRANSFER_FROM, TempoHardfork::latest())
         .await
-        .assert_matches_mainnet(GasCheck::Exact);
+        .assert_matches_source(GasCheck::Exact);
 }
 
 /// ERC-4337 bundles must keep replaying, see [`ERC4337_HANDLE_OPS`].
@@ -239,13 +274,13 @@ async fn test_tempo_canary_fork_aa_tip20_transfer_from() {
 async fn test_tempo_canary_fork_erc4337_bundler_handle_ops() {
     replay(ERC4337_HANDLE_OPS, TempoHardfork::latest())
         .await
-        .assert_matches_mainnet(GasCheck::Exact);
+        .assert_matches_source(GasCheck::Exact);
 }
 
 /// ERC-7821 batches on delegated accounts must keep replaying, see [`ERC7821_EXECUTE`].
 #[tokio::test(flavor = "multi_thread")]
 async fn test_tempo_canary_fork_erc7821_execute_on_delegated_account() {
-    replay(ERC7821_EXECUTE, TempoHardfork::latest()).await.assert_matches_mainnet(GasCheck::Exact);
+    replay(ERC7821_EXECUTE, TempoHardfork::latest()).await.assert_matches_source(GasCheck::Exact);
 }
 
 /// Replays a TIP20 `transfer` or `approve` with trailing calldata bytes that failed on mainnet
@@ -255,39 +290,66 @@ async fn assert_trailing_bytes_regression(pinned: PinnedTransaction) {
     replay(pinned, TempoHardfork::T10).await.assert_applies_tip20_call();
 
     let regression = replay(pinned, TempoHardfork::T11).await;
-    regression.assert_matches_mainnet(GasCheck::Exact);
-    assert!(!regression.mainnet_success, "{regression}: expected the mainnet call to have failed");
+    regression.assert_matches_source(GasCheck::Exact);
+    assert!(!regression.source_success, "{regression}: expected the mainnet call to have failed");
 
     replay(pinned, TempoHardfork::latest()).await.assert_applies_tip20_call();
 }
 
-/// A mainnet transaction a canary is pinned to, alone in its block.
+/// The network supplying a canary's transaction and historical state.
+#[derive(Clone, Copy)]
+enum CanaryNetwork {
+    Mainnet,
+    Testnet,
+}
+
+impl CanaryNetwork {
+    fn rpc_endpoint(self) -> String {
+        match self {
+            Self::Mainnet => next_tempo_mainnet_rpc_endpoint(),
+            Self::Testnet => next_tempo_testnet_rpc_endpoint(),
+        }
+    }
+
+    const fn explorer(self) -> &'static str {
+        match self {
+            Self::Mainnet => "https://explore.tempo.xyz",
+            Self::Testnet => "https://explore.testnet.tempo.xyz",
+        }
+    }
+}
+
+/// A transaction a canary is pinned to.
 #[derive(Clone, Copy)]
 struct PinnedTransaction {
+    network: CanaryNetwork,
     /// The block holding the transaction; the fork starts at its parent.
     block: u64,
-    /// The transaction's hash, which must be the only one in the block.
+    /// The transaction's hash.
     hash: B256,
+    /// An explicit index enables ordered prefix replay; otherwise the block must hold only this
+    /// tx.
+    transaction_index: Option<usize>,
 }
 
 impl PinnedTransaction {
     const fn new(block: u64, hash: B256) -> Self {
-        Self { block, hash }
+        Self { network: CanaryNetwork::Mainnet, block, hash, transaction_index: None }
     }
 }
 
-/// How the gas a replayed transaction used is compared against its mainnet receipt.
+/// How the gas a replayed transaction used is compared against its source receipt.
 #[derive(Clone, Copy)]
 enum GasCheck {
-    /// The replay must use exactly the gas mainnet recorded.
+    /// The replay must use exactly the gas the source recorded.
     Exact,
-    /// The replay must use exactly this much more gas than mainnet recorded, or less when
+    /// The replay must use exactly this much more gas than the source recorded, or less when
     /// negative; the known effect of a hardfork on the pinned transaction.
     Offset(i64),
 }
 
 /// The pinned transaction replayed on a fork of its parent block under a forced hardfork, next
-/// to the outcome mainnet recorded for it.
+/// to the outcome the source recorded for it.
 struct Replayed {
     pinned: PinnedTransaction,
     hardfork: TempoHardfork,
@@ -297,9 +359,9 @@ struct Replayed {
     success: bool,
     gas_used: u64,
     logs: Vec<LogRecord>,
-    mainnet_success: bool,
-    mainnet_gas_used: u64,
-    mainnet_logs: Vec<LogRecord>,
+    source_success: bool,
+    source_gas_used: u64,
+    source_logs: Vec<LogRecord>,
 }
 
 /// The parts of a log that execution determines.
@@ -328,44 +390,44 @@ impl LogRecord {
 }
 
 impl Replayed {
-    /// Asserts the replay reproduced the mainnet status, the mainnet logs, and, per `gas`, the
-    /// mainnet gas usage.
+    /// Asserts the replay reproduced the source status, the source logs, and, per `gas`, the
+    /// source gas usage.
     ///
     /// The fee payment log depends on the gas used, so it is only compared when the gas must
     /// match exactly.
-    fn assert_matches_mainnet(&self, gas: GasCheck) {
+    fn assert_matches_source(&self, gas: GasCheck) {
         assert_eq!(
-            self.success, self.mainnet_success,
-            "{self}: status diverged from mainnet: success {} vs {} (gas {} vs {})",
-            self.success, self.mainnet_success, self.gas_used, self.mainnet_gas_used
+            self.success, self.source_success,
+            "{self}: status diverged from source: success {} vs {} (gas {} vs {})",
+            self.success, self.source_success, self.gas_used, self.source_gas_used
         );
         match gas {
             GasCheck::Exact => {
                 assert_eq!(
-                    self.gas_used, self.mainnet_gas_used,
-                    "{self}: used different gas than on mainnet"
+                    self.gas_used, self.source_gas_used,
+                    "{self}: used different gas than on source"
                 );
-                assert_eq!(self.logs, self.mainnet_logs, "{self}: logs diverged from mainnet");
+                assert_eq!(self.logs, self.source_logs, "{self}: logs diverged from source");
             }
             GasCheck::Offset(offset) => {
                 assert_eq!(
-                    i128::from(self.gas_used) - i128::from(self.mainnet_gas_used),
+                    i128::from(self.gas_used) - i128::from(self.source_gas_used),
                     i128::from(offset),
-                    "{self}: used {} gas, mainnet used {}, expected offset {offset}",
+                    "{self}: used {} gas, source used {}, expected offset {offset}",
                     self.gas_used,
-                    self.mainnet_gas_used
+                    self.source_gas_used
                 );
                 assert_eq!(
                     self.effects(),
-                    Self::effects_of(&self.mainnet_logs),
-                    "{self}: logs diverged from mainnet"
+                    Self::effects_of(&self.source_logs),
+                    "{self}: logs diverged from source"
                 );
             }
         }
     }
 
     /// Asserts the replay succeeded and applied the pinned TIP20 `transfer` or `approve`: its
-    /// only effect is the matching `Transfer` or `Approval` event, whatever mainnet recorded.
+    /// only effect is the matching `Transfer` or `Approval` event, whatever the source recorded.
     fn assert_applies_tip20_call(&self) {
         assert!(self.success, "{self}: failed with gas {}", self.gas_used);
         let (selector, args) = self.input.split_at(4);
@@ -394,76 +456,100 @@ impl Replayed {
 
 impl fmt::Display for Replayed {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let explorer = self.pinned.network.explorer();
         write!(
             f,
-            "{EXPLORER}/receipt/{} in block {} ({EXPLORER}/block/{}) under {}",
+            "{explorer}/receipt/{} in block {} ({explorer}/block/{}) under {}",
             self.pinned.hash, self.pinned.block, self.pinned.block, self.hardfork
         )
     }
 }
 
-/// Forks Tempo mainnet at the parent of the pinned transaction's block, forces `hardfork`, and
+/// Forks the source network at the parent of the pinned transaction's block, forces `hardfork`, and
 /// replays the transaction's signed bytes at the block's timestamp.
 async fn replay(pinned: PinnedTransaction, hardfork: TempoHardfork) -> Replayed {
     let number = pinned.block;
-    let rpc_url = next_tempo_mainnet_rpc_endpoint();
-    let mainnet = http_provider(&rpc_url);
+    let rpc_url = pinned.network.rpc_endpoint();
+    let explorer = pinned.network.explorer();
+    let source = http_provider(&rpc_url);
 
-    let block = mainnet
+    let block = source
         .get_block_by_number(BlockNumberOrTag::Number(number))
         .await
         .unwrap()
-        .unwrap_or_else(|| panic!("tempo mainnet block {number} not found"));
-    let receipts = mainnet
+        .unwrap_or_else(|| panic!("tempo source block {number} not found"));
+    let receipts = source
         .get_block_receipts(BlockId::number(number))
         .await
         .unwrap()
-        .unwrap_or_else(|| panic!("tempo mainnet block {number} has no receipts"));
-    let [receipt] = receipts.as_slice() else {
-        panic!(
-            "block {number} holds {} transactions, expected only {EXPLORER}/receipt/{}",
-            receipts.len(),
-            pinned.hash
-        );
+        .unwrap_or_else(|| panic!("tempo source block {number} has no receipts"));
+    let receipt = if let Some(index) = pinned.transaction_index {
+        receipts.get(index).unwrap_or_else(|| panic!("block {number} has no transaction {index}"))
+    } else {
+        let [receipt] = receipts.as_slice() else {
+            panic!(
+                "block {number} holds {} transactions, expected only {explorer}/receipt/{}",
+                receipts.len(),
+                pinned.hash
+            );
+        };
+        receipt
     };
     assert_eq!(
         receipt.transaction_hash(),
         pinned.hash,
-        "block {number} does not hold the pinned transaction {EXPLORER}/receipt/{}",
+        "block {number} does not hold the pinned transaction {explorer}/receipt/{}",
         pinned.hash
     );
-    let tx = mainnet
+    let tx = source
         .get_transaction_by_hash(pinned.hash)
         .await
         .unwrap()
-        .unwrap_or_else(|| panic!("tempo mainnet transaction {} not found", pinned.hash));
-    let raw = mainnet.debug_get_raw_transaction(pinned.hash).await.unwrap();
-
+        .unwrap_or_else(|| panic!("tempo source transaction {} not found", pinned.hash));
     let (api, _handle) = spawn(
         NodeConfig::test_tempo()
             .with_eth_rpc_url(Some(rpc_url))
             .with_fork_block_number(Some(number - 1))
-            .with_hardfork(Some(hardfork.into())),
+            .with_hardfork(Some(hardfork.into()))
+            .with_transaction_order(TransactionOrder::Fifo),
     )
     .await;
     let node_info = api.anvil_node_info().await.unwrap();
     assert_eq!(node_info.hard_fork, hardfork.to_string(), "forced hardfork was not applied");
     api.anvil_set_auto_mine(false).await.unwrap();
-
-    // Tempo blocks are sub-second apart, so the parent may share the timestamp; anvil accepts an
-    // equal one. Setting it before submitting also validates time bounds against it.
+    // Tempo blocks may share a timestamp. Set it before submission to validate time bounds.
     api.evm_set_next_block_timestamp(block.header.timestamp).unwrap();
-    let sent = api.send_raw_transaction(raw).await.unwrap_or_else(|err| {
-        panic!(
-            "block {number} under {hardfork}: {EXPLORER}/receipt/{} rejected: {err}",
-            pinned.hash
-        )
-    });
-    assert_eq!(sent, pinned.hash, "block {number}: raw transaction decoded to a different hash");
+
+    // Replay signed bytes in source order, including every predecessor. Mining predecessors
+    // separately would change block-local execution context.
+    let hashes = block
+        .transactions
+        .hashes()
+        .take(pinned.transaction_index.unwrap_or(0) + 1)
+        .collect::<Vec<_>>();
+    assert_eq!(hashes.last(), Some(&pinned.hash), "pinned transaction has the wrong block index");
+    for hash in &hashes {
+        let raw = source.debug_get_raw_transaction(*hash).await.unwrap();
+        let sent = api.send_raw_transaction(raw).await.unwrap_or_else(|err| {
+            panic!("block {number} under {hardfork}: {explorer}/receipt/{hash} rejected: {err}")
+        });
+        assert_eq!(sent, *hash, "block {number}: raw transaction decoded to a different hash");
+    }
     api.mine_one().await.unwrap();
+    for (index, hash) in hashes.iter().enumerate() {
+        let receipt = api.transaction_receipt(*hash).await.unwrap().unwrap_or_else(|| {
+            panic!("block {number} under {hardfork}: {explorer}/receipt/{hash} was not mined")
+        });
+        assert_eq!(
+            receipt.transaction_index(),
+            Some(index as u64),
+            "replay changed transaction order"
+        );
+        assert_eq!(receipt.block_number(), Some(number), "replay changed transaction block");
+    }
 
     let local = api.transaction_receipt(pinned.hash).await.unwrap().unwrap_or_else(|| {
-        panic!("block {number} under {hardfork}: {EXPLORER}/receipt/{} was not mined", pinned.hash)
+        panic!("block {number} under {hardfork}: {explorer}/receipt/{} was not mined", pinned.hash)
     });
     Replayed {
         pinned,
@@ -474,8 +560,8 @@ async fn replay(pinned: PinnedTransaction, hardfork: TempoHardfork) -> Replayed 
         success: local.status(),
         gas_used: local.gas_used(),
         logs: local.0.inner.inner.logs().iter().map(LogRecord::new).collect(),
-        mainnet_success: receipt.status(),
-        mainnet_gas_used: receipt.gas_used(),
-        mainnet_logs: receipt.inner.inner.logs().iter().map(LogRecord::new).collect(),
+        source_success: receipt.status(),
+        source_gas_used: receipt.gas_used(),
+        source_logs: receipt.inner.inner.logs().iter().map(LogRecord::new).collect(),
     }
 }
