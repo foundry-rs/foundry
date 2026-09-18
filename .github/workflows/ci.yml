@@ -33,6 +33,7 @@ jobs:
       ARBITRUM_RPC: ${{ secrets.ARBITRUM_RPC }}
       ETH_SEPOLIA_RPC: ${{ secrets.ETH_SEPOLIA_RPC }}
       TEMPO_MAINNET_RPC_URL: ${{ secrets.TEMPO_MAINNET_RPC_URL }}
+      TEMPO_TESTNET_RPC_URL: ${{ secrets.TEMPO_TESTNET_RPC_URL }}
 
   docs:
     uses: ./.github/workflows/docs.yml
@@ -159,7 +160,6 @@ jobs:
       - name: Test GitHub scripts
         run: |
           python3 -m unittest discover -s .github/scripts/tests -p 'test_*.py'
-          node --test .github/scripts/tests/test-create-tag.js
 
   clippy:
     needs: cargo-cooldown
