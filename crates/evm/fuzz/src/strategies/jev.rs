@@ -9,7 +9,7 @@ use std::{
     collections::VecDeque,
     sync::mpsc::{self, Receiver, SyncSender},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 const MODEL: &str = "typesafe/jev-1.13";
@@ -234,8 +234,12 @@ impl Jev {
                 self.transport = Some(Transport::new()?);
             }
             self.requests += 1;
+            let start = Instant::now();
             let response = self.transport.as_ref().expect("initialized").decide(self.request())?;
-            self.accept(response)
+            self.accept(response)?;
+            tracing::debug!(target: "forge::jev", request = self.requests,
+                elapsed_ms = start.elapsed().as_millis(), "accepted Jev choice batch");
+            Ok::<_, eyre::Report>(())
         })();
         if result.is_err() {
             // Provider errors may contain sensitive response material. Never print them.

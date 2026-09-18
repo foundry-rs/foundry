@@ -74,7 +74,9 @@ impl GuidedCalls {
                 .collect();
             self.generation = Some(generation);
         }
-        self.jev.next().and_then(|index| self.calls.get(index).cloned())
+        let index = self.jev.next()?;
+        tracing::debug!(target: "forge::jev", production = index, "model-selected transaction");
+        self.calls.get(index).cloned()
     }
 }
 
