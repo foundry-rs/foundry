@@ -171,7 +171,7 @@ impl Jev {
             if self.history.len() == BATCH {
                 self.history.pop_front();
             }
-            self.history.push_back(json!({ "function": index, "reverted": reverted,
+            self.history.push_back(json!({ "function_productions": [format!("p{}", index * 2), format!("p{}", index * 2 + 1)], "reverted": reverted,
                 "discarded": discarded, "new_coverage": new_coverage }));
         }
     }
