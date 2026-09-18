@@ -33,7 +33,9 @@ use base_common_rpc_types::Transaction;
 #[cfg(feature = "optimism")]
 use alloy_consensus::Transaction as _;
 #[cfg(feature = "optimism")]
-use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, POST_EXEC_TX_TYPE_ID, TxDeposit, TxPostExec};
+use op_alloy_consensus::{
+    DEPOSIT_TX_TYPE_ID, POST_EXEC_TX_TYPE_ID, PostExecPayload, TxDeposit, TxPostExec,
+};
 
 //
 /// Container type for signed, typed transactions.
@@ -477,14 +479,36 @@ impl TryFrom<AnyRpcTransaction> for FoundryTxEnvelope {
                     }
 
                     if tx.ty() == POST_EXEC_TX_TYPE_ID {
-                        let post_exec_tx =
-                            tx.inner.fields.deserialize_into::<TxPostExec>().map_err(|e| {
+                        // The RPC form carries the RLP-encoded `PostExecPayload` in `input`; the
+                        // other fields are derived placeholders. Deserializing the object
+                        // straight into `TxPostExec` would instead use its standalone serde form
+                        // and fail on the missing `version` field.
+                        let input = tx
+                            .inner
+                            .fields
+                            .get_deserialized::<Bytes>("input")
+                            .ok_or_else(|| {
+                                ConversionError::Custom(
+                                    "Post-exec tx is missing `input`".to_string(),
+                                )
+                            })?
+                            .map_err(|e| {
                                 ConversionError::Custom(format!(
-                                    "Failed to deserialize post-exec tx: {e}"
+                                    "Failed to deserialize post-exec tx `input`: {e}"
+                                ))
+                            })?;
+                        let payload =
+                            PostExecPayload::from_rlp_bytes(input.as_ref()).map_err(|e| {
+                                ConversionError::Custom(format!(
+                                    "Failed to decode post-exec tx payload: {e}"
                                 ))
                             })?;
 
-                        return Ok(Self::PostExec(Sealed::new(post_exec_tx)));
+                        // Reuse the hash from the response rather than recomputing it.
+                        return Ok(Self::PostExec(Sealed::new_unchecked(
+                            TxPostExec::new(payload),
+                            tx.hash,
+                        )));
                     }
 
                     let tx_type = tx.ty();
@@ -653,6 +677,12 @@ mod tests {
     /// A plain Ethereum transaction in its JSON-RPC form.
     const ETH_RPC_TX: &str = r#"{"type":"0x0","chainId":"0x1","nonce":"0x15","gasPrice":"0x4a817c800","gas":"0xc350","to":"0xf02c1c8e6114b1dbe8937a39260b5b0a374432bb","value":"0xf3dbb76162000","input":"0x68656c6c6f21","r":"0x1b5e176d927f8e9ab405058b2d2457392da3e20f328b16ddabcebc33eaac5fea","s":"0x4ba69724e8f69de52f0125ad8b3c5c2cef33019bac3249e2c0a2192766d1721c","v":"0x25","hash":"0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b","blockHash":"0x1d59ff54b1eb26b013ce3cb5fc9dab3705b415a67127a003c3e61eb445bb8df2","blockNumber":"0x5daf3b","transactionIndex":"0x41","from":"0xa7d9ddbe1f17865597fbd27ec712455208b6b76d"}"#;
 
+    /// An OP-stack post-exec transaction (SDM, type `0x7D`) as returned by
+    /// `eth_getTransactionByHash`. The RLP-encoded `PostExecPayload` is carried in `input`; the
+    /// remaining fields are derived placeholders.
+    #[cfg(feature = "optimism")]
+    const OP_POST_EXEC_RPC_TX: &str = r#"{"blockHash":"0x72edd91c1b181b566e08846b9fe67e3d746c4e6555e6fb81f0d1acd9465f7322","blockNumber":"0x44ee2d","blockTimestamp":"0x6aadaad9","from":"0x0000000000000000000000000000000000000000","gas":"0x0","gasPrice":"0xfb","hash":"0x748fc6eb383fc0f2a92089556f639d4bdb1d363cb50e1be8acae2df338ba6963","input":"0xf83d018344ee2df7c4028207d0c4038207d0c4048207d0c4058207d0c4068207d0c4078207d0c4088207d0c4098207d0c40a8207d0c40b8207d0c40c8207d0","transactionIndex":"0xd","type":"0x7d","value":"0x0"}"#;
+
     /// An `ArbitrumInternalTx`, a type alloy models only as [`AnyTxEnvelope::Unknown`].
     const ARBITRUM_INTERNAL_RPC_TX: &str = r#"{"type":"0x6a","chainId":"0xa4b1","nonce":"0x0","gasPrice":"0x0","gas":"0x0","to":"0x00000000000000000000000000000000000a4b05","value":"0x0","input":"0x6bf6a42d","r":"0x0","s":"0x0","v":"0x0","hash":"0xe5ad4cc44e5cd67a464c038af87169fde2bd475f2c00306bd2d55ca2c5e4452e","blockHash":"0x0ce1511da42af573bac6870ef058d63bc4c8552440e97c149d4d539c482b5f7a","blockNumber":"0x1dc83ddc","transactionIndex":"0x0","from":"0x00000000000000000000000000000000000a4b05"}"#;
 
@@ -672,6 +702,42 @@ mod tests {
 
         // `AnyTxEnvelope::encode_2718` panics on this type, so it must not be reached.
         assert!(FoundryTxEnvelope::encode_rpc_2718(&tx).is_err());
+    }
+
+    #[cfg(feature = "optimism")]
+    #[test]
+    fn encode_rpc_2718_post_exec_tx() {
+        let tx: AnyRpcTransaction = serde_json::from_str(OP_POST_EXEC_RPC_TX).unwrap();
+
+        let encoded = FoundryTxEnvelope::encode_rpc_2718(&tx).unwrap();
+
+        // The 2718 envelope is the `0x7d` type byte followed by the payload carried in `input`.
+        let expected = hex!(
+            "7df83d018344ee2df7c4028207d0c4038207d0c4048207d0c4058207d0c4068207d0c4078207d0c4088207d0c4098207d0c40a8207d0c40b8207d0c40c8207d0"
+        );
+        assert_eq!(encoded, expected[..]);
+    }
+
+    /// The RPC form carries the payload as RLP in `input`, not as a `PostExecPayload` object, and
+    /// the hash must be taken from the response rather than recomputed.
+    #[cfg(feature = "optimism")]
+    #[test]
+    fn post_exec_rpc_tx_round_trips() {
+        let tx: AnyRpcTransaction = serde_json::from_str(OP_POST_EXEC_RPC_TX).unwrap();
+
+        let envelope = FoundryTxEnvelope::try_from(tx).unwrap();
+        let FoundryTxEnvelope::PostExec(sealed) = &envelope else {
+            panic!("expected a post-exec envelope, got {envelope:?}");
+        };
+
+        assert_eq!(
+            sealed.hash(),
+            b256!("0x748fc6eb383fc0f2a92089556f639d4bdb1d363cb50e1be8acae2df338ba6963")
+        );
+        // 11 rebated transactions, at indexes 2..=12, each refunded 2000 gas.
+        let payload = &sealed.inner().payload;
+        assert_eq!(payload.block_number, 0x44ee2d);
+        assert_eq!(payload.gas_refund_entries.len(), 11);
     }
 
     #[test]
