@@ -12,6 +12,7 @@ mod bind;
 mod bind_json;
 mod build;
 mod cache;
+mod cache_differential;
 mod cmd;
 mod compiler;
 mod config;
