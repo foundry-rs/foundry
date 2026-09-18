@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "request": {
+    "model": "typesafe/jev-1.13",
+    "state": {
+      "cases": [
+        {
+          "id": "clamp",
+          "specification": "Clamp a uint32 to the inclusive ceiling 100003."
+        },
+        {
+          "id": "pages",
+          "specification": "Round a uint32 item count up to whole pages of 65521 items."
+        },
+        {
+          "id": "cursor",
+          "specification": "Increment a uint32 circular cursor, wrapping modulo capacity 99991."
+        }
+      ]
+    },
+    "questions": {
+      "clamp": {
+        "type": "choice",
+        "instructions": "Which input distribution best exercises arithmetic boundary behavior for case clamp? Choose using its specification.",
+        "criteria": {
+          "broad": "Sample the full uint32 input range.",
+          "zero": "Focus on integers 0 through 8.",
+          "pivot": "Focus on the nine integers around the ceiling, page size, or capacity in the specification.",
+          "maximum": "Focus on the nine largest uint32 values."
+        }
+      },
+      "pages": {
+        "type": "choice",
+        "instructions": "Which input distribution best exercises arithmetic boundary behavior for case pages? Choose using its specification.",
+        "criteria": {
+          "broad": "Sample the full uint32 input range.",
+          "zero": "Focus on integers 0 through 8.",
+          "pivot": "Focus on the nine integers around the ceiling, page size, or capacity in the specification.",
+          "maximum": "Focus on the nine largest uint32 values."
+        }
+      },
+      "cursor": {
+        "type": "choice",
+        "instructions": "Which input distribution best exercises arithmetic boundary behavior for case cursor? Choose using its specification.",
+        "criteria": {
+          "broad": "Sample the full uint32 input range.",
+          "zero": "Focus on integers 0 through 8.",
+          "pivot": "Focus on the nine integers around the ceiling, page size, or capacity in the specification.",
+          "maximum": "Focus on the nine largest uint32 values."
+        }
+      }
+    }
+  },
+  "response": {
+    "model": "typesafe/jev-1.13-20260917",
+    "answers": {
+      "clamp": {
+        "type": "choice",
+        "choice": "pivot",
+        "probabilities": {
+          "maximum": 0.02,
+          "pivot": 0.96,
+          "zero": 0,
+          "broad": 0.02
+        },
+        "confidence": 0.95
+      },
+      "pages": {
+        "type": "choice",
+        "choice": "pivot",
+        "probabilities": {
+          "maximum": 0,
+          "pivot": 1,
+          "zero": 0,
+          "broad": 0
+        },
+        "confidence": 0.99
+      },
+      "cursor": {
+        "type": "choice",
+        "choice": "pivot",
+        "probabilities": {
+          "maximum": 0.01,
+          "pivot": 0.99,
+          "zero": 0,
+          "broad": 0
+        },
+        "confidence": 0.98
+      }
+    },
+    "usage": {
+      "input_tokens": 753,
+      "output_tokens": 133,
+      "cost": 0.000031626
+    },
+    "id": "gen-dec-1789770847-CsDF5X018vD5xWZDQsTx",
+    "provider": "TypeSafe"
+  },
+  "durationMs": 584.3076800000001
+}

@@ -1,0 +1,8 @@
+[profile.default]
+src = "src"
+test = "test"
+libs = []
+solc = "0.8.30"
+
+[profile.default.fuzz]
+runs = 256
