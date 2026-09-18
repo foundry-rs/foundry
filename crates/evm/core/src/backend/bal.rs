@@ -1,10 +1,9 @@
-//! Native BAL reads for a single transaction executed against its unchanged parent state.
+//! Block access list (BAL) reads for executing one transaction against its parent block's state.
 
 use super::{Backend, DatabaseError, DatabaseResult};
 use crate::evm::FoundryEvmNetwork;
 use alloy_primitives::{Address, U256};
 use revm::{
-    DatabaseRef,
     database_interface::bal::BalState,
     state::{
         AccountInfo,
@@ -14,17 +13,20 @@ use revm::{
 use std::sync::Arc;
 
 impl<FEN: FoundryEvmNetwork> Backend<FEN> {
-    /// Positions native BAL reads before a transaction without changing the parent database.
+    /// Serves reads of state the block wrote before `index` from `bal`, and everything else from
+    /// the underlying database.
     ///
-    /// The caller must supply a validated BAL for Cancun or later and use `transaction_index + 1`.
-    /// Install it only for a single transaction on an unchanged parent. Committing the transaction
-    /// removes BAL and preserves accessed account code for trace decoding. Discard the backend
-    /// afterward: skipped prefix storage is not materialized for subsequent transactions.
-    /// Accounts that could have been created in the skipped prefix require ordinary replay
-    /// when their storage is read: BAL does not enumerate every slot cleared by CREATE.
-    pub fn set_bal(&mut self, bal: Option<Arc<Bal>>, index: BlockAccessIndex) {
-        self.bal =
-            bal.map(|bal| BalState { bal: Some(bal), bal_index: index, ..Default::default() });
+    /// Index `0` holds the pre-block system writes and transaction `i` is index `i + 1`, so
+    /// positioning the reads at a transaction's own index yields its prestate without replaying
+    /// the earlier transactions. Committing the transaction's state removes the list again, so
+    /// the backend must not execute further transactions of that block afterwards.
+    pub fn set_bal(&mut self, bal: Arc<Bal>, index: BlockAccessIndex) {
+        self.bal = Some(BalState {
+            bal: Some(bal),
+            bal_index: index,
+            allow_db_fallback: true,
+            ..Default::default()
+        });
     }
 
     pub(super) fn apply_bal_account(
@@ -45,23 +47,6 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         index: U256,
     ) -> DatabaseResult<Option<U256>> {
         let Some(bal) = &self.bal else { return Ok(None) };
-        // Inspect raw parent account metadata, not BAL-overlaid nonce or code. A skipped CREATE
-        // can clear unlisted storage, including in index-zero system execution. Reject even when
-        // BAL has a prior slot write, since a later creation might have cleared that value.
-        let parent = if let Some(db) = self.active_fork_db() {
-            db.basic_ref(address)?
-        } else {
-            self.mem_db.basic_ref(address)?
-        };
-        if parent.is_none_or(|account| account.has_no_code_and_nonce()) {
-            return Err(DatabaseError::GetStorage(
-                address,
-                index,
-                Arc::new(eyre::eyre!(
-                    "BAL cannot exclude a storage reset for {address}; replay required"
-                )),
-            ));
-        }
         bal.storage(&address, index)
             .map_err(|err| DatabaseError::GetStorage(address, index, Arc::new(err.into())))
     }

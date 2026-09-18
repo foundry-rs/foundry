@@ -498,6 +498,47 @@ pub async fn spawn_rpc_proxy_retyping_first_block_transaction(
     format!("http://{address}")
 }
 
+/// Spawns an RPC proxy that forwards every request upstream and passes each `method` result,
+/// together with the request params, through `map` before returning it.
+pub async fn spawn_rpc_proxy_mapping_method(
+    endpoint: String,
+    method: &'static str,
+    map: impl Fn(&Value, Value) -> Value + Send + Sync + 'static,
+) -> String {
+    let client = reqwest::Client::new();
+    let map = Arc::new(map);
+    let router = Router::new().route(
+        "/",
+        post(move |Json(request): Json<Value>| {
+            let client = client.clone();
+            let endpoint = endpoint.clone();
+            let map = map.clone();
+            async move {
+                let mut response = client
+                    .post(endpoint)
+                    .json(&request)
+                    .send()
+                    .await
+                    .unwrap()
+                    .json::<Value>()
+                    .await
+                    .unwrap();
+                if request.get("method").and_then(Value::as_str) == Some(method)
+                    && let Some(result) = response.get_mut("result")
+                {
+                    let params = request.get("params").cloned().unwrap_or(Value::Null);
+                    *result = map(&params, result.take());
+                }
+                Json(response)
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    format!("http://{address}")
+}
+
 #[derive(Clone)]
 enum RpcMethodRejection {
     Before(usize),
