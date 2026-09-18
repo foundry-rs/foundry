@@ -1235,6 +1235,12 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                                 .then(|| error::snapshot_edge_fingerprint(call_result))
                                 .flatten();
                             call_new_coverage = corpus_manager.merge_edge_coverage(call_result);
+                            sequence_plan.observe(
+                                current_tx,
+                                call_result.reverted,
+                                discarded,
+                                call_new_coverage,
+                            );
                             if call_new_coverage {
                                 current_run.new_coverage = true;
                             }

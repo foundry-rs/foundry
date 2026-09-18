@@ -55,7 +55,7 @@ use foundry_compilers::{
     utils::source_files_iter,
 };
 use foundry_config::{
-    Config, InlineConfig, InvariantDepthMode, InvariantWorkers, figment,
+    Config, InlineConfig, InvariantDepthMode, InvariantTxGenerator, InvariantWorkers, figment,
     figment::{
         Metadata, Profile, Provider,
         value::{Dict, Map, Value},
@@ -722,6 +722,13 @@ pub struct TestArgs {
     /// How invariant run depth is selected.
     #[arg(long, env = "FOUNDRY_INVARIANT_DEPTH_MODE", value_name = "fixed|random")]
     pub invariant_depth_mode: Option<InvariantDepthMode>,
+
+    /// Select fresh invariant transactions using rng or Jev Choices.
+    ///
+    /// Jev sends ABI signatures and execution feedback to OpenRouter using OPENROUTER_API_KEY.
+    /// Arguments remain locally generated. Requests are bounded and fall back to RNG on failure.
+    #[arg(long, env = "FOUNDRY_INVARIANT_TX_GENERATOR", value_name = "rng|jev")]
+    pub invariant_tx_generator: Option<InvariantTxGenerator>,
 
     /// Percent of invariant calldata/senders generated from the dictionary.
     #[arg(long, env = "FOUNDRY_INVARIANT_DICTIONARY_WEIGHT", value_name = "PERCENT")]
@@ -2999,6 +3006,7 @@ impl Provider for TestArgs {
             "depth" => self.invariant_depth,
             "min_depth" => self.invariant_min_depth,
             "depth_mode" => self.invariant_depth_mode.map(Value::serialize).transpose()?,
+            "tx_generator" => self.invariant_tx_generator.map(Value::serialize).transpose()?,
             "workers" => self.invariant_workers.map(Value::serialize).transpose()?,
             "dictionary_weight" => self.invariant_dictionary_weight,
             "max_fuzz_dictionary_addresses" => self.invariant_dictionary_addresses.clone(),
@@ -3642,6 +3650,23 @@ mod tests {
         assert_eq!(
             figment.extract_inner::<InvariantWorkers>("invariant.workers").unwrap(),
             InvariantWorkers::Fixed(std::num::NonZeroUsize::new(2).unwrap())
+        );
+    }
+
+    #[test]
+    fn jev_mode_is_opt_in_and_cli_overrides_config() {
+        let defaults = Config::default();
+        assert_eq!(defaults.invariant.tx_generator, InvariantTxGenerator::Rng);
+        let args = TestArgs::parse_from(["forge", "--invariant-tx-generator", "jev"]);
+        let config = defaults.merge_inline_provider(&args).unwrap();
+        assert_eq!(config.invariant.tx_generator, InvariantTxGenerator::Jev);
+        let rng = TestArgs::parse_from(["forge", "--invariant-tx-generator", "rng"]);
+        assert_eq!(
+            config.merge_inline_provider(&rng).unwrap().invariant.tx_generator,
+            InvariantTxGenerator::Rng
+        );
+        assert!(
+            TestArgs::try_parse_from(["forge", "--invariant-tx-generator", "unknown"]).is_err()
         );
     }
 

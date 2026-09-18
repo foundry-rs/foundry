@@ -22,6 +22,8 @@ pub use invariants::override_call_strat;
 mod tx;
 pub use tx::TxGenerator;
 
+mod jev;
+
 mod mutators;
 pub use mutators::BoundMutator;
 

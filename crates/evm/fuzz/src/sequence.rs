@@ -93,6 +93,16 @@ impl InitialSequence {
 }
 
 impl SequencePlan {
+    /// Forward actual execution feedback to the optional online transaction generator.
+    pub fn observe(
+        &self,
+        tx: &BasicTxDetails,
+        reverted: bool,
+        discarded: bool,
+        new_coverage: bool,
+    ) {
+        self.tx.observe(tx, reverted, discarded, new_coverage);
+    }
     pub fn initial(&self) -> &[BasicTxDetails] {
         self.initial.as_slice()
     }
@@ -228,6 +238,7 @@ impl SequenceGenerator {
     where
         F: FnMut(usize) -> Result<CorpusEntryView<'a>>,
     {
+        self.tx.begin_run();
         let (initial, source) = match &self.mode {
             SequenceMode::Stateless(function) => {
                 self.start_stateless(runner, corpus_len, &mut entry_at, coverage, function)?
