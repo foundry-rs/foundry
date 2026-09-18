@@ -133,6 +133,109 @@ const INDEPENDENT_MUTATIONS: &[Mutation] = &[Mutation {
     expected_compiled_files: 2,
 }];
 
+const REPLACED_DEPENDENCY_FILES: &[FileSpec] = &[
+    FileSpec {
+        path: "external/A.sol",
+        contents: r#"contract A {
+    function value() external pure returns (uint256) { return 111; }
+}
+"#,
+    },
+    FileSpec {
+        path: "external/B.sol",
+        contents: r#"contract B {
+    function value() external pure returns (uint256) { return 333; }
+}
+"#,
+    },
+    FileSpec {
+        path: "src/Keeper.sol",
+        contents: r#"import {A} from "../external/A.sol";
+contract Keeper { function keep(A) external pure {} }
+"#,
+    },
+    FileSpec {
+        path: "test/Impl.t.sol",
+        contents: r#"import {A} from "../external/A.sol";
+contract ImplTest {
+    function test_value() public { require(new A().value() == 111, "changed A"); }
+}
+"#,
+    },
+];
+
+const REPLACED_DEPENDENCY_MUTATIONS: &[Mutation] = &[
+    Mutation {
+        path: "test/Impl.t.sol",
+        contents: r#"import {B} from "../external/B.sol";
+contract ImplTest {
+    function test_value() public { require(new B().value() == 333, "changed B"); }
+}
+"#,
+        // Adding B to the active source context conservatively invalidates every source unit.
+        expected_compiled_files: 4,
+    },
+    Mutation {
+        path: "external/A.sol",
+        contents: r#"contract A {
+    function value() external pure returns (uint256) { return 222; }
+}
+"#,
+        expected_compiled_files: 2,
+    },
+    Mutation {
+        path: "external/B.sol",
+        contents: r#"contract B {
+    function value() external pure returns (uint256) { return 444; }
+}
+"#,
+        expected_compiled_files: 2,
+    },
+];
+
+const CLEARED_DEPENDENCY_FILES: &[FileSpec] = &[
+    FileSpec {
+        path: "external/A.sol",
+        contents: r#"contract A {
+    function value() external pure returns (uint256) { return 111; }
+}
+"#,
+    },
+    FileSpec {
+        path: "src/Keeper.sol",
+        contents: r#"import {A} from "../external/A.sol";
+contract Keeper { function keep(A) external pure {} }
+"#,
+    },
+    FileSpec {
+        path: "test/Impl.t.sol",
+        contents: r#"import {A} from "../external/A.sol";
+contract ImplTest {
+    function test_value() public { require(new A().value() == 111, "changed A"); }
+}
+"#,
+    },
+];
+
+const CLEARED_DEPENDENCY_MUTATIONS: &[Mutation] = &[
+    Mutation {
+        path: "test/Impl.t.sol",
+        contents: r#"contract ImplTest {
+    function test_value() public pure { require(1 + 1 == 2, "arithmetic"); }
+}
+"#,
+        expected_compiled_files: 1,
+    },
+    Mutation {
+        path: "external/A.sol",
+        contents: r#"contract A {
+    function value() external pure returns (uint256) { return 222; }
+}
+"#,
+        expected_compiled_files: 2,
+    },
+];
+
 const SCENARIOS: &[Scenario] = &[
     Scenario { name: "dynamic", files: DYNAMIC_FILES, mutations: DYNAMIC_MUTATIONS },
     Scenario { name: "external-native", files: EXTERNAL_FILES, mutations: EXTERNAL_MUTATIONS },
@@ -140,6 +243,16 @@ const SCENARIOS: &[Scenario] = &[
         name: "independent-native",
         files: INDEPENDENT_FILES,
         mutations: INDEPENDENT_MUTATIONS,
+    },
+    Scenario {
+        name: "replace-native-dependency",
+        files: REPLACED_DEPENDENCY_FILES,
+        mutations: REPLACED_DEPENDENCY_MUTATIONS,
+    },
+    Scenario {
+        name: "clear-native-dependency",
+        files: CLEARED_DEPENDENCY_FILES,
+        mutations: CLEARED_DEPENDENCY_MUTATIONS,
     },
 ];
 
