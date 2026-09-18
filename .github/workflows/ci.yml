@@ -252,6 +252,22 @@ jobs:
           checksum: true
           fallback: none
       - run: cargo deny --all-features --locked check all
+      - name: Collect Aegis diagnostics
+        if: always()
+        run: |
+          if sudo test -f /var/log/aegis/service.jsonl; then
+            sudo install -m 0644 /var/log/aegis/service.jsonl "$RUNNER_TEMP/aegis-service.jsonl"
+          else
+            echo "::warning::Aegis service log is unavailable; enforcement may not have been installed."
+          fi
+      - name: Upload Aegis diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: aegis-cargo-deny-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/aegis-service.jsonl
+          if-no-files-found: warn
+          retention-days: 14
 
   codeql:
     name: analyze (${{ matrix.language }})
