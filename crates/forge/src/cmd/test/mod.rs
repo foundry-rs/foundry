@@ -217,63 +217,30 @@ fn count_fuzz_minimize_targets<FEN: FoundryEvmNetwork>(
         .sum()
 }
 
-#[derive(Clone, Copy)]
-enum NetworkDispatchKind {
-    Tempo,
-    #[cfg(feature = "base")]
-    Base,
-    #[cfg(feature = "monad")]
-    Monad,
-    #[cfg(feature = "optimism")]
-    Optimism,
-    Eth,
-}
-
-const fn network_dispatch_kind(evm_opts: &EvmOpts) -> NetworkDispatchKind {
-    if evm_opts.networks.is_tempo() {
-        return NetworkDispatchKind::Tempo;
-    }
-
-    #[cfg(feature = "base")]
-    if evm_opts.networks.is_base() {
-        return NetworkDispatchKind::Base;
-    }
-
-    #[cfg(feature = "monad")]
-    if evm_opts.networks.is_monad() {
-        return NetworkDispatchKind::Monad;
-    }
-    #[cfg(feature = "optimism")]
-    if evm_opts.networks.is_optimism() {
-        return NetworkDispatchKind::Optimism;
-    }
-    NetworkDispatchKind::Eth
-}
-
 /// Evaluates `$body` with `$fen` bound to the concrete network type selected by `$evm_opts`.
 macro_rules! dispatch_network {
     ($evm_opts:expr, | $fen:ident | $body:expr) => {
-        match network_dispatch_kind($evm_opts) {
+        match $evm_opts.networks.execution_network() {
             #[cfg(feature = "base")]
-            NetworkDispatchKind::Base => {
+            NetworkVariant::Base => {
                 type $fen = BaseEvmNetwork;
                 $body
             }
-            NetworkDispatchKind::Tempo => {
+            NetworkVariant::Tempo => {
                 type $fen = TempoEvmNetwork;
                 $body
             }
             #[cfg(feature = "monad")]
-            NetworkDispatchKind::Monad => {
+            NetworkVariant::Monad => {
                 type $fen = MonadEvmNetwork;
                 $body
             }
             #[cfg(feature = "optimism")]
-            NetworkDispatchKind::Optimism => {
+            NetworkVariant::Optimism => {
                 type $fen = OpEvmNetwork;
                 $body
             }
-            NetworkDispatchKind::Eth => {
+            NetworkVariant::Ethereum => {
                 type $fen = EthEvmNetwork;
                 $body
             }

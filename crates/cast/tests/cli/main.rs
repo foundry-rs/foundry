@@ -42,6 +42,7 @@ mod erc4626;
 mod keychain;
 mod read_networks;
 mod remote_trace;
+mod run_bal;
 mod run_networks;
 mod safe;
 mod selectors;
@@ -112,6 +113,7 @@ async fn deploy_counter_and_set_number(
 mod abi;
 mod access_list;
 mod address;
+mod bal;
 #[cfg(feature = "base")]
 mod base;
 mod bytecode;
