@@ -236,6 +236,83 @@ const CLEARED_DEPENDENCY_MUTATIONS: &[Mutation] = &[
     },
 ];
 
+const REMAPPING_FILES: &[FileSpec] = &[
+    FileSpec {
+        path: "foundry.toml",
+        contents: r#"[profile.default]
+dynamic_test_linking = true
+solc = "0.8.37"
+bytecode_hash = "none"
+cbor_metadata = false
+remappings = ["@dep/=vendor/a/"]
+"#,
+    },
+    FileSpec {
+        path: "vendor/a/Impl.sol",
+        contents: r#"contract Impl {
+    function value() external pure returns (uint256) { return 111; }
+}
+"#,
+    },
+    FileSpec {
+        path: "vendor/b/Impl.sol",
+        contents: r#"contract Impl {
+    function value() external pure returns (uint256) { return 333; }
+}
+"#,
+    },
+    FileSpec {
+        path: "src/KeepA.sol",
+        contents: r#"import {Impl as A} from "../vendor/a/Impl.sol";
+contract KeepA { function keep(A) external pure {} }
+"#,
+    },
+    FileSpec {
+        path: "src/KeepB.sol",
+        contents: r#"import {Impl as B} from "../vendor/b/Impl.sol";
+contract KeepB { function keep(B) external pure {} }
+"#,
+    },
+    FileSpec {
+        path: "test/Impl.t.sol",
+        contents: r#"import {Impl} from "@dep/Impl.sol";
+contract ImplTest {
+    function test_value() public { require(new Impl().value() == 111, "wrong target"); }
+}
+"#,
+    },
+];
+
+const REMAPPING_MUTATIONS: &[Mutation] = &[
+    Mutation {
+        path: "foundry.toml",
+        contents: r#"[profile.default]
+dynamic_test_linking = true
+solc = "0.8.37"
+bytecode_hash = "none"
+cbor_metadata = false
+remappings = ["@dep/=vendor/b/"]
+"#,
+        expected_compiled_files: 1,
+    },
+    Mutation {
+        path: "vendor/a/Impl.sol",
+        contents: r#"contract Impl {
+    function value() external pure returns (uint256) { return 222; }
+}
+"#,
+        expected_compiled_files: 2,
+    },
+    Mutation {
+        path: "vendor/b/Impl.sol",
+        contents: r#"contract Impl {
+    function value() external pure returns (uint256) { return 444; }
+}
+"#,
+        expected_compiled_files: 3,
+    },
+];
+
 const SCENARIOS: &[Scenario] = &[
     Scenario { name: "dynamic", files: DYNAMIC_FILES, mutations: DYNAMIC_MUTATIONS },
     Scenario { name: "external-native", files: EXTERNAL_FILES, mutations: EXTERNAL_MUTATIONS },
@@ -254,12 +331,97 @@ const SCENARIOS: &[Scenario] = &[
         files: CLEARED_DEPENDENCY_FILES,
         mutations: CLEARED_DEPENDENCY_MUTATIONS,
     },
+    Scenario { name: "retarget-remapping", files: REMAPPING_FILES, mutations: REMAPPING_MUTATIONS },
 ];
 
 #[test]
 fn cache_matches_clean_builds() {
     for scenario in SCENARIOS {
         run_scenario(scenario);
+    }
+}
+
+#[test]
+fn filtered_request_history_matches_clean_builds() {
+    const A_ARGS: &[&str] = &["test", "--match-path", "test/A.t.sol"];
+    const B_ARGS: &[&str] = &["test", "--match-path", "test/B.t.sol"];
+    const SCENARIO: Scenario =
+        Scenario { name: "filtered-history", files: INDEPENDENT_FILES, mutations: &[] };
+
+    let semantic = TestProject::new("cache-differential-filtered-semantic", PathStyle::Dapptools);
+    let reuse = TestProject::new("cache-differential-filtered-reuse", PathStyle::Dapptools);
+    materialize(&semantic, INDEPENDENT_FILES);
+    materialize(&reuse, INDEPENDENT_FILES);
+
+    assert!(run_forge_json(&semantic, A_ARGS).status.success());
+    assert!(run_forge_plain(&reuse, A_ARGS).status.success());
+    let cached = run_forge_plain(&reuse, A_ARGS);
+    assert_eq!(reported_compiled_files(&cached).unwrap(), 0);
+
+    let mut current =
+        INDEPENDENT_FILES.iter().map(|file| (file.path, file.contents)).collect::<BTreeMap<_, _>>();
+    run_checkpoint(&SCENARIO, 0, &semantic, &reuse, &current, B_ARGS, 2);
+
+    let changed_a = r#"contract A {
+    function value() external pure returns (uint256) { return 222; }
+}
+"#;
+    current.insert("external/A.sol", changed_a);
+    write_file(semantic.root(), "external/A.sol", changed_a);
+    write_file(reuse.root(), "external/A.sol", changed_a);
+
+    run_checkpoint(&SCENARIO, 1, &semantic, &reuse, &current, B_ARGS, 0);
+    run_checkpoint(&SCENARIO, 2, &semantic, &reuse, &current, A_ARGS, 2);
+
+    let changed_b = r#"contract B {
+    function value() external pure returns (uint256) { return 444; }
+}
+"#;
+    current.insert("external/B.sol", changed_b);
+    write_file(semantic.root(), "external/B.sol", changed_b);
+    write_file(reuse.root(), "external/B.sol", changed_b);
+
+    run_checkpoint(&SCENARIO, 3, &semantic, &reuse, &current, A_ARGS, 0);
+    run_checkpoint(&SCENARIO, 4, &semantic, &reuse, &current, B_ARGS, 2);
+}
+
+fn run_checkpoint(
+    scenario: &Scenario,
+    index: usize,
+    semantic: &TestProject,
+    reuse: &TestProject,
+    current: &BTreeMap<&'static str, &'static str>,
+    args: &[&str],
+    expected_compiled_files: usize,
+) {
+    let incremental_output = run_forge_json(semantic, args);
+    let incremental_compile = run_forge_plain(reuse, args);
+    let actual_compiled_files = reported_compiled_files(&incremental_compile).unwrap();
+
+    let clean = TestProject::new(
+        &format!("cache-differential-{}-clean-{index}", scenario.name),
+        PathStyle::Dapptools,
+    );
+    let files =
+        current.iter().map(|(&path, &contents)| FileSpec { path, contents }).collect::<Vec<_>>();
+    materialize(&clean, &files);
+    let clean_output = run_forge_json(&clean, args);
+
+    let incremental_observation = observe(semantic, &incremental_output);
+    let clean_observation = observe(&clean, &clean_output);
+    if actual_compiled_files != expected_compiled_files
+        || !observations_match(&incremental_observation, &clean_observation)
+    {
+        let saved = preserve_failure(scenario, index, semantic, reuse, &clean);
+        panic!(
+            "{} checkpoint {index}: incremental result differs from clean result\n\
+             replay artifacts: {}\n\
+             command: {args:?}\n\
+             compiled files: {actual_compiled_files}, expected: {expected_compiled_files}\n\
+             incremental: {incremental_observation:#?}\nclean: {clean_observation:#?}",
+            scenario.name,
+            saved.display(),
+        );
     }
 }
 
@@ -275,11 +437,11 @@ fn run_scenario(scenario: &Scenario) {
     materialize(&semantic, scenario.files);
     materialize(&reuse, scenario.files);
 
-    let baseline = run_forge_json(&semantic);
+    let baseline = run_forge_json(&semantic, &["test"]);
     assert!(baseline.status.success(), "{}: warmup failed: {baseline:?}", scenario.name);
-    let reuse_baseline = run_forge_plain(&reuse);
+    let reuse_baseline = run_forge_plain(&reuse, &["test"]);
     assert!(reuse_baseline.status.success(), "{}: reuse warmup failed", scenario.name);
-    let cached = run_forge_plain(&reuse);
+    let cached = run_forge_plain(&reuse, &["test"]);
     assert!(cached.status.success(), "{}: cached warmup failed: {cached:?}", scenario.name);
     assert_eq!(
         reported_compiled_files(&cached).unwrap(),
@@ -296,8 +458,8 @@ fn run_scenario(scenario: &Scenario) {
         write_file(semantic.root(), mutation.path, mutation.contents);
         write_file(reuse.root(), mutation.path, mutation.contents);
 
-        let incremental_output = run_forge_json(&semantic);
-        let incremental_compile = run_forge_plain(&reuse);
+        let incremental_output = run_forge_json(&semantic, &["test"]);
+        let incremental_compile = run_forge_plain(&reuse, &["test"]);
         let actual_compiled_files = reported_compiled_files(&incremental_compile).unwrap();
 
         let clean = TestProject::new(
@@ -309,12 +471,12 @@ fn run_scenario(scenario: &Scenario) {
             .map(|(&path, &contents)| FileSpec { path, contents })
             .collect::<Vec<_>>();
         materialize(&clean, &files);
-        let clean_output = run_forge_json(&clean);
+        let clean_output = run_forge_json(&clean, &["test"]);
 
         let incremental_observation = observe(&semantic, &incremental_output);
         let clean_observation = observe(&clean, &clean_output);
         if actual_compiled_files != mutation.expected_compiled_files
-            || incremental_observation != clean_observation
+            || !observations_match(&incremental_observation, &clean_observation)
         {
             let saved = preserve_failure(scenario, index, &semantic, &reuse, &clean);
             panic!(
@@ -354,12 +516,12 @@ fn write_file(root: &Path, path: &str, contents: &str) {
     fs::write(path, contents).unwrap();
 }
 
-fn run_forge_json(project: &TestProject) -> Output {
-    project.forge_bin().args(["test", "--json"]).output().unwrap()
+fn run_forge_json(project: &TestProject, args: &[&str]) -> Output {
+    project.forge_bin().args(args).arg("--json").output().unwrap()
 }
 
-fn run_forge_plain(project: &TestProject) -> Output {
-    project.forge_bin().arg("test").output().unwrap()
+fn run_forge_plain(project: &TestProject, args: &[&str]) -> Output {
+    project.forge_bin().args(args).output().unwrap()
 }
 
 fn reported_compiled_files(output: &Output) -> Result<usize, String> {
@@ -400,6 +562,15 @@ fn observe(project: &TestProject, output: &Output) -> Observation {
         results,
         artifacts: collect_artifacts(project.artifacts()),
     }
+}
+
+fn observations_match(incremental: &Observation, clean: &Observation) -> bool {
+    incremental.success == clean.success
+        && incremental.results == clean.results
+        && clean
+            .artifacts
+            .iter()
+            .all(|(path, artifact)| incremental.artifacts.get(path) == Some(artifact))
 }
 
 fn remove_durations(value: &mut Value) {
