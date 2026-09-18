@@ -42,7 +42,6 @@ mod erc4626;
 mod keychain;
 mod read_networks;
 mod remote_trace;
-mod run_bal;
 mod run_networks;
 mod safe;
 mod selectors;

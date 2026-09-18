@@ -144,8 +144,9 @@ mainnet = "${CAST_RUN_MAINNET_RPC_URL}"
         .assert_success();
 });
 
-// Without BAL support, `cast run` replays the block even on a node that supports the debug API.
-// The prestate tracer must be explicitly opted into via `--prestate-tracer`.
+// `cast run` defaults to replaying the block (conservative default) even on a node that supports
+// the debug API. The prestate tracer must be explicitly opted into via `--prestate-tracer`, so the
+// block replay message is present on stderr.
 forgetest_async!(cast_run_default_uses_block_replay, |prj, cmd| {
     let (api, handle) = anvil::spawn(NodeConfig::test()).await;
     let endpoint = handle.http_endpoint();

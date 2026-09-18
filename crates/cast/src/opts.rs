@@ -1299,15 +1299,6 @@ pub enum CastSubcommand {
 
     /// Runs a published transaction in a local environment and prints the trace
     ///
-    /// Restores transaction prestate from a block access list (BAL) when available, otherwise
-    /// replays earlier transactions. BAL requires supported Ethereum Cancun-or-later semantics,
-    /// matching execution chain ID and hardfork rules, and no explicit EVM version or hardfork
-    /// override.
-    /// Storage reads from accounts that may have been created in the block fall back to replay.
-    /// `--trace-printer` and upstream blocks at or before an Anvil endpoint's fork block bypass
-    /// BAL. `--prestate-tracer` tries the debug API first, then BAL, then replay. `--quick`
-    /// skips both prestate paths; `--debug-trace-transaction` uses remote tracing exclusively.
-    ///
     /// Examples:
     /// - cast run $TX_HASH
     /// - cast run $TX_HASH --quick (only use the state from the previous block)
