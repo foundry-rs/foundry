@@ -279,7 +279,10 @@ fn env(key: &str, ty: &DynSolType) -> Result {
 }
 
 fn env_default<T: SolValue>(key: &str, default: &T, ty: &DynSolType) -> Result {
-    Ok(env(key, ty).unwrap_or_else(|_| default.abi_encode()))
+    if env_is_missing(key) {
+        return Ok(default.abi_encode());
+    }
+    env(key, ty)
 }
 
 fn env_array(key: &str, delim: &str, ty: &DynSolType) -> Result {
@@ -289,7 +292,16 @@ fn env_array(key: &str, delim: &str, ty: &DynSolType) -> Result {
 }
 
 fn env_array_default<T: SolValue>(key: &str, delim: &str, default: &T, ty: &DynSolType) -> Result {
-    Ok(env_array(key, delim, ty).unwrap_or_else(|_| default.abi_encode()))
+    if env_is_missing(key) {
+        return Ok(default.abi_encode());
+    }
+    env_array(key, delim, ty)
+}
+
+/// Returns `true` if the variable is not set at all. Only then do the `envOr` cheatcodes fall
+/// back to their default; a variable that is set but cannot be parsed is an error.
+fn env_is_missing(key: &str) -> bool {
+    matches!(env::var(key), Err(env::VarError::NotPresent))
 }
 
 fn get_env(key: &str) -> Result<String> {
@@ -320,6 +332,35 @@ fn map_env_err<'a>(key: &'a str, value: &'a str) -> impl FnOnce(Error) -> Error 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn env_or_returns_default_when_missing() {
+        let key = "env_or_missing";
+        unsafe {
+            env::remove_var(key);
+        }
+        let default = 7u64;
+        let encoded = default.abi_encode();
+        assert_eq!(env_default(key, &default, &DynSolType::Uint(256)).unwrap(), encoded);
+        assert_eq!(env_array_default(key, ",", &default, &DynSolType::Uint(256)).unwrap(), encoded);
+    }
+
+    #[test]
+    fn env_or_rejects_unparsable_value() {
+        let key = "env_or_unparsable";
+        unsafe {
+            env::set_var(key, "not_a_number");
+        }
+
+        let err = env_default(key, &7u64, &DynSolType::Uint(256)).unwrap_err().to_string();
+        assert!(err.contains("$env_or_unparsable"), "{err:?}");
+        let err =
+            env_array_default(key, ",", &7u64, &DynSolType::Uint(256)).unwrap_err().to_string();
+        assert!(err.contains("$env_or_unparsable"), "{err:?}");
+        unsafe {
+            env::remove_var(key);
+        }
+    }
 
     #[test]
     fn parse_env_uint() {

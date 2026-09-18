@@ -1005,4 +1005,19 @@ contract EnvTest is Test {
             );
         }
     }
+
+    function testEnvOrUnparsableValueReverts() public {
+        string memory key = "_foundryCheatcodeEnvOrUnparsableTest";
+        vm.setEnv(key, "not_a_number");
+        vm._expectCheatcodeRevert("failed parsing $_foundryCheatcodeEnvOrUnparsableTest as type `uint256`");
+        vm.envOr(key, uint256(7));
+    }
+
+    function testEnvOrUnparsableArrayValueReverts() public {
+        string memory key = "_foundryCheatcodeEnvOrUnparsableArrTest";
+        vm.setEnv(key, "1,two");
+        uint256[] memory defaultValues = new uint256[](0);
+        vm._expectCheatcodeRevert();
+        vm.envOr(key, ",", defaultValues);
+    }
 }
