@@ -64,6 +64,44 @@ const DYNAMIC_MUTATIONS: &[Mutation] = &[Mutation {
     expected_compiled_files: 1,
 }];
 
+const DYNAMIC_NATIVE_MUTATIONS: &[Mutation] = &[
+    Mutation {
+        path: "test/Impl.t.sol",
+        contents: r#"import {Impl} from "../src/Impl.sol";
+function make() returns (Impl) { return new Impl(); }
+contract ImplTest {
+    function test_value() public { require(make().value() == 111, "changed value"); }
+}
+"#,
+        expected_compiled_files: 1,
+    },
+    Mutation {
+        path: "src/Impl.sol",
+        contents: r#"contract Impl {
+    function value() external pure returns (uint256) { return 222; }
+}
+"#,
+        expected_compiled_files: 2,
+    },
+    Mutation {
+        path: "test/Impl.t.sol",
+        contents: r#"import {Impl} from "../src/Impl.sol";
+contract ImplTest {
+    function test_value() public { require(new Impl().value() == 111, "changed value"); }
+}
+"#,
+        expected_compiled_files: 1,
+    },
+    Mutation {
+        path: "src/Impl.sol",
+        contents: r#"contract Impl {
+    function value() external pure returns (uint256) { return 111; }
+}
+"#,
+        expected_compiled_files: 1,
+    },
+];
+
 const EXTERNAL_FILES: &[FileSpec] = &[
     FileSpec {
         path: "external/Impl.sol",
@@ -341,6 +379,11 @@ contract BTest {
 
 const SCENARIOS: &[Scenario] = &[
     Scenario { name: "dynamic", files: DYNAMIC_FILES, mutations: DYNAMIC_MUTATIONS },
+    Scenario {
+        name: "dynamic-native-dynamic",
+        files: DYNAMIC_FILES,
+        mutations: DYNAMIC_NATIVE_MUTATIONS,
+    },
     Scenario { name: "external-native", files: EXTERNAL_FILES, mutations: EXTERNAL_MUTATIONS },
     Scenario {
         name: "independent-native",
@@ -400,8 +443,8 @@ fn compare_linking_modes(
     let standard_observation = observe(standard, &run_forge_json(standard, &["test"]));
     let mut dynamic_results = dynamic_observation.results.clone();
     let mut standard_results = standard_observation.results.clone();
-    remove_gas(&mut dynamic_results);
-    remove_gas(&mut standard_results);
+    remove_unit_test_gas(&mut dynamic_results);
+    remove_unit_test_gas(&mut standard_results);
     if dynamic_observation.success != standard_observation.success
         || dynamic_results != standard_results
     {
@@ -706,7 +749,7 @@ fn write_file(root: &Path, path: &str, contents: &str) {
 }
 
 fn run_forge_json(project: &TestProject, args: &[&str]) -> Output {
-    project.forge_bin().args(args).arg("--json").output().unwrap()
+    project.forge_bin().args(args).args(["--json", "-vv"]).output().unwrap()
 }
 
 fn run_forge_plain(project: &TestProject, args: &[&str]) -> Output {
@@ -745,7 +788,7 @@ fn observe(project: &TestProject, output: &Output) -> Observation {
             String::from_utf8_lossy(&output.stderr),
         )
     });
-    remove_durations(&mut results);
+    remove_result_durations(&mut results);
     Observation {
         success: output.status.success(),
         results,
@@ -762,29 +805,34 @@ fn observations_match(incremental: &Observation, clean: &Observation) -> bool {
             .all(|(path, artifact)| incremental.artifacts.get(path) == Some(artifact))
 }
 
-fn remove_durations(value: &mut Value) {
-    match value {
-        Value::Object(object) => {
-            object.remove("duration");
-            for value in object.values_mut() {
-                remove_durations(value);
+fn remove_result_durations(value: &mut Value) {
+    let Some(suites) = value.as_object_mut() else { return };
+    for suite in suites.values_mut().filter_map(Value::as_object_mut) {
+        suite.remove("duration");
+        if let Some(tests) = suite.get_mut("test_results").and_then(Value::as_object_mut) {
+            for test in tests.values_mut().filter_map(Value::as_object_mut) {
+                test.remove("duration");
             }
         }
-        Value::Array(values) => values.iter_mut().for_each(remove_durations),
-        _ => {}
     }
 }
 
-fn remove_gas(value: &mut Value) {
-    match value {
-        Value::Object(object) => {
-            object.remove("gas");
-            for value in object.values_mut() {
-                remove_gas(value);
+fn remove_unit_test_gas(value: &mut Value) {
+    let Some(suites) = value.as_object_mut() else { return };
+    for suite in suites.values_mut().filter_map(Value::as_object_mut) {
+        let Some(tests) = suite.get_mut("test_results").and_then(Value::as_object_mut) else {
+            continue;
+        };
+        for test in tests.values_mut().filter_map(Value::as_object_mut) {
+            if let Some(unit) = test
+                .get_mut("kind")
+                .and_then(Value::as_object_mut)
+                .and_then(|kind| kind.get_mut("Unit"))
+                .and_then(Value::as_object_mut)
+            {
+                unit.remove("gas");
             }
         }
-        Value::Array(values) => values.iter_mut().for_each(remove_gas),
-        _ => {}
     }
 }
 
@@ -888,4 +936,42 @@ fn parses_compilation_reports() {
     assert_eq!(reported_compiled_files(&output("No files changed, compilation skipped\n")), Ok(0));
     assert!(reported_compiled_files(&output("Compiler run successful!\n")).is_err());
     assert!(reported_compiled_files(&output("Compiling many files\n")).is_err());
+}
+
+#[test]
+fn normalizes_only_execution_metrics() {
+    let mut results = json!({
+        "test/Impl.t.sol:ImplTest": {
+            "duration": "1ms",
+            "test_results": {
+                "test_value()": {
+                    "duration": "2ms",
+                    "logs": ["observable"],
+                    "kind": {"Unit": {"gas": 123}},
+                    "gas_snapshots": {
+                        "gas": {"duration": "user value"}
+                    }
+                }
+            }
+        }
+    });
+    remove_result_durations(&mut results);
+    remove_unit_test_gas(&mut results);
+
+    assert_eq!(
+        results,
+        json!({
+            "test/Impl.t.sol:ImplTest": {
+                "test_results": {
+                    "test_value()": {
+                        "logs": ["observable"],
+                        "kind": {"Unit": {}},
+                        "gas_snapshots": {
+                            "gas": {"duration": "user value"}
+                        }
+                    }
+                }
+            }
+        })
+    );
 }
