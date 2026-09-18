@@ -9,7 +9,10 @@ use crate::{
     },
 };
 use alloy_consensus::{BlockHeader, Transaction, transaction::SignerRecoverable};
-use alloy_eips::BlockNumHash;
+use alloy_eips::{
+    BlockNumHash,
+    eip7928::{compute_block_access_list_hash, validate_block_access_list},
+};
 use alloy_network::{
     AnyNetwork, AnyRpcBlock, AnyRpcTransaction, AnyTxEnvelope, BlockResponse, Network,
     ReceiptResponse, TransactionResponse, primitives::HeaderResponse,
@@ -32,7 +35,7 @@ use foundry_cli::{
 };
 use foundry_common::{
     SYSTEM_TRANSACTION_TYPE, is_known_system_sender,
-    provider::{ProviderBuilder, RetryProvider},
+    provider::{ProviderBuilder, RetryProvider, block_access_list::fetch_block_access_list},
     shell,
 };
 use foundry_compilers::artifacts::EvmVersion;
@@ -56,7 +59,13 @@ use foundry_evm::{
 };
 use foundry_evm_networks::NetworkConfigs;
 use futures::TryFutureExt;
-use revm::{DatabaseRef, context::Block, primitives::hardfork::SpecId};
+use revm::{
+    DatabaseRef,
+    context::Block,
+    primitives::hardfork::SpecId,
+    state::bal::{Bal, BlockAccessIndex},
+};
+use std::sync::Arc;
 
 #[cfg(feature = "base")]
 use foundry_evm::core::evm::BaseEvmNetwork;
@@ -84,6 +93,7 @@ pub struct RunArgs {
     /// Executes the transaction only with the state from the previous block.
     ///
     /// May result in different results than the live execution!
+    /// Skips both BAL state restoration and `--prestate-tracer`.
     #[arg(long)]
     quick: bool,
 
@@ -95,7 +105,8 @@ pub struct RunArgs {
     ///
     /// This is significantly faster than replaying all previous transactions in the block, but
     /// requires the node to expose the `debug_` namespace (most public RPCs don't). If the call
-    /// or response can't be used, cast silently falls back to replaying the block.
+    /// or response can't be used, cast tries a block access list (BAL), then falls back to
+    /// replaying the block. Ignored with `--quick`.
     #[arg(long, default_value_t = false)]
     prestate_tracer: bool,
 
@@ -177,6 +188,9 @@ struct PreparedRun<FEN: FoundryEvmNetwork> {
     executor: TracingExecutor<FEN>,
     trace_context: TraceContext,
     prestate_applied: bool,
+    /// The validated BAL and the target transaction's index in its block.
+    block_access_list: Option<(Arc<Bal>, usize)>,
+    parent_beacon_block_root: Option<B256>,
     #[cfg(feature = "monad")]
     monad: MonadPrepared,
 }
@@ -201,7 +215,8 @@ impl RunArgs {
 
     /// Executes the transaction by replaying it
     ///
-    /// This replays the entire block the transaction was mined in unless `quick` is set to true
+    /// Restores transaction prestate from BAL when supported, otherwise replays the block prefix.
+    /// With `quick`, executes directly against the previous block's state.
     ///
     /// Note: This executes the transaction(s) as is: Cheatcodes are disabled
     pub async fn run(self) -> Result<()> {
@@ -439,7 +454,8 @@ impl RunArgs {
             .ok_or_else(|| eyre::eyre!("tx may still be pending: {:?}", tx_hash))?;
 
         // we need to fork off the parent block
-        config.fork_block_number = Some(tx_block_number - 1);
+        let parent_number = tx_block_number - 1;
+        config.fork_block_number = Some(parent_number);
 
         let create2_deployer = evm_opts.create2_deployer;
         let (block, mut fork) = tokio::try_join!(
@@ -449,6 +465,7 @@ impl RunArgs {
         )?;
         let chain = fork.context().chain();
         let networks = fork.context().networks();
+        let source = fork.source_context();
 
         let mut evm_version = self.evm_version;
         // Mined transactions already passed the block gas limit check their chain applies, and
@@ -508,19 +525,15 @@ impl RunArgs {
         evm_env.cfg_env.set_spec_and_mainnet_gas_params(executor.spec_id());
 
         let spec_id = (*evm_env.cfg_env.spec()).into();
-
-        if let Some(parent_beacon_block_root) =
-            parent_beacon_block_root_for_network(networks, spec_id, parent_beacon_block_root)
-        {
-            executor.apply_beacon_root(parent_beacon_block_root)?;
-        }
+        let parent_beacon_block_root =
+            parent_beacon_block_root_for_network(networks, spec_id, parent_beacon_block_root);
 
         // Set the state to the moment right before the transaction.
         //
         // When `--prestate-tracer` is set, opportunistically try to fetch the prestate directly
         // via `debug_traceTransaction` (much faster than replaying the block). This requires the
         // `debug_` namespace, which most nodes don't expose, so it is opt-in and silently falls
-        // back to replaying previous transactions in the block if the call or parsing fails.
+        // back to BAL, then replay, if the call or parsing fails.
         let mut prestate_applied = false;
         if !self.quick && self.prestate_tracer {
             trace!(?tx_hash, "attempting to fetch prestate via debug_traceTransaction");
@@ -533,6 +546,11 @@ impl RunArgs {
             {
                 Ok(trace) => match trace.try_into_pre_state_frame() {
                     Ok(pre_state_frame) => {
+                        // Local overrides can access beacon storage omitted by the canonical
+                        // trace. Apply system writes before overlaying its recorded prestate.
+                        if let Some(root) = parent_beacon_block_root {
+                            executor.apply_beacon_root(root)?;
+                        }
                         executor.apply_prestate_trace(pre_state_frame.into_pre_state())?;
                         prestate_applied = true;
                         trace!("prestate trace applied successfully, skipping block replay");
@@ -542,9 +560,59 @@ impl RunArgs {
                     }
                 },
                 Err(err) => {
-                    trace!(?err, "debug_traceTransaction failed, falling back to block replay");
+                    trace!(?err, "debug_traceTransaction failed, trying BAL before block replay");
                 }
             }
+        }
+
+        let mut block_access_list = None;
+        if !self.quick
+            // Streaming opcode output cannot be discarded when BAL execution needs replay.
+            && !self.trace_printer
+            && !prestate_applied
+            && source.network_profile.execution_network().is_ethereum()
+            && !source.network_profile.is_celo()
+            && !chain.is_arbitrum()
+            && networks.execution_network().is_ethereum()
+            && !networks.is_celo()
+            // Anvil forwards historical BALs upstream, where the chain ID and hardfork can
+            // differ from the endpoint's local execution settings.
+            && source.source_fork_block_number.is_none_or(|fork_block| tx_block_number > fork_block)
+            // A CHAINID override can change the state produced by prefix transactions.
+            && source.execution_chain_id == evm_env.cfg_env.chain_id
+            && self.evm_version.is_none()
+            && config.hardfork.is_none()
+            && spec_id.is_enabled_in(SpecId::CANCUN)
+            && let Some(block) = &block
+            && source.hardfork
+                .or_else(|| {
+                    FoundryHardfork::from_chain_and_timestamp(
+                        source.source_chain_id,
+                        block.header().timestamp(),
+                    )
+                })
+                .is_some_and(|hardfork| {
+                    matches!(hardfork, FoundryHardfork::Ethereum(_))
+                        && SpecId::from(hardfork) == spec_id
+                })
+        {
+            let bal = match executor.backend().block_hash_ref(parent_number) {
+                Ok(parent_hash) => prepare_bal(&provider, &tx, block, parent_hash).await,
+                Err(err) => Err(err.into()),
+            };
+            match bal {
+                Ok(bal) => block_access_list = bal.map(|(bal, index)| (Arc::new(bal), index)),
+                Err(err) => trace!(%err, "BAL unavailable, falling back to block replay"),
+            }
+        }
+
+        // BAL supplies index-zero system writes. Apply the existing system call only on the
+        // replay path; debug prestate already applied it before its overlay.
+        if !prestate_applied
+            && block_access_list.is_none()
+            && let Some(root) = parent_beacon_block_root
+        {
+            executor.apply_beacon_root(root)?;
         }
 
         Ok(PreparedRun {
@@ -557,10 +625,48 @@ impl RunArgs {
             executor,
             trace_context,
             prestate_applied,
+            block_access_list,
+            parent_beacon_block_root,
             #[cfg(feature = "monad")]
             monad: MonadPrepared { tx_block_number, compute_units_per_second },
         })
     }
+}
+
+/// Checks the target block before fetching and validating its BAL for Revm state reads.
+async fn prepare_bal(
+    provider: &RetryProvider,
+    tx: &AnyRpcTransaction,
+    block: &AnyRpcBlock,
+    parent_hash: B256,
+) -> Result<Option<(Bal, usize)>> {
+    let transactions = full_transactions(block)?;
+    let index = usize::try_from(
+        tx.transaction_index().ok_or_else(|| eyre::eyre!("missing transaction index"))?,
+    )?;
+    eyre::ensure!(
+        tx.block_hash() == Some(block.header().hash)
+            && tx.block_number() == Some(block.header().number())
+            && block.header().parent_hash() == parent_hash
+            && transactions.get(index).is_some_and(|t| t.tx_hash() == tx.tx_hash()),
+        "BAL transaction, block and fork parent do not agree"
+    );
+    eyre::ensure!(
+        transactions[..=index].iter().all(|tx| {
+            matches!(&*tx.inner.inner, AnyTxEnvelope::Ethereum(_)) && !is_system_transaction(tx)
+        }),
+        "BAL requires ordinary Ethereum transactions"
+    );
+    let Some(bal) = fetch_block_access_list(provider, BlockId::hash(block.header().hash)).await
+    else {
+        return Ok(None);
+    };
+    eyre::ensure!(!bal.is_empty(), "BAL is empty for a block containing transactions");
+    validate_block_access_list(&bal, transactions.len()).wrap_err("invalid block access list")?;
+    if let Some(hash) = block.header().block_access_list_hash() {
+        eyre::ensure!(compute_block_access_list_hash(&bal) == hash, "BAL hash mismatch");
+    }
+    Ok(Some((Bal::try_from_alloy(bal).wrap_err("invalid BAL bytecode")?, index)))
 }
 
 impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
@@ -641,9 +747,34 @@ impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
         // Decode the target transaction before replaying the block: an envelope this build
         // can't decode should fail fast.
         let target_tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(&self.tx)?;
-        let target_index = self.target_index()?;
         self.prepare_target();
 
+        if let Some((bal, target_index)) = self.block_access_list.take() {
+            // Keep failed BAL reads and partial execution isolated from the replay fallback.
+            let mut executor = self.executor.clone();
+            executor
+                .backend_mut()
+                .set_bal(Some(bal), BlockAccessIndex::new(target_index as u64 + 1));
+            match executor.transact_with_ordinary_block_replay(
+                self.evm_env.clone(),
+                target_tx_env.clone(),
+                Vec::new(),
+            ) {
+                Ok(result) => {
+                    *self.executor = executor;
+                    trace!("BAL prestate applied successfully, skipping block replay");
+                    return Ok(TraceResult::from_raw(result, self.trace_kind()));
+                }
+                Err(err) => {
+                    trace!(%err, "BAL execution unavailable, falling back to block replay");
+                    if let Some(root) = self.parent_beacon_block_root {
+                        self.executor.apply_beacon_root(root)?;
+                    }
+                }
+            }
+        }
+
+        let target_index = self.target_index()?;
         let block_number = self.evm_env.block_env.number();
         let replay_system_txes = self.args.replay_system_txes;
         let mut replay = Vec::new();
