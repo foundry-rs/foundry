@@ -479,10 +479,8 @@ impl TryFrom<AnyRpcTransaction> for FoundryTxEnvelope {
                     }
 
                     if tx.ty() == POST_EXEC_TX_TYPE_ID {
-                        // The RPC form carries the RLP-encoded `PostExecPayload` in `input`; the
-                        // other fields are derived placeholders. Deserializing the object
-                        // straight into `TxPostExec` would instead use its standalone serde form
-                        // and fail on the missing `version` field.
+                        // The RPC form carries the RLP-encoded `PostExecPayload` in `input`;
+                        // `TxPostExec`'s own serde form expects the payload fields instead.
                         let input = tx
                             .inner
                             .fields
@@ -504,11 +502,7 @@ impl TryFrom<AnyRpcTransaction> for FoundryTxEnvelope {
                                 ))
                             })?;
 
-                        // Reuse the hash from the response rather than recomputing it.
-                        return Ok(Self::PostExec(Sealed::new_unchecked(
-                            TxPostExec::new(payload),
-                            tx.hash,
-                        )));
+                        return Ok(Self::PostExec(Sealed::new(TxPostExec::new(payload))));
                     }
 
                     let tx_type = tx.ty();
@@ -719,10 +713,10 @@ mod tests {
     }
 
     /// The RPC form carries the payload as RLP in `input`, not as a `PostExecPayload` object, and
-    /// the hash must be taken from the response rather than recomputed.
+    /// the recomputed hash matches the one the node reported.
     #[cfg(feature = "optimism")]
     #[test]
-    fn post_exec_rpc_tx_round_trips() {
+    fn post_exec_rpc_tx_decodes() {
         let tx: AnyRpcTransaction = serde_json::from_str(OP_POST_EXEC_RPC_TX).unwrap();
 
         let envelope = FoundryTxEnvelope::try_from(tx).unwrap();
