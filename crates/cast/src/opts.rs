@@ -2,6 +2,7 @@ use crate::cmd::{
     access_list::AccessListArgs,
     artifact::ArtifactArgs,
     b2e_payload::B2EPayloadArgs,
+    bal::BalArgs,
     batch_mktx::BatchMakeTxArgs,
     batch_send::BatchSendArgs,
     bind::BindArgs,
@@ -472,6 +473,14 @@ pub enum CastSubcommand {
         #[command(flatten)]
         rpc: RpcOpts,
     },
+
+    /// Get the EIP-7928 block access list of a block
+    ///
+    /// Examples:
+    /// - cast bal latest
+    /// - cast bal 21000000 --raw
+    #[command(verbatim_doc_comment, visible_alias = "block-access-list")]
+    Bal(BalArgs),
 
     /// Perform a call on an account without publishing a transaction
     ///
