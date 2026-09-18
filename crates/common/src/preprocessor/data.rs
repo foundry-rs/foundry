@@ -51,7 +51,8 @@ impl ContractData {
         path: &Path,
         source: &solar::sema::hir::Source<'_>,
     ) -> Self {
-        let artifact = format!("{}:{}", path.to_slash_lossy(), contract.name);
+        let artifact =
+            solidity_string_content(&format!("{}:{}", path.to_slash_lossy(), contract.name));
 
         // Process data for contracts with constructor and parameters.
         let constructor_data = contract
@@ -158,6 +159,7 @@ impl ContractData {
         let args_struct = &constructor_details.args_struct;
         let encode_function = &constructor_details.encode_function;
 
+        let path = solidity_string_content(path.to_slash_lossy().as_ref());
         let helper = format!(
             r#"
 // SPDX-License-Identifier: MIT
@@ -175,7 +177,6 @@ function {encode_function}({helper_contract}.{args_struct} memory args) pure ret
     return abi.encode({abi_encode_args});
 }}
         "#,
-            path = path.to_slash_lossy(),
         );
 
         Some(helper)
@@ -187,6 +188,20 @@ fn unique_identifier(source: &str, mut identifier: String) -> String {
         identifier.push('_');
     }
     identifier
+}
+
+fn solidity_string_content(value: &str) -> String {
+    value.chars().fold(String::new(), |mut escaped, char| {
+        match char {
+            '\\' => escaped.push_str("\\\\"),
+            '"' => escaped.push_str("\\\""),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            char => escaped.push(char),
+        }
+        escaped
+    })
 }
 
 /// Collects preprocessor data from referenced contracts.
