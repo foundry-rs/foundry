@@ -44,12 +44,23 @@ use crate::{
 use super::process_tree::ManagedChild;
 
 const PRINT_SPONSOR_HASH_REVOKE_ERROR: &str = "--tempo.print-sponsor-hash only prints a sponsor hash and does not revoke the session on-chain";
+/// Signer-related environment variables that `foundry_wallets` resolves signers from. They are
+/// removed from the `--for` child so it can only sign with the injected session key.
 const SESSION_CHILD_SIGNER_ENV: &[&str] = &[
     "ETH_KEYSTORE",
     "ETH_KEYSTORE_ACCOUNT",
     "ETH_PASSWORD",
     "TEMPO_ACCESS_KEY",
     "TEMPO_ROOT_ACCOUNT",
+    "AWS_KMS_KEY_ID",
+    "GCP_PROJECT_ID",
+    "GCP_LOCATION",
+    "GCP_KEY_RING",
+    "GCP_KEY_NAME",
+    "GCP_KEY_VERSION",
+    "TURNKEY_API_PRIVATE_KEY",
+    "TURNKEY_ORGANIZATION_ID",
+    "TURNKEY_ADDRESS",
 ];
 
 /// Arguments for `cast wallet session`.
@@ -798,6 +809,15 @@ mod tests {
         let child = command.command(session_id);
 
         for key in SESSION_CHILD_SIGNER_ENV {
+            assert_eq!(
+                command_env(&child, key),
+                Some(None),
+                "expected {key} to be removed from session child environment"
+            );
+        }
+
+        // Remote signers resolve their credentials from the environment as well.
+        for key in ["AWS_KMS_KEY_ID", "GCP_KEY_NAME", "TURNKEY_API_PRIVATE_KEY"] {
             assert_eq!(
                 command_env(&child, key),
                 Some(None),
