@@ -1,0 +1,12 @@
+[profile.default]
+src = "src"
+test = "test"
+solc = "0.8.30"
+
+[profile.default.invariant]
+runs = 16
+depth = 100
+workers = 1
+tx_generator = "jev"
+fail_on_revert = false
+

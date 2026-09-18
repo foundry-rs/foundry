@@ -1193,6 +1193,17 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 run_depth,
                 |run| {
                     let tx = run.inputs.last_mut().expect("campaign always has a current input");
+                    sequence_plan.resolve_view(tx, |view| {
+                        run.executor
+                            .call_raw(view.sender, view.target, view.calldata, U256::ZERO)
+                            .ok()
+                            .filter(|result| {
+                                !result.reverted
+                                    && !result.execution_cancelled
+                                    && result.exit_reason.is_some_and(|reason| reason.is_ok())
+                            })
+                            .map(|result| result.result)
+                    });
                     (&mut run.executor, tx)
                 },
                 |run| run.depth,

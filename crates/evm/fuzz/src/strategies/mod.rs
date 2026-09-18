@@ -20,7 +20,7 @@ mod invariants;
 pub use invariants::override_call_strat;
 
 mod tx;
-pub use tx::TxGenerator;
+pub use tx::{TxGenerator, ViewCall};
 
 mod jev;
 
