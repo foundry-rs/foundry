@@ -1299,6 +1299,10 @@ pub enum CastSubcommand {
 
     /// Runs a published transaction in a local environment and prints the trace
     ///
+    /// If the node serves an EIP-7928 block access list (BAL) for the transaction's block, the
+    /// transaction's prestate is read from it instead of replaying the earlier transactions of
+    /// the block. Pass `--no-bal` to always replay the block.
+    ///
     /// Examples:
     /// - cast run $TX_HASH
     /// - cast run $TX_HASH --quick (only use the state from the previous block)
