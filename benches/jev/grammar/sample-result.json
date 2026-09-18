@@ -1,0 +1,64 @@
+{
+  "description": "Single local correctness run; not a findings or performance comparison",
+  "forge": "forge Version: 1.8.3\nCommit SHA: cae51ad458f6abb64852b7709eb784352429825d\nBuild Timestamp: 2026-09-15T10:46:16.519267388Z (1789469176)\nBuild Profile: dist",
+  "manifest": {
+    "version": 1,
+    "settings": {
+      "seed": 1,
+      "sequences": 2,
+      "length": 3,
+      "exploration": 0.2
+    },
+    "hashes": {
+      "foundry.toml": "57d8a24c0455947ddb32cb4cfda80e3b7b90d9c566612168de0e52b1d7561e87",
+      "src/Model.sol": "161cfe92397e508262830a4b11d5b7fe6f5fa6a6fb2310e2323e6833a49f0baf",
+      "src/GeneratedHandler.sol": "4bb208ad7ed3d4bf8eba5c680ce2eb9a1984a1d38297b7598eb81132bb69bdff",
+      "test/GeneratedInvariant.t.sol": "5d55992a320b748aab8b4e2f213cb12e05c1b80d0cb4031ff3577d1dc82c5bca"
+    },
+    "source": "live",
+    "apiCalls": 6
+  },
+  "model": "typesafe/jev-1.13-20260917",
+  "inferenceMs": 2425.5888370000002,
+  "reportedCostUsd": 0.000190092,
+  "tests": {
+    "test/GeneratedInvariant.t.sol:GeneratedInvariantTest": {
+      "invariant_conservation()": {
+        "status": "Success",
+        "reason": null,
+        "kind": {
+          "Invariant": {
+            "runs": 64,
+            "calls": 1024,
+            "reverts": 0,
+            "workers": 1,
+            "metrics": {
+              "src/GeneratedHandler.sol:GeneratedHandler.withdrawRaw": {
+                "calls": 306,
+                "reverts": 0,
+                "discards": 0
+              },
+              "src/GeneratedHandler.sol:GeneratedHandler.sequence1": {
+                "calls": 256,
+                "reverts": 0,
+                "discards": 0
+              },
+              "src/GeneratedHandler.sol:GeneratedHandler.depositRaw": {
+                "calls": 278,
+                "reverts": 0,
+                "discards": 0
+              },
+              "src/GeneratedHandler.sol:GeneratedHandler.sequence0": {
+                "calls": 184,
+                "reverts": 0,
+                "discards": 0
+              }
+            },
+            "failed_corpus_replays": 0,
+            "optimization_best_value": null
+          }
+        }
+      }
+    }
+  }
+}

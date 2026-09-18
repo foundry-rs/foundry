@@ -1,5 +1,8 @@
 # Jev input-selection experiment
 
+For typed, state-dependent Solidity sequence generation using Jev Choices alongside Forge's
+coverage-guided invariant engine, see the separate [grammar prototype](grammar/README.md).
+
 This opt-in experiment connects [TypeSafe Jev](https://docs.typesafe.ai/primitives/choice) through
 OpenRouter's Decisions API to three checked-in synthetic arithmetic tests. Jev chooses an input
 distribution from a fixed menu using only each test's specification. Forge generates the inputs,
