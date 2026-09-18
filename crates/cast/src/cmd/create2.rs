@@ -207,22 +207,23 @@ impl Create2Args {
             regexs.push(matches.replace('X', "."));
         }
 
+        let mut pattern_len = 0;
         if let Some(prefix) = starts_with {
-            regexs.push(format!(
-                r"^{}",
-                get_regex_hex_string(prefix).wrap_err("invalid prefix hex provided")?
-            ));
+            let prefix = get_regex_hex_string(prefix).wrap_err("invalid prefix hex provided")?;
+            pattern_len += prefix.len();
+            regexs.push(format!(r"^{prefix}"));
         }
         if let Some(suffix) = ends_with {
-            regexs.push(format!(
-                r"{}$",
-                get_regex_hex_string(suffix).wrap_err("invalid suffix hex provided")?
-            ))
+            let suffix = get_regex_hex_string(suffix).wrap_err("invalid suffix hex provided")?;
+            pattern_len += suffix.len();
+            regexs.push(format!(r"{suffix}$"));
         }
-
-        debug_assert!(
-            regexs.iter().map(|p| p.len() - 1).sum::<usize>() <= 40,
-            "vanity patterns length exceeded. cannot be more than 40 characters",
+        // A prefix and suffix that together exceed the address length can never match, and the
+        // miner would otherwise search forever.
+        eyre::ensure!(
+            pattern_len <= 40,
+            "--starts-with and --ends-with patterns are {pattern_len} hex characters combined, \
+             but an address has only 40"
         );
 
         let regex = RegexSetBuilder::new(regexs).case_insensitive(!case_sensitive).build()?;
@@ -337,6 +338,24 @@ mod tests {
         // Non-hex and misplaced prefixes are rejected.
         assert!(run(&[ZERO_HASH, "--starts-with", "0xerr"]).is_err());
         assert!(run(&[ZERO_HASH, "--starts-with", "x00"]).is_err());
+    }
+
+    #[test]
+    fn rejects_patterns_longer_than_an_address() {
+        let prefix = "a".repeat(30);
+        let suffix = "b".repeat(11);
+        let err = run(&[ZERO_HASH, "--starts-with", &prefix, "--ends-with", &suffix]).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "--starts-with and --ends-with patterns are 41 hex characters combined, but an address has only 40"
+        );
+
+        let prefix = "0x".to_string() + &"a".repeat(41);
+        let err = run(&[ZERO_HASH, "--starts-with", &prefix]).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "--starts-with and --ends-with patterns are 41 hex characters combined, but an address has only 40"
+        );
     }
 
     #[test]
