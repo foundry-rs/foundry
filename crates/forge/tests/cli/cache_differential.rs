@@ -351,6 +351,138 @@ remappings = ["@dep/=vendor/b/"]
     },
 ];
 
+const LIBRARY_FILES: &[FileSpec] = &[
+    FileSpec {
+        path: "src/Lib.sol",
+        contents: r#"library Lib {
+    function value() external pure returns (uint256) { return 111; }
+}
+"#,
+    },
+    FileSpec {
+        path: "src/Impl.sol",
+        contents: r#"import {Lib} from "./Lib.sol";
+contract Impl {
+    function value() external view returns (uint256) { return Lib.value(); }
+}
+"#,
+    },
+    FileSpec {
+        path: "test/Impl.t.sol",
+        contents: r#"import {Impl} from "../src/Impl.sol";
+contract ImplTest {
+    function test_value() public { require(new Impl().value() == 111, "changed library"); }
+}
+"#,
+    },
+];
+
+const LIBRARY_MUTATIONS: &[Mutation] = &[Mutation {
+    path: "src/Lib.sol",
+    contents: r#"library Lib {
+    function value() external pure returns (uint256) { return 222; }
+}
+"#,
+    expected_compiled_files: 3,
+}];
+
+const INHERITANCE_FILES: &[FileSpec] = &[
+    FileSpec {
+        path: "src/Base.sol",
+        contents: r#"contract Base {
+    function value() external pure returns (uint256) { return 111; }
+}
+"#,
+    },
+    FileSpec {
+        path: "src/Impl.sol",
+        contents: r#"import {Base} from "./Base.sol";
+contract Impl is Base {}
+"#,
+    },
+    FileSpec {
+        path: "test/Impl.t.sol",
+        contents: r#"import {Impl} from "../src/Impl.sol";
+contract ImplTest {
+    function test_value() public { require(new Impl().value() == 111, "changed base"); }
+}
+"#,
+    },
+];
+
+const INHERITANCE_MUTATIONS: &[Mutation] = &[Mutation {
+    path: "src/Base.sol",
+    contents: r#"contract Base {
+    function value() external pure returns (uint256) { return 222; }
+}
+"#,
+    expected_compiled_files: 2,
+}];
+
+const IMMUTABLE_FILES: &[FileSpec] = &[
+    FileSpec {
+        path: "src/Impl.sol",
+        contents: r#"contract Impl {
+    uint256 immutable stored;
+    constructor(uint256 value) { stored = value; }
+    function read() external view returns (uint256) { return stored; }
+}
+"#,
+    },
+    FileSpec {
+        path: "test/Impl.t.sol",
+        contents: r#"import {Impl} from "../src/Impl.sol";
+contract ImplTest {
+    function test_value() public { require(new Impl(111).read() == 111, "changed immutable"); }
+}
+"#,
+    },
+];
+
+const IMMUTABLE_MUTATIONS: &[Mutation] = &[Mutation {
+    path: "src/Impl.sol",
+    contents: r#"contract Impl {
+    uint256 immutable stored;
+    constructor(uint256 value) { stored = value + 1; }
+    function read() external view returns (uint256) { return stored; }
+}
+"#,
+    expected_compiled_files: 1,
+}];
+
+const NATIVE_CREATION_CODE_FILES: &[FileSpec] = &[
+    FileSpec {
+        path: "src/Impl.sol",
+        contents: r#"contract Impl {
+    function value() external pure returns (uint256) { return 111; }
+}
+"#,
+    },
+    FileSpec {
+        path: "test/Impl.t.sol",
+        contents: r#"import {Impl} from "../src/Impl.sol";
+contract ImplTest {
+    function creationCode() internal pure returns (bytes memory) { return type(Impl).creationCode; }
+    function test_value() public {
+        bytes memory code = creationCode();
+        address deployed;
+        assembly { deployed := create(0, add(code, 32), mload(code)) }
+        require(Impl(deployed).value() == 111, "changed creation code");
+    }
+}
+"#,
+    },
+];
+
+const NATIVE_CREATION_CODE_MUTATIONS: &[Mutation] = &[Mutation {
+    path: "src/Impl.sol",
+    contents: r#"contract Impl {
+    function value() external pure returns (uint256) { return 222; }
+}
+"#,
+    expected_compiled_files: 2,
+}];
+
 const SHARED_FILTER_FILES: &[FileSpec] = &[
     FileSpec {
         path: "external/Dep.sol",
@@ -400,6 +532,22 @@ const SCENARIOS: &[Scenario] = &[
         files: CLEARED_DEPENDENCY_FILES,
         mutations: CLEARED_DEPENDENCY_MUTATIONS,
     },
+    Scenario { name: "linked-library", files: LIBRARY_FILES, mutations: LIBRARY_MUTATIONS },
+    Scenario {
+        name: "inherited-implementation",
+        files: INHERITANCE_FILES,
+        mutations: INHERITANCE_MUTATIONS,
+    },
+    Scenario {
+        name: "constructor-immutable",
+        files: IMMUTABLE_FILES,
+        mutations: IMMUTABLE_MUTATIONS,
+    },
+    Scenario {
+        name: "native-creation-code",
+        files: NATIVE_CREATION_CODE_FILES,
+        mutations: NATIVE_CREATION_CODE_MUTATIONS,
+    },
     Scenario { name: "retarget-remapping", files: REMAPPING_FILES, mutations: REMAPPING_MUTATIONS },
 ];
 
@@ -423,12 +571,18 @@ fn dynamic_linking_matches_standard_cache() {
         );
         materialize(&dynamic, scenario.files);
         materialize_with_linking(&standard, scenario.files, false);
+        let mut current = scenario
+            .files
+            .iter()
+            .map(|file| (file.path, file.contents))
+            .collect::<BTreeMap<_, _>>();
 
-        compare_linking_modes(scenario, 0, &dynamic, &standard);
+        compare_linking_modes(scenario, 0, &dynamic, &standard, &current);
         for (index, mutation) in scenario.mutations.iter().enumerate() {
+            current.insert(mutation.path, mutation.contents);
             write_file(dynamic.root(), mutation.path, mutation.contents);
             write_file(standard.root(), mutation.path, mutation.contents);
-            compare_linking_modes(scenario, index + 1, &dynamic, &standard);
+            compare_linking_modes(scenario, index + 1, &dynamic, &standard, &current);
         }
     }
 }
@@ -438,21 +592,32 @@ fn compare_linking_modes(
     checkpoint: usize,
     dynamic: &TestProject,
     standard: &TestProject,
+    current: &BTreeMap<&'static str, &'static str>,
 ) {
     let dynamic_observation = observe(dynamic, &run_forge_json(dynamic, &["test"]));
     let standard_observation = observe(standard, &run_forge_json(standard, &["test"]));
+    let clean = TestProject::new(
+        &format!("cache-differential-{}-standard-clean-{checkpoint}", scenario.name),
+        PathStyle::Dapptools,
+    );
+    let files =
+        current.iter().map(|(&path, &contents)| FileSpec { path, contents }).collect::<Vec<_>>();
+    materialize_with_linking(&clean, &files, false);
+    let clean_observation = observe(&clean, &run_forge_json(&clean, &["test"]));
     let mut dynamic_results = dynamic_observation.results.clone();
     let mut standard_results = standard_observation.results.clone();
     remove_unit_test_gas(&mut dynamic_results);
     remove_unit_test_gas(&mut standard_results);
     if dynamic_observation.success != standard_observation.success
         || dynamic_results != standard_results
+        || !observations_match(&standard_observation, &clean_observation)
     {
-        let saved = preserve_failure(scenario, checkpoint, dynamic, standard, standard);
+        let saved = preserve_failure(scenario, checkpoint, dynamic, standard, &clean);
         panic!(
-            "{} checkpoint {checkpoint}: dynamic linking differs from the standard cache\n\
+            "{} checkpoint {checkpoint}: cached execution differs from its oracle\n\
              replay artifacts: {}\n\
-             dynamic: {dynamic_observation:#?}\nstandard: {standard_observation:#?}",
+             dynamic: {dynamic_observation:#?}\n\
+             standard: {standard_observation:#?}\nstandard clean: {clean_observation:#?}",
             scenario.name,
             saved.display(),
         );
@@ -873,8 +1038,17 @@ fn artifact_semantics(artifact: &Value) -> Value {
         "bytecodeLinkReferences": get(&["bytecode", "linkReferences"]),
         "runtimeBytecode": get(&["deployedBytecode", "object"]),
         "runtimeLinkReferences": get(&["deployedBytecode", "linkReferences"]),
-        "immutableReferences": get(&["deployedBytecode", "immutableReferences"]),
+        "immutableReferences": normalized_immutable_references(
+            get(&["deployedBytecode", "immutableReferences"]),
+        ),
     })
+}
+
+fn normalized_immutable_references(references: Value) -> Value {
+    let Value::Object(references) = references else { return references };
+    let mut groups = references.into_values().collect::<Vec<_>>();
+    groups.sort_by_key(Value::to_string);
+    Value::Array(groups)
 }
 
 fn preserve_failure(
