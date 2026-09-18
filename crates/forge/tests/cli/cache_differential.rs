@@ -94,6 +94,15 @@ impl GeneratedAction {
         Self::ToggleAEdge,
         Self::ToggleBEdge,
     ];
+    const SEEDED: [Self; 7] = [
+        Self::ProbeA,
+        Self::ProbeB,
+        Self::ToggleDependencyForA,
+        Self::ToggleDependencyForB,
+        Self::ToggleAEdge,
+        Self::ToggleBEdge,
+        Self::ToggleAEdgeRequestB,
+    ];
 
     const fn name(self) -> &'static str {
         match self {
@@ -783,6 +792,34 @@ fn generated_unselected_consumer_history_matches_oracles() {
             GeneratedAction::ProbeA,
         ],
     );
+}
+
+/// Runs deterministic longer histories in independently configurable process shards.
+#[test]
+#[ignore = "brute-force cache campaign"]
+fn generated_seeded_histories_match_oracles() {
+    let seed_start = std::env::var("CACHE_CAMPAIGN_SEED_START")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(0);
+    let seed_count = std::env::var("CACHE_CAMPAIGN_SEED_COUNT")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(8);
+    for seed in seed_start..seed_start + seed_count {
+        let history = generated_seeded_history(seed, 8);
+        run_generated_history(10_000 + seed as usize, &history);
+    }
+}
+
+fn generated_seeded_history(seed: u64, length: usize) -> Vec<GeneratedAction> {
+    let mut state = seed ^ 0x9e37_79b9_7f4a_7c15;
+    (0..length)
+        .map(|_| {
+            state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            GeneratedAction::SEEDED[(state >> 32) as usize % GeneratedAction::SEEDED.len()]
+        })
+        .collect()
 }
 
 fn run_generated_history(case: usize, history: &[GeneratedAction]) {
