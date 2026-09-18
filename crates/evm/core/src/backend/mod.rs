@@ -11,7 +11,7 @@ use crate::{
     state_snapshot::StateSnapshots,
     utils::{
         apply_chain_and_block_specific_env_changes_for_chain,
-        apply_chain_specific_tx_replay_env_changes_for_chain, get_blob_base_fee_update_fraction,
+        apply_chain_specific_tx_replay_env_changes_for_chain,
     },
 };
 use alloy_chains::Chain;
@@ -3233,13 +3233,6 @@ fn update_env_block<N: Network, SPEC: Into<SpecId> + Copy, BLOCK: FoundryBlock>(
     block_env.set_gas_limit(header.gas_limit());
     block_env.set_number(U256::from(header.number()));
     block_env.set_slot_num(header.slot_number().unwrap_or_default());
-
-    if let Some(excess_blob_gas) = header.excess_blob_gas() {
-        evm_env.block_env.set_blob_excess_gas_and_price(
-            excess_blob_gas,
-            get_blob_base_fee_update_fraction(evm_env.cfg_env.chain_id, header.timestamp()),
-        );
-    }
 
     apply_chain_and_block_specific_env_changes_for_chain::<N, _, _>(
         evm_env,
