@@ -3453,3 +3453,73 @@ contract ModifierCreationCodeTest {
 
     cmd.args(["build"]).assert_success();
 });
+
+// Nested call options are copied verbatim and must retain native dependency edges.
+forgetest!(preprocess_nested_deployment_options, |prj, cmd| {
+    let other = r#"
+contract Other {
+    function value() external pure returns (uint256) { return 111; }
+}
+"#;
+    prj.add_source("Other.sol", other);
+    prj.add_source(
+        "Target.sol",
+        r#"
+contract Empty { constructor() payable {} }
+contract Target {
+    uint256 public immutable value;
+    constructor(uint256 value_) payable { value = value_; }
+}
+"#,
+    );
+    prj.add_test(
+        "Options.t.sol",
+        r#"
+import {Other} from "../src/Other.sol";
+import {Empty, Target} from "../src/Target.sol";
+contract OptionsTest {
+    function expected() internal pure returns (bytes32) {
+        return keccak256(type(Empty).creationCode);
+    }
+    function test_salt() public {
+        Empty target = new Empty{salt: bytes32(new Other().value())}();
+        address predicted = address(uint160(uint256(keccak256(abi.encodePacked(
+            bytes1(0xff), address(this), bytes32(uint256(111)), expected()
+        )))));
+        require(address(target) == predicted, "changed salt");
+    }
+    function test_value() public {
+        Empty target = new Empty{value: new Other().value()}();
+        require(address(target).balance == 111, "changed value");
+    }
+    function test_arguments() public {
+        Target target = new Target{value: new Other().value()}(new Other().value());
+        require(address(target).balance == 111 && target.value() == 111, "changed arguments");
+    }
+    function test_try() public {
+        try new Target{value: new Other().value()}(42) returns (Target target) {
+            require(address(target).balance == 111, "changed try value");
+        } catch { revert("deployment failed"); }
+    }
+}
+"#,
+    );
+    for dynamic_test_linking in [false, true] {
+        prj.update_config(|config| config.dynamic_test_linking = dynamic_test_linking);
+        prj.add_source("Other.sol", other);
+        cmd.forge_fuse().args(["test", "--force"]).assert_success();
+        cmd.forge_fuse().arg("test").assert_success();
+        prj.add_source("Other.sol", &other.replace("return 111", "return 222"));
+        cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+Ran 4 tests for test/Options.t.sol:OptionsTest
+[FAIL: changed arguments] test_arguments() ([GAS])
+[FAIL: changed salt] test_salt() ([GAS])
+[FAIL: changed try value] test_try() ([GAS])
+[FAIL: changed value] test_value() ([GAS])
+Suite result: FAILED. 0 passed; 4 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+        cmd.forge_fuse().args(["test", "--force"]).assert_failure();
+    }
+});

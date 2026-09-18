@@ -582,6 +582,16 @@ impl<'gcx> Visit<'gcx> for BytecodeDependencyCollector<'gcx, '_> {
                     named_args,
                 ) {
                     self.collect_dependency(dependency);
+                    // Call options are copied into the replacement expression. Keep their
+                    // bytecode references native so edits cannot overlap the outer replacement.
+                    self.visit_expr(call_expr)?;
+                    if let Some(call_options) = named_args {
+                        for arg in call_options.args {
+                            self.collect_native_expr(&arg.value);
+                        }
+                    }
+                    self.visit_call_args(call_args)?;
+                    return ControlFlow::Continue(());
                 }
                 if let Some(function_id) = self.gcx.resolved_function(call_expr) {
                     self.collect_function_dependency(function_id);
