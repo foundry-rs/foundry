@@ -48,7 +48,7 @@ pub(crate) const SYMBOLIC_SOLVER_MODEL_CACHE_MAX_ENTRIES: usize = 512;
 // Bounded witness search limits.
 pub(crate) const HARD_ARITH_FALLBACK_MAX_VARS: usize = 4;
 pub(crate) const HARD_ARITH_FALLBACK_MAX_ASSIGNMENTS: usize = 50_000;
-pub(crate) const FALLBACK_MODEL_MAX_VARS: usize = 8;
+pub(crate) const FALLBACK_MODEL_MAX_VARS: usize = 5;
 pub(crate) const FALLBACK_MODEL_MAX_CANDIDATES_PER_VAR: usize = 24;
 pub(crate) const FALLBACK_MODEL_MAX_ASSIGNMENTS: usize =
     FALLBACK_MODEL_MAX_CANDIDATES_PER_VAR * FALLBACK_MODEL_MAX_CANDIDATES_PER_VAR;
