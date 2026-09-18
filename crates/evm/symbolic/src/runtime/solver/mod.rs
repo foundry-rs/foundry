@@ -10,7 +10,6 @@ use std::{
 use wait_timeout::ChildExt;
 
 mod fallback;
-mod native;
 mod normalize;
 mod reasoning;
 mod smt;
@@ -24,7 +23,7 @@ use reasoning::{product_monotonic_unsat_normalized, remove_implied_monotonic_con
 use smt::write_smt_assertions;
 
 pub(crate) use fallback::{
-    fallback_single_var_model, fallback_two_var_model, hard_arith_fallback_model,
+    fallback_bounded_model, fallback_single_var_model, hard_arith_fallback_model,
 };
 
 #[cfg(test)]
@@ -35,35 +34,6 @@ pub(crate) use normalize::{
 pub(crate) use reasoning::product_monotonic_unsat;
 
 const Z3_QUERY_END: &str = "foundry-query-complete";
-const NATIVE_SOLVER_CONTROL_ENV: &str = "FOUNDRY_INTERNAL_SYMBOLIC_Z3_CONTROL";
-const Z3_CONTROL_SKIP_AVAILABILITY_PROBE_ENV: &str =
-    "FOUNDRY_INTERNAL_SYMBOLIC_Z3_CONTROL_SKIP_AVAILABILITY_PROBE";
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum SolverRouting {
-    NativeWithFallback,
-    NativeOnly,
-    External,
-    ProbeFreeZ3Control,
-}
-
-impl SolverRouting {
-    const fn from_internal_controls(z3_control: bool, skip_availability_probe: bool) -> Self {
-        match (z3_control, skip_availability_probe) {
-            (false, _) => Self::NativeWithFallback,
-            (true, false) => Self::External,
-            (true, true) => Self::ProbeFreeZ3Control,
-        }
-    }
-
-    const fn native_enabled(self) -> bool {
-        matches!(self, Self::NativeWithFallback | Self::NativeOnly)
-    }
-
-    const fn native_only(self) -> bool {
-        matches!(self, Self::NativeOnly)
-    }
-}
 
 /// Errors that arise when parsing or constructing solver commands from configuration.
 #[derive(Debug, thiserror::Error)]
@@ -74,11 +44,6 @@ pub(crate) enum SolverConfigError {
     /// The command string contains invalid shell quoting.
     #[error("invalid shell quoting in symbolic solver command")]
     InvalidShellQuoting,
-    /// The in-process native solver was requested where a subprocess command is required.
-    #[error(
-        "`native` is an in-process solver mode and cannot be used as a subprocess or portfolio entry"
-    )]
-    NativeIsNotSubprocess,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -186,9 +151,9 @@ impl SolverCommand {
 
 pub(crate) struct SmtLibSubprocessSolver {
     commands: Result<Vec<SolverCommand>, SolverConfigError>,
-    routing: SolverRouting,
     timeout: Option<u32>,
     max_queries: usize,
+    bounded_model_search: bool,
     queries: usize,
     query_observer: Option<QueryObserver>,
     dump_smt: bool,
@@ -205,12 +170,6 @@ pub(crate) struct SmtLibSubprocessSolver {
     sat_cache_hits: usize,
     model_cache_hits: usize,
     smt_queries: usize,
-    native_queries: usize,
-    native_sat_queries: usize,
-    native_unsat_queries: usize,
-    native_unknown_queries: usize,
-    native_solver_time: Duration,
-    native_max_query_time: Duration,
     solver_time: Duration,
     smt_input_bytes: u64,
     smt_max_query_bytes: u64,
@@ -228,11 +187,9 @@ impl SmtLibSubprocessSolver {
     ) -> Self {
         Self {
             commands,
-            // Direct constructor callers test a specific subprocess. Production construction
-            // selects native-first routing in `from_config`.
-            routing: SolverRouting::External,
             timeout,
             max_queries,
+            bounded_model_search: false,
             queries: 0,
             query_observer: None,
             dump_smt,
@@ -249,12 +206,6 @@ impl SmtLibSubprocessSolver {
             sat_cache_hits: 0,
             model_cache_hits: 0,
             smt_queries: 0,
-            native_queries: 0,
-            native_sat_queries: 0,
-            native_unsat_queries: 0,
-            native_unknown_queries: 0,
-            native_solver_time: Duration::ZERO,
-            native_max_query_time: Duration::ZERO,
             solver_time: Duration::ZERO,
             smt_input_bytes: 0,
             smt_max_query_bytes: 0,
@@ -266,31 +217,19 @@ impl SmtLibSubprocessSolver {
 
     /// Constructs a subprocess solver from Foundry symbolic config.
     pub(crate) fn from_config(config: &SymbolicConfig) -> Self {
-        let routing = if config_uses_native_only_solver(config) {
-            SolverRouting::NativeOnly
-        } else {
-            SolverRouting::from_internal_controls(
-                std::env::var_os(NATIVE_SOLVER_CONTROL_ENV).is_some(),
-                std::env::var_os(Z3_CONTROL_SKIP_AVAILABILITY_PROBE_ENV).is_some(),
-            )
-        };
-        Self::from_config_with_routing(config, routing)
-    }
-
-    fn from_config_with_routing(config: &SymbolicConfig, routing: SolverRouting) -> Self {
         let mut solver = Self::new(
             solver_commands_for_config(config),
             config.timeout,
             config.max_solver_queries as usize,
             config.dump_smt,
         );
-        solver.routing = routing;
+        solver.bounded_model_search = true;
         solver
     }
 
     #[cfg(test)]
-    pub(crate) const fn enable_native_for_test(&mut self) {
-        self.routing = SolverRouting::NativeWithFallback;
+    pub(crate) const fn enable_bounded_model_search(&mut self) {
+        self.bounded_model_search = true;
     }
 
     /// Returns solver counters collected by this backend.
@@ -299,20 +238,6 @@ impl SmtLibSubprocessSolver {
             paths: 0,
             solver_queries: self.queries,
             smt_queries: self.smt_queries,
-            native_queries: self.native_queries,
-            native_sat_queries: self.native_sat_queries,
-            native_unsat_queries: self.native_unsat_queries,
-            native_unknown_queries: self.native_unknown_queries,
-            native_solver_time_ns: self
-                .native_solver_time
-                .as_nanos()
-                .try_into()
-                .unwrap_or(u64::MAX),
-            native_max_query_time_ns: self
-                .native_max_query_time
-                .as_nanos()
-                .try_into()
-                .unwrap_or(u64::MAX),
             sat_queries: self.sat_queries,
             model_queries: self.model_queries,
             sat_cache_hits: self.sat_cache_hits,
@@ -365,17 +290,6 @@ impl SmtLibSubprocessSolver {
 
     /// Verifies that a configured solver can be invoked before exploration starts.
     pub(crate) fn check_available(&self) -> Result<(), SymbolicError> {
-        // Always surface malformed command configuration, but defer executable probing whenever
-        // the native tier may answer the whole workload.
-        self.commands()?;
-        if matches!(
-            self.routing,
-            SolverRouting::NativeWithFallback
-                | SolverRouting::NativeOnly
-                | SolverRouting::ProbeFreeZ3Control
-        ) {
-            return self.commands().map(|_| ());
-        }
         let commands = self.commands()?;
         let mut errors = Vec::new();
         for command in commands {
@@ -511,7 +425,8 @@ impl SmtLibSubprocessSolver {
             self.cache_model_result(cache_key, model.clone());
             return Ok(model);
         }
-        if let Some(model) = fallback_two_var_model(&smt_constraints)
+        if self.bounded_model_search
+            && let Some(model) = fallback_bounded_model(&smt_constraints)
             && model_satisfies_constraints(&model, constraints)
         {
             self.cache_sat_result(cache_key.clone(), true);
@@ -528,18 +443,6 @@ impl SmtLibSubprocessSolver {
             self.cache_sat_result(cache_key.clone(), true);
             return Ok(model);
         }
-        match self.query_native(&smt_constraints, constraints, true) {
-            native::NativeSolveResult::Sat(model) => {
-                trace!("model: native solver returned a validated model");
-                self.cache_sat_result(cache_key.clone(), true);
-                self.cache_model_result(cache_key, model.clone());
-                return Ok(model);
-            }
-            native::NativeSolveResult::UnsatCandidate => {
-                trace!("model: native solver found an unsat candidate; requiring SMT confirmation");
-            }
-            native::NativeSolveResult::Unknown => {}
-        }
         if constraints_prefer_hard_arith_fallback_first(cx, &smt_constraints)
             && let Some(model) =
                 validated_hard_arith_fallback_model(cx, &smt_constraints, constraints)
@@ -549,9 +452,6 @@ impl SmtLibSubprocessSolver {
             self.cache_sat_result(cache_key.clone(), true);
             self.cache_model_result(cache_key, model.clone());
             return Ok(model);
-        }
-        if self.routing.native_only() {
-            return Err(SymbolicError::SolverUnknown);
         }
         let output = match self.query_normalized(cx, &smt_constraints, true, constraints) {
             Ok(output) => output,
@@ -674,7 +574,8 @@ impl SmtLibSubprocessSolver {
             self.cache_sat_result(cache_key, true);
             return Ok(BranchFeasibility::Sat);
         }
-        if let Some(model) = fallback_two_var_model(&smt_constraints)
+        if self.bounded_model_search
+            && let Some(model) = fallback_bounded_model(&smt_constraints)
             && model_satisfies_constraints(&model, constraints)
         {
             self.cache_sat_result(cache_key, true);
@@ -692,20 +593,6 @@ impl SmtLibSubprocessSolver {
             self.cache_sat_result(cache_key, true);
             return Ok(BranchFeasibility::Sat);
         }
-        match self.query_native(&smt_constraints, constraints, false) {
-            native::NativeSolveResult::Sat(model) => {
-                trace!("is_sat: native solver returned a validated model");
-                self.cache_sat_result(cache_key.clone(), true);
-                self.cache_model_result(cache_key, model);
-                return Ok(BranchFeasibility::Sat);
-            }
-            native::NativeSolveResult::UnsatCandidate => {
-                trace!(
-                    "is_sat: native solver found an unsat candidate; requiring SMT confirmation"
-                );
-            }
-            native::NativeSolveResult::Unknown => {}
-        }
         if constraints_prefer_hard_arith_fallback_first(cx, &smt_constraints) {
             if validated_hard_arith_fallback_model(cx, &smt_constraints, constraints).is_some() {
                 self.heuristic_witnesses += 1;
@@ -717,9 +604,6 @@ impl SmtLibSubprocessSolver {
                 trace!("is_sat: deferring hard arithmetic branch without local witness");
                 return Ok(BranchFeasibility::NeedsSolver);
             }
-        }
-        if self.routing.native_only() {
-            return Err(SymbolicError::SolverUnknown);
         }
         let output = match self.query_normalized(cx, &smt_constraints, false, constraints) {
             Ok(output) => output,
@@ -823,31 +707,6 @@ impl SmtLibSubprocessSolver {
         self.sat_cache
             .iter()
             .any(|(cached_key, result)| !*result && sorted_bool_exprs_are_subset(cached_key, key))
-    }
-
-    /// Attempts one normalized query with the in-process solver. `Unknown` always leaves the
-    /// external SMT fallback available unless native-only diagnostic mode was selected.
-    fn query_native(
-        &mut self,
-        normalized_constraints: &[SymBoolExpr],
-        original_constraints: &[SymBoolExpr],
-        model: bool,
-    ) -> native::NativeSolveResult {
-        if !self.routing.native_enabled() {
-            return native::NativeSolveResult::Unknown;
-        }
-        self.native_queries += 1;
-        let started = Instant::now();
-        let result = native::solve_native(normalized_constraints, original_constraints, model);
-        let elapsed = started.elapsed();
-        self.native_solver_time = self.native_solver_time.saturating_add(elapsed);
-        self.native_max_query_time = self.native_max_query_time.max(elapsed);
-        match &result {
-            native::NativeSolveResult::Sat(_) => self.native_sat_queries += 1,
-            native::NativeSolveResult::UnsatCandidate => self.native_unsat_queries += 1,
-            native::NativeSolveResult::Unknown => self.native_unknown_queries += 1,
-        }
-        result
     }
 
     /// Sends already-normalized constraints to the configured solver portfolio.
@@ -1227,18 +1086,7 @@ pub(crate) fn solver_commands_for_config(
         return portfolio.into_iter().map(solver_command_for_portfolio_entry).collect();
     }
 
-    if config.solver == "native" {
-        return Ok(Vec::new());
-    }
-
     Ok(vec![named_solver_command(&config.solver)?])
-}
-
-/// Returns whether config selects the in-process solver without an external fallback.
-fn config_uses_native_only_solver(config: &SymbolicConfig) -> bool {
-    config.solver == "native"
-        && config.solver_command.as_deref().is_none_or(str::is_empty)
-        && config.solver_portfolio.iter().all(|entry| entry.trim().is_empty())
 }
 
 /// Returns a warning when a configured portfolio will run with unavailable solver entries.
@@ -1275,7 +1123,6 @@ pub(crate) fn solver_portfolio_availability_warning(config: &SymbolicConfig) -> 
 /// Returns the default command for a known solver name.
 pub(crate) fn named_solver_command(solver: &str) -> Result<SolverCommand, SolverConfigError> {
     let (parts, smt_timeout) = match solver {
-        "native" => return Err(SolverConfigError::NativeIsNotSubprocess),
         "z3" => (vec!["z3", "-in", "-smt2"], true),
         "yices" => (vec!["yices-smt2", "--bvconst-in-decimal"], false),
         "cvc5" => (
@@ -1313,9 +1160,6 @@ pub(crate) fn named_solver_command(solver: &str) -> Result<SolverCommand, Solver
 pub(crate) fn solver_command_for_portfolio_entry(
     entry: &str,
 ) -> Result<SolverCommand, SolverConfigError> {
-    if entry == "native" {
-        return Err(SolverConfigError::NativeIsNotSubprocess);
-    }
     if entry.chars().any(|ch| ch.is_whitespace() || matches!(ch, '"' | '\'' | '\\')) {
         SolverCommand::new(split_solver_command(entry)?, false)
     } else {

@@ -1743,50 +1743,6 @@ contract SymbolicJsonIncomplete {
     assert!(symbolic["counterexample"].is_null());
 });
 
-forgetest_init!(symbolic_native_only_unhandled_query_is_incomplete, |prj, cmd| {
-    prj.add_test(
-        "SymbolicNativeOnlyIncomplete.t.sol",
-        r#"
-contract SymbolicNativeOnlyIncomplete {
-    function checkUnsupportedProduct(uint256 x, uint256 y) public pure {
-        require(x > 1);
-        require(y > 1);
-        require(x * y == 15);
-        assert(false);
-    }
-}
-"#,
-    );
-
-    let output = cmd
-        .args([
-            "test",
-            "--symbolic",
-            "--symbolic-solver",
-            "native",
-            "--json",
-            "--match-test",
-            "checkUnsupportedProduct",
-        ])
-        .assert_failure()
-        .get_output()
-        .stdout
-        .clone();
-
-    let result = json_test_result(&output, "checkUnsupportedProduct(uint256,uint256)");
-    let symbolic = &result["symbolic"];
-    assert_eq!(symbolic["status"], "incomplete");
-    assert_eq!(symbolic["incomplete"]["kind"], "revert_all");
-    assert_eq!(symbolic["incomplete"]["reason"], "all symbolic paths reverted");
-    assert_eq!(symbolic["solver"]["name"], "native");
-    assert!(symbolic["solver"]["command"].is_null());
-    assert!(symbolic["solver"]["stats"]["solver_queries"].as_u64().unwrap() >= 1);
-    assert_eq!(symbolic["solver"]["stats"]["smt_queries"], 0);
-    assert_eq!(symbolic["solver"]["stats"]["smt_input_bytes"], 0);
-    assert_eq!(symbolic["replay"]["status"], "not_required");
-    assert!(symbolic["counterexample"].is_null());
-});
-
 forgetest_init!(symbolic_finds_wrapping_arithmetic_riddle_counterexample, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(
@@ -3198,9 +3154,6 @@ contract SymbolicInvariantSequenceMinimize is Test {
 "#,
     );
 
-    // Keep this focused on Forge's minimizer: native solving can produce the already-minimal
-    // values directly, leaving no successful shrink to report.
-    cmd.env("FOUNDRY_INTERNAL_SYMBOLIC_Z3_CONTROL", "1");
     let output = cmd
         .args([
             "test",

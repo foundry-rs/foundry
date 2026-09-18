@@ -111,8 +111,6 @@ unknown-git = "deny"
 allow-git = [
     # Temporary: alloy-chains until HyperliquidTestnet is released.
     "https://github.com/alloy-rs/chains",
-    # Native symbolic solver experiment.
-    "https://github.com/figtracer/foundry-native-solver",
     "https://github.com/foundry-rs/foundry-core",
     "https://github.com/paradigmxyz/solar",
     # Only for tests.

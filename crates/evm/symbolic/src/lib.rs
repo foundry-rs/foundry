@@ -371,27 +371,6 @@ pub struct SymbolicStats {
     /// Number of queries sent to the SMT backend after local fast paths.
     #[serde(default)]
     pub smt_queries: usize,
-    /// Number of queries attempted by the native solver after the cheap local fast paths.
-    ///
-    /// Native metrics remain internal until a later versioned result schema exposes them.
-    #[serde(skip)]
-    pub native_queries: usize,
-    /// Number of native queries answered with an evaluator-validated model.
-    #[serde(skip)]
-    pub native_sat_queries: usize,
-    /// Number of native UNSAT candidates sent to the external SMT solver for confirmation.
-    #[serde(skip)]
-    pub native_unsat_queries: usize,
-    /// Number of queries the native solver did not classify. These either reach the configured
-    /// SMT backend or remain explicitly incomplete under an executor deferral policy.
-    #[serde(skip)]
-    pub native_unknown_queries: usize,
-    /// Total wall-clock time spent in the native solver, in nanoseconds.
-    #[serde(skip)]
-    pub native_solver_time_ns: u64,
-    /// Longest single native solver query, in nanoseconds.
-    #[serde(skip)]
-    pub native_max_query_time_ns: u64,
     /// Number of satisfiability checks requested by the executor.
     #[serde(default)]
     pub sat_queries: usize,
