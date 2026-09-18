@@ -18,8 +18,9 @@ to Forge's native engine or a profiling-build branch-versus-master comparison.
 | Sum of mutant command wall times                 | 1.445 s |            1.402 s | 1.395 s |
 | Including one live model request                 | 1.445 s |            1.402 s | 1.979 s |
 
-There were 360 total trials, including clean controls. Misses reached the input limit, so the broad
-arm's conditional median excludes 53 censored trials and is not directly comparable with the others.
+There were 360 total trials, including clean controls; their measurements are preserved in
+[trials.csv](trials.csv). Misses reached the input limit, so the broad arm's conditional median excludes
+53 censored trials and is not directly comparable with the others.
 The 8 ms difference in execution-only time between the boundary and Jev arms is too small to support
 a speed claim. Timings exclude compilation and control trials but include process startup and
 shrinking. There is no matched wall-clock-budget experiment or inference-latency distribution here.
