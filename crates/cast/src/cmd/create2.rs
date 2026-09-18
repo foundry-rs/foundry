@@ -207,24 +207,20 @@ impl Create2Args {
             regexs.push(matches.replace('X', "."));
         }
 
-        let mut pattern_len = 0;
-        if let Some(prefix) = starts_with {
-            let prefix = get_regex_hex_string(prefix).wrap_err("invalid prefix hex provided")?;
-            pattern_len += prefix.len();
+        let prefix = starts_with
+            .map(|p| get_regex_hex_string(p).wrap_err("invalid prefix hex provided"))
+            .transpose()?;
+        let suffix = ends_with
+            .map(|s| get_regex_hex_string(s).wrap_err("invalid suffix hex provided"))
+            .transpose()?;
+        // Patterns that no address can satisfy would otherwise make the miner search forever.
+        ensure_patterns_fit(prefix.as_deref(), suffix.as_deref(), case_sensitive)?;
+        if let Some(prefix) = prefix {
             regexs.push(format!(r"^{prefix}"));
         }
-        if let Some(suffix) = ends_with {
-            let suffix = get_regex_hex_string(suffix).wrap_err("invalid suffix hex provided")?;
-            pattern_len += suffix.len();
+        if let Some(suffix) = suffix {
             regexs.push(format!(r"{suffix}$"));
         }
-        // A prefix and suffix that together exceed the address length can never match, and the
-        // miner would otherwise search forever.
-        eyre::ensure!(
-            pattern_len <= 40,
-            "--starts-with and --ends-with patterns are {pattern_len} hex characters combined, \
-             but an address has only 40"
-        );
 
         let regex = RegexSetBuilder::new(regexs).case_insensitive(!case_sensitive).build()?;
 
@@ -292,6 +288,45 @@ impl Create2Args {
     }
 }
 
+/// Rejects a `--starts-with` / `--ends-with` pair that no 40-character address can satisfy: a
+/// pattern longer than an address, or a pair that together exceeds an address without agreeing on
+/// the characters where the two would overlap.
+fn ensure_patterns_fit(
+    prefix: Option<&str>,
+    suffix: Option<&str>,
+    case_sensitive: bool,
+) -> Result<()> {
+    const ADDRESS_LEN: usize = 40;
+    for (flag, pattern) in [("--starts-with", prefix), ("--ends-with", suffix)] {
+        if let Some(pattern) = pattern {
+            eyre::ensure!(
+                pattern.len() <= ADDRESS_LEN,
+                "{flag} pattern is {} hex characters, but an address has only {ADDRESS_LEN}",
+                pattern.len()
+            );
+        }
+    }
+    let (Some(prefix), Some(suffix)) = (prefix, suffix) else { return Ok(()) };
+    let overlap = (prefix.len() + suffix.len()).saturating_sub(ADDRESS_LEN);
+    if overlap == 0 {
+        return Ok(());
+    }
+    let prefix_tail = &prefix[prefix.len() - overlap..];
+    let suffix_head = &suffix[..overlap];
+    let agree = if case_sensitive {
+        prefix_tail == suffix_head
+    } else {
+        prefix_tail.eq_ignore_ascii_case(suffix_head)
+    };
+    eyre::ensure!(
+        agree,
+        "--starts-with and --ends-with overlap on the last {overlap} characters of the prefix \
+         ({prefix_tail:?}) and the first {overlap} of the suffix ({suffix_head:?}), which differ, \
+         so no address can match both"
+    );
+    Ok(())
+}
+
 fn get_regex_hex_string(s: String) -> Result<String> {
     let s = s.strip_prefix("0x").unwrap_or(&s);
     let pad_width = s.len() + s.len() % 2;
@@ -341,21 +376,50 @@ mod tests {
     }
 
     #[test]
-    fn rejects_patterns_longer_than_an_address() {
+    fn rejects_patterns_no_address_can_match() {
         let prefix = "a".repeat(30);
         let suffix = "b".repeat(11);
         let err = run(&[ZERO_HASH, "--starts-with", &prefix, "--ends-with", &suffix]).unwrap_err();
         assert_eq!(
             err.to_string(),
-            "--starts-with and --ends-with patterns are 41 hex characters combined, but an address has only 40"
+            "--starts-with and --ends-with overlap on the last 1 characters of the prefix (\"a\") \
+             and the first 1 of the suffix (\"b\"), which differ, so no address can match both"
         );
 
         let prefix = "0x".to_string() + &"a".repeat(41);
         let err = run(&[ZERO_HASH, "--starts-with", &prefix]).unwrap_err();
         assert_eq!(
             err.to_string(),
-            "--starts-with and --ends-with patterns are 41 hex characters combined, but an address has only 40"
+            "--starts-with pattern is 41 hex characters, but an address has only 40"
         );
+
+        let suffix = "b".repeat(41);
+        let err = run(&[ZERO_HASH, "--ends-with", &suffix]).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "--ends-with pattern is 41 hex characters, but an address has only 40"
+        );
+
+        // Case-insensitive by default, so a differently cased overlap is still satisfiable.
+        assert!(ensure_patterns_fit(Some(&"A".repeat(30)), Some(&"a".repeat(11)), false).is_ok());
+        assert!(ensure_patterns_fit(Some(&"A".repeat(30)), Some(&"a".repeat(11)), true).is_err());
+    }
+
+    #[test]
+    fn overlapping_patterns_that_agree_are_mined() {
+        // 30 + 11 = 41 characters, but the prefix ends where the suffix starts, so the address
+        // of the default deployer with a zero salt and zero init code hash matches both.
+        let (address, salt) = run(&[
+            ZERO_HASH,
+            "--starts-with",
+            "778a4590f20db0c23cb7c1befc8da0",
+            "--ends-with",
+            "04549f2aa95",
+            "--no-random",
+        ])
+        .unwrap();
+        assert_eq!(salt, B256::ZERO);
+        assert_eq!(address, address!("0x778a4590f20db0c23cb7c1befc8da04549f2aa95"));
     }
 
     #[test]
