@@ -3246,8 +3246,8 @@ contract CounterReturnsTest is Test {
     function test_try_counter_creation_returns_custom_type() public {
         try new Counter(1) returns (Counter c) {
             c;
-        } catch {
-            revert();
+        } catch Error(string memory reason) {
+            require(keccak256(bytes(reason)) == keccak256("ctor failure"));
         }
     }
 }
@@ -3263,7 +3263,7 @@ Compiling 21 files with [..]
 
 "#]]);
 
-    // Change Counter to fail test in try statement, only Counter contract should be compiled.
+    // The typed deployment remains native so its constructor revert reaches the catch clause.
     prj.add_source(
         "Counter.sol",
         r#"
@@ -3276,14 +3276,103 @@ contract Counter {
 }
         "#,
     );
-    cmd.assert_failure().stdout_eq(str![[r#"
-...
-Compiling 1 files with [..]
-...
-[FAIL: ctor failure] test_try_counter_creation_returns_custom_type() (gas: [..])
-...
+    cmd.assert_success();
+});
 
+forgetest!(preprocess_typed_try_new_preserves_catches, |prj, cmd| {
+    let targets = r#"
+error ConstructorError(uint256 value);
+
+contract RevertString {
+    constructor() { revert("first reason"); }
+}
+
+contract CustomError {
+    constructor() { revert ConstructorError(7); }
+}
+
+contract Panic {
+    constructor() { assert(false); }
+}
+
+contract EmptyRevert {
+    constructor() { assembly { revert(0, 0) } }
+}
+"#;
+    prj.add_source("Targets.sol", targets);
+    prj.add_test(
+        "TypedTry.t.sol",
+        r#"
+import * as Targets from "../src/Targets.sol";
+
+contract TypedTryTest {
+    bool public constructorCaught;
+
+    constructor() {
+        try new Targets.EmptyRevert() returns (Targets.EmptyRevert) {
+            revert("constructor deployment succeeded");
+        } catch (bytes memory reason) {
+            constructorCaught = reason.length == 0;
+        }
+    }
+
+    function test_constructor_context() public view {
+        require(constructorCaught, "constructor catch missed");
+    }
+
+    function test_error_string() public {
+        try new Targets.RevertString() returns (Targets.RevertString) {
+            revert("deployment succeeded");
+        } catch Error(string memory reason) {
+            require(keccak256(bytes(reason)) == keccak256("first reason"), "changed reason");
+        }
+    }
+
+    function test_custom_error() public {
+        try new Targets.CustomError() returns (Targets.CustomError) {
+            revert("deployment succeeded");
+        } catch (bytes memory reason) {
+            require(bytes4(reason) == Targets.ConstructorError.selector, "wrong custom error");
+        }
+    }
+
+    function test_panic() public {
+        try new Targets.Panic() returns (Targets.Panic) {
+            revert("deployment succeeded");
+        } catch Panic(uint256 code) {
+            require(code == 1, "wrong panic");
+        }
+    }
+
+    function test_empty_revert() public {
+        try new Targets.EmptyRevert() returns (Targets.EmptyRevert) {
+            revert("deployment succeeded");
+        } catch (bytes memory reason) {
+            require(reason.length == 0, "non-empty revert");
+        }
+    }
+}
+"#,
+    );
+
+    for dynamic_test_linking in [false, true] {
+        prj.update_config(|config| config.dynamic_test_linking = dynamic_test_linking);
+        prj.add_source("Targets.sol", targets);
+        cmd.forge_fuse().args(["test", "--force"]).assert_success();
+        cmd.forge_fuse().arg("test").assert_success();
+        prj.add_source("Targets.sol", &targets.replace("first reason", "second reason"));
+        cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+Ran 5 tests for test/TypedTry.t.sol:TypedTryTest
+[PASS] test_constructor_context() ([GAS])
+[PASS] test_custom_error() ([GAS])
+[PASS] test_empty_revert() ([GAS])
+[FAIL: changed reason] test_error_string() ([GAS])
+[PASS] test_panic() ([GAS])
+Suite result: FAILED. 4 passed; 1 failed; 0 skipped; [ELAPSED]
+...
 "#]]);
+    }
 });
 
 // Test that `type(Contract).creationCode` can be used in view functions.
@@ -3594,13 +3683,15 @@ contract Target {
 }
 "#;
     prj.add_source("Target.sol", target);
+    prj.add_source(
+        "ImportedNames.sol",
+        "interface VmContractHelper2 {} interface VmContractHelper2_ {}",
+    );
     prj.add_test(
         "Collision.t.sol",
         r#"
 import {Target} from "../src/Target.sol";
-
-interface VmContractHelper2 {}
-interface VmContractHelper2_ {}
+import "../src/ImportedNames.sol";
 
 contract CollisionTest {
     function test_value() public {
@@ -3627,9 +3718,15 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 });
 
 forgetest!(preprocess_generated_constructor_helper_name_collision, |prj, cmd| {
-    let target = r#"
-contract Target {
+    let base = r#"
+contract Base {
     struct FoundryPpConstructorArgs { uint256 unused; }
+    function encodeArgs0() public pure returns (uint256) { return 0; }
+}
+"#;
+    let target = r#"
+import {Base} from "./Base.sol";
+contract Target is Base {
     uint256 public value;
     constructor(uint256, uint256 foundry_pp_ctor_arg1) {
         value = foundry_pp_ctor_arg1 + 110;
@@ -3638,6 +3735,7 @@ contract Target {
 contract DeployHelper0 {}
 function encodeArgs0() pure returns (uint256) { return 0; }
 "#;
+    prj.add_source("Base.sol", base);
     prj.add_source("Target.sol", target);
     prj.add_test(
         "Collision.t.sol",
@@ -3657,6 +3755,7 @@ contract CollisionTest {
 
     for dynamic_test_linking in [false, true] {
         prj.update_config(|config| config.dynamic_test_linking = dynamic_test_linking);
+        prj.add_source("Base.sol", base);
         prj.add_source("Target.sol", target);
         cmd.forge_fuse().args(["test", "--force"]).assert_success();
         cmd.forge_fuse().arg("test").assert_success();
@@ -3820,10 +3919,15 @@ contract Args {
 }
 "#;
     prj.add_source("Colon:Path.sol", target);
+    prj.add_source(
+        "Parsed:Wrong.sol",
+        "contract Parsed { function value() external pure returns (uint256) { return 111; } }",
+    );
     prj.add_test(
         "Colon.t.sol",
         r#"
 import {Zero, Args} from "../src/Colon:Path.sol";
+import {Parsed} from "../src/Parsed:Wrong.sol";
 
 contract ColonTest {
     function test_zero() public {
@@ -3833,6 +3937,10 @@ contract ColonTest {
     function test_args() public {
         require(new Args(0).value() == 111, "changed args");
     }
+
+    function test_parseable_identifier() public {
+        require(new Parsed().value() == 111, "changed parsed");
+    }
 }
 "#,
     );
@@ -3840,18 +3948,27 @@ contract ColonTest {
     for dynamic_test_linking in [false, true] {
         prj.update_config(|config| config.dynamic_test_linking = dynamic_test_linking);
         prj.add_source("Colon:Path.sol", target);
+        prj.add_source(
+            "Parsed:Wrong.sol",
+            "contract Parsed { function value() external pure returns (uint256) { return 111; } }",
+        );
         cmd.forge_fuse().args(["test", "--force"]).assert_success();
         cmd.forge_fuse().arg("test").assert_success();
         prj.add_source(
             "Colon:Path.sol",
             &target.replace("+ 111", "+ 222").replace("return 111", "return 222"),
         );
+        prj.add_source(
+            "Parsed:Wrong.sol",
+            "contract Parsed { function value() external pure returns (uint256) { return 222; } }",
+        );
         cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
 ...
-Ran 2 tests for test/Colon.t.sol:ColonTest
+Ran 3 tests for test/Colon.t.sol:ColonTest
 [FAIL: changed args] test_args() ([GAS])
+[FAIL: changed parsed] test_parseable_identifier() ([GAS])
 [FAIL: changed zero] test_zero() ([GAS])
-Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 3 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
     }

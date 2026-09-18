@@ -28,6 +28,8 @@ pub struct ContractConstructorData {
     pub args_struct: String,
     /// Generated ABI encoding function identifier.
     pub encode_function: String,
+    /// Generated helper source-unit path.
+    pub helper_path: PathBuf,
 }
 
 /// Keeps data about a single contract definition.
@@ -50,6 +52,8 @@ impl ContractData {
         contract: &Contract<'_>,
         path: &Path,
         source: &solar::sema::hir::Source<'_>,
+        reserved_identifiers: &str,
+        source_units: &[PathBuf],
     ) -> Self {
         let artifact =
             solidity_string_content(&format!("{}:{}", path.to_slash_lossy(), contract.name));
@@ -60,7 +64,6 @@ impl ContractData {
             .map(|ctor_id| gcx.hir.function(ctor_id))
             .filter(|ctor| !ctor.parameters.is_empty())
             .map(|ctor| {
-                let source_text = source.file.src.as_str();
                 let contract_id = contract_id.index();
                 let mut abi_encode_args = vec![];
                 let mut struct_fields = vec![];
@@ -74,7 +77,10 @@ impl ContractData {
                     } else {
                         // Generate a unique name if the constructor arg does not have one.
                         arg_index += 1;
-                        unique_identifier(source_text, format!("foundry_pp_ctor_arg{arg_index}"))
+                        unique_identifier(
+                            reserved_identifiers,
+                            format!("foundry_pp_ctor_arg{arg_index}"),
+                        )
                     };
                     abi_encode_args.push(format!("args.{name}"));
                     struct_fields.push(format!("{ty} {name}"));
@@ -84,17 +90,18 @@ impl ContractData {
                     abi_encode_args: abi_encode_args.join(", "),
                     struct_fields: struct_fields.join("; "),
                     helper_contract: unique_identifier(
-                        source_text,
+                        reserved_identifiers,
                         format!("DeployHelper{contract_id}"),
                     ),
                     args_struct: unique_identifier(
-                        source_text,
+                        reserved_identifiers,
                         "FoundryPpConstructorArgs".to_string(),
                     ),
                     encode_function: unique_identifier(
-                        source_text,
+                        reserved_identifiers,
                         format!("encodeArgs{contract_id}"),
                     ),
+                    helper_path: deploy_helper_path(contract_id, source_units),
                 }
             });
 
@@ -209,8 +216,15 @@ pub(crate) fn collect_preprocessor_data(
     gcx: Gcx<'_>,
     referenced_contracts: &HashSet<ContractId>,
     root_dir: &Path,
+    source_units: &[PathBuf],
 ) -> PreprocessorData {
     let mut data = PreprocessorData::default();
+    let reserved_identifiers = gcx
+        .hir
+        .source_ids()
+        .map(|source_id| gcx.hir.source(source_id).file.src.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
     for contract_id in referenced_contracts {
         let contract = gcx.hir.contract(*contract_id);
         let source = gcx.hir.source(contract.source);
@@ -221,7 +235,15 @@ pub(crate) fn collect_preprocessor_data(
 
         // Match the compiler input paths in generated imports and artifact references.
         let path = path.strip_prefix(root_dir).unwrap_or(path);
-        let contract_data = ContractData::new(gcx, *contract_id, contract, path, source);
+        let contract_data = ContractData::new(
+            gcx,
+            *contract_id,
+            contract,
+            path,
+            source,
+            &reserved_identifiers,
+            source_units,
+        );
         data.insert(*contract_id, contract_data);
     }
     data
@@ -232,11 +254,42 @@ pub(crate) fn collect_preprocessor_data(
 /// See [`ContractData::build_helper`] for more details.
 pub(crate) fn create_deploy_helpers(data: &BTreeMap<ContractId, ContractData>) -> Sources {
     let mut deploy_helpers = Sources::new();
-    for (contract_id, contract) in data {
+    for contract in data.values() {
         if let Some(code) = contract.build_helper() {
-            let path = format!("foundry-pp/DeployHelper{}.sol", contract_id.index());
-            deploy_helpers.insert(path.into(), Source::new(code));
+            let path = contract.constructor_data.as_ref().unwrap().helper_path.clone();
+            deploy_helpers.insert(path, Source::new(code));
         }
     }
     deploy_helpers
+}
+
+/// Returns a generated helper path that cannot overwrite an existing source unit.
+pub(crate) fn deploy_helper_path(contract_id: usize, source_units: &[PathBuf]) -> PathBuf {
+    let mut stem = format!("DeployHelper{contract_id}");
+    loop {
+        let path = PathBuf::from(format!("foundry-pp/{stem}.sol"));
+        if !source_units.iter().any(|source_unit| source_unit == &path) {
+            return path;
+        }
+        stem.push('_');
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::deploy_helper_path;
+    use std::path::PathBuf;
+
+    #[test]
+    fn deploy_helper_path_does_not_replace_source_units() {
+        let source_units = [
+            PathBuf::from("foundry-pp/DeployHelper7.sol"),
+            PathBuf::from("foundry-pp/DeployHelper7_.sol"),
+        ];
+
+        assert_eq!(
+            deploy_helper_path(7, &source_units),
+            PathBuf::from("foundry-pp/DeployHelper7__.sol")
+        );
+    }
 }

@@ -1,5 +1,5 @@
 use super::{
-    data::{ContractData, PreprocessorData},
+    data::{ContractData, PreprocessorData, deploy_helper_path},
     span_to_range,
 };
 use crate::fs::normalize_path;
@@ -274,8 +274,8 @@ enum BytecodeDependencyKind {
         value: Option<String>,
         /// `salt` (if any) used when creating contract.
         salt: Option<String>,
-        /// Whether it's a try contract creation statement, with custom return.
-        try_stmt: Option<bool>,
+        /// Whether it's an untyped try contract creation statement.
+        try_stmt: bool,
     },
 }
 
@@ -501,7 +501,7 @@ fn can_rewrite(
         return true;
     }
 
-    let helper_path = PathBuf::from(format!("foundry-pp/DeployHelper{}.sol", contract_id.index()));
+    let helper_path = deploy_helper_path(contract_id.index(), source_units);
     !remappings.iter().any(|remapping| {
         // The test imports the generated helper, which in turn imports the dependency.
         remapping_applies(remapping, &helper_path, source_path, root_dir)
@@ -655,8 +655,25 @@ impl<'gcx> Visit<'gcx> for BytecodeDependencyCollector<'gcx, '_> {
                 false
             };
 
+            // A typed `try new` needs an adapter to turn the address returned by `deployCode`
+            // back into the contract type. The deployment cheatcode would be evaluated before
+            // that adapter call establishes Solidity's try boundary, changing which constructor
+            // failures reach the catch clauses. Preserve the native creation expression instead.
+            if has_custom_return {
+                self.collect_native_expr(&stmt_try.expr);
+                for clause in stmt_try.clauses {
+                    for &var in clause.args {
+                        self.visit_nested_var(var)?;
+                    }
+                    for stmt in clause.block.stmts {
+                        self.visit_stmt(stmt)?;
+                    }
+                }
+                return ControlFlow::Continue(());
+            }
+
             if let BytecodeDependencyKind::New { try_stmt, .. } = &mut dependency.kind {
-                *try_stmt = Some(has_custom_return);
+                *try_stmt = true;
             }
             self.collect_dependency(dependency);
             // The outer deployment was handled above, but its constructor arguments and call
@@ -715,7 +732,7 @@ fn handle_call_expr(
                 call_args_offset,
                 value: named_arg(call_options, "value", source_map),
                 salt: named_arg(call_options, "salt", source_map),
-                try_stmt: None,
+                try_stmt: false,
             },
             // The HIR callee excludes parentheses, so start at the full call expression.
             loc: span_to_range(source_map, parent_expr.span.with_hi(call_expr.span.hi())),
@@ -758,6 +775,12 @@ pub(crate) fn remove_bytecode_dependencies(
     data: &PreprocessorData,
 ) -> Updates {
     let mut updates = Updates::default();
+    let reserved_identifiers = gcx
+        .hir
+        .source_ids()
+        .map(|source_id| gcx.hir.source(source_id).file.src.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
     for (contract_id, deps) in &deps.preprocessed_contracts {
         let contract = gcx.hir.contract(*contract_id);
         let source = gcx.hir.source(contract.source);
@@ -769,13 +792,11 @@ pub(crate) fn remove_bytecode_dependencies(
         let mut used_helpers = BTreeSet::new();
 
         let vm_interface_name = unique_identifier(
-            source.file.src.as_str(),
+            &reserved_identifiers,
             format!("VmContractHelper{}", contract_id.index()),
         );
         // `address(uint160(uint256(keccak256("hevm cheat code"))))`
         let vm = format!("{vm_interface_name}(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D)");
-        let mut try_catch_helpers = BTreeMap::new();
-
         for dep in deps {
             let Some(ContractData { artifact, constructor_data, .. }) =
                 data.get(&dep.referenced_contract)
@@ -803,19 +824,8 @@ pub(crate) fn remove_bytecode_dependencies(
                     salt,
                     try_stmt,
                 } => {
-                    let (mut update, closing_seq) = if let Some(has_ret) = try_stmt {
-                        if *has_ret {
-                            let adapter =
-                                try_catch_helpers.entry(name.clone()).or_insert_with(|| {
-                                    unique_identifier(
-                                        source.file.src.as_str(),
-                                        format!("addressTo{name}{id}", id = contract_id.index()),
-                                    )
-                                });
-                            (format!("this.{adapter}("), "}))")
-                        } else {
-                            (String::new(), "})")
-                        }
+                    let (mut update, closing_seq) = if *try_stmt {
+                        (String::new(), "})")
                     } else {
                         (format!("{name}(payable("), "})))")
                     };
@@ -836,11 +846,11 @@ pub(crate) fn remove_bytecode_dependencies(
                         // Insert our helper.
                         used_helpers.insert(dep.referenced_contract);
                         let helper_contract = unique_identifier(
-                            source.file.src.as_str(),
+                            &reserved_identifiers,
                             constructor_data.helper_contract.clone(),
                         );
                         let encode_function = unique_identifier(
-                            source.file.src.as_str(),
+                            &reserved_identifiers,
                             constructor_data.encode_function.clone(),
                         );
 
@@ -864,43 +874,22 @@ pub(crate) fn remove_bytecode_dependencies(
             };
         }
 
-        // Add try catch statements after last function of the test contract.
-        if !try_catch_helpers.is_empty()
-            && let Some(last_fn_id) = contract.functions().last()
-        {
-            let last_fn_range =
-                span_to_range(gcx.sess.source_map(), gcx.hir.function(last_fn_id).span);
-            let to_address_fns = try_catch_helpers
-                .iter()
-                .map(|(ty, adapter)| {
-                    format!(
-                        r#"
-                            function {adapter}(address addr) public pure returns ({ty}) {{
-                                return {ty}(payable(addr));
-                            }}
-                        "#
-                    )
-                })
-                .collect::<String>();
-
-            updates.insert((last_fn_range.end, last_fn_range.end, to_address_fns));
-        }
-
-        let helper_imports = used_helpers.into_iter().map(|id| {
-            let constructor = data[&id].constructor_data.as_ref().unwrap();
-            let helper_contract = &constructor.helper_contract;
-            let encode_function = &constructor.encode_function;
-            let local_helper =
-                unique_identifier(source.file.src.as_str(), helper_contract.clone());
-            let local_encoder =
-                unique_identifier(source.file.src.as_str(), encode_function.clone());
-            let helper_import = import_alias(helper_contract, &local_helper);
-            let encoder_import = import_alias(encode_function, &local_encoder);
-            let id = id.index();
-            format!(
-                "import {{{helper_import}, {encoder_import}}} from \"foundry-pp/DeployHelper{id}.sol\";",
-            )
-        }).join("\n");
+        let helper_imports = used_helpers
+            .into_iter()
+            .map(|id| {
+                let constructor = data[&id].constructor_data.as_ref().unwrap();
+                let helper_contract = &constructor.helper_contract;
+                let encode_function = &constructor.encode_function;
+                let local_helper =
+                    unique_identifier(&reserved_identifiers, helper_contract.clone());
+                let local_encoder =
+                    unique_identifier(&reserved_identifiers, encode_function.clone());
+                let helper_import = import_alias(helper_contract, &local_helper);
+                let encoder_import = import_alias(encode_function, &local_encoder);
+                let helper_path = constructor.helper_path.to_slash_lossy();
+                format!("import {{{helper_import}, {encoder_import}}} from \"{helper_path}\";",)
+            })
+            .join("\n");
         updates.insert((
             source.file.src.len(),
             source.file.src.len(),

@@ -616,20 +616,20 @@ fn get_artifact_source<'a, FEN: FoundryEvmNetwork>(
 
     let artifacts =
         state.config.available_artifacts.as_ref().or(state.config.artifact_lookup.as_ref());
+    let exact_matches = artifacts
+        .into_iter()
+        .flat_map(|artifacts| artifacts.iter())
+        .filter(|(id, _)| id.identifier() == path)
+        .collect::<Vec<_>>();
+    match exact_matches.as_slice() {
+        [(_, artifact)] => return Ok(ArtifactSource::InMemory(artifact)),
+        [] => {}
+        _ => return Err(fmt_err!("multiple artifacts match exact identifier `{path}`")),
+    }
+
     let parsed = match parse_artifact_path(path) {
         Ok(parsed) => parsed,
-        Err(error) => {
-            let exact_matches = artifacts
-                .into_iter()
-                .flat_map(|artifacts| artifacts.iter())
-                .filter(|(id, _)| id.identifier() == path)
-                .collect::<Vec<_>>();
-            match exact_matches.as_slice() {
-                [(_, artifact)] => return Ok(ArtifactSource::InMemory(artifact)),
-                [] => return Err(fmt_err!("failed to parse artifact path: {error}")),
-                _ => return Err(fmt_err!("multiple artifacts match exact identifier `{path}`")),
-            }
-        }
+        Err(error) => return Err(fmt_err!("failed to parse artifact path: {error}")),
     };
     let ParsedArtifactPath { file, contract_name, version, profile } = parsed;
     let file = file.map(|file| {
