@@ -108,6 +108,7 @@ pub trait FoundryEvmFactory:
             BlockEnv = Self::BlockEnv,
             Spec = Self::Spec,
             HaltReason = Self::HaltReason,
+            Precompiles = PrecompilesMap,
         > + DerefMut<Target = Self::FoundryContext<'db>>
     where
         Self: 'db;
