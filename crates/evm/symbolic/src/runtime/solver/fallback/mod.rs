@@ -108,6 +108,7 @@ pub(crate) fn hard_arith_fallback_model(
         searched_vars: &searched_vars,
         vars: &vars,
         candidates: &candidates,
+        max_assignments: HARD_ARITH_FALLBACK_MAX_ASSIGNMENTS,
     };
     search.model(0, &mut model, &mut assignments)
 }
@@ -506,6 +507,7 @@ struct FallbackSearch<'a> {
     searched_vars: &'a SymbolicVars,
     vars: &'a [Symbol],
     candidates: &'a [Vec<U256>],
+    max_assignments: usize,
 }
 
 impl FallbackSearch<'_> {
@@ -517,7 +519,7 @@ impl FallbackSearch<'_> {
     ) -> Option<SymbolicModel> {
         if index == self.vars.len() {
             *assignments += 1;
-            if *assignments > FALLBACK_MODEL_MAX_ASSIGNMENTS {
+            if *assignments > self.max_assignments {
                 return None;
             }
             let mut completed = model.clone();
@@ -552,7 +554,7 @@ impl FallbackSearch<'_> {
             {
                 return Some(model);
             }
-            if *assignments > FALLBACK_MODEL_MAX_ASSIGNMENTS {
+            if *assignments > self.max_assignments {
                 return None;
             }
         }
@@ -1047,6 +1049,7 @@ pub(crate) fn fallback_bounded_model(constraints: &[SymBoolExpr]) -> Option<Symb
         searched_vars: &searched_vars,
         vars: &vars,
         candidates: &candidates,
+        max_assignments: FALLBACK_MODEL_MAX_ASSIGNMENTS,
     };
     let mut model = SymbolicModel::default();
     let mut assignments = 0usize;
