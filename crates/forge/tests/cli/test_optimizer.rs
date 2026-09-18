@@ -3766,3 +3766,51 @@ Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 "#]]);
     }
 });
+
+forgetest!(preprocess_colon_in_artifact_path, |prj, cmd| {
+    let target = r#"
+contract Zero {
+    function value() external pure returns (uint256) { return 111; }
+}
+contract Args {
+    uint256 public value;
+    constructor(uint256 offset) { value = offset + 111; }
+}
+"#;
+    prj.add_source("Colon:Path.sol", target);
+    prj.add_test(
+        "Colon.t.sol",
+        r#"
+import {Zero, Args} from "../src/Colon:Path.sol";
+
+contract ColonTest {
+    function test_zero() public {
+        require(new Zero().value() == 111, "changed zero");
+    }
+
+    function test_args() public {
+        require(new Args(0).value() == 111, "changed args");
+    }
+}
+"#,
+    );
+
+    for dynamic_test_linking in [false, true] {
+        prj.update_config(|config| config.dynamic_test_linking = dynamic_test_linking);
+        prj.add_source("Colon:Path.sol", target);
+        cmd.forge_fuse().args(["test", "--force"]).assert_success();
+        cmd.forge_fuse().arg("test").assert_success();
+        prj.add_source(
+            "Colon:Path.sol",
+            &target.replace("+ 111", "+ 222").replace("return 111", "return 222"),
+        );
+        cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+Ran 2 tests for test/Colon.t.sol:ColonTest
+[FAIL: changed args] test_args() ([GAS])
+[FAIL: changed zero] test_zero() ([GAS])
+Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+    }
+});

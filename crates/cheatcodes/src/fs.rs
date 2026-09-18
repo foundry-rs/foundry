@@ -614,8 +614,23 @@ fn get_artifact_source<'a, FEN: FoundryEvmNetwork>(
         return Ok(ArtifactSource::Disk(path));
     }
 
-    let parsed =
-        parse_artifact_path(path).map_err(|e| fmt_err!("failed to parse artifact path: {e}"))?;
+    let artifacts =
+        state.config.available_artifacts.as_ref().or(state.config.artifact_lookup.as_ref());
+    let parsed = match parse_artifact_path(path) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            let exact_matches = artifacts
+                .into_iter()
+                .flat_map(|artifacts| artifacts.iter())
+                .filter(|(id, _)| id.identifier() == path)
+                .collect::<Vec<_>>();
+            match exact_matches.as_slice() {
+                [(_, artifact)] => return Ok(ArtifactSource::InMemory(artifact)),
+                [] => return Err(fmt_err!("failed to parse artifact path: {error}")),
+                _ => return Err(fmt_err!("multiple artifacts match exact identifier `{path}`")),
+            }
+        }
+    };
     let ParsedArtifactPath { file, contract_name, version, profile } = parsed;
     let file = file.map(|file| {
         let cwd = state
@@ -640,9 +655,7 @@ fn get_artifact_source<'a, FEN: FoundryEvmNetwork>(
     });
 
     // Use the artifact lookup if present.
-    if let Some(artifacts) =
-        state.config.available_artifacts.as_ref().or(state.config.artifact_lookup.as_ref())
-    {
+    if let Some(artifacts) = artifacts {
         let ambiguous_file_profile =
             file.is_some() && version.is_none() && profile.is_none() && contract_name.is_some();
         let filter_artifacts = |treat_ambiguous_as_profile: bool| -> Vec<_> {
