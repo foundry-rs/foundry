@@ -2701,7 +2701,12 @@ impl EthApi<FoundryNetwork> {
             return Ok(fork.block_access_list(block_id).await?);
         }
 
-        Ok(None)
+        let block_access_list = match block_id {
+            BlockId::Hash(hash) => self.backend.block_access_list_by_hash(hash.block_hash),
+            BlockId::Number(_) => self.backend.block_access_list_by_number(number),
+        };
+        Ok(block_access_list
+            .map(|bal| serde_json::to_value(bal).expect("BAL serialization is infallible")))
     }
 
     /// Returns the EIP-7928 block access list for a block hash.
@@ -2712,6 +2717,12 @@ impl EthApi<FoundryNetwork> {
         block_hash: B256,
     ) -> Result<Option<serde_json::Value>> {
         node_info!("eth_getBlockAccessListByBlockHash");
+        if let Some(block_access_list) = self.backend.block_access_list_by_hash(block_hash) {
+            return Ok(Some(
+                serde_json::to_value(block_access_list).expect("BAL serialization is infallible"),
+            ));
+        }
+
         let Some(fork) = self.get_fork() else { return Ok(None) };
 
         // Only blocks we know to be mined after the fork point are guaranteed to be unknown
@@ -2742,7 +2753,10 @@ impl EthApi<FoundryNetwork> {
             return Ok(fork.block_access_list_by_number(block_number).await?);
         }
 
-        Ok(None)
+        Ok(self
+            .backend
+            .block_access_list_by_number(number)
+            .map(|bal| serde_json::to_value(bal).expect("BAL serialization is infallible")))
     }
 
     /// Returns the raw EIP-7928 block access list for a block.
@@ -2759,7 +2773,15 @@ impl EthApi<FoundryNetwork> {
             return Ok(fork.block_access_list_raw(block_id).await?);
         }
 
-        Ok(None)
+        let block_access_list = match block_id {
+            BlockId::Hash(hash) => self.backend.block_access_list_by_hash(hash.block_hash),
+            BlockId::Number(_) => self.backend.block_access_list_by_number(number),
+        };
+        Ok(block_access_list.map(|bal| {
+            let mut encoded = Vec::new();
+            alloy_rlp::encode_list(&bal, &mut encoded);
+            encoded.into()
+        }))
     }
 
     /// Returns the number of transactions sent from given address at given time (block number).

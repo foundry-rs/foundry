@@ -1,5 +1,5 @@
-//! `cast run` block access list (BAL) coverage using locally mined transactions and canned BAL
-//! responses, since Anvil does not serve BALs for the blocks it mines.
+//! `cast run` block access list (BAL) coverage using locally mined transactions. Anvil serves the
+//! BALs of the Amsterdam blocks it mines; earlier hardforks use canned BAL responses instead.
 
 use alloy_consensus::BlockHeader;
 use alloy_eips::{
@@ -42,10 +42,9 @@ struct Fixture {
 }
 
 impl Fixture {
-    async fn new() -> Self {
+    async fn new(hardfork: EthereumHardfork) -> Self {
         let (api, handle) =
-            anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Cancun.into())))
-                .await;
+            anvil::spawn(NodeConfig::test().with_hardfork(Some(hardfork.into()))).await;
         let provider = handle.http_provider();
         let sender = handle.dev_wallets().next().unwrap().address();
         let mut nonce = provider.get_transaction_count(sender).await.unwrap();
@@ -198,7 +197,7 @@ fn run(cmd: &mut TestCommand, hash: B256, endpoint: &str, flags: &[&str]) -> Out
 }
 
 casttest!(cast_run_fork_bal_matches_replay_at_every_position, async |_prj, cmd| {
-    let fixture = Fixture::new().await;
+    let fixture = Fixture::new(EthereumHardfork::Cancun).await;
     let (endpoint, calls) = spawn_rpc_proxy_canned_method(
         fixture.handle.http_endpoint(),
         BAL_METHOD,
@@ -225,7 +224,7 @@ casttest!(cast_run_fork_bal_matches_replay_at_every_position, async |_prj, cmd| 
 });
 
 casttest!(cast_run_fork_bal_respects_no_bal_quick_prestate_and_remote_modes, async |_prj, cmd| {
-    let fixture = Fixture::new().await;
+    let fixture = Fixture::new(EthereumHardfork::Cancun).await;
     let hash = fixture.transactions[2];
     let replay = run(&mut cmd, hash, &fixture.handle.http_endpoint(), &[]);
     let (endpoint, calls) = spawn_rpc_proxy_canned_method(
@@ -253,7 +252,7 @@ casttest!(cast_run_fork_bal_respects_no_bal_quick_prestate_and_remote_modes, asy
 });
 
 casttest!(cast_run_fork_bal_unavailable_falls_back_to_replay, async |_prj, cmd| {
-    let fixture = Fixture::new().await;
+    let fixture = Fixture::new(EthereumHardfork::Cancun).await;
     let hash = fixture.transactions[2];
     let replay = run(&mut cmd, hash, &fixture.handle.http_endpoint(), &[]);
 
@@ -279,7 +278,7 @@ casttest!(cast_run_fork_bal_unavailable_falls_back_to_replay, async |_prj, cmd| 
 });
 
 casttest!(cast_run_fork_bal_is_checked_against_the_header_hash, async |_prj, cmd| {
-    let fixture = Fixture::new().await;
+    let fixture = Fixture::new(EthereumHardfork::Cancun).await;
     let hash = fixture.transactions[2];
     let replay = run(&mut cmd, hash, &fixture.handle.http_endpoint(), &[]);
     let block_number = json!(format!("{:#x}", fixture.block_number));
@@ -314,5 +313,24 @@ Executing previous transactions from the block.
 "#]]);
         }
         assert_eq!(calls.load(Ordering::Relaxed), 1);
+    }
+});
+
+casttest!(cast_run_fork_bal_uses_anvil_block_access_list, async |_prj, cmd| {
+    // Amsterdam anvil serves the BAL of its own blocks, so no canned response is needed.
+    let fixture = Fixture::new(EthereumHardfork::Amsterdam).await;
+    let endpoint = fixture.handle.http_endpoint();
+    for hash in fixture.transactions {
+        let replay = run(&mut cmd, hash, &endpoint, &["--no-bal"]);
+        OutputAssert::new(replay.clone())
+            .stderr_eq("Executing previous transactions from the block.\n");
+        run_command(&mut cmd, hash, &endpoint, &[]);
+        cmd.env("RUST_LOG", "cast::cmd::run=trace");
+        cmd.with_no_redact().assert_success().stdout_eq(replay.stdout).stderr_eq(str![[r#"
+[..] TRACE cast::cmd::run: reading prestate from block access list, skipping block replay
+[..] TRACE cast::cmd::run: executing call transaction tx=[..]
+[..] TRACE cast::cmd::run: completed execution tx_hash=[..]
+
+"#]]);
     }
 });

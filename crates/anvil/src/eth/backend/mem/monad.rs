@@ -23,7 +23,9 @@ use alloy_consensus::{
 };
 use alloy_evm::{
     Database, Evm, EvmEnv, EvmFactory, RecoveredTx,
-    block::{BlockExecutionError, BlockExecutionResult, BlockExecutor, StateDB},
+    block::{
+        BalIndexedDatabase, BlockExecutionError, BlockExecutionResult, BlockExecutor, StateDB,
+    },
 };
 use alloy_monad_evm::{MonadContext, MonadEvm, MonadEvmFactory};
 use alloy_network::{BlockResponse, Network};
@@ -138,7 +140,7 @@ fn execute_pool_transaction<DB>(
     is_replay: bool,
 ) -> Result<AnvilTxResult<HaltReason>, BlockExecutionError>
 where
-    DB: StateDB<Error = DatabaseError>,
+    DB: StateDB<Error = DatabaseError> + BalIndexedDatabase,
 {
     prepare_transaction(executor.evm_mut(), &tx_env);
     let result = (|| {
@@ -375,7 +377,7 @@ impl<N: Network> Backend<N> {
         BlockchainError,
     >
     where
-        DB: StateDB<Error = DatabaseError>,
+        DB: StateDB<Error = DatabaseError> + BalIndexedDatabase,
     {
         let monad_env = Self::build_monad_evm_env(evm_env, hardfork);
         let inspector = self.build_mining_inspector();
@@ -420,7 +422,7 @@ impl<N: Network> Backend<N> {
         transaction_context: MonadChainContext,
     ) -> Result<ExecutedHistoricalReplay>
     where
-        DB: StateDB<Error = DatabaseError>,
+        DB: StateDB<Error = DatabaseError> + BalIndexedDatabase,
     {
         let monad_env = Self::build_monad_evm_env(evm_env, hardfork);
         let inspector = self.build_mining_inspector();
