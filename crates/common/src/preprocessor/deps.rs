@@ -768,7 +768,10 @@ pub(crate) fn remove_bytecode_dependencies(
         let updates = updates.entry(path.clone()).or_default();
         let mut used_helpers = BTreeSet::new();
 
-        let vm_interface_name = format!("VmContractHelper{}", contract_id.index());
+        let vm_interface_name = unique_identifier(
+            source.file.src.as_str(),
+            format!("VmContractHelper{}", contract_id.index()),
+        );
         // `address(uint160(uint256(keccak256("hevm cheat code"))))`
         let vm = format!("{vm_interface_name}(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D)");
         let mut try_catch_helpers: HashSet<&str> = HashSet::default();
@@ -899,4 +902,12 @@ interface {vm_interface_name} {{
         ));
     }
     updates
+}
+
+/// Returns an identifier that cannot collide with text in the original source.
+fn unique_identifier(source: &str, mut identifier: String) -> String {
+    while source.contains(&identifier) {
+        identifier.push('_');
+    }
+    identifier
 }

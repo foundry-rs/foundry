@@ -3586,3 +3586,42 @@ Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
         cmd.forge_fuse().args(["test", "--force"]).assert_failure();
     }
 });
+
+forgetest!(preprocess_generated_interface_name_collision, |prj, cmd| {
+    let target = r#"
+contract Target {
+    function value() external pure returns (uint256) { return 111; }
+}
+"#;
+    prj.add_source("Target.sol", target);
+    prj.add_test(
+        "Collision.t.sol",
+        r#"
+import {Target} from "../src/Target.sol";
+
+interface VmContractHelper2 {}
+interface VmContractHelper2_ {}
+
+contract CollisionTest {
+    function test_value() public {
+        require(new Target().value() == 111, "changed value");
+    }
+}
+"#,
+    );
+
+    for dynamic_test_linking in [false, true] {
+        prj.update_config(|config| config.dynamic_test_linking = dynamic_test_linking);
+        prj.add_source("Target.sol", target);
+        cmd.forge_fuse().args(["test", "--force"]).assert_success();
+        cmd.forge_fuse().arg("test").assert_success();
+        prj.add_source("Target.sol", &target.replace("return 111", "return 222"));
+        cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/Collision.t.sol:CollisionTest
+[FAIL: changed value] test_value() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+    }
+});
