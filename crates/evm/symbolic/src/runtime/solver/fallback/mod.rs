@@ -518,10 +518,6 @@ impl FallbackSearch<'_> {
         assignments: &mut usize,
     ) -> Option<SymbolicModel> {
         if index == self.vars.len() {
-            *assignments += 1;
-            if *assignments > self.max_assignments {
-                return None;
-            }
             let mut completed = model.clone();
             let mut remaining_support_visits = usize::MAX;
             if complete_fallback_support_model(
@@ -544,6 +540,10 @@ impl FallbackSearch<'_> {
         }
 
         for candidate in &self.candidates[index] {
+            if *assignments >= self.max_assignments {
+                return None;
+            }
+            *assignments += 1;
             model.insert(self.vars[index], *candidate);
             if fallback_partial_model_satisfies_known_constraints(
                 self.constraints,
@@ -553,9 +553,6 @@ impl FallbackSearch<'_> {
             ) && let Some(model) = self.model(index + 1, model, assignments)
             {
                 return Some(model);
-            }
-            if *assignments > self.max_assignments {
-                return None;
             }
         }
         model.remove(&self.vars[index]);
@@ -1157,6 +1154,35 @@ mod tests {
         let product_matches_expected = SymBoolExpr::eq(cx, checked_product, expected.clone());
         let product_matches_expected_word = SymExpr::bool_word(cx, product_matches_expected);
         SymExpr::binop(cx, SymBinOp::Or, operand_is_zero_word, product_matches_expected_word)
+    }
+
+    #[test]
+    fn fallback_search_counts_pruned_partial_assignments() {
+        let mut cx = SymCx::new();
+        let x = cx.intern("x");
+        let y = cx.intern("y");
+        let x_expr = SymExpr::get_var(&mut cx, x);
+        let expected = SymExpr::constant(&mut cx, U256::MAX);
+        let constraints = [SymBoolExpr::eq(&mut cx, x_expr, expected)];
+        let mut constraint_vars = SymbolicVars::default();
+        constraints[0].collect_vars(&mut constraint_vars);
+        let constraint_vars = [constraint_vars];
+        let searched_vars = [x, y].into_iter().collect();
+        let vars = [x, y];
+        let candidates = [vec![U256::ZERO, U256::from(1), U256::from(2)], vec![U256::ZERO]];
+        let search = FallbackSearch {
+            constraints: &constraints,
+            constraint_vars: &constraint_vars,
+            searched_vars: &searched_vars,
+            vars: &vars,
+            candidates: &candidates,
+            max_assignments: 2,
+        };
+        let mut model = SymbolicModel::default();
+        let mut assignments = 0;
+
+        assert!(search.model(0, &mut model, &mut assignments).is_none());
+        assert_eq!(assignments, 2);
     }
 
     #[test]
