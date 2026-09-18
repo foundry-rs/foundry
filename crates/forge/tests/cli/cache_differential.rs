@@ -37,6 +37,136 @@ struct Observation {
     artifacts: BTreeMap<PathBuf, Value>,
 }
 
+#[derive(Clone, Copy, Debug)]
+enum GeneratedEdge {
+    Direct,
+    FreeFunction,
+}
+
+impl GeneratedEdge {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Direct => "direct",
+            Self::FreeFunction => "free-function",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum GeneratedRequest {
+    A,
+    B,
+}
+
+impl GeneratedRequest {
+    const fn args(self) -> &'static [&'static str] {
+        match self {
+            Self::A => &["test", "--match-path", "test/A.t.sol"],
+            Self::B => &["test", "--match-path", "test/B.t.sol"],
+        }
+    }
+
+    const fn suite(self) -> &'static str {
+        match self {
+            Self::A => "test/A.t.sol:ATest",
+            Self::B => "test/B.t.sol:BTest",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum GeneratedAction {
+    ProbeA,
+    ProbeB,
+    ToggleDependencyForA,
+    ToggleDependencyForB,
+    ToggleAEdge,
+    ToggleBEdge,
+    ToggleAEdgeRequestB,
+}
+
+impl GeneratedAction {
+    const ALL: [Self; 6] = [
+        Self::ProbeA,
+        Self::ProbeB,
+        Self::ToggleDependencyForA,
+        Self::ToggleDependencyForB,
+        Self::ToggleAEdge,
+        Self::ToggleBEdge,
+    ];
+
+    const fn name(self) -> &'static str {
+        match self {
+            Self::ProbeA => "probe-a",
+            Self::ProbeB => "probe-b",
+            Self::ToggleDependencyForA => "toggle-dependency-request-a",
+            Self::ToggleDependencyForB => "toggle-dependency-request-b",
+            Self::ToggleAEdge => "toggle-a-edge-request-a",
+            Self::ToggleBEdge => "toggle-b-edge-request-b",
+            Self::ToggleAEdgeRequestB => "toggle-a-edge-request-b",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct GeneratedModel {
+    dependency_revision: bool,
+    a_edge: GeneratedEdge,
+    b_edge: GeneratedEdge,
+}
+
+impl Default for GeneratedModel {
+    fn default() -> Self {
+        Self {
+            dependency_revision: false,
+            a_edge: GeneratedEdge::FreeFunction,
+            b_edge: GeneratedEdge::FreeFunction,
+        }
+    }
+}
+
+impl GeneratedModel {
+    const fn value(self) -> u64 {
+        if self.dependency_revision { 101 } else { 100 }
+    }
+
+    const fn apply(&mut self, action: GeneratedAction) -> GeneratedRequest {
+        match action {
+            GeneratedAction::ProbeA => GeneratedRequest::A,
+            GeneratedAction::ProbeB => GeneratedRequest::B,
+            GeneratedAction::ToggleDependencyForA => {
+                self.dependency_revision = !self.dependency_revision;
+                GeneratedRequest::A
+            }
+            GeneratedAction::ToggleDependencyForB => {
+                self.dependency_revision = !self.dependency_revision;
+                GeneratedRequest::B
+            }
+            GeneratedAction::ToggleAEdge => {
+                self.a_edge = match self.a_edge {
+                    GeneratedEdge::Direct => GeneratedEdge::FreeFunction,
+                    GeneratedEdge::FreeFunction => GeneratedEdge::Direct,
+                };
+                GeneratedRequest::A
+            }
+            GeneratedAction::ToggleBEdge => {
+                self.b_edge = match self.b_edge {
+                    GeneratedEdge::Direct => GeneratedEdge::FreeFunction,
+                    GeneratedEdge::FreeFunction => GeneratedEdge::Direct,
+                };
+                GeneratedRequest::B
+            }
+            GeneratedAction::ToggleAEdgeRequestB => {
+                self.a_edge = match self.a_edge {
+                    GeneratedEdge::Direct => GeneratedEdge::FreeFunction,
+                    GeneratedEdge::FreeFunction => GeneratedEdge::Direct,
+                };
+                GeneratedRequest::B
+            }
+        }
+    }
+}
+
 const DYNAMIC_FILES: &[FileSpec] = &[
     FileSpec {
         path: "src/Impl.sol",
@@ -624,6 +754,235 @@ fn compare_linking_modes(
     }
 }
 
+/// Runs the exhaustive generated campaign locally without adding its subprocess budget to CI.
+#[test]
+#[ignore = "brute-force cache campaign"]
+fn generated_partial_request_histories_match_oracles() {
+    let mut case = 0;
+    for first in GeneratedAction::ALL {
+        for second in GeneratedAction::ALL {
+            for third in GeneratedAction::ALL {
+                run_generated_history(case, &[first, second, third]);
+                case += 1;
+            }
+        }
+    }
+    assert_eq!(case, 216);
+}
+
+/// Exercises classification changes to an unselected consumer.
+#[test]
+#[ignore = "brute-force cache campaign"]
+fn generated_unselected_consumer_history_matches_oracles() {
+    run_generated_history(
+        216,
+        &[
+            GeneratedAction::ToggleAEdge,
+            GeneratedAction::ToggleAEdgeRequestB,
+            GeneratedAction::ToggleDependencyForB,
+            GeneratedAction::ProbeA,
+        ],
+    );
+}
+
+fn run_generated_history(case: usize, history: &[GeneratedAction]) {
+    let dynamic = TestProject::new(
+        &format!("cache-differential-generated-{case}-dynamic"),
+        PathStyle::Dapptools,
+    );
+    let standard = TestProject::new(
+        &format!("cache-differential-generated-{case}-standard"),
+        PathStyle::Dapptools,
+    );
+    let mut model = GeneratedModel::default();
+    let mut files = render_generated_files(model);
+    materialize_generated(&dynamic, &files, true);
+    materialize_generated(&standard, &files, false);
+    run_generated_checkpoint(
+        case,
+        0,
+        &history[..0],
+        model,
+        GeneratedRequest::A,
+        &dynamic,
+        &standard,
+    );
+
+    for (index, &action) in history.iter().enumerate() {
+        let request = model.apply(action);
+        let next_files = render_generated_files(model);
+        apply_generated_file_diff(&dynamic, &files, &next_files);
+        apply_generated_file_diff(&standard, &files, &next_files);
+        files = next_files;
+        run_generated_checkpoint(
+            case,
+            index + 1,
+            &history[..=index],
+            model,
+            request,
+            &dynamic,
+            &standard,
+        );
+    }
+}
+
+fn run_generated_checkpoint(
+    case: usize,
+    checkpoint: usize,
+    history: &[GeneratedAction],
+    model: GeneratedModel,
+    request: GeneratedRequest,
+    dynamic: &TestProject,
+    standard: &TestProject,
+) {
+    let dynamic_output = run_forge_json(dynamic, request.args());
+    let standard_output = run_forge_json(standard, request.args());
+    let dynamic_observation = try_observe(dynamic, &dynamic_output);
+    let standard_observation = try_observe(standard, &standard_output);
+
+    let clean = TestProject::new(
+        &format!("cache-differential-generated-{case}-clean-{checkpoint}"),
+        PathStyle::Dapptools,
+    );
+    let files = render_generated_files(model);
+    materialize_generated(&clean, &files, false);
+    let clean_output = run_forge_json(&clean, request.args());
+    let clean_observation = try_observe(&clean, &clean_output);
+
+    let parse_errors = [
+        ("dynamic", dynamic_observation.as_ref().err()),
+        ("standard", standard_observation.as_ref().err()),
+        ("clean", clean_observation.as_ref().err()),
+    ]
+    .into_iter()
+    .filter_map(|(lane, error)| error.map(|error| format!("{lane}: {error}")))
+    .collect::<Vec<_>>();
+    if !parse_errors.is_empty() {
+        let fresh_dynamic = TestProject::new(
+            &format!("cache-differential-generated-{case}-fresh-dynamic-{checkpoint}"),
+            PathStyle::Dapptools,
+        );
+        materialize_generated(&fresh_dynamic, &files, true);
+        let fresh_dynamic_output = run_forge_json(&fresh_dynamic, request.args());
+        let saved = preserve_generated_failure(
+            case,
+            checkpoint,
+            history,
+            model,
+            request,
+            dynamic,
+            standard,
+            &clean,
+            &fresh_dynamic,
+            [
+                ("dynamic", &dynamic_output),
+                ("standard", &standard_output),
+                ("clean", &clean_output),
+                ("fresh-dynamic", &fresh_dynamic_output),
+            ],
+        );
+        panic!(
+            "generated case {case} checkpoint {checkpoint} emitted malformed output\n\
+             history: {history:?}\nrequest: {request:?}\n\
+             errors: {parse_errors:?}\nreplay artifacts: {}",
+            saved.display(),
+        );
+    }
+    let dynamic_observation = dynamic_observation.unwrap();
+    let standard_observation = standard_observation.unwrap();
+    let clean_observation = clean_observation.unwrap();
+
+    let validation_errors = [
+        ("dynamic", generated_observation_error(&dynamic_observation, model, request)),
+        ("standard", generated_observation_error(&standard_observation, model, request)),
+        ("clean", generated_observation_error(&clean_observation, model, request)),
+    ]
+    .into_iter()
+    .filter_map(|(lane, error)| error.map(|error| format!("{lane}: {error}")))
+    .collect::<Vec<_>>();
+    let mut dynamic_results = dynamic_observation.results.clone();
+    let mut clean_results = clean_observation.results.clone();
+    remove_unit_test_gas(&mut dynamic_results);
+    remove_unit_test_gas(&mut clean_results);
+    let dynamic_matches_clean = dynamic_observation.success == clean_observation.success
+        && dynamic_results == clean_results;
+    let standard_matches_clean = observations_match(&standard_observation, &clean_observation);
+
+    if validation_errors.is_empty() && dynamic_matches_clean && standard_matches_clean {
+        return;
+    }
+
+    let fresh_dynamic = TestProject::new(
+        &format!("cache-differential-generated-{case}-fresh-dynamic-{checkpoint}"),
+        PathStyle::Dapptools,
+    );
+    materialize_generated(&fresh_dynamic, &files, true);
+    let fresh_dynamic_output = run_forge_json(&fresh_dynamic, request.args());
+    let saved = preserve_generated_failure(
+        case,
+        checkpoint,
+        history,
+        model,
+        request,
+        dynamic,
+        standard,
+        &clean,
+        &fresh_dynamic,
+        [
+            ("dynamic", &dynamic_output),
+            ("standard", &standard_output),
+            ("clean", &clean_output),
+            ("fresh-dynamic", &fresh_dynamic_output),
+        ],
+    );
+    let fresh_dynamic_comparison = try_observe(&fresh_dynamic, &fresh_dynamic_output)
+        .map(|fresh| observations_match(&dynamic_observation, &fresh));
+    panic!(
+        "generated case {case} checkpoint {checkpoint} diverged\n\
+         history: {history:?}\nrequest: {request:?}\n\
+         validation: {validation_errors:?}\n\
+         dynamic matches clean: {dynamic_matches_clean}\n\
+         standard matches clean: {standard_matches_clean}\n\
+         dynamic matches fresh dynamic: {fresh_dynamic_comparison:?}\n\
+         replay artifacts: {}",
+        saved.display(),
+    );
+}
+
+fn generated_observation_error(
+    observation: &Observation,
+    model: GeneratedModel,
+    request: GeneratedRequest,
+) -> Option<String> {
+    if !observation.success {
+        return Some("command failed".to_string());
+    }
+    let Some(suites) = observation.results.as_object() else {
+        return Some("result is not an object".to_string());
+    };
+    if suites.len() != 1 || !suites.contains_key(request.suite()) {
+        return Some(format!("unexpected suites: {:?}", suites.keys().collect::<Vec<_>>()));
+    }
+    let Some(tests) = suites[request.suite()].get("test_results").and_then(Value::as_object) else {
+        return Some("test_results is not an object".to_string());
+    };
+    if tests.len() != 1 || !tests.contains_key("test_value()") {
+        return Some(format!("unexpected tests: {:?}", tests.keys().collect::<Vec<_>>()));
+    };
+    let test = &tests["test_value()"];
+    if test.get("status") != Some(&Value::String("Success".to_string())) {
+        return Some(format!("unexpected test status: {:?}", test.get("status")));
+    }
+    let expected_data = format!("0x{:064x}", model.value());
+    let logs = test.get("logs").and_then(Value::as_array);
+    if logs.is_none_or(|logs| {
+        logs.len() != 1 || logs[0].get("data").and_then(Value::as_str) != Some(&expected_data)
+    }) {
+        return Some(format!("expected one scalar observation with data {expected_data}"));
+    }
+    None
+}
+
 #[test]
 fn filtered_request_history_matches_clean_builds() {
     const A_ARGS: &[&str] = &["test", "--match-path", "test/A.t.sol"];
@@ -899,11 +1258,76 @@ dynamic_test_linking = {dynamic_test_linking}
 solc = "{SOLC_VERSION}"
 bytecode_hash = "none"
 cbor_metadata = false
+cache = true
+force = false
+src = "src"
+test = "test"
+out = "out"
+cache_path = "cache"
+libs = []
 "#,
         ),
     );
     for file in files {
         write_file(project.root(), file.path, file.contents);
+    }
+}
+
+fn render_generated_files(model: GeneratedModel) -> BTreeMap<&'static str, String> {
+    BTreeMap::from([
+        (
+            "src/X.sol",
+            format!(
+                "contract X {{ function value() external pure returns (uint256) {{ return {}; }} }}\n",
+                model.value()
+            ),
+        ),
+        ("test/A.t.sol", render_generated_test("A", model.a_edge)),
+        ("test/B.t.sol", render_generated_test("B", model.b_edge)),
+    ])
+}
+
+fn render_generated_test(name: &str, edge: GeneratedEdge) -> String {
+    let (helper, deployment) = match edge {
+        GeneratedEdge::Direct => (String::new(), "new X()".to_string()),
+        GeneratedEdge::FreeFunction => (
+            format!("function make{name}() returns (X) {{ return new X(); }}\n"),
+            format!("make{name}()"),
+        ),
+    };
+    format!(
+        "import {{X}} from \"../src/X.sol\";\n\
+         {helper}\
+         contract {name}Test {{\n\
+             event Observed(uint256 value);\n\
+             function test_value() public {{ emit Observed({deployment}.value()); }}\n\
+         }}\n"
+    )
+}
+
+fn materialize_generated(
+    project: &TestProject,
+    files: &BTreeMap<&'static str, String>,
+    dynamic_test_linking: bool,
+) {
+    materialize_with_linking(project, &[], dynamic_test_linking);
+    for (&path, contents) in files {
+        write_file(project.root(), path, contents);
+    }
+}
+
+fn apply_generated_file_diff(
+    project: &TestProject,
+    before: &BTreeMap<&'static str, String>,
+    after: &BTreeMap<&'static str, String>,
+) {
+    for &path in before.keys().filter(|path| !after.contains_key(*path)) {
+        fs::remove_file(project.root().join(path)).unwrap();
+    }
+    for (&path, contents) in after {
+        if before.get(path) != Some(contents) {
+            write_file(project.root(), path, contents);
+        }
     }
 }
 
@@ -914,11 +1338,33 @@ fn write_file(root: &Path, path: &str, contents: &str) {
 }
 
 fn run_forge_json(project: &TestProject, args: &[&str]) -> Output {
-    project.forge_bin().args(args).args(["--json", "-vv"]).output().unwrap()
+    forge_command(project)
+        .args(args)
+        .args(["--profile", "default", "--config-path"])
+        .arg(project.root().join("foundry.toml"))
+        .args(["--json", "-vv"])
+        .output()
+        .unwrap()
 }
 
 fn run_forge_plain(project: &TestProject, args: &[&str]) -> Output {
-    project.forge_bin().args(args).output().unwrap()
+    forge_command(project)
+        .args(args)
+        .args(["--profile", "default", "--config-path"])
+        .arg(project.root().join("foundry.toml"))
+        .output()
+        .unwrap()
+}
+
+fn forge_command(project: &TestProject) -> std::process::Command {
+    let mut command = project.forge_bin();
+    for (key, _) in std::env::vars_os() {
+        let key_text = key.to_string_lossy();
+        if key_text.starts_with("FOUNDRY_") || key_text.starts_with("DAPP_") {
+            command.env_remove(key);
+        }
+    }
+    command
 }
 
 fn reported_compiled_files(output: &Output) -> Result<usize, String> {
@@ -946,19 +1392,23 @@ fn reported_compiled_files(output: &Output) -> Result<usize, String> {
 }
 
 fn observe(project: &TestProject, output: &Output) -> Observation {
-    let mut results = serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
-        panic!(
+    try_observe(project, output).unwrap_or_else(|error| panic!("{error}"))
+}
+
+fn try_observe(project: &TestProject, output: &Output) -> Result<Observation, String> {
+    let mut results = serde_json::from_slice(&output.stdout).map_err(|error| {
+        format!(
             "forge did not emit JSON: {error}\nstdout:\n{}\nstderr:\n{}",
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr),
         )
-    });
+    })?;
     remove_result_durations(&mut results);
-    Observation {
+    Ok(Observation {
         success: output.status.success(),
         results,
         artifacts: collect_artifacts(project.artifacts()),
-    }
+    })
 }
 
 fn observations_match(incremental: &Observation, clean: &Observation) -> bool {
@@ -1082,6 +1532,94 @@ fn preserve_failure(
     root
 }
 
+#[allow(clippy::too_many_arguments)]
+fn preserve_generated_failure<const N: usize>(
+    case: usize,
+    checkpoint: usize,
+    history: &[GeneratedAction],
+    model: GeneratedModel,
+    request: GeneratedRequest,
+    dynamic: &TestProject,
+    standard: &TestProject,
+    clean: &TestProject,
+    fresh_dynamic: &TestProject,
+    outputs: [(&str, &Output); N],
+) -> PathBuf {
+    let root = dynamic
+        .foundry_bin_path("forge")
+        .parent()
+        .unwrap()
+        .join("cache-differential")
+        .join(format!("generated-{case}-{checkpoint}"));
+    let _ = fs::remove_dir_all(&root);
+    copy_tree(dynamic.root(), &root.join("dynamic"));
+    copy_tree(standard.root(), &root.join("standard"));
+    copy_tree(clean.root(), &root.join("clean"));
+    copy_tree(fresh_dynamic.root(), &root.join("fresh-dynamic"));
+    let output_dir = root.join("outputs");
+    fs::create_dir_all(&output_dir).unwrap();
+    for (lane, output) in outputs {
+        fs::write(output_dir.join(format!("{lane}.stdout")), &output.stdout).unwrap();
+        fs::write(output_dir.join(format!("{lane}.stderr")), &output.stderr).unwrap();
+    }
+    fs::write(
+        root.join("replay.json"),
+        serde_json::to_vec_pretty(&json!({
+            "version": 1,
+            "generator": "partial-request-core-v1",
+            "case": case,
+            "checkpoint": checkpoint,
+            "history": history.iter().map(|action| action.name()).collect::<Vec<_>>(),
+            "model": {
+                "dependencyValue": model.value(),
+                "aEdge": model.a_edge.name(),
+                "bEdge": model.b_edge.name(),
+            },
+            "request": request.suite(),
+            "forge": dynamic.foundry_bin_path("forge"),
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        root.join("realized-inputs.json"),
+        serde_json::to_vec_pretty(&generated_realized_inputs(history)).unwrap(),
+    )
+    .unwrap();
+    root
+}
+
+fn generated_realized_inputs(history: &[GeneratedAction]) -> Value {
+    let mut model = GeneratedModel::default();
+    let initial = render_generated_files(model);
+    let mut before = initial.clone();
+    let steps = history
+        .iter()
+        .map(|&action| {
+            let request = model.apply(action);
+            let after = render_generated_files(model);
+            let writes = after
+                .iter()
+                .filter(|(path, contents)| before.get(*path) != Some(*contents))
+                .map(|(&path, contents)| (path, contents.clone()))
+                .collect::<BTreeMap<_, _>>();
+            let deletes = before
+                .keys()
+                .filter(|path| !after.contains_key(*path))
+                .copied()
+                .collect::<Vec<_>>();
+            before = after;
+            json!({
+                "action": action.name(),
+                "request": request.suite(),
+                "writes": writes,
+                "deletes": deletes,
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({"initial": initial, "steps": steps})
+}
+
 fn copy_tree(source: &Path, destination: &Path) {
     fs::create_dir_all(destination).unwrap();
     for entry in fs::read_dir(source).unwrap() {
@@ -1147,5 +1685,32 @@ fn normalizes_only_execution_metrics() {
                 }
             }
         })
+    );
+}
+
+#[test]
+fn generated_observations_reject_extra_tests() {
+    let observation = Observation {
+        success: true,
+        results: json!({
+            "test/A.t.sol:ATest": {
+                "test_results": {
+                    "test_value()": {
+                        "status": "Success",
+                        "logs": [{
+                            "data": "0x0000000000000000000000000000000000000000000000000000000000000064"
+                        }]
+                    },
+                    "test_unexpected()": {"status": "Success", "logs": []}
+                }
+            }
+        }),
+        artifacts: BTreeMap::new(),
+    };
+
+    assert!(
+        generated_observation_error(&observation, GeneratedModel::default(), GeneratedRequest::A,)
+            .unwrap()
+            .starts_with("unexpected tests:")
     );
 }
