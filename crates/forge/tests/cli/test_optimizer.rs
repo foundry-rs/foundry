@@ -3625,3 +3625,48 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 "#]]);
     }
 });
+
+forgetest!(preprocess_generated_constructor_helper_name_collision, |prj, cmd| {
+    let target = r#"
+contract Target {
+    struct FoundryPpConstructorArgs { uint256 unused; }
+    uint256 public value;
+    constructor(uint256, uint256 foundry_pp_ctor_arg1) {
+        value = foundry_pp_ctor_arg1 + 110;
+    }
+}
+contract DeployHelper0 {}
+function encodeArgs0() pure returns (uint256) { return 0; }
+"#;
+    prj.add_source("Target.sol", target);
+    prj.add_test(
+        "Collision.t.sol",
+        r#"
+import {Target} from "../src/Target.sol";
+
+contract DeployHelper0_ {}
+function encodeArgs0_() pure returns (uint256) { return 0; }
+
+contract CollisionTest {
+    function test_value() public {
+        require(new Target(0, 1).value() == 111, "changed value");
+    }
+}
+"#,
+    );
+
+    for dynamic_test_linking in [false, true] {
+        prj.update_config(|config| config.dynamic_test_linking = dynamic_test_linking);
+        prj.add_source("Target.sol", target);
+        cmd.forge_fuse().args(["test", "--force"]).assert_success();
+        cmd.forge_fuse().arg("test").assert_success();
+        prj.add_source("Target.sol", &target.replace("+ 110", "+ 220"));
+        cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/Collision.t.sol:CollisionTest
+[FAIL: changed value] test_value() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+    }
+});

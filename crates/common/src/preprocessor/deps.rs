@@ -827,14 +827,22 @@ pub(crate) fn remove_bytecode_dependencies(
                         update.push_str(&format!("_salt: {salt}"));
                     }
 
-                    if constructor_data.is_some() {
+                    if let Some(constructor_data) = constructor_data {
                         // Insert our helper.
                         used_helpers.insert(dep.referenced_contract);
+                        let helper_contract = unique_identifier(
+                            source.file.src.as_str(),
+                            constructor_data.helper_contract.clone(),
+                        );
+                        let encode_function = unique_identifier(
+                            source.file.src.as_str(),
+                            constructor_data.encode_function.clone(),
+                        );
 
                         update.push_str(", ");
                         update.push_str(&format!(
-                            "_args: encodeArgs{id}(DeployHelper{id}.FoundryPpConstructorArgs",
-                            id = dep.referenced_contract.index()
+                            "_args: {}({}.{}",
+                            encode_function, helper_contract, constructor_data.args_struct,
                         ));
                         updates.insert((dep.loc.start, dep.loc.end + call_args_offset, update));
 
@@ -875,9 +883,18 @@ pub(crate) fn remove_bytecode_dependencies(
         }
 
         let helper_imports = used_helpers.into_iter().map(|id| {
+            let constructor = data[&id].constructor_data.as_ref().unwrap();
+            let helper_contract = &constructor.helper_contract;
+            let encode_function = &constructor.encode_function;
+            let local_helper =
+                unique_identifier(source.file.src.as_str(), helper_contract.clone());
+            let local_encoder =
+                unique_identifier(source.file.src.as_str(), encode_function.clone());
+            let helper_import = import_alias(helper_contract, &local_helper);
+            let encoder_import = import_alias(encode_function, &local_encoder);
             let id = id.index();
             format!(
-                "import {{DeployHelper{id}, encodeArgs{id}}} from \"foundry-pp/DeployHelper{id}.sol\";",
+                "import {{{helper_import}, {encoder_import}}} from \"foundry-pp/DeployHelper{id}.sol\";",
             )
         }).join("\n");
         updates.insert((
@@ -910,4 +927,8 @@ fn unique_identifier(source: &str, mut identifier: String) -> String {
         identifier.push('_');
     }
     identifier
+}
+
+fn import_alias(identifier: &str, local: &str) -> String {
+    if identifier == local { identifier.to_string() } else { format!("{identifier} as {local}") }
 }

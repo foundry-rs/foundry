@@ -22,13 +22,17 @@ pub struct ContractConstructorData {
     pub abi_encode_args: String,
     /// Constructor struct fields.
     pub struct_fields: String,
+    /// Generated helper contract identifier.
+    pub helper_contract: String,
+    /// Generated constructor argument struct identifier.
+    pub args_struct: String,
+    /// Generated ABI encoding function identifier.
+    pub encode_function: String,
 }
 
 /// Keeps data about a single contract definition.
 #[derive(Debug)]
 pub(crate) struct ContractData {
-    /// HIR Id of the contract.
-    contract_id: ContractId,
     /// Path of the source file.
     path: PathBuf,
     /// Name of the contract
@@ -55,6 +59,8 @@ impl ContractData {
             .map(|ctor_id| gcx.hir.function(ctor_id))
             .filter(|ctor| !ctor.parameters.is_empty())
             .map(|ctor| {
+                let source_text = source.file.src.as_str();
+                let contract_id = contract_id.index();
                 let mut abi_encode_args = vec![];
                 let mut struct_fields = vec![];
                 let mut arg_index = 0;
@@ -67,7 +73,7 @@ impl ContractData {
                     } else {
                         // Generate a unique name if the constructor arg does not have one.
                         arg_index += 1;
-                        format!("foundry_pp_ctor_arg{arg_index}")
+                        unique_identifier(source_text, format!("foundry_pp_ctor_arg{arg_index}"))
                     };
                     abi_encode_args.push(format!("args.{name}"));
                     struct_fields.push(format!("{ty} {name}"));
@@ -76,11 +82,22 @@ impl ContractData {
                 ContractConstructorData {
                     abi_encode_args: abi_encode_args.join(", "),
                     struct_fields: struct_fields.join("; "),
+                    helper_contract: unique_identifier(
+                        source_text,
+                        format!("DeployHelper{contract_id}"),
+                    ),
+                    args_struct: unique_identifier(
+                        source_text,
+                        "FoundryPpConstructorArgs".to_string(),
+                    ),
+                    encode_function: unique_identifier(
+                        source_text,
+                        format!("encodeArgs{contract_id}"),
+                    ),
                 }
             });
 
         Self {
-            contract_id,
             path: path.to_path_buf(),
             name: contract.name.to_string(),
             constructor_data,
@@ -132,12 +149,14 @@ impl ContractData {
     /// vm.deployCode("artifact path", encodeArgs335(DeployHelper335.FoundryPpConstructorArgs({name: name, symbol: symbol})))
     /// ```
     pub fn build_helper(&self) -> Option<String> {
-        let Self { contract_id, path, name, constructor_data, artifact: _ } = self;
+        let Self { path, name, constructor_data, artifact: _ } = self;
 
         let Some(constructor_details) = constructor_data else { return None };
-        let contract_id = contract_id.index();
         let struct_fields = &constructor_details.struct_fields;
         let abi_encode_args = &constructor_details.abi_encode_args;
+        let helper_contract = &constructor_details.helper_contract;
+        let args_struct = &constructor_details.args_struct;
+        let encode_function = &constructor_details.encode_function;
 
         let helper = format!(
             r#"
@@ -146,13 +165,13 @@ pragma solidity >=0.4.0;
 
 import "{path}";
 
-abstract contract DeployHelper{contract_id} is {name} {{
-    struct FoundryPpConstructorArgs {{
+abstract contract {helper_contract} is {name} {{
+    struct {args_struct} {{
         {struct_fields};
     }}
 }}
 
-function encodeArgs{contract_id}(DeployHelper{contract_id}.FoundryPpConstructorArgs memory args) pure returns (bytes memory) {{
+function {encode_function}({helper_contract}.{args_struct} memory args) pure returns (bytes memory) {{
     return abi.encode({abi_encode_args});
 }}
         "#,
@@ -161,6 +180,13 @@ function encodeArgs{contract_id}(DeployHelper{contract_id}.FoundryPpConstructorA
 
         Some(helper)
     }
+}
+
+fn unique_identifier(source: &str, mut identifier: String) -> String {
+    while source.contains(&identifier) {
+        identifier.push('_');
+    }
+    identifier
 }
 
 /// Collects preprocessor data from referenced contracts.
