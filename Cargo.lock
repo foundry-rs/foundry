@@ -5548,7 +5548,7 @@ dependencies = [
 [[package]]
 name = "foundry-block-explorers"
 version = "0.24.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=327739f0d2b848725b462271276f27aecd8b8ff9#327739f0d2b848725b462271276f27aecd8b8ff9"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=2a6ac05e5532d0402f4cae812fa6062d85b87bde#2a6ac05e5532d0402f4cae812fa6062d85b87bde"
 dependencies = [
  "alloy-chains",
  "alloy-json-abi",
@@ -5797,7 +5797,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=327739f0d2b848725b462271276f27aecd8b8ff9#327739f0d2b848725b462271276f27aecd8b8ff9"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=2a6ac05e5532d0402f4cae812fa6062d85b87bde#2a6ac05e5532d0402f4cae812fa6062d85b87bde"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -5828,7 +5828,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=327739f0d2b848725b462271276f27aecd8b8ff9#327739f0d2b848725b462271276f27aecd8b8ff9"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=2a6ac05e5532d0402f4cae812fa6062d85b87bde#2a6ac05e5532d0402f4cae812fa6062d85b87bde"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -5837,7 +5837,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-solc"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=327739f0d2b848725b462271276f27aecd8b8ff9#327739f0d2b848725b462271276f27aecd8b8ff9"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=2a6ac05e5532d0402f4cae812fa6062d85b87bde#2a6ac05e5532d0402f4cae812fa6062d85b87bde"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -5857,7 +5857,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=327739f0d2b848725b462271276f27aecd8b8ff9#327739f0d2b848725b462271276f27aecd8b8ff9"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=2a6ac05e5532d0402f4cae812fa6062d85b87bde#2a6ac05e5532d0402f4cae812fa6062d85b87bde"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -5870,7 +5870,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-core"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=327739f0d2b848725b462271276f27aecd8b8ff9#327739f0d2b848725b462271276f27aecd8b8ff9"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=2a6ac05e5532d0402f4cae812fa6062d85b87bde#2a6ac05e5532d0402f4cae812fa6062d85b87bde"
 dependencies = [
  "alloy-primitives",
  "dunce",
@@ -6220,7 +6220,7 @@ dependencies = [
 [[package]]
 name = "foundry-fork-db"
 version = "0.27.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=327739f0d2b848725b462271276f27aecd8b8ff9#327739f0d2b848725b462271276f27aecd8b8ff9"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=2a6ac05e5532d0402f4cae812fa6062d85b87bde#2a6ac05e5532d0402f4cae812fa6062d85b87bde"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
@@ -6237,7 +6237,7 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
- "zstd",
+ "zstd 0.14.0",
 ]
 
 [[package]]
@@ -6330,7 +6330,7 @@ dependencies = [
 [[package]]
 name = "foundry-wallets"
 version = "0.1.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=327739f0d2b848725b462271276f27aecd8b8ff9#327739f0d2b848725b462271276f27aecd8b8ff9"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=2a6ac05e5532d0402f4cae812fa6062d85b87bde#2a6ac05e5532d0402f4cae812fa6062d85b87bde"
 dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",
@@ -6350,7 +6350,7 @@ dependencies = [
  "axum",
  "clap",
  "derive_builder",
- "dirs 6.0.0",
+ "dirs 7.0.0",
  "eth-keystore",
  "eyre",
  "hidapi-rusb",
@@ -10487,7 +10487,7 @@ version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "80addacffc5df9398c55919f8993922d2b688f2aa5753708fdd658ca3cc63e39"
 dependencies = [
- "zstd",
+ "zstd 0.13.3",
 ]
 
 [[package]]
@@ -10496,7 +10496,7 @@ version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "08f1ebb37e81a596ce16e81bec6a0c9accbdb914cf19b9190eff69ed00395900"
 dependencies = [
- "zstd",
+ "zstd 0.13.3",
 ]
 
 [[package]]
@@ -11969,7 +11969,7 @@ dependencies = [
  "derive_more",
  "dunce",
  "inturn",
- "itertools 0.10.5",
+ "itertools 0.14.0",
  "itoa",
  "normalize-path",
  "once_map",
@@ -11981,7 +11981,7 @@ dependencies = [
  "solar-config",
  "solar-data-structures",
  "solar-macros",
- "thiserror 1.0.69",
+ "thiserror 2.0.20",
  "tracing",
  "unicode-width 0.2.2",
 ]
@@ -12016,7 +12016,7 @@ dependencies = [
  "solar-interface",
  "solar-parse",
  "solar-sema",
- "thiserror 1.0.69",
+ "thiserror 2.0.20",
  "tokio",
  "tokio-util",
  "toml_edit",
@@ -12042,7 +12042,7 @@ dependencies = [
  "alloy-primitives",
  "bitflags 2.13.1",
  "bumpalo",
- "itertools 0.10.5",
+ "itertools 0.14.0",
  "memchr",
  "num-bigint 0.5.1",
  "num-rational",
@@ -12370,7 +12370,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "tempfile",
- "thiserror 1.0.69",
+ "thiserror 2.0.20",
  "url",
  "zip",
 ]
@@ -14560,7 +14560,16 @@ version = "0.13.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e91ee311a569c327171651566e07972200e76fcfe2242a4fa446149a3881c08a"
 dependencies = [
- "zstd-safe",
+ "zstd-safe 7.2.4",
+]
+
+[[package]]
+name = "zstd"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf06bd8162af0734b344780deb55b42a2429ae430870d13fcc12f238e880fe6e"
+dependencies = [
+ "zstd-safe 8.0.0",
 ]
 
 [[package]]
@@ -14573,10 +14582,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "zstd-sys"
-version = "2.0.16+zstd.1.5.7"
+name = "zstd-safe"
+version = "8.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "91e19ebc2adc8f83e43039e79776e3fda8ca919132d68a1fed6a5faca2683748"
+checksum = "ae42c0555055784c70058d19ba8e275528e8a99a706684868ace5da4e716a4ab"
+dependencies = [
+ "zstd-sys",
+]
+
+[[package]]
+name = "zstd-sys"
+version = "2.1.0+zstd.1.5.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0ef0a8027ec3ee71300ab3bcbcd0393f434aa72b91ca6d635a39941deae8eea0"
 dependencies = [
  "cc",
  "pkg-config",
