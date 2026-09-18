@@ -19,16 +19,11 @@ env:
   RUSTC_WRAPPER: "sccache"
 
 jobs:
-  cargo-cooldown:
-    permissions:
-      contents: read
-    uses: ./.github/workflows/cargo-cooldown.yml
-
   run-benchmarks:
     name: Run All Benchmarks
-    needs: cargo-cooldown
     runs-on: depot-ubuntu-24.04-32
     permissions:
+      id-token: write
       contents: read
       pull-requests: read
     outputs:
@@ -38,6 +33,8 @@ jobs:
       FOUNDRY_BENCH_LOCAL_BUILD_PROFILE: profiling
       FOUNDRY_BENCH_LOCAL_BUILD_BINS: forge
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@ce5deead22108ccc6aafba0ca47d2a9e6d1a40e8
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -87,16 +84,6 @@ jobs:
             echo "versions=$REQUESTED_VERSIONS" >> "$GITHUB_OUTPUT"
             echo "is_source_comparison=false" >> "$GITHUB_OUTPUT"
           fi
-
-      - name: Enforce baseline Cargo dependency cooldown
-        if: steps.prep.outputs.is_source_comparison == 'true'
-        uses: tempoxyz/gh-actions/actions/cargo-cooldown@0aa93238d85fd085d7901320b670cc6adb7a02f3
-        env:
-          RUSTC_WRAPPER: ""
-        with:
-          # Baselines may contain the same named package exceptions as the candidate.
-          strict-project-config: false
-          working-directory: ../foundry-baseline
 
       - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
 
