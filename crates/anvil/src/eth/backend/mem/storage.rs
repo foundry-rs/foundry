@@ -453,14 +453,7 @@ impl<N: Network> BlockchainStorage<N> {
             let is_canonical = self.hashes.get(&number).is_some_and(|canonical| *canonical == hash);
             (number, is_canonical, hash)
         });
-        blocks
-            .into_iter()
-            .map(|(hash, block)| {
-                let mut serialized = SerializableBlock::from(block.clone());
-                serialized.block_access_list = self.block_access_lists.get(hash).cloned();
-                serialized
-            })
-            .collect()
+        blocks.into_iter().map(|(_, block)| block.clone().into()).collect()
     }
 
     /// Adds a block to storage and returns its hash.
@@ -487,16 +480,12 @@ impl<N: Network> BlockchainStorage<N> {
         serializable_blocks: Vec<SerializableBlock>,
         fork_boundary: Option<u64>,
     ) {
-        for mut serializable_block in serializable_blocks {
-            let block_access_list = serializable_block.block_access_list.take();
+        for serializable_block in serializable_blocks {
             let block: Block = serializable_block.into();
             if fork_boundary.is_some_and(|boundary| block.header.number() <= boundary) {
                 continue;
             }
-            let block_hash = self.insert_block(block);
-            if let Some(block_access_list) = block_access_list {
-                self.block_access_lists.insert(block_hash, block_access_list);
-            }
+            self.insert_block(block);
         }
     }
 
@@ -705,7 +694,6 @@ mod tests {
     use super::*;
     use crate::eth::backend::{db::Db, mem::in_memory_db::StateRootDb};
     use alloy_consensus::Header;
-    use alloy_eips::eip7928::AccountChanges;
     use alloy_primitives::{Address, hex};
     use alloy_rlp::Decodable;
     use foundry_primitives::FoundryNetwork;
@@ -909,8 +897,6 @@ mod tests {
         let block = create_block(header.clone().into(), vec![tx.clone()]);
         let block_hash = block.header.hash_slow();
         dump_storage.blocks.insert(block_hash, block);
-        let block_access_list = vec![AccountChanges::new(Address::ZERO)];
-        dump_storage.block_access_lists.insert(block_hash, block_access_list.clone());
 
         let serialized_blocks = dump_storage.serialized_blocks();
         let serialized_transactions = dump_storage.serialized_transactions();
@@ -924,7 +910,6 @@ mod tests {
         assert_eq!(loaded_block.header.gas_limit(), header.gas_limit());
         let loaded_tx = loaded_block.body.transactions.first().unwrap();
         assert_eq!(loaded_tx, &tx);
-        assert_eq!(load_storage.block_access_lists.get(&block_hash), Some(&block_access_list));
     }
 
     #[test]

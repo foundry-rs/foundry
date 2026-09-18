@@ -3,6 +3,7 @@
 use crate::mem::storage::MinedTransaction;
 use alloy_consensus::BlockBody;
 use alloy_eips::{eip4895::Withdrawals, eip7928::BlockAccessList};
+use alloy_evm::block::BalIndexedDatabase;
 use alloy_network::Network;
 use alloy_primitives::{
     Address, B256, Bytes, U256, keccak256,
@@ -26,7 +27,7 @@ use revm::{
     context_interface::block::BlobExcessGasAndPrice,
     database::{AccountState, CacheDB, DatabaseRef, DbAccount, bal::BalState},
     primitives::{KECCAK_EMPTY, eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE},
-    state::AccountInfo,
+    state::{AccountInfo, bal::BlockAccessIndex},
 };
 use serde::{
     Deserialize, Deserializer, Serialize,
@@ -186,7 +187,7 @@ impl<T: DatabaseRef<Error = DatabaseError>> AnvilCacheDB<T> {
     }
 
     /// Takes the recorded EIP-7928 block access list, if recording was enabled.
-    pub fn take_block_access_list(&mut self) -> Option<alloy_eips::eip7928::BlockAccessList> {
+    pub fn take_block_access_list(&mut self) -> Option<BlockAccessList> {
         self.1.take_built_alloy_bal()
     }
 }
@@ -251,11 +252,9 @@ impl<T: DatabaseRef<Error = DatabaseError> + fmt::Debug> DatabaseCommit for Anvi
     }
 }
 
-impl<T: DatabaseRef<Error = DatabaseError> + fmt::Debug> alloy_evm::block::BalIndexedDatabase
-    for AnvilCacheDB<T>
-{
+impl<T: DatabaseRef<Error = DatabaseError> + fmt::Debug> BalIndexedDatabase for AnvilCacheDB<T> {
     fn set_bal_index(&mut self, index: u64) {
-        self.1.bal_index = revm::state::bal::BlockAccessIndex::new(index);
+        self.1.bal_index = BlockAccessIndex::new(index);
     }
 
     fn bump_bal_index(&mut self) {
@@ -263,15 +262,15 @@ impl<T: DatabaseRef<Error = DatabaseError> + fmt::Debug> alloy_evm::block::BalIn
     }
 }
 
-impl<T: DatabaseRef<Error = DatabaseError> + fmt::Debug> alloy_evm::block::BalIndexedDatabase
+impl<T: DatabaseRef<Error = DatabaseError> + fmt::Debug> BalIndexedDatabase
     for &mut AnvilCacheDB<T>
 {
     fn set_bal_index(&mut self, index: u64) {
-        self.1.bal_index = revm::state::bal::BlockAccessIndex::new(index);
+        (**self).set_bal_index(index);
     }
 
     fn bump_bal_index(&mut self) {
-        self.1.bump_bal_index();
+        (**self).bump_bal_index();
     }
 }
 
@@ -850,8 +849,6 @@ pub struct SerializableBlock {
     pub ommers: Vec<FoundryHeader>,
     #[serde(default)]
     pub withdrawals: Option<Withdrawals>,
-    #[serde(default)]
-    pub block_access_list: Option<BlockAccessList>,
 }
 
 impl From<Block> for SerializableBlock {
@@ -861,7 +858,6 @@ impl From<Block> for SerializableBlock {
             transactions: block.body.transactions.into_iter().map(Into::into).collect(),
             ommers: block.body.ommers.into_iter().collect(),
             withdrawals: block.body.withdrawals,
-            block_access_list: None,
         }
     }
 }

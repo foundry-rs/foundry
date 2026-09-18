@@ -480,7 +480,9 @@ where
             state_changes.push(state.clone());
         }
         self.receipts.push(receipt);
-        self.evm.db_mut().bump_bal_index();
+        // EIP-7928 block access index 0 holds the pre-block system writes, transaction `i` is
+        // index `i + 1` and the post-block system writes follow the last transaction.
+        self.evm.db_mut().set_bal_index(self.receipts.len() as u64);
         self.evm.db_mut().commit(state);
 
         GasOutput::new(gas_used)

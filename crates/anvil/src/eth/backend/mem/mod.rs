@@ -59,11 +59,11 @@ use alloy_eips::{
     eip7685::EMPTY_REQUESTS_HASH,
     eip7840::BlobParams,
     eip7910::SystemContract,
-    eip7928::{EMPTY_BLOCK_ACCESS_LIST_HASH, compute_block_access_list_hash},
+    eip7928::{BlockAccessList, EMPTY_BLOCK_ACCESS_LIST_HASH, compute_block_access_list_hash},
 };
 use alloy_evm::{
     Database, EthEvmFactory, Evm, EvmEnv, EvmFactory, FromTxWithEncoded,
-    block::{BlockExecutionResult, BlockExecutor, StateDB},
+    block::{BalIndexedDatabase, BlockExecutionResult, BlockExecutor, StateDB},
     eth::{EthEvm, EthEvmContext},
     overrides::{OverrideBlockHashes, apply_state_overrides},
     precompiles::{DynPrecompile, MovePrecompileError, Precompile, PrecompilesMap},
@@ -2888,7 +2888,7 @@ impl<N: Network> Backend<N> {
         BlockchainError,
     >
     where
-        DB: StateDB<Error = DatabaseError> + alloy_evm::block::BalIndexedDatabase,
+        DB: StateDB<Error = DatabaseError> + BalIndexedDatabase,
     {
         let spec_id = *evm_env.spec_id();
         #[cfg(feature = "monad")]
@@ -5432,18 +5432,12 @@ where
     }
 
     /// Returns the EIP-7928 block access list stored for a locally mined block hash.
-    pub fn block_access_list_by_hash(
-        &self,
-        hash: B256,
-    ) -> Option<alloy_eips::eip7928::BlockAccessList> {
+    pub fn block_access_list_by_hash(&self, hash: B256) -> Option<BlockAccessList> {
         self.blockchain.storage.read().block_access_lists.get(&hash).cloned()
     }
 
     /// Returns the EIP-7928 block access list stored for a locally mined block number.
-    pub fn block_access_list_by_number(
-        &self,
-        number: u64,
-    ) -> Option<alloy_eips::eip7928::BlockAccessList> {
+    pub fn block_access_list_by_number(&self, number: u64) -> Option<BlockAccessList> {
         let storage = self.blockchain.storage.read();
         storage.hashes.get(&number).and_then(|hash| storage.block_access_lists.get(hash)).cloned()
     }
@@ -5688,7 +5682,7 @@ where
         >,
     ) -> Result<ExecutedHistoricalReplay>
     where
-        DB: StateDB<Error = DatabaseError> + alloy_evm::block::BalIndexedDatabase,
+        DB: StateDB<Error = DatabaseError> + BalIndexedDatabase,
     {
         #[cfg(feature = "monad")]
         if self.is_monad() {
@@ -5809,7 +5803,7 @@ where
         transactions: Vec<MaybeImpersonatedTransaction<FoundryTxEnvelope>>,
         transaction_infos: Vec<TransactionInfo>,
         parent_beacon_block_root: Option<B256>,
-        block_access_list: Option<&alloy_eips::eip7928::BlockAccessList>,
+        block_access_list: Option<&BlockAccessList>,
     ) -> BlockInfo<N> {
         let spec_id = *evm_env.spec_id();
         let is_shanghai = spec_id >= SpecId::SHANGHAI;
@@ -5927,13 +5921,10 @@ where
                 let gas_config = self.pool_tx_gas_config(&mining_evm_env);
 
                 let mut candidate_db = AnvilCacheDB::new(&**db);
-                if self.networks.execution_network().is_ethereum()
-                    && matches!(
-                        hardfork,
-                        FoundryHardfork::Ethereum(hardfork)
-                            if hardfork >= EthereumHardfork::Amsterdam
-                    )
-                {
+                if matches!(
+                    hardfork,
+                    FoundryHardfork::Ethereum(hardfork) if hardfork >= EthereumHardfork::Amsterdam
+                ) {
                     candidate_db.enable_bal_recording();
                 }
                 let (pool_result, block_result) = self.execute_with_block_executor(
