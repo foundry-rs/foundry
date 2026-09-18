@@ -3719,6 +3719,48 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
     }
 });
 
+forgetest!(preprocess_payable_try_adapter, |prj, cmd| {
+    let target = r#"
+contract Target {
+    uint256 public value;
+    constructor(uint256 offset) payable { value = offset + 111; }
+    receive() external payable {}
+}
+"#;
+    prj.add_source("Target.sol", target);
+    prj.add_test(
+        "Payable.t.sol",
+        r#"
+import {Target} from "../src/Target.sol";
+
+contract PayableTest {
+    function test_value() public {
+        try new Target(0) returns (Target target) {
+            require(target.value() == 111, "changed value");
+        } catch {
+            revert("deployment failed");
+        }
+    }
+}
+"#,
+    );
+
+    for dynamic_test_linking in [false, true] {
+        prj.update_config(|config| config.dynamic_test_linking = dynamic_test_linking);
+        prj.add_source("Target.sol", target);
+        cmd.forge_fuse().args(["test", "--force"]).assert_success();
+        cmd.forge_fuse().arg("test").assert_success();
+        prj.add_source("Target.sol", &target.replace("+ 111", "+ 222"));
+        cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/Payable.t.sol:PayableTest
+[FAIL: changed value] test_value() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+    }
+});
+
 forgetest!(preprocess_generated_path_string_escaping, |prj, cmd| {
     let target = r#"
 contract Zero {

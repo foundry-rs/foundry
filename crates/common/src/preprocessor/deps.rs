@@ -876,7 +876,7 @@ pub(crate) fn remove_bytecode_dependencies(
                     format!(
                         r#"
                             function {adapter}(address addr) public pure returns ({ty}) {{
-                                return {ty}(addr);
+                                return {ty}(payable(addr));
                             }}
                         "#
                     )
