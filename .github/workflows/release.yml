@@ -268,7 +268,9 @@ jobs:
 
   release-docker:
     name: Release Docker
-    needs: prepare
+    # The image is pushed during the Depot build, so wait for every native target.
+    needs: [prepare, release]
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && (needs.release.result == 'success' || (needs.prepare.outputs.skip_assets == 'true' && needs.release.result == 'skipped')) }}
     uses: ./.github/workflows/docker-publish.yml
     permissions:
       actions: read
@@ -279,6 +281,7 @@ jobs:
       packages: write
     with:
       tag_name: ${{ needs.prepare.outputs.tag_name }}
+      linux-validated: ${{ needs.release.result == 'success' }}
 
   release-docker-metadata:
     name: Record Docker digest
@@ -374,6 +377,13 @@ jobs:
           toolchain: stable
           targets: ${{ matrix.target }}
       - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
+
+      # Include locked workspace dependencies not reached by the --bins build.
+      - name: Fetch locked dependencies
+        env:
+          TARGET: ${{ matrix.target }}
+        shell: bash
+        run: cargo fetch --locked --target "$TARGET"
 
       - name: Install LLVM profiling tools
         if: matrix.target == 'x86_64-unknown-linux-gnu'
