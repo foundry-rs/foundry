@@ -1,4 +1,5 @@
 use crate::cmd::rpc_provider;
+use alloy_primitives::Bytes;
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
 use clap::Parser;
@@ -16,7 +17,7 @@ pub struct BalArgs {
     /// Can also be the tags earliest, finalized, safe, latest, or pending.
     block: Option<BlockId>,
 
-    /// Print the raw RLP encoded block access list.
+    /// Print the RLP encoded block access list.
     #[arg(long)]
     raw: bool,
 
@@ -28,16 +29,13 @@ impl BalArgs {
     pub async fn run(self) -> Result<()> {
         let provider = rpc_provider(&self.rpc)?;
         let block = self.block.unwrap_or_default();
+        let bal = provider.get_block_access_list(block).await?.ok_or_else(|| missing_bal(block))?;
 
+        // `eth_getBlockAccessListRaw` is not a specified method, so the encoding is done here
+        // rather than asked of the node.
         if self.raw {
-            let bal = provider
-                .get_block_access_list_raw(block)
-                .await?
-                .ok_or_else(|| missing_bal(block))?;
-            print_scalar(bal)
+            print_scalar(Bytes::from(alloy_rlp::encode(&bal)))
         } else {
-            let bal =
-                provider.get_block_access_list(block).await?.ok_or_else(|| missing_bal(block))?;
             print_json_object(bal)
         }
     }

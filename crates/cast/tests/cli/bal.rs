@@ -85,16 +85,11 @@ casttest!(bal, async |_prj, cmd| {
 
 casttest!(bal_raw, async |_prj, cmd| {
     let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
-    let (endpoint, _) = spawn_rpc_proxy_canned_method(
-        handle.http_endpoint(),
-        "eth_getBlockAccessListRaw",
-        json!("0xd8d794a94f5374fce5edbc8e2a8697c15331677e6ebf0bc0c0c0c0c0"),
-    )
-    .await;
+    let endpoint = canned_endpoint(handle.http_endpoint(), block_access_list()).await;
 
     cmd.args(["bal", "latest", "--raw", "--rpc-url", &endpoint]).assert_success().stdout_eq(str![
         [r#"
-0xd8d794a94f5374fce5edbc8e2a8697c15331677e6ebf0bc0c0c0c0c0
+0xf838f794a94f5374fce5edbc8e2a8697c15331677e6ebf0bc8c780c5c480820100c101cccb8089056bc75e2d63100000c3c28001c5c480826001
 
 "#]
     ]);
