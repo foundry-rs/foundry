@@ -13,7 +13,7 @@ declare_forge_lint!(
     INCONSISTENT_TYPE_NAMES,
     Severity::Low,
     "inconsistent-type-names",
-    "use explicit `uint256` and `int256` type names consistently within a contract"
+    "contract mixes shorthand and explicit integer type names; use `uint256` and `int256` consistently"
 );
 
 impl<'ast> ProjectLintPass<'ast> for InconsistentTypeNames {

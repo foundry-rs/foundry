@@ -661,6 +661,28 @@ contract EventsArithmeticConcreteBase {
 
 contract EventsArithmeticConcreteDerived is EventsArithmeticConcreteBase {}
 
+contract NamedArgumentArithmetic {
+    address public owner = msg.sender;
+    uint256 public fee;
+
+    function setFee(uint256 next) external {
+        require(msg.sender == owner);
+        _setFee({next: next, ignored: 0});
+    }
+
+    function _setFee(uint256 ignored, uint256 next) internal {
+        fee = next; //~WARN: `fee` is changed without an event but is used in arithmetic
+    }
+
+    function quote() external view returns (uint256) {
+        return _scale({value: fee, ignored: 0});
+    }
+
+    function _scale(uint256 ignored, uint256 value) internal pure returns (uint256) {
+        return value * 2;
+    }
+}
+
 contract ReproAccessNameCalleeResultIgnored {
     address public owner = msg.sender;
     uint256 public price;

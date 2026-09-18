@@ -8,7 +8,8 @@ use solar::{
     ast::{BinOpKind, LitKind, UnOpKind},
     sema::{
         Gcx,
-        hir::{self, ElementaryType, Expr, ExprKind, TypeKind, VariableId},
+        hir::{ElementaryType, Expr, ExprKind, VariableId},
+        ty::TyKind,
     },
 };
 use std::cmp::Ordering;
@@ -27,11 +28,11 @@ impl<'gcx> LateLintPass<'gcx> for TypeBasedTautology {
         // A pair of comparisons can cover the complete type range even when neither is
         // tautological on its own, e.g. `x > 0 || x == 0` for `uint`.
         let is_tautology = if op.kind == BinOpKind::Or {
-            matches!((comparison_of(&gcx.hir, left), comparison_of(&gcx.hir, right)),
+            matches!((comparison_of(gcx, left), comparison_of(gcx, right)),
                 (Some(l), Some(r)) if is_boundary_composition(&l, &r))
         } else {
             split_comparison(expr).is_some_and(|(operand, val, op)| {
-                elem_type_of(&gcx.hir, operand)
+                elem_type_of(gcx, operand)
                     .and_then(integer_bounds)
                     .is_some_and(|range| is_tautology(range, val, op))
             })
@@ -114,9 +115,9 @@ struct Comparison {
 }
 
 /// A comparison of one resolved integer variable (possibly cast) against a constant.
-fn comparison_of<'gcx>(hir: &hir::Hir<'gcx>, expr: &'gcx Expr<'gcx>) -> Option<Comparison> {
+fn comparison_of<'gcx>(gcx: Gcx<'gcx>, expr: &'gcx Expr<'gcx>) -> Option<Comparison> {
     let (operand, val, op) = split_comparison(expr)?;
-    let (variable, cast_path, range) = comparison_operand_of(hir, operand)?;
+    let (variable, cast_path, range) = comparison_operand_of(gcx, operand)?;
     Some(Comparison { variable, cast_path, range, op, val })
 }
 
@@ -141,20 +142,20 @@ fn is_boundary_composition(l: &Comparison, r: &Comparison) -> bool {
 /// distinguishes the operand from the uncast expression; any other cast resets the range to the
 /// target type's and becomes part of the operand's identity.
 fn comparison_operand_of<'gcx>(
-    hir: &hir::Hir<'gcx>,
+    gcx: Gcx<'gcx>,
     expr: &'gcx Expr<'gcx>,
 ) -> Option<(VariableId, Vec<ElementaryType>, Range)> {
     match &expr.peel_parens().kind {
-        ExprKind::Ident(reses) => {
-            let variable = reses.first()?.as_variable()?;
-            let TypeKind::Elementary(ty) = hir.variable(variable).ty.kind else { return None };
+        ExprKind::Ident(_) => {
+            let variable = gcx.resolved_variable(expr)?;
+            let ty = elem_type_of(gcx, expr)?;
             Some((variable, Vec::new(), integer_bounds(ty)?))
         }
         ExprKind::Call(callee, args, _) if args.len() == 1 => {
             let ty = cast_type(callee)?;
             let inner = args.exprs().next()?;
-            let (variable, mut cast_path, range) = comparison_operand_of(hir, inner)?;
-            let source = elem_type_of(hir, inner)?;
+            let (variable, mut cast_path, range) = comparison_operand_of(gcx, inner)?;
+            let source = elem_type_of(gcx, inner)?;
             let widening = match (source, ty) {
                 (ElementaryType::UInt(from), ElementaryType::UInt(to))
                 | (ElementaryType::Int(from), ElementaryType::Int(to)) => from.bits() <= to.bits(),
@@ -170,14 +171,10 @@ fn comparison_operand_of<'gcx>(
     }
 }
 
-/// The elementary type of a variable reference or of an explicit cast's target.
-fn elem_type_of(hir: &hir::Hir<'_>, expr: &Expr<'_>) -> Option<ElementaryType> {
-    match &expr.peel_parens().kind {
-        ExprKind::Ident(reses) => match hir.variable(reses.first()?.as_variable()?).ty.kind {
-            TypeKind::Elementary(ty) => Some(ty),
-            _ => None,
-        },
-        ExprKind::Call(callee, ..) => cast_type(callee),
+/// The elementary type selected by the type checker.
+fn elem_type_of(gcx: Gcx<'_>, expr: &Expr<'_>) -> Option<ElementaryType> {
+    match gcx.type_of_expr(expr.peel_parens().id)?.peel_refs().kind {
+        TyKind::Elementary(ty) => Some(ty),
         _ => None,
     }
 }

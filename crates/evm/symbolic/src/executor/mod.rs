@@ -18,6 +18,7 @@ struct CallOutcome {
 enum CallStatus {
     Success,
     Revert,
+    ExceptionalHalt,
     Failure,
 }
 
@@ -26,6 +27,7 @@ enum JoinedCallOutcome {
     ExpectedRevert { parent: PathState, child: PathState },
     Success { parent: PathState, child: PathState },
     Revert { parent: PathState, child: PathState },
+    ExceptionalHalt(PathState),
     Failure(PathState),
 }
 
@@ -39,6 +41,11 @@ enum CallPathOpcode {
     Execute(u8),
     Halt,
     Discard,
+}
+
+pub(super) struct FeasiblePath {
+    state: PathState,
+    from_deferred: bool,
 }
 
 #[derive(Debug)]
@@ -81,8 +88,8 @@ impl SymbolicExecutor {
         &mut self,
         paths: &mut VecDeque<PathState>,
         deferred_paths: &mut VecDeque<PathState>,
-        escalate_deferred: bool,
-    ) -> Result<Option<PathState>, SymbolicError> {
+        deferred_mode: DeferredPathMode,
+    ) -> Result<Option<FeasiblePath>, SymbolicError> {
         loop {
             while let Some(mut state) = self.pop_next_path(paths) {
                 if state.take_deferred_feasibility_check() {
@@ -95,7 +102,7 @@ impl SymbolicExecutor {
                         Ok(BranchFeasibility::Sat) => {}
                         Ok(BranchFeasibility::Unsat) => continue,
                         Ok(BranchFeasibility::NeedsSolver) => {
-                            if !escalate_deferred {
+                            if matches!(deferred_mode, DeferredPathMode::Skip) {
                                 self.defer_hard_arithmetic();
                                 continue;
                             }
@@ -110,7 +117,7 @@ impl SymbolicExecutor {
                         Err(err) => return Err(err),
                     }
                 }
-                return Ok(Some(state));
+                return Ok(Some(FeasiblePath { state, from_deferred: false }));
             }
 
             let Some(state) = self.pop_next_path(deferred_paths) else {
@@ -126,7 +133,7 @@ impl SymbolicExecutor {
             self.check_timeout()?;
             trace!("escalating deferred hard arithmetic branch to SMT solver");
             match self.is_sat_with_state(&state, &state.constraints) {
-                Ok(true) => return Ok(Some(state)),
+                Ok(true) => return Ok(Some(FeasiblePath { state, from_deferred: true })),
                 Ok(false) => {}
                 Err(SymbolicError::SolverUnknown) => self.defer_solver_unknown(),
                 Err(err) => return Err(err),
@@ -158,7 +165,7 @@ impl SymbolicExecutor {
         if let Some(mut expected) = parent.expected_revert.clone() {
             match outcome.status {
                 CallStatus::Success => return Ok(JoinedCallOutcome::Failure(parent)),
-                CallStatus::Revert | CallStatus::Failure => {
+                CallStatus::Revert | CallStatus::ExceptionalHalt | CallStatus::Failure => {
                     if !self.expected_revert_matches(
                         &mut parent,
                         &expected,
@@ -180,6 +187,7 @@ impl SymbolicExecutor {
         Ok(match outcome.status {
             CallStatus::Success => JoinedCallOutcome::Success { parent, child: outcome.state },
             CallStatus::Revert => JoinedCallOutcome::Revert { parent, child: outcome.state },
+            CallStatus::ExceptionalHalt => JoinedCallOutcome::ExceptionalHalt(parent),
             CallStatus::Failure => JoinedCallOutcome::Failure(parent),
         })
     }
@@ -208,24 +216,41 @@ impl SymbolicExecutor {
         kind: CallPathKind,
     ) -> Result<Vec<CallOutcome>, SymbolicError> {
         let mut outcomes = Vec::new();
+        let mut outcomes_before_deferred = None;
         let path_limit = self.config.path_width() as usize;
         let depth_limit = self.config.execution_depth() as usize;
 
         loop {
-            // Let invariant execution inspect each completed sequence outcome before escalating a
-            // deferred hard-arithmetic sibling. External calls still return all outcomes together
-            // because their parent frame must join them before it can continue.
+            // Let callers inspect a completed outcome before spending the remaining budget on a
+            // deferred sibling. A later proof pass reconstructs and drains all nested paths.
             if matches!(kind, CallPathKind::Sequence) && !outcomes.is_empty() {
                 break;
             }
-            let Some(mut state) = self.pop_next_feasible_path(
-                worklist,
-                deferred_worklist,
-                matches!(kind, CallPathKind::Sequence),
-            )?
+            if matches!(kind, CallPathKind::External)
+                && matches!(self.nested_deferred_mode, DeferredPathMode::Yield)
+                && outcomes_before_deferred.is_some_and(|count| outcomes.len() > count)
+            {
+                if !worklist.is_empty() || !deferred_worklist.is_empty() {
+                    self.defer_hard_arithmetic();
+                }
+                break;
+            }
+            let deferred_mode = match kind {
+                CallPathKind::Sequence => DeferredPathMode::Drain,
+                CallPathKind::External => self.nested_deferred_mode,
+            };
+            let Some(next) =
+                self.pop_next_feasible_path(worklist, deferred_worklist, deferred_mode)?
             else {
                 break;
             };
+            if next.from_deferred
+                && matches!(kind, CallPathKind::External)
+                && matches!(deferred_mode, DeferredPathMode::Yield)
+            {
+                outcomes_before_deferred = Some(outcomes.len());
+            }
+            let mut state = next.state;
             if *completed_paths >= path_limit {
                 return Err(SymbolicError::Unsupported("symbolic path limit exceeded"));
             }
@@ -266,6 +291,11 @@ impl SymbolicExecutor {
                             let mut out_of_bounds_constraints = state.constraints.clone();
                             out_of_bounds_constraints.push(condition.not(&mut self.cx));
                             if self.is_sat_with_state(&state, &out_of_bounds_constraints)? {
+                                if *completed_paths >= path_limit {
+                                    return Err(SymbolicError::Unsupported(
+                                        "symbolic path limit exceeded",
+                                    ));
+                                }
                                 let mut halted = state.clone();
                                 halted.constraints = out_of_bounds_constraints;
                                 *completed_paths += 1;
@@ -285,6 +315,9 @@ impl SymbolicExecutor {
                 let op = match op {
                     CallPathOpcode::Execute(op) => op,
                     CallPathOpcode::Halt => {
+                        if *completed_paths >= path_limit {
+                            return Err(SymbolicError::Unsupported("symbolic path limit exceeded"));
+                        }
                         *completed_paths += 1;
                         let status = self.successful_call_status(kind, &state);
                         outcomes.push(CallOutcome { status, state });
@@ -306,17 +339,34 @@ impl SymbolicExecutor {
                 )? {
                     StepOutcome::Continue => {}
                     StepOutcome::Halt => {
+                        if *completed_paths >= path_limit {
+                            return Err(SymbolicError::Unsupported("symbolic path limit exceeded"));
+                        }
                         *completed_paths += 1;
                         let status = self.successful_call_status(kind, &state);
                         outcomes.push(CallOutcome { status, state });
                         break;
                     }
                     StepOutcome::Revert => {
+                        if *completed_paths >= path_limit {
+                            return Err(SymbolicError::Unsupported("symbolic path limit exceeded"));
+                        }
                         *completed_paths += 1;
                         outcomes.push(CallOutcome { status: CallStatus::Revert, state });
                         break;
                     }
+                    StepOutcome::ExceptionalHalt => {
+                        if *completed_paths >= path_limit {
+                            return Err(SymbolicError::Unsupported("symbolic path limit exceeded"));
+                        }
+                        *completed_paths += 1;
+                        outcomes.push(CallOutcome { status: CallStatus::ExceptionalHalt, state });
+                        break;
+                    }
                     StepOutcome::Failure => {
+                        if *completed_paths >= path_limit {
+                            return Err(SymbolicError::Unsupported("symbolic path limit exceeded"));
+                        }
                         *completed_paths += 1;
                         outcomes.push(CallOutcome { status: CallStatus::Failure, state });
                         break;

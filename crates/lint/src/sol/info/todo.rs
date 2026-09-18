@@ -10,7 +10,7 @@ declare_forge_lint!(
     TODO_COMMENT,
     Severity::Info,
     "todo-comment",
-    "TODO/FIXME comments should be resolved before production"
+    "unresolved `TODO` or `FIXME` comment"
 );
 
 const MARKERS: &[&str] = &["TODO", "FIXME"];

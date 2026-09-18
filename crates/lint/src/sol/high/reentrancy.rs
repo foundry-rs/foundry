@@ -5,10 +5,9 @@ use crate::{
         Severity, SolLint,
         analysis::{
             DEFAULT_HELPER_ANALYSIS_CACHE_LIMIT, HelperAnalysisCache, arg_for_param,
-            branch_always_exits, cast_type, count_placeholders, expr_ty, for_each_child,
-            for_each_lhs_var, function_ids, is_address_cast, is_address_like, is_builtin,
-            is_inc_dec, is_require_or_assert, lhs_local_var, loop_update, state_lhs_vars,
-            stmts_before_placeholder, tuple_elems, unique,
+            branch_always_exits, cast_type, count_placeholders, expr_is_address, for_each_child,
+            for_each_lhs_var, is_address_cast, is_builtin, is_require_or_assert, lhs_local_var,
+            loop_update, state_lhs_vars, stmts_before_placeholder, tuple_elems,
         },
     },
 };
@@ -18,9 +17,10 @@ use solar::{
     interface::{Span, Symbol, data_structures::Never, kw, sym},
     sema::{
         Gcx,
+        builtins::Builtin,
         hir::{
-            self, CallArgs, CallOptions, ElementaryType, Expr, ExprKind, FunctionId, ItemId,
-            LoopSource, Res, Stmt, StmtKind, VariableId, Visit,
+            self, CallArgs, CallOptions, Expr, ExprKind, FunctionId, ItemId, LoopSource, Stmt,
+            StmtKind, VariableId, Visit,
         },
         ty::{TyFnKind, TyKind},
     },
@@ -436,11 +436,11 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
             return self.analyze_modifier_chain(modifiers, index + 1, body, state);
         };
 
-        self.seed_balance_parameters(modifier_func, &modifier.args, state);
+        self.seed_balance_parameters(modifier_id, &modifier.args, state);
         self.call_stack.push(modifier_id);
         let balance_guard = self
             .reentrancy_balance_enabled
-            .then(|| standard_reentrancy_guard_lock(&self.gcx.hir, modifier_func))
+            .then(|| standard_reentrancy_guard_lock(self.gcx, modifier_func))
             .flatten();
         let continuation = Some((modifiers, index + 1, body, balance_guard));
         let falls_through = self.analyze_block(modifier_body, continuation, state);
@@ -543,8 +543,8 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
             StmtKind::If(cond, then_stmt, else_stmt) => {
                 self.analyze_expr(cond, state);
                 if self.reentrancy_balance_enabled
-                    && (branch_stops_current_path(then_stmt)
-                        || else_stmt.is_some_and(branch_stops_current_path))
+                    && (branch_stops_current_path(self.gcx, then_stmt)
+                        || else_stmt.is_some_and(|expr| branch_stops_current_path(self.gcx, expr)))
                 {
                     self.emit_balance_calls(cond, state);
                 }
@@ -608,7 +608,7 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
         else_state: &mut FlowState,
     ) -> (bool, bool) {
         let predicate =
-            self.reentrancy_balance_enabled.then(|| path_predicate(&self.gcx.hir, cond)).flatten();
+            self.reentrancy_balance_enabled.then(|| path_predicate(self.gcx, cond)).flatten();
         let Some((predicate, value)) = predicate else { return (true, true) };
         (
             then_state.constrain_path((predicate, value)),
@@ -625,7 +625,7 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
                 self.analyze_expr(rhs, state);
                 self.analyze_lhs_indices(lhs, state);
                 self.record_write(lhs, state);
-                if let Some(var_id) = lhs_local_var(&self.gcx.hir, lhs) {
+                if let Some(var_id) = lhs_local_var(self.gcx, lhs) {
                     if op.is_none() {
                         self.update_internal_function_target(state, var_id, rhs);
                     } else {
@@ -636,9 +636,9 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
                     let targets = match tuple_elems(lhs) {
                         Some(elems) => elems
                             .iter()
-                            .map(|e| e.and_then(|e| lhs_local_var(&self.gcx.hir, e)))
+                            .map(|e| e.and_then(|e| lhs_local_var(self.gcx, e)))
                             .collect(),
-                        None => vec![lhs_local_var(&self.gcx.hir, lhs)],
+                        None => vec![lhs_local_var(self.gcx, lhs)],
                     };
                     self.bind_locals(state, &targets, rhs, op.map(|op| op.kind));
                 }
@@ -646,7 +646,7 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
             ExprKind::Delete(inner) => {
                 self.analyze_lhs_indices(inner, state);
                 self.record_write(inner, state);
-                if let Some(var_id) = lhs_local_var(&self.gcx.hir, inner) {
+                if let Some(var_id) = lhs_local_var(self.gcx, inner) {
                     state.internal_function_targets.remove(&var_id);
                     if self.reentrancy_balance_enabled {
                         self.clear_local(state, var_id);
@@ -655,10 +655,10 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
             }
             ExprKind::Unary(op, inner) => {
                 self.analyze_expr(inner, state);
-                if is_inc_dec(op.kind) {
+                if op.kind.has_side_effects() {
                     self.record_write(inner, state);
                     if self.reentrancy_balance_enabled
-                        && let Some(var_id) = lhs_local_var(&self.gcx.hir, inner)
+                        && let Some(var_id) = lhs_local_var(self.gcx, inner)
                     {
                         self.set_self_address_paths(state, var_id, PathAlternatives::new());
                     }
@@ -687,7 +687,7 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
                 }
 
                 if self.reentrancy_balance_enabled
-                    && is_require_or_assert(callee)
+                    && is_require_or_assert(self.gcx, callee)
                     && let Some(cond) = args.exprs().next()
                 {
                     self.emit_balance_calls(cond, state);
@@ -703,7 +703,7 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
                     state.push_call(expr.span, kind);
                 }
                 if self.reentrancy_balance_enabled
-                    && call_options_allow_reentrancy(&self.gcx.hir, *opts)
+                    && call_options_allow_reentrancy(self.gcx, *opts)
                     && callee_can_reenter(self.gcx, callee)
                     && !self.balance_guard_blocks_call(state, callee)
                 {
@@ -721,9 +721,9 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
                 let rhs_outcome = op.kind == BinOpKind::And;
                 let (mut short_state, mut rhs_state) = (state.clone(), state.clone());
                 let short_reachable =
-                    constrain_boolean_outcome(&self.gcx.hir, lhs, !rhs_outcome, &mut short_state);
+                    constrain_boolean_outcome(self.gcx, lhs, !rhs_outcome, &mut short_state);
                 let rhs_reachable =
-                    constrain_boolean_outcome(&self.gcx.hir, lhs, rhs_outcome, &mut rhs_state);
+                    constrain_boolean_outcome(self.gcx, lhs, rhs_outcome, &mut rhs_state);
                 if rhs_reachable {
                     self.analyze_expr(rhs, &mut rhs_state);
                 }
@@ -748,10 +748,10 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
                     [true_reachable.then_some(true_state), false_reachable.then_some(false_state)],
                 );
             }
-            ExprKind::Ident(reses) => state.state_reads.extend(
-                reses
-                    .iter()
-                    .filter_map(Res::as_variable)
+            ExprKind::Ident(_) => state.state_reads.extend(
+                self.gcx
+                    .resolved_variable(expr)
+                    .into_iter()
                     .filter(|v| self.gcx.hir.variable(*v).kind.is_state()),
             ),
             _ => for_each_child(expr, &mut |child| self.analyze_expr(child, state)),
@@ -788,12 +788,12 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
     /// Handles a write to `lhs`: reports pending reentrant calls that read the written state,
     /// invalidates written guard locks and forgets path facts about written locals.
     fn record_write(&mut self, lhs: &'gcx Expr<'gcx>, state: &mut FlowState) {
-        let written = state_lhs_vars(&self.gcx.hir, lhs);
+        let written = state_lhs_vars(self.gcx, lhs);
         self.emit_pending_calls(state, &written);
         state
             .invalidated_balance_guards
             .extend(written.iter().filter(|v| self.active_balance_guards.contains(v)));
-        for_each_lhs_var(lhs, &mut |var_id| {
+        for_each_lhs_var(self.gcx, lhs, &mut |var_id| {
             if !self.gcx.hir.variable(var_id).kind.is_state() {
                 forget_path_predicates(state, var_id);
             }
@@ -811,13 +811,13 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
             return Vec::new();
         };
 
-        self.seed_balance_parameters(func, args, state);
+        self.seed_balance_parameters(func_id, args, state);
         let parameter_predicates = if self.reentrancy_balance_enabled {
             func.parameters
                 .iter()
                 .map(|&param| {
-                    arg_for_param(&self.gcx.hir, func, param, args)
-                        .and_then(|arg| path_predicate(&self.gcx.hir, arg))
+                    arg_for_param(self.gcx, func_id, param, args)
+                        .and_then(|arg| path_predicate(self.gcx, arg))
                 })
                 .collect()
         } else {
@@ -884,8 +884,8 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
         callee: &'gcx Expr<'gcx>,
         state: &FlowState,
     ) -> BTreeSet<FunctionId> {
-        if let Some(targets) = lhs_local_var(&self.gcx.hir, callee)
-            .and_then(|v| state.internal_function_targets.get(&v))
+        if let Some(targets) =
+            lhs_local_var(self.gcx, callee).and_then(|v| state.internal_function_targets.get(&v))
         {
             return targets.clone();
         }
@@ -1022,12 +1022,8 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
                     return true;
                 }
                 let mut rhs_state = state.clone();
-                constrain_boolean_outcome(
-                    &self.gcx.hir,
-                    lhs,
-                    op.kind == BinOpKind::And,
-                    &mut rhs_state,
-                ) && recurse(rhs, &rhs_state)
+                constrain_boolean_outcome(self.gcx, lhs, op.kind == BinOpKind::And, &mut rhs_state)
+                    && recurse(rhs, &rhs_state)
             }
             ExprKind::Binary(lhs, op, rhs) => {
                 let is_comparison = matches!(
@@ -1082,7 +1078,7 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
                     values.iter().any(|value| value.stale_comparisons.contains(&span))
                 }),
             },
-            ExprKind::Ident(reses) => reses.iter().filter_map(Res::as_variable).any(|var_id| {
+            ExprKind::Ident(_) => self.gcx.resolved_variable(expr).is_some_and(|var_id| {
                 state
                     .balance_comparison_locals
                     .get(&var_id)
@@ -1222,12 +1218,13 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
                 .and_then(|values| values.first())
                 .map(|value| constrain_paths(&value.self_address_paths, &state.path_predicates))
                 .unwrap_or_default(),
-            ExprKind::Ident(_) if is_builtin(expr, sym::this) => {
+            ExprKind::Ident(_) if is_builtin(self.gcx, expr, sym::this) => {
                 BTreeSet::from([state.path_predicates.clone()])
             }
-            ExprKind::Ident(reses) => reses
-                .iter()
-                .filter_map(Res::as_variable)
+            ExprKind::Ident(_) => self
+                .gcx
+                .resolved_variable(expr)
+                .into_iter()
                 .filter_map(|v| state.self_address_local_paths.get(&v))
                 .flat_map(|paths| constrain_paths(paths, &state.path_predicates))
                 .collect(),
@@ -1254,9 +1251,10 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
         }
         let recurse = |e| self.expr_balance_paths(e, state);
         match &expr.kind {
-            ExprKind::Ident(reses) => reses
-                .iter()
-                .filter_map(Res::as_variable)
+            ExprKind::Ident(_) => self
+                .gcx
+                .resolved_variable(expr)
+                .into_iter()
                 .filter_map(|v| state.balance_local_paths.get(&v))
                 .flat_map(|paths| constrain_paths(paths, &state.path_predicates))
                 .collect(),
@@ -1304,9 +1302,10 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
             ExprKind::Call(..) if let Some(args) = cast_args(expr) => {
                 args.exprs().flat_map(recurse).collect()
             }
-            ExprKind::Ident(reses) => reses
-                .iter()
-                .filter_map(Res::as_variable)
+            ExprKind::Ident(_) => self
+                .gcx
+                .resolved_variable(expr)
+                .into_iter()
                 .filter_map(|var| state.balance_local_dependencies.get(&var))
                 .flatten()
                 .filter_map(|form| form.constrained(&state.path_predicates))
@@ -1346,8 +1345,8 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
         };
         match &expr.kind {
             ExprKind::Lit(_) => independent(),
-            ExprKind::Ident(reses) => {
-                let Some(var) = unique(reses.iter().filter_map(Res::as_variable)) else {
+            ExprKind::Ident(_) => {
+                let Some(var) = self.gcx.resolved_variable(expr) else {
                     return BTreeSet::new();
                 };
                 match state.balance_local_forms.get(&var) {
@@ -1388,18 +1387,16 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
             }
             ExprKind::Call(callee, args, _) if cast_type(callee).is_some() && args.len() == 1 => {
                 let inner = args.exprs().next().expect("one argument");
-                let preserving = match (expr_ty(self.gcx, inner), expr_ty(self.gcx, expr)) {
-                    (Some(from), Some(to)) => match (from.kind, to.kind) {
-                        (
-                            TyKind::Elementary(ElementaryType::UInt(from)),
-                            TyKind::Elementary(ElementaryType::UInt(to)),
-                        )
-                        | (
-                            TyKind::Elementary(ElementaryType::Int(from)),
-                            TyKind::Elementary(ElementaryType::Int(to)),
-                        ) => from.bits() <= to.bits(),
-                        _ => false,
-                    },
+                let preserving = match (
+                    self.gcx.type_of_expr(inner.peel_parens().id),
+                    self.gcx.type_of_expr(expr.peel_parens().id),
+                ) {
+                    (Some(from), Some(to)) => {
+                        from.is_integer()
+                            && to.is_integer()
+                            && from.is_signed() == to.is_signed()
+                            && from.convert_implicit_to(to, self.gcx)
+                    }
                     _ => false,
                 };
                 self.balance_forms(inner, state)
@@ -1423,15 +1420,15 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
     /// Binds the balance facts of the call arguments to the callee's parameters.
     fn seed_balance_parameters(
         &mut self,
-        func: &'gcx hir::Function<'gcx>,
+        func_id: FunctionId,
         args: &CallArgs<'gcx>,
         state: &mut FlowState,
     ) {
         if !self.reentrancy_balance_enabled {
             return;
         }
-        for &param in func.parameters {
-            match arg_for_param(&self.gcx.hir, func, param, args) {
+        for &param in self.gcx.hir.function(func_id).parameters {
+            match arg_for_param(self.gcx, func_id, param, args) {
                 Some(arg) => self.bind_locals(state, &[Some(param)], arg, None),
                 None => self.clear_local(state, param),
             }
@@ -1504,10 +1501,10 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
         callee: &'gcx Expr<'gcx>,
         opts: Option<&CallOptions<'gcx>>,
     ) -> Option<ReentrantCallKind> {
-        if self.reentrancy_eth_enabled && is_uncapped_value_call(&self.gcx.hir, callee, opts) {
+        if self.reentrancy_eth_enabled && is_uncapped_value_call(self.gcx, callee, opts) {
             Some(ReentrantCallKind::Eth)
         } else if self.reentrancy_no_eth_enabled
-            && !call_sends_eth(&self.gcx.hir, opts)
+            && !call_sends_eth(self.gcx, opts)
             && callee_can_reenter(self.gcx, callee)
         {
             Some(ReentrantCallKind::NoEth)
@@ -1565,7 +1562,7 @@ fn static_internal_callee(gcx: Gcx<'_>, callee: &Expr<'_>) -> Option<FunctionId>
     let callee = callee.peel_parens();
     let direct = match &callee.kind {
         ExprKind::Ident(_) => true,
-        ExprKind::Member(base, _) => is_builtin(base, sym::super_),
+        ExprKind::Member(base, _) => is_builtin(gcx, base, sym::super_),
         _ => false,
     };
     let TyKind::Fn(function) = gcx.type_of_expr(callee.id).filter(|_| direct)?.kind else {
@@ -1581,14 +1578,14 @@ fn owned_by(hir: &hir::Hir<'_>, func_id: FunctionId) -> impl Fn(VariableId) -> b
 
 /// The boolean fact `expr` establishes when it evaluates to `true`: a local flag, its negation,
 /// or an `==`/`!=` between locals and literals.
-fn path_predicate(hir: &hir::Hir<'_>, expr: &Expr<'_>) -> Option<(PathPredicate, bool)> {
+fn path_predicate(gcx: Gcx<'_>, expr: &Expr<'_>) -> Option<(PathPredicate, bool)> {
     match &expr.peel_parens().kind {
-        ExprKind::Ident(_) => Some((PathPredicate::Boolean(lhs_local_var(hir, expr)?), true)),
+        ExprKind::Ident(_) => Some((PathPredicate::Boolean(lhs_local_var(gcx, expr)?), true)),
         ExprKind::Unary(op, inner) if op.kind == UnOpKind::Not => {
-            path_predicate(hir, inner).map(|(predicate, value)| (predicate, !value))
+            path_predicate(gcx, inner).map(|(predicate, value)| (predicate, !value))
         }
         ExprKind::Binary(lhs, op, rhs) if matches!(op.kind, BinOpKind::Eq | BinOpKind::Ne) => {
-            let (lhs, rhs) = (predicate_operand(hir, lhs)?, predicate_operand(hir, rhs)?);
+            let (lhs, rhs) = (predicate_operand(gcx, lhs)?, predicate_operand(gcx, rhs)?);
             let predicate = PathPredicate::Equality(lhs.min(rhs), lhs.max(rhs));
             Some((predicate, op.kind == BinOpKind::Eq))
         }
@@ -1596,9 +1593,9 @@ fn path_predicate(hir: &hir::Hir<'_>, expr: &Expr<'_>) -> Option<(PathPredicate,
     }
 }
 
-fn predicate_operand(hir: &hir::Hir<'_>, expr: &Expr<'_>) -> Option<Operand> {
+fn predicate_operand(gcx: Gcx<'_>, expr: &Expr<'_>) -> Option<Operand> {
     match &expr.peel_parens().kind {
-        ExprKind::Ident(_) => Some(Operand::Variable(lhs_local_var(hir, expr)?)),
+        ExprKind::Ident(_) => Some(Operand::Variable(lhs_local_var(gcx, expr)?)),
         ExprKind::Lit(lit) => match lit.kind {
             LitKind::Number(value) => Some(Operand::Number(value)),
             LitKind::Bool(value) => Some(Operand::Boolean(value)),
@@ -1610,12 +1607,12 @@ fn predicate_operand(hir: &hir::Hir<'_>, expr: &Expr<'_>) -> Option<Operand> {
 
 /// Records in `state` that `expr` evaluated to `outcome`; returns `false` if that is impossible.
 fn constrain_boolean_outcome(
-    hir: &hir::Hir<'_>,
+    gcx: Gcx<'_>,
     expr: &Expr<'_>,
     outcome: bool,
     state: &mut FlowState,
 ) -> bool {
-    if let Some((predicate, value)) = path_predicate(hir, expr) {
+    if let Some((predicate, value)) = path_predicate(gcx, expr) {
         return state.constrain_path((predicate, value == outcome));
     }
     match &expr.peel_parens().kind {
@@ -1623,8 +1620,8 @@ fn constrain_boolean_outcome(
         ExprKind::Binary(lhs, op, rhs)
             if op.kind == if outcome { BinOpKind::And } else { BinOpKind::Or } =>
         {
-            constrain_boolean_outcome(hir, lhs, outcome, state)
-                && constrain_boolean_outcome(hir, rhs, outcome, state)
+            constrain_boolean_outcome(gcx, lhs, outcome, state)
+                && constrain_boolean_outcome(gcx, rhs, outcome, state)
         }
         _ => true,
     }
@@ -1728,29 +1725,25 @@ fn call_option<'a>(opts: Option<&'a CallOptions<'a>>, name: Symbol) -> Option<&'
     opts?.args.iter().find(|opt| opt.name.name == name).map(|opt| &opt.value)
 }
 
-fn call_sends_eth(hir: &hir::Hir<'_>, opts: Option<&CallOptions<'_>>) -> bool {
-    call_option(opts, sym::value).is_some_and(|value| !is_zero_value(hir, value))
+fn call_sends_eth(gcx: Gcx<'_>, opts: Option<&CallOptions<'_>>) -> bool {
+    call_option(opts, sym::value).is_some_and(|value| !is_zero_value(gcx, value))
 }
 
 /// `.call{value: v}(...)` with a non-zero value and no gas cap other than `gasleft()`.
-fn is_uncapped_value_call(
-    hir: &hir::Hir<'_>,
-    callee: &Expr<'_>,
-    opts: Option<&CallOptions<'_>>,
-) -> bool {
+fn is_uncapped_value_call(gcx: Gcx<'_>, callee: &Expr<'_>, opts: Option<&CallOptions<'_>>) -> bool {
     matches!(&callee.peel_parens().kind, ExprKind::Member(_, member) if member.name == kw::Call)
-        && call_sends_eth(hir, opts)
+        && call_sends_eth(gcx, opts)
         && call_option(opts, kw::Gas).is_none_or(|gas| {
             matches!(&gas.peel_parens().kind, ExprKind::Call(callee, args, None)
-                if args.is_empty() && is_builtin(callee, sym::gasleft))
+                if args.is_empty() && is_builtin(gcx, callee, sym::gasleft))
         })
 }
 
 /// True unless a `gas:` option provably leaves the callee too little gas to reenter.
-fn call_options_allow_reentrancy(hir: &hir::Hir<'_>, opts: Option<&CallOptions<'_>>) -> bool {
+fn call_options_allow_reentrancy(gcx: Gcx<'_>, opts: Option<&CallOptions<'_>>) -> bool {
     let Some(gas) = call_option(opts, kw::Gas) else { return true };
-    let sends_eth = call_sends_eth(hir, opts);
-    match const_value(hir, gas, None, &mut BTreeSet::new()) {
+    let sends_eth = call_sends_eth(gcx, opts);
+    match const_value(gcx, gas, None, &mut BTreeSet::new()) {
         Some(Operand::Number(gas)) => {
             gas > U256::from(REENTRANCY_GAS_STIPEND) || (sends_eth && !gas.is_zero())
         }
@@ -1758,28 +1751,28 @@ fn call_options_allow_reentrancy(hir: &hir::Hir<'_>, opts: Option<&CallOptions<'
     }
 }
 
-fn is_zero_value(hir: &hir::Hir<'_>, expr: &Expr<'_>) -> bool {
-    matches!(const_value(hir, expr, None, &mut BTreeSet::new()), Some(Operand::Number(n)) if n.is_zero())
+fn is_zero_value(gcx: Gcx<'_>, expr: &Expr<'_>) -> bool {
+    matches!(const_value(gcx, expr, None, &mut BTreeSet::new()), Some(Operand::Number(n)) if n.is_zero())
 }
 
 /// `break`/`continue` or anything that exits the function, so the current path stops here.
-fn branch_stops_current_path(stmt: &Stmt<'_>) -> bool {
+fn branch_stops_current_path(gcx: Gcx<'_>, stmt: &Stmt<'_>) -> bool {
     match &stmt.kind {
         StmtKind::Break | StmtKind::Continue => true,
         StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
-            block.stmts.iter().any(branch_stops_current_path)
+            block.stmts.iter().any(|expr| branch_stops_current_path(gcx, expr))
         }
         StmtKind::If(_, then_stmt, Some(else_stmt)) => {
-            branch_stops_current_path(then_stmt) && branch_stops_current_path(else_stmt)
+            branch_stops_current_path(gcx, then_stmt) && branch_stops_current_path(gcx, else_stmt)
         }
-        _ => branch_always_exits(stmt),
+        _ => branch_always_exits(gcx, stmt),
     }
 }
 
 /// The lock state variable of a standard reentrancy guard modifier: it rejects re-entry, sets
 /// the lock, runs `_` exactly once and restores the lock right after.
 fn standard_reentrancy_guard_lock(
-    hir: &hir::Hir<'_>,
+    gcx: Gcx<'_>,
     modifier: &hir::Function<'_>,
 ) -> Option<VariableId> {
     if !matches!(modifier.kind, FunctionKind::Modifier) || !modifier.modifiers.is_empty() {
@@ -1791,74 +1784,74 @@ fn standard_reentrancy_guard_lock(
     }
     let mut activation = Vec::new();
     stmts_before_placeholder(stmts, &mut activation)?;
-    let (lock_var, entered) = guard_activation(hir, &activation, &mut BTreeSet::new())?;
+    let (lock_var, entered) = guard_activation(gcx, &activation, &mut BTreeSet::new())?;
     let index = stmts.iter().position(|s| count_placeholders(std::slice::from_ref(s)) == 1)?;
-    let (restored_var, restored) = guard_restoration(hir, stmts.get(index + 1)?)?;
+    let (restored_var, restored) = guard_restoration(gcx, stmts.get(index + 1)?)?;
     (lock_var == restored_var && entered != restored).then_some(lock_var)
 }
 
 /// The lock and value set by the last of `stmts` (directly or via an argument-less helper), if
 /// an earlier statement rejects that value.
 fn guard_activation(
-    hir: &hir::Hir<'_>,
+    gcx: Gcx<'_>,
     stmts: &[&Stmt<'_>],
     seen: &mut BTreeSet<FunctionId>,
 ) -> Option<(VariableId, Operand)> {
     let (activation, prefix) = stmts.split_last()?;
-    if let Some((lock_var, entered)) = state_lock_assignment(hir, activation) {
+    if let Some((lock_var, entered)) = state_lock_assignment(gcx, activation) {
         return prefix
             .iter()
-            .any(|stmt| stmt_rejects_lock_value(hir, stmt, lock_var, entered))
+            .any(|stmt| stmt_rejects_lock_value(gcx, stmt, lock_var, entered))
             .then_some((lock_var, entered));
     }
-    let helper_id = simple_internal_call(activation)?;
-    let helper = hir.function(helper_id);
+    let helper_id = simple_internal_call(gcx, activation)?;
+    let helper = gcx.hir.function(helper_id);
     if !helper.modifiers.is_empty() || !seen.insert(helper_id) {
         return None;
     }
     let body = helper.body?.stmts.iter().collect::<Vec<_>>();
-    let result = guard_activation(hir, &body, seen);
+    let result = guard_activation(gcx, &body, seen);
     seen.remove(&helper_id);
     result
 }
 
 /// The lock and value restored by `stmt` (directly or via a single-statement helper).
-fn guard_restoration(hir: &hir::Hir<'_>, stmt: &Stmt<'_>) -> Option<(VariableId, Operand)> {
-    state_lock_assignment(hir, stmt).or_else(|| {
-        let helper = hir.function(simple_internal_call(stmt)?);
+fn guard_restoration(gcx: Gcx<'_>, stmt: &Stmt<'_>) -> Option<(VariableId, Operand)> {
+    state_lock_assignment(gcx, stmt).or_else(|| {
+        let helper = gcx.hir.function(simple_internal_call(gcx, stmt)?);
         let [stmt] = helper.modifiers.is_empty().then_some(helper.body?.stmts)? else {
             return None;
         };
-        state_lock_assignment(hir, stmt)
+        state_lock_assignment(gcx, stmt)
     })
 }
 
 /// `f();` naming exactly one function.
-fn simple_internal_call(stmt: &Stmt<'_>) -> Option<FunctionId> {
+fn simple_internal_call(gcx: Gcx<'_>, stmt: &Stmt<'_>) -> Option<FunctionId> {
     let StmtKind::Expr(expr) = stmt.kind else { return None };
     let ExprKind::Call(callee, args, None) = &expr.peel_parens().kind else { return None };
-    args.is_empty().then(|| unique(function_ids(callee))).flatten()
+    (args.is_empty() && matches!(callee.peel_parens().kind, ExprKind::Ident(_)))
+        .then(|| gcx.resolved_function(callee))
+        .flatten()
 }
 
 /// `lock = <constant>;` on a state variable.
-fn state_lock_assignment(hir: &hir::Hir<'_>, stmt: &Stmt<'_>) -> Option<(VariableId, Operand)> {
+fn state_lock_assignment(gcx: Gcx<'_>, stmt: &Stmt<'_>) -> Option<(VariableId, Operand)> {
     let StmtKind::Expr(expr) = stmt.kind else { return None };
     let ExprKind::Assign(lhs, None, rhs) = &expr.peel_parens().kind else { return None };
-    let ExprKind::Ident(reses) = &lhs.peel_parens().kind else { return None };
-    let lock_var = unique(
-        reses.iter().filter_map(Res::as_variable).filter(|v| hir.variable(*v).kind.is_state()),
-    )?;
-    Some((lock_var, const_value(hir, rhs, None, &mut BTreeSet::new())?))
+    let ExprKind::Ident(_) = &lhs.peel_parens().kind else { return None };
+    let lock_var = gcx.resolved_variable(lhs).filter(|&v| gcx.hir.variable(v).kind.is_state())?;
+    Some((lock_var, const_value(gcx, rhs, None, &mut BTreeSet::new())?))
 }
 
 /// True if `stmt` reverts whenever `lock_var` holds `entered`.
 fn stmt_rejects_lock_value(
-    hir: &hir::Hir<'_>,
+    gcx: Gcx<'_>,
     stmt: &Stmt<'_>,
     lock_var: VariableId,
     entered: Operand,
 ) -> bool {
-    let eval = |cond| match const_value(hir, cond, Some((lock_var, entered)), &mut BTreeSet::new())
+    let eval = |cond| match const_value(gcx, cond, Some((lock_var, entered)), &mut BTreeSet::new())
     {
         Some(Operand::Boolean(value)) => Some(value),
         _ => None,
@@ -1866,12 +1859,12 @@ fn stmt_rejects_lock_value(
     match stmt.kind {
         StmtKind::Expr(expr) => {
             let ExprKind::Call(callee, args, _) = &expr.peel_parens().kind else { return false };
-            is_require_or_assert(callee)
+            is_require_or_assert(gcx, callee)
                 && args.exprs().next().is_some_and(|cond| eval(cond) == Some(false))
         }
         StmtKind::If(cond, then_stmt, else_stmt) => match eval(cond) {
-            Some(true) => branch_always_exits(then_stmt),
-            Some(false) => else_stmt.is_some_and(branch_always_exits),
+            Some(true) => branch_always_exits(gcx, then_stmt),
+            Some(false) => else_stmt.is_some_and(|expr| branch_always_exits(gcx, expr)),
             None => false,
         },
         _ => false,
@@ -1881,7 +1874,7 @@ fn stmt_rejects_lock_value(
 /// Constant-folds `expr` over literals, `constant` variables, casts, `!` and `==`/`!=`; `lock`
 /// supplies the value of the lock variable.
 fn const_value(
-    hir: &hir::Hir<'_>,
+    gcx: Gcx<'_>,
     expr: &Expr<'_>,
     lock: Option<(VariableId, Operand)>,
     seen: &mut BTreeSet<VariableId>,
@@ -1893,35 +1886,35 @@ fn const_value(
             LitKind::Number(value) => Some(Operand::Number(value)),
             _ => None,
         },
-        ExprKind::Ident(reses) => {
-            let var_id = unique(reses.iter().filter_map(Res::as_variable))?;
+        ExprKind::Ident(_) => {
+            let var_id = gcx.resolved_variable(expr)?;
             if let Some((lock_var, entered)) = lock
                 && lock_var == var_id
             {
                 return Some(entered);
             }
-            let var = hir.variable(var_id);
+            let var = gcx.hir.variable(var_id);
             if !var.is_constant() || !seen.insert(var_id) {
                 return None;
             }
-            let value = const_value(hir, var.initializer?, lock, seen);
+            let value = const_value(gcx, var.initializer?, lock, seen);
             seen.remove(&var_id);
             value
         }
         ExprKind::Unary(op, inner) if op.kind == UnOpKind::Not => {
-            match const_value(hir, inner, lock, seen)? {
+            match const_value(gcx, inner, lock, seen)? {
                 Operand::Boolean(value) => Some(Operand::Boolean(!value)),
                 _ => None,
             }
         }
         ExprKind::Binary(lhs, op, rhs) if matches!(op.kind, BinOpKind::Eq | BinOpKind::Ne) => {
-            let lhs = const_value(hir, lhs, lock, seen)?;
-            let rhs = const_value(hir, rhs, lock, seen)?;
+            let lhs = const_value(gcx, lhs, lock, seen)?;
+            let rhs = const_value(gcx, rhs, lock, seen)?;
             Some(Operand::Boolean((lhs == rhs) == (op.kind == BinOpKind::Eq)))
         }
         ExprKind::Call(..) => {
             let args = cast_args(expr).filter(|args| args.len() == 1)?;
-            const_value(hir, args.exprs().next()?, lock, seen)
+            const_value(gcx, args.exprs().next()?, lock, seen)
         }
         _ => None,
     }
@@ -1935,7 +1928,7 @@ fn balance_reentry_lock<'gcx>(
 ) -> Option<VariableId> {
     let entry_id = gcx.hir.function_ids().find(|&id| std::ptr::eq(gcx.hir.function(id), entry))?;
     let defining_contract = entry.contract?;
-    guard_locks(&gcx.hir, entry).into_iter().find(|&lock_var| {
+    guard_locks(gcx, entry).into_iter().find(|&lock_var| {
         let mut deployed = false;
         for contract_id in gcx.hir.contract_ids() {
             let contract = gcx.hir.contract(contract_id);
@@ -1956,7 +1949,7 @@ fn balance_reentry_lock<'gcx>(
                 .map(|f| gcx.hir.function(f.id))
                 .filter(|f| !is_view_or_pure(f.state_mutability))
                 .chain(special().map(|id| gcx.hir.function(id)))
-                .all(|f| guard_locks(&gcx.hir, f).contains(&lock_var));
+                .all(|f| guard_locks(gcx, f).contains(&lock_var));
             if !guarded {
                 return false;
             }
@@ -1966,23 +1959,23 @@ fn balance_reentry_lock<'gcx>(
 }
 
 /// Locks of the standard reentrancy guards among `function`'s modifiers.
-fn guard_locks(hir: &hir::Hir<'_>, function: &hir::Function<'_>) -> Vec<VariableId> {
+fn guard_locks(gcx: Gcx<'_>, function: &hir::Function<'_>) -> Vec<VariableId> {
     function
         .modifiers
         .iter()
         .filter(|modifier| modifier.args.is_empty())
         .filter_map(|modifier| modifier.id.as_function())
-        .filter_map(|id| standard_reentrancy_guard_lock(hir, hir.function(id)))
+        .filter_map(|id| standard_reentrancy_guard_lock(gcx, gcx.hir.function(id)))
         .collect()
 }
 
 /// `delegatecall`/`callcode`, which run the callee in the caller's storage context.
 fn call_uses_delegate_context(gcx: Gcx<'_>, callee: &Expr<'_>) -> bool {
     let callee = callee.peel_parens();
-    matches!(&callee.kind, ExprKind::Member(_, member)
-        if matches!(member.name, kw::Callcode | kw::Delegatecall))
+    gcx.resolved_builtin(callee) == Some(Builtin::AddressDelegatecall)
+        || matches!(&callee.kind, ExprKind::Member(_, member) if member.name == kw::Callcode)
         || gcx.type_of_expr(callee.id).is_some_and(
-            |ty| matches!(ty.kind, TyKind::Fn(function) if function.kind == TyFnKind::DelegateCall),
+            |ty| matches!(ty.kind, TyKind::Fn(function) if function.is_delegate_call()),
         )
 }
 
@@ -1990,17 +1983,18 @@ fn call_uses_delegate_context(gcx: Gcx<'_>, callee: &Expr<'_>) -> bool {
 /// `delegatecall` on an address, or a state-changing external function call.
 fn callee_can_reenter<'gcx>(gcx: Gcx<'gcx>, callee: &Expr<'gcx>) -> bool {
     let callee = callee.peel_parens();
+    match gcx.resolved_builtin(callee) {
+        Some(Builtin::AddressCall | Builtin::AddressDelegatecall) => return true,
+        Some(Builtin::AddressStaticcall) => return false,
+        _ => {}
+    }
     match &callee.kind {
         ExprKind::Member(receiver, member)
-            if is_address_like(gcx, receiver)
-                && matches!(
-                    member.name,
-                    kw::Call | kw::Callcode | kw::Delegatecall | kw::Staticcall
-                ) =>
+            if expr_is_address(gcx, receiver) && member.name == kw::Callcode =>
         {
-            member.name != kw::Staticcall
+            true
         }
-        ExprKind::Member(receiver, _) if is_builtin(receiver, sym::super_) => false,
+        ExprKind::Member(receiver, _) if is_builtin(gcx, receiver, sym::super_) => false,
         _ => {
             let Some(TyKind::Fn(function)) = gcx.type_of_expr(callee.id).map(|ty| ty.kind) else {
                 return false;

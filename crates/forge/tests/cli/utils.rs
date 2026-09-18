@@ -65,8 +65,8 @@ impl EnvExternalities {
     /// Externalities for a deploy + verify run of `chain` against `verifier`.
     ///
     /// `network` is the name used to look up `<NETWORK>_RPC_URL` and `<NETWORK>_PRIVATE_KEY`, and
-    /// matches the canonical `NamedChain::as_str` spelling. Blockscout instances have no shared
-    /// registry, so they must be given an explicit `verifier_url`.
+    /// can differ from the canonical `NamedChain::as_str` spelling. Blockscout instances have no
+    /// shared registry, so they must be given an explicit `verifier_url`.
     ///
     /// Returns `None` when the network is not configured, which is how these tests stay inert
     /// outside of the nightly workflow that supplies the funded deployer key.

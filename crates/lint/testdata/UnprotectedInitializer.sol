@@ -347,3 +347,53 @@ contract RepeatedInitializerCalls is Initializable, DangerousBase {
         _left(owner_);
     }
 }
+
+contract SelectedInitializerOverload is Initializable, DangerousBase {
+    uint256 public value;
+
+    function initialize(address account) external initializer {
+        _initialize(account);
+    }
+
+    function _initialize(address) internal pure {}
+
+    function _initialize(uint256 next) internal {
+        value = next;
+    }
+}
+
+contract ExternalLockBase {
+    bool private initialized;
+
+    modifier initializer() {
+        _;
+    }
+
+    function _disableInitializers() public {
+        initialized = true;
+    }
+}
+
+contract ExternalLockInitializer is ExternalLockBase, DangerousBase {
+    address public owner;
+
+    constructor(ExternalLockBase other) {
+        other._disableInitializers();
+    }
+
+    function initialize(address next) external initializer { //~WARN: upgradeable initializer is not protected against direct implementation calls
+        owner = next;
+    }
+}
+
+contract InternalPublicLockInitializer is ExternalLockBase, DangerousBase {
+    address public owner;
+
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(address next) external initializer {
+        owner = next;
+    }
+}

@@ -503,3 +503,86 @@ casttest!(monad_run_replays_current_sender_context, async |_prj, cmd| {
     assert!(output.contains("ReserveBalance::dippedIntoReserve()"), "{output}");
     assert!(output.contains("[Return] true"), "{output}");
 });
+
+// An explicit EVM version selects the concrete Monad spec even when configuration and
+// endpoint metadata request MonadEight. Execution and labels must both use the override.
+casttest!(monad_fork_trace_evm_version_override, async |prj, cmd| {
+    prj.update_config(|config| {
+        config.networks = foundry_evm_networks::NetworkConfigs::with_monad();
+        config.hardfork = Some("monad:MonadEight".parse().unwrap());
+    });
+    let (_api, handle) = anvil::spawn(
+        NodeConfig::test_monad()
+            .with_hardfork(Some("monad:MonadEight".parse().unwrap()))
+            .with_chain_id(Some(MONAD_TESTNET_CHAIN_ID)),
+    )
+    .await;
+    let endpoint = handle.http_endpoint();
+    let from = handle.dev_accounts().next().unwrap();
+    let target = MONAD_RESERVE_BALANCE_ADDRESS.to_string();
+    let input = format!("0x{}", hex::encode(MONAD_DIPPED_INTO_RESERVE_SELECTOR));
+    cmd.args([
+        "call",
+        &target,
+        "--data",
+        &input,
+        "--rpc-url",
+        &endpoint,
+        "--trace",
+        "--from",
+        &from.to_string(),
+        "--evm-version",
+        "cancun",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+Traces:
+  [..] ReserveBalance::dippedIntoReserve()
+    └─ ← [Return] false
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]])
+    .stderr_eq(str![""]);
+
+    let receipt = handle
+        .http_provider()
+        .send_transaction(
+            TransactionRequest::default()
+                .with_from(from)
+                .with_to(MONAD_RESERVE_BALANCE_ADDRESS)
+                .with_gas_limit(100_000)
+                .with_input(MONAD_DIPPED_INTO_RESERVE_SELECTOR)
+                .into(),
+        )
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert!(receipt.status());
+    cmd.cast_fuse()
+        .args([
+            "run",
+            &receipt.transaction_hash.to_string(),
+            "--rpc-url",
+            &endpoint,
+            "--quick",
+            "--evm-version",
+            "cancun",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [..] ReserveBalance::dippedIntoReserve()
+    └─ ← [Return] false
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]])
+        .stderr_eq(str![""]);
+});

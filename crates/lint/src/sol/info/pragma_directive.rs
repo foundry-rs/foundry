@@ -43,9 +43,9 @@ impl<'ast> ProjectLintPass<'ast> for PragmaDirective {
             && distinct.len() > 1
         {
             let msg = format!(
-                "{} different Solidity pragma version requirements are used: {}",
+                "{} different Solidity pragma version requirements are used: `{}`",
                 distinct.len(),
-                distinct.join(", ")
+                distinct.join("`, `")
             );
             ctx.emit_with_msg(&sources[*idx], &PRAGMA_INCONSISTENT, *span, msg);
         }

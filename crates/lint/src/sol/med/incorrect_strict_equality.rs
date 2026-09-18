@@ -1,16 +1,13 @@
 use super::IncorrectStrictEquality;
 use crate::{
     linter::{LateLintPass, LintContext},
-    sol::{
-        Severity, SolLint,
-        analysis::{is_address_like, referenced_item},
-    },
+    sol::{Severity, SolLint, analysis::referenced_item},
 };
 use solar::{
     ast::BinOpKind,
-    interface::kw,
     sema::{
         Gcx,
+        builtins::Builtin,
         hir::{Expr, ExprKind, ItemId},
     },
 };
@@ -50,11 +47,11 @@ impl<'gcx> LateLintPass<'gcx> for IncorrectStrictEquality {
 /// method), skipping static library calls to avoid internal helpers of the same name.
 fn is_externally_influenced<'gcx>(gcx: Gcx<'gcx>, expr: &Expr<'gcx>) -> bool {
     match &expr.peel_parens().kind {
-        ExprKind::Member(base, member) => member.name == kw::Balance && is_address_like(gcx, base),
+        ExprKind::Member(..) => gcx.resolved_builtin(expr) == Some(Builtin::AddressBalance),
         ExprKind::Call(callee, ..) => {
             matches!(&callee.peel_parens().kind, ExprKind::Member(base, m)
                 if m.as_str() == "balanceOf"
-                    && !matches!(referenced_item(base), Some(ItemId::Contract(cid))
+                    && !matches!(referenced_item(gcx, base), Some(ItemId::Contract(cid))
                         if gcx.hir.contract(cid).kind.is_library()))
         }
         _ => false,

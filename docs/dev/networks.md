@@ -77,6 +77,13 @@ network's execution semantics.
 | `NetworkConfigs` and hardfork types | Pre-dispatch selection, chain and endpoint inference, feature configuration, and hardfork validation |
 | Foundry tools | CLI/config plumbing, one authoritative dispatch per execution entry point, and tool-specific workflows and user-visible behavior |
 
+After dispatch, `SpecFor<FEN>` owns hardfork resolution through `ExecutionSpec`: checked
+namespaced conversion, native source-chain schedules, local-fork behavior, and metadata for direct
+spec overrides. The shared resolver accepts one typed explicit spec and derives its reported
+hardfork from that same value. Tracing carries the result, including absent metadata for an
+Ethereum or Optimism version override, directly into decoding. Keep the source chain ID separate
+from an overridden execution chain ID when supplying historical context.
+
 Do not encode protocol behavior only as a chain-ID branch in a tool. Put execution semantics in the
 network factory or context, selection in the network configuration layer, and tool-specific workflow
 behavior in the relevant tool.
@@ -130,6 +137,17 @@ If state must survive a nested execution, implement the transfer explicitly at t
 or journal boundary. Do not rely on cloning the ordinary account database to preserve state owned by
 another component. Do not add optional custom-family state to a generic context or return generic
 "context update" signals when only one concrete family can use them.
+
+Both cheatcode inspector adapters use
+[`with_inherited_evm`](../../crates/evm/core/src/evm/mod.rs) to pair inherited context setup
+with successful write-back. Inspector assembly stays with the adapter, and EVM factories retain
+construction ownership. This shared operation still uses the existing Monad journal bridge; it
+is not a replacement for the deferred native journal, snapshot, and fork lifecycle migrations.
+
+Isolated calls and `executeTransaction` share account-state preparation and settlement through
+[`prepare_child_state` and `merge_child_state`](../../crates/evm/core/src/evm/mod.rs).
+Their transaction context, environment restoration, and native journal handling remain distinct:
+an isolated call belongs to its enclosing transaction, while `executeTransaction` runs a fresh one.
 
 Historical replay retains the RPC envelope's system classification after transaction conversion.
 The default nested replay behavior deliberately skips system envelopes unsupported by the selected

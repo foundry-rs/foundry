@@ -38,6 +38,20 @@ contract MissingEventsAccessControl {
         _;
     }
 
+    modifier onlyOwnerViaReassignedAlias(address newOwner) {
+        address caller = msg.sender;
+        caller = newOwner;
+        require(caller == owner, "not owner");
+        _;
+    }
+
+    modifier onlyOwnerViaAliasBeforeReassign(address newOwner) {
+        address caller = msg.sender;
+        require(caller == owner, "not owner");
+        caller = newOwner;
+        _;
+    }
+
     modifier onlyOwnerViaCheck() {
         _checkOwner();
         _;
@@ -144,6 +158,20 @@ contract MissingEventsAccessControl {
     }
 
     function setOwnerViaSenderAlias(address newOwner) external onlyOwnerViaSenderAlias {
+        owner = newOwner; //~WARN: `owner` is changed without an event but is used for access control
+    }
+
+    function setOwnerViaReassignedAlias(address newOwner)
+        external
+        onlyOwnerViaReassignedAlias(newOwner)
+    {
+        owner = newOwner;
+    }
+
+    function setOwnerViaAliasBeforeReassign(address newOwner)
+        external
+        onlyOwnerViaAliasBeforeReassign(newOwner)
+    {
         owner = newOwner; //~WARN: `owner` is changed without an event but is used for access control
     }
 
@@ -375,6 +403,19 @@ abstract contract MissingEventsAccessControlAssertionHelpers {
 
     function fail() internal view virtual {
         assertEq(uint256(0), uint256(1));
+    }
+}
+
+contract NamedArgumentAccessControl {
+    address public owner = msg.sender;
+
+    function setOwner(address next) external {
+        require(msg.sender == owner);
+        _setOwner({next: next, ignored: address(1)});
+    }
+
+    function _setOwner(address ignored, address next) internal {
+        owner = next; //~WARN: `owner` is changed without an event but is used for access control
     }
 }
 

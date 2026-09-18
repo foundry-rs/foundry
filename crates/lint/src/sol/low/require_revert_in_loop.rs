@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{
     linter::{LateLintPass, LintContext},
-    sol::{Severity, SolLint, analysis::builtins},
+    sol::{Severity, SolLint},
 };
 use solar::sema::{
     Gcx,
@@ -27,7 +27,7 @@ impl<'gcx> LateLintPass<'gcx> for RequireRevertInLoop {
                     StmtKind::Revert(expr) => Some(expr),
                     _ => None,
                 },
-                LoopItem::Expr(expr) => is_require_or_revert_call(expr).then_some(expr),
+                LoopItem::Expr(expr) => is_require_or_revert_call(gcx, expr).then_some(expr),
             };
             if let Some(expr) = reported {
                 ctx.emit(&REQUIRE_REVERT_IN_LOOP, expr.span);
@@ -37,9 +37,10 @@ impl<'gcx> LateLintPass<'gcx> for RequireRevertInLoop {
 }
 
 /// `require(..)`, `revert(..)` or the Yul `revert(..)` builtin.
-fn is_require_or_revert_call(expr: &Expr<'_>) -> bool {
+fn is_require_or_revert_call(gcx: Gcx<'_>, expr: &Expr<'_>) -> bool {
     let ExprKind::Call(callee, ..) = &expr.peel_parens().kind else { return false };
-    builtins(callee).any(|b| {
-        matches!(b, Builtin::Require | Builtin::Revert | Builtin::RevertMsg | Builtin::YulRevert)
-    })
+    matches!(
+        gcx.resolved_builtin(callee),
+        Some(Builtin::Require | Builtin::Revert | Builtin::RevertMsg | Builtin::YulRevert)
+    )
 }

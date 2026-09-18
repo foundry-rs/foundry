@@ -10,7 +10,7 @@ declare_forge_lint!(
     MULTI_CONTRACT_FILE,
     Severity::Info,
     "multi-contract-file",
-    "prefer having only one contract, interface or library per file"
+    "file contains multiple contracts, interfaces or libraries"
 );
 
 #[derive(Debug)]

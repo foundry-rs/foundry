@@ -1,4 +1,4 @@
-note[interface-naming]: interface names should be prefixed with 'I'
+note[interface-naming]: interface name is missing the `I` prefix
    ╭▸ ROOT/testdata/IncorrectERC20Interface.sol:LL:CC
    │
 LL │ interface ERC20 {
@@ -6,7 +6,7 @@ LL │ interface ERC20 {
    │
    ╰ help: https://getfoundry.sh/forge/linting/interface-naming
 
-note[multi-contract-file]: prefer having only one contract, interface or library per file
+note[multi-contract-file]: file contains multiple contracts, interfaces or libraries
    ╭▸ ROOT/testdata/IncorrectERC20Interface.sol:LL:CC
    │
 LL │ interface IERC20 {}
@@ -14,7 +14,7 @@ LL │ interface IERC20 {}
    │
    ╰ help: https://getfoundry.sh/forge/linting/multi-contract-file
 
-note[multi-contract-file]: prefer having only one contract, interface or library per file
+note[multi-contract-file]: file contains multiple contracts, interfaces or libraries
    ╭▸ ROOT/testdata/IncorrectERC20Interface.sol:LL:CC
    │
 LL │ interface ERC20 {
@@ -22,7 +22,7 @@ LL │ interface ERC20 {
    │
    ╰ help: https://getfoundry.sh/forge/linting/multi-contract-file
 
-note[multi-contract-file]: prefer having only one contract, interface or library per file
+note[multi-contract-file]: file contains multiple contracts, interfaces or libraries
    ╭▸ ROOT/testdata/IncorrectERC20Interface.sol:LL:CC
    │
 LL │ interface IERC20Incorrect is IERC20 {
@@ -30,7 +30,7 @@ LL │ interface IERC20Incorrect is IERC20 {
    │
    ╰ help: https://getfoundry.sh/forge/linting/multi-contract-file
 
-note[multi-contract-file]: prefer having only one contract, interface or library per file
+note[multi-contract-file]: file contains multiple contracts, interfaces or libraries
    ╭▸ ROOT/testdata/IncorrectERC20Interface.sol:LL:CC
    │
 LL │ interface IERC20Correct is IERC20 {
@@ -38,7 +38,7 @@ LL │ interface IERC20Correct is IERC20 {
    │
    ╰ help: https://getfoundry.sh/forge/linting/multi-contract-file
 
-note[multi-contract-file]: prefer having only one contract, interface or library per file
+note[multi-contract-file]: file contains multiple contracts, interfaces or libraries
    ╭▸ ROOT/testdata/IncorrectERC20Interface.sol:LL:CC
    │
 LL │ interface IERC20NamedCorrect {
@@ -46,7 +46,7 @@ LL │ interface IERC20NamedCorrect {
    │
    ╰ help: https://getfoundry.sh/forge/linting/multi-contract-file
 
-note[multi-contract-file]: prefer having only one contract, interface or library per file
+note[multi-contract-file]: file contains multiple contracts, interfaces or libraries
    ╭▸ ROOT/testdata/IncorrectERC20Interface.sol:LL:CC
    │
 LL │ interface INotERC20 {

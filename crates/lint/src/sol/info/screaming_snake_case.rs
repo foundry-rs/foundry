@@ -12,14 +12,14 @@ declare_forge_lint!(
     SCREAMING_SNAKE_CASE_CONSTANT,
     Severity::Info,
     "screaming-snake-case-const",
-    "constants should use SCREAMING_SNAKE_CASE"
+    "constant name is not `SCREAMING_SNAKE_CASE`"
 );
 
 declare_forge_lint!(
     SCREAMING_SNAKE_CASE_IMMUTABLE,
     Severity::Info,
     "screaming-snake-case-immutable",
-    "immutables should use SCREAMING_SNAKE_CASE"
+    "immutable name is not `SCREAMING_SNAKE_CASE`"
 );
 
 impl<'ast> EarlyLintPass<'ast> for ScreamingSnakeCase {

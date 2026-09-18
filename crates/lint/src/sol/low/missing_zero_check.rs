@@ -62,7 +62,7 @@ impl<'gcx> LateLintPass<'gcx> for MissingZeroCheck {
                 .iter()
                 .zip(m.args.exprs())
                 .filter_map(|(&mp, arg)| {
-                    let caller = underlying_var(arg).filter(|v| params.contains(v))?;
+                    let caller = underlying_var(gcx, arg).filter(|v| params.contains(v))?;
                     Some((mp, caller))
                 })
                 .collect();
@@ -143,7 +143,7 @@ impl<'gcx> Analyzer<'gcx> {
                 for (candidate, zero) in [(lhs, rhs), (rhs, lhs)] {
                     if is_zero_value(zero)
                         && let Some(sources) =
-                            underlying_var(candidate).and_then(|v| self.taint.get(&v))
+                            underlying_var(self.gcx, candidate).and_then(|v| self.taint.get(&v))
                     {
                         facts.extend(sources);
                     }
@@ -157,7 +157,7 @@ impl<'gcx> Analyzer<'gcx> {
     fn taint_sources(&self, expr: &hir::Expr<'_>) -> HashSet<VariableId> {
         let mut out = HashSet::new();
         let _ = expr.visit(&mut |e| {
-            if let Some(srcs) = underlying_var(e).and_then(|v| self.taint.get(&v)) {
+            if let Some(srcs) = underlying_var(self.gcx, e).and_then(|v| self.taint.get(&v)) {
                 out.extend(srcs);
             }
             ControlFlow::<Never>::Continue(())
@@ -201,8 +201,8 @@ impl<'gcx> Visit<'gcx> for Analyzer<'gcx> {
 
                 // A guard in an exiting branch holds for everything after the `if`; otherwise it
                 // must hold on both branches.
-                let then_exits = branch_always_exits(then);
-                let else_exits = else_.is_some_and(branch_always_exits);
+                let then_exits = branch_always_exits(self.gcx, then);
+                let else_exits = else_.is_some_and(|expr| branch_always_exits(self.gcx, expr));
                 self.guarded = match (then_exits, else_exits) {
                     (true, true) => &then_guards | &else_guards,
                     (true, false) => else_guards,
@@ -237,7 +237,7 @@ impl<'gcx> Visit<'gcx> for Analyzer<'gcx> {
     fn visit_expr(&mut self, expr: &'gcx hir::Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
         match &expr.kind {
             // `require(cond, ..)` / `assert(cond)`: only the first arg is a guard predicate.
-            ExprKind::Call(callee, args, _) if is_require_or_assert(callee) => {
+            ExprKind::Call(callee, args, _) if is_require_or_assert(self.gcx, callee) => {
                 let mut iter = args.exprs();
                 if let Some(cond) = iter.next() {
                     self.guarded.extend(self.nonzero_facts(cond, false));
@@ -259,7 +259,7 @@ impl<'gcx> Visit<'gcx> for Analyzer<'gcx> {
             }
             ExprKind::Assign(lhs, _, rhs) => {
                 // Sink: assignment to an address state variable.
-                if let Some(v) = underlying_var(lhs)
+                if let Some(v) = underlying_var(self.gcx, lhs)
                     && self.gcx.hir.variable(v).kind.is_state()
                     && is_address_type(&self.gcx.hir, v)
                 {
@@ -268,13 +268,14 @@ impl<'gcx> Visit<'gcx> for Analyzer<'gcx> {
                     self.sink_depth -= 1;
                     return ControlFlow::Continue(());
                 }
-                if let Some(local) = lhs_local_var(&self.gcx.hir, lhs) {
+                if let Some(local) = lhs_local_var(self.gcx, lhs) {
                     self.propagate(local, rhs);
                 }
             }
             ExprKind::Ident(_) => {
                 if self.sink_depth > 0
-                    && let Some(srcs) = underlying_var(expr).and_then(|v| self.taint.get(&v))
+                    && let Some(srcs) =
+                        underlying_var(self.gcx, expr).and_then(|v| self.taint.get(&v))
                 {
                     self.sinks.extend(srcs.iter().filter(|src| !self.guarded.contains(src)));
                 }

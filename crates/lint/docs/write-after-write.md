@@ -3,35 +3,20 @@
 **Severity**: `Gas`
 **ID**: `write-after-write`
 
-Flags storage variables that are written to consecutively without the first value ever being read.
-The first write is dead code; it pays the SSTORE cost but its value is immediately discarded when
-the second write overwrites it.
-
 ## What it does
 
-Reports the first assignment to a state variable when that same variable is written a second time
-before being read. Detection covers:
-
-- Plain `=` assignments and `delete` on bare state variable identifiers
-- Tuple/destructuring assignments: `(x, y) = (1, 2)` tracks each component individually
-- Pre/post increment and decrement (`++x`, `x--`, etc.) — these read then write, so the write
-  they produce can itself become dead if immediately overwritten
-
-The analysis recurses into branch bodies (`if`/`else`, loops, `try` clauses) and modifier bodies
-with fresh state so intra-body pairs are still caught. Conditional boundaries (`&&`, `||`,
-ternary) are handled conservatively to avoid false positives across short-circuit paths. Compound
-assignments (`+=`, `|=`, etc.) and index/member writes (`mapping[k]`, `struct.field`) are
-excluded to avoid false positives.
+Reports assignments to state variables whose values are overwritten before being read.
+Compound assignments and writes to individual mapping entries, array elements, or struct
+fields are excluded.
 
 ## Why is this bad?
 
-Every SSTORE costs at least 2,900 gas (warm slot) or 20,000 gas (cold slot). Writing a value to
-storage and then immediately overwriting it wastes that gas with no observable effect; only the
-final write matters.
+Writing a value to storage and then immediately overwriting it can waste gas when the compiler
+does not eliminate the first write. The cost depends on slot access history and the values
+involved; it is not a fixed amount per write. Remove the first assignment only when evaluating
+its right-hand side has no required side effects.
 
 ## Example
-
-### Bad
 
 ```solidity
 contract C {
@@ -44,7 +29,7 @@ contract C {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 contract C {

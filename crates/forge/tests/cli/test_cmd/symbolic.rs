@@ -780,6 +780,243 @@ contract SymbolicQuadraticQuote {
     assert_eq!(result["symbolic"]["solver"]["stats"]["heuristic_witnesses"], 0);
 });
 
+forgetest_init!(symbolic_retries_deferred_nested_arithmetic, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_retries_deferred_nested_arithmetic because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicDeferredExternalCall.t.sol",
+        r#"
+interface Vm {
+    function assume(bool condition) external pure;
+    function unixTime() external returns (uint256);
+}
+
+contract SymbolicConversionTarget {
+    function convert(uint256 base, uint256 coefficient) external pure returns (uint256) {
+        // A square cannot equal two, but interval bounds alone cannot establish that.
+        coefficient;
+        require(base * base != 2);
+        return base;
+    }
+}
+
+contract SymbolicCreatedConversion {
+    uint256 public value;
+
+    constructor(uint256 base, uint256 coefficient) {
+        coefficient;
+        require(base * base != 2);
+        value = base;
+    }
+}
+
+contract SymbolicDeferredExternalCall {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    SymbolicConversionTarget target;
+
+    function setUp() public {
+        target = new SymbolicConversionTarget();
+    }
+
+    /// forge-config: default.symbolic.timeout = 5
+    function checkExternalConversion(uint256 base, uint256 coefficient) external view {
+        vm.assume(base > 0 && base < 1_000);
+        vm.assume(coefficient >= 10 && coefficient <= 100);
+        assert(target.convert(base, coefficient) > 0);
+    }
+
+    /// forge-config: default.symbolic.timeout = 5
+    function checkCreatedConversion(uint256 base, uint256 coefficient) external {
+        vm.assume(base > 0 && base < 1_000);
+        vm.assume(coefficient >= 10 && coefficient <= 100);
+        SymbolicCreatedConversion created = new SymbolicCreatedConversion(base, coefficient);
+        assert(created.value() > 0);
+    }
+
+    /// forge-config: default.symbolic.timeout = 5
+    function checkNondeterministicExternalConversion(uint256 base, uint256 coefficient) external {
+        vm.unixTime();
+        vm.assume(base > 0 && base < 1_000);
+        vm.assume(coefficient >= 10 && coefficient <= 100);
+        assert(target.convert(base, coefficient) > 0);
+    }
+
+    /// forge-config: default.symbolic.max_solver_queries = 10
+    function checkQueryLimitedExternalConversion(uint256 base, uint256 coefficient) external view {
+        vm.assume(base > 0 && base < 1_000);
+        vm.assume(coefficient >= 10 && coefficient <= 100);
+        assert(target.convert(base, coefficient) > 0);
+    }
+}
+"#,
+    );
+
+    for (test, signature) in [
+        ("checkExternalConversion", "checkExternalConversion(uint256,uint256)"),
+        ("checkCreatedConversion", "checkCreatedConversion(uint256,uint256)"),
+    ] {
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--optimize", "--match-test", test])
+            .assert_success()
+            .get_output()
+            .stdout
+            .clone();
+        let result = json_test_result(&output, signature);
+        assert_eq!(result["symbolic"]["status"], "pass");
+        assert!(result["symbolic"]["solver"]["stats"]["smt_queries"].as_u64().unwrap() > 0);
+    }
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--optimize",
+            "--match-test",
+            "checkNondeterministicExternalConversion",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result =
+        json_test_result(&output, "checkNondeterministicExternalConversion(uint256,uint256)");
+    assert_eq!(result["symbolic"]["status"], "incomplete");
+    assert!(
+        result["symbolic"]["incomplete"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("nested hard arithmetic")
+    );
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--optimize",
+            "--match-test",
+            "checkQueryLimitedExternalConversion",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkQueryLimitedExternalConversion(uint256,uint256)");
+    assert_eq!(result["symbolic"]["status"], "incomplete");
+    assert!(
+        result["symbolic"]["incomplete"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("solver query limit exceeded (10)")
+    );
+    assert_eq!(result["symbolic"]["solver"]["stats"]["solver_queries"], 10);
+    assert!(result["symbolic"]["solver"]["stats"]["paths"].as_u64().unwrap() > 2);
+});
+
+forgetest_init!(symbolic_preserves_completed_external_call_counterexamples, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_preserves_completed_external_call_counterexamples because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicDeferredExternalPriority.t.sol",
+        r#"
+interface SymbolicDeferredPriorityVm {
+    function assume(bool condition) external pure;
+    function unixTime() external returns (uint256);
+}
+
+contract SymbolicDeferredPriorityTarget {
+    function evaluate(uint256 x, uint256 y) external pure returns (uint256) {
+        unchecked {
+            uint256 value = (x * y + 9) / 10;
+            if (value == 37) return 1;
+            if (value == 38) return 2;
+        }
+        return 0;
+    }
+}
+
+contract SymbolicDeferredExternalPriority {
+    SymbolicDeferredPriorityVm constant vm = SymbolicDeferredPriorityVm(
+        address(uint160(uint256(keccak256("hevm cheat code"))))
+    );
+    SymbolicDeferredPriorityTarget target;
+
+    function setUp() public {
+        target = new SymbolicDeferredPriorityTarget();
+    }
+
+    /// forge-config: default.symbolic.max_solver_queries = 16
+    function checkCompletedCallBfs(uint256 x, uint256 y) external view {
+        vm.assume(x >= 11 && x <= 18);
+        vm.assume(y >= 19 && y <= 30);
+        assert(target.evaluate(x, y) == 0);
+    }
+
+    /// forge-config: default.symbolic.max_solver_queries = 16
+    /// forge-config: default.symbolic.exploration_order = "dfs"
+    function checkCompletedCallDfs(uint256 x, uint256 y) external view {
+        vm.assume(x >= 11 && x <= 18);
+        vm.assume(y >= 19 && y <= 30);
+        assert(target.evaluate(x, y) == 0);
+    }
+
+    function checkDeferredHostRead(uint256 x, uint256 y) external {
+        vm.assume(x >= 11 && x <= 18);
+        vm.assume(y >= 19 && y <= 30);
+        uint256 value = target.evaluate(x, y);
+        if (value != 0) vm.unixTime();
+        assert(value <= 2);
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--optimize",
+            "--match-contract",
+            "SymbolicDeferredExternalPriority",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    for signature in
+        ["checkCompletedCallBfs(uint256,uint256)", "checkCompletedCallDfs(uint256,uint256)"]
+    {
+        let result = json_test_result(&output, signature);
+        assert_eq!(result["symbolic"]["status"], "fail_counterexample");
+        assert_eq!(result["symbolic"]["replay"]["status"], "confirmed");
+        assert!(result["symbolic"]["solver"]["stats"]["smt_queries"].as_u64().unwrap() > 0);
+    }
+
+    let result = json_test_result(&output, "checkDeferredHostRead(uint256,uint256)");
+    assert_eq!(result["symbolic"]["status"], "incomplete");
+    assert!(
+        result["symbolic"]["incomplete"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("nested hard arithmetic")
+    );
+});
+
 forgetest_init!(symbolic_proves_saturating_mul_equivalence, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(
@@ -1758,6 +1995,175 @@ contract SymbolicNativeArrayLengths {
 [PASS] checkArray(uint256[])
 "#]],
     );
+});
+
+forgetest_init!(symbolic_handles_array_assertions_from_symbolic_memory, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_handles_array_assertions_from_symbolic_memory because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicArrayAssertions.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicArrayAssertions is Test {
+    function checkArrayCopy(uint256[] memory values) public pure {
+        uint256[] memory copy = new uint256[](values.length);
+        for (uint256 i; i < values.length; ++i) copy[i] = values[i];
+        assertEq(values, copy);
+    }
+
+    function checkCorruptedArrayCopy(uint256[] memory values) public pure {
+        uint256[] memory copy = new uint256[](values.length);
+        for (uint256 i; i < values.length; ++i) copy[i] = values[i];
+        if (copy.length != 0) copy[0] ^= 1;
+        assertEq(values, copy);
+    }
+
+    function checkConcretePointerWithSymbolicSize(bool padded) public view {
+        assembly {
+            mstore(0x80, shl(224, 0x975d5a12))
+            mstore(0x84, 0x40)
+            mstore(0xa4, 0x60)
+            mstore(0xc4, 0)
+            mstore(0xe4, 0)
+            let size := add(0x84, shl(5, padded))
+            if iszero(staticcall(gas(), 0x7109709ECfa91a80626fF3989D68f67F5b1DD12D, 0x80, size, 0, 0)) {
+                revert(0, 0)
+            }
+        }
+    }
+
+    function checkArrayCallResultTracksInputSize(bool complete, uint256 value) public view {
+        bool success;
+        assembly {
+            mstore(0x80, shl(224, 0x975d5a12))
+            mstore(0x84, 0x40)
+            mstore(0xa4, 0x80)
+            mstore(0xc4, 1)
+            mstore(0xe4, value)
+            mstore(0x104, 1)
+            mstore(0x124, value)
+            let size := add(4, mul(0xc0, complete))
+            success := staticcall(gas(), 0x7109709ECfa91a80626fF3989D68f67F5b1DD12D, 0x80, size, 0, 0)
+        }
+        assertTrue(success);
+    }
+
+    function checkNoncanonicalArrayEncoding(bool shifted) public view {
+        bool success;
+        assembly {
+            let start := add(0x80, shl(5, shifted))
+            mstore(start, shl(224, 0x975d5a12))
+            mstore(add(start, 4), 0x60)
+            mstore(add(start, 0x24), 0x60)
+            mstore(add(start, 0x64), 1)
+            mstore(add(start, 0x84), 7)
+            success := staticcall(gas(), 0x7109709ECfa91a80626fF3989D68f67F5b1DD12D, start, 0xa4, 0, 0)
+        }
+        assertTrue(success);
+    }
+
+    function checkZeroLengthMcopy(uint256 dest, uint256 size) public view {
+        vm.assume(size <= 2);
+        uint256 byteAtZero;
+        assembly {
+            mstore8(0, 0xaa)
+            mstore8(0x20, 0xbb)
+            mcopy(dest, 0x1f, size)
+            byteAtZero := byte(0, mload(0))
+        }
+        assert(size != 0 || byteAtZero == 0xaa);
+    }
+}
+"#,
+    );
+
+    let args = [
+        "test",
+        "--symbolic",
+        "--symbolic-max-paths",
+        "20",
+        "--symbolic-max-solver-queries",
+        "50",
+        "--symbolic-max-depth",
+        "5000",
+        "--symbolic-timeout",
+        "1",
+    ];
+    let stdout = cmd
+        .args(args)
+        .args(["--symbolic-array-lengths", "1"])
+        .args(["--match-test", "^checkArrayCopy\\("])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert_relevant_lines(&stdout, str![["[PASS] checkArrayCopy(uint256[])"]]);
+
+    let stdout = cmd
+        .forge_fuse()
+        .args(args)
+        .args(["--symbolic-array-lengths", "1"])
+        .args(["--match-test", "^checkCorruptedArrayCopy\\("])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert_relevant_lines(
+        &stdout,
+        str![[r#"
+[FAIL: assertion failed: [0] != [1]; counterexample:
+args=[[0]]] checkCorruptedArrayCopy(uint256[])
+"#]],
+    );
+
+    let stdout = cmd
+        .forge_fuse()
+        .args(args)
+        .args(["--match-test", "^checkConcretePointerWithSymbolicSize\\("])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert_relevant_lines(&stdout, str![["[PASS] checkConcretePointerWithSymbolicSize(bool)"]]);
+
+    let stdout = cmd
+        .forge_fuse()
+        .args(args)
+        .args(["--match-test", "^checkArrayCallResultTracksInputSize\\("])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert_relevant_lines(
+        &stdout,
+        str![[
+            "[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic array assertion CALL input size] checkArrayCallResultTracksInputSize(bool,uint256)"
+        ]],
+    );
+
+    let output = cmd
+        .forge_fuse()
+        .args(args)
+        .args(["--json", "--match-test", "^checkNoncanonicalArrayEncoding\\("])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkNoncanonicalArrayEncoding(bool)");
+    assert_eq!(result["symbolic"]["status"], "pass");
+
+    let output = cmd
+        .forge_fuse()
+        .args(args)
+        .args(["--json", "--match-test", "^checkZeroLengthMcopy\\("])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkZeroLengthMcopy(uint256,uint256)");
+    assert_eq!(result["symbolic"]["status"], "pass");
 });
 
 forgetest_init!(symbolic_uses_legacy_halmos_array_lengths, |prj, cmd| {
@@ -4140,6 +4546,125 @@ contract SymbolicInvariantAssertionSeed is Test {
         .assert_failure();
 });
 
+forgetest_init!(
+    symbolic_invariant_frontier_seeding_retains_property_breaking_candidate,
+    |prj, cmd| {
+        if !z3_available() {
+            let _ = sh_eprintln!(
+                "skipping symbolic_invariant_frontier_seeding_retains_property_breaking_candidate because z3 is not available"
+            );
+            return;
+        }
+
+        prj.add_test(
+            "SymbolicInvariantCandidateSeed.t.sol",
+            r#"
+import "forge-std/Test.sol";
+
+contract SymbolicInvariantCandidateTarget {
+    bool public broken;
+
+    function act(uint256 value) external {
+        if (value < 10 && value == 7) broken = true;
+    }
+}
+
+contract SymbolicInvariantCandidateSeed is Test {
+    SymbolicInvariantCandidateTarget target;
+
+    function setUp() public {
+        target = new SymbolicInvariantCandidateTarget();
+        targetContract(address(target));
+    }
+
+    function invariant_anchor() public pure {}
+
+    function invariant_notBroken() public view {
+        assertFalse(target.broken());
+    }
+
+    function afterInvariant() public pure {}
+}
+"#,
+        );
+
+        cmd.forge_fuse()
+            .args([
+                "fuzz",
+                "run",
+                "--match-contract",
+                "SymbolicInvariantCandidateSeed",
+                "--runs",
+                "1",
+                "--depth",
+                "1",
+                "--seed",
+                "0x1234",
+                "--dictionary-weight",
+                "0",
+                "--threads",
+                "1",
+                "--frontier-dir",
+                "candidate_frontiers",
+            ])
+            .assert_success();
+
+        let frontier_path =
+            find_stateful_frontier_artifact(&prj.root().join("candidate_frontiers"));
+        let target_frontier =
+            keep_only_matching_frontier(&frontier_path, "value < 10", |frontier| {
+                frontier["call_index"] == 0
+                    && frontier["site"]["opcode_name"] == "LT"
+                    && frontier["operands"]["result"] == false
+                    && (frontier["operands"]["lhs"] == "0xa"
+                        || frontier["operands"]["rhs"] == "0xa")
+            });
+        let target_frontier_id = target_frontier["id"].as_u64().unwrap().to_string();
+
+        cmd.forge_fuse();
+        cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+        cmd.args([
+            "test",
+            "--match-contract",
+            "SymbolicInvariantCandidateSeed",
+            "--threads",
+            "1",
+            "--invariant-frontier-dir",
+            "candidate_frontiers",
+            "--invariant-corpus-dir",
+            "candidate_corpus",
+            "--symbolic-use-fuzz-frontiers",
+            "--symbolic-frontier-limit",
+            "1",
+            "--symbolic-frontier-ids",
+            &target_frontier_id,
+        ])
+        .assert_success();
+
+        let output = cmd
+            .forge_fuse()
+            .args([
+                "fuzz",
+                "replay",
+                "--match-contract",
+                "SymbolicInvariantCandidateSeed",
+                "--match-test",
+                "invariant_notBroken",
+                "--corpus-dir",
+                "candidate_corpus",
+            ])
+            .assert_failure()
+            .get_output()
+            .clone();
+        assert!(
+            output.stdout_lossy().contains("invariant_notBroken"),
+            "stdout={}\nstderr={}",
+            output.stdout_lossy(),
+            output.stderr_lossy()
+        );
+    }
+);
+
 forgetest_init!(symbolic_invariant_frontier_seeding_checks_property_from_prefix, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(
@@ -5911,4 +6436,329 @@ contract SymbolicInvalidJump is Test {
 [PASS] checkUntakenJumpiIgnoresSymbolicDestination(uint256)
 "#]],
     );
+});
+
+forgetest_init!(symbolic_bounded_fixed_point_round_trip, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_bounded_fixed_point_round_trip because z3 is not available"
+        );
+        return;
+    }
+    prj.add_test(
+        "FixedPointRoundTrip.t.sol",
+        r#"
+interface Vm {
+    function assume(bool condition) external pure;
+    function prank(address sender) external;
+    function setArbitraryStorage(address target, bool overwrite) external;
+    function store(address target, bytes32 slot, bytes32 value) external;
+}
+
+contract OptInTarget {
+    uint256 public cpt;
+    uint256 public rebasingCredits;
+    uint256 public nonRebasingSupply;
+    mapping(address => uint256) public credits;
+    mapping(address => uint256) public fixedCpt;
+    mapping(address => uint8) public state;
+    mapping(address => address) public yieldFrom;
+
+    function balanceOf(address account) public view returns (uint256) {
+        uint8 accountState = state[account];
+        require(accountState <= 4);
+        if (accountState == 3) return credits[account];
+        uint256 rate = fixedCpt[account];
+        uint256 balance = credits[account] * 1e18 / (rate == 0 ? cpt : rate);
+        if (accountState == 4) return balance - credits[yieldFrom[account]];
+        return balance;
+    }
+
+    function toInt(uint256 value) internal pure returns (int256) {
+        require(value <= uint256(type(int256).max));
+        return int256(value);
+    }
+
+    function toUint(int256 value) internal pure returns (uint256) {
+        require(value >= 0);
+        return uint256(value);
+    }
+
+    function optIn() external {
+        uint256 balance = balanceOf(msg.sender);
+        require(fixedCpt[msg.sender] > 0 || credits[msg.sender] == 0);
+        require(state[msg.sender] == 0 || state[msg.sender] == 1);
+        uint256 newCredits = (balance * cpt + 1e18 - 1) / 1e18;
+        credits[msg.sender] = newCredits;
+        fixedCpt[msg.sender] = 0;
+        state[msg.sender] = 2;
+        int256 creditDiff = toInt(newCredits);
+        int256 supplyDiff = -toInt(balance);
+        if (creditDiff != 0) rebasingCredits = toUint(toInt(rebasingCredits) + creditDiff);
+        if (supplyDiff != 0) nonRebasingSupply = toUint(toInt(nonRebasingSupply) + supplyDiff);
+    }
+}
+
+contract FixedPointRoundTripTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    OptInTarget target;
+
+    function setUp() public {
+        target = new OptInTarget();
+        vm.setArbitraryStorage(address(target), true);
+    }
+
+    function checkFullWidthRoundTrip(uint256 balance, uint256 cpt) external pure {
+        require(cpt >= 1e18);
+        uint256 credits = (balance * cpt + 1e18 - 1) / 1e18;
+        assert(credits * 1e18 / cpt == balance);
+    }
+
+    function checkFullWidthOptIn(address account) external {
+        vm.assume(target.cpt() >= 1e18);
+        uint256 fixedCpt = target.fixedCpt(account);
+        vm.assume(fixedCpt == 0 || fixedCpt == 1e18);
+        uint256 balance = target.balanceOf(account);
+        vm.prank(account);
+        target.optIn();
+        assert(target.balanceOf(account) == balance);
+        assert(target.fixedCpt(account) == 0);
+        assert(target.state(account) == 2);
+    }
+
+    function testOptInConcreteWitnessAboveUint128() external {
+        address account = address(0xB0B);
+        uint256 balance = uint256(type(uint128).max) + 1;
+        vm.store(address(target), bytes32(uint256(0)), bytes32(uint256(1e18)));
+        vm.store(address(target), bytes32(uint256(1)), bytes32(uint256(0)));
+        vm.store(address(target), bytes32(uint256(2)), bytes32(balance));
+        vm.store(address(target), keccak256(abi.encode(account, uint256(3))), bytes32(balance));
+        vm.store(address(target), keccak256(abi.encode(account, uint256(4))), bytes32(uint256(1e18)));
+        vm.store(address(target), keccak256(abi.encode(account, uint256(5))), bytes32(uint256(1)));
+        this.checkFullWidthOptIn(account);
+        assert(target.credits(account) == balance);
+        assert(target.rebasingCredits() == balance);
+        assert(target.nonRebasingSupply() == 0);
+    }
+
+    function checkUncheckedRounding(uint256 cpt) external pure {
+        require(cpt >= 1e18);
+        unchecked {
+            uint256 credits = (cpt + 1e18 - 1) / 1e18;
+            assert(credits * 1e18 / cpt == 1);
+        }
+    }
+
+    function testOptInConcreteWitness() external {
+        address account = address(0xB0B);
+        vm.store(address(target), bytes32(uint256(0)), bytes32(uint256(1e18 + 1)));
+        vm.store(address(target), bytes32(uint256(1)), bytes32(uint256(100)));
+        vm.store(address(target), bytes32(uint256(2)), bytes32(uint256(1)));
+        vm.store(address(target), keccak256(abi.encode(account, uint256(3))), bytes32(uint256(1)));
+        vm.store(address(target), keccak256(abi.encode(account, uint256(4))), bytes32(uint256(1e18)));
+        vm.store(address(target), keccak256(abi.encode(account, uint256(5))), bytes32(uint256(1)));
+        this.checkFullWidthOptIn(account);
+        assert(target.credits(account) == 2);
+        assert(target.rebasingCredits() == 102);
+        assert(target.nonRebasingSupply() == 0);
+    }
+
+    function checkLowRate(uint128 balance) external pure {
+        require(balance > 0 && balance < 100);
+        uint256 credits = (uint256(balance) * 1 + 2 - 1) / 2;
+        assert(credits * 2 / 1 == balance);
+    }
+
+    function checkWrapping(uint256 balance) external pure {
+        require(balance >= 1 << 255);
+        unchecked {
+            uint256 credits = (balance * 2 + 2 - 1) / 2;
+            assert(credits * 2 / 2 == balance);
+        }
+    }
+}
+"#,
+    );
+    for (test, signature) in [
+        ("checkFullWidthRoundTrip", "checkFullWidthRoundTrip(uint256,uint256)"),
+        ("checkFullWidthOptIn", "checkFullWidthOptIn(address)"),
+    ] {
+        let output = cmd
+            .forge_fuse()
+            .args([
+                "test",
+                "--symbolic",
+                "--json",
+                "--optimize",
+                "--symbolic-timeout",
+                "30",
+                "--match-test",
+                test,
+            ])
+            .assert_success()
+            .get_output()
+            .stdout
+            .clone();
+        let result = json_test_result(&output, signature);
+        assert_eq!(result["symbolic"]["status"], "pass");
+    }
+    cmd.forge_fuse()
+        .args(["test", "--optimize", "--match-test", "testOptInConcreteWitness"])
+        .assert_success();
+
+    for (test, signature) in [
+        ("checkLowRate", "checkLowRate(uint128)"),
+        ("checkWrapping", "checkWrapping(uint256)"),
+        ("checkUncheckedRounding", "checkUncheckedRounding(uint256)"),
+    ] {
+        let output = cmd
+            .forge_fuse()
+            .args([
+                "test",
+                "--symbolic",
+                "--json",
+                "--optimize",
+                "--symbolic-timeout",
+                "30",
+                "--match-test",
+                test,
+            ])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        let result = json_test_result(&output, signature);
+        assert_eq!(result["symbolic"]["status"], "fail_counterexample");
+    }
+});
+
+forgetest_init!(symbolic_independently_bounded_fixed_point_round_trip, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_independently_bounded_fixed_point_round_trip because z3 is not available"
+        );
+        return;
+    }
+    prj.add_test(
+        "FixedPointRoundTrip.t.sol",
+        r#"
+contract FixedPointRoundTripTest {
+    function checkRoundTrip(uint128 balance, uint256 rate) external pure {
+        require(balance > 0 && balance < type(uint128).max);
+        require(rate >= 1e18 && rate <= 1e27);
+        unchecked {
+            uint256 rounded = (uint256(balance) * rate + 1e18 - 1) / 1e18;
+            assert(rounded * 1e18 / rate == balance);
+        }
+    }
+
+}
+"#,
+    );
+
+    cmd.args(["test", "--symbolic", "--match-test", "checkRoundTrip"]).assert_success();
+});
+
+forgetest_init!(symbolic_rounded_product_relations, |prj, cmd| {
+    if !z3_available() {
+        let _ =
+            sh_eprintln!("skipping symbolic_rounded_product_relations because z3 is not available");
+        return;
+    }
+    prj.add_test(
+        "RoundedProduct.t.sol",
+        r#"
+contract RoundedProductTest {
+    function checkFloorError(uint256 value) external pure {
+        uint256 rounded = value / 37 * 37;
+        assert(rounded <= value);
+        assert(value - rounded < 37);
+    }
+
+    function checkDividendRelation(uint256 value) external pure {
+        require(value <= type(uint256).max - 36);
+        uint256 dividend = value + 36;
+        uint256 rounded = dividend / 37 * 37;
+        assert(rounded <= dividend);
+        assert(dividend - rounded < 37);
+    }
+
+    function checkWrappingDividendRelation(uint256 value) external pure {
+        unchecked {
+            uint256 dividend = value + 36;
+            uint256 rounded = dividend / 37 * 37;
+            assert(rounded <= dividend);
+            assert(dividend - rounded < 37);
+        }
+    }
+
+    function checkCeilingError(uint256 value) external pure {
+        uint256 rounded = (value + 36) / 37 * 37;
+        assert(rounded >= value);
+        assert(rounded - value < 37);
+    }
+
+    function checkCeilingRoundTrip(uint128 value, uint128 rate) external pure {
+        require(rate >= 37);
+        uint256 rounded = (uint256(value) * rate + 36) / 37 * 37;
+        assert(rounded / rate == value);
+    }
+
+    function checkCeilingIsNotExact(uint256 value) external pure {
+        require(value < 100);
+        uint256 rounded = (value + 36) / 37 * 37;
+        assert(rounded == value);
+    }
+
+    function checkWrappingCeiling(uint256 value) external pure {
+        unchecked {
+            uint256 rounded = (value + 36) / 37 * 37;
+            assert(rounded >= value);
+        }
+    }
+
+    function checkReversedFloorError(uint256 value) external pure {
+        unchecked {
+            uint256 rounded = value / 37 * 37;
+            assert(rounded - value < 37);
+        }
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        cmd.forge_fuse().args([
+            "test",
+            "--symbolic",
+            "--symbolic-timeout",
+            "30",
+            "--match-test",
+            "check(FloorError|DividendRelation|WrappingDividendRelation|CeilingError|CeilingRoundTrip)",
+        ])
+        .assert_success();
+        let output = cmd
+            .forge_fuse()
+            .args([
+                "test",
+                "--symbolic",
+                "--json",
+                "--symbolic-timeout",
+                "30",
+                "--match-test",
+                "check(CeilingIsNotExact|WrappingCeiling|ReversedFloorError)",
+            ])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        for test in ["checkCeilingIsNotExact", "checkWrappingCeiling", "checkReversedFloorError"] {
+            let signature = format!("{test}(uint256)");
+            let result = json_test_result(&output, &signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "{test}, optimized={optimized}"
+            );
+        }
+    }
 });

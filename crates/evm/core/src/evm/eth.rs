@@ -1,24 +1,35 @@
 use alloy_evm::{
     EthEvm, EthEvmFactory, Evm, EvmEnv, EvmFactory, eth::EthEvmContext, precompiles::PrecompilesMap,
 };
+use alloy_network::Ethereum;
 use foundry_evm_networks::apply_bsc_p256_precompile;
 use foundry_fork_db::DatabaseError;
 use revm::{
     context::{
         BlockEnv, Evm as RevmEvm, Journal, TxEnv,
-        result::{EVMError, ResultAndState},
+        result::{EVMError, HaltReason, ResultAndState},
     },
     handler::{EthFrame, EvmTr, FrameResult, MainnetHandler, instructions::EthInstructions},
     inspector::InspectorHandler,
-    interpreter::{FrameInput, interpreter::EthInterpreter},
+    interpreter::{FrameInput, InstructionResult, interpreter::EthInterpreter},
     primitives::hardfork::SpecId,
 };
 
 use crate::{
     FoundryContextExt, FoundryInspectorExt,
     backend::{DatabaseExt, JournaledState},
-    evm::{FoundryEvmFactory, NestedEvm, NestedEvmFor, run_inspected_frame},
+    evm::{
+        FoundryEvmFactory, FoundryEvmNetwork, IntoInstructionResult, NestedEvm, NestedEvmFor,
+        run_inspected_frame,
+    },
 };
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct EthEvmNetwork;
+impl FoundryEvmNetwork for EthEvmNetwork {
+    type Network = Ethereum;
+    type EvmFactory = EthEvmFactory;
+}
 
 type EthEvmHandler<'db, I> = MainnetHandler<EthRevmEvm<'db, I>, EVMError<DatabaseError>, EthFrame>;
 
@@ -29,6 +40,12 @@ pub type EthRevmEvm<'db, I> = RevmEvm<
     PrecompilesMap,
     EthFrame,
 >;
+
+impl IntoInstructionResult for HaltReason {
+    fn into_instruction_result(self) -> InstructionResult {
+        self.into()
+    }
+}
 
 impl FoundryEvmFactory for EthEvmFactory {
     type Chain = ();

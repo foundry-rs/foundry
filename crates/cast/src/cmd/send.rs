@@ -9,7 +9,7 @@ use crate::{
 };
 use alloy_consensus::{SignableTransaction, Signed};
 use alloy_ens::NameOrAddress;
-use alloy_network::{Ethereum, EthereumWallet, Network};
+use alloy_network::{Ethereum, EthereumWallet, Network, NetworkTransactionBuilder};
 use alloy_primitives::{Address, B256, hex};
 use alloy_provider::{Provider, ProviderBuilder as AlloyProviderBuilder};
 use alloy_signer::{Signature, Signer};
@@ -31,6 +31,9 @@ use tempo_alloy::TempoNetwork;
 use tempo_contracts::precompiles::{TIP20_FACTORY_ADDRESS, is_iso4217_currency};
 use tempo_primitives::transaction::FEE_PAYER_SIGNATURE_MARKER;
 use url::Url;
+
+#[cfg(feature = "base")]
+use base_common_network::Base;
 
 /// CLI arguments for `cast send`.
 #[derive(Debug, Parser)]
@@ -128,19 +131,34 @@ impl SendTxArgs {
     }
 
     pub async fn run(self) -> Result<()> {
-        if self.tx.tempo.session_id()?.is_some() {
-            return self.run_generic::<TempoNetwork>(None, None).await;
+        if self.to.is_none() && matches!(self.command, Some(SendTxSubcommands::Create { .. })) {
+            if !self.tx.auth.is_empty() {
+                eyre::bail!(
+                    "EIP-7702 transactions can't be CREATE transactions and require a destination address"
+                );
+            }
+            if self.path.is_some() {
+                eyre::bail!(
+                    "EIP-4844 transactions can't be CREATE transactions and require a destination address"
+                );
+            }
         }
 
-        let (is_tempo, signer, tempo_access_key) =
+        let (network, signer, tempo_access_key) =
             tempo::resolve_transaction_network_and_signer(&self.tx.tempo, &self.send_tx.eth)
                 .await?;
 
-        if is_tempo {
-            self.run_generic::<TempoNetwork>(signer, tempo_access_key).await
-        } else {
-            self.run_generic::<Ethereum>(signer, None).await
+        if network.is_tempo() {
+            return self.run_generic::<TempoNetwork>(signer, tempo_access_key).await;
         }
+
+        #[cfg(feature = "base")]
+        if network.is_base() {
+            super::validate_base_transaction_options(&self.tx)?;
+            return self.run_generic::<Base>(signer, None).await;
+        }
+
+        self.run_generic::<Ethereum>(signer, None).await
     }
 
     /// Runs a contract call with an already resolved browser signer.
@@ -225,18 +243,6 @@ impl SendTxArgs {
             args: constructor_args,
         }) = command
         {
-            // 7702 and 4844 transactions require a target, so they can't be CREATE transactions.
-            if to.is_none() && !tx.auth.is_empty() {
-                return Err(eyre!(
-                    "EIP-7702 transactions can't be CREATE transactions and require a destination address"
-                ));
-            }
-            if to.is_none() && blob_data.is_some() {
-                return Err(eyre!(
-                    "EIP-4844 transactions can't be CREATE transactions and require a destination address"
-                ));
-            }
-
             sig = constructor_sig;
             args = constructor_args;
             Some(code)
@@ -410,6 +416,7 @@ impl SendTxArgs {
                 browser.switch_chain(chain.id()).await?;
             }
 
+            tx_request.prep_for_submission();
             let tx_hash = browser.send_transaction_via_browser(tx_request).await?;
             send_opts.print_tx_result(&provider, tx_hash).await?;
         // Case 3: Tempo access-key wallet.

@@ -32,7 +32,7 @@ use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
     opts::{ChainValueParser, RpcOpts, TracingArgs, TransactionOpts},
-    utils::{LoadConfig, TraceResult, parse_ether_value},
+    utils::{TraceResult, load_config_from_provider, parse_ether_value},
 };
 use foundry_common::{
     FoundryTransactionBuilder,
@@ -62,6 +62,9 @@ use foundry_evm::{
 use foundry_evm_networks::NetworkConfigs;
 use foundry_wallets::{BrowserWalletOpts, WalletOpts};
 use std::str::FromStr;
+
+#[cfg(feature = "base")]
+use foundry_evm::core::evm::BaseEvmNetwork;
 
 #[cfg(feature = "monad")]
 use foundry_evm::core::evm::MonadEvmNetwork;
@@ -261,11 +264,19 @@ impl CallArgs {
         let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
         let (mut config, mut evm_opts) = super::load_cast_config_and_evm_opts(figment)?;
         evm_opts.fork_url = Some(config.get_rpc_url_or_localhost_http()?.into_owned());
-        if self.tx.tempo.is_tempo() {
+        let has_tempo_session = self.tx.tempo.session_id()?.is_some();
+        let requires_tempo = self.tx.tempo.is_tempo() || has_tempo_session;
+        super::validate_tempo_network(&config, requires_tempo)?;
+        if requires_tempo {
             evm_opts.networks = NetworkConfigs::with_tempo();
-        } else if let Some(chain) = self.chain {
+        } else if !evm_opts.networks.has_network_selection()
+            && let Some(chain) = config.chain
+        {
             evm_opts.networks =
                 evm_opts.networks.try_with_chain_id(chain.id()).map_err(eyre::Report::msg)?;
+        }
+        if has_tempo_session && self.will_disclose_auth() {
+            eyre::bail!("Tempo sessions cannot be combined with EIP-7702 authorizations");
         }
         let Some(auth_preflight) = self.preflight_auth_disclosure().await? else {
             return Ok(());
@@ -286,6 +297,19 @@ impl CallArgs {
                     evm_opts,
                     auth_preflight,
                     ExecutorBuilder::<TempoEvmNetwork>::new(),
+                )
+                .await;
+        }
+
+        #[cfg(feature = "base")]
+        if evm_opts.networks.is_base() {
+            super::validate_base_transaction_options(&self.tx)?;
+            return self
+                .run_with_network_and_opts::<BaseEvmNetwork>(
+                    config,
+                    evm_opts,
+                    auth_preflight,
+                    ExecutorBuilder::<BaseEvmNetwork>::new(),
                 )
                 .await;
         }
@@ -418,7 +442,13 @@ impl CallArgs {
             if debug_trace_call { Some(evm_opts.discover_fork_endpoint().await?) } else { None };
         let sender = match auth_sender {
             Some(sender) => sender,
-            None => read_only_sender::<FEN::Network>(&browser, wallet).await?.0,
+            None => {
+                let chain_id = match config.chain {
+                    Some(chain) => chain.id(),
+                    None => provider.get_chain_id().await?,
+                };
+                read_only_sender::<FEN::Network>(&browser, wallet, &tx.tempo, chain_id).await?.0
+            }
         };
         let from = sender.address();
 
@@ -582,7 +612,14 @@ impl CallArgs {
             return handle_traces(
                 result,
                 &config,
-                TraceContext::new(chain, endpoint_identity.network_profile, resolved_hardfork),
+                {
+                    let context = TraceContext::new(
+                        chain,
+                        endpoint_identity.network_profile,
+                        resolved_hardfork,
+                    );
+                    context.with_hardfork(context.decoding_hardfork(&config))
+                },
                 &contracts_bytecode,
                 &tracing,
                 with_local_artifacts,
@@ -766,7 +803,13 @@ impl CallArgs {
 
     /// Handle --curl mode by generating curl command without any RPC interaction.
     async fn run_curl(self) -> Result<()> {
-        let config = self.rpc.load_config()?;
+        let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
+        let config = load_config_from_provider(figment)?;
+        let has_tempo_session = self.tx.tempo.session_id()?.is_some();
+        super::validate_tempo_network(&config, self.tx.tempo.is_tempo() || has_tempo_session)?;
+        if has_tempo_session {
+            eyre::bail!("--tempo.session/TEMPO_SESSION_ID cannot be combined with --curl");
+        }
         let url = config.get_rpc_url_or_localhost_http()?;
         let jwt = config.get_rpc_jwt_secret()?;
 
@@ -968,6 +1011,19 @@ mod tests {
         let config = Config::from_provider(Config::figment().merge(&args)).unwrap();
 
         assert_eq!(config.chain, Some(Chain::mainnet()));
+    }
+
+    /// Base chain IDs resolved to Optimism before Base support existed, so a build without the
+    /// `base` feature — which is what release binaries ship — must keep resolving them that way.
+    #[test]
+    #[cfg(all(not(feature = "base"), feature = "optimism"))]
+    fn chain_id_without_base_still_resolves_to_optimism() {
+        for chain_id in [8453, 84532] {
+            let networks = NetworkConfigs::default()
+                .try_with_chain_id(chain_id)
+                .unwrap_or_else(|error| panic!("chain ID {chain_id} must still resolve: {error}"));
+            assert!(networks.is_optimism(), "chain ID {chain_id} must resolve to Optimism");
+        }
     }
 
     #[test]

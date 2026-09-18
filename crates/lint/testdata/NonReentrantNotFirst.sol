@@ -16,15 +16,15 @@ contract NonReentrantNotFirst {
         _;
     }
 
-    function badSingle(uint256 amount) external onlyOwner nonReentrant { //~WARN: `nonReentrant` should be the first modifier
+    function badSingle(uint256 amount) external onlyOwner nonReentrant { //~WARN: `nonReentrant` is not the first modifier
         amount;
     }
 
-    function badMultiple(uint256 amount) external onlyOwner whenNotPaused nonReentrant { //~WARN: `nonReentrant` should be the first modifier
+    function badMultiple(uint256 amount) external onlyOwner whenNotPaused nonReentrant { //~WARN: `nonReentrant` is not the first modifier
         amount;
     }
 
-    function badDuplicate(uint256 amount) external nonReentrant onlyOwner nonReentrant { //~WARN: `nonReentrant` should be the first modifier
+    function badDuplicate(uint256 amount) external nonReentrant onlyOwner nonReentrant { //~WARN: `nonReentrant` is not the first modifier
         amount;
     }
 
@@ -52,10 +52,10 @@ contract FallbackReceiveNonReentrantNotFirst {
         _;
     }
 
-    receive() external payable onlyOwner nonReentrant { //~WARN: `nonReentrant` should be the first modifier
+    receive() external payable onlyOwner nonReentrant { //~WARN: `nonReentrant` is not the first modifier
     }
 
-    fallback() external payable onlyOwner nonReentrant { //~WARN: `nonReentrant` should be the first modifier
+    fallback() external payable onlyOwner nonReentrant { //~WARN: `nonReentrant` is not the first modifier
     }
 }
 
@@ -70,7 +70,7 @@ contract InheritedNonReentrantNotFirst is BaseReentrancyGuard {
         _;
     }
 
-    function badInherited() external onlyOwner nonReentrant { //~WARN: `nonReentrant` should be the first modifier
+    function badInherited() external onlyOwner nonReentrant { //~WARN: `nonReentrant` is not the first modifier
         msg.sender;
     }
 

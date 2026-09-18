@@ -446,3 +446,11 @@ LL │ …     token.transferFrom(from, address(this), a);
    │
    ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-erc20
 
+warning[arbitrary-send-erc20]: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+   ╭▸ ROOT/testdata/ArbitrarySendErc20.sol:LL:CC
+   │
+LL │ …     token.transferFrom(from, to, amount);
+   │       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-erc20
+

@@ -3,7 +3,41 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
+type LocalAmount is uint256;
+
 contract UninitializedLocal {
+    enum Status { Pending, Done }
+
+    function enumValue() public pure returns (Status) {
+        Status status;
+        return status; //~WARN: local variable is read before being initialized
+    }
+
+    function contractValue() public pure returns (IFoo) {
+        IFoo target;
+        return target; //~WARN: local variable is read before being initialized
+    }
+
+    function userDefinedValue() public pure returns (uint256) {
+        LocalAmount amount;
+        return LocalAmount.unwrap(amount); //~WARN: local variable is read before being initialized
+    }
+
+    function functionValue() public pure returns (uint256) {
+        function() internal pure returns (uint256) callback;
+        return callback(); //~WARN: local variable is read before being initialized
+    }
+
+    function initializedValues() public pure returns (Status, IFoo, LocalAmount) {
+        Status status;
+        IFoo target;
+        LocalAmount amount;
+        status = Status.Done;
+        target = IFoo(address(1));
+        amount = LocalAmount.wrap(1);
+        return (status, target, amount);
+    }
+
     struct Point {
         uint256 x;
         uint256 y;

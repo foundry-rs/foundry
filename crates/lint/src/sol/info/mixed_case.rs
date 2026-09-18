@@ -16,14 +16,14 @@ declare_forge_lint!(
     MIXED_CASE_FUNCTION,
     Severity::Info,
     "mixed-case-function",
-    "function names should use mixedCase"
+    "function name is not `mixedCase`"
 );
 
 declare_forge_lint!(
     MIXED_CASE_VARIABLE,
     Severity::Info,
     "mixed-case-variable",
-    "mutable variables should use mixedCase"
+    "mutable variable name is not `mixedCase`"
 );
 
 /// Checks function names when `FUNCTIONS` is set, mutable variable names otherwise.

@@ -12,7 +12,7 @@ declare_forge_lint!(
     MISSING_INHERITANCE,
     Severity::Info,
     "missing-inheritance",
-    "contract implements an interface's external API but does not explicitly inherit from it"
+    "contract has all selectors of an interface it does not explicitly inherit"
 );
 
 impl<'ast> ProjectLintPass<'ast> for MissingInheritance {
@@ -112,7 +112,7 @@ impl<'ast> ProjectLintPass<'ast> for MissingInheritance {
             let Some(&src_idx) = input_source_idx.get(&target.source) else { continue };
             for iid in kept {
                 let msg = format!(
-                    "contract `{}` implements interface `{}`'s external API but does not explicitly inherit from it",
+                    "contract `{}` has all selectors of interface `{}` but does not explicitly inherit from it",
                     target.name.as_str(),
                     gcx.hir.contract(iid).name.as_str(),
                 );

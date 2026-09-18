@@ -12,7 +12,7 @@ declare_forge_lint!(
     CUSTOM_ERRORS,
     Severity::Gas,
     "custom-errors",
-    "prefer using custom errors on revert and require calls"
+    "`revert` or `require` call does not use a custom error"
 );
 
 impl<'ast> EarlyLintPass<'ast> for CustomErrors {

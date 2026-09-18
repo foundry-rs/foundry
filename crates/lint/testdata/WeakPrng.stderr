@@ -121,6 +121,14 @@ LL │         return block.timestamp % 60;
 warning[weak-prng]: weak randomness derived from a predictable on-chain value
    ╭▸ ROOT/testdata/WeakPrng.sol:LL:CC
    │
+LL │         return block.timestamp % MINUTE;
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/weak-prng
+
+warning[weak-prng]: weak randomness derived from a predictable on-chain value
+   ╭▸ ROOT/testdata/WeakPrng.sol:LL:CC
+   │
 LL │         return block.timestamp % 600;
    │                ━━━━━━━━━━━━━━━━━━━━━
    │

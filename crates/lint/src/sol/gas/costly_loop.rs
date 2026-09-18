@@ -9,7 +9,7 @@ use solar::{
     sema::{
         Gcx, Hir,
         builtins::Builtin,
-        hir::{self, Expr, ExprKind, Function, Res, Stmt, StmtKind, Visit as _},
+        hir::{self, Expr, ExprKind, Function, Stmt, StmtKind, Visit as _},
     },
 };
 use std::ops::ControlFlow;
@@ -66,10 +66,9 @@ impl<'gcx> hir::Visit<'gcx> for LoopWriteFinder<'_, 'gcx> {
 fn lvalue_is_state_var(gcx: Gcx<'_>, expr: &Expr<'_>) -> bool {
     let expr = expr.peel_parens();
     match &expr.kind {
-        ExprKind::Ident(reses) => reses
-            .iter()
-            .find_map(Res::as_variable)
-            .is_some_and(|id| gcx.hir.variable(id).is_state_variable()),
+        ExprKind::Ident(_) => {
+            gcx.resolved_variable(expr).is_some_and(|id| gcx.hir.variable(id).is_state_variable())
+        }
         ExprKind::Call(callee, ..) => {
             gcx.resolved_builtin(callee) == Some(Builtin::ArrayPush0)
                 || gcx

@@ -2,6 +2,8 @@ mod abi;
 mod anvil;
 mod anvil_api;
 mod api;
+#[cfg(feature = "base")]
+mod base;
 mod beacon_api;
 mod block_index;
 mod eip2935;
@@ -30,6 +32,7 @@ mod simulate;
 mod state;
 mod storage_values;
 mod tempo;
+mod tempo_canary;
 mod traces;
 mod transaction;
 mod txpool;

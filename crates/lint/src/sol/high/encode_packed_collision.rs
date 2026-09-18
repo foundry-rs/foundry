@@ -1,16 +1,13 @@
 use super::EncodedPackedCollision;
 use crate::{
     linter::{LateLintPass, LintContext},
-    sol::{
-        Severity, SolLint,
-        analysis::{expr_ty, is_builtin},
-    },
+    sol::{Severity, SolLint},
 };
 use solar::{
     ast::LitKind,
-    interface::sym,
     sema::{
         Gcx,
+        builtins::Builtin,
         hir::{Expr, ExprKind},
     },
 };
@@ -25,8 +22,7 @@ declare_forge_lint!(
 impl<'gcx> LateLintPass<'gcx> for EncodedPackedCollision {
     fn check_expr(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, expr: &'gcx Expr<'gcx>) {
         let ExprKind::Call(callee, args, _) = &expr.kind else { return };
-        let ExprKind::Member(base, member) = &callee.peel_parens().kind else { return };
-        if member.name != sym::encodePacked || !is_builtin(base, sym::abi) {
+        if gcx.resolved_builtin(callee) != Some(Builtin::AbiEncodePacked) {
             return;
         }
         // Only non-literal dynamic args count: a top-level string/hex/unicode literal is a
@@ -45,14 +41,5 @@ fn is_str_lit(expr: &Expr<'_>) -> bool {
 }
 
 fn is_dynamic_arg<'gcx>(gcx: Gcx<'gcx>, expr: &Expr<'gcx>) -> bool {
-    match &expr.peel_parens().kind {
-        // String literals (and multi-line/hex string sequences) are always dynamic.
-        ExprKind::Lit(_) => is_str_lit(expr),
-        // Ternary: dynamic when both branches are dynamic. Handled here so that literal branches
-        // (which have no checked type) are correctly identified as dynamic.
-        ExprKind::Ternary(_, then, else_) => {
-            is_dynamic_arg(gcx, then) && is_dynamic_arg(gcx, else_)
-        }
-        _ => expr_ty(gcx, expr).is_some_and(|ty| ty.peel_refs().is_dynamically_sized()),
-    }
+    gcx.type_of_expr(expr.peel_parens().id).is_some_and(|ty| ty.peel_refs().is_dynamically_sized())
 }

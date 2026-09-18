@@ -33,8 +33,9 @@ use foundry_evm::core::tempo::{
     active_tempo_precompile_addresses,
 };
 use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope, TempoTransactionRequest};
+use foundry_test_utils::rpc::spawn_rpc_proxy_canned_method;
 use futures::StreamExt;
-use std::num::NonZeroU64;
+use std::{num::NonZeroU64, sync::atomic::Ordering};
 use tempo_alloy::{TempoNetwork, primitives::TempoTxEnvelope, rpc::TempoHeaderResponse};
 use tempo_hardfork::{
     TempoHardfork,
@@ -52,13 +53,14 @@ use tempo_precompiles::{
     current_committee::{CURRENT_COMMITTEE_ADDRESS, ICurrentCommittee},
     nonce::NonceManager,
     receive_policy_guard::{IReceivePolicyGuard, InboundKind},
+    tip_fee_manager::IFeeManager,
     tip403_registry::{ALLOW_ALL_POLICY_ID, ITIP403Registry, REJECT_ALL_POLICY_ID},
 };
 use tempo_primitives::{
     AASigned, TempoHeader, TempoSignature, TempoTransaction,
     transaction::{
         Call, FEE_PAYER_SIGNATURE_MARKER, KeyAuthorization, KeychainSignature, PrimitiveSignature,
-        SignatureType, TokenLimit,
+        SignatureType, TEMPO_GAS_PRICE_SCALING_FACTOR, TokenLimit, calc_gas_balance_spending,
     },
 };
 
@@ -500,6 +502,84 @@ async fn test_tempo_fork_forwards_request_extensions() {
         .unwrap();
     assert_eq!(simulated[0]["calls"][0]["status"], "0x0");
     assert_eq!(simulated[0]["transactions"][0]["calls"], serde_json::to_value(calls).unwrap());
+}
+
+/// Forks must use real remote balances while preserving local balance edits and snapshots.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_fork_ignores_rpc_placeholder_balances() {
+    let (source, source_handle) =
+        spawn(NodeConfig::test_tempo().with_chain_id(Some(123456u64))).await;
+    let contract = Address::repeat_byte(0x42);
+    // Return SELFBALANCE, making the imported balance observable in EVM execution.
+    source.anvil_set_code(contract, alloy_primitives::bytes!("4760005260206000f3")).await.unwrap();
+    source.anvil_set_balance(contract, U256::from(42)).await.unwrap();
+    source.mine_one().await.unwrap();
+    let (proxy, balance_requests) = spawn_rpc_proxy_canned_method(
+        source_handle.http_endpoint(),
+        "eth_getBalance",
+        serde_json::json!("0xffff"),
+    )
+    .await;
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(proxy.clone()))
+            .with_fork_block_number(Some(1u64))
+            .with_chain_id(Some(31337u64))
+            .with_no_storage_caching(true),
+    )
+    .await;
+    let provider = handle.http_provider();
+    assert_eq!(
+        provider.get_account_info(contract).number(0).await.unwrap().balance,
+        U256::from(42),
+    );
+    for reset in [false, true] {
+        if reset {
+            api.anvil_reset(Some(Forking {
+                json_rpc_url: Some(proxy.clone()),
+                block_number: Some(1),
+            }))
+            .await
+            .unwrap();
+        }
+        let snapshot = api.evm_snapshot().await.unwrap();
+        let local_code = alloy_primitives::bytes!("6001");
+        api.anvil_set_balance(contract, U256::from(99)).await.unwrap();
+        api.anvil_set_nonce(contract, U256::from(7)).await.unwrap();
+        api.anvil_set_code(contract, local_code.clone()).await.unwrap();
+        let account = provider.get_account_info(contract).await.unwrap();
+        assert_eq!(account.balance, U256::from(99));
+        assert_eq!(account.nonce, 7);
+        assert_eq!(account.code, local_code);
+        assert!(api.evm_revert(snapshot).await.unwrap());
+
+        api.mine_one().await.unwrap();
+        let request = TransactionRequest::default().to(contract);
+        assert_eq!(
+            U256::from_be_slice(&provider.call(request.into()).await.unwrap()),
+            U256::from(42),
+        );
+    }
+    assert_eq!(balance_requests.load(Ordering::Relaxed), 0);
+
+    // A downstream fork must receive the historical balance, not this node's current state.
+    api.mine_one().await.unwrap();
+    let historical_block = provider.get_block_number().await.unwrap() - 1;
+    api.anvil_set_balance(contract, U256::from(99)).await.unwrap();
+    api.mine_one().await.unwrap();
+    let (_downstream_api, downstream_handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(handle.http_endpoint()))
+            .with_fork_block_number(Some(historical_block))
+            .with_no_storage_caching(true),
+    )
+    .await;
+    let balance = downstream_handle
+        .http_provider()
+        .call(TransactionRequest::default().to(contract).into())
+        .await
+        .unwrap();
+    assert_eq!(U256::from_be_slice(&balance), U256::from(42));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1882,6 +1962,220 @@ async fn test_tip20_transfer() {
         recipient_balance_after,
         "Recipient balance should increase by transfer amount"
     );
+}
+
+/// Every transaction on Tempo pays gas in a fee token, so a sender holding fee tokens but no
+/// native balance, which is what every forked mainnet sender looks like, must get its EIP-1559
+/// transaction pooled and mined.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_eip1559_sender_without_native_balance_pays_gas_in_fee_token() {
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+
+    let signer = PrivateKeySigner::random();
+    let sender = signer.address();
+    let recipient = Address::random();
+    assert!(provider.get_balance(sender).await.unwrap().is_zero());
+
+    let chain_id = provider.get_chain_id().await.unwrap();
+    let gas_price = provider.get_gas_price().await.unwrap();
+    let amount = U256::from(1_000_000);
+    let tx = TxEip1559 {
+        chain_id,
+        nonce: 0,
+        gas_limit: TIP20_TRANSFER_GAS,
+        max_fee_per_gas: gas_price * 2,
+        max_priority_fee_per_gas: gas_price / 10,
+        to: TxKind::Call(PATH_USD),
+        input: IERC20::transferCall { to: recipient, amount }.abi_encode().into(),
+        ..Default::default()
+    };
+    let signature = signer.sign_hash(&tx.signature_hash()).await.unwrap();
+    let raw = FoundryTxEnvelope::Eip1559(tx.into_signed(signature)).encoded_2718();
+
+    // Without fee tokens the pool reports the fee token shortfall, not missing native funds.
+    let err = provider.send_raw_transaction(&raw).await.unwrap_err();
+    assert!(err.to_string().contains("insufficient fee token balance"), "unexpected error: {err}");
+
+    api.anvil_deal_tip20(sender, PATH_USD, U256::from(10_000_000)).await.unwrap();
+    let receipt = provider.send_raw_transaction(&raw).await.unwrap().get_receipt().await.unwrap();
+    assert!(receipt.status());
+    assert_eq!(IERC20::new(PATH_USD, &provider).balanceOf(recipient).call().await.unwrap(), amount);
+}
+
+/// The pool admits a Tempo transaction only once the fee payer can cover the maximum fee,
+/// rounded up to a whole fee token unit like the execution precharge: one unit short is rejected,
+/// the exact amount is admitted and mined.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_pool_requires_max_fee_rounded_up_in_fee_token() {
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+
+    let signer = PrivateKeySigner::random();
+    let sender = signer.address();
+    let chain_id = provider.get_chain_id().await.unwrap();
+    let gas_price = provider.get_gas_price().await.unwrap();
+
+    // An odd gas limit keeps the fee from being a whole number of fee token units; a fresh
+    // account's first transaction also pays Tempo's new account cost.
+    let gas_limit = 1_000_001;
+    let max_fee_per_gas = gas_price * 2;
+    let required = calc_gas_balance_spending(gas_limit, max_fee_per_gas);
+    assert_ne!(
+        required * TEMPO_GAS_PRICE_SCALING_FACTOR,
+        U256::from(gas_limit) * U256::from(max_fee_per_gas),
+        "the fee must round up for the boundary to matter"
+    );
+
+    let tx = TxEip1559 {
+        chain_id,
+        nonce: 0,
+        gas_limit,
+        max_fee_per_gas,
+        max_priority_fee_per_gas: gas_price / 10,
+        to: TxKind::Call(Address::random()),
+        ..Default::default()
+    };
+    let signature = signer.sign_hash(&tx.signature_hash()).await.unwrap();
+    let raw = FoundryTxEnvelope::Eip1559(tx.into_signed(signature)).encoded_2718();
+
+    api.anvil_deal_tip20(sender, PATH_USD, required - U256::from(1)).await.unwrap();
+    let err = provider.send_raw_transaction(&raw).await.unwrap_err();
+    assert!(err.to_string().contains("insufficient fee token balance"), "unexpected error: {err}");
+
+    api.anvil_deal_tip20(sender, PATH_USD, required).await.unwrap();
+    let receipt = provider.send_raw_transaction(&raw).await.unwrap().get_receipt().await.unwrap();
+    assert!(receipt.status());
+}
+
+/// Signs `tx` with `signer` and returns its raw EIP-2718 encoding.
+async fn sign_eip1559(signer: &PrivateKeySigner, tx: TxEip1559) -> Vec<u8> {
+    let signature = signer.sign_hash(&tx.signature_hash()).await.unwrap();
+    FoundryTxEnvelope::Eip1559(tx.into_signed(signature)).encoded_2718()
+}
+
+/// The pool resolves the fee token like execution does: a sender holding only AlphaUSD that
+/// transfers AlphaUSD pays its fee in AlphaUSD, without any pathUSD or stored preference.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_pool_infers_fee_token_from_tip20_call() {
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+
+    let signer = PrivateKeySigner::random();
+    let sender = signer.address();
+    let recipient = Address::random();
+    let chain_id = provider.get_chain_id().await.unwrap();
+    let gas_price = provider.get_gas_price().await.unwrap();
+    let amount = U256::from(1_000_000);
+    api.anvil_deal_tip20(sender, ALPHA_USD, U256::from(10_000_000)).await.unwrap();
+
+    let tx = TxEip1559 {
+        chain_id,
+        nonce: 0,
+        gas_limit: TIP20_TRANSFER_GAS,
+        max_fee_per_gas: gas_price * 2,
+        max_priority_fee_per_gas: gas_price / 10,
+        to: TxKind::Call(ALPHA_USD),
+        input: IERC20::transferCall { to: recipient, amount }.abi_encode().into(),
+        ..Default::default()
+    };
+    let raw = sign_eip1559(&signer, tx).await;
+    let receipt = provider.send_raw_transaction(&raw).await.unwrap().get_receipt().await.unwrap();
+    assert!(receipt.status());
+
+    let alpha = IERC20::new(ALPHA_USD, &provider);
+    assert_eq!(alpha.balanceOf(recipient).call().await.unwrap(), amount);
+    assert!(
+        alpha.balanceOf(sender).call().await.unwrap() < U256::from(10_000_000) - amount,
+        "the fee was not paid in AlphaUSD"
+    );
+    assert_eq!(
+        IERC20::new(PATH_USD, &provider).balanceOf(sender).call().await.unwrap(),
+        U256::ZERO
+    );
+}
+
+/// A transaction that sets the sender's fee token preference pays its own fee in the token it
+/// sets, so the pool must resolve that token immediately instead of the stored preference.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_pool_uses_fee_token_set_by_the_transaction() {
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+
+    let signer = PrivateKeySigner::random();
+    let sender = signer.address();
+    let chain_id = provider.get_chain_id().await.unwrap();
+    let gas_price = provider.get_gas_price().await.unwrap();
+    api.anvil_deal_tip20(sender, ALPHA_USD, U256::from(10_000_000)).await.unwrap();
+
+    let tx = TxEip1559 {
+        chain_id,
+        nonce: 0,
+        gas_limit: TIP20_TRANSFER_GAS,
+        max_fee_per_gas: gas_price * 2,
+        max_priority_fee_per_gas: gas_price / 10,
+        to: TxKind::Call(TIP_FEE_MANAGER_ADDRESS),
+        input: IFeeManager::setUserTokenCall { token: ALPHA_USD }.abi_encode().into(),
+        ..Default::default()
+    };
+    let raw = sign_eip1559(&signer, tx).await;
+    let receipt = provider.send_raw_transaction(&raw).await.unwrap().get_receipt().await.unwrap();
+    assert!(receipt.status());
+
+    let fee_manager = IFeeManagerRpc::new(TIP_FEE_MANAGER_ADDRESS, &provider);
+    assert_eq!(fee_manager.userTokens(sender).call().await.unwrap(), ALPHA_USD);
+    assert!(
+        IERC20::new(ALPHA_USD, &provider).balanceOf(sender).call().await.unwrap()
+            < U256::from(10_000_000),
+        "the fee was not paid in AlphaUSD"
+    );
+}
+
+/// With pool balance checks disabled, a sender may spend fee tokens it only receives from an
+/// earlier transaction in the same block, mirroring the Ethereum test in `txpool`.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_accepts_spend_after_funding_when_pool_checks_disabled() {
+    let (api, handle) =
+        spawn(NodeConfig::test_tempo().with_disable_pool_balance_checks(true)).await;
+    let provider = handle.http_provider();
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let funder = provider.get_accounts().await.unwrap().remove(0);
+    let spender = Address::random();
+    api.anvil_impersonate_account(spender).await.unwrap();
+    let token = IERC20::new(PATH_USD, &provider);
+    let gas_price = provider.get_gas_price().await.unwrap();
+
+    // The funding transaction pays more, so it is mined first within the block.
+    let funding = U256::from(5_000_000);
+    let fund = TransactionRequest::default()
+        .with_from(funder)
+        .with_to(PATH_USD)
+        .with_input(token.transfer(spender, funding).calldata().clone())
+        .with_gas_limit(TIP20_TRANSFER_GAS)
+        .with_gas_price(gas_price * 10);
+    let fund_hash = *provider.send_transaction(WithOtherFields::new(fund)).await.unwrap().tx_hash();
+
+    // Without fee tokens the spender would be rejected while balance checks are enabled.
+    let spend = TransactionRequest::default()
+        .with_from(spender)
+        .with_to(PATH_USD)
+        .with_input(token.transfer(funder, U256::from(1_000_000)).calldata().clone())
+        .with_gas_limit(TIP20_TRANSFER_GAS)
+        .with_gas_price(gas_price);
+    let spend_hash =
+        *provider.send_transaction(WithOtherFields::new(spend)).await.unwrap().tx_hash();
+
+    let status = provider.txpool_status().await.unwrap();
+    assert_eq!((status.pending, status.queued), (2, 0));
+
+    api.mine_one().await.unwrap();
+    let block = provider.get_block(BlockId::number(1)).full().await.unwrap().unwrap();
+    assert_eq!(block.transactions.hashes().collect::<Vec<_>>(), vec![fund_hash, spend_hash]);
+    for hash in [fund_hash, spend_hash] {
+        let receipt = provider.get_transaction_receipt(hash).await.unwrap().unwrap();
+        assert!(receipt.status(), "{hash} failed");
+    }
 }
 
 // ============================================================================

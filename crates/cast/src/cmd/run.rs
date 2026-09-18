@@ -58,6 +58,9 @@ use foundry_evm_networks::NetworkConfigs;
 use futures::TryFutureExt;
 use revm::{DatabaseRef, context::Block, primitives::hardfork::SpecId};
 
+#[cfg(feature = "base")]
+use foundry_evm::core::evm::BaseEvmNetwork;
+
 #[cfg(feature = "monad")]
 use foundry_evm::core::evm::{BlockContext, ChainFor, MonadEvmNetwork};
 
@@ -224,6 +227,13 @@ impl RunArgs {
         if evm_opts.networks.is_tempo() {
             return self
                 .run_with_evm(config, evm_opts, ExecutorBuilder::<TempoEvmNetwork>::new())
+                .await;
+        }
+
+        #[cfg(feature = "base")]
+        if evm_opts.networks.is_base() {
+            return self
+                .run_with_evm(config, evm_opts, ExecutorBuilder::<BaseEvmNetwork>::new())
                 .await;
         }
 
@@ -399,7 +409,11 @@ impl RunArgs {
         handle_traces(
             result,
             &config,
-            TraceContext::new(chain, endpoint_identity.network_profile, resolved_hardfork),
+            {
+                let context =
+                    TraceContext::new(chain, endpoint_identity.network_profile, resolved_hardfork);
+                context.with_hardfork(context.decoding_hardfork(&config))
+            },
             &contracts_bytecode,
             &tracing,
             with_local_artifacts,

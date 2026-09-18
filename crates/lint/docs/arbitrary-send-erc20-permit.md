@@ -3,74 +3,18 @@
 **Severity**: `High`
 **ID**: `arbitrary-send-erc20-permit`
 
-Flags `transferFrom` / `safeTransferFrom` calls whose `from` argument is not provably
-`msg.sender` (or `address(this)`) when the function also calls
-`token.permit(owner, address(this), …)` for the same token and owner beforehand.
-
 ## What it does
 
-Detects, within a single function, the combination of:
+Flags `transferFrom` and `safeTransferFrom` calls preceded by a `permit` for the same token
+and owner in the same function, with this contract as the spender, when `from` is not
+constrained to `msg.sender` or `address(this)`. This includes common SafeERC20 and
+SafeTransferLib wrappers.
 
-1. A preceding `permit(owner, spender, value, deadline, v, r, s)` on `token` with
-   `spender == address(this)`, and
-2. A subsequent ERC20-style transfer of the same token from the same `owner`, where
-   `owner` cannot be proven equal to `msg.sender` or `address(this)`.
+A permit does not make an arbitrary `from` safe, even when its value matches the transfer
+amount. Matching EIP-3156 flash-loan repayments are excluded.
 
-Both common sink shapes are recognised:
-
-- Member calls: `token.transferFrom(owner, to, amount)` and
-  `token.safeTransferFrom(owner, to, amount)`.
-- Library calls: `Lib.safeTransferFrom(token, owner, to, amount)`, including the
-  Solady-shaped `using SafeTransferLib for address` form.
-
-The lint does **not** require the transfer `amount` to equal the permit `value`,
-nor does it inspect deadlines or signatures — the dangerous combination is the
-permit-then-arbitrary-transferFrom pattern itself, not the specific amounts.
-
-Matching EIP-3156 flash-loan repayments (`onFlashLoan` followed by a pull-back of
-`amount + fee`) are excluded.
-
-### Scope
-
-The check is intraprocedural. It flags one permit-then-`transferFrom` flow inside a
-single function body and correlates the token, owner, and spender by the underlying
-variable, with the following normalisations applied to both sides of the correlation:
-
-- elementary type casts (`address(x)`), interface / contract casts (`IERC20(rawToken)`),
-  `payable(...)` wraps, and parentheses are stripped;
-- local var-to-var copies (`IERC20 t = token; ...`, `address from2 = from; ...`) are
-  tracked as aliases, so the permit and the sink still correlate when one side is a copy;
-- local aliases of `address(this)` (e.g. `address self = address(this); permit(..., self, ...)`)
-  and no-arg helpers whose body is `return address(this);` are recognised as the permit
-  spender;
-- the `using SafeTransferLib for address` member form is treated as a sink.
-
-Dead code after a top-level `return` / `revert` is skipped — including function bodies
-whose modifier prefix definitely exits before `_;`. Inline
-`// forge-lint: disable-next-line(arbitrary-send-erc20-permit)` suppresses a single sink.
-
-Additionally supported correlations:
-
-- struct-field token receivers (`cfg.token.permit(...)` then `cfg.token.transferFrom(...)`)
-  match via a `(base var, field name)` key;
-- the library wrapper `SafeERC20.safePermit(token, ...)` is treated as an EIP-2612
-  permit on the `token` argument when the receiver is a library;
-- immutable / constant state vars proven equal to `address(this)` or `msg.sender`
-  by their declaration initializer or constructor body are recognised as such at
-  the start of every function;
-- internal calls to functions of the same contract drop facts about every state
-  variable the callee (or one nested level of internal callees) assigns to, so a
-  prior permit is no longer trusted after the receiver may have been swapped.
-
-Patterns the check still does **not** classify as the permit-variant (the
-underlying call may still be reported by `arbitrary-send-erc20` when the sink
-itself is unguarded) include permits issued inside a called helper / modifier /
-parent contract.
-
-Permits inside `for` / `while` loop bodies do **not** establish facts visible after
-the loop (the analyzer treats their execution count as possibly zero), so a
-`transferFrom` placed after the loop is not classified as the permit variant. A
-`transferFrom` inside the same iteration as the permit is still flagged.
+Permits issued in a separate helper or modifier are not correlated with the transfer;
+such transfers may instead be reported by `arbitrary-send-erc20`.
 
 ## Why is this bad?
 
@@ -90,12 +34,10 @@ the permit silently no-ops, only the caller's own balance is at risk.
 
 If your code separately proves that `permit` succeeded (for example by reading
 `token.nonces(owner)` before and after and reverting on no change) or restricts the
-sink to a vetted token allowlist, review the finding and suppress with
+transfer to a vetted token allowlist, review the finding and suppress with
 `// forge-lint: disable-next-line(arbitrary-send-erc20-permit)`.
 
 ## Example
-
-### Bad
 
 ```solidity
 function pullWithPermit(
@@ -112,7 +54,7 @@ function pullWithPermit(
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 function pullWithPermit(

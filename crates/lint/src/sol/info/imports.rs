@@ -10,18 +10,13 @@ use solar::{
 };
 use std::ops::ControlFlow;
 
-declare_forge_lint!(
-    UNUSED_IMPORT,
-    Severity::Info,
-    "unused-import",
-    "unused imports should be removed"
-);
+declare_forge_lint!(UNUSED_IMPORT, Severity::Info, "unused-import", "unused import");
 
 declare_forge_lint!(
     UNALIASED_PLAIN_IMPORT,
     Severity::Info,
     "unaliased-plain-import",
-    "use named imports '{A, B}' or alias 'import \"..\" as X'"
+    "plain import has no alias; use named imports `{A, B}` or alias `import \"..\" as X`"
 );
 
 impl<'ast> EarlyLintPass<'ast> for Imports {

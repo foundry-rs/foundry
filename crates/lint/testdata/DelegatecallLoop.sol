@@ -6,7 +6,7 @@ pragma solidity ^0.8.18;
 library DelegatecallLoopLib {
     function helper(bytes calldata payload) internal {
         address target = address(this);
-        (bool ok,) = target.delegatecall(payload); //~WARN: payable functions should not use `delegatecall` inside a loop
+        (bool ok,) = target.delegatecall(payload); //~WARN: payable function uses `delegatecall` inside a loop
         require(ok);
     }
 }
@@ -32,7 +32,7 @@ contract ExternalDelegatecallReader {
 contract ParentDelegatecallHelper {
     function superDelegate(bytes calldata payload) internal {
         address target = address(this);
-        (bool ok,) = target.delegatecall(payload); //~WARN: payable functions should not use `delegatecall` inside a loop
+        (bool ok,) = target.delegatecall(payload); //~WARN: payable function uses `delegatecall` inside a loop
         require(ok);
     }
 }
@@ -44,7 +44,7 @@ contract LinearizedSuperBase {
 contract LinearizedSuperDelegate is LinearizedSuperBase {
     function next(bytes calldata payload) internal virtual override {
         address target = address(this);
-        (bool ok,) = target.delegatecall(payload); //~WARN: payable functions should not use `delegatecall` inside a loop
+        (bool ok,) = target.delegatecall(payload); //~WARN: payable function uses `delegatecall` inside a loop
         require(ok);
     }
 }
@@ -68,7 +68,7 @@ contract DelegatecallLoop is
     function payableForLoop(bytes[] calldata payloads) external payable {
         address target = address(this);
         for (uint256 i = 0; i < payloads.length; ++i) {
-            (bool ok,) = target.delegatecall(payloads[i]); //~WARN: payable functions should not use `delegatecall` inside a loop
+            (bool ok,) = target.delegatecall(payloads[i]); //~WARN: payable function uses `delegatecall` inside a loop
             require(ok);
         }
     }
@@ -77,7 +77,7 @@ contract DelegatecallLoop is
         address target = address(this);
         uint256 i;
         while (i < payloads.length) {
-            (bool ok,) = target.delegatecall(payloads[i]); //~WARN: payable functions should not use `delegatecall` inside a loop
+            (bool ok,) = target.delegatecall(payloads[i]); //~WARN: payable function uses `delegatecall` inside a loop
             require(ok);
             ++i;
         }
@@ -88,7 +88,7 @@ contract DelegatecallLoop is
         uint256 i;
         if (payloads.length == 0) return;
         do {
-            (bool ok,) = target.delegatecall(payloads[i]); //~WARN: payable functions should not use `delegatecall` inside a loop
+            (bool ok,) = target.delegatecall(payloads[i]); //~WARN: payable function uses `delegatecall` inside a loop
             require(ok);
             ++i;
         } while (i < payloads.length);
@@ -98,7 +98,7 @@ contract DelegatecallLoop is
         address target = address(this);
         for (uint256 i = 0; i < payloads.length; ++i) {
             if (payloads[i].length != 0) {
-                (bool ok,) = target.delegatecall(payloads[i]); //~WARN: payable functions should not use `delegatecall` inside a loop
+                (bool ok,) = target.delegatecall(payloads[i]); //~WARN: payable function uses `delegatecall` inside a loop
                 require(ok);
             }
         }
@@ -110,7 +110,7 @@ contract DelegatecallLoop is
         for (
             uint256 i = 0;
             i < payloads.length;
-            (ok,) = target.delegatecall(payloads[i++]) //~WARN: payable functions should not use `delegatecall` inside a loop
+            (ok,) = target.delegatecall(payloads[i++]) //~WARN: payable function uses `delegatecall` inside a loop
         ) {}
         require(ok);
     }
@@ -118,7 +118,7 @@ contract DelegatecallLoop is
     modifier loopDelegatecall(bytes[] calldata payloads) {
         address target = address(this);
         for (uint256 i = 0; i < payloads.length; ++i) {
-            (bool ok,) = target.delegatecall(payloads[i]); //~WARN: payable functions should not use `delegatecall` inside a loop
+            (bool ok,) = target.delegatecall(payloads[i]); //~WARN: payable function uses `delegatecall` inside a loop
             require(ok);
         }
         _;
@@ -134,7 +134,7 @@ contract DelegatecallLoop is
 
     function payableModifierLoopPlaceholder(bytes calldata payload) external payable loopPlaceholder(3) {
         address target = address(this);
-        (bool ok,) = target.delegatecall(payload); //~WARN: payable functions should not use `delegatecall` inside a loop
+        (bool ok,) = target.delegatecall(payload); //~WARN: payable function uses `delegatecall` inside a loop
         require(ok);
     }
 
@@ -146,7 +146,7 @@ contract DelegatecallLoop is
 
     function delegate(bytes calldata payload) internal {
         address target = address(this);
-        (bool ok,) = target.delegatecall(payload); //~WARN: payable functions should not use `delegatecall` inside a loop
+        (bool ok,) = target.delegatecall(payload); //~WARN: payable function uses `delegatecall` inside a loop
         require(ok);
     }
 
@@ -157,7 +157,7 @@ contract DelegatecallLoop is
     function delegateInLoop(bytes[] calldata payloads) internal {
         address target = address(this);
         for (uint256 i = 0; i < payloads.length; ++i) {
-            (bool ok,) = target.delegatecall(payloads[i]); //~WARN: payable functions should not use `delegatecall` inside a loop
+            (bool ok,) = target.delegatecall(payloads[i]); //~WARN: payable function uses `delegatecall` inside a loop
             require(ok);
         }
     }
@@ -183,7 +183,7 @@ contract DelegatecallLoop is
 
     function publicDelegate(bytes calldata payload) public {
         address target = address(this);
-        (bool ok,) = target.delegatecall(payload); //~WARN: payable functions should not use `delegatecall` inside a loop
+        (bool ok,) = target.delegatecall(payload); //~WARN: payable function uses `delegatecall` inside a loop
         require(ok);
     }
 
@@ -261,7 +261,7 @@ contract DelegatecallLoop is
         address targetA = address(this);
         address targetB = address(0xBEEF);
         for (uint256 i = 0; i < payloads.length; ++i) {
-            (bool ok,) = (flag ? targetA : targetB).delegatecall(payloads[i]); //~WARN: payable functions should not use `delegatecall` inside a loop
+            (bool ok,) = (flag ? targetA : targetB).delegatecall(payloads[i]); //~WARN: payable function uses `delegatecall` inside a loop
             require(ok);
         }
     }
@@ -270,7 +270,7 @@ contract DelegatecallLoop is
         address targetA = address(this);
         address targetB = address(0xBEEF);
         for (uint256 i = 0; i < payloads.length; ++i) {
-            (bool ok,) = (payloads[i].length != 0 ? targetA : targetB).delegatecall(payloads[i]); //~WARN: payable functions should not use `delegatecall` inside a loop
+            (bool ok,) = (payloads[i].length != 0 ? targetA : targetB).delegatecall(payloads[i]); //~WARN: payable function uses `delegatecall` inside a loop
             require(ok);
         }
     }

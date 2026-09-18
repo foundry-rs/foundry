@@ -32,7 +32,7 @@ use foundry_evm_core::{
         history_storage_slot, history_storage_value,
     },
     env::FoundryContextExt,
-    evm::{FoundryEvmNetwork, TxEnvFor, TxEnvelopeFor},
+    evm::{FoundryEvmNetwork, TxEnvFor, TxEnvelopeFor, merge_child_state, prepare_child_state},
     refresh_chain_journal,
     utils::get_blob_base_fee_update_fraction_by_spec_id,
 };
@@ -45,7 +45,7 @@ use revm::{
     context::{Block, Cfg, ContextTr, Host, JournalTr, Transaction, result::ExecutionResult},
     inspector::JournalExt,
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
-    state::{Account, AccountStatus},
+    state::Account,
 };
 use std::{
     collections::{BTreeMap, btree_map::Entry},
@@ -704,6 +704,29 @@ impl Cheatcode for getBlockNumberCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self {} = self;
         Ok(ccx.ecx.block().number().abi_encode())
+    }
+}
+
+impl Cheatcode for rollSlotCall {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        ensure!(
+            ccx.ecx.cfg().spec().into() >= SpecId::AMSTERDAM,
+            "`rollSlot` is not supported before the Amsterdam hard fork; \
+             see EIP-7843: https://eips.ethereum.org/EIPS/eip-7843"
+        );
+        ccx.ecx.block_mut().set_slot_num(self.newSlotNumber);
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for getSlotNumberCall {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        ensure!(
+            ccx.ecx.cfg().spec().into() >= SpecId::AMSTERDAM,
+            "`getSlotNumber` is not supported before the Amsterdam hard fork; \
+             see EIP-7843: https://eips.ethereum.org/EIPS/eip-7843"
+        );
+        Ok(ccx.ecx.block().slot_num().abi_encode())
     }
 }
 
@@ -1377,20 +1400,7 @@ impl Cheatcode for executeTransactionCall {
         }
 
         // Clone journaled state and mark all accounts/slots cold.
-        let cold_state = {
-            let (_, journal) = ccx.ecx.db_journal_inner_mut();
-            let mut state = journal.state.clone();
-            for (addr, acc_mut) in &mut state {
-                if journal.warm_addresses.is_cold(addr) {
-                    acc_mut.mark_cold();
-                }
-                for slot_mut in acc_mut.storage.values_mut() {
-                    slot_mut.is_cold = true;
-                    slot_mut.original_value = slot_mut.present_value;
-                }
-            }
-            state
-        };
+        let cold_state = prepare_child_state(ccx.ecx.journal_inner());
 
         let mut res = None;
         let mut cold_state = Some(cold_state);
@@ -1430,31 +1440,7 @@ impl Cheatcode for executeTransactionCall {
         let res = res.map_err(|e| fmt_err!("transaction execution failed: {e}"))?;
 
         // Merge state changes back into the parent journaled state.
-        for (addr, mut acc) in res.state {
-            let Some(acc_mut) = ccx.ecx.journal_mut().evm_state_mut().get_mut(&addr) else {
-                ccx.ecx.journal_mut().evm_state_mut().insert(addr, acc);
-                continue;
-            };
-
-            // Preserve warm account status from parent context.
-            if acc.status.contains(AccountStatus::Cold)
-                && !acc_mut.status.contains(AccountStatus::Cold)
-            {
-                acc.status -= AccountStatus::Cold;
-            }
-            acc_mut.info = acc.info;
-            acc_mut.status |= acc.status;
-
-            // Merge storage changes.
-            for (key, val) in acc.storage {
-                let Some(slot_mut) = acc_mut.storage.get_mut(&key) else {
-                    acc_mut.storage.insert(key, val);
-                    continue;
-                };
-                slot_mut.present_value = val.present_value;
-                slot_mut.is_cold &= val.is_cold;
-            }
-        }
+        merge_child_state(ccx.ecx.journal_mut().evm_state_mut(), res.state);
 
         // Keep network-specific caches aligned with the state merged from the nested EVM while
         // preserving the outer transaction's execution context.

@@ -315,8 +315,9 @@ Created new encrypted keystore file: [..]
 
 // tests that `cast wallet new <name>` treats a bare account name like `cast wallet import <name>`
 casttest!(new_wallet_bare_account_name_uses_default_keystore, |prj, cmd| {
-    let account = "issue-16209-account";
-    cmd.env("HOME", prj.root());
+    // Windows resolves the home directory through the shell API, ignoring HOME.
+    // Use a unique account in the real default keystore directory on every platform.
+    let account = prj.root().file_name().unwrap().to_str().unwrap();
     cmd.args(["wallet", "new", account, "--unsafe-password", "test"])
         .assert_success()
         .stdout_eq(str![[r#"
@@ -329,8 +330,9 @@ Created new encrypted keystore file: [..]
 
 "#]]);
 
-    let keystore_path = prj.root().join(".foundry").join("keystores").join(account);
+    let keystore_path = dirs::home_dir().unwrap().join(".foundry").join("keystores").join(account);
     assert!(keystore_path.is_file(), "expected keystore at {}", keystore_path.display());
+    fs::remove_file(keystore_path).unwrap();
 });
 
 // tests that a missing path-like argument is still treated as a directory, not an account name

@@ -9,7 +9,7 @@ declare_forge_lint!(
     LOW_LEVEL_CALLS,
     Severity::Info,
     "low-level-calls",
-    "Low-level calls should be avoided"
+    "low-level call bypasses type checking"
 );
 
 impl<'ast> EarlyLintPass<'ast> for LowLevelCalls {

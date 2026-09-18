@@ -45,7 +45,12 @@ use revm::{
 };
 use std::{fmt, fmt::Debug, mem::take, sync::Arc};
 
-#[cfg(feature = "optimism")]
+#[cfg(feature = "base")]
+use base_common_consensus::Eip8130Receipt;
+#[cfg(feature = "base")]
+use base_common_evm::Eip8130PhaseStatuses;
+
+#[cfg(any(feature = "base", feature = "optimism"))]
 pub(crate) mod optimism;
 
 /// Determines whether an executor produces a complete block or a historical transaction prefix.
@@ -144,7 +149,8 @@ fn append_deposit_requests(
 pub struct FoundryReceiptBuilder;
 
 impl FoundryReceiptBuilder {
-    const fn wrap_receipt(
+    #[cfg_attr(not(feature = "base"), allow(clippy::missing_const_for_fn))]
+    fn wrap_receipt(
         tx_type: FoundryTxType,
         receipt: ReceiptWithBloom<Receipt>,
     ) -> FoundryReceiptEnvelope {
@@ -154,12 +160,17 @@ impl FoundryReceiptBuilder {
             FoundryTxType::Eip1559 => FoundryReceiptEnvelope::Eip1559(receipt),
             FoundryTxType::Eip4844 => FoundryReceiptEnvelope::Eip4844(receipt),
             FoundryTxType::Eip7702 => FoundryReceiptEnvelope::Eip7702(receipt),
-            #[cfg(feature = "optimism")]
+            #[cfg(any(feature = "base", feature = "optimism"))]
             FoundryTxType::Deposit => {
                 panic!("deposit receipts require fork-specific metadata")
             }
             #[cfg(feature = "optimism")]
             FoundryTxType::PostExec => FoundryReceiptEnvelope::PostExec(receipt),
+            #[cfg(feature = "base")]
+            FoundryTxType::Eip8130 => FoundryReceiptEnvelope::Eip8130(ReceiptWithBloom {
+                receipt: Eip8130Receipt::new(receipt.receipt, Eip8130PhaseStatuses::take()),
+                logs_bloom: receipt.logs_bloom,
+            }),
             FoundryTxType::Tempo => FoundryReceiptEnvelope::Tempo(receipt),
         }
     }
@@ -198,10 +209,11 @@ impl ReceiptBuilder for FoundryReceiptBuilder {
 
 /// Result of executing a transaction in [`AnvilBlockExecutor`].
 ///
-/// Wraps [`EthTxResult`] with the sender address, needed for deposit nonce resolution.
+/// Wraps [`EthTxResult`] with the sender address when OP deposit nonce resolution is enabled.
 #[derive(Debug)]
 pub struct AnvilTxResult<H> {
     pub inner: EthTxResult<H, FoundryTxType>,
+    #[cfg(any(feature = "base", feature = "optimism"))]
     pub sender: Address,
 }
 
@@ -242,6 +254,7 @@ pub struct AnvilBlockExecutor<E> {
     /// Maximum blob gas available to transactions in this block.
     max_blob_gas_per_block: u64,
     /// Whether OP Jovian repurposes `blobGasUsed` for the DA footprint.
+    #[cfg(feature = "optimism")]
     optimism_jovian: bool,
     /// State changes captured for deferred publication.
     state_changes: Option<Vec<EvmState>>,
@@ -257,8 +270,9 @@ impl<E: fmt::Debug> fmt::Debug for AnvilBlockExecutor<E> {
             .field("ethereum_transitions", &self.ethereum_transitions)
             .field("gas_used", &self.gas_used)
             .field("blob_gas_used", &self.blob_gas_used)
-            .field("max_blob_gas_per_block", &self.max_blob_gas_per_block)
-            .field("optimism_jovian", &self.optimism_jovian);
+            .field("max_blob_gas_per_block", &self.max_blob_gas_per_block);
+        #[cfg(feature = "optimism")]
+        debug.field("optimism_jovian", &self.optimism_jovian);
         debug.field("receipts", &self.receipts.len()).finish_non_exhaustive()
     }
 }
@@ -281,6 +295,7 @@ impl<E> AnvilBlockExecutor<E> {
             gas_used: 0,
             blob_gas_used: 0,
             max_blob_gas_per_block: u64::MAX,
+            #[cfg(feature = "optimism")]
             optimism_jovian: false,
             state_changes: None,
         }
@@ -337,6 +352,7 @@ where
             .into());
         }
 
+        #[cfg(any(feature = "base", feature = "optimism"))]
         let sender = *tx.signer();
         let transaction_hash = tx.tx().trie_hash();
         #[cfg(feature = "optimism")]
@@ -344,11 +360,14 @@ where
             optimism::blob_gas_used(self.evm.db_mut(), tx.tx(), self.optimism_jovian)?;
         #[cfg(not(feature = "optimism"))]
         let blob_gas_used = tx.tx().blob_gas_used().unwrap_or_default();
+        #[cfg(feature = "optimism")]
         let blob_gas_limit = block_blob_gas_limit(
             self.optimism_jovian,
             self.evm.block().gas_limit(),
             self.max_blob_gas_per_block,
         );
+        #[cfg(not(feature = "optimism"))]
+        let blob_gas_limit = self.max_blob_gas_per_block;
         if self.blob_gas_used.saturating_add(blob_gas_used) > blob_gas_limit {
             return Err(BlockExecutionError::msg("block blob gas limit exceeded"));
         }
@@ -356,6 +375,7 @@ where
 
         Ok(AnvilTxResult {
             inner: EthTxResult { result, blob_gas_used, tx_type: tx.tx().tx_type() },
+            #[cfg(any(feature = "base", feature = "optimism"))]
             sender,
         })
     }
@@ -424,7 +444,7 @@ where
     fn commit_transaction(&mut self, output: Self::Result) -> GasOutput {
         let AnvilTxResult {
             inner: EthTxResult { result: ResultAndState { result, state }, blob_gas_used, tx_type },
-            #[cfg_attr(not(feature = "optimism"), allow(unused_variables))]
+            #[cfg(any(feature = "base", feature = "optimism"))]
             sender,
         } = output;
 
@@ -435,7 +455,7 @@ where
             self.blob_gas_used = self.blob_gas_used.saturating_add(blob_gas_used);
         }
 
-        #[cfg(feature = "optimism")]
+        #[cfg(any(feature = "base", feature = "optimism"))]
         let receipt = if tx_type.is_deposit() {
             optimism::build_mined_deposit_receipt(result, &state, sender, self.gas_used)
         } else {
@@ -447,7 +467,7 @@ where
                 cumulative_gas_used: self.gas_used,
             })
         };
-        #[cfg(not(feature = "optimism"))]
+        #[cfg(not(any(feature = "base", feature = "optimism")))]
         let receipt = self.receipt_builder.build_receipt(ReceiptBuilderCtx {
             tx_type,
             evm: &self.evm,
@@ -521,20 +541,10 @@ pub struct ExecutedPoolTransactions<T> {
 /// before calling [`execute_pool_transactions`].
 pub struct PoolTxGasConfig {
     pub disable_block_gas_limit: bool,
-    pub tx_gas_limit_cap: Option<u64>,
-    pub tx_gas_limit_cap_resolved: u64,
+    /// Resolved transaction gas cap, or `None` when the caller disables this check.
+    pub enforced_tx_gas_limit_cap: Option<u64>,
     pub max_blob_gas_per_block: u64,
     pub is_cancun: bool,
-}
-
-/// Hooks invoked around each candidate transaction's execution.
-pub struct PoolTransactionHooks<BeforeTransaction, ExecuteTransaction, OnExecutionError> {
-    /// Runs after validation and immediately before execution.
-    pub before_transaction: BeforeTransaction,
-    /// Executes the candidate through the network-specific transaction entry point.
-    pub execute_transaction: ExecuteTransaction,
-    /// Runs when execution fails before the candidate can be included.
-    pub on_execution_error: OnExecutionError,
 }
 
 /// Executes a pool candidate through the block executor's ordinary transaction entry point.
@@ -555,7 +565,7 @@ where
 ///
 /// This is the shared core of `do_mine_block` and `with_pending_block`.
 #[allow(clippy::type_complexity)]
-pub fn execute_pool_transactions<B, BeforeTransaction, ExecuteTransaction, OnExecutionError>(
+pub fn execute_pool_transactions<B, ExecuteTransaction>(
     executor: &mut B,
     pool_transactions: &[Arc<PoolTransaction<B::Transaction>>],
     gas_config: &PoolTxGasConfig,
@@ -565,7 +575,7 @@ pub fn execute_pool_transactions<B, BeforeTransaction, ExecuteTransaction, OnExe
         &PoolTransaction<B::Transaction>,
         &AccountInfo,
     ) -> Result<(), InvalidTransactionError>,
-    hooks: &mut PoolTransactionHooks<BeforeTransaction, ExecuteTransaction, OnExecutionError>,
+    execute_transaction: &mut ExecuteTransaction,
 ) -> ExecutedPoolTransactions<B::Transaction>
 where
     B: BlockExecutor<
@@ -575,14 +585,12 @@ where
     B::Receipt: TxReceipt,
     <B::Result as TxResult>::HaltReason: Clone + IntoInstructionResult,
     <B::Evm as Evm>::Tx: FromTxWithEncoded<B::Transaction> + FoundryTransaction,
-    BeforeTransaction: FnMut(&mut B::Evm, &<B::Evm as Evm>::Tx),
     ExecuteTransaction: FnMut(
         &mut B,
         <B::Evm as Evm>::Tx,
         Recovered<B::Transaction>,
         bool,
     ) -> Result<B::Result, BlockExecutionError>,
-    OnExecutionError: FnMut(&mut B::Evm),
 {
     let gas_limit = executor.evm().block().gas_limit();
 
@@ -629,8 +637,8 @@ where
         }
 
         // Osaka EIP-7825 tx gas limit cap check
-        if gas_config.tx_gas_limit_cap.is_none()
-            && pending.transaction.gas_limit() > gas_config.tx_gas_limit_cap_resolved
+        if let Some(tx_gas_limit_cap) = gas_config.enforced_tx_gas_limit_cap
+            && pending.transaction.gas_limit() > tx_gas_limit_cap
         {
             trace!(target: "backend", tx_gas_limit = %pending.transaction.gas_limit(), ?pool_tx, "transaction gas limit exhausting, skipping transaction");
             continue;
@@ -653,10 +661,9 @@ where
 
         let nonce = account.nonce;
 
-        (hooks.before_transaction)(executor.evm_mut(), &tx_env);
         let recovered = Recovered::new_unchecked(pending.transaction.as_ref().clone(), sender);
         trace!(target: "backend", "[{:?}] executing", pool_tx.hash());
-        match (hooks.execute_transaction)(executor, tx_env, recovered, pool_tx.is_replay) {
+        match execute_transaction(executor, tx_env, recovered, pool_tx.is_replay) {
             Ok(result) => {
                 let exec_result = result.result().result.clone();
                 let gas_used = result.result().result.tx_gas_used();
@@ -715,7 +722,6 @@ where
                 transactions.push(pending.transaction.clone());
             }
             Err(err) => {
-                (hooks.on_execution_error)(executor.evm_mut());
                 executor.evm_mut().inspector_mut().discard_transaction(inspector_config);
                 if err.as_validation().is_some() {
                     warn!(target: "backend", "Skipping invalid tx [{:?}]: {}", pool_tx.hash(), err);

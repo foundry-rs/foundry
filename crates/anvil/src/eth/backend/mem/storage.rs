@@ -489,14 +489,14 @@ impl<N: Network> BlockchainStorage<N> {
             BlockNumberOrTag::Pending => None,
             BlockNumberOrTag::Number(num) => self.hashes.get(&num).copied(),
             BlockNumberOrTag::Safe => {
-                if self.best_number > slots_in_an_epoch {
+                if self.best_number.saturating_sub(slots_in_an_epoch) > self.genesis_number {
                     self.hashes.get(&(self.best_number - slots_in_an_epoch)).copied()
                 } else {
                     Some(self.genesis_hash)
                 }
             }
             BlockNumberOrTag::Finalized => {
-                if self.best_number > slots_in_an_epoch * 2 {
+                if self.best_number.saturating_sub(slots_in_an_epoch * 2) > self.genesis_number {
                     self.hashes.get(&(self.best_number - slots_in_an_epoch * 2)).copied()
                 } else {
                     Some(self.genesis_hash)
@@ -1013,6 +1013,82 @@ mod tests {
         assert_eq!(loaded_block.header, expected_header);
         assert_eq!(loaded_block.header.as_tempo().unwrap().shared_gas_limit, 1_000_000);
         assert_eq!(load_storage.hashes.get(&7), Some(&block_hash));
+    }
+
+    #[test]
+    fn test_hash_safe_with_non_zero_genesis_number() {
+        let mut storage = BlockchainStorage::<FoundryNetwork>::new(
+            Header { number: 100, ..Default::default() }.into(),
+        );
+
+        for best_number in [100, 131, 132] {
+            storage.best_number = best_number;
+            assert_eq!(storage.hash(BlockNumberOrTag::Safe, 32), Some(storage.genesis_hash));
+        }
+    }
+
+    #[test]
+    fn test_hash_finalized_with_non_zero_genesis_number() {
+        let mut storage = BlockchainStorage::<FoundryNetwork>::new(
+            Header { number: 100, ..Default::default() }.into(),
+        );
+
+        for best_number in [100, 163, 164] {
+            storage.best_number = best_number;
+            assert_eq!(storage.hash(BlockNumberOrTag::Finalized, 32), Some(storage.genesis_hash));
+        }
+    }
+
+    #[test]
+    fn test_hash_safe_finalized_with_deep_non_zero_genesis() {
+        let mut storage = BlockchainStorage::<FoundryNetwork>::new(
+            Header { number: 100, ..Default::default() }.into(),
+        );
+        storage.best_number = 200;
+        let safe_hash = B256::repeat_byte(0xab);
+        let finalized_hash = B256::repeat_byte(0xcd);
+        storage.hashes.insert(168, safe_hash);
+        storage.hashes.insert(136, finalized_hash);
+
+        assert_eq!(storage.hash(BlockNumberOrTag::Safe, 32), Some(safe_hash));
+        assert_eq!(storage.hash(BlockNumberOrTag::Finalized, 32), Some(finalized_hash));
+    }
+
+    #[test]
+    fn test_hash_safe_finalized_with_zero_genesis() {
+        let mut storage = BlockchainStorage::<FoundryNetwork>::new(Header::default().into());
+
+        for (tag, offset) in [(BlockNumberOrTag::Safe, 32), (BlockNumberOrTag::Finalized, 64)] {
+            for best_number in [0, offset - 1, offset] {
+                storage.best_number = best_number;
+                assert_eq!(storage.hash(tag, 32), Some(storage.genesis_hash));
+            }
+
+            storage.best_number = offset + 1;
+            assert_eq!(storage.hash(tag, 32), None);
+            let hash = B256::repeat_byte(0xab);
+            storage.hashes.insert(1, hash);
+            assert_eq!(storage.hash(tag, 32), Some(hash));
+            storage.hashes.remove(&1);
+        }
+    }
+
+    #[test]
+    fn test_hash_safe_finalized_fork_preserves_local_miss() {
+        let mut storage = BlockchainStorage::<FoundryNetwork>::forked(
+            23_000_000,
+            B256::repeat_byte(0xab),
+            U256::ZERO,
+        );
+
+        for (tag, number) in
+            [(BlockNumberOrTag::Safe, 22_999_968), (BlockNumberOrTag::Finalized, 22_999_936)]
+        {
+            assert_eq!(storage.hash(tag, 32), None);
+            let hash = B256::repeat_byte(0xcd);
+            storage.hashes.insert(number, hash);
+            assert_eq!(storage.hash(tag, 32), Some(hash));
+        }
     }
 
     // Regression test for https://github.com/foundry-rs/foundry/issues/12645:

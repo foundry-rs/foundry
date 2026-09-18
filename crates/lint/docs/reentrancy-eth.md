@@ -3,16 +3,10 @@
 **Severity**: `High`
 **ID**: `reentrancy-eth`
 
-Flags uncapped ETH-transferring low-level `call` operations when state read before the call is
-written after the call.
-
 ## What it does
 
-Warns when a function performs `.call{value: ...}(...)` without a concrete gas cap, or with
-`gas: gasleft()`, and later writes a state variable that was read before the call on the same
-reachable path. Local internal helper calls and modifiers are analyzed when their bodies are
-available. This uses Slither's `reentrancy-eth` detector name, while intentionally narrowing
-reporting to uncapped ETH-transferring low-level calls.
+Reports low-level `.call{value: ...}(...)` operations without a concrete gas cap, including
+`gas: gasleft()`, when a state variable read before the call is written after it.
 
 ## Why is this bad?
 
@@ -21,13 +15,10 @@ recipient can run complex fallback logic and re-enter the caller before later st
 If the function uses stale state read before the call and updates that state only afterward, the
 recipient may be able to repeat or reorder effects.
 
-This lint is intentionally conservative to avoid noisy findings: it does not report event-only
-ordering issues, unrelated state writes, zero-value calls, constructor-time calls, or calls with an
-explicit gas cap.
+Event-only ordering issues, unrelated state writes, zero-value calls, constructor-time calls,
+and calls with a concrete gas cap are excluded. A gas cap alone is not a reentrancy defense.
 
 ## Example
-
-### Bad
 
 ```solidity
 function withdraw() external {
@@ -38,7 +29,7 @@ function withdraw() external {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 function withdraw() external {

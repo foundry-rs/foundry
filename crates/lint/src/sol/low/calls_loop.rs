@@ -4,18 +4,15 @@ use super::{
 };
 use crate::{
     linter::{LateLintPass, LintContext},
-    sol::{
-        Severity, SolLint,
-        analysis::{is_address_like, is_builtin},
-    },
+    sol::{Severity, SolLint},
 };
 use solar::{
-    ast::{StateMutability, Visibility},
-    interface::{kw, sym},
+    ast::StateMutability,
     sema::{
-        Gcx, Ty,
-        hir::{ContractId, Expr, ExprKind, Function, FunctionId},
-        ty::TyKind,
+        Gcx,
+        builtins::Builtin,
+        hir::{Expr, ExprKind, Function},
+        ty::{TyFnKind, TyKind},
     },
 };
 
@@ -36,40 +33,35 @@ impl<'gcx> LateLintPass<'gcx> for CallsLoop {
 
 /// An interaction with another contract.
 enum ExternalCall {
-    /// `new C(..)`, or `.call`/`.delegatecall`/`.send`/`.transfer` on an address.
+    /// Contract creation or a mutating address builtin.
     Opaque,
     /// `.staticcall` on an address.
     Static,
-    /// High-level call on a contract-typed receiver (`this` included), with the callee's state
-    /// mutability when the type checker knows it.
-    Member(Option<StateMutability>),
+    /// High-level external or library call, including an external function pointer.
+    Member(StateMutability),
 }
 
-/// Classifies `callee` when calling it leaves the contract. `using for` bindings and `super`
-/// dispatch run in this contract and are not external.
+/// Classifies calls by their checked function kind, including function pointers and library
+/// delegate calls. Internal `using for` bindings and `super` dispatch stay internal.
 fn classify<'gcx>(gcx: Gcx<'gcx>, callee: &Expr<'gcx>) -> Option<ExternalCall> {
     let callee = callee.peel_parens();
-    if let ExprKind::New(ty) = &callee.kind {
-        return matches!(gcx.type_of_hir_ty(ty).kind, TyKind::Contract(_))
-            .then_some(ExternalCall::Opaque);
-    }
-    let ExprKind::Member(base, member) = &callee.kind else { return None };
     if matches!(
-        member.name,
-        kw::Call | kw::Delegatecall | kw::Staticcall | sym::send | sym::transfer
-    ) && is_address_like(gcx, base)
-    {
-        let external =
-            if member.name == kw::Staticcall { ExternalCall::Static } else { ExternalCall::Opaque };
-        return Some(external);
+        gcx.resolved_builtin(callee),
+        Some(Builtin::AddressPayableSend | Builtin::AddressPayableTransfer)
+    ) {
+        return Some(ExternalCall::Opaque);
     }
-    let contract_receiver = is_builtin(base, sym::this)
-        || gcx
-            .type_of_expr(base.peel_parens().id)
-            .is_some_and(|ty| matches!(ty.kind, TyKind::Contract(_)));
-    let attached = gcx.resolved_callee(callee.id).is_some_and(|c| c.attached);
-    (contract_receiver && !attached)
-        .then(|| ExternalCall::Member(gcx.type_of_expr(callee.id).and_then(Ty::state_mutability)))
+    let TyKind::Fn(function) = gcx.type_of_expr(callee.id)?.kind else { return None };
+    match function.kind() {
+        TyFnKind::External | TyFnKind::DelegateCall => {
+            Some(ExternalCall::Member(function.state_mutability))
+        }
+        TyFnKind::BareStaticCall => Some(ExternalCall::Static),
+        TyFnKind::BareCall | TyFnKind::BareDelegateCall | TyFnKind::Creation => {
+            Some(ExternalCall::Opaque)
+        }
+        _ => None,
+    }
 }
 
 /// True if calling `callee` interacts with another contract (or deploys one).
@@ -78,38 +70,13 @@ pub(super) fn is_external_call<'gcx>(gcx: Gcx<'gcx>, callee: &Expr<'gcx>) -> boo
 }
 
 /// Like [`is_external_call`], but excludes calls that cannot affect log ordering or observable
-/// state: `staticcall` and high-level `view`/`pure` callees (including `this.*`). Unknown
-/// callees are conservatively treated as state-mutating.
+/// state: `staticcall` and high-level `view`/`pure` callees (including `this.*`).
 pub(super) fn is_state_mutating_external_call<'gcx>(gcx: Gcx<'gcx>, callee: &Expr<'gcx>) -> bool {
     match classify(gcx, callee) {
         Some(ExternalCall::Opaque) => true,
         Some(ExternalCall::Member(mutability)) => {
-            !matches!(mutability, Some(StateMutability::View | StateMutability::Pure))
+            !matches!(mutability, StateMutability::View | StateMutability::Pure)
         }
         Some(ExternalCall::Static) | None => false,
     }
-}
-
-/// The base-chain function `super.<member>(..)` dispatches to from `enclosing_contract`: the first
-/// arity-matching `internal`/`public` function of that name in its linearization.
-pub(super) fn resolved_super_function_ids<'gcx>(
-    gcx: Gcx<'gcx>,
-    enclosing_contract: Option<ContractId>,
-    callee: &'gcx Expr<'gcx>,
-    explicit_arg_count: usize,
-) -> impl Iterator<Item = FunctionId> + 'gcx {
-    let target = || {
-        let ExprKind::Member(base, member) = &callee.peel_parens().kind else { return None };
-        if !is_builtin(base, sym::super_) {
-            return None;
-        }
-        let bases = gcx.hir.contract(enclosing_contract?).linearized_bases;
-        bases.iter().skip(1).flat_map(|&id| gcx.hir.contract(id).functions()).find(|&id| {
-            let func = gcx.hir.function(id);
-            func.name.is_some_and(|name| name.name == member.name)
-                && func.parameters.len() == explicit_arg_count
-                && matches!(func.visibility, Visibility::Internal | Visibility::Public)
-        })
-    };
-    target().into_iter()
 }

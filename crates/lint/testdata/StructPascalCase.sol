@@ -17,27 +17,27 @@ contract StructPascalCaseTest {
         uint256 a;
     }
 
-    struct _otherCase { //~NOTE: structs should use PascalCase
+    struct _otherCase { //~NOTE: struct name is not `PascalCase`
         uint256 a;
     }
 
-    struct pascalCase { //~NOTE: structs should use PascalCase
+    struct pascalCase { //~NOTE: struct name is not `PascalCase`
         uint256 a;
     }
 
-    struct pascalcase { //~NOTE: structs should use PascalCase
+    struct pascalcase { //~NOTE: struct name is not `PascalCase`
         uint256 a;
     }
 
-    struct pascal_case { //~NOTE: structs should use PascalCase
+    struct pascal_case { //~NOTE: struct name is not `PascalCase`
         uint256 a;
     }
 
-    struct PASCAL_CASE { //~NOTE: structs should use PascalCase
+    struct PASCAL_CASE { //~NOTE: struct name is not `PascalCase`
         uint256 a;
     }
 
-    struct PASCALCASE { //~NOTE: structs should use PascalCase
+    struct PASCALCASE { //~NOTE: struct name is not `PascalCase`
         uint256 a;
     }
 
@@ -54,11 +54,11 @@ contract StructPascalCaseTest {
         uint256 a;
     }
 
-    struct __ERC20Data { //~NOTE: structs should use PascalCase
+    struct __ERC20Data { //~NOTE: struct name is not `PascalCase`
         uint256 a;
     }
 
-    struct ERC20Data__ { //~NOTE: structs should use PascalCase
+    struct ERC20Data__ { //~NOTE: struct name is not `PascalCase`
         uint256 a;
     }
 }

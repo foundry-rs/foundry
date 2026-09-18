@@ -13,7 +13,7 @@ declare_forge_lint!(
     PASCAL_CASE_STRUCT,
     Severity::Info,
     "pascal-case-struct",
-    "structs should use PascalCase"
+    "struct name is not `PascalCase`"
 );
 
 #[derive(Debug)]

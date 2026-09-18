@@ -3,7 +3,7 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{
         Severity, SolLint,
-        analysis::{builtins, for_each_lhs_var, is_contract_cast, loop_stmts},
+        analysis::{for_each_lhs_var, is_contract_cast, loop_stmts},
     },
 };
 use solar::{
@@ -11,9 +11,7 @@ use solar::{
     interface::{data_structures::Never, kw, sym},
     sema::{
         Gcx,
-        hir::{
-            self, Expr, ExprKind, ItemId, Res, Stmt, StmtKind, TypeKind, VariableId, Visit as _,
-        },
+        hir::{self, Expr, ExprKind, ItemId, Stmt, StmtKind, TypeKind, VariableId, Visit as _},
     },
 };
 use std::{collections::HashSet, ops::ControlFlow};
@@ -22,14 +20,14 @@ declare_forge_lint!(
     COULD_BE_IMMUTABLE,
     Severity::Gas,
     "could-be-immutable",
-    "state variable could be declared immutable"
+    "state variable could be declared `immutable`"
 );
 
 declare_forge_lint!(
     COULD_BE_CONSTANT,
     Severity::Gas,
     "could-be-constant",
-    "state variable could be declared constant"
+    "state variable could be declared `constant`"
 );
 
 impl<'gcx> LateLintPass<'gcx> for UnchangedStateVariables {
@@ -77,15 +75,15 @@ impl<'gcx> LateLintPass<'gcx> for UnchangedStateVariables {
 
         // Writes performed as side effects of state variable initializers block `constant` but are
         // not valid `immutable` assignments, so they are tracked separately.
-        let mut initializer_writes = WriteCollector { hir: &gcx.hir, writes: HashSet::new() };
+        let mut initializer_writes = WriteCollector { gcx, writes: HashSet::new() };
         for id in candidates.clone() {
             if let Some(init) = gcx.hir.variable(id).initializer {
                 let _ = initializer_writes.visit_expr(init);
             }
         }
         // Modifier bodies are visited as ordinary functions, so their writes count as runtime.
-        let mut constructor_writes = WriteCollector { hir: &gcx.hir, writes: HashSet::new() };
-        let mut runtime_writes = WriteCollector { hir: &gcx.hir, writes: HashSet::new() };
+        let mut constructor_writes = WriteCollector { gcx, writes: HashSet::new() };
+        let mut runtime_writes = WriteCollector { gcx, writes: HashSet::new() };
         for function in functions {
             let collector = if function.is_constructor() {
                 &mut constructor_writes
@@ -102,13 +100,9 @@ impl<'gcx> LateLintPass<'gcx> for UnchangedStateVariables {
             let var = gcx.hir.variable(var_id);
             let span = var.name.map_or(var.span, |name| name.span);
             let constant_initializer =
-                var.initializer.is_some_and(|expr| is_compile_time_constant(&gcx.hir, expr));
+                var.initializer.is_some_and(|expr| is_compile_time_constant(gcx, expr));
             let written_in_constructor = constructor_writes.writes.contains(&var_id);
-            let immutable_type = match var.ty.kind {
-                TypeKind::Elementary(ty) => ty.is_value_type(),
-                TypeKind::Custom(ItemId::Contract(_)) => true,
-                _ => false,
-            };
+            let immutable_type = gcx.type_of_item(var_id.into()).is_value_type();
             if constant_initializer
                 && !written_in_constructor
                 && !initializer_writes.writes.contains(&var_id)
@@ -142,7 +136,7 @@ fn has_assembly_or_unknown(stmt: &Stmt<'_>) -> bool {
 
 /// Collects every variable at the root of an assigned, deleted or incremented lvalue.
 struct WriteCollector<'gcx> {
-    hir: &'gcx hir::Hir<'gcx>,
+    gcx: Gcx<'gcx>,
     writes: HashSet<VariableId>,
 }
 
@@ -150,7 +144,7 @@ impl<'gcx> hir::Visit<'gcx> for WriteCollector<'gcx> {
     type BreakValue = Never;
 
     fn hir(&self) -> &'gcx hir::Hir<'gcx> {
-        self.hir
+        &self.gcx.hir
     }
 
     fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
@@ -160,7 +154,7 @@ impl<'gcx> hir::Visit<'gcx> for WriteCollector<'gcx> {
             _ => None,
         };
         if let Some(lvalue) = lvalue {
-            for_each_lhs_var(lvalue, &mut |v| {
+            for_each_lhs_var(self.gcx, lvalue, &mut |v| {
                 self.writes.insert(v);
             });
         }
@@ -168,24 +162,19 @@ impl<'gcx> hir::Visit<'gcx> for WriteCollector<'gcx> {
     }
 }
 
-fn is_compile_time_constant(hir: &hir::Hir<'_>, expr: &Expr<'_>) -> bool {
-    let is_const = |e: &Expr<'_>| is_compile_time_constant(hir, e);
+fn is_compile_time_constant(gcx: Gcx<'_>, expr: &Expr<'_>) -> bool {
+    let is_const = |e: &Expr<'_>| is_compile_time_constant(gcx, e);
     match &expr.kind {
         ExprKind::Lit(_) | ExprKind::Type(_) | ExprKind::TypeCall(_) => true,
-        // A constant variable, possibly sharing its name with functions.
-        ExprKind::Ident(reses) => {
-            reses.iter().any(|r| r.as_variable().is_some())
-                && reses.iter().all(|r| {
-                    matches!(r, Res::Item(ItemId::Function(_)))
-                        || r.as_variable().is_some_and(|v| hir.variable(v).is_constant())
-                })
+        ExprKind::Ident(_) => {
+            gcx.resolved_variable(expr).is_some_and(|v| gcx.hir.variable(v).is_constant())
         }
         ExprKind::Unary(op, inner) => !op.kind.has_side_effects() && is_const(inner),
         ExprKind::Binary(lhs, _, rhs) => is_const(lhs) && is_const(rhs),
         ExprKind::Ternary(c, t, f) => is_const(c) && is_const(t) && is_const(f),
         ExprKind::Tuple(exprs) => exprs.iter().flatten().all(|e| is_const(e)),
         ExprKind::Call(callee, args, opts) => {
-            is_constant_call(callee)
+            is_constant_call(gcx, callee)
                 && args.exprs().all(is_const)
                 && opts.is_none_or(|opts| opts.args.iter().all(|arg| is_const(&arg.value)))
         }
@@ -200,7 +189,7 @@ fn is_compile_time_constant(hir: &hir::Hir<'_>, expr: &Expr<'_>) -> bool {
             (ExprKind::TypeCall(ty), sym::interfaceId) => matches!(
                 ty.kind,
                 TypeKind::Custom(ItemId::Contract(cid))
-                    if hir.contract(cid).kind == ContractKind::Interface
+                    if gcx.hir.contract(cid).kind == ContractKind::Interface
             ),
             _ => false,
         },
@@ -209,10 +198,10 @@ fn is_compile_time_constant(hir: &hir::Hir<'_>, expr: &Expr<'_>) -> bool {
 }
 
 /// Type casts (`address(0xCAFE)`, `IToken(addr)`) and the hashing / modular arithmetic builtins.
-fn is_constant_call(callee: &Expr<'_>) -> bool {
+fn is_constant_call(gcx: Gcx<'_>, callee: &Expr<'_>) -> bool {
     matches!(callee.kind, ExprKind::Type(_))
-        || is_contract_cast(callee)
-        || builtins(callee).any(|b| {
+        || is_contract_cast(gcx, callee)
+        || gcx.resolved_builtin(callee).is_some_and(|b| {
             matches!(
                 b.name(),
                 kw::Keccak256

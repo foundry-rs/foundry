@@ -1,17 +1,13 @@
 use super::FunctionInitState;
 use crate::{
     linter::{LateLintPass, LintContext},
-    sol::{
-        Severity, SolLint,
-        analysis::{resolved_function, ty_contract_id},
-    },
+    sol::{Severity, SolLint},
 };
 use solar::{
     ast::StateMutability,
-    interface::Symbol,
     sema::{
         Gcx,
-        hir::{self, ContractId, Expr, ExprKind, FunctionId, Hir, ItemId, VariableId, Visit},
+        hir::{ContractId, Expr, FunctionId, Hir, VariableId, Visit},
     },
 };
 use std::{convert::Infallible, ops::ControlFlow};
@@ -38,13 +34,7 @@ impl<'gcx> LateLintPass<'gcx> for FunctionInitState {
                 && !variable.is_constant()
                 && let Some(initializer) = variable.initializer
             {
-                let mut finder = ImpureRefFinder {
-                    gcx,
-                    source: contract.source,
-                    contract: id,
-                    callee: None,
-                    found: false,
-                };
+                let mut finder = ImpureRefFinder { gcx, found: false };
                 let _ = finder.visit_expr(initializer);
                 if finder.found {
                     ctx.emit(&FUNCTION_INIT_STATE, variable.span);
@@ -58,12 +48,6 @@ impl<'gcx> LateLintPass<'gcx> for FunctionInitState {
 /// an initializer expression, arguments of nested calls included.
 struct ImpureRefFinder<'gcx> {
     gcx: Gcx<'gcx>,
-    /// The source and contract of the initializer, the viewpoint for `using for` lookups.
-    source: hir::SourceId,
-    contract: ContractId,
-    /// The callee of the call being walked: its target was already judged through the type
-    /// checker's resolution, so it must not be re-judged by name matching.
-    callee: Option<hir::ExprId>,
     found: bool,
 }
 
@@ -75,83 +59,16 @@ impl<'gcx> Visit<'gcx> for ImpureRefFinder<'gcx> {
     }
 
     fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
-        let is_callee = self.callee == Some(expr.id);
-        match &expr.kind {
-            // The type checker already resolved the one function a call dispatches to (overload
-            // selection, override shadowing, `super.`, the qualified and `using for` forms).
-            ExprKind::Call(callee, ..) => {
-                if let Some(function_id) = resolved_function(self.gcx, callee) {
-                    self.judge_function(function_id);
-                }
-                self.callee = Some(callee.peel_parens().id);
-            }
-            // A callee name can also resolve to a variable: a call through a function pointer
-            // stored in state reads that variable.
-            ExprKind::Ident(resolutions) => {
-                for res in *resolutions {
-                    match res.as_variable() {
-                        Some(variable_id) => self.judge_variable(variable_id),
-                        None => {
-                            if !is_callee && let Some(function_id) = res.as_function() {
-                                self.judge_function(function_id);
-                            }
-                        }
-                    }
-                }
-            }
-            // A member reference used as a value has a resolved target too (`x.f` selects an
-            // override like `x.f()` would); scan by name only when there is none.
-            ExprKind::Member(base, member) if !is_callee => {
-                match resolved_function(self.gcx, expr) {
-                    Some(function_id) => self.judge_function(function_id),
-                    None => self.judge_member(base, member.name),
-                }
-            }
-            _ => {}
+        if let Some(variable_id) = self.gcx.resolved_variable(expr) {
+            self.judge_variable(variable_id);
+        } else if let Some(function_id) = self.gcx.resolved_function(expr) {
+            self.judge_function(function_id);
         }
         self.walk_expr(expr)
     }
 }
 
 impl ImpureRefFinder<'_> {
-    /// Judges a member read with no resolved function type (`Base.stateVar`): the member ident
-    /// carries no resolution, so type the base and scan by name.
-    fn judge_member(&mut self, base: &Expr<'_>, member: Symbol) {
-        let gcx = self.gcx;
-        let Some(ty) = gcx.type_of_expr(base.peel_parens().id) else { return };
-        if let Some(contract_id) = ty_contract_id(ty) {
-            // Walk the linearization: an inherited function or getter is not among the
-            // contract's own items.
-            for &base_id in gcx.hir.contract(contract_id).linearized_bases {
-                for &item_id in gcx.hir.contract(base_id).items {
-                    match item_id {
-                        ItemId::Variable(id)
-                            if gcx.hir.variable(id).name.is_some_and(|n| n.name == member) =>
-                        {
-                            self.judge_variable(id)
-                        }
-                        ItemId::Function(id)
-                            if gcx.hir.function(id).name.is_some_and(|n| n.name == member) =>
-                        {
-                            self.judge_function(id)
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        } else {
-            // A `using for` binding read as a value: the bound library function is a member of
-            // the value type. `members_of` needs reference types to keep their data location.
-            for entry in gcx.members_of(ty, self.source, Some(self.contract)) {
-                if entry.name == member
-                    && let Some(function_id) = entry.ty.function_id()
-                {
-                    self.judge_function(function_id);
-                }
-            }
-        }
-    }
-
     /// A read of another state variable: its initializer may not have run yet.
     fn judge_variable(&mut self, variable_id: VariableId) {
         let variable = self.gcx.hir.variable(variable_id);

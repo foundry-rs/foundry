@@ -58,6 +58,27 @@ wallet_json_field() {
   jq -r --arg field "$field" '(.data // .)[0][$field]' <<<"$wallet_json"
 }
 
+# Fork initialization can outlast a single upstream RPC's 60-second timeout.
+wait_for_anvil() {
+  local pid="$1" port="$2" timeout="${3:-120}"
+  local deadline=$((SECONDS + timeout))
+
+  while (( SECONDS < deadline )); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      echo "ERROR: Anvil exited before serving RPC on port $port" >&2
+      return 1
+    fi
+    if cast client --rpc-url "http://127.0.0.1:$port" --rpc-timeout 1 >/dev/null 2>&1; then
+      echo "Anvil started successfully on port $port"
+      return 0
+    fi
+    sleep 1
+  done
+
+  echo "ERROR: Anvil did not serve RPC on port $port within ${timeout}s" >&2
+  return 1
+}
+
 echo -e "\n=== INIT TEMPO PROJECT ==="
 tmp_dir=$(mktemp -d)
 cd "$tmp_dir"
@@ -901,18 +922,7 @@ ANVIL_PID=$!
 # Ensure anvil is stopped on script exit
 trap 'kill "$ANVIL_PID" 2>/dev/null || true' EXIT
 
-# Wait for anvil to be ready (max 10 seconds)
-for i in {1..10}; do
-  if cast client --rpc-url "http://127.0.0.1:$ANVIL_PORT" 2>/dev/null; then
-    echo "Anvil fork started successfully"
-    break
-  fi
-  if [[ $i -eq 10 ]]; then
-    echo "ERROR: Anvil fork failed to start"
-    exit 1
-  fi
-  sleep 1
-done
+wait_for_anvil "$ANVIL_PID" "$ANVIL_PORT"
 
 ALICE_PK="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 
@@ -976,18 +986,7 @@ ANVIL_PID=$!
 # Ensure anvil is stopped on script exit
 trap 'kill "$ANVIL_PID" 2>/dev/null || true' EXIT
 
-# Wait for anvil to be ready (max 10 seconds)
-for i in {1..10}; do
-  if cast client --rpc-url "http://127.0.0.1:$ANVIL_PORT" 2>/dev/null; then
-    echo "Anvil fork started successfully"
-    break
-  fi
-  if [[ $i -eq 10 ]]; then
-    echo "ERROR: Anvil fork failed to start"
-    exit 1
-  fi
-  sleep 1
-done
+wait_for_anvil "$ANVIL_PID" "$ANVIL_PORT"
 
 echo -e "\n=== ANVIL FORK: CHECK CLIENT VERSION ==="
 cast client --rpc-url http://127.0.0.1:$ANVIL_PORT

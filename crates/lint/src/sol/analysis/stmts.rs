@@ -3,7 +3,10 @@
 use super::is_exit_call;
 use solar::{
     ast::FunctionKind,
-    sema::hir::{self, Expr, FunctionId, LoopSource, Stmt, StmtKind, Visit},
+    sema::{
+        Gcx,
+        hir::{self, Expr, FunctionId, LoopSource, Stmt, StmtKind, Visit},
+    },
 };
 use std::ops::ControlFlow;
 
@@ -58,19 +61,23 @@ pub fn stmt_expr<'gcx>(
 /// `revert`, `selfdestruct`, `require(false, ..)` / `assert(false)`, a block containing any such
 /// statement, an `if` whose both arms exit, a `try` whose every clause exits, or a `do-while`
 /// whose body exits without `break`/`continue`.
-pub fn branch_always_exits(stmt: &Stmt<'_>) -> bool {
+pub fn branch_always_exits(gcx: Gcx<'_>, stmt: &Stmt<'_>) -> bool {
     match &stmt.kind {
         StmtKind::Return(_) | StmtKind::Revert(_) => true,
-        StmtKind::Expr(expr) => is_exit_call(expr),
-        StmtKind::Block(b) | StmtKind::UncheckedBlock(b) => b.stmts.iter().any(branch_always_exits),
-        StmtKind::If(_, t, Some(e)) => branch_always_exits(t) && branch_always_exits(e),
+        StmtKind::Expr(expr) => is_exit_call(gcx, expr),
+        StmtKind::Block(b) | StmtKind::UncheckedBlock(b) => {
+            b.stmts.iter().any(|expr| branch_always_exits(gcx, expr))
+        }
+        StmtKind::If(_, t, Some(e)) => branch_always_exits(gcx, t) && branch_always_exits(gcx, e),
         StmtKind::Loop(block, LoopSource::DoWhile) => {
             let user = do_while_user_stmts(block.stmts);
-            !stmts_break_or_continue(user) && user.iter().any(branch_always_exits)
+            !stmts_break_or_continue(user) && user.iter().any(|expr| branch_always_exits(gcx, expr))
         }
         StmtKind::Try(t) => {
             !t.clauses.is_empty()
-                && t.clauses.iter().all(|c| c.block.stmts.iter().any(branch_always_exits))
+                && t.clauses
+                    .iter()
+                    .all(|c| c.block.stmts.iter().any(|expr| branch_always_exits(gcx, expr)))
         }
         _ => false,
     }

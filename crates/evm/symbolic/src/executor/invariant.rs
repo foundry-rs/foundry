@@ -28,12 +28,10 @@ impl SymbolicExecutor {
             self.prepare_invariant_call(executor, state, invariant_address, sender, invariant)?;
 
         let mut checked = Vec::new();
-        while let Some(mut outcome) =
+        while let Some(outcome) =
             self.execute_sequence_call_next(executor, &mut call, completed_paths)?
         {
-            if !matches!(outcome.status, CallStatus::Success)
-                || self.invariant_return_failed(invariant, &mut outcome.state)?
-            {
+            if !matches!(outcome.status, CallStatus::Success) {
                 return Ok(vec![InvariantCheckOutcome { failed: true, state: outcome.state }]);
             }
 
@@ -273,40 +271,6 @@ impl SymbolicExecutor {
         }
 
         Ok(())
-    }
-
-    fn invariant_return_failed(
-        &mut self,
-        invariant: &Function,
-        state: &mut PathState,
-    ) -> Result<bool, SymbolicError> {
-        if invariant.outputs.is_empty() {
-            return Ok(false);
-        }
-        if invariant.outputs.len() != 1 || invariant.outputs[0].selector_type().as_ref() != "bool" {
-            return Ok(false);
-        }
-        if state.return_data.len() < 32 {
-            return Ok(true);
-        }
-
-        let pass = state.return_data.load_word(&mut self.cx, 0)?.nonzero_bool(&mut self.cx);
-        let fail = pass.clone().not(&mut self.cx);
-        match fail.as_const() {
-            Some(true) => Ok(true),
-            Some(false) => Ok(false),
-            None => {
-                let mut constraints = state.constraints.clone();
-                constraints.push(fail);
-                if self.is_sat_with_state(state, &constraints)? {
-                    state.constraints = constraints;
-                    Ok(true)
-                } else {
-                    state.constraints.push(pass);
-                    Ok(false)
-                }
-            }
-        }
     }
 
     #[expect(clippy::too_many_arguments)]

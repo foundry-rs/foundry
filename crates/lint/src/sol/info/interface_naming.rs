@@ -9,14 +9,14 @@ declare_forge_lint!(
     INTERFACE_FILE_NAMING,
     Severity::Info,
     "interface-file-naming",
-    "interface file names should be prefixed with 'I'"
+    "interface file name is missing the `I` prefix"
 );
 
 declare_forge_lint!(
     INTERFACE_NAMING,
     Severity::Info,
     "interface-naming",
-    "interface names should be prefixed with 'I'"
+    "interface name is missing the `I` prefix"
 );
 
 impl<'ast> EarlyLintPass<'ast> for InterfaceFileNaming {

@@ -65,6 +65,54 @@ invariant_counterStaysZero()
     );
 });
 
+forgetest_init!(symbolic_invariant_ignores_bool_return, |prj, cmd| {
+    skip_unless_z3!("symbolic_invariant_ignores_bool_return");
+    prj.update_config(|config| config.invariant.runs = 0);
+
+    prj.add_test(
+        "SymbolicInvariantBoolReturn.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicBoolReturnTarget {
+    uint256 public counter;
+
+    function bump() external {
+        counter = 1;
+    }
+}
+
+contract SymbolicInvariantBoolReturn is Test {
+    function setUp() public {
+        targetContract(address(new SymbolicBoolReturnTarget()));
+        targetSender(address(this));
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 1
+    function invariant_alwaysFalseButNeverAsserts() public pure returns (bool) {
+        return false;
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--match-test",
+            "invariant_alwaysFalseButNeverAsserts",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_alwaysFalseButNeverAsserts()");
+    assert_eq!(result["status"], "Success");
+    assert_eq!(result["symbolic"]["status"], "pass", "{}", result["symbolic"]["incomplete"]);
+});
+
 forgetest_init!(symbolic_invariant_safe_still_runs_fuzz_campaign, |prj, cmd| {
     skip_unless_z3!("symbolic_invariant_safe_still_runs_fuzz_campaign");
 
