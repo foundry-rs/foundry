@@ -313,6 +313,32 @@ remappings = ["@dep/=vendor/b/"]
     },
 ];
 
+const SHARED_FILTER_FILES: &[FileSpec] = &[
+    FileSpec {
+        path: "external/Dep.sol",
+        contents: r#"contract Dep {
+    function value() external pure returns (uint256) { return 111; }
+}
+"#,
+    },
+    FileSpec {
+        path: "test/A.t.sol",
+        contents: r#"import {Dep} from "../external/Dep.sol";
+contract ATest {
+    function test_value_a() public { require(new Dep().value() == 111, "changed A"); }
+}
+"#,
+    },
+    FileSpec {
+        path: "test/B.t.sol",
+        contents: r#"import {Dep} from "../external/Dep.sol";
+contract BTest {
+    function test_value_b() public { require(new Dep().value() == 111, "changed B"); }
+}
+"#,
+    },
+];
+
 const SCENARIOS: &[Scenario] = &[
     Scenario { name: "dynamic", files: DYNAMIC_FILES, mutations: DYNAMIC_MUTATIONS },
     Scenario { name: "external-native", files: EXTERNAL_FILES, mutations: EXTERNAL_MUTATIONS },
@@ -338,6 +364,55 @@ const SCENARIOS: &[Scenario] = &[
 fn cache_matches_clean_builds() {
     for scenario in SCENARIOS {
         run_scenario(scenario);
+    }
+}
+
+#[test]
+fn dynamic_linking_matches_standard_cache() {
+    for scenario in SCENARIOS.iter().filter(|scenario| scenario.name != "retarget-remapping") {
+        let dynamic = TestProject::new(
+            &format!("cache-differential-{}-dynamic", scenario.name),
+            PathStyle::Dapptools,
+        );
+        let standard = TestProject::new(
+            &format!("cache-differential-{}-standard", scenario.name),
+            PathStyle::Dapptools,
+        );
+        materialize(&dynamic, scenario.files);
+        materialize_with_linking(&standard, scenario.files, false);
+
+        compare_linking_modes(scenario, 0, &dynamic, &standard);
+        for (index, mutation) in scenario.mutations.iter().enumerate() {
+            write_file(dynamic.root(), mutation.path, mutation.contents);
+            write_file(standard.root(), mutation.path, mutation.contents);
+            compare_linking_modes(scenario, index + 1, &dynamic, &standard);
+        }
+    }
+}
+
+fn compare_linking_modes(
+    scenario: &Scenario,
+    checkpoint: usize,
+    dynamic: &TestProject,
+    standard: &TestProject,
+) {
+    let dynamic_observation = observe(dynamic, &run_forge_json(dynamic, &["test"]));
+    let standard_observation = observe(standard, &run_forge_json(standard, &["test"]));
+    let mut dynamic_results = dynamic_observation.results.clone();
+    let mut standard_results = standard_observation.results.clone();
+    remove_gas(&mut dynamic_results);
+    remove_gas(&mut standard_results);
+    if dynamic_observation.success != standard_observation.success
+        || dynamic_results != standard_results
+    {
+        let saved = preserve_failure(scenario, checkpoint, dynamic, standard, standard);
+        panic!(
+            "{} checkpoint {checkpoint}: dynamic linking differs from the standard cache\n\
+             replay artifacts: {}\n\
+             dynamic: {dynamic_observation:#?}\nstandard: {standard_observation:#?}",
+            scenario.name,
+            saved.display(),
+        );
     }
 }
 
@@ -383,6 +458,116 @@ fn filtered_request_history_matches_clean_builds() {
 
     run_checkpoint(&SCENARIO, 3, &semantic, &reuse, &current, A_ARGS, 0);
     run_checkpoint(&SCENARIO, 4, &semantic, &reuse, &current, B_ARGS, 2);
+}
+
+#[test]
+fn shared_dependency_partial_jobs_match_clean_builds() {
+    const A_ARGS: &[&str] = &["test", "--match-path", "test/A.t.sol"];
+    const B_ARGS: &[&str] = &["test", "--match-path", "test/B.t.sol"];
+    const SCENARIO: Scenario =
+        Scenario { name: "shared-partial-jobs", files: SHARED_FILTER_FILES, mutations: &[] };
+
+    let semantic = TestProject::new("cache-differential-shared-semantic", PathStyle::Dapptools);
+    let reuse = TestProject::new("cache-differential-shared-reuse", PathStyle::Dapptools);
+    materialize(&semantic, SHARED_FILTER_FILES);
+    materialize(&reuse, SHARED_FILTER_FILES);
+
+    assert!(run_forge_json(&semantic, A_ARGS).status.success());
+    assert!(run_forge_plain(&reuse, A_ARGS).status.success());
+    let mut current = SHARED_FILTER_FILES
+        .iter()
+        .map(|file| (file.path, file.contents))
+        .collect::<BTreeMap<_, _>>();
+    run_checkpoint(&SCENARIO, 0, &semantic, &reuse, &current, B_ARGS, 2);
+
+    let changed_dep = r#"contract Dep {
+    function value() external pure returns (uint256) { return 222; }
+}
+"#;
+    let changed_a = r#"import {Dep} from "../external/Dep.sol";
+contract ATest {
+    function test_value_a() public { require(new Dep().value() == 222, "changed A"); }
+}
+"#;
+    for (path, contents) in [("external/Dep.sol", changed_dep), ("test/A.t.sol", changed_a)] {
+        current.insert(path, contents);
+        write_file(semantic.root(), path, contents);
+        write_file(reuse.root(), path, contents);
+    }
+    run_checkpoint(&SCENARIO, 1, &semantic, &reuse, &current, A_ARGS, 2);
+    run_checkpoint(&SCENARIO, 2, &semantic, &reuse, &current, B_ARGS, 1);
+
+    let changed_b = r#"import {Dep} from "../external/Dep.sol";
+contract BTest {
+    function test_value_b() public { require(new Dep().value() == 222, "changed B"); }
+}
+"#;
+    current.insert("test/B.t.sol", changed_b);
+    write_file(semantic.root(), "test/B.t.sol", changed_b);
+    write_file(reuse.root(), "test/B.t.sol", changed_b);
+    run_checkpoint(&SCENARIO, 3, &semantic, &reuse, &current, B_ARGS, 1);
+}
+
+#[test]
+fn file_lifecycle_matches_clean_builds() {
+    const TEST_ARGS: &[&str] = &["test"];
+    const SCENARIO: Scenario =
+        Scenario { name: "file-lifecycle", files: INDEPENDENT_FILES, mutations: &[] };
+
+    let semantic = TestProject::new("cache-differential-lifecycle-semantic", PathStyle::Dapptools);
+    let reuse = TestProject::new("cache-differential-lifecycle-reuse", PathStyle::Dapptools);
+    materialize(&semantic, INDEPENDENT_FILES);
+    materialize(&reuse, INDEPENDENT_FILES);
+    assert!(run_forge_json(&semantic, TEST_ARGS).status.success());
+    assert!(run_forge_plain(&reuse, TEST_ARGS).status.success());
+
+    let mut current =
+        INDEPENDENT_FILES.iter().map(|file| (file.path, file.contents)).collect::<BTreeMap<_, _>>();
+    for path in ["test/B.t.sol", "external/B.sol"] {
+        current.remove(path);
+        fs::remove_file(semantic.root().join(path)).unwrap();
+        fs::remove_file(reuse.root().join(path)).unwrap();
+    }
+    run_checkpoint(&SCENARIO, 0, &semantic, &reuse, &current, TEST_ARGS, 2);
+
+    let dependency_c = r#"contract C {
+    function value() external pure returns (uint256) { return 555; }
+}
+"#;
+    let test_c = r#"import {C} from "../external/C.sol";
+contract CTest {
+    function test_value_c() public { require(new C().value() == 555, "changed C"); }
+}
+"#;
+    for (path, contents) in [("external/C.sol", dependency_c), ("test/C.t.sol", test_c)] {
+        current.insert(path, contents);
+        write_file(semantic.root(), path, contents);
+        write_file(reuse.root(), path, contents);
+    }
+    run_checkpoint(&SCENARIO, 1, &semantic, &reuse, &current, TEST_ARGS, 4);
+
+    for path in ["test/A.t.sol", "external/A.sol"] {
+        current.remove(path);
+        fs::remove_file(semantic.root().join(path)).unwrap();
+        fs::remove_file(reuse.root().join(path)).unwrap();
+    }
+    run_checkpoint(&SCENARIO, 2, &semantic, &reuse, &current, TEST_ARGS, 2);
+
+    let dependency_a = r#"contract A {
+    function value() external pure returns (uint256) { return 777; }
+}
+"#;
+    let test_a = r#"import {A} from "../external/A.sol";
+contract ATest {
+    function test_value_a() public { require(new A().value() == 777, "changed A"); }
+}
+"#;
+    for (path, contents) in [("external/A.sol", dependency_a), ("test/A2.t.sol", test_a)] {
+        current.insert(path, contents);
+        write_file(semantic.root(), path, contents);
+        write_file(reuse.root(), path, contents);
+    }
+    run_checkpoint(&SCENARIO, 3, &semantic, &reuse, &current, TEST_ARGS, 4);
 }
 
 fn run_checkpoint(
@@ -493,12 +678,16 @@ fn run_scenario(scenario: &Scenario) {
 }
 
 fn materialize(project: &TestProject, files: &[FileSpec]) {
+    materialize_with_linking(project, files, true);
+}
+
+fn materialize_with_linking(project: &TestProject, files: &[FileSpec], dynamic_test_linking: bool) {
     write_file(
         project.root(),
         "foundry.toml",
         &format!(
             r#"[profile.default]
-dynamic_test_linking = true
+dynamic_test_linking = {dynamic_test_linking}
 solc = "{SOLC_VERSION}"
 bytecode_hash = "none"
 cbor_metadata = false
@@ -582,6 +771,19 @@ fn remove_durations(value: &mut Value) {
             }
         }
         Value::Array(values) => values.iter_mut().for_each(remove_durations),
+        _ => {}
+    }
+}
+
+fn remove_gas(value: &mut Value) {
+    match value {
+        Value::Object(object) => {
+            object.remove("gas");
+            for value in object.values_mut() {
+                remove_gas(value);
+            }
+        }
+        Value::Array(values) => values.iter_mut().for_each(remove_gas),
         _ => {}
     }
 }
