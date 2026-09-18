@@ -45,7 +45,12 @@ use revm::{
 };
 use std::{fmt, fmt::Debug, mem::take, sync::Arc};
 
-#[cfg(feature = "optimism")]
+#[cfg(feature = "base")]
+use base_common_consensus::Eip8130Receipt;
+#[cfg(feature = "base")]
+use base_common_evm::Eip8130PhaseStatuses;
+
+#[cfg(any(feature = "base", feature = "optimism"))]
 pub(crate) mod optimism;
 
 /// Determines whether an executor produces a complete block or a historical transaction prefix.
@@ -144,7 +149,8 @@ fn append_deposit_requests(
 pub struct FoundryReceiptBuilder;
 
 impl FoundryReceiptBuilder {
-    const fn wrap_receipt(
+    #[cfg_attr(not(feature = "base"), allow(clippy::missing_const_for_fn))]
+    fn wrap_receipt(
         tx_type: FoundryTxType,
         receipt: ReceiptWithBloom<Receipt>,
     ) -> FoundryReceiptEnvelope {
@@ -161,9 +167,10 @@ impl FoundryReceiptBuilder {
             #[cfg(feature = "optimism")]
             FoundryTxType::PostExec => FoundryReceiptEnvelope::PostExec(receipt),
             #[cfg(feature = "base")]
-            FoundryTxType::Eip8130 => {
-                panic!("Base transactions are rejected before execution")
-            }
+            FoundryTxType::Eip8130 => FoundryReceiptEnvelope::Eip8130(ReceiptWithBloom {
+                receipt: Eip8130Receipt::new(receipt.receipt, Eip8130PhaseStatuses::take()),
+                logs_bloom: receipt.logs_bloom,
+            }),
             FoundryTxType::Tempo => FoundryReceiptEnvelope::Tempo(receipt),
         }
     }
@@ -206,7 +213,7 @@ impl ReceiptBuilder for FoundryReceiptBuilder {
 #[derive(Debug)]
 pub struct AnvilTxResult<H> {
     pub inner: EthTxResult<H, FoundryTxType>,
-    #[cfg(feature = "optimism")]
+    #[cfg(any(feature = "base", feature = "optimism"))]
     pub sender: Address,
 }
 
@@ -345,7 +352,7 @@ where
             .into());
         }
 
-        #[cfg(feature = "optimism")]
+        #[cfg(any(feature = "base", feature = "optimism"))]
         let sender = *tx.signer();
         let transaction_hash = tx.tx().trie_hash();
         #[cfg(feature = "optimism")]
@@ -368,7 +375,7 @@ where
 
         Ok(AnvilTxResult {
             inner: EthTxResult { result, blob_gas_used, tx_type: tx.tx().tx_type() },
-            #[cfg(feature = "optimism")]
+            #[cfg(any(feature = "base", feature = "optimism"))]
             sender,
         })
     }
@@ -437,7 +444,7 @@ where
     fn commit_transaction(&mut self, output: Self::Result) -> GasOutput {
         let AnvilTxResult {
             inner: EthTxResult { result: ResultAndState { result, state }, blob_gas_used, tx_type },
-            #[cfg(feature = "optimism")]
+            #[cfg(any(feature = "base", feature = "optimism"))]
             sender,
         } = output;
 
@@ -448,7 +455,7 @@ where
             self.blob_gas_used = self.blob_gas_used.saturating_add(blob_gas_used);
         }
 
-        #[cfg(feature = "optimism")]
+        #[cfg(any(feature = "base", feature = "optimism"))]
         let receipt = if tx_type.is_deposit() {
             optimism::build_mined_deposit_receipt(result, &state, sender, self.gas_used)
         } else {
@@ -460,7 +467,7 @@ where
                 cumulative_gas_used: self.gas_used,
             })
         };
-        #[cfg(not(feature = "optimism"))]
+        #[cfg(not(any(feature = "base", feature = "optimism")))]
         let receipt = self.receipt_builder.build_receipt(ReceiptBuilderCtx {
             tx_type,
             evm: &self.evm,

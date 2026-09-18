@@ -20,6 +20,8 @@ use serde::Serialize;
 use tempo_revm::TempoInvalidTransaction;
 use tokio::time::Duration;
 
+#[cfg(feature = "base")]
+mod base;
 #[cfg(feature = "optimism")]
 mod optimism;
 
@@ -112,8 +114,25 @@ pub enum BlockchainError {
         "EIP-7702 fields received but is not supported by the current hardfork.\n\nYou can use it by running anvil with '--hardfork prague' or later."
     )]
     EIP7702TransactionUnsupportedAtHardfork,
-    #[error(
-        "op-stack deposit tx received but is not supported.\n\nYou can use it by running anvil with '--optimism'."
+    // Base is an OP-stack chain and uses the same deposit envelope, so only the hint that names
+    // the flags able to enable it varies with the compiled-in families.
+    #[cfg_attr(
+        all(feature = "base", feature = "optimism"),
+        error(
+            "op-stack deposit tx received but is not supported.\n\nYou can use it by running anvil with '--optimism' or '--network base'."
+        )
+    )]
+    #[cfg_attr(
+        all(feature = "base", not(feature = "optimism")),
+        error(
+            "op-stack deposit tx received but is not supported.\n\nYou can use it by running anvil with '--network base'."
+        )
+    )]
+    #[cfg_attr(
+        not(feature = "base"),
+        error(
+            "op-stack deposit tx received but is not supported.\n\nYou can use it by running anvil with '--optimism'."
+        )
     )]
     DepositTransactionUnsupported,
     #[error(
@@ -121,7 +140,7 @@ pub enum BlockchainError {
     )]
     TempoTransactionUnsupported,
     #[cfg(feature = "base")]
-    #[error("Base transactions are not supported by Anvil yet")]
+    #[error("Base transactions require native Base execution; run Anvil with --network base")]
     BaseTransactionUnsupported,
     #[error("Unknown transaction type not supported")]
     UnknownTransactionType,
@@ -138,6 +157,9 @@ pub enum BlockchainError {
     },
     #[error("Invalid transaction request: {0}")]
     InvalidTransactionRequest(String),
+    #[cfg(feature = "base")]
+    #[error("EIP-8130 transaction rejected: {0}")]
+    Eip8130TransactionRejected(String),
     #[error("filter not found")]
     FilterNotFound,
 }
@@ -347,6 +369,10 @@ pub enum InvalidTransactionError {
     /// Missing enveloped transaction
     #[error("missing enveloped transaction")]
     MissingEnvelopedTx,
+    /// EIP-8130 transaction failed block-inclusion validation.
+    #[cfg(feature = "base")]
+    #[error("EIP-8130 transaction rejected: {0}")]
+    Eip8130(String),
     /// Native ETH value transfers are not allowed in Tempo mode
     #[error("native value transfer not allowed in Tempo mode")]
     TempoNativeValueTransfer,
@@ -549,6 +575,12 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 err @ BlockchainError::EvmError(_) => RpcError {
                     // VM halts are execution failures, not JSON-RPC server faults. REVERT has a
                     // dedicated code/data path above; other halts, such as invalid opcode, do not.
+                    code: ErrorCode::TransactionRejected,
+                    message: err.to_string().into(),
+                    data: None,
+                },
+                #[cfg(feature = "base")]
+                err @ BlockchainError::Eip8130TransactionRejected(_) => RpcError {
                     code: ErrorCode::TransactionRejected,
                     message: err.to_string().into(),
                     data: None,

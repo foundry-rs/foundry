@@ -6,7 +6,7 @@ use alloy_eips::{calc_next_block_base_fee, eip1559::BaseFeeParams, eip2718::Enco
 use alloy_network::{EthereumWallet, NetworkTransactionBuilder, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bloom, Bytes, TxHash, TxKind, U256, address, b256};
 use alloy_provider::Provider;
-use alloy_rpc_types::{BlockId, TransactionRequest, anvil::Forking};
+use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest, anvil::Forking};
 use alloy_serde::{OtherFields, WithOtherFields};
 use anvil::{NodeConfig, eth::fees::INITIAL_BASE_FEE, spawn};
 use axum::{Json, Router, routing::post};
@@ -16,6 +16,9 @@ use foundry_primitives::FoundryReceiptEnvelope;
 use op_alloy_consensus::{OpDepositReceipt, OpDepositReceiptWithBloom, TxDeposit};
 use op_alloy_rpc_types::OpTransactionFields;
 use serde_json::{Value, json};
+
+#[cfg(feature = "base")]
+use foundry_evm::hardforks::BaseUpgrade;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn inferred_optimism_forks_allow_non_monad_source_resets() {
@@ -51,6 +54,44 @@ async fn inferred_optimism_forks_allow_non_monad_source_resets() {
     let node_info = optimism_api.anvil_node_info().await.unwrap();
     assert_eq!(node_info.network.as_deref(), Some("optimism"));
     assert_eq!(node_info.fork_config.fork_url, Some(ethereum_origin.http_endpoint()));
+}
+
+#[cfg(feature = "base")]
+#[tokio::test(flavor = "multi_thread")]
+async fn inferred_optimism_fork_reset_to_base_preserves_execution_hardfork() {
+    let timestamp = 1_710_374_401u64;
+    let (_, optimism_origin) = spawn(
+        NodeConfig::test()
+            .with_optimism()
+            .with_hardfork(Some(OpHardfork::Ecotone.into()))
+            .with_genesis_timestamp(Some(timestamp)),
+    )
+    .await;
+    let (api, _) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(optimism_origin.http_endpoint()))
+            .with_fork_block_number(Some(0u64)),
+    )
+    .await;
+    assert!(api.backend.is_optimism());
+    assert_eq!(api.backend.hardfork(), OpHardfork::Ecotone.into());
+
+    let (_, base_origin) = spawn(
+        NodeConfig::test_base()
+            .with_hardfork(Some(BaseUpgrade::Ecotone.into()))
+            .with_genesis_timestamp(Some(timestamp)),
+    )
+    .await;
+    api.anvil_reset(Some(Forking {
+        json_rpc_url: Some(base_origin.http_endpoint()),
+        block_number: Some(0),
+    }))
+    .await
+    .unwrap();
+
+    assert!(api.backend.is_optimism());
+    assert_eq!(api.backend.hardfork(), OpHardfork::Ecotone.into());
+    api.mine_one().await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -614,6 +655,59 @@ async fn jovian_mining_and_simulation_use_da_footprint() {
         )),
         "Jovian should price the next block from its DA footprint",
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn fork_transaction_replay_uses_jovian_da_footprint() {
+    const DA_FOOTPRINT_SCALAR: u16 = 400;
+    const EXPECTED_DA_FOOTPRINT: u64 = 100 * DA_FOOTPRINT_SCALAR as u64;
+    const JOVIAN_ACTIVATION_TIMESTAMP: u64 = 1_764_691_201;
+
+    for (hardfork, timestamp, expected) in [
+        (OpHardfork::Isthmus, JOVIAN_ACTIVATION_TIMESTAMP - 2, 0),
+        (OpHardfork::Jovian, JOVIAN_ACTIVATION_TIMESTAMP, EXPECTED_DA_FOOTPRINT),
+    ] {
+        let (origin_api, origin) = spawn(
+            NodeConfig::test()
+                .with_chain_id(Some(8453u64))
+                .with_networks(NetworkConfigs::with_optimism())
+                .with_hardfork(Some(hardfork.into()))
+                .with_genesis_timestamp(Some(timestamp)),
+        )
+        .await;
+        let l1_block = address!("0x4200000000000000000000000000000000000015");
+        let mut scalar_slot = [0u8; 32];
+        scalar_slot[18..20].copy_from_slice(&DA_FOOTPRINT_SCALAR.to_be_bytes());
+        origin_api
+            .anvil_set_storage_at(l1_block, U256::from(8), B256::from(scalar_slot))
+            .await
+            .unwrap();
+
+        let wallet = origin.dev_wallets().next().unwrap();
+        let provider = http_provider_with_signer(&origin.http_endpoint(), wallet.into());
+        origin_api.evm_set_next_block_timestamp(timestamp).unwrap();
+        let receipt = provider
+            .send_transaction(WithOtherFields::new(
+                TransactionRequest::default().with_to(Address::random()).with_value(U256::ONE),
+            ))
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+
+        let (fork_api, _) = spawn(
+            NodeConfig::test()
+                .with_eth_rpc_url(Some(origin.http_endpoint()))
+                .with_fork_transaction_hash(Some(receipt.transaction_hash))
+                .with_hardfork(Some(hardfork.into()))
+                .with_no_mining(true),
+        )
+        .await;
+        let replayed = fork_api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+
+        assert_eq!(replayed.header.blob_gas_used, Some(expected), "hardfork: {hardfork:?}");
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]

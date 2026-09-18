@@ -12,8 +12,11 @@ casttest!(cast_call_trace_selects_base_network, async |prj, cmd| {
         config.hardfork = Some("base:Beryl".parse().unwrap());
         config.chain = Some(foundry_config::Chain::from_id(8453));
     });
-    let (_api, handle) = anvil::spawn(NodeConfig::test().with_chain_id(Some(8453u64))).await;
+    let (_api, handle) =
+        anvil::spawn(NodeConfig::test_base().with_hardfork(Some("base:Beryl".parse().unwrap())))
+            .await;
     let rpc = handle.http_endpoint();
+    let from = handle.dev_accounts().next().unwrap().to_string();
 
     let output = cmd
         .args([
@@ -23,6 +26,8 @@ casttest!(cast_call_trace_selects_base_network, async |prj, cmd| {
             "--rpc-url",
             &rpc,
             "--trace",
+            "--from",
+            &from,
             "--chain",
             "8453",
         ])
@@ -101,7 +106,9 @@ Error: Base does not support blob transactions; remove --blob, --eip4844, and --
 });
 
 casttest!(cast_base_transaction_roundtrip, async |prj, cmd| {
-    let (_api, handle) = anvil::spawn(NodeConfig::test().with_chain_id(Some(8453u64))).await;
+    let (_api, handle) =
+        anvil::spawn(NodeConfig::test_base().with_hardfork(Some("base:Beryl".parse().unwrap())))
+            .await;
     let provider = handle.http_provider();
     let mut accounts = handle.dev_accounts();
     let from = accounts.next().unwrap();

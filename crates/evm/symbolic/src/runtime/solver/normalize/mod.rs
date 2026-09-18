@@ -3,6 +3,7 @@
 use super::*;
 
 mod polynomial;
+mod rounding;
 
 use polynomial::polynomial_identity;
 
@@ -380,7 +381,7 @@ fn normalize_bool_node_for_solver(cx: &mut SymCx, expr: SymBoolExpr) -> SymBoolE
             SymBoolExprKind::Cmp(SymCmpOp::Ult, left, right)
                 if matches!(left.kind(), SymExprKind::Not(_)) =>
             {
-                SymBoolExpr::cmp(cx, SymCmpOp::Ule, right.clone(), left.clone())
+                normalize_cmp_for_solver(cx, SymCmpOp::Ule, right.clone(), left.clone())
             }
             _ => expr,
         },
@@ -417,6 +418,23 @@ fn normalize_cmp_for_solver(
             return SymBoolExpr::eq(cx, minuend.clone(), subtrahend.clone());
         }
     }
+
+    let (left, right) =
+        if matches!(op, SymCmpOp::Ult | SymCmpOp::Ule | SymCmpOp::Ugt | SymCmpOp::Uge) {
+            // Complement reverses unsigned order: ~x = MAX - x. Move it onto
+            // the constant so interval analysis can see Solidity's addition guard.
+            match (left.kind(), right.kind()) {
+                (SymExprKind::Not(value), SymExprKind::Const(limit)) => {
+                    (SymExpr::constant(cx, !*limit), value.clone())
+                }
+                (SymExprKind::Const(limit), SymExprKind::Not(value)) => {
+                    (value.clone(), SymExpr::constant(cx, !*limit))
+                }
+                _ => (left, right),
+            }
+        } else {
+            (left, right)
+        };
 
     match op {
         // `a > b => b < a`.
@@ -572,11 +590,8 @@ impl ConstraintContext {
             SymBoolExprKind::Const(_) | SymBoolExprKind::And(_) => false,
         };
         root_candidate
-            || expr.visit_unique_bool(|word| {
-                Self::mul_div_operands(word).is_some()
-                    || Self::ceil_div_product(word).is_some()
-                    || matches!(word.kind(), SymExprKind::Ite(_, _, _))
-            })
+            || expr.contains_udiv()
+            || expr.visit_unique_bool(|word| matches!(word.kind(), SymExprKind::Ite(_, _, _)))
     }
 
     fn normalize_bool(
@@ -599,6 +614,9 @@ impl ConstraintContext {
         };
         if let Some(normalized) = self.normalize_signed_add_comparison(cx, &expr) {
             return normalized;
+        }
+        if let Some(value) = self.rounding_comparison_value(&expr) {
+            return SymBoolExpr::constant(cx, value);
         }
         if let SymBoolExprKind::Not(value) = expr.kind()
             && let Some(normalized) = self.normalize_signed_add_comparison(cx, value)
@@ -704,8 +722,9 @@ impl ConstraintContext {
             SymExprKind::BinOp(SymBinOp::Mul, _, _) => Self::constant_mul_operands(expr)
                 .is_some_and(|(value, _)| Self::constant_mul_operands(value).is_some()),
             SymExprKind::BinOp(SymBinOp::UDiv, numerator, denominator) => {
-                denominator.as_const().is_some_and(|value| !value.is_zero())
-                    && Self::constant_mul_operands(numerator).is_some()
+                Self::rounded_product_operands(numerator).is_some()
+                    || (denominator.as_const().is_some_and(|value| !value.is_zero())
+                        && Self::constant_mul_operands(numerator).is_some())
             }
             _ => false,
         }
@@ -723,7 +742,7 @@ impl ConstraintContext {
                 return SymExpr::ite(cx, condition, then_value.clone(), else_value.clone());
             }
         }
-        if let Some(value) = self.round_up_round_trip(&expr) {
+        if let Some(value) = self.quotient_of_rounded_product(&expr) {
             return value.clone();
         }
         if let SymExprKind::BinOp(SymBinOp::And, value, mask) = expr.kind()
@@ -759,47 +778,6 @@ impl ConstraintContext {
             return other.clone();
         }
         expr
-    }
-
-    /// `floor(ceil(value * rate / scale) * scale / rate) == value` when rate >= scale.
-    fn round_up_round_trip<'a>(&self, expr: &'a SymExpr) -> Option<&'a SymExpr> {
-        let (scaled, rate) = expr.udiv_operands()?;
-        let (rounded, scale) = Self::constant_mul_operands(scaled)?;
-        let (product, divisor) = Self::ceil_div_product(rounded)?;
-        if divisor != scale
-            || rate.as_const().or_else(|| self.unsigned_lower_bounds.get(rate).copied())? < scale
-        {
-            return None;
-        }
-        let SymExprKind::BinOp(SymBinOp::Mul, left, right) = product.kind() else {
-            return None;
-        };
-        let value = if left == rate {
-            right
-        } else if right == rate {
-            left
-        } else {
-            return None;
-        };
-        // Independent operand bounds prove the unsigned theorem without relying on Solidity
-        // overflow guards. The rescaled product is smaller than value * rate + scale.
-        if self.interval(value).zip(self.interval(rate)).is_some_and(|(value, rate)| {
-            value.max.checked_mul(rate.max).and_then(|product| product.checked_add(scale)).is_some()
-        }) {
-            return Some(value);
-        }
-        // Full-width operands instead require retained successful overflow guards. A bound on
-        // a modular product alone never proves the original multiplication safe.
-        // Establish non-wrapping arithmetic for both conversions, including the rounding addition.
-        // Then value*rate <= ceil(value*rate/scale)*scale < value*rate + scale <= (value+1)*rate.
-        // A bound on the already-wrapped numerator is not evidence that its operands did not
-        // overflow. Establish each operation separately, starting with the original factors.
-        if !self.mul_cannot_overflow_256(value, rate) {
-            return None;
-        }
-        self.interval(product)?.max.checked_add(scale)?;
-        self.interval(rounded)?.max.checked_mul(scale)?;
-        Some(value)
     }
 
     fn bounded_bool_value(&self, expr: &SymBoolExpr) -> Option<bool> {
@@ -1376,6 +1354,11 @@ impl ConstraintContext {
                 })
             }
             SymExprKind::BinOp(SymBinOp::Sub, left, right) => {
+                if let Some(interval) =
+                    self.rounding_error_interval(left, right, intervals, remaining)
+                {
+                    return Some(interval);
+                }
                 let left = self.interval_cached(left, intervals, remaining)?;
                 let right = self.interval_cached(right, intervals, remaining)?;
                 if left.max < right.min {
@@ -1879,10 +1862,9 @@ impl ConstraintContext {
             return true;
         }
         for zero_term in &bool_terms {
-            let Some(zero_operand) = self.bounded_zero_check_operand(zero_term) else {
-                continue;
-            };
-            if bool_terms.iter().any(|term| self.checked_mul_guard_for_operand(term, zero_operand))
+            if bool_terms
+                .iter()
+                .any(|term| self.checked_mul_guard_for_zero_condition(term, zero_term))
             {
                 // `a == 0 || guarded_mul_div(a) => true`.
                 return true;
@@ -1928,14 +1910,34 @@ impl ConstraintContext {
         Some(value)
     }
 
-    fn checked_mul_guard_for_operand(&self, expr: &SymBoolExpr, zero_operand: &SymExpr) -> bool {
+    /// Checks a zero predicate against the actual divisor of a multiplication guard.
+    fn zero_check_for_operand(&self, condition: &SymBoolExpr, operand: &SymExpr) -> bool {
+        if self.bounded_zero_check_operand(condition) == Some(operand) {
+            return true;
+        }
+        // For a positive constant d, n / d == 0 iff n < d. Normalization
+        // exposes this comparison before the Solidity multiplication guard.
+        if let Some((numerator, denominator)) = operand.udiv_operands()
+            && denominator.as_const().is_some_and(|d| !d.is_zero())
+            && let SymBoolExprKind::Cmp(SymCmpOp::Ult, left, right) = condition.kind()
+        {
+            return left == numerator && right == denominator;
+        }
+        false
+    }
+
+    fn checked_mul_guard_for_zero_condition(
+        &self,
+        expr: &SymBoolExpr,
+        zero_condition: &SymBoolExpr,
+    ) -> bool {
         let SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) = expr.kind() else {
             return false;
         };
         [(left, right), (right, left)].into_iter().any(|(quotient, expected)| {
             matches!(quotient.kind(), SymExprKind::Ite(_, _, _))
                 && self
-                    .checked_quotient_factors(quotient, expected, Some(zero_operand))
+                    .checked_quotient_factors(quotient, expected, Some(zero_condition))
                     .is_some_and(|(left, right)| self.mul_cannot_overflow_256(left, right))
         })
     }
@@ -1945,21 +1947,22 @@ impl ConstraintContext {
         &self,
         quotient: &'a SymExpr,
         expected: &SymExpr,
-        zero_operand: Option<&SymExpr>,
+        zero_condition: Option<&SymBoolExpr>,
     ) -> Option<(&'a SymExpr, &'a SymExpr)> {
-        let quotient = if let SymExprKind::Ite(condition, zero, quotient) = quotient.kind() {
-            if zero.as_const() != Some(U256::ZERO)
-                || zero_operand.is_none()
-                || self.bounded_zero_check_operand(condition) != zero_operand
-            {
-                return None;
-            }
-            quotient
-        } else {
-            quotient
-        };
+        let (quotient, branch_condition) =
+            if let SymExprKind::Ite(condition, zero, quotient) = quotient.kind() {
+                if zero.as_const() != Some(U256::ZERO) || zero_condition.is_none() {
+                    return None;
+                }
+                (quotient, Some(condition))
+            } else {
+                (quotient, None)
+            };
         let (divisor, other) = Self::mul_div_identity_operands(quotient, expected)?;
-        zero_operand.is_none_or(|zero| zero == divisor).then_some((divisor, other))
+        (zero_condition.is_none_or(|condition| self.zero_check_for_operand(condition, divisor))
+            && branch_condition
+                .is_none_or(|condition| self.zero_check_for_operand(condition, divisor)))
+        .then_some((divisor, other))
     }
 
     /// Learns multiplication safety from a retained successful Solidity overflow check.
@@ -1975,12 +1978,8 @@ impl ConstraintContext {
             // alternative would let this predicate hold even when the product wraps.
             let first = terms[0].clone().not(cx);
             let second = terms[1].clone().not(cx);
-            self.bounded_zero_check_operand(&first)
-                .and_then(|zero| self.checked_product_factors(&second, Some(zero)))
-                .or_else(|| {
-                    self.bounded_zero_check_operand(&second)
-                        .and_then(|zero| self.checked_product_factors(&first, Some(zero)))
-                })
+            self.checked_product_factors(&second, Some(&first))
+                .or_else(|| self.checked_product_factors(&first, Some(&second)))
         } else {
             None
         };
@@ -2005,14 +2004,14 @@ impl ConstraintContext {
     fn checked_product_factors(
         &self,
         predicate: &SymBoolExpr,
-        zero_operand: Option<&SymExpr>,
+        zero_condition: Option<&SymBoolExpr>,
     ) -> Option<(SymExpr, SymExpr)> {
         let SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) = predicate.kind() else {
             return None;
         };
         for (quotient, expected) in [(left, right), (right, left)] {
             if let Some((divisor, other)) =
-                self.checked_quotient_factors(quotient, expected, zero_operand)
+                self.checked_quotient_factors(quotient, expected, zero_condition)
             {
                 // For divisor > 0, (divisor * other mod 2^256) / divisor == other
                 // implies the true product fits. For divisor == 0 the product is zero.
