@@ -648,6 +648,73 @@ contract BTest {
     },
 ];
 
+const LIBRARY_FILTER_FILES: &[FileSpec] = &[
+    FileSpec {
+        path: "src/Math.sol",
+        contents: r#"library Math {
+    function value() external pure returns (uint256) { return 111; }
+}
+"#,
+    },
+    FileSpec {
+        path: "src/Target.sol",
+        contents: r#"import {Math} from "./Math.sol";
+contract Target {
+    function value() external view returns (uint256) { return Math.value(); }
+}
+"#,
+    },
+    FileSpec {
+        path: "test/A.t.sol",
+        contents: r#"import {Target} from "../src/Target.sol";
+contract ATest {
+    function test_value_a() public { require(new Target().value() == 111, "changed A"); }
+}
+"#,
+    },
+    FileSpec {
+        path: "test/B.t.sol",
+        contents: r#"import {Target} from "../src/Target.sol";
+contract BTest {
+    function test_value_b() public { require(new Target().value() == 111, "changed B"); }
+}
+"#,
+    },
+];
+
+const SOURCE_UNIT_FILTER_FILES: &[FileSpec] = &[
+    FileSpec {
+        path: "src/Target.sol",
+        contents: r#"contract Target {
+    function value() external pure returns (uint256) { return 111; }
+}
+"#,
+    },
+    FileSpec {
+        path: "src/shadow/src/Target.sol",
+        contents: r#"contract Target {
+    function value() external pure returns (uint256) { return 999; }
+}
+"#,
+    },
+    FileSpec {
+        path: "test/A.t.sol",
+        contents: r#"import {Target} from "../src/Target.sol";
+contract ATest {
+    function test_value_a() public { require(new Target().value() == 111, "changed A"); }
+}
+"#,
+    },
+    FileSpec {
+        path: "test/B.t.sol",
+        contents: r#"import {Target} from "../src/Target.sol";
+contract BTest {
+    function test_value_b() public { require(new Target().value() == 111, "changed B"); }
+}
+"#,
+    },
+];
+
 const SCENARIOS: &[Scenario] = &[
     Scenario { name: "dynamic", files: DYNAMIC_FILES, mutations: DYNAMIC_MUTATIONS },
     Scenario {
@@ -1110,6 +1177,123 @@ contract BTest {
     write_file(semantic.root(), "test/B.t.sol", changed_b);
     write_file(reuse.root(), "test/B.t.sol", changed_b);
     run_checkpoint(&SCENARIO, 3, &semantic, &reuse, &current, B_ARGS, 1);
+}
+
+#[test]
+fn library_linking_partial_jobs_match_clean_builds() {
+    const A_ARGS: &[&str] = &["test", "--match-path", "test/A.t.sol"];
+    const B_ARGS: &[&str] = &["test", "--match-path", "test/B.t.sol"];
+    const SCENARIO: Scenario =
+        Scenario { name: "library-partial-jobs", files: LIBRARY_FILTER_FILES, mutations: &[] };
+
+    let semantic = TestProject::new("cache-differential-library-semantic", PathStyle::Dapptools);
+    let reuse = TestProject::new("cache-differential-library-reuse", PathStyle::Dapptools);
+    materialize(&semantic, LIBRARY_FILTER_FILES);
+    materialize(&reuse, LIBRARY_FILTER_FILES);
+
+    assert!(run_forge_json(&semantic, B_ARGS).status.success());
+    assert!(run_forge_plain(&reuse, B_ARGS).status.success());
+    let mut current = LIBRARY_FILTER_FILES
+        .iter()
+        .map(|file| (file.path, file.contents))
+        .collect::<BTreeMap<_, _>>();
+
+    let internal_math = r#"library Math {
+    function value() internal pure returns (uint256) { return 111; }
+}
+"#;
+    let internal_target = r#"import {Math} from "./Math.sol";
+contract Target {
+    function value() external pure returns (uint256) { return Math.value(); }
+}
+"#;
+    for (path, contents) in [("src/Math.sol", internal_math), ("src/Target.sol", internal_target)] {
+        current.insert(path, contents);
+        write_file(semantic.root(), path, contents);
+        write_file(reuse.root(), path, contents);
+    }
+    run_checkpoint(&SCENARIO, 0, &semantic, &reuse, &current, A_ARGS, 3);
+    run_checkpoint(&SCENARIO, 1, &semantic, &reuse, &current, B_ARGS, 1);
+
+    let external_math = r#"library Math {
+    function value() external pure returns (uint256) { return 222; }
+}
+"#;
+    let external_target = r#"import {Math} from "./Math.sol";
+contract Target {
+    function value() external view returns (uint256) { return Math.value(); }
+}
+"#;
+    let changed_a = r#"import {Target} from "../src/Target.sol";
+contract ATest {
+    function test_value_a() public { require(new Target().value() == 222, "changed A"); }
+}
+"#;
+    for (path, contents) in [
+        ("src/Math.sol", external_math),
+        ("src/Target.sol", external_target),
+        ("test/A.t.sol", changed_a),
+    ] {
+        current.insert(path, contents);
+        write_file(semantic.root(), path, contents);
+        write_file(reuse.root(), path, contents);
+    }
+    run_checkpoint(&SCENARIO, 2, &semantic, &reuse, &current, A_ARGS, 3);
+    run_checkpoint(&SCENARIO, 3, &semantic, &reuse, &current, B_ARGS, 1);
+
+    let changed_b = r#"import {Target} from "../src/Target.sol";
+contract BTest {
+    function test_value_b() public { require(new Target().value() == 222, "changed B"); }
+}
+"#;
+    current.insert("test/B.t.sol", changed_b);
+    write_file(semantic.root(), "test/B.t.sol", changed_b);
+    write_file(reuse.root(), "test/B.t.sol", changed_b);
+    run_checkpoint(&SCENARIO, 4, &semantic, &reuse, &current, B_ARGS, 1);
+}
+
+#[test]
+fn source_unit_contraction_reclassifies_unselected_tests() {
+    const ALL_ARGS: &[&str] = &["test"];
+    const A_ARGS: &[&str] = &["test", "--match-path", "test/A.t.sol"];
+    const B_ARGS: &[&str] = &["test", "--match-path", "test/B.t.sol"];
+    const SCENARIO: Scenario = Scenario {
+        name: "source-unit-contraction",
+        files: SOURCE_UNIT_FILTER_FILES,
+        mutations: &[],
+    };
+
+    let semantic = TestProject::new("cache-differential-context-semantic", PathStyle::Dapptools);
+    let reuse = TestProject::new("cache-differential-context-reuse", PathStyle::Dapptools);
+    materialize(&semantic, SOURCE_UNIT_FILTER_FILES);
+    materialize(&reuse, SOURCE_UNIT_FILTER_FILES);
+
+    assert!(run_forge_json(&semantic, ALL_ARGS).status.success());
+    assert!(run_forge_plain(&reuse, ALL_ARGS).status.success());
+    let cached = run_forge_plain(&reuse, ALL_ARGS);
+    assert_eq!(reported_compiled_files(&cached).unwrap(), 0);
+
+    let mut current = SOURCE_UNIT_FILTER_FILES
+        .iter()
+        .map(|file| (file.path, file.contents))
+        .collect::<BTreeMap<_, _>>();
+    let shadow = "src/shadow/src/Target.sol";
+    current.remove(shadow);
+    fs::remove_file(semantic.root().join(shadow)).unwrap();
+    fs::remove_file(reuse.root().join(shadow)).unwrap();
+
+    run_checkpoint(&SCENARIO, 0, &semantic, &reuse, &current, B_ARGS, 2);
+    run_checkpoint(&SCENARIO, 1, &semantic, &reuse, &current, A_ARGS, 1);
+
+    let changed_target = r#"contract Target {
+    function value() external pure returns (uint256) { return 222; }
+}
+"#;
+    current.insert("src/Target.sol", changed_target);
+    write_file(semantic.root(), "src/Target.sol", changed_target);
+    write_file(reuse.root(), "src/Target.sol", changed_target);
+    run_checkpoint(&SCENARIO, 2, &semantic, &reuse, &current, B_ARGS, 1);
+    run_checkpoint(&SCENARIO, 3, &semantic, &reuse, &current, A_ARGS, 0);
 }
 
 #[test]
