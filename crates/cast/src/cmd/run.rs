@@ -448,14 +448,6 @@ impl RunArgs {
         config.fork_block_number = Some(parent_number);
 
         let create2_deployer = evm_opts.create2_deployer;
-        let source_is_ethereum = evm_opts.fork_endpoint.as_ref().is_some_and(|endpoint| {
-            endpoint.network_profile.execution_network().is_ethereum()
-                && !endpoint.network_profile.is_celo()
-        });
-        let source_execution_chain_id =
-            evm_opts.fork_endpoint.as_ref().map(|endpoint| endpoint.execution_chain_id);
-        let source_fork_block_number =
-            evm_opts.fork_endpoint.as_ref().and_then(|endpoint| endpoint.source_fork_block_number);
         let (block, mut fork) = tokio::try_join!(
             // fetch the block the transaction was mined in
             provider.get_block(tx_block_number.into()).full().into_future().map_err(Into::into),
@@ -463,7 +455,7 @@ impl RunArgs {
         )?;
         let chain = fork.context().chain();
         let networks = fork.context().networks();
-        let source_hardfork = fork.context().hardfork();
+        let source = fork.source_context();
 
         let mut evm_version = self.evm_version;
         // Mined transactions already passed the block gas limit check their chain applies, and
@@ -568,23 +560,24 @@ impl RunArgs {
             // Streaming opcode output cannot be discarded when BAL execution needs replay.
             && !self.trace_printer
             && !prestate_applied
-            && source_is_ethereum
+            && source.network_profile.execution_network().is_ethereum()
+            && !source.network_profile.is_celo()
             && !chain.is_arbitrum()
             && networks.execution_network().is_ethereum()
             && !networks.is_celo()
             // Anvil forwards historical BALs upstream, where the chain ID and hardfork can
             // differ from the endpoint's local execution settings.
-            && source_fork_block_number.is_none_or(|fork_block| tx_block_number > fork_block)
+            && source.source_fork_block_number.is_none_or(|fork_block| tx_block_number > fork_block)
             // A CHAINID override can change the state produced by prefix transactions.
-            && source_execution_chain_id == Some(evm_env.cfg_env.chain_id)
+            && source.execution_chain_id == evm_env.cfg_env.chain_id
             && self.evm_version.is_none()
             && config.hardfork.is_none()
             && spec_id.is_enabled_in(SpecId::CANCUN)
             && let Some(block) = &block
-            && source_hardfork
+            && source.hardfork
                 .or_else(|| {
                     FoundryHardfork::from_chain_and_timestamp(
-                        chain.id(),
+                        source.source_chain_id,
                         block.header().timestamp(),
                     )
                 })

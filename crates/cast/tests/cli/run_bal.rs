@@ -15,8 +15,9 @@ use alloy_network::{
 };
 use alloy_primitives::{B256, Bytes, U256, hex};
 use alloy_provider::Provider;
-use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest};
+use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest, anvil::Forking};
 use anvil::{NodeConfig, NodeHandle};
+use axum::{Json, Router, routing::post};
 use foundry_test_utils::{
     TestCommand,
     rpc::{
@@ -279,6 +280,78 @@ casttest!(cast_run_fork_bal_rejects_invalid_transaction_index, async |_prj, cmd|
             .stderr_eq("Executing previous transactions from the block.\n");
         assert_eq!(calls.load(Ordering::Relaxed), 0);
     }
+});
+
+casttest!(cast_run_fork_bal_skips_historical_block_after_reset, async |_prj, cmd| {
+    let fixture = Fixture::new(false).await;
+    let hash = fixture.transactions[2];
+    let replay = run(&mut cmd, hash, &fixture.handle.http_endpoint(), &[]);
+    let block_number = fixture.handle.http_provider().get_block_number().await.unwrap();
+    let (api, handle) = anvil::spawn(
+        NodeConfig::test()
+            .with_hardfork(Some(EthereumHardfork::Cancun.into()))
+            .with_no_storage_caching(true),
+    )
+    .await;
+    let initial_info = api.anvil_node_info().await.unwrap();
+    let initial_instance = api.instance_id();
+    assert_eq!(initial_info.fork_config.fork_block_number, None);
+    let (endpoint, calls) =
+        spawn_rpc_proxy_canned_method(handle.http_endpoint(), BAL_METHOD, json!(fixture.bal)).await;
+
+    let client = reqwest::Client::new();
+    let reset_api = api.clone();
+    let upstream = fixture.handle.http_endpoint();
+    let router = Router::new().route(
+        "/",
+        post(move |Json(request): Json<Value>| {
+            let client = client.clone();
+            let endpoint = endpoint.clone();
+            let api = reset_api.clone();
+            let upstream = upstream.clone();
+            async move {
+                // Target lookup follows initial discovery. Reset before forwarding it so all
+                // transaction and block reads see the new fork, while the cached identity is old.
+                if request.get("method").and_then(Value::as_str) == Some("eth_getTransactionByHash")
+                    && api.instance_id() == initial_instance
+                {
+                    api.anvil_reset(Some(Forking {
+                        json_rpc_url: Some(upstream),
+                        block_number: Some(block_number),
+                    }))
+                    .await
+                    .unwrap();
+                }
+                Json(
+                    client
+                        .post(endpoint)
+                        .json(&request)
+                        .send()
+                        .await
+                        .unwrap()
+                        .json::<Value>()
+                        .await
+                        .unwrap(),
+                )
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let proxy = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+
+    let output = run(&mut cmd, hash, &format!("http://{address}"), &[]);
+    let resolved_info = api.anvil_node_info().await.unwrap();
+    assert_ne!(api.instance_id(), initial_instance);
+    assert_eq!(resolved_info.network, initial_info.network);
+    assert_eq!(resolved_info.environment.chain_id, initial_info.environment.chain_id);
+    assert_eq!(resolved_info.hard_fork, initial_info.hard_fork);
+    assert_eq!(resolved_info.fork_config.fork_block_number, Some(block_number));
+    assert_eq!(calls.load(Ordering::Relaxed), 0);
+    OutputAssert::new(output)
+        .stdout_eq(replay.stdout)
+        .stderr_eq("Executing previous transactions from the block.\n");
+    proxy.abort();
 });
 
 casttest!(cast_run_fork_bal_skips_mismatched_block_hash, async |_prj, cmd| {
