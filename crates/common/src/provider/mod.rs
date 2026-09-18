@@ -1,6 +1,5 @@
 //! Provider-related instantiation and usage utilities.
 
-pub mod block_access_list;
 pub mod curl_transport;
 pub mod fee;
 pub mod mpp;
