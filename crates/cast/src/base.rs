@@ -182,9 +182,11 @@ impl NumberWithBase {
         Ok(Self { number: Self::parse_digits(s, base)?, is_nonnegative: true, base })
     }
 
+    /// Parses the digits of `s` in `base`, stripping only that base's prefix: a leading `0b` is a
+    /// prefix when parsing binary and a pair of hexadecimal digits otherwise.
     fn parse_digits(s: &str, base: Base) -> Result<U256> {
         let s = match s.get(..2) {
-            Some("0x" | "0X" | "0o" | "0O" | "0b" | "0B") => &s[2..],
+            Some(p) if p.eq_ignore_ascii_case(base.prefix()) => &s[2..],
             _ => s,
         };
         U256::from_str_radix(s, base as u64).map_err(Into::into)
@@ -311,6 +313,41 @@ mod tests {
         let _ = Base::detect("0123456789abcdefg").unwrap_err();
         let _ = Base::detect("0x123abclpmk").unwrap_err();
         let _ = Base::detect("hello world").unwrap_err();
+    }
+
+    #[test]
+    fn strips_only_the_prefix_of_the_requested_base() {
+        // `0b`/`0B` are hexadecimal digits when the base is explicitly hexadecimal.
+        for s in ["0b1010", "0B1010"] {
+            let number = NumberWithBase::parse_uint(s, Some("16")).unwrap();
+            assert_eq!(number.number(), U256::from(0xb1010));
+            assert_eq!(number.base, Hexadecimal);
+        }
+        let number = NumberWithBase::parse_int("-0b11", Some("hex")).unwrap();
+        assert_eq!(number.number(), U256::from(0xb11).wrapping_neg());
+        assert!(!number.is_nonnegative());
+
+        // Prefixes of the requested base are still accepted, in either case.
+        assert_eq!(
+            NumberWithBase::parse_uint("0x1f", Some("16")).unwrap().number(),
+            U256::from(31)
+        );
+        assert_eq!(
+            NumberWithBase::parse_uint("0X1F", Some("16")).unwrap().number(),
+            U256::from(31)
+        );
+        assert_eq!(NumberWithBase::parse_uint("0b11", Some("2")).unwrap().number(), U256::from(3));
+        assert_eq!(NumberWithBase::parse_uint("0o17", Some("8")).unwrap().number(), U256::from(15));
+        assert_eq!(NumberWithBase::parse_uint("42", Some("10")).unwrap().number(), U256::from(42));
+
+        // A prefix of another base is not a valid digit sequence in the requested base.
+        assert!(NumberWithBase::parse_uint("0x10", Some("2")).is_err());
+        assert!(NumberWithBase::parse_uint("0b10", Some("10")).is_err());
+
+        // Detection from the prefix is unaffected.
+        let number = NumberWithBase::parse_uint("0b1010", None).unwrap();
+        assert_eq!(number.number(), U256::from(10));
+        assert_eq!(number.base, Binary);
     }
 
     #[test]
