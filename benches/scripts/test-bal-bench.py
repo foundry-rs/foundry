@@ -4,6 +4,9 @@
 All results are synthetic correctness checks, not archive performance evidence.
 Requires a Cast binary with PR #16931's --no-bal replay control. No patched
 binary, public RPC, or Amsterdam activation is required.
+
+Fixture checks consume the runner's saved artifacts. Cast mode precedence and
+header validation belong in crates/cast/tests/cli/run_bal.rs.
 """
 
 import argparse
@@ -16,15 +19,11 @@ from pathlib import Path
 import signal
 import socket
 import subprocess
-import threading
 import time
 import urllib.error
 import urllib.request
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
-BAL_METHOD = "eth_getBlockAccessListByBlockHash"
-REPLAY_STATUS = b"Executing previous transactions from the block."
 BEACON = "0x000f3df6d732807ef1319fb7b8bb8522d0beac02"
 BEACON_CODE = (
     "0x3373fffffffffffffffffffffffffffffffffffffffe14602557"
@@ -252,7 +251,7 @@ class Panel:
         }
 
 
-def verify(output, manifest, rounds, include_miss):
+def verify(output, manifest, rounds, include_miss, rpc):
     shanghai = manifest["source_context"]["hardfork"] == "shanghai"
     samples = [json.loads(line) for line in (output / "samples.jsonl").read_text().splitlines()]
     summary = json.loads((output / "summary.json").read_text())
@@ -264,6 +263,10 @@ def verify(output, manifest, rounds, include_miss):
     arms = {"auto", "replay", "miss"} if include_miss else {"auto", "replay"}
     require(len(measured) == len(manifest["cases"]) * len(arms) * rounds,
             "missing scheduled attempts")
+    receipts = {
+        tx_hash: rpc("eth_getTransactionReceipt", [tx_hash])
+        for tx_hash in {case["transaction_hash"] for case in manifest["cases"]}
+    }
     for case in manifest["cases"]:
         case_samples = [sample for sample in samples if sample["case_id"] == case["id"]]
         validation = [sample for sample in case_samples if sample["phase"] == "validation"]
@@ -287,6 +290,20 @@ def verify(output, manifest, rounds, include_miss):
                             if "BlockAccessList" in method)
             require(bal_count == (0 if shanghai or sample["arm"] == "replay" else 1),
                     prefix + "BAL probe count mismatch")
+            if case.get("fault") == "delayed_success" and sample["arm"] == "auto":
+                require(sample["wall_time_seconds"] >= 0.75,
+                        prefix + "delayed BAL completed before injected delay")
+            if sample["phase"] == "validation":
+                stdout = (output / "artifacts" / f"{sample['id']}.stdout").read_bytes()
+                require(hashlib.sha256(stdout).hexdigest() == sample["stdout_sha256"],
+                        prefix + "trace artifact differs from recorded hash")
+                expected_logs = [entry["data"].encode()
+                                 for entry in receipts[case["transaction_hash"]]["logs"]]
+                observed_logs = [line.split(b"data: ", 1)[1] for line in stdout.splitlines()
+                                 if b"data: " in line]
+                # Node receipts remain an independent oracle even if both runner arms agree.
+                require((observed_logs == expected_logs) != (negative and sample["arm"] == "auto"),
+                        prefix + "trace logs differ from fixture receipt expectation")
             if sample["phase"] != "oracle":
                 require(sample["correctness"] == ("correctness_blocked" if negative else "equivalent"),
                         prefix + "full output comparison result incorrect")
@@ -325,7 +342,7 @@ def verify(output, manifest, rounds, include_miss):
                     and all(metric["count"] == rounds for metric in rpc_deltas.values()),
                     prefix + "missing paired RPC overhead")
     checks = ["same_binary_no_bal_control", "replay_zero_probe", "full_trace_and_stdout",
-              "receipt_gas_status", "first_middle_last", "single_and_large_blocks",
+              "receipt_gas_status_logs", "first_middle_last", "single_and_large_blocks",
               "summary_retains_pairs_and_suppresses_invalid_speedups"]
     if shanghai:
         checks.append("pre_cancun_all_arms_replay_without_probe")
@@ -339,192 +356,6 @@ def verify(output, manifest, rounds, include_miss):
     })
 
 
-def verify_fixtures(rpc_url, manifest, cast, output):
-    """Check full state traces and mode precedence, independently of the timing runner."""
-    shanghai = manifest["source_context"]["hardfork"] == "shanghai"
-    current = {}
-    calls = []
-    lock = threading.Lock()
-
-    class Handler(BaseHTTPRequestHandler):
-        def log_message(self, *_args):
-            pass
-
-        def response(self, request):
-            if isinstance(request, list):
-                return [self.response(item) for item in request]
-            method = request["method"]
-            with lock:
-                calls.append(method)
-                case = current.copy()
-            fault = case.get("fault")
-            if method == BAL_METHOD:
-                if fault == "delayed_success":
-                    time.sleep(0.75)
-                response = {"jsonrpc": "2.0", "id": request["id"]}
-                if fault == "method_not_found":
-                    response["error"] = {"code": -32601, "message": "Method not found"}
-                else:
-                    response["result"] = None if fault == "null" else case["bal_response"]
-                return response
-            if method == "debug_traceTransaction" and case.get("null_prestate"):
-                return {"jsonrpc": "2.0", "id": request["id"], "result": None}
-            forward = urllib.request.Request(
-                rpc_url, json.dumps(request).encode(), {"Content-Type": "application/json"}
-            )
-            with urllib.request.urlopen(forward, timeout=10) as response:
-                result = json.load(response)
-            if (case.get("header_mismatch") and method in {"eth_getBlockByNumber", "eth_getBlockByHash"}
-                    and isinstance(result.get("result"), dict)
-                    and result["result"].get("hash") == case["block_hash"]):
-                result["result"]["blockAccessListHash"] = "0x" + "00" * 32
-            return result
-
-        def do_POST(self):
-            request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-            result = json.dumps(self.response(request)).encode()
-            try:
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(result)))
-                self.end_headers()
-                self.wfile.write(result)
-            except (BrokenPipeError, ConnectionResetError):
-                pass
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    endpoint = f"http://127.0.0.1:{server.server_port}"
-    artifact_dir = output / "fixture-artifacts"
-    artifact_dir.mkdir()
-    config = output / "foundry.toml"
-    config.write_text("[profile.default]\nno_storage_caching = true\n")
-    env = {key: os.environ[key] for key in ["PATH", "HOME", "TMPDIR", "SYSTEMROOT"] if key in os.environ}
-    env.update({
-        "FOUNDRY_CONFIG": str(config.resolve()), "FOUNDRY_PROFILE": "default",
-        "FOUNDRY_NO_STORAGE_CACHING": "true", "FOUNDRY_DISABLE_NIGHTLY_WARNING": "true",
-        "NO_COLOR": "1", "CLICOLOR": "0", "TERM": "dumb", "RUST_LOG": "off",
-    })
-    completed = []
-    rpc = Rpc(rpc_url)
-    receipts = {
-        tx_hash: rpc("eth_getTransactionReceipt", [tx_hash])
-        for tx_hash in sorted({case["transaction_hash"] for case in manifest["cases"]})
-    }
-
-    def execute(case, label, flags=(), **overrides):
-        with lock:
-            current.clear()
-            current.update(case)
-            current.update(overrides)
-            calls.clear()
-        command = [str(cast.resolve()), "run", case["transaction_hash"],
-                   "--disable-external-identification", "-vvvvv", "--rpc-url", endpoint, *flags]
-        started = time.monotonic()
-        result = subprocess.run(command, env=env, cwd=output, capture_output=True, timeout=30)
-        elapsed = time.monotonic() - started
-        (artifact_dir / f"{case['id']}-{label}.stdout").write_bytes(result.stdout)
-        (artifact_dir / f"{case['id']}-{label}.stderr").write_bytes(result.stderr)
-        require(result.returncode == 0, f"{case['id']}: {label} child failed; inspect fixture-artifacts")
-        with lock:
-            observed = list(calls)
-        completed.append({
-            "case_id": case["id"], "mode": label, "flags": list(flags),
-            "rpc_methods": observed, "stdout_sha256": hashlib.sha256(result.stdout).hexdigest(),
-            "elapsed_seconds_diagnostic_only": elapsed,
-        })
-        return result, observed, elapsed
-
-    def assert_calls(observed, bal=0, prestate=0):
-        require(observed.count(BAL_METHOD) == bal, "unexpected number of BAL probes")
-        require(observed.count("debug_traceTransaction") == prestate,
-                "unexpected number of prestate requests")
-
-    def assert_receipt(result, case, compare_logs=True):
-        require(f"Gas used: {case['expected_receipt_gas']}".encode() in result.stdout.splitlines(),
-                f"{case['id']}: receipt gas mismatch")
-        require(b"Transaction successfully executed." in result.stdout.splitlines(),
-                f"{case['id']}: execution status mismatch")
-        if compare_logs:
-            expected = [entry["data"].encode() for entry in receipts[case["transaction_hash"]]["logs"]]
-            observed = [line.split(b"data: ", 1)[1] for line in result.stdout.splitlines()
-                        if b"data: " in line]
-            require(observed == expected, f"{case['id']}: node receipt logs differ from local execution")
-
-    passed = False
-    try:
-        for case in manifest["cases"]:
-            replay, observed, _ = execute(case, "replay", ["--no-bal"])
-            assert_calls(observed)
-            assert_receipt(replay, case)
-            actual, observed, elapsed = execute(case, "auto")
-            assert_calls(observed, bal=0 if shanghai else 1)
-            negative = case.get("fault") == "missing_slot"
-            assert_receipt(actual, case, compare_logs=not negative)
-            require((actual.stdout == replay.stdout) != negative,
-                    f"{case['id']}: complete trace/stdout comparison differs from expectation")
-            fallback = shanghai or case.get("fault") in {"method_not_found", "null", "malformed"}
-            require((REPLAY_STATUS in actual.stderr) == fallback,
-                    f"{case['id']}: unexpected execution path")
-            if case.get("fault") == "delayed_success":
-                require(elapsed >= 0.75, "delayed BAL completed before injected delay")
-
-        if shanghai:
-            passed = True
-            return
-
-        case = next(case for case in manifest["cases"] if case["id"] == "counter-2")
-        replay, _, _ = execute(case, "mode-replay", ["--no-bal"])
-        quick, observed, _ = execute(case, "quick", ["--quick"])
-        assert_calls(observed)
-        require(quick.stdout != replay.stdout, "quick fixture must observe skipped prefix state")
-        for label, flags in [
-            ("quick-no-bal", ["--quick", "--no-bal"]),
-            ("quick-prestate", ["--quick", "--prestate-tracer"]),
-        ]:
-            actual, observed, _ = execute(case, label, flags)
-            assert_calls(observed)
-            require(actual.stdout == quick.stdout, f"{label}: quick semantics changed")
-        for label, flags, overrides, bal, fallback in [
-            ("prestate", ["--prestate-tracer"], {}, 0, False),
-            ("prestate-bal", ["--prestate-tracer"], {"null_prestate": True}, 1, False),
-            ("prestate-no-bal", ["--prestate-tracer", "--no-bal"],
-             {"null_prestate": True}, 0, True),
-            ("prestate-replay", ["--prestate-tracer"],
-             {"null_prestate": True, "fault": "null"}, 1, True),
-        ]:
-            actual, observed, _ = execute(case, label, flags, **overrides)
-            assert_calls(observed, bal=bal, prestate=1)
-            require(actual.stdout == replay.stdout, f"{label}: full trace differs from replay")
-            require((REPLAY_STATUS in actual.stderr) == fallback, f"{label}: wrong execution path")
-            if bal:
-                require(observed.index("debug_traceTransaction") < observed.index(BAL_METHOD),
-                        f"{label}: prestate must be attempted before BAL")
-        actual, observed, _ = execute(case, "header-mismatch", header_mismatch=True)
-        assert_calls(observed, bal=1)
-        require(actual.stdout == replay.stdout and REPLAY_STATUS in actual.stderr,
-                "header hash mismatch must fall back to equivalent replay")
-        passed = True
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join()
-        checks = ["same_binary_no_bal_control", "full_trace_return_logs_storage",
-                  "receipt_gas_status_logs"]
-        if shanghai:
-            checks.append("pre_cancun_replay_without_probe")
-        else:
-            checks.extend(["repeated_storage_and_account_changes", "pre_block_system_operation_once",
-                           "pre_amsterdam_provider_support", "quick_and_prestate_precedence",
-                           "header_hash_mismatch_fallback", "missing_prefix_storage_divergence_is_detected"])
-        write_json(output / "fixture-verification.json", {
-            "status": "pass" if passed else "fail", "synthetic": True,
-            "cast_sha256": hashlib.sha256(cast.read_bytes()).hexdigest(), "attempts": completed,
-            "hardfork": manifest["source_context"]["hardfork"], "checks": checks,
-        })
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--anvil", type=Path, default=Path("target/debug/anvil"))
@@ -535,8 +366,6 @@ def main():
     parser.add_argument("--rounds", type=int, default=1)
     parser.add_argument("--hardfork", choices=["cancun", "shanghai"], default="cancun",
                         help="Shanghai checks the pre-Cancun no-probe path with transfer fixtures")
-    parser.add_argument("--fixtures-only", action="store_true",
-                        help="validate fixtures and mode precedence without running timing samples")
     parser.add_argument("--include-miss", action="store_true",
                         help="also exercise the runner's injected method-not-found arm")
     parser.add_argument("--cast", type=Path, required=True,
@@ -579,10 +408,6 @@ def main():
         manifest = panel.manifest()
         manifest_path = args.output_dir / "panel.json"
         write_json(manifest_path, manifest)
-        verify_fixtures(rpc_url, manifest, args.cast, args.output_dir.resolve())
-        if args.fixtures_only:
-            print(f"PASS: {len(manifest['cases'])} synthetic fixtures; artifacts: {args.output_dir}")
-            return
         env = os.environ.copy()
         env["BAL_BENCH_LOCAL_FIXTURE_RPC"] = rpc_url
         env["FOUNDRY_DISABLE_NIGHTLY_WARNING"] = "true"
@@ -601,7 +426,7 @@ def main():
         with (args.output_dir / "runner.log").open("wb") as runner_log:
             subprocess.run(command, env=env, stdout=runner_log, stderr=subprocess.STDOUT,
                            check=True, timeout=1200)
-        verify(args.output_dir / "results", manifest, args.rounds, args.include_miss)
+        verify(args.output_dir / "results", manifest, args.rounds, args.include_miss, rpc)
         results = args.output_dir / "results"
         runner = json.loads((results / "manifest.json").read_text())["runner"]
         require(runner["image"] == env["ImageOS"], "sampling must record the measurement image")

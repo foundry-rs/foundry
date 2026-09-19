@@ -28,7 +28,14 @@ use foundry_test_utils::{
     str,
 };
 use serde_json::{Value, json};
-use std::{collections::BTreeMap, process::Output, sync::atomic::Ordering};
+use std::{
+    collections::BTreeMap,
+    process::Output,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
 
 const BAL_METHOD: &str = "eth_getBlockAccessListByBlockHash";
 
@@ -234,22 +241,62 @@ casttest!(cast_run_fork_bal_respects_no_bal_quick_prestate_and_remote_modes, asy
         json!(fixture.bal),
     )
     .await;
-    for flags in
-        [&["--no-bal"][..], &["--quick"], &["--prestate-tracer"], &["--debug-trace-transaction"]]
-    {
+    for flags in [&["--no-bal"][..], &["--prestate-tracer"], &["--debug-trace-transaction"]] {
         let expected = run(&mut cmd, hash, &fixture.handle.http_endpoint(), flags);
+        if flags == ["--prestate-tracer"] {
+            OutputAssert::new(expected.clone()).stdout_eq(replay.stdout.clone()).stderr_eq("");
+        }
         let actual = run(&mut cmd, hash, &endpoint, flags);
         OutputAssert::new(actual).stdout_eq(expected.stdout).stderr_eq(expected.stderr);
         assert_eq!(calls.load(Ordering::Relaxed), 0, "flags: {flags:?}");
     }
 
-    // A failed explicitly requested prestate tracer tries the BAL next, before ordinary replay.
+    let quick = run(&mut cmd, hash, &fixture.handle.http_endpoint(), &["--quick"]);
+    assert_ne!(quick.stdout, replay.stdout, "quick must observe skipped prefix state");
     let (endpoint, prestate_calls) =
         spawn_rpc_proxy_canned_method(endpoint, "debug_traceTransaction", Value::Null).await;
-    let output = run(&mut cmd, hash, &endpoint, &["--prestate-tracer"]);
-    OutputAssert::new(output).stdout_eq(replay.stdout).stderr_eq("");
-    assert_eq!(prestate_calls.load(Ordering::Relaxed), 1);
-    assert_eq!(calls.load(Ordering::Relaxed), 1);
+    for flags in [&["--quick"][..], &["--quick", "--no-bal"], &["--quick", "--prestate-tracer"]] {
+        let output = run(&mut cmd, hash, &endpoint, flags);
+        OutputAssert::new(output).stdout_eq(quick.stdout.clone()).stderr_eq("");
+        assert_eq!(calls.load(Ordering::Relaxed), 0, "flags: {flags:?}");
+        assert_eq!(prestate_calls.load(Ordering::Relaxed), 0, "flags: {flags:?}");
+    }
+
+    // A failed explicitly requested prestate tracer tries an allowed BAL before ordinary replay.
+    for (bal, flags, expected_bal_calls, stderr) in [
+        (json!(fixture.bal), &["--prestate-tracer"][..], 1, ""),
+        (
+            json!(fixture.bal),
+            &["--prestate-tracer", "--no-bal"][..],
+            0,
+            "Executing previous transactions from the block.\n",
+        ),
+        (
+            Value::Null,
+            &["--prestate-tracer"][..],
+            1,
+            "Executing previous transactions from the block.\n",
+        ),
+    ] {
+        let (endpoint, calls) =
+            spawn_rpc_proxy_canned_method(fixture.handle.http_endpoint(), BAL_METHOD, bal).await;
+        let (endpoint, prestate_calls) =
+            spawn_rpc_proxy_canned_method(endpoint, "debug_traceTransaction", Value::Null).await;
+        let prestate_calls_before_bal = Arc::new(AtomicUsize::new(0));
+        let observed = prestate_calls_before_bal.clone();
+        let prestate = prestate_calls.clone();
+        let endpoint = spawn_rpc_proxy_mapping_method(endpoint, BAL_METHOD, move |_, result| {
+            observed.store(prestate.load(Ordering::Relaxed), Ordering::Relaxed);
+            result
+        })
+        .await;
+
+        let output = run(&mut cmd, hash, &endpoint, flags);
+        OutputAssert::new(output).stdout_eq(replay.stdout.clone()).stderr_eq(stderr);
+        assert_eq!(prestate_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(calls.load(Ordering::Relaxed), expected_bal_calls);
+        assert_eq!(prestate_calls_before_bal.load(Ordering::Relaxed), expected_bal_calls);
+    }
 });
 
 casttest!(cast_run_fork_bal_unavailable_falls_back_to_replay, async |_prj, cmd| {
