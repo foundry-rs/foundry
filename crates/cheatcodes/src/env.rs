@@ -282,7 +282,13 @@ fn env_default<T: SolValue>(key: &str, default: &T, ty: &DynSolType) -> Result {
     if env_is_missing(key) {
         return Ok(default.abi_encode());
     }
-    env(key, ty)
+    let val = get_env(key)?;
+    // An empty string is a valid `string` value, but it can never parse as any other type, so a
+    // variable that is set but empty is treated as not found for the other typed overloads.
+    if val.is_empty() && !matches!(ty, DynSolType::String) {
+        return Ok(default.abi_encode());
+    }
+    string::parse(&val, ty).map_err(map_env_err(key, &val))
 }
 
 fn env_array(key: &str, delim: &str, ty: &DynSolType) -> Result {
@@ -298,8 +304,9 @@ fn env_array_default<T: SolValue>(key: &str, delim: &str, default: &T, ty: &DynS
     env_array(key, delim, ty)
 }
 
-/// Returns `true` if the variable is not set at all. Only then do the `envOr` cheatcodes fall
-/// back to their default; a variable that is set but cannot be parsed is an error.
+/// Returns `true` if the variable is not set at all. The `envOr` cheatcodes fall back to their
+/// default only then (or when the variable is set but empty, for the scalar typed overloads); a
+/// variable that is set to a value that cannot be parsed is an error.
 fn env_is_missing(key: &str) -> bool {
     matches!(env::var(key), Err(env::VarError::NotPresent))
 }
@@ -343,6 +350,31 @@ mod tests {
         let encoded = default.abi_encode();
         assert_eq!(env_default(key, &default, &DynSolType::Uint(256)).unwrap(), encoded);
         assert_eq!(env_array_default(key, ",", &default, &DynSolType::Uint(256)).unwrap(), encoded);
+    }
+
+    #[test]
+    fn env_or_returns_default_when_empty() {
+        let key = "env_or_empty";
+        unsafe {
+            env::set_var(key, "");
+        }
+        let default = 7u64;
+        assert_eq!(
+            env_default(key, &default, &DynSolType::Uint(256)).unwrap(),
+            default.abi_encode()
+        );
+        assert_eq!(
+            env_array_default(key, ",", &default, &DynSolType::Uint(256)).unwrap(),
+            Vec::<u64>::new().abi_encode()
+        );
+        // An empty string is a valid `string` value and must not be replaced by the default.
+        assert_eq!(
+            env_default(key, &"default", &DynSolType::String).unwrap(),
+            String::new().abi_encode()
+        );
+        unsafe {
+            env::remove_var(key);
+        }
     }
 
     #[test]

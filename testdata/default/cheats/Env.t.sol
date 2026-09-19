@@ -1013,6 +1013,19 @@ contract EnvTest is Test {
         vm.envOr(key, uint256(7));
     }
 
+    function testEnvOrEmptyValueReturnsDefault() public {
+        string memory key = "_foundryCheatcodeEnvOrEmptyTest";
+        vm.setEnv(key, "");
+        assertEq(vm.envOr(key, uint256(7)), 7);
+        assertEq(vm.envOr(key, int256(-7)), -7);
+        assertEq(vm.envOr(key, true), true);
+        assertEq(vm.envOr(key, address(0x1234)), address(0x1234));
+        assertEq(vm.envOr(key, bytes32("default")), bytes32("default"));
+        assertEq(vm.envOr(key, bytes("default")), bytes("default"));
+        // An empty string is a valid `string` value.
+        assertEq(vm.envOr(key, string("default")), "");
+    }
+
     function testEnvOrUnparsableArrayValueReverts() public {
         string memory key = "_foundryCheatcodeEnvOrUnparsableArrTest";
         vm.setEnv(key, "1,two");
