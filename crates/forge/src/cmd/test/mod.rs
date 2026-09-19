@@ -1038,6 +1038,11 @@ pub struct TestArgs {
     )]
     pub showmap_corpus_dir: Option<PathBuf>,
 
+    /// Decode the storage layouts of contracts outside the local project in state diffs, by
+    /// compiling the verified source a block explorer has for them.
+    #[arg(long)]
+    pub decode_external_storage: bool,
+
     #[command(flatten)]
     filter: FilterArgs,
 
@@ -3064,6 +3069,7 @@ impl Provider for TestArgs {
             "etherscan_api_key" =>
                 self.etherscan_api_key.as_ref().filter(|s| !s.trim().is_empty()).cloned(),
             "show_progress" => self.show_progress.then_some(true),
+            "decode_external_storage" => self.decode_external_storage.then_some(true),
         };
         // Mutation-testing CLI overrides
         if !mutation.is_empty() {

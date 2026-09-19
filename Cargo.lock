@@ -5763,6 +5763,7 @@ dependencies = [
  "tracing",
  "url",
  "vergen-gitcl",
+ "wait-timeout",
  "walkdir",
  "yansi",
 ]
