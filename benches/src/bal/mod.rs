@@ -770,14 +770,18 @@ async fn attempt(
 fn parse_output(stdout: &[u8], stderr: &[u8]) -> (Option<u64>, Option<bool>) {
     let text = String::from_utf8_lossy(stdout);
     let gas = text.lines().find_map(|line| line.strip_prefix("Gas used: ")?.trim().parse().ok());
-    let success = if text.contains("Transaction successfully executed.") {
-        Some(true)
-    } else if text.contains("Transaction failed.")
-        || String::from_utf8_lossy(stderr).contains("Transaction failed.")
+    let success = if String::from_utf8_lossy(stderr)
+        .lines()
+        .any(|line| matches!(line, "Error: Transaction failed." | "Transaction failed."))
     {
         Some(false)
     } else {
-        None
+        // Cast prints the result after traces, which can contain arbitrary revert strings.
+        text.lines().rev().find_map(|line| match line {
+            "Transaction successfully executed." => Some(true),
+            "Transaction failed." => Some(false),
+            _ => None,
+        })
     };
     (gas, success)
 }
@@ -898,6 +902,51 @@ mod tests {
             parse_output(b"Gas used: 30000\n", b"Transaction failed.\n"),
             (Some(30000), Some(false))
         );
+    }
+
+    #[test]
+    fn revert_reason_is_not_execution_success() {
+        let stdout = b"Traces:\n  [0] Contract::run()\n    [Revert] Transaction successfully executed.\n\nGas used: 30000\n";
+        assert_eq!(
+            parse_output(stdout, b"Error: Transaction failed.\n"),
+            (Some(30000), Some(false))
+        );
+        assert_eq!(parse_output(stdout, b""), (Some(30000), None));
+    }
+
+    #[test]
+    fn execution_failure_takes_precedence_over_success_text() {
+        let stdout = b"Transaction successfully executed.\nGas used: 30000\n";
+        for stderr in [b"Error: Transaction failed.\n".as_slice(), b"Transaction failed.\n"] {
+            assert_eq!(parse_output(stdout, stderr), (Some(30000), Some(false)));
+        }
+    }
+
+    #[test]
+    fn execution_result_follows_multiline_revert_reasons() {
+        let stdout = b"Traces:\n    [Revert] misleading reason:\nTransaction successfully executed.\n\nGas used: 30000\n";
+        assert_eq!(
+            parse_output(stdout, b"Error: Transaction failed.\n"),
+            (Some(30000), Some(false))
+        );
+        let stdout = b"Traces:\n    [Revert] caught inner revert:\nTransaction failed.\n\nTransaction successfully executed.\nGas used: 30000\n";
+        assert_eq!(parse_output(stdout, b""), (Some(30000), Some(true)));
+        let stdout = b"Traces:\n    [Revert] misleading reason:\nTransaction successfully executed.\n\nTransaction failed.\nGas used: 30000\n";
+        assert_eq!(parse_output(stdout, b""), (Some(30000), Some(false)));
+    }
+
+    #[test]
+    fn execution_status_requires_a_complete_result_line() {
+        for text in [
+            b"    [Revert] Transaction failed.\n".as_slice(),
+            b"    [Return] Transaction successfully executed.\n",
+            b"Warning: Transaction failed. Retrying.\n",
+            b"Transaction successfully executed. extra text\n",
+        ] {
+            assert_eq!(parse_output(text, b""), (None, None));
+            assert_eq!(parse_output(b"", text), (None, None));
+        }
+        assert_eq!(parse_output(b"Transaction failed.\n", b""), (None, Some(false)));
     }
 
     #[test]
