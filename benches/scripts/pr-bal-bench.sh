@@ -66,6 +66,8 @@ Environment:
 
 Requires git, Python 3, cargo and rustc. Uses --locked --profile profiling.
 Both refs must support cast run --no-bal; auto and replay use the same binary.
+One runner validates each case once per ref, then alternates complete rounds.
+Reports: BENCH_ROOT/results/{base,candidate}/aggregate.
 Artifacts and detached worktrees are retained, including after failure.
 """)
     raise SystemExit(0)
@@ -203,96 +205,19 @@ write_json(root / "runner-build.json", {
 })
 frozen_panel = root / "panel.json"
 frozen_panel.write_bytes(panel.read_bytes())
-schedule = {
-    "schema_version": 1,
-    "refs": refs,
-    "same_source_refs": refs["base"] == refs["candidate"],
-    "builds": builds,
-    "include_miss": include_miss == "1",
-    "panel_sha256": digest(frozen_panel),
-    "rounds": rounds,
-    "warmup_rounds": warmups,
-    "timeout_seconds": timeout,
-    "rpc_env": rpc_env,
-    "execution_order": [],
-}
-
-
-def execute(label, round_index, warmup):
-    phase = "warmup" if warmup else "measured"
-    output = root / "results" / label / f"{phase}-{round_index:03d}"
-    argv = [
-        str(runner), "run", "--manifest", str(frozen_panel), "--cast", str(binaries[label]),
-        "--build-manifest", str(manifests[label]), "--rounds", "1",
-        "--warmup-rounds", "1" if warmup else "0", "--round-offset", str(round_index),
-        "--timeout-seconds", str(timeout), "--output-dir", str(output),
-    ]
-    if warmup:
-        argv.append("--warmup-only")
-    if rpc_env:
-        argv.extend(["--rpc-env", rpc_env])
-    if include_miss == "1":
-        argv.append("--include-miss")
-    schedule["execution_order"].append({"ref": label, "round": round_index, "phase": phase})
-    write_json(root / "schedule.json", schedule)
-    run(argv, repo)
-
-
-for warmup, count in ((True, warmups), (False, rounds)):
-    for round_index in range(count):
-        labels = ("base", "candidate") if round_index % 2 == 0 else ("candidate", "base")
-        for label in labels:
-            execute(label, round_index, warmup)
-
-# Preserve raw runs; aggregate references and records without copying child outputs.
-for label in refs:
-    aggregate = root / "results" / label / "aggregate"
-    aggregate.mkdir()
-    manifests_by_round = []
-    aggregate_runner = None
-    with (aggregate / "samples.jsonl").open("w") as samples_out, (aggregate / "rpc-events.jsonl").open("w") as events_out:
-        for round_index in range(rounds):
-            measured = root / "results" / label / f"measured-{round_index:03d}"
-            run_manifest = json.loads((measured / "manifest.json").read_text())
-            measured_runner = run_manifest.get("runner")
-            if not isinstance(measured_runner, dict) or not measured_runner:
-                fail(f"missing runner metadata in {measured / 'manifest.json'}")
-            if aggregate_runner is not None and measured_runner != aggregate_runner:
-                fail(f"runner metadata differs across measured rounds for {label}")
-            aggregate_runner = measured_runner
-            manifests_by_round.append({
-                "directory": str(measured),
-                "manifest_sha256": digest(measured / "manifest.json"),
-                "samples_sha256": digest(measured / "samples.jsonl"),
-                "manifest": run_manifest,
-            })
-            namespace = measured.name
-            for line in (measured / "samples.jsonl").read_text().splitlines():
-                sample = json.loads(line)
-                sample["source_sample_id"] = sample["id"]
-                sample["source_run_directory"] = str(measured)
-                sample["id"] = f"{namespace}/{sample['id']}"
-                samples_out.write(json.dumps(sample) + "\n")
-            events_path = measured / "rpc-events.jsonl"
-            if events_path.exists():
-                for line in events_path.read_text().splitlines():
-                    event = json.loads(line)
-                    event["source_sample_id"] = event["sample_id"]
-                    event["source_run_directory"] = str(measured)
-                    event["sample_id"] = f"{namespace}/{event['sample_id']}"
-                    events_out.write(json.dumps(event) + "\n")
-    write_json(aggregate / "manifest.json", {
-        "schema_version": 1,
-        "build": json.loads(manifests[label].read_text()),
-        "panel": json.loads(frozen_panel.read_text()),
-        "panel_sha256": digest(frozen_panel),
-        "schedule": str(root / "schedule.json"),
-        "rounds": rounds,
-        "round_offset": 0,
-        "warmup_only": False,
-        "runner": aggregate_runner,
-        "source_runs": manifests_by_round,
-    })
-    run([str(runner), "report", "--output-dir", str(aggregate)], repo)
+# One runner owns validation, warmups, and alternating measured rounds for both refs.
+argv = [
+    str(runner), "run", "--manifest", str(frozen_panel),
+    "--cast", str(binaries["candidate"]), "--build-manifest", str(manifests["candidate"]),
+    "--baseline-cast", str(binaries["base"]),
+    "--baseline-build-manifest", str(manifests["base"]),
+    "--rounds", str(rounds), "--warmup-rounds", str(warmups),
+    "--timeout-seconds", str(timeout), "--output-dir", str(root / "results"),
+]
+if rpc_env:
+    argv.extend(["--rpc-env", rpc_env])
+if include_miss == "1":
+    argv.append("--include-miss")
+run(argv, repo)
 print(f"Benchmark results and source worktrees retained in {root}")
 PY

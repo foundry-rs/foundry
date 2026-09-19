@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Hermetic build provenance and round scheduling tests; never compile Foundry."""
+"""Hermetic build provenance and campaign invocation tests; never compile Foundry."""
 
 import hashlib
 import json
@@ -16,24 +16,20 @@ SOURCE_PATH = "crates/cast/src/cmd/run.rs"
 SOURCE = "// Unmodified Cast source; the replay control uses --no-bal.\n"
 FAKE_RUNNER = """#!/usr/bin/env python3
 import json
+import os
 from pathlib import Path
 import sys
-if sys.argv[1] == 'run':
-    binary = Path(sys.argv[sys.argv.index('--cast') + 1])
-    build = json.loads(Path(sys.argv[sys.argv.index('--build-manifest') + 1]).read_text())
+with (Path(os.environ['BENCH_ROOT']) / 'runner-invocations.jsonl').open('a') as log:
+    log.write(json.dumps(sys.argv[1:]) + '\\n')
+assert sys.argv[1] == 'run'
+for binary_flag, manifest_flag in (
+    ('--cast', '--build-manifest'),
+    ('--baseline-cast', '--baseline-build-manifest'),
+):
+    binary = Path(sys.argv[sys.argv.index(binary_flag) + 1])
+    build = json.loads(Path(sys.argv[sys.argv.index(manifest_flag) + 1]).read_text())
     assert str(binary) == build['cast']['path']
     assert binary.is_file()
-    output = Path(sys.argv[sys.argv.index('--output-dir') + 1])
-    output.mkdir(parents=True)
-    manifest = {'argv': sys.argv[1:], 'runner': {
-        'os': 'measurement-os', 'arch': 'measurement-arch',
-        'image': 'measurement-image', 'logical_cpus': 7,
-    }}
-    (output / 'manifest.json').write_text(json.dumps(manifest) + '\\n')
-    (output / 'samples.jsonl').write_text(json.dumps({'id': 'fixture', 'phase': 'measured'}) + '\\n')
-    (output / 'rpc-events.jsonl').write_text(json.dumps({'sample_id': 'fixture'}) + '\\n')
-elif sys.argv[1] != 'report':
-    raise SystemExit(1)
 """
 
 
@@ -41,7 +37,7 @@ class ControlBuildTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="foundry-bal-build-test-")
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         self.repo = self.root / "repository"
         self.repo.mkdir()
         script = self.repo / "benches/scripts/pr-bal-bench.sh"
@@ -179,70 +175,64 @@ if {dirty!r} and name == 'cast':
         self.assertFalse(schedule["same_source_refs"])
         self.assertEqual(schedule["builds"], {"base": "base", "candidate": "candidate"})
 
-    def test_alternates_rounds_and_keeps_warmups_separate(self):
+    def test_one_runner_receives_both_refs_and_complete_schedule(self):
+        (self.repo / SOURCE_PATH).write_text("// A separate candidate binary.\n")
+        self.git("add", SOURCE_PATH)
+        self.commit("candidate")
+        candidate_sha = self.git("rev-parse", "HEAD").strip()
         panel = self.root / "panel.json"
         panel.write_text('{"schema_version": 1}\n')
         self.environment.update({
             "BUILD_ONLY": "0", "PANEL_MANIFEST": str(panel), "INCLUDE_MISS": "1",
-            "ROUNDS": "3", "WARMUP_ROUNDS": "2",
+            "CANDIDATE_REF": candidate_sha,
+            "ROUNDS": "3", "WARMUP_ROUNDS": "2", "TIMEOUT_SECONDS": "37",
         })
         self.environment.pop("RPC_ENV")
         result = self.invoke()
         self.assertEqual(result.returncode, 0, result.stderr)
-        schedule = json.loads((self.artifacts / "schedule.json").read_text())
-        self.assertIsNone(schedule["rpc_env"])
-        self.assertTrue(schedule["include_miss"])
-        self.assertEqual(schedule["execution_order"], [
-            {"ref": label, "round": round_index, "phase": phase}
-            for phase, count in (("warmup", 2), ("measured", 3))
-            for round_index in range(count)
-            for label in (("base", "candidate") if round_index % 2 == 0 else ("candidate", "base"))
-        ])
+        invocations = [
+            json.loads(line)
+            for line in (self.artifacts / "runner-invocations.jsonl").read_text().splitlines()
+        ]
+        self.assertEqual(invocations, [[
+            "run", "--manifest", str(self.artifacts / "panel.json"),
+            "--cast", str(self.artifacts / "candidate/target/profiling/cast"),
+            "--build-manifest", str(self.artifacts / "candidate/build.json"),
+            "--baseline-cast", str(self.artifacts / "base/target/profiling/cast"),
+            "--baseline-build-manifest", str(self.artifacts / "base/build.json"),
+            "--rounds", "3", "--warmup-rounds", "2", "--timeout-seconds", "37",
+            "--output-dir", str(self.artifacts / "results"), "--include-miss",
+        ]])
         self.assertEqual((self.artifacts / "panel.json").read_bytes(), panel.read_bytes())
-        for label in ("base", "candidate"):
-            for phase in ("warmup", "measured"):
-                manifest = self.artifacts / "results" / label / f"{phase}-000/manifest.json"
-                argv = json.loads(manifest.read_text())["argv"]
-                self.assertEqual("--warmup-only" in argv, phase == "warmup")
-                self.assertIn("--include-miss", argv)
-            aggregate = self.artifacts / "results" / label / "aggregate"
-            manifest = json.loads((aggregate / "manifest.json").read_text())
-            self.assertEqual(manifest["panel"], json.loads(panel.read_text()))
-            self.assertEqual(manifest["rounds"], 3)
-            self.assertEqual(manifest["round_offset"], 0)
-            self.assertFalse(manifest["warmup_only"])
-            self.assertEqual(manifest["runner"], {
-                "os": "measurement-os", "arch": "measurement-arch",
-                "image": "measurement-image", "logical_cpus": 7,
-            })
-            for source in manifest["source_runs"]:
-                self.assertEqual(source["manifest"]["runner"], manifest["runner"])
-            samples = [json.loads(line) for line in (aggregate / "samples.jsonl").read_text().splitlines()]
-            self.assertEqual([sample["id"] for sample in samples], [f"measured-{round_index:03d}/fixture" for round_index in range(3)])
-            for sample in samples:
-                self.assertEqual(sample["source_sample_id"], "fixture")
-                self.assertTrue(Path(sample["source_run_directory"]).is_dir())
+        for label, sha in (("base", self.sha), ("candidate", candidate_sha)):
+            manifest = json.loads((self.artifacts / label / "build.json").read_text())
+            self.assertEqual(manifest["source_sha"], sha)
+        self.assertEqual(len(self.build_log.read_text().splitlines()), 3)
 
-    def test_aggregation_rejects_missing_or_inconsistent_runner_metadata(self):
+    def test_runner_forwards_rpc_name_and_default_rounds(self):
         panel = self.root / "panel.json"
         panel.write_text('{"schema_version": 1}\n')
-        self.environment.update({
-            "BUILD_ONLY": "0", "PANEL_MANIFEST": str(panel),
-            "ROUNDS": "2", "WARMUP_ROUNDS": "0",
-        })
-        for name, mutation, message in (
-            ("missing", "if output.name == 'measured-001': manifest.pop('runner')", "missing runner metadata"),
-            ("inconsistent", "manifest['runner']['image'] = output.name", "runner metadata differs"),
+        self.environment.update({"BUILD_ONLY": "0", "PANEL_MANIFEST": str(panel)})
+        for key in ("ROUNDS", "WARMUP_ROUNDS", "TIMEOUT_SECONDS"):
+            self.environment.pop(key, None)
+        result = self.invoke()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        invocations = [
+            json.loads(line)
+            for line in (self.artifacts / "runner-invocations.jsonl").read_text().splitlines()
+        ]
+        self.assertEqual(len(invocations), 1)
+        argv = invocations[0]
+        for flag, value in (
+            ("--rounds", "10"), ("--warmup-rounds", "2"), ("--timeout-seconds", "120"),
+            ("--rpc-env", "BAL_TEST_RPC_SECRET"),
+            ("--cast", str(self.artifacts / "base/target/profiling/cast")),
+            ("--baseline-cast", str(self.artifacts / "base/target/profiling/cast")),
         ):
-            with self.subTest(name=name):
-                artifacts = self.root / f"artifacts-{name}"
-                self.environment["BENCH_ROOT"] = str(artifacts)
-                marker = "    (output / 'manifest.json').write_text"
-                self.fake_cargo(runner=FAKE_RUNNER.replace(marker, f"    {mutation}\n{marker}"))
-                result = self.invoke()
-                self.assertNotEqual(result.returncode, 0)
-                self.assertIn(message, result.stderr)
-                self.assertFalse((artifacts / "results/base/aggregate/manifest.json").exists())
+            self.assertEqual(argv[argv.index(flag) + 1], value)
+        self.assertNotIn("--include-miss", argv)
+        self.assertNotIn("never-record-this-key", json.dumps(argv))
+        self.assertEqual(len(self.build_log.read_text().splitlines()), 2)
 
 
 if __name__ == "__main__":

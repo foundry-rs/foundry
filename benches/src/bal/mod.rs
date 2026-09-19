@@ -448,6 +448,24 @@ async fn check_binary(args: &RunArgs) -> Result<(Binary, Option<BuildIdentity>)>
     Ok((binary, build))
 }
 
+/// State retained for one binary across validation, warmup and measured rounds.
+struct PreparedRun {
+    label: &'static str,
+    args: RunArgs,
+    binary: Binary,
+    root: tempfile::TempDir,
+    // A missing entry means uncaptured; None means validation or the oracle failed.
+    oracles: BTreeMap<String, Option<String>>,
+}
+
+fn rounds(args: &RunArgs) -> impl Iterator<Item = (&'static str, usize)> + '_ {
+    [("warmup", args.warmup_rounds), ("measured", if args.warmup_only { 0 } else { args.rounds })]
+        .into_iter()
+        .flat_map(|(phase, count)| {
+            (args.round_offset..args.round_offset + count).map(move |round| (phase, round))
+        })
+}
+
 pub async fn run(args: RunArgs) -> Result<()> {
     ensure!(
         args.timeout_seconds > 0 && (args.rounds > 0 || args.warmup_only),
@@ -455,21 +473,52 @@ pub async fn run(args: RunArgs) -> Result<()> {
     );
     let manifest: Manifest = read_json(&args.manifest)?;
     validate_manifest(&manifest)?;
-    let (binary, build) = check_binary(&args).await?;
-    let cast = &binary.path;
     let upstream = endpoint(&args.endpoint)?;
-    new_output(&args.output_dir)?;
-    let root = tempfile::tempdir()?;
-    fs::write(root.path().join("foundry.toml"), "[profile.default]\nno_storage_caching = true\n")?;
-    let mut check = child_command(&env::current_exe()?, root.path());
-    check.arg("config-check");
-    let config = execute(check, Duration::from_secs(30), None).await?;
-    ensure!(
-        config.success,
-        "effective config preflight failed: {}",
-        String::from_utf8_lossy(&config.stderr)
-    );
-    let effective_config: Value = serde_json::from_slice(&config.stdout)?;
+    let mut refs = Vec::new();
+    if let Some(cast) = &args.baseline_cast {
+        let mut base = args.clone();
+        base.cast = cast.clone();
+        base.build_manifest = args.baseline_build_manifest.clone();
+        base.output_dir = args.output_dir.join("base/aggregate");
+        refs.push(("base", base));
+        let mut candidate = args.clone();
+        candidate.output_dir = args.output_dir.join("candidate/aggregate");
+        refs.push(("candidate", candidate));
+        new_output(&args.output_dir)?;
+    } else {
+        refs.push(("candidate", args.clone()));
+    }
+    let manifest_hash = digest(&fs::read(&args.manifest)?);
+    let runner = RunnerMetadata::default();
+    let schedule_manifest = rounds(&args)
+        .map(|(phase, round)| json!({"phase":phase,"round":round,"arms":schedule(manifest.seed,round,args.include_miss)}))
+        .collect::<Vec<_>>();
+    let mut runs = Vec::new();
+    for (label, args) in refs {
+        let (binary, build) = check_binary(&args).await?;
+        new_output(&args.output_dir)?;
+        let root = tempfile::tempdir()?;
+        fs::write(
+            root.path().join("foundry.toml"),
+            "[profile.default]\nno_storage_caching = true\n",
+        )?;
+        let mut check = child_command(&env::current_exe()?, root.path());
+        check.arg("config-check");
+        let config = execute(check, Duration::from_secs(30), None).await?;
+        ensure!(
+            config.success,
+            "effective config preflight failed: {}",
+            String::from_utf8_lossy(&config.stderr)
+        );
+        let effective_config: Value = serde_json::from_slice(&config.stdout)?;
+        let run_manifest = json!({"schema_version":1, "panel":manifest,"panel_sha256":manifest_hash,
+            "runner":runner,
+            "build":build,"binary":binary,"effective_config":effective_config,"rounds":args.rounds,"warmup_rounds":args.warmup_rounds,
+            "round_offset":args.round_offset,"timeout_seconds":args.timeout_seconds,"server_bal_source":"unknown",
+            "include_miss":args.include_miss,"warmup_only":args.warmup_only,"worker_count":1,"schedule":schedule_manifest});
+        write_json(&args.output_dir.join("manifest.json"), &run_manifest)?;
+        runs.push(PreparedRun { label, args, binary, root, oracles: BTreeMap::new() });
+    }
     let rpc = capture::Rpc::new(&upstream)?;
     ensure!(
         capture::quantity(&rpc.call("eth_chainId", json!([])).await?)? == manifest.chain_id,
@@ -492,104 +541,113 @@ pub async fn run(args: RunArgs) -> Result<()> {
             );
         }
     }
-    let manifest_hash = digest(&fs::read(&args.manifest)?);
-    let schedule_manifest = [
-        ("warmup", args.warmup_rounds),
-        ("measured", if args.warmup_only { 0 } else { args.rounds }),
-    ]
-    .into_iter()
-    .flat_map(|(phase, count)| {
-        (args.round_offset..args.round_offset + count).map(
-            move |round| json!({"phase":phase,"round":round,"arms":schedule(manifest.seed,round,args.include_miss)}),
-        )
-    })
-    .collect::<Vec<_>>();
-    let run_manifest = json!({"schema_version":1, "panel":manifest,"panel_sha256":manifest_hash,
-        "runner":RunnerMetadata::default(),
-        "build":build,"binary":binary,"effective_config":effective_config,"rounds":args.rounds,"warmup_rounds":args.warmup_rounds,
-        "round_offset":args.round_offset,"timeout_seconds":args.timeout_seconds,"server_bal_source":"unknown",
-        "include_miss":args.include_miss,"warmup_only":args.warmup_only,"worker_count":1,"schedule":schedule_manifest});
-    write_json(&args.output_dir.join("manifest.json"), &run_manifest)?;
-    for case in &manifest.cases {
-        if case.capture_error.is_some()
-            || case.expected_receipt_gas.is_none()
-            || case.expected_receipt_status.is_none()
-        {
-            record_uncaptured(&args, &manifest, case)?;
-            continue;
-        }
-        let mut validation = BTreeMap::new();
-        for arm in schedule(manifest.seed, 0, args.include_miss) {
-            let sample =
-                attempt(&args, &upstream, root.path(), cast, case, arm, "validation", 0, 0, None)
-                    .await?;
-            validation.insert(arm, sample);
-        }
-        let oracle = &validation[&Arm::Replay];
-        let equivalent = validation.values().all(|s| {
-            s.correctness == "unchecked"
-                && s.stdout_sha256 == oracle.stdout_sha256
-                && s.local_gas == case.expected_receipt_gas
-                && s.execution_success == case.expected_receipt_status
-        });
-        let mut default_oracle = None;
-        if equivalent {
-            let baseline = attempt(
-                &args,
+    // Validate each case once per binary before any warmup or measured rounds.
+    for run in &mut runs {
+        for case in &manifest.cases {
+            if case.capture_error.is_some()
+                || case.expected_receipt_gas.is_none()
+                || case.expected_receipt_status.is_none()
+            {
+                record_uncaptured(&run.args, &manifest, case)?;
+                continue;
+            }
+            let oracle = validate_case(
+                &run.args,
                 &upstream,
-                root.path(),
-                cast,
+                run.root.path(),
+                &run.binary.path,
                 case,
-                Arm::Replay,
-                "oracle",
-                0,
-                0,
-                None,
+                manifest.seed,
             )
             .await?;
-            if baseline.correctness == "unchecked"
-                && baseline.local_gas == case.expected_receipt_gas
-                && baseline.execution_success == case.expected_receipt_status
-            {
-                default_oracle = Some(baseline.stdout_sha256.clone());
-            }
-            append_sample(&args.output_dir, &baseline)?;
+            run.oracles.insert(case.id.clone(), oracle);
         }
-        for mut sample in validation.into_values() {
-            sample.correctness =
-                if equivalent { "equivalent" } else { "correctness_blocked" }.into();
-            append_sample(&args.output_dir, &sample)?;
-        }
-        for r in 0..args.warmup_rounds + if args.warmup_only { 0 } else { args.rounds } {
-            let phase = if r < args.warmup_rounds { "warmup" } else { "measured" };
-            let round =
-                args.round_offset + if r < args.warmup_rounds { r } else { r - args.warmup_rounds };
-            for (order, arm) in
-                schedule(manifest.seed, round, args.include_miss).into_iter().enumerate()
-            {
-                let mut sample = attempt(
-                    &args,
-                    &upstream,
-                    root.path(),
-                    cast,
-                    case,
-                    arm,
-                    phase,
-                    round,
-                    order,
-                    default_oracle.as_deref(),
-                )
-                .await?;
-                if default_oracle.is_none() {
-                    sample.correctness = "correctness_blocked".into();
+    }
+    let mut execution_order = Vec::new();
+    let schedule_path = args.output_dir.join("schedule.json");
+    write_json(&schedule_path, &json!({"schema_version":1,"execution_order":execution_order}))?;
+    for (phase, round) in rounds(&args) {
+        // Reverse whole ref rounds, while each ref retains the same arm schedule.
+        let order = if round % 2 == 0 { [0, 1] } else { [1, 0] };
+        for index in order.into_iter().filter(|index| *index < runs.len()) {
+            let run = &runs[index];
+            execution_order.push(json!({"ref":run.label,"round":round,"phase":phase}));
+            write_json(
+                &schedule_path,
+                &json!({"schema_version":1,"execution_order":execution_order}),
+            )?;
+            for case in &manifest.cases {
+                if let Some(oracle) = run.oracles.get(&case.id) {
+                    for (order, arm) in
+                        schedule(manifest.seed, round, args.include_miss).into_iter().enumerate()
+                    {
+                        let mut sample = attempt(
+                            &run.args,
+                            &upstream,
+                            run.root.path(),
+                            &run.binary.path,
+                            case,
+                            arm,
+                            phase,
+                            round,
+                            order,
+                            oracle.as_deref(),
+                        )
+                        .await?;
+                        if oracle.is_none() {
+                            sample.correctness = "correctness_blocked".into();
+                        }
+                        append_sample(&run.args.output_dir, &sample)?;
+                    }
                 }
-                append_sample(&args.output_dir, &sample)?;
             }
         }
     }
-    results::report(&args.output_dir)?;
-    sh_println!("BAL artifacts: {}", args.output_dir.display())?;
+    for run in &runs {
+        results::report(&run.args.output_dir)?;
+        sh_println!("BAL artifacts: {}", run.args.output_dir.display())?;
+    }
     Ok(())
+}
+
+async fn validate_case(
+    args: &RunArgs,
+    upstream: &str,
+    root: &Path,
+    cast: &Path,
+    case: &Case,
+    seed: u64,
+) -> Result<Option<String>> {
+    let mut validation = BTreeMap::new();
+    for arm in schedule(seed, 0, args.include_miss) {
+        let sample =
+            attempt(args, upstream, root, cast, case, arm, "validation", 0, 0, None).await?;
+        validation.insert(arm, sample);
+    }
+    let oracle = &validation[&Arm::Replay];
+    let equivalent = validation.values().all(|s| {
+        s.correctness == "unchecked"
+            && s.stdout_sha256 == oracle.stdout_sha256
+            && s.local_gas == case.expected_receipt_gas
+            && s.execution_success == case.expected_receipt_status
+    });
+    let mut default_oracle = None;
+    if equivalent {
+        let baseline =
+            attempt(args, upstream, root, cast, case, Arm::Replay, "oracle", 0, 0, None).await?;
+        if baseline.correctness == "unchecked"
+            && baseline.local_gas == case.expected_receipt_gas
+            && baseline.execution_success == case.expected_receipt_status
+        {
+            default_oracle = Some(baseline.stdout_sha256.clone());
+        }
+        append_sample(&args.output_dir, &baseline)?;
+    }
+    for mut sample in validation.into_values() {
+        sample.correctness = if equivalent { "equivalent" } else { "correctness_blocked" }.into();
+        append_sample(&args.output_dir, &sample)?;
+    }
+    Ok(default_oracle)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -885,6 +943,8 @@ mod tests {
             manifest: directory.path().join("panel.json"),
             build_manifest: None,
             cast: directory.path().join("cast"),
+            baseline_cast: None,
+            baseline_build_manifest: None,
             include_miss: true,
             output_dir: directory.path().to_owned(),
             rounds: 10,

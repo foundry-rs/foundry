@@ -58,7 +58,7 @@ struct CaptureArgs {
     seed: u64,
 }
 
-#[derive(Args)]
+#[derive(Args, Clone)]
 struct RunArgs {
     #[command(flatten)]
     endpoint: EndpointArgs,
@@ -70,6 +70,13 @@ struct RunArgs {
     /// Cast binary supporting --no-bal, used for both comparison arms.
     #[arg(long)]
     cast: PathBuf,
+    /// Optional baseline Cast binary; alternate complete rounds with --cast.
+    /// Reports are written under base/aggregate and candidate/aggregate in --output-dir.
+    #[arg(long)]
+    baseline_cast: Option<PathBuf>,
+    /// Build provenance for --baseline-cast.
+    #[arg(long, requires = "baseline_cast")]
+    baseline_build_manifest: Option<PathBuf>,
     /// Add a same-binary control with a locally injected method-not-found BAL response.
     #[arg(long)]
     include_miss: bool,
@@ -116,5 +123,44 @@ mod tests {
         ])
         .expect("an existing Cast binary is sufficient for a same-binary comparison");
         assert!(matches!(cli.command, Command::Run(_)));
+    }
+
+    #[test]
+    fn run_accepts_a_baseline_for_alternating_rounds() {
+        let cli = Cli::try_parse_from([
+            "foundry-cast-run-bench",
+            "run",
+            "--cast",
+            "/tmp/candidate",
+            "--baseline-cast",
+            "/tmp/base",
+            "--baseline-build-manifest",
+            "/tmp/base.json",
+            "--manifest",
+            "/tmp/panel.json",
+            "--output-dir",
+            "/tmp/results",
+        ])
+        .expect("one runner schedules both refs");
+        assert!(matches!(cli.command, Command::Run(_)));
+    }
+
+    #[test]
+    fn baseline_provenance_requires_a_baseline_binary() {
+        assert!(
+            Cli::try_parse_from([
+                "foundry-cast-run-bench",
+                "run",
+                "--cast",
+                "/tmp/candidate",
+                "--baseline-build-manifest",
+                "/tmp/base.json",
+                "--manifest",
+                "/tmp/panel.json",
+                "--output-dir",
+                "/tmp/results",
+            ])
+            .is_err()
+        );
     }
 }
