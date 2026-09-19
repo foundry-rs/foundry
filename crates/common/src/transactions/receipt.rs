@@ -10,6 +10,9 @@ use foundry_common_fmt::{UIfmt, UIfmtReceiptExt, get_pretty_receipt_attr};
 use serde::{Deserialize, Serialize};
 use tempo_alloy::rpc::TempoTransactionReceipt;
 
+#[cfg(feature = "base")]
+use base_common_rpc_types::BaseTransactionReceipt;
+
 #[cfg(feature = "optimism")]
 use op_alloy_rpc_types::OpTransactionReceipt;
 
@@ -22,6 +25,13 @@ pub trait FoundryReceiptResponse {
 impl FoundryReceiptResponse for TransactionReceipt {
     fn set_contract_address(&mut self, contract_address: Address) {
         self.contract_address = Some(contract_address);
+    }
+}
+
+#[cfg(feature = "base")]
+impl FoundryReceiptResponse for BaseTransactionReceipt {
+    fn set_contract_address(&mut self, contract_address: Address) {
+        self.inner.contract_address = Some(contract_address);
     }
 }
 

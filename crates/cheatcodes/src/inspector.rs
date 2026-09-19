@@ -45,9 +45,8 @@ use foundry_evm_core::{
     evm::{
         BlockEnvFor, ChainFor, EthEvmNetwork, EvmFactoryFor, FoundryContextFor, FoundryEvmFactory,
         FoundryEvmNetwork, NestedEvmClosureFor, SpecFor, TransactionRequestFor, TxEnvFor,
-        with_cloned_context,
+        with_inherited_evm,
     },
-    refresh_chain_journal,
 };
 use foundry_evm_traces::{
     TracingInspector, TracingInspectorConfig, identifier::SignaturesIdentifier,
@@ -185,42 +184,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         ecx: &mut FoundryContextFor<'_, FEN>,
         f: NestedEvmClosureFor<'_, FEN>,
     ) -> Result<(), EVMError<DatabaseError>> {
-        let factory = FEN::EvmFactory::default();
-        let chain_context = ecx.chain().clone();
-        #[cfg(feature = "monad")]
-        let state = foundry_evm_core::FoundryJournal::capture_reserve_balance(ecx.journal());
-        let mut nested_chain_context = None;
-        #[cfg(feature = "monad")]
-        let mut reserve_balance = None;
-        with_cloned_context(ecx, |db, evm_env, journaled_state| {
-            let mut evm = factory.create_nested_evm_with_inspector(db, evm_env, cheats);
-            *evm.chain_mut() = chain_context;
-            *evm.journal_inner_mut() = journaled_state;
-            #[cfg(feature = "monad")]
-            {
-                foundry_evm_core::FoundryJournal::restore_reserve_balance(evm.journal_mut(), state);
-                foundry_evm_core::evm::refresh_nested_chain_journal(&mut *evm);
-            }
-            f(&mut *evm)?;
-            nested_chain_context = Some(evm.chain_mut().clone());
-            #[cfg(feature = "monad")]
-            {
-                reserve_balance = Some(foundry_evm_core::FoundryJournal::capture_reserve_balance(
-                    evm.journal_mut(),
-                ));
-            }
-            let sub_inner = evm.journal_inner_mut().clone();
-            let sub_evm_env = evm.to_evm_env();
-            Ok((sub_evm_env, sub_inner))
-        })?;
-        *ecx.chain_mut() = nested_chain_context.expect("nested EVM chain context was captured");
-        #[cfg(feature = "monad")]
-        foundry_evm_core::FoundryJournal::restore_reserve_balance(
-            ecx.journal_mut(),
-            reserve_balance.expect("nested EVM state was captured"),
-        );
-        refresh_chain_journal(ecx);
-        Ok(())
+        with_inherited_evm::<FEN::EvmFactory, _>(ecx, cheats, f)
     }
 
     fn with_fresh_nested_evm(
@@ -462,6 +426,9 @@ pub struct GasMetering {
     /// Post-refund gas used by the isolated transaction wrapping the current frame.
     isolated_snapshot_gas_used: Option<u64>,
 
+    /// Isolated transaction refund to exclude from the next region sample at the caller's depth.
+    pending_isolated_refund: Option<(usize, u64)>,
+
     /// True if gas recording is enabled.
     pub recording: bool,
     /// The gas used in the last frame.
@@ -474,6 +441,7 @@ impl GasMetering {
     /// Start the gas recording.
     pub const fn start(&mut self) {
         self.recording = true;
+        self.pending_isolated_refund = None;
     }
 
     /// Stop the gas recording.
@@ -501,6 +469,21 @@ impl GasMetering {
     /// Preserves the historical gas snapshot value for an isolated transaction.
     pub const fn set_isolated_snapshot_gas_used(&mut self, gas_used: u64) {
         self.isolated_snapshot_gas_used = Some(gas_used);
+    }
+
+    /// Preserve post-refund region snapshots without changing the interpreter's gross gas usage.
+    const fn record_isolated_refund(
+        &mut self,
+        depth: usize,
+        gas: &Gas,
+        snapshot_gas_used: Option<u64>,
+    ) {
+        if self.recording
+            && let Some(snapshot_gas_used) = snapshot_gas_used
+        {
+            self.pending_isolated_refund =
+                Some((depth, gas.total_gas_spent().saturating_sub(snapshot_gas_used)));
+        }
     }
 }
 
@@ -1406,11 +1389,16 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         }
     }
 
+    /// Handles a call, accounting for whether the executor will isolate it as a transaction.
+    ///
+    /// If `isolate_call` is true, the executor owns the transaction nonce increment when the call
+    /// proceeds to execution.
     pub fn call_with_executor(
         &mut self,
         ecx: &mut FoundryContextFor<'_, FEN>,
         call: &mut CallInputs,
         executor: &mut dyn CheatcodesExecutor<FEN>,
+        isolate_call: bool,
     ) -> Option<CallOutcome> {
         // Apply custom execution evm version.
         if let Some(spec_id) = self.execution_evm_version {
@@ -1767,8 +1755,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     });
                     debug!(target: "cheatcodes", tx=?self.broadcastable_transactions.back().unwrap(), "broadcastable call");
 
-                    // Explicitly increment nonce if calls are not isolated.
-                    if !self.config.evm_opts.isolate {
+                    // Isolated transactions increment the nonce during execution. Nested
+                    // broadcasts do not start a separate transaction and need this increment.
+                    if !isolate_call {
                         let prev = account.info.nonce;
                         account.info.nonce += 1;
                         debug!(target: "cheatcodes", address=%broadcast.new_origin, nonce=prev+1, prev, "incremented nonce");
@@ -2417,7 +2406,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         if self.is_storage_hook_callback(ecx, inputs) {
             return None;
         }
-        Self::call_with_executor(self, ecx, inputs, &mut TransparentCheatcodesExecutor)
+        Self::call_with_executor(self, ecx, inputs, &mut TransparentCheatcodesExecutor, false)
     }
 
     fn call_end(
@@ -2427,6 +2416,11 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         outcome: &mut CallOutcome,
     ) {
         let isolated_snapshot_gas_used = self.gas_metering.isolated_snapshot_gas_used.take();
+        self.gas_metering.record_isolated_refund(
+            ecx.journal().depth(),
+            &outcome.result.gas,
+            isolated_snapshot_gas_used,
+        );
         if self.finish_storage_hook_call(ecx, call, outcome) {
             return;
         }
@@ -3036,6 +3030,11 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         outcome: &mut CreateOutcome,
     ) {
         let isolated_snapshot_gas_used = self.gas_metering.isolated_snapshot_gas_used.take();
+        self.gas_metering.record_isolated_refund(
+            ecx.journal().depth(),
+            &outcome.result.gas,
+            isolated_snapshot_gas_used,
+        );
         let call = Some(call);
         let curr_depth = ecx.journal().depth();
 
@@ -3246,8 +3245,15 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         ecx: &mut FoundryContextFor<'_, FEN>,
     ) {
         if interpreter.bytecode.action.as_ref().and_then(|i| i.instruction_result()).is_none() {
+            let curr_depth = ecx.journal().depth();
+            let isolated_refund = match self.gas_metering.pending_isolated_refund {
+                Some((depth, refund)) if depth == curr_depth => {
+                    self.gas_metering.pending_isolated_refund = None;
+                    refund
+                }
+                _ => 0,
+            };
             self.gas_metering.gas_records.iter_mut().for_each(|record| {
-                let curr_depth = ecx.journal().depth();
                 if curr_depth == record.depth {
                     // Skip the first opcode of the first call frame as it includes the gas cost of
                     // creating the snapshot.
@@ -3255,7 +3261,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                         let gas_diff = interpreter
                             .gas
                             .total_gas_spent()
-                            .saturating_sub(self.gas_metering.last_gas_used);
+                            .saturating_sub(self.gas_metering.last_gas_used)
+                            .saturating_sub(isolated_refund);
                         record.gas_used = record.gas_used.saturating_add(gas_diff);
                     }
 

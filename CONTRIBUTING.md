@@ -117,7 +117,7 @@ If you are working on a larger feature, we encourage you to open up a draft pull
 
 If you would like to test the binaries built from your change, see [foundryup](https://github.com/foundry-rs/foundry/tree/HEAD/foundryup).
 
-If you would like to use a debugger with breakpoints to debug a patch you might be working on, keep in mind we currently strip debug info for faster builds, which is _not_ the default. Therefore, to use a debugger, you need to enable it on the workspace [`Cargo.toml`'s `dev` profile](https://github.com/foundry-rs/foundry/tree/HEAD/Cargo.toml#L15-L18).
+If you would like to use a debugger with breakpoints to debug a patch you might be working on, keep in mind we currently strip debug info for faster builds, which is _not_ the default. Therefore, to use a debugger, you need to enable it on the workspace [`Cargo.toml`'s `dev` profile](https://github.com/foundry-rs/foundry/tree/HEAD/Cargo.toml#L136-L139).
 
 #### Output channels (stdout vs. stderr)
 
@@ -140,8 +140,6 @@ That said, if you have a number of commits that are "checkpoints" and don't repr
 #### Opening the pull request
 
 From within GitHub, opening a new pull request will present you with a template that should be filled out. Please try your best at filling out the details, but feel free to skip parts if you're not sure what to put.
-
-Pull requests must add or update a `.changelog/*.md` entry unless a maintainer applies the `L-ignore` label; see the [changelog instructions](.changelog/README.md#pull-requests).
 
 #### Discuss and update
 

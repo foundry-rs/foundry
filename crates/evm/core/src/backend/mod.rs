@@ -11,9 +11,10 @@ use crate::{
     state_snapshot::StateSnapshots,
     utils::{
         apply_chain_and_block_specific_env_changes_for_chain,
-        apply_chain_specific_tx_replay_env_changes_for_chain, get_blob_base_fee_update_fraction,
+        apply_chain_specific_tx_replay_env_changes_for_chain,
     },
 };
+use alloy_chains::Chain;
 use alloy_consensus::{BlockHeader, Typed2718};
 use alloy_eips::BlockNumHash;
 use alloy_evm::{Evm, EvmEnv, EvmFactory, precompiles::PrecompilesMap};
@@ -27,7 +28,8 @@ use eyre::Context;
 use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender};
 use foundry_evm_networks::{NetworkConfigs, apply_bsc_p256_precompile};
 pub use foundry_fork_db::{
-    BlockchainDb, ForkBlock, ForkBlockEnv, SharedBackend, cache::BlockchainDbMeta,
+    AccountFetchPolicy, BlockchainDb, ForkBlock, ForkBlockEnv, SharedBackend,
+    cache::BlockchainDbMeta,
 };
 use revm::{
     Database, DatabaseCommit, JournalEntry,
@@ -35,6 +37,7 @@ use revm::{
     context::{Block, BlockEnv, CfgEnv, ContextTr, JournalInner, Transaction},
     context_interface::{journaled_state::account::JournaledAccountTr, result::ResultAndState},
     database::{AccountState, CacheDB, DatabaseRef, EmptyDB},
+    database_interface::bal::BalState,
     primitives::{AddressMap, HashMap as Map, KECCAK_EMPTY, Log, hardfork::SpecId},
     state::{Account, AccountInfo, EvmState, EvmStorageSlot, TransactionId},
 };
@@ -49,6 +52,8 @@ use crate::evm::monad::BlockContext;
 
 mod diagnostic;
 pub use diagnostic::RevertDiagnostic;
+
+mod bal;
 
 mod error;
 pub use error::{BackendError, BackendResult, DatabaseError, DatabaseResult};
@@ -384,6 +389,9 @@ pub trait DatabaseExt<F: FoundryEvmFactory>:
     /// Returns the Fork url that's currently used in the database, if fork mode is on
     fn active_fork_url(&self) -> Option<String>;
 
+    /// Returns the source chain ID of the active fork, independent of execution overrides.
+    fn active_fork_source_chain_id(&self) -> Option<u64>;
+
     /// Returns the active fork's current fork block number, if any.
     fn active_fork_block_number(&self) -> Option<u64> {
         None
@@ -640,6 +648,8 @@ pub struct Backend<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     active_fork_ids: Option<(LocalForkId, ForkLookupIndex)>,
     /// RPC block number exposed while executing a historical transaction in a temporary backend.
     fork_block_number_override: Option<u64>,
+    /// Optional BAL position for a single transaction against unchanged parent state.
+    bal: Option<BalState>,
     /// holds additional Backend data
     inner: BackendInner<FEN>,
 }
@@ -653,6 +663,7 @@ impl<FEN: FoundryEvmNetwork> Clone for Backend<FEN> {
             fork_init_journaled_state: self.fork_init_journaled_state.clone(),
             active_fork_ids: self.active_fork_ids,
             fork_block_number_override: self.fork_block_number_override,
+            bal: self.bal.clone(),
             inner: self.inner.clone(),
         }
     }
@@ -666,6 +677,7 @@ impl<FEN: FoundryEvmNetwork> Debug for Backend<FEN> {
             .field("mem_db", &self.mem_db)
             .field("fork_init_journaled_state", &self.fork_init_journaled_state)
             .field("active_fork_ids", &self.active_fork_ids)
+            .field("bal", &self.bal)
             .field("inner", &self.inner)
             .finish()
     }
@@ -702,6 +714,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             fork_init_journaled_state: inner.new_journaled_state(),
             active_fork_ids: None,
             fork_block_number_override: None,
+            bal: None,
             inner,
         };
 
@@ -769,6 +782,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             fork_init_journaled_state: self.inner.new_journaled_state(),
             active_fork_ids: None,
             fork_block_number_override: None,
+            bal: None,
             inner: Default::default(),
         }
     }
@@ -2340,6 +2354,10 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         self.forks.get_fork_url(fork.clone()).ok()?
     }
 
+    fn active_fork_source_chain_id(&self) -> Option<u64> {
+        Some(self.inner.get_fork_by_id(self.active_fork_id()?).ok()?.source_chain_id)
+    }
+
     fn active_fork_block_number(&self) -> Option<u64> {
         if let Some(block_number) = self.fork_block_number_override {
             return Some(block_number);
@@ -2621,11 +2639,13 @@ impl<FEN: FoundryEvmNetwork> DatabaseRef for Backend<FEN> {
     type Error = DatabaseError;
 
     fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        if let Some(db) = self.active_fork_db() {
-            db.basic_ref(address)
+        let mut account = if let Some(db) = self.active_fork_db() {
+            db.basic_ref(address)?
         } else {
-            Ok(self.mem_db.basic_ref(address)?)
-        }
+            self.mem_db.basic_ref(address)?
+        };
+        self.apply_bal_account(address, &mut account)?;
+        Ok(account)
     }
 
     fn code_by_hash_ref(&self, code_hash: B256) -> Result<Bytecode, Self::Error> {
@@ -2637,6 +2657,9 @@ impl<FEN: FoundryEvmNetwork> DatabaseRef for Backend<FEN> {
     }
 
     fn storage_ref(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
+        if let Some(value) = self.bal_storage(address, index)? {
+            return Ok(value);
+        }
         if let Some(db) = self.active_fork_db() {
             DatabaseRef::storage_ref(db, address, index)
         } else {
@@ -2655,6 +2678,15 @@ impl<FEN: FoundryEvmNetwork> DatabaseRef for Backend<FEN> {
 
 impl<FEN: FoundryEvmNetwork> DatabaseCommit for Backend<FEN> {
     fn commit(&mut self, changes: AddressMap<Account>) {
+        if self.bal.take().is_some() {
+            // Keep code read through BAL available for trace decoding. CacheDB's normal commit
+            // skips untouched accounts; touched accounts must retain the target's final values.
+            for (address, account) in &changes {
+                if !account.is_touched() && !account.is_loaded_as_not_existing() {
+                    self.insert_account_info(*address, account.info.clone());
+                }
+            }
+        }
         if let Some(db) = self.active_fork_db_mut() {
             db.commit(changes)
         } else {
@@ -2666,11 +2698,13 @@ impl<FEN: FoundryEvmNetwork> DatabaseCommit for Backend<FEN> {
 impl<FEN: FoundryEvmNetwork> Database for Backend<FEN> {
     type Error = DatabaseError;
     fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        if let Some(db) = self.active_fork_db_mut() {
-            Ok(db.basic(address)?)
+        let mut account = if let Some(db) = self.active_fork_db_mut() {
+            db.basic(address)?
         } else {
-            Ok(self.mem_db.basic(address)?)
-        }
+            self.mem_db.basic(address)?
+        };
+        self.apply_bal_account(address, &mut account)?;
+        Ok(account)
     }
 
     fn code_by_hash(&mut self, code_hash: B256) -> Result<Bytecode, Self::Error> {
@@ -2682,6 +2716,9 @@ impl<FEN: FoundryEvmNetwork> Database for Backend<FEN> {
     }
 
     fn storage(&mut self, address: Address, index: U256) -> Result<U256, Self::Error> {
+        if let Some(value) = self.bal_storage(address, index)? {
+            return Ok(value);
+        }
         if let Some(db) = self.active_fork_db_mut() {
             Ok(Database::storage(db, address, index)?)
         } else {
@@ -3135,6 +3172,20 @@ pub(crate) fn merge_account_data<ExtDB: DatabaseRef, N: Network, B: ForkBlockEnv
     *active_journaled_state = target_fork.journaled_state.clone();
 }
 
+/// Returns the account-loading policy required by a fork source.
+///
+/// A recognized source chain ID is authoritative. The endpoint's execution profile is only a
+/// source hint for custom chain IDs, where the chain ID cannot identify the RPC semantics.
+pub fn account_fetch_policy_for_source(
+    source_chain_id: ChainId,
+    network_profile: NetworkConfigs,
+) -> AccountFetchPolicy {
+    let source_chain = Chain::from_id(source_chain_id);
+    let is_tempo =
+        source_chain.is_tempo() || (source_chain.named().is_none() && network_profile.is_tempo());
+    if is_tempo { AccountFetchPolicy::RequireAccountInfo } else { AccountFetchPolicy::Auto }
+}
+
 /// Clones the account data from the `active_journaled_state`  into the `fork_journaled_state`
 fn merge_journaled_state_data(
     addr: Address,
@@ -3210,13 +3261,6 @@ fn update_env_block<N: Network, SPEC: Into<SpecId> + Copy, BLOCK: FoundryBlock>(
     block_env.set_gas_limit(header.gas_limit());
     block_env.set_number(U256::from(header.number()));
     block_env.set_slot_num(header.slot_number().unwrap_or_default());
-
-    if let Some(excess_blob_gas) = header.excess_blob_gas() {
-        evm_env.block_env.set_blob_excess_gas_and_price(
-            excess_blob_gas,
-            get_blob_base_fee_update_fraction(evm_env.cfg_env.chain_id, header.timestamp()),
-        );
-    }
 
     apply_chain_and_block_specific_env_changes_for_chain::<N, _, _>(
         evm_env,

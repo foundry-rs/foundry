@@ -19,7 +19,7 @@ use std::{
 use tempo_hardfork::{TempoHardfork, constants::gas::tempo_t7_next_block_base_fee};
 
 #[cfg(feature = "optimism")]
-use foundry_evm::hardfork::FoundryHardfork;
+use foundry_evm::hardfork::OpHardfork;
 
 #[cfg(feature = "optimism")]
 mod optimism;
@@ -91,6 +91,7 @@ impl BaseFeeRules {
         }
     }
 
+    #[allow(clippy::missing_const_for_fn)] // Optimism extra-data encoding is not const.
     fn extra_data(self) -> Bytes {
         match self {
             Self::Standard(_) => Bytes::new(),
@@ -255,7 +256,7 @@ impl FeeManager {
 
     /// Initializes Optimism-family fee rules for a node that is not inheriting a fork header.
     #[cfg(feature = "optimism")]
-    pub(crate) fn set_optimism_hardfork(&self, hardfork: FoundryHardfork) {
+    pub(crate) fn set_optimism_hardfork(&self, hardfork: OpHardfork) {
         let mut state = self.state.write();
         let fallback = state.rules.base_fee.params();
         state.rules.base_fee = BaseFeeRules::Optimism {

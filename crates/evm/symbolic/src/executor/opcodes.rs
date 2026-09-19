@@ -227,7 +227,7 @@ impl SymbolicExecutor {
                     parent.world = outcome.state.world;
                     parent.block = outcome.state.block;
                 }
-                CallStatus::Revert | CallStatus::Failure => {
+                CallStatus::Revert | CallStatus::ExceptionalHalt | CallStatus::Failure => {
                     parent.return_data = outcome.state.frame.return_data;
                     parent.pending_storage_hook_revert = true;
                 }
@@ -921,7 +921,8 @@ impl SymbolicExecutor {
                 }
                 let offset = state.stack.pop()?;
                 let value = state.stack.pop()?;
-                state.memory.store_word_offset(&mut self.cx, offset, value);
+                let minimum_offset = state.lower_bound_usize(&offset);
+                state.memory.store_word_offset(&mut self.cx, offset, value, minimum_offset);
             }
             opcode::MSTORE8 => {
                 let offset = state.stack.peek(0)?.clone();
@@ -932,7 +933,8 @@ impl SymbolicExecutor {
                 }
                 let offset = state.stack.pop()?;
                 let value = state.stack.pop()?;
-                state.memory.store_byte_offset(&mut self.cx, offset, value);
+                let minimum_offset = state.lower_bound_usize(&offset);
+                state.memory.store_byte_offset(&mut self.cx, offset, value, minimum_offset);
             }
             opcode::SLOAD => {
                 let key = state.stack.pop()?;
@@ -1260,7 +1262,7 @@ impl SymbolicExecutor {
                 }
                 return self.return_or_revert(state, op == opcode::REVERT);
             }
-            opcode::INVALID => return Ok(StepOutcome::Failure),
+            opcode::INVALID => return Ok(StepOutcome::ExceptionalHalt),
             opcode::CALL => {
                 return self.call(executor, state, worklist, completed_paths, CallKind::Call);
             }

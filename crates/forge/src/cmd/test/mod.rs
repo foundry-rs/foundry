@@ -93,6 +93,9 @@ use std::{
 use tempfile::TempDir;
 use yansi::Paint;
 
+#[cfg(feature = "base")]
+use foundry_evm::core::evm::BaseEvmNetwork;
+
 #[cfg(feature = "monad")]
 use foundry_evm::core::evm::MonadEvmNetwork;
 
@@ -103,8 +106,9 @@ mod evm_profile_server;
 mod filter;
 mod summary;
 use filter::RerunFailures;
-pub use filter::{FilterArgs, ProjectPathsAwareFilter, RerunFailure};
 use summary::{TestSummaryReport, format_invariant_metrics_table};
+
+pub use filter::{FilterArgs, ProjectPathsAwareFilter, RerunFailure};
 
 const DEBUGGER_MATCHING_TESTS_DISPLAY_LIMIT: usize = 12;
 const AUTO_FUZZ_FAILURE_DIR: &str = "fuzz";
@@ -213,50 +217,30 @@ fn count_fuzz_minimize_targets<FEN: FoundryEvmNetwork>(
         .sum()
 }
 
-#[derive(Clone, Copy)]
-enum NetworkDispatchKind {
-    Tempo,
-    #[cfg(feature = "monad")]
-    Monad,
-    #[cfg(feature = "optimism")]
-    Optimism,
-    Eth,
-}
-
-const fn network_dispatch_kind(evm_opts: &EvmOpts) -> NetworkDispatchKind {
-    if evm_opts.networks.is_tempo() {
-        return NetworkDispatchKind::Tempo;
-    }
-    #[cfg(feature = "monad")]
-    if evm_opts.networks.is_monad() {
-        return NetworkDispatchKind::Monad;
-    }
-    #[cfg(feature = "optimism")]
-    if evm_opts.networks.is_optimism() {
-        return NetworkDispatchKind::Optimism;
-    }
-    NetworkDispatchKind::Eth
-}
-
 /// Evaluates `$body` with `$fen` bound to the concrete network type selected by `$evm_opts`.
 macro_rules! dispatch_network {
     ($evm_opts:expr, | $fen:ident | $body:expr) => {
-        match network_dispatch_kind($evm_opts) {
-            NetworkDispatchKind::Tempo => {
+        match $evm_opts.networks.execution_network() {
+            #[cfg(feature = "base")]
+            NetworkVariant::Base => {
+                type $fen = BaseEvmNetwork;
+                $body
+            }
+            NetworkVariant::Tempo => {
                 type $fen = TempoEvmNetwork;
                 $body
             }
             #[cfg(feature = "monad")]
-            NetworkDispatchKind::Monad => {
+            NetworkVariant::Monad => {
                 type $fen = MonadEvmNetwork;
                 $body
             }
             #[cfg(feature = "optimism")]
-            NetworkDispatchKind::Optimism => {
+            NetworkVariant::Optimism => {
                 type $fen = OpEvmNetwork;
                 $body
             }
-            NetworkDispatchKind::Eth => {
+            NetworkVariant::Ethereum => {
                 type $fen = EthEvmNetwork;
                 $body
             }

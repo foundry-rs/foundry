@@ -19,6 +19,8 @@ on:
         required: false
       TEMPO_MAINNET_RPC_URL:
         required: false
+      TEMPO_TESTNET_RPC_URL:
+        required: false
 
 concurrency:
   group: tests-${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -31,11 +33,6 @@ env:
   RUST_MIN_STACK: 4194304 # 2 * the default (2 * 1024 * 1024)
 
 jobs:
-  cargo-cooldown:
-    permissions:
-      contents: read
-    uses: ./.github/workflows/cargo-cooldown.yml
-
   matrices:
     name: build matrices
     runs-on: ubuntu-latest
@@ -66,12 +63,15 @@ jobs:
     runs-on: ${{ matrix.runner_label }}
     timeout-minutes: 60
     permissions:
+      id-token: write
       contents: read
-    needs: [cargo-cooldown, matrices]
+    needs: matrices
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.matrices.outputs.test-matrix) }}
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@ce5deead22108ccc6aafba0ca47d2a9e6d1a40e8
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -83,6 +83,20 @@ jobs:
       - name: Install Linux system dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install --yes libudev-dev
+      - name: Check out LCOV
+        if: runner.os == 'Linux' && !contains(matrix.name, 'external')
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: linux-test-project/lcov
+          ref: 5186f7394417292537d17b9a9a30f8c06bedc16c # v2.3.1
+          path: .lcov
+          persist-credentials: false
+      - name: Set up LCOV report validation
+        if: runner.os == 'Linux' && !contains(matrix.name, 'external')
+        run: |
+          sudo apt-get install --yes libcapture-tiny-perl libdatetime-perl libtimedate-perl
+          echo "FOUNDRY_TEST_GENHTML=$GITHUB_WORKSPACE/.lcov/bin/genhtml" >> "$GITHUB_ENV"
+          .lcov/bin/genhtml --version
       # External tests dependencies
       - name: Setup Node.js
         if: contains(matrix.name, 'external')
@@ -94,6 +108,12 @@ jobs:
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: latest
+      - name: Install pnpm for external fixtures
+        if: contains(matrix.name, 'external')
+        uses: tempoxyz/gh-actions/vendor/pnpm/action-setup@134b6c9105953bcf6d50ef0f3f70e31b7a3ec64f
+        with:
+          version: 11.8.0
+          run_install: false
       - name: Setup Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
@@ -122,7 +142,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           cache-bin: false
-      - uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
+      - uses: taiki-e/install-action@9534c84618278caac52cb373bb164ed464dbd8af # v2.87.11
         with:
           tool: nextest
       - name: Setup Git config
@@ -137,6 +157,7 @@ jobs:
           ARBITRUM_RPC: ${{ secrets.ARBITRUM_RPC }}
           ETH_SEPOLIA_RPC: ${{ secrets.ETH_SEPOLIA_RPC }}
           TEMPO_MAINNET_RPC_URL: ${{ secrets.TEMPO_MAINNET_RPC_URL }}
+          TEMPO_TESTNET_RPC_URL: ${{ secrets.TEMPO_TESTNET_RPC_URL }}
           NEXTEST_FILTER: ${{ matrix.filter }}
           NEXTEST_PARTITION: ${{ matrix.partition_arg }}
         shell: bash
@@ -146,4 +167,4 @@ jobs:
             args+=(--partition "$NEXTEST_PARTITION")
           fi
           args+=(--no-fail-fast)
-          cargo nextest run --locked --features monad "${args[@]}"
+          cargo nextest run --locked --features base,monad "${args[@]}"

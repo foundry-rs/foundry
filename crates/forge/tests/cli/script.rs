@@ -7,6 +7,7 @@ use crate::{
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::Ethereum;
 use alloy_primitives::{Address, Bytes, U256, address, hex};
+use alloy_provider::Provider;
 use anvil::{NodeConfig, spawn};
 use axum::{Router, body::Bytes as BodyBytes};
 use forge_script_sequence::ScriptSequence;
@@ -1363,6 +1364,87 @@ forgetest_async!(can_deploy_and_simulate_25_txes_concurrently, |prj, cmd| {
         .broadcast(ScriptOutcome::OkBroadcast)
         .assert_nonce_increment(&[(0, 25)])
         .await;
+});
+
+// <https://github.com/foundry-rs/foundry/issues/16851>.
+forgetest_async!(fork_nested_broadcast_nonces, |prj, cmd| {
+    prj.add_script(
+        "NestedBroadcast.s.sol",
+        r#"
+interface Vm {
+    function startBroadcast(address sender) external;
+    function stopBroadcast() external;
+}
+
+contract Counter {
+    uint256 public value;
+
+    function set(uint256 newValue) external {
+        value = newValue;
+    }
+}
+
+contract SubScript {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function run(address sender) external {
+        vm.startBroadcast(sender);
+        Counter counter = new Counter{salt: bytes32(uint256(1))}();
+        counter.set(7);
+        new Counter();
+        vm.stopBroadcast();
+    }
+}
+
+contract NestedBroadcast {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function run() external {
+        address sender = msg.sender;
+        vm.startBroadcast(sender);
+        Counter counter = new Counter();
+        vm.stopBroadcast();
+
+        new SubScript().run(sender);
+
+        vm.startBroadcast(sender);
+        counter.set(9);
+        new Counter();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+
+    for isolate in [true, false] {
+        prj.update_config(|config| config.isolate = isolate);
+        let (_api, handle) = spawn(NodeConfig::test().with_auto_impersonate(true)).await;
+        let sender = handle.dev_accounts().next().unwrap();
+        cmd.forge_fuse()
+            .args([
+                "script",
+                "script/NestedBroadcast.s.sol:NestedBroadcast",
+                "--rpc-url",
+                &handle.http_endpoint(),
+                "--broadcast",
+                "--slow",
+                "--unlocked",
+                "--sender",
+                &sender.to_string(),
+            ])
+            .assert_success();
+
+        let path = prj.root().join("broadcast/NestedBroadcast.s.sol/31337/run-latest.json");
+        let sequence: ScriptSequence<Ethereum> = foundry_common::fs::read_json_file(&path).unwrap();
+        assert_eq!(sequence.transactions.len(), 6);
+        assert_eq!(sequence.receipts.len(), 6);
+        for (nonce, transaction) in sequence.transactions.iter().enumerate() {
+            assert_eq!(transaction.transaction.nonce(), Some(nonce as u64));
+        }
+        let provider = handle.http_provider();
+        assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 6);
+        assert!(!provider.get_code_at(sender.create(3)).await.unwrap().is_empty());
+    }
 });
 
 forgetest_async!(broadcast_records_hashes_in_submission_order, |prj, cmd| {

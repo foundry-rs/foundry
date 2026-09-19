@@ -2,7 +2,7 @@
 # The on-chain deploy+verify tests share one funded deployer per network and one Etherscan key.
 # Running them concurrently collides on the account nonce and trips Etherscan's 3 calls/sec limit.
 deploy-verify = { max-threads = 1 }
-# The Tempo mainnet canaries fork a public endpoint that rate limits concurrent replays.
+# The Tempo canaries fork public endpoints that rate limit concurrent replays.
 tempo-canary = { max-threads = 1 }
 
 [profile.default]
