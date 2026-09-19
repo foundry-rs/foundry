@@ -86,10 +86,6 @@ struct RunArgs {
     rounds: usize,
     #[arg(long, default_value_t = 2)]
     warmup_rounds: usize,
-    #[arg(long, default_value_t = 0)]
-    round_offset: usize,
-    #[arg(long)]
-    warmup_only: bool,
     #[arg(long, default_value_t = 120)]
     timeout_seconds: u64,
 }

@@ -459,18 +459,13 @@ struct PreparedRun {
 }
 
 fn rounds(args: &RunArgs) -> impl Iterator<Item = (&'static str, usize)> + '_ {
-    [("warmup", args.warmup_rounds), ("measured", if args.warmup_only { 0 } else { args.rounds })]
+    [("warmup", args.warmup_rounds), ("measured", args.rounds)]
         .into_iter()
-        .flat_map(|(phase, count)| {
-            (args.round_offset..args.round_offset + count).map(move |round| (phase, round))
-        })
+        .flat_map(|(phase, count)| (0..count).map(move |round| (phase, round)))
 }
 
 pub async fn run(args: RunArgs) -> Result<()> {
-    ensure!(
-        args.timeout_seconds > 0 && (args.rounds > 0 || args.warmup_only),
-        "invalid rounds or timeout"
-    );
+    ensure!(args.timeout_seconds > 0 && args.rounds > 0, "invalid rounds or timeout");
     let manifest: Manifest = read_json(&args.manifest)?;
     validate_manifest(&manifest)?;
     let upstream = endpoint(&args.endpoint)?;
@@ -514,8 +509,8 @@ pub async fn run(args: RunArgs) -> Result<()> {
         let run_manifest = json!({"schema_version":1, "panel":manifest,"panel_sha256":manifest_hash,
             "runner":runner,
             "build":build,"binary":binary,"effective_config":effective_config,"rounds":args.rounds,"warmup_rounds":args.warmup_rounds,
-            "round_offset":args.round_offset,"timeout_seconds":args.timeout_seconds,"server_bal_source":"unknown",
-            "include_miss":args.include_miss,"warmup_only":args.warmup_only,"worker_count":1,"schedule":schedule_manifest});
+            "timeout_seconds":args.timeout_seconds,"server_bal_source":"unknown",
+            "include_miss":args.include_miss,"worker_count":1,"schedule":schedule_manifest});
         write_json(&args.output_dir.join("manifest.json"), &run_manifest)?;
         runs.push(PreparedRun { label, args, binary, root, oracles: BTreeMap::new() });
     }
@@ -788,43 +783,38 @@ fn parse_output(stdout: &[u8], stderr: &[u8]) -> (Option<u64>, Option<bool>) {
 }
 
 fn record_uncaptured(args: &RunArgs, manifest: &Manifest, case: &Case) -> Result<()> {
-    for (phase, count) in [
-        ("warmup", args.warmup_rounds),
-        ("measured", if args.warmup_only { 0 } else { args.rounds }),
-    ] {
-        for round in args.round_offset..args.round_offset + count {
-            for (order, arm) in
-                schedule(manifest.seed, round, args.include_miss).into_iter().enumerate()
-            {
-                append_sample(
-                    &args.output_dir,
-                    &results::Sample {
-                        schema_version: 1,
-                        id: format!("{}-{phase}-{round}-{order}-{}", case.id, arm.name()),
-                        case_id: case.id.clone(),
-                        phase: phase.into(),
-                        round,
-                        order,
-                        arm,
-                        actual_path: ActualPath::Failed,
-                        exit_code: None,
-                        timed_out: false,
-                        wall_time_seconds: None,
-                        observed_duration_seconds: 0.0,
-                        stdout_sha256: digest(b""),
-                        local_gas: None,
-                        execution_success: None,
-                        correctness: "capture_incomplete".into(),
-                        fault: case.fault.clone(),
-                        synthetic: arm == Arm::Miss
-                            || case.bal_response.is_some()
-                            || case.fault.is_some(),
-                        rpc_at_exit: proxy::Snapshot::default(),
-                        rpc: proxy::Snapshot::default(),
-                        bal_events: Vec::new(),
-                    },
-                )?;
-            }
+    for (phase, round) in rounds(args) {
+        for (order, arm) in
+            schedule(manifest.seed, round, args.include_miss).into_iter().enumerate()
+        {
+            append_sample(
+                &args.output_dir,
+                &results::Sample {
+                    schema_version: 1,
+                    id: format!("{}-{phase}-{round}-{order}-{}", case.id, arm.name()),
+                    case_id: case.id.clone(),
+                    phase: phase.into(),
+                    round,
+                    order,
+                    arm,
+                    actual_path: ActualPath::Failed,
+                    exit_code: None,
+                    timed_out: false,
+                    wall_time_seconds: None,
+                    observed_duration_seconds: 0.0,
+                    stdout_sha256: digest(b""),
+                    local_gas: None,
+                    execution_success: None,
+                    correctness: "capture_incomplete".into(),
+                    fault: case.fault.clone(),
+                    synthetic: arm == Arm::Miss
+                        || case.bal_response.is_some()
+                        || case.fault.is_some(),
+                    rpc_at_exit: proxy::Snapshot::default(),
+                    rpc: proxy::Snapshot::default(),
+                    bal_events: Vec::new(),
+                },
+            )?;
         }
     }
     Ok(())
@@ -953,8 +943,6 @@ mod tests {
             output_dir: directory.path().to_owned(),
             rounds: 10,
             warmup_rounds: 2,
-            round_offset: 7,
-            warmup_only: false,
             timeout_seconds: 30,
         };
         let case = Case {
@@ -997,7 +985,7 @@ mod tests {
             assert_eq!(measured.len(), 10);
             assert_eq!(
                 measured.iter().map(|sample| sample.round).collect::<BTreeSet<_>>(),
-                (7..17).collect()
+                (0..10).collect()
             );
             assert_eq!(
                 samples
@@ -1016,15 +1004,19 @@ mod tests {
             assert!(!sample.timed_out);
         }
         fs::remove_file(path).unwrap();
-        args.warmup_only = true;
+        args.warmup_rounds = 0;
+        args.rounds = 2;
+        args.include_miss = false;
         record_uncaptured(&args, &manifest, &case).unwrap();
         let raw = fs::read_to_string(directory.path().join("samples.jsonl")).unwrap();
-        let warmup = raw
+        let measured = raw
             .lines()
             .map(|line| serde_json::from_str::<Sample>(line).unwrap())
             .collect::<Vec<_>>();
-        assert_eq!(warmup.len(), 6);
-        assert!(warmup.iter().all(|sample| sample.phase == "warmup"));
+        assert_eq!(measured.len(), 4);
+        assert!(
+            measured.iter().all(|sample| sample.phase == "measured" && sample.arm != Arm::Miss)
+        );
     }
 
     #[cfg(unix)]
