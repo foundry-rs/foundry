@@ -513,6 +513,96 @@ fn quotient_bounds_do_not_require_bounded_numerators() {
 }
 
 #[test]
+fn constant_mul_div_guard_becomes_exact_overflow_bound() {
+    let mut cx = SymCx::new();
+    let value = SymExpr::var(&mut cx, "value");
+    for factor in
+        [U256::from(10), U256::from(3), U256::from(1_000_000_000_000_000_000u64), U256::MAX]
+    {
+        let scale = SymExpr::constant(&mut cx, factor);
+        let product = SymExpr::binop(&mut cx, SymBinOp::Mul, value.clone(), scale.clone());
+        let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, product, scale);
+        let guard = SymBoolExpr::eq(&mut cx, quotient, value.clone());
+        let expected =
+            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ule, &value, U256::MAX / factor);
+        for (original, expected) in
+            [(guard.clone(), expected.clone()), (guard.not(&mut cx), expected.not(&mut cx))]
+        {
+            let normalized = normalize_bool_for_solver(&mut cx, original.clone());
+            assert_eq!(normalized, expected, "factor={factor}");
+            for input in [
+                U256::ZERO,
+                U256::ONE,
+                U256::from(2),
+                U256::MAX / factor,
+                U256::MAX / factor + U256::ONE,
+                U256::ONE << 255,
+                U256::MAX,
+            ] {
+                let mut model = SymbolicModel::default();
+                assert!(value.assign_model_value(&mut model, input));
+                assert_eq!(
+                    original.eval_model(&model).unwrap(),
+                    normalized.eval_model(&model).unwrap(),
+                    "factor={factor}, input={input}",
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn constant_mul_div_guard_rewrite_excludes_unsound_shapes() {
+    let mut cx = SymCx::new();
+    let value = SymExpr::var(&mut cx, "value");
+    let other = SymExpr::var(&mut cx, "other");
+    let zero = SymExpr::zero(&mut cx);
+    let three = SymExpr::constant(&mut cx, U256::from(3));
+    let ten_value = U256::from(10);
+    let ten = SymExpr::constant(&mut cx, ten_value);
+    let rewritten =
+        SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ule, &value, U256::MAX / ten_value);
+
+    // (name, factor, division, divisor, expected side of the equality)
+    let cases = [
+        ("zero factor", zero.clone(), SymBinOp::UDiv, zero, value.clone()),
+        ("signed division", ten.clone(), SymBinOp::SDiv, ten.clone(), value.clone()),
+        ("mismatched divisor", ten.clone(), SymBinOp::UDiv, three, value.clone()),
+        ("mismatched expected value", ten.clone(), SymBinOp::UDiv, ten, other.clone()),
+        ("symbolic factor", other.clone(), SymBinOp::UDiv, other.clone(), value.clone()),
+    ];
+    for (name, factor, division, divisor, expected) in cases {
+        let product = SymExpr::binop(&mut cx, SymBinOp::Mul, value.clone(), factor);
+        let quotient = SymExpr::binop(&mut cx, division, product, divisor);
+        let guard = SymBoolExpr::eq(&mut cx, quotient, expected);
+        for original in [guard.clone(), guard.not(&mut cx)] {
+            let normalized = normalize_bool_for_solver(&mut cx, original.clone());
+            assert_ne!(normalized, rewritten, "{name}");
+            assert_ne!(normalized, rewritten.clone().not(&mut cx), "{name}");
+            for value_input in [
+                U256::ZERO,
+                U256::ONE,
+                U256::MAX / ten_value,
+                U256::MAX / ten_value + U256::ONE,
+                U256::ONE << 255,
+                U256::MAX,
+            ] {
+                for other_input in [U256::ZERO, U256::ONE, U256::from(3), U256::MAX] {
+                    let mut model = SymbolicModel::default();
+                    assert!(value.assign_model_value(&mut model, value_input));
+                    assert!(other.assign_model_value(&mut model, other_input));
+                    assert_eq!(
+                        original.eval_model(&model).unwrap(),
+                        normalized.eval_model(&model).unwrap(),
+                        "{name}: value={value_input}, other={other_input}",
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn scaled_zero_branch_proves_full_width_round_trip() {
     let mut cx = SymCx::new();
     let value = SymExpr::var(&mut cx, "credits");

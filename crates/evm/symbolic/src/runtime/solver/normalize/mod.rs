@@ -405,6 +405,17 @@ fn normalize_cmp_for_solver(
     right: SymExpr,
 ) -> SymBoolExpr {
     if op == SymCmpOp::Eq {
+        for (quotient, expected) in [(&left, &right), (&right, &left)] {
+            if let Some((denominator, value)) =
+                ConstraintContext::mul_div_identity_operands(quotient, expected)
+                && let Some(factor) = denominator.as_const().filter(|value| !value.is_zero())
+            {
+                // For constant k > 0, (x * k mod 2^256) / k == x iff x <= MAX / k.
+                // The quotient cannot exceed MAX / k; conversely this bound prevents wrapping.
+                // Retain that exact bound instead of asking SMT to solve the overflow check.
+                return SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ule, value, U256::MAX / factor);
+            }
+        }
         if right.as_const().is_some_and(|value| value.is_zero())
             && let SymExprKind::BinOp(SymBinOp::Sub, minuend, subtrahend) = left.kind()
         {
