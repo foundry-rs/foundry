@@ -1,0 +1,617 @@
+#!/usr/bin/env python3
+"""Validate the BAL benchmark against a local Anvil and synthetic BAL responses.
+
+All results are synthetic correctness checks, not archive performance evidence.
+Requires a Cast binary with PR #16931's --no-bal replay control. No patched
+binary, public RPC, or Amsterdam activation is required.
+"""
+
+import argparse
+import copy
+import hashlib
+import json
+import math
+import os
+from pathlib import Path
+import signal
+import socket
+import subprocess
+import threading
+import time
+import urllib.error
+import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+
+BAL_METHOD = "eth_getBlockAccessListByBlockHash"
+REPLAY_STATUS = b"Executing previous transactions from the block."
+BEACON = "0x000f3df6d732807ef1319fb7b8bb8522d0beac02"
+BEACON_CODE = (
+    "0x3373fffffffffffffffffffffffffffffffffffffffe14602557"
+    "60005460005260206000f35b60005460010160005500"
+)
+
+
+def require(condition, message):
+    if not condition:
+        raise RuntimeError(message)
+
+
+def write_json(path, value):
+    path.write_text(json.dumps(value, indent=2) + "\n")
+
+
+def account(address):
+    return {
+        "address": address,
+        "storageChanges": [],
+        "storageReads": [],
+        "balanceChanges": [],
+        "nonceChanges": [],
+        "codeChanges": [],
+    }
+
+
+def change(index, value):
+    return {"index": hex(index), "value": hex(value)}
+
+
+class Rpc:
+    def __init__(self, url):
+        self.url = url
+        self.next_id = 0
+
+    def __call__(self, method, params=None):
+        self.next_id += 1
+        body = json.dumps({
+            "jsonrpc": "2.0", "id": self.next_id,
+            "method": method, "params": params or [],
+        }).encode()
+        request = urllib.request.Request(
+            self.url, body, {"Content-Type": "application/json"}, method="POST"
+        )
+        with urllib.request.urlopen(request, timeout=10) as response:
+            result = json.load(response)
+        require("error" not in result, f"local fixture RPC {method}: {result.get('error')}")
+        require(result.get("id") == self.next_id, "fixture RPC response id mismatch")
+        return result["result"]
+
+    def number(self, method, params=None):
+        return int(self(method, params), 16)
+
+
+class Panel:
+    def __init__(self, rpc, hardfork):
+        self.rpc = rpc
+        self.hardfork = hardfork
+        self.sender, self.recipient = rpc("eth_accounts")[:2]
+        self.blocks = []
+        self.cases = []
+        rpc("evm_setAutomine", [False])
+
+    def send(self, nonce, to=None, data=None, value=0):
+        tx = {
+            "from": self.sender, "nonce": hex(nonce),
+            "gas": hex(1_000_000 if data or to not in [self.recipient] else 21_000),
+            "gasPrice": hex(2_000_000_000), "value": hex(value),
+        }
+        if to is not None:
+            tx["to"] = to
+        if data is not None:
+            tx["data"] = data
+        return self.rpc("eth_sendTransaction", [tx])
+
+    def mine(self):
+        self.rpc("evm_mine")
+        return self.rpc("eth_getBlockByNumber", ["latest", False])
+
+    def parent(self):
+        return self.rpc("eth_getBlockByNumber", ["latest", False])
+
+    def collect(self, label, parent, hashes, nonce, recipient=None):
+        block = self.mine()
+        require(block["transactions"] == hashes, f"{label}: unexpected transaction ordering")
+        require(block["parentHash"] == parent["hash"], f"{label}: unexpected parent")
+        beneficiary = block["miner"]
+        addresses = {self.sender, beneficiary}
+        if recipient:
+            addresses.add(recipient)
+        accounts = {address: account(address) for address in addresses}
+        balances = {
+            address: self.rpc.number("eth_getBalance", [address, parent["number"]])
+            for address in addresses
+        }
+        receipts = []
+        for index, tx_hash in enumerate(hashes):
+            receipt = self.rpc("eth_getTransactionReceipt", [tx_hash])
+            require(int(receipt["status"], 16) == 1, f"{label}: fixture transaction reverted")
+            require(int(receipt["transactionIndex"], 16) == index, "fixture index mismatch")
+            gas = int(receipt["gasUsed"], 16)
+            price = int(receipt["effectiveGasPrice"], 16)
+            balances[self.sender] -= gas * price + int(recipient is not None)
+            balances[beneficiary] += gas * (price - int(block["baseFeePerGas"], 16))
+            if recipient:
+                balances[recipient] += 1
+            for address in addresses:
+                accounts[address]["balanceChanges"].append(change(index + 1, balances[address]))
+            accounts[self.sender]["nonceChanges"].append(change(index + 1, nonce + index + 1))
+            receipts.append(receipt)
+        frozen = {
+            "block_hash": block["hash"], "block_number": int(block["number"], 16),
+            "parent_hash": parent["hash"], "targets": [],
+            "stratum": label,
+        }
+        self.blocks.append(frozen)
+        return frozen, receipts, accounts
+
+    def case(self, block, receipts, bal, index, label, fault=None):
+        receipt = receipts[index]
+        case_id = label if fault is None else f"{label}-{fault}"
+        block["targets"].append({
+            "id": case_id, "tx_hash": receipt["transactionHash"], "index": index,
+        })
+        count = len(receipts)
+        positions = [
+            name for name, position in [("first", 0), ("middle", count // 2), ("last", count - 1)]
+            if position == index
+        ]
+        case = {
+            "id": case_id, "transaction_hash": receipt["transactionHash"],
+            "block_hash": block["block_hash"], "index": index, "positions": positions,
+            "stratum": block["stratum"], "expected_receipt_gas": int(receipt["gasUsed"], 16),
+            "expected_receipt_status": True, "bal_response": copy.deepcopy(bal),
+        }
+        if fault:
+            case["fault"] = fault
+        self.cases.append(case)
+        return case
+
+    def transfers(self, count):
+        parent = self.parent()
+        nonce = self.rpc.number("eth_getTransactionCount", [self.sender, "latest"])
+        hashes = [self.send(nonce + i, to=self.recipient, value=1) for i in range(count)]
+        label = f"transfers-{count}"
+        block, receipts, accounts = self.collect(label, parent, hashes, nonce, self.recipient)
+        bal = sorted(accounts.values(), key=lambda item: item["address"])
+        for index in sorted({0, count // 2, count - 1}):
+            self.case(block, receipts, bal, index, f"{label}-{index}")
+        if count == 3 and self.hardfork == "cancun":
+            for fault in ["method_not_found", "null", "delayed_success", "malformed"]:
+                fault_bal = copy.deepcopy(bal)
+                if fault == "malformed":
+                    fault_bal = {"unexpected": True}
+                self.case(block, receipts, fault_bal, 1, "transfer-fault", fault)
+
+    def create_address(self, nonce):
+        # RLP([sender, nonce]); web3_sha3 supplies Ethereum Keccak, not NIST SHA3.
+        nonce_bytes = nonce.to_bytes((nonce.bit_length() + 7) // 8, "big")
+        encoded_nonce = nonce_bytes if 0 < nonce < 128 else bytes([0x80 + len(nonce_bytes)]) + nonce_bytes
+        payload = b"\x94" + bytes.fromhex(self.sender[2:]) + encoded_nonce
+        digest = self.rpc("web3_sha3", ["0x" + (bytes([0xC0 + len(payload)]) + payload).hex()])
+        return "0x" + digest[-40:]
+
+    def counter(self):
+        # Extend the PR's fixture to observe repeated account balance changes too.
+        self.rpc("anvil_setCode", [BEACON, BEACON_CODE])
+        nonce = self.rpc.number("eth_getTransactionCount", [self.sender, "latest"])
+        target = self.create_address(nonce)
+        # Return/log storage, the system counter, caller balance and beneficiary balance.
+        runtime = (
+            "60005460010180600055600052602060206000600073"
+            f"{BEACON[2:]}5afa503331604052413160605260806000a060806000f3"
+        )
+        length = len(runtime) // 2
+        init = f"0x600160005560{length:02x}601160003960{length:02x}6000f3{runtime}"
+        deployed = self.send(nonce, data=init)
+        self.mine()
+        require(self.rpc("eth_getTransactionReceipt", [deployed])["contractAddress"] == target,
+                "fixture deployment address differs from computed CREATE address")
+        nonce += 1
+        parent = self.mine()
+        require(self.rpc.number("eth_getStorageAt", [target, "0x0", "latest"]) == 1,
+                "counter parent storage must start at 1")
+        system_value = self.rpc.number("eth_getStorageAt", [BEACON, "0x0", "latest"]) + 1
+        hashes = [self.send(nonce + i, to=target) for i in range(3)]
+        block, receipts, accounts = self.collect("counter", parent, hashes, nonce)
+        for index, receipt in enumerate(receipts):
+            require(len(receipt["logs"]) == 1, "counter must emit exactly one log")
+            data = receipt["logs"][0]["data"][2:]
+            require(len(data) == 256 and int(data[:64], 16) == index + 2
+                    and int(data[64:128], 16) == system_value,
+                    "counter log must observe its own write and exactly one system operation")
+        target_changes = account(target)
+        target_changes["storageChanges"] = [{
+            "slot": "0x0",
+            "changes": [change(i, i + 1) for i in range(1, 4)],
+        }]
+        accounts[target] = target_changes
+        beacon_changes = account(BEACON)
+        beacon_changes["storageChanges"] = [{"slot": "0x0", "changes": [change(0, system_value)]}]
+        accounts[BEACON] = beacon_changes
+        bal = sorted(accounts.values(), key=lambda item: item["address"])
+        for index in range(3):
+            self.case(block, receipts, bal, index, f"counter-{index}")
+        missing = copy.deepcopy(bal)
+        # Preparation already applies the beacon call; omit an ordinary prefix write instead.
+        # Parent slot zero is 1, so the last transaction returns 2 instead of the correct 4.
+        next(entry for entry in missing if entry["address"] == target)["storageChanges"] = []
+        self.case(block, receipts, missing, 2, "missing-prefix-storage", "missing_slot")
+
+    def manifest(self):
+        return {
+            "schema_version": 1, "endpoint_label": f"synthetic-local-anvil-{self.hardfork}",
+            "chain_id": self.rpc.number("eth_chainId"),
+            "client_version": self.rpc("web3_clientVersion"),
+            "source_context": {
+                "synthetic": True, "hardfork": self.hardfork,
+                "server_bal_source": "synthetic_recorded_rpc",
+                "fixture_source": "benches/scripts/test-bal-bench.py",
+                "based_on": "PR #16931 crates/cast/tests/cli/run_bal.rs",
+            },
+            "seed": 7928, "blocks": self.blocks, "cases": self.cases,
+        }
+
+
+def verify(output, manifest, rounds, include_miss):
+    shanghai = manifest["source_context"]["hardfork"] == "shanghai"
+    samples = [json.loads(line) for line in (output / "samples.jsonl").read_text().splitlines()]
+    summary = json.loads((output / "summary.json").read_text())
+    comparisons = {comparison["case_id"]: comparison for comparison in summary["comparisons"]}
+    require(len(comparisons) == len(summary["comparisons"])
+            and set(comparisons) == {case["id"] for case in manifest["cases"]},
+            "summary must retain exactly one comparison per scheduled case")
+    measured = [sample for sample in samples if sample["phase"] == "measured"]
+    arms = {"auto", "replay", "miss"} if include_miss else {"auto", "replay"}
+    require(len(measured) == len(manifest["cases"]) * len(arms) * rounds,
+            "missing scheduled attempts")
+    for case in manifest["cases"]:
+        case_samples = [sample for sample in samples if sample["case_id"] == case["id"]]
+        validation = [sample for sample in case_samples if sample["phase"] == "validation"]
+        require({sample["arm"] for sample in validation} == arms and len(validation) == len(arms),
+                f"{case['id']}: missing full trace validation")
+        negative = case.get("fault") == "missing_slot"
+        for sample in case_samples:
+            prefix = f"{sample['id']}: "
+            require(sample["synthetic"], prefix + "fixture incorrectly labeled live")
+            require(not sample["timed_out"] and sample["exit_code"] == 0, prefix + "child failed")
+            require(sample["local_gas"] == case["expected_receipt_gas"], prefix + "receipt gas mismatch")
+            require(sample["execution_success"] is True, prefix + "execution status mismatch")
+            fallback = case.get("fault") in {"method_not_found", "null", "malformed"}
+            expected = "replay_no_probe" if shanghai else {
+                "auto": "replay_after_probe" if fallback else "bal_hit",
+                "miss": "replay_after_probe", "replay": "replay_no_probe",
+            }[sample["arm"]]
+            require(sample["actual_path"] == expected,
+                    prefix + f"expected {expected}, got {sample['actual_path']}")
+            bal_count = sum(value for method, value in sample["rpc"]["client_requests_by_method"].items()
+                            if "BlockAccessList" in method)
+            require(bal_count == (0 if shanghai or sample["arm"] == "replay" else 1),
+                    prefix + "BAL probe count mismatch")
+            if sample["phase"] != "oracle":
+                require(sample["correctness"] == ("correctness_blocked" if negative else "equivalent"),
+                        prefix + "full output comparison result incorrect")
+        for phase in ["validation", "measured"]:
+            hashes = {sample["stdout_sha256"] for sample in case_samples if sample["phase"] == phase}
+            require(len(hashes) == (2 if negative else 1),
+                    f"{case['id']}: {phase} output comparison differs from fixture expectation")
+        comparison = comparisons[case["id"]]
+        prefix = f"{case['id']}: summary "
+        require(comparison["synthetic"] is True and comparison["fault"] == case.get("fault"),
+                prefix + "lost synthetic/fault provenance")
+        for field in ["scheduled_pairs", "observed_auto_attempts", "observed_replay_attempts"]:
+            require(comparison[field] == rounds, prefix + field + " differs from scheduled rounds")
+        for field in ["missing_pairs", "duplicate_pairs", "unexpected_rounds"]:
+            require(comparison[field] == 0, prefix + field + " must be zero")
+        require(comparison["complete"] is (not negative), prefix + "incorrect completeness")
+        require(comparison["valid_pairs"] == (0 if negative else rounds)
+                and comparison["invalid_pairs"] == (rounds if negative else 0),
+                prefix + "incorrect valid/invalid pair counts")
+        metrics = ["auto_wall_seconds", "replay_wall_seconds", "paired_wall_delta_seconds",
+                   "speedup", "rpc_delta_per_pair"]
+        if negative:
+            require(all(comparison[field] is None for field in metrics),
+                    prefix + "incorrect prestate must not produce performance comparisons")
+        else:
+            for field in metrics[:3]:
+                require(comparison[field]["count"] == rounds, prefix + field + " missing pairs")
+            speedup = comparison["speedup"]
+            require(isinstance(speedup, (int, float)) and math.isfinite(speedup) and speedup > 0,
+                    prefix + "valid paired run must report finite positive replay/auto ratio")
+            require(math.isclose(speedup, comparison["replay_wall_seconds"]["median"]
+                                 / comparison["auto_wall_seconds"]["median"], rel_tol=1e-12),
+                    prefix + "speedup differs from paired elapsed times")
+            rpc_deltas = comparison["rpc_delta_per_pair"]
+            require(isinstance(rpc_deltas, dict) and "client_requests" in rpc_deltas
+                    and all(metric["count"] == rounds for metric in rpc_deltas.values()),
+                    prefix + "missing paired RPC overhead")
+    checks = ["same_binary_no_bal_control", "replay_zero_probe", "full_trace_and_stdout",
+              "receipt_gas_status", "first_middle_last", "single_and_large_blocks",
+              "summary_retains_pairs_and_suppresses_invalid_speedups"]
+    if shanghai:
+        checks.append("pre_cancun_all_arms_replay_without_probe")
+    else:
+        checks.extend(["unsupported_and_unusable_fallback", "delayed_success",
+                       "incomplete_bal_blocked_from_performance_claims"])
+    write_json(output.parent / "integration-verification.json", {
+        "status": "pass", "synthetic": True, "cases": len(manifest["cases"]),
+        "measured_attempts": len(measured), "all_attempts": len(samples),
+        "hardfork": manifest["source_context"]["hardfork"], "checks": checks,
+    })
+
+
+def verify_fixtures(rpc_url, manifest, cast, output):
+    """Check full state traces and mode precedence, independently of the timing runner."""
+    shanghai = manifest["source_context"]["hardfork"] == "shanghai"
+    current = {}
+    calls = []
+    lock = threading.Lock()
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *_args):
+            pass
+
+        def response(self, request):
+            if isinstance(request, list):
+                return [self.response(item) for item in request]
+            method = request["method"]
+            with lock:
+                calls.append(method)
+                case = current.copy()
+            fault = case.get("fault")
+            if method == BAL_METHOD:
+                if fault == "delayed_success":
+                    time.sleep(0.75)
+                response = {"jsonrpc": "2.0", "id": request["id"]}
+                if fault == "method_not_found":
+                    response["error"] = {"code": -32601, "message": "Method not found"}
+                else:
+                    response["result"] = None if fault == "null" else case["bal_response"]
+                return response
+            if method == "debug_traceTransaction" and case.get("null_prestate"):
+                return {"jsonrpc": "2.0", "id": request["id"], "result": None}
+            forward = urllib.request.Request(
+                rpc_url, json.dumps(request).encode(), {"Content-Type": "application/json"}
+            )
+            with urllib.request.urlopen(forward, timeout=10) as response:
+                result = json.load(response)
+            if (case.get("header_mismatch") and method in {"eth_getBlockByNumber", "eth_getBlockByHash"}
+                    and isinstance(result.get("result"), dict)
+                    and result["result"].get("hash") == case["block_hash"]):
+                result["result"]["blockAccessListHash"] = "0x" + "00" * 32
+            return result
+
+        def do_POST(self):
+            request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            result = json.dumps(self.response(request)).encode()
+            try:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(result)))
+                self.end_headers()
+                self.wfile.write(result)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    endpoint = f"http://127.0.0.1:{server.server_port}"
+    artifact_dir = output / "fixture-artifacts"
+    artifact_dir.mkdir()
+    config = output / "foundry.toml"
+    config.write_text("[profile.default]\nno_storage_caching = true\n")
+    env = {key: os.environ[key] for key in ["PATH", "HOME", "TMPDIR", "SYSTEMROOT"] if key in os.environ}
+    env.update({
+        "FOUNDRY_CONFIG": str(config.resolve()), "FOUNDRY_PROFILE": "default",
+        "FOUNDRY_NO_STORAGE_CACHING": "true", "FOUNDRY_DISABLE_NIGHTLY_WARNING": "true",
+        "NO_COLOR": "1", "CLICOLOR": "0", "TERM": "dumb", "RUST_LOG": "off",
+    })
+    completed = []
+    rpc = Rpc(rpc_url)
+    receipts = {
+        tx_hash: rpc("eth_getTransactionReceipt", [tx_hash])
+        for tx_hash in sorted({case["transaction_hash"] for case in manifest["cases"]})
+    }
+
+    def execute(case, label, flags=(), **overrides):
+        with lock:
+            current.clear()
+            current.update(case)
+            current.update(overrides)
+            calls.clear()
+        command = [str(cast.resolve()), "run", case["transaction_hash"],
+                   "--disable-external-identification", "-vvvvv", "--rpc-url", endpoint, *flags]
+        started = time.monotonic()
+        result = subprocess.run(command, env=env, cwd=output, capture_output=True, timeout=30)
+        elapsed = time.monotonic() - started
+        (artifact_dir / f"{case['id']}-{label}.stdout").write_bytes(result.stdout)
+        (artifact_dir / f"{case['id']}-{label}.stderr").write_bytes(result.stderr)
+        require(result.returncode == 0, f"{case['id']}: {label} child failed; inspect fixture-artifacts")
+        with lock:
+            observed = list(calls)
+        completed.append({
+            "case_id": case["id"], "mode": label, "flags": list(flags),
+            "rpc_methods": observed, "stdout_sha256": hashlib.sha256(result.stdout).hexdigest(),
+            "elapsed_seconds_diagnostic_only": elapsed,
+        })
+        return result, observed, elapsed
+
+    def assert_calls(observed, bal=0, prestate=0):
+        require(observed.count(BAL_METHOD) == bal, "unexpected number of BAL probes")
+        require(observed.count("debug_traceTransaction") == prestate,
+                "unexpected number of prestate requests")
+
+    def assert_receipt(result, case, compare_logs=True):
+        require(f"Gas used: {case['expected_receipt_gas']}".encode() in result.stdout.splitlines(),
+                f"{case['id']}: receipt gas mismatch")
+        require(b"Transaction successfully executed." in result.stdout.splitlines(),
+                f"{case['id']}: execution status mismatch")
+        if compare_logs:
+            expected = [entry["data"].encode() for entry in receipts[case["transaction_hash"]]["logs"]]
+            observed = [line.split(b"data: ", 1)[1] for line in result.stdout.splitlines()
+                        if b"data: " in line]
+            require(observed == expected, f"{case['id']}: node receipt logs differ from local execution")
+
+    passed = False
+    try:
+        for case in manifest["cases"]:
+            replay, observed, _ = execute(case, "replay", ["--no-bal"])
+            assert_calls(observed)
+            assert_receipt(replay, case)
+            actual, observed, elapsed = execute(case, "auto")
+            assert_calls(observed, bal=0 if shanghai else 1)
+            negative = case.get("fault") == "missing_slot"
+            assert_receipt(actual, case, compare_logs=not negative)
+            require((actual.stdout == replay.stdout) != negative,
+                    f"{case['id']}: complete trace/stdout comparison differs from expectation")
+            fallback = shanghai or case.get("fault") in {"method_not_found", "null", "malformed"}
+            require((REPLAY_STATUS in actual.stderr) == fallback,
+                    f"{case['id']}: unexpected execution path")
+            if case.get("fault") == "delayed_success":
+                require(elapsed >= 0.75, "delayed BAL completed before injected delay")
+
+        if shanghai:
+            passed = True
+            return
+
+        case = next(case for case in manifest["cases"] if case["id"] == "counter-2")
+        replay, _, _ = execute(case, "mode-replay", ["--no-bal"])
+        quick, observed, _ = execute(case, "quick", ["--quick"])
+        assert_calls(observed)
+        require(quick.stdout != replay.stdout, "quick fixture must observe skipped prefix state")
+        for label, flags in [
+            ("quick-no-bal", ["--quick", "--no-bal"]),
+            ("quick-prestate", ["--quick", "--prestate-tracer"]),
+        ]:
+            actual, observed, _ = execute(case, label, flags)
+            assert_calls(observed)
+            require(actual.stdout == quick.stdout, f"{label}: quick semantics changed")
+        for label, flags, overrides, bal, fallback in [
+            ("prestate", ["--prestate-tracer"], {}, 0, False),
+            ("prestate-bal", ["--prestate-tracer"], {"null_prestate": True}, 1, False),
+            ("prestate-no-bal", ["--prestate-tracer", "--no-bal"],
+             {"null_prestate": True}, 0, True),
+            ("prestate-replay", ["--prestate-tracer"],
+             {"null_prestate": True, "fault": "null"}, 1, True),
+        ]:
+            actual, observed, _ = execute(case, label, flags, **overrides)
+            assert_calls(observed, bal=bal, prestate=1)
+            require(actual.stdout == replay.stdout, f"{label}: full trace differs from replay")
+            require((REPLAY_STATUS in actual.stderr) == fallback, f"{label}: wrong execution path")
+            if bal:
+                require(observed.index("debug_traceTransaction") < observed.index(BAL_METHOD),
+                        f"{label}: prestate must be attempted before BAL")
+        actual, observed, _ = execute(case, "header-mismatch", header_mismatch=True)
+        assert_calls(observed, bal=1)
+        require(actual.stdout == replay.stdout and REPLAY_STATUS in actual.stderr,
+                "header hash mismatch must fall back to equivalent replay")
+        passed = True
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+        checks = ["same_binary_no_bal_control", "full_trace_return_logs_storage",
+                  "receipt_gas_status_logs"]
+        if shanghai:
+            checks.append("pre_cancun_replay_without_probe")
+        else:
+            checks.extend(["repeated_storage_and_account_changes", "pre_block_system_operation_once",
+                           "pre_amsterdam_provider_support", "quick_and_prestate_precedence",
+                           "header_hash_mismatch_fallback", "missing_prefix_storage_divergence_is_detected"])
+        write_json(output / "fixture-verification.json", {
+            "status": "pass" if passed else "fail", "synthetic": True,
+            "cast_sha256": hashlib.sha256(cast.read_bytes()).hexdigest(), "attempts": completed,
+            "hardfork": manifest["source_context"]["hardfork"], "checks": checks,
+        })
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--anvil", type=Path, default=Path("target/debug/anvil"))
+    parser.add_argument("--runner", type=Path, default=Path("target/debug/foundry-bal-bench"))
+    parser.add_argument("--build-manifest", type=Path)
+    parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--large-transactions", type=int, default=64)
+    parser.add_argument("--rounds", type=int, default=1)
+    parser.add_argument("--hardfork", choices=["cancun", "shanghai"], default="cancun",
+                        help="Shanghai checks the pre-Cancun no-probe path with transfer fixtures")
+    parser.add_argument("--fixtures-only", action="store_true",
+                        help="validate fixtures and mode precedence without running timing samples")
+    parser.add_argument("--include-miss", action="store_true",
+                        help="also exercise the runner's injected method-not-found arm")
+    parser.add_argument("--cast", type=Path, required=True,
+                        help="same Cast binary for default and --no-bal replay")
+    args = parser.parse_args()
+    help_result = subprocess.run([str(args.cast.resolve()), "run", "--help"],
+                                 capture_output=True, timeout=20, check=True)
+    require(b"--no-bal" in help_result.stdout,
+            "Cast lacks --no-bal; use PR #16931 or a newer build")
+    require(args.large_transactions >= 4, "large block must contain at least four transactions")
+    require(args.rounds > 0, "rounds must be positive")
+    require(not args.output_dir.exists(), "output directory already exists")
+    args.output_dir.mkdir(parents=True)
+    with socket.socket() as reservation:
+        reservation.bind(("127.0.0.1", 0))
+        port = reservation.getsockname()[1]
+    rpc_url = f"http://127.0.0.1:{port}"
+    rpc = Rpc(rpc_url)
+    log = (args.output_dir / "anvil.log").open("wb")
+    anvil = subprocess.Popen([
+        str(args.anvil.resolve()), "--host", "127.0.0.1", "--port", str(port),
+        "--hardfork", args.hardfork, "--chain-id", "1" if args.hardfork == "shanghai" else "31337",
+        "--timestamp", "1700000000", "--silent",
+    ], stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+    try:
+        deadline = time.monotonic() + 20
+        while True:
+            require(anvil.poll() is None, "Anvil exited before fixture setup; inspect anvil.log")
+            try:
+                rpc("eth_chainId")
+                break
+            except (urllib.error.URLError, ConnectionError):
+                require(time.monotonic() < deadline, "Anvil startup timed out")
+                time.sleep(0.05)
+        panel = Panel(rpc, args.hardfork)
+        for count in [1, 3, args.large_transactions]:
+            panel.transfers(count)
+        if args.hardfork == "cancun":
+            panel.counter()
+        manifest = panel.manifest()
+        manifest_path = args.output_dir / "panel.json"
+        write_json(manifest_path, manifest)
+        verify_fixtures(rpc_url, manifest, args.cast, args.output_dir.resolve())
+        if args.fixtures_only:
+            print(f"PASS: {len(manifest['cases'])} synthetic fixtures; artifacts: {args.output_dir}")
+            return
+        env = os.environ.copy()
+        env["BAL_BENCH_LOCAL_FIXTURE_RPC"] = rpc_url
+        env["FOUNDRY_DISABLE_NIGHTLY_WARNING"] = "true"
+        command = [
+                str(args.runner.resolve()), "run", "--manifest", str(manifest_path.resolve()),
+                "--cast", str(args.cast.resolve()),
+                "--rpc-env", "BAL_BENCH_LOCAL_FIXTURE_RPC", "--rounds", str(args.rounds),
+                "--warmup-rounds", "0", "--timeout-seconds", "30",
+                "--output-dir", str((args.output_dir / "results").resolve()),
+        ]
+        if args.build_manifest:
+            command += ["--build-manifest", str(args.build_manifest.resolve())]
+        if args.include_miss:
+            command.append("--include-miss")
+        with (args.output_dir / "runner.log").open("wb") as runner_log:
+            subprocess.run(command, env=env, stdout=runner_log, stderr=subprocess.STDOUT,
+                           check=True, timeout=1200)
+        verify(args.output_dir / "results", manifest, args.rounds, args.include_miss)
+        print(f"PASS: {len(manifest['cases'])} synthetic cases; artifacts: {args.output_dir}")
+    finally:
+        if anvil.poll() is None:
+            os.killpg(anvil.pid, signal.SIGTERM)
+            try:
+                anvil.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                os.killpg(anvil.pid, signal.SIGKILL)
+                anvil.wait()
+        log.close()
+
+
+if __name__ == "__main__":
+    main()

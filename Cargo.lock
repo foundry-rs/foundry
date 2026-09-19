@@ -5529,6 +5529,8 @@ dependencies = [
 name = "foundry-bench"
 version = "1.8.4"
 dependencies = [
+ "alloy-primitives",
+ "axum",
  "chrono",
  "clap",
  "color-eyre",
@@ -5536,13 +5538,20 @@ dependencies = [
  "eyre",
  "foundry-common",
  "foundry-compilers",
+ "foundry-config",
  "foundry-test-utils",
+ "futures",
+ "hyper",
+ "hyper-util",
  "libc",
  "once_cell",
  "rayon",
+ "reqwest 0.13.5",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tempfile",
+ "tokio",
 ]
 
 [[package]]

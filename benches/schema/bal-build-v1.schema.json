@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/foundry-rs/foundry/benches/schema/bal-build-v1.schema.json",
+  "title": "BAL benchmark Cast build v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "source_sha", "cargo_lock_sha256",
+    "rustc", "build_argv", "build_env", "cast"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "source_sha": { "$ref": "#/$defs/gitHash" },
+    "cargo_lock_sha256": { "$ref": "#/$defs/sha256" },
+    "rustc": { "$ref": "#/$defs/nonEmptyString" },
+    "build_argv": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/nonEmptyString" }
+    },
+    "build_env": {
+      "type": "object",
+      "propertyNames": {
+        "enum": [
+          "PATH", "HOME", "USER", "TMPDIR", "TEMP", "TMP", "CARGO_HOME", "RUSTUP_HOME",
+          "RUSTUP_TOOLCHAIN", "RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS", "CARGO_BUILD_JOBS",
+          "CC", "CXX", "AR", "SDKROOT", "MACOSX_DEPLOYMENT_TARGET", "PKG_CONFIG_PATH",
+          "SOURCE_DATE_EPOCH", "CARGO_INCREMENTAL", "FOUNDRY_DISABLE_NIGHTLY_WARNING",
+          "CARGO_TARGET_DIR"
+        ]
+      },
+      "additionalProperties": { "type": "string" }
+    },
+    "cast": { "$ref": "#/$defs/binary" }
+  },
+  "$defs": {
+    "nonEmptyString": { "type": "string", "minLength": 1 },
+    "gitHash": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "binary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "version"],
+      "properties": {
+        "path": { "$ref": "#/$defs/nonEmptyString" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "version": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    }
+  }
+}

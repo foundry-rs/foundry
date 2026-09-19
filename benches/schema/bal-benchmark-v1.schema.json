@@ -1,0 +1,173 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/foundry-rs/foundry/benches/schema/bal-benchmark-v1.schema.json",
+  "title": "BAL benchmark frozen panel or sample v1",
+  "oneOf": [{ "$ref": "#/$defs/panel" }, { "$ref": "#/$defs/sample" }],
+  "$defs": {
+    "text": { "type": "string", "minLength": 1 },
+    "hash": { "type": "string", "pattern": "^0x[0-9a-fA-F]{64}$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "count": { "type": "integer", "minimum": 0 },
+    "nullableCount": { "type": ["integer", "null"], "minimum": 0 },
+    "nullableSeconds": { "type": ["number", "null"], "minimum": 0 },
+    "methodCounts": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/count" }
+    },
+    "panel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "endpoint_label", "chain_id", "client_version", "source_context", "seed", "blocks", "cases"],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "endpoint_label": { "$ref": "#/$defs/text" },
+        "chain_id": { "$ref": "#/$defs/count" },
+        "client_version": { "$ref": "#/$defs/text" },
+        "source_context": { "type": "object" },
+        "seed": { "$ref": "#/$defs/count" },
+        "blocks": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/block" } },
+        "cases": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/case" } }
+      }
+    },
+    "block": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["block_hash", "block_number", "parent_hash", "targets", "stratum"],
+      "properties": {
+        "block_hash": { "$ref": "#/$defs/hash" },
+        "block_number": { "$ref": "#/$defs/count" },
+        "parent_hash": { "$ref": "#/$defs/hash" },
+        "stratum": { "$ref": "#/$defs/text" },
+        "targets": {
+          "type": "array", "minItems": 1,
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["id", "tx_hash", "index"],
+            "properties": {
+              "id": { "$ref": "#/$defs/text" },
+              "tx_hash": { "$ref": "#/$defs/hash" },
+              "index": { "$ref": "#/$defs/count" }
+            }
+          }
+        }
+      }
+    },
+    "case": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "transaction_hash", "block_hash", "index", "positions", "stratum", "expected_receipt_gas", "expected_receipt_status"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-zA-Z0-9_-]+$" },
+        "transaction_hash": { "$ref": "#/$defs/hash" },
+        "block_hash": { "$ref": "#/$defs/hash" },
+        "index": { "$ref": "#/$defs/count" },
+        "positions": { "type": "array", "items": { "$ref": "#/$defs/text" } },
+        "stratum": { "$ref": "#/$defs/text" },
+        "expected_receipt_gas": { "$ref": "#/$defs/nullableCount" },
+        "expected_receipt_status": { "type": ["boolean", "null"] },
+        "capture_error": { "$ref": "#/$defs/text" },
+        "bal_response": {},
+        "fault": { "enum": ["method_not_found", "null", "delayed_success", "malformed", "missing_slot"] }
+      }
+    },
+    "sample": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "schema_version", "id", "case_id", "phase", "round", "order", "arm", "actual_path", "exit_code", "timed_out",
+        "wall_time_seconds", "observed_duration_seconds", "stdout_sha256", "local_gas", "execution_success", "correctness",
+        "fault", "synthetic", "rpc_at_exit", "rpc", "bal_events"
+      ],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "id": { "$ref": "#/$defs/text" },
+        "case_id": { "$ref": "#/$defs/text" },
+        "phase": { "enum": ["validation", "oracle", "warmup", "measured"] },
+        "round": { "$ref": "#/$defs/count" },
+        "order": { "type": "integer", "minimum": 0, "maximum": 2 },
+        "arm": { "enum": ["auto", "miss", "replay"] },
+        "actual_path": { "enum": ["bal_hit", "replay_after_probe", "replay_no_probe", "failed", "unknown"] },
+        "exit_code": { "type": ["integer", "null"] },
+        "timed_out": { "type": "boolean" },
+        "wall_time_seconds": { "$ref": "#/$defs/nullableSeconds" },
+        "observed_duration_seconds": { "type": "number", "minimum": 0 },
+        "stdout_sha256": { "$ref": "#/$defs/sha256" },
+        "local_gas": { "$ref": "#/$defs/nullableCount" },
+        "execution_success": { "type": ["boolean", "null"] },
+        "correctness": { "enum": ["unchecked", "equivalent", "correctness_blocked", "invalid_path", "capture_incomplete"] },
+        "fault": { "type": ["string", "null"] },
+        "synthetic": { "type": "boolean" },
+        "rpc_at_exit": { "$ref": "#/$defs/snapshot" },
+        "rpc": { "$ref": "#/$defs/snapshot" },
+        "bal_events": { "type": "array", "items": { "$ref": "#/$defs/rpcEvent" } },
+        "source_sample_id": { "$ref": "#/$defs/text" },
+        "source_run_directory": { "$ref": "#/$defs/text" }
+      },
+      "allOf": [{
+        "if": { "properties": { "timed_out": { "const": true } } },
+        "then": { "properties": { "wall_time_seconds": { "type": "null" } } }
+      }]
+    },
+    "snapshot": {
+      "type": "object", "additionalProperties": false,
+      "required": ["client_requests_by_method", "upstream_requests_by_method", "client_http_exchanges", "upstream_http_exchanges", "injected_responses", "client_response_body_bytes", "upstream_response_body_bytes", "repeated_requests", "errors", "active_http_exchanges", "response_analysis_complete"],
+      "properties": {
+        "client_requests_by_method": { "$ref": "#/$defs/methodCounts" },
+        "upstream_requests_by_method": { "$ref": "#/$defs/methodCounts" },
+        "client_http_exchanges": { "$ref": "#/$defs/count" },
+        "upstream_http_exchanges": { "$ref": "#/$defs/count" },
+        "injected_responses": { "$ref": "#/$defs/count" },
+        "client_response_body_bytes": { "$ref": "#/$defs/count" },
+        "upstream_response_body_bytes": { "$ref": "#/$defs/count" },
+        "repeated_requests": { "$ref": "#/$defs/count" },
+        "errors": { "$ref": "#/$defs/count" },
+        "active_http_exchanges": { "$ref": "#/$defs/count" },
+        "response_analysis_complete": { "type": "boolean" }
+      }
+    },
+    "bodyMetrics": {
+      "type": "object", "additionalProperties": false,
+      "required": ["body_bytes", "completion", "elapsed_seconds", "content_encoding", "automatically_decompressed", "completed_during_cleanup", "cleanup_body_bytes"],
+      "properties": {
+        "body_bytes": { "$ref": "#/$defs/count" },
+        "completion": { "enum": ["pending", "eof", "dropped", "transport_error", "cancelled"] },
+        "elapsed_seconds": { "$ref": "#/$defs/nullableSeconds" },
+        "content_encoding": { "$ref": "#/$defs/text" },
+        "automatically_decompressed": { "type": "boolean" },
+        "completed_during_cleanup": { "type": "boolean" },
+        "cleanup_body_bytes": { "$ref": "#/$defs/count" }
+      }
+    },
+    "rpcCall": {
+      "type": "object", "additionalProperties": false,
+      "required": ["method", "id", "params", "forwarded", "injected", "repeated", "response", "error_code", "result_json_bytes"],
+      "properties": {
+        "method": { "$ref": "#/$defs/text" },
+        "id": {},
+        "params": {},
+        "forwarded": { "type": "boolean" },
+        "injected": { "type": "boolean" },
+        "repeated": { "type": "boolean" },
+        "response": { "enum": ["unobserved", "result", "null", "error", "missing", "malformed", "ambiguous", "notification"] },
+        "error_code": { "type": ["integer", "null"] },
+        "result_json_bytes": { "$ref": "#/$defs/nullableCount" }
+      }
+    },
+    "rpcEvent": {
+      "type": "object", "additionalProperties": false,
+      "required": ["exchange_id", "batch", "calls", "client_request_body_bytes", "upstream_request_body_bytes", "upstream_http_exchanges", "http_status", "upstream_http_status", "response", "upstream", "response_transformed", "issues"],
+      "properties": {
+        "exchange_id": { "$ref": "#/$defs/count" },
+        "batch": { "type": "boolean" },
+        "calls": { "type": "array", "items": { "$ref": "#/$defs/rpcCall" } },
+        "client_request_body_bytes": { "$ref": "#/$defs/count" },
+        "upstream_request_body_bytes": { "$ref": "#/$defs/count" },
+        "upstream_http_exchanges": { "$ref": "#/$defs/count" },
+        "http_status": { "type": ["integer", "null"], "minimum": 100, "maximum": 599 },
+        "upstream_http_status": { "type": ["integer", "null"], "minimum": 100, "maximum": 599 },
+        "response": { "$ref": "#/$defs/bodyMetrics" },
+        "upstream": { "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/bodyMetrics" }] },
+        "response_transformed": { "type": "boolean" },
+        "issues": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}
