@@ -53,6 +53,7 @@ const SESSION_CHILD_SIGNER_ENV: &[&str] = &[
     "TEMPO_ACCESS_KEY",
     "TEMPO_ROOT_ACCOUNT",
     "AWS_KMS_KEY_ID",
+    "AWS_KMS_KEY_IDS",
     "GCP_PROJECT_ID",
     "GCP_LOCATION",
     "GCP_KEY_RING",
@@ -817,7 +818,8 @@ mod tests {
         }
 
         // Remote signers resolve their credentials from the environment as well.
-        for key in ["AWS_KMS_KEY_ID", "GCP_KEY_NAME", "TURNKEY_API_PRIVATE_KEY"] {
+        for key in ["AWS_KMS_KEY_ID", "AWS_KMS_KEY_IDS", "GCP_KEY_NAME", "TURNKEY_API_PRIVATE_KEY"]
+        {
             assert_eq!(
                 command_env(&child, key),
                 Some(None),
