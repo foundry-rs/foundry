@@ -75,7 +75,7 @@ use alloy_network::{
     UnknownTypedTransaction,
 };
 use alloy_primitives::{
-    Address, B256, Bloom, Bytes, Signature, TxKind, U64, U256, address, hex, keccak256,
+    Address, B256, Bloom, Bytes, Signature, TxKind, U256, address, hex, keccak256,
     map::{AddressMap, B256Set, HashMap, HashSet},
 };
 use alloy_rlp::{Decodable, Encodable};
@@ -2067,12 +2067,17 @@ impl<N: Network> Backend<N> {
     /// Returns the block number for the given block id
     pub fn convert_block_number(&self, block: Option<BlockNumber>) -> u64 {
         let current = self.best_number();
+        // The chain starts at the configured genesis number, so `earliest` and the epoch-based
+        // tags never resolve below it.
+        let genesis = self.genesis_number();
         match block.unwrap_or(BlockNumber::Latest) {
             BlockNumber::Latest | BlockNumber::Pending => current,
-            BlockNumber::Earliest => 0,
+            BlockNumber::Earliest => genesis,
             BlockNumber::Number(num) => num,
-            BlockNumber::Safe => current.saturating_sub(self.slots_in_an_epoch),
-            BlockNumber::Finalized => current.saturating_sub(self.slots_in_an_epoch * 2),
+            BlockNumber::Safe => current.saturating_sub(self.slots_in_an_epoch).max(genesis),
+            BlockNumber::Finalized => {
+                current.saturating_sub(self.slots_in_an_epoch * 2).max(genesis)
+            }
         }
     }
 
@@ -2423,13 +2428,7 @@ impl<N: Network> Backend<N> {
                         .header
                         .number
                 }
-                BlockId::Number(num) => match num {
-                    BlockNumber::Latest | BlockNumber::Pending => current,
-                    BlockNumber::Earliest => U64::ZERO.to::<u64>(),
-                    BlockNumber::Number(num) => num,
-                    BlockNumber::Safe => current.saturating_sub(self.slots_in_an_epoch),
-                    BlockNumber::Finalized => current.saturating_sub(self.slots_in_an_epoch * 2),
-                },
+                BlockId::Number(num) => self.convert_block_number(Some(num)),
             };
 
         if requested > current {
