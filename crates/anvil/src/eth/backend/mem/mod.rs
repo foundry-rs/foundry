@@ -2944,8 +2944,9 @@ impl<N: Network> Backend<N> {
                 .create_evm_with_inspector(db, base_env, inspector);
             evm.ctx_mut().cfg.tx_chain_id_check = true;
             self.inject_precompiles(evm.precompiles_mut(), evm_env);
-            let executor = AnvilBlockExecutor::new(evm, parent_hash, spec_id, transitions)
+            let mut executor = AnvilBlockExecutor::new(evm, parent_hash, spec_id, transitions)
                 .with_max_blob_gas_per_block(gas_config.max_blob_gas_per_block);
+            executor.set_base_upgrade(upgrade);
             return execute!(executor);
         }
 
@@ -2960,7 +2961,7 @@ impl<N: Network> Backend<N> {
             self.inject_precompiles(evm.precompiles_mut(), evm_env);
             let mut executor = AnvilBlockExecutor::new(evm, parent_hash, spec_id, transitions)
                 .with_max_blob_gas_per_block(gas_config.max_blob_gas_per_block);
-            executor.set_optimism_hardfork(hardfork.into());
+            executor.set_optimism_hardfork(hardfork);
             return execute!(executor);
         }
 
@@ -5742,8 +5743,9 @@ where
             if let Some(block_number) = arbitrum_rpc_block_number {
                 self.inject_arbitrum_precompile_at_block(evm.precompiles_mut(), block_number);
             }
-            let executor = AnvilBlockExecutor::new(evm, parent_hash, spec_id, transitions)
+            let mut executor = AnvilBlockExecutor::new(evm, parent_hash, spec_id, transitions)
                 .with_state_changes();
+            executor.set_base_upgrade(upgrade);
             return execute!(executor);
         }
 
@@ -5762,7 +5764,7 @@ where
             // Historical replay has no local blob budget. OP still configures its Jovian DA budget.
             let mut executor = AnvilBlockExecutor::new(evm, parent_hash, spec_id, transitions)
                 .with_state_changes();
-            executor.set_optimism_hardfork(hardfork.into());
+            executor.set_optimism_hardfork(hardfork);
             return execute!(executor);
         }
 
