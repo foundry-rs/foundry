@@ -3,7 +3,7 @@
 
 use super::{
     branch_always_exits, is_require_or_assert, is_sender_member, lhs_local_var, loop_stmts,
-    stmt_expr, underlying_var, visit_stmts,
+    stmt_expr, tuple_elems, underlying_var, visit_stmts,
 };
 use solar::sema::{
     Gcx,
@@ -134,22 +134,45 @@ fn update_sender_aliases<'gcx>(
     stmt: &Stmt<'gcx>,
     aliases: &mut HashSet<VariableId>,
 ) {
-    let (var_id, value) = match stmt.kind {
-        StmtKind::DeclSingle(var_id) => (Some(var_id), gcx.hir.variable(var_id).initializer),
-        StmtKind::Expr(expr) => match &expr.peel_parens().kind {
-            ExprKind::Assign(lhs, _, rhs) => (lhs_local_var(gcx, lhs), Some(*rhs)),
-            _ => (None, None),
-        },
-        _ => (None, None),
-    };
-    if let Some(var_id) = var_id
-        && let Some(value) = value
-    {
-        if expr_reads_sender(gcx, value, &mut HashSet::new(), aliases) {
+    let mut update = |var_id: VariableId, value: Option<&Expr<'_>>| {
+        if value.is_some_and(|value| expr_reads_sender(gcx, value, &mut HashSet::new(), aliases)) {
             aliases.insert(var_id);
         } else {
             aliases.remove(&var_id);
         }
+    };
+    // A tuple literal assigns each local from its own element; any other value, such as a call
+    // returning a tuple, applies to all of them.
+    let element = |value: &'gcx Expr<'gcx>, i: usize| {
+        tuple_elems(value).map_or(Some(value), |elems| elems.get(i).copied().flatten())
+    };
+    match stmt.kind {
+        StmtKind::DeclSingle(var_id) => {
+            if let Some(value) = gcx.hir.variable(var_id).initializer {
+                update(var_id, Some(value));
+            }
+        }
+        StmtKind::DeclMulti(var_ids, value) => {
+            for (i, var_id) in var_ids.iter().enumerate() {
+                if let Some(var_id) = var_id {
+                    update(*var_id, element(value, i));
+                }
+            }
+        }
+        StmtKind::Expr(expr) => {
+            if let ExprKind::Assign(lhs, _, rhs) = &expr.peel_parens().kind {
+                if let Some(lhs_elems) = tuple_elems(lhs) {
+                    for (i, lhs) in lhs_elems.iter().enumerate() {
+                        if let Some(var_id) = lhs.and_then(|lhs| lhs_local_var(gcx, lhs)) {
+                            update(var_id, element(rhs, i));
+                        }
+                    }
+                } else if let Some(var_id) = lhs_local_var(gcx, lhs) {
+                    update(var_id, Some(rhs));
+                }
+            }
+        }
+        _ => {}
     }
 }
 
