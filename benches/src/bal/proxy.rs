@@ -66,7 +66,6 @@ pub struct BodyMetrics {
     pub completion: Completion,
     pub elapsed_seconds: Option<f64>,
     pub content_encoding: String,
-    pub automatically_decompressed: bool,
     pub completed_during_cleanup: bool,
     pub cleanup_body_bytes: u64,
 }
@@ -78,7 +77,6 @@ impl Default for BodyMetrics {
             completion: Completion::Pending,
             elapsed_seconds: None,
             content_encoding: "identity".into(),
-            automatically_decompressed: false,
             completed_during_cleanup: false,
             cleanup_body_bytes: 0,
         }
@@ -127,7 +125,6 @@ pub struct RpcEvent {
     pub upstream_http_status: Option<u16>,
     pub response: BodyMetrics,
     pub upstream: Option<BodyMetrics>,
-    pub response_transformed: bool,
     pub issues: Vec<String>,
 }
 
@@ -327,7 +324,6 @@ impl Exchange {
                     upstream_http_status: None,
                     response: BodyMetrics::default(),
                     upstream: None,
-                    response_transformed: false,
                     issues: Vec::new(),
                 },
                 started: Instant::now(),
@@ -877,7 +873,6 @@ mod tests {
             assert_eq!(session.snapshot.errors, 0);
             let event = &session.events[0];
             assert!(event.batch);
-            assert!(!event.response_transformed);
             assert_eq!(event.client_request_body_bytes, request_body.len() as u64);
             assert_eq!(event.upstream_request_body_bytes, request_body.len() as u64);
             assert_eq!(event.response.completion, Completion::Eof);
@@ -1101,7 +1096,6 @@ mod tests {
         assert_eq!(response.bytes().await.unwrap(), Bytes::from_static(b"encoded fixture"));
         let session = proxy.finish().await;
         assert_eq!(session.events[0].response.content_encoding, "gzip");
-        assert!(!session.events[0].response.automatically_decompressed);
         assert_eq!(session.events[0].response.body_bytes, 15);
         assert_eq!(session.events[0].calls[0].response, RpcResponse::Unobserved);
         assert!(session.events[0].calls[0].result_json_bytes.is_none());

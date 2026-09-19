@@ -1031,7 +1031,6 @@ mod tests {
                         ..BodyMetrics::default()
                     },
                     upstream: None,
-                    response_transformed: false,
                     issues: Vec::new(),
                 }];
                 let mut replay = sample(ActualPath::ReplayNoProbe, Some(5.0 + 2.0 * round as f64));
