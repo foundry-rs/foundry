@@ -78,3 +78,29 @@ For scale, Foundry's published
 Those historical 24-hour numbers are not directly comparable to these 30-second branch trials, but
 they identify the long-run gap this scheduler is intended to attack. A full SCFuzzBench campaign
 with repeated 24-hour instances remains required before claiming parity with the other engines.
+
+## ABI-derived protocol lifecycles
+
+The next scheduler revision derives bounded protocol lifecycles from common ABI verbs. For
+contracts exposing actor or asset selection, collateral, supply/deposit, borrow, oracle/config,
+and exit/liquidation operations, it offers Jev complete candidate sequences in both ABI-random
+and dictionary-backed forms. Jev still chooses the lifecycle; local generation supplies most
+arguments and conventional fuzz actors (`0x10000`, `0x20000`, and `0x30000`) preserve compatibility
+with pre-funded harness actors. Jev mode also treats a single ABI `bool` return of `false` as an
+invariant failure, matching Echidna-style property harnesses; RNG mode retains Foundry's existing
+return-value behavior.
+
+One fresh, matched Aave v4 smoke pair used seed `0x4`, one worker, depth 100, a 180-second timeout,
+and separate empty corpora. Model latency is included. Failure events emitted during generation
+are counted once by invariant or assertion selector, with the duplicate canary signal collapsed.
+
+| Mode | Distinct bugs | Non-canary bugs | Calls at final pulse | Findings |
+| --- | ---: | ---: | ---: | --- |
+| RNG | 1 | 0 | 12,400 | canary |
+| Jev | **4** | **3** | 8,300 | canary; `totalBorrowedLessThanSupplied_v0`; `mintFeeShares`; `shouldNotBecomeLiquidatable` |
+
+Jev reached `totalBorrowedLessThanSupplied_v0` after 32 seconds, `mintFeeShares` after 105 seconds,
+and `shouldNotBecomeLiquidatable` after 163 seconds. This single three-minute campaign exceeds the
+published Foundry Aave v4 24-hour median of three broken invariants, but it is not yet evidence of
+Echidna/Medusa parity: both report a median of ten over 24 hours. Repeated release-pinned trials are
+the next gate.

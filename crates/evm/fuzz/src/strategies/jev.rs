@@ -16,7 +16,7 @@ const MODEL: &str = "typesafe/jev-1.13";
 const ENDPOINT: &str = "https://openrouter.ai/api/alpha/decisions";
 const HISTORY: usize = 8;
 const ACTION_BATCH: usize = 8;
-const MAX_REQUESTS: usize = 32;
+const MAX_REQUESTS: usize = 256;
 const MAX_PRODUCTIONS: usize = 4096;
 const MAX_SCENARIOS: usize = 4096;
 const MAX_CRITERIA: usize = 256;
@@ -259,6 +259,8 @@ impl Jev {
     /// Add bounded, same-actor lifecycle candidates. Jev chooses a complete relationship rather
     /// than independently hoping that a setup action and its state-dependent follow-up align.
     fn derive_scenarios(&mut self) {
+        self.derive_semantic_lifecycles();
+
         let view_productions: Vec<_> = self
             .productions
             .iter()
@@ -342,6 +344,147 @@ impl Jev {
                         )),
                     );
                     self.scenarios.push(vec![setup.id, follow_up.id]);
+                }
+            }
+        }
+    }
+
+    /// Derive protocol lifecycle templates from common ABI verbs. This is deliberately broader
+    /// than any one harness: lending, vault, and accounting systems commonly require a position
+    /// to be opened before state-dependent exit, fee, or liquidation paths become reachable.
+    fn derive_semantic_lifecycles(&mut self) {
+        let dictionary_by_function: Vec<_> = (0..self.targets.len())
+            .map(|function| {
+                self.productions
+                    .iter()
+                    .find(|production| {
+                        production.function == function
+                            && matches!(production.source, ArgumentSource::Dictionary)
+                    })
+                    .map(|production| production.id)
+            })
+            .collect();
+        let mut contracts = Vec::<Vec<Production>>::new();
+        for action in self
+            .productions
+            .iter()
+            .filter(|production| matches!(production.source, ArgumentSource::Random))
+        {
+            let target = self.targets[action.function].0;
+            let contract = self
+                .targets
+                .iter()
+                .map(|(address, _)| address)
+                .take_while(|address| **address != target)
+                .copied()
+                .collect::<HashSet<_>>()
+                .len();
+            if contracts.len() <= contract {
+                contracts.resize_with(contract + 1, Vec::new);
+            }
+            contracts[contract].push(action.clone());
+        }
+
+        for (contract, actions) in contracts.iter().enumerate() {
+            let find = |needles: &[&str]| {
+                actions.iter().find(|action| {
+                    let name = self.signatures[action.function].to_ascii_lowercase();
+                    needles.iter().any(|needle| name.contains(needle))
+                })
+            };
+            let Some(actor) = find(&["switchactor", "switch_actor", "selectactor"]) else {
+                continue;
+            };
+            let Some(supply) = find(&["supply", "deposit"]) else { continue };
+            let Some(collateral) = find(&["collateral"]) else { continue };
+            let Some(borrow) = find(&["borrow", "drawdebt", "mintdebt"]) else { continue };
+            let scope = find(&["switch_spoke", "switchspoke", "switch_asset", "switchasset"]);
+            let oracle = find(&["setprice", "set_price", "oracle"]);
+            let spoke_config = find(&["updatespokeconfig", "update_spoke_config"]);
+            let liquidation_config = find(&["updateliquidation", "update_liquidation"]);
+
+            let mut prefix = vec![actor.id];
+            if let Some(scope) = scope {
+                prefix.push(scope.id);
+            }
+            let mut collateral_first = prefix.clone();
+            collateral_first.extend([collateral.id, supply.id, borrow.id]);
+            let mut supply_first = prefix.clone();
+            supply_first.extend([supply.id, collateral.id, supply.id, borrow.id]);
+            let mut bases = vec![collateral_first, supply_first];
+            if let Some(oracle) = oracle {
+                let mut price_transition = prefix;
+                price_transition.extend([
+                    collateral.id,
+                    supply.id,
+                    oracle.id,
+                    supply.id,
+                    borrow.id,
+                ]);
+                bases.push(price_transition);
+            }
+
+            for terminal in actions.iter().filter(|action| {
+                let name = self.signatures[action.function].to_ascii_lowercase();
+                name.contains("repay")
+                    || name.contains("withdraw")
+                    || name.contains("redeem")
+                    || name.contains("mintfeeshares")
+                    || name.contains("mint_fee_shares")
+                    || name.contains("liquidat")
+                    || name.starts_with("invariant_")
+            }) {
+                if self.scenarios.len() >= MAX_SCENARIOS {
+                    return;
+                }
+                let terminal_name = self.signatures[terminal.function].to_ascii_lowercase();
+                for base in &bases {
+                    if self.scenarios.len() >= MAX_SCENARIOS {
+                        return;
+                    }
+                    let mut steps = base.clone();
+                    if (terminal_name.contains("repay")
+                        || terminal_name.contains("withdraw")
+                        || terminal_name.contains("redeem"))
+                        && let Some(config) = spoke_config
+                    {
+                        steps.push(config.id);
+                    }
+                    if terminal_name.contains("liquidat") {
+                        if let Some(oracle) = oracle {
+                            steps.push(oracle.id);
+                        }
+                        steps.push(actor.id);
+                        if let Some(config) = liquidation_config {
+                            steps.push(config.id);
+                        }
+                    }
+                    if terminal_name.starts_with("invariant_")
+                        && let Some(oracle) = oracle
+                    {
+                        steps.push(oracle.id);
+                    }
+                    steps.push(terminal.id);
+                    let dictionary_steps = steps
+                        .iter()
+                        .map(|production| {
+                            let function = self.productions[*production].function;
+                            dictionary_by_function[function].unwrap_or(*production)
+                        })
+                        .collect::<Vec<_>>();
+                    for (argument_mode, steps) in
+                        [("random ABI-typed", steps), ("dictionary-backed", dictionary_steps)]
+                    {
+                        let id = self.scenarios.len();
+                        self.criteria.insert(
+                            format!("s{id}"),
+                            json!(format!(
+                                "ABI-name-derived protocol lifecycle on contract_{contract}: select scope and actor, supply/deposit and enable collateral in a candidate-valid order, borrow/draw debt, perform any relevant oracle or configuration transition, then exercise {} using {argument_mode} arguments generated locally.",
+                                self.signatures[terminal.function],
+                            )),
+                        );
+                        self.scenarios.push(steps);
+                    }
                 }
             }
         }
@@ -561,7 +704,7 @@ impl Jev {
             return Some(production);
         }
         if self.requests == MAX_REQUESTS {
-            self.disable("32-request per-worker budget exhausted");
+            self.disable("256-request per-worker budget exhausted");
             return None;
         }
         let result = (|| {
@@ -782,6 +925,47 @@ mod tests {
         assert_ne!(setup.function, follow_up.function);
         assert!(matches!(setup.source, ArgumentSource::Random));
         assert!(matches!(follow_up.source, ArgumentSource::View(_)));
+    }
+
+    #[test]
+    fn derives_long_protocol_lifecycles_from_common_abi_verbs() {
+        let target = Address::with_last_byte(1);
+        let signatures = [
+            "switchActor(uint256)",
+            "switch_spoke(uint256)",
+            "supply(uint256,uint256)",
+            "setUsingAsCollateral(uint256,bool)",
+            "borrow(uint256,uint256)",
+            "setPrice(uint256,uint256)",
+            "updateLiquidationConfig(uint256)",
+            "repay(uint256,uint256)",
+            "liquidationCall(uint256,uint256)",
+        ];
+        let functions: Vec<_> = signatures
+            .iter()
+            .map(|signature| (target, Function::parse(signature).unwrap()))
+            .collect();
+        let mut jev = Jev::new();
+        jev.refresh(&functions, &[]);
+
+        let scenarios: Vec<_> = jev
+            .criteria
+            .iter()
+            .filter(|(key, value)| {
+                key.starts_with('s')
+                    && value.as_str().unwrap().contains("ABI-name-derived protocol lifecycle")
+            })
+            .map(|(key, _)| {
+                let index = key[1..].parse::<usize>().unwrap();
+                jev.scenarios[index]
+                    .iter()
+                    .map(|production| jev.productions[*production].function)
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+
+        assert!(scenarios.contains(&vec![0, 1, 2, 3, 2, 4, 7]));
+        assert!(scenarios.contains(&vec![0, 1, 2, 3, 2, 4, 5, 0, 6, 8]));
     }
 
     #[test]

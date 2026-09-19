@@ -37,7 +37,7 @@ use foundry_common::{
 use foundry_compilers::utils::canonicalized;
 use foundry_config::{
     Config, FuzzConfig, FuzzCorpusConfig, FuzzDictionaryConfig, InlineConfig, InvariantConfig,
-    SymbolicConfig,
+    InvariantTxGenerator, SymbolicConfig,
 };
 use foundry_evm::{
     constants::{CALLER, MAGIC_ASSUME},
@@ -1343,7 +1343,10 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         }
 
         for invariant in &invariant_fns {
-            if invariant.outputs.len() == 1 && invariant.outputs[0].ty == "bool" {
+            if self.tcfg.config.invariant.tx_generator != InvariantTxGenerator::Jev
+                && invariant.outputs.len() == 1
+                && invariant.outputs[0].ty == "bool"
+            {
                 warnings.push(format!(
                     "Invariant function `{}` returns `bool`, but its return value is ignored; use assertions or revert to indicate failure.",
                     invariant.signature()
@@ -2044,6 +2047,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 accumulate_warp_roll: false,
                 fail_on_revert: replay.invariant_config.fail_on_revert,
                 expect_assertion_failure: replay.assertion_failure,
+                bool_return_is_failure: replay.invariant_config.tx_generator
+                    == InvariantTxGenerator::Jev
+                    && replay.target_invariant.outputs.len() == 1
+                    && replay.target_invariant.outputs[0].ty == "bool",
                 call_after_invariant: replay.invariant_contract.call_after_invariant,
                 rd: Some(self.revert_decoder()),
             },
@@ -2074,6 +2081,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 accumulate_warp_roll: config.has_delay(),
                 fail_on_revert: config.fail_on_revert,
                 expect_assertion_failure,
+                bool_return_is_failure: config.tx_generator == InvariantTxGenerator::Jev
+                    && invariant_contract.anchor().outputs.len() == 1
+                    && invariant_contract.anchor().outputs[0].ty == "bool",
                 call_after_invariant: invariant_contract.call_after_invariant,
                 rd: Some(self.revert_decoder()),
             },
@@ -3220,6 +3230,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         fail_on_revert: is_handler_artifact
                             || artifact.replay_semantics.fail_on_revert,
                         expect_assertion_failure: is_handler_artifact,
+                        bool_return_is_failure: self.config.invariant.tx_generator
+                            == InvariantTxGenerator::Jev
+                            && invariant.outputs.len() == 1
+                            && invariant.outputs[0].ty == "bool",
                         call_after_invariant,
                         rd: Some(self.revert_decoder()),
                     },
@@ -3411,6 +3425,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 accumulate_warp_roll: false,
                 fail_on_revert: policy,
                 expect_assertion_failure: false,
+                bool_return_is_failure: self.config.invariant.tx_generator
+                    == InvariantTxGenerator::Jev
+                    && invariant_contract.invariant_fns[invariant_idx].0.outputs.len() == 1
+                    && invariant_contract.invariant_fns[invariant_idx].0.outputs[0].ty == "bool",
                 call_after_invariant,
                 rd: Some(self.revert_decoder()),
             },

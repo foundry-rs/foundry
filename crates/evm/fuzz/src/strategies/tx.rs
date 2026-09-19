@@ -365,11 +365,12 @@ fn invariant_actors(senders: &SenderFilters) -> [Address; 3] {
     }
     std::array::from_fn(|role| {
         let mut bytes = [0u8; 20];
-        bytes[0] = 0xa1 + role as u8;
-        bytes[19] = 1;
+        // Match the conventional stateful-fuzz actor identities used by Solidity harnesses and
+        // other EVM fuzzers, so pre-funded or explicitly recognized actors remain useful.
+        bytes[17] = 1 + role as u8;
         let mut actor = Address::from(bytes);
         while !senders.allows(actor) {
-            bytes[19] = bytes[19].wrapping_add(1);
+            bytes[17] = bytes[17].wrapping_add(1);
             actor = Address::from(bytes);
         }
         actor
