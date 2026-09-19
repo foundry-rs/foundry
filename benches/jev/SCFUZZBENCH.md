@@ -24,7 +24,9 @@ FOUNDRY_INVARIANT_DEPTH=100 forge test --mc CryticToFoundry \
   --fuzz-seed 0x585f37fbac9620027325a193e979e3c93c87b069b15dce6c903f5f460436f916
 ```
 
-## One-seed smoke result
+## Initial one-seed smoke result
+
+This table predates the paginated scheduler below and records the bottlenecks which motivated it.
 
 | Target | RNG findings | Jev findings | RNG pulse | Jev pulse | Result |
 | --- | --- | --- | ---: | ---: | --- |
@@ -39,7 +41,40 @@ can run on four of the five current SCFuzzBench targets and preserve the known-b
 two targets with cataloged real bugs. In this sample it improves feature discovery on Aave, Origin
 Dollar, and Drips, while regressing Liquity and paying substantial inference overhead.
 
-The dominant qualitative failure is repeated selection of one plausible scenario until the
-32-request budget is exhausted. Superform also exceeds the current function cap. The next useful
-experiment is therefore not a longer run of this exact policy: it is a diverse, paginated scenario
-frontier followed by repeated, paired-seed SCFuzzBench trials.
+The dominant qualitative failure was repeated selection of one plausible scenario until the
+32-request budget was exhausted. Superform also exceeded the original function cap.
+
+## Paginated scheduler
+
+The follow-up implementation removes the 128-function guard, bounds remote criteria rather than
+the local grammar, derives lifecycle pairs without the full quadratic cross-product, interleaves
+direct and scenario productions, rotates through the entire candidate set, withholds recent model
+choices, and returns up to eight selected actions or scenarios per request. This makes Superform's
+536 productions and 1,560 scenarios usable and amortizes inference over a larger local batch.
+
+On Superform, one same-seed 30-second smoke run now executes the Jev path rather than RNG fallback.
+It finds the same 2/27 invariants as RNG and reaches 430 edges / 10 features / 200 transactions.
+This validates large-ABI support but is not a performance win.
+
+The Aave comparison uses four fresh, paired corpora. Three pairs use seeds 1, 2, and 3; the fourth
+uses the command's recorded seed above. The latest pulse is reported for each 30-second campaign.
+
+| Seed | RNG edges / features / txs | Jev edges / features / txs |
+| --- | ---: | ---: |
+| recorded | 118 / 15 / 1,500 | 124 / 46 / 1,700 |
+| 1 | 156 / 34 / 2,000 | 148 / 27 / 1,700 |
+| 2 | 143 / 29 / 1,500 | 178 / 47 / 1,600 |
+| 3 | 147 / 27 / 1,600 | 158 / 40 / 1,600 |
+| median | **145 / 28 / 1,550** | **153 / 43 / 1,650** |
+
+The median delta is +5.5% edges, +53.6% features, and +6.5% completed transactions. Both modes find
+the invariant canary in every run. Jev additionally reaches the assertion canary in 2/4 runs versus
+0/4 for RNG. One seed regresses, so this is promising short-budget evidence rather than a claim of
+statistical significance or additional real bug discovery.
+
+For scale, Foundry's published
+[SCFuzzBench tracking issue](https://github.com/foundry-rs/foundry/issues/14437) reports the Aave v4
+24-hour baseline as Echidna 10 [9,10], Medusa 10 [9,10], and Foundry 3 [3,3] broken invariants.
+Those historical 24-hour numbers are not directly comparable to these 30-second branch trials, but
+they identify the long-run gap this scheduler is intended to attack. A full SCFuzzBench campaign
+with repeated 24-hour instances remains required before claiming parity with the other engines.

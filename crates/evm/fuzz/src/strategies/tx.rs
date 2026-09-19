@@ -465,10 +465,8 @@ mod tests {
                 .unwrap()
                 .iter()
                 .map(|(slot, question)| {
-                    if slot == "actor" {
+                    if slot.starts_with("actor") {
                         (slot.clone(), json!({ "type": "choice", "choice": "roles_primary" }))
-                    } else if slot.starts_with("actor") {
-                        (slot.clone(), json!({ "type": "choice", "choice": "actor_1" }))
                     } else {
                         let key = question["criteria"]
                             .as_object()
@@ -551,7 +549,7 @@ mod tests {
                 .iter()
                 .map(|(slot, question)| {
                     if slot.starts_with("actor") {
-                        (slot.clone(), json!({ "type": "choice", "choice": "actor_0" }))
+                        (slot.clone(), json!({ "type": "choice", "choice": "roles_primary" }))
                     } else {
                         let key = question["criteria"]
                             .as_object()

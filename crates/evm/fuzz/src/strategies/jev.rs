@@ -6,7 +6,7 @@ use alloy_primitives::{Address, Selector};
 use eyre::{Result, bail, eyre};
 use serde_json::{Map, Value, json};
 use std::{
-    collections::VecDeque,
+    collections::{HashSet, VecDeque},
     sync::mpsc::{self, Receiver, SyncSender},
     thread,
     time::{Duration, Instant},
@@ -17,9 +17,11 @@ const ENDPOINT: &str = "https://openrouter.ai/api/alpha/decisions";
 const HISTORY: usize = 8;
 const ACTION_BATCH: usize = 8;
 const MAX_REQUESTS: usize = 32;
-const MAX_FUNCTIONS: usize = 128;
-const MAX_PRODUCTIONS: usize = 512;
+const MAX_PRODUCTIONS: usize = 4096;
+const MAX_SCENARIOS: usize = 4096;
 const MAX_CRITERIA: usize = 256;
+const SHARED_CRITERIA: usize = 16;
+const RECENT_CHOICES: usize = 64;
 const TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_RESPONSE_BYTES: usize = 256 * 1024;
 const MAX_REQUEST_BYTES: usize = 256 * 1024;
@@ -121,6 +123,9 @@ pub(super) struct Jev {
     scenarios: Vec<Vec<usize>>,
     pending: VecDeque<Production>,
     history: VecDeque<Value>,
+    offered: Vec<Vec<String>>,
+    recent_choices: VecDeque<String>,
+    criteria_cursor: usize,
     requests: usize,
     disabled: bool,
 }
@@ -151,6 +156,9 @@ impl Jev {
             scenarios: Vec::new(),
             pending: VecDeque::new(),
             history: VecDeque::new(),
+            offered: Vec::new(),
+            recent_choices: VecDeque::new(),
+            criteria_cursor: 0,
             requests: 0,
             disabled: false,
         }
@@ -169,10 +177,9 @@ impl Jev {
         self.criteria.clear();
         self.productions.clear();
         self.scenarios.clear();
-        if functions.len() > MAX_FUNCTIONS {
-            self.disable("more than 128 eligible functions");
-            return;
-        }
+        self.offered.clear();
+        self.recent_choices.clear();
+        self.criteria_cursor = 0;
         let mut contracts = Vec::new();
         for (index, (address, function)) in functions.iter().enumerate() {
             let target = contracts.iter().position(|a| a == address).unwrap_or_else(|| {
@@ -239,7 +246,7 @@ impl Jev {
         }
         self.derive_scenarios();
         if self.productions.len() > MAX_PRODUCTIONS {
-            self.disable("more than 512 ABI grammar productions");
+            self.disable("more than 4096 ABI grammar productions");
         }
     }
 
@@ -272,7 +279,7 @@ impl Jev {
                 .cloned()
                 .collect();
             for setup in setups {
-                if self.criteria.len() >= MAX_CRITERIA {
+                if self.scenarios.len() >= MAX_SCENARIOS {
                     return;
                 }
                 let id = self.scenarios.len();
@@ -291,40 +298,51 @@ impl Jev {
             }
         }
 
-        let actions: Vec<_> = self
+        let mut contracts = Vec::<Vec<Production>>::new();
+        for action in self
             .productions
             .iter()
             .filter(|production| matches!(production.source, ArgumentSource::Random))
-            .cloned()
-            .collect();
-        for setup in &actions {
-            for follow_up in &actions {
-                if setup.function == follow_up.function
-                    || self.targets[setup.function].0 != self.targets[follow_up.function].0
-                {
-                    continue;
+        {
+            let target = self.targets[action.function].0;
+            let contract = self
+                .targets
+                .iter()
+                .map(|(address, _)| address)
+                .take_while(|address| **address != target)
+                .copied()
+                .collect::<HashSet<_>>()
+                .len();
+            if contracts.len() <= contract {
+                contracts.resize_with(contract + 1, Vec::new);
+            }
+            contracts[contract].push(action.clone());
+        }
+        // Cover every eligible function without constructing the full O(n^2) cross-product. Four
+        // cyclic neighbours provide diverse lifecycle candidates and avoid privileging early ABIs.
+        for (contract, actions) in contracts.iter().enumerate() {
+            if actions.len() < 2 {
+                continue;
+            }
+            for (setup_index, setup) in actions.iter().enumerate() {
+                for offset in 1..actions.len().min(5) {
+                    if self.scenarios.len() >= MAX_SCENARIOS {
+                        return;
+                    }
+                    let follow_up = &actions[(setup_index + offset) % actions.len()];
+                    if setup.function == follow_up.function {
+                        continue;
+                    }
+                    let id = self.scenarios.len();
+                    self.criteria.insert(
+                        format!("s{id}"),
+                        json!(format!(
+                            "Two-action lifecycle candidate on contract_{contract}: {} then {}. Foundry generates arguments locally; choose an actor-role pattern which preserves or challenges the likely relationship.",
+                            self.signatures[setup.function], self.signatures[follow_up.function],
+                        )),
+                    );
+                    self.scenarios.push(vec![setup.id, follow_up.id]);
                 }
-                if self.criteria.len() >= MAX_CRITERIA {
-                    return;
-                }
-                let id = self.scenarios.len();
-                let target = self.targets[setup.function].0;
-                let contract = self
-                    .targets
-                    .iter()
-                    .map(|(address, _)| address)
-                    .take_while(|address| **address != target)
-                    .copied()
-                    .collect::<std::collections::HashSet<_>>()
-                    .len();
-                self.criteria.insert(
-                    format!("s{id}"),
-                    json!(format!(
-                        "Two-action lifecycle candidate on contract_{contract}: {} then {}. Foundry generates arguments locally; choose an actor-role pattern which preserves or challenges the likely relationship.",
-                        self.signatures[setup.function], self.signatures[follow_up.function],
-                    )),
-                );
-                self.scenarios.push(vec![setup.id, follow_up.id]);
             }
         }
     }
@@ -388,29 +406,53 @@ impl Jev {
         }
     }
 
-    fn request(&self) -> Value {
+    fn candidate_keys(&self) -> Vec<String> {
+        // Interleave scenarios with direct productions so paging never hides view/dictionary
+        // shortcuts merely because lifecycle candidates exist.
+        let mut candidates = Vec::with_capacity(self.scenarios.len() + self.productions.len());
+        let length = self.scenarios.len().max(self.productions.len());
+        for index in 0..length {
+            if index < self.scenarios.len() {
+                candidates.push(format!("s{index}"));
+            }
+            if index < self.productions.len() {
+                candidates.push(format!("p{index}"));
+            }
+        }
+        candidates
+    }
+
+    fn request(&mut self) -> Value {
         let mut questions = Map::new();
-        let scenario_criteria: Map<_, _> = self
-            .criteria
+        let all_candidates = self.candidate_keys();
+        let recent: HashSet<_> = self.recent_choices.iter().collect();
+        let mut candidates: Vec<_> = all_candidates
             .iter()
-            .filter(|(key, _)| key.starts_with('s'))
-            .take(MAX_CRITERIA)
-            .map(|(key, value)| (key.clone(), value.clone()))
+            .filter(|candidate| !recent.contains(candidate))
+            .cloned()
             .collect();
-        let production_criteria: Map<_, _> = self
-            .criteria
-            .iter()
-            .filter(|(key, _)| key.starts_with('p'))
-            .take(MAX_CRITERIA)
-            .map(|(key, value)| (key.clone(), value.clone()))
+        if candidates.is_empty() {
+            self.recent_choices.clear();
+            candidates = all_candidates;
+        }
+        let count = candidates.len().min(MAX_CRITERIA);
+        let start = self.criteria_cursor % candidates.len();
+        let page: Vec<_> = (0..count)
+            .map(|offset| candidates[(start + offset) % candidates.len()].clone())
             .collect();
-        let action_criteria =
-            if scenario_criteria.is_empty() { &production_criteria } else { &scenario_criteria };
-        let single_actor_criteria = json!({
-            "actor_0": "Primary actor: owner, depositor, borrower, or initiator.",
-            "actor_1": "Counterparty actor: recipient, spender, lender, or second participant.",
-            "actor_2": "Third-party actor: liquidator, attacker, arbitrageur, or unrelated participant."
-        });
+        self.criteria_cursor = (start + count) % candidates.len();
+
+        let slots = ACTION_BATCH.min(page.len());
+        self.offered = vec![Vec::new(); slots];
+        if page.len() <= SHARED_CRITERIA {
+            for offered in &mut self.offered {
+                offered.clone_from(&page);
+            }
+        } else {
+            for (index, candidate) in page.into_iter().enumerate() {
+                self.offered[index % slots].push(candidate);
+            }
+        }
         let scenario_actor_criteria = json!({
             "roles_primary": "Use the primary actor for every step; preserve one account's state.",
             "roles_counterparty": "Use the counterparty for every step; preserve a second account's state.",
@@ -418,30 +460,19 @@ impl Jev {
             "roles_counterparty_then_owner": "Counterparty performs setup, then primary actor performs the follow-up.",
             "roles_owner_then_third_party": "Primary actor performs setup, then an unrelated or adversarial third party follows up."
         });
-        if scenario_criteria.is_empty() {
-            for slot in 0..ACTION_BATCH {
-                questions.insert(format!("tx{slot}"), json!({
-                    "type": "choice",
-                    "instructions": format!("Choose action {slot} in a short stateful exploration batch. Prefer diverse useful API transitions."),
-                    "criteria": action_criteria,
-                }));
-                questions.insert(format!("actor{slot}"), json!({
-                    "type": "choice",
-                    "instructions": format!("Choose the persistent actor role for action {slot}. Reuse roles when state should carry across calls."),
-                    "criteria": single_actor_criteria,
-                }));
-            }
-        } else {
-            questions.insert("scenario".into(), json!({
-                    "type": "choice",
-                    "instructions": "Choose the next coherent stateful scenario. Prefer useful lifecycle transitions and relationships which ordinary random arguments are unlikely to satisfy.",
-                    "criteria": action_criteria,
-                }));
-            questions.insert("actor".into(), json!({
-                    "type": "choice",
-                    "instructions": "Choose the persistent actor role for every step in this scenario. Reuse roles across later scenarios when ownership, approval, debt, or balances should carry across calls.",
-                    "criteria": scenario_actor_criteria,
-                }));
+        for (slot, offered) in self.offered.iter().enumerate() {
+            let action_criteria: Map<_, _> =
+                offered.iter().map(|key| (key.clone(), self.criteria[key].clone())).collect();
+            questions.insert(format!("tx{slot}"), json!({
+                "type": "choice",
+                "instructions": format!("Choose stateful exploration candidate {slot}. Prefer a useful lifecycle transition or semantic relationship; the other slots have disjoint candidates when the ABI is large."),
+                "criteria": action_criteria,
+            }));
+            questions.insert(format!("actor{slot}"), json!({
+                "type": "choice",
+                "instructions": format!("Choose persistent actor roles for candidate {slot}. For a direct action, the first role is used."),
+                "criteria": scenario_actor_criteria,
+            }));
         }
         json!({ "model": MODEL,
             "state": { "grammar": "scenario := step(actor_role, eligible_function(random_typed_leaves | dictionary_typed_leaves | compatible_local_view_result)); actor_role identities persist for the run",
@@ -458,23 +489,20 @@ impl Jev {
             bail!("unexpected model");
         }
         let answers = response["answers"].as_object().ok_or_else(|| eyre!("missing answers"))?;
-        let slots: Vec<(String, String)> = if self.scenarios.is_empty() {
-            (0..ACTION_BATCH).map(|slot| (format!("tx{slot}"), format!("actor{slot}"))).collect()
-        } else {
-            vec![("scenario".into(), "actor".into())]
-        };
+        let slots: Vec<_> = (0..self.offered.len())
+            .map(|slot| (format!("tx{slot}"), format!("actor{slot}")))
+            .collect();
         if answers.len() != slots.len() * 2 {
             bail!("incomplete decision batch");
         }
         let mut pending = VecDeque::new();
-        for (decision_key, actor_key) in slots {
+        let mut selected = Vec::new();
+        for (slot, (decision_key, actor_key)) in slots.into_iter().enumerate() {
             let answer =
                 answers.get(&decision_key).ok_or_else(|| eyre!("missing decision slot"))?;
             let choice = answer["choice"].as_str().ok_or_else(|| eyre!("missing choice"))?;
-            let expected_prefix = if self.scenarios.is_empty() { 'p' } else { 's' };
             if answer["type"] != "choice"
-                || !choice.starts_with(expected_prefix)
-                || !self.criteria.contains_key(choice)
+                || !self.offered[slot].iter().any(|candidate| candidate == choice)
             {
                 bail!("invalid grammar production");
             }
@@ -494,24 +522,13 @@ impl Jev {
             if actor_answer["type"] != "choice" {
                 bail!("invalid actor choice");
             }
-            let actor_roles = if self.scenarios.is_empty() {
-                vec![
-                    actor_answer["choice"]
-                        .as_str()
-                        .and_then(|choice| choice.strip_prefix("actor_"))
-                        .and_then(|actor| actor.parse::<usize>().ok())
-                        .filter(|actor| *actor < 3)
-                        .ok_or_else(|| eyre!("invalid actor role"))?,
-                ]
-            } else {
-                match actor_answer["choice"].as_str() {
-                    Some("roles_primary") => vec![0, 0],
-                    Some("roles_counterparty") => vec![1, 1],
-                    Some("roles_owner_then_counterparty") => vec![0, 1],
-                    Some("roles_counterparty_then_owner") => vec![1, 0],
-                    Some("roles_owner_then_third_party") => vec![0, 2],
-                    _ => bail!("invalid actor role pattern"),
-                }
+            let actor_roles = match actor_answer["choice"].as_str() {
+                Some("roles_primary") => vec![0, 0],
+                Some("roles_counterparty") => vec![1, 1],
+                Some("roles_owner_then_counterparty") => vec![0, 1],
+                Some("roles_counterparty_then_owner") => vec![1, 0],
+                Some("roles_owner_then_third_party") => vec![0, 2],
+                _ => bail!("invalid actor role pattern"),
             };
             for (step, index) in production_indexes.into_iter().enumerate() {
                 let mut production: Production = self
@@ -522,8 +539,17 @@ impl Jev {
                 production.actor = actor_roles[step.min(actor_roles.len() - 1)];
                 pending.push_back(production);
             }
+            selected.push(choice.to_string());
         }
         self.pending = pending;
+        for choice in selected {
+            if !self.recent_choices.contains(&choice) {
+                self.recent_choices.push_back(choice);
+                if self.recent_choices.len() > RECENT_CHOICES {
+                    self.recent_choices.pop_front();
+                }
+            }
+        }
         Ok(())
     }
 
@@ -593,6 +619,9 @@ mod tests {
     fn rust_transport_sends_choices_and_reads_bounded_json() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let endpoint = format!("http://{}/decisions", listener.local_addr().unwrap());
+        let mut jev = grammar();
+        let request = jev.request();
+        let response = response(&jev, "p0");
         let server = thread::spawn(move || {
             let (mut socket, _) = listener.accept().unwrap();
             socket.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
@@ -619,12 +648,11 @@ mod tests {
                     }
                 }
             }
-            let body = response("p0").to_string();
+            let body = response.to_string();
             write!(socket, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
         });
         let transport = Transport::start("test-only".into(), endpoint).unwrap();
-        let mut jev = grammar();
-        jev.accept(transport.decide(jev.request()).unwrap()).unwrap();
+        jev.accept(transport.decide(request).unwrap()).unwrap();
         assert_eq!(jev.next().unwrap().function, 0);
         server.join().unwrap();
     }
@@ -644,26 +672,19 @@ mod tests {
         jev
     }
 
-    fn response(choice: &str) -> Value {
+    fn response(jev: &Jev, choice: &str) -> Value {
         let mut answers = Map::new();
-        if choice.starts_with('s') {
-            answers.insert("scenario".into(), json!({"type":"choice","choice":choice}));
-            answers.insert("actor".into(), json!({"type":"choice","choice":"roles_primary"}));
-        } else {
-            for slot in 0..ACTION_BATCH {
-                answers.insert(format!("tx{slot}"), json!({"type":"choice","choice":choice}));
-                answers.insert(
-                    format!("actor{slot}"),
-                    json!({"type":"choice","choice":format!("actor_{}", slot % 3)}),
-                );
-            }
+        for slot in 0..jev.offered.len() {
+            answers.insert(format!("tx{slot}"), json!({"type":"choice","choice":choice}));
+            answers
+                .insert(format!("actor{slot}"), json!({"type":"choice","choice":"roles_primary"}));
         }
         json!({"model":MODEL,"answers":answers})
     }
 
     #[test]
     fn derives_grammar_from_abi_without_addresses_or_values() {
-        let jev = grammar();
+        let mut jev = grammar();
         assert_eq!(jev.criteria.len(), 4);
         let request = jev.request().to_string();
         assert!(request.contains("withdraw(address,uint256[])"));
@@ -706,18 +727,22 @@ mod tests {
     #[test]
     fn model_choice_replaces_random_selection_and_refresh_invalidates_it() {
         let mut jev = grammar();
-        jev.accept(response("p3")).unwrap();
+        jev.request();
+        let decision = response(&jev, "p3");
+        jev.accept(decision).unwrap();
         let choice = jev.next().unwrap();
         assert_eq!(choice.function, 1);
         assert_eq!(choice.actor, 0);
         assert!(matches!(choice.source, ArgumentSource::Dictionary));
-        assert_eq!(jev.pending.len(), ACTION_BATCH - 1);
+        assert_eq!(jev.pending.len(), 3);
         jev.refresh(
             &[(Address::with_last_byte(1), Function::parse("deposit(uint256)").unwrap())],
             &[],
         );
         assert!(jev.pending.is_empty());
-        assert!(jev.accept(response("p3")).is_err());
+        jev.request();
+        let decision = response(&jev, "p3");
+        assert!(jev.accept(decision).is_err());
     }
 
     #[test]
@@ -748,7 +773,9 @@ mod tests {
             .unwrap()
             .0
             .clone();
-        jev.accept(response(&scenario)).unwrap();
+        jev.request();
+        let response = response(&jev, &scenario);
+        jev.accept(response).unwrap();
         let setup = jev.next().unwrap();
         let follow_up = jev.next().unwrap();
         assert_eq!(setup.actor, follow_up.actor);
@@ -760,15 +787,51 @@ mod tests {
     #[test]
     fn rejects_invented_and_partial_batches_atomically() {
         let mut jev = grammar();
-        assert!(jev.accept(response("arbitrary_code")).is_err());
-        let mut partial = response("p0");
-        partial["answers"].as_object_mut().unwrap().remove("actor7");
+        jev.request();
+        let decision = response(&jev, "arbitrary_code");
+        assert!(jev.accept(decision).is_err());
+        let last = jev.offered.len() - 1;
+        let mut partial = response(&jev, "p0");
+        partial["answers"].as_object_mut().unwrap().remove(&format!("actor{last}"));
         assert!(jev.accept(partial).is_err());
-        let mut renamed = response("p0");
-        let answer = renamed["answers"].as_object_mut().unwrap().remove("actor7").unwrap();
+        let mut renamed = response(&jev, "p0");
+        let answer =
+            renamed["answers"].as_object_mut().unwrap().remove(&format!("actor{last}")).unwrap();
         renamed["answers"]["not_a_slot"] = answer;
         assert!(jev.accept(renamed).is_err());
         assert!(jev.pending.is_empty());
+    }
+
+    #[test]
+    fn pages_large_abis_instead_of_disabling_guidance() {
+        let target = Address::with_last_byte(1);
+        let functions: Vec<_> = (0..200)
+            .map(|index| (target, Function::parse(&format!("f{index}(uint256)")).unwrap()))
+            .collect();
+        let mut jev = Jev::new();
+        jev.refresh(&functions, &[]);
+        assert!(!jev.disabled);
+        assert_eq!(jev.productions.len(), 400);
+
+        let mut offered = HashSet::new();
+        for _ in 0..4 {
+            let request = jev.request();
+            assert!(serde_json::to_vec(&request).unwrap().len() < MAX_REQUEST_BYTES);
+            offered.extend(jev.offered.iter().flatten().cloned());
+        }
+        assert!(offered.contains("p399"));
+        assert!(offered.iter().any(|choice| choice.starts_with('s')));
+    }
+
+    #[test]
+    fn recent_model_choices_are_withheld_from_the_next_batch() {
+        let mut jev = grammar();
+        jev.request();
+        let response = response(&jev, "p0");
+        jev.accept(response).unwrap();
+        jev.pending.clear();
+        jev.request();
+        assert!(jev.offered.iter().flatten().all(|choice| choice != "p0"));
     }
 
     #[test]

@@ -43,9 +43,11 @@ discloses eligible function and compatible view signatures/types plus local targ
 contract addresses, calldata, source, storage, or dictionary contents. The API key is only an authorization header and
 is never included in configuration, requests, diagnostics, or recordings.
 
-The experimental limits are either one derived scenario or eight action/actor pairs per request,
-32 requests per worker per invariant test group, 128 eligible functions, 512 local productions,
-256 model-visible choices, 256 KiB requests and responses, and a two-second HTTP deadline.
+The experimental limits are up to eight action-or-scenario and actor-role pairs per request,
+32 requests per worker per invariant test group, 4,096 local productions, 4,096 local scenarios,
+256 model-visible choices, 256 KiB requests and responses, and a two-second HTTP deadline. The
+model-visible frontier is paginated across the full local grammar and recent choices are withheld
+until the frontier cycles, so large ABIs do not silently disable guidance.
 The fuzz worker waits for each batch; this is not latency-free background guidance. Runtime and
 cost budgets must include those waits. Missing credentials, provider errors, invalid batches,
 oversized grammars or budget exhaustion disable further model calls for that worker and warn
@@ -124,8 +126,8 @@ show why further work should prioritize feedback-driven scenario diversity and r
 productions before increasing the remote-choice rate.
 
 The broader [Recon shortcut comparison](SCFUZZBENCH.md) runs the same native mode against all five
-current pinned SCFuzzBench targets and records known-bug hits, coverage pulses, throughput, and the
-current Superform function-limit fallback.
+current pinned SCFuzzBench targets and records known-bug hits, coverage pulses, throughput, the
+large-ABI scheduler result, and a four-seed paired Aave comparison.
 
 The generated-Solidity sample and native results exercise different fixtures and are not combined
 performance evidence. No native maze result is claimed until the actual native binary has been
