@@ -118,9 +118,15 @@
         "client_response_body_bytes": { "$ref": "#/$defs/count" },
         "upstream_response_body_bytes": { "$ref": "#/$defs/count" },
         "repeated_requests": { "$ref": "#/$defs/count" },
-        "errors": { "$ref": "#/$defs/count" },
+        "errors": {
+          "$ref": "#/$defs/count",
+          "description": "HTTP/transport and proxy issues across all exchanges, plus JSON-RPC errors from analyzed standalone BAL responses. Ordinary and batch JSON-RPC response errors are not inspected."
+        },
         "active_http_exchanges": { "$ref": "#/$defs/count" },
-        "response_analysis_complete": { "type": "boolean" }
+        "response_analysis_complete": {
+          "type": "boolean",
+          "description": "Deferred analysis of eligible standalone BAL responses has finished; this does not mean that every RPC response was parsed or observable."
+        }
       }
     },
     "bodyMetrics": {
@@ -146,9 +152,18 @@
         "forwarded": { "type": "boolean" },
         "injected": { "type": "boolean" },
         "repeated": { "type": "boolean" },
-        "response": { "enum": ["unobserved", "result", "null", "error", "missing", "malformed", "ambiguous", "notification"] },
-        "error_code": { "type": ["integer", "null"] },
-        "result_json_bytes": { "$ref": "#/$defs/nullableCount" }
+        "response": {
+          "enum": ["unobserved", "result", "null", "error", "missing", "malformed", "ambiguous", "notification"],
+          "description": "JSON-RPC response classification is available only for standalone BAL calls. Other calls remain unobserved; calls without an id are notifications."
+        },
+        "error_code": {
+          "type": ["integer", "null"],
+          "description": "JSON-RPC error code from an analyzed standalone BAL response, otherwise null."
+        },
+        "result_json_bytes": {
+          "$ref": "#/$defs/nullableCount",
+          "description": "Serialized result size from an analyzed standalone BAL response, otherwise null. HTTP body byte counts remain available for every exchange."
+        }
       }
     },
     "rpcEvent": {

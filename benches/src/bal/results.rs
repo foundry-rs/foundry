@@ -755,7 +755,7 @@ pub fn report(output_dir: &Path) -> Result<()> {
             rpc_median(delta, "bal_observed_body_bytes")
         )?;
     }
-    report.push_str("\nPer-method RPC totals, per-attempt distributions and paired deltas, upstream spans, payload sizes and process-exit versus cleanup snapshots are in `summary.json`; raw exchanges are in `rpc-events.jsonl`. BAL exchange bytes count each HTTP body once; mixed batches include other methods. Incomplete body sizes are observed bytes, not complete response sizes. Request spans are not summed as process wall time.\n\n");
+    report.push_str("\nPer-method RPC totals, per-attempt distributions and paired deltas, upstream spans, payload sizes and process-exit versus cleanup snapshots are in `summary.json`; raw exchanges are in `rpc-events.jsonl`. All RPCs have byte and completion metrics; only standalone BAL responses retain bodies for JSON-RPC classification and result sizes. Other responses remain unobserved, so error totals cover HTTP/transport issues and analyzed BAL errors. BAL exchange bytes count each HTTP body once; passthrough mixed batches include other methods. BAL injection requires a standalone request; rejected BAL batches invalidate the sample. Incomplete body sizes are observed bytes, not complete response sizes. Request spans are not summed as process wall time.\n\n");
     if !has_runner {
         report.push_str("\nNo common projection: measurement runner metadata was not recorded in `manifest.json`. Diagnostics above remain available; rerun sampling to record the measurement machine.\n");
     } else if !has_common_projection {

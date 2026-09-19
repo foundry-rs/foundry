@@ -25,6 +25,7 @@ FAKE_CAST = r'''
 import json
 from pathlib import Path
 import sys
+import urllib.error
 import urllib.request
 
 if sys.argv[1:] == ['--version']:
@@ -40,13 +41,22 @@ trace = '-vvvvv' in sys.argv
 arm = 'replay' if '--no-bal' in sys.argv else 'auto'
 if arm == 'auto':
     endpoint = sys.argv[sys.argv.index('--rpc-url') + 1]
-    body = json.dumps({'jsonrpc': '2.0', 'id': 1,
-                      'method': 'eth_getBlockAccessListByBlockHash',
-                      'params': [settings['block_hash']]}).encode()
+    payload = {'jsonrpc': '2.0', 'id': 1,
+               'method': 'eth_getBlockAccessListByBlockHash',
+               'params': [settings['block_hash']]}
+    if failure == 'bal_batch':
+        payload = [payload]
+    body = json.dumps(payload).encode()
     request = urllib.request.Request(endpoint, body, {'Content-Type': 'application/json'})
-    with urllib.request.urlopen(request, timeout=5) as response:
-        if 'error' in json.load(response):
-            arm = 'miss'
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            if 'error' in json.load(response):
+                arm = 'miss'
+    except urllib.error.HTTPError as error:
+        if failure != 'bal_batch' or error.code != 400:
+            raise
+        # Cast also falls back to replay when its BAL request fails.
+        arm = 'miss'
 log = Path(settings['log'])
 prior = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
 ordinary = sum(event['ref'] == settings['ref'] and event['arm'] == arm
@@ -278,6 +288,31 @@ class CampaignTests(unittest.TestCase):
         self.assertEqual([sample["correctness"] for sample in auto], ["equivalent", "correctness_blocked"])
         summary = json.loads((output / "summary.json").read_text())
         self.assertIsNone(summary["comparisons"][0]["speedup"])
+
+    def test_rejected_bal_batch_cannot_publish_successful_fallback(self):
+        self.fail_candidate("bal_batch")
+        output = self.run_campaign(rounds=1, warmups=0, baseline=False, include_miss=True)
+        samples = self.samples(output)
+        rejected = [sample for sample in samples if sample["arm"] in {"auto", "miss"}]
+        self.assertEqual(len(rejected), 4)
+        for sample in rejected:
+            self.assertEqual(sample["exit_code"], 0)
+            self.assertEqual(sample["actual_path"], "replay_after_probe")
+            self.assertEqual(len(sample["bal_events"]), 1)
+            event = sample["bal_events"][0]
+            self.assertEqual(event["http_status"], 400)
+            self.assertEqual(event["issues"], ["unsupported_bal_batch_injection"])
+            self.assertEqual(sample["rpc"]["upstream_http_exchanges"], 0)
+            self.assertEqual(sample["rpc"]["injected_responses"], 0)
+            self.assertEqual(sample["correctness"], "invalid_path")
+        summary = json.loads((output / "summary.json").read_text())
+        comparison = summary["comparisons"][0]
+        self.assertEqual(comparison["valid_pairs"], 0)
+        self.assertEqual(comparison["invalid_pairs"], 1)
+        for field in ("speedup", "auto_wall_seconds", "replay_wall_seconds",
+                      "paired_wall_delta_seconds", "rpc_delta_per_pair"):
+            self.assertIsNone(comparison[field])
+        self.assertFalse((output / "common-results.json").exists())
 
 
 if __name__ == "__main__":

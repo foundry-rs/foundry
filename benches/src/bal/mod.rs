@@ -594,7 +594,7 @@ pub async fn run(args: RunArgs) -> Result<()> {
                             oracle.as_deref(),
                         )
                         .await?;
-                        if oracle.is_none() {
+                        if oracle.is_none() && sample.correctness != "invalid_path" {
                             sample.correctness = "correctness_blocked".into();
                         }
                         append_sample(&run.args.output_dir, &sample)?;
@@ -644,7 +644,10 @@ async fn validate_case(
         append_sample(&args.output_dir, &baseline)?;
     }
     for mut sample in validation.into_values() {
-        sample.correctness = if equivalent { "equivalent" } else { "correctness_blocked" }.into();
+        if sample.correctness != "invalid_path" {
+            sample.correctness =
+                if equivalent { "equivalent" } else { "correctness_blocked" }.into();
+        }
         append_sample(&args.output_dir, &sample)?;
     }
     Ok(default_oracle)
@@ -716,7 +719,11 @@ async fn attempt(
         && (arm != Arm::Replay || (bal_count == 0 && actual_path == ActualPath::ReplayNoProbe))
         // Before Cancun, Cast skips the BAL probe even with the injected-miss policy.
         && (arm != Arm::Miss
-            || matches!(actual_path, ActualPath::ReplayAfterProbe | ActualPath::ReplayNoProbe));
+            || matches!(actual_path, ActualPath::ReplayAfterProbe | ActualPath::ReplayNoProbe))
+        // An unsupported injection must not become an ordinary miss if Cast replays successfully.
+        && !session.events.iter().any(|event| {
+            event.issues.iter().any(|issue| issue == "unsupported_bal_batch_injection")
+        });
     let (local_gas, execution_success) = parse_output(&output.stdout, &output.stderr);
     let correctness = if !path_valid {
         "invalid_path"

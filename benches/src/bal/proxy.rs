@@ -1,4 +1,7 @@
 //! Per-attempt HTTP RPC proxy with streaming, cancellation-aware accounting.
+//!
+//! All exchanges are metered, but only standalone BAL responses retain bodies for analysis.
+//! Batches pass through unchanged; BAL injection requires a standalone request.
 
 use axum::{
     Router,
@@ -28,9 +31,9 @@ use tokio::{
 };
 
 const MAX_REQUEST_BYTES: usize = 16 * 1024 * 1024;
-const MAX_CAPTURE_BYTES: usize = 128 * 1024 * 1024;
+const MAX_BAL_CAPTURE_BYTES: usize = 128 * 1024 * 1024;
 
-/// Only BAL methods are affected; other RPC calls use the same upstream.
+/// Only standalone BAL methods are affected; other RPC calls use the same upstream.
 #[derive(Clone, Debug)]
 pub enum Policy {
     Passthrough,
@@ -82,7 +85,8 @@ impl Default for BodyMetrics {
     }
 }
 
-/// Response classification is derived after the timed attempt.
+/// Standalone BAL response classification is derived after the timed attempt.
+/// Other RPC responses remain unobserved; HTTP and body metrics still cover every exchange.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RpcResponse {
@@ -137,9 +141,10 @@ pub struct Snapshot {
     pub client_response_body_bytes: u64,
     pub upstream_response_body_bytes: u64,
     pub repeated_requests: u64,
+    /// HTTP/transport issues across all exchanges, plus analyzed BAL JSON-RPC errors.
     pub errors: u64,
     pub active_http_exchanges: u64,
-    /// False for cheap process-exit snapshots, before deferred JSON analysis.
+    /// False for cheap process-exit snapshots, before deferred standalone BAL JSON analysis.
     pub response_analysis_complete: bool,
 }
 
@@ -328,7 +333,7 @@ impl Exchange {
                 started: Instant::now(),
                 upstream_started: None,
                 chunks: Vec::new(),
-                capture_complete: true,
+                capture_complete: false,
             });
             index
         };
@@ -405,8 +410,8 @@ async fn handle_exchange(exchange: Exchange, request: Request) -> Response {
     };
     let batch = value.is_array();
     let requests = match &value {
-        Value::Array(requests) if !requests.is_empty() => requests.clone(),
-        Value::Object(_) => vec![value.clone()],
+        Value::Array(requests) if !requests.is_empty() => requests.as_slice(),
+        Value::Object(_) => std::slice::from_ref(&value),
         _ => {
             exchange.update(|raw, _| raw.event.issues.push("invalid_request_shape".into()));
             return measured_response(
@@ -417,96 +422,78 @@ async fn handle_exchange(exchange: Exchange, request: Request) -> Response {
             );
         }
     };
-    let policy = &exchange.state.policy;
-    let mut forwarded = Vec::new();
-    let mut injected = Vec::new();
-    let mut forwarded_indices = Vec::new();
-    let mut injected_indices = Vec::new();
-    let mut delay = 0;
+    let has_bal =
+        requests.iter().any(|request| request["method"].as_str().is_some_and(is_bal_method));
     {
         let mut ledger = exchange.state.ledger.lock().unwrap();
-        let mut calls = Vec::new();
-        for (index, request) in requests.iter().enumerate() {
-            let method = request["method"].as_str().unwrap_or("<invalid>").to_owned();
-            let params = request.get("params").cloned().unwrap_or(Value::Null);
-            let id = request.get("id").cloned();
-            let repeated = !ledger.requests.insert(json!([method, params]).to_string());
-            let replacement = if is_bal_method(&method) {
-                match policy {
-                    Policy::Passthrough => None,
-                    Policy::MethodNotFound => Some(
-                        json!({"jsonrpc":"2.0","id":id,"error":{"code":-32601,"message":"Method not found"}}),
-                    ),
-                    Policy::Null => Some(json!({"jsonrpc":"2.0","id":id,"result":null})),
-                    Policy::Recorded(result) => {
-                        Some(json!({"jsonrpc":"2.0","id":id,"result":result}))
-                    }
-                    Policy::Delay { millis, result } => {
-                        delay = *millis;
-                        result
-                            .as_ref()
-                            .map(|result| json!({"jsonrpc":"2.0","id":id,"result":result}))
-                    }
+        let calls = requests
+            .iter()
+            .map(|request| {
+                let method = request["method"].as_str().unwrap_or("<invalid>").to_owned();
+                let params = request.get("params").cloned().unwrap_or(Value::Null);
+                let repeated = !ledger.requests.insert(json!([method, params]).to_string());
+                RpcCall {
+                    method,
+                    id: request.get("id").cloned(),
+                    params,
+                    forwarded: false,
+                    injected: false,
+                    repeated,
+                    response: RpcResponse::Unobserved,
+                    error_code: None,
+                    result_json_bytes: None,
                 }
-            } else {
-                None
-            };
-            if let Some(replacement) = replacement {
-                if id.is_some() {
-                    injected.push(replacement);
-                    injected_indices.push(index);
-                }
-            } else {
-                forwarded.push(request.clone());
-                forwarded_indices.push(index);
-            }
-            calls.push(RpcCall {
-                method,
-                id,
-                params,
-                forwarded: false,
-                injected: false,
-                repeated,
-                response: RpcResponse::Unobserved,
-                error_code: None,
-                result_json_bytes: None,
-            });
-        }
+            })
+            .collect();
         let raw = &mut ledger.events[exchange.index];
         raw.event.batch = batch;
         raw.event.calls = calls;
+        raw.capture_complete = !batch && has_bal;
     }
-    if delay != 0 {
-        tokio::time::sleep(Duration::from_millis(delay)).await;
-    }
-    if forwarded.is_empty() {
-        let response = if injected.is_empty() {
-            Bytes::new()
-        } else if batch {
-            Bytes::from(serde_json::to_vec(&injected).unwrap())
-        } else {
-            Bytes::from(serde_json::to_vec(&injected[0]).unwrap())
-        };
-        exchange.update(|raw, _| {
-            for index in &injected_indices {
-                raw.event.calls[*index].injected = true;
+    if has_bal {
+        if batch && !matches!(exchange.state.policy, Policy::Passthrough) {
+            exchange.update(|raw, _| {
+                raw.event.issues.push("unsupported_bal_batch_injection".into());
+            });
+            return measured_response(
+                exchange,
+                StatusCode::BAD_REQUEST,
+                HeaderMap::new(),
+                Bytes::new(),
+            );
+        }
+        if !batch {
+            let id = value.get("id");
+            let replacement = match &exchange.state.policy {
+                Policy::Passthrough => None,
+                Policy::MethodNotFound => Some(
+                    json!({"jsonrpc":"2.0","id":id,"error":{"code":-32601,"message":"Method not found"}}),
+                ),
+                Policy::Null => Some(json!({"jsonrpc":"2.0","id":id,"result":null})),
+                Policy::Recorded(result) => Some(json!({"jsonrpc":"2.0","id":id,"result":result})),
+                Policy::Delay { millis, result } => {
+                    tokio::time::sleep(Duration::from_millis(*millis)).await;
+                    result.as_ref().map(|result| json!({"jsonrpc":"2.0","id":id,"result":result}))
+                }
+            };
+            if let Some(replacement) = replacement {
+                let response = if id.is_some() {
+                    exchange.update(|raw, _| raw.event.calls[0].injected = true);
+                    Bytes::from(serde_json::to_vec(&replacement).unwrap())
+                } else {
+                    Bytes::new()
+                };
+                return measured_response(exchange, StatusCode::OK, HeaderMap::new(), response);
             }
-        });
-        return measured_response(exchange, StatusCode::OK, HeaderMap::new(), response);
+        }
     }
-    let request_body = if forwarded.len() == requests.len() {
-        body
-    } else {
-        exchange.update(|raw, _| raw.event.response_transformed = true);
-        Bytes::from(serde_json::to_vec(&forwarded).unwrap())
-    };
     exchange.update(|raw, _| {
         raw.upstream_started = Some(Instant::now());
         raw.event.upstream = Some(BodyMetrics::default());
-        raw.event.upstream_request_body_bytes = request_body.len() as u64;
+        raw.event.upstream_request_body_bytes = body.len() as u64;
         raw.event.upstream_http_exchanges = 1;
-        for index in &forwarded_indices {
-            raw.event.calls[*index].forwarded = true;
+        for call in &mut raw.event.calls {
+            call.forwarded = true;
         }
     });
     let response = exchange
@@ -515,7 +502,7 @@ async fn handle_exchange(exchange: Exchange, request: Request) -> Response {
         .post(exchange.state.upstream.clone())
         .header(header::CONTENT_TYPE, "application/json")
         .header(header::ACCEPT_ENCODING, "identity")
-        .body(request_body)
+        .body(body)
         .send()
         .await;
     let Ok(response) = response else {
@@ -539,66 +526,12 @@ async fn handle_exchange(exchange: Exchange, request: Request) -> Response {
             raw.event.issues.push("upstream_http_error".into());
         }
     });
-    let mut stream = Box::pin(
+    let stream = Box::pin(
         response
             .bytes_stream()
             .map(|chunk| chunk.map_err(|_| io::Error::other("upstream response body error"))),
     );
-    if injected.is_empty() {
-        return stream_response(exchange, status, headers, stream, true);
-    }
-    // Mixed injected batches must be assembled; passthrough responses never take this path.
-    let mut buffered = Vec::new();
-    while let Some(chunk) = stream.next().await {
-        let Ok(chunk) = chunk else {
-            exchange.update(|raw, cleanup| {
-                raw.event.issues.push("mixed_batch_partial_upstream_body".into());
-                finish_upstream(raw, Completion::TransportError, cleanup);
-            });
-            return measured_response(
-                exchange,
-                StatusCode::BAD_GATEWAY,
-                headers,
-                Bytes::from(buffered),
-            );
-        };
-        exchange.update(|raw, cleanup| add_upstream_bytes(raw, chunk.len(), cleanup));
-        if buffered.len().saturating_add(chunk.len()) > MAX_CAPTURE_BYTES {
-            exchange.update(|raw, cleanup| {
-                raw.event.issues.push("mixed_batch_body_limit".into());
-                finish_upstream(raw, Completion::Cancelled, cleanup);
-            });
-            return measured_response(
-                exchange,
-                StatusCode::BAD_GATEWAY,
-                HeaderMap::new(),
-                Bytes::new(),
-            );
-        }
-        buffered.extend_from_slice(&chunk);
-    }
-    exchange.update(|raw, cleanup| finish_upstream(raw, Completion::Eof, cleanup));
-    let Ok(Value::Array(mut responses)) = serde_json::from_slice::<Value>(&buffered) else {
-        exchange.update(|raw, _| raw.event.issues.push("mixed_batch_invalid_upstream_json".into()));
-        return measured_response(
-            exchange,
-            StatusCode::BAD_GATEWAY,
-            headers,
-            Bytes::from(buffered),
-        );
-    };
-    responses.extend(injected);
-    exchange.update(|raw, _| {
-        for index in &injected_indices {
-            raw.event.calls[*index].injected = true;
-        }
-    });
-    measured_response(
-        exchange,
-        status,
-        HeaderMap::new(),
-        Bytes::from(serde_json::to_vec(&responses).unwrap()),
-    )
+    stream_response(exchange, status, headers, stream, true)
 }
 
 fn encoding(headers: &HeaderMap) -> String {
@@ -658,7 +591,7 @@ impl Stream for MeteredStream {
                         add_upstream_bytes(raw, bytes.len(), cleanup);
                     }
                     if raw.capture_complete {
-                        if raw.event.response.body_bytes <= MAX_CAPTURE_BYTES as u64 {
+                        if raw.event.response.body_bytes <= MAX_BAL_CAPTURE_BYTES as u64 {
                             raw.chunks.push(bytes.clone());
                         } else {
                             raw.capture_complete = false;
@@ -765,63 +698,28 @@ fn analyze_response(raw: &mut RecordedEvent) {
         }
         return;
     };
-    let responses = if raw.event.batch {
-        let Some(responses) = value.as_array() else {
-            raw.event.issues.push("invalid_batch_response_shape".into());
-            for call in &mut raw.event.calls {
-                if call.id.is_some() {
-                    call.response = RpcResponse::Malformed;
-                }
-            }
-            return;
-        };
-        responses.as_slice()
+    let call = &mut raw.event.calls[0];
+    let Some(id) = &call.id else { return };
+    if !value.is_object() {
+        call.response = RpcResponse::Malformed;
+        raw.event.issues.push("invalid_response_shape".into());
+    } else if value.get("id") != Some(id) {
+        call.response = RpcResponse::Missing;
+        raw.event.issues.push("unknown_response_id".into());
+    } else if value.get("jsonrpc").and_then(Value::as_str) != Some("2.0")
+        || value.get("result").is_some() == value.get("error").is_some()
+    {
+        call.response = RpcResponse::Malformed;
+    } else if let Some(result) = value.get("result") {
+        call.response = if result.is_null() { RpcResponse::Null } else { RpcResponse::Result };
+        call.result_json_bytes = Some(serde_json::to_vec(result).unwrap().len() as u64);
     } else {
-        std::slice::from_ref(&value)
-    };
-    let mut id_counts = BTreeMap::<String, usize>::new();
-    for call in &raw.event.calls {
-        if let Some(id) = &call.id {
-            *id_counts.entry(id.to_string()).or_default() += 1;
-        }
-    }
-    for call in &mut raw.event.calls {
-        let Some(id) = &call.id else { continue };
-        let matching =
-            responses.iter().filter(|response| response.get("id") == Some(id)).collect::<Vec<_>>();
-        if id_counts[&id.to_string()] > 1 {
-            call.response = RpcResponse::Ambiguous;
-        } else if matching.is_empty() {
-            call.response = RpcResponse::Missing;
-        } else if matching.len() > 1 {
-            call.response = RpcResponse::Ambiguous;
+        call.error_code = value["error"]["code"].as_i64();
+        call.response = if call.error_code.is_some() && value["error"]["message"].is_string() {
+            RpcResponse::Error
         } else {
-            let response = matching[0];
-            if response.get("jsonrpc").and_then(Value::as_str) != Some("2.0")
-                || response.get("result").is_some() == response.get("error").is_some()
-            {
-                call.response = RpcResponse::Malformed;
-            } else if let Some(result) = response.get("result") {
-                call.response =
-                    if result.is_null() { RpcResponse::Null } else { RpcResponse::Result };
-                call.result_json_bytes = Some(serde_json::to_vec(result).unwrap().len() as u64);
-            } else {
-                call.error_code = response["error"]["code"].as_i64();
-                call.response =
-                    if call.error_code.is_some() && response["error"]["message"].is_string() {
-                        RpcResponse::Error
-                    } else {
-                        RpcResponse::Malformed
-                    };
-            }
-        }
-    }
-    for response in responses {
-        if response.get("id").is_none()
-            || !raw.event.calls.iter().any(|call| call.id.as_ref() == response.get("id"))
-        {
-            raw.event.issues.push("unknown_response_id".into());
-        }
+            RpcResponse::Malformed
+        };
     }
 }
 
@@ -878,90 +776,156 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn passthrough_preserves_batch_ids_and_counts_body_once() {
+    async fn ordinary_responses_are_metered_without_retaining_bodies() {
+        let payload = Bytes::from(vec![b'x'; 1024 * 1024]);
+        let upstream_payload = payload.clone();
         let upstream = Router::new().route(
             "/",
-            post(|| async {
-                Json(json!([
-                    {"jsonrpc":"2.0","id":"b","error":{"code":-32000,"message":"fixture"}},
-                    {"jsonrpc":"2.0","id":1,"result":null}
-                ]))
+            post(move || {
+                let payload = upstream_payload.clone();
+                async move { payload }
             }),
         );
         let (url, task) = serve(upstream).await;
         let proxy = Proxy::start(&url, Policy::Passthrough).await.unwrap();
-        let response = reqwest::Client::new()
-            .post(proxy.url())
-            .json(&json!([
-                {"jsonrpc":"2.0","id":1,"method":"eth_getBlockAccessListByBlockHash","params":[]},
-                {"jsonrpc":"2.0","id":"b","method":"eth_chainId","params":[]}
-            ]))
-            .send()
-            .await
+        let client = reqwest::Client::new();
+        for id in 0..3 {
+            let response = client
+                .post(proxy.url())
+                .json(&request("eth_getCode", json!(id)))
+                .send()
+                .await
+                .unwrap()
+                .bytes()
+                .await
+                .unwrap();
+            assert_eq!(response, payload);
+        }
+        let retained = proxy
+            .state
+            .ledger
+            .lock()
             .unwrap()
-            .bytes()
-            .await
-            .unwrap();
+            .events
+            .iter()
+            .flat_map(|raw| &raw.chunks)
+            .map(Bytes::len)
+            .sum::<usize>();
+        assert_eq!(retained, 0, "ordinary response bodies must not accumulate until finish");
         let session = proxy.finish().await;
-        assert_eq!(session.snapshot.client_http_exchanges, 1);
-        assert_eq!(session.snapshot.upstream_http_exchanges, 1);
-        assert_eq!(session.snapshot.client_response_body_bytes, response.len() as u64);
-        assert_eq!(session.snapshot.upstream_response_body_bytes, response.len() as u64);
-        assert_eq!(session.events[0].calls[0].response, RpcResponse::Null);
-        assert_eq!(session.events[0].calls[1].response, RpcResponse::Error);
-        assert_eq!(session.events[0].calls[1].error_code, Some(-32000));
-        assert_eq!(session.events[0].response.completion, Completion::Eof);
+        assert_eq!(session.snapshot.client_requests_by_method["eth_getCode"], 3);
+        assert_eq!(session.snapshot.upstream_requests_by_method["eth_getCode"], 3);
+        assert_eq!(session.snapshot.client_response_body_bytes, 3 * payload.len() as u64);
+        assert_eq!(session.snapshot.upstream_response_body_bytes, 3 * payload.len() as u64);
+        assert_eq!(session.snapshot.repeated_requests, 2);
+        assert_eq!(session.snapshot.errors, 0);
+        for event in &session.events {
+            assert_eq!(event.response.completion, Completion::Eof);
+            assert_eq!(event.upstream.as_ref().unwrap().completion, Completion::Eof);
+            assert_eq!(event.calls[0].response, RpcResponse::Unobserved);
+            assert_eq!(event.calls[0].result_json_bytes, None);
+            assert!(event.issues.is_empty());
+        }
         task.abort();
     }
 
     #[tokio::test]
-    async fn injected_bal_batch_preserves_other_requests_and_counts_repeats() {
-        let upstream = Router::new().route(
-            "/",
-            post(|Json(value): Json<Value>| async move {
-                assert_eq!(value, json!([request("eth_chainId", json!("other"))]));
-                Json(json!([{"jsonrpc":"2.0","id":"other","result":"0x1"}]))
-            }),
+    async fn batches_pass_through_unchanged_and_count_body_once() {
+        let response_body = Bytes::from_static(
+            br#"[ {"jsonrpc":"2.0", "id":"b", "error":{"code":-32000,"message":"fixture"}},
+                 {"jsonrpc":"2.0", "id":1, "result":null} ]"#,
         );
-        let (url, task) = serve(upstream).await;
-        let proxy = Proxy::start(&url, Policy::MethodNotFound).await.unwrap();
-        let body = json!([
-            request("eth_getBlockAccessListByBlockHash", json!(4)),
-            request("eth_chainId", json!("other"))
-        ]);
-        for _ in 0..2 {
+        for (policy, method) in [
+            (Policy::MethodNotFound, "eth_getCode"),
+            (Policy::Passthrough, "eth_getBlockAccessListByBlockHash"),
+        ] {
+            let request_body = Bytes::from(format!(
+                r#"[ {{"jsonrpc":"2.0","id":1,"method":"{method}","params":[]}},
+                     {{"jsonrpc":"2.0","id":"b","method":"eth_chainId","params":[]}} ]"#,
+            ));
+            let expected_request = request_body.clone();
+            let upstream_body = response_body.clone();
+            let upstream = Router::new().route(
+                "/",
+                post(move |body: Bytes| {
+                    assert_eq!(body, expected_request);
+                    let body = upstream_body.clone();
+                    async move { body }
+                }),
+            );
+            let (url, task) = serve(upstream).await;
+            let proxy = Proxy::start(&url, policy).await.unwrap();
             let response = reqwest::Client::new()
                 .post(proxy.url())
-                .json(&body)
+                .body(request_body.clone())
                 .send()
                 .await
                 .unwrap()
-                .json::<Value>()
+                .bytes()
                 .await
                 .unwrap();
-            assert_eq!(
-                response,
-                json!([
-                    {"jsonrpc":"2.0","id":"other","result":"0x1"},
-                    {"jsonrpc":"2.0","id":4,"error":{"code":-32601,"message":"Method not found"}}
-                ])
-            );
+            assert_eq!(response, response_body);
+            assert!(proxy.state.ledger.lock().unwrap().events[0].chunks.is_empty());
+            let session = proxy.finish().await;
+            assert_eq!(session.snapshot.client_http_exchanges, 1);
+            assert_eq!(session.snapshot.upstream_http_exchanges, 1);
+            assert_eq!(session.snapshot.client_requests_by_method[method], 1);
+            assert_eq!(session.snapshot.upstream_requests_by_method["eth_chainId"], 1);
+            assert_eq!(session.snapshot.client_response_body_bytes, response.len() as u64);
+            assert_eq!(session.snapshot.upstream_response_body_bytes, response.len() as u64);
+            assert_eq!(session.snapshot.injected_responses, 0);
+            assert_eq!(session.snapshot.errors, 0);
+            let event = &session.events[0];
+            assert!(event.batch);
+            assert!(!event.response_transformed);
+            assert_eq!(event.client_request_body_bytes, request_body.len() as u64);
+            assert_eq!(event.upstream_request_body_bytes, request_body.len() as u64);
+            assert_eq!(event.response.completion, Completion::Eof);
+            for call in &event.calls {
+                assert_eq!(call.response, RpcResponse::Unobserved);
+                assert_eq!(call.error_code, None);
+                assert_eq!(call.result_json_bytes, None);
+            }
+            task.abort();
         }
-        let session = proxy.finish().await;
-        assert_eq!(
-            session.snapshot.client_requests_by_method["eth_getBlockAccessListByBlockHash"],
-            2
-        );
-        assert_eq!(
-            session.snapshot.upstream_requests_by_method,
-            BTreeMap::from([("eth_chainId".into(), 2)])
-        );
-        assert_eq!(session.snapshot.injected_responses, 2);
-        assert_eq!(session.snapshot.repeated_requests, 2);
-        assert_eq!(session.events[0].calls[0].error_code, Some(-32601));
-        assert!(session.events.iter().all(|event| event.response_transformed));
-        assert_eq!(session.events[1].exchange_id, 1);
-        task.abort();
+    }
+
+    #[tokio::test]
+    async fn bal_batches_cannot_silently_bypass_injection() {
+        for policy in [
+            Policy::MethodNotFound,
+            Policy::Null,
+            Policy::Recorded(json!([])),
+            Policy::Delay { millis: 60_000, result: None },
+        ] {
+            for body in [
+                json!([request("eth_getBlockAccessListByBlockHash", json!(4))]),
+                json!([
+                    request("eth_getBlockAccessListByBlockHash", json!(4)),
+                    request("eth_chainId", json!("other")),
+                ]),
+            ] {
+                let proxy = Proxy::start("http://127.0.0.1:1", policy.clone()).await.unwrap();
+                let response = reqwest::Client::new()
+                    .post(proxy.url())
+                    .timeout(Duration::from_secs(2))
+                    .json(&body)
+                    .send()
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+                response.bytes().await.unwrap();
+                let session = proxy.finish().await;
+                assert_eq!(session.snapshot.client_http_exchanges, 1);
+                assert_eq!(session.snapshot.upstream_http_exchanges, 0);
+                assert_eq!(session.snapshot.injected_responses, 0);
+                assert_eq!(session.snapshot.errors, 1);
+                assert_eq!(session.events[0].issues, ["unsupported_bal_batch_injection"]);
+                assert!(
+                    session.events[0].calls.iter().all(|call| !call.forwarded && !call.injected)
+                );
+            }
+        }
     }
 
     #[tokio::test]
@@ -995,40 +959,66 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unknown_missing_duplicate_and_malformed_responses_are_recorded() {
-        let upstream = Router::new().route(
-            "/",
-            post(|| async {
-                Json(json!([
-                    {"jsonrpc":"2.0","id":1,"result":0},
-                    {"jsonrpc":"2.0","id":1,"result":1},
-                    {"jsonrpc":"2.0","id":3,"error":"not an error object"},
-                    {"jsonrpc":"2.0","id":99,"result":0}
-                ]))
-            }),
-        );
-        let (url, task) = serve(upstream).await;
-        let proxy = Proxy::start(&url, Policy::Passthrough).await.unwrap();
-        reqwest::Client::new()
-            .post(proxy.url())
-            .json(&json!([
-                request("eth_chainId", json!(1)),
-                request("eth_chainId", json!(2)),
-                request("eth_chainId", json!(3))
-            ]))
-            .send()
-            .await
-            .unwrap()
-            .bytes()
-            .await
-            .unwrap();
-        let session = proxy.finish().await;
-        assert_eq!(
-            session.events[0].calls.iter().map(|call| call.response).collect::<Vec<_>>(),
-            [RpcResponse::Ambiguous, RpcResponse::Missing, RpcResponse::Malformed]
-        );
-        assert_eq!(session.events[0].issues, ["unknown_response_id"]);
-        task.abort();
+    async fn standalone_bal_response_classification() {
+        for (body, response, error_code, issue) in [
+            (json!({"jsonrpc":"2.0","id":1,"result":[]}), RpcResponse::Result, None, None),
+            (json!({"jsonrpc":"2.0","id":1,"result":null}), RpcResponse::Null, None, None),
+            (
+                json!({"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unavailable"}}),
+                RpcResponse::Error,
+                Some(-32601),
+                None,
+            ),
+            (json!({"jsonrpc":"2.0","id":1,"error":"invalid"}), RpcResponse::Malformed, None, None),
+            (
+                json!({"jsonrpc":"2.0","id":99,"result":0}),
+                RpcResponse::Missing,
+                None,
+                Some("unknown_response_id"),
+            ),
+            (
+                json!([{"jsonrpc":"2.0","id":1,"result":0}]),
+                RpcResponse::Malformed,
+                None,
+                Some("invalid_response_shape"),
+            ),
+            (
+                json!({"jsonrpc":"2.0","id":1,"result":0,"error":{"code":-1,"message":"bad"}}),
+                RpcResponse::Malformed,
+                None,
+                None,
+            ),
+        ] {
+            let upstream = Router::new().route(
+                "/",
+                post(move || {
+                    let body = body.clone();
+                    async move { Json(body) }
+                }),
+            );
+            let (url, task) = serve(upstream).await;
+            let proxy = Proxy::start(&url, Policy::Passthrough).await.unwrap();
+            reqwest::Client::new()
+                .post(proxy.url())
+                .json(&request("eth_getBlockAccessListByBlockHash", json!(1)))
+                .send()
+                .await
+                .unwrap()
+                .bytes()
+                .await
+                .unwrap();
+            let session = proxy.finish().await;
+            let call = &session.events[0].calls[0];
+            assert_eq!(call.response, response);
+            assert_eq!(call.error_code, error_code);
+            assert_eq!(session.events[0].issues, issue.into_iter().collect::<Vec<_>>());
+            if matches!(response, RpcResponse::Result | RpcResponse::Null) {
+                assert!(call.result_json_bytes.is_some());
+            } else {
+                assert!(call.result_json_bytes.is_none());
+            }
+            task.abort();
+        }
     }
 
     #[tokio::test]
@@ -1041,7 +1031,7 @@ mod tests {
         let proxy = Proxy::start(&url, Policy::Passthrough).await.unwrap();
         let response = reqwest::Client::new()
             .post(proxy.url())
-            .json(&request("eth_chainId", json!(1)))
+            .json(&request("eth_getBlockAccessListByBlockHash", json!(1)))
             .send()
             .await
             .unwrap();
@@ -1103,7 +1093,7 @@ mod tests {
             .build()
             .unwrap()
             .post(proxy.url())
-            .json(&request("eth_chainId", json!(1)))
+            .json(&request("eth_getBlockAccessListByBlockHash", json!(1)))
             .send()
             .await
             .unwrap();
@@ -1191,44 +1181,46 @@ mod tests {
 
     #[tokio::test]
     async fn bytes_after_measurement_boundary_are_cleanup_even_before_finish() {
-        let (release, delayed) = oneshot::channel();
-        let delayed = Arc::new(Mutex::new(Some(delayed)));
-        let upstream = Router::new().route(
-            "/",
-            post(move || {
-                let delayed = delayed.lock().unwrap().take().unwrap();
-                async move {
-                    let first = futures::stream::once(async {
-                        Ok::<_, io::Error>(Bytes::from_static(b"first"))
-                    });
-                    let second = futures::stream::once(async move {
-                        delayed.await.unwrap();
-                        Ok::<_, io::Error>(Bytes::from_static(b"late"))
-                    });
-                    Body::from_stream(first.chain(second))
-                }
-            }),
-        );
-        let (url, task) = serve(upstream).await;
-        let proxy = Proxy::start(&url, Policy::Passthrough).await.unwrap();
-        let mut response = reqwest::Client::new()
-            .post(proxy.url())
-            .json(&request("eth_getBlockAccessListByBlockHash", json!(1)))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(response.chunk().await.unwrap().unwrap(), Bytes::from_static(b"first"));
-        let at_exit = proxy.end_measurement();
-        assert_eq!(at_exit.client_response_body_bytes, 5);
-        release.send(()).unwrap();
-        assert_eq!(response.bytes().await.unwrap(), Bytes::from_static(b"late"));
-        let session = proxy.finish().await;
-        assert_eq!(session.events[0].response.body_bytes, 9);
-        assert_eq!(session.events[0].response.cleanup_body_bytes, 4);
-        assert_eq!(session.events[0].upstream.as_ref().unwrap().cleanup_body_bytes, 4);
-        assert!(session.events[0].response.completed_during_cleanup);
-        assert_eq!(session.events[0].response.completion, Completion::Eof);
-        task.abort();
+        for method in ["eth_getCode", "eth_getBlockAccessListByBlockHash"] {
+            let (release, delayed) = oneshot::channel();
+            let delayed = Arc::new(Mutex::new(Some(delayed)));
+            let upstream = Router::new().route(
+                "/",
+                post(move || {
+                    let delayed = delayed.lock().unwrap().take().unwrap();
+                    async move {
+                        let first = futures::stream::once(async {
+                            Ok::<_, io::Error>(Bytes::from_static(b"first"))
+                        });
+                        let second = futures::stream::once(async move {
+                            delayed.await.unwrap();
+                            Ok::<_, io::Error>(Bytes::from_static(b"late"))
+                        });
+                        Body::from_stream(first.chain(second))
+                    }
+                }),
+            );
+            let (url, task) = serve(upstream).await;
+            let proxy = Proxy::start(&url, Policy::Passthrough).await.unwrap();
+            let mut response = reqwest::Client::new()
+                .post(proxy.url())
+                .json(&request(method, json!(1)))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.chunk().await.unwrap().unwrap(), Bytes::from_static(b"first"));
+            let at_exit = proxy.end_measurement();
+            assert_eq!(at_exit.client_response_body_bytes, 5);
+            release.send(()).unwrap();
+            assert_eq!(response.bytes().await.unwrap(), Bytes::from_static(b"late"));
+            let session = proxy.finish().await;
+            assert_eq!(session.events[0].response.body_bytes, 9);
+            assert_eq!(session.events[0].response.cleanup_body_bytes, 4);
+            assert_eq!(session.events[0].upstream.as_ref().unwrap().cleanup_body_bytes, 4);
+            assert!(session.events[0].response.completed_during_cleanup);
+            assert_eq!(session.events[0].response.completion, Completion::Eof);
+            task.abort();
+        }
     }
 
     #[tokio::test]
