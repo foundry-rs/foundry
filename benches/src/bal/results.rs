@@ -1,7 +1,7 @@
 //! Recompute auditable summaries without discarding unsuccessful scheduled attempts.
 
 use super::{ActualPath, Arm, read_json, write_json};
-use eyre::{Result, ensure};
+use eyre::{Context, Result, ensure};
 use foundry_bench::results::{CommonBenchmark, CommonBenchmarkResult, Metric, RunnerMetadata};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -478,7 +478,11 @@ fn compare_samples(samples: &[Sample], manifest: &Value) -> Vec<Comparison> {
         .collect()
 }
 
-fn common_projection(groups: &[Group], commit: &str) -> Option<CommonBenchmarkResult> {
+fn common_projection(
+    groups: &[Group],
+    commit: &str,
+    runner: RunnerMetadata,
+) -> Option<CommonBenchmarkResult> {
     let benchmarks = groups
         .iter()
         .filter_map(|group| {
@@ -524,7 +528,7 @@ fn common_projection(groups: &[Group], commit: &str) -> Option<CommonBenchmarkRe
         repo: "foundry-rs/foundry".into(),
         commit: commit.into(),
         pr: None,
-        runner: RunnerMetadata::default(),
+        runner,
         benchmarks,
     })
 }
@@ -558,6 +562,21 @@ fn rpc_median(metrics: &BTreeMap<String, Distribution>, name: &str) -> String {
 pub fn report(output_dir: &Path) -> Result<()> {
     let manifest_path = output_dir.join("manifest.json");
     let manifest: Value = read_json(&manifest_path)?;
+    let runner = manifest
+        .get("runner")
+        .map(|runner| serde_json::from_value::<RunnerMetadata>(runner.clone()))
+        .transpose()
+        .wrap_err("invalid measurement runner metadata in run manifest")?;
+    if let Some(runner) = &runner {
+        ensure!(
+            !runner.os.is_empty()
+                && !runner.arch.is_empty()
+                && runner.logical_cpus > 0
+                && runner.image.as_ref().is_none_or(|image| !image.is_empty()),
+            "invalid measurement runner metadata in run manifest"
+        );
+    }
+    let has_runner = runner.is_some();
     ensure!(
         manifest["build"].get("auto").is_none() && manifest["build"].get("replay").is_none(),
         "legacy split-binary runs cannot produce same-binary BAL reports; rerun with one Cast binary"
@@ -595,8 +614,13 @@ pub fn report(output_dir: &Path) -> Result<()> {
         }
     }
     let groups = group_samples(&samples);
-    let common =
-        common_projection(&groups, manifest["build"]["source_sha"].as_str().unwrap_or("unknown"));
+    let common = runner.and_then(|runner| {
+        common_projection(
+            &groups,
+            manifest["build"]["source_sha"].as_str().unwrap_or("unknown"),
+            runner,
+        )
+    });
     let has_common_projection = common.is_some();
     let comparisons = compare_samples(&samples, &manifest);
     write_json(
@@ -732,7 +756,9 @@ pub fn report(output_dir: &Path) -> Result<()> {
         )?;
     }
     report.push_str("\nPer-method RPC totals, per-attempt distributions and paired deltas, upstream spans, payload sizes and process-exit versus cleanup snapshots are in `summary.json`; raw exchanges are in `rpc-events.jsonl`. BAL exchange bytes count each HTTP body once; mixed batches include other methods. Incomplete body sizes are observed bytes, not complete response sizes. Request spans are not summed as process wall time.\n\n");
-    if !has_common_projection {
+    if !has_runner {
+        report.push_str("\nNo common projection: measurement runner metadata was not recorded in `manifest.json`. Diagnostics above remain available; rerun sampling to record the measurement machine.\n");
+    } else if !has_common_projection {
         report.push_str("\nNo common projection: no eligible performance measurements. No zero-duration placeholder was emitted.\n");
     }
     report.push_str("\nNo unconditional speedup is inferred from censored, unknown or correctness-blocked attempts. Server BAL source and cache behavior require independent evidence.\n");
@@ -744,6 +770,7 @@ pub fn report(output_dir: &Path) -> Result<()> {
 mod tests {
     use super::{Sample, common_projection, compare_samples, group_samples, report};
     use crate::bal::{ActualPath, Arm, Binary, BuildIdentity, write_json};
+    use foundry_bench::results::RunnerMetadata;
     use serde_json::{Value, json};
     use std::fs;
 
@@ -792,7 +819,7 @@ mod tests {
         assert_eq!(overall.completed_wall_seconds.as_ref().unwrap().median, 3.0);
         assert_eq!(overall.actual_paths["replay_after_probe"], 1);
         assert_eq!(groups[1].attempts, 1);
-        let common = common_projection(&groups, "sha").unwrap();
+        let common = common_projection(&groups, "sha", RunnerMetadata::default()).unwrap();
         assert_eq!(common.benchmarks[0].counters["scheduled_attempts"].value, 3.0);
         assert_eq!(common.benchmarks[0].wall_time.value, 3.0);
     }
@@ -802,7 +829,8 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         write_json(
             &root.path().join("manifest.json"),
-            &json!({"binary":{"sha256":"a".repeat(64)},"build":{"source_sha":"sha"}}),
+            &json!({"binary":{"sha256":"a".repeat(64)},"build":{"source_sha":"sha"},
+                "runner":RunnerMetadata::default()}),
         )
         .unwrap();
         fs::write(
@@ -829,7 +857,59 @@ mod tests {
         assert_eq!(groups[0].attempts, 1);
         assert_eq!(groups[0].correctness_blocked, 1);
         assert_eq!(groups[0].completed_wall_seconds.as_ref().unwrap().median, 9.0);
-        assert!(common_projection(&groups, "sha").is_none());
+        assert!(common_projection(&groups, "sha", RunnerMetadata::default()).is_none());
+    }
+
+    #[test]
+    fn missing_runner_preserves_diagnostics_but_removes_common_projection() {
+        let root = tempfile::tempdir().unwrap();
+        let mut manifest = paired_manifest();
+        manifest["binary"] = json!({"sha256":"a".repeat(64)});
+        write_json(&root.path().join("manifest.json"), &manifest).unwrap();
+        let samples = paired_samples()
+            .iter()
+            .map(|sample| serde_json::to_string(sample).unwrap())
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(root.path().join("samples.jsonl"), samples).unwrap();
+        fs::write(root.path().join("common-results.json"), "stale report-host metadata").unwrap();
+
+        report(root.path()).unwrap();
+
+        assert!(!root.path().join("common-results.json").exists());
+        let summary =
+            serde_json::from_slice::<Value>(&fs::read(root.path().join("summary.json")).unwrap())
+                .unwrap();
+        assert_eq!(summary["no_common_projection"], true);
+        assert_eq!(summary["comparisons"][0]["valid_pairs"], 2);
+        assert_eq!(summary["comparisons"][0]["speedup"], 3.0);
+        let markdown = fs::read_to_string(root.path().join("report.md")).unwrap();
+        assert!(markdown.contains("measurement runner metadata was not recorded"));
+        assert!(!markdown.contains("no eligible performance measurements"));
+    }
+
+    #[test]
+    fn malformed_runner_metadata_is_rejected() {
+        let root = tempfile::tempdir().unwrap();
+        for runner in [
+            Value::Null,
+            json!({}),
+            json!({"os":"linux","arch":"x86_64","logical_cpus":"8"}),
+            json!({"os":"","arch":"x86_64","logical_cpus":8}),
+            json!({"os":"linux","arch":"","logical_cpus":8}),
+            json!({"os":"linux","arch":"x86_64","logical_cpus":0}),
+            json!({"os":"linux","arch":"x86_64","logical_cpus":8,"image":""}),
+        ] {
+            write_json(
+                &root.path().join("manifest.json"),
+                &json!({"binary":{"sha256":"a".repeat(64)},"runner":runner}),
+            )
+            .unwrap();
+            let error = report(root.path()).unwrap_err();
+            assert!(error.to_string().contains("invalid measurement runner metadata"));
+            assert!(!root.path().join("report.md").exists());
+            assert!(!root.path().join("common-results.json").exists());
+        }
     }
 
     fn paired_samples() -> Vec<Sample> {
@@ -1007,13 +1087,19 @@ mod tests {
             cast: binary.clone(),
         };
         let mut direct = paired_manifest();
+        let runner = json!({
+            "os": "measurement-os", "arch": "measurement-arch",
+            "image": "measurement-image", "logical_cpus": 37,
+        });
         direct["schema_version"] = json!(1);
         direct["binary"] = serde_json::to_value(binary).unwrap();
         direct["build"] = Value::Null;
+        direct["runner"] = runner.clone();
         let mut aggregate = paired_manifest();
         aggregate["schema_version"] = json!(1);
         aggregate["build"] = serde_json::to_value(build).unwrap();
         aggregate["schedule"] = json!("/retained-artifacts/schedule.json");
+        aggregate["runner"] = runner.clone();
         for manifest in [direct, aggregate] {
             write_json(&root.path().join("manifest.json"), &manifest).unwrap();
             let samples = paired_samples()
@@ -1031,6 +1117,12 @@ mod tests {
                 .join("\n");
             fs::write(root.path().join("samples.jsonl"), samples).unwrap();
             report(root.path()).unwrap();
+            let common = serde_json::from_slice::<Value>(
+                &fs::read(root.path().join("common-results.json")).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(common["runner"], runner);
+            assert_eq!(common["benchmarks"][0]["wall_time"]["value"], 2.0);
             let summary = serde_json::from_slice::<Value>(
                 &fs::read(root.path().join("summary.json")).unwrap(),
             )

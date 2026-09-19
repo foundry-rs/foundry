@@ -586,6 +586,7 @@ def main():
         env = os.environ.copy()
         env["BAL_BENCH_LOCAL_FIXTURE_RPC"] = rpc_url
         env["FOUNDRY_DISABLE_NIGHTLY_WARNING"] = "true"
+        env["ImageOS"] = "bal-bench-measurement-image"
         command = [
                 str(args.runner.resolve()), "run", "--manifest", str(manifest_path.resolve()),
                 "--cast", str(args.cast.resolve()),
@@ -601,6 +602,19 @@ def main():
             subprocess.run(command, env=env, stdout=runner_log, stderr=subprocess.STDOUT,
                            check=True, timeout=1200)
         verify(args.output_dir / "results", manifest, args.rounds, args.include_miss)
+        results = args.output_dir / "results"
+        runner = json.loads((results / "manifest.json").read_text())["runner"]
+        require(runner["image"] == env["ImageOS"], "sampling must record the measurement image")
+        common = json.loads((results / "common-results.json").read_text())
+        require(common["runner"] == runner, "report must preserve the recorded measurement runner")
+        reports = {name: (results / name).read_bytes()
+                   for name in ("common-results.json", "summary.json", "report.md")}
+        subprocess.run([
+            str(args.runner.resolve()), "report", "--output-dir", str(results.resolve()),
+        ], env={**env, "ImageOS": "bal-bench-report-image"}, check=True, timeout=30)
+        for name, before in reports.items():
+            require((results / name).read_bytes() == before,
+                    f"offline {name} must not change with the reporting machine")
         print(f"PASS: {len(manifest['cases'])} synthetic cases; artifacts: {args.output_dir}")
     finally:
         if anvil.poll() is None:

@@ -25,7 +25,11 @@ if sys.argv[1] == 'run':
     assert binary.is_file()
     output = Path(sys.argv[sys.argv.index('--output-dir') + 1])
     output.mkdir(parents=True)
-    (output / 'manifest.json').write_text(json.dumps({'argv': sys.argv[1:]}) + '\\n')
+    manifest = {'argv': sys.argv[1:], 'runner': {
+        'os': 'measurement-os', 'arch': 'measurement-arch',
+        'image': 'measurement-image', 'logical_cpus': 7,
+    }}
+    (output / 'manifest.json').write_text(json.dumps(manifest) + '\\n')
     (output / 'samples.jsonl').write_text(json.dumps({'id': 'fixture', 'phase': 'measured'}) + '\\n')
     (output / 'rpc-events.jsonl').write_text(json.dumps({'sample_id': 'fixture'}) + '\\n')
 elif sys.argv[1] != 'report':
@@ -80,7 +84,7 @@ class ControlBuildTests(unittest.TestCase):
         target.write_text(text)
         target.chmod(0o755)
 
-    def fake_cargo(self, dirty=False, no_bal=True):
+    def fake_cargo(self, dirty=False, no_bal=True, runner=FAKE_RUNNER):
         cast = f"""#!/usr/bin/env python3
 import sys
 if sys.argv[1:] == ['run', '--help']:
@@ -102,7 +106,7 @@ with Path({str(self.build_log)!r}).open('a') as log:
     log.write(json.dumps({{'cwd': str(Path.cwd()), 'argv': sys.argv[1:]}}) + '\\n')
 binary = Path(os.environ['CARGO_TARGET_DIR']) / 'profiling' / name
 binary.parent.mkdir(parents=True, exist_ok=True)
-binary.write_text({cast!r} if name == 'cast' else {FAKE_RUNNER!r})
+binary.write_text({cast!r} if name == 'cast' else {runner!r})
 binary.chmod(0o755)
 if {dirty!r} and name == 'cast':
     Path('Cargo.lock').write_text('unexpected mutation\\n')
@@ -207,11 +211,38 @@ if {dirty!r} and name == 'cast':
             self.assertEqual(manifest["rounds"], 3)
             self.assertEqual(manifest["round_offset"], 0)
             self.assertFalse(manifest["warmup_only"])
+            self.assertEqual(manifest["runner"], {
+                "os": "measurement-os", "arch": "measurement-arch",
+                "image": "measurement-image", "logical_cpus": 7,
+            })
+            for source in manifest["source_runs"]:
+                self.assertEqual(source["manifest"]["runner"], manifest["runner"])
             samples = [json.loads(line) for line in (aggregate / "samples.jsonl").read_text().splitlines()]
             self.assertEqual([sample["id"] for sample in samples], [f"measured-{round_index:03d}/fixture" for round_index in range(3)])
             for sample in samples:
                 self.assertEqual(sample["source_sample_id"], "fixture")
                 self.assertTrue(Path(sample["source_run_directory"]).is_dir())
+
+    def test_aggregation_rejects_missing_or_inconsistent_runner_metadata(self):
+        panel = self.root / "panel.json"
+        panel.write_text('{"schema_version": 1}\n')
+        self.environment.update({
+            "BUILD_ONLY": "0", "PANEL_MANIFEST": str(panel),
+            "ROUNDS": "2", "WARMUP_ROUNDS": "0",
+        })
+        for name, mutation, message in (
+            ("missing", "if output.name == 'measured-001': manifest.pop('runner')", "missing runner metadata"),
+            ("inconsistent", "manifest['runner']['image'] = output.name", "runner metadata differs"),
+        ):
+            with self.subTest(name=name):
+                artifacts = self.root / f"artifacts-{name}"
+                self.environment["BENCH_ROOT"] = str(artifacts)
+                marker = "    (output / 'manifest.json').write_text"
+                self.fake_cargo(runner=FAKE_RUNNER.replace(marker, f"    {mutation}\n{marker}"))
+                result = self.invoke()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stderr)
+                self.assertFalse((artifacts / "results/base/aggregate/manifest.json").exists())
 
 
 if __name__ == "__main__":

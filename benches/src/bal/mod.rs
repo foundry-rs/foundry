@@ -3,6 +3,7 @@
 use crate::{EndpointArgs, RunArgs};
 use alloy_primitives::B256;
 use eyre::{Context, Result, bail, ensure};
+use foundry_bench::results::RunnerMetadata;
 use foundry_common::sh_println;
 use foundry_config::Config;
 use serde::{Deserialize, Serialize};
@@ -504,6 +505,7 @@ pub async fn run(args: RunArgs) -> Result<()> {
     })
     .collect::<Vec<_>>();
     let run_manifest = json!({"schema_version":1, "panel":manifest,"panel_sha256":manifest_hash,
+        "runner":RunnerMetadata::default(),
         "build":build,"binary":binary,"effective_config":effective_config,"rounds":args.rounds,"warmup_rounds":args.warmup_rounds,
         "round_offset":args.round_offset,"timeout_seconds":args.timeout_seconds,"server_bal_source":"unknown",
         "include_miss":args.include_miss,"warmup_only":args.warmup_only,"worker_count":1,"schedule":schedule_manifest});

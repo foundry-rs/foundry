@@ -82,10 +82,10 @@ pub struct CommonBenchmarkResult {
     pub benchmarks: Vec<CommonBenchmark>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct RunnerMetadata {
-    pub os: &'static str,
-    pub arch: &'static str,
+    pub os: String,
+    pub arch: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image: Option<String>,
     pub logical_cpus: usize,
@@ -94,9 +94,9 @@ pub struct RunnerMetadata {
 impl Default for RunnerMetadata {
     fn default() -> Self {
         Self {
-            os: std::env::consts::OS,
-            arch: std::env::consts::ARCH,
-            image: std::env::var("ImageOS").ok(),
+            os: std::env::consts::OS.into(),
+            arch: std::env::consts::ARCH.into(),
+            image: std::env::var("ImageOS").ok().filter(|image| !image.is_empty()),
             logical_cpus: thread::available_parallelism().map_or(1, |n| n.get()),
         }
     }

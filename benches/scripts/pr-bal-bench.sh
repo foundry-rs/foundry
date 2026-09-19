@@ -249,10 +249,17 @@ for label in refs:
     aggregate = root / "results" / label / "aggregate"
     aggregate.mkdir()
     manifests_by_round = []
+    aggregate_runner = None
     with (aggregate / "samples.jsonl").open("w") as samples_out, (aggregate / "rpc-events.jsonl").open("w") as events_out:
         for round_index in range(rounds):
             measured = root / "results" / label / f"measured-{round_index:03d}"
             run_manifest = json.loads((measured / "manifest.json").read_text())
+            measured_runner = run_manifest.get("runner")
+            if not isinstance(measured_runner, dict) or not measured_runner:
+                fail(f"missing runner metadata in {measured / 'manifest.json'}")
+            if aggregate_runner is not None and measured_runner != aggregate_runner:
+                fail(f"runner metadata differs across measured rounds for {label}")
+            aggregate_runner = measured_runner
             manifests_by_round.append({
                 "directory": str(measured),
                 "manifest_sha256": digest(measured / "manifest.json"),
@@ -283,6 +290,7 @@ for label in refs:
         "rounds": rounds,
         "round_offset": 0,
         "warmup_only": False,
+        "runner": aggregate_runner,
         "source_runs": manifests_by_round,
     })
     run([str(runner), "report", "--output-dir", str(aggregate)], repo)
