@@ -335,7 +335,9 @@ impl Jev {
         if !self.disabled && self.transport.is_none() {
             match Transport::new() {
                 Ok(transport) => self.transport = Some(transport),
-                Err(_) => self.disable("missing credential or transport initialization failure"),
+                Err(_) => {
+                    self.disable("missing credential, transport failure, or invalid response")
+                }
             }
         }
     }

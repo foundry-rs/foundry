@@ -1,6 +1,6 @@
 # Native Jev transaction generation
 
-This branch adds an opt-in Rust implementation, independent of the earlier JavaScript experiments:
+This branch adds an opt-in Rust implementation and a replayable generated-Solidity prototype:
 
 ```sh
 # OPENROUTER_API_KEY must already be configured. This opts in to remote ABI metadata disclosure.
@@ -56,6 +56,20 @@ Remote decisions are not seed-deterministic. Persisted concrete corpus/failure t
 the replay artifact; rerunning only the RNG seed may produce different Jev decisions. This mode
 does not currently persist provider responses or expose a deterministic decision replay stream.
 
+## Generated Solidity shortcuts
+
+[`grammar`](grammar) is the complementary code-generation path. Jev selects bounded, typed action,
+sender, and live-view productions; a local validated AST renderer materializes Solidity shortcut
+handlers. Forge compiles and calls those handlers alongside ordinary actions. State reads remain at
+each generated call site, so later steps observe changes made by their prerequisites. The checked-in
+decision recording makes the generated source and execution reproducible without another provider
+call or credential.
+
+This demonstrates the compile/deploy/call mechanics on a local fund-flow ledger. The native path
+above derives scenario candidates from arbitrary invariant ABIs, while the generated-Solidity
+prototype still uses a fixed local model. Neither path presently infers a complete asset-flow graph
+from Solidity source or proves that every accepted protocol state has been enumerated.
+
 ## Stateful semantic smoke benchmark
 
 The fixture in [`fixtures`](fixtures) tests the relationship
@@ -109,7 +123,6 @@ in those budgets. These are negative controls, not evidence of a protocol-scale 
 show why further work should prioritize feedback-driven scenario diversity and richer value
 productions before increasing the remote-choice rate.
 
-The earlier JavaScript experiments remain in
-[commit 55660b597](https://github.com/foundry-rs/foundry/tree/55660b597490a78b9bbc7c7217f2e739c1d52d78/benches/jev),
-not in the active implementation. They are not measurements of this native mode. No native maze result is claimed
-until the actual native binary has been built and run under matched end-to-end budgets.
+The generated-Solidity sample and native results exercise different fixtures and are not combined
+performance evidence. No native maze result is claimed until the actual native binary has been
+built and run under matched end-to-end budgets.
