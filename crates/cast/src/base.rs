@@ -182,13 +182,11 @@ impl NumberWithBase {
         Ok(Self { number: Self::parse_digits(s, base)?, is_nonnegative: true, base })
     }
 
-    /// Parses the digits of `s` in `base`, accepting the prefix of that base but no other: a
-    /// leading `0b` is a binary prefix only when parsing binary and a pair of hexadecimal digits
-    /// otherwise.
+    /// Parses the digits of `s` in `base`, stripping only that base's prefix: a leading `0b` is a
+    /// prefix when parsing binary and a pair of hexadecimal digits otherwise.
     fn parse_digits(s: &str, base: Base) -> Result<U256> {
-        let prefix = base.prefix();
-        let s = match s.get(..prefix.len()) {
-            Some(p) if !prefix.is_empty() && p.eq_ignore_ascii_case(prefix) => &s[prefix.len()..],
+        let s = match s.get(..2) {
+            Some(p) if p.eq_ignore_ascii_case(base.prefix()) => &s[2..],
             _ => s,
         };
         U256::from_str_radix(s, base as u64).map_err(Into::into)
