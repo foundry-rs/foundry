@@ -75,7 +75,12 @@ impl ExternalIdentifierConfig {
     /// Returns `None` when there is nothing to look them up with: identification is off, or
     /// neither Sourcify nor a block explorer is usable.
     pub fn identifier(&self, chain: Option<Chain>) -> Option<ExternalIdentifier> {
-        self.identifier_with(chain, self.etherscan_alias.as_deref(), true)
+        self.identifier_with(
+            chain,
+            self.etherscan_alias.as_deref(),
+            self.etherscan_api_key.as_deref(),
+            true,
+        )
     }
 
     /// Builds an identifier for compiling storage layouts on exactly `chain`.
@@ -84,30 +89,26 @@ impl ExternalIdentifierConfig {
     /// chain that executed the recorded storage access. Sourcify is omitted because its compact
     /// response does not contain the verified sources required for compilation.
     pub fn storage_identifier(&self, chain: Chain) -> Option<ExternalIdentifier> {
-        let mut config = self.clone();
-        if config.etherscan_api_key.as_ref().is_some_and(|key| config.etherscan.contains_key(key)) {
-            // `etherscan_api_key` also accepts a table alias. Do not reuse an alias name as the
-            // literal API key for a different runtime chain.
-            config.etherscan_api_key = None;
-        }
-        config.identifier_with(Some(chain), None, false)
+        // `etherscan_api_key` also accepts a table alias. Do not reuse an alias name as the
+        // literal API key for a different runtime chain.
+        let api_key =
+            self.etherscan_api_key.as_deref().filter(|key| !self.etherscan.contains_key(*key));
+        self.identifier_with(Some(chain), None, api_key, false)
     }
 
     fn identifier_with(
         &self,
         mut chain: Option<Chain>,
         etherscan_alias: Option<&str>,
+        etherscan_api_key: Option<&str>,
         sourcify: bool,
     ) -> Option<ExternalIdentifier> {
         if self.offline || self.timeout == 0 {
             return None;
         }
 
-        let resolved = self.etherscan.resolve_for(
-            etherscan_alias,
-            self.etherscan_api_key.as_deref(),
-            chain.or(self.chain),
-        );
+        let resolved =
+            self.etherscan.resolve_for(etherscan_alias, etherscan_api_key, chain.or(self.chain));
         let etherscan = match resolved {
             Ok(Some(config)) => {
                 chain = config.chain;

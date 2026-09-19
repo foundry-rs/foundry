@@ -8,13 +8,13 @@ use alloy_primitives::{
     Address,
     map::{AddressMap, HashMap},
 };
-use foundry_common::external_storage::fetch_external_storage_layouts;
+use foundry_common::external_storage::{fetch_external_storage_layouts, lock_until};
 use foundry_compilers::artifacts::StorageLayout;
 use foundry_config::Chain;
 use foundry_evm_traces::identifier::{ExternalIdentifier, ExternalIdentifierConfig};
 use std::{
-    sync::{Arc, LazyLock, Mutex, MutexGuard, TryLockError},
-    time::{Duration, Instant},
+    sync::{Arc, LazyLock, Mutex},
+    time::Instant,
 };
 
 /// Chain id to the identifier for that chain, or `None` if one couldn't be built.
@@ -77,21 +77,4 @@ fn identifier(
             }
         })
         .clone()
-}
-
-/// Acquires an external-lookup lock without exceeding the caller's deadline.
-fn lock_until<T>(mutex: &Mutex<T>, deadline: Instant) -> Option<MutexGuard<'_, T>> {
-    loop {
-        match mutex.try_lock() {
-            Ok(guard) => return Some(guard),
-            Err(TryLockError::Poisoned(err)) => return Some(err.into_inner()),
-            Err(TryLockError::WouldBlock) => {
-                let remaining = deadline.saturating_duration_since(Instant::now());
-                if remaining.is_zero() {
-                    return None;
-                }
-                std::thread::sleep(remaining.min(Duration::from_millis(1)));
-            }
-        }
-    }
 }

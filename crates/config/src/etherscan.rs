@@ -90,9 +90,8 @@ impl EtherscanConfigs {
     /// CLI flag — overriding the key that entry carries. With no matching entry, `api_key` alone is
     /// enough to build a config for `chain`.
     ///
-    /// Shared by [`Config::get_etherscan_config_with_chain`](crate::Config::
-    /// get_etherscan_config_with_chain) and by consumers that keep only a snapshot of the config
-    /// and resolve later, against a chain they don't learn until runtime.
+    /// Shared by [`Config::get_etherscan_config_with_chain`] and by consumers that keep only a
+    /// snapshot of the config and resolve later, against a chain they don't learn until runtime.
     pub fn resolve_for(
         &self,
         alias: Option<&str>,

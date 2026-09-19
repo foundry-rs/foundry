@@ -444,12 +444,13 @@ fn write_cached_layout(
     }
 }
 
-/// Acquires a lookup lock without exceeding the caller's deadline.
-fn lock_until<T>(mutex: &Mutex<T>, deadline: Instant) -> Option<MutexGuard<'_, T>> {
+/// Acquires a lock without exceeding the caller's deadline.
+///
+/// Poisoned locks are recovered: everything guarded this way only holds memoized lookup state.
+pub fn lock_until<T>(mutex: &Mutex<T>, deadline: Instant) -> Option<MutexGuard<'_, T>> {
     loop {
         match mutex.try_lock() {
             Ok(guard) => return Some(guard),
-            // A slot only holds a memoized result, so recovering after a panic is safe.
             Err(TryLockError::Poisoned(err)) => return Some(err.into_inner()),
             Err(TryLockError::WouldBlock) => {
                 let remaining = deadline.saturating_duration_since(Instant::now());
