@@ -10,7 +10,7 @@ mod local;
 pub use local::LocalTraceIdentifier;
 
 mod external;
-pub use external::ExternalIdentifier;
+pub use external::{ExternalIdentifier, ExternalIdentifierConfig};
 
 mod signatures;
 pub use signatures::{SignaturesCache, SignaturesIdentifier};

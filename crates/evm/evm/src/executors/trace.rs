@@ -8,7 +8,7 @@ use foundry_evm_core::{
     backend::Backend,
     evm::{BlockEnvFor, EvmEnvFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
     fork::CreateFork,
-    opts::{EvmOpts, ExecutionSpecContext, ForkContext, resolve_execution_spec},
+    opts::{EvmOpts, ExecutionSpecContext, resolve_execution_spec},
 };
 use foundry_evm_hardforks::FoundryHardfork;
 use foundry_evm_networks::{
@@ -36,11 +36,6 @@ pub struct TracingFork<FEN: FoundryEvmNetwork> {
 impl<FEN: FoundryEvmNetwork> TracingFork<FEN> {
     pub const fn context(&self) -> TraceContext {
         self.context
-    }
-
-    /// Returns the backend's resolved source context, unaffected by local execution overrides.
-    pub const fn source_context(&self) -> ForkContext {
-        self.fork.resolved.as_ref().expect("tracing fork is resolved").context()
     }
 
     /// Resolves the execution spec and carries it into the trace decoding context.

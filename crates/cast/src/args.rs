@@ -629,6 +629,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             };
             print_scalar(number)?;
         }
+        CastSubcommand::Bal(cmd) => cmd.run().await?,
         CastSubcommand::Chain { rpc } => {
             let provider = rpc_provider(&rpc)?;
             const GENESIS_CHAINS: &[(&str, &str)] = &[
