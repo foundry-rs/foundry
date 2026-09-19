@@ -123,6 +123,10 @@ in those budgets. These are negative controls, not evidence of a protocol-scale 
 show why further work should prioritize feedback-driven scenario diversity and richer value
 productions before increasing the remote-choice rate.
 
+The broader [Recon shortcut comparison](SCFUZZBENCH.md) runs the same native mode against all five
+current pinned SCFuzzBench targets and records known-bug hits, coverage pulses, throughput, and the
+current Superform function-limit fallback.
+
 The generated-Solidity sample and native results exercise different fixtures and are not combined
 performance evidence. No native maze result is claimed until the actual native binary has been
 built and run under matched end-to-end budgets.
