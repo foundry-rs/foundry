@@ -1,4 +1,4 @@
-//! Compare Cast BAL execution and replay using the same binary.
+//! Benchmark cast run execution paths using the same binary.
 
 use clap::{Args, Parser, Subcommand};
 use eyre::Result;
@@ -7,7 +7,7 @@ use std::path::PathBuf;
 mod bal;
 
 #[derive(Parser)]
-#[command(name = "foundry-bal-bench", about = "Measure Cast BAL latency and RPC overhead")]
+#[command(name = "foundry-cast-run-bench", about = "Measure cast run latency and RPC overhead")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -105,7 +105,7 @@ mod tests {
     #[test]
     fn run_accepts_one_binary_without_a_build_manifest() {
         let cli = Cli::try_parse_from([
-            "foundry-bal-bench",
+            "foundry-cast-run-bench",
             "run",
             "--cast",
             "/tmp/cast",

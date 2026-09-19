@@ -22,8 +22,8 @@ name = "foundry-scfuzzbench"
 path = "src/scfuzzbench.rs"
 
 [[bin]]
-name = "foundry-bal-bench"
-path = "src/bal_bench.rs"
+name = "foundry-cast-run-bench"
+path = "src/cast_run_bench.rs"
 
 [dependencies]
 foundry-test-utils.workspace = true

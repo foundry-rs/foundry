@@ -374,9 +374,10 @@ owners use that contract to provision storage and release/trend views.
 4. **Hyperfine not found**: Install hyperfine using the instructions in Prerequisites
 5. **npm/Node.js errors**: Ensure Node.js and npm are installed for repositories that require them
 
-## Cast block access list benchmarks
+## Cast run benchmarks
 
-`foundry-bal-bench` compares ordinary `cast run` (`auto`) with `cast run --no-bal`
+`foundry-cast-run-bench` measures `cast run` performance. It currently compares
+ordinary `cast run` (`auto`, with block access list support) with `cast run --no-bal`
 (`replay`) using the **same unmodified binary**. An HTTP proxy records RPC counts,
 response bytes and request timings. `--include-miss` adds an optional arm that
 locally injects JSON-RPC method-not-found for BAL requests; this measures local
@@ -406,11 +407,11 @@ first/middle/last targets; coincident positions are deduplicated. Fix `--end-blo
 and `--seed` to repeat a selection, or reuse the captured manifest directly:
 
 ```sh
-cargo run --locked -p foundry-bench --bin foundry-bal-bench -- capture \
+cargo run --locked -p foundry-bench --bin foundry-cast-run-bench -- capture \
   --blocks 12 --candidate-blocks 120 --seed 7928 \
   --rpc-env BAL_BENCH_RPC_URL --output-dir /tmp/foundry-bal-panel
 
-cargo run --locked -p foundry-bench --bin foundry-bal-bench -- run \
+cargo run --locked -p foundry-bench --bin foundry-cast-run-bench -- run \
   --manifest /tmp/foundry-bal-panel/manifest.json \
   --cast /absolute/path/to/bal-capable/cast \
   --rpc-env BAL_BENCH_RPC_URL --rounds 10 --warmup-rounds 2 \
@@ -440,7 +441,7 @@ Results retain `manifest.json`, `samples.jsonl`, `rpc-events.jsonl` and raw chil
 outputs. `summary.json` and `report.md` can be recomputed offline:
 
 ```sh
-cargo run --locked -p foundry-bench --bin foundry-bal-bench -- report \
+cargo run --locked -p foundry-bench --bin foundry-cast-run-bench -- report \
   --output-dir /tmp/foundry-bal-results
 ```
 
@@ -497,7 +498,7 @@ The build wrapper tests use fake compiler tools and local Git repositories:
 ```sh
 bash -n benches/scripts/pr-bal-bench.sh
 python3 benches/scripts/test-pr-bal-bench.py -v
-cargo test -p foundry-bench --bin foundry-bal-bench
+cargo test -p foundry-bench --bin foundry-cast-run-bench
 ```
 
 The local Anvil harness uses recorded BAL responses to check first/middle/last
@@ -507,7 +508,7 @@ unsupported/unusable responses, and `--quick`/`--prestate-tracer` precedence:
 ```sh
 python3 benches/scripts/test-bal-bench.py \
   --cast /absolute/path/to/bal-capable/cast \
-  --anvil /absolute/path/anvil --runner /absolute/path/foundry-bal-bench \
+  --anvil /absolute/path/anvil --runner /absolute/path/foundry-cast-run-bench \
   --include-miss --output-dir /tmp/foundry-bal-local-check
 ```
 
@@ -523,6 +524,6 @@ Measure the proxy's loopback overhead separately; do not subtract it from Cast
 wall times:
 
 ```sh
-cargo test -p foundry-bench --bin foundry-bal-bench \
+cargo test -p foundry-bench --bin foundry-cast-run-bench \
   bal::proxy::tests::proxy_overhead -- --ignored --nocapture
 ```

@@ -528,7 +528,7 @@ def verify_fixtures(rpc_url, manifest, cast, output):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--anvil", type=Path, default=Path("target/debug/anvil"))
-    parser.add_argument("--runner", type=Path, default=Path("target/debug/foundry-bal-bench"))
+    parser.add_argument("--runner", type=Path, default=Path("target/debug/foundry-cast-run-bench"))
     parser.add_argument("--build-manifest", type=Path)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--large-transactions", type=int, default=64)

@@ -185,10 +185,10 @@ if build_only == "1":
 runner_env = dict(build_env, CARGO_TARGET_DIR=str(root / "runner-target"))
 runner_argv = [
     "cargo", "build", "--locked", "--profile", "profiling", "-p", "foundry-bench",
-    "--bin", "foundry-bal-bench",
+    "--bin", "foundry-cast-run-bench",
 ]
 run(runner_argv, repo, runner_env)
-runner = root / "runner-target" / "profiling" / "foundry-bal-bench"
+runner = root / "runner-target" / "profiling" / "foundry-cast-run-bench"
 changed = git("diff", "HEAD", "--name-only").splitlines()
 untracked = git("ls-files", "--others", "--exclude-standard", "--", "benches").splitlines()
 write_json(root / "runner-build.json", {
