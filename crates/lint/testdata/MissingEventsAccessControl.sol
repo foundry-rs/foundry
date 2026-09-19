@@ -52,6 +52,25 @@ contract MissingEventsAccessControl {
         _;
     }
 
+    modifier onlyOwnerViaTupleReassignedAlias(address newOwner) {
+        address caller = msg.sender;
+        (caller,) = (newOwner, false);
+        require(caller == owner, "not owner");
+        _;
+    }
+
+    modifier onlyOwnerViaTupleDeclaredAlias() {
+        (address caller, bool live) = (msg.sender, true);
+        require(live && caller == owner, "not owner");
+        _;
+    }
+
+    modifier onlyOwnerViaTupleCallAlias() {
+        (address caller,) = _senderAndFlag();
+        require(caller == owner, "not owner");
+        _;
+    }
+
     modifier onlyOwnerViaCheck() {
         _checkOwner();
         _;
@@ -172,6 +191,24 @@ contract MissingEventsAccessControl {
         external
         onlyOwnerViaAliasBeforeReassign(newOwner)
     {
+        owner = newOwner; //~WARN: `owner` is changed without an event but is used for access control
+    }
+
+    function setOwnerViaTupleReassignedAlias(address newOwner)
+        external
+        onlyOwnerViaTupleReassignedAlias(newOwner)
+    {
+        owner = newOwner;
+    }
+
+    function setOwnerViaTupleDeclaredAlias(address newOwner)
+        external
+        onlyOwnerViaTupleDeclaredAlias
+    {
+        owner = newOwner; //~WARN: `owner` is changed without an event but is used for access control
+    }
+
+    function setOwnerViaTupleCallAlias(address newOwner) external onlyOwnerViaTupleCallAlias {
         owner = newOwner; //~WARN: `owner` is changed without an event but is used for access control
     }
 
@@ -338,6 +375,10 @@ contract MissingEventsAccessControl {
 
     constructor(address initialOwner) {
         owner = initialOwner;
+    }
+
+    function _senderAndFlag() internal view returns (address, bool) {
+        return (msg.sender, true);
     }
 
     function _checkOwner() internal view {
