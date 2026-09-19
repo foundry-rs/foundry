@@ -16,12 +16,13 @@ excluded. Model latency is included. The latest progress pulse before the timeou
 feature, and transaction counts; post-timeout shrinking is excluded. Ground-truth bug hits use
 [SCFuzzBench's revision-locked catalog](https://github.com/scfuzzbench/scfuzzbench/blob/main/benchmarks/known_bugs.json).
 
+Use the checked-in runner so every arm also receives a unique failure-persistence directory.
+Reusing only a fresh corpus is insufficient: Forge otherwise replays failures saved by an earlier
+campaign, contaminating time-to-bug and coverage comparisons.
+
 ```sh
-FOUNDRY_INVARIANT_TIMEOUT=30 FOUNDRY_INVARIANT_RUNS=500000000 \
-FOUNDRY_INVARIANT_DEPTH=100 forge test --mc CryticToFoundry \
-  --match-test 'invariant_' --invariant-workers 1 \
-  --invariant-tx-generator jev \
-  --fuzz-seed 0x585f37fbac9620027325a193e979e3c93c87b069b15dce6c903f5f460436f916
+FORGE_BIN="$PWD/target/release/forge" \
+  benches/jev/scfuzzbench.sh /path/to/scfuzzbench-target jev 30
 ```
 
 ## Initial one-seed smoke result
