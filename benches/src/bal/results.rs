@@ -355,6 +355,16 @@ struct Comparison {
     rpc_delta_per_pair: Option<BTreeMap<String, Distribution>>,
 }
 
+fn scheduled_rounds(manifest: &Value) -> Option<BTreeSet<usize>> {
+    if manifest["warmup_only"] == true {
+        Some(BTreeSet::new())
+    } else {
+        let rounds = manifest["rounds"].as_u64()?;
+        let offset = manifest["round_offset"].as_u64().unwrap_or(0);
+        Some((offset..offset.saturating_add(rounds)).map(|round| round as usize).collect())
+    }
+}
+
 fn compare_samples(samples: &[Sample], manifest: &Value) -> Vec<Comparison> {
     let mut cases = BTreeMap::<_, Vec<_>>::new();
     if let Some(panel) = manifest["panel"]["cases"].as_array() {
@@ -369,14 +379,7 @@ fn compare_samples(samples: &[Sample], manifest: &Value) -> Vec<Comparison> {
     }) {
         cases.entry(&sample.case_id).or_default().push(sample);
     }
-    let scheduled = if manifest["warmup_only"] == true {
-        Some(BTreeSet::new())
-    } else if let Some(rounds) = manifest["rounds"].as_u64() {
-        let offset = manifest["round_offset"].as_u64().unwrap_or(0);
-        Some((offset..offset.saturating_add(rounds)).map(|round| round as usize).collect())
-    } else {
-        None
-    };
+    let scheduled = scheduled_rounds(manifest);
     cases
         .into_iter()
         .map(|(case_id, samples)| {
@@ -473,25 +476,72 @@ fn compare_samples(samples: &[Sample], manifest: &Value) -> Vec<Comparison> {
 
 fn common_projection(
     groups: &[Group],
-    commit: &str,
+    samples: &[Sample],
+    manifest: &Value,
     runner: RunnerMetadata,
 ) -> Option<CommonBenchmarkResult> {
+    let scheduled = scheduled_rounds(manifest);
+    if scheduled.as_ref().is_some_and(BTreeSet::is_empty) {
+        return None;
+    }
     let benchmarks = groups
         .iter()
         .filter_map(|group| {
-            if group.conditional_on_bal_hit || group.fault.is_some() {
+            if group.conditional_on_bal_hit
+                || group.fault.is_some()
+                || (group.arm == Arm::Miss && manifest["include_miss"] == false)
+            {
                 return None;
             }
             let wall = group.eligible_wall_seconds.as_ref()?;
-            let mut counters = BTreeMap::new();
-            for (name, count) in [
-                ("scheduled_attempts", group.attempts),
+            let mut counts = vec![
+                ("observed_attempts", group.attempts),
                 ("valid_completed", group.eligible),
                 ("failed", group.failed),
                 ("unknown", group.unknown),
                 ("censored", group.censored),
                 ("correctness_blocked", group.correctness_blocked),
-            ] {
+            ];
+            // Older aggregate manifests may not record whether the miss arm was scheduled.
+            if let Some(rounds) = &scheduled
+                && (group.arm != Arm::Miss || manifest["include_miss"] == true)
+            {
+                let mut observed = BTreeMap::new();
+                for sample in samples.iter().filter(|sample| {
+                    sample.phase == "measured"
+                        && sample.case_id == group.case_id
+                        && sample.arm == group.arm
+                        && sample.fault == group.fault
+                        && sample.synthetic == group.synthetic
+                }) {
+                    *observed.entry(sample.round).or_insert(0usize) += 1;
+                }
+                counts.extend([
+                    ("scheduled_attempts", rounds.len()),
+                    (
+                        "missing_attempts",
+                        rounds.iter().filter(|round| !observed.contains_key(round)).count(),
+                    ),
+                    (
+                        "duplicate_attempts",
+                        observed
+                            .iter()
+                            .filter(|(round, _)| rounds.contains(round))
+                            .map(|(_, count)| count - 1)
+                            .sum(),
+                    ),
+                    (
+                        "unexpected_attempts",
+                        observed
+                            .iter()
+                            .filter(|(round, _)| !rounds.contains(round))
+                            .map(|(_, count)| count)
+                            .sum(),
+                    ),
+                ]);
+            }
+            let mut counters = BTreeMap::new();
+            for (name, count) in counts {
                 counters.insert(
                     name.to_owned(),
                     Metric { value: count as f64, unit: "count", statistic: "total" },
@@ -519,7 +569,7 @@ fn common_projection(
     (!benchmarks.is_empty()).then(|| CommonBenchmarkResult {
         schema_version: 1,
         repo: "foundry-rs/foundry".into(),
-        commit: commit.into(),
+        commit: manifest["build"]["source_sha"].as_str().unwrap_or("unknown").into(),
         pr: None,
         runner,
         benchmarks,
@@ -603,13 +653,7 @@ pub fn report(output_dir: &Path) -> Result<()> {
         }
     }
     let groups = group_samples(&samples);
-    let common = runner.and_then(|runner| {
-        common_projection(
-            &groups,
-            manifest["build"]["source_sha"].as_str().unwrap_or("unknown"),
-            runner,
-        )
-    });
+    let common = runner.and_then(|runner| common_projection(&groups, &samples, &manifest, runner));
     let has_common_projection = common.is_some();
     let comparisons = compare_samples(&samples, &manifest);
     write_json(
@@ -646,7 +690,7 @@ pub fn report(output_dir: &Path) -> Result<()> {
             comparison.invalid_pairs,
         )?;
     }
-    report.push_str("\nAll attempts remain in the diagnostics below. Wall distributions include completed failures; timeouts are censored. Common JSON contains valid completed equivalents with full attempt counters. The optional miss arm injects local method-not-found, excluding a real unsupported provider's round trip.\n\n");
+    report.push_str("\nAll attempts remain in the diagnostics below. Wall distributions include completed failures; timeouts are censored. Common JSON wall times are conditional on valid completed equivalents. Observed attempts are separate from manifest-planned, missing, duplicate and unexpected attempts; unknown plan counters are omitted. Duplicate attempts count extra records for scheduled rounds, while unexpected attempts count every record outside the schedule. The optional miss arm injects local method-not-found, excluding a real unsupported provider's round trip.\n\n");
     report.push_str("| Case | Arm | Attempts / complete / valid | Hit / fallback / no probe | Failed / unknown / censored / blocked | Wall seconds: median / IQR / min / max |\n| --- | --- | ---: | ---: | ---: | --- |\n");
     for group in groups.iter().filter(|group| group.fault.is_none()) {
         let name = format!(
@@ -795,11 +839,14 @@ mod tests {
 
     #[test]
     fn round_trip_preserves_censoring_and_fallback_denominator() {
-        let samples = vec![
+        let mut samples = vec![
             paired_samples().remove(0),
             sample(ActualPath::ReplayAfterProbe, Some(5.0)),
             sample(ActualPath::Failed, None),
         ];
+        for (round, sample) in samples.iter_mut().enumerate() {
+            sample.round = round;
+        }
         let encoded = serde_json::to_value(&samples).unwrap();
         let decoded = serde_json::from_value::<Vec<Sample>>(encoded.clone()).unwrap();
         assert_eq!(serde_json::to_value(&decoded).unwrap(), encoded);
@@ -812,7 +859,9 @@ mod tests {
         assert_eq!(overall.completed_wall_seconds.as_ref().unwrap().median, 3.0);
         assert_eq!(overall.actual_paths["replay_after_probe"], 1);
         assert_eq!(groups[1].attempts, 1);
-        let common = common_projection(&groups, "sha", RunnerMetadata::default()).unwrap();
+        let common =
+            common_projection(&groups, &decoded, &json!({"rounds":3}), RunnerMetadata::default())
+                .unwrap();
         assert_eq!(common.benchmarks[0].counters["scheduled_attempts"].value, 3.0);
         assert_eq!(common.benchmarks[0].wall_time.value, 3.0);
     }
@@ -890,11 +939,15 @@ mod tests {
         blocked.correctness = "correctness_blocked".into();
         let mut warmup = sample(ActualPath::BalHit, Some(0.1));
         warmup.phase = "warmup".into();
-        let groups = group_samples(&[blocked, warmup]);
+        let samples = [blocked, warmup];
+        let groups = group_samples(&samples);
         assert_eq!(groups[0].attempts, 1);
         assert_eq!(groups[0].correctness_blocked, 1);
         assert_eq!(groups[0].completed_wall_seconds.as_ref().unwrap().median, 9.0);
-        assert!(common_projection(&groups, "sha", RunnerMetadata::default()).is_none());
+        assert!(
+            common_projection(&groups, &samples, &paired_manifest(), RunnerMetadata::default())
+                .is_none()
+        );
     }
 
     #[test]
@@ -1049,6 +1102,160 @@ mod tests {
 
     fn paired_manifest() -> Value {
         json!({"rounds":2,"round_offset":0,"panel":{"cases":[{"id":"middle"}]}})
+    }
+
+    fn report_samples(samples: &[Sample], mut manifest: Value) -> tempfile::TempDir {
+        let root = tempfile::tempdir().unwrap();
+        manifest["binary"] = json!({"sha256":"a".repeat(64)});
+        manifest["runner"] = serde_json::to_value(RunnerMetadata::default()).unwrap();
+        write_json(&root.path().join("manifest.json"), &manifest).unwrap();
+        fs::write(
+            root.path().join("samples.jsonl"),
+            samples
+                .iter()
+                .map(|sample| serde_json::to_string(sample).unwrap())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+        report(root.path()).unwrap();
+        root
+    }
+
+    #[test]
+    fn common_report_preserves_the_schedule_after_interruption() {
+        let root = report_samples(&paired_samples()[..2], paired_manifest());
+        let common = serde_json::from_slice::<Value>(
+            &fs::read(root.path().join("common-results.json")).unwrap(),
+        )
+        .unwrap();
+        let benchmarks = common["benchmarks"].as_array().unwrap();
+        assert_eq!(benchmarks.len(), 2);
+        for benchmark in benchmarks {
+            let counters = &benchmark["counters"];
+            assert_eq!(counters["scheduled_attempts"]["value"], 2.0);
+            assert_eq!(counters["observed_attempts"]["value"], 1.0);
+            assert_eq!(counters["missing_attempts"]["value"], 1.0);
+            assert_eq!(counters["valid_completed"]["value"], 1.0);
+        }
+    }
+
+    #[test]
+    fn common_report_distinguishes_missing_duplicate_and_unexpected_rounds() {
+        for (rounds, offset, missing, duplicate, unexpected) in [
+            (vec![0, 1], 0, 0, 0, 0),
+            (vec![0, 0], 0, 1, 1, 0),
+            (vec![0, 9], 0, 1, 0, 1),
+            (vec![0, 0, 9, 9], 0, 1, 1, 2),
+            (vec![4], 4, 1, 0, 0),
+            (vec![4, 5], 4, 0, 0, 0),
+        ] {
+            let mut samples = rounds
+                .iter()
+                .flat_map(|round| {
+                    paired_samples().into_iter().take(2).map(|mut sample| {
+                        sample.round = *round;
+                        sample
+                    })
+                })
+                .collect::<Vec<_>>();
+            for phase in ["validation", "warmup"] {
+                let mut sample = samples[0].clone();
+                sample.phase = phase.into();
+                samples.push(sample);
+            }
+            let mut manifest = paired_manifest();
+            manifest["round_offset"] = json!(offset);
+            let root = report_samples(&samples, manifest);
+            let common = serde_json::from_slice::<Value>(
+                &fs::read(root.path().join("common-results.json")).unwrap(),
+            )
+            .unwrap();
+            for benchmark in common["benchmarks"].as_array().unwrap() {
+                let counters = &benchmark["counters"];
+                for (name, expected) in [
+                    ("scheduled_attempts", 2),
+                    ("observed_attempts", rounds.len()),
+                    ("missing_attempts", missing),
+                    ("duplicate_attempts", duplicate),
+                    ("unexpected_attempts", unexpected),
+                ] {
+                    assert_eq!(counters[name]["value"], expected as f64, "{rounds:?}: {name}");
+                }
+                let expected_wall =
+                    if benchmark["name"].as_str().unwrap().contains("/auto/") { 1.0 } else { 5.0 };
+                assert_eq!(benchmark["wall_time"]["value"], expected_wall);
+            }
+        }
+    }
+
+    #[test]
+    fn common_report_omits_unknown_plan_counters_for_legacy_manifests() {
+        let mut samples = paired_samples()[..2].to_vec();
+        let mut miss = samples[1].clone();
+        miss.arm = Arm::Miss;
+        miss.synthetic = true;
+        samples.push(miss);
+        for (manifest, miss_included, auto_plan_known, miss_plan_known) in [
+            (json!({"rounds":2,"include_miss":true}), true, true, true),
+            (json!({"rounds":2,"include_miss":false}), false, true, false),
+            (json!({"rounds":2}), true, true, false),
+            (json!({"include_miss":true}), true, false, false),
+        ] {
+            let root = report_samples(&samples, manifest);
+            let common = serde_json::from_slice::<Value>(
+                &fs::read(root.path().join("common-results.json")).unwrap(),
+            )
+            .unwrap();
+            let benchmarks = common["benchmarks"].as_array().unwrap();
+            assert_eq!(benchmarks.len(), if miss_included { 3 } else { 2 });
+            for benchmark in benchmarks {
+                let is_miss = benchmark["name"].as_str().unwrap().contains("/miss/");
+                assert!(!is_miss || miss_included);
+                let counters = &benchmark["counters"];
+                assert_eq!(counters["observed_attempts"]["value"], 1.0);
+                let plan_known = if is_miss { miss_plan_known } else { auto_plan_known };
+                if plan_known {
+                    assert_eq!(counters["scheduled_attempts"]["value"], 2.0);
+                    assert_eq!(counters["missing_attempts"]["value"], 1.0);
+                } else {
+                    for name in [
+                        "scheduled_attempts",
+                        "missing_attempts",
+                        "duplicate_attempts",
+                        "unexpected_attempts",
+                    ] {
+                        assert!(counters.get(name).is_none(), "unknown {name} must be omitted");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn common_report_removes_stale_timings_when_no_measurements_are_scheduled() {
+        let root = report_samples(&paired_samples(), paired_manifest());
+        let common = root.path().join("common-results.json");
+        let prior = fs::read(&common).unwrap();
+        for schedule in [json!({"rounds":2,"warmup_only":true}), json!({"rounds":0})] {
+            let manifest_path = root.path().join("manifest.json");
+            let mut manifest =
+                serde_json::from_slice::<Value>(&fs::read(&manifest_path).unwrap()).unwrap();
+            manifest.as_object_mut().unwrap().remove("warmup_only");
+            manifest.as_object_mut().unwrap().extend(schedule.as_object().unwrap().clone());
+            write_json(&manifest_path, &manifest).unwrap();
+            fs::write(&common, &prior).unwrap();
+
+            report(root.path()).unwrap();
+
+            assert!(!common.exists());
+            let summary = serde_json::from_slice::<Value>(
+                &fs::read(root.path().join("summary.json")).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(summary["no_common_projection"], true);
+            assert!(summary["comparisons"][0]["speedup"].is_null());
+        }
     }
 
     #[test]
