@@ -1,6 +1,10 @@
 //! Recompute auditable summaries without discarding unsuccessful scheduled attempts.
 
-use super::{ActualPath, Arm, read_json, write_json};
+use super::{
+    ActualPath, Arm,
+    proxy::{Completion, RpcEvent, Snapshot, is_bal_method},
+    read_json, write_json,
+};
 use eyre::{Context, Result, ensure};
 use foundry_bench::results::{CommonBenchmark, CommonBenchmarkResult, Metric, RunnerMetadata};
 use serde::{Deserialize, Serialize};
@@ -33,9 +37,9 @@ pub struct Sample {
     pub correctness: String,
     pub fault: Option<String>,
     pub synthetic: bool,
-    pub rpc_at_exit: Value,
-    pub rpc: Value,
-    pub bal_events: Vec<Value>,
+    pub rpc_at_exit: Snapshot,
+    pub rpc: Snapshot,
+    pub bal_events: Vec<RpcEvent>,
 }
 
 impl Sample {
@@ -105,8 +109,8 @@ struct Group {
     actual_paths: BTreeMap<String, usize>,
     completed_wall_seconds: Option<Distribution>,
     eligible_wall_seconds: Option<Distribution>,
-    rpc_at_exit: Value,
-    rpc_after_cleanup: Value,
+    rpc_at_exit: RpcTotals,
+    rpc_after_cleanup: RpcTotals,
     rpc_per_attempt: BTreeMap<String, Distribution>,
     bal_http_elapsed_seconds: Option<Distribution>,
     bal_upstream_elapsed_seconds: Option<Distribution>,
@@ -119,35 +123,42 @@ struct Group {
     bal_results_with_known_size: usize,
 }
 
-fn sum_rpc<'a>(snapshots: impl IntoIterator<Item = &'a Value>) -> Value {
-    let mut totals = BTreeMap::<String, u64>::new();
-    let mut methods = BTreeMap::<String, BTreeMap<String, u64>>::new();
+/// Aggregate counts omit the per-snapshot response analysis state.
+#[derive(Debug, Default, Serialize)]
+struct RpcTotals {
+    client_requests_by_method: BTreeMap<String, u64>,
+    upstream_requests_by_method: BTreeMap<String, u64>,
+    client_http_exchanges: u64,
+    upstream_http_exchanges: u64,
+    injected_responses: u64,
+    client_response_body_bytes: u64,
+    upstream_response_body_bytes: u64,
+    repeated_requests: u64,
+    errors: u64,
+    active_http_exchanges: u64,
+}
+
+fn sum_rpc<'a>(snapshots: impl IntoIterator<Item = &'a Snapshot>) -> RpcTotals {
+    let mut totals = RpcTotals::default();
     for snapshot in snapshots {
-        if let Some(fields) = snapshot.as_object() {
-            for (name, value) in fields {
-                if let Some(count) = value.as_u64() {
-                    *totals.entry(name.clone()).or_default() += count;
-                } else if name.ends_with("_requests_by_method")
-                    && let Some(counts) = value.as_object()
-                {
-                    let group = methods.entry(name.clone()).or_default();
-                    for (method, count) in counts {
-                        if let Some(count) = count.as_u64() {
-                            *group.entry(method.clone()).or_default() += count;
-                        }
-                    }
-                }
+        for (counts, total_counts) in [
+            (&snapshot.client_requests_by_method, &mut totals.client_requests_by_method),
+            (&snapshot.upstream_requests_by_method, &mut totals.upstream_requests_by_method),
+        ] {
+            for (method, count) in counts {
+                *total_counts.entry(method.clone()).or_default() += count;
             }
         }
+        totals.client_http_exchanges += snapshot.client_http_exchanges;
+        totals.upstream_http_exchanges += snapshot.upstream_http_exchanges;
+        totals.injected_responses += snapshot.injected_responses;
+        totals.client_response_body_bytes += snapshot.client_response_body_bytes;
+        totals.upstream_response_body_bytes += snapshot.upstream_response_body_bytes;
+        totals.repeated_requests += snapshot.repeated_requests;
+        totals.errors += snapshot.errors;
+        totals.active_http_exchanges += snapshot.active_http_exchanges;
     }
-    let mut result = serde_json::Map::new();
-    for (name, count) in totals {
-        result.insert(name, json!(count));
-    }
-    for (name, counts) in methods {
-        result.insert(name, json!(counts));
-    }
-    Value::Object(result)
+    totals
 }
 
 fn summarize(samples: &[&Sample], conditional: bool) -> Group {
@@ -220,33 +231,30 @@ fn summarize(samples: &[&Sample], conditional: bool) -> Group {
         *actual_paths.entry(path.to_owned()).or_default() += 1;
         for event in &sample.bal_events {
             group.bal_exchanges += 1;
-            let response = &event["response"];
-            group.bal_exchange_observed_body_bytes += response["body_bytes"].as_u64().unwrap_or(0);
-            group.bal_exchange_cleanup_body_bytes +=
-                response["cleanup_body_bytes"].as_u64().unwrap_or(0);
-            if response["completion"] == "eof" {
-                if let Some(elapsed) = response["elapsed_seconds"].as_f64() {
+            let response = &event.response;
+            group.bal_exchange_observed_body_bytes += response.body_bytes;
+            group.bal_exchange_cleanup_body_bytes += response.cleanup_body_bytes;
+            if response.completion == Completion::Eof {
+                if let Some(elapsed) = response.elapsed_seconds {
                     bal_http_elapsed.push(elapsed);
                 }
             } else {
                 group.bal_incomplete_exchanges += 1;
             }
-            if event["upstream"]["completion"] == "eof"
-                && let Some(elapsed) = event["upstream"]["elapsed_seconds"].as_f64()
+            if let Some(upstream) = &event.upstream
+                && upstream.completion == Completion::Eof
+                && let Some(elapsed) = upstream.elapsed_seconds
             {
                 bal_upstream_elapsed.push(elapsed);
             }
-            if let Some(calls) = event["calls"].as_array() {
-                group.bal_mixed_batch_exchanges += usize::from(calls.iter().any(|call| {
-                    !super::proxy::is_bal_method(call["method"].as_str().unwrap_or_default())
-                }));
-                for call in calls {
-                    if super::proxy::is_bal_method(call["method"].as_str().unwrap_or_default())
-                        && let Some(bytes) = call["result_json_bytes"].as_u64()
-                    {
-                        group.bal_result_json_bytes += bytes;
-                        group.bal_results_with_known_size += 1;
-                    }
+            group.bal_mixed_batch_exchanges +=
+                usize::from(event.calls.iter().any(|call| !is_bal_method(&call.method)));
+            for call in &event.calls {
+                if is_bal_method(&call.method)
+                    && let Some(bytes) = call.result_json_bytes
+                {
+                    group.bal_result_json_bytes += bytes;
+                    group.bal_results_with_known_size += 1;
                 }
             }
         }
@@ -286,42 +294,27 @@ fn group_samples(samples: &[Sample]) -> Vec<Group> {
 fn rpc_metrics(sample: &Sample) -> BTreeMap<String, f64> {
     let mut metrics = BTreeMap::new();
     for (name, value) in [
-        ("client_requests", rpc_requests(&sample.rpc_at_exit, "client_requests_by_method")),
-        ("upstream_requests", rpc_requests(&sample.rpc_at_exit, "upstream_requests_by_method")),
-        (
-            "client_response_body_bytes",
-            sample.rpc_at_exit["client_response_body_bytes"].as_u64().unwrap_or(0),
-        ),
-        (
-            "upstream_response_body_bytes",
-            sample.rpc_at_exit["upstream_response_body_bytes"].as_u64().unwrap_or(0),
-        ),
+        ("client_requests", sample.rpc_at_exit.client_requests_by_method.values().sum()),
+        ("upstream_requests", sample.rpc_at_exit.upstream_requests_by_method.values().sum()),
+        ("client_response_body_bytes", sample.rpc_at_exit.client_response_body_bytes),
+        ("upstream_response_body_bytes", sample.rpc_at_exit.upstream_response_body_bytes),
         (
             "bal_observed_body_bytes",
-            sample
-                .bal_events
-                .iter()
-                .map(|event| event["response"]["body_bytes"].as_u64().unwrap_or(0))
-                .sum(),
+            sample.bal_events.iter().map(|event| event.response.body_bytes).sum(),
         ),
         (
             "bal_cleanup_body_bytes",
-            sample
-                .bal_events
-                .iter()
-                .map(|event| event["response"]["cleanup_body_bytes"].as_u64().unwrap_or(0))
-                .sum(),
+            sample.bal_events.iter().map(|event| event.response.cleanup_body_bytes).sum(),
         ),
     ] {
         metrics.insert(name.to_owned(), value as f64);
     }
-    for direction in ["client_requests_by_method", "upstream_requests_by_method"] {
-        if let Some(counts) = sample.rpc_at_exit[direction].as_object() {
-            for (method, count) in counts {
-                if let Some(count) = count.as_u64() {
-                    metrics.insert(format!("{direction}.{method}"), count as f64);
-                }
-            }
+    for (direction, counts) in [
+        ("client_requests_by_method", &sample.rpc_at_exit.client_requests_by_method),
+        ("upstream_requests_by_method", &sample.rpc_at_exit.upstream_requests_by_method),
+    ] {
+        for (method, count) in counts {
+            metrics.insert(format!("{direction}.{method}"), *count as f64);
         }
     }
     metrics
@@ -544,10 +537,6 @@ fn timing(distribution: Option<&Distribution>) -> String {
     )
 }
 
-fn rpc_requests(snapshot: &Value, name: &str) -> u64 {
-    snapshot[name].as_object().map_or(0, |values| values.values().filter_map(Value::as_u64).sum())
-}
-
 fn median(distribution: Option<&Distribution>) -> String {
     distribution.map_or_else(|| "—".into(), |distribution| format!("{:.6}", distribution.median))
 }
@@ -704,8 +693,8 @@ pub fn report(output_dir: &Path) -> Result<()> {
             group.censored,
             group.correctness_blocked,
             timing(group.completed_wall_seconds.as_ref()),
-            rpc_requests(&group.rpc_at_exit, "client_requests_by_method"),
-            rpc_requests(&group.rpc_at_exit, "upstream_requests_by_method"),
+            group.rpc_at_exit.client_requests_by_method.values().sum::<u64>(),
+            group.rpc_at_exit.upstream_requests_by_method.values().sum::<u64>(),
             cell(&serde_json::to_string(&group.actual_paths)?)
         )?;
     }
@@ -716,8 +705,8 @@ pub fn report(output_dir: &Path) -> Result<()> {
             "| {} / {} | {} / {} | {} / {} / {} | {} / {} | {} |",
             cell(&group.case_id),
             group.arm.name(),
-            rpc_requests(&group.rpc_at_exit, "client_requests_by_method"),
-            rpc_requests(&group.rpc_at_exit, "upstream_requests_by_method"),
+            group.rpc_at_exit.client_requests_by_method.values().sum::<u64>(),
+            group.rpc_at_exit.upstream_requests_by_method.values().sum::<u64>(),
             group.bal_exchanges,
             group.bal_incomplete_exchanges,
             group.bal_mixed_batch_exchanges,
@@ -769,7 +758,11 @@ pub fn report(output_dir: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{Sample, common_projection, compare_samples, group_samples, report};
-    use crate::bal::{ActualPath, Arm, Binary, BuildIdentity, write_json};
+    use crate::bal::{
+        ActualPath, Arm, Binary, BuildIdentity,
+        proxy::{BodyMetrics, RpcCall, RpcEvent, RpcResponse, Snapshot},
+        write_json,
+    };
     use foundry_bench::results::RunnerMetadata;
     use serde_json::{Value, json};
     use std::fs;
@@ -794,8 +787,8 @@ mod tests {
             correctness: "equivalent".into(),
             fault: None,
             synthetic: false,
-            rpc_at_exit: json!({}),
-            rpc: json!({}),
+            rpc_at_exit: Snapshot::default(),
+            rpc: Snapshot::default(),
             bal_events: vec![],
         }
     }
@@ -803,7 +796,7 @@ mod tests {
     #[test]
     fn round_trip_preserves_censoring_and_fallback_denominator() {
         let samples = vec![
-            sample(ActualPath::BalHit, Some(1.0)),
+            paired_samples().remove(0),
             sample(ActualPath::ReplayAfterProbe, Some(5.0)),
             sample(ActualPath::Failed, None),
         ];
@@ -822,6 +815,50 @@ mod tests {
         let common = common_projection(&groups, "sha", RunnerMetadata::default()).unwrap();
         assert_eq!(common.benchmarks[0].counters["scheduled_attempts"].value, 3.0);
         assert_eq!(common.benchmarks[0].wall_time.value, 3.0);
+    }
+
+    #[test]
+    fn rpc_totals_preserve_counts_without_snapshot_analysis_state() {
+        let mut first = sample(ActualPath::ReplayAfterProbe, Some(1.0));
+        first.rpc_at_exit = Snapshot {
+            client_requests_by_method: [("eth_getStorageAt".into(), 3)].into(),
+            upstream_requests_by_method: [("eth_getStorageAt".into(), 2)].into(),
+            client_http_exchanges: 3,
+            upstream_http_exchanges: 2,
+            injected_responses: 1,
+            client_response_body_bytes: 120,
+            upstream_response_body_bytes: 80,
+            repeated_requests: 2,
+            errors: 1,
+            active_http_exchanges: 1,
+            response_analysis_complete: false,
+        };
+        let mut second = first.clone();
+        second.rpc_at_exit.client_requests_by_method.insert("eth_getBlockAccessList".into(), 1);
+        second.rpc_at_exit.upstream_requests_by_method.insert("eth_getBlockAccessList".into(), 1);
+        second.rpc_at_exit.response_analysis_complete = true;
+        first.rpc = first.rpc_at_exit.clone();
+        second.rpc = second.rpc_at_exit.clone();
+        second.rpc.client_response_body_bytes += 7;
+        second.rpc.upstream_response_body_bytes += 5;
+
+        let groups = serde_json::to_value(group_samples(&[first, second])).unwrap();
+        let mut expected = json!({
+            "client_requests_by_method": {"eth_getStorageAt":6,"eth_getBlockAccessList":1},
+            "upstream_requests_by_method": {"eth_getStorageAt":4,"eth_getBlockAccessList":1},
+            "client_http_exchanges":6,
+            "upstream_http_exchanges":4,
+            "injected_responses":2,
+            "client_response_body_bytes":240,
+            "upstream_response_body_bytes":160,
+            "repeated_requests":4,
+            "errors":2,
+            "active_http_exchanges":2,
+        });
+        assert_eq!(groups[0]["rpc_at_exit"], expected);
+        expected["client_response_body_bytes"] = json!(247);
+        expected["upstream_response_body_bytes"] = json!(165);
+        assert_eq!(groups[0]["rpc_after_cleanup"], expected);
     }
 
     #[test]
@@ -912,26 +949,103 @@ mod tests {
         }
     }
 
+    #[test]
+    fn report_rejects_missing_or_invalid_rpc_counters() {
+        let valid = serde_json::to_value(&paired_samples()[0]).unwrap();
+        for (path, field) in [
+            ("/rpc_at_exit", "client_response_body_bytes"),
+            ("/rpc", "errors"),
+            ("/bal_events/0/response", "body_bytes"),
+        ] {
+            for replacement in [None, Some(json!("123")), Some(Value::Null)] {
+                let root = tempfile::tempdir().unwrap();
+                write_json(
+                    &root.path().join("manifest.json"),
+                    &json!({"binary":{"sha256":"a".repeat(64)}}),
+                )
+                .unwrap();
+                let mut malformed = valid.clone();
+                let fields = malformed.pointer_mut(path).unwrap().as_object_mut().unwrap();
+                let expected = if let Some(value) = replacement {
+                    fields.insert(field.into(), value);
+                    "invalid type".to_owned()
+                } else {
+                    fields.remove(field);
+                    format!("missing field `{field}`")
+                };
+                fs::write(
+                    root.path().join("samples.jsonl"),
+                    serde_json::to_string(&malformed).unwrap(),
+                )
+                .unwrap();
+
+                let error = report(root.path()).unwrap_err();
+                assert!(error.to_string().contains(&expected), "{error}");
+                assert!(!root.path().join("summary.json").exists());
+                assert!(!root.path().join("report.md").exists());
+            }
+        }
+    }
+
     fn paired_samples() -> Vec<Sample> {
-        (0..2).flat_map(|round| {
-            let mut auto = sample(ActualPath::BalHit, Some(1.0 + 2.0 * round as f64));
-            auto.round = round;
-            auto.rpc_at_exit = json!({
-                "client_requests_by_method": {"eth_getBlockAccessList":1,"eth_getStorageAt":3},
-                "upstream_requests_by_method": {"eth_getBlockAccessList":1,"eth_getStorageAt":3},
-                "client_response_body_bytes":120,
-            });
-            auto.bal_events = vec![json!({"response":{"body_bytes":100,"cleanup_body_bytes":4}})];
-            let mut replay = sample(ActualPath::ReplayNoProbe, Some(5.0 + 2.0 * round as f64));
-            replay.arm = Arm::Replay;
-            replay.round = round;
-            replay.rpc_at_exit = json!({
-                "client_requests_by_method": {"eth_getStorageAt":10},
-                "upstream_requests_by_method": {"eth_getStorageAt":10},
-                "client_response_body_bytes":300,
-            });
-            [auto, replay]
-        }).collect()
+        (0..2)
+            .flat_map(|round| {
+                let mut auto = sample(ActualPath::BalHit, Some(1.0 + 2.0 * round as f64));
+                auto.round = round;
+                auto.rpc_at_exit = Snapshot {
+                    client_requests_by_method: [
+                        ("eth_getBlockAccessList".into(), 1),
+                        ("eth_getStorageAt".into(), 3),
+                    ]
+                    .into(),
+                    upstream_requests_by_method: [
+                        ("eth_getBlockAccessList".into(), 1),
+                        ("eth_getStorageAt".into(), 3),
+                    ]
+                    .into(),
+                    client_response_body_bytes: 120,
+                    ..Snapshot::default()
+                };
+                auto.bal_events = vec![RpcEvent {
+                    exchange_id: 0,
+                    batch: false,
+                    calls: vec![RpcCall {
+                        method: "eth_getBlockAccessList".into(),
+                        id: Some(json!(1)),
+                        params: json!(["0x1"]),
+                        forwarded: true,
+                        injected: false,
+                        repeated: false,
+                        response: RpcResponse::Unobserved,
+                        error_code: None,
+                        result_json_bytes: None,
+                    }],
+                    client_request_body_bytes: 0,
+                    upstream_request_body_bytes: 0,
+                    upstream_http_exchanges: 1,
+                    http_status: None,
+                    upstream_http_status: None,
+                    response: BodyMetrics {
+                        body_bytes: 100,
+                        cleanup_body_bytes: 4,
+                        ..BodyMetrics::default()
+                    },
+                    upstream: None,
+                    response_transformed: false,
+                    issues: Vec::new(),
+                }];
+                let mut replay = sample(ActualPath::ReplayNoProbe, Some(5.0 + 2.0 * round as f64));
+                replay.arm = Arm::Replay;
+                replay.round = round;
+                replay.rpc_at_exit = Snapshot {
+                    client_requests_by_method: [("eth_getStorageAt".into(), 10)].into(),
+                    upstream_requests_by_method: [("eth_getStorageAt".into(), 10)].into(),
+                    client_response_body_bytes: 300,
+                    ..Snapshot::default()
+                };
+                [auto, replay]
+            })
+            .collect()
     }
 
     fn paired_manifest() -> Value {

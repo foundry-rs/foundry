@@ -703,7 +703,7 @@ async fn attempt(
         stderr: b"benchmark child spawn or output collection failed\n".to_vec(),
         rpc_at_exit: None,
     });
-    let at_exit = output.rpc_at_exit.as_ref().unwrap_or(&at_exit);
+    let at_exit = output.rpc_at_exit.unwrap_or(at_exit);
     fs::write(args.output_dir.join("artifacts").join(format!("{id}.stdout")), &output.stdout)?;
     fs::write(args.output_dir.join("artifacts").join(format!("{id}.stderr")), &output.stderr)?;
     let bal_count = at_exit
@@ -762,15 +762,12 @@ async fn attempt(
         correctness: correctness.into(),
         fault: case.fault.clone(),
         synthetic: arm == Arm::Miss || case.bal_response.is_some() || case.fault.is_some(),
-        rpc_at_exit: serde_json::to_value(at_exit)?,
-        rpc: serde_json::to_value(session.snapshot)?,
+        rpc_at_exit: at_exit,
+        rpc: session.snapshot,
         bal_events: session
             .events
-            .iter()
-            .filter_map(|event| {
-                let value = serde_json::to_value(event).ok()?;
-                event.calls.iter().any(|call| proxy::is_bal_method(&call.method)).then_some(value)
-            })
+            .into_iter()
+            .filter(|event| event.calls.iter().any(|call| proxy::is_bal_method(&call.method)))
             .collect(),
     })
 }
@@ -822,8 +819,8 @@ fn record_uncaptured(args: &RunArgs, manifest: &Manifest, case: &Case) -> Result
                         synthetic: arm == Arm::Miss
                             || case.bal_response.is_some()
                             || case.fault.is_some(),
-                        rpc_at_exit: serde_json::to_value(proxy::Snapshot::default())?,
-                        rpc: serde_json::to_value(proxy::Snapshot::default())?,
+                        rpc_at_exit: proxy::Snapshot::default(),
+                        rpc: proxy::Snapshot::default(),
                         bal_events: Vec::new(),
                     },
                 )?;
