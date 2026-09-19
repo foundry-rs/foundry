@@ -4,7 +4,8 @@ use crate::{
     BasicTxDetails, FuzzFixtures,
     invariant::FuzzRunIdentifiedContracts,
     strategies::{
-        FuzzState, TxGenerator, constrain_enum_value, generate_msg_value, mutate_param_value,
+        FuzzState, TxGenerator, ViewCall, constrain_enum_value, generate_msg_value,
+        mutate_param_value,
     },
 };
 use alloy_dyn_abi::JsonAbiExt;
@@ -93,6 +94,25 @@ impl InitialSequence {
 }
 
 impl SequencePlan {
+    /// Resolves any pending model-selected view relationship for this fresh transaction.
+    pub fn resolve_view(
+        &self,
+        tx: &mut BasicTxDetails,
+        call: impl FnMut(ViewCall) -> Option<alloy_primitives::Bytes>,
+    ) {
+        self.tx.resolve_view(tx, call);
+    }
+
+    /// Forward actual execution feedback to the optional online transaction generator.
+    pub fn observe(
+        &self,
+        tx: &BasicTxDetails,
+        reverted: bool,
+        discarded: bool,
+        new_coverage: bool,
+    ) {
+        self.tx.observe(tx, reverted, discarded, new_coverage);
+    }
     pub fn initial(&self) -> &[BasicTxDetails] {
         self.initial.as_slice()
     }
@@ -228,6 +248,7 @@ impl SequenceGenerator {
     where
         F: FnMut(usize) -> Result<CorpusEntryView<'a>>,
     {
+        self.tx.begin_run();
         let (initial, source) = match &self.mode {
             SequenceMode::Stateless(function) => {
                 self.start_stateless(runner, corpus_len, &mut entry_at, coverage, function)?
