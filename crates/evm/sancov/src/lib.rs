@@ -11,27 +11,33 @@
 //! Only crates compiled with sancov instrumentation (via a `RUSTC_WRAPPER`)
 //! will trigger these callbacks — no runtime filtering needed.
 
-use std::sync::atomic::{AtomicPtr, AtomicU32, AtomicUsize, Ordering};
+use std::{
+    cell::Cell,
+    sync::atomic::{AtomicU32, AtomicUsize, Ordering},
+};
 
-static COVERAGE_MAP_PTR: AtomicPtr<u8> = AtomicPtr::new(std::ptr::null_mut());
-static COVERAGE_MAP_LEN: AtomicUsize = AtomicUsize::new(0);
+// The coverage map is owned by the thread that activated it: the executor points it at a
+// thread-local buffer, and instrumented code reports hits on the thread that runs it. Keeping the
+// pointer per thread lets parallel test workers record into their own buffers instead of the one
+// most recently activated, and lets one worker deactivate its map without disabling the others.
+thread_local! {
+    static COVERAGE_MAP: Cell<(*mut u8, usize)> = const { Cell::new((std::ptr::null_mut(), 0)) };
+}
 
-/// Point the coverage map at the given buffer. Subsequent `__sanitizer_cov_trace_pc_guard`
-/// calls will record hits into this buffer.
+/// Point the coverage map of the current thread at the given buffer. Subsequent
+/// `__sanitizer_cov_trace_pc_guard` calls on this thread will record hits into this buffer.
 pub fn set_coverage_map(ptr: *mut u8, len: usize) {
-    COVERAGE_MAP_PTR.store(ptr, Ordering::Release);
-    COVERAGE_MAP_LEN.store(len, Ordering::Release);
+    COVERAGE_MAP.set((ptr, len));
 }
 
-/// Deactivate the coverage map.
+/// Deactivate the coverage map of the current thread.
 pub fn clear_coverage_map() {
-    COVERAGE_MAP_PTR.store(std::ptr::null_mut(), Ordering::Release);
-    COVERAGE_MAP_LEN.store(0, Ordering::Release);
+    COVERAGE_MAP.set((std::ptr::null_mut(), 0));
 }
 
-/// Whether a coverage map is currently active.
+/// Whether a coverage map is currently active on this thread.
 pub fn is_active() -> bool {
-    !COVERAGE_MAP_PTR.load(Ordering::Relaxed).is_null()
+    !COVERAGE_MAP.get().0.is_null()
 }
 
 static NEXT_SANCOV_IDX: AtomicUsize = AtomicUsize::new(0);
@@ -43,12 +49,8 @@ const UNASSIGNED: usize = usize::MAX;
 /// Record a hit for the given guard ID into the active coverage map.
 #[inline(always)]
 pub fn record_hit(guard_id: u32) {
-    let ptr = COVERAGE_MAP_PTR.load(Ordering::Relaxed);
-    if ptr.is_null() {
-        return;
-    }
-    let len = COVERAGE_MAP_LEN.load(Ordering::Relaxed);
-    if len == 0 {
+    let (ptr, len) = COVERAGE_MAP.get();
+    if ptr.is_null() || len == 0 {
         return;
     }
 
@@ -254,5 +256,44 @@ pub unsafe extern "C" fn __sanitizer_cov_trace_switch(val: u64, cases: *const u6
     for i in 0..n.min(16) {
         let case_val = unsafe { *cases.add(2 + i) };
         record_cmp(64, val, case_val);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Barrier;
+
+    #[test]
+    fn coverage_maps_are_per_thread() {
+        let barrier = Barrier::new(2);
+        let worker = |guard_id: u32| {
+            let mut buf = vec![0u8; 64];
+            set_coverage_map(buf.as_mut_ptr(), buf.len());
+            // Both maps are active at the same time.
+            barrier.wait();
+            record_hit(guard_id);
+            record_hit(guard_id);
+            barrier.wait();
+            // A worker finishing must not deactivate the other worker's map.
+            if guard_id == 1_000_001 {
+                clear_coverage_map();
+                assert!(!is_active());
+            }
+            barrier.wait();
+            assert_eq!(is_active(), guard_id != 1_000_001);
+            record_hit(guard_id);
+            clear_coverage_map();
+            buf
+        };
+        let (first, second) = std::thread::scope(|s| {
+            let first = s.spawn(|| worker(1_000_001));
+            let second = s.spawn(|| worker(1_000_002));
+            (first.join().unwrap(), second.join().unwrap())
+        });
+
+        // Each buffer received exactly its own thread's hits.
+        assert_eq!(first.iter().map(|&b| b as usize).sum::<usize>(), 2);
+        assert_eq!(second.iter().map(|&b| b as usize).sum::<usize>(), 3);
     }
 }
