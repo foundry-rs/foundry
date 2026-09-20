@@ -1,0 +1,253 @@
+---
+name: bench (BAL)
+
+permissions: {}
+
+'on':
+  issue_comment:
+    types: [created]
+
+# Serialize comment updates. Publication also rejects older request IDs because
+# GitHub does not guarantee the order in which pending runs begin.
+concurrency:
+  group: bench-bal-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  request:
+    if: >-
+      github.event.issue.pull_request &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
+      (
+        startsWith(github.event.comment.body, 'derek bench ') ||
+        startsWith(github.event.comment.body, 'decofe bench ') ||
+        startsWith(github.event.comment.body, '@decofe bench ')
+      )
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      requested: ${{ steps.request.outputs.requested }}
+      ready: ${{ steps.request.outputs.ready }}
+      request-error: ${{ steps.request.outputs.request-error }}
+      base-sha: ${{ steps.request.outputs.base-sha }}
+      head-sha: ${{ steps.request.outputs.head-sha }}
+      head-repository: ${{ steps.request.outputs.head-repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # issue_comment uses the default branch, never the PR workflow/scripts.
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          path: trusted
+      - name: Authorize and pin pull request revisions
+        id: request
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const { authorize } = require('./trusted/.github/scripts/cast-bal-comment.cjs');
+            await authorize({ github, context, core });
+
+  tools:
+    needs: request
+    if: needs.request.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    outputs:
+      toolchain: ${{ steps.toolchain.outputs.version }}
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          path: trusted
+      - name: Make room for profiling builds
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes build-essential pkg-config libudev-dev libssl-dev clang cmake
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
+      - name: Pin the same compiler for both revisions
+        id: toolchain
+        run: printf 'version=%s\n' "$(rustc --version | cut -d ' ' -f 2)" >> "$GITHUB_OUTPUT"
+      - name: Build trusted Anvil and benchmark runner
+        working-directory: trusted
+        env:
+          BUILD_TOOLCHAIN: ${{ steps.toolchain.outputs.version }}
+        run: |
+          cargo "+$BUILD_TOOLCHAIN" build --locked --profile profiling --bin anvil --bin foundry-cast-run-bench
+          mkdir -p ../tools
+          cp target/profiling/anvil target/profiling/foundry-cast-run-bench ../tools/
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        id: upload
+        with:
+          name: cast-bal-tools
+          path: tools/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+          overwrite: true
+
+  build:
+    needs: [request, tools]
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    # Fork build scripts run on disposable GitHub-hosted machines. No secrets,
+    # caches, environments, OIDC, or write-scoped tokens are available here.
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - role: base
+            repository: ${{ github.repository }}
+            sha: ${{ needs.request.outputs.base-sha }}
+          - role: head
+            repository: ${{ needs.request.outputs.head-repository }}
+            sha: ${{ needs.request.outputs.head-sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ matrix.repository }}
+          ref: ${{ matrix.sha }}
+          persist-credentials: false
+          path: source
+          submodules: false
+      - name: Make room for profiling builds
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes build-essential pkg-config libudev-dev libssl-dev clang cmake
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: ${{ needs.tools.outputs.toolchain }}
+      - name: Build pinned Cast
+        working-directory: source
+        env:
+          EXPECTED_SHA: ${{ matrix.sha }}
+          BUILD_TOOLCHAIN: ${{ needs.tools.outputs.toolchain }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          cargo "+$BUILD_TOOLCHAIN" build --locked --profile profiling --bin cast
+          mkdir -p ../binary
+          cp target/profiling/cast ../binary/cast
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          # Stable within the run so failed-job retries can reuse successful builds.
+          name: cast-bal-${{ matrix.role }}
+          path: binary/cast
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+          overwrite: true
+
+  measure:
+    needs: [request, tools, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          path: trusted
+      - name: Download trusted tools by immutable artifact ID
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.tools.outputs.artifact-id }}
+          path: tools
+          merge-multiple: true
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: cast-bal-base
+          path: binaries/base
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: cast-bal-head
+          path: binaries/head
+      - name: Measure the frozen historical panel
+        env:
+          BASE_SHA: ${{ needs.request.outputs.base-sha }}
+          HEAD_SHA: ${{ needs.request.outputs.head-sha }}
+        run: |
+          chmod +x tools/anvil tools/foundry-cast-run-bench binaries/base/cast binaries/head/cast
+          python3 trusted/benches/scripts/cast_bal_campaign.py \
+            --fixture-dir trusted/benches/fixtures/cast-bal \
+            --anvil tools/anvil --runner tools/foundry-cast-run-bench \
+            --base-cast binaries/base/cast --head-cast binaries/head/cast \
+            --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA" \
+            --output-dir results --rounds 10 --warmup-rounds 2 --timeout-seconds 120
+      - name: Preserve evidence, including failed attempts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cast-bal-results
+          path: results/
+          if-no-files-found: warn
+          retention-days: 7
+          overwrite: true
+
+  publish:
+    needs: [request, tools, build, measure]
+    if: always() && needs.request.outputs.requested == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # This fresh runner never builds or executes PR code or downloaded binaries.
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          path: trusted
+      - name: Download measurement data
+        id: download
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: cast-bal-results
+          path: results
+      - name: Render trusted Markdown, including failures
+        if: always()
+        env:
+          BASE_SHA: ${{ needs.request.outputs.base-sha }}
+          HEAD_SHA: ${{ needs.request.outputs.head-sha }}
+          REQUEST_ERROR: ${{ needs.request.outputs.request-error }}
+          TOOLS_RESULT: ${{ needs.tools.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          MEASURE_RESULT: ${{ needs.measure.result }}
+          DOWNLOAD_RESULT: ${{ steps.download.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}
+        run: |
+          failure="$REQUEST_ERROR"
+          if [[ -z "$failure" && ( "$TOOLS_RESULT" != success || "$BUILD_RESULT" != success || "$MEASURE_RESULT" != success || "$DOWNLOAD_RESULT" != success ) ]]; then
+            failure="Benchmark workflow did not complete: tools=$TOOLS_RESULT, build=$BUILD_RESULT, measurement=$MEASURE_RESULT, evidence=$DOWNLOAD_RESULT. See workflow logs."
+          fi
+          python3 trusted/benches/scripts/cast_bal_report.py \
+            --campaign-dir results --output comment.md \
+            --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA" \
+            --run-url "$RUN_URL" --failure "$failure"
+      - name: Update the single BAL comment
+        if: always()
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          BASE_SHA: ${{ needs.request.outputs.base-sha }}
+          HEAD_SHA: ${{ needs.request.outputs.head-sha }}
+          REPORT_PATH: comment.md
+        with:
+          script: |
+            const { publish } = require('./trusted/.github/scripts/cast-bal-comment.cjs');
+            await publish({ github, context, core });

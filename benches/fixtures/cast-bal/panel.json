@@ -1,0 +1,153 @@
+{
+  "schema_version": 1,
+  "endpoint_label": "ethereum.reth.rs",
+  "chain_id": 1,
+  "client_version": "reth/v2.6.0-73a3a00/x86_64-unknown-linux-gnu",
+  "source_context": {
+    "kind": "live_http",
+    "server_bal_source": "unknown",
+    "captured_at": "2026-09-19T13:47:48.285927Z",
+    "finalized_hash": "0x8eaaa2631cff8c5585f5ef0029df7e5e6e0f8c4d5e80c8ea0bbab4da9f3db5e3",
+    "finalized_number": 26011867,
+    "candidate_start": 26011848,
+    "candidate_end": 26011867,
+    "large_transaction_count_threshold": 409,
+    "candidate_metadata_sha256": "87cccc5f1bc98d6d56b0cef3ce2cbc8051c74ed3d7ea659c37835afc3b547494",
+    "raw_sha256": [
+      "6afcaf0bc0d929743108494696265d90fa78cc2bf46f3cee62fecf7c0358406f",
+      "14c64aefef03185a804b408736dc4ad87914a02af6c3c2ba5c95b823523fe552",
+      "b26c358170a8761520bddd1c718d260b424baca88d49c2d0174b42e9959a76b4",
+      "f7840ec43cc01253f07752d05b1e0be38d8068b3f9c70c996a8087e41ed8f273",
+      "2a88d10f6757da1c31172ebbfed2e3eb8bea6c6c821483a407b45361a7d42059",
+      "eacdb3c0691dafa85eb28d7fdcadd8218316387802023bd6f766cb2e8f0c41cc",
+      "7909162c0c5bbdc729da4d781efdd824097b66c7aff7ecaceb79bd5c5d14e101",
+      "1c0c5c0e72bf699e89c96dcbac9fd05505d98dd0298a843a98ba76a444541550"
+    ],
+    "failures": [],
+    "purpose": "performance_panel",
+    "unrepresented_periods": "hardfork periods outside the frozen candidate interval are not sampled"
+  },
+  "seed": 7928,
+  "blocks": [
+    {
+      "block_hash": "0x5c3533a9d780caa9ba655e7e477eb3203c3bd80e0728f1edf2ea39f96aa4d36d",
+      "block_number": 26011850,
+      "parent_hash": "0x6a4e72a2e9bace23f4023f5b856661e51f94015ca6be0aa0e04da4586102c2c0",
+      "targets": [
+        {
+          "id": "b26011850-t0",
+          "tx_hash": "0x1103cb1d50d7a5b456f9ea04dec31b18c92740a38fdfe2af09142e88a15a9fde",
+          "index": 0
+        },
+        {
+          "id": "b26011850-t208",
+          "tx_hash": "0x8c3c086f7252fdf92953505d3708bae11d99e6bace714dbde533a65d93ac4c27",
+          "index": 208
+        },
+        {
+          "id": "b26011850-t416",
+          "tx_hash": "0x316aec0d9dcf15eec82071b132c794659efb77ca24756cd1c36b57de572b9fce",
+          "index": 416
+        }
+      ],
+      "stratum": "Ethereum(Bpo2)/large"
+    },
+    {
+      "block_hash": "0x3f1c476f13c8cc1f77af347e5b42c39cff94114289784f25e5b5c5cc69705abd",
+      "block_number": 26011861,
+      "parent_hash": "0xbd9e11f3517744a62c914b4893472c3bd59cad9079415fdc886b2aaa59cb59e5",
+      "targets": [
+        {
+          "id": "b26011861-t0",
+          "tx_hash": "0xdc869c9af9204406839181acd46b663fc93c5f17d4a5c552036f7fb802262345",
+          "index": 0
+        },
+        {
+          "id": "b26011861-t131",
+          "tx_hash": "0xc92c9cdd4d8a0e7e43dd12d633cf4af03d9e86d802d076bbd9de8895cd1fbb64",
+          "index": 131
+        },
+        {
+          "id": "b26011861-t263",
+          "tx_hash": "0xec8064e74004c47e089e54253c6a0eedf9033fbdad496b227601126bb8caadb4",
+          "index": 263
+        }
+      ],
+      "stratum": "Ethereum(Bpo2)/ordinary"
+    }
+  ],
+  "cases": [
+    {
+      "id": "b26011850-t0",
+      "transaction_hash": "0x1103cb1d50d7a5b456f9ea04dec31b18c92740a38fdfe2af09142e88a15a9fde",
+      "block_hash": "0x5c3533a9d780caa9ba655e7e477eb3203c3bd80e0728f1edf2ea39f96aa4d36d",
+      "index": 0,
+      "positions": [
+        "first"
+      ],
+      "stratum": "Ethereum(Bpo2)/large",
+      "expected_receipt_gas": 34681,
+      "expected_receipt_status": true
+    },
+    {
+      "id": "b26011850-t208",
+      "transaction_hash": "0x8c3c086f7252fdf92953505d3708bae11d99e6bace714dbde533a65d93ac4c27",
+      "block_hash": "0x5c3533a9d780caa9ba655e7e477eb3203c3bd80e0728f1edf2ea39f96aa4d36d",
+      "index": 208,
+      "positions": [
+        "middle"
+      ],
+      "stratum": "Ethereum(Bpo2)/large",
+      "expected_receipt_gas": 21000,
+      "expected_receipt_status": true
+    },
+    {
+      "id": "b26011850-t416",
+      "transaction_hash": "0x316aec0d9dcf15eec82071b132c794659efb77ca24756cd1c36b57de572b9fce",
+      "block_hash": "0x5c3533a9d780caa9ba655e7e477eb3203c3bd80e0728f1edf2ea39f96aa4d36d",
+      "index": 416,
+      "positions": [
+        "last"
+      ],
+      "stratum": "Ethereum(Bpo2)/large",
+      "expected_receipt_gas": 29022,
+      "expected_receipt_status": true
+    },
+    {
+      "id": "b26011861-t0",
+      "transaction_hash": "0xdc869c9af9204406839181acd46b663fc93c5f17d4a5c552036f7fb802262345",
+      "block_hash": "0x3f1c476f13c8cc1f77af347e5b42c39cff94114289784f25e5b5c5cc69705abd",
+      "index": 0,
+      "positions": [
+        "first"
+      ],
+      "stratum": "Ethereum(Bpo2)/ordinary",
+      "expected_receipt_gas": 234683,
+      "expected_receipt_status": true
+    },
+    {
+      "id": "b26011861-t131",
+      "transaction_hash": "0xc92c9cdd4d8a0e7e43dd12d633cf4af03d9e86d802d076bbd9de8895cd1fbb64",
+      "block_hash": "0x3f1c476f13c8cc1f77af347e5b42c39cff94114289784f25e5b5c5cc69705abd",
+      "index": 131,
+      "positions": [
+        "middle"
+      ],
+      "stratum": "Ethereum(Bpo2)/ordinary",
+      "expected_receipt_gas": 143517,
+      "expected_receipt_status": true
+    },
+    {
+      "id": "b26011861-t263",
+      "transaction_hash": "0xec8064e74004c47e089e54253c6a0eedf9033fbdad496b227601126bb8caadb4",
+      "block_hash": "0x3f1c476f13c8cc1f77af347e5b42c39cff94114289784f25e5b5c5cc69705abd",
+      "index": 263,
+      "positions": [
+        "last"
+      ],
+      "stratum": "Ethereum(Bpo2)/ordinary",
+      "expected_receipt_gas": 29022,
+      "expected_receipt_status": true
+    }
+  ]
+}

@@ -320,6 +320,88 @@ The artifact bundle exposes:
   `benches/schema/benchmark-result-v1.schema.json`
 - `--symbolic-sidecar-output <FILE.json>` - Write the opt-in v1 symbolic samples sidecar (requires exactly one version)
 
+## Cast BAL pull request benchmark
+
+A collaborator with repository write, maintain, or admin permission can comment
+`derek bench bal` on an open PR. `decofe bench bal` and `@decofe bench bal` are
+aliases. The command takes no arguments and compares the PR's exact base and head
+commits, including PRs from forks. It does not select a fixed PR or assume that
+the base branch is `master`.
+
+The `bench (BAL)` workflow must first be present on the repository's default
+branch. It builds both Cast revisions with the same Rust compiler and
+`--locked --profile profiling`; both revisions must support `cast run --no-bal`.
+Anvil, the native benchmark runner, fixtures, and reporting scripts come from
+the trusted default-branch commit that received the comment. Builds and execution
+run on fresh GitHub-hosted runners with read-only repository permissions and no
+repository secrets. A separate job renders the evidence and updates one bot
+comment. The existing external benchmark dispatcher continues to handle other
+benchmark commands.
+
+The English Markdown comment compares **Base → PR** separately for
+**BAL-accelerated** and **Full replay**. It shows median wall time, local RPC
+counts, PR/Base ratios, and folded per-case measurements. Build failures,
+timeouts, missing attempts, unexpected execution paths, and correctness failures
+prevent performance claims. Same-binary control runs are explicitly identified.
+If either PR revision has changed, the comment marks the pinned result as stale.
+Repeated requests update the same comment; older requests cannot replace newer
+results. GitHub's “Re-run failed jobs” retains successful build artifacts for
+the next measurement attempt.
+
+The fixed [historical panel](fixtures/cast-bal/README.md) contains the first,
+middle, and last transaction from each of two Ethereum blocks. Each block uses
+a fresh Anvil fork at its authentic parent state. Preparation and warmup are
+excluded from timing. The native runner alternates complete base/head rounds
+and BAL/replay order, using ten measured rounds, two warmup rounds, one worker,
+and a 120-second deadline per Cast invocation. After preparation, any fixture
+request fails the campaign; there is no remote RPC fallback. This measures a
+warmed local provider, including local BAL transfer and processing, and does
+not measure public-RPC latency, server-side BAL generation, or other hardfork
+periods. GitHub-hosted timing remains subject to machine noise.
+
+Reports are inline Markdown; no HTML generator or hosting service is required.
+Raw campaign evidence remains in workflow artifacts for seven days. Download it
+within that period when longer retention is needed. The public command becomes
+available only after the workflow is merged into the default branch.
+
+### Run the same campaign locally
+
+Use Python 3.9 or newer and separately built Anvil, native runner, and Cast
+binaries. Build the runner with
+`cargo build --locked --profile profiling --bin foundry-cast-run-bench`.
+`scripts/pr-bal-bench.sh` can build exact Cast refs with `BUILD_ONLY=1`; preserve
+its build manifests to verify source and binary identities.
+
+```bash
+python3 benches/scripts/cast_bal_campaign.py \
+  --fixture-dir benches/fixtures/cast-bal \
+  --anvil /path/to/anvil --runner /path/to/foundry-cast-run-bench \
+  --base-cast /path/to/base/cast --head-cast /path/to/head/cast \
+  --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA" \
+  --base-build-manifest /path/to/base/build.json \
+  --head-build-manifest /path/to/head/build.json \
+  --output-dir /path/to/new-results \
+  --rounds 10 --warmup-rounds 2 --timeout-seconds 120
+
+python3 benches/scripts/cast_bal_report.py \
+  --campaign-dir /path/to/new-results --output /path/to/comment.md \
+  --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA"
+```
+
+The output directory must be new. Both SHA arguments must be complete 40-digit
+commit hashes. Build manifests are optional when a trusted build pipeline
+already pins the binaries. The campaign records binary hashes in either case.
+If a revision requires uncaptured historical state, the campaign fails rather
+than inventing state or fetching new archive data.
+
+Focused checks require only Python and Node.js:
+
+```bash
+python3 benches/scripts/test_cast_bal_campaign.py
+python3 benches/scripts/test-cast-bal-report.py
+node --test .github/scripts/tests/test_cast_bal_comment.cjs
+```
+
 ## Benchmark Structure
 
 - `forge_test` - Benchmarks non-isolated `forge test` command across repos

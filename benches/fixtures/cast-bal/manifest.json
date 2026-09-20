@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "description": "Authentic historical parent-state and metadata RPC recordings for a fixed six-case local Anvil benchmark. No remote fallback.",
+  "panel_sha256": "1f4d182e95cb89ee61bd98f5842187ff7bf30f6cffe4321d92040e58488a2ee5",
+  "blocks": [
+    {
+      "block_number": 26011850,
+      "path": "block-26011850.json.gz",
+      "sha256": "ca26af94fac8aa0c6abb1402a2dcc8f9b7d4ec7b7de75aca843e37cce8e0d1b2",
+      "records": 2539,
+      "source_upstream_sha256": "c7c2f41107bb484753cc51c3631e73e47fb74f62a7c435bd8f4052ddb21787c1"
+    },
+    {
+      "block_number": 26011861,
+      "path": "block-26011861.json.gz",
+      "sha256": "c04a2cfd4accb31fc7bb5a68d09fda38018cd4af05acb4b7b808bccaf8be4af5",
+      "records": 4464,
+      "source_upstream_sha256": "441ed552d6f0765fdd7bc2c3163f1c40ea2819917ee75a4eab3512bd19209b9d"
+    }
+  ]
+}

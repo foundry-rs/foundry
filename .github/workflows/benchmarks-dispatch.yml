@@ -37,6 +37,11 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
         with:
           script: |
+            // BAL has its own default-branch workflow and never uses the external publisher.
+            if (/^(?:derek|@?decofe)\s+bench\s+bal(?:\s|$)/i.test(context.payload.comment.body.trim())) {
+              core.setOutput('bal', 'true');
+              return;
+            }
             const usage = [
               '**Usage:** `derek bench <subcommand> [args]` (also `decofe bench ...`).\n',
               '- `bench invariant [compare-ref=REF] [timeout=N] [workers=N] [trials=N] [paired-seeds=true|false] [benchmark-type=property|optimization]`\n',
@@ -45,6 +50,7 @@ jobs:
               '- `bench build [compare-ref=REF] [timeout=N] [cache=true|false]`\n',
               '- `bench fuzz [compare-ref=REF] [timeout=N]`\n',
               '- `bench coverage [compare-ref=REF] [timeout=N]`\n',
+              '- `bench bal` (exact PR base/head, inline report)\n',
               '- `bench all [compare-ref=REF] [timeout=N]`',
             ].join('');
             const actor = context.payload.comment.user.login;
@@ -324,6 +330,7 @@ jobs:
             core.setOutput('payload-b64', Buffer.from(JSON.stringify(payload), 'utf8').toString('base64'));
 
       - name: Acknowledge request
+        if: steps.request.outputs.bal != 'true'
         id: ack
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
         env:
@@ -353,6 +360,7 @@ jobs:
             core.setOutput('comment-id', String(comment.id));
 
       - name: Publish event
+        if: steps.request.outputs.bal != 'true'
         id: publish
         continue-on-error: true
         env:
