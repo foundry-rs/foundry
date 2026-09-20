@@ -7,7 +7,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from cast_bal_report import MARKER, main, render
+from cast_bal_report import MARKER, main, median_interval, render
 
 
 BASE = "1" * 40
@@ -80,8 +80,34 @@ class ReportTests(unittest.TestCase):
     def report(self, **kwargs):
         return render(self.root, BASE, HEAD, **kwargs)
 
+    def set_measured_values(self, label, arm, values):
+        template = next(sample for sample in self.samples[label]
+                        if sample["phase"] == "measured" and sample["arm"] == arm)
+        self.samples[label] = [sample for sample in self.samples[label]
+                               if sample["phase"] != "measured" or sample["arm"] != arm]
+        for index, value in enumerate(values):
+            sample = copy.deepcopy(template)
+            sample.update(id=f"measured-{index}-{arm}", round=index,
+                          wall_time_seconds=value, observed_duration_seconds=value)
+            self.samples[label].append(sample)
+        self.config["rounds"] = len(values)
+        for run in self.runs.values():
+            run["rounds"] = len(values)
+
+    def set_wall_comparison(self, base, candidate):
+        self.assertEqual(len(base), len(candidate))
+        for label, values in (("base", base), ("candidate", candidate)):
+            for arm in ("auto", "replay"):
+                self.set_measured_values(label, arm, values)
+        self.write_fixture()
+
     def assert_withheld(self, report):
         self.assertIn("**No valid PR performance comparison.**", report)
+        self.assertNotIn("| Wall ms (Base → PR) |", report)
+        self.assertNotIn("Improved (", report)
+        self.assertNotIn("Regressed (", report)
+        self.assertNotIn("wall time: Improved", report)
+        self.assertNotIn("wall time: Regressed", report)
         self.assertNotIn("| Time ratio |", report)
         self.assertNotIn("2.000×", report)
         self.assertNotIn("| 2000.000 /", report)
@@ -90,13 +116,110 @@ class ReportTests(unittest.TestCase):
         report = self.report(run_url="https://github.com/foundry-rs/foundry/actions/runs/123")
         self.assertTrue(report.startswith(MARKER + "\n"))
         self.assertIn("**Complete:** 1 cases, 2 measured rounds per revision/mode", report)
-        self.assertIn("| b100-t2 | BAL-accelerated | 2000.000 → 4000.000 | 2.000× | 4 → 2 | 0.500× |", report)
-        self.assertIn("| b100-t2 | Full replay | 12000.000 → 6000.000 | 0.500× | 4 → 2 | 0.500× |", report)
+        headline, details = report.split("<details>", 1)
+        self.assertIn("| Case | Mode | Wall ms (Base → PR) | Wall time | Other changes |", headline)
+        self.assertIn("| b100-t2 | BAL-accelerated | 2000.0 → 4000.0 | Inconclusive (100.0% higher) | RPC: 50.0% lower |", headline)
+        self.assertIn("| b100-t2 | Full replay | 12000.0 → 6000.0 | Inconclusive (50.0% lower) | RPC: 50.0% lower |", headline)
+        self.assertNotIn("IQR", headline)
+        self.assertNotIn("min / max", headline)
+        self.assertNotIn("Median intervals", headline)
+        self.assertNotIn("Too few measured rounds", headline)
+        self.assertEqual(report.count("<details>"), 1)
+        self.assertIn("median / IQR / min / max", details)
+        self.assertIn("Too few measured rounds (at least 7 per revision required).", details)
         self.assertIn("| Base / BAL-accelerated | 2 / 0 / 0 | 2000.000 / 1000.000 / 1000.000 / 3000.000 | 4 / 4 | 2.0 |", report)
         self.assertIn("<summary>Per-case measurements and correctness</summary>", report)
         self.assertIn("not public-RPC latency", report)
-        self.assertIn("no overall speedup or statistical significance", report)
         self.assertEqual(report, self.report(run_url="https://github.com/foundry-rs/foundry/actions/runs/123"))
+
+    def test_clear_timing_direction_is_reported_for_each_mode(self):
+        self.set_wall_comparison([2] * 10, [1] * 10)
+        self.set_measured_values("base", "replay", [1] * 10)
+        self.set_measured_values("candidate", "replay", [2] * 10)
+        self.write_fixture()
+        headline, details = self.report().split("<details>", 1)
+        self.assertIn("| b100-t2 | BAL-accelerated | 2000.0 → 1000.0 | Improved (50.0% lower) | RPC: 50.0% lower |", headline)
+        self.assertIn("| b100-t2 | Full replay | 1000.0 → 2000.0 | Regressed (100.0% higher) | RPC: 50.0% lower |", headline)
+        self.assertIn("**BAL-accelerated wall time: Improved.** Median intervals: Base 2000.000–2000.000 ms; PR 1000.000–1000.000 ms. PR interval is entirely lower.", details)
+        self.assertIn("**Full replay wall time: Regressed.** Median intervals: Base 1000.000–1000.000 ms; PR 2000.000–2000.000 ms. PR interval is entirely higher.", details)
+        self.assertNotIn("Median intervals", headline)
+
+    def test_faster_time_and_higher_resource_use_have_separate_outcomes(self):
+        self.set_wall_comparison([2] * 10, [1] * 10)
+        for sample in self.samples["candidate"]:
+            if sample["phase"] == "measured":
+                sample["rpc"]["client_requests_by_method"]["eth_getCode"] = 6
+                sample["rpc"]["upstream_requests_by_method"]["eth_getCode"] = 6
+                sample["rpc"]["client_response_body_bytes"] = 4096
+        self.write_fixture()
+        headline, details = self.report().split("<details>", 1)
+        self.assertIn("| b100-t2 | BAL-accelerated | 2000.0 → 1000.0 | Improved (50.0% lower) | RPC: 50.0% higher; Response: 100.0% higher |", headline)
+        self.assertNotIn("Regressed (", headline)
+        self.assertIn("6 / 6 | 4.0", details)
+
+    def test_overlapping_or_touching_intervals_are_inconclusive(self):
+        comparisons = (
+            ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], [value + .5 for value in range(1, 11)]),
+            ([1] + [2] * 8 + [3], [2] * 2 + [3] * 8),
+            ([2] * 10, [2] * 10),
+        )
+        for base, candidate in comparisons:
+            with self.subTest(base=base, candidate=candidate):
+                self.set_wall_comparison(base, candidate)
+                headline, details = self.report().split("<details>", 1)
+                self.assertIn("Inconclusive (", headline)
+                self.assertNotIn("Improved (", headline)
+                self.assertNotIn("Regressed (", headline)
+                self.assertNotIn("Intervals overlap or touch", headline)
+                self.assertIn("Intervals overlap or touch; direction is unresolved.", details)
+                self.assertIn("Median intervals: Base", details)
+
+    def test_fewer_than_seven_rounds_cannot_claim_timing_direction(self):
+        self.set_wall_comparison([10] * 6, [1] * 6)
+        headline, details = self.report().split("<details>", 1)
+        self.assertIn("| b100-t2 | BAL-accelerated | 10000.0 → 1000.0 | Inconclusive (90.0% lower) | RPC: 50.0% lower |", headline)
+        self.assertNotIn("Improved (", headline)
+        self.assertIn("Too few measured rounds (at least 7 per revision required).", details)
+
+    def test_median_intervals_use_exact_conservative_order_statistics(self):
+        for count in (0, 1, 6):
+            with self.subTest(count=count):
+                self.assertIsNone(median_interval(list(range(count))))
+        self.assertEqual(median_interval(list(range(7))), (0, 6))
+        self.assertEqual(median_interval(list(range(10))), (1, 8))
+        self.assertEqual(median_interval(list(reversed(range(10)))), (1, 8))
+        self.assertEqual(median_interval([2] * 10), (2, 2))
+
+    def test_sample_and_round_order_does_not_change_report(self):
+        self.set_wall_comparison(list(range(11, 21)), list(range(1, 11)))
+        expected = self.report()
+        for samples in self.samples.values():
+            samples.reverse()
+            for sample in samples:
+                if sample["phase"] == "measured":
+                    sample["round"] = 9 - sample["round"]
+        self.write_fixture()
+        self.assertEqual(self.report(), expected)
+
+    def test_zero_resource_baselines_show_counts_without_dividing_by_zero(self):
+        self.set_wall_comparison([2] * 10, [1] * 10)
+        for sample in self.samples["base"]:
+            if sample["phase"] == "measured":
+                sample["rpc"]["client_requests_by_method"] = {}
+                sample["rpc"]["upstream_requests_by_method"] = {}
+                sample["rpc"]["client_response_body_bytes"] = 0
+        self.write_fixture()
+        headline = self.report().split("<details>", 1)[0]
+        self.assertIn("| Improved (50.0% lower) | RPC: 0 → 2; Response: 0 → 2048 bytes |", headline)
+
+    def test_small_timing_changes_do_not_round_to_misleading_zero(self):
+        for value, change, assessment in ((1.0001, "<0.1% higher", "Regressed"),
+                                          (.9999, "<0.1% lower", "Improved")):
+            with self.subTest(value=value):
+                self.set_wall_comparison([1] * 10, [value] * 10)
+                headline = self.report().split("<details>", 1)[0]
+                self.assertIn(f"| 1000.0 → {value * 1000:.1f} | {assessment} ({change}) |", headline)
+                self.assertNotIn("(0.0%", headline)
 
     def test_missing_duplicate_and_unexpected_attempts_suppress_all_comparisons(self):
         original = copy.deepcopy(self.samples["base"])
@@ -188,6 +311,17 @@ class ReportTests(unittest.TestCase):
                 self.assertNotIn("| Time ratio |", report)
                 self.assertNotIn("| RPC ratio |", report)
                 self.assertNotIn("2.000×", report)
+                headline = report.split("<details>", 1)[0]
+                self.assertIn("| b100-t2 | BAL-accelerated | 2000.0 → 4000.0 | Not compared (control) | Not compared |", headline)
+                self.assertIn("| b100-t2 | Full replay | 12000.0 → 6000.0 | Not compared (control) | Not compared |", headline)
+                self.assertNotIn("Improved (", report)
+                self.assertNotIn("Regressed (", report)
+                self.assertNotIn("wall time: Improved", report)
+                self.assertNotIn("wall time: Regressed", report)
+                self.assertNotIn("% higher", report)
+                self.assertNotIn("% lower", report)
+                self.assertNotIn("IQR", headline)
+                self.assertNotIn("min / max", headline)
                 self.assertIn("same revision or binary", report)
                 self.assertIn("not PR performance evidence", report)
                 self.assertIn("| Base / BAL-accelerated | 2 / 0 / 0 | 2000.000 / 1000.000 / 1000.000 / 3000.000 | 4 / 4 | 2.0 |", report)

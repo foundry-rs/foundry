@@ -69,6 +69,79 @@ def rpc_count(sample, direction="client"):
     return sum(counters.values())
 
 
+def median_interval(values):
+    """Return an exact, at least 97.5% interval for the population median, if finite."""
+    values = sorted(values)
+    count, tail, interval = len(values), 0, None
+    for rank in range(1, (count + 1) // 2 + 1):
+        tail += math.comb(count, rank - 1)
+        # Two binomial tails must total at most 0.025; compare exact integers.
+        if 80 * tail > 2 ** count:
+            break
+        interval = values[rank - 1], values[count - rank]
+    return interval
+
+
+def wall_assessment(base, head):
+    intervals = [median_interval(values) for values in (base, head)]
+    if any(interval is None for interval in intervals):
+        return "Inconclusive", "Too few measured rounds (at least 7 per revision required)."
+    before, after = intervals
+    evidence = (f"Median intervals: Base {before[0] * 1000:.3f}–{before[1] * 1000:.3f} ms; "
+                f"PR {after[0] * 1000:.3f}–{after[1] * 1000:.3f} ms.")
+    if after[1] < before[0]:
+        return "Improved", f"{evidence} PR interval is entirely lower."
+    if after[0] > before[1]:
+        return "Regressed", f"{evidence} PR interval is entirely higher."
+    return "Inconclusive", f"{evidence} Intervals overlap or touch; direction is unresolved."
+
+
+def percent_change(before, after):
+    if before == after:
+        return "unchanged"
+    if before == 0:
+        return f"{before:g} → {after:g}"
+    percent = abs(after / before - 1) * 100
+    amount = "<0.1%" if percent < .05 else f"{percent:.1f}%"
+    return f"{amount} {'lower' if after < before else 'higher'}"
+
+
+def comparisons(rows):
+    for base in rows:
+        if base["ref"] == "base":
+            head = next(row for row in rows if row["ref"] == "candidate"
+                        and row["case"]["id"] == base["case"]["id"] and row["arm"] == base["arm"])
+            yield base, head
+
+
+def measurement_summary(rows, control):
+    lines = ["| Case | Mode | Wall ms (Base → PR) | Wall time | Other changes |",
+             "| --- | --- | ---: | --- | --- |"]
+    for base, head in comparisons(rows):
+        times = [[sample["wall_time_seconds"] for sample in row["samples"]] for row in (base, head)]
+        before, after = map(median, times)
+        if control:
+            outcome, changes = "Not compared (control)", "Not compared"
+        else:
+            status, _ = wall_assessment(*times)
+            outcome = f"{status} ({percent_change(before, after)})"
+            changes = []
+            for name, metric in (("RPC", rpc_count),
+                                 ("Response", lambda sample: sample["rpc"]["client_response_body_bytes"])):
+                values = [median(metric(sample) for sample in row["samples"]) for row in (base, head)]
+                if values[0] != values[1]:
+                    change = percent_change(*values)
+                    if name == "Response" and values[0] == 0:
+                        change += " bytes"
+                    changes.append(f"{name}: {change}")
+            changes = "; ".join(changes) or "RPC / response unchanged"
+        lines.append(f"| {base['case']['id']} | {ARMS[base['arm']]} | "
+                     f"{before * 1000:.1f} → {after * 1000:.1f} | {outcome} | {changes} |")
+    lines += ["", "Wall ms is the median of measured rounds; lower is faster. "
+              "Warmup is excluded. Expand the details for measurements and assessment reasons.", ""]
+    return lines
+
+
 def validate_samples(samples, cases, rounds, warmups):
     expected = Counter((case["id"], phase, arm, index)
                        for case in cases
@@ -191,8 +264,17 @@ def collect(root, summary):
     return rows, issues
 
 
-def measurement_details(rows, validated):
+def measurement_details(rows, validated, control):
     lines = ["<details>", "<summary>Per-case measurements and correctness</summary>", ""]
+    if validated and not control:
+        lines += ["Wall-time assessments compare exact, nonparametric median intervals with at least "
+                  "97.5% coverage for each revision (at least 95% joint coverage per comparison). "
+                  "Improved or Regressed requires strictly separated intervals; otherwise the result is "
+                  "Inconclusive, which does not establish equal performance. At least 7 measured rounds "
+                  "per revision are needed. These exploratory assessments assume representative independent "
+                  "repetitions; they do not provide simultaneous confidence across all cases or rule out "
+                  "machine drift. RPC and response changes describe observed medians, not statistical "
+                  "verdicts or a combined performance score.", ""]
     for case_id in dict.fromkeys(row["case"]["id"] for row in rows):
         selected = [row for row in rows if row["case"]["id"] == case_id]
         case = selected[0]["case"]
@@ -216,7 +298,20 @@ def measurement_details(rows, validated):
                 size = f"{median(sample['rpc']['client_response_body_bytes'] for sample in samples) / 1024:.1f}"
             lines.append(f"| {REFS[row['ref']]} / {ARMS[row['arm']]} | {counts} | {wall} | {rpc} | {size} |")
         lines.append("")
-    lines += ["Wall statistics use measured rounds only; IQR = p75 − p25 with linear interpolation. "
+        if validated:
+            if control:
+                lines += ["**Assessment: Not compared.** Base and PR use the same revision or binary; "
+                          "these measurements cannot establish a PR improvement or regression.", ""]
+            else:
+                for base, head in comparisons(selected):
+                    times = [[sample["wall_time_seconds"] for sample in row["samples"]]
+                             for row in (base, head)]
+                    status, reason = wall_assessment(*times)
+                    lines += [f"**{ARMS[base['arm']]} wall time: {status}.** {reason}", ""]
+    lines += ["BAL-accelerated requires an observed BAL hit; Full replay adds `--no-bal` to the "
+              "same revision's binary. Local RPCs count JSON-RPC calls from Cast to the local proxy, "
+              "including metadata and optional probes.", "",
+              "Wall statistics use measured rounds only; IQR = p75 − p25 with linear interpolation. "
               "RPC and response-byte columns are per-attempt medians after proxy cleanup. "
               "Forwarded RPCs go to the local gateway, not an archive provider. "
               "Timeouts are censored and are never substituted as elapsed measurements.", "", "</details>", ""]
@@ -267,36 +362,18 @@ def render(root, base_sha=None, head_sha=None, run_url=None, failure=None):
                   "The campaign completed and passed all receipt, replay-equivalence and preparation-barrier checks.", "",
                   "This control uses the same revision or binary for Base and PR. It verifies benchmark execution; "
                   "it is not PR performance evidence. Measured wall times, local RPC counts and response sizes "
-                  "are shown in the per-case details. PR timing comparisons and ratios are withheld.", ""]
+                  "are shown below. PR performance assessments and changes are withheld.", ""]
     elif complete:
         config = summary["configuration"]
         lines += [f"**Complete:** {len(rows) // 4} cases, {config['rounds']} measured rounds per revision/mode, "
                   f"{config['warmup_rounds']} warmup rounds, {config['timeout_seconds']} s timeout, one worker. "
                   "Both revisions match receipt gas/status and their own full replay traces; "
                   "all scheduled attempts passed, with no fixture access after preparation.", "",
-                  "Each row compares **Base → PR in the same mode**. Ratio = PR / Base median "
-                  "(below 1 is faster); no overall speedup or statistical significance is inferred.", "",
-                  "| Case | Mode | Median ms, Base → PR | Time ratio | Local RPCs, Base → PR | RPC ratio |",
-                  "| --- | --- | ---: | ---: | ---: | ---: |"]
-        for row in rows:
-            if row["ref"] != "base":
-                continue
-            head = next(item for item in rows if item["case"]["id"] == row["case"]["id"]
-                        and item["arm"] == row["arm"] and item["ref"] == "candidate")
-            base_time, head_time = [median(sample["wall_time_seconds"] for sample in item["samples"])
-                                    for item in (row, head)]
-            base_rpc, head_rpc = [median(rpc_count(sample) for sample in item["samples"])
-                                 for item in (row, head)]
-            time_ratio = f"{head_time / base_time:.3f}×" if base_time else "n/a"
-            rpc_ratio = f"{head_rpc / base_rpc:.3f}×" if base_rpc else "n/a"
-            lines.append(f"| {row['case']['id']} | {ARMS[row['arm']]} | "
-                         f"{base_time * 1000:.3f} → {head_time * 1000:.3f} | {time_ratio} | "
-                         f"{base_rpc:g} → {head_rpc:g} | {rpc_ratio} |")
-        lines += ["", "Local RPCs count JSON-RPC calls from Cast to the local proxy, including metadata "
-                  "and optional probes. BAL-accelerated requires an observed BAL hit; Full replay adds "
-                  "`--no-bal` to the same revision's binary.", ""]
+                  "Each row compares **Base → PR in the same mode**. Wall-time assessments account "
+                  "for measurement uncertainty; Inconclusive means the direction is unresolved. "
+                  "RPC and response changes are reported separately; no overall performance score is inferred.", ""]
     else:
-        lines += ["**No valid PR performance comparison.** Timings and ratios are withheld because "
+        lines += ["**No valid PR performance comparison.** Timings and assessments are withheld because "
                   "the complete campaign did not pass all checks.", ""]
         lines.extend(f"- {safe_text(issue)}" for issue in issues[:20])
         if control:
@@ -304,8 +381,10 @@ def render(root, base_sha=None, head_sha=None, run_url=None, failure=None):
         if len(issues) > 20:
             lines.append(f"- {len(issues) - 20} additional evidence errors.")
         lines.append("")
+    if validated:
+        lines.extend(measurement_summary(rows, control))
     if rows:
-        lines.extend(measurement_details(rows, validated))
+        lines.extend(measurement_details(rows, validated, control))
     return "\n".join(lines).rstrip() + "\n"
 
 
