@@ -1043,7 +1043,7 @@ mod tests {
     fn paired_samples() -> Vec<Sample> {
         (0..2)
             .flat_map(|round| {
-                let mut auto = sample(ActualPath::BalHit, Some(1.0 + 2.0 * round as f64));
+                let mut auto = sample(ActualPath::BalHit, Some(2.0f64.mul_add(round as f64, 1.0)));
                 auto.round = round;
                 auto.rpc_at_exit = Snapshot {
                     client_requests_by_method: [
@@ -1086,7 +1086,8 @@ mod tests {
                     upstream: None,
                     issues: Vec::new(),
                 }];
-                let mut replay = sample(ActualPath::ReplayNoProbe, Some(5.0 + 2.0 * round as f64));
+                let mut replay =
+                    sample(ActualPath::ReplayNoProbe, Some(2.0f64.mul_add(round as f64, 5.0)));
                 replay.arm = Arm::Replay;
                 replay.round = round;
                 replay.rpc_at_exit = Snapshot {
