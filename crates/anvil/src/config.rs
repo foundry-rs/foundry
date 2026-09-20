@@ -4,7 +4,9 @@ use crate::{
         backend::{
             db::{Db, SerializableState},
             fork::{
-                ClientFork, ClientForkConfig, ForkEndpointIdentity, ensure_fork_network_supported,
+                ClientFork, ClientForkConfig, ForkEndpointIdentity,
+                bal::{self, PreparedBalSeed},
+                ensure_fork_network_supported,
             },
             genesis::GenesisConfig,
             mem::fork_db::ForkedDatabase,
@@ -130,6 +132,7 @@ struct ForkOverrides {
 
 struct StableForkSnapshot {
     endpoint_identity: ForkEndpointIdentity,
+    endpoint_is_anvil: bool,
     block_number: u64,
     transaction_replay: Option<ForkTransactionReplay>,
     block: Option<AnyRpcBlock>,
@@ -187,6 +190,14 @@ impl AnvilNodeInfoProbe {
 pub(crate) struct ForkTransactionReplay {
     pub(crate) source_block: AnyRpcBlock,
     pub(crate) target_index: usize,
+}
+
+/// A detached fork database and optional cache seed, before local state overrides.
+pub(crate) struct PreparedFork {
+    pub(crate) db: ForkedDatabase<AnyNetwork>,
+    pub(crate) config: ClientForkConfig,
+    pub(crate) replay: Option<ForkTransactionReplay>,
+    pub(crate) bal_seed: Option<PreparedBalSeed>,
 }
 
 /// The default IPC endpoint
@@ -267,6 +278,8 @@ pub struct NodeConfig {
     pub fork_chain_id: Option<U256>,
     /// Skip `anvil_nodeInfo` / `anvil_metadata` probes against the fork URL.
     pub no_fork_node_info: bool,
+    /// Disables opportunistic BAL post-state prefill of the remote fork cache.
+    pub no_bal: bool,
     /// Address fork state reads by block number instead of by block hash.
     pub fork_state_by_number: bool,
     /// Chain ID discovered from the active fork source.
@@ -676,6 +689,7 @@ impl Default for NodeConfig {
             fork_retry_backoff: Duration::from_millis(1_000),
             fork_chain_id: None,
             no_fork_node_info: false,
+            no_bal: false,
             fork_state_by_number: false,
             fork_source_chain_id: None,
             fork_execution_chain_id: None,
@@ -1131,6 +1145,13 @@ impl NodeConfig {
     #[must_use]
     pub const fn with_fork_state_by_number(mut self, fork_state_by_number: bool) -> Self {
         self.fork_state_by_number = fork_state_by_number;
+        self
+    }
+
+    /// Disables opportunistic BAL post-state prefill of the remote fork cache.
+    #[must_use]
+    pub const fn with_no_bal(mut self, no_bal: bool) -> Self {
+        self.no_bal = no_bal;
         self
     }
 
@@ -1625,8 +1646,11 @@ impl NodeConfig {
         fees: &FeeManager,
     ) -> Result<(Arc<TokioRwLock<Box<dyn Db>>>, Option<ClientFork>, Option<ForkTransactionReplay>)>
     {
-        let (db, config, replay) =
+        let PreparedFork { db, config, replay, bal_seed } =
             self.setup_fork_db_config_with_replay(eth_rpc_url, evm_env, fees, None).await?;
+        if let Some(seed) = bal_seed {
+            seed.apply(db.inner());
+        }
         let db: Arc<TokioRwLock<Box<dyn Db>>> = Arc::new(TokioRwLock::new(Box::new(db)));
         let fork = ClientFork::new(config, Arc::clone(&db));
         Ok((db, Some(fork), replay))
@@ -1834,6 +1858,7 @@ impl NodeConfig {
             if before == after {
                 return Ok(StableForkSnapshot {
                     endpoint_identity: before,
+                    endpoint_is_anvil: node_info_probe.identified,
                     block_number,
                     transaction_replay,
                     block,
@@ -1930,9 +1955,12 @@ impl NodeConfig {
         evm_env: &mut EvmEnv,
         fees: &FeeManager,
     ) -> Result<(ForkedDatabase<AnyNetwork>, ClientForkConfig)> {
-        let (db, config, replay) =
+        let PreparedFork { db, config, replay, bal_seed } =
             self.setup_fork_db_config_with_replay(eth_rpc_url, evm_env, fees, None).await?;
         eyre::ensure!(replay.is_none(), "transaction-hash fork replay requires full node startup");
+        if let Some(seed) = bal_seed {
+            seed.apply(db.inner());
+        }
         Ok((db, config))
     }
 
@@ -1943,12 +1971,15 @@ impl NodeConfig {
         evm_env: &mut EvmEnv,
         fees: &FeeManager,
         execution_profile: NetworkConfigs,
-    ) -> Result<(ForkedDatabase<AnyNetwork>, ClientForkConfig)> {
-        let (db, config, replay) = self
+    ) -> Result<PreparedFork> {
+        let prepared = self
             .setup_fork_db_config_with_replay(eth_rpc_url, evm_env, fees, Some(execution_profile))
             .await?;
-        eyre::ensure!(replay.is_none(), "transaction-hash fork replay requires full node startup");
-        Ok((db, config))
+        eyre::ensure!(
+            prepared.replay.is_none(),
+            "transaction-hash fork replay requires full node startup"
+        );
+        Ok(prepared)
     }
 
     pub(crate) async fn setup_fork_db_config_with_replay(
@@ -1957,7 +1988,7 @@ impl NodeConfig {
         evm_env: &mut EvmEnv,
         fees: &FeeManager,
         fixed_execution_profile: Option<NetworkConfigs>,
-    ) -> Result<(ForkedDatabase<AnyNetwork>, ClientForkConfig, Option<ForkTransactionReplay>)> {
+    ) -> Result<PreparedFork> {
         debug!(target: "node", eth_rpc_url=%redact_url(&eth_rpc_url), "setting up fork db");
         if self.fork_chain_id.is_some() {
             eyre::ensure!(
@@ -1981,12 +2012,13 @@ impl NodeConfig {
         // reset between any two RPC calls, so verify the endpoint identity on both sides.
         let StableForkSnapshot {
             endpoint_identity: fork_identity,
+            endpoint_is_anvil,
             block_number: fork_block_number,
             transaction_replay: fork_transaction_replay,
             block,
             gas_price,
         } = self.stable_fork_snapshot(&provider, fork_overrides).await?;
-        self.fork_endpoint_is_anvil = fork_identity.is_authoritative();
+        self.fork_endpoint_is_anvil = endpoint_is_anvil;
 
         let target_network = fork_identity.network.unwrap_or(NetworkVariant::Ethereum);
         let target_profile = fork_identity.network_profile.unwrap_or_default();
@@ -2198,6 +2230,14 @@ latest block number: {latest_block}"
             eyre::bail!("primary fork endpoint changed while its context was being validated");
         }
 
+        // Use source-chain rules, never the local execution hardfork override. Anvil sources
+        // may expose manually modified state under the same block hash as their original BAL.
+        let bal_seed = if self.fork_bal_eligible(fork_identity, block.header.timestamp()) {
+            bal::fetch(&provider, &block).await
+        } else {
+            None
+        };
+
         let source_id = fork_source_id(&self.fork_urls, &self.fork_headers);
         let account_fetch_policy = account_fetch_policy_for_source(source_chain_id, target_profile);
         let meta = BlockchainDbMeta::new(cache_block_env, eth_rpc_url.clone())
@@ -2277,7 +2317,27 @@ latest block number: {latest_block}"
         // need to insert the forked block's hash
         db.insert_block_hash(U256::from(config.block_number), config.block_hash);
 
-        Ok((db, config, fork_transaction_replay))
+        Ok(PreparedFork { db, config, replay: fork_transaction_replay, bal_seed })
+    }
+
+    /// Whether the source is eligible for Ethereum BAL prefill under Cancun deletion rules.
+    fn fork_bal_eligible(&self, identity: ForkEndpointIdentity, timestamp: u64) -> bool {
+        !self.no_bal
+            && !self.no_fork_node_info
+            && !self.fork_endpoint_is_anvil
+            && !identity.is_authoritative()
+            && identity.network.is_none_or(|network| network.is_ethereum())
+            && matches!(
+                NamedChain::try_from(identity.source_chain_id),
+                Ok(NamedChain::Mainnet
+                    | NamedChain::Sepolia
+                    | NamedChain::Holesky
+                    | NamedChain::Hoodi)
+            )
+            && matches!(
+                FoundryHardfork::from_chain_and_timestamp(identity.source_chain_id, timestamp),
+                Some(hardfork @ FoundryHardfork::Ethereum(_)) if SpecId::from(hardfork) >= SpecId::CANCUN
+            )
     }
 
     /// we only use the gas limit value of the block if it is non-zero and the block gas
@@ -2683,6 +2743,42 @@ mod tests {
         assert_eq!(json["endpoint"], redact_url(&fork_url));
         assert!(!json.to_string().contains("password"));
         assert!(!json.to_string().contains("secret"));
+    }
+
+    #[test]
+    fn fork_bal_eligibility_uses_source_rules() {
+        let mut config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Amsterdam.into()));
+        let mut identity = ForkEndpointIdentity {
+            execution_chain_id: 31_337,
+            source_chain_id: 1,
+            network: Some(NetworkVariant::Ethereum),
+            network_profile: None,
+            hardfork: None,
+            instance_id: None,
+            source_fork_block_number: None,
+            source_fork_block_hash: None,
+        };
+        assert!(config.fork_bal_eligible(identity, 1_800_000_000));
+        assert!(!config.fork_bal_eligible(identity, 1_600_000_000));
+        identity.source_chain_id = 31_337;
+        assert!(!config.fork_bal_eligible(identity, 1_800_000_000));
+        identity.source_chain_id = 42_161;
+        assert!(!config.fork_bal_eligible(identity, 1_800_000_000));
+        identity.source_chain_id = 1;
+        identity.network = Some(NetworkVariant::Tempo);
+        assert!(!config.fork_bal_eligible(identity, 1_800_000_000));
+        identity.network = Some(NetworkVariant::Ethereum);
+        identity.hardfork = Some(EthereumHardfork::Amsterdam.into());
+        assert!(!config.fork_bal_eligible(identity, 1_800_000_000));
+        identity.hardfork = None;
+        config.fork_endpoint_is_anvil = true;
+        assert!(!config.fork_bal_eligible(identity, 1_800_000_000));
+        config.fork_endpoint_is_anvil = false;
+        config.no_fork_node_info = true;
+        assert!(!config.fork_bal_eligible(identity, 1_800_000_000));
+        config.no_fork_node_info = false;
+        config.no_bal = true;
+        assert!(!config.fork_bal_eligible(identity, 1_800_000_000));
     }
 
     #[test]

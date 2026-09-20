@@ -50,6 +50,8 @@ use revm::context_interface::block::BlobExcessGasAndPrice;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::RwLock as AsyncRwLock;
 
+pub(crate) mod bal;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ForkEndpointIdentity {
     pub(crate) execution_chain_id: u64,

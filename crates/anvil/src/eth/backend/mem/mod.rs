@@ -2,7 +2,7 @@
 use self::{in_memory_db::StateRootDb, state::trie_storage};
 use crate::{
     ForkChoice, NodeConfig, PrecompileFactory,
-    config::{ForkTransactionReplay, PruneStateHistoryConfig, source_hardfork},
+    config::{ForkTransactionReplay, PreparedFork, PruneStateHistoryConfig, source_hardfork},
     eth::{
         backend::{
             cheats::{CheatEcrecover, CheatsManager},
@@ -4784,14 +4784,15 @@ impl<N: Network> Backend<N> {
         let mut staged_env = self.evm_env.read().clone();
         staged_config.apply_tempo_fork_beneficiary_default(&mut staged_env);
         let staged_fees = self.fees.detached();
-        let (mut staged_db, staged_client_config) = staged_config
-            .setup_fork_db_config_for_reset(
-                target_rpc_url.clone(),
-                &mut staged_env,
-                &staged_fees,
-                self.networks,
-            )
-            .await?;
+        let PreparedFork { db: mut staged_db, config: staged_client_config, bal_seed, .. } =
+            staged_config
+                .setup_fork_db_config_for_reset(
+                    target_rpc_url.clone(),
+                    &mut staged_env,
+                    &staged_fees,
+                    self.networks,
+                )
+                .await?;
         let cache_lease = StagedForkCacheLease::for_db(staged_db.inner());
         let cache_identity_changed = previous_source.as_ref().is_some_and(|source| {
             source.authoritative_identity_changed_at_same_url(
@@ -4805,6 +4806,9 @@ impl<N: Network> Backend<N> {
                 U256::from(staged_client_config.block_number),
                 staged_client_config.block_hash,
             );
+        }
+        if let Some(seed) = bal_seed {
+            seed.apply(staged_db.inner());
         }
         let mut invalidated_cache_namespaces = Vec::new();
         if cache_identity_changed && !staged_config.no_storage_caching {
