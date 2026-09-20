@@ -463,3 +463,90 @@ Ran 2 test suites [ELAPSED]: 1 tests passed, 1 failed, 0 skipped (2 total tests)
 ...
 "#]]);
 });
+
+forgetest_init!(rerun_respects_match_test_and_clears_passed_failures, |prj, cmd| {
+    prj.add_test(
+        "RerunFilter.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract RerunFilterTest is Test {
+    function testBrokenA() public {
+        assertTrue(false);
+    }
+
+    function testBrokenB() public {
+        assertTrue(false);
+    }
+
+    function testFine() public {
+        assertTrue(true);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "-j1"]).assert_failure();
+
+    // `--match-test` narrows the recorded failures instead of being replaced by them.
+    cmd.forge_fuse()
+        .args(["test", "--rerun", "--match-test", "testBrokenA", "-j1"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/RerunFilter.t.sol:RerunFilterTest
+[FAIL: assertion failed] testBrokenA() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+...
+"#]]);
+
+    prj.add_test(
+        "RerunFilter.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract RerunFilterTest is Test {
+    function testBrokenA() public {
+        assertTrue(true);
+    }
+
+    function testBrokenB() public {
+        assertTrue(true);
+    }
+
+    function testFine() public {
+        assertTrue(true);
+    }
+}
+"#,
+    );
+
+    // The narrowed run did not touch `testBrokenB`, so both failures are still recorded.
+    cmd.forge_fuse().args(["test", "--rerun", "-j1"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 2 tests for test/RerunFilter.t.sol:RerunFilterTest
+[PASS] testBrokenA() ([GAS])
+[PASS] testBrokenB() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]]);
+
+    // Both passed, so nothing is recorded and `--rerun` is a regular run again.
+    cmd.forge_fuse().args(["test", "--rerun", "-j1"]).assert_success().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 3 tests for test/RerunFilter.t.sol:RerunFilterTest
+[PASS] testBrokenA() ([GAS])
+[PASS] testBrokenB() ([GAS])
+[PASS] testFine() ([GAS])
+Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
+
+"#]]);
+});

@@ -2769,7 +2769,10 @@ impl TestArgs {
         let mut filter = self.filter.clone();
         let rerun_failures = if self.rerun {
             let failures = last_run_failures(config);
-            filter.test_pattern = failures.test_pattern;
+            // An explicit `--match-test` narrows the recorded failures instead of being replaced.
+            if filter.test_pattern.is_none() {
+                filter.test_pattern = failures.test_pattern;
+            }
             failures.failures
         } else {
             None
@@ -3299,25 +3302,34 @@ fn last_run_failures(config: &Config) -> LastRunFailures {
     LastRunFailures { test_pattern, failures: None }
 }
 
-/// Persist filter with last test run failures (only if there's any failure).
+/// Persist the test failures for `--rerun`. A recorded failure is dropped once its test ran again,
+/// so a passing run clears it while a narrowed run leaves unrelated failures in place. The file is
+/// removed when nothing is left, which makes the next `--rerun` a regular run.
 fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
-    if outcome.failed() > 0 && fs::create_file(&config.test_failures_file).is_ok() {
-        let failures = outcome
-            .results
-            .iter()
-            .flat_map(|(contract, suite)| {
-                suite.test_results.iter().filter(|(_, result)| result.status.is_failure()).flat_map(
-                    move |(test_name, test_result)| {
-                        rerun_filter_matches(test_name, test_result)
-                            .map(move |test| RerunFailure { contract: contract.clone(), test })
-                    },
-                )
+    let ran_again = |failure: &RerunFailure| {
+        outcome.results.get(&failure.contract).is_some_and(|suite| {
+            suite.test_results.keys().any(|signature| {
+                failure.test == *signature || signature.split('(').next() == Some(&failure.test)
             })
-            .collect::<Vec<_>>();
+        })
+    };
+    let mut failures = last_run_failures(config).failures.unwrap_or_default();
+    failures.retain(|failure| !ran_again(failure));
+    failures.extend(outcome.results.iter().flat_map(|(contract, suite)| {
+        suite.test_results.iter().filter(|(_, result)| result.status.is_failure()).flat_map(
+            move |(test_name, test_result)| {
+                rerun_filter_matches(test_name, test_result)
+                    .map(move |test| RerunFailure { contract: contract.clone(), test })
+            },
+        )
+    }));
 
-        if let Ok(output) = serde_json::to_string(&RerunFailures { version: 1, failures }) {
-            let _ = fs::write(&config.test_failures_file, output);
-        }
+    if failures.is_empty() {
+        let _ = fs::remove_file(&config.test_failures_file);
+    } else if fs::create_file(&config.test_failures_file).is_ok()
+        && let Ok(output) = serde_json::to_string(&RerunFailures { version: 1, failures })
+    {
+        let _ = fs::write(&config.test_failures_file, output);
     }
 }
 
