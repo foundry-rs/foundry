@@ -6,7 +6,7 @@ use alloy_eips::{
     eip7928::{BlockAccessList, compute_block_access_list_hash, validate_block_access_list},
 };
 use alloy_network::AnyRpcBlock;
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256, U256, map::U256Map};
 use alloy_provider::Provider;
 use eyre::{Result, WrapErr};
 use foundry_common::provider::RetryProvider;
@@ -81,7 +81,9 @@ impl PreparedBalSeed {
         let mut storage = Vec::new();
         for account in bal {
             if !account.storage_changes.is_empty() {
-                storage.push((account.address, account.storage_post_states().collect()));
+                let mut slots = Vec::with_capacity(account.storage_changes.len());
+                slots.extend(account.storage_post_states());
+                storage.push((account.address, slots));
             }
             let balance = account.balance_post_state();
             let nonce = account.nonce_post_state();
@@ -128,7 +130,9 @@ impl PreparedBalSeed {
         let mut storage = db.storage().write();
         let mut inserted_slots = 0;
         for (address, slots) in self.storage {
-            let cached_slots = storage.entry(address).or_default();
+            let cached_slots = storage.entry(address).or_insert_with(|| {
+                U256Map::with_capacity_and_hasher(slots.len(), Default::default())
+            });
             let slots_before = cached_slots.len();
             for (slot, value) in slots {
                 cached_slots.entry(slot).or_insert(value);
