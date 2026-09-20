@@ -631,13 +631,7 @@ where
         // An EIP-7702 transaction can't be a CREATE. If the recipient was omitted, the sender
         // itself is the destination, which is the common case for self-delegation.
         let kind = match state.kind {
-            TxKind::Create if !self.auth.is_empty() => {
-                eyre::ensure!(
-                    !from.is_zero(),
-                    "EIP-7702 transactions require a destination address"
-                );
-                TxKind::Call(from)
-            }
+            TxKind::Create if !self.auth.is_empty() => TxKind::Call(from),
             kind => kind,
         };
         self.tx.set_kind(kind);
