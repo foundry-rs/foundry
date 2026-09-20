@@ -95,14 +95,22 @@ class ReportTests(unittest.TestCase):
             run["rounds"] = len(values)
 
     def set_wall_comparison(self, base, candidate):
-        self.assertEqual(len(base), len(candidate))
-        for label, values in (("base", base), ("candidate", candidate)):
-            for arm in ("auto", "replay"):
+        self.set_mode_comparison(base, base, candidate, candidate)
+
+    def set_mode_comparison(self, base_bal, base_replay, candidate_bal, candidate_replay):
+        self.assertEqual(len({len(values) for values in
+                              (base_bal, base_replay, candidate_bal, candidate_replay)}), 1)
+        for label, modes in (("base", (base_bal, base_replay)),
+                             ("candidate", (candidate_bal, candidate_replay))):
+            for arm, values in zip(("auto", "replay"), modes):
                 self.set_measured_values(label, arm, values)
         self.write_fixture()
 
     def assert_withheld(self, report):
         self.assertIn("**No valid PR performance comparison.**", report)
+        self.assertNotIn("| Case | Base speedup |", report)
+        self.assertNotIn("| Case | Run 1 speedup |", report)
+        self.assertNotIn("BAL benefit: ", report)
         self.assertNotIn("| Wall ms (Base → PR) |", report)
         self.assertNotIn("Improved (", report)
         self.assertNotIn("Regressed (", report)
@@ -112,21 +120,24 @@ class ReportTests(unittest.TestCase):
         self.assertNotIn("2.000×", report)
         self.assertNotIn("| 2000.000 /", report)
 
-    def test_complete_report_compares_each_mode_across_revisions(self):
+    def test_complete_report_compares_bal_benefit_and_folds_raw_measurements(self):
         report = self.report(run_url="https://github.com/foundry-rs/foundry/actions/runs/123")
         self.assertTrue(report.startswith(MARKER + "\n"))
         self.assertIn("**Complete:** 1 cases, 2 measured rounds per revision/mode", report)
         headline, details = report.split("<details>", 1)
-        self.assertIn("| Case | Mode | Wall ms (Base → PR) | Wall time | Other changes |", headline)
-        self.assertIn("| b100-t2 | BAL-accelerated | 2000.0 → 4000.0 | Inconclusive (100.0% higher) | RPC: 50.0% lower |", headline)
-        self.assertIn("| b100-t2 | Full replay | 12000.0 → 6000.0 | Inconclusive (50.0% lower) | RPC: 50.0% lower |", headline)
+        self.assertIn("| Case | Base speedup | PR speedup | Speedup change | BAL benefit |", headline)
+        self.assertIn("| b100-t2 | 6.00× | 1.50× | 75.0% lower | Inconclusive |", headline)
         self.assertNotIn("IQR", headline)
         self.assertNotIn("min / max", headline)
         self.assertNotIn("Median intervals", headline)
+        self.assertNotIn("Speedup intervals", headline)
         self.assertNotIn("Too few measured rounds", headline)
         self.assertEqual(report.count("<details>"), 1)
         self.assertIn("median / IQR / min / max", details)
         self.assertIn("Too few measured rounds (at least 7 per revision required).", details)
+        self.assertIn("Too few measured rounds (at least 8 per revision/mode required).", details)
+        self.assertIn("**BAL-accelerated wall time: Inconclusive (100.0% higher).**", details)
+        self.assertIn("**Full replay wall time: Inconclusive (50.0% lower).**", details)
         self.assertIn("| Base / BAL-accelerated | 2 / 0 / 0 | 2000.000 / 1000.000 / 1000.000 / 3000.000 | 4 / 4 | 2.0 |", report)
         self.assertIn("<summary>Per-case measurements and correctness</summary>", report)
         self.assertIn("not public-RPC latency", report)
@@ -138,14 +149,13 @@ class ReportTests(unittest.TestCase):
         self.set_measured_values("candidate", "replay", [2] * 10)
         self.write_fixture()
         headline, details = self.report().split("<details>", 1)
-        self.assertIn("| b100-t2 | BAL-accelerated | 2000.0 → 1000.0 | Improved (50.0% lower) | RPC: 50.0% lower |", headline)
-        self.assertIn("| b100-t2 | Full replay | 1000.0 → 2000.0 | Regressed (100.0% higher) | RPC: 50.0% lower |", headline)
-        self.assertIn("**BAL-accelerated wall time: Improved.** Median intervals: Base 2000.000–2000.000 ms; PR 1000.000–1000.000 ms. PR interval is entirely lower.", details)
-        self.assertIn("**Full replay wall time: Regressed.** Median intervals: Base 1000.000–1000.000 ms; PR 2000.000–2000.000 ms. PR interval is entirely higher.", details)
+        self.assertIn("| b100-t2 | 0.50× | 2.00× | 300.0% higher | Improved |", headline)
+        self.assertIn("**BAL-accelerated wall time: Improved (50.0% lower).** Median intervals: Base 2000.000–2000.000 ms; PR 1000.000–1000.000 ms. PR interval is entirely lower.", details)
+        self.assertIn("**Full replay wall time: Regressed (100.0% higher).** Median intervals: Base 1000.000–1000.000 ms; PR 2000.000–2000.000 ms. PR interval is entirely higher.", details)
         self.assertNotIn("Median intervals", headline)
 
     def test_faster_time_and_higher_resource_use_have_separate_outcomes(self):
-        self.set_wall_comparison([2] * 10, [1] * 10)
+        self.set_mode_comparison([2] * 10, [4] * 10, [1] * 10, [4] * 10)
         for sample in self.samples["candidate"]:
             if sample["phase"] == "measured":
                 sample["rpc"]["client_requests_by_method"]["eth_getCode"] = 6
@@ -153,8 +163,10 @@ class ReportTests(unittest.TestCase):
                 sample["rpc"]["client_response_body_bytes"] = 4096
         self.write_fixture()
         headline, details = self.report().split("<details>", 1)
-        self.assertIn("| b100-t2 | BAL-accelerated | 2000.0 → 1000.0 | Improved (50.0% lower) | RPC: 50.0% higher; Response: 100.0% higher |", headline)
-        self.assertNotIn("Regressed (", headline)
+        self.assertIn("| b100-t2 | 2.00× | 4.00× | 100.0% higher | Improved |", headline)
+        self.assertIn("**BAL-accelerated wall time: Improved (50.0% lower).**", details)
+        self.assertIn("RPC: 50.0% higher; Response: 100.0% higher.", details)
+        self.assertNotIn("Regressed", headline)
         self.assertIn("6 / 6 | 4.0", details)
 
     def test_overlapping_or_touching_intervals_are_inconclusive(self):
@@ -167,9 +179,9 @@ class ReportTests(unittest.TestCase):
             with self.subTest(base=base, candidate=candidate):
                 self.set_wall_comparison(base, candidate)
                 headline, details = self.report().split("<details>", 1)
-                self.assertIn("Inconclusive (", headline)
-                self.assertNotIn("Improved (", headline)
-                self.assertNotIn("Regressed (", headline)
+                self.assertIn("| Inconclusive |", headline)
+                self.assertNotIn("| Improved |", headline)
+                self.assertNotIn("| Regressed |", headline)
                 self.assertNotIn("Intervals overlap or touch", headline)
                 self.assertIn("Intervals overlap or touch; direction is unresolved.", details)
                 self.assertIn("Median intervals: Base", details)
@@ -177,7 +189,8 @@ class ReportTests(unittest.TestCase):
     def test_fewer_than_seven_rounds_cannot_claim_timing_direction(self):
         self.set_wall_comparison([10] * 6, [1] * 6)
         headline, details = self.report().split("<details>", 1)
-        self.assertIn("| b100-t2 | BAL-accelerated | 10000.0 → 1000.0 | Inconclusive (90.0% lower) | RPC: 50.0% lower |", headline)
+        self.assertIn("| b100-t2 | 1.00× | 1.00× | unchanged | Inconclusive |", headline)
+        self.assertIn("**BAL-accelerated wall time: Inconclusive (90.0% lower).**", details)
         self.assertNotIn("Improved (", headline)
         self.assertIn("Too few measured rounds (at least 7 per revision required).", details)
 
@@ -189,9 +202,13 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(median_interval(list(range(10))), (1, 8))
         self.assertEqual(median_interval(list(reversed(range(10)))), (1, 8))
         self.assertEqual(median_interval([2] * 10), (2, 2))
+        self.assertIsNone(median_interval(list(range(7)), groups=4))
+        self.assertEqual(median_interval(list(range(8)), groups=4), (0, 7))
+        self.assertEqual(median_interval(list(range(10)), groups=4), (0, 9))
 
     def test_sample_and_round_order_does_not_change_report(self):
-        self.set_wall_comparison(list(range(11, 21)), list(range(1, 11)))
+        self.set_mode_comparison(list(range(11, 21)), list(range(21, 31)),
+                                 list(range(1, 11)), list(range(31, 41)))
         expected = self.report()
         for samples in self.samples.values():
             samples.reverse()
@@ -209,17 +226,86 @@ class ReportTests(unittest.TestCase):
                 sample["rpc"]["upstream_requests_by_method"] = {}
                 sample["rpc"]["client_response_body_bytes"] = 0
         self.write_fixture()
-        headline = self.report().split("<details>", 1)[0]
-        self.assertIn("| Improved (50.0% lower) | RPC: 0 → 2; Response: 0 → 2048 bytes |", headline)
+        details = self.report().split("<details>", 1)[1]
+        self.assertIn("**BAL-accelerated wall time: Improved (50.0% lower).**", details)
+        self.assertIn("RPC: 0 → 2; Response: 0 → 2048 bytes.", details)
 
-    def test_small_timing_changes_do_not_round_to_misleading_zero(self):
-        for value, change, assessment in ((1.0001, "<0.1% higher", "Regressed"),
-                                          (.9999, "<0.1% lower", "Improved")):
+    def test_small_speedup_and_timing_changes_do_not_round_to_misleading_zero(self):
+        for value, change, benefit, timing in ((1.0001, "<0.1% higher", "Improved", "Regressed"),
+                                               (.9999, "<0.1% lower", "Regressed", "Improved")):
             with self.subTest(value=value):
-                self.set_wall_comparison([1] * 10, [value] * 10)
-                headline = self.report().split("<details>", 1)[0]
-                self.assertIn(f"| 1000.0 → {value * 1000:.1f} | {assessment} ({change}) |", headline)
-                self.assertNotIn("(0.0%", headline)
+                self.set_mode_comparison([1] * 10, [1] * 10, [1] * 10, [value] * 10)
+                headline, details = self.report().split("<details>", 1)
+                self.assertIn(f"| b100-t2 | 1.00× | 1.00× | {change} | {benefit} |", headline)
+                self.assertIn(f"**Full replay wall time: {timing} ({change}).**", details)
+                self.assertNotIn("| 0.0%", headline)
+                self.assertNotIn("(0.0%", details)
+
+    def test_bal_benefit_direction_uses_each_revisions_full_replay(self):
+        for bal, speedup, change, status in ((1, "4.00×", "100.0% higher", "Improved"),
+                                            (4, "1.00×", "50.0% lower", "Regressed")):
+            with self.subTest(bal=bal):
+                self.set_mode_comparison([2] * 10, [4] * 10, [bal] * 10, [4] * 10)
+                headline, details = self.report().split("<details>", 1)
+                self.assertIn(f"| b100-t2 | 2.00× | {speedup} | {change} | {status} |", headline)
+                self.assertIn(f"**BAL benefit: {status}.** Speedup intervals: Base 2.000–2.000×;", details)
+
+    def test_speedup_uses_ratio_of_medians_without_pairing_rounds(self):
+        self.set_mode_comparison([1, 100, 100] * 3, [10, 10, 1000] * 3,
+                                 [2, 200, 200] * 3, [20, 20, 2000] * 3)
+        headline = self.report().split("<details>", 1)[0]
+        self.assertIn("| b100-t2 | 0.10× | 0.10× | unchanged | Inconclusive |", headline)
+        self.assertNotIn("| 10.00× |", headline)
+
+    def test_both_modes_faster_does_not_imply_larger_bal_benefit(self):
+        self.set_mode_comparison([2] * 10, [4] * 10, [1] * 10, [2] * 10)
+        headline, details = self.report().split("<details>", 1)
+        self.assertIn("| b100-t2 | 2.00× | 2.00× | unchanged | Inconclusive |", headline)
+        self.assertIn("**BAL-accelerated wall time: Improved (50.0% lower).**", details)
+        self.assertIn("**Full replay wall time: Improved (50.0% lower).**", details)
+        self.assertIn("**BAL benefit: Inconclusive.** Speedup intervals: Base 2.000–2.000×; PR 2.000–2.000×. Intervals overlap or touch; direction is unresolved.", details)
+
+    def test_larger_bal_benefit_can_coexist_with_slower_absolute_bal_time(self):
+        self.set_mode_comparison([2] * 10, [4] * 10, [3] * 10, [12] * 10)
+        headline, details = self.report().split("<details>", 1)
+        self.assertIn("| b100-t2 | 2.00× | 4.00× | 100.0% higher | Improved |", headline)
+        self.assertIn("**BAL-accelerated wall time: Regressed (50.0% higher).**", details)
+        self.assertIn("**Full replay wall time: Regressed (200.0% higher).**", details)
+
+    def test_overlapping_and_touching_speedup_intervals_are_inconclusive(self):
+        comparisons = (
+            ([1] * 5 + [3] * 5, [2] * 5 + [4] * 5,
+             "2.00× | 3.00× | 50.0% higher", "Base 1.000–3.000×; PR 2.000–4.000×."),
+            ([1] * 5 + [2] * 5, [2] * 5 + [3] * 5,
+             "1.50× | 2.50× | 66.7% higher", "Base 1.000–2.000×; PR 2.000–3.000×."),
+        )
+        for base, candidate, values, intervals in comparisons:
+            with self.subTest(intervals=intervals):
+                self.set_mode_comparison([1] * 10, base, [1] * 10, candidate)
+                headline, details = self.report().split("<details>", 1)
+                self.assertIn(f"| b100-t2 | {values} | Inconclusive |", headline)
+                self.assertIn(f"**BAL benefit: Inconclusive.** Speedup intervals: {intervals} Intervals overlap or touch; direction is unresolved.", details)
+
+    def test_bal_benefit_requires_eight_rounds_while_wall_direction_requires_seven(self):
+        for rounds, status in ((7, "Inconclusive"), (8, "Improved")):
+            with self.subTest(rounds=rounds):
+                self.set_mode_comparison([2] * rounds, [4] * rounds,
+                                         [1] * rounds, [4] * rounds)
+                headline, details = self.report().split("<details>", 1)
+                self.assertIn(f"| b100-t2 | 2.00× | 4.00× | 100.0% higher | {status} |", headline)
+                self.assertIn("**BAL-accelerated wall time: Improved (50.0% lower).**", details)
+                if rounds == 7:
+                    self.assertIn("**BAL benefit: Inconclusive.** Too few measured rounds (at least 8 per revision/mode required).", details)
+                else:
+                    self.assertIn("**BAL benefit: Improved.** Speedup intervals: Base 2.000–2.000×; PR 4.000–4.000×.", details)
+                    self.assertNotIn("Too few measured rounds", details)
+
+    def test_below_one_speedup_is_visible_as_bal_slower_than_replay(self):
+        self.set_mode_comparison([4] * 10, [2] * 10, [8] * 10, [2] * 10)
+        headline, details = self.report().split("<details>", 1)
+        self.assertIn("| b100-t2 | 0.50× | 0.25× | 50.0% lower | Regressed |", headline)
+        self.assertIn("below 1× means BAL is slower", headline)
+        self.assertIn("PR has a smaller BAL benefit relative to its own full replay.", details)
 
     def test_missing_duplicate_and_unexpected_attempts_suppress_all_comparisons(self):
         original = copy.deepcopy(self.samples["base"])
@@ -312,10 +398,14 @@ class ReportTests(unittest.TestCase):
                 self.assertNotIn("| RPC ratio |", report)
                 self.assertNotIn("2.000×", report)
                 headline = report.split("<details>", 1)[0]
-                self.assertIn("| b100-t2 | BAL-accelerated | 2000.0 → 4000.0 | Not compared (control) | Not compared |", headline)
-                self.assertIn("| b100-t2 | Full replay | 12000.0 → 6000.0 | Not compared (control) | Not compared |", headline)
-                self.assertNotIn("Improved (", report)
-                self.assertNotIn("Regressed (", report)
+                self.assertIn("| Case | Run 1 speedup | Run 2 speedup |", headline)
+                self.assertIn("| b100-t2 | 6.00× | 1.50× |", headline)
+                self.assertNotIn("Not compared", report)
+                self.assertNotIn("Speedup change", report)
+                self.assertNotIn("| BAL benefit |", report)
+                self.assertNotIn("BAL benefit:", report)
+                self.assertNotIn("Improved", report)
+                self.assertNotIn("Regressed", report)
                 self.assertNotIn("wall time: Improved", report)
                 self.assertNotIn("wall time: Regressed", report)
                 self.assertNotIn("% higher", report)
@@ -328,6 +418,19 @@ class ReportTests(unittest.TestCase):
                 self.assertIn("| Base / Full replay | 2 / 0 / 0 | 12000.000 / 2000.000 / 10000.000 / 14000.000 | 4 / 4 | 2.0 |", report)
                 self.assertIn("| PR / BAL-accelerated | 2 / 0 / 0 | 4000.000 / 2000.000 / 2000.000 / 6000.000 | 2 / 2 | 2.0 |", report)
                 self.assertIn("| PR / Full replay | 2 / 0 / 0 | 6000.000 / 1000.000 / 5000.000 / 7000.000 | 2 / 2 | 2.0 |", report)
+
+    def test_validated_control_does_not_judge_separated_speedup_intervals(self):
+        self.set_mode_comparison([2] * 10, [4] * 10, [1] * 10, [4] * 10)
+        self.summary["files"]["head_cast"]["sha256"] = "a" * 64
+        self.write_fixture()
+        report = self.report()
+        headline = report.split("<details>", 1)[0]
+        self.assertIn("| b100-t2 | 2.00× | 4.00× |", headline)
+        self.assertNotIn("Improved", report)
+        self.assertNotIn("Regressed", report)
+        self.assertNotIn("Speedup change", report)
+        self.assertNotIn("% higher", report)
+        self.assertNotIn("% lower", report)
 
     def test_invalid_control_counters_withhold_all_measurements(self):
         self.summary["files"]["head_cast"]["sha256"] = "a" * 64

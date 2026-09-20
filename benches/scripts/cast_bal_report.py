@@ -69,14 +69,14 @@ def rpc_count(sample, direction="client"):
     return sum(counters.values())
 
 
-def median_interval(values):
-    """Return an exact, at least 97.5% interval for the population median, if finite."""
+def median_interval(values, groups=2):
+    """Return an exact median interval with at least 95% joint coverage across groups."""
     values = sorted(values)
     count, tail, interval = len(values), 0, None
     for rank in range(1, (count + 1) // 2 + 1):
         tail += math.comb(count, rank - 1)
-        # Two binomial tails must total at most 0.025; compare exact integers.
-        if 80 * tail > 2 ** count:
+        # Bonferroni: two tails per group share a 0.05 error budget.
+        if 40 * groups * tail > 2 ** count:
             break
         interval = values[rank - 1], values[count - rank]
     return interval
@@ -114,31 +114,64 @@ def comparisons(rows):
             yield base, head
 
 
+def case_modes(rows, case_id):
+    return {label: {row["arm"]: [sample["wall_time_seconds"] for sample in row["samples"]]
+                    for row in rows if row["case"]["id"] == case_id and row["ref"] == label}
+            for label in REFS}
+
+
+def speedup(modes):
+    return median(modes["replay"]) / median(modes["auto"])
+
+
+def speedup_assessment(modes):
+    intervals = []
+    for label in REFS:
+        bal, replay = [median_interval(modes[label][arm], groups=4) for arm in ARMS]
+        if bal is None or replay is None:
+            return "Inconclusive", "Too few measured rounds (at least 8 per revision/mode required)."
+        intervals.append((replay[0] / bal[1], replay[1] / bal[0]))
+    before, after = intervals
+    evidence = (f"Speedup intervals: Base {before[0]:.3f}–{before[1]:.3f}×; "
+                f"PR {after[0]:.3f}–{after[1]:.3f}×.")
+    if after[0] > before[1]:
+        return "Improved", f"{evidence} PR has a larger BAL benefit relative to its own full replay."
+    if after[1] < before[0]:
+        return "Regressed", f"{evidence} PR has a smaller BAL benefit relative to its own full replay."
+    return "Inconclusive", f"{evidence} Intervals overlap or touch; direction is unresolved."
+
+
+def resource_changes(base, head):
+    changes = []
+    for name, metric in (("RPC", rpc_count),
+                         ("Response", lambda sample: sample["rpc"]["client_response_body_bytes"])):
+        values = [median(metric(sample) for sample in row["samples"]) for row in (base, head)]
+        if values[0] != values[1]:
+            change = percent_change(*values)
+            if name == "Response" and values[0] == 0:
+                change += " bytes"
+            changes.append(f"{name}: {change}")
+    return "; ".join(changes) or "RPC / response unchanged"
+
+
 def measurement_summary(rows, control):
-    lines = ["| Case | Mode | Wall ms (Base → PR) | Wall time | Other changes |",
-             "| --- | --- | ---: | --- | --- |"]
-    for base, head in comparisons(rows):
-        times = [[sample["wall_time_seconds"] for sample in row["samples"]] for row in (base, head)]
-        before, after = map(median, times)
-        if control:
-            outcome, changes = "Not compared (control)", "Not compared"
-        else:
-            status, _ = wall_assessment(*times)
-            outcome = f"{status} ({percent_change(before, after)})"
-            changes = []
-            for name, metric in (("RPC", rpc_count),
-                                 ("Response", lambda sample: sample["rpc"]["client_response_body_bytes"])):
-                values = [median(metric(sample) for sample in row["samples"]) for row in (base, head)]
-                if values[0] != values[1]:
-                    change = percent_change(*values)
-                    if name == "Response" and values[0] == 0:
-                        change += " bytes"
-                    changes.append(f"{name}: {change}")
-            changes = "; ".join(changes) or "RPC / response unchanged"
-        lines.append(f"| {base['case']['id']} | {ARMS[base['arm']]} | "
-                     f"{before * 1000:.1f} → {after * 1000:.1f} | {outcome} | {changes} |")
-    lines += ["", "Wall ms is the median of measured rounds; lower is faster. "
-              "Warmup is excluded. Expand the details for measurements and assessment reasons.", ""]
+    if control:
+        lines = ["| Case | Run 1 speedup | Run 2 speedup |", "| --- | ---: | ---: |"]
+    else:
+        lines = ["| Case | Base speedup | PR speedup | Speedup change | BAL benefit |",
+                 "| --- | ---: | ---: | ---: | --- |"]
+    for case_id in dict.fromkeys(row["case"]["id"] for row in rows):
+        modes = case_modes(rows, case_id)
+        before, after = [speedup(modes[label]) for label in REFS]
+        line = f"| {case_id} | {before:.2f}× | {after:.2f}× |"
+        if not control:
+            status, _ = speedup_assessment(modes)
+            line += f" {percent_change(before, after)} | {status} |"
+        lines.append(line)
+    lines += ["", "Speedup = Full replay wall ms / BAL wall ms, using measured-round medians. "
+              "Higher is better; 1× means equal time, and below 1× means BAL is slower. "
+              "Warmup is excluded. Expand the details for absolute wall times, resource changes "
+              "and assessment reasons.", ""]
     return lines
 
 
@@ -267,11 +300,15 @@ def collect(root, summary):
 def measurement_details(rows, validated, control):
     lines = ["<details>", "<summary>Per-case measurements and correctness</summary>", ""]
     if validated and not control:
-        lines += ["Wall-time assessments compare exact, nonparametric median intervals with at least "
-                  "97.5% coverage for each revision (at least 95% joint coverage per comparison). "
-                  "Improved or Regressed requires strictly separated intervals; otherwise the result is "
-                  "Inconclusive, which does not establish equal performance. At least 7 measured rounds "
-                  "per revision are needed. These exploratory assessments assume representative independent "
+        lines += ["BAL-benefit assessments use four exact, nonparametric median intervals, one per "
+                  "revision/mode, each with at least 98.75% coverage (at least 95% joint coverage per case). "
+                  "Each speedup interval is [replay lower / BAL upper, replay upper / BAL lower]. "
+                  "Improved requires the PR speedup interval to be entirely higher than Base; Regressed "
+                  "requires it to be entirely lower. Overlapping or touching intervals, or fewer than "
+                  "8 measured rounds per revision/mode, give Inconclusive. This does not establish equal benefit.", "",
+                  "Absolute wall-time assessments use 97.5% median intervals for each revision "
+                  "(at least 95% joint coverage), with at least 7 measured rounds. Lower is faster. "
+                  "These exploratory assessments assume representative independent "
                   "repetitions; they do not provide simultaneous confidence across all cases or rule out "
                   "machine drift. RPC and response changes describe observed medians, not statistical "
                   "verdicts or a combined performance score.", ""]
@@ -298,16 +335,16 @@ def measurement_details(rows, validated, control):
                 size = f"{median(sample['rpc']['client_response_body_bytes'] for sample in samples) / 1024:.1f}"
             lines.append(f"| {REFS[row['ref']]} / {ARMS[row['arm']]} | {counts} | {wall} | {rpc} | {size} |")
         lines.append("")
-        if validated:
-            if control:
-                lines += ["**Assessment: Not compared.** Base and PR use the same revision or binary; "
-                          "these measurements cannot establish a PR improvement or regression.", ""]
-            else:
-                for base, head in comparisons(selected):
-                    times = [[sample["wall_time_seconds"] for sample in row["samples"]]
-                             for row in (base, head)]
-                    status, reason = wall_assessment(*times)
-                    lines += [f"**{ARMS[base['arm']]} wall time: {status}.** {reason}", ""]
+        if validated and not control:
+            status, reason = speedup_assessment(case_modes(selected, case_id))
+            lines += [f"**BAL benefit: {status}.** {reason}", ""]
+            for base, head in comparisons(selected):
+                times = [[sample["wall_time_seconds"] for sample in row["samples"]]
+                         for row in (base, head)]
+                status, reason = wall_assessment(*times)
+                change = percent_change(*map(median, times))
+                lines += [f"**{ARMS[base['arm']]} wall time: {status} ({change}).** {reason} "
+                          f"{resource_changes(base, head)}.", ""]
     lines += ["BAL-accelerated requires an observed BAL hit; Full replay adds `--no-bal` to the "
               "same revision's binary. Local RPCs count JSON-RPC calls from Cast to the local proxy, "
               "including metadata and optional probes.", "",
@@ -360,18 +397,21 @@ def render(root, base_sha=None, head_sha=None, run_url=None, failure=None):
                   f"{config['timeout_seconds']} s timeout, one worker. "
                   f"All {measured}/{len(rows) * config['rounds']} measured attempts passed. "
                   "The campaign completed and passed all receipt, replay-equivalence and preparation-barrier checks.", "",
-                  "This control uses the same revision or binary for Base and PR. It verifies benchmark execution; "
-                  "it is not PR performance evidence. Measured wall times, local RPC counts and response sizes "
-                  "are shown below. PR performance assessments and changes are withheld.", ""]
+                  "This control uses the same revision or binary; it is not PR performance evidence. "
+                  "Run 1 and Run 2 are the Base- and PR-labelled runs. Each shows BAL speedup against "
+                  "its own full replay; no change between revisions is assessed.", ""]
     elif complete:
         config = summary["configuration"]
         lines += [f"**Complete:** {len(rows) // 4} cases, {config['rounds']} measured rounds per revision/mode, "
                   f"{config['warmup_rounds']} warmup rounds, {config['timeout_seconds']} s timeout, one worker. "
                   "Both revisions match receipt gas/status and their own full replay traces; "
                   "all scheduled attempts passed, with no fixture access after preparation.", "",
-                  "Each row compares **Base → PR in the same mode**. Wall-time assessments account "
-                  "for measurement uncertainty; Inconclusive means the direction is unresolved. "
-                  "RPC and response changes are reported separately; no overall performance score is inferred.", ""]
+                  "Each row compares **BAL's advantage over Full replay in Base versus PR**. "
+                  "Speedup change = (PR speedup / Base speedup − 1) × 100%. "
+                  "This measures relative benefit, not absolute BAL latency. Full replay is measured "
+                  "on both revisions; a larger speedup can also result from slower replay. "
+                  "Inconclusive means the direction is unresolved; expand details for separate "
+                  "wall-time and resource changes.", ""]
     else:
         lines += ["**No valid PR performance comparison.** Timings and assessments are withheld because "
                   "the complete campaign did not pass all checks.", ""]
