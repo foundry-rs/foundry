@@ -109,9 +109,8 @@ class ReportTests(unittest.TestCase):
     def assert_withheld(self, report):
         self.assertIn("**No valid PR performance comparison.**", report)
         self.assertNotIn("| Case | Base speedup |", report)
-        self.assertNotIn("| Case | Run 1 speedup |", report)
         self.assertNotIn("BAL benefit: ", report)
-        self.assertNotIn("| Wall ms (Base → PR) |", report)
+        self.assertNotIn("| Wall ms (Base → Head) |", report)
         self.assertNotIn("Improved (", report)
         self.assertNotIn("Regressed (", report)
         self.assertNotIn("wall time: Improved", report)
@@ -125,7 +124,7 @@ class ReportTests(unittest.TestCase):
         self.assertTrue(report.startswith(MARKER + "\n"))
         self.assertIn("**Complete:** 1 cases, 2 measured rounds per revision/mode", report)
         headline, details = report.split("<details>", 1)
-        self.assertIn("| Case | Base speedup | PR speedup | Speedup change | BAL benefit |", headline)
+        self.assertIn("| Case | Base speedup | Head speedup | Speedup change | BAL benefit |", headline)
         self.assertIn("| b100-t2 | 6.00× | 1.50× | 75.0% lower | Inconclusive |", headline)
         self.assertNotIn("IQR", headline)
         self.assertNotIn("min / max", headline)
@@ -150,8 +149,8 @@ class ReportTests(unittest.TestCase):
         self.write_fixture()
         headline, details = self.report().split("<details>", 1)
         self.assertIn("| b100-t2 | 0.50× | 2.00× | 300.0% higher | Improved |", headline)
-        self.assertIn("**BAL-accelerated wall time: Improved (50.0% lower).** Median intervals: Base 2000.000–2000.000 ms; PR 1000.000–1000.000 ms. PR interval is entirely lower.", details)
-        self.assertIn("**Full replay wall time: Regressed (100.0% higher).** Median intervals: Base 1000.000–1000.000 ms; PR 2000.000–2000.000 ms. PR interval is entirely higher.", details)
+        self.assertIn("**BAL-accelerated wall time: Improved (50.0% lower).** Median intervals: Base 2000.000–2000.000 ms; Head 1000.000–1000.000 ms. Head interval is entirely lower.", details)
+        self.assertIn("**Full replay wall time: Regressed (100.0% higher).** Median intervals: Base 1000.000–1000.000 ms; Head 2000.000–2000.000 ms. Head interval is entirely higher.", details)
         self.assertNotIn("Median intervals", headline)
 
     def test_faster_time_and_higher_resource_use_have_separate_outcomes(self):
@@ -263,7 +262,7 @@ class ReportTests(unittest.TestCase):
         self.assertIn("| b100-t2 | 2.00× | 2.00× | unchanged | Inconclusive |", headline)
         self.assertIn("**BAL-accelerated wall time: Improved (50.0% lower).**", details)
         self.assertIn("**Full replay wall time: Improved (50.0% lower).**", details)
-        self.assertIn("**BAL benefit: Inconclusive.** Speedup intervals: Base 2.000–2.000×; PR 2.000–2.000×. Intervals overlap or touch; direction is unresolved.", details)
+        self.assertIn("**BAL benefit: Inconclusive.** Speedup intervals: Base 2.000–2.000×; Head 2.000–2.000×. Intervals overlap or touch; direction is unresolved.", details)
 
     def test_larger_bal_benefit_can_coexist_with_slower_absolute_bal_time(self):
         self.set_mode_comparison([2] * 10, [4] * 10, [3] * 10, [12] * 10)
@@ -275,9 +274,9 @@ class ReportTests(unittest.TestCase):
     def test_overlapping_and_touching_speedup_intervals_are_inconclusive(self):
         comparisons = (
             ([1] * 5 + [3] * 5, [2] * 5 + [4] * 5,
-             "2.00× | 3.00× | 50.0% higher", "Base 1.000–3.000×; PR 2.000–4.000×."),
+             "2.00× | 3.00× | 50.0% higher", "Base 1.000–3.000×; Head 2.000–4.000×."),
             ([1] * 5 + [2] * 5, [2] * 5 + [3] * 5,
-             "1.50× | 2.50× | 66.7% higher", "Base 1.000–2.000×; PR 2.000–3.000×."),
+             "1.50× | 2.50× | 66.7% higher", "Base 1.000–2.000×; Head 2.000–3.000×."),
         )
         for base, candidate, values, intervals in comparisons:
             with self.subTest(intervals=intervals):
@@ -297,7 +296,7 @@ class ReportTests(unittest.TestCase):
                 if rounds == 7:
                     self.assertIn("**BAL benefit: Inconclusive.** Too few measured rounds (at least 8 per revision/mode required).", details)
                 else:
-                    self.assertIn("**BAL benefit: Improved.** Speedup intervals: Base 2.000–2.000×; PR 4.000–4.000×.", details)
+                    self.assertIn("**BAL benefit: Improved.** Speedup intervals: Base 2.000–2.000×; Head 4.000–4.000×.", details)
                     self.assertNotIn("Too few measured rounds", details)
 
     def test_below_one_speedup_is_visible_as_bal_slower_than_replay(self):
@@ -305,7 +304,7 @@ class ReportTests(unittest.TestCase):
         headline, details = self.report().split("<details>", 1)
         self.assertIn("| b100-t2 | 0.50× | 0.25× | 50.0% lower | Regressed |", headline)
         self.assertIn("below 1× means BAL is slower", headline)
-        self.assertIn("PR has a smaller BAL benefit relative to its own full replay.", details)
+        self.assertIn("Head has a smaller BAL benefit relative to its own full replay.", details)
 
     def test_missing_duplicate_and_unexpected_attempts_suppress_all_comparisons(self):
         original = copy.deepcopy(self.samples["base"])
@@ -352,7 +351,7 @@ class ReportTests(unittest.TestCase):
         report = self.report()
         self.assert_withheld(report)
         self.assertIn("Campaign failed: runner timed out", report)
-        self.assertIn("| PR / Full replay | 2 / 1 / 1 | withheld | withheld | withheld |", report)
+        self.assertIn("| Head / Full replay | 2 / 1 / 1 | withheld | withheld | withheld |", report)
 
     def test_missing_block_and_open_barrier_are_invalid(self):
         self.summary["blocks"] = []
@@ -368,7 +367,7 @@ class ReportTests(unittest.TestCase):
         self.write_fixture()
         report = self.report()
         self.assert_withheld(report)
-        self.assertIn(f"Base `{BASE}` → PR `{HEAD}`", report)
+        self.assertIn(f"Base `{BASE}` → Head `{HEAD}`", report)
         self.assertIn("Campaign revisions differ", report)
         self.assertNotIn("9" * 40, report)
 
@@ -398,7 +397,9 @@ class ReportTests(unittest.TestCase):
                 self.assertNotIn("| RPC ratio |", report)
                 self.assertNotIn("2.000×", report)
                 headline = report.split("<details>", 1)[0]
-                self.assertIn("| Case | Run 1 speedup | Run 2 speedup |", headline)
+                self.assertIn("| Case | Base speedup | Head speedup |", headline)
+                self.assertNotIn("Run 1", report)
+                self.assertNotIn("Run 2", report)
                 self.assertIn("| b100-t2 | 6.00× | 1.50× |", headline)
                 self.assertNotIn("Not compared", report)
                 self.assertNotIn("Speedup change", report)
@@ -416,8 +417,8 @@ class ReportTests(unittest.TestCase):
                 self.assertIn("not PR performance evidence", report)
                 self.assertIn("| Base / BAL-accelerated | 2 / 0 / 0 | 2000.000 / 1000.000 / 1000.000 / 3000.000 | 4 / 4 | 2.0 |", report)
                 self.assertIn("| Base / Full replay | 2 / 0 / 0 | 12000.000 / 2000.000 / 10000.000 / 14000.000 | 4 / 4 | 2.0 |", report)
-                self.assertIn("| PR / BAL-accelerated | 2 / 0 / 0 | 4000.000 / 2000.000 / 2000.000 / 6000.000 | 2 / 2 | 2.0 |", report)
-                self.assertIn("| PR / Full replay | 2 / 0 / 0 | 6000.000 / 1000.000 / 5000.000 / 7000.000 | 2 / 2 | 2.0 |", report)
+                self.assertIn("| Head / BAL-accelerated | 2 / 0 / 0 | 4000.000 / 2000.000 / 2000.000 / 6000.000 | 2 / 2 | 2.0 |", report)
+                self.assertIn("| Head / Full replay | 2 / 0 / 0 | 6000.000 / 1000.000 / 5000.000 / 7000.000 | 2 / 2 | 2.0 |", report)
 
     def test_validated_control_does_not_judge_separated_speedup_intervals(self):
         self.set_mode_comparison([2] * 10, [4] * 10, [1] * 10, [4] * 10)
@@ -440,7 +441,7 @@ class ReportTests(unittest.TestCase):
         self.assert_withheld(report)
         self.assertIn("Invalid RPC byte counter", report)
         self.assertIn("| Base / BAL-accelerated | 2 / 0 / 0 | withheld | withheld | withheld |", report)
-        self.assertIn("| PR / Full replay | 2 / 0 / 0 | withheld | withheld | withheld |", report)
+        self.assertIn("| Head / Full replay | 2 / 0 / 0 | withheld | withheld | withheld |", report)
 
     def test_failed_control_is_not_reported_as_validated(self):
         self.summary["files"]["head_cast"]["sha256"] = "a" * 64
@@ -451,7 +452,7 @@ class ReportTests(unittest.TestCase):
         self.assertNotIn("**Validated control:**", report)
         self.assertIn("Failed or timed-out attempt", report)
         self.assertIn("| Base / BAL-accelerated | 2 / 0 / 0 | withheld | withheld | withheld |", report)
-        self.assertIn("| PR / Full replay | 2 / 1 / 0 | withheld | withheld | withheld |", report)
+        self.assertIn("| Head / Full replay | 2 / 1 / 0 | withheld | withheld | withheld |", report)
 
     def test_failed_build_cli_still_writes_postable_comment(self):
         output = self.root / "comment.md"

@@ -12,7 +12,7 @@ from statistics import median
 
 MARKER = "<!-- foundry-cast-bal-benchmark -->"
 ARMS = {"auto": "BAL-accelerated", "replay": "Full replay"}
-REFS = {"base": "Base", "candidate": "PR"}
+REFS = {"base": "Base", "candidate": "Head"}
 MAX_FILE_BYTES = 16 * 1024 * 1024
 
 
@@ -88,11 +88,11 @@ def wall_assessment(base, head):
         return "Inconclusive", "Too few measured rounds (at least 7 per revision required)."
     before, after = intervals
     evidence = (f"Median intervals: Base {before[0] * 1000:.3f}–{before[1] * 1000:.3f} ms; "
-                f"PR {after[0] * 1000:.3f}–{after[1] * 1000:.3f} ms.")
+                f"Head {after[0] * 1000:.3f}–{after[1] * 1000:.3f} ms.")
     if after[1] < before[0]:
-        return "Improved", f"{evidence} PR interval is entirely lower."
+        return "Improved", f"{evidence} Head interval is entirely lower."
     if after[0] > before[1]:
-        return "Regressed", f"{evidence} PR interval is entirely higher."
+        return "Regressed", f"{evidence} Head interval is entirely higher."
     return "Inconclusive", f"{evidence} Intervals overlap or touch; direction is unresolved."
 
 
@@ -133,11 +133,11 @@ def speedup_assessment(modes):
         intervals.append((replay[0] / bal[1], replay[1] / bal[0]))
     before, after = intervals
     evidence = (f"Speedup intervals: Base {before[0]:.3f}–{before[1]:.3f}×; "
-                f"PR {after[0]:.3f}–{after[1]:.3f}×.")
+                f"Head {after[0]:.3f}–{after[1]:.3f}×.")
     if after[0] > before[1]:
-        return "Improved", f"{evidence} PR has a larger BAL benefit relative to its own full replay."
+        return "Improved", f"{evidence} Head has a larger BAL benefit relative to its own full replay."
     if after[1] < before[0]:
-        return "Regressed", f"{evidence} PR has a smaller BAL benefit relative to its own full replay."
+        return "Regressed", f"{evidence} Head has a smaller BAL benefit relative to its own full replay."
     return "Inconclusive", f"{evidence} Intervals overlap or touch; direction is unresolved."
 
 
@@ -156,9 +156,9 @@ def resource_changes(base, head):
 
 def measurement_summary(rows, control):
     if control:
-        lines = ["| Case | Run 1 speedup | Run 2 speedup |", "| --- | ---: | ---: |"]
+        lines = ["| Case | Base speedup | Head speedup |", "| --- | ---: | ---: |"]
     else:
-        lines = ["| Case | Base speedup | PR speedup | Speedup change | BAL benefit |",
+        lines = ["| Case | Base speedup | Head speedup | Speedup change | BAL benefit |",
                  "| --- | ---: | ---: | ---: | --- |"]
     for case_id in dict.fromkeys(row["case"]["id"] for row in rows):
         modes = case_modes(rows, case_id)
@@ -303,7 +303,7 @@ def measurement_details(rows, validated, control):
         lines += ["BAL-benefit assessments use four exact, nonparametric median intervals, one per "
                   "revision/mode, each with at least 98.75% coverage (at least 95% joint coverage per case). "
                   "Each speedup interval is [replay lower / BAL upper, replay upper / BAL lower]. "
-                  "Improved requires the PR speedup interval to be entirely higher than Base; Regressed "
+                  "Improved requires the Head speedup interval to be entirely higher than Base; Regressed "
                   "requires it to be entirely lower. Overlapping or touching intervals, or fewer than "
                   "8 measured rounds per revision/mode, give Inconclusive. This does not establish equal benefit.", "",
                   "Absolute wall-time assessments use 97.5% median intervals for each revision "
@@ -380,7 +380,7 @@ def render(root, base_sha=None, head_sha=None, run_url=None, failure=None):
     complete = validated and not control
     lines = [MARKER, "## Cast BAL benchmark", ""]
     if base_sha and head_sha:
-        lines += [f"Base `{safe_text(base_sha)}` → PR `{safe_text(head_sha)}`.", ""]
+        lines += [f"Base `{safe_text(base_sha)}` → Head `{safe_text(head_sha)}`.", ""]
     if run_url:
         require(re.fullmatch(r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/actions/runs/[0-9]+"
                              r"(?:/attempts/[1-9][0-9]*)?", run_url),
@@ -398,16 +398,16 @@ def render(root, base_sha=None, head_sha=None, run_url=None, failure=None):
                   f"All {measured}/{len(rows) * config['rounds']} measured attempts passed. "
                   "The campaign completed and passed all receipt, replay-equivalence and preparation-barrier checks.", "",
                   "This control uses the same revision or binary; it is not PR performance evidence. "
-                  "Run 1 and Run 2 are the Base- and PR-labelled runs. Each shows BAL speedup against "
-                  "its own full replay; no change between revisions is assessed.", ""]
+                  "Base and Head each show BAL speedup against "
+                  "their own full replay; no change between revisions is assessed.", ""]
     elif complete:
         config = summary["configuration"]
         lines += [f"**Complete:** {len(rows) // 4} cases, {config['rounds']} measured rounds per revision/mode, "
                   f"{config['warmup_rounds']} warmup rounds, {config['timeout_seconds']} s timeout, one worker. "
                   "Both revisions match receipt gas/status and their own full replay traces; "
                   "all scheduled attempts passed, with no fixture access after preparation.", "",
-                  "Each row compares **BAL's advantage over Full replay in Base versus PR**. "
-                  "Speedup change = (PR speedup / Base speedup − 1) × 100%. "
+                  "Each row compares **BAL's advantage over Full replay in Base versus Head**. "
+                  "Speedup change = (Head speedup / Base speedup − 1) × 100%. "
                   "This measures relative benefit, not absolute BAL latency. Full replay is measured "
                   "on both revisions; a larger speedup can also result from slower replay. "
                   "Inconclusive means the direction is unresolved; expand details for separate "
