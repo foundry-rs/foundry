@@ -441,6 +441,7 @@ impl GasMetering {
     /// Start the gas recording.
     pub const fn start(&mut self) {
         self.recording = true;
+        self.last_gas_used = 0;
         self.pending_isolated_refund = None;
     }
 
