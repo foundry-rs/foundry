@@ -1,5 +1,14 @@
-//! commonly used sol generated types
+//! Shared contract bindings and bytecode for integration tests.
+
+use alloy_primitives::{Bytes, bytes};
 use alloy_sol_types::sol;
+
+/// Counter runtime that increments storage slot zero on every call.
+pub(crate) const COUNTER_RUNTIME_CODE: Bytes = bytes!("60005460010160005500");
+
+/// Creation code that sets slot zero to one and installs [`COUNTER_RUNTIME_CODE`].
+pub(crate) const COUNTER_INIT_CODE: Bytes =
+    bytes!("6001600055600a6011600039600a6000f360005460010160005500");
 
 sol!(
     #[sol(rpc)]

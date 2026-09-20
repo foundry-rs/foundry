@@ -1,6 +1,7 @@
 //! Account creation, deletion and delegation across a prefilled fork.
 
 use super::{BalOrigin, BalProxy, BalResponse, CONTRACT};
+use crate::abi::{COUNTER_INIT_CODE, COUNTER_RUNTIME_CODE};
 use alloy_network::{ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes, U256, address, bytes};
 use alloy_provider::Provider;
@@ -44,14 +45,11 @@ async fn fork_bal_complete_created_account_avoids_account_rpc() {
     let mut origin = BalOrigin::new().await;
     let nonce = origin.handle.http_provider().get_transaction_count(origin.sender).await.unwrap();
     let contract = origin.sender.create(nonce);
-    // Initialize slot zero to one, then install a runtime that increments it on every call.
-    let runtime = bytes!("60005460010160005500");
-    let deployment = bytes!("6001600055600a6011600039600a6000f360005460010160005500");
     let (success, _) = mine_transaction(
         &origin.api,
         TransactionRequest::default()
             .with_from(origin.sender)
-            .with_deploy_code(deployment)
+            .with_deploy_code(COUNTER_INIT_CODE)
             .with_value(U256::from(42))
             .with_gas_limit(1_000_000),
     )
@@ -80,7 +78,7 @@ async fn fork_bal_complete_created_account_avoids_account_rpc() {
         proxy.clear();
         assert_eq!(api.balance(contract, None).await.unwrap(), U256::from(42));
         assert_eq!(api.transaction_count(contract, None).await.unwrap(), U256::ONE);
-        assert_eq!(api.get_code(contract, None).await.unwrap(), runtime);
+        assert_eq!(api.get_code(contract, None).await.unwrap(), COUNTER_RUNTIME_CODE);
         assert_eq!(account_requests(&proxy) == 0, !no_bal);
 
         outcomes.push(
@@ -97,7 +95,7 @@ async fn fork_bal_complete_created_account_avoids_account_rpc() {
             api.storage_at(contract, U256::ZERO, None).await.unwrap(),
             B256::from(U256::from(2))
         );
-        assert_eq!(api.get_code(contract, None).await.unwrap(), runtime);
+        assert_eq!(api.get_code(contract, None).await.unwrap(), COUNTER_RUNTIME_CODE);
     }
     assert!(outcomes[0].0);
     assert_eq!(outcomes[0], outcomes[1]);
