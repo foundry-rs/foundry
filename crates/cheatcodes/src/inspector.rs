@@ -3053,7 +3053,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
 
             // Clean single-call prank once we have returned to the original depth
             if prank.single_call {
-                std::mem::take(&mut self.pranks);
+                self.pranks.remove(&curr_depth);
             }
         }
 
