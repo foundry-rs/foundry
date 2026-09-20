@@ -227,10 +227,17 @@ fn build_filter(
     Ok(filter)
 }
 
-/// Encodes `args` as the indexed topics of `event`; empty arguments match any value.
+/// Encodes `args` as the indexed topics of `event`; empty arguments match any value. Anonymous
+/// events have no selector topic, so their indexed inputs start at the first topic.
 fn event_topics(event: &Event, args: &[String]) -> Result<[Topic; 4]> {
-    let mut topics = vec![Topic::from(event.selector())];
-    for (input, arg) in event.inputs.iter().filter(|input| input.indexed).zip(args) {
+    let mut topics = if event.anonymous { vec![] } else { vec![Topic::from(event.selector())] };
+    let indexed = event.inputs.iter().filter(|input| input.indexed);
+    eyre::ensure!(
+        topics.len() + indexed.clone().count() <= 4,
+        "event `{}` has too many indexed inputs: a log has at most 4 topics",
+        event.name
+    );
+    for (input, arg) in indexed.zip(args) {
         let kind = input.resolve()?;
         topics.push(if arg.is_empty() {
             Topic::default()
@@ -449,7 +456,7 @@ fn is_range_limit_error(err: &RpcError<TransportErrorKind>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::keccak256;
+    use alloy_primitives::{U256, keccak256};
 
     const ADDRESS: &str = "0x4D1A2e2bB4F88F0250f26Ffff098B0b30B26BF38";
     const TRANSFER_SIG: &str = "Transfer(address indexed,address indexed,uint256)";
@@ -489,7 +496,7 @@ mod tests {
             }
         );
 
-        let cases: [(&str, &[&str], [Topic; 4]); 8] = [
+        let cases: [(&str, &[&str], [Topic; 4]); 9] = [
             (TRANSFER_SIG, &[], [transfer_topic.into(), any(), any(), any()]),
             (TRANSFER_SIG, &[ADDRESS], [transfer_topic.into(), addr_topic.clone(), any(), any()]),
             (TRANSFER_SIG, &["", ADDRESS], [transfer_topic.into(), any(), addr_topic, any()]),
@@ -541,10 +548,27 @@ mod tests {
                     any(),
                 ],
             ),
+            (
+                "event Anon(address indexed a, uint256 indexed b, uint256 c, address indexed d) anonymous",
+                &[ADDRESS, "7", ""],
+                [
+                    B256::left_padding_from(addr.as_slice()).into(),
+                    B256::from(U256::from(7)).into(),
+                    any(),
+                    any(),
+                ],
+            ),
         ];
         for (sig_or_topic, args, expected) in cases {
             assert_eq!(filter(sig_or_topic, args).unwrap(), topics(expected), "{sig_or_topic}");
         }
+
+        let too_many = filter(
+            "event Wide(address indexed a, uint256 indexed b, uint256 indexed c, uint256 indexed d)",
+            &[],
+        )
+        .unwrap_err();
+        assert!(too_many.to_string().contains("too many indexed inputs"), "{too_many}");
 
         let multiple = build_filter(
             None,
