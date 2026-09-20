@@ -1,11 +1,11 @@
 //! OP-stack receipt construction for the Anvil block executor.
 
 use alloy_consensus::{Eip658Value, Receipt, ReceiptWithBloom};
-use alloy_primitives::{Address, Log};
+use alloy_primitives::Log;
 use foundry_evm::hardfork::FoundryHardfork;
 use foundry_primitives::FoundryReceiptEnvelope;
 use op_alloy_consensus::{OpDepositReceipt, OpDepositReceiptWithBloom};
-use revm::{context_interface::result::ExecutionResult, state::EvmState};
+use revm::context_interface::result::ExecutionResult;
 
 #[cfg(feature = "base")]
 use foundry_evm::hardforks::BaseUpgrade;
@@ -25,11 +25,18 @@ use op_revm::{L1BlockInfo, estimate_tx_compressed_size};
 #[cfg(feature = "optimism")]
 use revm::Database;
 
-#[cfg(feature = "optimism")]
 impl<E> AnvilBlockExecutor<E> {
     /// Configures OP-specific block accounting without changing the shared constructor.
-    pub(crate) fn set_optimism_hardfork(&mut self, hardfork: OpHardfork) {
-        self.optimism_jovian = hardfork >= OpHardfork::Jovian;
+    #[cfg(feature = "optimism")]
+    pub(crate) fn set_optimism_hardfork(&mut self, hardfork: FoundryHardfork) {
+        self.optimism_jovian = OpHardfork::from(hardfork) >= OpHardfork::Jovian;
+        self.deposit_hardfork = Some(hardfork);
+    }
+
+    /// Records the Base upgrade that gates deposit receipt metadata.
+    #[cfg(feature = "base")]
+    pub(crate) const fn set_base_upgrade(&mut self, upgrade: BaseUpgrade) {
+        self.deposit_hardfork = Some(FoundryHardfork::Base(upgrade));
     }
 }
 
@@ -51,14 +58,20 @@ pub(crate) fn blob_gas_used<DB: Database>(
 }
 
 /// Builds a mined OP deposit receipt and derives its fork-specific metadata.
+///
+/// `depositor_nonce` is the sender nonce before the deposit executed. Without a configured
+/// hardfork the receipt carries both fields, matching the network's default configuration.
 pub(crate) fn build_mined_deposit_receipt<H>(
     result: ExecutionResult<H>,
-    state: &EvmState,
-    sender: Address,
+    hardfork: Option<FoundryHardfork>,
+    depositor_nonce: u64,
     cumulative_gas_used: u64,
 ) -> FoundryReceiptEnvelope {
-    let deposit_nonce = state.get(&sender).map(|account| account.info.nonce);
-    build_deposit_receipt(result, cumulative_gas_used, deposit_nonce, deposit_nonce.map(|_| 1))
+    let (deposit_nonce, deposit_receipt_version) = match hardfork {
+        Some(hardfork) => deposit_metadata(hardfork, depositor_nonce),
+        None => (Some(depositor_nonce), Some(1)),
+    };
+    build_deposit_receipt(result, cumulative_gas_used, deposit_nonce, deposit_receipt_version)
 }
 
 /// Builds an RPC-simulated OP deposit receipt and derives its fork-specific metadata.

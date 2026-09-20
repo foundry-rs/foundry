@@ -60,6 +60,13 @@ contract ForkTest is Test {
         assertEq(anotherFork, vm.activeFork());
     }
 
+    // ensures the blob fee market of the forked block is exposed
+    function testForkBlockBlobBaseFee() public {
+        // Mainnet block 22_000_000 (Cancun) carries 22_151_168 excess blob gas.
+        vm.createSelectFork("mainnet", 22_000_000);
+        assertEq(block.blobbasefee, 761, "blob base fee should follow the forked block header");
+    }
+
     // ensures forks have different block hashes
     function testBlockNumbersMismatch() public {
         vm.selectFork(mainnetFork);
