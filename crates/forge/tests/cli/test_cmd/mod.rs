@@ -725,6 +725,30 @@ forgetest!(can_run_test_with_json_output_non_verbose, |prj, cmd| {
         .stdout_eq(file!["../../fixtures/SimpleContractTestNonVerbose.json": Json]);
 });
 
+forgetest!(json_and_junit_emit_empty_documents_without_matches, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.insert_console();
+    prj.add_source("Simple.t.sol", SIMPLE_CONTRACT);
+
+    // A filter that matches nothing must still produce a parseable document on stdout.
+    cmd.args(["test", "--json", "--match-test", "testNoSuch"]).assert_success().stdout_eq(str![[
+        r#"
+{}
+
+"#
+    ]]);
+
+    cmd.forge_fuse().args(["test", "--junit", "--match-test", "testNoSuch"]).assert_success().stdout_eq(str![[
+        r#"
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="Test run" tests="0" skipped="0" failures="0" errors="0" timestamp="[..]" time="0.000">
+</testsuites>
+
+
+"#
+    ]]);
+});
+
 forgetest!(can_write_json_results_without_changing_stdout, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_console();

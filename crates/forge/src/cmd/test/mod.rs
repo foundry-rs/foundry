@@ -2260,6 +2260,13 @@ impl TestArgs {
                 }
                 sh_warn!("{msg}")?;
             }
+            // Machine-readable modes still get a well-formed, empty document on stdout.
+            if self.junit {
+                sh_println!("{}", junit_xml_report(&BTreeMap::new(), verbosity).to_string()?)?;
+            } else if self.mutate.is_none() && !self.gas_report && !self.summary && shell::is_json()
+            {
+                sh_println!("{}", serde_json::to_string(&BTreeMap::<String, SuiteResult>::new())?)?;
+            }
             return Ok(TestOutcome::empty(Some(runner.known_contracts.clone()), false));
         }
 
