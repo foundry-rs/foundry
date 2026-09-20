@@ -191,7 +191,7 @@ def collect(root, summary):
     return rows, issues
 
 
-def measurement_details(rows, complete):
+def measurement_details(rows, validated):
     lines = ["<details>", "<summary>Per-case measurements and correctness</summary>", ""]
     for case_id in dict.fromkeys(row["case"]["id"] for row in rows):
         selected = [row for row in rows if row["case"]["id"] == case_id]
@@ -207,7 +207,7 @@ def measurement_details(rows, complete):
             counts = f"{len(samples)} / {sum(sample.get('timed_out') is True for sample in samples)} / "
             counts += str(sum(sample.get("exit_code") != 0 for sample in samples))
             wall, rpc, size = "withheld", "withheld", "withheld"
-            if complete:
+            if validated:
                 values = [sample["wall_time_seconds"] * 1000 for sample in samples]
                 wall = " / ".join(f"{value:.3f}" for value in (
                     median(values), quantile(values, .75) - quantile(values, .25), min(values), max(values)))
@@ -266,7 +266,8 @@ def render(root, base_sha=None, head_sha=None, run_url=None, failure=None):
                   f"All {measured}/{len(rows) * config['rounds']} measured attempts passed. "
                   "The campaign completed and passed all receipt, replay-equivalence and preparation-barrier checks.", "",
                   "This control uses the same revision or binary for Base and PR. It verifies benchmark execution; "
-                  "it is not PR performance evidence. PR timing comparisons and ratios are withheld.", ""]
+                  "it is not PR performance evidence. Measured wall times, local RPC counts and response sizes "
+                  "are shown in the per-case details. PR timing comparisons and ratios are withheld.", ""]
     elif complete:
         config = summary["configuration"]
         lines += [f"**Complete:** {len(rows) // 4} cases, {config['rounds']} measured rounds per revision/mode, "
@@ -304,7 +305,7 @@ def render(root, base_sha=None, head_sha=None, run_url=None, failure=None):
             lines.append(f"- {len(issues) - 20} additional evidence errors.")
         lines.append("")
     if rows:
-        lines.extend(measurement_details(rows, complete))
+        lines.extend(measurement_details(rows, validated))
     return "\n".join(lines).rstrip() + "\n"
 
 

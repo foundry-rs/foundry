@@ -172,19 +172,38 @@ class ReportTests(unittest.TestCase):
         self.write_fixture()
         self.assert_withheld(self.report())
 
-    def test_same_binary_control_is_not_presented_as_pr_evidence(self):
+    def test_validated_controls_show_measurements_without_pr_comparisons(self):
+        for identity in ("binary", "revision"):
+            with self.subTest(identity=identity):
+                head = BASE if identity == "revision" else HEAD
+                self.summary["refs"]["head"] = head
+                self.runs["candidate"]["build"]["source_sha"] = head
+                self.summary["files"]["head_cast"]["sha256"] = ("a" if identity == "binary" else "b") * 64
+                self.write_fixture()
+                report = render(self.root, BASE, head)
+                self.assertIn("**Validated control:** 1 cases, 2 measured rounds per revision/mode", report)
+                self.assertIn("All 8/8 measured attempts passed", report)
+                self.assertIn("passed all receipt, replay-equivalence and preparation-barrier checks", report)
+                self.assertNotIn("did not pass all checks", report)
+                self.assertNotIn("| Time ratio |", report)
+                self.assertNotIn("| RPC ratio |", report)
+                self.assertNotIn("2.000×", report)
+                self.assertIn("same revision or binary", report)
+                self.assertIn("not PR performance evidence", report)
+                self.assertIn("| Base / BAL-accelerated | 2 / 0 / 0 | 2000.000 / 1000.000 / 1000.000 / 3000.000 | 4 / 4 | 2.0 |", report)
+                self.assertIn("| Base / Full replay | 2 / 0 / 0 | 12000.000 / 2000.000 / 10000.000 / 14000.000 | 4 / 4 | 2.0 |", report)
+                self.assertIn("| PR / BAL-accelerated | 2 / 0 / 0 | 4000.000 / 2000.000 / 2000.000 / 6000.000 | 2 / 2 | 2.0 |", report)
+                self.assertIn("| PR / Full replay | 2 / 0 / 0 | 6000.000 / 1000.000 / 5000.000 / 7000.000 | 2 / 2 | 2.0 |", report)
+
+    def test_invalid_control_counters_withhold_all_measurements(self):
         self.summary["files"]["head_cast"]["sha256"] = "a" * 64
+        self.samples["candidate"][-1]["rpc"]["client_response_body_bytes"] = -1
         self.write_fixture()
         report = self.report()
-        self.assertIn("**Validated control:** 1 cases, 2 measured rounds per revision/mode", report)
-        self.assertIn("All 8/8 measured attempts passed", report)
-        self.assertIn("passed all receipt, replay-equivalence and preparation-barrier checks", report)
-        self.assertNotIn("did not pass all checks", report)
-        self.assertNotIn("| Time ratio |", report)
-        self.assertNotIn("2.000×", report)
-        self.assertNotIn("| 2000.000 /", report)
-        self.assertIn("same revision or binary", report)
-        self.assertIn("not PR performance evidence", report)
+        self.assert_withheld(report)
+        self.assertIn("Invalid RPC byte counter", report)
+        self.assertIn("| Base / BAL-accelerated | 2 / 0 / 0 | withheld | withheld | withheld |", report)
+        self.assertIn("| PR / Full replay | 2 / 0 / 0 | withheld | withheld | withheld |", report)
 
     def test_failed_control_is_not_reported_as_validated(self):
         self.summary["files"]["head_cast"]["sha256"] = "a" * 64
@@ -194,6 +213,8 @@ class ReportTests(unittest.TestCase):
         self.assert_withheld(report)
         self.assertNotIn("**Validated control:**", report)
         self.assertIn("Failed or timed-out attempt", report)
+        self.assertIn("| Base / BAL-accelerated | 2 / 0 / 0 | withheld | withheld | withheld |", report)
+        self.assertIn("| PR / Full replay | 2 / 1 / 0 | withheld | withheld | withheld |", report)
 
     def test_failed_build_cli_still_writes_postable_comment(self):
         output = self.root / "comment.md"

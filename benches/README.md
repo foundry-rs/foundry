@@ -342,7 +342,10 @@ The English Markdown comment compares **Base → PR** separately for
 **BAL-accelerated** and **Full replay**. It shows median wall time, local RPC
 counts, PR/Base ratios, and folded per-case measurements. Build failures,
 timeouts, missing attempts, unexpected execution paths, and correctness failures
-prevent performance claims. Same-binary control runs are explicitly identified.
+prevent performance claims. Validated same-revision or same-binary controls show
+wall-time statistics, local RPC counts, and response sizes in the per-case details;
+PR comparisons and ratios remain withheld. Invalid or incomplete controls also
+withhold these measurements.
 If either PR revision has changed, the comment marks the pinned result as stale.
 Repeated requests update the same comment; older requests cannot replace newer
 results. GitHub's “Re-run failed jobs” retains successful build artifacts for
