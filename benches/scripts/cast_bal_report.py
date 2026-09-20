@@ -96,13 +96,15 @@ def wall_assessment(base, head):
     return "Inconclusive", f"{evidence} Intervals overlap or touch; direction is unresolved."
 
 
-def percent_change(before, after):
+def percent_change(before, after, signed=False):
     if before == after:
-        return "unchanged"
+        return "0.0%" if signed else "unchanged"
     if before == 0:
         return f"{before:g} → {after:g}"
     percent = abs(after / before - 1) * 100
     amount = "<0.1%" if percent < .05 else f"{percent:.1f}%"
+    if signed:
+        return f"{'-' if after < before else '+'}{amount}"
     return f"{amount} {'lower' if after < before else 'higher'}"
 
 
@@ -156,20 +158,22 @@ def resource_changes(base, head):
 
 def measurement_summary(rows, control):
     if control:
-        lines = ["| Case | Base speedup | Head speedup |", "| --- | ---: | ---: |"]
+        lines = ["| Case | Base speedup | Head speedup | Observed improvement / regression |",
+                 "| --- | ---: | ---: | ---: |"]
     else:
         lines = ["| Case | Base speedup | Head speedup | Speedup change | BAL benefit |",
                  "| --- | ---: | ---: | ---: | --- |"]
     for case_id in dict.fromkeys(row["case"]["id"] for row in rows):
         modes = case_modes(rows, case_id)
         before, after = [speedup(modes[label]) for label in REFS]
-        line = f"| {case_id} | {before:.2f}× | {after:.2f}× |"
+        line = f"| {case_id} | {before:.2f}× | {after:.2f}× | {percent_change(before, after, signed=True)} |"
         if not control:
             status, _ = speedup_assessment(modes)
-            line += f" {percent_change(before, after)} | {status} |"
+            line += f" {status} |"
         lines.append(line)
     lines += ["", "Speedup = Full replay wall ms / BAL wall ms, using measured-round medians. "
               "Higher is better; 1× means equal time, and below 1× means BAL is slower. "
+              "Positive change means improvement; negative means regression, using unrounded speedups. "
               "Warmup is excluded. Expand the details for absolute wall times, resource changes "
               "and assessment reasons.", ""]
     return lines
@@ -398,8 +402,10 @@ def render(root, base_sha=None, head_sha=None, run_url=None, failure=None):
                   f"All {measured}/{len(rows) * config['rounds']} measured attempts passed. "
                   "The campaign completed and passed all receipt, replay-equivalence and preparation-barrier checks.", "",
                   "This control uses the same revision or binary; it is not PR performance evidence. "
-                  "Base and Head each show BAL speedup against "
-                  "their own full replay; no change between revisions is assessed.", ""]
+                  "Base and Head each show BAL speedup against their own full replay. "
+                  "Observed improvement / regression = (Head speedup / Base speedup − 1) × 100%, "
+                  "using unrounded ratios. This describes measurement variation; "
+                  "no statistical verdict is assigned.", ""]
     elif complete:
         config = summary["configuration"]
         lines += [f"**Complete:** {len(rows) // 4} cases, {config['rounds']} measured rounds per revision/mode, "
