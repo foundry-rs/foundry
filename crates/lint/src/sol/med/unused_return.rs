@@ -42,17 +42,21 @@ impl<'gcx> LateLintPass<'gcx> for UnusedReturn {
     }
 }
 
-/// True if `expr` is an external member call whose selected function has return values,
-/// excluding ERC20 `transfer`/`transferFrom` (covered by
-/// `erc20-unchecked-transfer`).
+/// True if `expr` is an external call whose selected function has return values, excluding ERC20
+/// `transfer`/`transferFrom` member calls (covered by `erc20-unchecked-transfer`).
 fn is_unused_return_call<'gcx>(gcx: Gcx<'gcx>, expr: &Expr<'gcx>) -> bool {
     let ExprKind::Call(callee, ..) = &expr.peel_parens().kind else { return false };
-    let ExprKind::Member(_, name) = &callee.peel_parens().kind else { return false };
-    let Some(ty) = gcx.type_of_expr(callee.peel_parens().id) else { return false };
-    if !matches!(ty.kind, TyKind::Fn(f) if matches!(f.kind(), TyFnKind::External | TyFnKind::DelegateCall))
+    let Some(TyKind::Fn(function_ty)) = gcx.type_of_expr(callee.peel_parens().id).map(|ty| ty.kind)
+    else {
+        return false;
+    };
+    if !matches!(function_ty.kind(), TyFnKind::External | TyFnKind::DelegateCall)
+        || function_ty.returns.is_empty()
     {
         return false;
     }
+
+    let ExprKind::Member(_, name) = &callee.peel_parens().kind else { return true };
     let Some(fid) = gcx.resolved_function(callee) else { return false };
     let f = gcx.hir.function(fid);
 
@@ -66,5 +70,5 @@ fn is_unused_return_call<'gcx>(gcx: Gcx<'gcx>, expr: &Expr<'gcx>) -> bool {
             "transferFrom" => sig(f.parameters, &["address", "address", "uint256"]),
             _ => false,
         };
-    !f.returns.is_empty() && !is_erc20_transfer
+    !is_erc20_transfer
 }
