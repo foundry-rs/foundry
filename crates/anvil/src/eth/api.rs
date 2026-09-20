@@ -4418,11 +4418,17 @@ impl EthApi<FoundryNetwork> {
         } else {
             let mut pairs = tx_block_pairs;
 
+            // A reorg of depth 0 mines no blocks, so there is nowhere to place the transactions.
+            let Some(last_block) = depth.checked_sub(1) else {
+                return Err(BlockchainError::RpcError(RpcError::invalid_params(
+                    "Reorg depth must be at least 1 to include transactions",
+                )));
+            };
+
             // Check the maximum block supplied number will not exceed the reorged chain height
-            if let Some((_, num)) = pairs.iter().find(|(_, num)| *num >= depth) {
+            if let Some((_, num)) = pairs.iter().find(|(_, num)| *num > last_block) {
                 return Err(BlockchainError::RpcError(RpcError::invalid_params(format!(
-                    "Block number for reorg tx will exceed the reorged chain height. Block number {num} must not exceed (depth-1) {}",
-                    depth - 1
+                    "Block number for reorg tx will exceed the reorged chain height. Block number {num} must not exceed (depth-1) {last_block}"
                 ))));
             }
 
