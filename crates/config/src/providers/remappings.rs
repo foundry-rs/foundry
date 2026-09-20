@@ -102,11 +102,11 @@ impl Remappings {
             // `@prb/math/=src/math/` can coexist with an incoming `@prb/=lib/prb/`; the root alias
             // resolves its subtree while the dependency alias acts as a fallback for the rest of
             // the namespace.
-            let mut existing_name_path = existing.name.clone();
-            if !existing_name_path.ends_with('/') {
-                existing_name_path.push('/')
-            }
-            let is_conflicting = remapping.name.starts_with(&existing_name_path);
+            // Compare without trailing slashes so `pkg` and `pkg/` denote the same alias.
+            let existing_name = existing.name.trim_end_matches('/');
+            let name = remapping.name.trim_end_matches('/');
+            let is_conflicting = name == existing_name
+                || name.strip_prefix(existing_name).is_some_and(|rest| rest.starts_with('/'));
             is_conflicting && existing.context == remapping.context
         }) {
             return false;
@@ -1205,6 +1205,20 @@ mod tests {
         let mut duplicate = Remappings::new_with_remappings(vec![remapping("pkg/", "src/local/")]);
         duplicate.extend(vec![remapping("pkg/", "lib/pkg/src/")]);
         assert_eq!(duplicate.remappings, vec![remapping("pkg/", "src/local/")]);
+
+        // The first remapping wins regardless of whether either name carries a trailing slash.
+        for (existing, incoming) in
+            [("pkg", "pkg"), ("pkg", "pkg/"), ("pkg/", "pkg"), ("pkg", "pkg/sub/")]
+        {
+            let mut duplicate =
+                Remappings::new_with_remappings(vec![remapping(existing, "src/local/")]);
+            duplicate.extend(vec![remapping(incoming, "lib/pkg/src/")]);
+            assert_eq!(
+                duplicate.remappings,
+                vec![remapping(existing, "src/local/")],
+                "{existing} then {incoming}"
+            );
+        }
 
         let contextual_remapping = |context: &str, name: &str, path: &str| Remapping {
             context: Some(context.to_string()),
