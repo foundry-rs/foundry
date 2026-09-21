@@ -1435,6 +1435,25 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         Self::populate_rolled_active_fork(fork, persistent_accounts, caller, journaled_state);
     }
 
+    /// Reinitializes the stored journal of a rolled fork that is not active.
+    ///
+    /// The journal still holds the accounts that were loaded while the fork was last selected, at
+    /// the block it was on then. Selecting the fork again would keep serving those values, so it
+    /// starts over from the initial journal. Accounts created on the fork are carried over, as for
+    /// an active roll; persistent accounts and the caller are merged when the fork is selected.
+    fn reset_rolled_inactive_fork(
+        fork: &mut Fork<AnyNetwork, BlockEnvFor<FEN>>,
+        fork_init_journaled_state: &JournaledState,
+    ) {
+        let rolled =
+            std::mem::replace(&mut fork.journaled_state, fork_init_journaled_state.clone());
+        for (addr, acc) in &rolled.state {
+            if acc.is_created() && acc.is_touched() {
+                merge_journaled_state_data(*addr, &rolled, &mut fork.journaled_state);
+            }
+        }
+    }
+
     /// Rolls a fork while preparing active transaction context before publishing the new fork.
     fn roll_fork_with_context(
         &mut self,
@@ -1496,7 +1515,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         let context_update = std::marker::PhantomData;
 
         // Update the local mapping only after all context fetches and decoding have succeeded.
-        self.inner.roll_fork(id, fork_id, block, context.source_chain_id, backend)?;
+        let idx = self.inner.roll_fork(id, fork_id, block, context.source_chain_id, backend)?;
 
         if let Some((active_id, active_idx)) = self.active_fork_ids
             && active_id == id
@@ -1515,6 +1534,9 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
                 caller,
                 journaled_state,
             );
+        } else {
+            let fork = self.inner.get_fork_mut(idx);
+            Self::reset_rolled_inactive_fork(fork, &self.fork_init_journaled_state);
         }
 
         Ok(context_update)
