@@ -282,7 +282,7 @@ mod tests {
         let mut mocks = HashSet::new();
         <DynamicTestLinkingPreprocessor as Preprocessor<MultiCompiler>>::preprocess(
             &DynamicTestLinkingPreprocessor,
-            &MultiCompiler { solc: Some(SolcCompiler::default()), vyper: None },
+            &MultiCompiler { solc: Some(SolcCompiler::default()), vyper: None, fe: None },
             &mut input,
             paths.with_language_ref(),
             &mut mocks,

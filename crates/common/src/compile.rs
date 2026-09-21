@@ -799,7 +799,8 @@ pub fn etherscan_project(metadata: &Metadata, target_path: &Path) -> Result<Proj
     let v = metadata.compiler_version()?;
     let solc = Solc::find_or_install(&v)?;
 
-    let compiler = MultiCompiler { solc: Some(SolcCompiler::Specific(solc)), vyper: None };
+    let compiler =
+        MultiCompiler { solc: Some(SolcCompiler::Specific(solc)), vyper: None, fe: None };
 
     Ok(ProjectBuilder::<MultiCompiler>::default()
         .settings(MultiCompilerSettings {

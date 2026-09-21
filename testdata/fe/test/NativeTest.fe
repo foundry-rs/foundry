@@ -1,0 +1,101 @@
+use std::evm::{Address, Call, Create, Ctx}
+
+// Only the cheatcodes used here are declared; no Solidity helper library is needed.
+msg Vm {
+    #[selector = sol("prank(address)")]
+    Prank { sender: Address },
+    #[selector = sol("deal(address,uint256)")]
+    Deal { account: Address, balance: u256 },
+}
+
+fn vm() -> Address {
+    Address { inner: 0x7109709ECfa91a80626fF3989D68f67F5b1DD12D }
+}
+
+msg ChildMsg {
+    #[selector = sol("number()")]
+    Number -> u256,
+    #[selector = sol("caller()")]
+    Caller -> Address,
+}
+
+pub contract NativeChild uses (ctx: Ctx) {
+    mut number: u256
+
+    init(initial: u256) uses mut number {
+        number = initial
+    }
+
+    recv ChildMsg {
+        Number -> u256 uses number { number }
+        Caller -> Address uses ctx { ctx.caller() }
+    }
+}
+
+msg NativeTests {
+    #[selector = sol("setUp()")]
+    SetUp,
+    #[selector = sol("testDeployment()")]
+    TestDeployment,
+    #[selector = sol("testPrank()")]
+    TestPrank,
+    #[selector = sol("testDeal()")]
+    TestDeal,
+    #[selector = sol("testSetup()")]
+    TestSetup,
+    #[selector = sol("testFuzzSetNumber(uint256)")]
+    TestFuzzSetNumber { value: u256 },
+}
+
+pub contract NativeTest uses (create: mut Create, call: mut Call, ctx: Ctx) {
+    mut number: u256
+    mut child: Address
+
+    recv NativeTests {
+        SetUp uses (mut number, mut child, mut create) {
+            number = 42
+            child = create.create<NativeChild>(value: 0, args: (42,))
+        }
+        TestDeployment uses (child, mut call, ctx) {
+            assert(child.inner != 0)
+            assert(ctx.extcodesize(child) > 0)
+            let initial = call.call(
+                addr: child, gas: 100000, value: 0, message: ChildMsg::Number {},
+            )
+            assert(initial == 42)
+        }
+        TestPrank uses (child, mut call, ctx) {
+            let alice = Address { inner: 0x1234 }
+            call.call(
+                addr: vm(), gas: 100000, value: 0, message: Vm::Prank { sender: alice },
+            )
+            let sender = call.call(
+                addr: child, gas: 100000, value: 0, message: ChildMsg::Caller {},
+            )
+            assert(sender.inner == alice.inner)
+            // A prank affects only the next call.
+            let next_sender = call.call(
+                addr: child, gas: 100000, value: 0, message: ChildMsg::Caller {},
+            )
+            assert(next_sender.inner == ctx.address().inner)
+        }
+        TestDeal uses (child, mut call, ctx) {
+            assert(ctx.balance(child) == 0)
+            call.call(
+                addr: vm(), gas: 100000, value: 0,
+                message: Vm::Deal { account: child, balance: 123 },
+            )
+            assert(ctx.balance(child) == 123)
+        }
+        TestSetup uses mut number {
+            assert(number == 42)
+            number = number + 1
+            assert(number == 43)
+        }
+        TestFuzzSetNumber { value } uses mut number {
+            assert(number == 42)
+            number = value
+            assert(number == value)
+        }
+    }
+}

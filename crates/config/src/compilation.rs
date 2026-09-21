@@ -32,6 +32,7 @@ impl SettingsOverrides {
         if let Some(evm_version) = self.evm_version {
             settings.solc.evm_version = Some(evm_version);
             settings.vyper.evm_version = Some(evm_version);
+            settings.fe.evm_version = evm_version;
         }
 
         if let Some(enabled) = self.optimizer {

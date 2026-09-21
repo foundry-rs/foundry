@@ -22,6 +22,7 @@ mod debug;
 mod doc;
 mod eip712;
 mod failure_assertions;
+mod fe;
 mod inline_config;
 mod install;
 mod lsp;

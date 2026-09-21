@@ -1,0 +1,16 @@
+[profile.default]
+src = "src"
+test = "test"
+libs = ["lib"]
+solc = "0.8.30"
+evm_version = "osaka"
+# Preserve the complete Fe recompilation input in Foundry artifacts.
+extra_output = ["metadata"]
+
+[profile.default.fe]
+optimize = "1"
+# Optionally set path = "/absolute/path/to/fe-26.3".
+# The setup script creates a launcher with the chosen compiler on PATH.
+
+[profile.default.fuzz]
+runs = 256

@@ -203,6 +203,12 @@ fn resolved_compiler_path(
     compiler: &ResolvedCompiler,
 ) -> Result<PathBuf> {
     match compiler.language {
+        MultiCompilerLanguage::Fe(_) => project
+            .compiler
+            .fe
+            .as_ref()
+            .map(|fe| fe.path.clone())
+            .ok_or_else(|| eyre::eyre!("Fe compiler is not available")),
         MultiCompilerLanguage::Solc(_) => {
             let solc = project
                 .compiler

@@ -139,6 +139,9 @@ pub use inline::{InlineConfig, InlineConfigError, NatSpec};
 pub mod soldeer;
 use soldeer::{SoldeerConfig, SoldeerDependencyConfig};
 
+mod fe;
+pub use fe::FeConfig;
+
 mod vyper;
 pub use vyper::VyperConfig;
 
@@ -587,6 +590,10 @@ pub struct Config {
     /// Configuration for Vyper compiler
     pub vyper: VyperConfig,
 
+    /// Fe compiler configuration.
+    #[serde(default, skip_serializing_if = "FeConfig::is_default")]
+    pub fe: FeConfig,
+
     /// Soldeer dependencies
     pub dependencies: Option<SoldeerDependencyConfig>,
 
@@ -774,6 +781,7 @@ impl Config {
         "dependencies",
         "soldeer",
         "vyper",
+        "fe",
         "bind_json",
     ];
 
@@ -1603,14 +1611,49 @@ impl Config {
         Ok(vyper)
     }
 
+    /// Returns an installed Fe compiler when the project has Fe inputs.
+    pub fn fe_compiler(&self) -> Result<Option<foundry_compilers::compilers::fe::Fe>, SolcError> {
+        if !self.project_paths::<foundry_compilers::compilers::fe::FeLanguage>().has_input_files() {
+            return Ok(None);
+        }
+        let path = self
+            .fe
+            .path
+            .as_ref()
+            .map(|path| if path.is_relative() { self.root.join(path) } else { path.clone() })
+            .unwrap_or_else(|| "fe".into());
+        foundry_compilers::compilers::fe::Fe::new(path).map(Some)
+    }
+
+    /// Returns Fe settings including the exact compiler identity for cache invalidation.
+    pub fn fe_settings(&self) -> Result<foundry_compilers::compilers::fe::FeSettings, SolcError> {
+        if !["0", "1", "2", "s"].contains(&self.fe.optimize.as_str()) {
+            return Err(SolcError::msg("Fe optimizer must be 0, 1, 2, or s"));
+        }
+        Ok(foundry_compilers::compilers::fe::FeSettings {
+            optimize: self.fe.optimize.clone(),
+            evm_version: self.evm_version,
+            compiler_identity: self.fe_compiler()?.map(|fe| fe.identity).unwrap_or_default(),
+            base_path: self.root.clone(),
+        })
+    }
+
     /// Returns configuration for a compiler to use when setting up a [Project].
     pub fn compiler(&self) -> Result<MultiCompiler, SolcError> {
-        Ok(MultiCompiler { solc: Some(self.solc_compiler()?), vyper: self.vyper_compiler()? })
+        Ok(MultiCompiler {
+            solc: Some(self.solc_compiler()?),
+            vyper: self.vyper_compiler()?,
+            fe: self.fe_compiler()?,
+        })
     }
 
     /// Returns configured [MultiCompilerSettings].
     pub fn compiler_settings(&self) -> Result<MultiCompilerSettings, SolcError> {
-        Ok(MultiCompilerSettings { solc: self.solc_settings()?, vyper: self.vyper_settings()? })
+        Ok(MultiCompilerSettings {
+            solc: self.solc_settings()?,
+            vyper: self.vyper_settings()?,
+            fe: self.fe_settings()?,
+        })
     }
 
     /// Returns all configured remappings.
@@ -2925,6 +2968,7 @@ impl Default for Config {
             gas_reports_include_tests: false,
             solc: None,
             vyper: Default::default(),
+            fe: Default::default(),
             auto_detect_solc: true,
             offline: false,
             optimizer: None,

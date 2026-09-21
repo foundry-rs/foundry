@@ -74,6 +74,7 @@ impl SourceData {
         let mut debug_scopes = Vec::new();
 
         match language {
+            MultiCompilerLanguage::Fe(_) => {} // Fe source maps are not yet supported.
             MultiCompilerLanguage::Vyper(_) => {
                 // Vyper contracts have the same name as the file name.
                 if let Some(name) = path.file_stem().map(|s| s.to_string_lossy().to_string()) {

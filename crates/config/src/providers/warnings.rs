@@ -203,7 +203,8 @@ impl<P: Provider> WarningsProvider<P> {
                         .unwrap_or(Config::FILE_NAME.to_string());
                     for key in profile_dict.keys() {
                         let is_not_deprecated = !Self::is_deprecated_profile_key(key);
-                        let is_not_allowed = !allowed_keys.contains(key)
+                        let is_not_allowed = key != "fe"
+                            && !allowed_keys.contains(key)
                             && !allowed_keys.contains(&key.to_snake_case());
                         let is_not_reserved =
                             !RESERVED_KEYS.contains(&key.as_str()) && key != Self::WARNINGS_KEY;
@@ -266,6 +267,8 @@ impl<P: Provider> WarningsProvider<P> {
             // so the default serialization produces an empty dict. Use explicit keys instead.
             let allowed_keys: BTreeSet<String> = if *section_name == "vyper" {
                 VYPER_KEYS.iter().map(|s| s.to_string()).collect()
+            } else if *section_name == "fe" {
+                ["path", "optimize"].into_iter().map(str::to_string).collect()
             } else if *section_name == "doc" {
                 DOC_KEYS.iter().map(|s| s.to_string()).collect()
             } else if *section_name == "tracing" {
@@ -342,6 +345,8 @@ impl<P: Provider> WarningsProvider<P> {
             // so the default serialization produces an empty dict. Use explicit keys instead.
             let allowed_keys: BTreeSet<String> = if key == "vyper" {
                 VYPER_KEYS.iter().map(|s| s.to_string()).collect()
+            } else if key == "fe" {
+                ["path", "optimize"].into_iter().map(str::to_string).collect()
             } else if key == "doc" {
                 DOC_KEYS.iter().map(|s| s.to_string()).collect()
             } else if key == "symbolic" {

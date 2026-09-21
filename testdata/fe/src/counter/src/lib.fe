@@ -1,0 +1,36 @@
+use std::evm::Log
+use step::increment_by
+
+msg CounterMsg {
+    #[selector = sol("number()")]
+    Number -> u256,
+    #[selector = sol("setNumber(uint256)")]
+    SetNumber { value: u256 },
+    #[selector = sol("increment()")]
+    Increment,
+}
+
+#[event]
+struct NumberChanged {
+    value: u256,
+}
+
+pub contract Counter uses (log: mut Log) {
+    mut number: u256
+
+    init(initial: u256) uses mut number {
+        number = initial
+    }
+
+    recv CounterMsg {
+        Number -> u256 uses number { number }
+        SetNumber { value } uses (mut number, mut log) {
+            number = value
+            log.emit(NumberChanged { value })
+        }
+        Increment uses (mut number, mut log) {
+            number = number + increment_by()
+            log.emit(NumberChanged { value: number })
+        }
+    }
+}
