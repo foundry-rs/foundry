@@ -165,18 +165,22 @@ path for log inspection. These tests do not edit or close existing user windows.
 
 ### Local packaging
 
+From `editors/vscode`, run:
+
 ```bash
 npm run package
-npx vsce ls --tree
 code --install-extension bundle/solar-lsp.vsix --force
 ```
 
-Packaging runs the compiler and includes runtime dependencies, grammars,
-language configuration and license texts from the repository root. The VSIX is
-local and ignored by
-Git. To preserve a normal profile, supply isolated `--user-data-dir` and
-`--extensions-dir` arguments when installing or opening VS Code. No automated
-Marketplace publishing is configured.
+Packaging runs the compiler and stages the runtime dependencies, grammars and
+language configuration selected by `.vscodeignore`. It copies the MIT and
+Apache-2.0 license texts directly from the repository root, so packaging also
+works with `core.symlinks=false`. The temporary staging directory is removed
+after packaging; the checkout's license links are unchanged. Use `npm run package`
+for this preparation instead of invoking `vsce package` directly. The VSIX is
+local and ignored by Git. To preserve a normal profile, supply isolated
+`--user-data-dir` and `--extensions-dir` arguments when installing or opening
+VS Code. No automated Marketplace publishing is configured.
 
 ## Protocol tracing and CodeLens
 

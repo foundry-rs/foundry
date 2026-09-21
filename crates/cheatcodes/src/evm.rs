@@ -4,7 +4,7 @@ use crate::{
     BroadcastableTransaction, Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Error, Result,
     Vm::*, inspector::RecordDebugStepInfo,
 };
-use alloy_consensus::transaction::SignerRecoverable;
+use alloy_consensus::{Typed2718, transaction::SignerRecoverable};
 use alloy_evm::FromRecoveredTx;
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_network::eip2718::EIP4844_TX_TYPE_ID;
@@ -1351,6 +1351,11 @@ impl Cheatcode for executeTransactionCall {
         // Decode the RLP-encoded signed transaction.
         let tx = TxEnvelopeFor::<FEN>::decode(&mut self.rawTx.as_ref())
             .map_err(|err| fmt_err!("failed to decode RLP-encoded transaction: {err}"))?;
+
+        ensure!(
+            tx.ty() != 0x79,
+            "EIP-8130 transactions are not supported by vm.executeTransaction"
+        );
 
         // Build TxEnv from the recovered transaction.
         let sender =
