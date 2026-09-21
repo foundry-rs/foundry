@@ -58,6 +58,8 @@ impl PathState {
         let block = SymbolicBlock::new(cx);
         let callvalue = SymExpr::constant(cx, callvalue);
         let frame = CallFrame::new(cx, address, address, caller, callvalue, false, call_data);
+        let mut world = SymbolicWorld::default();
+        world.add_symbolic_address_classes(calldata.address_classes().to_vec());
         Self {
             depth: 0,
             call_depth: 0,
@@ -67,7 +69,7 @@ impl PathState {
             ffi_enabled,
             block,
             frame,
-            world: SymbolicWorld::default(),
+            world,
             prank: SymbolicPrank::default(),
             constraints,
             next_symbol: 0,
@@ -1780,6 +1782,9 @@ pub(crate) struct SymbolicWorldState {
     arbitrary_storage_all: bool,
     zero_init_symbolic_storage: bool,
     symbolic_address_aliases: HashMap<SymExpr, Address>,
+    /// Address expressions the current path constrains to be equal; members of one class share
+    /// the representative account of whichever member gets registered first.
+    symbolic_address_classes: Vec<Vec<SymExpr>>,
     replay_storage_slots: HashMap<Symbol, Vec<SymbolicReplayStorageSlot>>,
 }
 
@@ -1926,11 +1931,31 @@ impl SymbolicWorld {
     pub(crate) fn resolve_address(&self, expr: &SymExpr) -> Option<Address> {
         expr.as_const().map(word_to_address).or_else(|| {
             self.symbolic_address_aliases.get(expr).copied().or_else(|| {
-                self.symbolic_address_aliases.iter().find_map(|(alias, address)| {
-                    expr.symbolic_address_equivalent(alias).then_some(*address)
-                })
+                self.symbolic_address_aliases
+                    .iter()
+                    .find_map(|(alias, address)| {
+                        expr.symbolic_address_equivalent(alias).then_some(*address)
+                    })
+                    .or_else(|| self.resolve_class_address(expr))
             })
         })
+    }
+
+    /// Resolves `expr` through the account of any address it is constrained to equal.
+    fn resolve_class_address(&self, expr: &SymExpr) -> Option<Address> {
+        let class = self
+            .symbolic_address_classes
+            .iter()
+            .find(|class| class.iter().any(|member| expr.symbolic_address_equivalent(member)))?;
+        self.symbolic_address_aliases.iter().find_map(|(alias, address)| {
+            class.iter().any(|member| alias.symbolic_address_equivalent(member)).then_some(*address)
+        })
+    }
+
+    pub(crate) fn add_symbolic_address_classes(&mut self, classes: Vec<Vec<SymExpr>>) {
+        if !classes.is_empty() {
+            self.state_mut().symbolic_address_classes.extend(classes);
+        }
     }
 
     pub(crate) fn symbolic_address_slot(&mut self, expr: SymExpr) -> Address {

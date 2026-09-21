@@ -1973,6 +1973,52 @@ contract SymbolicConstrainedCheatcodes is Test {
     assert!(!stdout.contains("symbolic randomBytes len"), "{stdout}");
 });
 
+forgetest_init!(symbolic_address_inputs_may_alias, |prj, cmd| {
+    skip_unless_z3!("symbolic_address_inputs_may_alias");
+
+    prj.add_test(
+        "SymbolicAddressAlias.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicAddressAlias is Test {
+    // Fails concretely for any a == b: the second deal overwrites the first.
+    function checkDealsMayTargetOneAccount(address a, address b) public {
+        vm.deal(a, 10 ether);
+        vm.deal(b, 0);
+        assert(a.balance + b.balance == 10 ether);
+    }
+
+    function checkDistinctDealsAreIndependent(address a, address b) public {
+        vm.assume(a != b);
+        vm.deal(a, 10 ether);
+        vm.deal(b, 0);
+        assert(a.balance + b.balance == 10 ether);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-contract", "SymbolicAddressAlias"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+args=[0x0000000000000000000000000000000000000000, 0x0000000000000000000000000000000000000000]] checkDealsMayTargetOneAccount(address,address)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkDistinctDealsAreIndependent(address,address)
+"#]],
+    );
+});
+
 forgetest_init!(symbolic_cheatcodes_reject_gas_deal_value, |prj, cmd| {
     skip_unless_z3!("symbolic_cheatcodes_reject_gas_deal_value");
 

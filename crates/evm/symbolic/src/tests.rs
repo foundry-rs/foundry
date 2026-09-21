@@ -444,6 +444,53 @@ fn calldata_selector_load_simplifies_to_concrete_word() {
 }
 
 #[test]
+fn calldata_variants_partition_address_inputs() {
+    let mut cx = SymCx::new();
+    let config = SymbolicConfig::default();
+
+    let single = Function::parse("check(address,uint256)").unwrap();
+    let variants = symbolic_calldata_variants(&mut cx, &single, &config).unwrap();
+    assert_eq!(variants.len(), 1);
+    assert!(variants[0].address_classes().is_empty());
+
+    // Two addresses: distinct, or the same account.
+    let pair = Function::parse("check(address,address)").unwrap();
+    let variants = symbolic_calldata_variants(&mut cx, &pair, &config).unwrap();
+    assert_eq!(variants.len(), 2);
+    assert!(variants[0].address_classes().is_empty());
+    assert_eq!(variants[1].address_classes().len(), 1);
+    assert_eq!(variants[1].address_classes()[0].len(), 2);
+    assert_eq!(variants[1].constraints().len(), variants[0].constraints().len());
+
+    // Three addresses: the five set partitions.
+    let triple = Function::parse("check(address,address,address)").unwrap();
+    let variants = symbolic_calldata_variants(&mut cx, &triple, &config).unwrap();
+    assert_eq!(variants.len(), 5);
+    assert_eq!(variants.iter().filter(|variant| variant.address_classes().is_empty()).count(), 1);
+    assert_eq!(
+        variants.iter().filter(|variant| variant.address_classes()[..].concat().len() == 3).count(),
+        1
+    );
+}
+
+#[test]
+fn aliased_symbolic_addresses_share_one_account() {
+    let mut cx = SymCx::new();
+    let function = Function::parse("check(address,address)").unwrap();
+    let aliased = symbolic_calldata_variants(&mut cx, &function, &SymbolicConfig::default())
+        .unwrap()
+        .remove(1);
+    let [first, second] = <[SymExpr; 2]>::try_from(aliased.address_classes()[0].clone()).unwrap();
+    let mut state =
+        PathState::new(&mut cx, Address::ZERO, Address::ZERO, U256::ZERO, aliased, false);
+
+    let account = state.world.symbolic_address_slot(first.clone());
+    assert_eq!(state.world.resolve_address(&second), Some(account));
+    assert_eq!(state.world.symbolic_address_slot(second), account);
+    assert_eq!(state.world.symbolic_address_slot(first), account);
+}
+
+#[test]
 fn artifact_json_fallback_paths_uses_foundry_artifact_basename() {
     assert_eq!(
         artifact_json_fallback_paths("src/01_NomadZeroRoot.sol:NomadLike"),

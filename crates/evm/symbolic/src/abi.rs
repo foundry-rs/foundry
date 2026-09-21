@@ -5,6 +5,8 @@ pub(super) struct SymbolicCalldata {
     bytes: SymBytes,
     inputs: Vec<SymbolicInput>,
     constraints: Vec<SymBoolExpr>,
+    /// Groups of top-level `address` inputs that this variant constrains to be equal.
+    address_classes: Vec<Vec<SymExpr>>,
 }
 
 impl SymbolicCalldata {
@@ -30,6 +32,7 @@ impl SymbolicCalldata {
             bytes: SymBytes::concrete(cx, function.selector().to_vec()),
             inputs: Vec::new(),
             constraints: Vec::new(),
+            address_classes: Vec::new(),
         })
     }
 
@@ -67,8 +70,55 @@ impl SymbolicCalldata {
             variants.iter().map(|(state, _)| state.positional_dynamic_index).max().unwrap_or(0),
         )?;
 
-        let mut out = Vec::with_capacity(variants.len());
+        // Two symbolic addresses may denote the same account. Every account-level operation
+        // keys its state by a representative derived from the address expression, so two
+        // distinct expressions would otherwise always get two distinct accounts. Enumerate the
+        // ways the address inputs can coincide and explore each as its own variant, with the
+        // matching equality constraints and the classes the world uses to share accounts.
+        let mut partitioned = Vec::new();
         for (state, inputs) in variants {
+            let addresses = inputs
+                .iter()
+                .filter_map(|input| match &input.value {
+                    SymbolicAbiValue::Address { word } => Some(word.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            for partition in set_partitions(addresses.len()) {
+                let mut state = state.clone();
+                let classes = partition
+                    .iter()
+                    .map(|block| {
+                        block.iter().map(|&idx| addresses[idx].clone()).collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>();
+                for class in &classes {
+                    for member in &class[1..] {
+                        state.constraints.push(SymBoolExpr::eq(
+                            builder.cx,
+                            class[0].clone(),
+                            member.clone(),
+                        ));
+                    }
+                }
+                for (idx, class) in classes.iter().enumerate() {
+                    for other in &classes[idx + 1..] {
+                        let eq = SymBoolExpr::eq(builder.cx, class[0].clone(), other[0].clone());
+                        state.constraints.push(eq.not(builder.cx));
+                    }
+                }
+                let address_classes =
+                    classes.into_iter().filter(|class| class.len() > 1).collect::<Vec<_>>();
+                push_variant(
+                    &mut partitioned,
+                    (state, inputs.clone(), address_classes),
+                    variant_limit,
+                )?;
+            }
+        }
+
+        let mut out = Vec::with_capacity(partitioned.len());
+        for (state, inputs, address_classes) in partitioned {
             let selector = SymBytes::concrete(builder.cx, function.selector().to_vec());
             let encoded = builder.encode_sequence(inputs.iter().map(|input| &input.value));
             let bytes = SymBytes::concat(builder.cx, [selector, encoded]);
@@ -78,7 +128,7 @@ impl SymbolicCalldata {
                 ));
             }
 
-            out.push(Self { bytes, inputs, constraints: state.constraints });
+            out.push(Self { bytes, inputs, constraints: state.constraints, address_classes });
         }
         Ok(out)
     }
@@ -95,6 +145,11 @@ impl SymbolicCalldata {
     /// Consumes this symbolic calldata into its constraints.
     pub(super) fn into_constraints(self) -> Vec<SymBoolExpr> {
         self.constraints
+    }
+
+    /// Groups of top-level `address` inputs constrained to be equal in this variant.
+    pub(super) fn address_classes(&self) -> &[Vec<SymExpr>] {
+        &self.address_classes
     }
 
     pub(super) fn model_to_args(
@@ -586,6 +641,29 @@ fn validate_positional_dynamic_lengths(
 }
 
 /// Returns the maximum number of calldata variants allowed during ABI expansion.
+/// All ways to split `0..len` into non-empty blocks, in restricted-growth order; the
+/// all-distinct partition comes first so it is explored before any aliasing variant.
+fn set_partitions(len: usize) -> Vec<Vec<Vec<usize>>> {
+    let mut out = Vec::new();
+    let mut blocks = Vec::<Vec<usize>>::new();
+    fn go(idx: usize, len: usize, blocks: &mut Vec<Vec<usize>>, out: &mut Vec<Vec<Vec<usize>>>) {
+        if idx == len {
+            out.push(blocks.clone());
+            return;
+        }
+        blocks.push(vec![idx]);
+        go(idx + 1, len, blocks, out);
+        blocks.pop();
+        for block in 0..blocks.len() {
+            blocks[block].push(idx);
+            go(idx + 1, len, blocks, out);
+            blocks[block].pop();
+        }
+    }
+    go(0, len, &mut blocks, &mut out);
+    out
+}
+
 fn calldata_variant_limit(config: &SymbolicConfig) -> usize {
     config.path_width().max(1) as usize
 }
