@@ -134,45 +134,53 @@ fn update_sender_aliases<'gcx>(
     stmt: &Stmt<'gcx>,
     aliases: &mut HashSet<VariableId>,
 ) {
-    let mut update = |var_id: VariableId, value: Option<&Expr<'_>>| {
-        if value.is_some_and(|value| expr_reads_sender(gcx, value, &mut HashSet::new(), aliases)) {
-            aliases.insert(var_id);
-        } else {
-            aliases.remove(&var_id);
-        }
+    let reads_sender = |value: Option<&Expr<'_>>, aliases: &HashSet<VariableId>| {
+        value.is_some_and(|value| expr_reads_sender(gcx, value, &mut HashSet::new(), aliases))
     };
     // A tuple literal assigns each local from its own element; any other value, such as a call
     // returning a tuple, applies to all of them.
     let element = |value: &'gcx Expr<'gcx>, i: usize| {
         tuple_elems(value).map_or(Some(value), |elems| elems.get(i).copied().flatten())
     };
-    match stmt.kind {
-        StmtKind::DeclSingle(var_id) => {
-            if let Some(value) = gcx.hir.variable(var_id).initializer {
-                update(var_id, Some(value));
-            }
+    // A tuple assignment is simultaneous, so every right-hand side is classified against the
+    // aliases as they were before the statement, and the locals are updated afterwards.
+    let updates: Vec<(VariableId, bool)> = match stmt.kind {
+        StmtKind::DeclSingle(var_id) => match gcx.hir.variable(var_id).initializer {
+            Some(value) => vec![(var_id, reads_sender(Some(value), aliases))],
+            None => return,
+        },
+        StmtKind::DeclMulti(var_ids, value) => var_ids
+            .iter()
+            .enumerate()
+            .filter_map(|(i, var_id)| {
+                var_id.map(|var_id| (var_id, reads_sender(element(value, i), aliases)))
+            })
+            .collect(),
+        StmtKind::Expr(expr) => match &expr.peel_parens().kind {
+            ExprKind::Assign(lhs, _, rhs) => match tuple_elems(lhs) {
+                Some(lhs_elems) => lhs_elems
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, lhs)| {
+                        let var_id = lhs.and_then(|lhs| lhs_local_var(gcx, lhs))?;
+                        Some((var_id, reads_sender(element(rhs, i), aliases)))
+                    })
+                    .collect(),
+                None => match lhs_local_var(gcx, lhs) {
+                    Some(var_id) => vec![(var_id, reads_sender(Some(rhs), aliases))],
+                    None => return,
+                },
+            },
+            _ => return,
+        },
+        _ => return,
+    };
+    for (var_id, reads_sender) in updates {
+        if reads_sender {
+            aliases.insert(var_id);
+        } else {
+            aliases.remove(&var_id);
         }
-        StmtKind::DeclMulti(var_ids, value) => {
-            for (i, var_id) in var_ids.iter().enumerate() {
-                if let Some(var_id) = var_id {
-                    update(*var_id, element(value, i));
-                }
-            }
-        }
-        StmtKind::Expr(expr) => {
-            if let ExprKind::Assign(lhs, _, rhs) = &expr.peel_parens().kind {
-                if let Some(lhs_elems) = tuple_elems(lhs) {
-                    for (i, lhs) in lhs_elems.iter().enumerate() {
-                        if let Some(var_id) = lhs.and_then(|lhs| lhs_local_var(gcx, lhs)) {
-                            update(var_id, element(rhs, i));
-                        }
-                    }
-                } else if let Some(var_id) = lhs_local_var(gcx, lhs) {
-                    update(var_id, Some(rhs));
-                }
-            }
-        }
-        _ => {}
     }
 }
 

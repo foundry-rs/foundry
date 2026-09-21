@@ -59,6 +59,14 @@ contract MissingEventsAccessControl {
         _;
     }
 
+    modifier onlyOwnerViaTupleSwappedAlias(address newOwner) {
+        address caller = newOwner;
+        address previous;
+        (caller, previous) = (msg.sender, caller);
+        require(previous == owner, "not owner");
+        _;
+    }
+
     modifier onlyOwnerViaTupleDeclaredAlias() {
         (address caller, bool live) = (msg.sender, true);
         require(live && caller == owner, "not owner");
@@ -197,6 +205,13 @@ contract MissingEventsAccessControl {
     function setOwnerViaTupleReassignedAlias(address newOwner)
         external
         onlyOwnerViaTupleReassignedAlias(newOwner)
+    {
+        owner = newOwner;
+    }
+
+    function setOwnerViaTupleSwappedAlias(address newOwner)
+        external
+        onlyOwnerViaTupleSwappedAlias(newOwner)
     {
         owner = newOwner;
     }
