@@ -259,42 +259,7 @@ impl SymbolicExecutor {
             return Ok(false);
         }
 
-        let mut candidates = HashSet::<U256>::default();
-        for expected in &state.expected_calls {
-            let Some(expected_value) = expected.value() else { continue };
-            if self
-                .expected_call_match_constraints(
-                    state,
-                    expected,
-                    to,
-                    Some(expected_value),
-                    gas,
-                    call_input,
-                )?
-                .is_some()
-            {
-                candidates.insert(expected_value);
-            }
-        }
-        for mock in &state.call_mocks {
-            let Some(mock_value) = mock.value() else { continue };
-            if self
-                .call_mock_match_constraints(
-                    state,
-                    mock,
-                    code_address,
-                    Some(mock_value),
-                    call_input,
-                )?
-                .is_some()
-            {
-                candidates.insert(mock_value);
-            }
-        }
-
-        let mut candidates = candidates.into_iter().collect::<Vec<_>>();
-        candidates.sort_unstable();
-        for candidate in candidates {
+        for candidate in self.call_value_candidates(state, to, code_address, gas, call_input)? {
             let eq = SymBoolExpr::eq_word_const(&mut self.cx, value, candidate);
             let (eq_constraints, eq_sat) = self.constraints_with_condition(state, eq.clone())?;
             let eq_not = eq.not(&mut self.cx);
@@ -336,35 +301,7 @@ impl SymbolicExecutor {
         callee: Address,
         calldata: &SymBytes,
     ) -> Result<bool, SymbolicError> {
-        for idx in (0..state.function_mocks.len()).rev() {
-            if state.function_mocks[idx].calldata_len() != calldata.len() {
-                continue;
-            }
-            let Some(condition) =
-                state.function_mocks[idx].match_condition(&mut self.cx, callee, calldata)
-            else {
-                continue;
-            };
-            if self.branch_symbolic_match_condition_if_needed(
-                state,
-                worklist,
-                pre_call_state,
-                call_pc,
-                condition,
-            )? {
-                return Ok(true);
-            }
-        }
-
-        for idx in (0..state.function_mocks.len()).rev() {
-            if state.function_mocks[idx].calldata_len() != 4 {
-                continue;
-            }
-            let Some(condition) =
-                state.function_mocks[idx].match_condition(&mut self.cx, callee, calldata)
-            else {
-                continue;
-            };
+        for condition in self.function_mock_conditions(state, callee, calldata) {
             if self.branch_symbolic_match_condition_if_needed(
                 state,
                 worklist,
@@ -419,40 +356,9 @@ impl SymbolicExecutor {
         gas: &SymExpr,
         calldata: &SymBytes,
     ) -> Result<bool, SymbolicError> {
-        for idx in 0..state.expected_calls.len() {
-            let Some(condition) = state.expected_calls[idx].match_condition(
-                &mut self.cx,
-                callee,
-                value,
-                gas,
-                calldata,
-            )?
-            else {
-                continue;
-            };
-            if self.branch_symbolic_match_condition_if_needed(
-                state,
-                worklist,
-                pre_call_state,
-                call_pc,
-                condition,
-            )? {
-                return Ok(true);
-            }
-        }
-
-        let mut mocks = (0..state.call_mocks.len()).collect::<Vec<_>>();
-        mocks.sort_by_key(|idx| {
-            let (len, has_value) = state.call_mocks[*idx].specificity();
-            (std::cmp::Reverse(len), std::cmp::Reverse(has_value), *idx)
-        });
-
-        for idx in mocks {
-            let Some(condition) =
-                state.call_mocks[idx].match_condition(&mut self.cx, code_address, value, calldata)
-            else {
-                continue;
-            };
+        for condition in
+            self.call_match_conditions(state, callee, code_address, value, gas, calldata)?
+        {
             if self.branch_symbolic_match_condition_if_needed(
                 state,
                 worklist,
@@ -1554,9 +1460,7 @@ impl SymbolicExecutor {
                 continue;
             }
 
-            // `call_concrete_target` commits a mock or expectation as soon as its match is
-            // satisfiable, so split the candidate the way the concrete-target path does before
-            // it gets there; otherwise the mismatching world is never explored.
+            // Decide mock matches before executing either the mocked or real call.
             for mut branch in
                 self.split_symbolic_target_candidate(branch, to, &value, &gas, &call_input)?
             {
@@ -1594,11 +1498,7 @@ impl SymbolicExecutor {
         Ok(StepOutcome::Continue)
     }
 
-    /// Splits one candidate branch of a symbolic-target call on every function mock, call
-    /// value, expected call and call mock condition that is still undecided under the branch
-    /// constraints, in the same order the concrete-target path forks on them. Each returned
-    /// branch has every such condition decided, so `call_concrete_target` can only commit the
-    /// matches that actually hold on it.
+    /// Decides mock and expectation matches before executing a symbolic-target candidate.
     fn split_symbolic_target_candidate(
         &mut self,
         branch: PathState,
@@ -1649,14 +1549,16 @@ impl SymbolicExecutor {
                 for condition in conditions {
                     match_branches = self.split_branches_on(match_branches, condition)?;
                 }
+                if out.len() + match_branches.len() > self.config.path_width() as usize {
+                    return Err(SymbolicError::Unsupported("symbolic path limit exceeded"));
+                }
                 out.extend(match_branches);
             }
         }
         Ok(out)
     }
 
-    /// Forks every branch on `condition` when both outcomes are satisfiable, otherwise commits
-    /// the satisfiable one; a condition that is unsatisfiable either way leaves the branch as is.
+    /// Splits branches on a match condition, retaining feasible outcomes.
     fn split_branches_on(
         &mut self,
         branches: Vec<PathState>,
@@ -1688,14 +1590,16 @@ impl SymbolicExecutor {
                     branch.constraints = mismatch_constraints;
                     next.push(branch);
                 }
-                (false, false) => next.push(branch),
+                (false, false) => {}
+            }
+            if next.len() > self.config.path_width() as usize {
+                return Err(SymbolicError::Unsupported("symbolic path limit exceeded"));
             }
         }
         Ok(next)
     }
 
-    /// Function mock match conditions for a call to `callee`, most recent mock first, in the
-    /// order `branch_symbolic_function_mock_if_needed` forks on them.
+    /// Function mock conditions in match-precedence order.
     fn function_mock_conditions(
         &mut self,
         state: &PathState,
@@ -1718,8 +1622,7 @@ impl SymbolicExecutor {
         conditions
     }
 
-    /// Call values that would satisfy an expected call or call mock, as
-    /// `branch_symbolic_call_value_if_needed` enumerates them.
+    /// Values that can satisfy a call expectation or mock.
     fn call_value_candidates(
         &mut self,
         state: &PathState,
@@ -1765,8 +1668,7 @@ impl SymbolicExecutor {
         Ok(candidates)
     }
 
-    /// Expected call and call mock match conditions in the order
-    /// `branch_symbolic_call_match_if_needed` forks on them.
+    /// Expected call and call mock conditions in match-precedence order.
     fn call_match_conditions(
         &mut self,
         state: &PathState,
