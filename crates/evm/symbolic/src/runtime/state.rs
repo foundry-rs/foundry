@@ -1782,8 +1782,7 @@ pub(crate) struct SymbolicWorldState {
     arbitrary_storage_all: bool,
     zero_init_symbolic_storage: bool,
     symbolic_address_aliases: HashMap<SymExpr, Address>,
-    /// Address expressions the current path constrains to be equal; members of one class share
-    /// the representative account of whichever member gets registered first.
+    /// Equal address expressions sharing one representative account.
     symbolic_address_classes: Vec<Vec<SymExpr>>,
     replay_storage_slots: HashMap<Symbol, Vec<SymbolicReplayStorageSlot>>,
 }
@@ -1936,19 +1935,18 @@ impl SymbolicWorld {
                     .find_map(|(alias, address)| {
                         expr.symbolic_address_equivalent(alias).then_some(*address)
                     })
-                    .or_else(|| self.resolve_class_address(expr))
+                    .or_else(|| {
+                        let class = self.symbolic_address_classes.iter().find(|class| {
+                            class.iter().any(|member| expr.symbolic_address_equivalent(member))
+                        })?;
+                        self.symbolic_address_aliases.iter().find_map(|(alias, address)| {
+                            class
+                                .iter()
+                                .any(|member| alias.symbolic_address_equivalent(member))
+                                .then_some(*address)
+                        })
+                    })
             })
-        })
-    }
-
-    /// Resolves `expr` through the account of any address it is constrained to equal.
-    fn resolve_class_address(&self, expr: &SymExpr) -> Option<Address> {
-        let class = self
-            .symbolic_address_classes
-            .iter()
-            .find(|class| class.iter().any(|member| expr.symbolic_address_equivalent(member)))?;
-        self.symbolic_address_aliases.iter().find_map(|(alias, address)| {
-            class.iter().any(|member| alias.symbolic_address_equivalent(member)).then_some(*address)
         })
     }
 

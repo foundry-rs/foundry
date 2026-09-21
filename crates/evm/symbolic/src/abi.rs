@@ -70,11 +70,7 @@ impl SymbolicCalldata {
             variants.iter().map(|(state, _)| state.positional_dynamic_index).max().unwrap_or(0),
         )?;
 
-        // Two symbolic addresses may denote the same account. Every account-level operation
-        // keys its state by a representative derived from the address expression, so two
-        // distinct expressions would otherwise always get two distinct accounts. Enumerate the
-        // ways the address inputs can coincide and explore each as its own variant, with the
-        // matching equality constraints and the classes the world uses to share accounts.
+        // Explore equal-address cases as variants sharing a representative account.
         let mut partitioned = Vec::new();
         for (state, inputs) in variants {
             let addresses = inputs
@@ -84,7 +80,7 @@ impl SymbolicCalldata {
                     _ => None,
                 })
                 .collect::<Vec<_>>();
-            for partition in set_partitions(addresses.len()) {
+            for partition in set_partitions(addresses.len(), variant_limit)? {
                 let mut state = state.clone();
                 let classes = partition
                     .iter()
@@ -640,30 +636,35 @@ fn validate_positional_dynamic_lengths(
     Ok(())
 }
 
-/// Returns the maximum number of calldata variants allowed during ABI expansion.
-/// All ways to split `0..len` into non-empty blocks, in restricted-growth order; the
-/// all-distinct partition comes first so it is explored before any aliasing variant.
-fn set_partitions(len: usize) -> Vec<Vec<Vec<usize>>> {
+/// Enumerates address partitions within the variant budget, all-distinct first.
+fn set_partitions(len: usize, limit: usize) -> Result<Vec<Vec<Vec<usize>>>, SymbolicError> {
     let mut out = Vec::new();
     let mut blocks = Vec::<Vec<usize>>::new();
-    fn go(idx: usize, len: usize, blocks: &mut Vec<Vec<usize>>, out: &mut Vec<Vec<Vec<usize>>>) {
+    fn go(
+        idx: usize,
+        len: usize,
+        blocks: &mut Vec<Vec<usize>>,
+        out: &mut Vec<Vec<Vec<usize>>>,
+        limit: usize,
+    ) -> Result<(), SymbolicError> {
         if idx == len {
-            out.push(blocks.clone());
-            return;
+            return push_variant(out, blocks.clone(), limit);
         }
         blocks.push(vec![idx]);
-        go(idx + 1, len, blocks, out);
+        go(idx + 1, len, blocks, out, limit)?;
         blocks.pop();
         for block in 0..blocks.len() {
             blocks[block].push(idx);
-            go(idx + 1, len, blocks, out);
+            go(idx + 1, len, blocks, out, limit)?;
             blocks[block].pop();
         }
+        Ok(())
     }
-    go(0, len, &mut blocks, &mut out);
-    out
+    go(0, len, &mut blocks, &mut out, limit)?;
+    Ok(out)
 }
 
+/// Returns the maximum number of calldata variants allowed during ABI expansion.
 fn calldata_variant_limit(config: &SymbolicConfig) -> usize {
     config.path_width().max(1) as usize
 }

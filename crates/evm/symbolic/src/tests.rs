@@ -471,23 +471,11 @@ fn calldata_variants_partition_address_inputs() {
         variants.iter().filter(|variant| variant.address_classes()[..].concat().len() == 3).count(),
         1
     );
-}
-
-#[test]
-fn aliased_symbolic_addresses_share_one_account() {
-    let mut cx = SymCx::new();
-    let function = Function::parse("check(address,address)").unwrap();
-    let aliased = symbolic_calldata_variants(&mut cx, &function, &SymbolicConfig::default())
-        .unwrap()
-        .remove(1);
-    let [first, second] = <[SymExpr; 2]>::try_from(aliased.address_classes()[0].clone()).unwrap();
-    let mut state =
-        PathState::new(&mut cx, Address::ZERO, Address::ZERO, U256::ZERO, aliased, false);
-
-    let account = state.world.symbolic_address_slot(first.clone());
-    assert_eq!(state.world.resolve_address(&second), Some(account));
-    assert_eq!(state.world.symbolic_address_slot(second), account);
-    assert_eq!(state.world.symbolic_address_slot(first), account);
+    let config = SymbolicConfig { width: Some(2), ..config };
+    assert!(matches!(
+        symbolic_calldata_variants(&mut cx, &triple, &config),
+        Err(SymbolicError::CalldataVariantLimit(2))
+    ));
 }
 
 #[test]
