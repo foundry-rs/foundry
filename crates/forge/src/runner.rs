@@ -326,7 +326,7 @@ pub(crate) fn count_runnable_invariant_campaign_anchors(
 
     let functions = abi
         .functions()
-        .filter(|func| filter.matches_test_function(func))
+        .filter(|func| filter.matches_test_function_in_contract(scope.contract_name, func))
         .filter(|func| {
             function_matches_network_pass(
                 scope.all_override_networks,
@@ -455,6 +455,7 @@ fn select_invariant_campaigns<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cmd::test::{FilterArgs, RerunFailure};
     use foundry_common::EmptyTestFilter;
     use foundry_config::NatSpec;
 
@@ -737,6 +738,35 @@ mod tests {
         .unwrap();
 
         assert_eq!(count_anchors(&abi, &InlineConfig::new()), 3);
+    }
+
+    #[test]
+    fn runnable_campaign_anchor_count_respects_contract_aware_rerun_filter() {
+        let abi = JsonAbi::parse([
+            "function invariantOne() external returns (int256)",
+            "function invariantTwo() external returns (int256)",
+        ])
+        .unwrap();
+        let config = Config::default();
+        let mut filter = FilterArgs::default().merge_with_config(&config);
+        filter.set_rerun_failures(vec![RerunFailure {
+            contract: CONTRACT_NAME.to_string(),
+            test: "invariantOne".to_string(),
+        }]);
+
+        let count = count_runnable_invariant_campaign_anchors(
+            &abi,
+            &filter,
+            InvariantCampaignScope {
+                config: &config,
+                inline_config: &InlineConfig::new(),
+                contract_name: CONTRACT_NAME,
+                all_override_networks: &[],
+                pass_network: None,
+            },
+        );
+
+        assert_eq!(count, 1);
     }
 
     #[test]

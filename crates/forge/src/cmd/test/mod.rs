@@ -1868,6 +1868,11 @@ impl TestArgs {
             self.print_summary(&outcome, multi_pass_timer.elapsed())?;
         }
 
+        // Persist once from the merged invocation outcome. Per-pass persistence can lose failures
+        // when a later network pass succeeds, and this boundary also covers serialized output and
+        // successful runs that matched no tests.
+        persist_run_failures(&config_for_mutation, &outcome);
+
         if let Some(replay) = &execution.replay_symbolic_artifact {
             let target = &replay.artifact.test;
             match outcome.tests().count() {
@@ -2695,9 +2700,6 @@ impl TestArgs {
             }
             outcome.json_file_results = Some(results);
         }
-
-        // Persist test run failures to enable replaying.
-        persist_run_failures(&config, &outcome);
 
         Ok(outcome)
     }
