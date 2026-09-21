@@ -459,6 +459,7 @@ mod tests {
     use alloy_primitives::{U256, keccak256};
 
     const ADDRESS: &str = "0x4D1A2e2bB4F88F0250f26Ffff098B0b30B26BF38";
+    const OTHER_ADDRESS: &str = "0x000000000000000000000000000000000000dead";
     const TRANSFER_SIG: &str = "Transfer(address indexed,address indexed,uint256)";
     const TRANSFER_TOPIC: &str =
         "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
@@ -481,6 +482,7 @@ mod tests {
     fn builds_filters() {
         let transfer_topic = B256::from_str(TRANSFER_TOPIC).unwrap();
         let addr: Address = ADDRESS.parse().unwrap();
+        let other_addr: Address = OTHER_ADDRESS.parse().unwrap();
         let addr_topic = Topic::from(B256::left_padding_from(addr.as_slice()));
         let any = Topic::default;
 
@@ -496,7 +498,7 @@ mod tests {
             }
         );
 
-        let cases: [(&str, &[&str], [Topic; 4]); 9] = [
+        let cases: [(&str, &[&str], [Topic; 4]); 10] = [
             (TRANSFER_SIG, &[], [transfer_topic.into(), any(), any(), any()]),
             (TRANSFER_SIG, &[ADDRESS], [transfer_topic.into(), addr_topic.clone(), any(), any()]),
             (TRANSFER_SIG, &["", ADDRESS], [transfer_topic.into(), any(), addr_topic, any()]),
@@ -556,6 +558,16 @@ mod tests {
                     B256::from(U256::from(7)).into(),
                     any(),
                     any(),
+                ],
+            ),
+            (
+                "event Anon(address indexed a, uint256 indexed b, uint256 indexed c, address indexed d) anonymous",
+                &[ADDRESS, "7", "", OTHER_ADDRESS],
+                [
+                    B256::left_padding_from(addr.as_slice()).into(),
+                    B256::from(U256::from(7)).into(),
+                    any(),
+                    B256::left_padding_from(other_addr.as_slice()).into(),
                 ],
             ),
         ];
