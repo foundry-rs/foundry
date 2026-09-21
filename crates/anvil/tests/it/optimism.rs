@@ -319,6 +319,79 @@ async fn test_simulated_op_deposit_receipt_root_includes_canyon_fields() {
     assert_eq!(response[0]["receiptsRoot"], json!(calculate_receipt_root(&[receipt])));
 }
 
+/// Mines a deposit from a sender whose nonce is already `2` and returns its receipt as JSON.
+async fn mine_deposit_receipt_after_two_transfers(config: NodeConfig) -> Value {
+    let (api, handle) = spawn(config).await;
+
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+    // Unsigned requests go through `eth_sendTransaction`, which is where deposits are built.
+    let provider = http_provider(&handle.http_endpoint());
+
+    // Move the sender past nonce zero so pre- and post-execution nonces differ.
+    for _ in 0..2 {
+        let tx =
+            TransactionRequest::default().with_from(from).with_to(to).with_value(U256::from(1));
+        provider
+            .send_transaction(WithOtherFields::new(tx))
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+    }
+    assert_eq!(provider.get_transaction_count(from).await.unwrap(), 2);
+
+    let other: OtherFields =
+        json!({ "sourceHash": B256::ZERO, "mint": "0x0", "isSystemTx": false }).try_into().unwrap();
+    let tx = TransactionRequest::default()
+        .with_from(from)
+        .with_to(to)
+        .with_value(U256::from(1))
+        .with_gas_limit(21000);
+    let pending = provider
+        .send_transaction(WithOtherFields { inner: tx, other })
+        .await
+        .unwrap()
+        .register()
+        .await
+        .unwrap();
+    api.evm_mine(None).await.unwrap();
+    assert_eq!(provider.get_transaction_count(from).await.unwrap(), 3);
+
+    provider
+        .raw_request::<_, Value>("eth_getTransactionReceipt".into(), (pending.tx_hash(),))
+        .await
+        .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_mined_deposit_receipt_uses_pre_execution_nonce() {
+    let receipt = mine_deposit_receipt_after_two_transfers(
+        NodeConfig::test().with_networks(NetworkConfigs::with_optimism()),
+    )
+    .await;
+
+    assert_eq!(receipt["type"], json!("0x7E"));
+    assert_eq!(receipt["depositNonce"], json!("0x2"));
+    assert_eq!(receipt["depositReceiptVersion"], json!("0x1"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_mined_deposit_receipt_omits_metadata_before_regolith() {
+    let receipt = mine_deposit_receipt_after_two_transfers(
+        NodeConfig::test()
+            .with_networks(NetworkConfigs::with_optimism())
+            .with_hardfork(Some(OpHardfork::Bedrock.into())),
+    )
+    .await;
+
+    assert_eq!(receipt["type"], json!("0x7E"));
+    assert_eq!(receipt["depositNonce"], Value::Null);
+    assert_eq!(receipt["depositReceiptVersion"], Value::Null);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn test_send_value_raw_deposit_transaction() {
     // enable the Optimism flag

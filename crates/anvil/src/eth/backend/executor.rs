@@ -51,6 +51,9 @@ use base_common_consensus::Eip8130Receipt;
 use base_common_evm::Eip8130PhaseStatuses;
 
 #[cfg(any(feature = "base", feature = "optimism"))]
+use foundry_evm::hardfork::FoundryHardfork;
+
+#[cfg(any(feature = "base", feature = "optimism"))]
 pub(crate) mod optimism;
 
 /// Determines whether an executor produces a complete block or a historical transaction prefix.
@@ -209,12 +212,13 @@ impl ReceiptBuilder for FoundryReceiptBuilder {
 
 /// Result of executing a transaction in [`AnvilBlockExecutor`].
 ///
-/// Wraps [`EthTxResult`] with the sender address when OP deposit nonce resolution is enabled.
+/// Wraps [`EthTxResult`] with the depositor nonce when OP deposit receipts are enabled.
 #[derive(Debug)]
 pub struct AnvilTxResult<H> {
     pub inner: EthTxResult<H, FoundryTxType>,
+    /// The sender nonce before a deposit transaction executed, `None` for other transactions.
     #[cfg(any(feature = "base", feature = "optimism"))]
-    pub sender: Address,
+    pub depositor_nonce: Option<u64>,
 }
 
 impl<H: Send + 'static> TxResult for AnvilTxResult<H> {
@@ -256,6 +260,9 @@ pub struct AnvilBlockExecutor<E> {
     /// Whether OP Jovian repurposes `blobGasUsed` for the DA footprint.
     #[cfg(feature = "optimism")]
     optimism_jovian: bool,
+    /// The OP-stack hardfork that gates deposit receipt metadata.
+    #[cfg(any(feature = "base", feature = "optimism"))]
+    deposit_hardfork: Option<FoundryHardfork>,
     /// State changes captured for deferred publication.
     state_changes: Option<Vec<EvmState>>,
 }
@@ -297,6 +304,8 @@ impl<E> AnvilBlockExecutor<E> {
             max_blob_gas_per_block: u64::MAX,
             #[cfg(feature = "optimism")]
             optimism_jovian: false,
+            #[cfg(any(feature = "base", feature = "optimism"))]
+            deposit_hardfork: None,
             state_changes: None,
         }
     }
@@ -352,8 +361,20 @@ where
             .into());
         }
 
+        // The deposit nonce reported in the receipt is the sender nonce before the deposit ran, so
+        // it has to be read before the transaction executes.
         #[cfg(any(feature = "base", feature = "optimism"))]
-        let sender = *tx.signer();
+        let depositor_nonce = if tx.tx().tx_type().is_deposit() {
+            let account = self
+                .evm
+                .db_mut()
+                .basic(*tx.signer())
+                .map_err(BlockExecutionError::other)?
+                .unwrap_or_default();
+            Some(account.nonce)
+        } else {
+            None
+        };
         let transaction_hash = tx.tx().trie_hash();
         #[cfg(feature = "optimism")]
         let blob_gas_used =
@@ -376,7 +397,7 @@ where
         Ok(AnvilTxResult {
             inner: EthTxResult { result, blob_gas_used, tx_type: tx.tx().tx_type() },
             #[cfg(any(feature = "base", feature = "optimism"))]
-            sender,
+            depositor_nonce,
         })
     }
 }
@@ -445,7 +466,7 @@ where
         let AnvilTxResult {
             inner: EthTxResult { result: ResultAndState { result, state }, blob_gas_used, tx_type },
             #[cfg(any(feature = "base", feature = "optimism"))]
-            sender,
+            depositor_nonce,
         } = output;
 
         let gas_used = result.tx_gas_used();
@@ -456,8 +477,13 @@ where
         }
 
         #[cfg(any(feature = "base", feature = "optimism"))]
-        let receipt = if tx_type.is_deposit() {
-            optimism::build_mined_deposit_receipt(result, &state, sender, self.gas_used)
+        let receipt = if let Some(depositor_nonce) = depositor_nonce {
+            optimism::build_mined_deposit_receipt(
+                result,
+                self.deposit_hardfork,
+                depositor_nonce,
+                self.gas_used,
+            )
         } else {
             self.receipt_builder.build_receipt(ReceiptBuilderCtx {
                 tx_type,
