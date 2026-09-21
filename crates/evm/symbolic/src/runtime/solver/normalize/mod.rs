@@ -413,6 +413,8 @@ fn normalize_cmp_for_solver(
                 // For constant k > 0, (x * k mod 2^256) / k == x iff x <= MAX / k.
                 // The quotient cannot exceed MAX / k; conversely this bound prevents wrapping.
                 // Retain that exact bound instead of asking SMT to solve the overflow check.
+                // `SymExpr::binop` folds a zero factor away, so the non-zero filter is only a
+                // defensive guard against `MAX / 0` should that folding ever change.
                 return SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ule, value, U256::MAX / factor);
             }
         }

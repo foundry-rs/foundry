@@ -556,7 +556,6 @@ fn constant_mul_div_guard_rewrite_excludes_unsound_shapes() {
     let mut cx = SymCx::new();
     let value = SymExpr::var(&mut cx, "value");
     let other = SymExpr::var(&mut cx, "other");
-    let zero = SymExpr::zero(&mut cx);
     let three = SymExpr::constant(&mut cx, U256::from(3));
     let ten_value = U256::from(10);
     let ten = SymExpr::constant(&mut cx, ten_value);
@@ -565,7 +564,6 @@ fn constant_mul_div_guard_rewrite_excludes_unsound_shapes() {
 
     // (name, factor, division, divisor, expected side of the equality)
     let cases = [
-        ("zero factor", zero.clone(), SymBinOp::UDiv, zero, value.clone()),
         ("signed division", ten.clone(), SymBinOp::SDiv, ten.clone(), value.clone()),
         ("mismatched divisor", ten.clone(), SymBinOp::UDiv, three, value.clone()),
         ("mismatched expected value", ten.clone(), SymBinOp::UDiv, ten, other.clone()),
