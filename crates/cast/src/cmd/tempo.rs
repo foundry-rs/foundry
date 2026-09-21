@@ -6,13 +6,31 @@ use foundry_common::tempo::{EnsureAccessKeyConfig, decode_key_authorization, ens
 use tempo_alloy::accounts::TempoAccountsStore;
 use tempo_primitives::transaction::SignedKeyAuthorization;
 
-/// Tempo wallet integration commands.
+mod zone;
+
+/// Tempo-specific commands.
+#[derive(Debug, Parser)]
+pub struct TempoArgs {
+    #[command(subcommand)]
+    command: TempoSubcommand,
+}
+
+impl TempoArgs {
+    pub async fn run(self) -> Result<()> {
+        self.command.run().await
+    }
+}
+
+/// Tempo wallet and zone integration commands.
 #[derive(Debug, Parser)]
 #[allow(
     clippy::large_enum_variant,
     reason = "parsed once; retaining PrivateKeySigner keeps access-key input typed and redacted"
 )]
 pub enum TempoSubcommand {
+    /// Deposit into and withdraw from Tempo zones.
+    Zone(zone::ZoneArgs),
+
     /// Authorize a new access key against your Tempo wallet via wallet.tempo.
     ///
     /// Persists the key to `$TEMPO_HOME/wallet/store.json` (default
@@ -53,6 +71,7 @@ pub enum TempoSubcommand {
 impl TempoSubcommand {
     pub async fn run(self) -> Result<()> {
         match self {
+            Self::Zone(args) => args.run().await,
             Self::Login { chain_id, no_browser } => {
                 let mut cfg = EnsureAccessKeyConfig::from_env(chain_id);
                 cfg.no_browser |= no_browser;

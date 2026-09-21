@@ -8,6 +8,7 @@ use foundry_config::{
     cache::StorageCachingConfig, fs_permissions::FsAccessKind,
 };
 use foundry_evm_core::opts::EvmOpts;
+use foundry_evm_traces::identifier::ExternalIdentifierConfig;
 use std::{
     path::{Path, PathBuf},
     time::Duration,
@@ -57,6 +58,12 @@ pub struct CheatsConfig {
     /// Artifacts used to resolve cheatcode artifact references.
     /// Unlike `available_artifacts`, this is retained when artifact safety checks are disabled.
     pub artifact_lookup: Option<ContractsByArtifact>,
+    /// Whether to decode the storage layouts of contracts outside the local project in state
+    /// diffs, by fetching their verified source code from a block explorer.
+    pub decode_external_storage: bool,
+    /// Settings for looking contracts up on block explorers, resolved lazily against the chain a
+    /// test is running on: a `vm.createSelectFork` can change it after this config was built.
+    pub external_sources: ExternalIdentifierConfig,
     /// Currently running artifact.
     pub running_artifact: Option<ArtifactId>,
     /// Whether to enable legacy (non-reverting) assertions.
@@ -105,6 +112,8 @@ impl CheatsConfig {
             labels,
             available_artifacts,
             artifact_lookup,
+            decode_external_storage: config.decode_external_storage,
+            external_sources: ExternalIdentifierConfig::new(config),
             running_artifact,
             assertions_revert: config.assertions_revert,
             seed: config.fuzz.seed,
@@ -250,6 +259,8 @@ impl Default for CheatsConfig {
             labels: Default::default(),
             available_artifacts: Default::default(),
             artifact_lookup: Default::default(),
+            decode_external_storage: false,
+            external_sources: Default::default(),
             running_artifact: Default::default(),
             assertions_revert: true,
             seed: None,

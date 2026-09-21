@@ -17,16 +17,13 @@ use foundry_cli::{
 };
 use foundry_common::{
     abi::find_source,
-    compile::{ProjectCompiler, etherscan_project},
+    compile::{ProjectCompiler, add_storage_layout_output, etherscan_project},
     shell,
 };
 use foundry_compilers::{
     Artifact, ArtifactId, Project, ProjectCompileOutput,
-    artifacts::{ConfigurableContractArtifact, Contract, StorageLayout},
-    compilers::{
-        Compiler,
-        solc::{Solc, SolcCompiler},
-    },
+    artifacts::{ConfigurableContractArtifact, StorageLayout},
+    compilers::solc::{Solc, SolcCompiler},
 };
 use foundry_config::{
     Config,
@@ -382,17 +379,6 @@ async fn fetch_and_print_storage<P: Provider<AnyNetwork>>(
     }
     sh_println!("\n{table}\n")?;
     Ok(())
-}
-
-fn add_storage_layout_output<C: Compiler<CompilerContract = Contract>>(project: &mut Project<C>) {
-    project.artifacts.additional_values.storage_layout = true;
-    project.update_output_selection(|selection| {
-        for contract_selection in selection.0.values_mut() {
-            for selection in contract_selection.values_mut() {
-                selection.push("storageLayout".to_string());
-            }
-        }
-    })
 }
 
 #[cfg(test)]

@@ -24,6 +24,10 @@ scoped to the modeled EVM surface and configured bounds.
 - `src/runtime/expr/`: symbolic word/bool expressions, hash-consing, symbol
   interning, simplification, canonicalization, SMT emission, traversal, and
   folding.
+- `src/runtime/solver/`: solver orchestration, query scheduling, caches, budgets,
+  and model validation. Its `normalize/`, `reasoning/`, `fallback/`, and `smt/`
+  folders own normalization, lightweight proof passes, bounded witness fallback,
+  and query-level SMT emission respectively.
 - `src/tests.rs`: crate-level symbolic behavior tests. Put private expression
   representation tests in the relevant module-local `#[cfg(test)]` module.
 

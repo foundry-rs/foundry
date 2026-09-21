@@ -138,6 +138,17 @@ or journal boundary. Do not rely on cloning the ordinary account database to pre
 another component. Do not add optional custom-family state to a generic context or return generic
 "context update" signals when only one concrete family can use them.
 
+Both cheatcode inspector adapters use
+[`with_inherited_evm`](../../crates/evm/core/src/evm/mod.rs) to pair inherited context setup
+with successful write-back. Inspector assembly stays with the adapter, and EVM factories retain
+construction ownership. This shared operation still uses the existing Monad journal bridge; it
+is not a replacement for the deferred native journal, snapshot, and fork lifecycle migrations.
+
+Isolated calls and `executeTransaction` share account-state preparation and settlement through
+[`prepare_child_state` and `merge_child_state`](../../crates/evm/core/src/evm/mod.rs).
+Their transaction context, environment restoration, and native journal handling remain distinct:
+an isolated call belongs to its enclosing transaction, while `executeTransaction` runs a fresh one.
+
 Historical replay retains the RPC envelope's system classification after transaction conversion.
 The default nested replay behavior deliberately skips system envelopes unsupported by the selected
 execution family without mutating state. A family that supports protocol system envelopes must
@@ -190,7 +201,3 @@ User-facing selection, configuration, and workflows belong in the
 [Foundry Book](https://getfoundry.sh). CLI option text belongs in the Clap definitions and is
 generated into the book. Trait, context, and state invariants belong in Rustdoc next to their
 implementation. Cross-crate integration guidance belongs here.
-
-Add a changelog fragment for user-visible behavior. If a change only reorganizes contributor
-documentation or CI and has no release-facing effect, use the repository's `L-ignore` label instead
-of inventing a package release note.

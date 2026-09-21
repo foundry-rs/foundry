@@ -14,7 +14,6 @@ Keep each fact in the source that owns it and link to that source elsewhere:
 | Crate and module APIs, invariants, and implementation details | Source Rustdoc, published as [Foundry Rustdoc][foundry-rustdoc] |
 | Cross-crate contributor workflows | `docs/dev/` or [`CONTRIBUTING.md`](../../CONTRIBUTING.md) |
 | Agent-only repository instructions | [`AGENTS.md`](../../AGENTS.md) |
-| Release-facing changes | [Changelog fragments](../../.changelog/README.md) |
 
 Do not copy generated CLI reference text or crate dependency lists into `docs/dev`. Update CLI help
 or Rustdoc at the source, then link to the generated documentation.
@@ -68,6 +67,14 @@ CI runs tests through cargo-nextest. Nightly and stable release builds derive th
 functionality from `RUST_FEATURES` in `.github/workflows/release.yml` and
 `.github/workflows/docker-publish.yml`. Keep those lists aligned with the default `FEATURES` in the
 root `Makefile` so published binaries expose the same surface as local release builds.
+
+Maintainers select stable and release-candidate versions, update the workspace version and
+`Cargo.lock`, and push the corresponding `vX.Y.Z` or `vX.Y.Z-rcN` tag at the intended commit.
+The [release workflow](../../.github/workflows/release.yml) builds the artifacts and generates
+PR-based notes in a draft GitHub release. After reviewing the notes and successful build, run the
+[finalization workflow](../../.github/workflows/finalize-release.yml) from `master` with that exact
+tag. It verifies the tagged workflow and recorded Docker digest before publishing and promoting
+eligible Docker aliases. Nightlies continue through the scheduled release workflow.
 
 For contribution policy and support channels, see [`CONTRIBUTING.md`](../../CONTRIBUTING.md).
 

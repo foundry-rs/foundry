@@ -306,6 +306,10 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for CowBackend<'_, FEN
         self.backend.active_fork_url()
     }
 
+    fn active_fork_source_chain_id(&self) -> Option<u64> {
+        self.backend.active_fork_source_chain_id()
+    }
+
     fn active_fork_block_number(&self) -> Option<u64> {
         self.backend.active_fork_block_number()
     }
