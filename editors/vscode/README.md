@@ -165,6 +165,8 @@ path for log inspection. These tests do not edit or close existing user windows.
 
 ### Local packaging
 
+From `editors/vscode`, run:
+
 ```bash
 npm run package
 code --install-extension bundle/solar-lsp.vsix --force

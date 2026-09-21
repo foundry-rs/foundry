@@ -4,6 +4,11 @@ import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promi
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+const args = process.argv.slice(2);
+if (args.length > 0) {
+  throw new Error(`package.mjs does not accept arguments: ${args.join(" ")}`);
+}
+
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const bundle = join(root, "bundle");
 const licenses = ["LICENSE-MIT", "LICENSE-APACHE"];
