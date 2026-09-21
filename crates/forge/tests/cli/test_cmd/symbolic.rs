@@ -6484,6 +6484,20 @@ contract OptInTarget {
         return uint256(value);
     }
 
+    function optOut() external {
+        require(fixedCpt[msg.sender] == 0);
+        require(state[msg.sender] == 0 || state[msg.sender] == 2);
+        uint256 oldCredits = credits[msg.sender];
+        uint256 balance = balanceOf(msg.sender);
+        credits[msg.sender] = balance;
+        fixedCpt[msg.sender] = 1e18;
+        state[msg.sender] = 1;
+        int256 creditDiff = -toInt(oldCredits);
+        int256 supplyDiff = toInt(balance);
+        if (creditDiff != 0) rebasingCredits = toUint(toInt(rebasingCredits) + creditDiff);
+        if (supplyDiff != 0) nonRebasingSupply = toUint(toInt(nonRebasingSupply) + supplyDiff);
+    }
+
     function optIn() external {
         uint256 balance = balanceOf(msg.sender);
         require(fixedCpt[msg.sender] > 0 || credits[msg.sender] == 0);
@@ -6524,6 +6538,33 @@ contract FixedPointRoundTripTest {
         assert(target.balanceOf(account) == balance);
         assert(target.fixedCpt(account) == 0);
         assert(target.state(account) == 2);
+    }
+
+    function checkFullWidthOptOut(address account) external {
+        vm.assume(target.cpt() >= 1e18);
+        uint256 balance = target.balanceOf(account);
+        vm.prank(account);
+        target.optOut();
+        assert(target.balanceOf(account) == balance);
+        assert(target.fixedCpt(account) == 1e18);
+        assert(target.state(account) == 1);
+    }
+
+    function testOptOutConcreteWitnessAtCreditLimit() external {
+        address account = address(0xB0B);
+        uint256 credits = type(uint256).max / 1e18;
+        uint256 rate = 1e18 + 1;
+        uint256 balance = credits * 1e18 / rate;
+        vm.store(address(target), bytes32(uint256(0)), bytes32(rate));
+        vm.store(address(target), bytes32(uint256(1)), bytes32(credits));
+        vm.store(address(target), bytes32(uint256(2)), bytes32(uint256(0)));
+        vm.store(address(target), keccak256(abi.encode(account, uint256(3))), bytes32(credits));
+        vm.store(address(target), keccak256(abi.encode(account, uint256(4))), bytes32(uint256(0)));
+        vm.store(address(target), keccak256(abi.encode(account, uint256(5))), bytes32(uint256(2)));
+        this.checkFullWidthOptOut(account);
+        assert(target.credits(account) == balance);
+        assert(target.rebasingCredits() == 0);
+        assert(target.nonRebasingSupply() == balance);
     }
 
     function testOptInConcreteWitnessAboveUint128() external {
@@ -6569,6 +6610,12 @@ contract FixedPointRoundTripTest {
         assert(credits * 2 / 1 == balance);
     }
 
+    function checkUncheckedConstantProduct(uint256 value) external pure {
+        unchecked {
+            assert(value * 1e18 / 1e18 == value);
+        }
+    }
+
     function checkWrapping(uint256 balance) external pure {
         require(balance >= 1 << 255);
         unchecked {
@@ -6582,6 +6629,7 @@ contract FixedPointRoundTripTest {
     for (test, signature) in [
         ("checkFullWidthRoundTrip", "checkFullWidthRoundTrip(uint256,uint256)"),
         ("checkFullWidthOptIn", "checkFullWidthOptIn(address)"),
+        ("checkFullWidthOptOut", "checkFullWidthOptOut(address)"),
     ] {
         let output = cmd
             .forge_fuse()
@@ -6603,13 +6651,14 @@ contract FixedPointRoundTripTest {
         assert_eq!(result["symbolic"]["status"], "pass");
     }
     cmd.forge_fuse()
-        .args(["test", "--optimize", "--match-test", "testOptInConcreteWitness"])
+        .args(["test", "--optimize", "--match-test", "testOpt(In|Out)ConcreteWitness"])
         .assert_success();
 
     for (test, signature) in [
         ("checkLowRate", "checkLowRate(uint128)"),
         ("checkWrapping", "checkWrapping(uint256)"),
         ("checkUncheckedRounding", "checkUncheckedRounding(uint256)"),
+        ("checkUncheckedConstantProduct", "checkUncheckedConstantProduct(uint256)"),
     ] {
         let output = cmd
             .forge_fuse()
