@@ -75,7 +75,7 @@ use alloy_network::{
     UnknownTypedTransaction,
 };
 use alloy_primitives::{
-    Address, B256, Bloom, Bytes, Signature, TxKind, U64, U256, address, hex, keccak256,
+    Address, B256, Bloom, Bytes, Signature, TxKind, U256, address, hex, keccak256,
     map::{AddressMap, B256Set, HashMap, HashSet},
 };
 use alloy_rlp::{Decodable, Encodable};
@@ -2067,12 +2067,17 @@ impl<N: Network> Backend<N> {
     /// Returns the block number for the given block id
     pub fn convert_block_number(&self, block: Option<BlockNumber>) -> u64 {
         let current = self.best_number();
+        // The chain starts at the configured genesis number, so `earliest` and the epoch-based
+        // tags never resolve below it.
+        let genesis = self.genesis_number();
         match block.unwrap_or(BlockNumber::Latest) {
             BlockNumber::Latest | BlockNumber::Pending => current,
-            BlockNumber::Earliest => 0,
+            BlockNumber::Earliest => genesis,
             BlockNumber::Number(num) => num,
-            BlockNumber::Safe => current.saturating_sub(self.slots_in_an_epoch),
-            BlockNumber::Finalized => current.saturating_sub(self.slots_in_an_epoch * 2),
+            BlockNumber::Safe => current.saturating_sub(self.slots_in_an_epoch).max(genesis),
+            BlockNumber::Finalized => {
+                current.saturating_sub(self.slots_in_an_epoch * 2).max(genesis)
+            }
         }
     }
 
@@ -2423,13 +2428,7 @@ impl<N: Network> Backend<N> {
                         .header
                         .number
                 }
-                BlockId::Number(num) => match num {
-                    BlockNumber::Latest | BlockNumber::Pending => current,
-                    BlockNumber::Earliest => U64::ZERO.to::<u64>(),
-                    BlockNumber::Number(num) => num,
-                    BlockNumber::Safe => current.saturating_sub(self.slots_in_an_epoch),
-                    BlockNumber::Finalized => current.saturating_sub(self.slots_in_an_epoch * 2),
-                },
+                BlockId::Number(num) => self.convert_block_number(Some(num)),
             };
 
         if requested > current {
@@ -2945,8 +2944,9 @@ impl<N: Network> Backend<N> {
                 .create_evm_with_inspector(db, base_env, inspector);
             evm.ctx_mut().cfg.tx_chain_id_check = true;
             self.inject_precompiles(evm.precompiles_mut(), evm_env);
-            let executor = AnvilBlockExecutor::new(evm, parent_hash, spec_id, transitions)
+            let mut executor = AnvilBlockExecutor::new(evm, parent_hash, spec_id, transitions)
                 .with_max_blob_gas_per_block(gas_config.max_blob_gas_per_block);
+            executor.set_base_upgrade(upgrade);
             return execute!(executor);
         }
 
@@ -2961,7 +2961,7 @@ impl<N: Network> Backend<N> {
             self.inject_precompiles(evm.precompiles_mut(), evm_env);
             let mut executor = AnvilBlockExecutor::new(evm, parent_hash, spec_id, transitions)
                 .with_max_blob_gas_per_block(gas_config.max_blob_gas_per_block);
-            executor.set_optimism_hardfork(hardfork.into());
+            executor.set_optimism_hardfork(hardfork);
             return execute!(executor);
         }
 
@@ -5743,8 +5743,9 @@ where
             if let Some(block_number) = arbitrum_rpc_block_number {
                 self.inject_arbitrum_precompile_at_block(evm.precompiles_mut(), block_number);
             }
-            let executor = AnvilBlockExecutor::new(evm, parent_hash, spec_id, transitions)
+            let mut executor = AnvilBlockExecutor::new(evm, parent_hash, spec_id, transitions)
                 .with_state_changes();
+            executor.set_base_upgrade(upgrade);
             return execute!(executor);
         }
 
@@ -5763,7 +5764,7 @@ where
             // Historical replay has no local blob budget. OP still configures its Jovian DA budget.
             let mut executor = AnvilBlockExecutor::new(evm, parent_hash, spec_id, transitions)
                 .with_state_changes();
-            executor.set_optimism_hardfork(hardfork.into());
+            executor.set_optimism_hardfork(hardfork);
             return execute!(executor);
         }
 

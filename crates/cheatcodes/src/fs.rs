@@ -569,7 +569,7 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
     {
         ccx.ecx.tx_mut().set_caller(prank.prank_origin);
         if prank.single_call {
-            std::mem::take(&mut ccx.state.pranks);
+            ccx.state.pranks.remove(&depth);
         }
     }
 
