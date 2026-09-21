@@ -2145,6 +2145,67 @@ Compiling 2 files with [..]
 "#]]);
 });
 
+forgetest!(preprocess_contract_to_free_function_clears_dependencies, |prj, cmd| {
+    prj.update_config(|config| config.dynamic_test_linking = true);
+    let dependency =
+        "contract Dep { function value() public pure returns (uint256) { return 1; } }";
+    prj.add_source("Dep.sol", dependency);
+    prj.add_test(
+        "Helper.sol",
+        r#"
+import {Dep} from "../src/Dep.sol";
+contract Helper {
+    function dependencyCode() internal pure returns (bytes memory) {
+        return type(Dep).creationCode;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Consumer.t.sol",
+        r#"
+import {Helper} from "./Helper.sol";
+contract ConsumerTest is Helper {
+    function test_helper() public pure {
+        require(dependencyCode().length > 0);
+    }
+}
+"#,
+    );
+    cmd.args(["test"]).assert_success();
+
+    prj.add_test("Helper.sol", "function helperValue() pure returns (uint256) { return 1; }");
+    prj.add_test(
+        "Consumer.t.sol",
+        r#"
+import {helperValue} from "./Helper.sol";
+contract ConsumerTest {
+    function test_helper() public pure {
+        require(helperValue() == 1);
+    }
+}
+"#,
+    );
+    cmd.assert_success();
+
+    // Neither the contractless helper nor its rebuilt importer still depends on Dep.
+    for value in [2, 3] {
+        prj.add_source("Dep.sol", &dependency.replace("return 1", &format!("return {value}")));
+        cmd.with_no_redact().assert_success().stdout_eq(str![[r#"
+Compiling 1 files with [..]
+[..]
+Compiler run successful!
+
+Ran 1 test for test/Consumer.t.sol:ConsumerTest
+[PASS] test_helper() (gas: [..])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [..]
+
+Ran 1 test suite [..]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+    }
+});
+
 // - CounterMock contract is Counter contract
 // - CounterMock instantiated in CounterTest
 //

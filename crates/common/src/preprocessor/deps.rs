@@ -52,7 +52,8 @@ impl PreprocessorDependencies {
         let mut referenced_contracts = HashSet::new();
         let mut current_mocks = HashSet::new();
         let mut current_native_dependencies = NativeDependencies::new();
-        let mut candidate_files = HashSet::new();
+        let candidate_files =
+            paths.iter().map(|path| normalize_path(&root_dir.join(path))).collect::<HashSet<_>>();
         let mut conservative_files = HashSet::new();
         let global_using_dependencies = using_dependency_sources(
             gcx,
@@ -112,7 +113,6 @@ impl PreprocessorDependencies {
         // Collect dependencies for non-mock test/script contracts.
         for (contract_id, contract, source, path) in candidate_contracts() {
             let full_path = normalize_path(&root_dir.join(path));
-            candidate_files.insert(full_path.clone());
 
             if current_mocks.contains(&full_path) {
                 trace!("{} is a mock, skipping", path.display());
