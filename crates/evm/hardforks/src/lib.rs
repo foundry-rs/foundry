@@ -13,6 +13,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+#[cfg(all(feature = "optimism", not(feature = "base")))]
+use alloy_chains::NamedChain;
 #[cfg(feature = "optimism")]
 use op_revm::OpSpecId;
 
@@ -515,6 +517,30 @@ impl ExecutionSpec for OpSpecId {
             FoundryHardfork::Optimism(hardfork) => Some(spec_id_from_optimism_hardfork(hardfork)),
             _ => None,
         }
+    }
+
+    fn fork_hardfork(
+        chain_id: u64,
+        timestamp: u64,
+        endpoint_hardfork: Option<FoundryHardfork>,
+    ) -> Option<FoundryHardfork> {
+        let endpoint_hardfork =
+            endpoint_hardfork.filter(|&hardfork| Self::from_foundry_hardfork(hardfork).is_some());
+        if endpoint_hardfork.is_some() {
+            return endpoint_hardfork;
+        }
+
+        // Base uses its own upgrade schedule. Without native Base support, retain the configured
+        // EVM version instead of applying the incompatible OP schedule.
+        #[cfg(not(feature = "base"))]
+        if matches!(
+            Chain::from_id(chain_id).named(),
+            Some(NamedChain::Base | NamedChain::BaseSepolia)
+        ) {
+            return None;
+        }
+
+        Self::historical_hardfork(chain_id, timestamp)
     }
 
     fn historical_hardfork(chain_id: u64, timestamp: u64) -> Option<FoundryHardfork> {
