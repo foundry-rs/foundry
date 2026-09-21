@@ -149,27 +149,19 @@ impl SymbolicExecutor {
                     parent.stack.push(SymExpr::zero(&mut self.cx))?;
                     parents.push_back(parent);
                 }
-                JoinedCallOutcome::ExpectedRevert { mut parent, child } => {
+                JoinedCallOutcome::ExpectedRevert { mut parent, .. } => {
                     parent.return_data = SymReturnData::empty(&mut self.cx);
-                    parent.block = child.block.clone();
-                    parent.expected_calls = child.expected_calls;
                     parent.expected_creates = pending_expected_creates.clone();
-                    parent.call_mocks = child.call_mocks;
-                    parent.function_mocks = child.function_mocks;
                     parent.world = failure_world.clone();
                     parent.stack.push(created_word.clone())?;
                     parents.push_back(parent);
                 }
                 JoinedCallOutcome::Success { mut parent, child } => {
                     parent.return_data = SymReturnData::empty(&mut self.cx);
-                    parent.block = child.block.clone();
                     let runtime = &child.frame.return_data;
                     parent.world = child.world;
                     parent.expected_emit = child.expected_emit;
-                    parent.expected_calls = child.expected_calls;
                     parent.expected_creates = pending_expected_creates.clone();
-                    parent.call_mocks = child.call_mocks;
-                    parent.function_mocks = child.function_mocks;
                     self.observe_expected_create(&mut parent, state.address, kind, runtime)?;
                     if !parent.world.is_destroyed(created) {
                         parent.world.install_code(created, runtime.to_code(&mut self.cx)?);
@@ -181,12 +173,7 @@ impl SymbolicExecutor {
                 JoinedCallOutcome::Revert { mut parent, child } => {
                     parent.return_data = SymReturnData::empty(&mut self.cx);
                     parent.world = failure_world.clone();
-                    if rejected_runtime {
-                        parent.block = child.block;
-                        parent.expected_calls = child.expected_calls;
-                        parent.call_mocks = child.call_mocks;
-                        parent.function_mocks = child.function_mocks;
-                    } else {
+                    if !rejected_runtime {
                         parent.return_data = child.frame.return_data;
                     }
                     parent.stack.push(SymExpr::zero(&mut self.cx))?;

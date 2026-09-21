@@ -1973,6 +1973,84 @@ contract SymbolicConstrainedCheatcodes is Test {
     assert!(!stdout.contains("symbolic randomBytes len"), "{stdout}");
 });
 
+forgetest_init!(symbolic_cheatcode_state_survives_reverting_call, |prj, cmd| {
+    skip_unless_z3!("symbolic_cheatcode_state_survives_reverting_call");
+
+    prj.add_test(
+        "SymbolicRevertKeepsCheatcodes.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Token {
+    function balanceOf(address) external pure returns (uint256) {
+        return 7;
+    }
+}
+
+contract SymbolicRevertKeepsCheatcodes is Test {
+    uint256 constant DEADLINE = 1000;
+    Token token;
+
+    function setUp() public {
+        token = new Token();
+    }
+
+    function warpThenRevert(uint256 t) external {
+        vm.warp(t);
+        revert("boom");
+    }
+
+    function mockThenRevert(address user) external {
+        vm.mockCall(
+            address(token),
+            abi.encodeWithSelector(Token.balanceOf.selector, user),
+            abi.encode(uint256(5))
+        );
+        revert("boom");
+    }
+
+    // Concretely the warp outlives the revert, so any t >= DEADLINE breaks this.
+    function checkWarpSurvivesRevertingCall(uint256 t) public {
+        try this.warpThenRevert(t) {} catch {}
+        assert(block.timestamp < DEADLINE);
+    }
+
+    // Concretely the mock outlives the revert, so the mocked value is observed.
+    function checkMockSurvivesRevertingCall(address user) public {
+        try this.mockThenRevert(user) {} catch {}
+        assert(token.balanceOf(user) == 7);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-contract", "SymbolicRevertKeepsCheatcodes"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+args=[1000]] checkWarpSurvivesRevertingCall(uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL: panic: assertion failed (0x01); counterexample:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkMockSurvivesRevertingCall(address)
+"#]],
+    );
+    assert!(!stdout.contains("[PASS]"), "{stdout}");
+});
+
 forgetest_init!(symbolic_cheatcodes_reject_gas_deal_value, |prj, cmd| {
     skip_unless_z3!("symbolic_cheatcodes_reject_gas_deal_value");
 

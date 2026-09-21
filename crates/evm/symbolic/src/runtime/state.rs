@@ -421,6 +421,16 @@ impl PathState {
         self.access_record = child.access_record.take();
     }
 
+    /// Adopts the block overrides, call expectations and mocks a child call left behind. These
+    /// live in the cheatcode inspector rather than in the EVM journal, so concretely they survive
+    /// the child reverting or halting just as they survive it succeeding.
+    pub(crate) fn take_cheatcode_state(&mut self, child: &mut Self) {
+        self.block = child.block.clone();
+        self.expected_calls = std::mem::take(&mut child.expected_calls);
+        self.call_mocks = std::mem::take(&mut child.call_mocks);
+        self.function_mocks = std::mem::take(&mut child.function_mocks);
+    }
+
     pub(crate) fn take_reverted_top_level_effects(&mut self, mut reverted: Self) {
         self.take_noncommitting_check_state(&mut reverted);
         self.block = reverted.block;
