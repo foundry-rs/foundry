@@ -4301,18 +4301,68 @@ fn solver_normalizes_mul_div_at_exact_no_wrap_boundary() {
 }
 
 #[test]
-fn solver_does_not_normalize_wrapping_mul_div_identity() {
+fn solver_preserves_wrapping_mul_div_counterexamples() {
     let mut cx = SymCx::new();
     let value = SymExpr::var(&mut cx, "value");
-    let factor = SymExpr::constant(&mut cx, U256::from(58));
+    let factor_value = U256::from(58);
+    let factor = SymExpr::constant(&mut cx, factor_value);
     let product = SymExpr::binop(&mut cx, SymBinOp::Mul, value.clone(), factor.clone());
     let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, product, factor);
-    let identity = SymBoolExpr::eq(&mut cx, quotient, value);
+    let identity = SymBoolExpr::eq(&mut cx, quotient, value.clone());
+    let normalized = normalize_constraints_for_solver(&mut cx, std::slice::from_ref(&identity));
+    let expected =
+        SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ule, &value, U256::MAX / factor_value);
+    assert_eq!(normalized, vec![expected]);
 
-    assert_eq!(
-        normalize_constraints_for_solver(&mut cx, std::slice::from_ref(&identity)),
-        vec![identity]
-    );
+    let failure = identity.clone().not(&mut cx);
+    let normalized_failure =
+        normalize_constraints_for_solver(&mut cx, std::slice::from_ref(&failure));
+    for input in [U256::MAX / factor_value + U256::ONE, U256::MAX] {
+        let model = symbolic_model(&mut cx, [("value", input)]);
+        assert!(!identity.eval_model(&model).unwrap());
+        assert!(normalized.iter().any(|constraint| !constraint.eval_model(&model).unwrap()));
+        assert!(failure.eval_model(&model).unwrap());
+        assert!(normalized_failure.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
+    }
+}
+
+#[test]
+fn constant_mul_div_guard_branches_are_decided_locally_and_cached() {
+    let mut cx = SymCx::new();
+    let value = SymExpr::var(&mut cx, "value");
+    let scale_value = U256::from(1_000_000_000_000_000_000u64);
+    let scale = SymExpr::constant(&mut cx, scale_value);
+    let product = SymExpr::binop(&mut cx, SymBinOp::Mul, value.clone(), scale.clone());
+    let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, product, scale);
+    let guard = SymBoolExpr::eq(&mut cx, quotient, value.clone());
+    let failure = guard.clone().not(&mut cx);
+    let fits = SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ule, &value, U256::MAX / scale_value);
+    let wraps = fits.clone().not(&mut cx);
+
+    // No SMT backend is configured: every branch below must be decided by the rewrite.
+    let mut solver = SmtLibSubprocessSolver::new(Ok(Vec::new()), None, 16, false);
+    for (constraints, feasible) in [
+        (vec![guard.clone()], true),
+        (vec![failure.clone()], true),
+        (vec![fits.clone(), guard.clone()], true),
+        (vec![wraps.clone(), failure.clone()], true),
+        (vec![fits, failure], false),
+        (vec![wraps, guard], false),
+    ] {
+        assert_eq!(
+            solver.is_sat_branch(&mut cx, &constraints).unwrap(),
+            feasible,
+            "{constraints:?}"
+        );
+        let cache_hits = solver.stats().sat_cache_hits;
+        assert_eq!(
+            solver.is_sat_branch(&mut cx, &constraints).unwrap(),
+            feasible,
+            "{constraints:?}"
+        );
+        assert_eq!(solver.stats().sat_cache_hits, cache_hits + 1, "{constraints:?}");
+    }
+    assert_eq!(solver.stats().smt_queries, 0);
 }
 
 #[test]

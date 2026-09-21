@@ -2074,6 +2074,27 @@ mod tests {
     }
 
     #[test]
+    #[cfg(all(feature = "optimism", not(feature = "base")))]
+    fn resolve_execution_spec_preserves_config_for_base_op_fallback() {
+        let config = Config { evm_version: EvmVersion::Osaka, ..Default::default() };
+        let mut block = BlockEnv::default();
+        block.set_timestamp(U256::from(u64::MAX));
+        let mut env = EvmEnv::new(CfgEnv::new_with_spec(OpSpecId::default()), block);
+
+        assert_eq!(
+            resolve_execution_spec(
+                config.evm_version,
+                config.hardfork,
+                &mut env,
+                ExecutionSpecContext::fork(NamedChain::Base as u64, None),
+                None,
+            ),
+            None
+        );
+        assert_eq!(env.cfg_env.spec, OpSpecId::KARST);
+    }
+
+    #[test]
     #[cfg(feature = "monad")]
     fn resolve_execution_spec_honors_explicit_precedence() {
         let activation =
