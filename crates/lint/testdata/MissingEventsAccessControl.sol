@@ -67,6 +67,46 @@ contract MissingEventsAccessControl {
         _;
     }
 
+    modifier onlyOwnerViaTupleTransferredAlias(address newOwner) {
+        address caller = msg.sender;
+        address previous;
+        (caller, previous) = (newOwner, caller);
+        require(previous == owner, "not owner");
+        _;
+    }
+
+    modifier onlyOwnerViaTupleRepeatedSenderFirst(address newOwner) {
+        address caller;
+        (caller, caller) = (msg.sender, newOwner);
+        require(caller == owner, "not owner");
+        _;
+    }
+
+    modifier onlyOwnerViaTupleRepeatedCandidateFirst(address newOwner) {
+        address caller;
+        (caller, caller) = (newOwner, msg.sender);
+        require(caller == owner, "not owner");
+        _;
+    }
+
+    modifier onlyOwnerViaNestedTupleAlias() {
+        address caller;
+        address spare;
+        bool live;
+        ((caller, spare), live) = ((msg.sender, address(0)), true);
+        require(live && caller == owner, "not owner");
+        _;
+    }
+
+    modifier onlyOwnerViaNestedTupleReassignedAlias(address newOwner) {
+        address caller = msg.sender;
+        address spare;
+        bool live;
+        ((caller, spare), live) = ((newOwner, address(0)), false);
+        require(caller == owner, "not owner");
+        _;
+    }
+
     modifier onlyOwnerViaTupleDeclaredAlias() {
         (address caller, bool live) = (msg.sender, true);
         require(live && caller == owner, "not owner");
@@ -75,6 +115,20 @@ contract MissingEventsAccessControl {
 
     modifier onlyOwnerViaTupleCallAlias() {
         (address caller,) = _senderAndFlag();
+        require(caller == owner, "not owner");
+        _;
+    }
+
+    modifier onlyOwnerViaTupleCallAssignedAlias() {
+        address caller;
+        (, caller) = _flagAndSender();
+        require(caller == owner, "not owner");
+        _;
+    }
+
+    modifier onlyOwnerViaTupleCallReassignedAlias(address newOwner) {
+        address caller = msg.sender;
+        (, caller) = _flagAndAddress(newOwner);
         require(caller == owner, "not owner");
         _;
     }
@@ -216,6 +270,38 @@ contract MissingEventsAccessControl {
         owner = newOwner;
     }
 
+    function setOwnerViaTupleTransferredAlias(address newOwner)
+        external
+        onlyOwnerViaTupleTransferredAlias(newOwner)
+    {
+        owner = newOwner; //~WARN: `owner` is changed without an event but is used for access control
+    }
+
+    function setOwnerViaTupleRepeatedSenderFirst(address newOwner)
+        external
+        onlyOwnerViaTupleRepeatedSenderFirst(newOwner)
+    {
+        owner = newOwner; //~WARN: `owner` is changed without an event but is used for access control
+    }
+
+    function setOwnerViaTupleRepeatedCandidateFirst(address newOwner)
+        external
+        onlyOwnerViaTupleRepeatedCandidateFirst(newOwner)
+    {
+        owner = newOwner;
+    }
+
+    function setOwnerViaNestedTupleAlias(address newOwner) external onlyOwnerViaNestedTupleAlias {
+        owner = newOwner; //~WARN: `owner` is changed without an event but is used for access control
+    }
+
+    function setOwnerViaNestedTupleReassignedAlias(address newOwner)
+        external
+        onlyOwnerViaNestedTupleReassignedAlias(newOwner)
+    {
+        owner = newOwner;
+    }
+
     function setOwnerViaTupleDeclaredAlias(address newOwner)
         external
         onlyOwnerViaTupleDeclaredAlias
@@ -225,6 +311,20 @@ contract MissingEventsAccessControl {
 
     function setOwnerViaTupleCallAlias(address newOwner) external onlyOwnerViaTupleCallAlias {
         owner = newOwner; //~WARN: `owner` is changed without an event but is used for access control
+    }
+
+    function setOwnerViaTupleCallAssignedAlias(address newOwner)
+        external
+        onlyOwnerViaTupleCallAssignedAlias
+    {
+        owner = newOwner; //~WARN: `owner` is changed without an event but is used for access control
+    }
+
+    function setOwnerViaTupleCallReassignedAlias(address newOwner)
+        external
+        onlyOwnerViaTupleCallReassignedAlias(newOwner)
+    {
+        owner = newOwner;
     }
 
     function setOwnerInModifier(address newOwner) external onlyOwner writesOwner(newOwner) {}
@@ -394,6 +494,14 @@ contract MissingEventsAccessControl {
 
     function _senderAndFlag() internal view returns (address, bool) {
         return (msg.sender, true);
+    }
+
+    function _flagAndSender() internal view returns (bool, address) {
+        return (true, msg.sender);
+    }
+
+    function _flagAndAddress(address value) internal pure returns (bool, address) {
+        return (true, value);
     }
 
     function _checkOwner() internal view {

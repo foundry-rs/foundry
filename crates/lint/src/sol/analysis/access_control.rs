@@ -137,11 +137,6 @@ fn update_sender_aliases<'gcx>(
     let reads_sender = |value: Option<&Expr<'_>>, aliases: &HashSet<VariableId>| {
         value.is_some_and(|value| expr_reads_sender(gcx, value, &mut HashSet::new(), aliases))
     };
-    // A tuple literal assigns each local from its own element; any other value, such as a call
-    // returning a tuple, applies to all of them.
-    let element = |value: &'gcx Expr<'gcx>, i: usize| {
-        tuple_elems(value).map_or(Some(value), |elems| elems.get(i).copied().flatten())
-    };
     // A tuple assignment is simultaneous, so every right-hand side is classified against the
     // aliases as they were before the statement, and the locals are updated afterwards.
     let updates: Vec<(VariableId, bool)> = match stmt.kind {
@@ -153,34 +148,53 @@ fn update_sender_aliases<'gcx>(
             .iter()
             .enumerate()
             .filter_map(|(i, var_id)| {
-                var_id.map(|var_id| (var_id, reads_sender(element(value, i), aliases)))
+                let value =
+                    tuple_elems(value).map_or(Some(value), |elems| elems.get(i).copied().flatten());
+                var_id.map(|var_id| (var_id, reads_sender(value, aliases)))
             })
             .collect(),
         StmtKind::Expr(expr) => match &expr.peel_parens().kind {
-            ExprKind::Assign(lhs, _, rhs) => match tuple_elems(lhs) {
-                Some(lhs_elems) => lhs_elems
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, lhs)| {
-                        let var_id = lhs.and_then(|lhs| lhs_local_var(gcx, lhs))?;
-                        Some((var_id, reads_sender(element(rhs, i), aliases)))
-                    })
-                    .collect(),
-                None => match lhs_local_var(gcx, lhs) {
-                    Some(var_id) => vec![(var_id, reads_sender(Some(rhs), aliases))],
-                    None => return,
-                },
-            },
+            ExprKind::Assign(lhs, _, rhs) => {
+                let mut updates = Vec::new();
+                collect_sender_alias_updates(gcx, lhs, Some(rhs), aliases, &mut updates);
+                updates
+            }
             _ => return,
         },
         _ => return,
     };
-    for (var_id, reads_sender) in updates {
+    // Solidity commits tuple writes right-to-left, which matters when a local occurs more than
+    // once in the destination.
+    for (var_id, reads_sender) in updates.into_iter().rev() {
         if reads_sender {
             aliases.insert(var_id);
         } else {
             aliases.remove(&var_id);
         }
+    }
+}
+
+/// Recursively pairs tuple destinations with tuple literal elements. Any other right-hand side,
+/// such as a call returning a tuple, applies to every destination local.
+fn collect_sender_alias_updates(
+    gcx: Gcx<'_>,
+    lhs: &Expr<'_>,
+    rhs: Option<&Expr<'_>>,
+    aliases: &HashSet<VariableId>,
+    updates: &mut Vec<(VariableId, bool)>,
+) {
+    if let Some(lhs_elems) = tuple_elems(lhs) {
+        for (i, lhs) in lhs_elems.iter().enumerate() {
+            let Some(lhs) = lhs else { continue };
+            let rhs = rhs.and_then(|rhs| {
+                tuple_elems(rhs).map_or(Some(rhs), |elems| elems.get(i).copied().flatten())
+            });
+            collect_sender_alias_updates(gcx, lhs, rhs, aliases, updates);
+        }
+    } else if let Some(var_id) = lhs_local_var(gcx, lhs) {
+        let reads_sender =
+            rhs.is_some_and(|rhs| expr_reads_sender(gcx, rhs, &mut HashSet::new(), aliases));
+        updates.push((var_id, reads_sender));
     }
 }
 
