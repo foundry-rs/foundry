@@ -87,7 +87,7 @@ No files changed, compilation skipped
 Ran 1 test for test/Value.t.sol:ValueTest
 [PASS] test_arguments() ([GAS])
 Traces:
-  [30387] ValueTest::test_arguments()
+  [[..]] ValueTest::test_arguments()
     ├─ [0] VM::deployCode("src/Target.sol:Target", 0x000000000000000000000000000000000000000000000000000000000000002a, 1000000000000000000 [1e18])
     │   ├─ [41006] → new Target@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   │   └─ ← [Return] 203 bytes of code
