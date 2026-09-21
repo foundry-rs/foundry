@@ -149,7 +149,6 @@ impl SymbolicExecutor {
     ) -> Result<JoinedCallOutcome, SymbolicError> {
         let mut parent = state.clone();
         parent.take_call_outcome_state(&mut outcome.state);
-        parent.take_cheatcode_state(&mut outcome.state);
 
         if let Some(assumption) = parent.assume_no_revert_next_call.take()
             && matches!(outcome.status, CallStatus::Revert)
