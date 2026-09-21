@@ -1526,7 +1526,9 @@ impl TestArgs {
         let has_contract_or_test_filter = filter_args.test_pattern.is_some()
             || filter_args.test_pattern_inverse.is_some()
             || filter_args.contract_pattern.is_some()
-            || filter_args.contract_pattern_inverse.is_some();
+            || filter_args.contract_pattern_inverse.is_some()
+            || filter_args.rerun_pattern.is_some()
+            || test_filter.rerun_failures().is_some();
 
         // `MultiContractRunner::build` strips the root prefix from artifact source paths so the
         // identifiers it constructs are project-relative. Match that here for the filter check
@@ -1990,7 +1992,7 @@ impl TestArgs {
                 show_progress: self.show_progress,
                 json_output,
                 // Carry the filter the baseline actually used (positional path shorthand folded
-                // into `path_pattern`, `--rerun` failures injected into `test_pattern`) and its
+                // into `path_pattern`, `--rerun` failures applied on top of it) and its
                 // isolation flag so every mutant exercises the exact same test set.
                 filter_args: filter.args().clone(),
                 rerun_failures: filter.rerun_failures().map(<[RerunFailure]>::to_vec),
@@ -2764,19 +2766,9 @@ impl TestArgs {
     }
 
     /// Returns the flattened [`FilterArgs`] arguments merged with [`Config`].
-    /// Loads and applies filter from file if only last test run failures performed.
+    /// With `--rerun`, the last run failures are applied on top of the merged filter.
     pub fn filter(&self, config: &Config) -> Result<ProjectPathsAwareFilter> {
         let mut filter = self.filter.clone();
-        let rerun_failures = if self.rerun {
-            let failures = last_run_failures(config);
-            // An explicit `--match-test` narrows the recorded failures instead of being replaced.
-            if filter.test_pattern.is_none() {
-                filter.test_pattern = failures.test_pattern;
-            }
-            failures.failures
-        } else {
-            None
-        };
         if filter.path_pattern.is_some() {
             if self.path.is_some() {
                 bail!("Can not supply both --match-path and |path|");
@@ -2785,8 +2777,13 @@ impl TestArgs {
             filter.path_pattern = self.path.clone();
         }
         let mut filter = filter.merge_with_config(config);
-        if let Some(failures) = rerun_failures {
-            filter.set_rerun_failures(failures);
+        if self.rerun {
+            let LastRunFailures { test_pattern, failures } = last_run_failures(config);
+            if let Some(failures) = failures {
+                filter.set_rerun_failures(failures);
+            } else {
+                filter.args_mut().rerun_pattern = test_pattern;
+            }
         }
         Ok(filter)
     }
@@ -3269,28 +3266,21 @@ fn format_matching_debug_tests(matching_tests: &[RerunFailure]) -> String {
 }
 
 struct LastRunFailures {
+    /// Test name pattern from a legacy failure file.
     test_pattern: Option<Regex>,
+    /// Contract/test pairs from a versioned failure file.
     failures: Option<Vec<RerunFailure>>,
 }
 
-/// Load persisted filter (with last test run failures) from file.
+/// Load persisted last test run failures from file.
 fn last_run_failures(config: &Config) -> LastRunFailures {
     let Ok(filter) = fs::read_to_string(&config.test_failures_file) else {
         return LastRunFailures { test_pattern: None, failures: None };
     };
 
     if let Ok(failures) = serde_json::from_str::<RerunFailures>(&filter) {
-        if failures.failures.is_empty() {
-            return LastRunFailures { test_pattern: None, failures: None };
-        }
-        let test_pattern = failures
-            .failures
-            .iter()
-            .map(|failure| regex::escape(&failure.test))
-            .collect::<Vec<_>>()
-            .join("|");
-        let test_pattern = Regex::new(&test_pattern).ok();
-        return LastRunFailures { test_pattern, failures: Some(failures.failures) };
+        let failures = Some(failures.failures).filter(|failures| !failures.is_empty());
+        return LastRunFailures { test_pattern: None, failures };
     }
 
     // Legacy format: a plain regex.
@@ -3302,27 +3292,21 @@ fn last_run_failures(config: &Config) -> LastRunFailures {
     LastRunFailures { test_pattern, failures: None }
 }
 
-/// Persist the test failures for `--rerun`. A recorded failure is dropped once its test ran again,
-/// so a passing run clears it while a narrowed run leaves unrelated failures in place. The file is
-/// removed when nothing is left, which makes the next `--rerun` a regular run.
+/// Persist the failures of the completed test run for `--rerun`, replacing the previous record.
+/// The file is removed when the run recorded no failures, so the next `--rerun` is a regular run.
 fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
-    let ran_again = |failure: &RerunFailure| {
-        outcome.results.get(&failure.contract).is_some_and(|suite| {
-            suite.test_results.keys().any(|signature| {
-                failure.test == *signature || signature.split('(').next() == Some(&failure.test)
-            })
+    let failures = outcome
+        .results
+        .iter()
+        .flat_map(|(contract, suite)| {
+            suite.test_results.iter().filter(|(_, result)| result.status.is_failure()).flat_map(
+                move |(test_name, test_result)| {
+                    rerun_filter_matches(test_name, test_result)
+                        .map(move |test| RerunFailure { contract: contract.clone(), test })
+                },
+            )
         })
-    };
-    let mut failures = last_run_failures(config).failures.unwrap_or_default();
-    failures.retain(|failure| !ran_again(failure));
-    failures.extend(outcome.results.iter().flat_map(|(contract, suite)| {
-        suite.test_results.iter().filter(|(_, result)| result.status.is_failure()).flat_map(
-            move |(test_name, test_result)| {
-                rerun_filter_matches(test_name, test_result)
-                    .map(move |test| RerunFailure { contract: contract.clone(), test })
-            },
-        )
-    }));
+        .collect::<Vec<_>>();
 
     if failures.is_empty() {
         let _ = fs::remove_file(&config.test_failures_file);

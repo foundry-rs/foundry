@@ -661,6 +661,7 @@ mod tests {
             path_pattern: None,
             path_pattern_inverse: None,
             coverage_pattern_inverse: None,
+            rerun_pattern: None,
         }
     }
 

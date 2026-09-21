@@ -464,7 +464,7 @@ Ran 2 test suites [ELAPSED]: 1 tests passed, 1 failed, 0 skipped (2 total tests)
 "#]]);
 });
 
-forgetest_init!(rerun_respects_match_test_and_clears_passed_failures, |prj, cmd| {
+forgetest_init!(rerun_intersects_filters_and_replaces_cache, |prj, cmd| {
     prj.add_test(
         "RerunFilter.t.sol",
         r#"
@@ -488,13 +488,28 @@ contract RerunFilterTest is Test {
 
     cmd.args(["test", "-j1"]).assert_failure();
 
+    // A config `match_test` is applied on top of the recorded failures instead of being dropped.
+    prj.update_config(|config| {
+        config.test_pattern = Some(regex::Regex::new("testBroken[AB]").unwrap().into());
+    });
+    cmd.forge_fuse().args(["test", "--rerun", "-j1"]).assert_failure().stdout_eq(str![[r#"
+...
+Ran 2 tests for test/RerunFilter.t.sol:RerunFilterTest
+[FAIL: assertion failed] testBrokenA() ([GAS])
+[FAIL: assertion failed] testBrokenB() ([GAS])
+Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 2 failed, 0 skipped (2 total tests)
+...
+"#]]);
+
     // `--match-test` narrows the recorded failures instead of being replaced by them.
+    prj.update_config(|config| config.test_pattern = None);
     cmd.forge_fuse()
         .args(["test", "--rerun", "--match-test", "testBrokenA", "-j1"])
         .assert_failure()
         .stdout_eq(str![[r#"
-No files changed, compilation skipped
-
+...
 Ran 1 test for test/RerunFilter.t.sol:RerunFilterTest
 [FAIL: assertion failed] testBrokenA() ([GAS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
@@ -524,19 +539,18 @@ contract RerunFilterTest is Test {
 "#,
     );
 
-    // The narrowed run did not touch `testBrokenB`, so both failures are still recorded.
+    // Each completed run replaces the record, so only the narrowed run's failure is left.
     cmd.forge_fuse().args(["test", "--rerun", "-j1"]).assert_success().stdout_eq(str![[r#"
 ...
-Ran 2 tests for test/RerunFilter.t.sol:RerunFilterTest
+Ran 1 test for test/RerunFilter.t.sol:RerunFilterTest
 [PASS] testBrokenA() ([GAS])
-[PASS] testBrokenB() ([GAS])
-Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
 
-    // Both passed, so nothing is recorded and `--rerun` is a regular run again.
+    // A run without failures clears the record, so `--rerun` is a regular run again.
     cmd.forge_fuse().args(["test", "--rerun", "-j1"]).assert_success().stdout_eq(str![[r#"
 No files changed, compilation skipped
 
@@ -548,5 +562,57 @@ Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 
+"#]]);
+});
+
+forgetest_init!(rerun_intersects_legacy_failure_pattern, |prj, cmd| {
+    prj.add_test(
+        "RerunLegacy.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract RerunLegacyTest is Test {
+    function testBrokenA() public {
+        assertTrue(false);
+    }
+
+    function testBrokenB() public {
+        assertTrue(false);
+    }
+}
+"#,
+    );
+
+    // Older versions persisted the failed test names as a plain regex. It is applied on top of
+    // `--match-test` in both directions instead of one replacing the other.
+    let failures_file = prj.root().join("cache/test-failures");
+    std::fs::create_dir_all(failures_file.parent().unwrap()).unwrap();
+    std::fs::write(&failures_file, "testBroken[AB]").unwrap();
+
+    cmd.args(["test", "--rerun", "--match-test", "testBrokenA", "-j1"]).assert_failure().stdout_eq(
+        str![[r#"
+...
+Ran 1 test for test/RerunLegacy.t.sol:RerunLegacyTest
+[FAIL: assertion failed] testBrokenA() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+...
+"#]],
+    );
+
+    std::fs::write(&failures_file, "testBrokenB").unwrap();
+
+    cmd.forge_fuse()
+        .args(["test", "--rerun", "--match-test", "testBroken[AB]", "-j1"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/RerunLegacy.t.sol:RerunLegacyTest
+[FAIL: assertion failed] testBrokenB() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+...
 "#]]);
 });
