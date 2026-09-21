@@ -487,7 +487,7 @@ contract RerunFilterTest is Test {
 
     // A CLI `match_test` takes precedence over config, then intersects the recorded failures.
     prj.update_config(|config| {
-        config.test_pattern = Some(regex::Regex::new("testBrokenA").unwrap().into());
+        config.test_pattern = Some(regex::Regex::new(r"^testBrokenA\b").unwrap().into());
     });
     cmd.forge_fuse()
         .args(["test", "--rerun", "--match-test", "testBrokenB", "-j1"])
@@ -506,7 +506,7 @@ Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
     prj.update_config(|config| config.test_pattern = None);
     cmd.forge_fuse().args(["test", "-j1"]).assert_failure();
     prj.update_config(|config| {
-        config.test_pattern = Some(regex::Regex::new("testBrokenA").unwrap().into());
+        config.test_pattern = Some(regex::Regex::new(r"^testBrokenA\b").unwrap().into());
     });
     cmd.forge_fuse().args(["test", "--rerun", "-j1"]).assert_failure().stdout_eq(str![[r#"
 ...
