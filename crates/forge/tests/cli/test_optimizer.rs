@@ -1425,18 +1425,34 @@ contract Root {
 });
 
 forgetest_init!(filtered_tests_support_overlapping_source_roots, |prj, cmd| {
-    prj.update_config(|config| config.script = ".".into());
+    prj.update_config(|config| {
+        config.script = ".".into();
+        config.dynamic_test_linking = true;
+    });
     prj.add_source("SourceFixture.sol", "contract SourceFixture {}");
+    prj.add_source(
+        "Child.sol",
+        "contract Child { function value() external pure returns (uint256) { return 1; } }",
+    );
+    prj.add_source(
+        "Factory.sol",
+        "import {Child} from './Child.sol'; contract Factory { function create() external returns (Child) { return new Child(); } }",
+    );
     prj.add_test("fixtures/Fixture.sol", "contract Fixture {}");
     prj.add_test(
         "Fixture.t.sol",
         r#"
 import {Test} from "forge-std/Test.sol";
+import {Child} from "../src/Child.sol";
+import {Factory} from "../src/Factory.sol";
 
 contract FixtureTest is Test {
     function testFixture() public {
         assertGt(vm.getCode("test/fixtures/Fixture.sol:Fixture").length, 0);
         assertGt(vm.getCode("src/SourceFixture.sol:SourceFixture").length, 0);
+        Factory factory = new Factory();
+        Child child = factory.create();
+        assertEq(child.value(), 1);
     }
 }
 "#,
@@ -3941,9 +3957,38 @@ contract ColonTest {
     function test_parseable_identifier() public {
         require(new Parsed().value() == 111, "changed parsed");
     }
+
+    function test_running_profile_bytecode() public {
+        require(
+            keccak256(address(new Zero()).code) == keccak256(type(Zero).runtimeCode),
+            "wrong profile bytecode"
+        );
+    }
 }
 "#,
     );
+    prj.update_config(|config| {
+        config.additional_compiler_profiles = vec![SettingsOverrides {
+            name: "optimized".to_owned(),
+            via_ir: None,
+            evm_version: None,
+            optimizer: Some(true),
+            optimizer_runs: Some(10_000),
+            bytecode_hash: None,
+        }];
+        config.compilation_restrictions = vec![CompilationRestrictions {
+            paths: "test/Colon.t.sol".parse().unwrap(),
+            version: None,
+            via_ir: None,
+            bytecode_hash: None,
+            min_optimizer_runs: Some(10_000),
+            optimizer_runs: None,
+            max_optimizer_runs: None,
+            min_evm_version: None,
+            evm_version: None,
+            max_evm_version: None,
+        }];
+    });
 
     for dynamic_test_linking in [false, true] {
         prj.update_config(|config| config.dynamic_test_linking = dynamic_test_linking);
@@ -3964,11 +4009,12 @@ contract ColonTest {
         );
         cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
 ...
-Ran 3 tests for test/Colon.t.sol:ColonTest
+Ran 4 tests for test/Colon.t.sol:ColonTest
 [FAIL: changed args] test_args() ([GAS])
 [FAIL: changed parsed] test_parseable_identifier() ([GAS])
+[PASS] test_running_profile_bytecode() ([GAS])
 [FAIL: changed zero] test_zero() ([GAS])
-Suite result: FAILED. 0 passed; 3 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 1 passed; 3 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
     }

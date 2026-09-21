@@ -47,7 +47,7 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
             input,
             paths,
             mocks,
-            &mut PreprocessorState::default(),
+            &mut PreprocessorState::untracked(),
             &source_units,
         )
     }
@@ -170,7 +170,7 @@ impl Preprocessor<MultiCompiler> for DynamicTestLinkingPreprocessor {
             input,
             paths,
             mocks,
-            &mut PreprocessorState::default(),
+            &mut PreprocessorState::untracked(),
             &source_units,
         )
     }
@@ -218,4 +218,77 @@ fn mark_conservative(
 #[track_caller]
 fn span_to_range(source_map: &SourceMap, span: Span) -> Range<usize> {
     source_map.span_to_range(span).unwrap()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use foundry_compilers::{CompilerInput, artifacts::Source, solc::SolcSettings};
+    use semver::Version;
+
+    fn input() -> (tempfile::TempDir, ProjectPathsConfig<SolcLanguage>, SolcVersionedInput) {
+        let root = tempfile::tempdir().unwrap();
+        let paths = ProjectPathsConfig::builder().root(root.path()).build().unwrap();
+        let sources = [
+            ("src/Dep.sol", "contract Dep {}"),
+            ("test/Mock.sol", "import '../src/Dep.sol'; contract Mock is Dep {}"),
+            (
+                "test/Deploy.sol",
+                "import '../src/Dep.sol'; contract Deploy { function deploy() public returns (Dep) { return new Dep(); } function native() public pure returns (bytes memory) { return type(Dep).creationCode; } }",
+            ),
+        ]
+        .into_iter()
+        .map(|(path, content)| (PathBuf::from(path), Source::new(content)))
+        .collect();
+        let input = SolcVersionedInput::build(
+            sources,
+            SolcSettings::default(),
+            SolcLanguage::Solidity,
+            Version::new(0, 8, 30),
+        );
+        (root, paths, input)
+    }
+
+    fn assert_preprocessed(
+        paths: &ProjectPathsConfig<SolcLanguage>,
+        input: &SolcVersionedInput,
+        mocks: &HashSet<PathBuf>,
+    ) {
+        let source = &input.input.sources[&PathBuf::from("test/Deploy.sol")].content;
+        assert!(!source.contains("return new Dep();"), "eligible deployment was not rewritten");
+        assert!(source.contains("type(Dep).creationCode"), "native dependency was lost");
+        assert!(mocks.contains(&paths.root.join("test/Mock.sol")));
+    }
+
+    #[test]
+    fn direct_solc_preprocess_tracks_mocks_without_cache_context() {
+        let (_root, paths, mut input) = input();
+        let mut mocks = HashSet::new();
+        <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::preprocess(
+            &DynamicTestLinkingPreprocessor,
+            &SolcCompiler::default(),
+            &mut input,
+            &paths,
+            &mut mocks,
+        )
+        .unwrap();
+        assert_preprocessed(&paths, &input, &mocks);
+    }
+
+    #[test]
+    fn direct_multi_preprocess_tracks_mocks_without_cache_context() {
+        let (_root, paths, input) = input();
+        let mut input = MultiCompilerInput::Solc(Box::new(input));
+        let mut mocks = HashSet::new();
+        <DynamicTestLinkingPreprocessor as Preprocessor<MultiCompiler>>::preprocess(
+            &DynamicTestLinkingPreprocessor,
+            &MultiCompiler { solc: Some(SolcCompiler::default()), vyper: None },
+            &mut input,
+            paths.with_language_ref(),
+            &mut mocks,
+        )
+        .unwrap();
+        let MultiCompilerInput::Solc(input) = input else { unreachable!() };
+        assert_preprocessed(&paths, &input, &mocks);
+    }
 }

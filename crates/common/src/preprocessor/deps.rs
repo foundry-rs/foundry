@@ -89,8 +89,9 @@ impl PreprocessorDependencies {
                 let base = gcx.hir.contract(*base_id);
                 if let FileName::Real(base_path) = &gcx.hir.source(base.source).file.name {
                     let base_path = normalize_path(&root_dir.join(base_path));
+                    let is_source_contract = is_path_in_dir(&base_path, src_dir, root_dir);
+                    inherits_source_contract |= is_source_contract;
                     if base_path != full_path {
-                        inherits_source_contract |= is_path_in_dir(&base_path, src_dir, root_dir);
                         inherited_dependencies.insert(base_path);
                     }
                 }
