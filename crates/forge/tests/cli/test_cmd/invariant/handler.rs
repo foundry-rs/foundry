@@ -352,6 +352,76 @@ contract AlwaysAssertTest is Test {
     assert!(entries_after.is_empty(), "stale handler file must be deleted, got {entries_after:?}");
 });
 
+forgetest_init!(handler_replay_uses_full_persisted_sequence_after_depth_decrease, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 20;
+        config.invariant.fail_on_revert = false;
+    });
+    prj.add_source(
+        "DelayedAssert.sol",
+        r#"
+contract DelayedAssert {
+    uint256 public calls;
+
+    function inc() external {
+        calls++;
+        assert(calls < 5);
+    }
+}
+   "#,
+    );
+    prj.add_test(
+        "DelayedAssertTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {DelayedAssert} from "../src/DelayedAssert.sol";
+
+contract DelayedAssertTest is Test {
+    DelayedAssert handler;
+
+    function setUp() public {
+        handler = new DelayedAssert();
+        targetContract(address(handler));
+    }
+
+    function invariant_ok() public view {}
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_ok"]).assert_failure();
+
+    let handlers_dir = prj
+        .root()
+        .join("cache")
+        .join("invariant")
+        .join("failures")
+        .join("DelayedAssertTest")
+        .join("handlers");
+    let file = std::fs::read_dir(&handlers_dir)
+        .unwrap()
+        .filter_map(|entry| entry.ok())
+        .find(|entry| entry.path().extension().is_some_and(|extension| extension == "json"))
+        .expect("persisted handler file");
+    let json: serde_json::Value =
+        serde_json::from_reader(std::fs::File::open(file.path()).unwrap()).unwrap();
+    assert_eq!(json["call_sequence"].as_array().unwrap().len(), 5);
+
+    // No depth-three campaign could reach the assertion, and runs = 0 prevents rediscovery.
+    // The failure must therefore come from replaying all five calls in the persisted sequence.
+    prj.update_config(|config| {
+        config.invariant.runs = 0;
+        config.invariant.depth = 3;
+    });
+    cmd.forge_fuse().args(["test", "--mt", "invariant_ok"]).assert_failure().stderr_eq(str![[r#"
+...
+Warning: Replayed handler-side assertion bug from [..]
+...
+"#]]);
+    assert!(file.path().exists(), "replayed handler file should be preserved");
+});
+
 // Two distinct handler contracts → two persisted files, both reported.
 forgetest_init!(multi_handler_bugs_each_persist_independently, |prj, cmd| {
     prj.update_config(|config| {
