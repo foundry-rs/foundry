@@ -202,6 +202,9 @@ performance claims.
 
 ## Notes
 
+- The fragment-based changelog workflow has been removed. Do not create or
+  restore `.changelog/` or add changelog fragment files; release notes are
+  generated from pull requests.
 - Use `RUST_LOG=<filter>` for debugging CLI internals, for example
   `RUST_LOG=forge` or `RUST_LOG=cast`.
 - Disclose AI assistance in PRs when used, per `CONTRIBUTING.md`.
