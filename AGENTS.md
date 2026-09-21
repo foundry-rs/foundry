@@ -207,7 +207,6 @@ performance claims.
   generated from pull requests.
 - Use `RUST_LOG=<filter>` for debugging CLI internals, for example
   `RUST_LOG=forge` or `RUST_LOG=cast`.
-- Disclose AI assistance in PRs when used, per `CONTRIBUTING.md`.
 - Do not send spelling-only or grammar-only documentation PRs.
 - Keep release feature lists aligned between the root `Makefile` and release
   workflows when changing published CLI feature surfaces.
