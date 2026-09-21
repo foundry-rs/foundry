@@ -1619,6 +1619,7 @@ impl NodeConfig {
                     config.endpoint_identity,
                     config.block_number,
                     config.block_hash,
+                    config.bal_seeded,
                 )
                 .await?
             {
@@ -1935,9 +1936,29 @@ impl NodeConfig {
         expected: ForkEndpointIdentity,
         block_number: u64,
         block_hash: B256,
+        require_conclusive: bool,
     ) -> Result<bool> {
-        for eth_rpc_url in Self::fork_urls_requiring_revalidation(fork_urls, expected) {
-            if !self.fork_context_matches(eth_rpc_url, expected, block_number, block_hash).await? {
+        let urls = if require_conclusive {
+            fork_urls
+        } else {
+            Self::fork_urls_requiring_revalidation(fork_urls, expected)
+        };
+        for eth_rpc_url in urls {
+            let matches = if require_conclusive {
+                let mut probe = self.node_info_probe(expected.is_authoritative());
+                self.fork_context_matches_with_probe(
+                    eth_rpc_url,
+                    expected,
+                    block_number,
+                    block_hash,
+                    &mut probe,
+                )
+                .await?
+                    && !probe.inconclusive
+            } else {
+                self.fork_context_matches(eth_rpc_url, expected, block_number, block_hash).await?
+            };
+            if !matches {
                 return Ok(false);
             }
         }
@@ -2269,13 +2290,34 @@ latest block number: {latest_block}"
         // Use source-chain rules, never the local execution hardfork override. Anvil sources
         // may expose manually modified state under the same block hash as their original BAL.
         // Inconclusive discovery must keep state reads lazy even if a later probe is unsupported.
-        let bal_seed = if !node_info_probe.inconclusive
+        let mut bal_seed = if !node_info_probe.inconclusive
             && self.fork_bal_eligible(fork_identity, block.header.timestamp())
         {
             bal::fetch(&provider, &block).await
         } else {
             None
         };
+        if bal_seed.is_some() {
+            // Even a single anonymous endpoint can become mutable while its BAL is fetched.
+            // Check every source before opening the cache or applying any seeded state.
+            for url in std::iter::once(&eth_rpc_url).chain(self.fork_urls.iter().skip(1)) {
+                let mut probe = self.node_info_probe(false);
+                eyre::ensure!(
+                    self.fork_context_matches_with_probe(
+                        url,
+                        fork_identity,
+                        fork_block_number,
+                        block_hash,
+                        &mut probe,
+                    )
+                    .await?,
+                    "fork endpoint changed while its block access list was being fetched"
+                );
+                if probe.inconclusive {
+                    bal_seed = None;
+                }
+            }
+        }
 
         let source_id = fork_source_id(&self.fork_urls, &self.fork_headers);
         let account_fetch_policy = account_fetch_policy_for_source(source_chain_id, target_profile);
@@ -2337,6 +2379,7 @@ latest block number: {latest_block}"
             fork_chain_id: self.fork_chain_id.map(|chain_id| chain_id.to()),
             hardfork: Some(effective_hardfork),
             endpoint_identity: fork_identity,
+            bal_seeded: bal_seed.is_some(),
             timestamp: block.header.timestamp(),
             base_fee: block.header.base_fee_per_gas().map(|g| g as u128),
             timeout: self.fork_request_timeout,

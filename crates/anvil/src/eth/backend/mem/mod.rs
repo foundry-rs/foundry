@@ -4871,6 +4871,7 @@ impl<N: Network> Backend<N> {
                     staged_client_config.endpoint_identity,
                     staged_client_config.block_number,
                     staged_client_config.block_hash,
+                    staged_client_config.bal_seeded,
                 )
                 .await?
             {

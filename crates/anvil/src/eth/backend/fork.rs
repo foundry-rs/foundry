@@ -910,6 +910,8 @@ pub struct ClientForkConfig<N: Network = AnyNetwork> {
     pub hardfork: Option<FoundryHardfork>,
     /// Stable endpoint identity captured with the fork block.
     pub(crate) endpoint_identity: ForkEndpointIdentity,
+    /// Whether BAL state requires conclusive identity validation before exposing the fork.
+    pub(crate) bal_seeded: bool,
     /// The timestamp for the forked block
     pub timestamp: u64,
     /// The basefee of the forked block

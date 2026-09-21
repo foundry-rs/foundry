@@ -33,14 +33,18 @@ const CONTRACT: Address = address!("000000000000000000000000000000000000ba10");
 #[derive(Clone, Copy, Debug)]
 enum BalResponse {
     Valid,
+    CanonicalOnly,
+    LegacyOnly,
     Timing,
     Unsupported,
+    InternalError,
     Null,
     BadCommitment,
     WithoutCommitment,
     PreCancun,
     Malformed,
     Timeout,
+    LegacyTimeout,
     NodeInfoTimeout,
     NodeInfoTimeoutOnce,
     NodeInfoInternalError,
@@ -115,16 +119,33 @@ impl BalProxy {
                     }
                     if (!reveal_anvil && matches!(method, "anvil_nodeInfo" | "anvil_metadata"))
                         || (method == "eth_getAccountInfo" && matches!(mode, BalResponse::Timing))
+                        || (matches!(
+                            method,
+                            "eth_getBlockAccessList" | "eth_getBlockAccessListByBlockHash"
+                        ) && matches!(mode, BalResponse::Unsupported))
                         || (method == "eth_getBlockAccessListByBlockHash"
-                            && matches!(mode, BalResponse::Unsupported))
+                            && matches!(mode, BalResponse::CanonicalOnly))
+                        || (method == "eth_getBlockAccessList"
+                            && matches!(mode, BalResponse::LegacyOnly | BalResponse::LegacyTimeout))
                     {
                         return Json(json!({
                             "jsonrpc": "2.0", "id": request["id"],
                             "error": {"code": -32601, "message": "method not found"},
                         }));
                     }
-                    if method == "eth_getBlockAccessListByBlockHash" {
+                    if method == "eth_getBlockAccessListByBlockHash"
+                        && matches!(mode, BalResponse::LegacyTimeout)
+                    {
+                        return futures::future::pending().await;
+                    }
+                    if method == "eth_getBlockAccessList" {
                         match mode {
+                            BalResponse::InternalError => {
+                                return Json(json!({
+                                    "jsonrpc": "2.0", "id": request["id"],
+                                    "error": {"code": -32603, "message": "injected internal error"},
+                                }));
+                            }
                             BalResponse::Null => {
                                 return Json(json!({
                                     "jsonrpc": "2.0", "id": request["id"], "result": null,
@@ -149,7 +170,7 @@ impl BalProxy {
                         .json::<Value>()
                         .await
                         .unwrap();
-                    if method == "eth_getBlockAccessListByBlockHash"
+                    if method == "eth_getBlockAccessList"
                         && matches!(mode, BalResponse::BadCommitment)
                     {
                         response["result"] = json!([]);
@@ -259,10 +280,11 @@ impl BalOrigin {
 #[tokio::test(flavor = "multi_thread")]
 async fn fork_bal_seeds_changed_slots_without_eager_account_requests() {
     let origin = BalOrigin::new().await;
-    let proxy = BalProxy::new(&origin.handle, BalResponse::Valid, false).await;
+    let proxy = BalProxy::new(&origin.handle, BalResponse::CanonicalOnly, false).await;
     let (api, _handle) = spawn(origin.config(&proxy)).await;
 
-    assert_eq!(proxy.count("eth_getBlockAccessListByBlockHash"), 1);
+    assert_eq!(proxy.count("eth_getBlockAccessList"), 1);
+    assert_eq!(proxy.count("eth_getBlockAccessListByBlockHash"), 0);
     for method in ["eth_getAccountInfo", "eth_getBalance", "eth_getTransactionCount", "eth_getCode"]
     {
         assert_eq!(proxy.count(method), 0, "{method} must remain lazy");
@@ -271,7 +293,7 @@ async fn fork_bal_seeds_changed_slots_without_eager_account_requests() {
         .requests
         .lock()
         .iter()
-        .find(|request| request["method"] == "eth_getBlockAccessListByBlockHash")
+        .find(|request| request["method"] == "eth_getBlockAccessList")
         .cloned()
         .unwrap();
     assert_eq!(bal_request["params"][0], json!(origin.block_hash));
@@ -291,13 +313,42 @@ async fn fork_bal_seeds_changed_slots_without_eager_account_requests() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn fork_bal_falls_back_to_legacy_method_when_canonical_is_unsupported() {
+    let origin = BalOrigin::new().await;
+    let proxy = BalProxy::new(&origin.handle, BalResponse::LegacyOnly, false).await;
+    let (api, _handle) = spawn(origin.config(&proxy)).await;
+    let requests = proxy
+        .requests
+        .lock()
+        .iter()
+        .filter(|request| {
+            matches!(
+                request["method"].as_str(),
+                Some("eth_getBlockAccessList" | "eth_getBlockAccessListByBlockHash")
+            )
+        })
+        .map(|request| (request["method"].clone(), request["params"].clone()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        requests,
+        vec![
+            (json!("eth_getBlockAccessList"), json!([origin.block_hash])),
+            (json!("eth_getBlockAccessListByBlockHash"), json!([origin.block_hash])),
+        ]
+    );
+    proxy.clear();
+    assert_eq!(api.storage_at(CONTRACT, U256::ZERO, None).await.unwrap(), B256::from(U256::ONE));
+    assert_eq!(proxy.count("eth_getStorageAt"), 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn fork_bal_matches_lazy_state_across_commits_snapshots_and_reset() {
     let origin = BalOrigin::new().await;
     let mut final_balances = Vec::new();
     for no_bal in [false, true] {
         let proxy = BalProxy::new(&origin.handle, BalResponse::Valid, false).await;
         let (api, _handle) = spawn(origin.config(&proxy).with_no_bal(no_bal)).await;
-        assert_eq!(proxy.count("eth_getBlockAccessListByBlockHash"), usize::from(!no_bal));
+        assert_eq!(proxy.count("eth_getBlockAccessList"), usize::from(!no_bal));
         let snapshot = api.evm_snapshot().await.unwrap();
         for value in [2, 3] {
             BalOrigin::increment(&api, origin.sender).await;
@@ -325,7 +376,7 @@ async fn fork_bal_matches_lazy_state_across_commits_snapshots_and_reset() {
             api.storage_at(CONTRACT, U256::ZERO, None).await.unwrap(),
             B256::from(U256::ONE)
         );
-        assert_eq!(proxy.count("eth_getBlockAccessListByBlockHash"), 2 * usize::from(!no_bal));
+        assert_eq!(proxy.count("eth_getBlockAccessList"), 2 * usize::from(!no_bal));
     }
     assert_eq!(final_balances[0], final_balances[1]);
 }
@@ -335,10 +386,12 @@ async fn fork_bal_failure_falls_back_without_delaying_normal_rpc_timeout() {
     let origin = BalOrigin::new().await;
     for mode in [
         BalResponse::Unsupported,
+        BalResponse::InternalError,
         BalResponse::Null,
         BalResponse::BadCommitment,
         BalResponse::Malformed,
         BalResponse::Timeout,
+        BalResponse::LegacyTimeout,
     ] {
         let proxy = BalProxy::new(&origin.handle, mode, false).await;
         let (api, _handle) = tokio::time::timeout(
@@ -347,7 +400,12 @@ async fn fork_bal_failure_falls_back_without_delaying_normal_rpc_timeout() {
         )
         .await
         .unwrap_or_else(|_| panic!("optional BAL request must have a bounded deadline: {mode:?}"));
-        assert_eq!(proxy.count("eth_getBlockAccessListByBlockHash"), 1, "{mode:?}");
+        assert_eq!(proxy.count("eth_getBlockAccessList"), 1, "{mode:?}");
+        assert_eq!(
+            proxy.count("eth_getBlockAccessListByBlockHash"),
+            usize::from(matches!(mode, BalResponse::Unsupported | BalResponse::LegacyTimeout)),
+            "{mode:?}"
+        );
         proxy.clear();
         assert_eq!(
             api.storage_at(CONTRACT, U256::ZERO, None).await.unwrap(),
@@ -419,7 +477,7 @@ async fn fork_bal_skips_mutable_anvil_sources_including_historical_blocks() {
         }
         let proxy = BalProxy::new(&origin.handle, BalResponse::Valid, true).await;
         let (api, _handle) = spawn(origin.config(&proxy)).await;
-        assert_eq!(proxy.count("eth_getBlockAccessListByBlockHash"), 0);
+        assert_eq!(proxy.count("eth_getBlockAccessList"), 0);
         assert_eq!(
             api.storage_at(CONTRACT, U256::ZERO, None).await.unwrap(),
             B256::from(U256::from(99)),
@@ -487,7 +545,7 @@ async fn fork_bal_transaction_hash_uses_parent_seed_and_replays_target_prefix() 
         .requests
         .lock()
         .iter()
-        .filter(|request| request["method"] == "eth_getBlockAccessListByBlockHash")
+        .filter(|request| request["method"] == "eth_getBlockAccessList")
         .map(|request| request["params"][0].clone())
         .collect::<Vec<_>>();
     assert_eq!(requested_blocks, vec![json!(origin.block_hash)]);
@@ -508,7 +566,7 @@ async fn fork_bal_accepts_uncommitted_history_but_skips_pre_cancun_sources() {
         let proxy = BalProxy::new(&origin.handle, mode, false).await;
         // The explicit Amsterdam execution override must not change source eligibility.
         let (api, _handle) = spawn(origin.config(&proxy)).await;
-        assert_eq!(proxy.count("eth_getBlockAccessListByBlockHash"), expected_bal_calls);
+        assert_eq!(proxy.count("eth_getBlockAccessList"), expected_bal_calls);
         assert_eq!(
             api.storage_at(CONTRACT, U256::ZERO, None).await.unwrap(),
             B256::from(U256::ONE),
@@ -586,7 +644,7 @@ async fn fork_bal_local_timing() {
                     "startup_ms": startup.as_secs_f64() * 1000.0,
                     "startup_and_first_transaction_ms": first_transaction.as_secs_f64() * 1000.0,
                     "startup_and_three_transactions_ms": total.as_secs_f64() * 1000.0,
-                    "bal_requests": proxy.count("eth_getBlockAccessListByBlockHash"),
+                    "bal_requests": proxy.count("eth_getBlockAccessList"),
                     "storage_requests": proxy.count("eth_getStorageAt"),
                     "account_requests": proxy.count("eth_getAccountInfo"),
                 }));

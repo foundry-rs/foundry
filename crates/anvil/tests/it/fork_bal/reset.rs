@@ -30,6 +30,7 @@ use tracing_subscriber::{
 struct ResetFailure {
     block_number: Option<u64>,
     bal_returned: bool,
+    post_bal_block_lookups: usize,
     rejected_blocks: usize,
 }
 
@@ -61,10 +62,14 @@ impl ResetProxy {
                             && let Some(number) = failure.block_number
                             && request["params"][0] == json!(format!("{number:#x}"))
                         {
-                            failure.rejected_blocks += 1;
-                            return Json(json!({
-                                "jsonrpc": "2.0", "id": request["id"], "result": null,
-                            }));
+                            failure.post_bal_block_lookups += 1;
+                            // Allow seed validation, then fail after the seed is applied.
+                            if failure.post_bal_block_lookups > 1 {
+                                failure.rejected_blocks += 1;
+                                return Json(json!({
+                                    "jsonrpc": "2.0", "id": request["id"], "result": null,
+                                }));
+                            }
                         }
                     }
                     let response = client
@@ -76,9 +81,7 @@ impl ResetProxy {
                         .json::<Value>()
                         .await
                         .unwrap();
-                    if method == "eth_getBlockAccessListByBlockHash"
-                        && control.lock().block_number.is_some()
-                    {
+                    if method == "eth_getBlockAccessList" && control.lock().block_number.is_some() {
                         assert!(response["result"].as_array().is_some_and(|bal| !bal.is_empty()));
                         control.lock().bal_returned = true;
                     }
@@ -217,7 +220,8 @@ async fn fork_bal_failed_reset_after_seed_preserves_persistent_cache() {
         .with_subscriber(tracing_subscriber::registry().with(applied_seeds.clone()))
         .await;
     assert!(result.is_err());
-    assert_eq!(proxy.count("eth_getBlockAccessListByBlockHash"), 1);
+    assert_eq!(proxy.count("eth_getBlockAccessList"), 1);
+    assert_eq!(reset_proxy.failure.lock().post_bal_block_lookups, 2);
     assert_eq!(reset_proxy.failure.lock().rejected_blocks, 1);
     assert!(
         applied_seeds.0.lock().iter().any(|seed| {
@@ -243,7 +247,7 @@ async fn fork_bal_failed_reset_after_seed_preserves_persistent_cache() {
     let (api, _handle) = spawn(config.with_no_bal(true)).await;
     assert_eq!(api.storage_at(CONTRACT, U256::ZERO, None).await.unwrap(), B256::from(U256::ONE));
     assert_eq!(api.storage_at(CONTRACT, U256::ONE, None).await.unwrap(), B256::from(U256::from(9)));
-    assert_eq!(proxy.count("eth_getBlockAccessListByBlockHash"), 0);
+    assert_eq!(proxy.count("eth_getBlockAccessList"), 0);
     assert_eq!(proxy.count("eth_getStorageAt"), 0, "the reopened fork must read its disk cache");
     assert!(!candidate_path.exists());
 }

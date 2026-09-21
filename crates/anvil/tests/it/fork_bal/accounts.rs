@@ -5,10 +5,10 @@ use crate::abi::{COUNTER_INIT_CODE, COUNTER_RUNTIME_CODE};
 use alloy_network::{ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes, U256, address, bytes};
 use alloy_provider::Provider;
-use alloy_rpc_types::{Authorization, BlockNumberOrTag, TransactionRequest};
+use alloy_rpc_types::{Authorization, BlockId, BlockNumberOrTag, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use alloy_signer::SignerSync;
-use anvil::{eth::EthApi, spawn};
+use anvil::{EthereumHardfork, eth::EthApi, spawn};
 use foundry_primitives::FoundryNetwork;
 
 async fn pin_latest(origin: &mut BalOrigin) {
@@ -164,6 +164,56 @@ async fn fork_bal_create_destroy_and_create2_reuse_keep_storage_empty() {
     }
     assert!(outcomes[0].0);
     assert_eq!(outcomes[0], outcomes[1]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn fork_bal_historical_storage_keeps_local_deletion() {
+    let mut origin = BalOrigin::new().await;
+    // Empty calldata increments slot zero; nonempty calldata selfdestructs to the caller.
+    origin
+        .api
+        .anvil_set_code(CONTRACT, bytes!("361560075733ff5b60005460010160005500"))
+        .await
+        .unwrap();
+    BalOrigin::increment(&origin.api, origin.sender).await;
+    pin_latest(&mut origin).await;
+
+    for no_bal in [false, true] {
+        let proxy = BalProxy::new(&origin.handle, BalResponse::Valid, false).await;
+        // Source eligibility is Cancun+, but local Shanghai execution can delete existing storage.
+        let (api, _handle) = spawn(
+            origin
+                .config(&proxy)
+                .with_no_bal(no_bal)
+                .with_hardfork(Some(EthereumHardfork::Shanghai.into())),
+        )
+        .await;
+        assert_eq!(proxy.count("eth_getBlockAccessList"), usize::from(!no_bal));
+        proxy.clear();
+
+        // Keep the old slot unread: only BAL prefill should add it to the remote snapshot.
+        let (success, _) = mine_transaction(
+            &api,
+            TransactionRequest::default()
+                .with_from(origin.sender)
+                .with_to(CONTRACT)
+                .with_input(bytes!("01"))
+                .with_gas_limit(200_000),
+        )
+        .await;
+        assert!(success);
+        let deleted_block = BlockId::number(api.block_number().unwrap().to());
+        assert!(api.get_code(CONTRACT, None).await.unwrap().is_empty());
+        assert_eq!(api.storage_at(CONTRACT, U256::ZERO, None).await.unwrap(), B256::ZERO);
+
+        api.mine_one().await.unwrap();
+        assert_eq!(
+            api.storage_at(CONTRACT, U256::ZERO, Some(deleted_block)).await.unwrap(),
+            B256::ZERO,
+            "historical storage must stay deleted with no_bal={no_bal}"
+        );
+        assert_eq!(proxy.count("eth_getStorageAt"), 0);
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]

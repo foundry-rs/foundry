@@ -1,15 +1,14 @@
 //! Prefills immutable fork state from a validated block access list.
 
 use alloy_consensus::BlockHeader;
-use alloy_eips::{
-    BlockId,
-    eip7928::{BlockAccessList, compute_block_access_list_hash, validate_block_access_list},
+use alloy_eips::eip7928::{
+    BlockAccessList, compute_block_access_list_hash, validate_block_access_list,
 };
 use alloy_network::AnyRpcBlock;
 use alloy_primitives::{Address, B256, U256, map::U256Map};
 use alloy_provider::Provider;
 use eyre::{Result, WrapErr};
-use foundry_common::provider::RetryProvider;
+use foundry_common::provider::{RetryProvider, is_rpc_method_not_found};
 use foundry_evm::backend::BlockchainDb;
 use revm::state::{AccountInfo, Bytecode};
 use std::time::Duration;
@@ -28,10 +27,14 @@ pub(crate) async fn fetch(
     block: &AnyRpcBlock,
 ) -> Option<PreparedBalSeed> {
     let block_hash = block.header.hash;
-    let bal = match tokio::time::timeout(
-        Duration::from_millis(500),
-        provider.get_block_access_list(BlockId::hash(block_hash)),
-    )
+    let bal = match tokio::time::timeout(Duration::from_millis(500), async {
+        match provider.raw_request("eth_getBlockAccessList".into(), (block_hash,)).await {
+            Err(error) if is_rpc_method_not_found(&error) => {
+                provider.get_block_access_list_by_hash(block_hash).await
+            }
+            response => response,
+        }
+    })
     .await
     {
         Ok(Ok(Some(bal))) => bal,
