@@ -1546,6 +1546,7 @@ impl SymbolicExecutor {
             parents.push_back(branch);
         }
 
+        let call_input = in_size.read_from_memory(&mut self.cx, &state.memory, in_offset.clone());
         for (to, constraint) in candidates.into_iter().zip(candidate_constraints) {
             let mut branch = state.clone();
             branch.constraints.push(constraint);
@@ -1553,28 +1554,35 @@ impl SymbolicExecutor {
                 continue;
             }
 
-            let mut branch_worklist = VecDeque::new();
-            match self.call_concrete_target(
-                executor,
-                &mut branch,
-                &mut branch_worklist,
-                completed_paths,
-                kind,
-                to,
-                None,
-                value.clone(),
-                gas.clone(),
-                in_offset.clone(),
-                in_size.clone(),
-                out_offset.clone(),
-                out_size.clone(),
-            )? {
-                StepOutcome::Continue => {
-                    parents.push_back(branch);
-                    parents.extend(branch_worklist);
+            // `call_concrete_target` commits a mock or expectation as soon as its match is
+            // satisfiable, so split the candidate the way the concrete-target path does before
+            // it gets there; otherwise the mismatching world is never explored.
+            for mut branch in
+                self.split_symbolic_target_candidate(branch, to, &value, &gas, &call_input)?
+            {
+                let mut branch_worklist = VecDeque::new();
+                match self.call_concrete_target(
+                    executor,
+                    &mut branch,
+                    &mut branch_worklist,
+                    completed_paths,
+                    kind,
+                    to,
+                    None,
+                    value.clone(),
+                    gas.clone(),
+                    in_offset.clone(),
+                    in_size.clone(),
+                    out_offset.clone(),
+                    out_size.clone(),
+                )? {
+                    StepOutcome::Continue => {
+                        parents.push_back(branch);
+                        parents.extend(branch_worklist);
+                    }
+                    StepOutcome::AssumeRejected => {}
+                    outcome => return Ok(outcome),
                 }
-                StepOutcome::AssumeRejected => {}
-                outcome => return Ok(outcome),
             }
         }
 
@@ -1584,6 +1592,211 @@ impl SymbolicExecutor {
         *state = first;
         worklist.extend(parents);
         Ok(StepOutcome::Continue)
+    }
+
+    /// Splits one candidate branch of a symbolic-target call on every function mock, call
+    /// value, expected call and call mock condition that is still undecided under the branch
+    /// constraints, in the same order the concrete-target path forks on them. Each returned
+    /// branch has every such condition decided, so `call_concrete_target` can only commit the
+    /// matches that actually hold on it.
+    fn split_symbolic_target_candidate(
+        &mut self,
+        branch: PathState,
+        to: Address,
+        value: &SymExpr,
+        gas: &SymExpr,
+        call_input: &SymBytes,
+    ) -> Result<Vec<PathState>, SymbolicError> {
+        let mut branches = vec![branch];
+        for condition in self.function_mock_conditions(&branches[0], to, call_input) {
+            branches = self.split_branches_on(branches, condition)?;
+        }
+
+        let mut out = Vec::new();
+        for mut branch in branches {
+            let code_address = if branch.function_mocks.is_empty() {
+                to
+            } else {
+                self.function_mock_target(&mut branch, to, call_input)?.unwrap_or(to)
+            };
+
+            let mut value_branches = vec![branch];
+            if value_branches[0].constrained_word(&mut self.cx, value).is_none() {
+                let candidates = self.call_value_candidates(
+                    &value_branches[0],
+                    to,
+                    code_address,
+                    gas,
+                    call_input,
+                )?;
+                for candidate in candidates {
+                    let eq = SymBoolExpr::eq_word_const(&mut self.cx, value, candidate);
+                    value_branches = self.split_branches_on(value_branches, eq)?;
+                }
+            }
+
+            for branch in value_branches {
+                let concrete_value = branch.constrained_word(&mut self.cx, value);
+                let mut match_branches = vec![branch];
+                let conditions = self.call_match_conditions(
+                    &match_branches[0],
+                    to,
+                    code_address,
+                    concrete_value,
+                    gas,
+                    call_input,
+                )?;
+                for condition in conditions {
+                    match_branches = self.split_branches_on(match_branches, condition)?;
+                }
+                out.extend(match_branches);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Forks every branch on `condition` when both outcomes are satisfiable, otherwise commits
+    /// the satisfiable one; a condition that is unsatisfiable either way leaves the branch as is.
+    fn split_branches_on(
+        &mut self,
+        branches: Vec<PathState>,
+        condition: SymBoolExpr,
+    ) -> Result<Vec<PathState>, SymbolicError> {
+        let mismatch_condition = condition.clone().not(&mut self.cx);
+        let mut next = Vec::with_capacity(branches.len());
+        for branch in branches {
+            let (match_constraints, match_sat) =
+                self.constraints_with_condition(&branch, condition.clone())?;
+            let (mismatch_constraints, mismatch_sat) =
+                self.constraints_with_condition(&branch, mismatch_condition.clone())?;
+            match (match_sat, mismatch_sat) {
+                (true, true) => {
+                    let mut match_branch = branch.clone();
+                    match_branch.constraints = match_constraints;
+                    next.push(match_branch);
+                    let mut mismatch_branch = branch;
+                    mismatch_branch.constraints = mismatch_constraints;
+                    next.push(mismatch_branch);
+                }
+                (true, false) => {
+                    let mut branch = branch;
+                    branch.constraints = match_constraints;
+                    next.push(branch);
+                }
+                (false, true) => {
+                    let mut branch = branch;
+                    branch.constraints = mismatch_constraints;
+                    next.push(branch);
+                }
+                (false, false) => next.push(branch),
+            }
+        }
+        Ok(next)
+    }
+
+    /// Function mock match conditions for a call to `callee`, most recent mock first, in the
+    /// order `branch_symbolic_function_mock_if_needed` forks on them.
+    fn function_mock_conditions(
+        &mut self,
+        state: &PathState,
+        callee: Address,
+        calldata: &SymBytes,
+    ) -> Vec<SymBoolExpr> {
+        let mut conditions = Vec::new();
+        for calldata_len in [calldata.len(), 4] {
+            for idx in (0..state.function_mocks.len()).rev() {
+                if state.function_mocks[idx].calldata_len() != calldata_len {
+                    continue;
+                }
+                if let Some(condition) =
+                    state.function_mocks[idx].match_condition(&mut self.cx, callee, calldata)
+                {
+                    conditions.push(condition);
+                }
+            }
+        }
+        conditions
+    }
+
+    /// Call values that would satisfy an expected call or call mock, as
+    /// `branch_symbolic_call_value_if_needed` enumerates them.
+    fn call_value_candidates(
+        &mut self,
+        state: &PathState,
+        to: Address,
+        code_address: Address,
+        gas: &SymExpr,
+        call_input: &SymBytes,
+    ) -> Result<Vec<U256>, SymbolicError> {
+        let mut candidates = HashSet::<U256>::default();
+        for expected in &state.expected_calls {
+            let Some(expected_value) = expected.value() else { continue };
+            if self
+                .expected_call_match_constraints(
+                    state,
+                    expected,
+                    to,
+                    Some(expected_value),
+                    gas,
+                    call_input,
+                )?
+                .is_some()
+            {
+                candidates.insert(expected_value);
+            }
+        }
+        for mock in &state.call_mocks {
+            let Some(mock_value) = mock.value() else { continue };
+            if self
+                .call_mock_match_constraints(
+                    state,
+                    mock,
+                    code_address,
+                    Some(mock_value),
+                    call_input,
+                )?
+                .is_some()
+            {
+                candidates.insert(mock_value);
+            }
+        }
+        let mut candidates = candidates.into_iter().collect::<Vec<_>>();
+        candidates.sort_unstable();
+        Ok(candidates)
+    }
+
+    /// Expected call and call mock match conditions in the order
+    /// `branch_symbolic_call_match_if_needed` forks on them.
+    fn call_match_conditions(
+        &mut self,
+        state: &PathState,
+        callee: Address,
+        code_address: Address,
+        value: Option<U256>,
+        gas: &SymExpr,
+        calldata: &SymBytes,
+    ) -> Result<Vec<SymBoolExpr>, SymbolicError> {
+        let mut conditions = Vec::new();
+        for expected in &state.expected_calls {
+            if let Some(condition) =
+                expected.match_condition(&mut self.cx, callee, value, gas, calldata)?
+            {
+                conditions.push(condition);
+            }
+        }
+        let mut mocks = (0..state.call_mocks.len()).collect::<Vec<_>>();
+        mocks.sort_by_key(|idx| {
+            let (len, has_value) = state.call_mocks[*idx].specificity();
+            (std::cmp::Reverse(len), std::cmp::Reverse(has_value), *idx)
+        });
+        for idx in mocks {
+            if let Some(condition) =
+                state.call_mocks[idx].match_condition(&mut self.cx, code_address, value, calldata)
+            {
+                conditions.push(condition);
+            }
+        }
+        Ok(conditions)
     }
 }
 

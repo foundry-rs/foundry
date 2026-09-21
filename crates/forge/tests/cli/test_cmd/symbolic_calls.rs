@@ -742,6 +742,90 @@ args=
     assert!(!stdout.contains("symbolic CALL target outside known contracts"), "{stdout}");
 });
 
+forgetest_init!(symbolic_call_target_explores_mock_mismatch, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_call_target_explores_mock_mismatch because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicTargetMockMismatch.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract RealToken {
+    function balanceOf(address) external pure returns (uint256) {
+        return 7;
+    }
+}
+
+contract FiveToken {
+    function balanceOf(address) external pure returns (uint256) {
+        return 5;
+    }
+}
+
+contract SymbolicTargetMockMismatch is Test {
+    RealToken real;
+    FiveToken five;
+
+    function setUp() public {
+        real = new RealToken();
+        five = new FiveToken();
+    }
+
+    // The mock only covers `balanceOf(user)`; for `user != this` the real code answers 7.
+    function checkMockedSymbolicTargetMayMiss(address callee, address user) public {
+        vm.assume(callee == address(real) || callee == address(five));
+        vm.mockCall(
+            address(real),
+            abi.encodeWithSelector(RealToken.balanceOf.selector, user),
+            abi.encode(uint256(5))
+        );
+        assert(RealToken(callee).balanceOf(address(this)) == 5);
+    }
+
+    function checkMockedSymbolicTargetAlwaysHits(address callee) public {
+        vm.assume(callee == address(real) || callee == address(five));
+        vm.mockCall(
+            address(real),
+            abi.encodeWithSelector(RealToken.balanceOf.selector, address(this)),
+            abi.encode(uint256(5))
+        );
+        assert(RealToken(callee).balanceOf(address(this)) == 5);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-contract", "SymbolicTargetMockMismatch"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL: panic: assertion failed (0x01); counterexample:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkMockedSymbolicTargetMayMiss(address,address)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkMockedSymbolicTargetAlwaysHits(address)
+"#]],
+    );
+});
+
 forgetest_init!(symbolic_external_call_with_single_known_target_auto_expands, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(
