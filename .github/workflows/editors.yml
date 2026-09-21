@@ -66,8 +66,17 @@ jobs:
           prefix-key: v2-editor-forge
       - run: npm ci
         working-directory: editors/vscode
-      - run: npm run check && npm test && npm run bundle:check && npm run package
+      - run: npm run check && npm test && npm run bundle:check
         working-directory: editors/vscode
+      - name: Package licenses without symlinks
+        working-directory: editors/vscode
+        run: |
+          rm LICENSE-MIT LICENSE-APACHE
+          printf '%s' '../../LICENSE-MIT' > LICENSE-MIT
+          printf '%s' '../../LICENSE-APACHE' > LICENSE-APACHE
+          npm run package
+          unzip -p bundle/solar-lsp.vsix extension/LICENSE-MIT | cmp - ../../LICENSE-MIT
+          unzip -p bundle/solar-lsp.vsix extension/LICENSE-APACHE | cmp - ../../LICENSE-APACHE
       - run: cargo build --locked -p forge --bin forge
       - run: cargo test --locked -p forge --test cli 'lsp::'
       - name: Real Forge in VS Code Extension Development Host
