@@ -25,6 +25,8 @@ use std::{
 use tokio::task::JoinHandle;
 
 mod accounts;
+mod identity;
+mod reset;
 
 const CONTRACT: Address = address!("000000000000000000000000000000000000ba10");
 
@@ -39,6 +41,12 @@ enum BalResponse {
     PreCancun,
     Malformed,
     Timeout,
+    NodeInfoTimeout,
+    NodeInfoTimeoutOnce,
+    NodeInfoInternalError,
+    NodeInfoInternalErrorAfterDiscovery,
+    NodeInfoMalformed,
+    MetadataTimeout,
 }
 
 struct BalProxy {
@@ -74,6 +82,37 @@ impl BalProxy {
                         tokio::time::sleep(latency).await;
                     }
                     let method = request["method"].as_str().unwrap();
+                    if method == "anvil_nodeInfo" {
+                        let calls =
+                            recorded.lock().iter().filter(|r| r["method"] == method).count();
+                        match mode {
+                            BalResponse::NodeInfoTimeout => {
+                                return futures::future::pending().await;
+                            }
+                            BalResponse::NodeInfoTimeoutOnce if calls == 1 => {
+                                return futures::future::pending().await;
+                            }
+                            BalResponse::NodeInfoInternalError
+                            | BalResponse::NodeInfoInternalErrorAfterDiscovery
+                                if matches!(mode, BalResponse::NodeInfoInternalError)
+                                    || calls > 2 =>
+                            {
+                                return Json(json!({
+                                    "jsonrpc": "2.0", "id": request["id"],
+                                    "error": {"code": -32603, "message": "injected internal error"},
+                                }));
+                            }
+                            BalResponse::NodeInfoMalformed => {
+                                return Json(json!({
+                                    "jsonrpc": "2.0", "id": request["id"], "result": {},
+                                }));
+                            }
+                            _ => {}
+                        }
+                    }
+                    if method == "anvil_metadata" && matches!(mode, BalResponse::MetadataTimeout) {
+                        return futures::future::pending().await;
+                    }
                     if (!reveal_anvil && matches!(method, "anvil_nodeInfo" | "anvil_metadata"))
                         || (method == "eth_getAccountInfo" && matches!(mode, BalResponse::Timing))
                         || (method == "eth_getBlockAccessListByBlockHash"
@@ -160,9 +199,14 @@ struct BalOrigin {
 
 impl BalOrigin {
     async fn new() -> Self {
+        Self::with_genesis_block_number(0).await
+    }
+
+    async fn with_genesis_block_number(number: u64) -> Self {
         let (api, handle) = spawn(
             NodeConfig::test()
                 .with_chain_id(Some(1u64))
+                .with_genesis_block_number(Some(number))
                 .with_hardfork(Some(EthereumHardfork::Amsterdam.into()))
                 .with_genesis_timestamp(Some(1_800_000_000u64))
                 .with_no_mining(true),

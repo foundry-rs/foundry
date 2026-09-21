@@ -132,7 +132,7 @@ struct ForkOverrides {
 
 struct StableForkSnapshot {
     endpoint_identity: ForkEndpointIdentity,
-    endpoint_is_anvil: bool,
+    node_info_probe: AnvilNodeInfoProbe,
     block_number: u64,
     transaction_replay: Option<ForkTransactionReplay>,
     block: Option<AnyRpcBlock>,
@@ -153,11 +153,13 @@ const FORK_IDENTITY_PROBE_TIMEOUT: Duration = Duration::from_millis(500);
 struct AnvilNodeInfoProbe {
     identified: bool,
     skip: bool,
+    /// At least one probe could not distinguish an unsupported method from an unavailable node.
+    inconclusive: bool,
 }
 
 impl AnvilNodeInfoProbe {
     const fn new(identified: bool, skip: bool) -> Self {
-        Self { identified, skip }
+        Self { identified, skip, inconclusive: false }
     }
 
     async fn request(&mut self, provider: &RetryProvider) -> Result<Option<NodeInfo>> {
@@ -170,6 +172,7 @@ impl AnvilNodeInfoProbe {
         )
         .await
         else {
+            self.inconclusive = true;
             return Ok(None);
         };
         match response {
@@ -177,7 +180,10 @@ impl AnvilNodeInfoProbe {
                 self.identified = true;
                 Ok(Some(node_info))
             }
-            Err(_) if !self.identified => Ok(None),
+            Err(error) if !self.identified => {
+                self.inconclusive |= !is_rpc_method_not_found(&error);
+                Ok(None)
+            }
             Err(error) => {
                 Err(error).wrap_err("failed to determine network family from fork endpoint")
             }
@@ -1858,7 +1864,7 @@ impl NodeConfig {
             if before == after {
                 return Ok(StableForkSnapshot {
                     endpoint_identity: before,
-                    endpoint_is_anvil: node_info_probe.identified,
+                    node_info_probe,
                     block_number,
                     transaction_replay,
                     block,
@@ -1878,17 +1884,33 @@ impl NodeConfig {
         block_number: u64,
         block_hash: B256,
     ) -> Result<bool> {
-        let provider = self.fork_provider(eth_rpc_url)?;
         let mut node_info_probe = self.node_info_probe(expected.is_authoritative());
+        self.fork_context_matches_with_probe(
+            eth_rpc_url,
+            expected,
+            block_number,
+            block_hash,
+            &mut node_info_probe,
+        )
+        .await
+    }
+
+    async fn fork_context_matches_with_probe(
+        &self,
+        eth_rpc_url: &str,
+        expected: ForkEndpointIdentity,
+        block_number: u64,
+        block_hash: B256,
+        node_info_probe: &mut AnvilNodeInfoProbe,
+    ) -> Result<bool> {
+        let provider = self.fork_provider(eth_rpc_url)?;
         for _ in 0..3 {
-            let before =
-                self.resolved_fork_endpoint_identity(&provider, &mut node_info_probe).await?;
+            let before = self.resolved_fork_endpoint_identity(&provider, node_info_probe).await?;
             let block = provider
                 .get_block(BlockNumberOrTag::Number(block_number).into())
                 .await
                 .wrap_err("failed to confirm fork block context")?;
-            let after =
-                self.resolved_fork_endpoint_identity(&provider, &mut node_info_probe).await?;
+            let after = self.resolved_fork_endpoint_identity(&provider, node_info_probe).await?;
             if before != after {
                 continue;
             }
@@ -2012,13 +2034,13 @@ impl NodeConfig {
         // reset between any two RPC calls, so verify the endpoint identity on both sides.
         let StableForkSnapshot {
             endpoint_identity: fork_identity,
-            endpoint_is_anvil,
+            mut node_info_probe,
             block_number: fork_block_number,
             transaction_replay: fork_transaction_replay,
             block,
             gas_price,
         } = self.stable_fork_snapshot(&provider, fork_overrides).await?;
-        self.fork_endpoint_is_anvil = endpoint_is_anvil;
+        self.fork_endpoint_is_anvil = node_info_probe.identified;
 
         let target_network = fork_identity.network.unwrap_or(NetworkVariant::Ethereum);
         let target_profile = fork_identity.network_profile.unwrap_or_default();
@@ -2211,8 +2233,15 @@ latest block number: {latest_block}"
         );
 
         for mirror_url in self.fork_urls.iter().skip(1) {
+            let mut mirror_probe = self.node_info_probe(fork_identity.is_authoritative());
             if !self
-                .fork_context_matches(mirror_url, fork_identity, fork_block_number, block_hash)
+                .fork_context_matches_with_probe(
+                    mirror_url,
+                    fork_identity,
+                    fork_block_number,
+                    block_hash,
+                    &mut mirror_probe,
+                )
                 .await?
             {
                 eyre::bail!(
@@ -2221,10 +2250,17 @@ latest block number: {latest_block}"
                     redact_url(mirror_url)
                 );
             }
+            node_info_probe.inconclusive |= mirror_probe.inconclusive;
         }
         if self.requires_primary_fork_revalidation(fork_identity)
             && !self
-                .fork_context_matches(&eth_rpc_url, fork_identity, fork_block_number, block_hash)
+                .fork_context_matches_with_probe(
+                    &eth_rpc_url,
+                    fork_identity,
+                    fork_block_number,
+                    block_hash,
+                    &mut node_info_probe,
+                )
                 .await?
         {
             eyre::bail!("primary fork endpoint changed while its context was being validated");
@@ -2232,7 +2268,10 @@ latest block number: {latest_block}"
 
         // Use source-chain rules, never the local execution hardfork override. Anvil sources
         // may expose manually modified state under the same block hash as their original BAL.
-        let bal_seed = if self.fork_bal_eligible(fork_identity, block.header.timestamp()) {
+        // Inconclusive discovery must keep state reads lazy even if a later probe is unsupported.
+        let bal_seed = if !node_info_probe.inconclusive
+            && self.fork_bal_eligible(fork_identity, block.header.timestamp())
+        {
             bal::fetch(&provider, &block).await
         } else {
             None
