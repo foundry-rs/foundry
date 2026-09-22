@@ -1,4 +1,4 @@
-note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
+note[unwrapped-modifier-logic]: modifier logic can be wrapped to reduce code size
    ╭▸ ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
    │
 LL │ ┏     modifier multipleBeforePlaceholder() {
@@ -24,7 +24,7 @@ LL +         checkInternal(msg.sender);
 LL +     }
    ╰╴
 
-note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
+note[unwrapped-modifier-logic]: modifier logic can be wrapped to reduce code size
    ╭▸ ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
    │
 LL │ ┏     modifier multipleAfterPlaceholder() {
@@ -50,7 +50,7 @@ LL +         checkInternal(msg.sender);
 LL +     }
    ╰╴
 
-note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
+note[unwrapped-modifier-logic]: modifier logic can be wrapped to reduce code size
    ╭▸ ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
    │
 LL │ ┏     modifier multipleBeforeAfterPlaceholder(address sender) {
@@ -82,7 +82,7 @@ LL +         checkPublic(sender);
 LL +     }
    ╰╴
 
-note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
+note[unwrapped-modifier-logic]: modifier logic can be wrapped to reduce code size
    ╭▸ ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
    │
 LL │ ┏     modifier beforeWrappedAfterKept(address sender) {
@@ -108,7 +108,7 @@ LL +         checkPrivate(sender);
 LL +     }
    ╰╴
 
-note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
+note[unwrapped-modifier-logic]: modifier logic can be wrapped to reduce code size
    ╭▸ ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
    │
 LL │ ┏     modifier afterWrappedBeforeKept(address sender) {
@@ -134,7 +134,7 @@ LL +         checkInternal(sender);
 LL +     }
    ╰╴
 
-note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
+note[unwrapped-modifier-logic]: modifier logic can be wrapped to reduce code size
    ╭▸ ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
    │
 LL │ ┏     modifier keepAssemblyBefore() {
@@ -162,7 +162,7 @@ LL +         checkPrivate(msg.sender);
 LL +     }
    ╰╴
 
-note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
+note[unwrapped-modifier-logic]: modifier logic can be wrapped to reduce code size
    ╭▸ ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
    │
 LL │ ┏     modifier onlyOwner() {
@@ -184,7 +184,7 @@ LL +         require(isOwner[msg.sender], "Not owner");
 LL +     }
    ╰╴
 
-note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
+note[unwrapped-modifier-logic]: modifier logic can be wrapped to reduce code size
    ╭▸ ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
    │
 LL │ ┏     modifier onlyRole(bytes32 role) {
@@ -206,7 +206,7 @@ LL +         if(!hasRole[msg.sender][role]) revert("Not authorized");
 LL +     }
    ╰╴
 
-note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
+note[unwrapped-modifier-logic]: modifier logic can be wrapped to reduce code size
    ╭▸ ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
    │
 LL │ ┏     modifier onlyRoleOrOpenRole(bytes32 role) {
@@ -228,7 +228,7 @@ LL +         assert(hasRole[msg.sender][role] || hasRole[address(0)][role]);
 LL +     }
    ╰╴
 
-note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
+note[unwrapped-modifier-logic]: modifier logic can be wrapped to reduce code size
    ╭▸ ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
    │
 LL │ ┏     modifier onlyRoleOrAdmin(bytes32 role, address admin) {
@@ -250,7 +250,7 @@ LL +         assert(hasRole[msg.sender][role] || msg.sender == admin);
 LL +     }
    ╰╴
 
-note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
+note[unwrapped-modifier-logic]: modifier logic can be wrapped to reduce code size
    ╭▸ ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
    │
 LL │ ┏     modifier assign(address sender) {
@@ -274,7 +274,7 @@ LL +         isOwner[sender] = _isOwner;
 LL +     }
    ╰╴
 
-note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
+note[unwrapped-modifier-logic]: modifier logic can be wrapped to reduce code size
    ╭▸ ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
    │
 LL │ ┏     modifier uncheckedBlock(address sender) {
@@ -299,7 +299,7 @@ LL +         }
 LL +     }
    ╰╴
 
-note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
+note[unwrapped-modifier-logic]: modifier logic can be wrapped to reduce code size
    ╭▸ ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
    │
 LL │ ┏     modifier emitEvent(address sender) {
@@ -321,7 +321,7 @@ LL +         emit DidSomething(sender);
 LL +     }
    ╰╴
 
-note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
+note[unwrapped-modifier-logic]: modifier logic can be wrapped to reduce code size
    ╭▸ ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
    │
 LL │ ┏     modifier onlyOwnerContract(address sender) {

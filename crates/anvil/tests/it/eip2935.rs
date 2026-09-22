@@ -18,16 +18,17 @@ use alloy_rpc_types::{
 };
 use alloy_serde::WithOtherFields;
 use anvil::{NodeConfig, PrecompileFactory, spawn};
-#[cfg(feature = "optimism")]
-use foundry_evm::hardfork::OpHardfork;
 use foundry_evm::hardfork::{EthereumHardfork, TempoHardfork};
-#[cfg(feature = "optimism")]
-use foundry_evm_networks::NetworkConfigs;
 use revm::precompile::{PrecompileError, PrecompileOutput, PrecompileStatus};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
+
+#[cfg(feature = "optimism")]
+use foundry_evm::hardfork::OpHardfork;
+#[cfg(feature = "optimism")]
+use foundry_evm_networks::NetworkConfigs;
 
 const REPLAY_PRE_EXECUTION_ERROR: &str = "replay pre-execution sentinel";
 

@@ -171,6 +171,43 @@ contract ExecuteTransactionTest is Test {
         assertEq(address(to).balance, 17 - value);
         assertEq(address(random).balance, value);
     }
+
+    function test_execute_rejects_oversized_initcode() public {
+        uint256 privateKey = 1;
+        vm.chainId(1);
+        vm.deal(vm.addr(privateKey), 1 ether);
+
+        bytes[] memory unsigned = new bytes[](9);
+        unsigned[1] = hex"01"; // gas price
+        unsigned[2] = hex"989680"; // gas limit
+        unsigned[5] = new bytes(131_073);
+        unsigned[6] = hex"01"; // chain ID
+
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKey, keccak256(vm.toRlp(unsigned)));
+
+        bytes[] memory signed = new bytes[](9);
+        for (uint256 i; i < 6; i++) {
+            signed[i] = unsigned[i];
+        }
+        signed[6] = abi.encodePacked(v + 10); // EIP-155 replay-protected v for chain ID 1
+        signed[7] = _trimLeadingZeros(r);
+        signed[8] = _trimLeadingZeros(s);
+
+        bytes memory rawTx = vm.toRlp(signed);
+        vm._expectCheatcodeRevert();
+        vm.executeTransaction(rawTx);
+    }
+
+    function _trimLeadingZeros(bytes32 value) private pure returns (bytes memory out) {
+        uint256 offset;
+        while (offset < 32 && value[offset] == bytes1(0)) {
+            offset++;
+        }
+        out = new bytes(32 - offset);
+        for (uint256 i; i < out.length; i++) {
+            out[i] = value[offset + i];
+        }
+    }
 }
 
 contract MyERC20 {

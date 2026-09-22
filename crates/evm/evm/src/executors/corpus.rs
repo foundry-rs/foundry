@@ -48,10 +48,6 @@ use eyre::{Result, eyre};
 use foundry_common::{ContractsByAddress, ContractsByArtifact, TestFunctionExt, sh_warn};
 use foundry_config::FuzzCorpusConfig;
 use foundry_evm_core::{constants::CALLER, evm::FoundryEvmNetwork, utils::StateChangeset};
-#[cfg(test)]
-use foundry_evm_fuzz::strategies::EvmFuzzState;
-#[cfg(test)]
-use foundry_evm_fuzz::strategies::TxGenerator;
 use foundry_evm_fuzz::{
     BasicTxDetails, CallDetails, ObservedCall,
     invariant::{
@@ -59,8 +55,6 @@ use foundry_evm_fuzz::{
     },
     sequence::{ComparisonHint, CorpusEntryView, SequenceGenerator, SequencePlan},
 };
-#[cfg(test)]
-use proptest::prelude::Strategy;
 use proptest::test_runner::TestRunner;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -434,6 +428,7 @@ impl WorkerCorpusSeed {
 
     pub(crate) fn load_from_disk<FEN: FoundryEvmNetwork>(
         config: &FuzzCorpusConfig,
+        replay_root: Option<&Path>,
         executor: Option<&Executor<FEN>>,
         target: ReplayTarget<'_>,
     ) -> Result<Self> {
@@ -441,7 +436,7 @@ impl WorkerCorpusSeed {
         let Some(corpus_dir) = &config.corpus_dir else {
             return Ok(seed);
         };
-        let replay_dirs = canonical_replay_dirs(corpus_dir);
+        let replay_dirs = canonical_replay_dirs(replay_root.unwrap_or(corpus_dir));
         seed.replay_dirs = Some(replay_dirs.clone());
 
         // Seed in-memory corpus with the persisted optimization best sequence so the mutation
@@ -864,12 +859,13 @@ impl WorkerCorpus {
         id: usize,
         config: FuzzCorpusConfig,
         sequence_generator: SequenceGenerator,
+        replay_root: Option<&Path>,
         // Only required by master worker (id = 0) to replay existing corpus.
         executor: Option<&Executor<FEN>>,
         target: ReplayTarget<'_>,
     ) -> Result<Self> {
         let seed = if id == 0 {
-            WorkerCorpusSeed::load_from_disk(&config, executor, target)?
+            WorkerCorpusSeed::load_from_disk(&config, replay_root, executor, target)?
         } else {
             WorkerCorpusSeed::empty(&config).with_optimization_state(&config)
         };
@@ -1813,7 +1809,8 @@ mod tests {
         backend::Backend,
         evm::{EthEvmNetwork, EvmEnvFor, TxEnvFor},
     };
-    use proptest::prelude::Just;
+    use foundry_evm_fuzz::strategies::{EvmFuzzState, TxGenerator};
+    use proptest::prelude::{Just, Strategy};
     use rayon::prelude::*;
     use revm::{
         bytecode::Bytecode,
@@ -2321,6 +2318,7 @@ mod tests {
         let seed = WorkerCorpusSeed::load_from_disk::<foundry_evm_core::evm::EthEvmNetwork>(
             &config,
             None,
+            None,
             ReplayTarget { stateless: None, fuzzed_contracts: None, dynamic: None },
         )
         .unwrap();
@@ -2552,6 +2550,7 @@ mod tests {
             1,
             config,
             generator,
+            None,
             None,
             ReplayTarget { stateless: None, fuzzed_contracts: None, dynamic: None },
         )

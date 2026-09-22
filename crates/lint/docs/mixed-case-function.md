@@ -1,9 +1,7 @@
-# Function names should use mixedCase
+# Function names should use `mixedCase`
 
 **Severity**: `Info`
 **ID**: `mixed-case-function`
-
-Flags function names that do not follow `mixedCase`.
 
 ## What it does
 
@@ -13,21 +11,22 @@ single-character names are not checked. Test functions starting with `test`, `in
 `statefulFuzz`, configured uppercase patterns (for example, `ERC20`), and external constant-style
 getters are exempted.
 
-## Why is this bad?
+## Why restrict this?
 
 The Solidity style guide recommends `mixedCase` for function names. Consistent style makes call
 sites uniform, helps editor tooling, and reduces friction in code review.
 
-## Example
+Keep an established external API or required interface spelling when renaming would break
+compatibility. Suppress those declarations rather than changing the public function selector.
 
-### Bad
+## Example
 
 ```solidity
 function get_balance() external view returns (uint256);
 function GetBalance()  external view returns (uint256);
 ```
 
-### Good
+Use instead:
 
 ```solidity
 function getBalance() external view returns (uint256);

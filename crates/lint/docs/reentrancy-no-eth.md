@@ -3,15 +3,10 @@
 **Severity**: `Med`
 **ID**: `reentrancy-no-eth`
 
-Flags external calls that do not transfer ETH when state read before the call is written after the
-call on the same reachable path.
-
 ## What it does
 
-Warns when a public or external entry point reads a state variable, performs a reentrant external
-call that does not send ETH, and later writes the same state variable. Local internal helper calls
-and modifiers are analyzed when their bodies are available. This uses Slither's
-`reentrancy-no-eth` detector name.
+Reports public or external functions that read a state variable, make an external call
+without sending ETH, and then write the same state variable.
 
 ## Why is this bad?
 
@@ -19,13 +14,11 @@ Even without ETH transfer, an external call can invoke attacker-controlled code.
 re-enters before later state changes occur, the original function may continue with stale state and
 overwrite or reuse values that changed during the reentrant execution.
 
-This lint is intentionally conservative to avoid noisy findings: it does not report ETH-transferring
-calls, view or pure interface calls, unrelated state writes, or constructor-time calls. It does not
-attempt to prove custom guard modifiers are effective.
+ETH-transferring calls, view or pure interface calls, unrelated state writes, and constructor-time
+calls are excluded. A custom reentrancy guard may still produce a warning; review its protection
+before suppressing the lint.
 
 ## Example
-
-### Bad
 
 ```solidity
 function claim(IHook hook) external {
@@ -35,7 +28,7 @@ function claim(IHook hook) external {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 function claim(IHook hook) external {

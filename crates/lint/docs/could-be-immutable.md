@@ -3,9 +3,6 @@
 **Severity**: `Gas`
 **ID**: `could-be-immutable`
 
-Flags state variables that are assigned only in the constructor and never written to afterward —
-making them eligible to be declared `immutable`.
-
 ## What it does
 
 Reports each non-`constant`, non-`immutable` state variable whose only writes occur in the
@@ -19,8 +16,6 @@ variables `immutable` also expresses intent and prevents future writes.
 
 ## Example
 
-### Bad
-
 ```solidity
 contract C {
     address owner;
@@ -28,7 +23,7 @@ contract C {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 contract C {
@@ -36,7 +31,3 @@ contract C {
     constructor() { OWNER = msg.sender; }
 }
 ```
-
-## Notes
-
-This is a `Gas`-severity lint and is **not** applied to test or script files.

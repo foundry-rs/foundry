@@ -63,7 +63,7 @@ contract Erc4626Inflation is Test {
 ...
 Failing tests:
 Encountered 1 failing test in test/Erc4626Inflation.t.sol:Erc4626Inflation
-[FAIL: panic: assertion failed (0x01); counterexample: [CALLDATA] [ARGS]] checkDepositReturnsShares(uint64,uint128,uint64) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkDepositReturnsShares(uint64,uint128,uint64) ([METRICS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
@@ -146,7 +146,7 @@ contract Erc20ApproveRace is Test {
 ...
 Failing tests:
 Encountered 1 failing test in test/Erc20ApproveRace.t.sol:Erc20ApproveRace
-[FAIL: panic: assertion failed (0x01); counterexample: [CALLDATA] [ARGS]] checkApproveRace(uint64,uint64) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkApproveRace(uint64,uint64) ([METRICS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 

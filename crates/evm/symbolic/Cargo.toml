@@ -1,7 +1,6 @@
 [package]
 name = "foundry-evm-symbolic"
 description = "Foundry symbolic EVM executor"
-readme = "README.md"
 
 version.workspace = true
 edition.workspace = true
@@ -39,4 +38,5 @@ wait-timeout.workspace = true
 
 [features]
 default = ["optimism"]
+base = ["foundry-evm/base"]
 optimism = ["foundry-evm/optimism"]

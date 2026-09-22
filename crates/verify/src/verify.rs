@@ -414,9 +414,9 @@ pub struct VerifyArgs {
     #[arg(long, help_heading = "Compiler options")]
     pub no_auto_detect: bool,
 
-    /// Specify the solc version, or a path to a local solc, to build with.
+    /// Specify the solc version, path, or executable name on `PATH` to build with.
     ///
-    /// Valid values are in the format `x.y.z`, `solc:x.y.z` or `path/to/solc`.
+    /// Valid values are in the format `x.y.z`, `solc:x.y.z`, `path/to/solc`, or `solc`.
     #[arg(long = "use", help_heading = "Compiler options", value_name = "SOLC_VERSION")]
     pub use_solc: Option<String>,
 
@@ -563,8 +563,8 @@ enum RunContext {
 impl VerifyArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
     pub async fn run(self) -> Result<()> {
-        let config = self.load_config()?;
         let context = self.resolve_context().await?;
+        let config = context.config.clone();
         self.run_with_resolved_context(RunContext::Local(Box::new(context)), config).await
     }
 
@@ -808,7 +808,7 @@ impl VerifyArgs {
     /// Resolves [VerificationContext] object either from entered contract name or by trying to
     /// match bytecode located at given address.
     pub async fn resolve_context(&self) -> Result<VerificationContext> {
-        let mut config = self.load_config()?;
+        let mut config = self.load_config_with_dependencies()?;
         config.libraries.extend(self.libraries.clone());
 
         let project = config.project()?;

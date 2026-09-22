@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand, ValueHint};
 use eyre::Result;
+use foundry_cli::install;
 use foundry_common::shell;
 use foundry_compilers::{
     Graph, Project,
@@ -73,7 +74,8 @@ impl ResolveArgs {
         let Self { root, skip, path } = self;
 
         let root = root.unwrap_or_else(|| PathBuf::from("."));
-        let config = Config::load_with_root(&root)?;
+        let mut config = Config::load_with_root(&root)?;
+        install::install_missing_dependencies(&mut config, || Config::load_with_root(&root))?;
         let project = config.project()?;
 
         let graph = Graph::resolve(&project.paths)?;

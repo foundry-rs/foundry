@@ -1,12 +1,12 @@
 use crate::{BasicTxDetails, CallDetails};
-use alloy_primitives::Address;
+use alloy_primitives::{Address, map::AddressSet};
 use parking_lot::{Mutex, RwLock};
 use proptest::{
     option::weighted,
     strategy::{SBoxedStrategy, Strategy, ValueTree},
     test_runner::TestRunner,
 };
-use std::{collections::HashSet, sync::Arc};
+use std::sync::Arc;
 
 /// Given a TestRunner and a strategy, it generates calls. Used inside the Fuzzer inspector to
 /// override external calls to test for potential reentrancy vulnerabilities.
@@ -19,7 +19,7 @@ pub struct RandomCallGenerator {
     pub test_address: Address,
     /// Addresses of handler contracts that can be reentered.
     /// We only inject callbacks when the call target is one of these.
-    pub handler_addresses: Arc<RwLock<HashSet<Address>>>,
+    pub handler_addresses: Arc<RwLock<AddressSet>>,
     /// Runner that will generate the call from the strategy.
     pub runner: Arc<Mutex<TestRunner>>,
     /// Strategy to be used to generate calls from `target_reference`.
@@ -40,7 +40,7 @@ pub struct RandomCallGenerator {
 impl RandomCallGenerator {
     pub fn new(
         test_address: Address,
-        handler_addresses: HashSet<Address>,
+        handler_addresses: AddressSet,
         runner: TestRunner,
         strategy: impl Strategy<Value = CallDetails> + Send + Sync + 'static,
         target_reference: Arc<RwLock<Address>>,

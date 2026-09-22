@@ -185,8 +185,8 @@ pub(crate) fn record_handler_assertion_bug<FEN: FoundryEvmNetwork>(
         });
     }
 
-    // Standard reverted-input pop. Delay-enabled campaigns keep reverted calls so
-    // shrinking can preserve their warp/roll contribution.
+    // Standard reverted-input pop. Delay-enabled campaigns keep reverted calls so their warp/roll
+    // contribution can be replayed.
     if call_reverted && !is_optimization && !config.has_delay() {
         inputs.pop();
     }

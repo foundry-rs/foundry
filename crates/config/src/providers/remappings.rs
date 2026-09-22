@@ -356,6 +356,7 @@ impl RemappingsProvider<'_> {
             for remapping in contextual
                 .into_iter()
                 .filter(|remapping| ambiguous_aliases.contains(&remapping.name))
+                .flat_map(expand_scoped_contextual_remapping)
             {
                 if let Some(overlays) = contextual_overlays(&authoritative_remappings, &remapping) {
                     contextual_remappings.extend(overlays);
@@ -596,6 +597,41 @@ fn context_starts_with(path: &str, base: &str) -> bool {
     }
     #[cfg(not(windows))]
     Path::new(path).starts_with(base)
+}
+
+/// Narrows an npm scope mapping to its installed packages so missing siblings can use the global
+/// hoisted-package fallback.
+fn expand_scoped_contextual_remapping(remapping: Remapping) -> Vec<Remapping> {
+    let scope = remapping.name.trim_end_matches('/');
+    let path = Path::new(&remapping.path);
+    if !scope.starts_with('@')
+        || path.file_name().and_then(|name| name.to_str()) != Some(scope)
+        || path.parent().and_then(|parent| parent.file_name()).and_then(|name| name.to_str())
+            != Some("node_modules")
+    {
+        return vec![remapping];
+    }
+
+    let Ok(entries) = fs::read_dir(path) else { return vec![remapping] };
+    let mut packages = Vec::new();
+    for entry in entries {
+        let Ok(entry) = entry else { return vec![remapping] };
+        if !entry.path().is_dir() {
+            continue;
+        }
+        let Ok(name) = entry.file_name().into_string() else { return vec![remapping] };
+        let mut path = entry.path().display().to_string();
+        if !path.ends_with(['/', '\\']) {
+            path.push(MAIN_SEPARATOR);
+        }
+        packages.push(Remapping {
+            context: remapping.context.clone(),
+            name: format!("{scope}/{name}/"),
+            path,
+        });
+    }
+    packages.sort_by(|a, b| a.name.cmp(&b.name));
+    if packages.is_empty() { vec![remapping] } else { packages }
 }
 
 fn configured_auto_remapping(

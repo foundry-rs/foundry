@@ -205,10 +205,7 @@ pub fn common_setup() {
     enable_paint();
 }
 
-/// Loads dotenv files from the cwd and project root after warning, ignoring parse failures.
-///
-/// The warning is written directly because dotenv may configure logging before the tracing
-/// subscriber is initialized.
+/// Loads dotenv files from the cwd and project root, ignoring parse failures.
 pub fn load_dotenv() {
     // we only want the .env file of the cwd and project root
     // `find_project_root` calls `current_dir` internally so both paths are either both `Ok` or
@@ -226,25 +223,6 @@ pub fn load_dotenv() {
                 paths.push(cwd_env);
             }
         }
-    }
-
-    if paths.is_empty() {
-        return;
-    }
-
-    {
-        use std::io::Write as _;
-
-        let mut stderr = std::io::stderr().lock();
-        let _ = writeln!(stderr, "Warning: loading project dotenv files:");
-        for path in &paths {
-            let _ = writeln!(stderr, "  {path:?}");
-        }
-        let _ = writeln!(
-            stderr,
-            "Project environment variables can affect executable and library loading. Only run \
-             commands in projects you trust."
-        );
     }
 
     for path in paths {

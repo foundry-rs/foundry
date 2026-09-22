@@ -27,10 +27,6 @@ use solar::{
     parse::Parser,
 };
 
-fn failed_to_parse(path: &Path) -> eyre::Report {
-    eyre!("failed to parse {}", path.display())
-}
-
 #[derive(Clone, Copy)]
 enum CacheKind<'a> {
     Mutants,
@@ -43,27 +39,6 @@ struct CachedMutationResults {
     mutant_count: usize,
     mutant_hash: u64,
     results: Vec<(Mutant, MutationResult)>,
-}
-
-fn mutant_set_hash(mutants: &[Mutant]) -> u64 {
-    let mut entries: Vec<_> = mutants
-        .iter()
-        .map(|mutant| {
-            (
-                mutant.span.lo().0,
-                mutant.span.hi().0,
-                mutant.mutation.to_string(),
-                mutant.original.clone(),
-            )
-        })
-        .collect();
-    entries.sort();
-
-    let mut hasher = DefaultHasher::new();
-    for entry in entries {
-        entry.hash(&mut hasher);
-    }
-    hasher.finish()
 }
 
 pub mod mutant;
@@ -607,6 +582,31 @@ impl MutationHandler {
 
         false
     }
+}
+
+fn failed_to_parse(path: &Path) -> eyre::Report {
+    eyre!("failed to parse {}", path.display())
+}
+
+fn mutant_set_hash(mutants: &[Mutant]) -> u64 {
+    let mut entries: Vec<_> = mutants
+        .iter()
+        .map(|mutant| {
+            (
+                mutant.span.lo().0,
+                mutant.span.hi().0,
+                mutant.mutation.to_string(),
+                mutant.original.clone(),
+            )
+        })
+        .collect();
+    entries.sort();
+
+    let mut hasher = DefaultHasher::new();
+    for entry in entries {
+        entry.hash(&mut hasher);
+    }
+    hasher.finish()
 }
 
 #[cfg(test)]

@@ -474,51 +474,7 @@ exclude_operators = [
     assert_eq!(summary["mutation_score"], 100.0);
 });
 
-forgetest_init!(mutation_testing_rejects_list_mode, |prj, cmd| {
-    prj.add_source(
-        "Counter.sol",
-        r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.13;
-
-contract Counter {
-    uint256 public number;
-
-    function increment() public {
-        number++;
-    }
-}
-"#,
-    );
-
-    prj.add_test(
-        "Counter.t.sol",
-        r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.13;
-
-import "../src/Counter.sol";
-
-contract CounterTest {
-    function test_Increment() public {
-        Counter counter = new Counter();
-        counter.increment();
-        assert(counter.number() == 1);
-    }
-}
-"#,
-    );
-
-    let output = cmd.args(["test", "--mutate", "src/Counter.sol", "--list"]).assert_failure();
-    let stderr = output.get_output().stderr_lossy();
-
-    assert!(
-        stderr.contains("`--mutate` cannot be combined with: --list"),
-        "unexpected stderr:\n{stderr}"
-    );
-});
-
-forgetest_init!(mutation_testing_rejects_list_mode_before_compile, |prj, cmd| {
+forgetest!(mutation_testing_rejects_list_mode_before_compile, |prj, cmd| {
     prj.add_source(
         "Broken.sol",
         r#"
@@ -533,17 +489,13 @@ contract Broken {
 "#,
     );
 
-    let output = cmd.args(["test", "--mutate", "src/Broken.sol", "--list"]).assert_failure();
-    let stderr = output.get_output().stderr_lossy();
+    cmd.args(["test", "--mutate", "src/Broken.sol", "--list"])
+        .assert_failure()
+        .stdout_eq("")
+        .stderr_eq(str![[r#"
+Error: `--mutate` cannot be combined with: --list. Re-run without those flags to use mutation testing.
 
-    assert!(
-        stderr.contains("`--mutate` cannot be combined with: --list"),
-        "unexpected stderr:\n{stderr}"
-    );
-    assert!(
-        !stderr.contains("Compiler run failed"),
-        "mutation/list conflict should be reported before compile errors:\n{stderr}"
-    );
+"#]]);
 });
 
 forgetest_init!(mutation_testing_rejects_all_skipped_baseline, |prj, cmd| {
@@ -965,11 +917,11 @@ MUTATION TESTING RESULTS
 ╭──────────┬───────────┬────────────╮
 │ Status   ┆ # Mutants ┆ % of Total │
 ╞══════════╪═══════════╪════════════╡
-│ Survived ┆ 2         ┆ 18.2%      │
+│ Survived ┆ 2         ┆ 20.0%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Killed   ┆ 8         ┆ 72.7%      │
+│ Killed   ┆ 8         ┆ 80.0%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Invalid  ┆ 1         ┆ 9.1%       │
+│ Invalid  ┆ 0         ┆ 0.0%       │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
 │ Skipped  ┆ 0         ┆ 0.0%       │
 ╰──────────┴───────────┴────────────╯
@@ -1027,11 +979,11 @@ MUTATION TESTING RESULTS
 ╭──────────┬───────────┬────────────╮
 │ Status   ┆ # Mutants ┆ % of Total │
 ╞══════════╪═══════════╪════════════╡
-│ Survived ┆ 2         ┆ 18.2%      │
+│ Survived ┆ 2         ┆ 20.0%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Killed   ┆ 8         ┆ 72.7%      │
+│ Killed   ┆ 8         ┆ 80.0%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Invalid  ┆ 1         ┆ 9.1%       │
+│ Invalid  ┆ 0         ┆ 0.0%       │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
 │ Skipped  ┆ 0         ┆ 0.0%       │
 ╰──────────┴───────────┴────────────╯
@@ -1060,9 +1012,6 @@ Survived mutants
 ...
 ────────────────────────────────────────────────────────────
 8 mutants killed
-
-────────────────────────────────────────────────────────────
-1 mutants invalid
 
 ════════════════════════════════════════════════════════════
 

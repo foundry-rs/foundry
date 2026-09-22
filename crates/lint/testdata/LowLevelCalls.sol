@@ -13,45 +13,45 @@ contract LowLevelCalls {
     bytes existingData;
 
     function checkedCall(address target, bytes memory data) public {
-        (bool success, bytes memory result) = target.call(data); //~NOTE: Low-level calls should be avoided
+        (bool success, bytes memory result) = target.call(data); //~NOTE: low-level call bypasses type checking
         require(success, "Call failed");
         emit CallResult(success, result);
     }
 
     function checkedCallWithValue(address payable target, uint256 value) public {
-        (bool success, ) = target.call{value: value}(""); //~NOTE: Low-level calls should be avoided
+        (bool success, ) = target.call{value: value}(""); //~NOTE: low-level call bypasses type checking
         require(success, "Call failed");
     }
 
     function checkedDelegateCall(address target, bytes memory data) public returns (bool) {
-        (bool success, ) = target.delegatecall(data); //~NOTE: Low-level calls should be avoided
+        (bool success, ) = target.delegatecall(data); //~NOTE: low-level call bypasses type checking
         return success;
     }
 
     function checkedStaticCall(address target, bytes memory data) public view returns (bytes memory) {
-        (bool success, bytes memory result) = target.staticcall(data); //~NOTE: Low-level calls should be avoided
+        (bool success, bytes memory result) = target.staticcall(data); //~NOTE: low-level call bypasses type checking
         require(success, "Static call failed");
         return result;
     }
 
     function uncheckedCall(address target, bytes memory data) public {
-        target.call(data); //~NOTE: Low-level calls should be avoided
+        target.call(data); //~NOTE: low-level call bypasses type checking
     }
 
     function uncheckedCallWithValue(address payable target, uint256 value) public {
-        target.call{value: value}(""); //~NOTE: Low-level calls should be avoided
+        target.call{value: value}(""); //~NOTE: low-level call bypasses type checking
     }
 
     function uncheckedDelegateCall(address target, bytes memory data) public {
-        target.delegatecall(data); //~NOTE: Low-level calls should be avoided
+        target.delegatecall(data); //~NOTE: low-level call bypasses type checking
     }
 
     function uncheckedStaticCall(address target, bytes memory data) public view {
-        target.staticcall(data); //~NOTE: Low-level calls should be avoided
+        target.staticcall(data); //~NOTE: low-level call bypasses type checking
     }
 
     function ignoredSuccess(address target) public {
-        (, existingData) = target.call(""); //~NOTE: Low-level calls should be avoided
+        (, existingData) = target.call(""); //~NOTE: low-level call bypasses type checking
     }
 
     function nonLowLevelMemberCalls(Receiver receiver, address payable target, bytes calldata data) public {

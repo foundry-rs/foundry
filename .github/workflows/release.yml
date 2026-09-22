@@ -21,11 +21,12 @@ env:
   # Keep the base features in sync with `docker-publish.yml`.
   # Platform-specific release features are added in the build step.
   RUST_PROFILE: dist
-  RUST_FEATURES: aws-kms,gcp-kms,turnkey,cli,asm-keccak,js-tracer,monad,optimism
+  RUST_FEATURES: aws-kms,gcp-kms,turnkey,cli,asm-keccak,js-tracer,base,monad,optimism
 
 jobs:
   prepare:
     name: Prepare release
+    if: github.event_name != 'schedule' || github.repository == 'foundry-rs/foundry'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -206,7 +207,7 @@ jobs:
       - name: Build changelog
         id: build_changelog
         if: ${{ steps.existing_release.outputs.skip_assets != 'true' }}
-        uses: mikepenz/release-changelog-builder-action@c9bcd8238b6f41e05561348339429d360b1c0247 # v6.2.3
+        uses: mikepenz/release-changelog-builder-action@cb021f9b36a51a7c6f18e4679b6fa2cb77a1260c # v6.3.0
         with:
           configuration: "./.github/changelog.json"
           fromTag: ${{ steps.release_info.outputs.from_tag || '' }}
@@ -267,7 +268,9 @@ jobs:
 
   release-docker:
     name: Release Docker
-    needs: prepare
+    # The image is pushed during the Depot build, so wait for every native target.
+    needs: [prepare, release]
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && (needs.release.result == 'success' || (needs.prepare.outputs.skip_assets == 'true' && needs.release.result == 'skipped')) }}
     uses: ./.github/workflows/docker-publish.yml
     permissions:
       actions: read
@@ -278,6 +281,7 @@ jobs:
       packages: write
     with:
       tag_name: ${{ needs.prepare.outputs.tag_name }}
+      linux-validated: ${{ needs.release.result == 'success' }}
 
   release-docker-metadata:
     name: Record Docker digest
@@ -316,7 +320,7 @@ jobs:
     name: release ${{ matrix.target }} (${{ matrix.runner }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 240
-    needs: prepare
+    needs: [prepare]
     if: ${{ needs.prepare.outputs.skip_assets != 'true' }}
     strategy:
       fail-fast: false
@@ -352,7 +356,7 @@ jobs:
             svm_target_platform: macosx-amd64
             platform: darwin
             arch: amd64
-          - runner: macos-latest-large
+          - runner: macos-latest-xlarge
             target: aarch64-apple-darwin
             svm_target_platform: macosx-aarch64
             platform: darwin
@@ -363,21 +367,40 @@ jobs:
             platform: win32
             arch: amd64
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@ce5deead22108ccc6aafba0ca47d2a9e6d1a40e8
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1
         with:
           toolchain: stable
           targets: ${{ matrix.target }}
-      - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
+      - uses: rui314/setup-mold@10ca16bf91dc22e05ebdc935cad9c75ea248f621 # v1
+
+      # Include locked workspace dependencies not reached by the --bins build.
+      - name: Fetch locked dependencies
+        env:
+          TARGET: ${{ matrix.target }}
+        shell: bash
+        run: cargo fetch --locked --target "$TARGET"
+
+      - name: Install LLVM profiling tools
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: rustup component add llvm-tools-preview
 
       - name: Apple Silicon setup
         if: matrix.target == 'aarch64-apple-darwin'
         run: |
-          printf 'SDKROOT=%s\n' "$(xcrun -sdk macosx --show-sdk-path)" >> "$GITHUB_ENV"
-          # Apple Silicon and the Touch ID shim require macOS 11 or newer.
-          printf 'MACOSX_DEPLOYMENT_TARGET=11.0\n' >> "$GITHUB_ENV"
+          {
+            printf 'SDKROOT=%s\n' "$(xcrun -sdk macosx --show-sdk-path)"
+            # Apple Silicon and the Touch ID shim require macOS 11 or newer.
+            printf 'MACOSX_DEPLOYMENT_TARGET=11.0\n'
+            # Keep the release independent of Homebrew's libusb installation.
+            printf 'LIBUSB_STATIC=1\n'
+            # The ARM64 runner has less memory than the Intel large runner.
+            printf 'CARGO_BUILD_JOBS=2\n'
+          } >> "$GITHUB_ENV"
 
       - name: cross setup
         if: contains(matrix.target, 'musl')
@@ -406,7 +429,7 @@ jobs:
           fi
 
           echo "Building $TARGET with features: $features"
-          flags=(--locked --target "$TARGET" --profile "$RUST_PROFILE" --bins
+          flags=(--locked --target "$TARGET" --profile "$RUST_PROFILE"
             --no-default-features --features "$features")
 
           # `jemalloc` is not fully supported on MSVC or aarch64 Linux.
@@ -416,12 +439,15 @@ jobs:
 
           [[ "$TARGET" == *windows* ]] && ext=".exe"
 
-          if [[ "$TARGET" == *-musl ]]; then
-            cross build "${flags[@]}"
+          if [[ "$TARGET" == "x86_64-unknown-linux-gnu" ]]; then
+            .github/scripts/pgo.sh "${flags[@]}"
+          elif [[ "$TARGET" == *-musl ]]; then
+            cross build "${flags[@]}" --bins
           else
-            cargo build "${flags[@]}"
+            cargo build "${flags[@]}" --bins
           fi
 
+          host_target=$(rustc -vV | sed -n 's/^host: //p')
           bins=(anvil cast chisel forge solar)
           for name in "${bins[@]}"; do
             bin="$OUT_DIR/$name$ext"
@@ -429,7 +455,11 @@ jobs:
             file "$bin" || true
             du -h "$bin" || true
             ldd "$bin" || true
-            $bin --version || true
+            if [[ "$TARGET" == "$host_target" ]]; then
+              "$bin" --version
+            else
+              echo "Skipping execution of $name: target $TARGET differs from host $host_target"
+            fi
             printf '%s_bin_path=%s\n' "$name" "$bin" >> "$GITHUB_ENV"
           done
 
@@ -479,7 +509,7 @@ jobs:
           cat "$FOUNDRY_CHECKSUM"
 
       - name: Install Syft
-        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
 
       - name: Generate SBOM (SPDX)
         env:

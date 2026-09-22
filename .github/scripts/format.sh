@@ -9,4 +9,4 @@ while IFS= read -r -d '' file; do
 done < <(find testdata -name '*.sol' ! -name Vm.sol ! -name console.sol -print0)
 
 # Run forge fmt on all found files
-cargo run --bin forge -- fmt "$@" "${sol_files[@]}"
+cargo run --locked --bin forge -- fmt "$@" "${sol_files[@]}"

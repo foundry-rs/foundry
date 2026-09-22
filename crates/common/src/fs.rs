@@ -3,13 +3,14 @@
 use crate::errors::FsPathError;
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 use serde::{Serialize, de::DeserializeOwned};
-#[cfg(unix)]
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::{
     fs::{self, File},
     io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write},
     path::{Component, Path, PathBuf},
 };
+
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 /// The [`fs`](self) result type.
 pub type Result<T> = std::result::Result<T, FsPathError>;

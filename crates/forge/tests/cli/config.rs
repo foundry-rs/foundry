@@ -112,6 +112,7 @@ isolate = true
 disable_block_gas_limit = false
 enable_tx_gas_limit = false
 unchecked_cheatcode_artifacts = false
+decode_external_storage = false
 create2_library_salt = "0x0000000000000000000000000000000000000000000000000000000000000000"
 create2_deployer = "0x4e59b44847b379578588920ca78fbf26c0b4956c"
 assertions_revert = true
@@ -154,7 +155,11 @@ prefer_compact = "all"
 single_line_imports = false
 
 [lint]
-severity = []
+severity = [
+    "high",
+    "medium",
+    "low",
+]
 exclude_lints = []
 ignore = []
 lint_on_build = true
@@ -259,6 +264,7 @@ seed_corpus = false
 use_fuzz_corpus = false
 corpus_seed_limit = 32
 use_fuzz_frontiers = false
+check_invariant_frontiers = false
 frontier_limit = 256
 solver = "z3"
 timeout = 30
@@ -380,6 +386,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
             use_fuzz_corpus: true,
             corpus_seed_limit: 17,
             use_fuzz_frontiers: true,
+            check_invariant_frontiers: true,
             frontier_limit: 11,
             frontier_ids: vec![4, 9],
             frontier_pcs: vec![123, 456],
@@ -479,6 +486,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         labels: Default::default(),
         isolate: true,
         unchecked_cheatcode_artifacts: false,
+        decode_external_storage: false,
         create2_library_salt: Config::DEFAULT_CREATE2_LIBRARY_SALT,
         create2_deployer: Config::DEFAULT_CREATE2_DEPLOYER,
         vyper: Default::default(),
@@ -807,7 +815,7 @@ Error: `solc` "this/solc/does/not/exist" does not exist
     let local_solc = Solc::find_or_install(&OTHER_SOLC_VERSION.parse().unwrap()).unwrap();
     cmd.forge_fuse()
         .args(["build", "--force", "--use"])
-        .arg(local_solc.solc)
+        .arg(&local_solc.solc)
         .root_arg()
         .assert_success()
         .stdout_eq(str![[r#"
@@ -816,6 +824,20 @@ Error: `solc` "this/solc/does/not/exist" does not exist
 Compiler run successful!
 
 "#]]);
+
+    let bin_dir = prj.root().join("bin");
+    fs::create_dir(&bin_dir).unwrap();
+    let path_solc = bin_dir.join(format!("custom-solc{}", std::env::consts::EXE_SUFFIX));
+    fs::copy(local_solc.solc, path_solc).unwrap();
+
+    cmd.forge_fuse();
+    cmd.env("PATH", &bin_dir);
+    cmd.args(["build", "--force", "--use", "custom-solc"]).root_arg().assert_success();
+
+    prj.update_config(|config| config.solc = Some(SolcReq::Local("custom-solc".into())));
+    cmd.forge_fuse();
+    cmd.env("PATH", bin_dir);
+    cmd.args(["build", "--force"]).root_arg().assert_success();
 });
 
 // test to ensure yul optimizer can be set as intended
@@ -1234,6 +1256,40 @@ shared/=deps-a/a/lib/shared/src/
     cmd.forge_fuse().arg("lint").assert_success();
     prj.update_config(|config| config.libs = vec!["deps-a".into(), "deps-b".into()]);
     cmd.forge_fuse().arg("remappings").assert_success().stdout_eq(expected);
+});
+
+forgetest!(scoped_npm_context_preserves_hoisted_sibling_fallback, |prj, cmd| {
+    let owner = prj.root().join("node_modules/@bananapus/router-terminal-v6");
+    let nested_v3 = owner.join("node_modules/@uniswap/v3-core/src");
+    let hoisted_v3 = prj.root().join("node_modules/@uniswap/v3-core/src");
+    let hoisted_v4 = prj.root().join("node_modules/@uniswap/v4-core/src");
+    for dependency in [&owner.join("src"), &nested_v3, &hoisted_v3, &hoisted_v4] {
+        pretty_err(dependency, fs::create_dir_all(dependency));
+    }
+    prj.update_config(|config| config.libs = vec!["node_modules".into()]);
+    pretty_err(
+        &owner,
+        fs::write(
+            owner.join("src/RouterTerminal.sol"),
+            "import {NestedV3} from \"@uniswap/v3-core/src/Version.sol\"; import {HoistedV4} from \"@uniswap/v4-core/src/Version.sol\"; contract RouterTerminal is NestedV3, HoistedV4 {}\n",
+        ),
+    );
+    pretty_err(&nested_v3, fs::write(nested_v3.join("Version.sol"), "contract NestedV3 {}\n"));
+    pretty_err(&hoisted_v3, fs::write(hoisted_v3.join("Version.sol"), "contract HoistedV3 {}\n"));
+    pretty_err(&hoisted_v4, fs::write(hoisted_v4.join("Version.sol"), "contract HoistedV4 {}\n"));
+    prj.add_source(
+        "UsesRouterTerminal.sol",
+        "import {RouterTerminal} from \"@bananapus/router-terminal-v6/src/RouterTerminal.sol\"; import {HoistedV3} from \"@uniswap/v3-core/src/Version.sol\"; contract UsesRouterTerminal is RouterTerminal, HoistedV3 {}\n",
+    );
+
+    cmd.arg("remappings").assert_success().stdout_eq(str![[r#"
+node_modules/@bananapus/router-terminal-v6/:@uniswap/v3-core/=node_modules/@bananapus/router-terminal-v6/node_modules/@uniswap/v3-core/
+@bananapus/=node_modules/@bananapus/
+@uniswap/=node_modules/@uniswap/
+
+"#]]);
+    cmd.forge_fuse().arg("build").assert_success();
+    cmd.forge_fuse().arg("lint").assert_success();
 });
 
 forgetest!(contextual_remapping_dedup_uses_context_and_name, |prj, cmd| {
@@ -2226,6 +2282,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "use_fuzz_corpus": false,
     "corpus_seed_limit": 32,
     "use_fuzz_frontiers": false,
+    "check_invariant_frontiers": false,
     "frontier_limit": 256,
     "solver": "z3",
     "timeout": 30,
@@ -2333,7 +2390,11 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "single_line_imports": false
   },
   "lint": {
-    "severity": [],
+    "severity": [
+      "high",
+      "medium",
+      "low"
+    ],
     "exclude_lints": [],
     "ignore": [],
     "lint_on_build": true,
@@ -2375,6 +2436,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "disable_block_gas_limit": false,
   "enable_tx_gas_limit": false,
   "unchecked_cheatcode_artifacts": false,
+  "decode_external_storage": false,
   "create2_library_salt": "0x0000000000000000000000000000000000000000000000000000000000000000",
   "create2_deployer": "0x4e59b44847b379578588920ca78fbf26c0b4956c",
   "vyper": {},

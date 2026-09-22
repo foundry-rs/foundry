@@ -1,6 +1,16 @@
 //! # foundry-evm-networks
 //!
-//! Foundry EVM network configuration.
+//! Runtime selection and shared configuration for Foundry's EVM network families.
+//!
+//! [`NetworkConfigs`] describes the active execution profile selected by configuration, CLI flags,
+//! hardforks, or fork endpoint discovery. Cargo features only determine which optional
+//! [`NetworkVariant`] values are compiled into a binary; they do not select a network at runtime.
+//!
+//! Concrete Alloy network and EVM factory types are associated by `FoundryEvmNetwork` in
+//! `foundry-evm-core`. See the [custom EVM integration guide] for the cross-crate ownership and
+//! state-lifecycle contract.
+//!
+//! [custom EVM integration guide]: https://github.com/foundry-rs/foundry/blob/master/docs/dev/networks.md
 
 use crate::celo::transfer::{
     CELO_TRANSFER_ADDRESS, CELO_TRANSFER_LABEL, PRECOMPILE_ID_CELO_TRANSFER,
@@ -9,19 +19,13 @@ use alloy_chains::{
     Chain, NamedChain,
     NamedChain::{Chiado, Gnosis, Moonbase, Moonbeam, MoonbeamDev, Moonriver, Rsk, RskTestnet},
 };
-use alloy_eips::eip1559::BaseFeeParams;
+use alloy_eips::{eip1559::BaseFeeParams, eip7840::BlobParams};
 use alloy_evm::precompiles::{DynPrecompile, PrecompilesMap};
 use alloy_primitives::{Address, ChainId, address, map::AddressHashMap};
 use clap::Parser;
-#[cfg(feature = "monad")]
-type MonadHardfork = foundry_evm_hardforks::MonadHardfork;
-#[cfg(feature = "optimism")]
-use foundry_evm_hardforks::OpHardfork;
 use foundry_evm_hardforks::{
-    EthereumHardfork, FoundryHardfork, TempoHardfork, latest_active_tempo_hardfork,
+    EthereumHardfork, ExecutionSpec, FoundryHardfork, TempoHardfork, latest_active_tempo_hardfork,
 };
-#[cfg(not(feature = "monad"))]
-type MonadHardfork = ();
 use revm::precompile::{
     Precompile as RevmPrecompile,
     secp256r1::{P256VERIFY, P256VERIFY_OSAKA},
@@ -36,11 +40,22 @@ use tempo_contracts::precompiles::{
     VALIDATOR_CONFIG_ADDRESS, VALIDATOR_CONFIG_V2_ADDRESS,
 };
 
-/// The Monad cheatcode handler address.
-pub const MONAD_CHEATCODE_ADDRESS: Address = address!("0xc0FFeeCD43A10e1C2b0De63c6CDCFe5B7d0e0CEA");
+#[cfg(feature = "base")]
+use base_common_precompiles::{
+    ActivationRegistryStorage, B20FactoryStorage, NonceManagerStorage, PolicyRegistryStorage,
+    TxContextStorage,
+};
+#[cfg(feature = "base")]
+use foundry_evm_hardforks::BaseUpgrade;
+
+#[cfg(feature = "optimism")]
+use foundry_evm_hardforks::OpHardfork;
 
 #[cfg(feature = "monad")]
-const MONAD_CHEATCODE_ADDRESSES: &[Address] = &[MONAD_CHEATCODE_ADDRESS];
+type MonadHardfork = foundry_evm_hardforks::MonadHardfork;
+
+/// The Monad cheatcode handler address.
+pub const MONAD_CHEATCODE_ADDRESS: Address = address!("0xc0FFeeCD43A10e1C2b0De63c6CDCFe5B7d0e0CEA");
 
 pub mod arbitrum;
 pub mod celo;
@@ -77,6 +92,40 @@ const MONAD_PRECOMPILES: &[(&str, Address)] = &[
     ("MonadReserveBalance", monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS),
 ];
 
+#[cfg(feature = "base")]
+const BASE_PRECOMPILES: &[(&str, Address)] = &[
+    ("B20Factory", B20FactoryStorage::ADDRESS),
+    ("ActivationRegistry", ActivationRegistryStorage::ADDRESS),
+    ("PolicyRegistry", PolicyRegistryStorage::ADDRESS),
+    ("TxContext", TxContextStorage::ADDRESS),
+    ("NonceManager", NonceManagerStorage::ADDRESS),
+];
+
+/// All fixed Base precompile addresses.
+#[cfg(feature = "base")]
+pub const BASE_PRECOMPILE_ADDRESSES: &[Address] = &[
+    B20FactoryStorage::ADDRESS,
+    ActivationRegistryStorage::ADDRESS,
+    PolicyRegistryStorage::ADDRESS,
+    TxContextStorage::ADDRESS,
+    NonceManagerStorage::ADDRESS,
+];
+
+/// Fixed Base precompiles that expose at least one function returning no data.
+///
+/// Solidity guards high-level calls to such functions with an `extcodesize` check, which a
+/// code-less account fails in the caller, so these must carry code. Base mainnet plants a one-byte
+/// sentinel on exactly these two. The factory, nonce manager, and transaction context return data
+/// from every function and are code-less on chain, so stubbing them would diverge — a contract
+/// guarding calls with an `isContract` probe would pass locally and revert on Base.
+///
+/// The nonce manager separately receives a stub at Zenith from Base's own
+/// `ensure_eip8130_system_accounts` transition, for EIP-161 state clearing rather than for
+/// `extcodesize`. That transition owns it; this list must not.
+#[cfg(feature = "base")]
+pub const BASE_CODE_SENTINEL_ADDRESSES: &[Address] =
+    &[ActivationRegistryStorage::ADDRESS, PolicyRegistryStorage::ADDRESS];
+
 /// BSC secp256r1 precompile address introduced by the Haber hardfork.
 const BSC_P256_ADDRESS: Address = address!("0000000000000000000000000000000000000100");
 
@@ -86,24 +135,6 @@ const BSC_MAINNET_HABER_TIMESTAMP: u64 = 1_718_863_500;
 const BSC_TESTNET_HABER_TIMESTAMP: u64 = 1_716_962_820;
 const BSC_MAINNET_OSAKA_TIMESTAMP: u64 = 1_777_343_400;
 const BSC_TESTNET_OSAKA_TIMESTAMP: u64 = 1_774_319_400;
-
-/// Returns the BSC P256 precompile for the given timestamp. The outer option distinguishes BSC
-/// chains from unrelated chains, while the inner option disables P256 before Haber.
-const fn bsc_p256_precompile(chain_id: ChainId, timestamp: u64) -> Option<Option<RevmPrecompile>> {
-    let (haber_timestamp, osaka_timestamp) = match chain_id {
-        BSC_MAINNET_CHAIN_ID => (BSC_MAINNET_HABER_TIMESTAMP, BSC_MAINNET_OSAKA_TIMESTAMP),
-        BSC_TESTNET_CHAIN_ID => (BSC_TESTNET_HABER_TIMESTAMP, BSC_TESTNET_OSAKA_TIMESTAMP),
-        _ => return None,
-    };
-
-    if timestamp < haber_timestamp {
-        Some(None)
-    } else if timestamp < osaka_timestamp {
-        Some(Some(P256VERIFY))
-    } else {
-        Some(Some(P256VERIFY_OSAKA))
-    }
-}
 
 /// All well-known Tempo precompile addresses.
 pub const TEMPO_PRECOMPILE_ADDRESSES: &[Address] = &[
@@ -122,39 +153,6 @@ pub const TEMPO_PRECOMPILE_ADDRESSES: &[Address] = &[
     STORAGE_CREDITS_ADDRESS,
     CURRENT_COMMITTEE_ADDRESS,
 ];
-
-/// Returns whether a well-known Tempo precompile address is active at `hardfork`.
-pub fn is_tempo_precompile_active_at(address: Address, hardfork: TempoHardfork) -> bool {
-    if address == CURRENT_COMMITTEE_ADDRESS {
-        hardfork.is_t8()
-    } else if address == TIP20_CHANNEL_RESERVE_ADDRESS {
-        hardfork.is_t5()
-    } else if address == RECEIVE_POLICY_GUARD_ADDRESS {
-        hardfork.is_t6()
-    } else if address == STORAGE_CREDITS_ADDRESS {
-        hardfork.is_t7()
-    } else if address == ADDRESS_REGISTRY_ADDRESS || address == SIGNATURE_VERIFIER_ADDRESS {
-        hardfork.is_t3()
-    } else {
-        true
-    }
-}
-
-/// Returns the well-known Tempo precompile addresses active at `hardfork`.
-pub fn active_tempo_precompile_addresses(hardfork: TempoHardfork) -> impl Iterator<Item = Address> {
-    TEMPO_PRECOMPILE_ADDRESSES
-        .iter()
-        .copied()
-        .filter(move |&address| is_tempo_precompile_active_at(address, hardfork))
-}
-
-/// Returns whether a well-known Monad precompile address is active at `hardfork`.
-#[cfg(feature = "monad")]
-pub fn is_monad_precompile_active_at(address: Address, hardfork: MonadHardfork) -> bool {
-    address == monad_revm::staking::STAKING_ADDRESS
-        || (address == monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS
-            && MonadHardfork::MonadNine.is_enabled_in(hardfork))
-}
 
 #[derive(
     Clone,
@@ -175,6 +173,8 @@ pub fn is_monad_precompile_active_at(address: Address, hardfork: MonadHardfork) 
 pub enum NetworkVariant {
     #[default]
     Ethereum,
+    #[cfg(feature = "base")]
+    Base,
     #[cfg(feature = "optimism")]
     Optimism,
     Tempo,
@@ -197,6 +197,8 @@ impl std::str::FromStr for NetworkVariant {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "ethereum" => Ok(Self::Ethereum),
+            #[cfg(feature = "base")]
+            "base" => Ok(Self::Base),
             #[cfg(feature = "optimism")]
             "optimism" => Ok(Self::Optimism),
             "tempo" => Ok(Self::Tempo),
@@ -221,6 +223,14 @@ impl NetworkVariant {
         if matches!(chain.named(), Some(NamedChain::Celo | NamedChain::CeloSepolia)) {
             return Ok(Some(Self::Ethereum));
         }
+        // Only claim Base when the feature is on. `is_optimism()` below already covers Base chain
+        // IDs, and that is what shipped binaries resolve them to today, so erroring here would
+        // regress builds that never asked for Base. Monad errors instead because no shipped EVM
+        // approximates it.
+        #[cfg(feature = "base")]
+        if matches!(chain.named(), Some(NamedChain::Base | NamedChain::BaseSepolia)) {
+            return Ok(Some(Self::Base));
+        }
         if matches!(chain.named(), Some(NamedChain::Monad | NamedChain::MonadTestnet)) {
             #[cfg(feature = "monad")]
             return Ok(Some(Self::Monad));
@@ -240,6 +250,10 @@ impl NetworkVariant {
     pub fn from_node_info_name(network: &str) -> Result<Self, String> {
         match network {
             "ethereum" => Ok(Self::Ethereum),
+            #[cfg(feature = "base")]
+            "base" => Ok(Self::Base),
+            #[cfg(not(feature = "base"))]
+            "base" => Err("network family `base` is not enabled in this build".to_string()),
             #[cfg(feature = "optimism")]
             "optimism" => Ok(Self::Optimism),
             #[cfg(not(feature = "optimism"))]
@@ -293,31 +307,50 @@ impl NetworkVariant {
         format!("{}:{hardfork}", self.name()).parse()
     }
 
+    /// Returns this network's hardfork at a historical source-chain timestamp.
+    ///
+    /// Unknown source chains return `None`; the selected network owns the lookup so a chain ID
+    /// shared by multiple execution families cannot select another family's hardfork.
+    pub fn historical_hardfork(self, chain_id: ChainId, timestamp: u64) -> Option<FoundryHardfork> {
+        match self {
+            Self::Ethereum => {
+                EthereumHardfork::from_chain_and_timestamp(Chain::from_id(chain_id), timestamp)
+                    .map(Into::into)
+            }
+            Self::Tempo => {
+                TempoHardfork::from_chain_and_timestamp(chain_id, timestamp).map(Into::into)
+            }
+            #[cfg(feature = "optimism")]
+            Self::Optimism => {
+                OpHardfork::from_chain_and_timestamp(Chain::from_id(chain_id), timestamp)
+                    .map(Into::into)
+            }
+            #[cfg(feature = "monad")]
+            Self::Monad => {
+                MonadHardfork::from_chain_and_timestamp(chain_id, timestamp).map(Into::into)
+            }
+            #[cfg(feature = "base")]
+            Self::Base => {
+                BaseUpgrade::from_chain_and_timestamp(chain_id, timestamp).map(Into::into)
+            }
+        }
+    }
+
     /// Returns the active hardfork for this network at the given chain and timestamp.
     ///
     /// Unknown chain IDs fall back to the network's default hardfork. The selected network owns
     /// the lookup so an explicit network choice is not overridden by the chain ID's family.
     pub fn hardfork_at(self, chain_id: ChainId, timestamp: u64) -> FoundryHardfork {
-        match self {
-            Self::Ethereum => {
-                EthereumHardfork::from_chain_and_timestamp(Chain::from_id(chain_id), timestamp)
-                    .unwrap_or_default()
-                    .into()
-            }
-            Self::Tempo => TempoHardfork::from_chain_and_timestamp(chain_id, timestamp)
-                .unwrap_or_else(latest_active_tempo_hardfork)
-                .into(),
+        self.historical_hardfork(chain_id, timestamp).unwrap_or_else(|| match self {
+            Self::Ethereum => EthereumHardfork::default().into(),
+            Self::Tempo => latest_active_tempo_hardfork().into(),
             #[cfg(feature = "optimism")]
-            Self::Optimism => {
-                OpHardfork::from_chain_and_timestamp(Chain::from_id(chain_id), timestamp)
-                    .unwrap_or_default()
-                    .into()
-            }
+            Self::Optimism => OpHardfork::default().into(),
             #[cfg(feature = "monad")]
-            Self::Monad => MonadHardfork::from_chain_and_timestamp(chain_id, timestamp)
-                .unwrap_or_default()
-                .into(),
-        }
+            Self::Monad => MonadHardfork::default().into(),
+            #[cfg(feature = "base")]
+            Self::Base => BaseUpgrade::default().into(),
+        })
     }
 
     /// Returns `true` if this is the Ethereum network variant.
@@ -325,10 +358,22 @@ impl NetworkVariant {
         matches!(self, Self::Ethereum)
     }
 
+    /// Returns `true` if this is the Base network variant.
+    #[cfg(feature = "base")]
+    pub const fn is_base(&self) -> bool {
+        matches!(self, Self::Base)
+    }
+
     /// Returns `true` if this is the Optimism network variant.
-    #[cfg(feature = "optimism")]
     pub const fn is_optimism(&self) -> bool {
-        matches!(self, Self::Optimism)
+        #[cfg(feature = "optimism")]
+        {
+            matches!(self, Self::Optimism)
+        }
+        #[cfg(not(feature = "optimism"))]
+        {
+            false
+        }
     }
 
     /// Returns `true` if this is the Tempo network variant.
@@ -352,6 +397,8 @@ impl NetworkVariant {
     pub const fn name(&self) -> &'static str {
         match self {
             Self::Ethereum => "ethereum",
+            #[cfg(feature = "base")]
+            Self::Base => "base",
             #[cfg(feature = "optimism")]
             Self::Optimism => "optimism",
             Self::Tempo => "tempo",
@@ -364,6 +411,8 @@ impl NetworkVariant {
     pub const fn hardfork_namespace(&self) -> Option<&'static str> {
         match self {
             Self::Ethereum => None,
+            #[cfg(feature = "base")]
+            Self::Base => Some("base"),
             #[cfg(feature = "optimism")]
             Self::Optimism => Some("optimism"),
             Self::Tempo => Some("tempo"),
@@ -429,9 +478,8 @@ pub struct NetworkConfigs {
 }
 
 // Custom `Serialize` impl: always emits the *resolved* network as the canonical
-// `network = "..."` field, and never emits the legacy `tempo` / `optimism` / `monad` aliases.
-// This avoids confusing output like `network = "monad"` next to `monad = false`, and ensures
-// legacy aliases in foundry.toml round-trip as canonical network values.
+// `network = "..."` field, and never emits legacy network aliases. This avoids contradictory
+// canonical and legacy selectors, and ensures old foundry.toml keys round-trip canonically.
 impl Serialize for NetworkConfigs {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
@@ -498,8 +546,20 @@ impl NetworkConfigs {
         Self { network: Some(NetworkVariant::Monad), monad: true, ..Default::default() }
     }
 
+    #[cfg(feature = "base")]
+    pub fn with_base() -> Self {
+        Self { network: Some(NetworkVariant::Base), ..Default::default() }
+    }
+
     pub const fn is_tempo(&self) -> bool {
         if let Some(network) = self.resolved_network() { network.is_tempo() } else { false }
+    }
+
+    /// Returns whether Optimism network features are enabled.
+    ///
+    /// Always returns `false` when built without the `optimism` feature.
+    pub const fn is_optimism(&self) -> bool {
+        if let Some(network) = self.resolved_network() { network.is_optimism() } else { false }
     }
 
     #[cfg(feature = "monad")]
@@ -512,13 +572,30 @@ impl NetworkConfigs {
         false
     }
 
-    /// Returns additional cheatcode contract addresses for the active network.
-    pub const fn extra_cheatcode_addresses(&self) -> &'static [Address] {
+    #[cfg(feature = "base")]
+    pub const fn is_base(&self) -> bool {
+        matches!(self.resolved_network(), Some(NetworkVariant::Base))
+    }
+
+    /// Coerces `hardfork` into this network's family.
+    ///
+    /// Execution and fee rules apply the same lossy `From` conversions, so a cross-namespace
+    /// override such as `--hardfork prague` on a Tempo node runs as a Tempo hardfork. Callers that
+    /// need to describe what actually executed, like trace decoding, go through here rather than
+    /// carrying the configured value.
+    pub fn executed_hardfork(&self, hardfork: FoundryHardfork) -> FoundryHardfork {
+        if self.is_tempo() {
+            return TempoHardfork::from(hardfork).into();
+        }
         #[cfg(feature = "monad")]
         if self.is_monad() {
-            return MONAD_CHEATCODE_ADDRESSES;
+            return MonadHardfork::from(hardfork).into();
         }
-        &[]
+        #[cfg(feature = "base")]
+        if self.is_base() {
+            return BaseUpgrade::from(hardfork).into();
+        }
+        hardfork
     }
 
     pub const fn is_celo(&self) -> bool {
@@ -579,8 +656,13 @@ impl NetworkConfigs {
     /// without rebuilding the instantiated EVM.
     ///
     /// Monad uses a distinct EVM factory and instruction provider, so forks cannot cross the
-    /// Monad boundary. Existing non-Monad fork-source compatibility remains unchanged.
+    /// Monad boundary. Base execution requires a Base source, while existing Ethereum, Optimism,
+    /// and Tempo execution can continue using Base as a state source without switching engines.
     pub const fn supports_fork_source(&self, source: &Self) -> bool {
+        #[cfg(feature = "base")]
+        if self.is_base() && !source.is_base() {
+            return false;
+        }
         self.is_monad() == source.is_monad()
     }
 
@@ -591,21 +673,51 @@ impl NetworkConfigs {
 
     /// Returns the base fee parameters for the configured network.
     ///
-    /// For Optimism networks, returns Canyon parameters if the Canyon hardfork is active
-    /// at the given timestamp, otherwise returns pre-Canyon parameters.
-    #[cfg(feature = "optimism")]
+    /// For OP Stack networks, returns Canyon parameters if the Canyon hardfork is active at the
+    /// given timestamp, otherwise returns pre-Canyon parameters.
     pub fn base_fee_params(&self, timestamp: u64) -> BaseFeeParams {
+        #[cfg(feature = "base")]
+        if self.is_base() {
+            let canyon_active =
+                BaseUpgrade::from_chain_and_timestamp(NamedChain::Base as u64, timestamp)
+                    .is_some_and(|upgrade| upgrade >= BaseUpgrade::Canyon);
+            return if canyon_active {
+                BaseFeeParams::new(250, 6)
+            } else {
+                BaseFeeParams::new(50, 6)
+            };
+        }
+        #[cfg(feature = "optimism")]
         if self.is_optimism() {
             return self.op_base_fee_params(timestamp);
         }
         BaseFeeParams::ethereum()
     }
 
-    /// Returns the base fee parameters for the configured network.
-    #[cfg(not(feature = "optimism"))]
-    pub const fn base_fee_params(&self, timestamp: u64) -> BaseFeeParams {
-        let _ = timestamp;
-        BaseFeeParams::ethereum()
+    /// Calculates the blob excess gas inherited by the next block.
+    ///
+    /// OP Stack headers use the blob fields for protocol metadata rather than EIP-4844 blobs, so
+    /// their excess blob gas remains zero. Other execution profiles use the configured Ethereum
+    /// blob schedule.
+    pub fn next_block_blob_excess_gas(
+        &self,
+        blob_params: BlobParams,
+        parent_excess_blob_gas: u64,
+        parent_blob_gas_used: u64,
+        parent_base_fee: u64,
+    ) -> u64 {
+        #[cfg(feature = "base")]
+        if self.is_base() {
+            return 0;
+        }
+        if self.is_optimism() {
+            return 0;
+        }
+        blob_params.next_block_excess_blob_gas_osaka(
+            parent_excess_blob_gas,
+            parent_blob_gas_used,
+            parent_base_fee,
+        )
     }
 
     /// Returns contract size limits for networks that override Ethereum defaults.
@@ -776,6 +888,8 @@ impl NetworkConfigs {
         let network = match hardfork {
             FoundryHardfork::Ethereum(_) => self,
             FoundryHardfork::Tempo(_) => Self::with_tempo(),
+            #[cfg(feature = "base")]
+            FoundryHardfork::Base(_) => Self::with_base(),
             #[cfg(feature = "optimism")]
             FoundryHardfork::Optimism(_) => Self::with_optimism(),
             #[cfg(feature = "monad")]
@@ -794,36 +908,15 @@ impl NetworkConfigs {
         }
     }
 
-    /// Injects chain-specific precompiles active at the given timestamp.
-    pub fn inject_chain_precompiles(
-        self,
-        precompiles: &mut PrecompilesMap,
-        chain_id: ChainId,
-        timestamp: u64,
-    ) {
-        let Some(p256verify) = bsc_p256_precompile(chain_id, timestamp) else { return };
-        precompiles.apply_precompile(&BSC_P256_ADDRESS, move |_| {
-            p256verify.map(|p256verify| {
-                DynPrecompile::new(p256verify.id().clone(), move |input| {
-                    p256verify.execute(input.data, input.gas, input.reservoir)
-                })
-            })
-        });
-    }
-
-    /// Returns precompiles label for configured networks, to be used in traces.
-    pub fn precompiles_label(
-        self,
-        tempo_hardfork: Option<TempoHardfork>,
-        monad_hardfork: Option<MonadHardfork>,
-    ) -> AddressHashMap<String> {
-        #[cfg(not(feature = "monad"))]
-        let _ = monad_hardfork;
+    /// Returns precompile labels for configured networks at the given hardfork, to be used in
+    /// traces.
+    pub fn precompiles_label(self, hardfork: Option<FoundryHardfork>) -> AddressHashMap<String> {
         let mut labels = AddressHashMap::default();
         if self.is_celo() {
             labels.insert(CELO_TRANSFER_ADDRESS, CELO_TRANSFER_LABEL.to_string());
         }
         if self.is_tempo() {
+            let tempo_hardfork = hardfork.and_then(TempoHardfork::from_foundry_hardfork);
             labels.extend(
                 TEMPO_PRECOMPILES
                     .iter()
@@ -838,6 +931,7 @@ impl NetworkConfigs {
         }
         #[cfg(feature = "monad")]
         if self.is_monad() {
+            let monad_hardfork = hardfork.and_then(MonadHardfork::from_foundry_hardfork);
             labels.extend(
                 MONAD_PRECOMPILE_LABELS
                     .iter()
@@ -850,23 +944,35 @@ impl NetworkConfigs {
                     .map(|(label, address)| (address, label.to_string())),
             );
         }
+        #[cfg(feature = "base")]
+        if self.is_base() {
+            let base_upgrade = hardfork.and_then(|hardfork| match hardfork {
+                FoundryHardfork::Base(upgrade) => Some(upgrade),
+                _ => None,
+            });
+            labels.extend(
+                BASE_PRECOMPILES
+                    .iter()
+                    .copied()
+                    .filter(|(_, address)| {
+                        base_upgrade
+                            .is_none_or(|upgrade| is_base_precompile_active_at(*address, upgrade))
+                    })
+                    .map(|(label, address)| (address, label.to_string())),
+            );
+        }
         labels
     }
 
-    /// Returns precompiles for configured networks.
-    pub fn precompiles(
-        self,
-        tempo_hardfork: Option<TempoHardfork>,
-        monad_hardfork: Option<MonadHardfork>,
-    ) -> BTreeMap<String, Address> {
-        #[cfg(not(feature = "monad"))]
-        let _ = monad_hardfork;
+    /// Returns precompiles for configured networks at the given hardfork.
+    pub fn precompiles(self, hardfork: Option<FoundryHardfork>) -> BTreeMap<String, Address> {
         let mut precompiles = BTreeMap::new();
         if self.is_celo() {
             precompiles
                 .insert(PRECOMPILE_ID_CELO_TRANSFER.name().to_string(), CELO_TRANSFER_ADDRESS);
         }
         if self.is_tempo() {
+            let tempo_hardfork = hardfork.and_then(TempoHardfork::from_foundry_hardfork);
             precompiles.extend(
                 TEMPO_PRECOMPILES
                     .iter()
@@ -881,6 +987,7 @@ impl NetworkConfigs {
         }
         #[cfg(feature = "monad")]
         if self.is_monad() {
+            let monad_hardfork = hardfork.and_then(MonadHardfork::from_foundry_hardfork);
             precompiles.extend(
                 MONAD_PRECOMPILES
                     .iter()
@@ -893,8 +1000,41 @@ impl NetworkConfigs {
                     .map(|(label, address)| (label.to_string(), address)),
             );
         }
+        #[cfg(feature = "base")]
+        if self.is_base() {
+            let base_upgrade = hardfork.and_then(|hardfork| match hardfork {
+                FoundryHardfork::Base(upgrade) => Some(upgrade),
+                _ => None,
+            });
+            precompiles.extend(
+                BASE_PRECOMPILES
+                    .iter()
+                    .copied()
+                    .filter(|(_, address)| {
+                        base_upgrade
+                            .is_none_or(|upgrade| is_base_precompile_active_at(*address, upgrade))
+                    })
+                    .map(|(label, address)| (label.to_string(), address)),
+            );
+        }
         precompiles
     }
+}
+
+/// Applies the BSC P256 precompile active at the given timestamp.
+pub fn apply_bsc_p256_precompile(
+    precompiles: &mut PrecompilesMap,
+    chain_id: ChainId,
+    timestamp: u64,
+) {
+    let Some(p256verify) = bsc_p256_precompile(chain_id, timestamp) else { return };
+    precompiles.apply_precompile(&BSC_P256_ADDRESS, move |_| {
+        p256verify.map(|p256verify| {
+            DynPrecompile::new(p256verify.id().clone(), move |input| {
+                p256verify.execute(input.data, input.gas, input.reservoir)
+            })
+        })
+    });
 }
 
 impl From<NetworkVariant> for NetworkConfigs {
@@ -908,12 +1048,118 @@ impl From<NetworkVariant> for NetworkConfigs {
             NetworkVariant::Monad => {
                 Self { network: Some(network), monad: true, ..Default::default() }
             }
+            #[cfg(feature = "base")]
+            NetworkVariant::Base => Self { network: Some(network), ..Default::default() },
             #[cfg(feature = "optimism")]
             NetworkVariant::Optimism => {
                 Self { network: Some(network), optimism: true, ..Default::default() }
             }
         }
     }
+}
+
+/// Returns the BSC P256 precompile for the given timestamp. The outer option distinguishes BSC
+/// chains from unrelated chains, while the inner option disables P256 before Haber.
+const fn bsc_p256_precompile(chain_id: ChainId, timestamp: u64) -> Option<Option<RevmPrecompile>> {
+    let (haber_timestamp, osaka_timestamp) = match chain_id {
+        BSC_MAINNET_CHAIN_ID => (BSC_MAINNET_HABER_TIMESTAMP, BSC_MAINNET_OSAKA_TIMESTAMP),
+        BSC_TESTNET_CHAIN_ID => (BSC_TESTNET_HABER_TIMESTAMP, BSC_TESTNET_OSAKA_TIMESTAMP),
+        _ => return None,
+    };
+
+    if timestamp < haber_timestamp {
+        Some(None)
+    } else if timestamp < osaka_timestamp {
+        Some(Some(P256VERIFY))
+    } else {
+        Some(Some(P256VERIFY_OSAKA))
+    }
+}
+
+/// Returns custom precompile labels for an already resolved execution hardfork.
+/// This metadata lookup does not discover or select an execution network.
+pub fn resolved_precompile_labels(hardfork: Option<FoundryHardfork>) -> AddressHashMap<String> {
+    match hardfork {
+        Some(FoundryHardfork::Tempo(hardfork)) => TEMPO_PRECOMPILES
+            .iter()
+            .filter(|(_, address)| is_tempo_precompile_active_at(*address, hardfork))
+            .map(|(label, address)| (*address, (*label).to_string()))
+            .collect(),
+        #[cfg(feature = "monad")]
+        Some(FoundryHardfork::Monad(hardfork)) => MONAD_PRECOMPILE_LABELS
+            .iter()
+            .filter(|(_, address)| is_monad_precompile_active_at(*address, hardfork))
+            .map(|(label, address)| (*address, (*label).to_string()))
+            .collect(),
+        #[cfg(feature = "base")]
+        Some(FoundryHardfork::Base(upgrade)) => BASE_PRECOMPILES
+            .iter()
+            .filter(|(_, address)| is_base_precompile_active_at(*address, upgrade))
+            .map(|(label, address)| (*address, (*label).to_string()))
+            .collect(),
+        _ => AddressHashMap::default(),
+    }
+}
+
+/// Returns whether a well-known Tempo precompile address is active at `hardfork`.
+pub fn is_tempo_precompile_active_at(address: Address, hardfork: TempoHardfork) -> bool {
+    if address == CURRENT_COMMITTEE_ADDRESS {
+        hardfork.is_t8()
+    } else if address == TIP20_CHANNEL_RESERVE_ADDRESS {
+        hardfork.is_t5()
+    } else if address == RECEIVE_POLICY_GUARD_ADDRESS {
+        hardfork.is_t6()
+    } else if address == STORAGE_CREDITS_ADDRESS {
+        hardfork.is_t7()
+    } else if address == ADDRESS_REGISTRY_ADDRESS || address == SIGNATURE_VERIFIER_ADDRESS {
+        hardfork.is_t3()
+    } else {
+        true
+    }
+}
+
+/// Returns the well-known Tempo precompile addresses active at `hardfork`.
+pub fn active_tempo_precompile_addresses(hardfork: TempoHardfork) -> impl Iterator<Item = Address> {
+    TEMPO_PRECOMPILE_ADDRESSES
+        .iter()
+        .copied()
+        .filter(move |&address| is_tempo_precompile_active_at(address, hardfork))
+}
+
+/// Returns whether a well-known Monad precompile address is active at `hardfork`.
+#[cfg(feature = "monad")]
+pub fn is_monad_precompile_active_at(address: Address, hardfork: MonadHardfork) -> bool {
+    address == monad_revm::staking::STAKING_ADDRESS
+        || (address == monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS
+            && MonadHardfork::MonadNine.is_enabled_in(hardfork))
+}
+
+/// Returns whether a fixed Base precompile is active at `upgrade`.
+#[cfg(feature = "base")]
+pub fn is_base_precompile_active_at(address: Address, upgrade: BaseUpgrade) -> bool {
+    if matches!(address, TxContextStorage::ADDRESS | NonceManagerStorage::ADDRESS) {
+        upgrade >= BaseUpgrade::Cobalt
+    } else if matches!(
+        address,
+        B20FactoryStorage::ADDRESS
+            | ActivationRegistryStorage::ADDRESS
+            | PolicyRegistryStorage::ADDRESS
+    ) {
+        upgrade >= BaseUpgrade::Beryl
+    } else {
+        false
+    }
+}
+
+/// Returns the fixed Base precompiles active at `upgrade`.
+#[cfg(feature = "base")]
+pub fn active_base_precompiles(
+    upgrade: BaseUpgrade,
+) -> impl Iterator<Item = (&'static str, Address)> {
+    BASE_PRECOMPILES
+        .iter()
+        .copied()
+        .filter(move |(_, address)| is_base_precompile_active_at(*address, upgrade))
 }
 
 #[cfg(test)]
@@ -929,9 +1175,11 @@ mod tests {
     #[test]
     fn network_variant_predicates() {
         assert!(NetworkVariant::Ethereum.is_ethereum());
+        assert!(!NetworkVariant::Ethereum.is_optimism());
         assert!(!NetworkVariant::Ethereum.is_tempo());
         assert!(NetworkVariant::Tempo.is_tempo());
         assert!(!NetworkVariant::Tempo.is_ethereum());
+        assert!(!NetworkVariant::Tempo.is_optimism());
 
         #[cfg(feature = "monad")]
         {
@@ -939,6 +1187,7 @@ mod tests {
             assert!(!NetworkVariant::Tempo.is_monad());
             assert!(NetworkVariant::Monad.is_monad());
             assert!(!NetworkVariant::Monad.is_ethereum());
+            assert!(!NetworkVariant::Monad.is_optimism());
             assert!(!NetworkVariant::Monad.is_tempo());
         }
 
@@ -952,8 +1201,36 @@ mod tests {
             assert!(!NetworkVariant::Optimism.is_monad());
         }
 
-        #[cfg(all(feature = "optimism", feature = "monad"))]
-        assert!(!NetworkVariant::Monad.is_optimism());
+        #[cfg(feature = "base")]
+        {
+            assert!(NetworkVariant::Base.is_base());
+            assert!(!NetworkVariant::Base.is_ethereum());
+            assert!(!NetworkVariant::Base.is_optimism());
+            assert!(!NetworkVariant::Base.is_tempo());
+        }
+    }
+
+    #[test]
+    #[cfg(all(feature = "base", feature = "optimism"))]
+    fn historical_hardfork_uses_selected_execution_family() {
+        let timestamp = 1_710_374_401;
+
+        assert_eq!(
+            NetworkVariant::Base.historical_hardfork(NamedChain::Base as u64, timestamp),
+            Some(BaseUpgrade::Ecotone.into())
+        );
+        assert_eq!(
+            NetworkVariant::Optimism.historical_hardfork(NamedChain::Base as u64, timestamp),
+            Some(OpHardfork::Ecotone.into())
+        );
+        assert_eq!(
+            NetworkVariant::Ethereum.historical_hardfork(NamedChain::Base as u64, timestamp),
+            None
+        );
+        assert_eq!(
+            NetworkVariant::Tempo.historical_hardfork(NamedChain::Base as u64, timestamp),
+            None
+        );
     }
 
     #[test]
@@ -976,6 +1253,35 @@ mod tests {
             assert!(!NetworkConfigs::with_monad().supports_fork_source(execution));
         }
         assert!(NetworkConfigs::with_monad().supports_fork_source(&NetworkConfigs::with_monad()));
+    }
+
+    #[test]
+    #[cfg(feature = "base")]
+    fn fork_sources_preserve_base_state_source_compatibility() {
+        #[cfg_attr(not(feature = "optimism"), allow(unused_mut))]
+        let mut non_base = vec![
+            NetworkConfigs::default(),
+            NetworkConfigs::with_ethereum(),
+            NetworkConfigs::with_celo(),
+            NetworkConfigs::with_tempo(),
+        ];
+        #[cfg(feature = "optimism")]
+        non_base.push(NetworkConfigs::with_optimism());
+        for execution in &non_base {
+            assert!(execution.supports_fork_source(&NetworkConfigs::with_base()));
+            assert!(!NetworkConfigs::with_base().supports_fork_source(execution));
+        }
+        assert!(NetworkConfigs::with_base().supports_fork_source(&NetworkConfigs::with_base()));
+
+        #[cfg(feature = "monad")]
+        {
+            assert!(
+                !NetworkConfigs::with_monad().supports_fork_source(&NetworkConfigs::with_base())
+            );
+            assert!(
+                !NetworkConfigs::with_base().supports_fork_source(&NetworkConfigs::with_monad())
+            );
+        }
     }
 
     #[test]
@@ -1396,14 +1702,60 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "base")]
+    #[test]
+    fn base_precompile_labels_follow_upgrade_boundaries() {
+        let config = NetworkConfigs::with_base();
+
+        assert!(config.precompiles_label(Some(BaseUpgrade::Azul.into())).is_empty());
+
+        let beryl = config.precompiles_label(Some(BaseUpgrade::Beryl.into()));
+        assert_eq!(beryl.get(&B20FactoryStorage::ADDRESS), Some(&"B20Factory".to_string()));
+        assert_eq!(
+            beryl.get(&ActivationRegistryStorage::ADDRESS),
+            Some(&"ActivationRegistry".to_string())
+        );
+        assert_eq!(beryl.get(&PolicyRegistryStorage::ADDRESS), Some(&"PolicyRegistry".to_string()));
+        assert!(!beryl.contains_key(&TxContextStorage::ADDRESS));
+        assert!(!beryl.contains_key(&NonceManagerStorage::ADDRESS));
+
+        let cobalt = config.precompiles_label(Some(BaseUpgrade::Cobalt.into()));
+        assert_eq!(cobalt.len(), BASE_PRECOMPILES.len());
+        assert_eq!(config.precompiles_label(None).len(), BASE_PRECOMPILES.len());
+
+        for upgrade in [BaseUpgrade::Azul, BaseUpgrade::Beryl, BaseUpgrade::Cobalt] {
+            assert_eq!(
+                resolved_precompile_labels(Some(upgrade.into())),
+                config.precompiles_label(Some(upgrade.into()))
+            );
+        }
+
+        // The name-keyed precompile map must honor the same upgrade boundaries.
+        assert!(config.precompiles(Some(BaseUpgrade::Azul.into())).is_empty());
+        let beryl = config.precompiles(Some(BaseUpgrade::Beryl.into()));
+        assert_eq!(beryl.get("B20Factory"), Some(&B20FactoryStorage::ADDRESS));
+        assert!(!beryl.contains_key("NonceManager"));
+        assert_eq!(
+            config.precompiles(Some(BaseUpgrade::Cobalt.into())).get("NonceManager"),
+            Some(&NonceManagerStorage::ADDRESS)
+        );
+
+        // A non-Base profile must not pick up Base labels even when an upgrade is supplied.
+        assert!(
+            NetworkConfigs::default()
+                .precompiles_label(Some(BaseUpgrade::Cobalt.into()))
+                .is_empty()
+        );
+    }
+
     #[test]
     fn new_tempo_flag_equivalent_to_legacy() {
         let via_new = NetworkConfigs { network: Some(NetworkVariant::Tempo), ..Default::default() };
         let via_old = NetworkConfigs { tempo: true, ..Default::default() };
         assert_eq!(via_new.is_tempo(), via_old.is_tempo());
         assert_eq!(via_new.active_network_name(), via_old.active_network_name());
-        assert_eq!(via_new.precompiles(None, None), via_old.precompiles(None, None));
-        assert_eq!(via_new.precompiles_label(None, None), via_old.precompiles_label(None, None));
+        assert_eq!(via_new.precompiles(None), via_old.precompiles(None));
+        assert_eq!(via_new.precompiles_label(None), via_old.precompiles_label(None));
     }
 
     fn bsc_p256_gas_used(chain_id: ChainId, timestamp: u64) -> Option<u64> {
@@ -1444,7 +1796,7 @@ mod tests {
     fn removes_bsc_p256_before_haber() {
         let mut precompiles = PrecompilesMap::from_static(Precompiles::osaka());
         assert!(precompiles.get(&BSC_P256_ADDRESS).is_some());
-        NetworkConfigs::default().inject_chain_precompiles(
+        apply_bsc_p256_precompile(
             &mut precompiles,
             BSC_MAINNET_CHAIN_ID,
             BSC_MAINNET_HABER_TIMESTAMP - 1,
@@ -1457,35 +1809,37 @@ mod tests {
         let cfg = NetworkConfigs { network: Some(NetworkVariant::Tempo), ..Default::default() };
 
         assert_eq!(
-            cfg.precompiles(None, None).get("TIP20ChannelReserve"),
+            cfg.precompiles(None).get("TIP20ChannelReserve"),
             Some(&TIP20_CHANNEL_RESERVE_ADDRESS)
         );
         assert!(
-            !cfg.precompiles(Some(TempoHardfork::T4), None).contains_key("TIP20ChannelReserve")
+            !cfg.precompiles(Some(TempoHardfork::T4.into())).contains_key("TIP20ChannelReserve")
         );
-        assert!(!cfg.precompiles(Some(TempoHardfork::T4), None).contains_key("ReceivePolicyGuard"));
-        assert!(!cfg.precompiles(Some(TempoHardfork::T2), None).contains_key("AddressRegistry"));
-        assert!(!cfg.precompiles(Some(TempoHardfork::T2), None).contains_key("SignatureVerifier"));
+        assert!(
+            !cfg.precompiles(Some(TempoHardfork::T4.into())).contains_key("ReceivePolicyGuard")
+        );
+        assert!(!cfg.precompiles(Some(TempoHardfork::T2.into())).contains_key("AddressRegistry"));
+        assert!(!cfg.precompiles(Some(TempoHardfork::T2.into())).contains_key("SignatureVerifier"));
         assert_eq!(
-            cfg.precompiles(Some(TempoHardfork::T3), None).get("AddressRegistry"),
+            cfg.precompiles(Some(TempoHardfork::T3.into())).get("AddressRegistry"),
             Some(&ADDRESS_REGISTRY_ADDRESS)
         );
         assert_eq!(
-            cfg.precompiles(Some(TempoHardfork::T3), None).get("SignatureVerifier"),
+            cfg.precompiles(Some(TempoHardfork::T3.into())).get("SignatureVerifier"),
             Some(&SIGNATURE_VERIFIER_ADDRESS)
         );
         assert_eq!(
-            cfg.precompiles_label(Some(TempoHardfork::T5), None)
+            cfg.precompiles_label(Some(TempoHardfork::T5.into()))
                 .get(&TIP20_CHANNEL_RESERVE_ADDRESS),
             Some(&"TIP20ChannelReserve".to_string())
         );
-        assert!(cfg.precompiles_label(None, None).contains_key(&TIP20_CHANNEL_RESERVE_ADDRESS));
+        assert!(cfg.precompiles_label(None).contains_key(&TIP20_CHANNEL_RESERVE_ADDRESS));
         assert!(
-            !cfg.precompiles_label(Some(TempoHardfork::T5), None)
+            !cfg.precompiles_label(Some(TempoHardfork::T5.into()))
                 .contains_key(&RECEIVE_POLICY_GUARD_ADDRESS)
         );
         assert!(
-            cfg.precompiles_label(Some(TempoHardfork::T6), None)
+            cfg.precompiles_label(Some(TempoHardfork::T6.into()))
                 .contains_key(&RECEIVE_POLICY_GUARD_ADDRESS)
         );
     }
@@ -1496,28 +1850,28 @@ mod tests {
         let cfg = NetworkConfigs { network: Some(NetworkVariant::Monad), ..Default::default() };
 
         assert_eq!(
-            cfg.precompiles(None, Some(MonadHardfork::MonadEight)).get("MonadStaking"),
+            cfg.precompiles(Some(MonadHardfork::MonadEight.into())).get("MonadStaking"),
             Some(&monad_revm::staking::STAKING_ADDRESS)
         );
         assert!(
-            !cfg.precompiles(None, Some(MonadHardfork::MonadEight))
+            !cfg.precompiles(Some(MonadHardfork::MonadEight.into()))
                 .contains_key("MonadReserveBalance")
         );
         assert_eq!(
-            cfg.precompiles(None, Some(MonadHardfork::MonadNine)).get("MonadReserveBalance"),
+            cfg.precompiles(Some(MonadHardfork::MonadNine.into())).get("MonadReserveBalance"),
             Some(&monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS)
         );
         assert_eq!(
-            cfg.precompiles_label(None, Some(MonadHardfork::MonadNine))
+            cfg.precompiles_label(Some(MonadHardfork::MonadNine.into()))
                 .get(&monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS),
             Some(&"ReserveBalance".to_string())
         );
         assert!(
-            cfg.precompiles_label(None, None)
+            cfg.precompiles_label(None)
                 .contains_key(&monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS)
         );
         assert!(
-            !cfg.precompiles_label(None, Some(MonadHardfork::MonadEight))
+            !cfg.precompiles_label(Some(MonadHardfork::MonadEight.into()))
                 .contains_key(&monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS)
         );
     }
@@ -1530,8 +1884,8 @@ mod tests {
 
         // The hardfork-filtered precompile map must honor the same T7 activation.
         let cfg = NetworkConfigs { network: Some(NetworkVariant::Tempo), ..Default::default() };
-        assert!(!cfg.precompiles(Some(TempoHardfork::T6), None).contains_key("StorageCredits"));
-        assert!(cfg.precompiles(Some(TempoHardfork::T7), None).contains_key("StorageCredits"));
+        assert!(!cfg.precompiles(Some(TempoHardfork::T6.into())).contains_key("StorageCredits"));
+        assert!(cfg.precompiles(Some(TempoHardfork::T7.into())).contains_key("StorageCredits"));
     }
 
     #[test]
@@ -1541,8 +1895,8 @@ mod tests {
         assert!(TEMPO_PRECOMPILE_ADDRESSES.contains(&CURRENT_COMMITTEE_ADDRESS));
 
         let cfg = NetworkConfigs { network: Some(NetworkVariant::Tempo), ..Default::default() };
-        assert!(!cfg.precompiles(Some(TempoHardfork::T7), None).contains_key("CurrentCommittee"));
-        assert!(cfg.precompiles(Some(TempoHardfork::T8), None).contains_key("CurrentCommittee"));
+        assert!(!cfg.precompiles(Some(TempoHardfork::T7.into())).contains_key("CurrentCommittee"));
+        assert!(cfg.precompiles(Some(TempoHardfork::T8.into())).contains_key("CurrentCommittee"));
     }
 
     // --- resolved() / active_network_name ---
@@ -1559,7 +1913,6 @@ mod tests {
         let cfg = NetworkConfigs::with_monad();
         assert_eq!(cfg.active_network_name(), Some("monad"));
         assert!(cfg.is_monad());
-        assert_eq!(cfg.extra_cheatcode_addresses(), &[MONAD_CHEATCODE_ADDRESS]);
     }
 
     #[test]
@@ -1575,7 +1928,30 @@ mod tests {
     fn active_network_name_default_is_none() {
         let cfg = NetworkConfigs::default();
         assert_eq!(cfg.active_network_name(), None);
-        assert!(cfg.extra_cheatcode_addresses().is_empty());
+        assert!(!cfg.is_optimism());
+    }
+
+    /// Base chain IDs resolved to Optimism before Base support existed, and `is_optimism()` still
+    /// covers them, so a build without the `base` feature must keep resolving them rather than
+    /// erroring. Shipped release binaries are exactly that build.
+    #[test]
+    #[cfg(all(not(feature = "base"), feature = "optimism"))]
+    fn chain_id_inference_falls_back_to_optimism_without_base() {
+        for chain_id in [NamedChain::Base as u64, NamedChain::BaseSepolia as u64] {
+            let configs = NetworkConfigs::default()
+                .try_with_chain_id(chain_id)
+                .unwrap_or_else(|error| panic!("chain ID {chain_id} must still resolve: {error}"));
+            assert!(configs.is_optimism(), "chain ID {chain_id} must resolve to Optimism");
+        }
+    }
+
+    #[test]
+    #[cfg(not(feature = "base"))]
+    fn node_info_rejects_disabled_base() {
+        assert_eq!(
+            NetworkVariant::from_node_info_name("base").unwrap_err(),
+            "network family `base` is not enabled in this build"
+        );
     }
 
     // --- Serde round-trip ---
@@ -1733,6 +2109,75 @@ mod tests {
         assert!(NetworkConfigs::default().try_with_chain_id(143).unwrap().is_monad());
     }
 
+    #[cfg(feature = "base")]
+    mod base {
+        use super::*;
+
+        #[test]
+        fn active_network_name_base() {
+            let cfg = NetworkConfigs::with_base();
+            assert_eq!(cfg.active_network_name(), Some("base"));
+        }
+
+        #[test]
+        fn base_fee_params_follow_canyon_boundary() {
+            const CANYON_TIMESTAMP: u64 = 1_704_992_401;
+
+            let config = NetworkConfigs::with_base();
+            assert_eq!(config.base_fee_params(CANYON_TIMESTAMP - 1), BaseFeeParams::new(50, 6));
+            assert_eq!(config.base_fee_params(CANYON_TIMESTAMP), BaseFeeParams::new(250, 6));
+        }
+
+        #[test]
+        fn base_does_not_inherit_ethereum_blob_excess_gas() {
+            let params = BlobParams::prague();
+            assert_eq!(
+                NetworkConfigs::with_base().next_block_blob_excess_gas(
+                    params,
+                    0,
+                    params.target_blob_gas_per_block() + 1,
+                    1,
+                ),
+                0
+            );
+        }
+
+        #[test]
+        fn serde_roundtrip_base() {
+            let original = NetworkConfigs::with_base();
+            let json = serde_json::to_string(&original).unwrap();
+            let restored: NetworkConfigs = serde_json::from_str(&json).unwrap();
+            assert!(restored.is_base());
+            assert!(!restored.is_tempo());
+        }
+
+        #[test]
+        fn serde_base_field_deserialized() {
+            let json_base = r#"{"network": "base", "celo": false, "bypass_prevrandao": false}"#;
+            let cfg_base: NetworkConfigs = serde_json::from_str(json_base).unwrap();
+            assert!(cfg_base.is_base());
+        }
+
+        #[test]
+        fn chain_id_detects_base_networks() {
+            assert_eq!(NetworkVariant::from(8453), NetworkVariant::Base);
+            assert_eq!(NetworkVariant::from(84532), NetworkVariant::Base);
+            assert!(NetworkConfigs::default().try_with_chain_id(8453).unwrap().is_base());
+            assert_eq!(NetworkVariant::from_node_info_name("base").unwrap(), NetworkVariant::Base);
+        }
+
+        #[test]
+        fn hardfork_infers_base_network() {
+            assert_eq!(
+                NetworkConfigs::default()
+                    .normalize_for_hardfork(FoundryHardfork::Base(BaseUpgrade::Beryl))
+                    .unwrap()
+                    .resolved_network(),
+                Some(NetworkVariant::Base)
+            );
+        }
+    }
+
     #[cfg(feature = "optimism")]
     mod optimism {
         use super::*;
@@ -1788,5 +2233,17 @@ mod tests {
             let cfg_optimism: NetworkConfigs = serde_json::from_str(json_optimism).unwrap();
             assert!(cfg_optimism.is_optimism());
         }
+    }
+
+    #[test]
+    fn executed_hardfork_follows_the_network_family() {
+        // A cross-namespace override runs as the configured network's hardfork, so the value used
+        // to describe execution has to be coerced the same way.
+        let prague = FoundryHardfork::Ethereum(EthereumHardfork::Prague);
+        assert_eq!(NetworkConfigs::default().executed_hardfork(prague), prague);
+        assert_eq!(
+            NetworkConfigs::with_tempo().executed_hardfork(prague),
+            FoundryHardfork::Tempo(TempoHardfork::from(prague))
+        );
     }
 }

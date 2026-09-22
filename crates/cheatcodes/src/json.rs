@@ -814,8 +814,10 @@ pub(super) fn resolve_type(
         return ordered_ty(ty);
     };
 
-    if let Ok(encoded) = EncodeType::parse(type_description) {
-        let main_type = encoded.types[0].type_name;
+    if let Ok(encoded) = EncodeType::parse(type_description)
+        && let Some(main) = encoded.types.first()
+    {
+        let main_type = main.type_name;
         let mut resolver = Resolver::default();
         for t in &encoded.types {
             resolver.ingest(t.to_owned());
@@ -1131,6 +1133,16 @@ mod tests {
             return Ok(());
         }
         panic!("Expected Person to be CustomStruct");
+    }
+
+    #[test]
+    fn test_resolve_type_bare_struct_name_errors_instead_of_panicking() {
+        // `EncodeType::parse` succeeds with an empty type list for inputs without `(`.
+        let err = resolve_type("Foo", None).unwrap_err();
+        assert!(
+            err.to_string().contains("valid Solidity type or a EIP712 `encodeType` string"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]

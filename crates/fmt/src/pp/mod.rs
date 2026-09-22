@@ -415,6 +415,7 @@ impl Printer {
                 IndentStyle::Block { offset } => {
                     usize::try_from(self.indent as isize + offset).unwrap()
                 }
+                IndentStyle::Visual if self.out.ends_with('\n') => self.pending_indentation,
                 IndentStyle::Visual => (self.margin - self.space) as usize,
             };
         } else {

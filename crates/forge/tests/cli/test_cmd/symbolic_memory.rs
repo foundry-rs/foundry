@@ -247,29 +247,31 @@ contract SymbolicOversizedMemoryRange {
     }
 
     function testOversizedVariableMemoryRanges() public {
-        verifyOversizedVariableMemoryRanges();
+        verifyOversizedVariableMemoryRanges(true);
     }
 
     function checkOversizedVariableMemoryRanges() public {
-        verifyOversizedVariableMemoryRanges();
+        verifyOversizedVariableMemoryRanges(false);
     }
 
-    function verifyOversizedVariableMemoryRanges() internal {
-        assertFails(this.calldataCopy.selector);
-        assertFails(this.codeCopy.selector);
-        assertFails(this.extcodeCopy.selector);
-        assertFails(this.returndataCopy.selector);
-        assertFails(this.memoryCopyDest.selector);
-        assertFails(this.memoryCopySource.selector);
-        assertFails(this.hash.selector);
-        assertFails(this.log.selector);
-        assertFails(this.ret.selector);
-        assertFails(this.rev.selector);
+    function verifyOversizedVariableMemoryRanges(bool capGas) internal {
+        assertFails(this.calldataCopy.selector, capGas);
+        assertFails(this.codeCopy.selector, capGas);
+        assertFails(this.extcodeCopy.selector, capGas);
+        assertFails(this.returndataCopy.selector, capGas);
+        assertFails(this.memoryCopyDest.selector, capGas);
+        assertFails(this.memoryCopySource.selector, capGas);
+        assertFails(this.hash.selector, capGas);
+        assertFails(this.log.selector, capGas);
+        assertFails(this.ret.selector, capGas);
+        assertFails(this.rev.selector, capGas);
     }
 
-    function assertFails(bytes4 selector) internal {
-        (bool ok, bytes memory data) =
-            address(this).call{gas: 100_000}(abi.encodeWithSelector(selector));
+    function assertFails(bytes4 selector, bool capGas) internal {
+        bytes memory input = abi.encodeWithSelector(selector);
+        (bool ok, bytes memory data) = capGas
+            ? address(this).call{gas: 100_000}(input)
+            : address(this).call(input);
         assert(!ok);
         assert(data.length == 0);
     }
@@ -1141,6 +1143,95 @@ contract SymbolicReturndataCopySize is Test {
     );
     assert!(!stdout.contains("symbolic RETURNDATACOPY size"), "{stdout}");
 });
+
+forgetest_init!(
+    symbolic_returndatacopy_reverts_on_out_of_bounds_offset_with_symbolic_size,
+    |prj, cmd| {
+        if !z3_available() {
+            let _ = sh_eprintln!(
+                "skipping symbolic_returndatacopy_reverts_on_out_of_bounds_offset_with_symbolic_size because z3 is not available"
+            );
+            return;
+        }
+
+        prj.add_test(
+            "SymbolicReturndataCopyOobOffset.t.sol",
+            r#"
+import "forge-std/Test.sol";
+
+contract SymbolicReturndataCopyOobOffsetHelper {
+    function pair(uint256 marker) external pure returns (uint256, uint256) {
+        return (11, marker);
+    }
+}
+
+contract SymbolicReturndataCopyOobOffsetTrigger {
+    SymbolicReturndataCopyOobOffsetHelper public helper;
+
+    constructor(SymbolicReturndataCopyOobOffsetHelper _helper) {
+        helper = _helper;
+    }
+
+    function copy(uint256 offset, uint256 size) external {
+        bytes4 selector = SymbolicReturndataCopyOobOffsetHelper.pair.selector;
+        address target = address(helper);
+        assembly {
+            mstore(0x80, selector)
+            mstore(0x84, 0)
+            pop(staticcall(gas(), target, 0x80, 36, 0, 0))
+            returndatacopy(0, offset, size)
+        }
+    }
+}
+
+contract SymbolicReturndataCopyOobOffset is Test {
+    SymbolicReturndataCopyOobOffsetHelper helper;
+    SymbolicReturndataCopyOobOffsetTrigger trigger;
+
+    function setUp() public {
+        helper = new SymbolicReturndataCopyOobOffsetHelper();
+        trigger = new SymbolicReturndataCopyOobOffsetTrigger(helper);
+    }
+
+    function checkOutOfBoundsOffsetForcedZeroSizeReverts(uint256 size) public {
+        vm.assume(size <= 0);
+        vm.expectRevert();
+        trigger.copy(65, size);
+    }
+
+    function checkOutOfBoundsClearsReturnData(uint256 size) public {
+        vm.assume(size <= 0);
+        (bool ok, bytes memory data) = address(trigger).call(
+            abi.encodeCall(SymbolicReturndataCopyOobOffsetTrigger.copy, (65, size))
+        );
+        assertFalse(ok);
+        assertEq(data.length, 0);
+    }
+
+}
+"#,
+        );
+
+        let stdout = cmd
+            .args([
+                "test",
+                "--symbolic",
+                "--match-test",
+                "checkOutOfBoundsOffsetForcedZeroSizeReverts|checkOutOfBoundsClearsReturnData",
+            ])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+
+        assert_relevant_lines(
+            &stdout,
+            foundry_test_utils::str![[r#"
+[PASS] checkOutOfBoundsOffsetForcedZeroSizeReverts(uint256)
+[PASS] checkOutOfBoundsClearsReturnData(uint256)
+"#]],
+        );
+    }
+);
 
 forgetest_init!(symbolic_return_revert_accept_symbolic_offset, |prj, cmd| {
     if !z3_available() {

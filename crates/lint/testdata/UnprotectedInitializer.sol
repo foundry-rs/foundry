@@ -96,8 +96,17 @@ contract NoDestructiveSink is Initializable {
     address public owner;
 
     function initialize(address owner_) public initializer {
+        _shared();
+        _shared();
         owner = owner_;
     }
+
+    function _shared() internal pure {
+        _leaf();
+        _leaf();
+    }
+
+    function _leaf() internal pure {}
 }
 
 contract ProtectedDisableInitializers is Initializable {
@@ -283,5 +292,108 @@ contract StorageAliasInitializer is Initializable {
     function execute(address target, bytes calldata data) external {
         (bool ok,) = target.delegatecall(data);
         require(ok);
+    }
+}
+
+contract StorageReturnInitializer is Initializable {
+    struct Layout {
+        address owner;
+    }
+
+    Layout private layout;
+    Layout private alternateLayout;
+
+    function getLayout() internal view returns (Layout storage) {
+        return layout;
+    }
+
+    function getAlternateLayout() internal view returns (Layout storage) {
+        return alternateLayout;
+    }
+
+    function initialize(address owner_) public initializer { //~WARN: upgradeable initializer is not protected against direct implementation calls
+        getLayout().owner = owner_;
+    }
+
+    function initializeConditional(bool useAlternate, address owner_) public initializer { //~WARN: upgradeable initializer is not protected against direct implementation calls
+        (useAlternate ? getAlternateLayout() : getLayout()).owner = owner_;
+    }
+
+    function execute(address target, bytes calldata data) external {
+        (bool ok,) = target.delegatecall(data);
+        require(ok);
+    }
+}
+
+// Repeated edges and recursive calls must not hide a later state write.
+contract RepeatedInitializerCalls is Initializable, DangerousBase {
+    address public owner;
+
+    function initialize(address owner_) public initializer { //~WARN: upgradeable initializer is not protected against direct implementation calls
+        _left(owner_);
+        _right(owner_);
+    }
+
+    function _left(address owner_) internal {
+        _shared(owner_);
+    }
+
+    function _right(address owner_) internal {
+        _shared(owner_);
+        owner = owner_;
+    }
+
+    function _shared(address owner_) internal {
+        _left(owner_);
+    }
+}
+
+contract SelectedInitializerOverload is Initializable, DangerousBase {
+    uint256 public value;
+
+    function initialize(address account) external initializer {
+        _initialize(account);
+    }
+
+    function _initialize(address) internal pure {}
+
+    function _initialize(uint256 next) internal {
+        value = next;
+    }
+}
+
+contract ExternalLockBase {
+    bool private initialized;
+
+    modifier initializer() {
+        _;
+    }
+
+    function _disableInitializers() public {
+        initialized = true;
+    }
+}
+
+contract ExternalLockInitializer is ExternalLockBase, DangerousBase {
+    address public owner;
+
+    constructor(ExternalLockBase other) {
+        other._disableInitializers();
+    }
+
+    function initialize(address next) external initializer { //~WARN: upgradeable initializer is not protected against direct implementation calls
+        owner = next;
+    }
+}
+
+contract InternalPublicLockInitializer is ExternalLockBase, DangerousBase {
+    address public owner;
+
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(address next) external initializer {
+        owner = next;
     }
 }

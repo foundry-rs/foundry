@@ -31,6 +31,9 @@ enum ResponseMutation {
     MissingTransactionBlock {
         block_hash: String,
     },
+    MissingTransactionFromFullBlock {
+        tx_hash: String,
+    },
     CanonicalBlockHash {
         block_number: String,
         replacement: String,
@@ -103,6 +106,21 @@ fn mutate_rpc_result(request: &Value, response: &mut Value, mutation: &ResponseM
         && requested_target.is_some_and(|target| target.eq_ignore_ascii_case(block_hash))
     {
         response["result"] = Value::Null;
+        return;
+    }
+
+    if let ResponseMutation::MissingTransactionFromFullBlock { tx_hash } = mutation
+        && method == "eth_getBlockByNumber"
+        && request.pointer("/params/1").and_then(Value::as_bool) == Some(true)
+        && let Some(transactions) =
+            response.pointer_mut("/result/transactions").and_then(Value::as_array_mut)
+    {
+        transactions.retain(|transaction| {
+            transaction
+                .get("hash")
+                .and_then(Value::as_str)
+                .is_none_or(|hash| !hash.eq_ignore_ascii_case(tx_hash))
+        });
         return;
     }
 
@@ -372,4 +390,25 @@ casttest!(cast_run_remote_trace_rejects_canonical_block_mismatch, async |_prj, c
         .stderr_lossy();
     assert!(output.contains("canonical block lookup reported block"), "{output}");
     assert!(output.contains("changed inclusion"), "{output}");
+});
+
+casttest!(cast_run_rejects_target_missing_from_replay_block, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let (tx_hash, _, _) = send_identity_transaction(&handle).await;
+    let (endpoint, _) = spawn_recording_rpc_proxy(
+        handle.http_endpoint(),
+        ResponseMutation::MissingTransactionFromFullBlock { tx_hash: tx_hash.to_string() },
+    )
+    .await;
+
+    let tx_hash = tx_hash.to_string();
+    let output = cmd
+        .args(["run", &tx_hash, "--rpc-url", &endpoint])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+    assert!(
+        output.contains(&format!("transaction {tx_hash} is missing from its block")),
+        "{output}"
+    );
 });

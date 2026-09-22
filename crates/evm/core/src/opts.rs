@@ -4,8 +4,6 @@ use crate::{
     fork::{CreateFork, ResolvedFork},
     utils::{apply_chain_and_block_specific_env_changes_for_chain, block_env_from_header},
 };
-#[cfg(test)]
-use alloy_chains::NamedChain;
 use alloy_consensus::BlockHeader;
 use alloy_eips::BlockNumHash;
 use alloy_network::{AnyNetwork, BlockResponse, Network, primitives::HeaderResponse};
@@ -20,21 +18,23 @@ use foundry_common::{
     ALCHEMY_FREE_TIER_CUPS, NON_ARCHIVE_NODE_WARNING,
     provider::{ProviderBuilder, is_rpc_method_not_found},
 };
+use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{Chain, Config, ExecutionSpec, FoundryHardfork, GasLimit};
-use foundry_evm_hardforks::TempoHardfork;
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
 use revm::{context::CfgEnv, primitives::hardfork::SpecId};
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
 use url::Url;
 
-fn fork_endpoint_description(endpoint: &str) -> String {
-    Url::parse(endpoint)
-        .ok()
-        .and_then(|url| url.host_str().map(|host| format!("provider {host}")))
-        .unwrap_or_else(|| "configured provider".to_string())
-}
-
+/// EVM execution options, including the configured remote fork.
+///
+/// Fork handling separates two responsibilities. Endpoint discovery identifies and caches the
+/// execution family without selecting a block. Exact resolution binds the configured source and
+/// selector to a block number, hash, and endpoint context. Forge normally performs discovery
+/// before resolution, while callers that already know the network can resolve directly.
+///
+/// An implicit `latest` selector remains unchanged in these options; only the returned
+/// [`ResolvedFork`] is pinned to the exact block observed during resolution.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EvmOpts {
     /// The EVM environment configuration.
@@ -123,11 +123,11 @@ pub struct EvmOpts {
     /// The CREATE2 deployer's address.
     pub create2_deployer: Address,
 
-    /// Identity discovered from the configured fork endpoint.
+    /// Most recently discovered endpoint identity, cached for network dispatch and revalidation.
     #[serde(skip)]
     pub fork_endpoint: Option<ForkEndpointIdentity>,
 
-    /// Endpoint identity that must remain stable while constructing local execution state.
+    /// Endpoint identity promoted to an invariant that later discovery must match.
     #[serde(skip)]
     pub expected_fork_endpoint: Option<ForkEndpointIdentity>,
 
@@ -144,10 +144,18 @@ pub struct EvmOpts {
     pub fork_block_number_is_inferred: bool,
 }
 
-/// Execution and source identity exposed by a fork endpoint.
+/// A snapshot of the execution and upstream-source identity exposed by an RPC endpoint.
+///
+/// This identity is independent of the block selector Forge resolves. In particular,
+/// `source_fork_block_*` describes the upstream block from which an Anvil endpoint was itself
+/// forked; the target block selected for local execution belongs to [`ResolvedFork`]. Equality
+/// detects observable endpoint identity changes, including Anvil instance resets, and
+/// execution-profile changes between related RPC reads.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ForkEndpointIdentity {
     /// RPC URL from which this identity was discovered.
+    ///
+    /// Request headers and JWT credentials are bound separately by [`ResolvedFork`].
     pub endpoint: String,
     /// Chain ID exposed through `eth_chainId`.
     pub execution_chain_id: ChainId,
@@ -171,11 +179,18 @@ pub struct ForkEndpointIdentity {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum EndpointHardforkPolicy {
+    /// Permit an unrecognized hardfork during early network-family discovery.
     Optional,
+    /// Require a recognized hardfork before constructing an execution environment.
     Required,
 }
 
-/// Tracks whether `anvil_nodeInfo` has positively identified the endpoint as Anvil.
+/// Best-effort Anvil detection that becomes strict after positive identification.
+///
+/// Before the first successful `anvil_nodeInfo` response, any probe failure means that the
+/// optional capability is unavailable. Mandatory standard RPC reads still expose endpoint-wide
+/// failures. Once a response or cached endpoint identity identifies Anvil, every later probe
+/// failure is returned so it cannot hide an endpoint reset or execution-profile change.
 #[derive(Clone, Copy, Debug, Default)]
 struct AnvilNodeInfoProbe {
     identified: bool,
@@ -195,7 +210,7 @@ impl AnvilNodeInfoProbe {
                 self.identified = true;
                 Ok(Some(node_info))
             }
-            Err(error) if !self.identified && is_rpc_method_not_found(&error) => Ok(None),
+            Err(_) if !self.identified => Ok(None),
             Err(error) => Err(error).wrap_err("failed to determine network family from endpoint"),
         }
     }
@@ -221,9 +236,11 @@ fn endpoint_hardfork(
     }
 }
 
-/// Identity and block context of the remote chain backing a fork.
+/// Endpoint identity paired with the remote block number backing a fork.
 ///
-/// The source chain ID remains distinct from the configured `CHAINID` opcode override.
+/// [`ResolvedFork`] adds the exact block hash and configured RPC source. The remote
+/// `block_number` may differ from a remapped EVM block number on L2s, and the source chain ID
+/// remains distinct from a configured `CHAINID` opcode override.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize)]
 pub struct ForkContext {
     /// Chain ID exposed through `eth_chainId`.
@@ -431,7 +448,12 @@ impl EvmOpts {
         )
     }
 
-    /// Resolves and pins an unpinned fork to the current latest block.
+    /// Converts an implicit `latest` selector into a block-number selector in place.
+    ///
+    /// This only reads the endpoint's current block number; it does not resolve a block hash or
+    /// endpoint identity and is therefore not a reorg-safe fork snapshot. Use
+    /// [`Self::resolve_fork`] when later reads and backend construction must share an exact
+    /// identity.
     pub async fn pin_fork_block(&mut self) -> eyre::Result<Option<BlockNumber>> {
         if self.fork_block_number.is_none()
             && let Some(fork_url) = &self.fork_url
@@ -444,7 +466,13 @@ impl EvmOpts {
         Ok(self.fork_block_number)
     }
 
-    /// Resolves the configured fork selector without changing it.
+    /// Resolves the configured fork source and selector to an exact snapshot without changing
+    /// `self`.
+    ///
+    /// Endpoint identity is read before and after the target block and the operation is retried if
+    /// it changes. The result binds the configured RPC source, configured selector, exact block
+    /// number and hash, and [`ForkContext`]. When the selector is implicit `latest`, only the
+    /// returned [`ResolvedFork`] is pinned.
     pub async fn resolve_fork(&self) -> eyre::Result<Option<ResolvedFork>> {
         let Some(fork_url) = &self.fork_url else { return Ok(None) };
         let provider = self.fork_provider_with_url::<AnyNetwork>(fork_url)?;
@@ -583,10 +611,12 @@ impl EvmOpts {
         builder.build()
     }
 
-    /// Infers the network configuration and exact endpoint identity for a fork.
+    /// Discovers and caches the network configuration and endpoint identity for a fork.
     ///
-    /// Explicit network selections are preserved, while endpoint identity is still cached so
-    /// downstream execution can honor an Anvil endpoint's exact hardfork.
+    /// This is the dispatch phase of fork setup: explicit network selections are preserved, while
+    /// inferred chain and network settings are applied when no override exists. The method does not
+    /// resolve or pin a fork block; block resolution happens later through [`Self::resolve_fork`]
+    /// or [`Self::env_resolved`].
     pub async fn infer_network_from_fork(&mut self) -> eyre::Result<()> {
         let previous_identity = self.fork_endpoint.clone();
         let Some(fork_url) = self.fork_url.clone() else {
@@ -638,7 +668,13 @@ impl EvmOpts {
         Ok(())
     }
 
-    /// Discovers the complete identity exposed by the configured fork endpoint.
+    /// Discovers a stable identity snapshot without selecting a fork block.
+    ///
+    /// Each attempt reads `eth_chainId` and the optional Anvil identity methods before and after,
+    /// and returns only when both snapshots agree. Before Anvil is positively identified, a failed
+    /// `anvil_nodeInfo` probe is treated as absence of optional Anvil identity information for that
+    /// snapshot. Later probe failures are strict. This method does not mutate or cache the returned
+    /// identity in `self`.
     pub async fn discover_fork_endpoint(&self) -> eyre::Result<ForkEndpointIdentity> {
         let fork_url = self.fork_url.as_deref().ok_or_eyre("fork URL is not configured")?;
         let provider = self.fork_provider_with_url::<AnyNetwork>(fork_url)?;
@@ -683,8 +719,11 @@ impl EvmOpts {
         );
     }
 
-    /// Resolves one endpoint identity snapshot, using Anvil's authoritative node metadata when it
-    /// is already known to be available.
+    /// Reads one endpoint identity snapshot without performing a stability check.
+    ///
+    /// The shared node-info probe starts permissive for endpoints that do not expose Anvil methods
+    /// and becomes strict after Anvil is identified. Callers either bracket mutable remote reads
+    /// with two snapshots or use this helper to revalidate an already resolved fork.
     async fn resolve_fork_endpoint_once<N: Network, P: Provider<N>>(
         &self,
         provider: &P,
@@ -726,6 +765,9 @@ impl EvmOpts {
         Ok((identity.execution_chain_id, identity.network))
     }
 
+    /// Builds an identity from one observed chain ID and optional Anvil node-info response.
+    ///
+    /// Anvil metadata is consulted only after node info has positively identified the endpoint.
     async fn resolve_fork_endpoint_identity<N: Network, P: Provider<N>>(
         provider: &P,
         endpoint: &str,
@@ -835,7 +877,11 @@ impl EvmOpts {
         Ok((evm_env, tx, fork.as_ref().map(ResolvedFork::number)))
     }
 
-    /// Returns the EVM and transaction environments with their resolved fork context.
+    /// Returns the EVM and transaction environments with an exact resolved fork snapshot.
+    ///
+    /// Resolution brackets block and gas-price reads with endpoint identity checks and retries if
+    /// the endpoint changes. Downstream preflight reads and backend construction should reuse the
+    /// returned [`ResolvedFork`] instead of carrying only its block number.
     pub async fn env_resolved<
         SPEC: Into<SpecId> + Default + Copy,
         BLOCK: FoundryBlock + Default,
@@ -1411,23 +1457,15 @@ impl ExecutionSpecContext {
         Self::Historical { source_chain_id, endpoint_hardfork }
     }
 
-    fn endpoint_hardfork(self, networks: NetworkConfigs) -> Option<FoundryHardfork> {
+    fn hardfork<SPEC: ExecutionSpec>(self, timestamp: u64) -> Option<FoundryHardfork> {
         match self {
-            Self::Historical { endpoint_hardfork, .. } => endpoint_hardfork,
-            Self::Fork { endpoint_hardfork, .. } if networks.active_network_name().is_some() => {
-                endpoint_hardfork
+            Self::Local => None,
+            Self::Fork { source_chain_id, endpoint_hardfork } => {
+                SPEC::fork_hardfork(source_chain_id, timestamp, endpoint_hardfork)
             }
-            Self::Local | Self::Fork { .. } => None,
-        }
-    }
-
-    fn schedule_chain_id(self, networks: NetworkConfigs) -> Option<ChainId> {
-        match self {
-            Self::Historical { source_chain_id, .. } => Some(source_chain_id),
-            Self::Fork { source_chain_id, .. } if networks.active_network_name().is_some() => {
-                Some(source_chain_id)
-            }
-            Self::Local | Self::Fork { .. } => None,
+            Self::Historical { source_chain_id, endpoint_hardfork } => endpoint_hardfork
+                .filter(|&hardfork| SPEC::from_foundry_hardfork(hardfork).is_some())
+                .or_else(|| SPEC::historical_hardfork(source_chain_id, timestamp)),
         }
     }
 }
@@ -1442,53 +1480,30 @@ impl ExecutionSpecContext {
 /// Returns the exact namespaced hardfork, when applicable, so execution and trace decoding can use
 /// the same hardfork.
 pub fn resolve_execution_spec<SPEC, BLOCK>(
-    config: &Config,
-    networks: NetworkConfigs,
+    evm_version: EvmVersion,
+    configured_hardfork: Option<FoundryHardfork>,
     evm_env: &mut EvmEnv<SPEC, BLOCK>,
     context: ExecutionSpecContext,
     explicit_spec: Option<SPEC>,
-    explicit_hardfork: Option<FoundryHardfork>,
 ) -> Option<FoundryHardfork>
 where
     SPEC: ExecutionSpec + Into<SpecId> + Copy,
     BLOCK: FoundryBlock,
 {
-    let supports = |hardfork| SPEC::from_foundry_hardfork(hardfork).is_some();
-    let configured_hardfork = config.hardfork.filter(|&hardfork| supports(hardfork));
-    let endpoint_hardfork =
-        context.endpoint_hardfork(networks).filter(|&hardfork| supports(hardfork));
-    let timestamp_hardfork = context
-        .schedule_chain_id(networks)
-        .and_then(|chain_id| {
-            FoundryHardfork::from_chain_and_timestamp(
-                chain_id,
-                evm_env.block_env.timestamp().saturating_to(),
-            )
-        })
-        .filter(|&hardfork| supports(hardfork));
-    let fallback_hardfork = if networks.is_tempo() {
-        Some(FoundryHardfork::Tempo(config.evm_spec_id::<TempoHardfork>()))
+    let (spec, hardfork) = if let Some(spec) = explicit_spec {
+        (spec, spec.reported_hardfork())
+    } else if let Some((hardfork, spec)) = configured_hardfork
+        .filter(|&hardfork| SPEC::from_foundry_hardfork(hardfork).is_some())
+        .or_else(|| context.hardfork::<SPEC>(evm_env.block_env.timestamp().saturating_to()))
+        .and_then(|hardfork| SPEC::from_foundry_hardfork(hardfork).map(|spec| (hardfork, spec)))
+    {
+        (spec, Some(hardfork))
     } else {
-        #[cfg(feature = "monad")]
-        let hardfork = networks.is_monad().then(|| {
-            FoundryHardfork::Monad(config.evm_spec_id::<foundry_evm_hardforks::MonadHardfork>())
-        });
-        #[cfg(not(feature = "monad"))]
-        let hardfork = None;
-        hardfork
+        let spec = SPEC::from_evm_version(evm_version);
+        (spec, spec.reported_hardfork())
     };
-
-    let resolved_hardfork = if explicit_spec.is_some() {
-        explicit_hardfork
-    } else {
-        configured_hardfork.or(endpoint_hardfork).or(timestamp_hardfork).or(fallback_hardfork)
-    };
-    let spec = explicit_spec
-        .or_else(|| resolved_hardfork.and_then(SPEC::from_foundry_hardfork))
-        .unwrap_or_else(|| config.evm_spec_id());
     evm_env.cfg_env.set_spec_and_mainnet_gas_params(spec);
-
-    resolved_hardfork
+    hardfork
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -1544,6 +1559,13 @@ pub struct Env {
     pub code_size_limit: Option<usize>,
 }
 
+fn fork_endpoint_description(endpoint: &str) -> String {
+    Url::parse(endpoint)
+        .ok()
+        .and_then(|url| url.host_str().map(|host| format!("provider {host}")))
+        .unwrap_or_else(|| "configured provider".to_string())
+}
+
 async fn option_try_or_else<T, E>(
     option: Option<T>,
     f: impl AsyncFnOnce() -> Result<T, E>,
@@ -1553,18 +1575,23 @@ async fn option_try_or_else<T, E>(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use alloy_chains::NamedChain;
     use alloy_network::TransactionBuilder;
     use alloy_primitives::bytes;
     use alloy_rpc_types::TransactionRequest;
     use alloy_serde::WithOtherFields;
     use foundry_test_utils::rpc::{
-        spawn_rpc_proxy_method_not_found_before, spawn_rpc_proxy_rejecting_method_after,
+        spawn_rpc_proxy_internal_error_after, spawn_rpc_proxy_method_not_found_before,
+        spawn_rpc_proxy_rejecting_method_after,
     };
-    #[cfg(feature = "optimism")]
-    use op_revm::OpSpecId;
     use revm::context::{BlockEnv, TxEnv};
 
-    use super::*;
+    #[cfg(feature = "base")]
+    use foundry_evm_hardforks::BaseUpgrade;
+
+    #[cfg(feature = "optimism")]
+    use op_revm::OpSpecId;
 
     fn resolved_context(block_number: BlockNumber) -> ForkContext {
         ForkContext {
@@ -1889,18 +1916,16 @@ mod tests {
     #[cfg(feature = "monad")]
     fn resolve_execution_spec_uses_monad_ten_activation_timestamp() {
         let config = Config::default();
-        let networks = NetworkConfigs::with_monad();
         let activation =
             foundry_evm_hardforks::MonadHardfork::MonadTen.mainnet_activation_timestamp().unwrap();
 
         let mut before = monad_env(activation - 1);
         assert_eq!(
             resolve_execution_spec(
-                &config,
-                networks,
+                config.evm_version,
+                config.hardfork,
                 &mut before,
                 ExecutionSpecContext::fork(NamedChain::Monad as u64, None),
-                None,
                 None,
             ),
             Some(FoundryHardfork::Monad(foundry_evm_hardforks::MonadHardfork::MonadNine))
@@ -1910,11 +1935,10 @@ mod tests {
         let mut after = monad_env(activation);
         assert_eq!(
             resolve_execution_spec(
-                &config,
-                networks,
+                config.evm_version,
+                config.hardfork,
                 &mut after,
                 ExecutionSpecContext::fork(NamedChain::Monad as u64, None),
-                None,
                 None,
             ),
             Some(FoundryHardfork::Monad(foundry_evm_hardforks::MonadHardfork::MonadTen))
@@ -1934,11 +1958,10 @@ mod tests {
 
         assert_eq!(
             resolve_execution_spec(
-                &config,
-                NetworkConfigs::with_monad(),
+                config.evm_version,
+                config.hardfork,
                 &mut env,
                 ExecutionSpecContext::fork(NamedChain::Monad as u64, Some(endpoint_hardfork),),
-                None,
                 None,
             ),
             Some(endpoint_hardfork)
@@ -1950,18 +1973,16 @@ mod tests {
     #[cfg(feature = "monad")]
     fn resolve_execution_spec_ignores_schedule_for_local_env() {
         let config = Config::default();
-        let networks = NetworkConfigs::with_monad();
         let activation =
             foundry_evm_hardforks::MonadHardfork::MonadTen.mainnet_activation_timestamp().unwrap();
         let mut env = monad_env(activation - 1);
 
         assert_eq!(
             resolve_execution_spec(
-                &config,
-                networks,
+                config.evm_version,
+                config.hardfork,
                 &mut env,
                 ExecutionSpecContext::Local,
-                None,
                 None,
             ),
             Some(FoundryHardfork::Monad(foundry_evm_hardforks::MonadHardfork::MonadTen))
@@ -1978,11 +1999,10 @@ mod tests {
 
         assert_eq!(
             resolve_execution_spec(
-                &config,
-                NetworkConfigs::default(),
+                config.evm_version,
+                config.hardfork,
                 &mut env,
                 ExecutionSpecContext::fork(NamedChain::Mainnet as u64, None),
-                None,
                 None,
             ),
             None
@@ -1993,11 +2013,10 @@ mod tests {
             FoundryHardfork::Ethereum(foundry_evm_hardforks::EthereumHardfork::Frontier);
         assert_eq!(
             resolve_execution_spec(
-                &config,
-                NetworkConfigs::default(),
+                config.evm_version,
+                config.hardfork,
                 &mut env,
                 ExecutionSpecContext::fork(NamedChain::Mainnet as u64, Some(endpoint_hardfork),),
-                None,
                 None,
             ),
             None
@@ -2018,11 +2037,10 @@ mod tests {
 
         assert_eq!(
             resolve_execution_spec(
-                &config,
-                NetworkConfigs::default(),
+                config.evm_version,
+                config.hardfork,
                 &mut env,
                 ExecutionSpecContext::historical(NamedChain::Mainnet as u64, None),
-                None,
                 None,
             ),
             Some(expected)
@@ -2033,7 +2051,8 @@ mod tests {
     #[test]
     #[cfg(feature = "optimism")]
     fn resolve_execution_spec_uses_optimism_schedule_for_local_forks() {
-        let config = Config::default();
+        let config =
+            Config { hardfork: Some("ethereum:london".parse().unwrap()), ..Default::default() };
         let chain_id = NamedChain::Optimism as u64;
         let timestamp = u64::MAX;
         let expected = FoundryHardfork::from_chain_and_timestamp(chain_id, timestamp).unwrap();
@@ -2043,11 +2062,10 @@ mod tests {
 
         assert_eq!(
             resolve_execution_spec(
-                &config,
-                NetworkConfigs::with_optimism(),
+                config.evm_version,
+                config.hardfork,
                 &mut env,
-                ExecutionSpecContext::fork(chain_id, None),
-                None,
+                ExecutionSpecContext::fork(chain_id, Some("tempo:T3".parse().unwrap())),
                 None,
             ),
             Some(expected)
@@ -2056,9 +2074,29 @@ mod tests {
     }
 
     #[test]
+    #[cfg(all(feature = "optimism", not(feature = "base")))]
+    fn resolve_execution_spec_preserves_config_for_base_op_fallback() {
+        let config = Config { evm_version: EvmVersion::Osaka, ..Default::default() };
+        let mut block = BlockEnv::default();
+        block.set_timestamp(U256::from(u64::MAX));
+        let mut env = EvmEnv::new(CfgEnv::new_with_spec(OpSpecId::default()), block);
+
+        assert_eq!(
+            resolve_execution_spec(
+                config.evm_version,
+                config.hardfork,
+                &mut env,
+                ExecutionSpecContext::fork(NamedChain::Base as u64, None),
+                None,
+            ),
+            None
+        );
+        assert_eq!(env.cfg_env.spec, OpSpecId::KARST);
+    }
+
+    #[test]
     #[cfg(feature = "monad")]
     fn resolve_execution_spec_honors_explicit_precedence() {
-        let networks = NetworkConfigs::with_monad();
         let activation =
             foundry_evm_hardforks::MonadHardfork::MonadNine.mainnet_activation_timestamp().unwrap();
         let mut configured = Config {
@@ -2069,11 +2107,10 @@ mod tests {
 
         assert_eq!(
             resolve_execution_spec(
-                &configured,
-                networks,
+                configured.evm_version,
+                configured.hardfork,
                 &mut env,
                 ExecutionSpecContext::fork(NamedChain::Monad as u64, None),
-                None,
                 None,
             ),
             configured.hardfork
@@ -2083,12 +2120,11 @@ mod tests {
         configured.hardfork = None;
         assert_eq!(
             resolve_execution_spec(
-                &configured,
-                networks,
+                configured.evm_version,
+                configured.hardfork,
                 &mut env,
                 ExecutionSpecContext::fork(NamedChain::Monad as u64, None),
                 Some(foundry_evm_hardforks::MonadHardfork::MonadEight),
-                Some(FoundryHardfork::Monad(foundry_evm_hardforks::MonadHardfork::MonadEight)),
             ),
             Some(FoundryHardfork::Monad(foundry_evm_hardforks::MonadHardfork::MonadEight))
         );
@@ -2128,11 +2164,10 @@ mod tests {
         assert_eq!(tx_env.chain_id, Some(NamedChain::Mainnet as u64));
         assert_eq!(
             resolve_execution_spec(
-                &Config::default(),
-                NetworkConfigs::with_monad(),
+                Config::default().evm_version,
+                Config::default().hardfork,
                 &mut evm_env,
                 ExecutionSpecContext::fork(fork_context.source_chain_id, fork_context.hardfork,),
-                None,
                 None,
             ),
             Some(FoundryHardfork::Monad(foundry_evm_hardforks::MonadHardfork::MonadEight))
@@ -2156,6 +2191,8 @@ mod tests {
             assert!(!evm_opts.networks.is_tempo());
             #[cfg(feature = "optimism")]
             assert!(!evm_opts.networks.is_optimism());
+            #[cfg(feature = "base")]
+            assert!(!evm_opts.networks.is_base());
             assert!(!evm_opts.networks.is_celo());
             assert_eq!(evm_opts.networks, NetworkConfigs::default());
         }
@@ -2184,6 +2221,8 @@ mod tests {
         profiles.push(NetworkConfigs::with_optimism());
         #[cfg(feature = "monad")]
         profiles.push(NetworkConfigs::with_monad());
+        #[cfg(feature = "base")]
+        profiles.push(NetworkConfigs::with_base());
 
         for networks in profiles {
             let mut evm_opts = EvmOpts {
@@ -2241,22 +2280,44 @@ mod tests {
         assert_eq!(evm_opts.fork_network().await.unwrap(), (chain_id, NetworkVariant::Ethereum));
     }
 
+    #[tokio::test]
+    #[cfg(feature = "base")]
+    async fn base_endpoint_identity_uses_generic_chain_profile() {
+        let endpoint = "http://127.0.0.1:1";
+        let provider = EvmOpts::default().fork_provider_with_url::<AnyNetwork>(endpoint).unwrap();
+
+        let identity = EvmOpts::resolve_fork_endpoint_identity(
+            &provider,
+            endpoint,
+            NamedChain::Base as u64,
+            None,
+            None,
+            EndpointHardforkPolicy::Optional,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(identity.execution_chain_id, NamedChain::Base as u64);
+        assert_eq!(identity.source_chain_id, NamedChain::Base as u64);
+        assert_eq!(identity.network, NetworkVariant::Base);
+        assert!(identity.network_profile.is_base());
+        assert_eq!(identity.reported_hardfork, None);
+        assert_eq!(identity.hardfork, None);
+    }
+
     #[tokio::test(flavor = "multi_thread")]
-    async fn fork_non_anvil_node_info_rpc_error_is_visible() {
+    async fn fork_non_anvil_node_info_rpc_error_is_optional() {
         let (_api, handle) =
             anvil::spawn(anvil::NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64)))
                 .await;
         let fork_url =
-            spawn_rpc_proxy_rejecting_method_after(handle.http_endpoint(), "anvil_nodeInfo", 0)
-                .await;
+            spawn_rpc_proxy_internal_error_after(handle.http_endpoint(), "anvil_nodeInfo", 0).await;
         let mut evm_opts = EvmOpts { fork_url: Some(fork_url), ..Default::default() };
 
-        let error = evm_opts.infer_network_from_fork().await.unwrap_err();
+        evm_opts.infer_network_from_fork().await.unwrap();
 
-        assert!(
-            error.to_string().contains("failed to determine network family from endpoint"),
-            "{error}"
-        );
+        assert_eq!(evm_opts.networks, NetworkConfigs::default());
+        assert_eq!(evm_opts.env.chain_id, Some(NamedChain::Mainnet as u64));
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -2529,11 +2590,10 @@ mod tests {
         );
         assert_eq!(
             resolve_execution_spec(
-                &Config::default(),
-                evm_opts.networks,
+                Config::default().evm_version,
+                Config::default().hardfork,
                 &mut evm_env,
                 ExecutionSpecContext::fork(context.source_chain_id, context.hardfork),
-                None,
                 None,
             ),
             context.hardfork
@@ -2673,6 +2733,29 @@ mod tests {
         );
     }
 
+    #[test]
+    #[cfg(feature = "base")]
+    fn unknown_base_endpoint_hardfork_is_optional_only_for_remote_execution() {
+        assert_eq!(NetworkVariant::from_node_info_name("base").unwrap(), NetworkVariant::Base);
+        assert_eq!(
+            endpoint_hardfork(NetworkVariant::Base, "BaseFuture", EndpointHardforkPolicy::Optional)
+                .unwrap(),
+            None
+        );
+
+        let error =
+            endpoint_hardfork(NetworkVariant::Base, "BaseFuture", EndpointHardforkPolicy::Required)
+                .unwrap_err();
+        assert!(
+            error.to_string().contains("unsupported hardfork `BaseFuture` reported for `base`")
+        );
+        assert_eq!(
+            endpoint_hardfork(NetworkVariant::Base, "Beryl", EndpointHardforkPolicy::Required)
+                .unwrap(),
+            Some(FoundryHardfork::Base(BaseUpgrade::Beryl))
+        );
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     #[cfg(feature = "monad")]
     async fn fork_network_detects_monad_anvil() {
@@ -2697,6 +2780,22 @@ mod tests {
 
         assert!(error.to_string().contains("failed to retrieve chain ID"));
         assert!(evm_opts.networks.is_monad());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    #[cfg(feature = "base")]
+    async fn infer_network_base_propagates_unavailable_rpc() {
+        let mut evm_opts = EvmOpts {
+            fork_url: Some("http://127.0.0.1:1".to_string()),
+            networks: NetworkConfigs::with_base(),
+            ..Default::default()
+        };
+
+        let error = evm_opts.infer_network_from_fork().await.unwrap_err();
+
+        assert!(error.to_string().contains("failed to retrieve chain ID"));
+        assert!(evm_opts.networks.is_base());
+        assert_eq!(evm_opts.fork_endpoint, None);
     }
 
     #[tokio::test(flavor = "multi_thread")]

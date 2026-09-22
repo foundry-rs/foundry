@@ -47,7 +47,7 @@ pub struct BindJsonArgs {
 
 impl BindJsonArgs {
     pub fn run(self) -> Result<()> {
-        let config = self.load_config()?;
+        let config = self.load_config_with_dependencies()?;
         let project = config.ephemeral_project()?;
         let target_path = config.root.join(self.out.as_ref().unwrap_or(&config.bind_json.out));
 

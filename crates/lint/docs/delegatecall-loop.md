@@ -1,9 +1,7 @@
-# Delegatecall inside payable loop
+# `delegatecall` inside a payable loop
 
 **Severity**: `Low`
 **ID**: `delegatecall-loop`
-
-Flags `delegatecall` operations inside loops in externally callable payable functions.
 
 ## What it does
 
@@ -21,8 +19,6 @@ multiple times or repeatedly mutate the caller's storage in unexpected ways.
 
 ## Example
 
-### Bad
-
 ```solidity
 function batch(address[] calldata receivers) external payable {
     for (uint256 i; i < receivers.length; ++i) {
@@ -31,18 +27,19 @@ function batch(address[] calldata receivers) external payable {
 }
 ```
 
-### Good
+Use instead:
+
+For an equal split, reject an empty recipient list and choose how to handle any remainder. This
+example accepts only exactly divisible payments; other APIs may explicitly refund or account for
+the remainder.
 
 ```solidity
 function batch(address[] calldata receivers) external payable {
+    require(receivers.length != 0, "no receivers");
+    require(msg.value % receivers.length == 0, "unequal split");
     uint256 share = msg.value / receivers.length;
     for (uint256 i; i < receivers.length; ++i) {
         _credit(receivers[i], share);
     }
 }
 ```
-
-## Notes
-
-Review each occurrence manually. If `delegatecall` is required, ensure delegated code cannot
-reuse `msg.value` or unexpectedly modify caller storage across loop iterations.

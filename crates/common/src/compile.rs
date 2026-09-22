@@ -36,7 +36,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fmt::Display,
     io::IsTerminal,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     str::FromStr,
     sync::Arc,
     time::Instant,
@@ -63,6 +63,9 @@ pub struct ProjectCompiler {
     /// Whether to print anything at all. Overrides other `print` options.
     quiet: Option<bool>,
 
+    /// Whether to print the resolved settings for each compiler invocation.
+    print_compiler_settings: bool,
+
     /// Whether to bail on compiler errors.
     bail: Option<bool>,
 
@@ -77,6 +80,9 @@ pub struct ProjectCompiler {
 
     /// Whether to compile with dynamic linking tests and scripts.
     dynamic_test_linking: bool,
+
+    /// Whether ABI acquisition may consult the compiler-owned ABI cache.
+    abi_cache: bool,
 }
 
 impl Default for ProjectCompiler {
@@ -95,11 +101,13 @@ impl ProjectCompiler {
             print_names: None,
             print_sizes: None,
             quiet: Some(crate::shell::is_quiet()),
+            print_compiler_settings: false,
             bail: None,
             ignore_eip_3860: false,
             size_limits: ContractSizeLimits::default(),
             files: Vec::new(),
             dynamic_test_linking: false,
+            abi_cache: false,
         }
     }
 
@@ -122,6 +130,13 @@ impl ProjectCompiler {
     #[doc(alias = "silent")]
     pub const fn quiet(mut self, yes: bool) -> Self {
         self.quiet = Some(yes);
+        self
+    }
+
+    /// Sets whether to print the resolved settings for each compiler invocation.
+    #[inline]
+    pub const fn print_compiler_settings(mut self, yes: bool) -> Self {
+        self.print_compiler_settings = yes;
         self
     }
 
@@ -185,6 +200,7 @@ impl ProjectCompiler {
         // Taking is fine since we don't need these in `compile_with`.
         let files = std::mem::take(&mut self.files);
         let preprocess = self.dynamic_test_linking;
+        let abi_cache = self.abi_cache;
         self.compile_with(|| {
             let sources = if files.is_empty() {
                 project.paths.read_input_files()?
@@ -197,7 +213,11 @@ impl ProjectCompiler {
             if preprocess {
                 compiler = compiler.with_preprocessor(DynamicTestLinkingPreprocessor);
             }
-            compiler.compile().map_err(Into::into)
+            if abi_cache {
+                compiler.compile_abi_cached().map_err(Into::into)
+            } else {
+                compiler.compile().map_err(Into::into)
+            }
         })
     }
 
@@ -212,16 +232,21 @@ impl ProjectCompiler {
         let quiet = self.quiet.unwrap_or(false);
         let bail = self.bail.unwrap_or(true);
 
-        let output = with_compilation_reporter(quiet, Some(self.project_root.clone()), || {
-            tracing::debug!("compiling project");
+        let output = with_compilation_reporter_and_settings(
+            quiet,
+            Some(self.project_root.clone()),
+            self.print_compiler_settings,
+            || {
+                tracing::debug!("compiling project");
 
-            let timer = Instant::now();
-            let r = f();
-            let elapsed = timer.elapsed();
+                let timer = Instant::now();
+                let r = f();
+                let elapsed = timer.elapsed();
 
-            tracing::debug!("finished compiling in {:.3}s", elapsed.as_secs_f64());
-            r
-        })?;
+                tracing::debug!("finished compiling in {:.3}s", elapsed.as_secs_f64());
+                r
+            },
+        )?;
 
         if bail && output.has_compiler_errors() {
             eyre::bail!("{output}");
@@ -291,7 +316,7 @@ impl ProjectCompiler {
                 // filter out forge-std specific contracts
                 !id.source.to_string_lossy().contains("/forge-std/src/")
             }) {
-                artifacts.entry(id.name.clone()).or_default().push((id.source.clone(), artifact));
+                artifacts.entry(id.name.clone()).or_default().push((id.source, artifact));
             }
 
             // Internal libraries are inlined into consumers and never deployed; skip them.
@@ -681,7 +706,7 @@ where
 /// Compiles the project requesting only ABI output.
 pub fn compile_abi_project<C: Compiler<CompilerContract = Contract>>(
     project: &mut Project<C>,
-    compiler: ProjectCompiler,
+    mut compiler: ProjectCompiler,
 ) -> Result<ProjectCompileOutput<C>>
 where
     DynamicTestLinkingPreprocessor: Preprocessor<C>,
@@ -690,7 +715,30 @@ where
         // Request ABI so compilers populate `contracts` without producing bytecode outputs.
         *selection = OutputSelection::common_output_selection(["abi".to_string()]);
     });
+    compiler.abi_cache |= project.no_artifacts;
     compiler.compile(project)
+}
+
+/// Acquires ABI output with compiler-owned persistence separate from normal artifacts.
+///
+/// Requests for additional files or full build info retain their existing output behavior.
+pub fn compile_abi_project_cached<C: Compiler<CompilerContract = Contract>>(
+    project: &mut Project<C>,
+    mut compiler: ProjectCompiler,
+) -> Result<ProjectCompileOutput<C>>
+where
+    DynamicTestLinkingPreprocessor: Preprocessor<C>,
+{
+    if !project.cached
+        || project.build_info
+        || project.artifacts.additional_files != Default::default()
+    {
+        return compile_abi_project(project, compiler);
+    }
+    let mut cached_project = project.clone();
+    cached_project.no_artifacts = false;
+    compiler.abi_cache = true;
+    compile_abi_project(&mut cached_project, compiler)
 }
 
 /// Compiles the target contract requesting only ABI output and returns its ABI.
@@ -720,8 +768,12 @@ pub fn etherscan_project(metadata: &Metadata, target_path: &Path) -> Result<Proj
     let mut settings = metadata.settings()?;
 
     // make remappings absolute with our root
+    //
+    // The remappings come from the explorer's copy of the contract's compiler settings, which is
+    // attacker controlled: a target of `../../..` would otherwise point the compiler at sources
+    // outside the checkout and let a verified contract pull arbitrary local files into the build.
     for remapping in &mut settings.remappings {
-        let new_path = sources_path.join(remapping.path.trim_start_matches('/'));
+        let new_path = sources_path.join(sanitize_relative_path(remapping.path.as_ref()));
         remapping.path = new_path.display().to_string();
     }
 
@@ -763,6 +815,36 @@ pub fn etherscan_project(metadata: &Metadata, target_path: &Path) -> Result<Proj
         .build(compiler)?)
 }
 
+/// Normalizes an untrusted path relative to the source root, discarding leading separators,
+/// drive prefixes, and parent components that would escape that root.
+fn sanitize_relative_path(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(part) => normalized.push(part),
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            _ => {}
+        }
+    }
+    normalized
+}
+
+/// Adds `storageLayout` to the compiler output selection for the given project.
+pub fn add_storage_layout_output<C: Compiler<CompilerContract = Contract>>(
+    project: &mut Project<C>,
+) {
+    project.artifacts.additional_values.storage_layout = true;
+    project.update_output_selection(|selection| {
+        for contract_selection in selection.0.values_mut() {
+            for selection in contract_selection.values_mut() {
+                selection.push("storageLayout".to_string());
+            }
+        }
+    })
+}
+
 /// Configures the reporter and runs the given closure.
 ///
 /// In TTY mode, [`SpinnerReporter`] paints the progress to stderr. The non-TTY fallback
@@ -774,14 +856,28 @@ pub fn with_compilation_reporter<O>(
     project_root: Option<PathBuf>,
     f: impl FnOnce() -> O,
 ) -> O {
+    with_compilation_reporter_and_settings(quiet, project_root, false, f)
+}
+
+fn with_compilation_reporter_and_settings<O>(
+    quiet: bool,
+    project_root: Option<PathBuf>,
+    print_compiler_settings: bool,
+    f: impl FnOnce() -> O,
+) -> O {
     #[expect(clippy::collapsible_else_if)]
     let reporter = if quiet || shell::is_json() {
         Report::new(NoReporter::default())
     } else {
         if std::io::stderr().is_terminal() {
-            Report::new(SpinnerReporter::spawn(project_root))
+            Report::new(
+                SpinnerReporter::spawn(project_root)
+                    .with_compiler_settings(print_compiler_settings),
+            )
         } else {
-            Report::new(BasicStdoutReporter::default())
+            Report::new(
+                BasicStdoutReporter::default().with_compiler_settings(print_compiler_settings),
+            )
         }
     };
 
@@ -922,6 +1018,30 @@ mod tests {
         assert_eq!(
             ContractSizeLimits::for_spec_id(SpecId::AMSTERDAM),
             ContractSizeLimits::new(65_536, 131_072)
+        );
+    }
+
+    #[test]
+    fn sanitized_remapping_paths_stay_inside_the_root() {
+        let root = Path::new("/tmp/sources");
+        for path in ["../../../etc", "a/../../../etc", "/etc", "./a/../b"] {
+            let joined = root.join(sanitize_relative_path(Path::new(path)));
+            assert!(
+                joined.starts_with(root) && !joined.components().any(|c| c == Component::ParentDir),
+                "{path} escaped the root: {}",
+                joined.display()
+            );
+        }
+
+        for (path, expected) in [("src/../lib/", "lib"), ("./a/../b", "b"), ("a/../../lib", "lib")]
+        {
+            assert_eq!(sanitize_relative_path(Path::new(path)), Path::new(expected));
+        }
+
+        // Ordinary relative paths are left alone.
+        assert_eq!(
+            sanitize_relative_path(Path::new("lib/openzeppelin")),
+            Path::new("lib/openzeppelin")
         );
     }
 }

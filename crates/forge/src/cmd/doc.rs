@@ -60,11 +60,7 @@ impl DocArgs {
         }
         let mut config = self.config()?;
 
-        if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
-        {
-            // need to re-configure here to also catch additional remappings
-            config = self.config()?;
-        }
+        install::install_missing_dependencies(&mut config, || self.config())?;
 
         let root = &config.root;
         let project = config.ephemeral_project()?;

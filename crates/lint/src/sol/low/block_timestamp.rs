@@ -1,21 +1,20 @@
 use super::BlockTimestamp;
 use crate::{
     linter::{LateLintPass, LintContext},
-    sol::{Severity, SolLint},
+    sol::{
+        Severity, SolLint,
+        analysis::{any_subexpr, branch_always_exits, loop_stmts, tuple_elems},
+    },
 };
 use solar::{
-    ast,
-    interface::{kw, sym},
+    ast::Visibility,
     sema::{
         Gcx, Hir,
         builtins::Builtin,
-        hir::{
-            BinOpKind, Block, ContractId, Expr, ExprKind, Function, FunctionId, ItemId, Res, Stmt,
-            StmtKind, VariableId,
-        },
+        hir::{BinOpKind, Expr, ExprKind, Function, FunctionId, Stmt, StmtKind, VariableId, Visit},
     },
 };
-use std::collections::HashSet;
+use std::{collections::HashSet, convert::Infallible, ops::ControlFlow};
 
 declare_forge_lint!(
     BLOCK_TIMESTAMP,
@@ -24,242 +23,245 @@ declare_forge_lint!(
     "usage of `block.timestamp` in a comparison may be manipulated by validators"
 );
 
-impl<'hir> LateLintPass<'hir> for BlockTimestamp {
-    fn check_function(
+impl<'gcx> LateLintPass<'gcx> for BlockTimestamp {
+    fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, func: &'gcx Function<'gcx>) {
+        let Some(body) = func.body else { return };
+        // The contract's own internal helpers that return `block.timestamp` directly.
+        let helpers = func
+            .contract
+            .map(|c| gcx.hir.contract(c).functions())
+            .into_iter()
+            .flatten()
+            .filter(|&id| {
+                let helper = gcx.hir.function(id);
+                matches!(helper.visibility, Visibility::Internal | Visibility::Private)
+                    && helper.body.is_some_and(|body| returns_timestamp(gcx, body.stmts))
+            })
+            .collect();
+        Checker { ctx, gcx, helpers, aliases: HashSet::new() }.block(body.stmts);
+    }
+}
+
+/// Flow-sensitive walk reporting comparisons involving `block.timestamp`, a helper returning it,
+/// or a local holding a value derived from either.
+struct Checker<'a, 's, 'c, 'gcx> {
+    ctx: &'a LintContext<'s, 'c>,
+    gcx: Gcx<'gcx>,
+    helpers: Vec<FunctionId>,
+    /// Locals currently holding a timestamp-derived value.
+    aliases: HashSet<VariableId>,
+}
+
+impl<'gcx> Checker<'_, '_, '_, 'gcx> {
+    /// Walks statements in order, stopping at the first one control cannot continue past.
+    fn block(&mut self, stmts: impl IntoIterator<Item = &'gcx Stmt<'gcx>>) {
+        for stmt in stmts {
+            let _ = self.visit_stmt(stmt);
+            if branch_always_exits(self.gcx, stmt) {
+                break;
+            }
+        }
+    }
+
+    /// Walks an alternative arm on a copy of the current aliases; when control can continue past
+    /// `stmts`, the aliases the arm leaves are added to `merged`.
+    fn arm(
         &mut self,
-        ctx: &LintContext,
-        _gcx: Gcx<'hir>,
-        hir: &'hir Hir<'hir>,
-        func: &'hir Function<'hir>,
+        merged: &mut HashSet<VariableId>,
+        stmts: impl IntoIterator<Item = &'gcx Stmt<'gcx>>,
+        walk: impl FnOnce(&mut Self),
     ) {
-        if let Some(body) = func.body {
-            let helpers = timestamp_helpers(hir, func.contract);
-            let mut aliases = HashSet::new();
-            check_block(ctx, hir, &helpers, body, &mut aliases);
+        let saved = self.aliases.clone();
+        walk(self);
+        let aliases = std::mem::replace(&mut self.aliases, saved);
+        if !stmts.into_iter().any(|expr| branch_always_exits(self.gcx, expr)) {
+            merged.extend(aliases);
         }
+    }
+
+    /// Binds the variables of an lvalue (tuple targets included) to whether they now hold a
+    /// timestamp-derived value.
+    fn bind(&mut self, lhs: &Expr<'_>, is_source: bool) {
+        match &lhs.peel_parens().kind {
+            ExprKind::Tuple(elems) => elems.iter().flatten().for_each(|e| self.bind(e, is_source)),
+            ExprKind::Ident(_) => {
+                if let Some(var) = self.gcx.resolved_variable(lhs) {
+                    self.set_alias(var, is_source);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn set_alias(&mut self, var: VariableId, is_source: bool) {
+        if self.gcx.hir.variable(var).is_local_or_return() {
+            if is_source {
+                self.aliases.insert(var);
+            } else {
+                self.aliases.remove(&var);
+            }
+        }
+    }
+
+    /// Whether each of `n` targets receives a timestamp-derived value from `rhs`: element-wise
+    /// for a matching tuple, otherwise `rhs` as a whole for every target.
+    fn source_values(&self, rhs: &Expr<'_>, n: usize) -> Vec<bool> {
+        match tuple_elems(rhs) {
+            Some(elems) if elems.len() == n => {
+                elems.iter().map(|e| e.is_some_and(|e| self.is_source_value(e))).collect()
+            }
+            _ => vec![self.is_source_value(rhs); n],
+        }
+    }
+
+    /// True if the value of `expr` derives from a timestamp source: the source itself, or one
+    /// flowing through arithmetic, unary operators, a ternary arm or a parenthesized tuple.
+    fn is_source_value(&self, expr: &Expr<'_>) -> bool {
+        self.is_source(expr)
+            || match &expr.peel_parens().kind {
+                ExprKind::Binary(lhs, op, rhs) if !is_cmp(op.kind) => {
+                    self.is_source_value(lhs) || self.is_source_value(rhs)
+                }
+                ExprKind::Unary(_, inner)
+                | ExprKind::Payable(inner)
+                | ExprKind::YulMember(inner, _) => self.is_source_value(inner),
+                ExprKind::Ternary(_, then_expr, else_expr) => {
+                    self.is_source_value(then_expr) || self.is_source_value(else_expr)
+                }
+                ExprKind::Tuple([Some(inner)]) => self.is_source_value(inner),
+                _ => false,
+            }
+    }
+
+    /// `block.timestamp`, a call to a helper returning it, or an alias of either.
+    fn is_source(&self, expr: &Expr<'_>) -> bool {
+        is_block_timestamp(self.gcx, expr)
+            || self.gcx.resolved_variable(expr).is_some_and(|var| self.aliases.contains(&var))
+            || matches!(&expr.peel_parens().kind, ExprKind::Call(callee, ..)
+                if self.gcx.resolved_function(callee).is_some_and(|id| self.helpers.contains(&id)))
     }
 }
 
-fn check_block<'hir>(
-    ctx: &LintContext,
-    hir: &'hir Hir<'hir>,
-    helpers: &HashSet<FunctionId>,
-    block: Block<'hir>,
-    aliases: &mut HashSet<VariableId>,
-) -> bool {
-    for stmt in block.stmts {
-        if !check_stmt(ctx, hir, helpers, stmt, aliases) {
-            return false;
-        }
+impl<'gcx> Visit<'gcx> for Checker<'_, '_, '_, 'gcx> {
+    type BreakValue = Infallible;
+
+    fn hir(&self) -> &'gcx Hir<'gcx> {
+        &self.gcx.hir
     }
-    true
-}
 
-fn check_stmt<'hir>(
-    ctx: &LintContext,
-    hir: &'hir Hir<'hir>,
-    helpers: &HashSet<FunctionId>,
-    stmt: &'hir Stmt<'hir>,
-    aliases: &mut HashSet<VariableId>,
-) -> bool {
-    match &stmt.kind {
-        StmtKind::DeclSingle(var_id) => {
-            if let Some(init) = hir.variable(*var_id).initializer {
-                check_expr(ctx, hir, helpers, init, aliases);
-                update_alias(
-                    hir,
-                    *var_id,
-                    expr_value_is_timestamp_source(helpers, init, aliases),
-                    aliases,
-                );
-            }
-            true
-        }
-        StmtKind::DeclMulti(vars, expr) => {
-            check_expr(ctx, hir, helpers, expr, aliases);
-            update_multi_aliases(hir, helpers, vars, expr, aliases);
-            true
-        }
-        StmtKind::Expr(expr) => {
-            check_expr(ctx, hir, helpers, expr, aliases);
-            !is_revert_call(expr)
-        }
-        StmtKind::Emit(expr) => {
-            check_expr(ctx, hir, helpers, expr, aliases);
-            true
-        }
-        StmtKind::Revert(expr) | StmtKind::Return(Some(expr)) => {
-            check_expr(ctx, hir, helpers, expr, aliases);
-            false
-        }
-        StmtKind::If(cond, then_stmt, else_stmt) => {
-            check_expr(ctx, hir, helpers, cond, aliases);
-
-            let baseline = aliases.clone();
-            let mut merged = HashSet::new();
-            let mut falls_through = false;
-
-            let mut then_aliases = baseline.clone();
-            if check_stmt(ctx, hir, helpers, then_stmt, &mut then_aliases) {
-                merged.extend(then_aliases);
-                falls_through = true;
-            }
-
-            if let Some(else_stmt) = else_stmt {
-                let mut else_aliases = baseline;
-                if check_stmt(ctx, hir, helpers, else_stmt, &mut else_aliases) {
-                    merged.extend(else_aliases);
-                    falls_through = true;
-                }
-            } else {
-                merged.extend(baseline);
-                falls_through = true;
-            }
-
-            if falls_through {
-                *aliases = merged;
-            }
-            falls_through
-        }
-        StmtKind::Loop(block, _) => {
-            let baseline = aliases.clone();
-            let mut loop_aliases = baseline.clone();
-            *aliases = if check_block(ctx, hir, helpers, *block, &mut loop_aliases) {
-                baseline.union(&loop_aliases).copied().collect()
-            } else {
-                baseline
-            };
-            true
-        }
-        StmtKind::Try(try_stmt) => {
-            check_expr(ctx, hir, helpers, &try_stmt.expr, aliases);
-
-            let baseline = aliases.clone();
-            let mut merged = baseline.clone();
-            for clause in try_stmt.clauses {
-                let mut clause_aliases = baseline.clone();
-                if check_block(ctx, hir, helpers, clause.block, &mut clause_aliases) {
-                    merged.extend(clause_aliases);
+    fn visit_stmt(&mut self, stmt: &'gcx Stmt<'gcx>) -> ControlFlow<Infallible> {
+        match &stmt.kind {
+            StmtKind::DeclSingle(var) => {
+                if let Some(init) = self.gcx.hir.variable(*var).initializer {
+                    self.visit_expr(init)?;
+                    let is_source = self.is_source_value(init);
+                    self.set_alias(*var, is_source);
                 }
             }
-            *aliases = merged;
-            true
-        }
-        StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
-            check_block(ctx, hir, helpers, *block, aliases)
-        }
-        StmtKind::AssemblyBlock(block) => check_block(ctx, hir, helpers, *block, aliases),
-        StmtKind::Switch(switch) => {
-            check_expr(ctx, hir, helpers, switch.selector, aliases);
-
-            let baseline = aliases.clone();
-            let mut merged = baseline.clone();
-            for case in switch.cases {
-                let mut case_aliases = baseline.clone();
-                if check_block(ctx, hir, helpers, case.body, &mut case_aliases) {
-                    merged.extend(case_aliases);
+            StmtKind::DeclMulti(vars, expr) => {
+                self.visit_expr(expr)?;
+                for (var, is_source) in vars.iter().zip(self.source_values(expr, vars.len())) {
+                    if let Some(var) = var {
+                        self.set_alias(*var, is_source);
+                    }
                 }
             }
-            *aliases = merged;
-            true
+            StmtKind::Block(block)
+            | StmtKind::UncheckedBlock(block)
+            | StmtKind::AssemblyBlock(block) => {
+                self.block(block.stmts);
+            }
+            // Only the arms control can continue past contribute their aliases.
+            StmtKind::If(cond, then_stmt, else_stmt) => {
+                self.visit_expr(cond)?;
+                let mut merged = HashSet::new();
+                self.arm(&mut merged, std::slice::from_ref(*then_stmt), |s| {
+                    let _ = s.visit_stmt(then_stmt);
+                });
+                match else_stmt {
+                    Some(else_stmt) => {
+                        self.arm(&mut merged, std::slice::from_ref(*else_stmt), |s| {
+                            let _ = s.visit_stmt(else_stmt);
+                        })
+                    }
+                    None => merged.extend(self.aliases.iter().copied()),
+                }
+                self.aliases = merged;
+            }
+            StmtKind::Loop(block, source) => {
+                let mut merged = self.aliases.clone();
+                let stmts = loop_stmts(*block, *source);
+                self.arm(&mut merged, stmts.clone(), |s| s.block(stmts));
+                self.aliases = merged;
+            }
+            StmtKind::Try(try_stmt) => {
+                self.visit_expr(&try_stmt.expr)?;
+                let mut merged = self.aliases.clone();
+                for clause in try_stmt.clauses {
+                    self.arm(&mut merged, clause.block.stmts, |s| s.block(clause.block.stmts));
+                }
+                self.aliases = merged;
+            }
+            StmtKind::Switch(switch) => {
+                self.visit_expr(switch.selector)?;
+                let mut merged = self.aliases.clone();
+                for case in switch.cases {
+                    self.arm(&mut merged, case.body.stmts, |s| s.block(case.body.stmts));
+                }
+                self.aliases = merged;
+            }
+            _ => self.walk_stmt(stmt)?,
         }
-        StmtKind::Return(None) => false,
-        StmtKind::Break | StmtKind::Continue | StmtKind::Placeholder | StmtKind::Err(_) => true,
+        ControlFlow::Continue(())
+    }
+
+    fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Infallible> {
+        match &expr.peel_parens().kind {
+            // The right-hand side is evaluated first, against the aliases before the write.
+            ExprKind::Assign(lhs, op, rhs) => {
+                self.visit_expr(rhs)?;
+                if op.is_some() {
+                    self.visit_expr(lhs)?;
+                    let is_source = self.is_source_value(rhs) || self.is_source_value(lhs);
+                    self.bind(lhs, is_source);
+                } else if let Some(elems) = tuple_elems(lhs) {
+                    for (elem, is_source) in elems.iter().zip(self.source_values(rhs, elems.len()))
+                    {
+                        if let Some(elem) = elem {
+                            self.bind(elem, is_source);
+                        }
+                    }
+                } else {
+                    let is_source = self.is_source_value(rhs);
+                    self.bind(lhs, is_source);
+                }
+            }
+            ExprKind::Binary(lhs, op, rhs) => {
+                if is_cmp(op.kind) && (self.contains_source(lhs) || self.contains_source(rhs)) {
+                    self.ctx.emit(&BLOCK_TIMESTAMP, expr.span);
+                }
+                self.visit_expr(lhs)?;
+                self.visit_expr(rhs)?;
+            }
+            ExprKind::Ternary(cond, then_expr, else_expr) => {
+                self.visit_expr(cond)?;
+                let mut merged = HashSet::new();
+                self.arm(&mut merged, &[], |s| {
+                    let _ = s.visit_expr(then_expr);
+                });
+                self.visit_expr(else_expr)?;
+                self.aliases.extend(merged);
+            }
+            _ => self.walk_expr(expr)?,
+        }
+        ControlFlow::Continue(())
     }
 }
 
-fn check_expr<'hir>(
-    ctx: &LintContext,
-    hir: &'hir Hir<'hir>,
-    helpers: &HashSet<FunctionId>,
-    expr: &'hir Expr<'hir>,
-    aliases: &mut HashSet<VariableId>,
-) {
-    match &expr.peel_parens().kind {
-        ExprKind::Assign(lhs, op, rhs) => {
-            check_expr(ctx, hir, helpers, rhs, aliases);
-            let rhs_is_timestamp = expr_value_is_timestamp_source(helpers, rhs, aliases);
-
-            if op.is_some() {
-                check_expr(ctx, hir, helpers, lhs, aliases);
-                update_lhs_aliases(
-                    hir,
-                    lhs,
-                    rhs_is_timestamp || expr_value_is_timestamp_source(helpers, lhs, aliases),
-                    aliases,
-                );
-            } else {
-                update_assignment_aliases(hir, helpers, lhs, rhs, aliases);
-            }
-        }
-        ExprKind::Binary(lhs, op, rhs) => {
-            if is_cmp(op.kind)
-                && (expr_contains_timestamp_source(helpers, lhs, aliases)
-                    || expr_contains_timestamp_source(helpers, rhs, aliases))
-            {
-                ctx.emit(&BLOCK_TIMESTAMP, expr.span);
-            }
-
-            check_expr(ctx, hir, helpers, lhs, aliases);
-            check_expr(ctx, hir, helpers, rhs, aliases);
-        }
-        ExprKind::Call(callee, args, options) => {
-            check_expr(ctx, hir, helpers, callee, aliases);
-            if let Some(options) = options {
-                for arg in options.args {
-                    check_expr(ctx, hir, helpers, &arg.value, aliases);
-                }
-            }
-            for arg in args.exprs() {
-                check_expr(ctx, hir, helpers, arg, aliases);
-            }
-        }
-        ExprKind::Unary(_, inner)
-        | ExprKind::Delete(inner)
-        | ExprKind::Member(inner, _)
-        | ExprKind::Payable(inner)
-        | ExprKind::YulMember(inner, _) => check_expr(ctx, hir, helpers, inner, aliases),
-        ExprKind::Ternary(cond, then_expr, else_expr) => {
-            check_expr(ctx, hir, helpers, cond, aliases);
-
-            let baseline = aliases.clone();
-            let mut then_aliases = baseline.clone();
-            check_expr(ctx, hir, helpers, then_expr, &mut then_aliases);
-            let mut else_aliases = baseline;
-            check_expr(ctx, hir, helpers, else_expr, &mut else_aliases);
-            *aliases = then_aliases.union(&else_aliases).copied().collect();
-        }
-        ExprKind::Tuple(exprs) => {
-            for expr in exprs.iter().flatten() {
-                check_expr(ctx, hir, helpers, expr, aliases);
-            }
-        }
-        ExprKind::Array(exprs) => {
-            for expr in *exprs {
-                check_expr(ctx, hir, helpers, expr, aliases);
-            }
-        }
-        ExprKind::Index(base, index) => {
-            check_expr(ctx, hir, helpers, base, aliases);
-            if let Some(index) = index {
-                check_expr(ctx, hir, helpers, index, aliases);
-            }
-        }
-        ExprKind::Slice(base, start, end) => {
-            check_expr(ctx, hir, helpers, base, aliases);
-            if let Some(start) = start {
-                check_expr(ctx, hir, helpers, start, aliases);
-            }
-            if let Some(end) = end {
-                check_expr(ctx, hir, helpers, end, aliases);
-            }
-        }
-        ExprKind::Ident(_)
-        | ExprKind::Lit(_)
-        | ExprKind::New(_)
-        | ExprKind::TypeCall(_)
-        | ExprKind::Type(_)
-        | ExprKind::Err(_) => {}
+impl<'gcx> Checker<'_, '_, '_, 'gcx> {
+    /// True if `expr` or any subexpression is a timestamp source.
+    fn contains_source(&self, expr: &'gcx Expr<'gcx>) -> bool {
+        any_subexpr(expr, |e| self.is_source(e))
     }
 }
 
@@ -275,305 +277,22 @@ const fn is_cmp(kind: BinOpKind) -> bool {
     )
 }
 
-fn update_multi_aliases(
-    hir: &Hir<'_>,
-    helpers: &HashSet<FunctionId>,
-    vars: &[Option<VariableId>],
-    expr: &Expr<'_>,
-    aliases: &mut HashSet<VariableId>,
-) {
-    if let ExprKind::Tuple(exprs) = &expr.peel_parens().kind
-        && exprs.len() == vars.len()
-    {
-        let rhs_aliases: Vec<_> = exprs
-            .iter()
-            .map(|expr| {
-                expr.is_some_and(|expr| expr_value_is_timestamp_source(helpers, expr, aliases))
-            })
-            .collect();
-        for (var_id, rhs_is_timestamp) in vars.iter().zip(rhs_aliases) {
-            if let Some(var_id) = var_id {
-                update_alias(hir, *var_id, rhs_is_timestamp, aliases);
-            }
-        }
-        return;
-    }
-
-    let rhs_is_timestamp = expr_value_is_timestamp_source(helpers, expr, aliases);
-    for var_id in vars.iter().flatten() {
-        update_alias(hir, *var_id, rhs_is_timestamp, aliases);
-    }
+/// `block.timestamp`, or the Yul `timestamp()` builtin.
+fn is_block_timestamp(gcx: Gcx<'_>, expr: &Expr<'_>) -> bool {
+    gcx.resolved_builtin(expr) == Some(Builtin::BlockTimestamp)
 }
 
-fn update_assignment_aliases(
-    hir: &Hir<'_>,
-    helpers: &HashSet<FunctionId>,
-    lhs: &Expr<'_>,
-    rhs: &Expr<'_>,
-    aliases: &mut HashSet<VariableId>,
-) {
-    if let (ExprKind::Tuple(lhs_exprs), ExprKind::Tuple(rhs_exprs)) =
-        (&lhs.peel_parens().kind, &rhs.peel_parens().kind)
-        && lhs_exprs.len() == rhs_exprs.len()
-    {
-        let rhs_aliases: Vec<_> = rhs_exprs
-            .iter()
-            .map(|rhs| rhs.is_some_and(|rhs| expr_value_is_timestamp_source(helpers, rhs, aliases)))
-            .collect();
-        for (lhs, rhs_is_timestamp) in lhs_exprs.iter().zip(rhs_aliases) {
-            if let Some(lhs) = lhs {
-                update_lhs_aliases(hir, lhs, rhs_is_timestamp, aliases);
-            }
-        }
-        return;
-    }
-
-    let rhs_is_timestamp = expr_value_is_timestamp_source(helpers, rhs, aliases);
-    update_lhs_aliases(hir, lhs, rhs_is_timestamp, aliases);
-}
-
-fn update_lhs_aliases(
-    hir: &Hir<'_>,
-    lhs: &Expr<'_>,
-    is_timestamp: bool,
-    aliases: &mut HashSet<VariableId>,
-) {
-    match &lhs.peel_parens().kind {
-        ExprKind::Ident(resolutions) => {
-            for res in *resolutions {
-                if let Res::Item(ItemId::Variable(var_id)) = res {
-                    update_alias(hir, *var_id, is_timestamp, aliases);
-                }
-            }
-        }
-        ExprKind::Tuple(exprs) => {
-            for expr in exprs.iter().flatten() {
-                update_lhs_aliases(hir, expr, is_timestamp, aliases);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn update_alias(
-    hir: &Hir<'_>,
-    var_id: VariableId,
-    is_timestamp: bool,
-    aliases: &mut HashSet<VariableId>,
-) {
-    if !hir.variable(var_id).is_local_or_return() {
-        return;
-    }
-    if is_timestamp {
-        aliases.insert(var_id);
-    } else {
-        aliases.remove(&var_id);
-    }
-}
-
-fn expr_contains_timestamp_source(
-    helpers: &HashSet<FunctionId>,
-    expr: &Expr<'_>,
-    aliases: &HashSet<VariableId>,
-) -> bool {
-    if expr_value_is_timestamp_source(helpers, expr, aliases) {
-        return true;
-    }
-
-    match &expr.peel_parens().kind {
-        ExprKind::Assign(lhs, _, rhs) | ExprKind::Binary(lhs, _, rhs) => {
-            expr_contains_timestamp_source(helpers, lhs, aliases)
-                || expr_contains_timestamp_source(helpers, rhs, aliases)
-        }
-        ExprKind::Call(callee, args, options) => {
-            expr_contains_timestamp_source(helpers, callee, aliases)
-                || options.is_some_and(|options| {
-                    options
-                        .args
-                        .iter()
-                        .any(|arg| expr_contains_timestamp_source(helpers, &arg.value, aliases))
-                })
-                || args.exprs().any(|arg| expr_contains_timestamp_source(helpers, arg, aliases))
-        }
-        ExprKind::Unary(_, inner)
-        | ExprKind::Delete(inner)
-        | ExprKind::Member(inner, _)
-        | ExprKind::Payable(inner)
-        | ExprKind::YulMember(inner, _) => expr_contains_timestamp_source(helpers, inner, aliases),
-        ExprKind::Ternary(cond, then_expr, else_expr) => {
-            expr_contains_timestamp_source(helpers, cond, aliases)
-                || expr_contains_timestamp_source(helpers, then_expr, aliases)
-                || expr_contains_timestamp_source(helpers, else_expr, aliases)
-        }
-        ExprKind::Tuple(exprs) => exprs
-            .iter()
-            .flatten()
-            .any(|expr| expr_contains_timestamp_source(helpers, expr, aliases)),
-        ExprKind::Array(exprs) => {
-            exprs.iter().any(|expr| expr_contains_timestamp_source(helpers, expr, aliases))
-        }
-        ExprKind::Index(base, index) => {
-            expr_contains_timestamp_source(helpers, base, aliases)
-                || index
-                    .is_some_and(|index| expr_contains_timestamp_source(helpers, index, aliases))
-        }
-        ExprKind::Slice(base, start, end) => {
-            expr_contains_timestamp_source(helpers, base, aliases)
-                || start
-                    .is_some_and(|start| expr_contains_timestamp_source(helpers, start, aliases))
-                || end.is_some_and(|end| expr_contains_timestamp_source(helpers, end, aliases))
-        }
-        ExprKind::Ident(_)
-        | ExprKind::Lit(_)
-        | ExprKind::New(_)
-        | ExprKind::TypeCall(_)
-        | ExprKind::Type(_)
-        | ExprKind::Err(_) => false,
-    }
-}
-
-fn expr_value_is_timestamp_source(
-    helpers: &HashSet<FunctionId>,
-    expr: &Expr<'_>,
-    aliases: &HashSet<VariableId>,
-) -> bool {
-    if is_block_timestamp(expr) || is_timestamp_helper_call(helpers, expr) {
-        return true;
-    }
-
-    match &expr.peel_parens().kind {
-        ExprKind::Ident(resolutions) => resolutions.iter().any(
-            |res| matches!(res, Res::Item(ItemId::Variable(var_id)) if aliases.contains(var_id)),
-        ),
-        ExprKind::Binary(lhs, op, rhs) if !is_cmp(op.kind) => {
-            expr_value_is_timestamp_source(helpers, lhs, aliases)
-                || expr_value_is_timestamp_source(helpers, rhs, aliases)
-        }
-        ExprKind::Unary(_, inner) | ExprKind::Payable(inner) | ExprKind::YulMember(inner, _) => {
-            expr_value_is_timestamp_source(helpers, inner, aliases)
-        }
-        ExprKind::Ternary(_, then_expr, else_expr) => {
-            expr_value_is_timestamp_source(helpers, then_expr, aliases)
-                || expr_value_is_timestamp_source(helpers, else_expr, aliases)
-        }
-        ExprKind::Tuple([Some(inner)]) => expr_value_is_timestamp_source(helpers, inner, aliases),
-        _ => false,
-    }
-}
-
-fn is_block_timestamp(expr: &Expr<'_>) -> bool {
-    match &expr.peel_parens().kind {
-        ExprKind::Member(base, member) if member.name == kw::Timestamp => {
-            let ExprKind::Ident(reses) = &base.peel_parens().kind else { return false };
-            reses
-                .iter()
-                .any(|res| matches!(res, Res::Builtin(builtin) if builtin.name() == sym::block))
-        }
-        ExprKind::Ident(reses) => {
-            reses.iter().any(|res| matches!(res, Res::Builtin(Builtin::BlockTimestamp)))
-        }
-        _ => false,
-    }
-}
-
-fn timestamp_helpers(hir: &Hir<'_>, contract: Option<ContractId>) -> HashSet<FunctionId> {
-    let Some(contract) = contract else { return HashSet::new() };
-    hir.contract_item_ids(contract)
-        .filter_map(|item| item.as_function())
-        .filter(|fid| {
-            let helper = hir.function(*fid);
-            helper.contract == Some(contract)
-                && matches!(helper.visibility, ast::Visibility::Internal | ast::Visibility::Private)
-                && helper.body.is_some_and(block_directly_returns_timestamp)
-        })
-        .collect()
-}
-
-fn is_timestamp_helper_call(helpers: &HashSet<FunctionId>, expr: &Expr<'_>) -> bool {
-    let ExprKind::Call(callee, _, _) = &expr.peel_parens().kind else { return false };
-    helper_function_ids(callee).into_iter().any(|fid| helpers.contains(&fid))
-}
-
-fn is_revert_call(expr: &Expr<'_>) -> bool {
-    let ExprKind::Call(callee, _, _) = &expr.peel_parens().kind else { return false };
-    let ExprKind::Ident(resolutions) = &callee.peel_parens().kind else { return false };
-    resolutions.iter().any(|res| matches!(res, Res::Builtin(Builtin::Revert | Builtin::RevertMsg)))
-}
-
-fn helper_function_ids(callee: &Expr<'_>) -> Vec<FunctionId> {
-    let ExprKind::Ident(resolutions) = &callee.peel_parens().kind else { return Vec::new() };
-    resolutions
-        .iter()
-        .filter_map(
-            |res| {
-                if let Res::Item(ItemId::Function(fid)) = res { Some(*fid) } else { None }
-            },
-        )
-        .collect()
-}
-
-fn block_directly_returns_timestamp(block: Block<'_>) -> bool {
-    block.stmts.iter().any(stmt_directly_returns_timestamp)
-}
-
-fn stmt_directly_returns_timestamp(stmt: &Stmt<'_>) -> bool {
-    match &stmt.kind {
-        StmtKind::Return(Some(expr)) => expr_contains_direct_block_timestamp(expr),
+/// True if a `return` reachable through plain blocks and `if` arms mentions `block.timestamp`.
+fn returns_timestamp(gcx: Gcx<'_>, stmts: &[Stmt<'_>]) -> bool {
+    stmts.iter().any(|stmt| match &stmt.kind {
+        StmtKind::Return(Some(expr)) => any_subexpr(expr, |expr| is_block_timestamp(gcx, expr)),
         StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
-            block_directly_returns_timestamp(*block)
+            returns_timestamp(gcx, block.stmts)
         }
         StmtKind::If(_, then_stmt, else_stmt) => {
-            stmt_directly_returns_timestamp(then_stmt)
-                || else_stmt.is_some_and(stmt_directly_returns_timestamp)
+            returns_timestamp(gcx, std::slice::from_ref(*then_stmt))
+                || else_stmt.is_some_and(|e| returns_timestamp(gcx, std::slice::from_ref(e)))
         }
         _ => false,
-    }
-}
-
-fn expr_contains_direct_block_timestamp(expr: &Expr<'_>) -> bool {
-    if is_block_timestamp(expr) {
-        return true;
-    }
-
-    match &expr.peel_parens().kind {
-        ExprKind::Assign(lhs, _, rhs) | ExprKind::Binary(lhs, _, rhs) => {
-            expr_contains_direct_block_timestamp(lhs) || expr_contains_direct_block_timestamp(rhs)
-        }
-        ExprKind::Call(callee, args, options) => {
-            expr_contains_direct_block_timestamp(callee)
-                || options.is_some_and(|options| {
-                    options.args.iter().any(|arg| expr_contains_direct_block_timestamp(&arg.value))
-                })
-                || args.exprs().any(expr_contains_direct_block_timestamp)
-        }
-        ExprKind::Unary(_, inner)
-        | ExprKind::Delete(inner)
-        | ExprKind::Member(inner, _)
-        | ExprKind::Payable(inner)
-        | ExprKind::YulMember(inner, _) => expr_contains_direct_block_timestamp(inner),
-        ExprKind::Ternary(cond, then_expr, else_expr) => {
-            expr_contains_direct_block_timestamp(cond)
-                || expr_contains_direct_block_timestamp(then_expr)
-                || expr_contains_direct_block_timestamp(else_expr)
-        }
-        ExprKind::Tuple(exprs) => {
-            exprs.iter().flatten().any(|expr| expr_contains_direct_block_timestamp(expr))
-        }
-        ExprKind::Array(exprs) => exprs.iter().any(expr_contains_direct_block_timestamp),
-        ExprKind::Index(base, index) => {
-            expr_contains_direct_block_timestamp(base)
-                || index.is_some_and(expr_contains_direct_block_timestamp)
-        }
-        ExprKind::Slice(base, start, end) => {
-            expr_contains_direct_block_timestamp(base)
-                || start.is_some_and(expr_contains_direct_block_timestamp)
-                || end.is_some_and(expr_contains_direct_block_timestamp)
-        }
-        ExprKind::Ident(_)
-        | ExprKind::Lit(_)
-        | ExprKind::New(_)
-        | ExprKind::TypeCall(_)
-        | ExprKind::Type(_)
-        | ExprKind::Err(_) => false,
-    }
+    })
 }

@@ -1973,6 +1973,155 @@ contract SymbolicConstrainedCheatcodes is Test {
     assert!(!stdout.contains("symbolic randomBytes len"), "{stdout}");
 });
 
+forgetest_init!(symbolic_cheatcode_state_survives_reverting_call, |prj, cmd| {
+    skip_unless_z3!("symbolic_cheatcode_state_survives_reverting_call");
+
+    prj.add_test(
+        "SymbolicRevertKeepsCheatcodes.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Token {
+    function balanceOf(address) external pure returns (uint256) {
+        return 7;
+    }
+}
+
+contract SymbolicRevertKeepsCheatcodes is Test {
+    uint256 constant DEADLINE = 1000;
+    Token token;
+
+    function setUp() public {
+        token = new Token();
+    }
+
+    function warpThenRevert(uint256 t) external {
+        vm.warp(t);
+        revert("boom");
+    }
+
+    function mockThenRevert(address user) external {
+        vm.mockCall(
+            address(token),
+            abi.encodeWithSelector(Token.balanceOf.selector, user),
+            abi.encode(uint256(5))
+        );
+        revert("boom");
+    }
+
+    // Concretely the warp outlives the revert, so any t >= DEADLINE breaks this.
+    function checkWarpSurvivesRevertingCall(uint256 t) public {
+        try this.warpThenRevert(t) {} catch {}
+        assert(block.timestamp < DEADLINE);
+    }
+
+    // Concretely the mock outlives the revert, so the mocked value is observed.
+    function checkMockSurvivesRevertingCall(address user) public {
+        try this.mockThenRevert(user) {} catch {}
+        assert(token.balanceOf(user) == 7);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-contract", "SymbolicRevertKeepsCheatcodes"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+args=[1000]] checkWarpSurvivesRevertingCall(uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL: panic: assertion failed (0x01); counterexample:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkMockSurvivesRevertingCall(address)
+"#]],
+    );
+    assert!(!stdout.contains("[PASS]"), "{stdout}");
+});
+
+forgetest_init!(symbolic_expect_call_follows_function_mock_redirect, |prj, cmd| {
+    skip_unless_z3!("symbolic_expect_call_follows_function_mock_redirect");
+
+    prj.add_test(
+        "SymbolicExpectCallRedirect.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Target {
+    function ping() external pure returns (uint256) {
+        return 1;
+    }
+}
+
+contract Redirect {
+    function ping() external pure returns (uint256) {
+        return 2;
+    }
+}
+
+contract SymbolicExpectCallRedirect is Test {
+    Target target;
+    Redirect redirect;
+
+    function setUp() public {
+        target = new Target();
+        redirect = new Redirect();
+    }
+
+    // The redirected call runs `redirect`'s code, so an expectation on `target` is never met.
+    function checkExpectCallOnRedirectedSource() public {
+        vm.mockFunction(address(target), address(redirect), abi.encodeWithSelector(Target.ping.selector));
+        vm.expectCall(address(target), abi.encodeWithSelector(Target.ping.selector));
+        target.ping();
+    }
+
+    function checkExpectCallOnRedirectTarget() public {
+        vm.mockFunction(address(target), address(redirect), abi.encodeWithSelector(Target.ping.selector));
+        vm.expectCall(address(redirect), abi.encodeWithSelector(Target.ping.selector));
+        assertEq(target.ping(), 2);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-contract", "SymbolicExpectCallRedirect"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+to be called 1 time, but was called 0 times; counterexample:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkExpectCallOnRedirectedSource()
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkExpectCallOnRedirectTarget()
+"#]],
+    );
+});
+
 forgetest_init!(symbolic_cheatcodes_reject_gas_deal_value, |prj, cmd| {
     skip_unless_z3!("symbolic_cheatcodes_reject_gas_deal_value");
 
@@ -2197,6 +2346,58 @@ contract SymbolicExpectRevert is Test {
         &stdout,
         foundry_test_utils::str![[r#"
 [PASS] checkExpectRevert(uint256)
+"#]],
+    );
+});
+
+forgetest_init!(symbolic_vm_expect_revert_double_registration_is_rejected, |prj, cmd| {
+    skip_unless_z3!("symbolic_vm_expect_revert_double_registration_is_rejected");
+
+    prj.add_test(
+        "DoubleExpectRevert.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicExpectedReverter {
+    error Custom(uint256 value);
+
+    function failPanic() external pure {
+        assert(false);
+    }
+}
+
+contract DoubleExpectRevert is Test {
+    SymbolicExpectedReverter helper;
+
+    function setUp() public {
+        helper = new SymbolicExpectedReverter();
+    }
+
+    function checkDoubleExpectRevert(uint256) public {
+        vm.expectRevert(SymbolicExpectedReverter.Custom.selector);
+        vm.expectRevert(bytes4(0x4e487b71));
+        helper.failPanic();
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-test", "checkDoubleExpectRevert"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkDoubleExpectRevert(uint256)
 "#]],
     );
 });
@@ -2504,6 +2705,11 @@ contract SymbolicEmitter {
     function fire(address who, uint256 id, uint256 value) external {
         emit Seen(who, id, value);
     }
+
+    function fireTwice(address who, uint256 id, uint256 value) external {
+        emit Seen(who, id, value);
+        emit Seen(who, id, value);
+    }
 }
 
 contract SymbolicExpectEmit is Test {
@@ -2527,6 +2733,24 @@ contract SymbolicExpectEmit is Test {
         emit Seen(address(0xB0B), 7, 9);
         emitter.fire(address(0xB0B), 7, 9);
     }
+
+    function checkExpectEmitCountOverloads(uint256) public {
+        vm.expectEmit(uint64(2));
+        emit Seen(address(0xB0B), 7, 9);
+        emitter.fireTwice(address(0xB0B), 7, 9);
+
+        vm.expectEmit(address(emitter), uint64(2));
+        emit Seen(address(0xB0B), 7, 9);
+        emitter.fireTwice(address(0xB0B), 7, 9);
+
+        vm.expectEmit(true, true, false, true, uint64(2));
+        emit Seen(address(0xB0B), 7, 9);
+        emitter.fireTwice(address(0xB0B), 7, 9);
+
+        vm.expectEmit(true, true, false, true, address(emitter), uint64(2));
+        emit Seen(address(0xB0B), 7, 9);
+        emitter.fireTwice(address(0xB0B), 7, 9);
+    }
 }
 "#,
     );
@@ -2547,6 +2771,12 @@ contract SymbolicExpectEmit is Test {
         &stdout,
         foundry_test_utils::str![[r#"
 [PASS] checkExpectEmitSymbolicEmitter(address)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkExpectEmitCountOverloads(uint256)
 "#]],
     );
     assert!(!stdout.contains("symbolic vm.expectEmit"), "{stdout}");
@@ -2682,7 +2912,7 @@ contract SymbolicExpectCall is Test {
             uint64(50000),
             abi.encodeWithSelector(SymbolicExpectedCallTarget.ping.selector, uint256(13))
         );
-        assertEq(target.ping{gas: 50000}(13), 14);
+        assertEq(target.ping(13), 14);
 
         vm.expectCallMinGas(
             address(target),
@@ -2690,7 +2920,7 @@ contract SymbolicExpectCall is Test {
             uint64(25000),
             abi.encodeWithSelector(SymbolicExpectedCallTarget.ping.selector, uint256(14))
         );
-        assertEq(target.ping{gas: 50000}(14), 15);
+        assertEq(target.ping(14), 15);
     }
 
     function checkExpectCallSymbolicCallee(address expectedCallee) public {
@@ -2725,6 +2955,55 @@ contract SymbolicExpectCall is Test {
             abi.encodeWithSelector(SymbolicExpectedCallTarget.ping.selector, uint256(15))
         );
         assertEq(target.ping{gas: 50000}(15), 16);
+    }
+
+    function checkExpectCallAdditive(uint256) public {
+        bytes memory data =
+            abi.encodeWithSelector(SymbolicExpectedCallTarget.ping.selector, uint256(2));
+        vm.expectCall(address(target), data);
+        vm.expectCall(address(target), data);
+        assertEq(target.ping(2), 3);
+        assertEq(target.ping(2), 3);
+    }
+
+    function checkExpectCallCountedDuplicateReverts(uint256) public {
+        bytes memory data =
+            abi.encodeWithSelector(SymbolicExpectedCallTarget.ping.selector, uint256(3));
+        vm.expectCall(address(target), data, 1);
+        (bool ok, bytes memory ret) = address(vm).call(
+            abi.encodeWithSignature("expectCall(address,bytes,uint64)", address(target), data, uint64(1))
+        );
+        assertFalse(ok);
+        assertEq(
+            keccak256(ret),
+            keccak256(
+                abi.encodeWithSelector(
+                    bytes4(keccak256("CheatcodeError(string)")),
+                    "counted expected calls can only bet set once"
+                )
+            )
+        );
+        assertEq(target.ping(3), 4);
+    }
+
+    function checkExpectCallNonCountedOverCountedReverts(uint256) public {
+        bytes memory data =
+            abi.encodeWithSelector(SymbolicExpectedCallTarget.ping.selector, uint256(4));
+        vm.expectCall(address(target), data, 1);
+        (bool ok, bytes memory ret) = address(vm).call(
+            abi.encodeWithSignature("expectCall(address,bytes)", address(target), data)
+        );
+        assertFalse(ok);
+        assertEq(
+            keccak256(ret),
+            keccak256(
+                abi.encodeWithSelector(
+                    bytes4(keccak256("CheatcodeError(string)")),
+                    "cannot overwrite a counted expectCall with a non-counted expectCall"
+                )
+            )
+        );
+        assertEq(target.ping(4), 5);
     }
 }
 "#,
@@ -2832,6 +3111,25 @@ checkSymbolicCalleeExpectedCallMismatch(address)
 checkExpectCallMinGasMissing(uint256)
 "#]],
     );
+
+    let stdout = prj
+        .forge_command()
+        .args(["test", "--symbolic", "--match-test", "checkExpectCallAdditive"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkExpectCallAdditive(uint256)
+"#]],
+    );
+
+    for test in
+        ["checkExpectCallCountedDuplicateReverts", "checkExpectCallNonCountedOverCountedReverts"]
+    {
+        prj.forge_command().args(["test", "--symbolic", "--match-test", test]).assert_success();
+    }
 });
 
 forgetest_init!(symbolic_vm_mock_call_returns_and_reverts, |prj, cmd| {
@@ -2936,6 +3234,25 @@ contract SymbolicMockCall is Test {
         assertEq(IMockedTarget(target).value(input), input + 2);
         assertEq(IMockedTarget(target).value(input), input + 2);
     }
+
+    function checkMockCallRemockReplacesStaleValue(uint256) public {
+        address target = address(0x1234);
+
+        vm.mockCall(
+            target,
+            abi.encodeWithSelector(IMockedTarget.value.selector, uint256(1)),
+            abi.encode(uint256(10))
+        );
+        assertEq(IMockedTarget(target).value(1), 10);
+
+        // Re-registering the same mock replaces its return value.
+        vm.mockCall(
+            target,
+            abi.encodeWithSelector(IMockedTarget.value.selector, uint256(1)),
+            abi.encode(uint256(20))
+        );
+        assertEq(IMockedTarget(target).value(1), 20);
+    }
 }
 "#,
     );
@@ -3011,6 +3328,22 @@ contract SymbolicMockCall is Test {
 checkSymbolicCalleeMockMismatch(address)
 "#]],
     );
+    assert!(!stdout.contains("symbolic vm.mockCall"), "{stdout}");
+
+    let stdout = prj
+        .forge_command()
+        .args(["test", "--symbolic", "--match-test", "checkMockCallRemockReplacesStaleValue"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkMockCallRemockReplacesStaleValue(uint256)
+"#]],
+    );
+    assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
     assert!(!stdout.contains("symbolic vm.mockCall"), "{stdout}");
 });
 
@@ -5255,6 +5588,7 @@ contract StorageHookFuzzGuidanceTest is Test {
 
 forgetest_init!(symbolic_mapping_storage_hooks, |prj, cmd| {
     skip_unless_z3!("symbolic_mapping_storage_hooks");
+    prj.update_config(|config| config.invariant.runs = 0);
     prj.add_test(
         "SymbolicMappingStorageHooks.t.sol",
         r#"
@@ -5899,8 +6233,6 @@ contract SymbolicMappingStorageHooksSymbolicSize is Test {
             "test",
             "--symbolic",
             "--json",
-            "--fuzz-runs",
-            "0",
             "--match-contract",
             "^SymbolicMappingStorageHooksStale$",
         ])

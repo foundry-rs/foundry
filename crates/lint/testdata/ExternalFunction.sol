@@ -20,29 +20,29 @@ contract ExternalFunction {
 
     // SHOULD FAIL:
 
-    function setStored(bytes memory data) public { //~NOTE: public function can be declared external
+    function setStored(bytes memory data) public { //~NOTE: `public` function can be declared `external`
         stored = data;
     }
 
-    function multiArrayConsumer(uint256[] memory xs, address[] memory ys) public { //~NOTE: public function can be declared external
+    function multiArrayConsumer(uint256[] memory xs, address[] memory ys) public { //~NOTE: `public` function can be declared `external`
         owner = ys[0];
         if (xs.length > 0) owner = ys[xs.length - 1];
     }
 
-    function structConsumer(Item memory item) public { //~NOTE: public function can be declared external
+    function structConsumer(Item memory item) public { //~NOTE: `public` function can be declared `external`
         owner = item.who;
     }
 
-    function nestedReferenceConsumer(string memory s, uint256 v) public returns (uint256) { //~NOTE: public function can be declared external
+    function nestedReferenceConsumer(string memory s, uint256 v) public returns (uint256) { //~NOTE: `public` function can be declared `external`
         bytes memory bs = bytes(s);
         return bs.length + v;
     }
 
-    function calledOnlyExternally(bytes memory payload) public { //~NOTE: public function can be declared external
+    function calledOnlyExternally(bytes memory payload) public { //~NOTE: `public` function can be declared `external`
         stored = payload;
     }
 
-    function localUnaryStillExternal(bytes memory data) public { //~NOTE: public function can be declared external
+    function localUnaryStillExternal(bytes memory data) public { //~NOTE: `public` function can be declared `external`
         uint256 i = 0;
         i++;
         stored = data;
@@ -140,7 +140,7 @@ abstract contract Base {
     // Abstract — must stay ≥ public for derived contracts to override.
     function virtualWithoutBody(bytes memory data) public virtual;
 
-    // Reached via `super.calledViaSuper(...)` in `Derived`; matched by name.
+    // Reached via `super.calledViaSuper(...)` in `Derived`.
     function calledViaSuper(bytes memory data) public virtual {
         _bytes = data;
     }
@@ -177,7 +177,7 @@ contract UnrelatedDerived is UnrelatedBase {
 contract UnrelatedSameName {
     bytes public buf;
 
-    function isolatedSuperTarget(bytes memory data) public { //~NOTE: public function can be declared external
+    function isolatedSuperTarget(bytes memory data) public { //~NOTE: `public` function can be declared `external`
         buf = data;
     }
 }
@@ -246,17 +246,59 @@ contract EscapingParams is WithGuard {
         stored = data;
     }
 
-    function readsOnly(ItemLib.Item memory item) public { //~NOTE: public function can be declared external
+    function readsOnly(ItemLib.Item memory item) public { //~NOTE: `public` function can be declared `external`
         uint256 amt = item.amount;
         owner = item.who;
         stored = abi.encodePacked(amt);
     }
 
-    function modifierWithoutArgs(bytes memory data) public checkValues { //~NOTE: public function can be declared external
+    function modifierWithoutArgs(bytes memory data) public checkValues { //~NOTE: `public` function can be declared `external`
         stored = data;
     }
 
-    function returnsParam(bytes memory data) public returns (bytes memory) { //~NOTE: public function can be declared external
+    function returnsParam(bytes memory data) public returns (bytes memory) { //~NOTE: `public` function can be declared `external`
         return data;
+    }
+}
+
+contract OverloadedReferences {
+    function consume(bytes memory data) public pure returns (uint256) { //~NOTE: `public` function can be declared `external`
+        return data.length;
+    }
+
+    function consume(uint256[] memory data) public pure returns (uint256) {
+        return data.length;
+    }
+
+    function callArray(uint256[] memory data) external pure returns (uint256) {
+        return consume(data);
+    }
+}
+
+contract OverloadedSuperBase {
+    function consume(bytes memory data) public pure virtual returns (uint256) { //~NOTE: `public` function can be declared `external`
+        return data.length;
+    }
+
+    function consume(uint256[] memory data) public pure virtual returns (uint256) {
+        return data.length;
+    }
+}
+
+contract OverloadedSuperDerived is OverloadedSuperBase {
+    function callArray(uint256[] memory data) external pure returns (uint256) {
+        return super.consume(data);
+    }
+}
+
+contract QualifiedReferenceBase {
+    function consume(bytes memory data) public pure returns (uint256) {
+        return data.length;
+    }
+}
+
+contract QualifiedReferenceDerived is QualifiedReferenceBase {
+    function callBase(bytes memory data) external pure returns (uint256) {
+        return QualifiedReferenceBase.consume(data);
     }
 }

@@ -1,4 +1,4 @@
-warning[rtlo]: U+202E (Right-to-Left Override) detected
+warning[rtlo]: `U+202E` (Right-to-Left Override) detected
    ╭▸ ROOT/testdata/RtloCommentsOnly.sol:LL:CC
    │
 LL │ // hidden� payload � trailing
@@ -6,7 +6,7 @@ LL │ // hidden� payload � trailing
    │
    ╰ help: https://getfoundry.sh/forge/linting/rtlo
 
-warning[rtlo]: U+202C (Pop Directional Formatting) detected
+warning[rtlo]: `U+202C` (Pop Directional Formatting) detected
    ╭▸ ROOT/testdata/RtloCommentsOnly.sol:LL:CC
    │
 LL │ // hidden� payload � trailing
@@ -14,7 +14,7 @@ LL │ // hidden� payload � trailing
    │
    ╰ help: https://getfoundry.sh/forge/linting/rtlo
 
-warning[rtlo]: U+202E (Right-to-Left Override) detected
+warning[rtlo]: `U+202E` (Right-to-Left Override) detected
    ╭▸ ROOT/testdata/RtloCommentsOnly.sol:LL:CC
    │
 LL │ /* block� comment � end */
@@ -22,7 +22,7 @@ LL │ /* block� comment � end */
    │
    ╰ help: https://getfoundry.sh/forge/linting/rtlo
 
-warning[rtlo]: U+202C (Pop Directional Formatting) detected
+warning[rtlo]: `U+202C` (Pop Directional Formatting) detected
    ╭▸ ROOT/testdata/RtloCommentsOnly.sol:LL:CC
    │
 LL │ /* block� comment � end */

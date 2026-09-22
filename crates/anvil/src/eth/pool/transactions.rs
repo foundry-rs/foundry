@@ -21,14 +21,6 @@ pub type TxMarker = Vec<u8>;
 /// unlock.
 type ReplacedTransactions<T> = (Vec<Arc<PoolTransaction<T>>>, Vec<TxHash>);
 
-/// creates an unique identifier for aan (`nonce` + `Address`) combo
-pub fn to_marker(nonce: u64, from: Address) -> TxMarker {
-    let mut data = [0u8; 28];
-    data[..8].copy_from_slice(&nonce.to_le_bytes()[..]);
-    data[8..].copy_from_slice(&from.0[..]);
-    data.to_vec()
-}
-
 /// Modes that determine the transaction ordering of the mempool
 ///
 /// This type controls the transaction order via the priority metric of a transaction
@@ -280,7 +272,7 @@ impl<T: Transaction> PendingTransactions<T> {
             "transaction is already added"
         );
 
-        if let Some(replace) = self
+        let replaced_hash = if let Some(replace) = self
             .waiting_markers
             .get(&tx.transaction.provides)
             .and_then(|hash| self.waiting_queue.get(hash))
@@ -290,6 +282,13 @@ impl<T: Transaction> PendingTransactions<T> {
                 warn!(target: "txpool", "pending replacement transaction underpriced [{:?}]", tx.transaction.hash());
                 return Err(PoolError::ReplacementUnderpriced(tx.transaction.hash()));
             }
+            Some(replace.transaction.hash())
+        } else {
+            None
+        };
+        // Remove old markers before inserting the replacement, which shares their keys.
+        if let Some(replaced_hash) = replaced_hash {
+            self.remove(vec![replaced_hash]);
         }
 
         // add all missing markers
@@ -784,6 +783,14 @@ impl<T: Transaction> ReadyTransaction<T> {
     pub fn max_fee_per_gas(&self) -> u128 {
         self.transaction.transaction.max_fee_per_gas()
     }
+}
+
+/// creates an unique identifier for aan (`nonce` + `Address`) combo
+pub fn to_marker(nonce: u64, from: Address) -> TxMarker {
+    let mut data = [0u8; 28];
+    data[..8].copy_from_slice(&nonce.to_le_bytes()[..]);
+    data[8..].copy_from_slice(&from.0[..]);
+    data.to_vec()
 }
 
 #[cfg(test)]
