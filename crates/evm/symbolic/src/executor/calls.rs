@@ -182,7 +182,6 @@ impl SymbolicExecutor {
                     worklist,
                     pre_call_state,
                     call_pc,
-                    to,
                     code_address,
                     &value,
                     &gas,
@@ -200,7 +199,6 @@ impl SymbolicExecutor {
                     worklist,
                     pre_call_state,
                     call_pc,
-                    to,
                     code_address,
                     concrete_value,
                     &gas,
@@ -249,7 +247,6 @@ impl SymbolicExecutor {
         worklist: &mut VecDeque<PathState>,
         pre_call_state: &PathState,
         call_pc: usize,
-        to: Address,
         code_address: Address,
         value: &SymExpr,
         gas: &SymExpr,
@@ -259,7 +256,7 @@ impl SymbolicExecutor {
             return Ok(false);
         }
 
-        for candidate in self.call_value_candidates(state, to, code_address, gas, call_input)? {
+        for candidate in self.call_value_candidates(state, code_address, gas, call_input)? {
             let eq = SymBoolExpr::eq_word_const(&mut self.cx, value, candidate);
             let (eq_constraints, eq_sat) = self.constraints_with_condition(state, eq.clone())?;
             let eq_not = eq.not(&mut self.cx);
@@ -350,15 +347,12 @@ impl SymbolicExecutor {
         worklist: &mut VecDeque<PathState>,
         pre_call_state: &PathState,
         call_pc: usize,
-        callee: Address,
         code_address: Address,
         value: Option<U256>,
         gas: &SymExpr,
         calldata: &SymBytes,
     ) -> Result<bool, SymbolicError> {
-        for condition in
-            self.call_match_conditions(state, callee, code_address, value, gas, calldata)?
-        {
+        for condition in self.call_match_conditions(state, code_address, value, gas, calldata)? {
             if self.branch_symbolic_match_condition_if_needed(
                 state,
                 worklist,
@@ -848,13 +842,21 @@ impl SymbolicExecutor {
         }
 
         let call_input = in_size.read_from_memory(&mut self.cx, &state.memory, in_offset.clone());
+        // `vm.mockFunction` swaps the code that runs, and the concrete inspector matches
+        // `vm.expectCall` against that address, so resolve the redirect before observing.
+        let code_address = self.function_mock_target(state, to, &call_input)?.unwrap_or(to);
         if !state.expected_calls.is_empty() {
             let concrete_value = state.constrained_word(&mut self.cx, &value);
-            if !self.observe_expected_call(state, to, concrete_value, &gas, &call_input)? {
+            if !self.observe_expected_call(
+                state,
+                code_address,
+                concrete_value,
+                &gas,
+                &call_input,
+            )? {
                 return Ok(StepOutcome::Failure);
             }
         }
-        let code_address = self.function_mock_target(state, to, &call_input)?.unwrap_or(to);
         let call_context =
             (!matches!(kind, CallKind::DelegateCall)).then(|| state.prank_for_next_call());
         let transfer_to = if matches!(kind, CallKind::Call) { to } else { state.address };
@@ -1516,13 +1518,8 @@ impl SymbolicExecutor {
 
             let mut value_branches = vec![branch];
             if value_branches[0].constrained_word(&mut self.cx, value).is_none() {
-                let candidates = self.call_value_candidates(
-                    &value_branches[0],
-                    to,
-                    code_address,
-                    gas,
-                    call_input,
-                )?;
+                let candidates =
+                    self.call_value_candidates(&value_branches[0], code_address, gas, call_input)?;
                 for candidate in candidates {
                     let eq = SymBoolExpr::eq_word_const(&mut self.cx, value, candidate);
                     value_branches = self.split_branches_on(value_branches, eq)?;
@@ -1534,7 +1531,6 @@ impl SymbolicExecutor {
                 let mut match_branches = vec![branch];
                 let conditions = self.call_match_conditions(
                     &match_branches[0],
-                    to,
                     code_address,
                     concrete_value,
                     gas,
@@ -1620,7 +1616,6 @@ impl SymbolicExecutor {
     fn call_value_candidates(
         &mut self,
         state: &PathState,
-        to: Address,
         code_address: Address,
         gas: &SymExpr,
         call_input: &SymBytes,
@@ -1632,7 +1627,7 @@ impl SymbolicExecutor {
                 .expected_call_match_constraints(
                     state,
                     expected,
-                    to,
+                    code_address,
                     Some(expected_value),
                     gas,
                     call_input,
@@ -1666,7 +1661,6 @@ impl SymbolicExecutor {
     fn call_match_conditions(
         &mut self,
         state: &PathState,
-        callee: Address,
         code_address: Address,
         value: Option<U256>,
         gas: &SymExpr,
@@ -1675,7 +1669,7 @@ impl SymbolicExecutor {
         let mut conditions = Vec::new();
         for expected in &state.expected_calls {
             if let Some(condition) =
-                expected.match_condition(&mut self.cx, callee, value, gas, calldata)?
+                expected.match_condition(&mut self.cx, code_address, value, gas, calldata)?
             {
                 conditions.push(condition);
             }
