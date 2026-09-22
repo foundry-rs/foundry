@@ -6,15 +6,15 @@
 ## What it does
 
 Reports assignments to state variables whose values are overwritten before being read.
-Compound assignments and writes to individual mapping entries, array elements, or struct
-fields are excluded.
+Compound assignments read before writing and are reported when their result is overwritten.
+Individual mapping entries, array elements, and struct fields are excluded.
 
 ## Why is this bad?
 
 Writing a value to storage and then immediately overwriting it can waste gas when the compiler
 does not eliminate the first write. The cost depends on slot access history and the values
-involved; it is not a fixed amount per write. Remove the first assignment only when evaluating
-its right-hand side has no required side effects.
+involved; it is not a fixed amount per write. Remove the first assignment only when
+its evaluation has no required side effects or revert checks, including arithmetic overflow checks.
 
 ## Example
 
@@ -47,7 +47,7 @@ contract C {
         x = v;
     }
 
-    // Compound assignments read before writing, not flagged.
+    // The compound assignment reads the earlier write.
     function goodCompound() external {
         x = 1;
         x += 1;
