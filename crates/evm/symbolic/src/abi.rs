@@ -5,8 +5,6 @@ pub(super) struct SymbolicCalldata {
     bytes: SymBytes,
     inputs: Vec<SymbolicInput>,
     constraints: Vec<SymBoolExpr>,
-    /// Groups of top-level `address` inputs that this variant constrains to be equal.
-    address_classes: Vec<Vec<SymExpr>>,
 }
 
 impl SymbolicCalldata {
@@ -32,7 +30,6 @@ impl SymbolicCalldata {
             bytes: SymBytes::concrete(cx, function.selector().to_vec()),
             inputs: Vec::new(),
             constraints: Vec::new(),
-            address_classes: Vec::new(),
         })
     }
 
@@ -73,48 +70,54 @@ impl SymbolicCalldata {
         // Explore equal-address cases as variants sharing a representative account.
         let mut partitioned = Vec::new();
         for (state, inputs) in variants {
-            let addresses = inputs
+            let address_indices = inputs
                 .iter()
-                .filter_map(|input| match &input.value {
-                    SymbolicAbiValue::Address { word } => Some(word.clone()),
+                .enumerate()
+                .filter_map(|(idx, input)| match input.value {
+                    SymbolicAbiValue::Address { .. } => Some(idx),
                     _ => None,
                 })
                 .collect::<Vec<_>>();
-            for partition in set_partitions(addresses.len(), variant_limit)? {
+            for partition in set_partitions(address_indices.len(), variant_limit)? {
                 let mut state = state.clone();
-                let classes = partition
-                    .iter()
-                    .map(|block| {
-                        block.iter().map(|&idx| addresses[idx].clone()).collect::<Vec<_>>()
-                    })
-                    .collect::<Vec<_>>();
-                for class in &classes {
-                    for member in &class[1..] {
-                        state.constraints.push(SymBoolExpr::eq(
-                            builder.cx,
-                            class[0].clone(),
-                            member.clone(),
-                        ));
+                let mut inputs = inputs.clone();
+                let mut representatives = Vec::with_capacity(partition.len());
+                for block in partition {
+                    let representative = match &inputs[address_indices[block[0]]].value {
+                        SymbolicAbiValue::Address { word } => word.clone(),
+                        _ => unreachable!("address index must refer to an address input"),
+                    };
+                    for member in block {
+                        let replaced = match &mut inputs[address_indices[member]].value {
+                            SymbolicAbiValue::Address { word } => {
+                                let replaced = word.clone();
+                                *word = representative.clone();
+                                replaced
+                            }
+                            _ => unreachable!("address index must refer to an address input"),
+                        };
+                        if replaced != representative {
+                            for constraint in &mut state.constraints {
+                                *constraint = constraint.fold_exprs(builder.cx, &mut |_, expr| {
+                                    if expr == replaced { representative.clone() } else { expr }
+                                });
+                            }
+                        }
                     }
+                    representatives.push(representative);
                 }
-                for (idx, class) in classes.iter().enumerate() {
-                    for other in &classes[idx + 1..] {
-                        let eq = SymBoolExpr::eq(builder.cx, class[0].clone(), other[0].clone());
+                for (idx, representative) in representatives.iter().enumerate() {
+                    for other in &representatives[idx + 1..] {
+                        let eq = SymBoolExpr::eq(builder.cx, representative.clone(), other.clone());
                         state.constraints.push(eq.not(builder.cx));
                     }
                 }
-                let address_classes =
-                    classes.into_iter().filter(|class| class.len() > 1).collect::<Vec<_>>();
-                push_variant(
-                    &mut partitioned,
-                    (state, inputs.clone(), address_classes),
-                    variant_limit,
-                )?;
+                push_variant(&mut partitioned, (state, inputs), variant_limit)?;
             }
         }
 
         let mut out = Vec::with_capacity(partitioned.len());
-        for (state, inputs, address_classes) in partitioned {
+        for (state, inputs) in partitioned {
             let selector = SymBytes::concrete(builder.cx, function.selector().to_vec());
             let encoded = builder.encode_sequence(inputs.iter().map(|input| &input.value));
             let bytes = SymBytes::concat(builder.cx, [selector, encoded]);
@@ -124,7 +127,7 @@ impl SymbolicCalldata {
                 ));
             }
 
-            out.push(Self { bytes, inputs, constraints: state.constraints, address_classes });
+            out.push(Self { bytes, inputs, constraints: state.constraints });
         }
         Ok(out)
     }
@@ -141,11 +144,6 @@ impl SymbolicCalldata {
     /// Consumes this symbolic calldata into its constraints.
     pub(super) fn into_constraints(self) -> Vec<SymBoolExpr> {
         self.constraints
-    }
-
-    /// Groups of top-level `address` inputs constrained to be equal in this variant.
-    pub(super) fn address_classes(&self) -> &[Vec<SymExpr>] {
-        &self.address_classes
     }
 
     pub(super) fn model_to_args(

@@ -80,7 +80,6 @@ impl SymbolicExecutor {
             invariant,
             call_data,
             constraints,
-            Vec::new(),
         )
     }
 
@@ -121,7 +120,6 @@ impl SymbolicExecutor {
             };
             let call_data = step.calldata.call_data(&mut self.cx);
             let constraints = step.calldata.constraints().to_vec();
-            let address_classes = step.calldata.address_classes().to_vec();
             let mut handler = match self.prepare_sequence_call(
                 input.executor,
                 initial_state.clone(),
@@ -130,7 +128,6 @@ impl SymbolicExecutor {
                 &input.target.function,
                 call_data,
                 constraints,
-                address_classes,
             ) {
                 Ok(call) => call,
                 Err(error) => {
@@ -286,10 +283,8 @@ impl SymbolicExecutor {
         _function: &Function,
         calldata: SymCalldata,
         constraints: Vec<SymBoolExpr>,
-        address_classes: Vec<Vec<SymExpr>>,
     ) -> Result<SequenceCall, SymbolicError> {
         state.world.clear_transaction_scoped_state();
-        state.world.add_symbolic_address_classes(address_classes);
         state.mapping_hook_keccak_preimages.clear();
         let code = state.world.extcode(&mut self.cx, executor, target)?;
         state.call_depth = 0;

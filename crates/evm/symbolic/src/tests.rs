@@ -451,26 +451,47 @@ fn calldata_variants_partition_address_inputs() {
     let single = Function::parse("check(address,uint256)").unwrap();
     let variants = symbolic_calldata_variants(&mut cx, &single, &config).unwrap();
     assert_eq!(variants.len(), 1);
-    assert!(variants[0].address_classes().is_empty());
 
     // Two addresses: distinct, or the same account.
     let pair = Function::parse("check(address,address)").unwrap();
     let variants = symbolic_calldata_variants(&mut cx, &pair, &config).unwrap();
     assert_eq!(variants.len(), 2);
-    assert!(variants[0].address_classes().is_empty());
-    assert_eq!(variants[1].address_classes().len(), 1);
-    assert_eq!(variants[1].address_classes()[0].len(), 2);
-    assert_eq!(variants[1].constraints().len(), variants[0].constraints().len());
+    let distinct = variants[0].call_data(&mut cx);
+    assert_ne!(distinct.load(&mut cx, 4).unwrap(), distinct.load(&mut cx, 36).unwrap());
+    let equal = variants[1].call_data(&mut cx);
+    assert_eq!(equal.load(&mut cx, 4).unwrap(), equal.load(&mut cx, 36).unwrap());
+
+    let first = Address::from([0x11; 20]);
+    let second = Address::from([0x22; 20]);
+    let distinct_args = vec![DynSolValue::Address(first), DynSolValue::Address(second)];
+    let distinct_seed = SymbolicConcreteInput {
+        calldata: Bytes::from(pair.abi_encode_input(&distinct_args).unwrap()),
+        args: distinct_args,
+    };
+    assert!(variants[0].seed_model(&mut cx, &distinct_seed).is_some());
+    assert!(variants[1].seed_model(&mut cx, &distinct_seed).is_none());
+    let equal_args = vec![DynSolValue::Address(first), DynSolValue::Address(first)];
+    let equal_seed = SymbolicConcreteInput {
+        calldata: Bytes::from(pair.abi_encode_input(&equal_args).unwrap()),
+        args: equal_args,
+    };
+    assert!(variants[0].seed_model(&mut cx, &equal_seed).is_none());
+    assert!(variants[1].seed_model(&mut cx, &equal_seed).is_some());
 
     // Three addresses: the five set partitions.
     let triple = Function::parse("check(address,address,address)").unwrap();
     let variants = symbolic_calldata_variants(&mut cx, &triple, &config).unwrap();
     assert_eq!(variants.len(), 5);
-    assert_eq!(variants.iter().filter(|variant| variant.address_classes().is_empty()).count(), 1);
-    assert_eq!(
-        variants.iter().filter(|variant| variant.address_classes()[..].concat().len() == 3).count(),
-        1
-    );
+    let mut class_counts = variants
+        .iter()
+        .map(|variant| {
+            let calldata = variant.call_data(&mut cx);
+            let words = [4, 36, 68].map(|offset| calldata.load(&mut cx, offset).unwrap());
+            words.iter().enumerate().filter(|(idx, word)| !words[..*idx].contains(word)).count()
+        })
+        .collect::<Vec<_>>();
+    class_counts.sort_unstable();
+    assert_eq!(class_counts, vec![1, 2, 2, 2, 3]);
     let config = SymbolicConfig { width: Some(2), ..config };
     assert!(matches!(
         symbolic_calldata_variants(&mut cx, &triple, &config),
