@@ -47,14 +47,31 @@ class ValidationTests(unittest.TestCase):
                     "refs/tags/release-1.9.0", manifest(tmp, "1.9.0"), ["v1.8.3"]
                 )
 
-    def test_candidate_must_be_strictly_newer(self):
+    def test_candidate_must_be_newer_than_latest_stable(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = manifest(tmp, "1.9.0")
-            for latest in ("v1.9.1", "v2.0.0-rc1"):
-                with self.subTest(latest=latest), self.assertRaisesRegex(MODULE.ReleaseError, "must be newer"):
-                    MODULE.validate_release("refs/heads/release-1.9.0", path, [latest])
+            with self.assertRaisesRegex(MODULE.ReleaseError, "must be newer"):
+                MODULE.validate_release("refs/heads/release-1.9.0", path, ["v1.9.1"])
             with self.assertRaisesRegex(MODULE.ReleaseError, "already exists"):
                 MODULE.validate_release("refs/heads/release-1.9.0", path, ["v1.9.0"])
+
+    def test_stable_maintenance_release_ignores_newer_rc(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            metadata = MODULE.validate_release(
+                "refs/heads/release-1.8.4",
+                manifest(tmp, "1.8.4"),
+                ["v1.8.3", "v1.9.0-rc1"],
+            )
+            self.assertEqual(metadata["from_tag"], "v1.8.3")
+
+    def test_rc_candidate_must_be_newer_than_latest_release(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(MODULE.ReleaseError, "must be newer"):
+                MODULE.validate_release(
+                    "refs/heads/release-1.9.0-rc1",
+                    manifest(tmp, "1.9.0-rc1"),
+                    ["v1.8.3", "v2.0.0-rc1"],
+                )
 
     def test_versions_use_numeric_rc_ordering(self):
         tags = ["v1.8.3", "v1.9.0-rc1", "v1.9.0-rc9", "v1.9.0-rc10", "v1.9.0", "v1.9.1"]

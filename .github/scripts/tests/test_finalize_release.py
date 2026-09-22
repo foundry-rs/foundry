@@ -146,17 +146,36 @@ class StableTests(unittest.TestCase):
         ]}
         push_only = {"workflow_runs": runs["workflow_runs"][:1]}
         self.assertEqual(
-            MODULE.require_release_run(FakeCommands({command: json.dumps([push_only])}), "r", "v1.0.0", "abc"),
+            MODULE.require_release_run(
+                FakeCommands({command: json.dumps([push_only])}),
+                "r", "v1.0.0", "abc", published=False,
+            ),
             1,
         )
-        self.assertEqual(MODULE.require_release_run(FakeCommands({command: json.dumps([runs])}), "r", "v1.0.0", "abc"), 2)
+        self.assertEqual(
+            MODULE.require_release_run(
+                FakeCommands({command: json.dumps([runs])}),
+                "r", "v1.0.0", "abc", published=False,
+            ),
+            2,
+        )
         runs["workflow_runs"][1]["conclusion"] = "failure"
         with self.assertRaisesRegex(MODULE.ReleaseError, "latest .* was not successful"):
-            MODULE.require_release_run(FakeCommands({command: json.dumps([runs])}), "r", "v1.0.0", "abc")
+            MODULE.require_release_run(
+                FakeCommands({command: json.dumps([runs])}),
+                "r", "v1.0.0", "abc", published=False,
+            )
+        self.assertEqual(
+            MODULE.require_release_run(
+                FakeCommands({command: json.dumps([runs])}),
+                "r", "v1.0.0", "abc", published=True,
+            ),
+            1,
+        )
         with self.assertRaisesRegex(MODULE.ReleaseError, "no release.yml run"):
             MODULE.require_release_run(
                 FakeCommands({command: json.dumps([{"workflow_runs": runs["workflow_runs"][2:]}])}),
-                "r", "v1.0.0", "abc",
+                "r", "v1.0.0", "abc", published=False,
             )
 
     def test_rc_draft_is_published_without_aliases(self):
@@ -185,6 +204,7 @@ class StableTests(unittest.TestCase):
             ("git", "rev-parse", f"{tag}^{{commit}}"): commit,
             run_command: json.dumps([{"workflow_runs": [
                 release_run(7, "workflow_dispatch", commit, tag),
+                release_run(8, "workflow_dispatch", commit, tag, conclusion="failure"),
             ]}]),
             digest_command(f"image:{tag}"): f'"{DIGEST}"',
         }
@@ -194,6 +214,7 @@ class StableTests(unittest.TestCase):
         commands = FakeCommands(results, artifact_digest=DIGEST)
         MODULE.finalize_stable(commands, "r", "image", tag)
         self.assertFalse(any(call[:3] == ("gh", "release", "edit") for call in commands.calls))
+        self.assertTrue(any(call[:4] == ("gh", "run", "download", "7") for call in commands.calls))
 
 
 class NightlyTests(unittest.TestCase):
