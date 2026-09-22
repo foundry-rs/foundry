@@ -13,9 +13,9 @@ use path_slash::PathExt;
 use solar::sema::{
     Gcx, Hir,
     hir::{
-        CallArgs, CallOptions, ContractId, ContractKind, Expr, ExprKind, Function, FunctionId,
-        FunctionKind, Res, SourceId, StateMutability, Stmt, StmtKind, TypeKind, UsingDirective,
-        UsingEntryKind, Visit,
+        CallArgs, CallOptions, Contract, ContractId, ContractKind, Expr, ExprKind, Function,
+        FunctionId, FunctionKind, Res, SourceId, StateMutability, Stmt, StmtKind, TypeKind,
+        UsingDirective, UsingEntryKind, Visibility, Visit,
     },
     interface::{SourceMap, data_structures::Never, source_map::FileName},
 };
@@ -460,6 +460,13 @@ impl<'gcx, 'src> BytecodeDependencyCollector<'gcx, 'src> {
             return;
         }
 
+        // Constructor parameter types are copied into a derived helper contract. Private
+        // constants used as array dimensions are not accessible in that scope.
+        if constructor_uses_private_constants(self.gcx, contract) {
+            self.native_dependencies.insert(native_path);
+            return;
+        }
+
         // Remapped imports can have absolute or symlinked paths, while compiler input paths are
         // relative and configured source directories can be canonicalized.
         if !is_path_in_dir(path, self.src_dir, self.root_dir) {
@@ -471,6 +478,33 @@ impl<'gcx, 'src> BytecodeDependencyCollector<'gcx, 'src> {
 
         self.dependencies.push(dependency);
     }
+}
+
+/// Returns whether constructor parameter types reference private constants.
+fn constructor_uses_private_constants(gcx: Gcx<'_>, contract: &Contract<'_>) -> bool {
+    contract.ctor.is_some_and(|ctor| {
+        gcx.hir.function(ctor).parameters.iter().any(|&param| {
+            gcx.hir
+                .variable(param)
+                .ty
+                .visit(&gcx.hir, &mut |ty| {
+                    if let TypeKind::Array(array) = &ty.kind
+                        && let Some(size) = array.size
+                    {
+                        size.visit(&mut |expr| {
+                            if gcx.resolved_variable(expr).is_some_and(|var| {
+                                gcx.hir.variable(var).visibility == Some(Visibility::Private)
+                            }) {
+                                return ControlFlow::Break(());
+                            }
+                            ControlFlow::Continue(())
+                        })?;
+                    }
+                    ControlFlow::Continue(())
+                })
+                .is_break()
+        })
+    })
 }
 
 /// Returns whether generated helper and artifact references preserve the source-unit identity.
