@@ -135,17 +135,19 @@ def stable_aliases(candidate, all_releases):
 def require_release_run(commands, repo, tag, commit):
     pages = json.loads(commands.output([
         "gh", "api", "--paginate", "--slurp",
-        f"repos/{repo}/actions/workflows/release.yml/runs?event=push&head_sha={commit}&per_page=100",
+        f"repos/{repo}/actions/workflows/release.yml/runs?head_sha={commit}&per_page=100",
     ]))
     matching = [
         run for page in pages for run in page.get("workflow_runs", [])
-        if run.get("head_sha") == commit and run.get("head_branch") == tag
+        if run.get("event") in ("push", "workflow_dispatch")
+        and run.get("head_sha") == commit
+        and run.get("head_branch") == tag
     ]
     if not matching:
-        raise ReleaseError(f"no release.yml push run found for {tag} at {commit}")
+        raise ReleaseError(f"no release.yml run found for {tag} at {commit}")
     latest = max(matching, key=lambda run: run["id"])
     if latest.get("conclusion") != "success":
-        raise ReleaseError(f"latest release.yml push run for {tag} at {commit} was not successful")
+        raise ReleaseError(f"latest release.yml run for {tag} at {commit} was not successful")
     return latest["id"]
 
 

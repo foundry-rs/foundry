@@ -65,6 +65,23 @@ def release_pages(*values):
     return json.dumps([list(values)])
 
 
+def release_runs_command(commit):
+    return (
+        "gh", "api", "--paginate", "--slurp",
+        f"repos/r/actions/workflows/release.yml/runs?head_sha={commit}&per_page=100",
+    )
+
+
+def release_run(run_id, event, commit, tag, conclusion="success"):
+    return {
+        "id": run_id,
+        "event": event,
+        "conclusion": conclusion,
+        "head_sha": commit,
+        "head_branch": tag,
+    }
+
+
 def digest_command(reference):
     return (
         "docker", "buildx", "imagetools", "inspect", reference,
@@ -119,32 +136,39 @@ class StableTests(unittest.TestCase):
             MODULE.verify_exact(FakeCommands({command: f'"{DIGEST}"'}), "image", "v1.2.3", OTHER_DIGEST)
 
     def test_release_run_requirement_uses_latest_matching_run(self):
-        command = (
-            "gh", "api", "--paginate", "--slurp",
-            "repos/r/actions/workflows/release.yml/runs?event=push&head_sha=abc&per_page=100",
-        )
+        command = release_runs_command("abc")
         runs = {"workflow_runs": [
-            {"id": 1, "conclusion": "success", "head_sha": "abc", "head_branch": "v1.0.0"},
-            {"id": 2, "conclusion": "success", "head_sha": "abc", "head_branch": "v1.0.0"},
+            release_run(1, "push", "abc", "v1.0.0"),
+            release_run(2, "workflow_dispatch", "abc", "v1.0.0"),
+            release_run(3, "schedule", "abc", "v1.0.0"),
+            release_run(4, "workflow_dispatch", "def", "v1.0.0"),
+            release_run(5, "workflow_dispatch", "abc", "v1.0.1"),
         ]}
+        push_only = {"workflow_runs": runs["workflow_runs"][:1]}
+        self.assertEqual(
+            MODULE.require_release_run(FakeCommands({command: json.dumps([push_only])}), "r", "v1.0.0", "abc"),
+            1,
+        )
         self.assertEqual(MODULE.require_release_run(FakeCommands({command: json.dumps([runs])}), "r", "v1.0.0", "abc"), 2)
         runs["workflow_runs"][1]["conclusion"] = "failure"
         with self.assertRaisesRegex(MODULE.ReleaseError, "latest .* was not successful"):
             MODULE.require_release_run(FakeCommands({command: json.dumps([runs])}), "r", "v1.0.0", "abc")
+        with self.assertRaisesRegex(MODULE.ReleaseError, "no release.yml run"):
+            MODULE.require_release_run(
+                FakeCommands({command: json.dumps([{"workflow_runs": runs["workflow_runs"][2:]}])}),
+                "r", "v1.0.0", "abc",
+            )
 
     def test_rc_draft_is_published_without_aliases(self):
         tag = "v1.2.3-rc1"
         commit = "c" * 40
-        run_command = (
-            "gh", "api", "--paginate", "--slurp",
-            f"repos/r/actions/workflows/release.yml/runs?event=push&head_sha={commit}&per_page=100",
-        )
+        run_command = release_runs_command(commit)
         publish = ("gh", "release", "edit", tag, "--draft=false", "--prerelease=true", "--latest=false")
         commands = FakeCommands({
             RELEASES_COMMAND: release_pages(release(tag, draft=True, prerelease=True)),
             ("git", "rev-parse", f"{tag}^{{commit}}"): commit,
             run_command: json.dumps([{"workflow_runs": [
-                {"id": 7, "conclusion": "success", "head_sha": commit, "head_branch": tag},
+                release_run(7, "workflow_dispatch", commit, tag),
             ]}]),
             digest_command(f"image:{tag}"): f'"{DIGEST}"',
             publish: 0,
@@ -155,15 +179,12 @@ class StableTests(unittest.TestCase):
     def test_published_retry_does_not_edit_immutable_release(self):
         tag = "v1.2.3"
         commit = "c" * 40
-        run_command = (
-            "gh", "api", "--paginate", "--slurp",
-            f"repos/r/actions/workflows/release.yml/runs?event=push&head_sha={commit}&per_page=100",
-        )
+        run_command = release_runs_command(commit)
         results = {
             RELEASES_COMMAND: release_pages(release(tag)),
             ("git", "rev-parse", f"{tag}^{{commit}}"): commit,
             run_command: json.dumps([{"workflow_runs": [
-                {"id": 7, "conclusion": "success", "head_sha": commit, "head_branch": tag},
+                release_run(7, "workflow_dispatch", commit, tag),
             ]}]),
             digest_command(f"image:{tag}"): f'"{DIGEST}"',
         }
