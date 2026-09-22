@@ -17,18 +17,12 @@ use crate::{
 };
 use alloy_chains::{Chain, NamedChain};
 use alloy_consensus::BlockHeader;
-use alloy_eips::{
-    eip1559::BaseFeeParams,
-    eip7840::BlobParams,
-    eip7928::{BlockAccessList, compute_block_access_list_hash, validate_block_access_list},
-};
+use alloy_eips::{eip1559::BaseFeeParams, eip7840::BlobParams};
 use alloy_evm::EvmEnv;
 use alloy_genesis::Genesis;
 use alloy_network::{AnyNetwork, AnyRpcBlock, BlockResponse, TransactionResponse};
 use alloy_primitives::{
-    Address, B256, BlockNumber, TxHash, U256, hex, keccak256,
-    map::{HashMap, U256Map},
-    utils::Unit,
+    Address, B256, BlockNumber, TxHash, U256, hex, keccak256, map::HashMap, utils::Unit,
 };
 use alloy_provider::Provider;
 use alloy_rpc_types::{
@@ -67,7 +61,6 @@ use revm::{
     context::{BlockEnv, CfgEnv},
     context_interface::block::BlobExcessGasAndPrice,
     primitives::hardfork::SpecId,
-    state::{AccountInfo, Bytecode},
 };
 use serde_json::{Value, json};
 use std::{
@@ -137,7 +130,7 @@ struct ForkOverrides {
 
 struct StableForkSnapshot {
     endpoint_identity: ForkEndpointIdentity,
-    node_info_probe: AnvilNodeInfoProbe,
+    state_is_mutable: bool,
     block_number: u64,
     transaction_replay: Option<ForkTransactionReplay>,
     block: Option<AnyRpcBlock>,
@@ -158,7 +151,7 @@ const FORK_IDENTITY_PROBE_TIMEOUT: Duration = Duration::from_millis(500);
 struct AnvilNodeInfoProbe {
     identified: bool,
     skip: bool,
-    /// At least one probe could not distinguish an unsupported method from an unavailable node.
+    /// A failed probe could not distinguish an unsupported method from a mutable Anvil source.
     inconclusive: bool,
 }
 
@@ -201,162 +194,6 @@ impl AnvilNodeInfoProbe {
 pub(crate) struct ForkTransactionReplay {
     pub(crate) source_block: AnyRpcBlock,
     pub(crate) target_index: usize,
-}
-
-/// A detached fork database and optional cache seed, before local state overrides.
-pub(crate) struct PreparedFork {
-    pub(crate) db: ForkedDatabase<AnyNetwork>,
-    pub(crate) config: ClientForkConfig,
-    pub(crate) replay: Option<ForkTransactionReplay>,
-    pub(crate) bal_seed: Option<PreparedBalSeed>,
-}
-
-/// Validated post-block values that can populate the remote cache without fetching accounts.
-#[derive(Debug)]
-pub(crate) struct PreparedBalSeed {
-    block_hash: B256,
-    accounts: Vec<(Address, AccountInfo)>,
-    storage: Vec<(Address, Vec<(U256, U256)>)>,
-}
-
-/// Fetches an optional BAL within a bounded budget, including the provider's retries.
-async fn fetch_bal_seed(provider: &RetryProvider, block: &AnyRpcBlock) -> Option<PreparedBalSeed> {
-    let block_hash = block.header.hash;
-    let bal = match tokio::time::timeout(Duration::from_millis(500), async {
-        match provider.raw_request("eth_getBlockAccessList".into(), (block_hash,)).await {
-            Err(error) if is_rpc_method_not_found(&error) => {
-                provider.get_block_access_list_by_hash(block_hash).await
-            }
-            response => response,
-        }
-    })
-    .await
-    {
-        Ok(Ok(Some(bal))) => bal,
-        Ok(Ok(None)) => {
-            debug!(target: "node", %block_hash, "fork BAL unavailable");
-            return None;
-        }
-        Ok(Err(_)) => {
-            debug!(target: "node", %block_hash, "fork BAL request failed");
-            return None;
-        }
-        Err(_) => {
-            debug!(target: "node", %block_hash, "fork BAL request timed out");
-            return None;
-        }
-    };
-    match PreparedBalSeed::new(
-        bal,
-        block_hash,
-        block.transactions.len(),
-        block.header.block_access_list_hash(),
-    ) {
-        Ok(seed) if seed.is_empty() => {
-            debug!(target: "node", %block_hash, "fork BAL contains no cacheable post-state");
-            None
-        }
-        Ok(seed) => Some(seed),
-        Err(err) => {
-            debug!(target: "node", %block_hash, %err, "ignoring invalid fork BAL");
-            None
-        }
-    }
-}
-
-impl PreparedBalSeed {
-    fn new(
-        bal: BlockAccessList,
-        block_hash: B256,
-        transaction_count: usize,
-        expected_hash: Option<B256>,
-    ) -> Result<Self> {
-        validate_block_access_list(&bal, transaction_count).wrap_err("invalid BAL structure")?;
-        if let Some(expected_hash) = expected_hash {
-            eyre::ensure!(
-                compute_block_access_list_hash(&bal) == expected_hash,
-                "BAL hash mismatch"
-            );
-        }
-
-        let mut accounts = Vec::new();
-        let mut storage = Vec::new();
-        for account in bal {
-            if !account.storage_changes.is_empty() {
-                let mut slots = Vec::with_capacity(account.storage_changes.len());
-                slots.extend(account.storage_post_states());
-                storage.push((account.address, slots));
-            }
-            let balance = account.balance_post_state();
-            let nonce = account.nonce_post_state();
-            let mut code = None;
-            // Validate code even when this account's remaining fields are incomplete.
-            for change in account.code_changes {
-                code =
-                    Some(Bytecode::new_raw_checked(change.new_code).wrap_err("invalid BAL code")?);
-            }
-            if let (Some(balance), Some(nonce), Some(code)) = (balance, nonce, code) {
-                accounts.push((
-                    account.address,
-                    AccountInfo {
-                        balance,
-                        nonce,
-                        code_hash: code.hash_slow(),
-                        code: Some(code),
-                        account_id: None,
-                    },
-                ));
-            }
-        }
-        Ok(Self { block_hash, accounts, storage })
-    }
-
-    const fn is_empty(&self) -> bool {
-        self.accounts.is_empty() && self.storage.is_empty()
-    }
-
-    /// Seeds an exact fork block's remote cache, retaining already cached accounts and slots.
-    ///
-    /// The caller must apply this before exposing the staged database or applying local overrides.
-    /// A seed for a different block is ignored without modifying the database.
-    pub(crate) fn apply(self, db: &BlockchainDb) {
-        if db.meta().read().fork_hash != Some(self.block_hash) {
-            debug!(
-                target: "node",
-                block_hash=%self.block_hash,
-                "ignoring fork BAL for a different cache block"
-            );
-            return;
-        }
-
-        let mut accounts = db.accounts().write();
-        let accounts_before = accounts.len();
-        for (address, account) in self.accounts {
-            accounts.entry(address).or_insert(account);
-        }
-        let inserted_accounts = accounts.len() - accounts_before;
-        drop(accounts);
-
-        let mut storage = db.storage().write();
-        let mut inserted_slots = 0;
-        for (address, slots) in self.storage {
-            let cached_slots = storage.entry(address).or_insert_with(|| {
-                U256Map::with_capacity_and_hasher(slots.len(), Default::default())
-            });
-            let slots_before = cached_slots.len();
-            for (slot, value) in slots {
-                cached_slots.entry(slot).or_insert(value);
-            }
-            inserted_slots += cached_slots.len() - slots_before;
-        }
-        debug!(
-            target: "node",
-            block_hash=%self.block_hash,
-            inserted_accounts,
-            inserted_slots,
-            "prefilled fork cache from BAL"
-        );
-    }
 }
 
 /// The default IPC endpoint
@@ -1772,7 +1609,6 @@ impl NodeConfig {
                     config.endpoint_identity,
                     config.block_number,
                     config.block_hash,
-                    config.bal_seeded,
                 )
                 .await?
             {
@@ -1806,10 +1642,10 @@ impl NodeConfig {
         fees: &FeeManager,
     ) -> Result<(Arc<TokioRwLock<Box<dyn Db>>>, Option<ClientFork>, Option<ForkTransactionReplay>)>
     {
-        let PreparedFork { db, config, replay, bal_seed } =
+        let (db, config, replay) =
             self.setup_fork_db_config_with_replay(eth_rpc_url, evm_env, fees, None).await?;
-        if let Some(seed) = bal_seed {
-            seed.apply(db.inner());
+        if !self.no_bal && !self.no_fork_node_info {
+            config.prefill_cache(db.inner(), self.fork_state_by_number).await;
         }
         let db: Arc<TokioRwLock<Box<dyn Db>>> = Arc::new(TokioRwLock::new(Box::new(db)));
         let fork = ClientFork::new(config, Arc::clone(&db));
@@ -2018,7 +1854,7 @@ impl NodeConfig {
             if before == after {
                 return Ok(StableForkSnapshot {
                     endpoint_identity: before,
-                    node_info_probe,
+                    state_is_mutable: node_info_probe.identified || node_info_probe.inconclusive,
                     block_number,
                     transaction_replay,
                     block,
@@ -2038,33 +1874,17 @@ impl NodeConfig {
         block_number: u64,
         block_hash: B256,
     ) -> Result<bool> {
-        let mut node_info_probe = self.node_info_probe(expected.is_authoritative());
-        self.fork_context_matches_with_probe(
-            eth_rpc_url,
-            expected,
-            block_number,
-            block_hash,
-            &mut node_info_probe,
-        )
-        .await
-    }
-
-    async fn fork_context_matches_with_probe(
-        &self,
-        eth_rpc_url: &str,
-        expected: ForkEndpointIdentity,
-        block_number: u64,
-        block_hash: B256,
-        node_info_probe: &mut AnvilNodeInfoProbe,
-    ) -> Result<bool> {
         let provider = self.fork_provider(eth_rpc_url)?;
+        let mut node_info_probe = self.node_info_probe(expected.is_authoritative());
         for _ in 0..3 {
-            let before = self.resolved_fork_endpoint_identity(&provider, node_info_probe).await?;
+            let before =
+                self.resolved_fork_endpoint_identity(&provider, &mut node_info_probe).await?;
             let block = provider
                 .get_block(BlockNumberOrTag::Number(block_number).into())
                 .await
                 .wrap_err("failed to confirm fork block context")?;
-            let after = self.resolved_fork_endpoint_identity(&provider, node_info_probe).await?;
+            let after =
+                self.resolved_fork_endpoint_identity(&provider, &mut node_info_probe).await?;
             if before != after {
                 continue;
             }
@@ -2089,29 +1909,9 @@ impl NodeConfig {
         expected: ForkEndpointIdentity,
         block_number: u64,
         block_hash: B256,
-        require_conclusive: bool,
     ) -> Result<bool> {
-        let urls = if require_conclusive {
-            fork_urls
-        } else {
-            Self::fork_urls_requiring_revalidation(fork_urls, expected)
-        };
-        for eth_rpc_url in urls {
-            let matches = if require_conclusive {
-                let mut probe = self.node_info_probe(expected.is_authoritative());
-                self.fork_context_matches_with_probe(
-                    eth_rpc_url,
-                    expected,
-                    block_number,
-                    block_hash,
-                    &mut probe,
-                )
-                .await?
-                    && !probe.inconclusive
-            } else {
-                self.fork_context_matches(eth_rpc_url, expected, block_number, block_hash).await?
-            };
-            if !matches {
+        for eth_rpc_url in Self::fork_urls_requiring_revalidation(fork_urls, expected) {
+            if !self.fork_context_matches(eth_rpc_url, expected, block_number, block_hash).await? {
                 return Ok(false);
             }
         }
@@ -2151,11 +1951,11 @@ impl NodeConfig {
         evm_env: &mut EvmEnv,
         fees: &FeeManager,
     ) -> Result<(ForkedDatabase<AnyNetwork>, ClientForkConfig)> {
-        let PreparedFork { db, config, replay, bal_seed } =
+        let (db, config, replay) =
             self.setup_fork_db_config_with_replay(eth_rpc_url, evm_env, fees, None).await?;
         eyre::ensure!(replay.is_none(), "transaction-hash fork replay requires full node startup");
-        if let Some(seed) = bal_seed {
-            seed.apply(db.inner());
+        if !self.no_bal && !self.no_fork_node_info {
+            config.prefill_cache(db.inner(), self.fork_state_by_number).await;
         }
         Ok((db, config))
     }
@@ -2167,15 +1967,12 @@ impl NodeConfig {
         evm_env: &mut EvmEnv,
         fees: &FeeManager,
         execution_profile: NetworkConfigs,
-    ) -> Result<PreparedFork> {
-        let prepared = self
+    ) -> Result<(ForkedDatabase<AnyNetwork>, ClientForkConfig)> {
+        let (db, config, replay) = self
             .setup_fork_db_config_with_replay(eth_rpc_url, evm_env, fees, Some(execution_profile))
             .await?;
-        eyre::ensure!(
-            prepared.replay.is_none(),
-            "transaction-hash fork replay requires full node startup"
-        );
-        Ok(prepared)
+        eyre::ensure!(replay.is_none(), "transaction-hash fork replay requires full node startup");
+        Ok((db, config))
     }
 
     pub(crate) async fn setup_fork_db_config_with_replay(
@@ -2184,7 +1981,7 @@ impl NodeConfig {
         evm_env: &mut EvmEnv,
         fees: &FeeManager,
         fixed_execution_profile: Option<NetworkConfigs>,
-    ) -> Result<PreparedFork> {
+    ) -> Result<(ForkedDatabase<AnyNetwork>, ClientForkConfig, Option<ForkTransactionReplay>)> {
         debug!(target: "node", eth_rpc_url=%redact_url(&eth_rpc_url), "setting up fork db");
         if self.fork_chain_id.is_some() {
             eyre::ensure!(
@@ -2208,13 +2005,13 @@ impl NodeConfig {
         // reset between any two RPC calls, so verify the endpoint identity on both sides.
         let StableForkSnapshot {
             endpoint_identity: fork_identity,
-            mut node_info_probe,
+            state_is_mutable,
             block_number: fork_block_number,
             transaction_replay: fork_transaction_replay,
             block,
             gas_price,
         } = self.stable_fork_snapshot(&provider, fork_overrides).await?;
-        self.fork_endpoint_is_anvil = node_info_probe.identified;
+        self.fork_endpoint_is_anvil = fork_identity.is_authoritative();
 
         let target_network = fork_identity.network.unwrap_or(NetworkVariant::Ethereum);
         let target_profile = fork_identity.network_profile.unwrap_or_default();
@@ -2407,15 +2204,8 @@ latest block number: {latest_block}"
         );
 
         for mirror_url in self.fork_urls.iter().skip(1) {
-            let mut mirror_probe = self.node_info_probe(fork_identity.is_authoritative());
             if !self
-                .fork_context_matches_with_probe(
-                    mirror_url,
-                    fork_identity,
-                    fork_block_number,
-                    block_hash,
-                    &mut mirror_probe,
-                )
+                .fork_context_matches(mirror_url, fork_identity, fork_block_number, block_hash)
                 .await?
             {
                 eyre::bail!(
@@ -2424,52 +2214,13 @@ latest block number: {latest_block}"
                     redact_url(mirror_url)
                 );
             }
-            node_info_probe.inconclusive |= mirror_probe.inconclusive;
         }
         if self.requires_primary_fork_revalidation(fork_identity)
             && !self
-                .fork_context_matches_with_probe(
-                    &eth_rpc_url,
-                    fork_identity,
-                    fork_block_number,
-                    block_hash,
-                    &mut node_info_probe,
-                )
+                .fork_context_matches(&eth_rpc_url, fork_identity, fork_block_number, block_hash)
                 .await?
         {
             eyre::bail!("primary fork endpoint changed while its context was being validated");
-        }
-
-        // Use source-chain rules, never the local execution hardfork override. Anvil sources
-        // may expose manually modified state under the same block hash as their original BAL.
-        // Inconclusive discovery must keep state reads lazy even if a later probe is unsupported.
-        let mut bal_seed = if !node_info_probe.inconclusive
-            && self.fork_bal_eligible(fork_identity, block.header.timestamp())
-        {
-            fetch_bal_seed(&provider, &block).await
-        } else {
-            None
-        };
-        if bal_seed.is_some() {
-            // Even a single anonymous endpoint can become mutable while its BAL is fetched.
-            // Check every source before opening the cache or applying any seeded state.
-            for url in std::iter::once(&eth_rpc_url).chain(self.fork_urls.iter().skip(1)) {
-                let mut probe = self.node_info_probe(false);
-                eyre::ensure!(
-                    self.fork_context_matches_with_probe(
-                        url,
-                        fork_identity,
-                        fork_block_number,
-                        block_hash,
-                        &mut probe,
-                    )
-                    .await?,
-                    "fork endpoint changed while its block access list was being fetched"
-                );
-                if probe.inconclusive {
-                    bal_seed = None;
-                }
-            }
         }
 
         let source_id = fork_source_id(&self.fork_urls, &self.fork_headers);
@@ -2532,7 +2283,7 @@ latest block number: {latest_block}"
             fork_chain_id: self.fork_chain_id.map(|chain_id| chain_id.to()),
             hardfork: Some(effective_hardfork),
             endpoint_identity: fork_identity,
-            bal_seeded: bal_seed.is_some(),
+            state_is_mutable,
             timestamp: block.header.timestamp(),
             base_fee: block.header.base_fee_per_gas().map(|g| g as u128),
             timeout: self.fork_request_timeout,
@@ -2552,27 +2303,7 @@ latest block number: {latest_block}"
         // need to insert the forked block's hash
         db.insert_block_hash(U256::from(config.block_number), config.block_hash);
 
-        Ok(PreparedFork { db, config, replay: fork_transaction_replay, bal_seed })
-    }
-
-    /// Whether the source is eligible for Ethereum BAL prefill under Cancun deletion rules.
-    fn fork_bal_eligible(&self, identity: ForkEndpointIdentity, timestamp: u64) -> bool {
-        !self.no_bal
-            && !self.no_fork_node_info
-            && !self.fork_endpoint_is_anvil
-            && !identity.is_authoritative()
-            && identity.network.is_none_or(|network| network.is_ethereum())
-            && matches!(
-                NamedChain::try_from(identity.source_chain_id),
-                Ok(NamedChain::Mainnet
-                    | NamedChain::Sepolia
-                    | NamedChain::Holesky
-                    | NamedChain::Hoodi)
-            )
-            && matches!(
-                FoundryHardfork::from_chain_and_timestamp(identity.source_chain_id, timestamp),
-                Some(hardfork @ FoundryHardfork::Ethereum(_)) if SpecId::from(hardfork) >= SpecId::CANCUN
-            )
+        Ok((db, config, fork_transaction_replay))
     }
 
     /// we only use the gas limit value of the block if it is non-zero and the block gas
@@ -2909,9 +2640,6 @@ async fn find_latest_fork_block<P: Provider<AnyNetwork>>(
 }
 
 #[cfg(test)]
-mod bal_tests;
-
-#[cfg(test)]
 mod tests {
     use super::*;
     use foundry_evm::{hardfork::EthereumHardfork, hardforks::latest_active_tempo_hardfork};
@@ -2981,42 +2709,6 @@ mod tests {
         assert_eq!(json["endpoint"], redact_url(&fork_url));
         assert!(!json.to_string().contains("password"));
         assert!(!json.to_string().contains("secret"));
-    }
-
-    #[test]
-    fn fork_bal_eligibility_uses_source_rules() {
-        let mut config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Amsterdam.into()));
-        let mut identity = ForkEndpointIdentity {
-            execution_chain_id: 31_337,
-            source_chain_id: 1,
-            network: Some(NetworkVariant::Ethereum),
-            network_profile: None,
-            hardfork: None,
-            instance_id: None,
-            source_fork_block_number: None,
-            source_fork_block_hash: None,
-        };
-        assert!(config.fork_bal_eligible(identity, 1_800_000_000));
-        assert!(!config.fork_bal_eligible(identity, 1_600_000_000));
-        identity.source_chain_id = 31_337;
-        assert!(!config.fork_bal_eligible(identity, 1_800_000_000));
-        identity.source_chain_id = 42_161;
-        assert!(!config.fork_bal_eligible(identity, 1_800_000_000));
-        identity.source_chain_id = 1;
-        identity.network = Some(NetworkVariant::Tempo);
-        assert!(!config.fork_bal_eligible(identity, 1_800_000_000));
-        identity.network = Some(NetworkVariant::Ethereum);
-        identity.hardfork = Some(EthereumHardfork::Amsterdam.into());
-        assert!(!config.fork_bal_eligible(identity, 1_800_000_000));
-        identity.hardfork = None;
-        config.fork_endpoint_is_anvil = true;
-        assert!(!config.fork_bal_eligible(identity, 1_800_000_000));
-        config.fork_endpoint_is_anvil = false;
-        config.no_fork_node_info = true;
-        assert!(!config.fork_bal_eligible(identity, 1_800_000_000));
-        config.no_fork_node_info = false;
-        config.no_bal = true;
-        assert!(!config.fork_bal_eligible(identity, 1_800_000_000));
     }
 
     #[test]

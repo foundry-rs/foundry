@@ -1,6 +1,6 @@
 //! Account creation, deletion and delegation across a prefilled fork.
 
-use super::{BalOrigin, BalProxy, BalResponse, CONTRACT};
+use super::{BalOrigin, CONTRACT, cached_storage, has_cached_account};
 use crate::abi::{COUNTER_INIT_CODE, COUNTER_RUNTIME_CODE};
 use alloy_network::{ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes, U256, address, bytes};
@@ -33,15 +33,8 @@ async fn mine_transaction(
     (receipt.status(), receipt.gas_used())
 }
 
-fn account_requests(proxy: &BalProxy) -> usize {
-    ["eth_getAccountInfo", "eth_getBalance", "eth_getTransactionCount", "eth_getCode"]
-        .into_iter()
-        .map(|method| proxy.count(method))
-        .sum()
-}
-
 #[tokio::test(flavor = "multi_thread")]
-async fn fork_bal_complete_created_account_avoids_account_rpc() {
+async fn fork_bal_prefills_complete_created_accounts() {
     let mut origin = BalOrigin::new().await;
     let nonce = origin.handle.http_provider().get_transaction_count(origin.sender).await.unwrap();
     let contract = origin.sender.create(nonce);
@@ -73,13 +66,11 @@ async fn fork_bal_complete_created_account_avoids_account_rpc() {
 
     let mut outcomes = Vec::new();
     for no_bal in [false, true] {
-        let proxy = BalProxy::new(&origin.handle, BalResponse::Valid, false).await;
-        let (api, _handle) = spawn(origin.config(&proxy).with_no_bal(no_bal)).await;
-        proxy.clear();
+        let (api, _handle) = spawn(origin.config().with_no_bal(no_bal)).await;
+        assert_eq!(has_cached_account(&api, contract).await, !no_bal);
         assert_eq!(api.balance(contract, None).await.unwrap(), U256::from(42));
         assert_eq!(api.transaction_count(contract, None).await.unwrap(), U256::ONE);
         assert_eq!(api.get_code(contract, None).await.unwrap(), COUNTER_RUNTIME_CODE);
-        assert_eq!(account_requests(&proxy) == 0, !no_bal);
 
         outcomes.push(
             mine_transaction(
@@ -99,6 +90,16 @@ async fn fork_bal_complete_created_account_avoids_account_rpc() {
     }
     assert!(outcomes[0].0);
     assert_eq!(outcomes[0], outcomes[1]);
+
+    // The BAL remains unchanged when Anvil account overrides modify its block's state.
+    origin.api.anvil_set_balance(contract, U256::from(99)).await.unwrap();
+    origin.api.anvil_set_nonce(contract, U256::from(7)).await.unwrap();
+    origin.api.anvil_set_code(contract, bytes!("00")).await.unwrap();
+    let (api, _handle) = spawn(origin.config()).await;
+    assert!(has_cached_account(&api, contract).await);
+    assert_eq!(api.balance(contract, None).await.unwrap(), U256::from(99));
+    assert_eq!(api.transaction_count(contract, None).await.unwrap(), U256::from(7));
+    assert_eq!(api.get_code(contract, None).await.unwrap(), bytes!("00"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -143,11 +144,9 @@ async fn fork_bal_create_destroy_and_create2_reuse_keep_storage_empty() {
 
     let mut outcomes = Vec::new();
     for no_bal in [false, true] {
-        let proxy = BalProxy::new(&origin.handle, BalResponse::Valid, false).await;
-        let (api, _handle) = spawn(origin.config(&proxy).with_no_bal(no_bal)).await;
-        proxy.clear();
+        let (api, _handle) = spawn(origin.config().with_no_bal(no_bal)).await;
+        assert_eq!(cached_storage(&api, child, U256::ZERO).await, None);
         assert_eq!(api.storage_at(child, U256::ZERO, None).await.unwrap(), B256::ZERO);
-        assert_eq!(proxy.count("eth_getStorageAt"), 1, "deleted writes must remain lazy");
         outcomes.push(
             mine_transaction(
                 &api,
@@ -179,17 +178,18 @@ async fn fork_bal_historical_storage_keeps_local_deletion() {
     pin_latest(&mut origin).await;
 
     for no_bal in [false, true] {
-        let proxy = BalProxy::new(&origin.handle, BalResponse::Valid, false).await;
         // Source eligibility is Cancun+, but local Shanghai execution can delete existing storage.
         let (api, _handle) = spawn(
             origin
-                .config(&proxy)
+                .config()
                 .with_no_bal(no_bal)
                 .with_hardfork(Some(EthereumHardfork::Shanghai.into())),
         )
         .await;
-        assert_eq!(proxy.count("eth_getBlockAccessList"), usize::from(!no_bal));
-        proxy.clear();
+        assert_eq!(
+            cached_storage(&api, CONTRACT, U256::ZERO).await,
+            (!no_bal).then_some(U256::from(2))
+        );
 
         // Keep the old slot unread: only BAL prefill should add it to the remote snapshot.
         let (success, _) = mine_transaction(
@@ -212,7 +212,6 @@ async fn fork_bal_historical_storage_keeps_local_deletion() {
             B256::ZERO,
             "historical storage must stay deleted with no_bal={no_bal}"
         );
-        assert_eq!(proxy.count("eth_getStorageAt"), 0);
     }
 }
 
@@ -256,16 +255,14 @@ async fn fork_bal_eip7702_set_and_clear_match_lazy_state() {
 
         let mut outcomes = Vec::new();
         for no_bal in [false, true] {
-            let proxy = BalProxy::new(&origin.handle, BalResponse::Valid, false).await;
-            let (api, _handle) = spawn(origin.config(&proxy).with_no_bal(no_bal)).await;
-            proxy.clear();
+            let (api, _handle) = spawn(origin.config().with_no_bal(no_bal)).await;
+            assert_eq!(has_cached_account(&api, authority.address()).await, !no_bal);
             assert_eq!(api.balance(authority.address(), None).await.unwrap(), expected_balance);
             assert_eq!(
                 api.transaction_count(authority.address(), None).await.unwrap(),
                 expected_nonce
             );
             assert_eq!(api.get_code(authority.address(), None).await.unwrap(), expected_code);
-            assert_eq!(account_requests(&proxy) == 0, !no_bal);
             assert_eq!(
                 api.storage_at(authority.address(), U256::ZERO, None).await.unwrap(),
                 B256::from(U256::ONE)

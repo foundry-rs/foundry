@@ -270,7 +270,8 @@ async fn test_fork_block_access_list_forwards_pre_fork_blocks() {
     )
     .await;
 
-    let (_api, handle) = spawn(NodeConfig::test().with_eth_rpc_url(Some(proxy))).await;
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(proxy)).with_no_bal(true)).await;
     let provider = handle.http_provider();
 
     // The fork block itself predates the fork, so the request reaches the upstream node.
