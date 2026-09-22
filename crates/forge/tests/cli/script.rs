@@ -26,14 +26,16 @@ use regex::Regex;
 use serde_json::Value;
 use std::{
     env, fs,
+    io::Read,
     path::{Path, PathBuf},
-    process::{Child, Command, ExitStatus, Stdio},
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-    },
-    time::Duration,
+    process::{Child, Command, Output, Stdio},
+    sync::atomic::{AtomicUsize, Ordering},
+    thread::{self, JoinHandle},
+    time::{Duration, Instant},
 };
+
+#[cfg(unix)]
+use std::os::unix::process::ExitStatusExt;
 
 fn latest_dry_run_sequence(root: &Path) -> ScriptSequence<Ethereum> {
     let path = foundry_common::fs::json_files(&root.join("broadcast"))
@@ -42,146 +44,65 @@ fn latest_dry_run_sequence(root: &Path) -> ScriptSequence<Ethereum> {
     foundry_common::fs::read_json_file(&path).unwrap()
 }
 
-struct AcceptedResponseLossProxy {
-    endpoint: String,
-    lose_responses: Arc<AtomicBool>,
-    submissions: Arc<AtomicUsize>,
-    accepted_hash: Arc<Mutex<Option<String>>>,
-    release_responses: tokio::sync::watch::Sender<bool>,
-    shutdown: Option<tokio::sync::oneshot::Sender<()>>,
-    task: tokio::task::JoinHandle<()>,
+struct KillOnDrop {
+    child: Option<Child>,
+    stderr: Option<JoinHandle<Vec<u8>>>,
 }
-
-impl AcceptedResponseLossProxy {
-    async fn spawn(upstream: String, method: &'static str) -> Self {
-        let client = reqwest::Client::new();
-        let lose_responses = Arc::new(AtomicBool::new(true));
-        let submissions = Arc::new(AtomicUsize::new(0));
-        let accepted_hash = Arc::new(Mutex::new(None));
-        let (release_responses, _) = tokio::sync::watch::channel(false);
-        let app = Router::new().fallback({
-            let lose_responses = lose_responses.clone();
-            let submissions = submissions.clone();
-            let accepted_hash = accepted_hash.clone();
-            let release_responses = release_responses.clone();
-            move |body: BodyBytes| {
-                let upstream = upstream.clone();
-                let client = client.clone();
-                let lose_responses = lose_responses.clone();
-                let submissions = submissions.clone();
-                let accepted_hash = accepted_hash.clone();
-                let mut release_responses = release_responses.subscribe();
-                async move {
-                    let request: Value = serde_json::from_slice(&body).unwrap();
-                    let is_submission =
-                        request.get("method").and_then(Value::as_str) == Some(method);
-                    if is_submission {
-                        submissions.fetch_add(1, Ordering::SeqCst);
-                    }
-                    let response = client
-                        .post(upstream)
-                        .header("content-type", "application/json")
-                        .body(body)
-                        .send()
-                        .await
-                        .unwrap()
-                        .bytes()
-                        .await
-                        .unwrap();
-                    if is_submission && lose_responses.load(Ordering::SeqCst) {
-                        let response_json: Value = serde_json::from_slice(&response).unwrap();
-                        let hash = response_json
-                            .get("result")
-                            .and_then(Value::as_str)
-                            .expect("upstream rejected the held submission")
-                            .to_owned();
-                        *accepted_hash.lock().unwrap() = Some(hash);
-                        release_responses.wait_for(|released| *released).await.unwrap();
-                    }
-                    response
-                }
-            }
-        });
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let endpoint = format!("http://{}", listener.local_addr().unwrap());
-        let (shutdown, shutdown_rx) = tokio::sync::oneshot::channel();
-        let task = tokio::spawn(async move {
-            axum::serve(listener, app)
-                .with_graceful_shutdown(async move {
-                    let _ = shutdown_rx.await;
-                })
-                .await
-                .unwrap()
-        });
-        Self {
-            endpoint,
-            lose_responses,
-            submissions,
-            accepted_hash,
-            release_responses,
-            shutdown: Some(shutdown),
-            task,
-        }
-    }
-
-    async fn wait_for_accepted_submission(&self) -> String {
-        tokio::time::timeout(Duration::from_secs(30), async {
-            loop {
-                let accepted_hash = self.accepted_hash.lock().unwrap().clone();
-                if let Some(hash) = accepted_hash {
-                    return hash;
-                }
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .expect("forge never submitted an accepted transaction")
-    }
-
-    fn submission_count(&self) -> usize {
-        self.submissions.load(Ordering::SeqCst)
-    }
-
-    fn restore_responses(&self) {
-        self.lose_responses.store(false, Ordering::SeqCst);
-        self.release_responses.send_replace(true);
-    }
-}
-
-impl Drop for AcceptedResponseLossProxy {
-    fn drop(&mut self) {
-        self.release_responses.send_replace(true);
-        if let Some(shutdown) = self.shutdown.take() {
-            let _ = shutdown.send(());
-        }
-        self.task.abort();
-    }
-}
-
-struct KillOnDrop(Option<Child>);
 
 impl KillOnDrop {
     fn spawn(command: &mut Command) -> Self {
-        let child = command.stdout(Stdio::null()).stderr(Stdio::null()).spawn().unwrap();
-        Self(Some(child))
+        let mut child = command.stdout(Stdio::null()).stderr(Stdio::piped()).spawn().unwrap();
+        let mut child_stderr = child.stderr.take().unwrap();
+        let stderr = thread::spawn(move || {
+            let mut stderr = Vec::new();
+            child_stderr.read_to_end(&mut stderr).unwrap();
+            stderr
+        });
+        Self { child: Some(child), stderr: Some(stderr) }
     }
 
-    fn kill_and_wait(mut self) -> ExitStatus {
-        let mut child = self.0.take().unwrap();
+    fn is_running(&mut self) -> bool {
+        self.child.as_mut().unwrap().try_wait().unwrap().is_none()
+    }
+
+    fn kill_and_wait(mut self) -> Output {
+        let mut child = self.child.take().unwrap();
         child.kill().unwrap();
-        child.wait().unwrap()
+        let status = child.wait().unwrap();
+        Output { status, stdout: Vec::new(), stderr: self.stderr.take().unwrap().join().unwrap() }
     }
 
-    fn wait(mut self) -> ExitStatus {
-        self.0.take().unwrap().wait().unwrap()
+    fn wait(mut self) -> Output {
+        let mut child = self.child.take().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                return Output {
+                    status,
+                    stdout: Vec::new(),
+                    stderr: self.stderr.take().unwrap().join().unwrap(),
+                };
+            }
+            if Instant::now() >= deadline {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                let stderr = self.stderr.take().unwrap().join().unwrap();
+                let stderr = String::from_utf8_lossy(&stderr);
+                panic!("forge did not exit within 30 seconds\nstderr:\n{stderr}");
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
     }
 }
 
 impl Drop for KillOnDrop {
     fn drop(&mut self) {
-        if let Some(child) = &mut self.0 {
+        if let Some(child) = &mut self.child {
             let _ = child.kill();
             let _ = child.wait();
+        }
+        if let Some(stderr) = self.stderr.take() {
+            let _ = stderr.join();
         }
     }
 }
@@ -1314,50 +1235,115 @@ Error: Failed to send transaction after 4 attempts Err([..]operation timed out)
 "#]]);
 });
 
-// An unlocked account delegates signing and submission to the RPC. Once its response is lost, the
-// outcome is ambiguous and resume must not automatically submit another transaction.
-forgetest_async!(accepted_unlocked_transaction_without_checkpoint_is_not_replayed, |prj, cmd| {
-    let (_api, handle) = spawn(NodeConfig::test().with_auto_impersonate(true)).await;
-    let (recording_rpc, submissions) =
-        spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_sendTransaction").await;
-    let proxy = AcceptedResponseLossProxy::spawn(recording_rpc, "eth_sendTransaction").await;
+forgetest_async!(resume_recovers_checkpoint_after_process_interruption, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let script = prj.add_script(
+        "InterruptedResume.s.sol",
+        r#"
+import "forge-std/Script.sol";
 
-    let mut tester = ScriptTester::new_broadcast(cmd, &proxy.endpoint, prj.root());
-    tester
-        .unlocked()
-        .add_sig("BroadcastTestNoLinking", "deployDoesntPanic()")
-        .slow()
-        .arg("--broadcast");
-    let sender_a = tester.accounts_pub[0];
-    let sender_b = tester.accounts_pub[1];
-    let provider = handle.http_provider();
-    let child = KillOnDrop::spawn(tester.cmd.cmd());
-    proxy.wait_for_accepted_submission().await;
-    tokio::time::timeout(Duration::from_secs(10), async {
-        while provider.get_transaction_count(sender_a).await.unwrap() == 0 {
+contract InterruptedResumeTarget {}
+
+contract InterruptedResume is Script {
+    function run() external {
+        vm.startBroadcast();
+        new InterruptedResumeTarget();
+        new InterruptedResumeTarget();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let (submission_rpc, submissions) =
+        spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_sendRawTransaction").await;
+    let (rpc, receipt_requests) =
+        spawn_rpc_proxy_recording_method(submission_rpc, "eth_getTransactionReceipt").await;
+    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let sender = handle.dev_accounts().next().unwrap();
+    let path = prj.root().join("broadcast/InterruptedResume.s.sol/31337/run-latest.json");
+
+    cmd.arg("script").arg(&script).args([
+        "--tc",
+        "InterruptedResume",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        private_key,
+        "--broadcast",
+        "--slow",
+    ]);
+    let mut child = KillOnDrop::spawn(cmd.cmd());
+    let sequence = tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            if let Ok(sequence) = foundry_common::fs::read_json_file::<Value>(&path)
+                && sequence["pending"].as_array().is_some_and(|pending| pending.len() == 1)
+                && sequence["transactions"][0]["hash"].is_string()
+            {
+                break sequence;
+            }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
     .await
-    .expect("accepted transaction was not mined");
-    assert!(!child.kill_and_wait().success());
-
-    assert_eq!(provider.get_transaction_count(sender_a).await.unwrap(), 1);
-    assert_eq!(provider.get_transaction_count(sender_b).await.unwrap(), 0);
-    assert!(!provider.get_code_at(sender_a.create(0)).await.unwrap().is_empty());
-
-    proxy.restore_responses();
-    tester.clear();
-    tester
-        .unlocked()
-        .add_sig("BroadcastTestNoLinking", "deployDoesntPanic()")
-        .slow()
-        .arg("--resume");
-    tester.cmd.assert_failure();
-    assert_eq!(proxy.submission_count(), 1);
+    .expect("first transaction was not checkpointed");
+    let first_hash = sequence["transactions"][0]["hash"].clone();
+    let first_address = sequence["transactions"][0]["contractAddress"]
+        .as_str()
+        .unwrap()
+        .parse::<Address>()
+        .unwrap();
+    assert!(sequence["transactions"][1]["hash"].is_null());
+    assert!(sequence["receipts"].as_array().unwrap().is_empty());
     assert_eq!(submissions.lock().unwrap().len(), 1);
-    assert_eq!(provider.get_transaction_count(sender_a).await.unwrap(), 1);
-    assert_eq!(provider.get_transaction_count(sender_b).await.unwrap(), 0);
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            if receipt_requests
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|params| params.get(0) == Some(&first_hash))
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("forge did not poll for the checkpointed transaction receipt");
+    assert!(child.is_running(), "forge exited before it could be interrupted");
+    let output = child.kill_and_wait();
+    assert!(!output.status.success(), "forge unexpectedly succeeded");
+    #[cfg(unix)]
+    assert_eq!(output.status.signal(), Some(9), "forge was not terminated by SIGKILL");
+
+    api.mine_one().await.unwrap();
+    api.anvil_set_auto_mine(true).await.unwrap();
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--tc",
+        "InterruptedResume",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        private_key,
+        "--resume",
+        "--slow",
+    ]);
+    cmd.assert_success();
+
+    let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    assert_eq!(sequence["transactions"][0]["hash"], first_hash);
+    assert!(sequence["transactions"][1]["hash"].is_string());
+    assert_eq!(sequence["receipts"].as_array().unwrap().len(), 2);
+    assert!(sequence["pending"].as_array().unwrap().is_empty());
+    assert_eq!(submissions.lock().unwrap().len(), 2);
+    let provider = handle.http_provider();
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 2);
+    assert!(!provider.get_code_at(first_address).await.unwrap().is_empty());
+    let second_address =
+        sequence["transactions"][1]["contractAddress"].as_str().unwrap().parse().unwrap();
+    assert!(!provider.get_code_at(second_address).await.unwrap().is_empty());
 });
 
 forgetest_async!(can_deploy_script_remember_key, |prj, cmd| {
@@ -5398,8 +5384,12 @@ forgetest_async!(tempo_batch_resume_waits_for_pending_hash, |prj, cmd| {
     let script = prj.add_source("MultiDeploy", MULTI_DEPLOY_SCRIPT);
     let (api, handle) = spawn(NodeConfig::test_tempo()).await;
     api.anvil_set_auto_mine(false).await.unwrap();
+    let (lookup_rpc, lookups) =
+        spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_getTransactionByHash").await;
+    let (receipt_rpc, receipt_requests) =
+        spawn_rpc_proxy_recording_method(lookup_rpc, "eth_getTransactionReceipt").await;
     let (rpc, submissions) =
-        spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_sendRawTransaction").await;
+        spawn_rpc_proxy_recording_method(receipt_rpc, "eth_sendRawTransaction").await;
     let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
     let sender = handle.dev_accounts().next().unwrap();
 
@@ -5422,6 +5412,17 @@ forgetest_async!(tempo_batch_resume_waits_for_pending_hash, |prj, cmd| {
         String::from_utf8_lossy(&stderr)
     );
     assert_eq!(submissions.lock().unwrap().len(), 1);
+    let path = foundry_common::fs::json_files(&prj.root().join("broadcast"))
+        .find(|path| {
+            path.ends_with("run-latest.json") && !path.to_string_lossy().contains("dry-run")
+        })
+        .expect("no latest Tempo broadcast artifact");
+    let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    let pending = sequence["pending"].as_array().unwrap();
+    assert_eq!(pending.len(), 1);
+    let hash = pending[0].clone();
+    let receipt_requests_before_resume = receipt_requests.lock().unwrap().len();
+    let lookups_before_resume = lookups.lock().unwrap().len();
 
     prj.update_config(|config| config.transaction_timeout = 30);
     let mut resume = prj.forge_bin();
@@ -5437,13 +5438,32 @@ forgetest_async!(tempo_batch_resume_waits_for_pending_hash, |prj, cmd| {
         "--network",
         "tempo",
     ]);
-    let child = KillOnDrop::spawn(&mut resume);
-    tokio::time::sleep(Duration::from_millis(250)).await;
+    let mut child = KillOnDrop::spawn(&mut resume);
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            let observed_pending_receipt =
+                receipt_requests.lock().unwrap().len() > receipt_requests_before_resume;
+            let observed_pending_lookup = lookups.lock().unwrap().len() > lookups_before_resume;
+            if observed_pending_receipt && observed_pending_lookup {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("resume did not observe the checkpointed transaction as pending");
+    assert!(child.is_running(), "resume exited before the pending transaction was mined");
     assert_eq!(submissions.lock().unwrap().len(), 1);
     api.mine_one().await.unwrap();
-    assert!(child.wait().success());
+    let output = child.wait();
+    assert!(output.status.success(), "resume failed: {}", String::from_utf8_lossy(&output.stderr));
     assert_eq!(submissions.lock().unwrap().len(), 1);
     assert_eq!(handle.http_provider().get_transaction_count(sender).await.unwrap(), 1);
+    let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    assert!(sequence["pending"].as_array().unwrap().is_empty());
+    let receipts = sequence["receipts"].as_array().unwrap();
+    assert_eq!(receipts.len(), 3);
+    assert!(receipts.iter().all(|receipt| receipt["transactionHash"] == hash));
 });
 
 // Same dry-run assertions against the live Moderato testnet.

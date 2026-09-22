@@ -172,10 +172,12 @@ forgetest_async!(resume_multi_chain_does_not_replay_completed_chain, |prj, cmd| 
     for (deployment, handle) in deployments.iter().zip([&handle1, &handle2]) {
         let provider = handle.http_provider();
         for transaction in deployment["transactions"].as_array().unwrap() {
-            if let Some(address) = transaction["contractAddress"].as_str() {
-                let address = address.parse::<Address>().unwrap();
-                assert!(!provider.get_code_at(address).await.unwrap().is_empty());
-            }
+            let address = transaction["contractAddress"]
+                .as_str()
+                .expect("deployment transaction is missing its contract address")
+                .parse::<Address>()
+                .unwrap();
+            assert!(!provider.get_code_at(address).await.unwrap().is_empty());
         }
     }
 });
