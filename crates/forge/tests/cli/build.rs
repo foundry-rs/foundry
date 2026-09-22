@@ -1,6 +1,6 @@
 use crate::utils::generate_large_init_contract;
 use foundry_compilers::artifacts::{BytecodeHash, EvmVersion};
-use foundry_config::{CompilationRestrictions, ExternalCompiler, SettingsOverrides};
+use foundry_config::{CompilationRestrictions, SettingsOverrides};
 use foundry_test_utils::{forgetest, forgetest_init, snapbox::IntoData, str, util::OutputExt};
 use globset::Glob;
 use std::{
@@ -11,6 +11,8 @@ use std::{
     process::{Command, Stdio},
 };
 
+#[cfg(unix)]
+use foundry_config::ExternalCompiler;
 #[cfg(unix)]
 use std::os::unix::fs::{PermissionsExt, symlink};
 
