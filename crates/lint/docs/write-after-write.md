@@ -6,8 +6,8 @@
 ## What it does
 
 Reports assignments to state variables whose values are overwritten before being read.
-Compound assignments read before writing. Individual mapping entries, array elements, and struct
-fields are excluded.
+Compound assignments read before writing and are reported when their result is overwritten.
+Individual mapping entries, array elements, and struct fields are excluded.
 
 ## Why is this bad?
 

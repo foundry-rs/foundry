@@ -130,8 +130,12 @@ impl Analyzer<'_, '_> {
                 self.reads(rhs);
                 if op.is_some() {
                     self.reads(lhs);
+                    if let Some(var) = self.state_var(lhs) {
+                        self.pending.insert(var, expr.span);
+                    }
+                } else {
+                    self.write_lhs(lhs, expr.span);
                 }
-                self.write_lhs(lhs, expr.span);
             }
             // Pre/post increment and decrement read the variable, then write it.
             ExprKind::Unary(op, inner) if op.kind.has_side_effects() => {
@@ -204,7 +208,13 @@ impl Analyzer<'_, '_> {
                 self.reads(lhs);
                 self.reads(rhs);
             }
-            ExprKind::Unary(_, inner) | ExprKind::Payable(inner) | ExprKind::Member(inner, _) => {
+            ExprKind::Member(inner, _) => {
+                if let Some(var) = self.state_var(expr) {
+                    self.pending.remove(&var);
+                }
+                self.reads(inner);
+            }
+            ExprKind::Unary(_, inner) | ExprKind::Payable(inner) => {
                 self.reads(inner);
             }
             ExprKind::Index(base, index) => {
