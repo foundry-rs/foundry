@@ -26,22 +26,35 @@ class ValidationTests(unittest.TestCase):
             path = manifest(tmp, "1.9.0-rc2")
             self.assertEqual(
                 MODULE.validate_release(
-                    "release-1.9.0-rc2", path, ["nightly", "v1.8.3", "v1.9.0-rc1"]
+                    "refs/heads/release-1.9.0-rc2", path, ["nightly", "v1.8.3", "v1.9.0-rc1"]
                 )["from_tag"],
                 "v1.9.0-rc1",
             )
-            for branch in ("master", "feature", "release-v1.9.0-rc2", "release-1.9.0", "release-1.9.0-rc02"):
-                with self.subTest(branch=branch), self.assertRaises(MODULE.ReleaseError):
-                    MODULE.validate_release(branch, path, ["v1.8.3"])
+            for ref in (
+                "refs/heads/master",
+                "refs/heads/feature",
+                "refs/heads/release-v1.9.0-rc2",
+                "refs/heads/release-1.9.0",
+                "refs/heads/release-1.9.0-rc02",
+            ):
+                with self.subTest(ref=ref), self.assertRaises(MODULE.ReleaseError):
+                    MODULE.validate_release(ref, path, ["v1.8.3"])
+
+    def test_rejects_release_named_tag_ref(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(MODULE.ReleaseError, "release branch"):
+                MODULE.validate_release(
+                    "refs/tags/release-1.9.0", manifest(tmp, "1.9.0"), ["v1.8.3"]
+                )
 
     def test_candidate_must_be_strictly_newer(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = manifest(tmp, "1.9.0")
             for latest in ("v1.9.1", "v2.0.0-rc1"):
                 with self.subTest(latest=latest), self.assertRaisesRegex(MODULE.ReleaseError, "must be newer"):
-                    MODULE.validate_release("release-1.9.0", path, [latest])
+                    MODULE.validate_release("refs/heads/release-1.9.0", path, [latest])
             with self.assertRaisesRegex(MODULE.ReleaseError, "already exists"):
-                MODULE.validate_release("release-1.9.0", path, ["v1.9.0"])
+                MODULE.validate_release("refs/heads/release-1.9.0", path, ["v1.9.0"])
 
     def test_versions_use_numeric_rc_ordering(self):
         tags = ["v1.8.3", "v1.9.0-rc1", "v1.9.0-rc9", "v1.9.0-rc10", "v1.9.0", "v1.9.1"]
@@ -50,22 +63,24 @@ class ValidationTests(unittest.TestCase):
     def test_requires_existing_release(self):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaisesRegex(MODULE.ReleaseError, "no preceding strict stable tag"):
-                MODULE.validate_release("release-1.9.0", manifest(tmp, "1.9.0"), ["nightly"])
+                MODULE.validate_release("refs/heads/release-1.9.0", manifest(tmp, "1.9.0"), ["nightly"])
 
     def test_requires_rc_predecessor(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = manifest(tmp, "1.9.0-rc2")
             with self.assertRaisesRegex(MODULE.ReleaseError, "no preceding strict RC tag"):
-                MODULE.validate_release("release-1.9.0-rc2", path, ["v1.8.3"])
+                MODULE.validate_release("refs/heads/release-1.9.0-rc2", path, ["v1.8.3"])
 
     def test_metadata_selects_canonical_predecessor(self):
         with tempfile.TemporaryDirectory() as tmp:
             stable = MODULE.validate_release(
-                "release-1.9.0", manifest(tmp, "1.9.0"), ["v1.8.2", "v1.8.3", "v1.9.0-rc1"],
+                "refs/heads/release-1.9.0",
+                manifest(tmp, "1.9.0"),
+                ["v1.8.2", "v1.8.3", "v1.9.0-rc1"],
             )
             self.assertEqual(stable["from_tag"], "v1.8.3")
             rc = MODULE.validate_release(
-                "release-2.0.0-rc1", manifest(tmp, "2.0.0-rc1"), ["v1.9.0"],
+                "refs/heads/release-2.0.0-rc1", manifest(tmp, "2.0.0-rc1"), ["v1.9.0"],
             )
             self.assertEqual(rc["from_tag"], "v1.9.0")
 
@@ -73,12 +88,12 @@ class ValidationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = manifest(tmp, "1.9.0")
             metadata = MODULE.validate_release(
-                "release-1.9.0", path, ["v1.8.3", "v1.9.0", "v1.9.1"], SHA, SHA,
+                "refs/heads/release-1.9.0", path, ["v1.8.3", "v1.9.0", "v1.9.1"], SHA, SHA,
             )
             self.assertEqual(metadata["tag_name"], "v1.9.0")
             with self.assertRaisesRegex(MODULE.ReleaseError, "different commit"):
                 MODULE.validate_release(
-                    "release-1.9.0", path, ["v1.8.3", "v1.9.0"], SHA, "b" * 40,
+                    "refs/heads/release-1.9.0", path, ["v1.8.3", "v1.9.0"], SHA, "b" * 40,
                 )
 
 

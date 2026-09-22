@@ -39,7 +39,11 @@ def manifest_version(manifest):
     return version
 
 
-def validate_release(branch, manifest, tags, commit=None, candidate_commit=None):
+def validate_release(ref, manifest, tags, commit=None, candidate_commit=None):
+    prefix = "refs/heads/"
+    if not ref.startswith(prefix):
+        raise ReleaseError("workflow must run from a release branch")
+    branch = ref.removeprefix(prefix)
     if RELEASE_BRANCH.fullmatch(branch) is None:
         raise ReleaseError("workflow must run from release-X.Y.Z[-rcN]")
     version = manifest_version(manifest)
@@ -149,22 +153,22 @@ def local_tag_commit(directory, tag):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=["validate", "tag"])
-    parser.add_argument("--branch")
+    parser.add_argument("--ref")
     parser.add_argument("--version")
     parser.add_argument("--commit")
     parser.add_argument("--directory", type=pathlib.Path, default=pathlib.Path.cwd())
     args = parser.parse_args()
     try:
         if args.mode == "validate":
-            if args.branch is None or args.commit is None:
-                raise ReleaseError("validate requires --branch and --commit")
+            if args.ref is None or args.commit is None:
+                raise ReleaseError("validate requires --ref and --commit")
             tags = subprocess.check_output(
                 ["git", "-C", str(args.directory), "tag", "--list"], text=True,
             ).splitlines()
             version = manifest_version(args.directory / "Cargo.toml")
             tag = f"v{version}"
             metadata = validate_release(
-                args.branch,
+                args.ref,
                 args.directory / "Cargo.toml",
                 tags,
                 args.commit,
