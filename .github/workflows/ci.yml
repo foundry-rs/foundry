@@ -229,7 +229,7 @@ jobs:
         run: ./.github/scripts/format.sh --check
 
   deny:
-    uses: tempoxyz/ci/.github/workflows/deny.yml@a75700dae1a185e3968a902dd095c917782ced76
+    uses: tempoxyz/ci/.github/workflows/deny.yml@921d47ce30160fb82a5181c840b41fbbac77c18f
     permissions:
       contents: read
       id-token: write
