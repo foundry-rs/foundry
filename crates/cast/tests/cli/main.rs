@@ -113,6 +113,7 @@ async fn deploy_counter_and_set_number(
 mod abi;
 mod access_list;
 mod address;
+mod bal;
 #[cfg(feature = "base")]
 mod base;
 mod bytecode;

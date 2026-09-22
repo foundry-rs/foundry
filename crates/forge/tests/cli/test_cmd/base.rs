@@ -1,6 +1,15 @@
+use alloy_consensus::transaction::SignerRecoverable;
+use alloy_network::eip2718::Encodable2718;
+use alloy_primitives::{B256, Bytes, hex};
+use alloy_signer::SignerSync;
+use alloy_signer_local::PrivateKeySigner;
 use anvil::{NodeConfig, spawn};
-use foundry_evm::hardforks::BaseUpgrade;
+use foundry_evm::{
+    core::evm::{BaseEvmNetwork, TxEnvelopeFor},
+    hardforks::BaseUpgrade,
+};
 use foundry_test_utils::util::OutputExt;
+use serde_json::json;
 
 forgetest!(base_azul_excludes_beryl_precompiles, |prj, cmd| {
     prj.add_test("BaseEvm.t.sol", include_str!("../../fixtures/BaseEvm.t.sol"));
@@ -140,4 +149,71 @@ contract BaseScript {
         .arg(script)
         .args(["--network", "base", "--hardfork", "base:Beryl", "--chain-id", "8453"])
         .assert_success();
+});
+
+forgetest!(base_execute_transaction_rejects_eip8130, |prj, cmd| {
+    let signer = PrivateKeySigner::from_bytes(&B256::with_last_byte(1)).unwrap();
+    let mut envelope = json!({
+        "type": "0x79",
+        "tx": {
+            "chainId": 8453, "sender": null, "payer": null,
+            "nonceKey": "0x0", "nonceSequence": 0,
+            "validAfter": 0, "validBefore": 0,
+            "maxPriorityFeePerGas": "0x0", "maxFeePerGas": "0x3b9aca00",
+            "gasLimit": 200000, "accountChanges": [], "calls": [], "metadata": "0x"
+        },
+        "senderAuth": "0x", "payerAuth": "0x"
+    });
+    let unsigned =
+        serde_json::from_value::<TxEnvelopeFor<BaseEvmNetwork>>(envelope.clone()).unwrap();
+    let signature = signer
+        .sign_hash_sync(&unsigned.as_eip8130().unwrap().tx().sender_signature_hash())
+        .unwrap();
+    envelope["senderAuth"] = json!(Bytes::from(signature.as_bytes().to_vec()));
+    let signed = serde_json::from_value::<TxEnvelopeFor<BaseEvmNetwork>>(envelope).unwrap();
+    assert_eq!(signed.recover_signer().unwrap(), signer.address());
+    let mut raw = Vec::new();
+    signed.network_encode(&mut raw);
+    let raw = hex::encode(raw);
+    let sender = signer.address();
+    prj.add_test(
+        "BaseExecuteTransaction.t.sol",
+        &format!(
+            r#"
+interface Vm {{
+    function deal(address account, uint256 balance) external;
+    function getNonce(address account) external view returns (uint64);
+    function _expectCheatcodeRevert(bytes calldata reason) external;
+    function executeTransaction(bytes calldata rawTx) external;
+}}
+
+contract BaseExecuteTransactionTest {{
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function test_rejects_eip8130_without_state_changes() public {{
+        address sender = {sender};
+        vm.deal(sender, 1 ether);
+        uint64 nonce = vm.getNonce(sender);
+        vm._expectCheatcodeRevert("EIP-8130 transactions are not supported by vm.executeTransaction");
+        vm.executeTransaction(hex"{raw}");
+        require(sender.balance == 1 ether, "sender balance changed");
+        require(vm.getNonce(sender) == nonce, "sender nonce changed");
+        require(block.chainid == 8453, "execution chain changed");
+    }}
+}}
+"#
+        ),
+    );
+    cmd.args([
+        "test",
+        "--network",
+        "base",
+        "--hardfork",
+        "base:Zenith",
+        "--chain-id",
+        "8453",
+        "--match-contract",
+        "BaseExecuteTransactionTest",
+    ])
+    .assert_success();
 });

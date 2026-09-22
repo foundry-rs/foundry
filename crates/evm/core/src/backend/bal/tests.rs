@@ -1,4 +1,4 @@
-//! Tests for native block access list state reads and commits.
+//! Tests for block access list state reads and commits.
 
 use crate::{
     backend::{Backend, CowBackend},
@@ -25,7 +25,7 @@ use revm::{
 use std::sync::Arc;
 
 #[test]
-fn bal_reads_use_index_without_changing_parent_cache() {
+fn bal_reads_use_index_and_fall_back_to_parent_state() {
     let address = Address::with_last_byte(1);
     let slot = U256::ZERO;
     let mut backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
@@ -56,62 +56,33 @@ fn bal_reads_use_index_without_changing_parent_cache() {
         .unwrap(),
     );
 
-    backend.set_bal(Some(bal.clone()), BlockAccessIndex::new(1));
+    backend.set_bal(bal.clone(), BlockAccessIndex::new(1));
     let account = backend.basic(address).unwrap().unwrap();
     assert_eq!(account.balance, U256::from(20));
     assert_eq!(account.code.unwrap().original_bytes(), code);
     assert_eq!(backend.storage(address, slot).unwrap(), U256::from(20));
     assert_eq!(backend.basic_ref(address).unwrap().unwrap().balance, U256::from(20));
     assert_eq!(backend.storage_ref(address, slot).unwrap(), U256::from(20));
+    // A slot the block only read keeps its parent value.
     assert_eq!(backend.storage_ref(address, U256::from(99)).unwrap(), U256::from(77));
     let mut cow = CowBackend::new_borrowed(&backend);
     assert_eq!(cow.basic(address).unwrap().unwrap().balance, U256::from(20));
     assert_eq!(cow.storage(address, slot).unwrap(), U256::from(20));
 
-    backend.set_bal(Some(bal), BlockAccessIndex::new(2));
+    backend.set_bal(bal, BlockAccessIndex::new(2));
     assert_eq!(backend.basic(address).unwrap().unwrap().balance, U256::from(30));
     assert_eq!(backend.storage(address, slot).unwrap(), U256::from(30));
-    assert!(backend.storage(address, U256::from(100)).is_err());
-    assert!(backend.basic(Address::with_last_byte(2)).is_err());
+    // State the list does not mention was untouched by the block and comes from the parent
+    // database, which reports every unknown account as an existing empty account.
+    assert_eq!(backend.storage(address, U256::from(100)).unwrap(), U256::ZERO);
+    assert_eq!(backend.basic(Address::with_last_byte(2)).unwrap(), Some(AccountInfo::default()));
 
-    backend.set_bal(None, BlockAccessIndex::PRE_EXECUTION);
+    // Committing removes the list again.
+    backend.commit(Default::default());
     assert_eq!(backend.basic(address).unwrap().unwrap().balance, U256::from(10));
     assert_eq!(backend.storage(address, slot).unwrap(), U256::from(10));
     assert_eq!(backend.basic_ref(address).unwrap().unwrap().nonce, 1);
     assert_eq!(backend.storage_ref(address, slot).unwrap(), U256::from(10));
-}
-
-#[test]
-fn bal_rejects_possible_storage_resets_including_system_creation() {
-    let address = Address::with_last_byte(1);
-    let slot = U256::from(99);
-    // A prior BAL value is insufficient: a subsequent CREATE can reset that storage.
-    for prior_value in [None, Some(U256::from(55))] {
-        let mut changes = AccountChanges::new(address);
-        if let Some(value) = prior_value {
-            changes.storage_changes.push(SlotChanges::new(
-                slot,
-                vec![StorageChange::new(BlockAccessIndex::new(0), value)],
-            ));
-        } else {
-            changes.storage_reads.push(slot);
-        }
-        let bal = Arc::new(Bal::try_from_alloy(vec![changes]).unwrap());
-        for parent_exists in [false, true] {
-            let mut backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
-            if parent_exists {
-                backend.insert_account_info(address, AccountInfo::default());
-                backend.insert_account_storage(address, slot, U256::from(77)).unwrap();
-            } else {
-                backend.mem_db.cache.accounts.insert(address, DbAccount::new_not_existing());
-            }
-            for index in [1, 2] {
-                backend.set_bal(Some(bal.clone()), BlockAccessIndex::new(index));
-                assert!(backend.storage(address, slot).is_err());
-                assert!(backend.storage_ref(address, slot).is_err());
-            }
-        }
-    }
 }
 
 #[test]
@@ -164,7 +135,7 @@ fn bal_commit_preserves_target_and_untouched_code() {
         AccountChanges::new(missing),
     ])
     .unwrap();
-    backend.set_bal(Some(Arc::new(bal)), BlockAccessIndex::new(2));
+    backend.set_bal(Arc::new(bal), BlockAccessIndex::new(2));
     let authorization = RecoveredAuthorization::new_unchecked(
         Authorization { chain_id: U256::ZERO, address: delegate, nonce: 1 },
         RecoveredAuthority::Valid(authority),

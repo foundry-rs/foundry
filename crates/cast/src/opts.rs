@@ -2,6 +2,7 @@ use crate::cmd::{
     access_list::AccessListArgs,
     artifact::ArtifactArgs,
     b2e_payload::B2EPayloadArgs,
+    bal::BalArgs,
     batch_mktx::BatchMakeTxArgs,
     batch_send::BatchSendArgs,
     bind::BindArgs,
@@ -472,6 +473,14 @@ pub enum CastSubcommand {
         #[command(flatten)]
         rpc: RpcOpts,
     },
+
+    /// Get the EIP-7928 block access list of a block
+    ///
+    /// Examples:
+    /// - cast bal latest
+    /// - cast bal 21000000 --raw
+    #[command(verbatim_doc_comment, visible_alias = "block-access-list")]
+    Bal(BalArgs),
 
     /// Perform a call on an account without publishing a transaction
     ///
@@ -1299,14 +1308,9 @@ pub enum CastSubcommand {
 
     /// Runs a published transaction in a local environment and prints the trace
     ///
-    /// Restores transaction prestate from a block access list (BAL) when available, otherwise
-    /// replays earlier transactions. BAL requires supported Ethereum Cancun-or-later semantics,
-    /// matching execution chain ID and hardfork rules, and no explicit EVM version or hardfork
-    /// override.
-    /// Storage reads from accounts that may have been created in the block fall back to replay.
-    /// `--trace-printer` and upstream blocks at or before an Anvil endpoint's fork block bypass
-    /// BAL. `--prestate-tracer` tries the debug API first, then BAL, then replay. `--quick`
-    /// skips both prestate paths; `--debug-trace-transaction` uses remote tracing exclusively.
+    /// If the node serves an EIP-7928 block access list (BAL) for the transaction's block, the
+    /// transaction's prestate is read from it instead of replaying the earlier transactions of
+    /// the block. Pass `--no-bal` to always replay the block.
     ///
     /// Examples:
     /// - cast run $TX_HASH

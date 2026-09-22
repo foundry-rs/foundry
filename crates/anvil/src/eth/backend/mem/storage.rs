@@ -10,6 +10,7 @@ use crate::eth::{
     pool::transactions::PoolTransaction,
 };
 use alloy_consensus::BlockHeader;
+use alloy_eips::eip7928::BlockAccessList;
 use alloy_network::Network;
 use alloy_primitives::{
     B256, Bytes, U256,
@@ -296,6 +297,8 @@ impl Default for InMemoryBlockStates {
 pub struct BlockchainStorage<N: Network> {
     /// all stored blocks (block hash -> block)
     pub blocks: B256HashMap<Block>,
+    /// EIP-7928 block access lists for locally mined blocks.
+    pub block_access_lists: B256HashMap<BlockAccessList>,
     /// mapping from block number -> block hash
     pub hashes: HashMap<u64, B256>,
     /// The current best hash
@@ -342,6 +345,7 @@ impl<N: Network> BlockchainStorage<N> {
         hashes.insert(best_number, genesis_hash);
         Self {
             blocks,
+            block_access_lists: Default::default(),
             hashes,
             best_hash,
             best_number,
@@ -362,6 +366,7 @@ impl<N: Network> BlockchainStorage<N> {
 
         Self {
             blocks: B256HashMap::default(),
+            block_access_lists: Default::default(),
             hashes,
             best_hash: block_hash,
             best_number: block_number,
@@ -392,6 +397,7 @@ impl<N: Network> BlockchainStorage<N> {
                 if let Some(block) = self.blocks.remove(&hash) {
                     removed.push(block);
                 }
+                self.block_access_lists.remove(&hash);
                 #[cfg(feature = "monad")]
                 self.remove_monad_block_metadata(&hash);
                 self.hashes.remove(&i);
@@ -405,6 +411,7 @@ impl<N: Network> BlockchainStorage<N> {
     pub fn empty() -> Self {
         Self {
             blocks: Default::default(),
+            block_access_lists: Default::default(),
             hashes: Default::default(),
             best_hash: Default::default(),
             best_number: Default::default(),
@@ -428,6 +435,7 @@ impl<N: Network> BlockchainStorage<N> {
 
     /// Removes all stored transactions for the given block hash
     pub fn remove_block_transactions(&mut self, block_hash: B256) {
+        self.block_access_lists.remove(&block_hash);
         if let Some(block) = self.blocks.get_mut(&block_hash) {
             for tx in &block.body.transactions {
                 self.transactions.remove(&tx.hash());

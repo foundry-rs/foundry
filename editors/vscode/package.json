@@ -210,10 +210,9 @@
     "bundle": "node scripts/bundle.mjs",
     "bundle:check": "node scripts/bundle.mjs --check",
     "test": "npm run compile && node --test test/*.test.cjs",
-    "package": "vsce package --out bundle/solar-lsp.vsix",
+    "package": "npm run compile && node scripts/package.mjs",
     "test:host": "npm run compile && node scripts/test-host.cjs",
-    "test:launcher": "node scripts/test-host.cjs --launcher",
-    "prepackage": "node -e \"require('node:fs').mkdirSync('bundle', { recursive: true })\""
+    "test:launcher": "node scripts/test-host.cjs --launcher"
   },
   "devDependencies": {
     "@types/node": "26.x",

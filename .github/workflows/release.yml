@@ -82,6 +82,7 @@ jobs:
     if: needs.preflight.outputs.is_nightly != 'true'
     permissions:
       contents: read
+      id-token: write
     uses: ./.github/workflows/test.yml
     with:
       profile: default
@@ -122,12 +123,6 @@ jobs:
           fi
           python3 .github/scripts/tag-release.py tag --version "$VERSION" --commit "$COMMIT"
           printf 'from_tag=%s\n' "$(jq -r '.from_tag' <<< "$metadata")" >> "$GITHUB_OUTPUT"
-
-  cargo-cooldown:
-    if: github.event_name != 'schedule' || github.repository == 'foundry-rs/foundry'
-    permissions:
-      contents: read
-    uses: ./.github/workflows/cargo-cooldown.yml
 
   prepare:
     name: Prepare release
@@ -283,8 +278,9 @@ jobs:
 
   release-docker:
     name: Release Docker
-    needs: prepare
-    if: ${{ !cancelled() && needs.prepare.result == 'success' }}
+    # The image is pushed during the Depot build, so wait for every native target.
+    needs: [prepare, release]
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && (needs.release.result == 'success' || (needs.prepare.outputs.skip_assets == 'true' && needs.release.result == 'skipped')) }}
     uses: ./.github/workflows/docker-publish.yml
     permissions:
       actions: read
@@ -295,6 +291,7 @@ jobs:
       packages: write
     with:
       tag_name: ${{ needs.prepare.outputs.tag_name }}
+      linux-validated: ${{ needs.release.result == 'success' }}
 
   release-docker-metadata:
     name: Record Docker digest
@@ -334,8 +331,8 @@ jobs:
     name: release ${{ matrix.target }} (${{ matrix.runner }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 240
-    needs: [cargo-cooldown, prepare]
-    if: ${{ !cancelled() && needs.cargo-cooldown.result == 'success' && needs.prepare.result == 'success' && needs.prepare.outputs.skip_assets != 'true' }}
+    needs: [prepare]
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.prepare.outputs.skip_assets != 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -381,14 +378,23 @@ jobs:
             platform: win32
             arch: amd64
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@ce5deead22108ccc6aafba0ca47d2a9e6d1a40e8
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1
         with:
           toolchain: stable
           targets: ${{ matrix.target }}
-      - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
+      - uses: rui314/setup-mold@10ca16bf91dc22e05ebdc935cad9c75ea248f621 # v1
+
+      # Include locked workspace dependencies not reached by the --bins build.
+      - name: Fetch locked dependencies
+        env:
+          TARGET: ${{ matrix.target }}
+        shell: bash
+        run: cargo fetch --locked --target "$TARGET"
 
       - name: Install LLVM profiling tools
         if: matrix.target == 'x86_64-unknown-linux-gnu'
@@ -670,7 +676,6 @@ jobs:
       preflight,
       test-release,
       tag-release,
-      cargo-cooldown,
       prepare,
       release-docker,
       release-docker-metadata,

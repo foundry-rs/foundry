@@ -40,8 +40,11 @@ jobs:
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
+      id-token: write
       contents: read
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@ce5deead22108ccc6aafba0ca47d2a9e6d1a40e8
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -50,7 +53,7 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: editors/vscode/package-lock.json
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1
         with:
           toolchain: stable
       - name: Install Forge and VS Code native dependencies
@@ -63,8 +66,17 @@ jobs:
           prefix-key: v2-editor-forge
       - run: npm ci
         working-directory: editors/vscode
-      - run: npm run check && npm test && npm run bundle:check && npm run package
+      - run: npm run check && npm test && npm run bundle:check
         working-directory: editors/vscode
+      - name: Package licenses without symlinks
+        working-directory: editors/vscode
+        run: |
+          rm LICENSE-MIT LICENSE-APACHE
+          printf '%s' '../../LICENSE-MIT' > LICENSE-MIT
+          printf '%s' '../../LICENSE-APACHE' > LICENSE-APACHE
+          npm run package
+          unzip -p bundle/solar-lsp.vsix extension/LICENSE-MIT | cmp - ../../LICENSE-MIT
+          unzip -p bundle/solar-lsp.vsix extension/LICENSE-APACHE | cmp - ../../LICENSE-APACHE
       - run: cargo build --locked -p forge --bin forge
       - run: cargo test --locked -p forge --test cli 'lsp::'
       - name: Real Forge in VS Code Extension Development Host
@@ -79,16 +91,19 @@ jobs:
     runs-on: depot-ubuntu-latest
     timeout-minutes: 15
     permissions:
+      id-token: write
       contents: read
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@ce5deead22108ccc6aafba0ca47d2a9e6d1a40e8
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1
         with:
           toolchain: nightly
           components: rustfmt
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1
         with:
           toolchain: stable
           components: clippy

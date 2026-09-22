@@ -569,7 +569,7 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
     {
         ccx.ecx.tx_mut().set_caller(prank.prank_origin);
         if prank.single_call {
-            std::mem::take(&mut ccx.state.pranks);
+            ccx.state.pranks.remove(&depth);
         }
     }
 
@@ -614,10 +614,9 @@ fn get_artifact_source<'a, FEN: FoundryEvmNetwork>(
         return Ok(ArtifactSource::Disk(path));
     }
 
-    let parsed =
-        parse_artifact_path(path).map_err(|e| fmt_err!("failed to parse artifact path: {e}"))?;
-    let ParsedArtifactPath { file, contract_name, version, profile } = parsed;
-    let file = file.map(|file| {
+    let artifacts =
+        state.config.available_artifacts.as_ref().or(state.config.artifact_lookup.as_ref());
+    let resolve_source = |file: PathBuf| {
         let cwd = state
             .config
             .running_artifact
@@ -637,18 +636,40 @@ fn get_artifact_source<'a, FEN: FoundryEvmNetwork>(
         } else {
             file
         }
-    });
+    };
+    let exact_identifier = path
+        .rsplit_once(':')
+        .map(|(source, contract)| (resolve_source(PathBuf::from(source)), contract))
+        .filter(|(source, contract)| {
+            artifacts.into_iter().flat_map(|artifacts| artifacts.iter()).any(|(id, _)| {
+                id.source == *source
+                    && id.name.split('.').next().is_some_and(|name| name == *contract)
+            })
+        });
+
+    let parsed = match parse_artifact_path(path) {
+        Ok(parsed) => parsed,
+        Err(_) if exact_identifier.is_some() => {
+            ParsedArtifactPath { file: None, contract_name: None, version: None, profile: None }
+        }
+        Err(error) => return Err(fmt_err!("failed to parse artifact path: {error}")),
+    };
+    let ParsedArtifactPath { file, contract_name, version, profile } = parsed;
+    let file = file.map(resolve_source);
 
     // Use the artifact lookup if present.
-    if let Some(artifacts) =
-        state.config.available_artifacts.as_ref().or(state.config.artifact_lookup.as_ref())
-    {
+    if let Some(artifacts) = artifacts {
         let ambiguous_file_profile =
             file.is_some() && version.is_none() && profile.is_none() && contract_name.is_some();
         let filter_artifacts = |treat_ambiguous_as_profile: bool| -> Vec<_> {
             artifacts
                 .iter()
                 .filter(|(id, _)| {
+                    if let Some((source, contract)) = &exact_identifier {
+                        return id.source == *source
+                            && id.name.split('.').next().is_some_and(|name| name == *contract);
+                    }
+
                     // name might be in the form of "Counter.0.8.23"
                     let id_name = id.name.split('.').next().unwrap();
 
@@ -700,7 +721,7 @@ fn get_artifact_source<'a, FEN: FoundryEvmNetwork>(
                         .as_ref()
                         .and_then(|running| {
                             // Only filter by running version if user did NOT specify a version
-                            if version.is_none() {
+                            if exact_identifier.is_some() || version.is_none() {
                                 filtered.retain(|(id, _)| id.version == running.version);
 
                                 // Return artifact if only one matched
@@ -710,7 +731,7 @@ fn get_artifact_source<'a, FEN: FoundryEvmNetwork>(
                             }
 
                             // Only filter by running profile if user did NOT specify a profile
-                            if profile.is_none() {
+                            if exact_identifier.is_some() || profile.is_none() {
                                 filtered.retain(|(id, _)| id.profile == running.profile);
 
                                 return (filtered.len() == 1).then(|| filtered[0]);
@@ -1395,6 +1416,45 @@ mod tests {
     }
 
     #[test]
+    fn test_get_artifact_code_exact_colon_path_uses_running_profile() {
+        let default_bytecode = Bytes::from_static(&[0x60, 0x01]);
+        let optimized_bytecode = Bytes::from_static(&[0x60, 0x02]);
+        let versioned_bytecode = Bytes::from_static(&[0x60, 0x03]);
+        let source = "src/Colon:Path.sol";
+        let default = test_artifact(source, "Target", "default", default_bytecode);
+        let optimized =
+            test_artifact(source, "Target.optimized", "optimized", optimized_bytecode.clone());
+        let mut versioned = test_artifact(
+            source,
+            "Target.0.8.29.optimized",
+            "optimized",
+            versioned_bytecode.clone(),
+        );
+        versioned.0.version = Version::new(0, 8, 29);
+        let artifacts = ContractsByArtifact::new([default, optimized, versioned]);
+        for (patch, expected) in [(30, optimized_bytecode), (29, versioned_bytecode)] {
+            let running_artifact = ArtifactId {
+                source: PathBuf::from("test/Runner.t.sol"),
+                name: "Runner".to_owned(),
+                path: PathBuf::from("test/Runner.t.sol/Runner.json"),
+                version: Version::new(0, 8, patch),
+                build_id: String::new(),
+                profile: "optimized".to_owned(),
+            };
+            let config = CheatsConfig {
+                available_artifacts: Some(artifacts.clone()),
+                running_artifact: Some(running_artifact),
+                root: PathBuf::from(&env!("CARGO_MANIFEST_DIR")),
+                ..Default::default()
+            };
+            let cheats: Cheatcodes = Cheatcodes::new(Arc::new(config));
+            let bytecode =
+                super::get_artifact_code(&cheats, "src/Colon:Path.sol:Target", false).unwrap();
+            assert_eq!(bytecode, expected);
+        }
+    }
+
+    #[test]
     fn test_get_artifact_code_prefers_contract_name_over_file_profile_ambiguity() {
         let profile_bytecode = Bytes::from_static(&[0x60, 0x02]);
         let contract_bytecode = Bytes::from_static(&[0x60, 0x03]);
@@ -1441,6 +1501,47 @@ mod tests {
             super::get_artifact_code(&cheats, "@example/Something.sol:Something", false).unwrap();
 
         assert_eq!(resolved, bytecode);
+    }
+
+    #[test]
+    fn test_get_artifact_code_remaps_exact_paths_before_profile_selection() {
+        for file in ["Target.sol", "Colon:Path.sol"] {
+            let source = format!("src/{file}");
+            let remapped = format!("lib/alternate/{file}");
+            let default_bytecode = Bytes::from_static(&[0x60, 0x02]);
+            let optimized_bytecode = Bytes::from_static(&[0x60, 0x03]);
+            let artifacts = ContractsByArtifact::new([
+                test_artifact(&source, "Target", "default", Bytes::from_static(&[0x60, 0x01])),
+                test_artifact(&remapped, "Target", "default", default_bytecode.clone()),
+                test_artifact(
+                    &remapped,
+                    "Target.optimized",
+                    "optimized",
+                    optimized_bytecode.clone(),
+                ),
+            ]);
+            for (profile, expected) in
+                [("default", default_bytecode), ("optimized", optimized_bytecode)]
+            {
+                let root = PathBuf::from(&env!("CARGO_MANIFEST_DIR"));
+                let paths = foundry_compilers::ProjectPathsConfig::builder()
+                    .remapping(Remapping::from_str("src/=lib/alternate/").unwrap())
+                    .build_with_root(&root);
+                let config = CheatsConfig {
+                    available_artifacts: Some(artifacts.clone()),
+                    running_artifact: Some(
+                        test_artifact("test/Runner.t.sol", "Runner", profile, Bytes::new()).0,
+                    ),
+                    root,
+                    paths,
+                    ..Default::default()
+                };
+                let cheats: Cheatcodes = Cheatcodes::new(Arc::new(config));
+                let resolved =
+                    super::get_artifact_code(&cheats, &format!("{source}:Target"), false).unwrap();
+                assert_eq!(resolved, expected, "{source} in {profile} profile");
+            }
+        }
     }
 
     #[test]

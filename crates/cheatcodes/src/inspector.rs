@@ -441,6 +441,7 @@ impl GasMetering {
     /// Start the gas recording.
     pub const fn start(&mut self) {
         self.recording = true;
+        self.last_gas_used = 0;
         self.pending_isolated_refund = None;
     }
 
@@ -3052,7 +3053,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
 
             // Clean single-call prank once we have returned to the original depth
             if prank.single_call {
-                std::mem::take(&mut self.pranks);
+                self.pranks.remove(&curr_depth);
             }
         }
 
