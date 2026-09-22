@@ -444,6 +444,62 @@ fn calldata_selector_load_simplifies_to_concrete_word() {
 }
 
 #[test]
+fn calldata_variants_partition_address_inputs() {
+    let mut cx = SymCx::new();
+    let config = SymbolicConfig::default();
+
+    let single = Function::parse("check(address,uint256)").unwrap();
+    let variants = symbolic_calldata_variants(&mut cx, &single, &config).unwrap();
+    assert_eq!(variants.len(), 1);
+
+    // Two addresses: distinct, or the same account.
+    let pair = Function::parse("check(address,address)").unwrap();
+    let variants = symbolic_calldata_variants(&mut cx, &pair, &config).unwrap();
+    assert_eq!(variants.len(), 2);
+    let distinct = variants[0].call_data(&mut cx);
+    assert_ne!(distinct.load(&mut cx, 4).unwrap(), distinct.load(&mut cx, 36).unwrap());
+    let equal = variants[1].call_data(&mut cx);
+    assert_eq!(equal.load(&mut cx, 4).unwrap(), equal.load(&mut cx, 36).unwrap());
+
+    let first = Address::from([0x11; 20]);
+    let second = Address::from([0x22; 20]);
+    let distinct_args = vec![DynSolValue::Address(first), DynSolValue::Address(second)];
+    let distinct_seed = SymbolicConcreteInput {
+        calldata: Bytes::from(pair.abi_encode_input(&distinct_args).unwrap()),
+        args: distinct_args,
+    };
+    assert!(variants[0].seed_model(&mut cx, &distinct_seed).is_some());
+    assert!(variants[1].seed_model(&mut cx, &distinct_seed).is_none());
+    let equal_args = vec![DynSolValue::Address(first), DynSolValue::Address(first)];
+    let equal_seed = SymbolicConcreteInput {
+        calldata: Bytes::from(pair.abi_encode_input(&equal_args).unwrap()),
+        args: equal_args,
+    };
+    assert!(variants[0].seed_model(&mut cx, &equal_seed).is_none());
+    assert!(variants[1].seed_model(&mut cx, &equal_seed).is_some());
+
+    // Three addresses: the five set partitions.
+    let triple = Function::parse("check(address,address,address)").unwrap();
+    let variants = symbolic_calldata_variants(&mut cx, &triple, &config).unwrap();
+    assert_eq!(variants.len(), 5);
+    let mut class_counts = variants
+        .iter()
+        .map(|variant| {
+            let calldata = variant.call_data(&mut cx);
+            let words = [4, 36, 68].map(|offset| calldata.load(&mut cx, offset).unwrap());
+            words.iter().enumerate().filter(|(idx, word)| !words[..*idx].contains(word)).count()
+        })
+        .collect::<Vec<_>>();
+    class_counts.sort_unstable();
+    assert_eq!(class_counts, vec![1, 2, 2, 2, 3]);
+    let config = SymbolicConfig { width: Some(2), ..config };
+    assert!(matches!(
+        symbolic_calldata_variants(&mut cx, &triple, &config),
+        Err(SymbolicError::CalldataVariantLimit(2))
+    ));
+}
+
+#[test]
 fn artifact_json_fallback_paths_uses_foundry_artifact_basename() {
     assert_eq!(
         artifact_json_fallback_paths("src/01_NomadZeroRoot.sol:NomadLike"),
