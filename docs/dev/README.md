@@ -48,6 +48,11 @@ use forking must contain `fork` in their name. Forge and Cast CLI tests live und
 - [Showmap corpus replay](./showmap.md) documents the persisted-corpus coverage workflow and file
   format.
 
+## Design proposals
+
+- [External compiler adapters](./external-compiler-adapters.md) proposes a versioned process
+  protocol for compiler-native EVM project builds maintained outside Foundry. It is not implemented.
+
 ## Updating documentation
 
 Update documentation at the canonical location in the ownership table alongside implementation
