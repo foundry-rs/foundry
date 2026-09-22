@@ -99,12 +99,15 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: write
+    outputs:
+      from_tag: ${{ steps.release_info.outputs.from_tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
       - name: Revalidate and create tag
+        id: release_info
         env:
           BRANCH: ${{ github.ref_name }}
           COMMIT: ${{ github.sha }}
@@ -118,6 +121,7 @@ jobs:
             exit 1
           fi
           python3 .github/scripts/tag-release.py tag --version "$VERSION" --commit "$COMMIT"
+          printf 'from_tag=%s\n' "$(jq -r '.from_tag' <<< "$metadata")" >> "$GITHUB_OUTPUT"
 
   cargo-cooldown:
     if: github.event_name != 'schedule' || github.repository == 'foundry-rs/foundry'
@@ -221,7 +225,7 @@ jobs:
         uses: mikepenz/release-changelog-builder-action@cb021f9b36a51a7c6f18e4679b6fa2cb77a1260c # v6.3.0
         with:
           configuration: "./.github/changelog.json"
-          fromTag: ${{ needs.preflight.outputs.from_tag || '' }}
+          fromTag: ${{ needs.tag-release.outputs.from_tag || needs.preflight.outputs.from_tag || '' }}
           # The canonical nightly tag is created only when the complete release
           # is published, so use its commit directly while building the notes.
           toTag: ${{ (env.IS_NIGHTLY == 'true' && github.sha) || needs.preflight.outputs.tag_name }}
