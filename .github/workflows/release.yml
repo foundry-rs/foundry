@@ -10,6 +10,7 @@ on:
 concurrency:
   group: ${{ (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/master' && format('release-tagging-{0}', github.repository)) || format('release-{0}-{1}-{2}', github.repository, github.ref, github.sha) }}
   cancel-in-progress: false
+  queue: max
 
 env:
   CARGO_TERM_COLOR: always
