@@ -44,7 +44,7 @@ jobs:
       contents: read
     steps:
       - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@ce5deead22108ccc6aafba0ca47d2a9e6d1a40e8
+        uses: tempoxyz/gh-actions/actions/secure-runner@44477a1dea964684252d6032489e5c8acde487cd # 2026-09-22T22-28-45Z-44477a1d
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -95,7 +95,7 @@ jobs:
       contents: read
     steps:
       - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@ce5deead22108ccc6aafba0ca47d2a9e6d1a40e8
+        uses: tempoxyz/gh-actions/actions/secure-runner@44477a1dea964684252d6032489e5c8acde487cd # 2026-09-22T22-28-45Z-44477a1d
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
