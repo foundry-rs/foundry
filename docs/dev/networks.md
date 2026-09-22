@@ -175,6 +175,10 @@ profile.
 
 ### Script recovery
 
+The requirements in this subsection are proposed and are not guarantees of the current script
+broadcaster. Network integrations must satisfy them as the durable recovery architecture is
+implemented.
+
 Custom transaction fields remain owned by the selected Alloy `Network` and concrete execution
 family, but `forge script` must carry their final values through durable submission and resume. A
 network integration that changes transaction preparation is incomplete until it identifies every
