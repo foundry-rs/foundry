@@ -1373,6 +1373,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                 .is_some_and(|ctx| ctx.locally_created_accounts.contains(&address));
         if should_mark_created_locally
             && let Some(account) = ecx.journal_mut().evm_state_mut().get_mut(&address)
+            && account.is_created()
         {
             account.mark_created_locally();
         }
