@@ -40,6 +40,7 @@ use foundry_cli::{
 use foundry_common::{
     ContractsByArtifact, EmptyTestFilter, TestFilter, TestFunctionExt, TestFunctionKind,
     compile::{ProjectCompiler, compile_abi_project, compile_abi_project_cached},
+    external_compiler::ExternalCompilerWorkflow,
     fs, sh_status, sh_warn, shell,
 };
 use foundry_compilers::{
@@ -1508,6 +1509,7 @@ impl TestArgs {
         let output = compile_abi_project_cached(
             &mut project,
             ProjectCompiler::new()
+                .external_compilers(config, ExternalCompilerWorkflow::Test)
                 .files(sources.iter().cloned())
                 .dynamic_test_linking(config.dynamic_test_linking)
                 .quiet(true),
@@ -1656,6 +1658,7 @@ impl TestArgs {
         trace!(target: "forge::test", ?filter, "using filter");
 
         let compiler = ProjectCompiler::new()
+            .external_compilers(&config, ExternalCompilerWorkflow::Test)
             .dynamic_test_linking(config.dynamic_test_linking)
             .quiet(shell::is_json() || self.junit);
         let (output, selected_sources, inline_config) = if self.list {

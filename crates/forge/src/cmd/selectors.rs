@@ -11,6 +11,7 @@ use foundry_cli::{
 };
 use foundry_common::{
     compile::{PathOrContractInfo, ProjectCompiler, compile_abi_project},
+    external_compiler::ExternalCompilerWorkflow,
     selectors::{SelectorImportData, import_selectors},
     shell,
 };
@@ -116,7 +117,7 @@ impl SelectorsSubcommands {
                         .path()
                         .map(Ok)
                         .unwrap_or_else(|| project.find_contract_path(contract_name))?;
-                    compile_abi_project(&mut project, compiler.files([target_path]))?
+                    compile_abi_project(&mut project, compiler.target_files([target_path]))?
                 } else {
                     compile_abi_project(&mut project, compiler)?
                 };
@@ -180,17 +181,19 @@ impl SelectorsSubcommands {
                         ]);
                     });
                 }
-                let mut compiler = ProjectCompiler::new().quiet(true);
+                let mut compiler = ProjectCompiler::new()
+                    .external_compilers(&config, ExternalCompilerWorkflow::Inspect)
+                    .quiet(true);
 
                 if let Some(contract_path) = &mut first_contract.path {
                     let target_path = canonicalize(&*contract_path)?;
                     *contract_path = target_path.to_string_lossy().to_string();
-                    compiler = compiler.files([target_path]);
+                    compiler = compiler.target_files([target_path]);
                 }
                 if let Some(contract_path) = &mut second_contract.path {
                     let target_path = canonicalize(&*contract_path)?;
                     *contract_path = target_path.to_string_lossy().to_string();
-                    compiler = compiler.files([target_path]);
+                    compiler = compiler.target_files([target_path]);
                 }
 
                 let output = compiler.compile(&project)?;
@@ -247,7 +250,7 @@ impl SelectorsSubcommands {
                     .filter(|_| project.no_artifacts)
                     .and_then(|contract| project.find_contract_path(contract).ok());
                 let compiler = if let Some(target_path) = target_path {
-                    compiler.files([target_path])
+                    compiler.target_files([target_path])
                 } else {
                     compiler
                 };
@@ -462,7 +465,9 @@ fn project_from_paths(
 ) -> Result<(Project<MultiCompiler>, ProjectCompiler)> {
     let build = BuildOpts { project_paths, ..Default::default() };
     let config = build.load_config_with_dependencies()?;
-    let compiler = ProjectCompiler::new().dynamic_test_linking(config.dynamic_test_linking);
+    let compiler = ProjectCompiler::new()
+        .external_compilers(&config, ExternalCompilerWorkflow::Inspect)
+        .dynamic_test_linking(config.dynamic_test_linking);
     let mut project = config.project()?;
     if !project.build_info {
         project.no_artifacts = true;

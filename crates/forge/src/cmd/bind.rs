@@ -6,6 +6,7 @@ use forge_sol_macro_gen::{MultiSolMacroGen, SolMacroGen};
 use foundry_cli::{opts::BuildOpts, utils::LoadConfig};
 use foundry_common::{
     compile::{ProjectCompiler, compile_abi_project},
+    external_compiler::ExternalCompilerWorkflow,
     fs::json_files,
 };
 use foundry_compilers::{
@@ -139,7 +140,11 @@ impl BindArgs {
             cached_enum_definitions(&paths, self.get_json_files(&artifacts)?.map(|(_, path)| path))
         } else {
             let mut project = config.project()?;
-            let output = compile_abi_project(&mut project, ProjectCompiler::new())?;
+            let output = compile_abi_project(
+                &mut project,
+                ProjectCompiler::new()
+                    .external_compilers(&config, ExternalCompilerWorkflow::Inspect),
+            )?;
             enum_definitions(output.parser())
         };
 

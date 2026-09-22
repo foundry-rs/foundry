@@ -40,6 +40,8 @@ use forking must contain `fork` in their name. Forge and Cast CLI tests live und
 - [Debugging](./debugging.md) collects contributor debugging techniques.
 - [Editor integrations](../../editors/README.md) covers the VS Code Development Host,
   independent client builds, local packaging and Zed installation.
+- [External compiler adapters](./external-compiler-adapters.md) defines the executable protocol,
+  cache contract, and artifact integration for compiler-native EVM projects.
 - [Lint rules](./lintrules.md) covers the lint registry, UI fixtures, and documentation contract.
 - [Custom EVM integrations](./networks.md) describes network selection, execution ownership,
   state lifecycles, tool dispatch, and CI coverage.
@@ -47,11 +49,6 @@ use forking must contain `fork` in their name. Forge and Cast CLI tests live und
 - [Scripting](./scripting.md) documents the internal script execution and broadcast pipeline.
 - [Showmap corpus replay](./showmap.md) documents the persisted-corpus coverage workflow and file
   format.
-
-## Design proposals
-
-- [External compiler adapters](./external-compiler-adapters.md) proposes a versioned process
-  protocol for compiler-native EVM project builds maintained outside Foundry. It is not implemented.
 
 ## Updating documentation
 

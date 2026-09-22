@@ -17,7 +17,7 @@ use foundry_cheatcodes::Wallets;
 use foundry_cli::opts::TempoOpts;
 use foundry_common::{
     ContractData, ContractsByArtifact, ContractsByArtifactBuilder, compile::ProjectCompiler,
-    provider::ProviderBuilder,
+    external_compiler::ExternalCompilerWorkflow, provider::ProviderBuilder,
 };
 use foundry_compilers::{
     ArtifactId, ProjectCompileOutput,
@@ -222,6 +222,7 @@ impl<FEN: FoundryEvmNetwork> PreprocessedState<FEN> {
         .chain([target_path.clone()]);
 
         let output = ProjectCompiler::new()
+            .external_compilers(&script_config.config, ExternalCompilerWorkflow::Script)
             .files(sources_to_compile)
             .dynamic_test_linking(script_config.config.dynamic_test_linking)
             .compile(&project)?;

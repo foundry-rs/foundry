@@ -1,257 +1,160 @@
-# External compiler adapters (proposal)
+# External compiler adapters
 
-Status: proposed, not implemented. Tracks [OSS-821][issue]. Configuration and wire examples below
-describe a candidate protocol, not options available in released Foundry.
+Foundry can compile compiler-native EVM projects through explicitly configured executable
+adapters. The adapter owns project discovery, dependency resolution, and compiler invocation.
+Foundry owns process transport, cache validation, artifact paths, and integration with Forge.
+This implements the protocol tracked by [OSS-821][issue].
 
-## Decision and scope
+This keeps language-specific parsers and toolchains outside Foundry while making their EVM
+artifacts available to the existing build, test, script, inspection, binding, selector, and create
+flows. Solidity and Vyper continue to use their built-in compiler paths.
 
-Add an explicitly configured executable adapter that owns a **complete compiler-native project
-build**. Foundry supplies project roots, requested workflows, and common EVM requirements; the
-adapter discovers manifests, sources, and dependencies, invokes its installed compiler, and returns
-normalized artifacts. A standalone file can be a native project when the adapter supports it.
-Foundry must not split a native project into per-file invocations or parse its dependency manifest.
+## Configuration
 
-Version 1 targets EVM bytecode and Solidity-compatible ABI. Keep Solidity and Vyper on their existing
-paths. Exclude in-process plugins, automatic compiler installation or updates, non-EVM targets, and
-universal workflow parity. In particular, the RISC-V output discussed in [#10021][revive] is outside
-this proposal; ABI compatibility alone does not make executable code EVM-compatible. The alternate
-compiler request in [#4418][alternate] motivates the executable boundary.
-
-## Configuration and trust
-
-An illustrative configuration for an independently distributed Fe adapter:
+Configure each adapter under the active profile:
 
 ```toml
-[[profile.default.compiler_adapters]]
+[[profile.default.external_compilers]]
 id = "contracts"
 command = "/opt/toolchains/fe-foundry-adapter"
 args = []
 roots = ["contracts"]
 
-[profile.default.compiler_adapters.settings]
+[profile.default.external_compilers.settings]
 compiler = "/opt/toolchains/fe"
 optimization = "s"
 ```
 
-`id` is a unique, user-chosen namespace, not a language enum. Roots resolve relative to the Foundry
-project. `command` is an absolute path or an explicit project-relative path; launch it with an argv
-array and no shell. No PATH search, extension-triggered execution, or adapter registry lookup occurs.
-`settings` is an opaque JSON-compatible TOML table interpreted and validated by the adapter. The
-example's `compiler` and `optimization` keys have no Fe-specific meaning in Foundry. Normal profile
-resolution applies; duplicate IDs and overlapping ownership of the same native build are errors.
-Native dependency sharing does not itself constitute an ownership conflict.
+`id` is a unique namespace for the adapter's artifacts and cache entries. It may contain ASCII
+letters, digits, `.`, `-`, and `_`. `command` is an absolute path or a path relative to the Foundry
+project root. Foundry executes it directly without a shell or PATH lookup. `roots` contains one or
+more compiler-native project roots relative to the Foundry project. `args` is an optional argument
+array, and `settings` is an optional JSON-compatible TOML table passed through without
+interpretation.
 
-Configuring an adapter authorizes local executable code, including discovery. This is a process
-boundary, **not an OS sandbox**: the child has the user's privileges. Start it at the Foundry project
-root with an explicit minimal environment; any additional inherited variable names must be
-configured and included in cache identity. The adapter must declare its build-affecting environment
-and toolchain inputs. Foundry does not send RPC credentials or verification tokens. Adapters own
-compiler selection and dependency resolution, but v1 requires dependencies to be already available
-locally; missing dependencies fail with native setup instructions. No implicit network fetches,
-manifest/lockfile rewrites, installation, or updates are part of discovery or compilation. These
-are adapter obligations; hostile executables require external sandboxing.
+Configuring an adapter authorizes that executable to run with the user's privileges. Foundry clears
+the child environment and starts it in the Foundry project root, but this process boundary is not
+an operating-system sandbox. Adapters that need environment variables or network access must
+arrange those requirements themselves through their executable or explicit settings.
 
-The host supplies a private scratch/output directory. Validate output paths, canonical containment
-(including symlinks), IDs, sizes, bytecode, references, and source spans before importing anything.
-Native input paths may legitimately lie outside the project for local dependencies; keep them
-distinct from output destinations. Adapters never choose destinations under Foundry's `out/` or
-`cache/`. Apply configurable process and output limits, drain stderr while reading stdout, and
-terminate the child process group on timeout or cancellation. Choose numeric defaults during the
-prototype from representative builds, before enabling the feature by default.
+## Transport and lifecycle
 
-## Protocol and lifecycle
+Protocol version 1.0 uses newline-delimited JSON on stdin and stdout. One adapter process serves one
+Forge compilation. Requests are sequential, use increasing integer IDs, and receive a response with
+the same ID and exactly one of `result` or `error`. Stdout is reserved for protocol messages. The
+adapter may use stderr for failure context; structured compiler diagnostics belong in the compile
+result. Foundry rejects individual protocol lines larger than 16 MiB.
 
-Use UTF-8 newline-delimited JSON over stdin/stdout, sequential request/response messages with an
-integer request ID, and stderr for human progress. One process serves one host build session, with
-no persistent daemon. Stdout contains protocol messages only. Each response echoes the ID and has
-exactly one of `result` or `error`; a normal compiler failure is a result with error diagnostics.
-After the final response, the host closes stdin and requires a successful process exit before
-publishing results. Adapters stop their compiler children before exiting.
+Foundry sends three operations in order.
+
+### `initialize`
 
 ```json
-{"id":1,"method":"initialize","params":{"protocols":["1.0"],"host":{"name":"forge"},"target":"evm"}}
-{"id":1,"result":{"protocol":"1.0","adapter":{"name":"fe-foundry-adapter","version":"0.1.0"},"extensions":[]}}
+{"id":1,"method":"initialize","params":{"protocols":["1.0"],"host":{"name":"forge","version":"1.8.4"},"target":"evm"}}
+{"id":1,"result":{"protocol":"1.0"}}
 ```
 
-The initial envelope is stable across versions. The adapter selects one exact host-offered protocol
-or returns `unsupported_protocol`. Breaking envelope/artifact semantics require a new major;
-additive optional fields and named capability schemas use minor versions. Unknown optional fields
-are ignored, unknown required features are rejected, and unknown capabilities are never enabled.
-Protocol version and compiler version are independent.
+The adapter must select exactly `1.0`. Protocol and compiler versions are independent.
 
-| Operation | Request | Result and host action |
+### `discover`
+
+```json
+{"id":2,"method":"discover","params":{"roots":["/project/contracts"],"settings":{"optimization":"s"},"workflow":"build","selected_paths":[]}}
+{"id":2,"result":{"units":[{"id":"app","compiler":{"name":"fe","version":"26.3.0"},"inputs":["contracts/fe.toml","contracts/src/lib.fe"],"capabilities":["build/1"],"effectiveSettings":{"optimization":"s"},"cacheable":true}]}}
+```
+
+The adapter returns complete build units. A unit is the smallest compiler-native project that can
+be built independently. Its `inputs` must contain every file whose bytes determine compilation,
+including manifests, lockfiles, local dependency sources, and compiler resources when needed.
+Paths may be absolute or relative to the Foundry root and must resolve to files. The compiler
+version must be valid SemVer.
+
+Every unit must advertise `build/1`. Advertising `forge-tests/1` additionally makes deployable
+artifacts from that unit eligible for Forge's test-contract discovery. Build-only artifacts remain
+available as known contracts and deployment dependencies during `forge test`; ABI function names
+alone do not opt them into execution as test suites.
+
+`selected_paths` contains explicit paths selected by the calling Forge command. The adapter decides
+which units own those paths and must still return each selected unit's complete input closure.
+
+### `compile`
+
+Foundry sends `compile` only on a cache miss or when caching is disabled:
+
+```json
+{"id":3,"method":"compile","params":{"unit":"app","fingerprint":"<sha256>","workflow":"build"}}
+{"id":3,"result":{"diagnostics":[],"artifacts":[{"source":"contracts/src/lib.fe","name":"Counter","abi":[],"bytecode":"0x60006000f3","deployedBytecode":"0x00","metadata":{"language":"Fe"}}]}}
+```
+
+The result may contain `error`, `warning`, or `info` diagnostics. Error diagnostics fail the Forge
+command. Each artifact supports these fields:
+
+| Field | Required | Meaning |
 | --- | --- | --- |
-| `initialize` | Supported protocol versions and target family. | Negotiate before interpreting any project output. |
-| `discover` | Configured roots/settings, required EVM revision, requested workflows/outputs. | Return native build units, full input closure, effective settings, compiler/toolchain identities, and per-unit capabilities. Always run before a host cache lookup. |
-| `compile` | Unit ID, discovery fingerprint, requirements, host-owned scratch directory. | Build the entire unit; return diagnostics and a normalized artifact bundle with actual input provenance. Reject stale discovery. |
+| `source` | yes | Project-relative logical source path. |
+| `name` | yes | Contract name. |
+| `abi` | no | Standard JSON ABI; defaults to an empty ABI. |
+| `bytecode` | no | Creation bytecode. |
+| `deployedBytecode` | no | Runtime bytecode; requires creation bytecode. |
+| `sourceMap`, `deployedSourceMap` | no | Solidity-format instruction source maps. |
+| `linkReferences`, `deployedLinkReferences` | no | Standard link-reference maps. |
+| `metadata` | no | Adapter-owned JSON metadata, serialized into Foundry's `rawMetadata` field. |
+| `sourceId` | no | Source ID used by the supplied source maps. |
 
-Discovery may return several units, for example a workspace's independently buildable members. The
-adapter defines their boundaries and transitive dependencies; the host treats each unit as opaque
-and atomic. Report stable unit IDs, member/entrypoint ownership, source and manifest paths, local
-dependency roots, resolved dependency identities, toolchain binaries/resources, and effective
-settings after native defaults. Settings the adapter cannot honor, including the EVM revision,
-produce an error rather than a silently different build. A configured root with no recognized
-project is an error; an adapter-only project must bypass today's "Nothing to compile" shortcut.
+Source paths must be relative and may not contain `.` or `..` components. Contract and unit IDs use
+the same restricted character set as adapter IDs. Foundry rejects duplicate `(source, contract)`
+identities across adapters and conflicts with built-in compiler artifacts.
 
-File filters select owning units; they never truncate their input closure. Build each selected unit
-once, then filter its returned artifacts. Discovery runs before built-in parsing; adapter-owned
-entrypoints are excluded from built-in builds, and conflicting ownership is rejected. Mixed
-Solidity/adapter projects compile independently and merge at the artifact boundary. Cross-language
-calls use ABI interfaces or artifact deployment; cross-compiler source imports and
-generated-interface dependency scheduling are deferred.
+After the last response Foundry closes stdin and requires the adapter to exit successfully. A
+protocol error, compiler error diagnostic, malformed artifact, or nonzero exit fails the Forge
+command; Foundry does not fall back to another compiler.
 
-## Artifacts and optional workflows
+## Cache and artifacts
 
-The mandatory bundle contains a stable `(adapter ID, unit ID, source unit, contract name)` identity,
-compiler identity, effective settings, EVM revision, a source table, diagnostics, and contracts.
-Each contract has a standard JSON ABI and separate creation/runtime bytecode objects; distinguish
-an absent deployable bytecode (interface) from valid empty bytecode. Source IDs are local to a build
-unit and refer to exact source content and hashes, including generated sources. Keep logical source
-names separate from filesystem paths. Namespace source IDs and source-map lookups by build identity
-when merging; preserve the original bundle.
-Never overwrite artifacts on collisions or substitute a fictitious solc version for another compiler.
+Discovery runs on every build, including cache hits. For each cacheable unit Foundry hashes the
+protocol version, adapter executable path, bytes and arguments, requested and effective settings,
+workflow, compiler identity, unit descriptor, and the path and contents of every discovered input.
+The SHA-256 fingerprint indexes the unit result under
+`cache/external-compilers/<adapter>/<unit>.json`. `cacheable = false`, `cache = false`, and
+`--force` bypass reuse.
 
-Diagnostics include severity, a namespaced string code, message, and optional primary/related spans
-using source IDs and UTF-8 byte offsets. Preserve native metadata exactly as opaque text/bytes with
-a media type and schema identifier; do not parse and reserialize away bytecode-relevant content.
-Explicit absence is valid for metadata and source maps. Optional creation/runtime source maps use
-a negotiated schema (initially Solidity's instruction-index source-map encoding), reference that
-bundle's sources, and are checked against the corresponding bytecode. Persist the normalized
-bundle, native metadata, and build provenance on both fresh and cached paths.
+Normalized artifacts are written under:
 
-Capabilities identify versioned data/behavior contracts, not a claim that all Foundry commands work.
-The usable feature set is the intersection of host support, adapter support, and outputs actually
-provided by this unit. Validate requested capabilities before compilation and actual outputs before
-execution. Missing capabilities produce a specific unsupported-workflow error.
+```text
+out/.external/<adapter>/<unit>/<source>/<contract>.json
+```
 
-Requirements attach to consumption roles. Deployment dependencies need build and, when applicable,
-linking support; artifacts considered as external test suites need explicit `forge-tests/1`
-eligibility. ABI naming alone never opts an external artifact into test execution. This allows a
-Solidity test to deploy an adapter artifact without requiring that artifact to be a native test suite.
+They are merged into `ProjectCompileOutput`, so Forge's artifact lookup, linking, tracing, scripts,
+bindings, selectors, inspection, and contract creation can consume them. Foundry removes artifact
+directories for adapters and units that disappear from complete discovery, and replaces the active
+unit directory so contracts no longer emitted by a unit are retired. `forge clean` removes these
+host-owned artifacts and cache entries with the normal `out` and `cache` directories.
 
-| Workflow | Contract and initial behavior |
-| --- | --- |
-| Build / ABI consumption | Required. ABI, bytecode, diagnostics, provenance; contract name selection remains unambiguous. |
-| Linking | Fully linked bytecode needs no optional support. `link-references/1` supplies validated creation/runtime offsets, lengths, and library artifact IDs for the existing host linker. Reject unresolved references without support. Native linking can instead consume explicitly supplied addresses as fingerprinted settings. |
-| Forge tests | `forge-tests/1` marks eligible artifacts following Forge ABI naming/setup conventions and deployment rules. Includes ordinary ABI-driven fuzzing where supported; native compiler test harnesses are not implicitly Forge tests. Solidity tests may deploy adapter artifacts without this capability. |
-| Debugging | Opcode tracing remains possible. `source-maps/1` enables source stepping only after generic host integration; locals/scopes require a separate schema. Do not send unknown languages through Solar. |
-| Coverage | Unsupported in initial v1. Source maps alone cannot replace Solidity AST-based statement/branch analysis. Reserve a future coverage-items schema and host consumer. Explicit coverage requests fail for affected units. |
-| Verification | Optional `reproduction-bundle/1` exports exact sources, compiler identity, settings, libraries, and native metadata. Network verification additionally requires a compatible host provider; the bundle alone does not enable Etherscan/Sourcify. No arbitrary adapter-selected HTTP requests. |
+The adapter cache is unit-scoped and independent of the Solidity/Vyper compiler cache. Declaring a
+unit cacheable is a promise by the adapter that the discovery response lists its complete
+build-affecting input closure. Ambient inputs such as time, randomness, undeclared environment,
+mutable dependency caches, or unreported compiler resources require `cacheable = false`.
 
-Formatting, linting, mutation, Solidity AST bindings, and language-specific inline configuration are
-not implied by successful compilation. Commands must reject unsupported selected inputs. Ordinary
-build/test commands may operate without source debugging, coverage, or verification; reports must
-not silently claim those features or complete coverage of omitted languages.
+## Forge integration and limits
 
-## Cache and failure semantics
+Adapter-aware compilation is enabled for `forge build`, `forge test`, scripts, `forge inspect`,
+`forge bind`, `forge selectors`, and `forge create`. Adapter-only projects bypass the built-in
+"Nothing to compile" exit. Mixed projects compile the external units first, then the built-in
+sources, and merge their normalized artifacts only after both compilers succeed.
 
-Cache a whole native unit, independently of Solidity's per-source compiler cache. Discovery is
-mandatory even on a hit, so new/deleted source files, changed workspace membership, and new manifest
-dependencies are visible. The host computes a versioned content hash over:
+Commands that select one external contract before compilation, such as `forge inspect` and
+`forge create`, require a path-qualified identifier such as `contracts/src/lib.fe:Counter` because
+Foundry cannot infer an adapter-owned source path from a contract name before discovery.
 
-- Protocol/artifact schema versions and the host normalization version.
-- Adapter executable content, resolved path/argv, and adapter-reported implementation resources
-  (including interpreter/package files for script adapters).
-- Every compiler/backend binary and resource identity, not just its display version.
-- Unit identity/root, complete discovered input path/content set, dependency resolution, manifests,
-  lockfiles when present, and generated input provenance.
-- Opaque requested settings, resolved effective settings, EVM revision, requested output/capability
-  set, library addresses, and the effective build-affecting environment.
+`forge coverage` rejects projects with configured external compilers because coverage cannot yet
+combine external source analysis with Solidity analysis. Source-level debugging and verification
+reproduction for external artifacts are also outside the initial integration. Build and test
+execution still work without those optional workflows. Cross-compiler source imports and generated
+interface dependency scheduling are not supported; use ABI interfaces or artifact deployment at the
+language boundary.
 
-Use a specified canonical serialization (including deterministic map ordering) and SHA-256, not
-mtime or process-local hashes. Hash local bytes in the host; require content-addressed identities
-for non-file resources. A toolchain or dependency closure that cannot be fingerprinted completely
-must report `cacheable: false`; the host then always invokes compilation. Cacheability asserts that
-the result is determined by the complete declared build context, including ambient and platform
-inputs and generated-input provenance. Time, randomness, directory enumeration, mutable native
-caches, or any other undeclared input also require `cacheable: false`. Adapter private caches must
-not reintroduce reuse based on incomplete inputs. The host cannot detect a dishonest declaration.
-Never persist raw secret environment values in build-info.
-
-Compilation must use the discovered snapshot or fail if it changes. The host checks the reported
-actual input set and revalidates discovery/content after compilation before publishing; a changed
-input closure invalidates the result. A trusted adapter is responsible for snapshot consistency
-during its native build; post-build hashing alone is not a hermetic-build guarantee. Cache hits also
-require intact artifact bundles and sufficient outputs. Initially require exact output/capability
-set equality, leaving superset reuse as a later optimization.
-
-Missing executable, unsupported protocol/target/settings/workflow, invalid messages, oversized
-output, malformed artifacts, compiler errors, nonzero exit, or cancellation fail the command with
-adapter/unit context and bounded stderr. A process exiting before its pending response is complete
-is a failure. Never fall back to another compiler or stale success. In adapter-aware builds, the
-coordinator must prevent the built-in compiler from publishing directly: stage both built-in and
-adapter outputs, then publish artifacts and cache entries only after every selected pipeline
-succeeds. This requires an additive core entry point that separates compilation from persistence.
-Reconcile active unit indexes against complete discovery and resolved adapter configuration; retire
-disappeared units, and remove contracts a remaining unit no longer emits. Artifact filters affect the
-returned view, not the complete persisted unit bundle, and unselected existing units are not treated
-as deleted. Existing artifacts may remain on disk after failure but cannot be returned as a
-successful result. `--force` bypasses reuse; `forge clean` removes host-owned adapter artifacts/cache,
-not native project files.
-
-## Ownership and integration
-
-The current [`Compiler`/`ParsedSource`/`Language` traits][compiler-traits] assume host-side source
-resolution and static file extensions. Adding `Fe` variants would spread language knowledge through
-Foundry, as illustrated by [foundry-core#206][core-fe] and [foundry#16968][foundry-fe]. Put a generic
-native-project coordinator beside that pipeline rather than forcing foreign manifests through it.
-
-| Owner | Responsibility |
-| --- | --- |
-| `foundry-core` / `foundry-compilers` | Versioned protocol DTOs and conformance fixtures, process transport, native-unit coordinator/cache, normalized bundles and artifact projection. No Fe parser, dependency, settings type, or compiler variant. |
-| Foundry configuration and [`common::compile`](../../crates/common/src/compile.rs) | Generic adapter configuration and host policy, request construction, coordination with built-in compilation, diagnostics and merged artifact lookup. |
-| Forge, linking, traces, verification | Consume normalized artifacts; explicitly gate each optional workflow. Keep Solidity analysis on Solidity sources. |
-| Adapter maintainers | Native discovery/dependency resolution, compiler invocation and fingerprints, normalization, capability correctness, distribution and version compatibility. |
-
-Prefer additive APIs: preserve existing `Config::project()` and `Project<MultiCompiler>` callers,
-introduce the coordinating build entry point for adapter-aware commands, and explicitly reject
-configured adapters in unmigrated command paths. This is a real cross-crate change: current
-`ProjectCompileOutput`, artifact/source identities, runner analysis, and verification contexts have
-built-in compiler assumptions. Audit those consumers before promising transparent compatibility;
-do not shoehorn external output into fake Solidity sources or discard provenance during merging.
-
-## Fe walkthrough and validation plan
-
-Fe's documented [ingots][fe-projects] contain `fe.toml` and `src/lib.fe`; [workspaces][fe-workspaces]
-add member discovery and shared dependencies. The out-of-tree adapter interprets these and any
-standalone-file mode supported by its pinned Fe executable. It owns all Fe version-specific flags
-and rejects dependency/target forms it cannot support. Foundry only sees native units and inputs.
-
-For `contracts/fe.toml` depending on a local `lib/step` ingot, discovery returns both manifests and
-all relevant sources, the installed Fe toolchain identity, and resolved optimizer/EVM settings.
-Compilation invokes the native project build once and translates ABI and both bytecodes into the
-bundle. Fe's documented [metadata emission][fe-metadata] can populate the opaque metadata field;
-it does not establish compatibility with Foundry's verification providers. Editing `lib/step`,
-adding a source/member, changing a manifest, replacing the Fe executable at the same path, or
-changing optimization produces a different cache key. All Fe-specific logic lives in the adapter.
-
-This is a design walkthrough, not a working integration or proof of workflow support. Validate it
-in three implementation steps:
-
-1. Specify protocol schemas and build a generic fixture adapter. Test incompatible versions,
-   malformed output, cancellation, output path escapes, artifact collisions, stale discovery,
-   fresh/cache parity, removed outputs and units, filtered builds, uncacheable ambient inputs, and
-   input/toolchain/settings invalidation.
-2. Implement the coordinator and generic configuration in core/Foundry with configuration tests and
-   the corresponding Foundry Book update. Exercise adapter-only and mixed Solidity builds through
-   the actual Forge executable, including cache hits, adapter failure after successful built-in
-   compilation, Solidity deployment of adapter artifacts, and explicit external test eligibility.
-3. Build the Fe adapter in a separate repository against a pinned Fe release. Compile an ingot,
-   workspace, and local dependency; run Solidity tests deploying its artifacts, then opt into native
-   Forge-ABI test artifacts after testing setup, pass/fail, fuzzing, and cheatcode behavior. Explicitly
-   test unsupported coverage/debug/verification requests. Confirm neither Foundry repository gains
-   Fe-specific dependencies, configuration fields, file-extension lists, or compiler variants.
-
-Before protocol stabilization, settle the exact artifact projection API and schema, environment
-allowlist, and measured resource-limit defaults in that prototype. The default recommendation is to
-ship build/artifact interoperability first, then independently qualify optional workflows.
+The host does not install adapters, compilers, or native dependencies, and does not interpret
+language manifests. Adapter distribution, toolchain selection, dependency setup, protocol
+conformance, and native compiler diagnostics remain the adapter maintainer's responsibility.
 
 [issue]: https://linear.app/tempoxyz/issue/OSS-821
-[alternate]: https://github.com/foundry-rs/foundry/issues/4418
-[revive]: https://github.com/foundry-rs/foundry/issues/10021
-[core-fe]: https://github.com/foundry-rs/foundry-core/pull/206
-[foundry-fe]: https://github.com/foundry-rs/foundry/pull/16968
-[compiler-traits]: https://github.com/foundry-rs/foundry-core/blob/1e313aa20ae3185eabafdaa7f0dac22d277f0348/crates/compilers/crates/compilers/src/compilers/mod.rs
-[fe-projects]: https://fe-lang.org/ingots/project-structure/
-[fe-workspaces]: https://fe-lang.org/ingots/workspaces/
-[fe-metadata]: https://blog.fe-lang.org/posts/release-26-2/

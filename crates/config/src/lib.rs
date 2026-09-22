@@ -148,6 +148,9 @@ use bind_json::BindJsonConfig;
 mod compilation;
 pub use compilation::{CompilationRestrictions, SettingsOverrides};
 
+mod external_compiler;
+pub use external_compiler::ExternalCompiler;
+
 pub mod extend;
 use extend::Extends;
 use foundry_evm_networks::NetworkConfigs;
@@ -586,6 +589,10 @@ pub struct Config {
 
     /// Configuration for Vyper compiler
     pub vyper: VyperConfig,
+
+    /// Explicitly configured external compiler adapters.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub external_compilers: Vec<ExternalCompiler>,
 
     /// Soldeer dependencies
     pub dependencies: Option<SoldeerDependencyConfig>,
@@ -2925,6 +2932,7 @@ impl Default for Config {
             gas_reports_include_tests: false,
             solc: None,
             vyper: Default::default(),
+            external_compilers: Default::default(),
             auto_detect_solc: true,
             offline: false,
             optimizer: None,

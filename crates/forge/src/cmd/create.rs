@@ -20,6 +20,7 @@ use foundry_cli::{
 };
 use foundry_common::{
     FoundryTransactionBuilder, compile,
+    external_compiler::ExternalCompilerWorkflow,
     provider::{
         ProviderBuilder,
         fee::{estimate_eip1559_fees, resolve_broadcast_eip1559_fees},
@@ -195,7 +196,11 @@ impl CreateArgs {
             project.find_contract_path(&self.contract.name)?
         };
 
-        let output = compile::compile_target(&target_path, &project, shell::is_json())?;
+        let compiler = compile::ProjectCompiler::new()
+            .external_compilers(&config, ExternalCompilerWorkflow::Create)
+            .quiet(shell::is_json())
+            .target_files([target_path.clone()]);
+        let output = compiler.compile(&project)?;
 
         let (abi, bin, id) = find_contract_artifacts(output, &target_path, &self.contract.name)?;
 

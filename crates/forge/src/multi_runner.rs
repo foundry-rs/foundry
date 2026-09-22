@@ -16,7 +16,7 @@ use eyre::Result;
 use foundry_cli::opts::configure_pcx_from_compile_output;
 use foundry_common::{
     ContractsByArtifact, ContractsByArtifactBuilder, EmptyTestFilter, LIBRARY_DEPLOYER,
-    TestFunctionKind, get_contract_name,
+    TestFunctionKind, external_compiler::external_artifact_is_test_eligible, get_contract_name,
 };
 use foundry_compilers::{
     Artifact, ArtifactId, Compiler, ProjectCompileOutput,
@@ -832,6 +832,9 @@ impl MultiContractRunnerBuilder {
         let empty_filter = EmptyTestFilter::default();
         let resolver = Resolver::new(&linker);
         for (id, contract) in linked_contracts.iter() {
+            if !external_artifact_is_test_eligible(&id.build_id) {
+                continue;
+            }
             let Some(abi) = contract.abi.as_ref() else { continue };
             if abi.constructor.as_ref().is_some_and(|c| !c.inputs.is_empty())
                 || !test_matcher.matches_contract(&empty_filter, id, abi)

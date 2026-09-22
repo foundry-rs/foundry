@@ -1,6 +1,6 @@
 use crate::utils::generate_large_init_contract;
 use foundry_compilers::artifacts::{BytecodeHash, EvmVersion};
-use foundry_config::{CompilationRestrictions, SettingsOverrides};
+use foundry_config::{CompilationRestrictions, ExternalCompiler, SettingsOverrides};
 use foundry_test_utils::{forgetest, forgetest_init, snapbox::IntoData, str, util::OutputExt};
 use globset::Glob;
 use std::{
@@ -32,6 +32,90 @@ fn add_local_submodule(root: &Path, path: &str) -> String {
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     git(&root.join(path), &["rev-parse", "HEAD"])
 }
+
+#[cfg(unix)]
+forgetest!(external_compiler_builds_and_caches_native_project, |prj, cmd| {
+    let native = prj.root().join("native");
+    fs::create_dir_all(native.join("src")).unwrap();
+    fs::write(native.join("fe.toml"), "[ingot]\nname = \"app\"\nversion = \"1.0.0\"\n").unwrap();
+    fs::write(native.join("src/lib.fe"), "pub contract Counter {}\n").unwrap();
+
+    let adapter = prj.root().join("adapter.sh");
+    fs::write(
+        &adapter,
+        r#"#!/bin/sh
+read -r initialize
+printf '%s\n' '{"id":1,"result":{"protocol":"1.0"}}'
+read -r discover
+printf '%s\n' '{"id":2,"result":{"units":[{"id":"app","compiler":{"name":"fe","version":"26.3.0"},"inputs":["native/fe.toml","native/src/lib.fe"],"capabilities":["build/1"],"effectiveSettings":{"optimization":"s"},"cacheable":true}]}}'
+if read -r compile; then
+    : > "$0.compiled"
+    printf '%s\n' '{"id":3,"result":{"diagnostics":[],"artifacts":[{"source":"native/src/lib.fe","name":"Counter","abi":[{"type":"function","name":"testExternalArtifactIsDeployable","inputs":[],"outputs":[],"stateMutability":"nonpayable"}],"bytecode":"0x6005600c60003960056000f360006000fd","deployedBytecode":"0x60006000fd","metadata":{"language":"Fe"}}]}}'
+fi
+"#,
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&adapter).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&adapter, permissions).unwrap();
+    prj.update_config(|config| {
+        config.external_compilers.push(ExternalCompiler {
+            id: "fixture".to_string(),
+            command: adapter.clone(),
+            args: Vec::new(),
+            roots: vec!["native".into()],
+            settings: serde_json::json!({ "optimization": "s" }),
+        });
+    });
+
+    cmd.forge_fuse().args(["build", "native"]).assert_success();
+    let invoked = adapter.with_extension("sh.compiled");
+    assert!(invoked.exists());
+    let artifact = prj.root().join("out/.external/fixture/app/native/src/lib.fe/Counter.json");
+    let artifact_json: serde_json::Value =
+        serde_json::from_slice(&fs::read(artifact).unwrap()).unwrap();
+    assert_eq!(artifact_json["bytecode"]["object"], "0x6005600c60003960056000f360006000fd");
+    assert_eq!(artifact_json["rawMetadata"], r#"{"language":"Fe"}"#);
+
+    fs::remove_file(&invoked).unwrap();
+    cmd.forge_fuse().arg("build").assert_success();
+    assert!(!invoked.exists(), "cache hit unexpectedly invoked compilation");
+
+    fs::write(native.join("src/lib.fe"), "pub contract Counter { pub fn value() -> u256 { 1 } }\n")
+        .unwrap();
+    cmd.forge_fuse().arg("build").assert_success();
+    assert!(invoked.exists(), "source change did not invalidate external compiler cache");
+
+    cmd.forge_fuse().args(["inspect", "native/src/lib.fe:Counter", "abi"]).assert_success();
+
+    fs::create_dir_all(prj.root().join("test")).unwrap();
+    fs::write(
+        prj.root().join("test/ExternalArtifact.t.sol"),
+        r#"pragma solidity >=0.8.0;
+
+interface Vm {
+    function getCode(string calldata artifact) external returns (bytes memory);
+}
+
+contract ExternalArtifactTest {
+    Vm private constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function testExternalArtifactIsDeployable() public {
+        bytes memory code = vm.getCode("Counter");
+        address deployed;
+        assembly ("memory-safe") {
+            deployed := create(0, add(code, 0x20), mload(code))
+        }
+        require(deployed != address(0) && deployed.code.length == 5);
+    }
+}
+"#,
+    )
+    .unwrap();
+    cmd.forge_fuse()
+        .args(["test", "--match-test", "testExternalArtifactIsDeployable"])
+        .assert_success();
+});
 
 #[cfg(unix)]
 forgetest!(local_compiler_runs_without_warning, |prj, cmd| {
