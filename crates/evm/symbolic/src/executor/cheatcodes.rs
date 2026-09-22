@@ -337,11 +337,8 @@ impl SymbolicExecutor {
                     parent.stack.push(SymExpr::zero(&mut self.cx))?;
                     parents.push_back(parent);
                 }
-                JoinedCallOutcome::ExpectedRevert { mut parent, child } => {
-                    parent.expected_calls = child.expected_calls;
+                JoinedCallOutcome::ExpectedRevert { mut parent, .. } => {
                     parent.expected_creates = pending_expected_creates.clone();
-                    parent.call_mocks = child.call_mocks;
-                    parent.function_mocks = child.function_mocks;
                     parent.world = failure_world.clone();
                     let zero = SymExpr::zero(&mut self.cx);
                     let return_data = SymReturnData::from_words(&mut self.cx, vec![zero]);
@@ -356,12 +353,8 @@ impl SymbolicExecutor {
                 }
                 JoinedCallOutcome::Success { mut parent, child } => {
                     parent.world = child.world;
-                    parent.block = child.block;
                     parent.expected_emit = child.expected_emit;
-                    parent.expected_calls = child.expected_calls;
                     parent.expected_creates = pending_expected_creates.clone();
-                    parent.call_mocks = child.call_mocks;
-                    parent.function_mocks = child.function_mocks;
                     self.observe_expected_create(
                         &mut parent,
                         state.address,
