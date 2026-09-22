@@ -13,8 +13,7 @@ contract Issue16983Dummy {
 }
 
 contract Issue16983Test is Test {
-    IUniswapV3Factory internal constant FACTORY =
-        IUniswapV3Factory(0x33128a8fC17869897dcE68Ed026d694621f6FDfD);
+    IUniswapV3Factory internal constant FACTORY = IUniswapV3Factory(0x33128a8fC17869897dcE68Ed026d694621f6FDfD);
     address internal constant DEPLOYER = 0x7AC7499f3754B65CF9089db328ef51151a78EC00;
 
     function testForkReadsStorageAfterSameAddressWasCreatedOnAnotherFork() public {
