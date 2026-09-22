@@ -4,9 +4,7 @@ use crate::{
         backend::{
             db::{Db, SerializableState},
             fork::{
-                ClientFork, ClientForkConfig, ForkEndpointIdentity,
-                bal::{self, PreparedBalSeed},
-                ensure_fork_network_supported,
+                ClientFork, ClientForkConfig, ForkEndpointIdentity, ensure_fork_network_supported,
             },
             genesis::GenesisConfig,
             mem::fork_db::ForkedDatabase,
@@ -19,12 +17,18 @@ use crate::{
 };
 use alloy_chains::{Chain, NamedChain};
 use alloy_consensus::BlockHeader;
-use alloy_eips::{eip1559::BaseFeeParams, eip7840::BlobParams};
+use alloy_eips::{
+    eip1559::BaseFeeParams,
+    eip7840::BlobParams,
+    eip7928::{BlockAccessList, compute_block_access_list_hash, validate_block_access_list},
+};
 use alloy_evm::EvmEnv;
 use alloy_genesis::Genesis;
 use alloy_network::{AnyNetwork, AnyRpcBlock, BlockResponse, TransactionResponse};
 use alloy_primitives::{
-    Address, B256, BlockNumber, TxHash, U256, hex, keccak256, map::HashMap, utils::Unit,
+    Address, B256, BlockNumber, TxHash, U256, hex, keccak256,
+    map::{HashMap, U256Map},
+    utils::Unit,
 };
 use alloy_provider::Provider;
 use alloy_rpc_types::{
@@ -63,6 +67,7 @@ use revm::{
     context::{BlockEnv, CfgEnv},
     context_interface::block::BlobExcessGasAndPrice,
     primitives::hardfork::SpecId,
+    state::{AccountInfo, Bytecode},
 };
 use serde_json::{Value, json};
 use std::{
@@ -204,6 +209,154 @@ pub(crate) struct PreparedFork {
     pub(crate) config: ClientForkConfig,
     pub(crate) replay: Option<ForkTransactionReplay>,
     pub(crate) bal_seed: Option<PreparedBalSeed>,
+}
+
+/// Validated post-block values that can populate the remote cache without fetching accounts.
+#[derive(Debug)]
+pub(crate) struct PreparedBalSeed {
+    block_hash: B256,
+    accounts: Vec<(Address, AccountInfo)>,
+    storage: Vec<(Address, Vec<(U256, U256)>)>,
+}
+
+/// Fetches an optional BAL within a bounded budget, including the provider's retries.
+async fn fetch_bal_seed(provider: &RetryProvider, block: &AnyRpcBlock) -> Option<PreparedBalSeed> {
+    let block_hash = block.header.hash;
+    let bal = match tokio::time::timeout(Duration::from_millis(500), async {
+        match provider.raw_request("eth_getBlockAccessList".into(), (block_hash,)).await {
+            Err(error) if is_rpc_method_not_found(&error) => {
+                provider.get_block_access_list_by_hash(block_hash).await
+            }
+            response => response,
+        }
+    })
+    .await
+    {
+        Ok(Ok(Some(bal))) => bal,
+        Ok(Ok(None)) => {
+            debug!(target: "node", %block_hash, "fork BAL unavailable");
+            return None;
+        }
+        Ok(Err(_)) => {
+            debug!(target: "node", %block_hash, "fork BAL request failed");
+            return None;
+        }
+        Err(_) => {
+            debug!(target: "node", %block_hash, "fork BAL request timed out");
+            return None;
+        }
+    };
+    match PreparedBalSeed::new(
+        bal,
+        block_hash,
+        block.transactions.len(),
+        block.header.block_access_list_hash(),
+    ) {
+        Ok(seed) if seed.is_empty() => {
+            debug!(target: "node", %block_hash, "fork BAL contains no cacheable post-state");
+            None
+        }
+        Ok(seed) => Some(seed),
+        Err(err) => {
+            debug!(target: "node", %block_hash, %err, "ignoring invalid fork BAL");
+            None
+        }
+    }
+}
+
+impl PreparedBalSeed {
+    fn new(
+        bal: BlockAccessList,
+        block_hash: B256,
+        transaction_count: usize,
+        expected_hash: Option<B256>,
+    ) -> Result<Self> {
+        validate_block_access_list(&bal, transaction_count).wrap_err("invalid BAL structure")?;
+        if let Some(expected_hash) = expected_hash {
+            eyre::ensure!(
+                compute_block_access_list_hash(&bal) == expected_hash,
+                "BAL hash mismatch"
+            );
+        }
+
+        let mut accounts = Vec::new();
+        let mut storage = Vec::new();
+        for account in bal {
+            if !account.storage_changes.is_empty() {
+                let mut slots = Vec::with_capacity(account.storage_changes.len());
+                slots.extend(account.storage_post_states());
+                storage.push((account.address, slots));
+            }
+            let balance = account.balance_post_state();
+            let nonce = account.nonce_post_state();
+            let mut code = None;
+            // Validate code even when this account's remaining fields are incomplete.
+            for change in account.code_changes {
+                code =
+                    Some(Bytecode::new_raw_checked(change.new_code).wrap_err("invalid BAL code")?);
+            }
+            if let (Some(balance), Some(nonce), Some(code)) = (balance, nonce, code) {
+                accounts.push((
+                    account.address,
+                    AccountInfo {
+                        balance,
+                        nonce,
+                        code_hash: code.hash_slow(),
+                        code: Some(code),
+                        account_id: None,
+                    },
+                ));
+            }
+        }
+        Ok(Self { block_hash, accounts, storage })
+    }
+
+    const fn is_empty(&self) -> bool {
+        self.accounts.is_empty() && self.storage.is_empty()
+    }
+
+    /// Seeds an exact fork block's remote cache, retaining already cached accounts and slots.
+    ///
+    /// The caller must apply this before exposing the staged database or applying local overrides.
+    /// A seed for a different block is ignored without modifying the database.
+    pub(crate) fn apply(self, db: &BlockchainDb) {
+        if db.meta().read().fork_hash != Some(self.block_hash) {
+            debug!(
+                target: "node",
+                block_hash=%self.block_hash,
+                "ignoring fork BAL for a different cache block"
+            );
+            return;
+        }
+
+        let mut accounts = db.accounts().write();
+        let accounts_before = accounts.len();
+        for (address, account) in self.accounts {
+            accounts.entry(address).or_insert(account);
+        }
+        let inserted_accounts = accounts.len() - accounts_before;
+        drop(accounts);
+
+        let mut storage = db.storage().write();
+        let mut inserted_slots = 0;
+        for (address, slots) in self.storage {
+            let cached_slots = storage.entry(address).or_insert_with(|| {
+                U256Map::with_capacity_and_hasher(slots.len(), Default::default())
+            });
+            let slots_before = cached_slots.len();
+            for (slot, value) in slots {
+                cached_slots.entry(slot).or_insert(value);
+            }
+            inserted_slots += cached_slots.len() - slots_before;
+        }
+        debug!(
+            target: "node",
+            block_hash=%self.block_hash,
+            inserted_accounts,
+            inserted_slots,
+            "prefilled fork cache from BAL"
+        );
+    }
 }
 
 /// The default IPC endpoint
@@ -2293,7 +2446,7 @@ latest block number: {latest_block}"
         let mut bal_seed = if !node_info_probe.inconclusive
             && self.fork_bal_eligible(fork_identity, block.header.timestamp())
         {
-            bal::fetch(&provider, &block).await
+            fetch_bal_seed(&provider, &block).await
         } else {
             None
         };
@@ -2754,6 +2907,9 @@ async fn find_latest_fork_block<P: Provider<AnyNetwork>>(
 
     Ok(num)
 }
+
+#[cfg(test)]
+mod bal_tests;
 
 #[cfg(test)]
 mod tests {

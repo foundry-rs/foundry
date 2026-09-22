@@ -110,6 +110,88 @@ impl Drop for IdentityProxy {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn fork_bal_empty_seed_keeps_startup_lazy() {
+    let origin = BalOrigin::new().await;
+    origin
+        .api
+        .anvil_set_storage_at(CONTRACT, U256::ZERO, B256::from(U256::from(99)))
+        .await
+        .unwrap();
+
+    for mode in [BalResponse::Empty, BalResponse::Partial] {
+        for no_bal in [false, true] {
+            let proxy = BalProxy::new(&origin.handle, mode, true).await;
+            let changing = IdentityProxy::new(
+                proxy.endpoint.clone(),
+                IdentityAfterBal::InternalErrorAfterValidation,
+                Arc::new(AtomicBool::new(false)),
+            )
+            .await;
+            let (api, _handle) = spawn(
+                origin
+                    .config(&proxy)
+                    .with_fork_urls(vec![changing.endpoint.clone()])
+                    .with_no_bal(no_bal),
+            )
+            .await;
+
+            assert_eq!(proxy.count("eth_getBlockAccessList"), usize::from(!no_bal));
+            assert_eq!(changing.post_fetch_probes.load(Ordering::SeqCst), 0);
+            assert_eq!(proxy.count("eth_getStorageAt"), 0);
+            assert_eq!(
+                api.storage_at(CONTRACT, U256::ZERO, None).await.unwrap(),
+                B256::from(U256::from(99)),
+                "{mode:?}, no_bal={no_bal}",
+            );
+            assert_eq!(proxy.count("eth_getStorageAt"), 1);
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn fork_bal_empty_seed_keeps_reset_lazy() {
+    let origin = BalOrigin::new().await;
+    origin
+        .api
+        .anvil_set_storage_at(CONTRACT, U256::ZERO, B256::from(U256::from(99)))
+        .await
+        .unwrap();
+
+    for mode in [BalResponse::Empty, BalResponse::Partial] {
+        for no_bal in [false, true] {
+            let proxy = BalProxy::new(&origin.handle, BalResponse::Valid, false).await;
+            let (api, _handle) = spawn(origin.config(&proxy).with_no_bal(no_bal)).await;
+            api.anvil_set_storage_at(CONTRACT, U256::ZERO, B256::from(U256::from(77)))
+                .await
+                .unwrap();
+            let replacement = BalProxy::new(&origin.handle, mode, true).await;
+            let changing = IdentityProxy::new(
+                replacement.endpoint.clone(),
+                IdentityAfterBal::InternalErrorAfterValidation,
+                Arc::new(AtomicBool::new(false)),
+            )
+            .await;
+            api.anvil_reset(Some(Forking {
+                json_rpc_url: Some(changing.endpoint.clone()),
+                block_number: Some(origin.block_number),
+            }))
+            .await
+            .unwrap();
+
+            assert_eq!(replacement.count("eth_getBlockAccessList"), usize::from(!no_bal));
+            assert_eq!(changing.post_fetch_probes.load(Ordering::SeqCst), 0);
+            assert_eq!(replacement.count("eth_getStorageAt"), 0);
+            assert_eq!(
+                api.storage_at(CONTRACT, U256::ZERO, None).await.unwrap(),
+                B256::from(U256::from(99)),
+                "{mode:?}, no_bal={no_bal}",
+            );
+            assert_eq!(replacement.count("eth_getStorageAt"), 1);
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn fork_bal_skips_identity_failure_after_fetch() {
     let origin = BalOrigin::new().await;
     origin

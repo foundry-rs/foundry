@@ -1,5 +1,6 @@
 //! Fork cache warming from immutable block access lists.
 
+use alloy_eips::eip7928::{AccountChanges, BalanceChange, BlockAccessIndex};
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, B256, U256, address, bytes};
@@ -39,6 +40,8 @@ enum BalResponse {
     Unsupported,
     InternalError,
     Null,
+    Empty,
+    Partial,
     BadCommitment,
     WithoutCommitment,
     PreCancun,
@@ -170,15 +173,32 @@ impl BalProxy {
                         .json::<Value>()
                         .await
                         .unwrap();
-                    if method == "eth_getBlockAccessList"
-                        && matches!(mode, BalResponse::BadCommitment)
-                    {
-                        response["result"] = json!([]);
+                    if method == "eth_getBlockAccessList" {
+                        match mode {
+                            BalResponse::BadCommitment | BalResponse::Empty => {
+                                response["result"] = json!([]);
+                            }
+                            BalResponse::Partial => {
+                                response["result"] = json!([AccountChanges::new(CONTRACT)
+                                    .with_balance_change(BalanceChange::new(
+                                        BlockAccessIndex::new(1),
+                                        U256::from(42),
+                                    ))
+                                    .with_storage_read(U256::ZERO)]);
+                            }
+                            _ => {}
+                        }
                     }
                     if matches!(method, "eth_getBlockByHash" | "eth_getBlockByNumber")
                         && let Some(block) = response["result"].as_object_mut()
                     {
-                        if matches!(mode, BalResponse::WithoutCommitment | BalResponse::PreCancun) {
+                        if matches!(
+                            mode,
+                            BalResponse::WithoutCommitment
+                                | BalResponse::PreCancun
+                                | BalResponse::Empty
+                                | BalResponse::Partial
+                        ) {
                             block.remove("blockAccessListHash");
                         }
                         if matches!(mode, BalResponse::PreCancun) {
