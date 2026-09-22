@@ -2051,6 +2051,77 @@ checkMockSurvivesRevertingCall(address)
     assert!(!stdout.contains("[PASS]"), "{stdout}");
 });
 
+forgetest_init!(symbolic_expect_call_follows_function_mock_redirect, |prj, cmd| {
+    skip_unless_z3!("symbolic_expect_call_follows_function_mock_redirect");
+
+    prj.add_test(
+        "SymbolicExpectCallRedirect.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Target {
+    function ping() external pure returns (uint256) {
+        return 1;
+    }
+}
+
+contract Redirect {
+    function ping() external pure returns (uint256) {
+        return 2;
+    }
+}
+
+contract SymbolicExpectCallRedirect is Test {
+    Target target;
+    Redirect redirect;
+
+    function setUp() public {
+        target = new Target();
+        redirect = new Redirect();
+    }
+
+    // The redirected call runs `redirect`'s code, so an expectation on `target` is never met.
+    function checkExpectCallOnRedirectedSource() public {
+        vm.mockFunction(address(target), address(redirect), abi.encodeWithSelector(Target.ping.selector));
+        vm.expectCall(address(target), abi.encodeWithSelector(Target.ping.selector));
+        target.ping();
+    }
+
+    function checkExpectCallOnRedirectTarget() public {
+        vm.mockFunction(address(target), address(redirect), abi.encodeWithSelector(Target.ping.selector));
+        vm.expectCall(address(redirect), abi.encodeWithSelector(Target.ping.selector));
+        assertEq(target.ping(), 2);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-contract", "SymbolicExpectCallRedirect"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+to be called 1 time, but was called 0 times; counterexample:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkExpectCallOnRedirectedSource()
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkExpectCallOnRedirectTarget()
+"#]],
+    );
+});
+
 forgetest_init!(symbolic_cheatcodes_reject_gas_deal_value, |prj, cmd| {
     skip_unless_z3!("symbolic_cheatcodes_reject_gas_deal_value");
 
