@@ -127,13 +127,12 @@ impl Analyzer<'_, '_> {
         match &expr.kind {
             ExprKind::Assign(lhs, op, rhs) => {
                 // The RHS is evaluated before the assignment takes effect; a compound assignment
-                // also reads the current LHS value.
+                // also reads the current LHS value before writing it back.
                 self.reads(rhs);
-                if op.is_none() {
-                    self.write_lhs(lhs, expr.span);
-                } else {
+                if op.is_some() {
                     self.reads(lhs);
                 }
+                self.write_lhs(lhs, expr.span);
             }
             // Pre/post increment and decrement read the variable, then write it.
             ExprKind::Unary(op, inner) if op.kind.has_side_effects() => {
