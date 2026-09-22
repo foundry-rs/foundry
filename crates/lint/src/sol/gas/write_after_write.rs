@@ -126,8 +126,7 @@ impl Analyzer<'_, '_> {
         let expr = expr.peel_parens();
         match &expr.kind {
             ExprKind::Assign(lhs, op, rhs) => {
-                // The RHS is evaluated before the assignment takes effect; a compound assignment
-                // also reads the current LHS value before writing it back.
+                // Compound assignments read the LHS before writing it.
                 self.reads(rhs);
                 if op.is_some() {
                     self.reads(lhs);
@@ -155,7 +154,7 @@ impl Analyzer<'_, '_> {
         }
     }
 
-    /// Records a plain `=` write; tuple destructuring records each component with its own span.
+    /// Records assignment writes, preserving each tuple component's span.
     fn write_lhs(&mut self, lhs: &Expr<'_>, span: Span) {
         match &lhs.peel_parens().kind {
             ExprKind::Tuple(exprs) => {

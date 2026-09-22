@@ -166,19 +166,19 @@ contract WriteAfterWrite {
         x = v;
     }
 
-    // bad: x += 1 reads x, then writes it; x = v overwrites that write without a read
+    // bad: compound result overwritten without a read
     function bad12(uint256 v) public {
         x += 1;
         x = v;
     }
 
-    // bad: same for the other compound operators
+    // bad: subtraction result overwritten without a read
     function bad13(uint256 v) public {
         x -= 1;
         x = v;
     }
 
-    // good: compound assignment after a write reads the pending write
+    // good: compound assignment reads the earlier write
     function good16(uint256 v) public {
         x = v;
         x *= 2;
