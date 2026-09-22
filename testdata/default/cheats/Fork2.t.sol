@@ -101,6 +101,28 @@ contract ForkTest is Test {
         assertEq(block.number, mainBlock + 1);
     }
 
+    // test that rolling a fork that is not selected drops the accounts it had loaded, so reads
+    // after selecting it again come from the new block instead of the old journal
+    function testRollInactiveForkRefreshesLoadedState() public {
+        address weth = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
+        vm.selectFork(mainnetFork);
+        uint256 latest = block.number;
+
+        uint256 fork = vm.createSelectFork("mainnet", latest - 40);
+        // Load the account into the fork's journal at the old block.
+        uint256 staleBalance = weth.balance;
+        assertGt(staleBalance, 0);
+
+        vm.selectFork(optimismFork);
+        vm.rollFork(fork, latest - 10);
+        vm.selectFork(fork);
+        assertEq(block.number, latest - 10);
+        uint256 rolledBalance = weth.balance;
+
+        vm.createSelectFork("mainnet", latest - 10);
+        assertEq(rolledBalance, weth.balance);
+    }
+
     // test that we can "roll" blocks until a transaction
     function testCanRollForkUntilTransaction() public {
         // block to run transactions from
