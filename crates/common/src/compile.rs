@@ -279,7 +279,7 @@ impl ProjectCompiler {
                 compiler.compile().map_err(eyre::Report::from)?
             };
             if let Some(external) = external {
-                merge_external(&mut output, external)?;
+                merge_external(&mut output, external, !project.no_artifacts)?;
             }
             Ok(output)
         })

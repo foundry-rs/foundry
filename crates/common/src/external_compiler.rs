@@ -112,37 +112,48 @@ pub fn compile_external(
     })
 }
 
-/// Merges validated external artifacts into a built-in compilation result and writes them to disk.
+/// Merges validated external artifacts into a built-in compilation result.
 pub fn merge_external<C>(
     output: &mut ProjectCompileOutput<C>,
     external: ExternalCompilation,
+    write_artifacts: bool,
 ) -> Result<()>
 where
     C: Compiler<CompilerContract = Contract>,
 {
     let mut merged = output.compiled_artifacts().clone();
-    for (source, contracts) in external.artifacts {
+    for (source, contracts) in &external.artifacts {
         for name in contracts.keys() {
             ensure!(
-                merged.get(&source).and_then(|existing| existing.get(name)).is_none(),
+                merged.get(source).and_then(|existing| existing.get(name)).is_none(),
                 "external compiler artifact conflicts with built-in artifact {}:{name}",
                 source.display()
             );
         }
-        merged.as_mut().entry(source).or_default().extend(contracts);
     }
-    retire_children(&external.output_root, &external.active_units.keys().cloned().collect(), None)?;
-    for (adapter, units) in external.active_units {
-        let adapter_root = external.output_root.join(adapter);
-        retire_children(&adapter_root, &units, None)?;
-        for unit in units {
-            let unit_root = adapter_root.join(unit);
-            if unit_root.exists() {
-                fs::remove_dir_all(unit_root)?;
+
+    if write_artifacts {
+        retire_children(
+            &external.output_root,
+            &external.active_units.keys().cloned().collect(),
+            None,
+        )?;
+        for (adapter, units) in &external.active_units {
+            let adapter_root = external.output_root.join(adapter);
+            retire_children(&adapter_root, units, None)?;
+            for unit in units {
+                let unit_root = adapter_root.join(unit);
+                if unit_root.exists() {
+                    fs::remove_dir_all(unit_root)?;
+                }
             }
         }
+        external.artifacts.write_all()?;
     }
-    merged.write_all()?;
+
+    for (source, contracts) in external.artifacts {
+        merged.as_mut().entry(source).or_default().extend(contracts);
+    }
     output.set_compiled_artifacts(merged);
     Ok(())
 }
