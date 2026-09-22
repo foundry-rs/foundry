@@ -1,4 +1,4 @@
-//! Unit tests for BAL validation and fork cache seeding.
+//! Unit tests for BAL source eligibility, validation and fork cache seeding.
 
 use super::{ClientForkConfig, ForkEndpointIdentity, cache_bal, validate_bal};
 use alloy_eips::eip7928::{
@@ -10,7 +10,11 @@ use alloy_primitives::{Address, B256, Bytes, U256, bytes};
 use alloy_provider::ProviderBuilder;
 use alloy_rpc_types::{Block, BlockTransactions};
 use alloy_transport::mock::Asserter;
-use foundry_evm::backend::{BlockchainDb, BlockchainDbMeta};
+use foundry_evm::{
+    backend::{BlockchainDb, BlockchainDbMeta},
+    hardfork::EthereumHardfork,
+};
+use foundry_evm_networks::NetworkVariant;
 use revm::{context::BlockEnv, state::AccountInfo};
 use std::{sync::Arc, time::Duration};
 
@@ -62,6 +66,78 @@ fn fork_config(asserter: Asserter, block_hash: B256) -> ClientForkConfig {
         compute_units_per_second: 0,
         headers: vec![],
         total_difficulty: U256::ZERO,
+    }
+}
+
+#[tokio::test]
+async fn fork_bal_prefill_uses_source_rules() {
+    let hash = B256::repeat_byte(1);
+    let address = Address::repeat_byte(1);
+    let ethereum = Some(NetworkVariant::Ethereum);
+    let cancun = Some(EthereumHardfork::Cancun);
+    let shanghai = Some(EthereumHardfork::Shanghai);
+    for (name, chain_id, network, hardfork, timestamp, eligible) in [
+        ("mainnet", 1, ethereum, None, 1_800_000_000, true),
+        ("mainnet before Cancun", 1, ethereum, None, 1_600_000_000, false),
+        ("undiscovered network", 1, None, None, 1_800_000_000, true),
+        ("Sepolia", 11_155_111, ethereum, None, 1_800_000_000, true),
+        ("Holesky", 17_000, ethereum, None, 1_800_000_000, true),
+        ("Hoodi", 560_048, ethereum, None, 1_800_000_000, true),
+        ("unknown source", 31_337, ethereum, None, 1_800_000_000, false),
+        ("Arbitrum source", 42_161, ethereum, None, 1_800_000_000, false),
+        ("Tempo source", 1, Some(NetworkVariant::Tempo), cancun, 1_800_000_000, false),
+        ("Anvil before Cancun", 1, ethereum, shanghai, 1_800_000_000, false),
+        ("Anvil with Cancun override", 1, ethereum, cancun, 1_600_000_000, true),
+        ("Anvil custom chain", 31_337, ethereum, cancun, 1_800_000_000, true),
+    ] {
+        let asserter = Asserter::new();
+        let mut config = fork_config(asserter.clone(), hash);
+        config.endpoint_identity.source_chain_id = chain_id;
+        config.endpoint_identity.network = network;
+        config.endpoint_identity.hardfork = hardfork.map(Into::into);
+        config.timestamp = timestamp;
+        // Local execution overrides must not make an ineligible source eligible.
+        config.hardfork = Some(EthereumHardfork::Amsterdam.into());
+        config.execution_chain_id = 31_337;
+        config.override_chain_id = Some(31_337);
+        config.endpoint_identity.execution_chain_id = 31_337;
+        config.state_is_mutable = true;
+
+        let bal = vec![AccountChanges::new(address).with_storage_change(SlotChanges::new(
+            U256::ZERO,
+            vec![StorageChange::new(index(1), U256::ONE)],
+        ))];
+        let block = AnyRpcBlock::new(
+            Block::new(
+                AnyRpcHeader {
+                    hash,
+                    inner: AnyHeader {
+                        number: config.block_number,
+                        timestamp,
+                        block_access_list_hash: Some(compute_block_access_list_hash(&bal)),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                BlockTransactions::Hashes(vec![B256::repeat_byte(2)]),
+            )
+            .into(),
+        );
+        asserter.push_success(&block);
+        asserter.push_success(&bal);
+        asserter.push_success(&U256::from(99));
+        let queued = asserter.read_q().len();
+        let db = database(hash);
+
+        config.prefill_cache(&db, false).await;
+
+        assert_eq!(asserter.read_q().len(), if eligible { 0 } else { queued }, "{name}");
+        assert_eq!(
+            db.storage().read().get(&address).and_then(|slots| slots.get(&U256::ZERO)).copied(),
+            eligible.then_some(U256::from(99)),
+            "{name}"
+        );
+        assert!(db.accounts().read().is_empty(), "{name}");
     }
 }
 

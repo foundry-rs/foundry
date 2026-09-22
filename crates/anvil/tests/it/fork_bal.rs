@@ -106,26 +106,41 @@ async fn has_cached_account(api: &EthApi<FoundryNetwork>, address: Address) -> b
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn fork_bal_real_anvil_prefills_changed_storage() {
+async fn fork_bal_real_anvil_prefill_respects_flags_on_startup_and_reset() {
     let origin = BalOrigin::new().await;
-    for no_bal in [false, true] {
-        let (api, _handle) = spawn(origin.config().with_no_bal(no_bal)).await;
-        assert_eq!(
-            cached_storage(&api, CONTRACT, U256::ZERO).await,
-            (!no_bal).then_some(U256::ONE)
-        );
-        assert_eq!(cached_storage(&api, CONTRACT, U256::ONE).await, None);
-        assert!(!has_cached_account(&api, CONTRACT).await, "incomplete accounts remain lazy");
+    for (no_bal, no_fork_node_info) in [(false, false), (true, false), (false, true), (true, true)]
+    {
+        let (api, _handle) =
+            spawn(origin.config().with_no_bal(no_bal).with_no_fork_node_info(no_fork_node_info))
+                .await;
+        for reset in [false, true] {
+            if reset {
+                api.anvil_reset(Some(Forking {
+                    json_rpc_url: None,
+                    block_number: Some(origin.block_number),
+                }))
+                .await
+                .unwrap();
+            }
+            assert_eq!(
+                cached_storage(&api, CONTRACT, U256::ZERO).await,
+                (!no_bal && !no_fork_node_info).then_some(U256::ONE),
+                "no_bal={no_bal}, no_fork_node_info={no_fork_node_info}, reset={reset}"
+            );
+            assert_eq!(cached_storage(&api, CONTRACT, U256::ONE).await, None);
+            assert!(!has_cached_account(&api, CONTRACT).await, "incomplete accounts remain lazy");
 
-        assert_eq!(
-            api.storage_at(CONTRACT, U256::ZERO, None).await.unwrap(),
-            B256::from(U256::ONE)
-        );
-        assert_eq!(
-            api.storage_at(CONTRACT, U256::ONE, None).await.unwrap(),
-            B256::from(U256::from(9))
-        );
-        assert_eq!(cached_storage(&api, CONTRACT, U256::ONE).await, Some(U256::from(9)));
+            assert_eq!(
+                api.storage_at(CONTRACT, U256::ZERO, None).await.unwrap(),
+                B256::from(U256::ONE)
+            );
+            assert_eq!(
+                api.storage_at(CONTRACT, U256::ONE, None).await.unwrap(),
+                B256::from(U256::from(9))
+            );
+            assert_eq!(cached_storage(&api, CONTRACT, U256::ZERO).await, Some(U256::ONE));
+            assert_eq!(cached_storage(&api, CONTRACT, U256::ONE).await, Some(U256::from(9)));
+        }
     }
 }
 

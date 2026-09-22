@@ -966,24 +966,27 @@ impl<N: Network> ClientForkConfig<N> {
 }
 
 impl ClientForkConfig {
-    /// Prefills the remote cache before local overrides, without making BAL support mandatory.
-    pub(crate) async fn prefill_cache(&self, db: &BlockchainDb, state_by_number: bool) {
+    /// Checks the source's network and hardfork for Cancun-compatible BAL prefill.
+    fn bal_eligible(&self) -> bool {
         let identity = self.endpoint_identity;
         let source_hardfork = identity.hardfork.or_else(|| {
             FoundryHardfork::from_chain_and_timestamp(identity.source_chain_id, self.timestamp)
         });
-        if identity.network.is_some_and(|network| !network.is_ethereum())
-            || (!identity.is_authoritative()
-                && !matches!(
+        identity.network.is_none_or(|network| network.is_ethereum())
+            && (identity.is_authoritative()
+                || matches!(
                     NamedChain::try_from(identity.source_chain_id),
                     Ok(NamedChain::Mainnet
                         | NamedChain::Sepolia
                         | NamedChain::Holesky
                         | NamedChain::Hoodi)
                 ))
-            || !matches!(source_hardfork, Some(hardfork @ FoundryHardfork::Ethereum(_)) if SpecId::from(hardfork) >= SpecId::CANCUN)
-            || db.meta().read().fork_hash != Some(self.block_hash)
-        {
+            && matches!(source_hardfork, Some(hardfork @ FoundryHardfork::Ethereum(_)) if SpecId::from(hardfork) >= SpecId::CANCUN)
+    }
+
+    /// Prefills the remote cache before local overrides, without making BAL support mandatory.
+    pub(crate) async fn prefill_cache(&self, db: &BlockchainDb, state_by_number: bool) {
+        if !self.bal_eligible() || db.meta().read().fork_hash != Some(self.block_hash) {
             return;
         }
 
