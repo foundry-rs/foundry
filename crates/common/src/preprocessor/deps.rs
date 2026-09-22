@@ -15,7 +15,7 @@ use solar::sema::{
     hir::{
         CallArgs, CallOptions, ContractId, ContractKind, Expr, ExprKind, Function, FunctionId,
         FunctionKind, Res, SourceId, StateMutability, Stmt, StmtKind, TypeKind, UsingDirective,
-        UsingEntryKind, Visit,
+        UsingEntryKind, Variable, Visit,
     },
     interface::{SourceMap, data_structures::Never, source_map::FileName},
 };
@@ -552,6 +552,14 @@ impl<'gcx> Visit<'gcx> for BytecodeDependencyCollector<'gcx, '_> {
             || func.state_mutability == StateMutability::Pure
             || matches!(func.kind, FunctionKind::Modifier);
         self.walk_function(func)?;
+        self.preserve_native_creation_code = previous;
+        ControlFlow::Continue(())
+    }
+
+    fn visit_var(&mut self, var: &'gcx Variable<'gcx>) -> ControlFlow<Self::BreakValue> {
+        let previous = self.preserve_native_creation_code;
+        self.preserve_native_creation_code |= var.is_constant();
+        self.walk_var(var)?;
         self.preserve_native_creation_code = previous;
         ControlFlow::Continue(())
     }
