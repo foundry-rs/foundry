@@ -2,12 +2,11 @@
 //!
 //! Each network module owns its network marker and concrete EVM implementations.
 
-use std::{fmt::Debug, ops::DerefMut};
-
 use crate::{
     FoundryBlock, FoundryChain, FoundryContextExt, FoundryInspectorExt, FoundryJournal,
     FoundryTransaction, FromAnyRpcTransaction,
     backend::{DatabaseExt, JournaledState},
+    refresh_chain_journal,
 };
 use alloy_consensus::{SignableTransaction, Signed, transaction::SignerRecoverable};
 use alloy_evm::{Evm, EvmEnv, EvmFactory, FromRecoveredTx, precompiles::PrecompilesMap};
@@ -31,9 +30,13 @@ use revm::{
         interpreter_action::FrameInit,
     },
     primitives::hardfork::SpecId,
+    state::{AccountStatus, EvmState},
 };
 use serde::{Deserialize, Serialize};
+use std::{fmt::Debug, ops::DerefMut};
 
+#[cfg(feature = "base")]
+pub mod base;
 pub mod eth;
 #[cfg(feature = "monad")]
 pub mod monad;
@@ -43,6 +46,9 @@ pub mod tempo;
 
 pub use eth::*;
 pub use tempo::*;
+
+#[cfg(feature = "base")]
+pub use base::*;
 
 #[cfg(feature = "monad")]
 pub use monad::*;
@@ -102,6 +108,7 @@ pub trait FoundryEvmFactory:
             BlockEnv = Self::BlockEnv,
             Spec = Self::Spec,
             HaltReason = Self::HaltReason,
+            Precompiles = PrecompilesMap,
         > + DerefMut<Target = Self::FoundryContext<'db>>
     where
         Self: 'db;
@@ -242,6 +249,104 @@ pub type NestedEvmClosure<'a, F> = &'a mut dyn for<'j> FnMut(
 /// Nested EVM closure for a Foundry EVM network.
 pub type NestedEvmClosureFor<'a, FEN> = NestedEvmClosure<'a, EvmFactoryFor<FEN>>;
 
+/// Runs a child operation with the parent's environment, journal, and native chain state.
+///
+/// Publishes child environment, journal, and chain changes only when the operation returns `Ok`.
+/// This does not roll back database or inspector effects: callers retain their existing ownership
+/// of those effects. The outer transaction environment is not replaced.
+///
+/// Both inspector adapters use this operation so inheritance and write-back remain paired. The
+/// existing Monad journal bridge is retained here until native journal lifecycle ownership
+/// migrates.
+pub fn with_inherited_evm<F, I>(
+    ecx: &mut F::FoundryContext<'_>,
+    inspector: I,
+    f: NestedEvmClosure<'_, F>,
+) -> Result<(), EVMError<DatabaseError>>
+where
+    F: FoundryEvmFactory,
+    I: for<'db> FoundryInspectorExt<F::FoundryContext<'db>>,
+{
+    let evm_env = ecx.evm_clone();
+    let chain_context = ecx.chain().clone();
+    #[cfg(feature = "monad")]
+    let mut reserve_balance = FoundryJournal::capture_reserve_balance(ecx.journal());
+    let (evm_env, journaled_state, chain_context) = {
+        let (db, journaled_state) = ecx.db_journal_inner_mut();
+        let journaled_state = journaled_state.clone();
+        let mut evm = F::default().create_nested_evm_with_inspector(db, evm_env, inspector);
+        *evm.chain_mut() = chain_context;
+        *evm.journal_inner_mut() = journaled_state;
+        #[cfg(feature = "monad")]
+        {
+            FoundryJournal::restore_reserve_balance(evm.journal_mut(), reserve_balance);
+            refresh_nested_chain_journal(&mut *evm);
+        }
+        f(&mut *evm)?;
+        #[cfg(feature = "monad")]
+        {
+            reserve_balance = FoundryJournal::capture_reserve_balance(evm.journal_mut());
+        }
+        (evm.to_evm_env(), evm.journal_inner_mut().clone(), evm.chain_mut().clone())
+    };
+    ecx.set_journal_inner(journaled_state);
+    ecx.set_evm(evm_env);
+    *ecx.chain_mut() = chain_context;
+    #[cfg(feature = "monad")]
+    FoundryJournal::restore_reserve_balance(ecx.journal_mut(), reserve_balance);
+    refresh_chain_journal(ecx);
+    Ok(())
+}
+
+/// Prepares account state for execution across a synthetic transaction boundary.
+///
+/// Preserve account flags, including local creation, while making accounts outside the protocol
+/// warm-address set cold. All storage starts cold with its current value as the child's original
+/// value. The parent's state is unchanged.
+pub fn prepare_child_state(journal: &JournaledState) -> EvmState {
+    let mut state = journal.state.clone();
+    for (address, account) in &mut state {
+        if journal.warm_addresses.is_cold(address) {
+            account.mark_cold();
+        }
+        for slot in account.storage.values_mut() {
+            slot.is_cold = true;
+            slot.original_value = slot.present_value;
+        }
+    }
+    state
+}
+
+/// Merges a child's returned account state into its suspended parent.
+///
+/// Preserve parent warmth and original storage values, import child account flags and current
+/// values, and retain untouched parent accounts and slots. Newly loaded accounts and slots keep
+/// their child metadata. This operates on the EVM's returned state, not on an unfiltered write set;
+/// the caller retains responsibility for execution errors and family-specific reconciliation.
+pub fn merge_child_state(parent: &mut EvmState, child: EvmState) {
+    for (address, mut account) in child {
+        let Some(parent_account) = parent.get_mut(&address) else {
+            parent.insert(address, account);
+            continue;
+        };
+        if account.status.contains(AccountStatus::Cold)
+            && !parent_account.status.contains(AccountStatus::Cold)
+        {
+            account.status -= AccountStatus::Cold;
+        }
+        parent_account.info = account.info;
+        parent_account.status |= account.status;
+        for (key, slot) in account.storage {
+            let Some(parent_slot) = parent_account.storage.get_mut(&key) else {
+                parent_account.storage.insert(key, slot);
+                continue;
+            };
+            parent_slot.present_value = slot.present_value;
+            parent_slot.is_cold &= slot.is_cold;
+        }
+    }
+}
+
 /// Runs a nested frame with inspection and settles its gas into the parent frame.
 pub(crate) fn run_inspected_frame<H>(
     evm: &mut H::Evm,
@@ -263,32 +368,6 @@ where
     );
     handler.last_frame_result(evm, &mut frame_result, &mut parent_gas)?;
     Ok(frame_result)
-}
-
-/// Clones the current context (env + journal), passes the database, cloned env,
-/// and cloned journal inner to the callback. The callback builds whatever EVM it
-/// needs, runs its operations, and returns `(result, modified_env, modified_journal)`.
-/// Modified state is written back after the callback returns.
-pub fn with_cloned_context<CTX: FoundryContextExt>(
-    ecx: &mut CTX,
-    f: impl FnOnce(
-        &mut CTX::Db,
-        EvmEnv<CTX::Spec, CTX::Block>,
-        JournaledState,
-    )
-        -> Result<(EvmEnv<CTX::Spec, CTX::Block>, JournaledState), EVMError<DatabaseError>>,
-) -> Result<(), EVMError<DatabaseError>> {
-    let evm_env = ecx.evm_clone();
-    let (db, journal_inner) = ecx.db_journal_inner_mut();
-    let journal_inner = journal_inner.clone();
-
-    let (sub_evm_env, sub_inner) = f(db, evm_env, journal_inner)?;
-
-    // Write back modified state. The db borrow was released when f returned.
-    ecx.set_journal_inner(sub_inner);
-    ecx.set_evm(sub_evm_env);
-
-    Ok(())
 }
 
 /// Get the call inputs for the CREATE2 factory.
@@ -314,4 +393,181 @@ pub fn get_create2_factory_call_inputs<T: JournalTr>(
         return_memory_offset: 0..0,
         charged_new_account_state_gas: false,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend::Backend;
+    use alloy_evm::EthEvmFactory;
+    use revm::{
+        context::Transaction,
+        state::{Account, AccountInfo, EvmStorageSlot, TransactionId},
+    };
+
+    #[cfg(feature = "monad")]
+    use alloy_monad_evm::MonadEvmFactory;
+    #[cfg(feature = "monad")]
+    use monad_revm::{MonadHardfork, MonadJournalTr, reserve_balance::tracker::ReserveBalanceInit};
+    #[cfg(feature = "monad")]
+    use revm::context::{BlockEnv, CfgEnv};
+
+    #[test]
+    fn inherited_journal_publishes_only_after_success() {
+        let address = Address::with_last_byte(0x42);
+        for succeeds in [false, true] {
+            let mut db = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+            let mut parent = EthEvmFactory::default().create_foundry_evm_with_inspector(
+                &mut db,
+                EvmEnvFor::<EthEvmNetwork>::default(),
+                NoOpInspector,
+            );
+            parent.journaled_state.inner.depth = 3;
+            parent
+                .journaled_state
+                .inner
+                .state
+                .insert(address, Account::from(AccountInfo::from_balance(U256::from(7))));
+            let caller = parent.tx().caller();
+            let result =
+                with_inherited_evm::<EthEvmFactory, _>(&mut parent, NoOpInspector, &mut |child| {
+                    assert_eq!(child.journal_inner_mut().depth, 3);
+                    assert_eq!(
+                        child.journal_inner_mut().state[&address].info.balance,
+                        U256::from(7)
+                    );
+                    child.journal_inner_mut().depth = 4;
+                    child.journal_inner_mut().state.get_mut(&address).unwrap().info.balance =
+                        U256::from(9);
+                    child.tx_mut().caller = address;
+                    if succeeds { Ok(()) } else { Err(EVMError::Custom("abort child".into())) }
+                });
+            assert_eq!(result.is_ok(), succeeds);
+            assert_eq!(parent.journaled_state.inner.depth, if succeeds { 4 } else { 3 });
+            assert_eq!(
+                parent.journaled_state.inner.state[&address].info.balance,
+                U256::from(if succeeds { 9 } else { 7 })
+            );
+            assert_eq!(parent.tx().caller(), caller);
+        }
+    }
+
+    #[cfg(feature = "monad")]
+    #[test]
+    fn inherited_monad_tracker_and_chain_publish_together() {
+        let sender = Address::with_last_byte(0x42);
+        for succeeds in [false, true] {
+            let mut db = Backend::<MonadEvmNetwork>::spawn(None).unwrap();
+            let mut parent = MonadEvmFactory::default().create_foundry_evm_with_inspector(
+                &mut db,
+                EvmEnv::new(CfgEnv::new_with_spec(MonadHardfork::MonadNine), BlockEnv::default()),
+                NoOpInspector,
+            );
+            let account = Account::from(AccountInfo::from_balance(U256::from(12)));
+            let chain = parent.chain().clone();
+            parent.journaled_state.reserve_balance_mut().init(ReserveBalanceInit {
+                chain: &chain,
+                spec: MonadHardfork::MonadNine,
+                sender,
+                effective_gas_price: 0,
+                gas_limit: 0,
+                sender_is_delegated: false,
+                sender_account: Some(&account),
+            });
+            parent.journaled_state.inner.state.insert(sender, account);
+            let tracker = parent.journaled_state.reserve_balance().clone();
+            let result = with_inherited_evm::<MonadEvmFactory, _>(
+                &mut parent,
+                NoOpInspector,
+                &mut |child| {
+                    assert_eq!(child.journal_mut().reserve_balance(), &tracker);
+                    child.chain_mut().parent_senders_and_authorities.insert(sender);
+                    child.journal_inner_mut().state.get_mut(&sender).unwrap().info.balance =
+                        U256::from(9);
+                    if succeeds { Ok(()) } else { Err(EVMError::Custom("abort child".into())) }
+                },
+            );
+            assert_eq!(result.is_ok(), succeeds);
+            if succeeds {
+                assert!(parent.chain().parent_senders_and_authorities.contains(&sender));
+                assert!(parent.journaled_state.reserve_balance().has_violation());
+            } else {
+                assert_eq!(parent.chain(), &chain);
+                assert_eq!(parent.journaled_state.reserve_balance(), &tracker);
+                assert_eq!(
+                    parent.journaled_state.inner.state[&sender].info.balance,
+                    U256::from(12)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn preparation_preserves_creation_and_protocol_warmth() {
+        let address = Address::with_last_byte(0x42);
+        let protocol_address = Address::with_last_byte(0x43);
+        let key = U256::ONE;
+        let mut account = Account::from(AccountInfo::default());
+        account.mark_created_locally();
+        account.mark_touch();
+        account.storage.insert(
+            key,
+            EvmStorageSlot::new_changed(U256::from(3), U256::from(7), TransactionId::ZERO),
+        );
+        let mut journal = JournaledState::default();
+        journal.state.insert(address, account.clone());
+        journal.state.insert(protocol_address, account);
+        journal.warm_addresses.set_coinbase(protocol_address);
+        let before = journal.state.clone();
+
+        let child = prepare_child_state(&journal);
+
+        assert_eq!(journal.state, before);
+        assert!(child[&address].is_created_locally());
+        assert!(child[&address].is_touched());
+        assert!(child[&address].status.contains(AccountStatus::Cold));
+        assert!(!child[&protocol_address].status.contains(AccountStatus::Cold));
+        for account in child.values() {
+            assert_eq!(account.storage[&key].original_value, U256::from(7));
+            assert_eq!(account.storage[&key].present_value, U256::from(7));
+            assert!(account.storage[&key].is_cold);
+        }
+    }
+
+    #[test]
+    fn settlement_preserves_parent_original_values_and_combines_warmth() {
+        let address = Address::with_last_byte(0x42);
+        let key = U256::ONE;
+        for parent_cold in [false, true] {
+            for child_cold in [false, true] {
+                let mut account = Account::from(AccountInfo::default());
+                account.status.set(AccountStatus::Cold, parent_cold);
+                account.mark_created_locally();
+                let mut slot =
+                    EvmStorageSlot::new_changed(U256::from(3), U256::from(7), TransactionId::ZERO);
+                slot.is_cold = parent_cold;
+                account.storage.insert(key, slot);
+                let mut parent = EvmState::from_iter([(address, account)]);
+                let mut account = Account::from(AccountInfo::from_balance(U256::from(9)));
+                account.status.set(AccountStatus::Cold, child_cold);
+                account.mark_touch();
+                let mut slot =
+                    EvmStorageSlot::new_changed(U256::from(7), U256::from(11), TransactionId::ZERO);
+                slot.is_cold = child_cold;
+                account.storage.insert(key, slot);
+
+                merge_child_state(&mut parent, EvmState::from_iter([(address, account)]));
+
+                let account = &parent[&address];
+                assert!(account.is_created_locally());
+                assert!(account.is_touched());
+                assert_eq!(account.info.balance, U256::from(9));
+                // Account flags are unioned; a cold parent retains its flag until journal access.
+                assert_eq!(account.status.contains(AccountStatus::Cold), parent_cold);
+                assert_eq!(account.storage[&key].original_value, U256::from(3));
+                assert_eq!(account.storage[&key].present_value, U256::from(11));
+                assert_eq!(account.storage[&key].is_cold, parent_cold && child_cold);
+            }
+        }
+    }
 }

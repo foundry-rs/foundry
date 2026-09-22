@@ -2,7 +2,8 @@
 
 use crate::mem::storage::MinedTransaction;
 use alloy_consensus::BlockBody;
-use alloy_eips::eip4895::Withdrawals;
+use alloy_eips::{eip4895::Withdrawals, eip7928::BlockAccessList};
+use alloy_evm::block::BalIndexedDatabase;
 use alloy_network::Network;
 use alloy_primitives::{
     Address, B256, Bytes, U256, keccak256,
@@ -24,9 +25,9 @@ use revm::{
     bytecode::Bytecode,
     context::BlockEnv,
     context_interface::block::BlobExcessGasAndPrice,
-    database::{AccountState, CacheDB, DatabaseRef, DbAccount},
+    database::{AccountState, CacheDB, DatabaseRef, DbAccount, bal::BalState},
     primitives::{KECCAK_EMPTY, eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE},
-    state::AccountInfo,
+    state::{AccountInfo, bal::BlockAccessIndex},
 };
 use serde::{
     Deserialize, Deserializer, Serialize,
@@ -181,11 +182,21 @@ impl alloy_evm::Database for dyn Db {}
 
 /// A wrapper around [`CacheDB`].
 #[derive(Debug)]
-pub struct AnvilCacheDB<T>(pub CacheDB<T>);
+pub struct AnvilCacheDB<T>(pub CacheDB<T>, BalState);
 
 impl<T: DatabaseRef<Error = DatabaseError>> AnvilCacheDB<T> {
     pub fn new(inner: T) -> Self {
-        Self(CacheDB::new(inner))
+        Self(CacheDB::new(inner), BalState::default())
+    }
+
+    /// Enables EIP-7928 block access list recording.
+    pub fn enable_bal_recording(&mut self) {
+        self.1 = BalState::new().with_bal_builder();
+    }
+
+    /// Takes the recorded EIP-7928 block access list, if recording was enabled.
+    pub fn take_block_access_list(&mut self) -> Option<BlockAccessList> {
+        self.1.take_built_alloy_bal()
     }
 }
 
@@ -244,7 +255,30 @@ impl<T: DatabaseRef<Error = DatabaseError>> DatabaseRef for AnvilCacheDB<T> {
 
 impl<T: DatabaseRef<Error = DatabaseError> + fmt::Debug> DatabaseCommit for AnvilCacheDB<T> {
     fn commit(&mut self, changes: revm::state::EvmState) {
+        self.1.commit(&changes);
         self.0.commit(changes)
+    }
+}
+
+impl<T: DatabaseRef<Error = DatabaseError> + fmt::Debug> BalIndexedDatabase for AnvilCacheDB<T> {
+    fn set_bal_index(&mut self, index: u64) {
+        self.1.bal_index = BlockAccessIndex::new(index);
+    }
+
+    fn bump_bal_index(&mut self) {
+        self.1.bump_bal_index();
+    }
+}
+
+impl<T: DatabaseRef<Error = DatabaseError> + fmt::Debug> BalIndexedDatabase
+    for &mut AnvilCacheDB<T>
+{
+    fn set_bal_index(&mut self, index: u64) {
+        (**self).set_bal_index(index);
+    }
+
+    fn bump_bal_index(&mut self) {
+        (**self).bump_bal_index();
     }
 }
 

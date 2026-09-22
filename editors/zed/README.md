@@ -19,8 +19,7 @@ separate capability probe because Zed's process API cannot set its working
 directory. Missing Forge on `PATH` produces installation guidance; missing custom
 executables and incompatible builds are reported by Zed's language server
 status/log during startup. To check an installation, run
-`forge lsp --stdio --help` from the worktree directory. Forge accepts `--stdio`
-even though it is hidden from help output.
+`forge lsp --stdio --help` from the worktree directory.
 
 To select a specific Forge installation, set its absolute path in your Zed user
 or project settings:
@@ -104,14 +103,14 @@ be created without copying the Cargo target directory or grammar checkout:
 
 ```sh
 mkdir -p target/editor-dev
-tar -chzf target/editor-dev/zed-solar-local.tar.gz -C editors/zed \
+tar -czf target/editor-dev/zed-solar-local.tar.gz -C editors/zed \
   extension.toml extension.wasm languages grammars/solidity.wasm \
-  LICENSE-MIT LICENSE-APACHE GRAMMAR-LICENSE README.md
+  GRAMMAR-LICENSE README.md -C ../.. LICENSE-MIT LICENSE-APACHE
 ```
 
 This archive is for local inspection/distribution; store release and registration
-are separate maintainer tasks. The `-h` option includes the root license texts
-referenced by the extension's license symlinks.
+are separate maintainer tasks. The archive reads the license texts directly from
+the repository root, including in checkouts with `core.symlinks=false`.
 
 1. Launch Zed with a new `--user-data-dir`; its settings live in `config/` under
    that directory. On macOS, the normal CLI can forward to an existing instance

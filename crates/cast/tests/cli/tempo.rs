@@ -1232,3 +1232,42 @@ casttest!(tempo_mktx_selects_network_without_tempo_options, async |prj, cmd| {
             .stdout_eq(expected);
     }
 });
+
+casttest!(tempo_zone_rejects_zero_amount, |_prj, cmd| {
+    for args in [
+        vec!["tempo", "zone", "deposit", "--portal", "0x1111111111111111111111111111111111111111"],
+        vec!["tempo", "zone", "withdraw", "--zone-id", "42", "--zone-chain-id", "1337"],
+    ] {
+        cmd.cast_fuse()
+            .args(args)
+            .args(["--amount", "0"])
+            .assert_failure()
+            .stdout_eq("")
+            .stderr_eq(str![[r#"
+Error: amount must be greater than zero
+
+"#]]);
+    }
+});
+
+casttest!(tempo_zone_rejects_callback_without_gas, |_prj, cmd| {
+    cmd.args([
+        "tempo",
+        "zone",
+        "withdraw",
+        "--zone-id",
+        "7",
+        "--zone-chain-id",
+        "421700007",
+        "--amount",
+        "1",
+        "--callback-data",
+        "0x1234",
+    ])
+    .assert_failure()
+    .stdout_eq("")
+    .stderr_eq(str![[r#"
+Error: --callback-data requires a nonzero --callback-gas-limit
+
+"#]]);
+});

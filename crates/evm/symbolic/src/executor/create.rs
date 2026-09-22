@@ -126,11 +126,15 @@ impl SymbolicExecutor {
         for mut outcome in outcomes {
             let runtime = &outcome.state.frame.return_data;
             let spec_id: SpecId = executor.spec_id().into();
-            if matches!(outcome.status, CallStatus::Success)
-                && runtime_exceeds_code_size_limit(&executor.evm_env().cfg_env, spec_id, runtime)
-            {
-                outcome.status = CallStatus::Revert;
-                outcome.state.frame.return_data = SymReturnData::empty(&mut self.cx);
+            let mut rejected_runtime = false;
+            if matches!(outcome.status, CallStatus::Success) {
+                if runtime_exceeds_code_size_limit(&executor.evm_env().cfg_env, spec_id, runtime) {
+                    outcome.status = CallStatus::Revert;
+                    outcome.state.frame.return_data = SymReturnData::empty(&mut self.cx);
+                } else if runtime_has_rejected_prefix(&mut self.cx, spec_id, runtime)? {
+                    outcome.status = CallStatus::Revert;
+                    rejected_runtime = true;
+                }
             }
             match self.join_call_outcome(state, outcome, created)? {
                 JoinedCallOutcome::Rejected => {}
@@ -145,12 +149,9 @@ impl SymbolicExecutor {
                     parent.stack.push(SymExpr::zero(&mut self.cx))?;
                     parents.push_back(parent);
                 }
-                JoinedCallOutcome::ExpectedRevert { mut parent, child } => {
+                JoinedCallOutcome::ExpectedRevert { mut parent, .. } => {
                     parent.return_data = SymReturnData::empty(&mut self.cx);
-                    parent.expected_calls = child.expected_calls;
                     parent.expected_creates = pending_expected_creates.clone();
-                    parent.call_mocks = child.call_mocks;
-                    parent.function_mocks = child.function_mocks;
                     parent.world = failure_world.clone();
                     parent.stack.push(created_word.clone())?;
                     parents.push_back(parent);
@@ -159,12 +160,8 @@ impl SymbolicExecutor {
                     parent.return_data = SymReturnData::empty(&mut self.cx);
                     let runtime = &child.frame.return_data;
                     parent.world = child.world;
-                    parent.block = child.block;
                     parent.expected_emit = child.expected_emit;
-                    parent.expected_calls = child.expected_calls;
                     parent.expected_creates = pending_expected_creates.clone();
-                    parent.call_mocks = child.call_mocks;
-                    parent.function_mocks = child.function_mocks;
                     self.observe_expected_create(&mut parent, state.address, kind, runtime)?;
                     if !parent.world.is_destroyed(created) {
                         parent.world.install_code(created, runtime.to_code(&mut self.cx)?);
@@ -176,7 +173,9 @@ impl SymbolicExecutor {
                 JoinedCallOutcome::Revert { mut parent, child } => {
                     parent.return_data = SymReturnData::empty(&mut self.cx);
                     parent.world = failure_world.clone();
-                    parent.return_data = child.frame.return_data;
+                    if !rejected_runtime {
+                        parent.return_data = child.frame.return_data;
+                    }
                     parent.stack.push(SymExpr::zero(&mut self.cx))?;
                     parents.push_back(parent);
                 }
@@ -214,6 +213,21 @@ fn runtime_exceeds_code_size_limit(
     spec_id >= SpecId::SPURIOUS_DRAGON
         && !runtime.has_symbolic_len()
         && runtime.len() > cfg.max_code_size()
+}
+
+fn runtime_has_rejected_prefix(
+    cx: &mut SymCx,
+    spec_id: SpecId,
+    runtime: &SymReturnData,
+) -> Result<bool, SymbolicError> {
+    if spec_id < SpecId::LONDON || runtime.len() == 0 {
+        return Ok(false);
+    }
+    let first_byte = runtime.byte(cx, 0);
+    let Some(first_byte) = first_byte.as_const() else {
+        return Err(SymbolicError::Unsupported("CREATE with symbolic runtime prefix not modeled"));
+    };
+    Ok(first_byte == U256::from(0xef))
 }
 
 #[cfg(test)]

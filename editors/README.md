@@ -27,15 +27,21 @@ open VS Code. A project path or `--code-path` also selects the launcher.
 `forge lsp --stdio` always runs the language server for an editor client; bare
 `forge lsp` with redirected input preserves that behavior.
 
-The launcher uses dedicated VS Code profiles under `~/.foundry/cache/lsp/vscode`
-on Windows, or `/tmp/foundry-lsp-<uid>` on Unix to fit the socket path limits.
-The Unix root and session directories are private to the
-current user and reject unsafe permissions or symbolic links. Normal VS Code
-settings are left untouched, including when using a portable installation.
-Profiles are reused across launches until their directories are removed, including
-by operating-system temporary-directory cleanup on Unix.
-Each project, Forge executable path and selected Foundry profile gets its own
-profile. Bundled extension assets are cached by content under
+The launcher stores dedicated VS Code profiles in the platform data directory
+under `foundry/lsp/vscode/<session-hash>`, outside the Foundry cache. On Unix,
+`/tmp/foundry-lsp-<uid>/` holds private symlinks to these durable profiles to fit
+socket path limits. The links are recreated after temporary-directory cleanup;
+settings, history and installed extensions survive both cache and temporary-directory
+cleanup. Normal VS Code settings are left untouched, including when using a
+portable installation. Profiles are reused across launches until removed.
+Each project, resolved VS Code CLI launcher path and target, Forge executable
+path and selected Foundry profile gets its own profile. The same launcher path
+and target reuse the same session; distinct symlink entry points stay isolated,
+and repointing a launcher symlink selects a separate profile. When upgrading
+from a launcher that did not include the editor executable in session identity,
+the first launch creates a fresh profile. Previous profile directories remain
+on disk and are not migrated automatically, since they may have been shared by
+different editors. Bundled extension assets are cached by content under
 `~/.foundry/cache/lsp/extensions`. No extension store installation or standalone
 Solar binary is required.
 

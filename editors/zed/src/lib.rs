@@ -1,6 +1,5 @@
 use std::{collections::HashMap, path::Path};
-use zed::LanguageServerId;
-use zed_extension_api::{self as zed, Result, serde_json, settings::LspSettings};
+use zed_extension_api::{self as zed, LanguageServerId, Result, serde_json, settings::LspSettings};
 
 const INSTALL_GUIDANCE: &str = "Install or upgrade Foundry from https://getfoundry.sh with an LSP-enabled Forge. Verify `forge lsp --stdio --help` succeeds from the worktree directory; for this checkout, run `cargo build --locked -p forge --bin forge`. Set lsp.solar.settings.forgePath to its absolute path.";
 const LEGACY_BINARY_GUIDANCE: &str = "Remove lsp.solar.binary.path and binary.arguments, which override the language server command in Zed. Set lsp.solar.settings.forgePath to an absolute Forge path instead. A former Solar path is not a Forge path.";
@@ -80,7 +79,7 @@ fn forge_command(
         None | Some(serde_json::Value::Null) => which("forge")
             .ok_or_else(|| format!("Forge was not found on PATH. {INSTALL_GUIDANCE}"))?,
         Some(_) => {
-            return Err("lsp.solar.settings.forgePath must be an absolute Forge path.".into())
+            return Err("lsp.solar.settings.forgePath must be an absolute Forge path.".into());
         }
     };
     initialization_options(settings, &forge_path)?;
@@ -96,11 +95,11 @@ fn forge_command(
 
 // WASI path parsing uses Unix rules even when the host is Windows.
 fn is_absolute_path(path: &str) -> bool {
-    Path::new(path).is_absolute() ||
-        path.starts_with(r"\\") ||
-        (path.as_bytes().first().is_some_and(u8::is_ascii_alphabetic) &&
-            path.as_bytes().get(1) == Some(&b':') &&
-            path.as_bytes().get(2).is_some_and(|byte| matches!(byte, b'/' | b'\\')))
+    Path::new(path).is_absolute()
+        || path.starts_with(r"\\")
+        || (path.as_bytes().first().is_some_and(u8::is_ascii_alphabetic)
+            && path.as_bytes().get(1) == Some(&b':')
+            && path.as_bytes().get(2).is_some_and(|byte| matches!(byte, b'/' | b'\\')))
 }
 
 fn initialization_options(settings: &LspSettings, forge_path: &str) -> Result<serde_json::Value> {
@@ -109,8 +108,8 @@ fn initialization_options(settings: &LspSettings, forge_path: &str) -> Result<se
         Some(serde_json::Value::Object(options)) => options,
         Some(_) => return Err("lsp.solar.initialization_options must be an object.".into()),
     };
-    if let Some(previous) = options.get("forgePath") &&
-        previous.as_str() != Some(forge_path)
+    if let Some(previous) = options.get("forgePath")
+        && previous.as_str() != Some(forge_path)
     {
         return Err("Remove lsp.solar.initialization_options.forgePath and set lsp.solar.settings.forgePath instead, so the language server, formatter, and checks use the same Forge.".into());
     }

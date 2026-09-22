@@ -15,15 +15,24 @@ use tempo_primitives::{
     transaction::{Call, SignedKeyAuthorization, TempoSignedAuthorization},
 };
 
-#[cfg(any(test, feature = "optimism"))]
+#[cfg(all(feature = "base", not(feature = "optimism")))]
+use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, TxDeposit};
+
+#[cfg(any(feature = "base", feature = "optimism"))]
+use super::get_deposit_tx_parts;
+#[cfg(any(feature = "base", feature = "optimism"))]
+use op_revm::transaction::deposit::DepositTransactionParts;
+
+#[cfg(any(test, feature = "base", feature = "optimism"))]
 use alloy_serde::OtherFields;
 
-#[cfg(feature = "optimism")]
-use super::optimism::get_deposit_tx_parts;
+#[cfg(feature = "base")]
+use base_common_evm::EIP8130_TRANSACTION_TYPE;
+#[cfg(feature = "base")]
+use base_common_rpc_types::BaseTransactionRequest;
+
 #[cfg(feature = "optimism")]
 use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, POST_EXEC_TX_TYPE_ID, TxDeposit};
-#[cfg(feature = "optimism")]
-use op_revm::transaction::deposit::DepositTransactionParts;
 
 pub use tempo_alloy::rpc::TempoTransactionRequest;
 
@@ -40,7 +49,9 @@ pub use tempo_alloy::rpc::TempoTransactionRequest;
 #[allow(clippy::large_enum_variant)]
 pub enum FoundryTransactionRequest {
     Ethereum(TransactionRequest),
-    #[cfg(feature = "optimism")]
+    #[cfg(feature = "base")]
+    Base(BaseTransactionRequest),
+    #[cfg(any(feature = "base", feature = "optimism"))]
     Op(WithOtherFields<TransactionRequest>),
     Tempo(Box<TempoTransactionRequest>),
 }
@@ -65,8 +76,23 @@ impl FoundryTransactionRequest {
         matches!(self, Self::Ethereum(_))
     }
 
+    /// Returns `true` if this is a Base EIP-8130 request.
+    #[cfg(feature = "base")]
+    pub const fn is_base(&self) -> bool {
+        matches!(self, Self::Base(_))
+    }
+
+    /// Returns the native Base request.
+    #[cfg(feature = "base")]
+    pub const fn as_base(&self) -> Option<&BaseTransactionRequest> {
+        match self {
+            Self::Base(request) => Some(request),
+            _ => None,
+        }
+    }
+
     /// Returns `true` if this is an OP stack transaction request.
-    #[cfg(feature = "optimism")]
+    #[cfg(any(feature = "base", feature = "optimism"))]
     pub const fn is_op(&self) -> bool {
         matches!(self, Self::Op(_))
     }
@@ -87,7 +113,9 @@ impl FoundryTransactionRequest {
     pub fn into_inner(self) -> TransactionRequest {
         match self {
             Self::Ethereum(tx) => tx,
-            #[cfg(feature = "optimism")]
+            #[cfg(feature = "base")]
+            Self::Base(tx) => tx.into(),
+            #[cfg(any(feature = "base", feature = "optimism"))]
             Self::Op(tx) => tx.inner,
             Self::Tempo(tx) => tx.inner,
         }
@@ -99,7 +127,7 @@ impl FoundryTransactionRequest {
     /// # Returns
     /// - Ok(deposit_tx_parts) if all necessary keys are present to build a deposit transaction.
     /// - Err(missing) if some keys are missing to build a deposit transaction.
-    #[cfg(feature = "optimism")]
+    #[cfg(any(feature = "base", feature = "optimism"))]
     pub fn get_deposit_tx_parts(&self) -> Result<DepositTransactionParts, Vec<&'static str>> {
         match self {
             Self::Op(tx) => get_deposit_tx_parts(&tx.other),
@@ -114,11 +142,13 @@ impl FoundryTransactionRequest {
     pub fn preferred_type(&self) -> FoundryTxType {
         match self {
             Self::Ethereum(tx) => tx.preferred_type().into(),
+            #[cfg(feature = "base")]
+            Self::Base(_) => FoundryTxType::Eip8130,
             #[cfg(feature = "optimism")]
             Self::Op(tx) if tx.inner.transaction_type == Some(POST_EXEC_TX_TYPE_ID) => {
                 FoundryTxType::PostExec
             }
-            #[cfg(feature = "optimism")]
+            #[cfg(any(feature = "base", feature = "optimism"))]
             Self::Op(_) => FoundryTxType::Deposit,
             Self::Tempo(_) => FoundryTxType::Tempo,
         }
@@ -142,7 +172,7 @@ impl FoundryTransactionRequest {
 
     /// Check if all necessary keys are present to build a Deposit transaction, returning a list of
     /// keys that are missing.
-    #[cfg(feature = "optimism")]
+    #[cfg(any(feature = "base", feature = "optimism"))]
     pub fn complete_deposit(&self) -> Result<(), Vec<&'static str>> {
         self.get_deposit_tx_parts().map(|_| ())
     }
@@ -164,10 +194,14 @@ impl FoundryTransactionRequest {
             FoundryTxType::Eip1559 => self.as_ref().complete_1559(),
             FoundryTxType::Eip4844 => self.as_ref().complete_4844(),
             FoundryTxType::Eip7702 => self.as_ref().complete_7702(),
-            #[cfg(feature = "optimism")]
+            #[cfg(any(feature = "base", feature = "optimism"))]
             FoundryTxType::Deposit => self.complete_deposit(),
             #[cfg(feature = "optimism")]
             FoundryTxType::PostExec => Err(vec!["not implemented for post-exec tx"]),
+            #[cfg(feature = "base")]
+            FoundryTxType::Eip8130 => {
+                Err(vec!["EIP-8130 requires a signed raw transaction envelope"])
+            }
             FoundryTxType::Tempo => self.complete_tempo(),
         }
     }
@@ -189,7 +223,11 @@ impl FoundryTransactionRequest {
     /// Converts the request into a `FoundryTypedTx`, handling all Ethereum and OP-stack transaction
     /// types.
     pub fn build_typed_tx(self) -> Result<FoundryTypedTx, Self> {
-        #[cfg(feature = "optimism")]
+        #[cfg(feature = "base")]
+        if self.is_base() {
+            return Err(self);
+        }
+        #[cfg(any(feature = "base", feature = "optimism"))]
         if let Ok(deposit_tx_parts) = self.get_deposit_tx_parts() {
             // Build deposit transaction
             return Ok(FoundryTypedTx::Deposit(TxDeposit {
@@ -245,7 +283,9 @@ impl Serialize for FoundryTransactionRequest {
     {
         match self {
             Self::Ethereum(tx) => tx.serialize(serializer),
-            #[cfg(feature = "optimism")]
+            #[cfg(feature = "base")]
+            Self::Base(tx) => tx.serialize(serializer),
+            #[cfg(any(feature = "base", feature = "optimism"))]
             Self::Op(tx) => tx.serialize(serializer),
             Self::Tempo(tx) => tx.serialize(serializer),
         }
@@ -267,7 +307,9 @@ impl AsRef<TransactionRequest> for FoundryTransactionRequest {
     fn as_ref(&self) -> &TransactionRequest {
         match self {
             Self::Ethereum(tx) => tx,
-            #[cfg(feature = "optimism")]
+            #[cfg(feature = "base")]
+            Self::Base(tx) => tx.as_ref(),
+            #[cfg(any(feature = "base", feature = "optimism"))]
             Self::Op(tx) => tx,
             Self::Tempo(tx) => tx.as_ref(),
         }
@@ -278,7 +320,9 @@ impl AsMut<TransactionRequest> for FoundryTransactionRequest {
     fn as_mut(&mut self) -> &mut TransactionRequest {
         match self {
             Self::Ethereum(tx) => tx,
-            #[cfg(feature = "optimism")]
+            #[cfg(feature = "base")]
+            Self::Base(tx) => tx.as_mut(),
+            #[cfg(any(feature = "base", feature = "optimism"))]
             Self::Op(tx) => tx,
             Self::Tempo(tx) => tx.as_mut(),
         }
@@ -296,6 +340,40 @@ impl TryFrom<WithOtherFields<TransactionRequest>> for FoundryTransactionRequest 
             )]
             Option<NonZeroU64>,
         );
+
+        #[cfg(feature = "base")]
+        {
+            let present = |field: &str| tx.other.get(field).is_some_and(|value| !value.is_null());
+            let base_fields =
+                ["accountChanges", "metadata", "sender", "senderAuth", "payer", "payerAuth"]
+                    .iter()
+                    .any(|field| present(field));
+            let phased_calls = tx
+                .other
+                .get("calls")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|calls| calls.first().is_some_and(serde_json::Value::is_array));
+            let explicit_base = tx.transaction_type == Some(EIP8130_TRANSACTION_TYPE);
+            if base_fields || phased_calls || explicit_base {
+                if tx.transaction_type.is_some() && !explicit_base {
+                    return Err(serde::de::Error::custom(
+                        "Base fields conflict with transaction type",
+                    ));
+                }
+                if TEMPO_REQUEST_FIELDS.iter().any(|field| {
+                    !matches!(*field, "nonceKey" | "calls" | "validBefore" | "validAfter")
+                        && present(field)
+                }) {
+                    return Err(serde::de::Error::custom(
+                        "conflicting Base and Tempo request fields",
+                    ));
+                }
+                let mut base =
+                    serde_json::from_value::<BaseTransactionRequest>(serde_json::to_value(&tx)?)?;
+                base.as_mut().transaction_type = Some(EIP8130_TRANSACTION_TYPE);
+                return Ok(Self::Base(base));
+            }
+        }
 
         if tx.transaction_type == Some(TEMPO_TX_TYPE_ID)
             || TEMPO_REQUEST_FIELDS.iter().any(|field| {
@@ -351,6 +429,12 @@ impl TryFrom<WithOtherFields<TransactionRequest>> for FoundryTransactionRequest 
                 tx.other.get_deserialized::<Option<_>>("feePayerSignature").transpose()?.flatten();
             return Ok(Self::Tempo(Box::new(tempo_tx_req)));
         }
+        #[cfg(all(feature = "base", not(feature = "optimism")))]
+        if tx.transaction_type == Some(DEPOSIT_TX_TYPE_ID)
+            || get_deposit_tx_parts(&tx.other).is_ok()
+        {
+            return Ok(Self::Op(tx));
+        }
         #[cfg(feature = "optimism")]
         if tx.transaction_type == Some(DEPOSIT_TX_TYPE_ID)
             || tx.transaction_type == Some(POST_EXEC_TX_TYPE_ID)
@@ -376,7 +460,7 @@ impl From<FoundryTypedTx> for FoundryTransactionRequest {
             FoundryTypedTx::Eip1559(tx) => Self::Ethereum(Into::<TransactionRequest>::into(tx)),
             FoundryTypedTx::Eip4844(tx) => Self::Ethereum(Into::<TransactionRequest>::into(tx)),
             FoundryTypedTx::Eip7702(tx) => Self::Ethereum(Into::<TransactionRequest>::into(tx)),
-            #[cfg(feature = "optimism")]
+            #[cfg(any(feature = "base", feature = "optimism"))]
             FoundryTypedTx::Deposit(tx) => {
                 let other = OtherFields::from_iter([
                     ("sourceHash", serde_json::to_value(tx.source_hash).unwrap()),
@@ -385,7 +469,7 @@ impl From<FoundryTypedTx> for FoundryTransactionRequest {
                 ]);
                 WithOtherFields { inner: Into::<TransactionRequest>::into(tx), other }
                     .try_into()
-                    .expect("valid OP transaction request")
+                    .expect("valid deposit transaction request")
             }
             #[cfg(feature = "optimism")]
             FoundryTypedTx::PostExec(tx) => WithOtherFields {
@@ -394,6 +478,10 @@ impl From<FoundryTypedTx> for FoundryTransactionRequest {
             }
             .try_into()
             .expect("valid OP post-exec transaction request"),
+            #[cfg(feature = "base")]
+            FoundryTypedTx::Eip8130(tx) => {
+                Self::Base(super::base::simulation_request(tx, None, None, None))
+            }
             FoundryTypedTx::Tempo(tx) => Self::Tempo(Box::new(tx.into())),
         }
     }
@@ -401,6 +489,18 @@ impl From<FoundryTypedTx> for FoundryTransactionRequest {
 
 impl From<FoundryTxEnvelope> for FoundryTransactionRequest {
     fn from(tx: FoundryTxEnvelope) -> Self {
+        #[cfg(feature = "base")]
+        if let FoundryTxEnvelope::Eip8130(tx) = tx {
+            let from = tx.recover_sender().ok();
+            let sender_auth = Some(tx.sender_auth().clone());
+            let payer_auth = Some(tx.payer_auth().clone());
+            return Self::Base(super::base::simulation_request(
+                tx.into_tx(),
+                from,
+                sender_auth,
+                payer_auth,
+            ));
+        }
         FoundryTypedTx::from(tx).into()
     }
 }
@@ -538,10 +638,14 @@ impl NetworkTransactionBuilder<FoundryNetwork> for FoundryTransactionRequest {
     }
 
     fn can_build(&self) -> bool {
+        #[cfg(feature = "base")]
+        if self.is_base() {
+            return false;
+        }
         if self.as_ref().can_build() || self.complete_tempo().is_ok() {
             return true;
         }
-        #[cfg(feature = "optimism")]
+        #[cfg(any(feature = "base", feature = "optimism"))]
         if self.complete_deposit().is_ok() {
             return true;
         }
@@ -561,16 +665,20 @@ impl NetworkTransactionBuilder<FoundryNetwork> for FoundryTransactionRequest {
     /// Prepares [`FoundryTransactionRequest`] by trimming conflicting fields, and filling with
     /// default values the mandatory fields.
     fn prep_for_submission(&mut self) {
+        #[cfg(feature = "base")]
+        if self.is_base() {
+            return;
+        }
         let preferred_type = self.preferred_type();
         let inner = self.as_mut();
         inner.transaction_type = Some(preferred_type as u8);
         inner.gas.is_none().then(|| inner.set_gas_limit(Default::default()));
         let is_deposit = {
-            #[cfg(feature = "optimism")]
+            #[cfg(any(feature = "base", feature = "optimism"))]
             {
                 preferred_type.is_deposit()
             }
-            #[cfg(not(feature = "optimism"))]
+            #[cfg(not(any(feature = "base", feature = "optimism")))]
             {
                 false
             }
@@ -644,13 +752,12 @@ impl TransactionBuilder4844 for FoundryTransactionRequest {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use alloy_primitives::{B256, Bytes, Signature};
     use tempo_primitives::{
         TempoSignature, TempoTransaction,
         transaction::{Authorization, KeyAuthorization, PrimitiveSignature},
     };
-
-    use super::*;
 
     fn default_tx_req() -> TransactionRequest {
         TransactionRequest::default()
@@ -672,7 +779,7 @@ mod tests {
         assert!(tempo.is_tempo());
         assert!(!tempo.is_ethereum());
 
-        #[cfg(feature = "optimism")]
+        #[cfg(any(feature = "base", feature = "optimism"))]
         {
             let op = FoundryTransactionRequest::Op(WithOtherFields::default());
             assert!(op.is_op());
@@ -703,6 +810,48 @@ mod tests {
         assert!(matches!(req.build_unsigned(), Ok(FoundryTypedTx::Tempo(_))));
     }
 
+    #[cfg(feature = "base")]
+    #[test]
+    fn base_and_tempo_request_routing() {
+        let call = serde_json::json!({ "to": Address::ZERO, "data": "0x", "value": "0x0" });
+        for (value, expected_type) in [
+            (serde_json::json!({"calls": [call]}), FoundryTxType::Tempo),
+            (serde_json::json!({"nonceKey": "0x1"}), FoundryTxType::Tempo),
+            (serde_json::json!({"validBefore": "0x123"}), FoundryTxType::Tempo),
+            (serde_json::json!({"calls": []}), FoundryTxType::Eip1559),
+            (serde_json::json!({"calls": [[call]], "validBefore": 123}), FoundryTxType::Eip8130),
+            (serde_json::json!({"type": "0x79"}), FoundryTxType::Eip8130),
+            (serde_json::json!({"type": "0x79", "nonceKey": "0x1"}), FoundryTxType::Eip8130),
+            (serde_json::json!({"type": "0x76", "calls": [call]}), FoundryTxType::Tempo),
+            (
+                serde_json::json!({"sender": Address::ZERO, "feeToken": null}),
+                FoundryTxType::Eip8130,
+            ),
+        ] {
+            let request: FoundryTransactionRequest = serde_json::from_value(value.clone())
+                .unwrap_or_else(|err| panic!("{value}: {err}"));
+            assert_eq!(request.preferred_type(), expected_type, "{value}");
+            if expected_type == FoundryTxType::Eip8130 {
+                assert!(request.is_base(), "{value}");
+                assert!(!request.can_build(), "{value}");
+            }
+            let roundtrip: FoundryTransactionRequest =
+                serde_json::from_value(serde_json::to_value(&request).unwrap()).unwrap();
+            assert_eq!(request, roundtrip);
+        }
+        for value in [
+            serde_json::json!({"type": "0x76", "calls": [[call]]}),
+            serde_json::json!({"type": "0x79", "feeToken": Address::ZERO}),
+            serde_json::json!({"type": "0x2", "sender": Address::ZERO}),
+            serde_json::json!({"type": "0x79", "calls": [call]}),
+        ] {
+            assert!(
+                serde_json::from_value::<FoundryTransactionRequest>(value.clone()).is_err(),
+                "{value}"
+            );
+        }
+    }
+
     #[test]
     fn test_routing_serialized_non_aa_tempo_request_to_ethereum() {
         let request = TempoTransactionRequest { inner: default_tx_req(), ..Default::default() };
@@ -718,7 +867,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "optimism")]
+    #[cfg(any(feature = "base", feature = "optimism"))]
     fn test_routing_op_by_deposit_fields() {
         let tx = default_tx_req();
         let mut other = OtherFields::default();
@@ -773,7 +922,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "optimism")]
+    #[cfg(any(feature = "base", feature = "optimism"))]
     fn test_serialization_op() {
         let tx = default_tx_req();
         let mut other = OtherFields::default();
@@ -910,7 +1059,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "optimism")]
+    #[cfg(any(feature = "base", feature = "optimism"))]
     fn test_deposit_typed_tx_roundtrip() {
         let deposit_tx = TxDeposit {
             from: Address::random(),

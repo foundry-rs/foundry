@@ -1,29 +1,27 @@
 version: 2
+multi-ecosystem-groups:
+  code-weekly:
+    open-pull-requests-limit: 5
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: UTC
 updates:
   - package-ecosystem: npm
     directory: /editors/vscode
-    schedule:
-      interval: weekly
-      day: monday
+    patterns: ["*"]
+    multi-ecosystem-group: code-weekly
     cooldown:
       default-days: 7
-    groups:
-      editor-npm-weekly:
-        patterns:
-          - '*'
   - package-ecosystem: cargo
     directory: /editors/zed
-    schedule:
-      interval: weekly
-      day: monday
+    patterns: ["*"]
+    multi-ecosystem-group: code-weekly
     cooldown:
       default-days: 7
   - package-ecosystem: github-actions
     directory: /
-    labels:
-      - dependencies
-      - github_actions
-      - L-ignore
     schedule:
       interval: weekly
       day: monday
@@ -37,14 +35,10 @@ updates:
           - '*'
   - package-ecosystem: cargo
     directory: /
-    schedule:
-      interval: weekly
-      day: monday
-      time: "09:00"
-      timezone: UTC
+    patterns: ["*"]
+    multi-ecosystem-group: code-weekly
     cooldown:
       default-days: 7
-    open-pull-requests-limit: 5
     ignore:
       - dependency-name: syn
         update-types:
@@ -58,7 +52,3 @@ updates:
       - dependency-name: ecdsa
         update-types:
           - version-update:semver-minor
-    groups:
-      cargo-weekly:
-        patterns:
-          - '*'

@@ -38,10 +38,14 @@ symlink to that durable profile so VS Code's socket path stays short. The link
 is recreated after temporary-directory cleanup, while settings, history and
 installed extensions remain. Portable VS Code installations also use this
 isolated profile. Profiles are reused until removed.
-Sessions are keyed by
-project directory, Forge executable path and selected Foundry profile. Normal
-VS Code settings are untouched. The launched client always uses the Forge
-executable that opened it, including for formatting and background checks.
+Sessions are keyed by project directory, resolved VS Code CLI launcher path and
+target, Forge executable path and selected Foundry profile. The same launcher
+path and target reuse a session; distinct symlink entry points stay isolated,
+and repointing a launcher symlink selects a separate profile. Upgrading from a
+launcher that shared profiles across editors creates fresh profiles and preserves
+the old directories without automatic migration; see the [editor overview](../README.md).
+Normal VS Code settings are untouched. The launched client always uses the
+Forge executable that opened it, including for formatting and background checks.
 
 A separately installed extension resolves `forge` from `PATH`, or uses an
 explicit executable:
@@ -161,18 +165,22 @@ path for log inspection. These tests do not edit or close existing user windows.
 
 ### Local packaging
 
+From `editors/vscode`, run:
+
 ```bash
 npm run package
-npx vsce ls --tree
 code --install-extension bundle/solar-lsp.vsix --force
 ```
 
-Packaging runs the compiler and includes runtime dependencies, grammars,
-language configuration and license texts from the repository root. The VSIX is
-local and ignored by
-Git. To preserve a normal profile, supply isolated `--user-data-dir` and
-`--extensions-dir` arguments when installing or opening VS Code. No automated
-Marketplace publishing is configured.
+Packaging runs the compiler and stages the runtime dependencies, grammars and
+language configuration selected by `.vscodeignore`. It copies the MIT and
+Apache-2.0 license texts directly from the repository root, so packaging also
+works with `core.symlinks=false`. The temporary staging directory is removed
+after packaging; the checkout's license links are unchanged. Use `npm run package`
+for this preparation instead of invoking `vsce package` directly. The VSIX is
+local and ignored by Git. To preserve a normal profile, supply isolated
+`--user-data-dir` and `--extensions-dir` arguments when installing or opening
+VS Code. No automated Marketplace publishing is configured.
 
 ## Protocol tracing and CodeLens
 
