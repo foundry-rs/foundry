@@ -46,7 +46,7 @@ jobs:
       id-token: write
     steps:
       - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@e8f9d5c23ab43d0645c6d50fb73e98b362cdec02 # 2026-09-22T08-14-13Z-e8f9d5c2
+        uses: tempoxyz/gh-actions/actions/secure-runner@44477a1dea964684252d6032489e5c8acde487cd # 2026-09-22T22-28-45Z-44477a1d
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -78,7 +78,7 @@ jobs:
       digest: ${{ steps.select.outputs.digest }}
     steps:
       - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@e8f9d5c23ab43d0645c6d50fb73e98b362cdec02 # 2026-09-22T08-14-13Z-e8f9d5c2
+        uses: tempoxyz/gh-actions/actions/secure-runner@44477a1dea964684252d6032489e5c8acde487cd # 2026-09-22T22-28-45Z-44477a1d
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
