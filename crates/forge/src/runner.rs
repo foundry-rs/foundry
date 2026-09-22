@@ -52,7 +52,7 @@ use foundry_evm::{
             CheckSequenceFailureSite, CheckSequenceOptions, CheckSequenceOutcome,
             HandlerAssertionFailure, InvariantExecutor, InvariantFuzzError, ReplayErrorResult,
             check_sequence, did_fail_on_assert, execute_tx, execute_tx_and_register_created,
-            replay_error, replay_handler_failure_sequence, replay_run,
+            handler_edge_fingerprint, replay_error, replay_handler_failure_sequence, replay_run,
         },
         persist_corpus_seed, read_corpus_dir, replay_corpus_to_showmap,
         replay_sequence_for_minimization, should_ignore_revert,
@@ -2116,15 +2116,26 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 let _ = std::fs::remove_file(&path);
                 continue;
             }
+            let edge_fingerprinted = matches!(
+                failure_site,
+                Some(SymbolicInvariantFailureSite::SequenceCall {
+                    target,
+                    selector,
+                    fingerprint,
+                }) if fingerprint != handler_edge_fingerprint(None, target, selector)
+            );
             let txes = base_counterexamples_to_txes(&mut call_sequence, config.show_solidity);
             let sequence = (0..min(txes.len(), config.depth as usize)).collect::<Vec<_>>();
-            let replay_executor = match self.clone_executor_with_symbolic_storage(&storage) {
+            let mut replay_executor = match self.clone_executor_with_symbolic_storage(&storage) {
                 Ok(executor) => executor,
                 Err(err) => {
                     error!(%err, "Failed to apply symbolic storage for handler-side assertion replay");
                     continue;
                 }
             };
+            if edge_fingerprinted {
+                replay_executor.inspector_mut().collect_edge_coverage_with_config(&config.corpus);
+            }
             match replay_handler_failure_sequence(
                 replay_executor,
                 &txes,

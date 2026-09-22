@@ -217,12 +217,15 @@ forgetest_init!(handler_assertion_persisted_to_disk, |prj, cmd| {
         config.invariant.runs = 1;
         config.invariant.depth = 10;
         config.invariant.fail_on_revert = false;
+        config.invariant.corpus.corpus_dir = Some("inv_corpus".into());
+        config.invariant.corpus.evm_edge_coverage_include_call_depth = true;
     });
     prj.add_source(
         "AlwaysAssert.sol",
         r#"
 contract AlwaysAssert {
-    function boom() external { assert(false); }
+    function ping() external pure {}
+    function boom() external { this.ping(); assert(false); }
 }
    "#,
     );
@@ -264,11 +267,15 @@ contract AlwaysAssertTest is Test {
     prj.update_config(|config| {
         config.invariant.runs = 0;
     });
-    cmd.forge_fuse().args(["test", "--mt", "invariant_ok"]).assert_failure().stderr_eq(str![[r#"
+    cmd.forge_fuse().args(["fuzz", "replay", "--mt", "invariant_ok"]).assert_failure().stderr_eq(
+        str![[r#"
 ...
 Warning: Replayed handler-side assertion bug from [..]
 ...
-"#]]);
+"#]],
+    );
+
+    cmd.forge_fuse().args(["fuzz", "replay", "--mt", "invariant_ok"]).assert_failure();
 
     // Sanity check: persisted file is still there after a successful replay.
     let entries_after: Vec<_> = std::fs::read_dir(&handlers_dir)
@@ -305,7 +312,8 @@ contract AlwaysAssert {
         "AlwaysAssert.sol",
         r#"
 contract AlwaysAssert {
-    function boom() external { assert(false); }
+    function ping() external pure {}
+    function boom() external { this.ping(); assert(false); }
 }
    "#,
     );
