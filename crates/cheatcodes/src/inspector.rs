@@ -1307,7 +1307,13 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
         apply_dispatch(
             &decoded,
-            &mut CheatsCtxt { state: self, ecx, gas_limit: call.gas_limit, caller },
+            &mut CheatsCtxt {
+                state: self,
+                ecx,
+                gas_limit: call.gas_limit,
+                caller,
+                is_static: call.is_static,
+            },
             executor,
         )
     }
@@ -1327,7 +1333,13 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         ecx.db_mut().ensure_cheatcode_access_forking_mode(&caller)?;
 
         crate::monad::apply_monad_cheatcode(
-            &mut CheatsCtxt { state: self, ecx, gas_limit: call.gas_limit, caller },
+            &mut CheatsCtxt {
+                state: self,
+                ecx,
+                gas_limit: call.gas_limit,
+                caller,
+                is_static: call.is_static,
+            },
             &input,
         )
     }
