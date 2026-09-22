@@ -229,29 +229,12 @@ jobs:
         run: ./.github/scripts/format.sh --check
 
   deny:
-    name: cargo deny check
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    uses: tempoxyz/ci/.github/workflows/deny.yml@a75700dae1a185e3968a902dd095c917782ced76
     permissions:
       contents: read
       id-token: write
-    env:
-      RUSTC_WRAPPER: ""
-    steps:
-      - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@ce5deead22108ccc6aafba0ca47d2a9e6d1a40e8
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1
-        with:
-          toolchain: nightly
-      - uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # v2.87.12
-        with:
-          tool: cargo-deny@0.20.2
-          checksum: true
-          fallback: none
-      - run: cargo deny --all-features --locked check all
+    with:
+      deny-flags: --all-features --locked
 
   codeql:
     name: analyze (${{ matrix.language }})
