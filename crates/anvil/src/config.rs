@@ -1645,7 +1645,7 @@ impl NodeConfig {
         let (db, config, replay) =
             self.setup_fork_db_config_with_replay(eth_rpc_url, evm_env, fees, None).await?;
         if !self.no_bal && !self.no_fork_node_info {
-            config.prefill_cache(db.inner(), self.fork_state_by_number).await;
+            config.prefill_cache(db.inner()).await;
         }
         let db: Arc<TokioRwLock<Box<dyn Db>>> = Arc::new(TokioRwLock::new(Box::new(db)));
         let fork = ClientFork::new(config, Arc::clone(&db));
@@ -1955,7 +1955,7 @@ impl NodeConfig {
             self.setup_fork_db_config_with_replay(eth_rpc_url, evm_env, fees, None).await?;
         eyre::ensure!(replay.is_none(), "transaction-hash fork replay requires full node startup");
         if !self.no_bal && !self.no_fork_node_info {
-            config.prefill_cache(db.inner(), self.fork_state_by_number).await;
+            config.prefill_cache(db.inner()).await;
         }
         Ok((db, config))
     }

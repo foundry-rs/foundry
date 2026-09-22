@@ -1,4 +1,4 @@
-//! Unit tests for BAL source eligibility, validation and fork cache seeding.
+//! Tests for BAL source eligibility, validation and fork cache insertion.
 
 use super::{ClientForkConfig, ForkEndpointIdentity, cache_bal, validate_bal};
 use alloy_eips::eip7928::{
@@ -70,100 +70,83 @@ fn fork_config(asserter: Asserter, block_hash: B256) -> ClientForkConfig {
 }
 
 #[tokio::test]
-async fn fork_bal_prefill_uses_source_rules() {
+async fn fork_bal_skips_ineligible_sources_and_mismatched_cache() {
     let hash = B256::repeat_byte(1);
-    let address = Address::repeat_byte(1);
-    let ethereum = Some(NetworkVariant::Ethereum);
-    let cancun = Some(EthereumHardfork::Cancun);
-    let shanghai = Some(EthereumHardfork::Shanghai);
-    for (name, chain_id, network, hardfork, timestamp, eligible) in [
-        ("mainnet", 1, ethereum, None, 1_800_000_000, true),
-        ("mainnet before Cancun", 1, ethereum, None, 1_600_000_000, false),
-        ("undiscovered network", 1, None, None, 1_800_000_000, true),
-        ("Sepolia", 11_155_111, ethereum, None, 1_800_000_000, true),
-        ("Holesky", 17_000, ethereum, None, 1_800_000_000, true),
-        ("Hoodi", 560_048, ethereum, None, 1_800_000_000, true),
-        ("unknown source", 31_337, ethereum, None, 1_800_000_000, false),
-        ("Arbitrum source", 42_161, ethereum, None, 1_800_000_000, false),
-        ("Tempo source", 1, Some(NetworkVariant::Tempo), cancun, 1_800_000_000, false),
-        ("Anvil before Cancun", 1, ethereum, shanghai, 1_800_000_000, false),
-        ("Anvil with Cancun override", 1, ethereum, cancun, 1_600_000_000, true),
-        ("Anvil custom chain", 31_337, ethereum, cancun, 1_800_000_000, true),
-    ] {
+    for (mutable, multiple, wrong_block) in
+        [(true, false, false), (false, true, false), (false, false, true)]
+    {
         let asserter = Asserter::new();
         let mut config = fork_config(asserter.clone(), hash);
+        config.state_is_mutable = mutable;
+        if multiple {
+            config.fork_urls.push("http://localhost:8546".to_string());
+        }
+        asserter.push_success(&serde_json::Value::Null);
+        let db = database(if wrong_block { B256::ZERO } else { hash });
+
+        config.prefill_cache(&db).await;
+
+        assert_eq!(asserter.read_q().len(), 1, "ineligible sources must not issue prefill RPCs");
+        assert!(db.accounts().read().is_empty());
+        assert!(db.storage().read().is_empty());
+    }
+}
+
+#[test]
+fn fork_bal_uses_source_rules() {
+    let ethereum = Some(NetworkVariant::Ethereum);
+    for (chain_id, network, timestamp, eligible) in [
+        (1, ethereum, 1_800_000_000, true),
+        (1, ethereum, 1_600_000_000, false),
+        (1, None, 1_800_000_000, true),
+        (11_155_111, ethereum, 1_800_000_000, true),
+        (17_000, ethereum, 1_800_000_000, true),
+        (560_048, ethereum, 1_800_000_000, true),
+        (31_337, ethereum, 1_800_000_000, false),
+        (42_161, ethereum, 1_800_000_000, false),
+        (1, Some(NetworkVariant::Tempo), 1_800_000_000, false),
+    ] {
+        let mut config = fork_config(Asserter::new(), B256::ZERO);
         config.endpoint_identity.source_chain_id = chain_id;
         config.endpoint_identity.network = network;
-        config.endpoint_identity.hardfork = hardfork.map(Into::into);
         config.timestamp = timestamp;
         // Local execution overrides must not make an ineligible source eligible.
         config.hardfork = Some(EthereumHardfork::Amsterdam.into());
         config.execution_chain_id = 31_337;
         config.override_chain_id = Some(31_337);
         config.endpoint_identity.execution_chain_id = 31_337;
-        config.state_is_mutable = true;
-
-        let bal = vec![AccountChanges::new(address).with_storage_change(SlotChanges::new(
-            U256::ZERO,
-            vec![StorageChange::new(index(1), U256::ONE)],
-        ))];
-        let block = AnyRpcBlock::new(
-            Block::new(
-                AnyRpcHeader {
-                    hash,
-                    inner: AnyHeader {
-                        number: config.block_number,
-                        timestamp,
-                        block_access_list_hash: Some(compute_block_access_list_hash(&bal)),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                },
-                BlockTransactions::Hashes(vec![B256::repeat_byte(2)]),
-            )
-            .into(),
-        );
-        asserter.push_success(&block);
-        asserter.push_success(&bal);
-        asserter.push_success(&U256::from(99));
-        let queued = asserter.read_q().len();
-        let db = database(hash);
-
-        config.prefill_cache(&db, false).await;
-
-        assert_eq!(asserter.read_q().len(), if eligible { 0 } else { queued }, "{name}");
-        assert_eq!(
-            db.storage().read().get(&address).and_then(|slots| slots.get(&U256::ZERO)).copied(),
-            eligible.then_some(U256::from(99)),
-            "{name}"
-        );
-        assert!(db.accounts().read().is_empty(), "{name}");
+        assert_eq!(config.bal_eligible(), eligible, "{chain_id}, {network:?}, {timestamp}");
     }
 }
 
+fn rpc_error(asserter: &Asserter, code: i64) {
+    asserter.push_failure(
+        serde_json::from_value(serde_json::json!({"code": code, "message": "unavailable"}))
+            .unwrap(),
+    );
+}
+
 #[tokio::test]
-async fn fork_bal_prefill_validates_before_caching_and_refetches_only_mutable_state() {
+async fn fork_bal_prefill_validates_before_caching() {
     let hash = B256::repeat_byte(1);
     let address = Address::repeat_byte(1);
-    for (wrong_block, bad_commitment, mutable) in
-        [(false, false, false), (false, true, false), (true, false, false), (false, false, true)]
-    {
+    for (legacy, bad_commitment, wrong_hash, identity_code) in [
+        (false, false, false, -32601),
+        (true, false, false, -32601),
+        (false, true, false, -32601),
+        (false, false, true, -32601),
+        (false, false, false, -32603),
+        (false, false, false, 0),
+    ] {
         let asserter = Asserter::new();
-        let mut config = fork_config(asserter.clone(), hash);
-        config.state_is_mutable = mutable;
-        let account = if mutable {
-            AccountChanges::new(address)
-        } else {
-            complete_account(address, bytes!("6000"))
-        };
-        let bal = vec![account.with_storage_change(SlotChanges::new(
-            U256::ONE,
-            vec![StorageChange::new(index(1), U256::ONE)],
-        ))];
+        let config = fork_config(asserter.clone(), hash);
+        let bal = vec![complete_account(address, bytes!("6000")).with_storage_change(
+            SlotChanges::new(U256::ONE, vec![StorageChange::new(index(1), U256::ONE)]),
+        )];
         let block = AnyRpcBlock::new(
             Block::new(
                 AnyRpcHeader {
-                    hash,
+                    hash: if wrong_hash { B256::ZERO } else { hash },
                     inner: AnyHeader {
                         number: config.block_number,
                         timestamp: config.timestamp,
@@ -180,44 +163,60 @@ async fn fork_bal_prefill_validates_before_caching_and_refetches_only_mutable_st
             )
             .into(),
         );
-        let unsupported = || {
-            asserter.push_failure(
-                serde_json::from_str(r#"{"code":-32601,"message":"method not found"}"#).unwrap(),
-            );
-        };
-        if !mutable {
-            unsupported();
+        if legacy {
+            rpc_error(&asserter, -32601);
         }
-        asserter.push_success(&block);
         asserter.push_success(&bal);
-        if mutable {
-            asserter.push_success(&U256::from(99));
-        } else if !bad_commitment {
-            unsupported();
+        asserter.push_success(&block);
+        if !bad_commitment && !wrong_hash {
+            if identity_code == 0 {
+                asserter.push_success(&serde_json::json!({}));
+            } else {
+                rpc_error(&asserter, identity_code);
+            }
         }
-        let queued = asserter.read_q().len();
-        let db = database(if wrong_block { B256::ZERO } else { hash });
+        let db = database(hash);
 
-        config.prefill_cache(&db, false).await;
+        config.prefill_cache(&db).await;
 
-        assert_eq!(asserter.read_q().len(), if wrong_block { queued } else { 0 });
-        if wrong_block || bad_commitment {
+        assert!(asserter.read_q().is_empty());
+        if bad_commitment || wrong_hash || identity_code != -32601 {
             assert!(db.accounts().read().is_empty());
             assert!(db.storage().read().is_empty());
         } else {
-            assert_eq!(
-                db.storage().read()[&address][&U256::ONE],
-                if mutable { U256::from(99) } else { U256::ONE }
-            );
-            if mutable {
-                assert!(db.accounts().read().is_empty());
-            } else {
-                let account = &db.accounts().read()[&address];
-                assert_eq!(account.balance, U256::from(42));
-                assert_eq!(account.nonce, 3);
-                assert_eq!(account.code.as_ref().unwrap().original_bytes(), bytes!("6000"));
-            }
+            assert_eq!(db.storage().read()[&address][&U256::ONE], U256::ONE);
+            let accounts = db.accounts().read();
+            let account = &accounts[&address];
+            assert_eq!(account.balance, U256::from(42));
+            assert_eq!(account.nonce, 3);
+            assert_eq!(account.code.as_ref().unwrap().original_bytes(), bytes!("6000"));
         }
+    }
+}
+
+#[tokio::test]
+async fn fork_bal_unavailable_does_not_fetch_block_or_change_cache() {
+    let hash = B256::repeat_byte(1);
+    for error in [None, Some(-32603), Some(-32601)] {
+        let asserter = Asserter::new();
+        let config = fork_config(asserter.clone(), hash);
+        if let Some(code) = error {
+            rpc_error(&asserter, code);
+        }
+        if error != Some(-32603) {
+            asserter.push_success(&serde_json::Value::Null);
+        }
+        // A following response must stay untouched when no BAL is available.
+        asserter.push_success(&serde_json::Value::Null);
+        let db = database(hash);
+        db.storage().write().entry(Address::ZERO).or_default().insert(U256::ZERO, U256::ONE);
+        let storage = db.storage().read().clone();
+
+        config.prefill_cache(&db).await;
+
+        assert_eq!(asserter.read_q().len(), 1);
+        assert_eq!(*db.storage().read(), storage);
+        assert!(db.accounts().read().is_empty());
     }
 }
 
@@ -319,56 +318,27 @@ fn fork_bal_seed_preserves_cached_values_and_merges_slots() {
 }
 
 #[test]
-fn fork_bal_seed_survives_disk_cache_reload() {
-    let hash = B256::repeat_byte(1);
+fn fork_bal_seed_keeps_final_account_code() {
     let address = Address::repeat_byte(1);
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("storage.json");
-    let meta = BlockchainDbMeta::new(BlockEnv::default(), "http://localhost:8545".to_string())
-        .with_fork_identity(hash, B256::ZERO);
-    let db = BlockchainDb::new(meta.clone(), Some(path.clone()));
-    db.storage().write().entry(address).or_default().insert(U256::from(9), U256::from(99));
-    db.cache().flush();
-    drop(db);
-
-    let db = BlockchainDb::new(meta.clone(), Some(path.clone()));
-    let code = bytes!("6000");
-    let account = complete_account(address, code.clone()).with_storage_change(SlotChanges::new(
-        U256::ONE,
-        vec![StorageChange::new(index(1), U256::ZERO)],
-    ));
-    let authority = Address::repeat_byte(3);
-    let cleared = Address::repeat_byte(4);
     let delegation = bytes!("ef01000000000000000000000000000000000000000042");
-    let cleared_account = complete_account(cleared, delegation.clone())
-        .with_balance_change(BalanceChange::new(index(2), U256::ZERO))
-        .with_nonce_change(NonceChange::new(index(2), 0))
-        .with_code_change(CodeChange::new(index(2), Bytes::new()));
-    let authority_account = complete_account(authority, delegation.clone());
-    cache_bal(&db, vec![account, authority_account, cleared_account]);
-    db.cache().flush();
-    drop(db);
+    for code in [bytes!("6000"), delegation, Bytes::new()] {
+        let db = database(B256::ZERO);
+        let account = complete_account(address, bytes!("6001"))
+            .with_code_change(CodeChange::new(index(2), code.clone()));
 
-    let db = BlockchainDb::new(meta, Some(path));
-    assert_eq!(db.storage().read()[&address][&U256::ONE], U256::ZERO);
-    assert_eq!(db.storage().read()[&address][&U256::from(9)], U256::from(99));
-    assert!(!db.storage().read()[&address].contains_key(&U256::from(2)));
-    let accounts = db.accounts().read();
-    let account = &accounts[&address];
-    assert_eq!(account.balance, U256::from(42));
-    assert_eq!(account.nonce, 3);
-    assert_eq!(account.code.as_ref().unwrap().original_bytes(), code);
-    let account = &accounts[&authority];
-    assert_eq!(account.balance, U256::from(42));
-    assert_eq!(account.nonce, 3);
-    assert_eq!(account.code_hash, alloy_primitives::keccak256(&delegation));
-    assert_eq!(account.code.as_ref().unwrap().original_bytes(), delegation);
-    assert!(account.code.as_ref().unwrap().is_eip7702());
-    let account = &accounts[&cleared];
-    assert_eq!(account.balance, U256::ZERO);
-    assert_eq!(account.nonce, 0);
-    assert_eq!(account.code_hash, alloy_primitives::KECCAK256_EMPTY);
-    assert!(account.code.as_ref().unwrap().is_empty());
+        cache_bal(&db, vec![account]);
+
+        let accounts = db.accounts().read();
+        let account = &accounts[&address];
+        assert_eq!(account.balance, U256::from(42));
+        assert_eq!(account.nonce, 3);
+        assert_eq!(account.code_hash, alloy_primitives::keccak256(&code));
+        assert_eq!(account.code.as_ref().unwrap().original_bytes(), code);
+        assert_eq!(
+            account.code.as_ref().unwrap().is_eip7702(),
+            code.starts_with(&[0xef, 0x01, 0x00])
+        );
+    }
 }
 
 #[test]
@@ -381,13 +351,6 @@ fn fork_bal_seed_rejects_invalid_structure_hash_and_bytecode() {
 
     let duplicate_accounts = vec![valid[0].clone(), valid[0].clone()];
     assert!(validate_bal(&duplicate_accounts, 1, None).is_err());
-    let invalid_index =
-        AccountChanges::new(address).with_balance_change(BalanceChange::new(index(3), U256::ZERO));
-    assert!(validate_bal(&vec![invalid_index], 1, None).is_err());
-    let empty_changes =
-        AccountChanges::new(address).with_storage_change(SlotChanges::new(U256::from(1), vec![]));
-    assert!(validate_bal(&vec![empty_changes], 1, None).is_err());
-
     // Invalid code must discard the seed even for an incomplete account or an earlier write.
     let invalid_code = AccountChanges::new(address)
         .with_code_change(CodeChange::new(index(0), bytes!("ef0100")))

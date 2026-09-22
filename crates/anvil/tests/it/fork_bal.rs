@@ -15,6 +15,9 @@ use anvil::{
     spawn,
 };
 use foundry_primitives::FoundryNetwork;
+use foundry_test_utils::rpc::{
+    spawn_rpc_proxy_internal_error_after, spawn_rpc_proxy_method_not_found_before,
+};
 
 mod accounts;
 
@@ -23,6 +26,7 @@ const CONTRACT: Address = address!("000000000000000000000000000000000000ba10");
 struct BalOrigin {
     api: EthApi<FoundryNetwork>,
     handle: NodeHandle,
+    endpoint: String,
     sender: Address,
     block_number: u64,
     block_hash: B256,
@@ -53,9 +57,17 @@ impl BalOrigin {
             .await
             .unwrap()
             .unwrap();
+        // Model an ordinary Ethereum RPC while keeping mined source state unchanged.
+        let endpoint = spawn_rpc_proxy_method_not_found_before(
+            handle.http_endpoint(),
+            "anvil_nodeInfo",
+            usize::MAX,
+        )
+        .await;
         Self {
             api,
             handle,
+            endpoint,
             sender,
             block_number: block.header.number,
             block_hash: block.header.hash,
@@ -64,7 +76,7 @@ impl BalOrigin {
 
     fn config(&self) -> NodeConfig {
         NodeConfig::test()
-            .with_eth_rpc_url(Some(self.handle.http_endpoint()))
+            .with_eth_rpc_url(Some(self.endpoint.clone()))
             .with_fork_block_number(Some(self.block_number))
             .with_hardfork(Some(EthereumHardfork::Amsterdam.into()))
             .with_no_storage_caching(true)
@@ -108,23 +120,25 @@ async fn has_cached_account(api: &EthApi<FoundryNetwork>, address: Address) -> b
 #[tokio::test(flavor = "multi_thread")]
 async fn fork_bal_real_anvil_prefill_respects_flags_on_startup_and_reset() {
     let origin = BalOrigin::new().await;
+    BalOrigin::increment(&origin.api, origin.sender).await;
     for (no_bal, no_fork_node_info) in [(false, false), (true, false), (false, true), (true, true)]
     {
         let (api, _handle) =
             spawn(origin.config().with_no_bal(no_bal).with_no_fork_node_info(no_fork_node_info))
                 .await;
         for reset in [false, true] {
+            let value = U256::from(if reset { 2 } else { 1 });
             if reset {
                 api.anvil_reset(Some(Forking {
                     json_rpc_url: None,
-                    block_number: Some(origin.block_number),
+                    block_number: Some(origin.block_number + 1),
                 }))
                 .await
                 .unwrap();
             }
             assert_eq!(
                 cached_storage(&api, CONTRACT, U256::ZERO).await,
-                (!no_bal && !no_fork_node_info).then_some(U256::ONE),
+                (!no_bal && !no_fork_node_info).then_some(value),
                 "no_bal={no_bal}, no_fork_node_info={no_fork_node_info}, reset={reset}"
             );
             assert_eq!(cached_storage(&api, CONTRACT, U256::ONE).await, None);
@@ -132,13 +146,13 @@ async fn fork_bal_real_anvil_prefill_respects_flags_on_startup_and_reset() {
 
             assert_eq!(
                 api.storage_at(CONTRACT, U256::ZERO, None).await.unwrap(),
-                B256::from(U256::ONE)
+                B256::from(value)
             );
             assert_eq!(
                 api.storage_at(CONTRACT, U256::ONE, None).await.unwrap(),
                 B256::from(U256::from(9))
             );
-            assert_eq!(cached_storage(&api, CONTRACT, U256::ZERO).await, Some(U256::ONE));
+            assert_eq!(cached_storage(&api, CONTRACT, U256::ZERO).await, Some(value));
             assert_eq!(cached_storage(&api, CONTRACT, U256::ONE).await, Some(U256::from(9)));
         }
     }
@@ -155,77 +169,51 @@ async fn fork_bal_unavailable_keeps_storage_lazy() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn fork_bal_prefetches_mutated_anvil_storage_at_current_and_historical_blocks() {
+async fn fork_bal_skips_mutable_and_uncertain_sources_and_reads_lazily() {
     let origin = BalOrigin::new().await;
     origin
         .api
         .anvil_set_storage_at(CONTRACT, U256::ZERO, B256::from(U256::from(99)))
         .await
         .unwrap();
-    for historical in [false, true] {
-        if historical {
-            origin.api.mine_one().await.unwrap();
+    let uncertain =
+        spawn_rpc_proxy_internal_error_after(origin.handle.http_endpoint(), "anvil_nodeInfo", 0)
+            .await;
+    for endpoint in [origin.handle.http_endpoint(), uncertain] {
+        let (api, _handle) = spawn(origin.config().with_eth_rpc_url(Some(endpoint))).await;
+        for reset in [false, true] {
+            if reset {
+                api.anvil_reset(Some(Forking {
+                    json_rpc_url: None,
+                    block_number: Some(origin.block_number),
+                }))
+                .await
+                .unwrap();
+            }
+            assert_eq!(cached_storage(&api, CONTRACT, U256::ZERO).await, None);
+            assert_eq!(
+                api.storage_at(CONTRACT, U256::ZERO, None).await.unwrap(),
+                B256::from(U256::from(99)),
+            );
+            assert_eq!(cached_storage(&api, CONTRACT, U256::ZERO).await, Some(U256::from(99)));
         }
-        let (api, _handle) = spawn(origin.config()).await;
-        assert_eq!(cached_storage(&api, CONTRACT, U256::ZERO).await, Some(U256::from(99)));
-        assert_eq!(
-            api.storage_at(CONTRACT, U256::ZERO, None).await.unwrap(),
-            B256::from(U256::from(99)),
-        );
     }
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn fork_bal_matches_lazy_state_across_commits_snapshots_and_reset() {
+async fn fork_bal_seed_survives_local_commit_and_snapshot_revert() {
     let origin = BalOrigin::new().await;
-    let mut final_balances = Vec::new();
-    for no_bal in [false, true] {
-        let (api, _handle) = spawn(origin.config().with_no_bal(no_bal)).await;
-        let snapshot = api.evm_snapshot().await.unwrap();
-        for value in [2, 3] {
-            BalOrigin::increment(&api, origin.sender).await;
-            assert_eq!(
-                api.storage_at(CONTRACT, U256::ZERO, None).await.unwrap(),
-                B256::from(U256::from(value)),
-            );
-        }
-        final_balances.push(api.balance(origin.sender, None).await.unwrap());
-        assert!(api.evm_revert(snapshot).await.unwrap());
-        let snapshot = api.evm_snapshot().await.unwrap();
-        api.anvil_set_storage_at(CONTRACT, U256::ZERO, B256::from(U256::from(77))).await.unwrap();
-        assert!(
-            api.anvil_reset(Some(Forking {
-                json_rpc_url: None,
-                block_number: Some(origin.block_number + 100),
-            }))
-            .await
-            .is_err()
-        );
-        assert_eq!(
-            api.storage_at(CONTRACT, U256::ZERO, None).await.unwrap(),
-            B256::from(U256::from(77)),
-        );
-        assert!(api.evm_revert(snapshot).await.unwrap());
-        assert_eq!(
-            api.storage_at(CONTRACT, U256::ZERO, None).await.unwrap(),
-            B256::from(U256::ONE)
-        );
-
-        let snapshot = api.evm_snapshot().await.unwrap();
-        api.anvil_set_storage_at(CONTRACT, U256::ZERO, B256::from(U256::from(99))).await.unwrap();
-        api.anvil_reset(Some(Forking {
-            json_rpc_url: None,
-            block_number: Some(origin.block_number),
-        }))
-        .await
-        .unwrap();
-        assert!(!api.evm_revert(snapshot).await.unwrap());
-        assert_eq!(
-            api.storage_at(CONTRACT, U256::ZERO, None).await.unwrap(),
-            B256::from(U256::ONE)
-        );
-    }
-    assert_eq!(final_balances[0], final_balances[1]);
+    let (api, _handle) = spawn(origin.config()).await;
+    assert_eq!(cached_storage(&api, CONTRACT, U256::ZERO).await, Some(U256::ONE));
+    let snapshot = api.evm_snapshot().await.unwrap();
+    BalOrigin::increment(&api, origin.sender).await;
+    assert_eq!(
+        api.storage_at(CONTRACT, U256::ZERO, None).await.unwrap(),
+        B256::from(U256::from(2)),
+    );
+    assert_eq!(cached_storage(&api, CONTRACT, U256::ZERO).await, Some(U256::ONE));
+    assert!(api.evm_revert(snapshot).await.unwrap());
+    assert_eq!(api.storage_at(CONTRACT, U256::ZERO, None).await.unwrap(), B256::from(U256::ONE));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -276,28 +264,6 @@ async fn fork_bal_preserves_genesis_funding_and_loaded_state_overrides() {
         B256::from(U256::from(50))
     );
     assert_eq!(api.balance(CONTRACT, None).await.unwrap(), U256::from(40));
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn fork_bal_reset_refreshes_the_remote_seed() {
-    let origin = BalOrigin::new().await;
-    let (api, _handle) = spawn(origin.config()).await;
-    assert_eq!(cached_storage(&api, CONTRACT, U256::ZERO).await, Some(U256::ONE));
-
-    BalOrigin::increment(&origin.api, origin.sender).await;
-    api.anvil_reset(Some(Forking {
-        json_rpc_url: None,
-        block_number: Some(origin.block_number + 1),
-    }))
-    .await
-    .unwrap();
-    assert_eq!(cached_storage(&api, CONTRACT, U256::ZERO).await, Some(U256::from(2)));
-    assert_eq!(
-        api.storage_at(CONTRACT, U256::ZERO, None).await.unwrap(),
-        B256::from(U256::from(2))
-    );
-    api.anvil_reset(None).await.unwrap();
-    assert_eq!(api.storage_at(CONTRACT, U256::ZERO, None).await.unwrap(), B256::ZERO);
 }
 
 #[tokio::test(flavor = "multi_thread")]

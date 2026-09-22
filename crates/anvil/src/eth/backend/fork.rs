@@ -966,49 +966,33 @@ impl<N: Network> ClientForkConfig<N> {
 }
 
 impl ClientForkConfig {
-    /// Checks the source's network and hardfork for Cancun-compatible BAL prefill.
+    /// Accepts only a single, immutable Ethereum source under Cancun deletion rules.
     fn bal_eligible(&self) -> bool {
         let identity = self.endpoint_identity;
-        let source_hardfork = identity.hardfork.or_else(|| {
-            FoundryHardfork::from_chain_and_timestamp(identity.source_chain_id, self.timestamp)
-        });
-        identity.network.is_none_or(|network| network.is_ethereum())
-            && (identity.is_authoritative()
-                || matches!(
-                    NamedChain::try_from(identity.source_chain_id),
-                    Ok(NamedChain::Mainnet
-                        | NamedChain::Sepolia
-                        | NamedChain::Holesky
-                        | NamedChain::Hoodi)
-                ))
-            && matches!(source_hardfork, Some(hardfork @ FoundryHardfork::Ethereum(_)) if SpecId::from(hardfork) >= SpecId::CANCUN)
+        !self.state_is_mutable
+            && self.fork_urls.len() == 1
+            && !identity.is_authoritative()
+            && identity.network.is_none_or(|network| network.is_ethereum())
+            && matches!(
+                NamedChain::try_from(identity.source_chain_id),
+                Ok(NamedChain::Mainnet
+                    | NamedChain::Sepolia
+                    | NamedChain::Holesky
+                    | NamedChain::Hoodi)
+            )
+            && matches!(
+                FoundryHardfork::from_chain_and_timestamp(identity.source_chain_id, self.timestamp),
+                Some(hardfork @ FoundryHardfork::Ethereum(_)) if SpecId::from(hardfork) >= SpecId::CANCUN
+            )
     }
 
     /// Prefills the remote cache before local overrides, without making BAL support mandatory.
-    pub(crate) async fn prefill_cache(&self, db: &BlockchainDb, state_by_number: bool) {
+    pub(crate) async fn prefill_cache(&self, db: &BlockchainDb) {
         if !self.bal_eligible() || db.meta().read().fork_hash != Some(self.block_hash) {
             return;
         }
 
         let prefill = async {
-            // Anvil's state can change without changing its block hash. Only immutable sources
-            // can supply cache values directly; local nodes supply the keys to prefetch instead.
-            let mutable = if self.state_is_mutable || self.fork_urls.len() > 1 {
-                true
-            } else {
-                match self
-                    .provider
-                    .raw_request::<_, serde_json::Value>("anvil_nodeInfo".into(), ())
-                    .await
-                {
-                    Ok(_) => true,
-                    Err(error) if is_rpc_method_not_found(&error) => false,
-                    Err(error) => return Err(error.into()),
-                }
-            };
-            let block_id = BlockId::hash(self.block_hash);
-            let Some(block) = self.provider.get_block(block_id).await? else { return Ok(()) };
-            eyre::ensure!(block.header.hash == self.block_hash, "fork block hash mismatch");
             let bal = match self
                 .provider
                 .raw_request("eth_getBlockAccessList".into(), (self.block_hash,))
@@ -1019,61 +1003,27 @@ impl ClientForkConfig {
                 }
                 response => response,
             };
-            let Some(mut bal) = bal? else { return Ok(()) };
+            let Some(bal) = bal? else { return Ok(()) };
+            let Some(block) = self.provider.get_block(BlockId::hash(self.block_hash)).await? else {
+                return Ok(());
+            };
+            eyre::ensure!(block.header.hash == self.block_hash, "fork block hash mismatch");
             validate_bal(&bal, block.transactions.len(), block.header.block_access_list_hash())?;
 
-            if mutable {
-                let state_block = if state_by_number { self.block_number.into() } else { block_id };
-                for account in &mut bal {
-                    if let (Some(balance), Some(nonce), Some(code)) = (
-                        account.balance_changes.last_mut(),
-                        account.nonce_changes.last_mut(),
-                        account.code_changes.last_mut(),
-                    ) {
-                        let (new_balance, new_nonce, new_code) = tokio::try_join!(
-                            self.provider
-                                .get_balance(account.address)
-                                .block_id(state_block)
-                                .into_future(),
-                            self.provider
-                                .get_transaction_count(account.address)
-                                .block_id(state_block)
-                                .into_future(),
-                            self.provider
-                                .get_code_at(account.address)
-                                .block_id(state_block)
-                                .into_future(),
-                        )?;
-                        Bytecode::new_raw_checked(new_code.clone())?;
-                        balance.post_balance = new_balance;
-                        nonce.new_nonce = new_nonce;
-                        code.new_code = new_code;
-                    }
-                    for slot in &mut account.storage_changes {
-                        if let Some(change) = slot.changes.last_mut() {
-                            change.new_value = self
-                                .provider
-                                .get_storage_at(account.address, slot.slot)
-                                .block_id(state_block)
-                                .await?;
-                        }
-                    }
-                }
-            } else {
-                // Do not insert immutable values if the endpoint became a local node meanwhile.
-                match self
-                    .provider
-                    .raw_request::<_, serde_json::Value>("anvil_nodeInfo".into(), ())
-                    .await
-                {
-                    Err(error) if is_rpc_method_not_found(&error) => {}
-                    _ => return Ok(()),
-                }
+            // Anvil can mutate state without changing the block hash. Discard the BAL if
+            // the source became local or its identity is now inconclusive.
+            match self
+                .provider
+                .raw_request::<_, serde_json::Value>("anvil_nodeInfo".into(), ())
+                .await
+            {
+                Err(error) if is_rpc_method_not_found(&error) => {}
+                _ => return Ok(()),
             }
             cache_bal(db, bal);
             Ok::<_, eyre::Report>(())
         };
-        // Include retries and any mutable-source reads in the optional startup budget.
+        // Include retries and validation RPCs in the optional startup budget.
         match tokio::time::timeout(Duration::from_millis(500), prefill).await {
             Ok(Ok(())) => {}
             Ok(Err(_)) => debug!(target: "node", "fork BAL prefill unavailable"),

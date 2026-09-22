@@ -4807,9 +4807,7 @@ impl<N: Network> Backend<N> {
             );
         }
         if !staged_config.no_bal && !staged_config.no_fork_node_info {
-            staged_client_config
-                .prefill_cache(staged_db.inner(), staged_config.fork_state_by_number)
-                .await;
+            staged_client_config.prefill_cache(staged_db.inner()).await;
         }
         let mut invalidated_cache_namespaces = Vec::new();
         if cache_identity_changed && !staged_config.no_storage_caching {
