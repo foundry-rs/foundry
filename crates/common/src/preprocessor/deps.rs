@@ -13,9 +13,9 @@ use path_slash::PathExt;
 use solar::sema::{
     Gcx, Hir,
     hir::{
-        CallArgs, CallOptions, ContractId, ContractKind, Expr, ExprKind, Function, FunctionId,
-        FunctionKind, Res, SourceId, StateMutability, Stmt, StmtKind, TypeKind, UsingDirective,
-        UsingEntryKind, Variable, Visit,
+        CallArgs, CallOptions, Contract, ContractId, ContractKind, Expr, ExprKind, Function,
+        FunctionId, FunctionKind, Res, SourceId, StateMutability, Stmt, StmtKind, TypeKind,
+        UsingDirective, UsingEntryKind, Variable, Visibility, Visit,
     },
     interface::{SourceMap, data_structures::Never, source_map::FileName},
 };
@@ -275,8 +275,6 @@ enum BytecodeDependencyKind {
         value: Option<String>,
         /// `salt` (if any) used when creating contract.
         salt: Option<String>,
-        /// Whether it's an untyped try contract creation statement.
-        try_stmt: bool,
     },
 }
 
@@ -460,6 +458,13 @@ impl<'gcx, 'src> BytecodeDependencyCollector<'gcx, 'src> {
             return;
         }
 
+        // Constructor parameter types are copied into a derived helper contract. Private
+        // constants used as array dimensions are not accessible in that scope.
+        if constructor_uses_private_constants(self.gcx, contract) {
+            self.native_dependencies.insert(native_path);
+            return;
+        }
+
         // Remapped imports can have absolute or symlinked paths, while compiler input paths are
         // relative and configured source directories can be canonicalized.
         if !is_path_in_dir(path, self.src_dir, self.root_dir) {
@@ -471,6 +476,33 @@ impl<'gcx, 'src> BytecodeDependencyCollector<'gcx, 'src> {
 
         self.dependencies.push(dependency);
     }
+}
+
+/// Returns whether constructor parameter types reference private constants.
+fn constructor_uses_private_constants(gcx: Gcx<'_>, contract: &Contract<'_>) -> bool {
+    contract.ctor.is_some_and(|ctor| {
+        gcx.hir.function(ctor).parameters.iter().any(|&param| {
+            gcx.hir
+                .variable(param)
+                .ty
+                .visit(&gcx.hir, &mut |ty| {
+                    if let TypeKind::Array(array) = &ty.kind
+                        && let Some(size) = array.size
+                    {
+                        size.visit(&mut |expr| {
+                            if gcx.resolved_variable(expr).is_some_and(|var| {
+                                gcx.hir.variable(var).visibility == Some(Visibility::Private)
+                            }) {
+                                return ControlFlow::Break(());
+                            }
+                            ControlFlow::Continue(())
+                        })?;
+                    }
+                    ControlFlow::Continue(())
+                })
+                .is_break()
+        })
+    })
 }
 
 /// Returns whether generated helper and artifact references preserve the source-unit identity.
@@ -645,55 +677,13 @@ impl<'gcx> Visit<'gcx> for BytecodeDependencyCollector<'gcx, '_> {
 
     fn visit_stmt(&mut self, stmt: &'gcx Stmt<'gcx>) -> ControlFlow<Self::BreakValue> {
         if let StmtKind::Try(stmt_try) = stmt.kind
-            && let ExprKind::Call(call_expr, call_args, named_args) = &stmt_try.expr.kind
-            && let Some(mut dependency) = handle_call_expr(
-                self.gcx.sess.source_map(),
-                &stmt_try.expr,
-                call_expr,
-                call_args,
-                named_args,
-            )
+            && let ExprKind::Call(call_expr, ..) = &stmt_try.expr.kind
+            && matches!(call_expr.kind, ExprKind::New(_))
         {
-            let has_custom_return = if let Some(clause) = stmt_try.clauses.first()
-                && clause.args.len() == 1
-                && let Some(ret_var) = clause.args.first()
-                && let TypeKind::Custom(_) = self.hir().variable(*ret_var).ty.kind
-            {
-                true
-            } else {
-                false
-            };
-
-            // A typed `try new` needs an adapter to turn the address returned by `deployCode`
-            // back into the contract type. The deployment cheatcode would be evaluated before
-            // that adapter call establishes Solidity's try boundary, changing which constructor
-            // failures reach the catch clauses. Preserve the native creation expression instead.
-            if has_custom_return {
-                self.collect_native_expr(&stmt_try.expr);
-                for clause in stmt_try.clauses {
-                    for &var in clause.args {
-                        self.visit_nested_var(var)?;
-                    }
-                    for stmt in clause.block.stmts {
-                        self.visit_stmt(stmt)?;
-                    }
-                }
-                return ControlFlow::Continue(());
-            }
-
-            if let BytecodeDependencyKind::New { try_stmt, .. } = &mut dependency.kind {
-                *try_stmt = true;
-            }
-            self.collect_dependency(dependency);
-            // The outer deployment was handled above, but its constructor arguments and call
-            // options can contain embedded library or free-function code dependencies.
-            self.visit_expr(call_expr)?;
-            if let Some(call_options) = named_args {
-                for arg in call_options.args {
-                    self.collect_native_expr(&arg.value);
-                }
-            }
-            self.visit_call_args(call_args)?;
+            // Keep try deployments native: a static-context violation halts the current frame,
+            // whereas a deployment cheatcode revert could be caught by an untyped try. Typed
+            // returns also require native creation to preserve the constructor catch boundary.
+            self.collect_native_expr(&stmt_try.expr);
 
             for clause in stmt_try.clauses {
                 for &var in clause.args {
@@ -741,7 +731,6 @@ fn handle_call_expr(
                 call_args_offset,
                 value: named_arg(call_options, "value", source_map),
                 salt: named_arg(call_options, "salt", source_map),
-                try_stmt: false,
             },
             // The HIR callee excludes parentheses, so start at the full call expression.
             loc: span_to_range(source_map, parent_expr.span.with_hi(call_expr.span.hi())),
@@ -768,16 +757,7 @@ fn named_arg(
 /// Goes over all test/script files and replaces bytecode dependencies with cheatcode
 /// invocations.
 ///
-/// Special handling of try/catch statements with custom returns, where the try statement becomes
-/// ```solidity
-/// try this.addressToCounter() returns (Counter c)
-/// ```
-/// and helper to cast address is appended
-/// ```solidity
-/// function addressToCounter(address addr) returns (Counter) {
-///     return Counter(addr);
-/// }
-/// ```
+/// Try deployments remain native to preserve their constructor failure boundaries.
 pub(crate) fn remove_bytecode_dependencies(
     gcx: Gcx<'_>,
     deps: &PreprocessorDependencies,
@@ -831,13 +811,9 @@ pub(crate) fn remove_bytecode_dependencies(
                     call_args_offset,
                     value,
                     salt,
-                    try_stmt,
                 } => {
-                    let (mut update, closing_seq) = if *try_stmt {
-                        (String::new(), "})")
-                    } else {
-                        (format!("{name}(payable("), "})))")
-                    };
+                    let mut update = format!("{name}(payable(");
+                    let closing_seq = "})))";
                     update.push_str(&format!("{vm}.deployCode({{"));
                     update.push_str(&format!("_artifact: \"{artifact}\""));
 
