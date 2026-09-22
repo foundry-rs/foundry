@@ -210,6 +210,8 @@ use tempo_revm::{
     ExecutionContext, TempoBatchCallEnv, TempoBlockEnv, TempoHaltReason, TempoTxEnv,
     evm::TempoContext, gas_params::tempo_gas_params,
 };
+#[cfg(test)]
+use tokio::sync::Notify;
 use tokio::{sync::RwLock as AsyncRwLock, task::JoinSet};
 
 /// Creates an Ethereum-shaped genesis header from the EVM environment.
@@ -926,6 +928,13 @@ struct StateSnapshot {
     fees: FeeSnapshot,
 }
 
+#[cfg(test)]
+#[derive(Clone)]
+struct MiningCommitHook {
+    reached: Arc<Notify>,
+    resume: Arc<Notify>,
+}
+
 /// Gives access to the [revm::Database]
 pub struct Backend<N: Network> {
     /// Access to [`revm::Database`] abstraction.
@@ -991,6 +1000,9 @@ pub struct Backend<N: Network> {
     precompile_factory: Option<Arc<dyn PrecompileFactory>>,
     /// Prevent race conditions during mining
     mining: Arc<tokio::sync::Mutex<()>>,
+    /// Test-only synchronization point after database commit and before canonical publication.
+    #[cfg(test)]
+    mining_commit_hook: Arc<Mutex<Option<MiningCommitHook>>>,
     /// Disable pool balance checks
     disable_pool_balance_checks: bool,
     /// Keeps startup fork-cache rollback armed until startup initialization completes.
@@ -1027,6 +1039,8 @@ impl<N: Network> Clone for Backend<N> {
             slots_in_an_epoch: self.slots_in_an_epoch,
             precompile_factory: self.precompile_factory.clone(),
             mining: self.mining.clone(),
+            #[cfg(test)]
+            mining_commit_hook: self.mining_commit_hook.clone(),
             disable_pool_balance_checks: self.disable_pool_balance_checks,
             startup_fork_cache_user: self.startup_fork_cache_user.clone(),
         }
@@ -4025,6 +4039,8 @@ impl<N: Network> Backend<N> {
             slots_in_an_epoch,
             precompile_factory,
             mining: Arc::new(tokio::sync::Mutex::new(())),
+            #[cfg(test)]
+            mining_commit_hook: Default::default(),
             disable_pool_balance_checks,
             startup_fork_cache_user,
         };
@@ -5433,7 +5449,17 @@ where
             evm_env.block_env.prevrandao =
                 Some(next_prevrandao.map_or_else(|| keccak256(input), |pending| pending.value));
 
-            let (block_info, included, invalid, not_yet_valid, block_hash, parent_state) = {
+            let (
+                db_guard,
+                block_info,
+                included,
+                invalid,
+                not_yet_valid,
+                block_hash,
+                parent_state,
+                next_block_base_fee,
+                next_block_blob_fees,
+            ) = {
                 let mut db = self.db.write().await;
 
                 // finally set the next block timestamp, this is done just before execution, because
@@ -5521,16 +5547,17 @@ where
                     self.fees.blob_params().update_fraction as u64,
                 );
 
-                // Live execution readers acquire the database read lock before cloning the block
-                // environment and next-block fee state. Publish the complete snapshot under the
-                // database write lock so readers observe either the parent or newly mined state.
-                // The database is always the outer lock, and no path holds an environment or fee
-                // guard while waiting for it, so these acquisitions cannot form a lock cycle.
-                evm_env.block_env.difficulty = U256::ZERO;
-                *self.evm_env.write() = evm_env;
-                self.fees.set_next_block_fees(next_block_base_fee, next_block_blob_fees);
-
-                (block_info, included, invalid, not_yet_valid, block_hash, parent_state)
+                (
+                    db,
+                    block_info,
+                    included,
+                    invalid,
+                    not_yet_valid,
+                    block_hash,
+                    parent_state,
+                    next_block_base_fee,
+                    next_block_blob_fees,
+                )
             };
 
             // create the new block with the current timestamp
@@ -5562,6 +5589,13 @@ where
                 transactions.len(),
                 transactions.iter().map(|tx| tx.transaction_hash).collect::<Vec<_>>()
             );
+            #[cfg(test)]
+            let mining_commit_hook = { self.mining_commit_hook.lock().clone() };
+            #[cfg(test)]
+            if let Some(hook) = mining_commit_hook {
+                hook.reached.notify_one();
+                hook.resume.notified().await;
+            }
             let mut storage = self.blockchain.storage.write();
             // update block metadata
             storage.best_number = block_number;
@@ -5616,6 +5650,18 @@ where
                     .saturating_sub(transaction_block_keeper.try_into().unwrap_or(u64::MAX));
                 storage.remove_block_transactions_by_number(to_clear)
             }
+
+            // Live execution readers acquire the database read lock before cloning the block
+            // environment, next-block fee state, and canonical head. Publish the complete snapshot
+            // while retaining the database write lock so readers observe either the parent or newly
+            // mined state. The database is always the outer lock, and no path holds a storage,
+            // environment, or fee guard while waiting for it, so these acquisitions cannot form a
+            // lock cycle.
+            evm_env.block_env.difficulty = U256::ZERO;
+            *self.evm_env.write() = evm_env;
+            self.fees.set_next_block_fees(next_block_base_fee, next_block_blob_fees);
+            drop(storage);
+            drop(db_guard);
 
             self.time.mark_block_created();
 
@@ -9422,8 +9468,9 @@ pub use foundry_evm::core::evm::IntoInstructionResult;
 #[cfg(test)]
 mod tests {
     use super::{
-        BlockRequest, FeeDetails, ForkCacheNamespace, ForkCacheSource, InstructionResult, Output,
-        StagedForkCacheLease, StagedForkDbUser, arbitrum_replay_block_number,
+        BlockRequest, FeeDetails, ForkCacheNamespace, ForkCacheSource, InstructionResult,
+        MiningCommitHook, Output, StagedForkCacheLease, StagedForkDbUser,
+        arbitrum_replay_block_number,
     };
     use crate::{NodeConfig, config::ForkTransactionReplay, spawn};
     use alloy_network::{AnyHeader, AnyRpcBlock, AnyRpcHeader, TransactionBuilder};
@@ -9437,8 +9484,9 @@ mod tests {
         hardfork::{EthereumHardfork, FoundryHardfork},
     };
     use foundry_evm_networks::arbitrum;
-    use std::sync::{Arc, mpsc};
+    use std::sync::Arc;
     use tempfile::tempdir;
+    use tokio::sync::Notify;
 
     fn test_cache_db(cache_path: std::path::PathBuf) -> BlockchainDb {
         let db = BlockchainDb::new(BlockchainDbMeta::default(), Some(cache_path));
@@ -9600,31 +9648,28 @@ mod tests {
         ));
         assert!(futures::poll!(call.as_mut()).is_pending());
 
-        // Pause canonical block publication after the database snapshot is published. A separate
-        // thread owns this synchronous lock so the async test does not hold it across an await.
-        let backend = api.backend.clone();
-        let (storage_locked_tx, storage_locked_rx) = mpsc::channel();
-        let (release_storage_tx, release_storage_rx) = mpsc::channel();
-        let storage_thread = std::thread::spawn(move || {
-            let storage_guard = backend.blockchain.storage.write();
-            storage_locked_tx.send(()).unwrap();
-            release_storage_rx.recv().unwrap();
-            drop(storage_guard);
-        });
-        storage_locked_rx.recv().unwrap();
+        let mut pending_block = Box::pin(api.backend.pending_block(Vec::new()));
+        assert!(futures::poll!(pending_block.as_mut()).is_pending());
+
+        // Pause mining after the database commit but before canonical publication without locking
+        // storage, so an incorrectly unblocked pending reader can observe the old parent.
+        let hook =
+            MiningCommitHook { reached: Arc::new(Notify::new()), resume: Arc::new(Notify::new()) };
+        *api.backend.mining_commit_hook.lock() = Some(hook.clone());
         drop(db_guard);
         let mining = tokio::spawn(mining);
-        let (exit, output, _, _) = call.await.unwrap();
+        hook.reached.notified().await;
 
-        // `with_pending_block` builds its environment from this snapshot before reading canonical
-        // storage. It must already contain the fee derived for block two while mining is paused.
-        let pending_env = api.backend.next_evm_env();
-        assert_eq!(pending_env.block_env.number, U256::from(2));
-        assert_eq!(pending_env.block_env.basefee, 875_175_000);
+        // Mining retains the database write lock while waiting to publish the canonical head, so
+        // neither a live call nor a pending block can observe the partially published snapshot.
+        assert!(futures::poll!(call.as_mut()).is_pending());
+        assert!(futures::poll!(pending_block.as_mut()).is_pending());
 
-        release_storage_tx.send(()).unwrap();
-        storage_thread.join().unwrap();
+        hook.resume.notify_one();
         mining.await.unwrap().unwrap();
+
+        let (exit, output, _, _) = call.await.unwrap();
+        let pending_block = pending_block.await;
 
         assert_eq!(exit, InstructionResult::Return);
         let Some(Output::Call(output)) = output else { panic!("call did not return data") };
@@ -9632,6 +9677,10 @@ mod tests {
         let balance = U256::from_be_slice(&output[..32]);
         let block_number = U256::from_be_slice(&output[32..]);
         assert_eq!((balance, block_number), (U256::from(1), U256::from(1)));
+
+        assert_eq!(pending_block.block.header.number, api.backend.best_number() + 1);
+        assert_eq!(pending_block.block.header.parent_hash, api.backend.best_hash());
+        assert_eq!(pending_block.block.header.base_fee_per_gas, Some(875_175_000));
     }
 
     struct CacheFlushingDb(BlockchainDb);
