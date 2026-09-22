@@ -1,8 +1,8 @@
 # Forge scripting internals
 
-This guide describes the contributor-facing `forge script` lifecycle, the state persisted for
-`--resume`, and the recovery contract that broadcasting changes must preserve. User-facing CLI
-instructions belong in the [Foundry Book](https://getfoundry.sh).
+This guide describes the current contributor-facing `forge script` lifecycle, persisted resume
+state and known limitations, followed by a proposed recovery contract. User-facing CLI instructions
+belong in the [Foundry Book](https://getfoundry.sh).
 
 ## Ownership
 
@@ -187,13 +187,14 @@ it, potentially replacing the previous recovery files with an older simulation p
 4. prepares and submits that remaining work.
 
 The saved RPC is part of the sensitive sequence. Operator handoff therefore also hands off an
-endpoint. Rebinding it must verify the expected chain identity before reconciliation or submission.
+endpoint. The proposed recovery contract requires endpoint rebinding to verify the expected chain
+identity before reconciliation or submission.
 
 ## Tempo and multichain behavior
 
-Regular Tempo transactions use the normal sequence path. Fee token, nonce key, validity window,
-account-key preparation, and sponsor data are applied during final preparation. The sequence does
-not preserve an immutable copy of the final signed payload or every submission attempt.
+Regular Tempo transactions use the normal sequence path and populate network-specific fields across
+the stages described in [Preparation and signer modes](#preparation-and-signer-modes). The sequence
+does not preserve an immutable copy of the final signed payload or every submission attempt.
 
 `--batch` is a separate, single-chain path. It converts all remaining operations into one Tempo type
 `0x76` transaction, requires one sender, and preserves operation order as batch calls. After the RPC
@@ -201,11 +202,12 @@ returns, the batch hash is stamped onto every remaining transaction and saved on
 One network receipt is copied per operation so existing artifact and verification consumers retain
 their expected shape.
 
-The batch-specific path checks a stamped hash before resolving the batch signer or sponsorship.
-End-to-end resume can nevertheless re-execute the script earlier to recover missing
-script-provided signers. The current batch path clears the hash after a receipt timeout so a later
-run can create a replacement. A timeout is an ambiguous outcome, so this behavior does not satisfy
-the proposed recovery contract below.
+The batch-specific recovery path checks an already stamped hash before resolving the batch signer
+or sponsorship. End-to-end resume can nevertheless re-execute the script earlier to recover missing
+script-provided signers. If recovery cannot find the transaction, it clears the checkpoint and
+submits again in the same invocation. A recovery timeout clears the checkpoint and returns an error,
+while a timeout immediately after a new submission retains the checkpoint for the next resume.
+These ambiguous outcomes do not satisfy the proposed recovery contract below.
 
 Multichain mode stores per-chain sequences in one `MultiChainSequence`. Pending hashes are
 reconciled per chain, while new sequences are broadcast in container order. There is no cross-chain
@@ -237,11 +239,12 @@ need not remain the authoritative recovery state.
 - Persist a versioned, immutable operation plan before the first submission.
 - Give every operation a stable ID independent of receipt order, container position changes, and
   process lifetime. Scope identity by deployment and chain.
-- Record the build and execution inputs that can change the ordered transaction requests, including
-  build artifacts, selected signature and arguments, linked libraries, chain ID, sender, initial
-  nonce, and execution-affecting configuration. Reject resume when those inputs do not match.
-  Verification-only settings, signer location, and validated endpoint handoff may change without
-  invalidating the plan.
+- Record as provenance the build and execution inputs that can change the ordered transaction
+  requests, including build artifacts, selected signature and arguments, linked libraries, chain
+  ID, sender, initial nonce, and execution-affecting configuration. A mismatch blocks rebuilding the
+  saved plan or preparing new attempts, but not reconciliation or identical-byte rebroadcast of a
+  persisted signed attempt. Verification-only settings, signer location, and validated endpoint
+  handoff may change without invalidating the plan.
 - Never silently rebuild, renumber, omit, or insert operations during resume.
 - Preserve batch membership and assign a stable batch ID when operations share one network
   transaction.
@@ -308,10 +311,10 @@ and require a new signature. It must preserve the operation's intent and record 
 - Legacy import validates transaction, hash, pending, receipt, and sensitive-metadata associations.
   If it cannot prove a safe state, it imports the operation as unresolved rather than guessing.
 
-## Failure-injection coverage
+## Proposed failure-injection coverage
 
-Tests belong around the real Forge executable, local nodes, and a controlled RPC proxy. At minimum,
-inject process exit or transport failure:
+Tests for the proposed recovery contract belong around the real Forge executable, local nodes, and
+a controlled RPC proxy. At minimum, inject process exit or transport failure:
 
 - before forwarding a submission, after forwarding but before returning its response, after the
   response, and after each durable checkpoint;
