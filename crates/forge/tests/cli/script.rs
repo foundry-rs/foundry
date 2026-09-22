@@ -15,7 +15,10 @@ use foundry_compilers::artifacts::EvmVersion;
 use foundry_evm::constants::CALLER;
 use foundry_test_utils::{
     ScriptOutcome, ScriptTester,
-    rpc::{self, next_http_archive_rpc_url},
+    rpc::{
+        self, next_http_archive_rpc_url, spawn_rpc_proxy_recording_method,
+        spawn_rpc_proxy_rejecting_method_after_when_enabled,
+    },
     snapbox::IntoData,
     util::{OTHER_SOLC_VERSION, SOLC_VERSION},
 };
@@ -24,7 +27,12 @@ use serde_json::Value;
 use std::{
     env, fs,
     path::{Path, PathBuf},
-    sync::atomic::{AtomicUsize, Ordering},
+    process::{Child, Command, ExitStatus, Stdio},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    },
+    time::Duration,
 };
 
 fn latest_dry_run_sequence(root: &Path) -> ScriptSequence<Ethereum> {
@@ -32,6 +40,150 @@ fn latest_dry_run_sequence(root: &Path) -> ScriptSequence<Ethereum> {
         .find(|path| path.ends_with("dry-run/run-latest.json"))
         .unwrap();
     foundry_common::fs::read_json_file(&path).unwrap()
+}
+
+struct AcceptedResponseLossProxy {
+    endpoint: String,
+    lose_responses: Arc<AtomicBool>,
+    submissions: Arc<AtomicUsize>,
+    accepted_hash: Arc<Mutex<Option<String>>>,
+    release_responses: tokio::sync::watch::Sender<bool>,
+    shutdown: Option<tokio::sync::oneshot::Sender<()>>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl AcceptedResponseLossProxy {
+    async fn spawn(upstream: String, method: &'static str) -> Self {
+        let client = reqwest::Client::new();
+        let lose_responses = Arc::new(AtomicBool::new(true));
+        let submissions = Arc::new(AtomicUsize::new(0));
+        let accepted_hash = Arc::new(Mutex::new(None));
+        let (release_responses, _) = tokio::sync::watch::channel(false);
+        let app = Router::new().fallback({
+            let lose_responses = lose_responses.clone();
+            let submissions = submissions.clone();
+            let accepted_hash = accepted_hash.clone();
+            let release_responses = release_responses.clone();
+            move |body: BodyBytes| {
+                let upstream = upstream.clone();
+                let client = client.clone();
+                let lose_responses = lose_responses.clone();
+                let submissions = submissions.clone();
+                let accepted_hash = accepted_hash.clone();
+                let mut release_responses = release_responses.subscribe();
+                async move {
+                    let request: Value = serde_json::from_slice(&body).unwrap();
+                    let is_submission =
+                        request.get("method").and_then(Value::as_str) == Some(method);
+                    if is_submission {
+                        submissions.fetch_add(1, Ordering::SeqCst);
+                    }
+                    let response = client
+                        .post(upstream)
+                        .header("content-type", "application/json")
+                        .body(body)
+                        .send()
+                        .await
+                        .unwrap()
+                        .bytes()
+                        .await
+                        .unwrap();
+                    if is_submission && lose_responses.load(Ordering::SeqCst) {
+                        let response_json: Value = serde_json::from_slice(&response).unwrap();
+                        let hash = response_json
+                            .get("result")
+                            .and_then(Value::as_str)
+                            .expect("upstream rejected the held submission")
+                            .to_owned();
+                        *accepted_hash.lock().unwrap() = Some(hash);
+                        release_responses.wait_for(|released| *released).await.unwrap();
+                    }
+                    response
+                }
+            }
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let (shutdown, shutdown_rx) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async move {
+                    let _ = shutdown_rx.await;
+                })
+                .await
+                .unwrap()
+        });
+        Self {
+            endpoint,
+            lose_responses,
+            submissions,
+            accepted_hash,
+            release_responses,
+            shutdown: Some(shutdown),
+            task,
+        }
+    }
+
+    async fn wait_for_accepted_submission(&self) -> String {
+        tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                let accepted_hash = self.accepted_hash.lock().unwrap().clone();
+                if let Some(hash) = accepted_hash {
+                    return hash;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("forge never submitted an accepted transaction")
+    }
+
+    fn submission_count(&self) -> usize {
+        self.submissions.load(Ordering::SeqCst)
+    }
+
+    fn restore_responses(&self) {
+        self.lose_responses.store(false, Ordering::SeqCst);
+        self.release_responses.send_replace(true);
+    }
+}
+
+impl Drop for AcceptedResponseLossProxy {
+    fn drop(&mut self) {
+        self.release_responses.send_replace(true);
+        if let Some(shutdown) = self.shutdown.take() {
+            let _ = shutdown.send(());
+        }
+        self.task.abort();
+    }
+}
+
+struct KillOnDrop(Option<Child>);
+
+impl KillOnDrop {
+    fn spawn(command: &mut Command) -> Self {
+        let child = command.stdout(Stdio::null()).stderr(Stdio::null()).spawn().unwrap();
+        Self(Some(child))
+    }
+
+    fn kill_and_wait(mut self) -> ExitStatus {
+        let mut child = self.0.take().unwrap();
+        child.kill().unwrap();
+        child.wait().unwrap()
+    }
+
+    fn wait(mut self) -> ExitStatus {
+        self.0.take().unwrap().wait().unwrap()
+    }
+}
+
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        if let Some(child) = &mut self.0 {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
 }
 
 // Tests that fork cheat codes can be used in script
@@ -1160,6 +1312,52 @@ forgetest_async!(broadcast_honors_rpc_timeout, |prj, cmd| {
 Error: Failed to send transaction after 4 attempts Err([..]operation timed out)
 
 "#]]);
+});
+
+// An unlocked account delegates signing and submission to the RPC. Once its response is lost, the
+// outcome is ambiguous and resume must not automatically submit another transaction.
+forgetest_async!(accepted_unlocked_transaction_without_checkpoint_is_not_replayed, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test().with_auto_impersonate(true)).await;
+    let (recording_rpc, submissions) =
+        spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_sendTransaction").await;
+    let proxy = AcceptedResponseLossProxy::spawn(recording_rpc, "eth_sendTransaction").await;
+
+    let mut tester = ScriptTester::new_broadcast(cmd, &proxy.endpoint, prj.root());
+    tester
+        .unlocked()
+        .add_sig("BroadcastTestNoLinking", "deployDoesntPanic()")
+        .slow()
+        .arg("--broadcast");
+    let sender_a = tester.accounts_pub[0];
+    let sender_b = tester.accounts_pub[1];
+    let provider = handle.http_provider();
+    let child = KillOnDrop::spawn(tester.cmd.cmd());
+    proxy.wait_for_accepted_submission().await;
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while provider.get_transaction_count(sender_a).await.unwrap() == 0 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("accepted transaction was not mined");
+    assert!(!child.kill_and_wait().success());
+
+    assert_eq!(provider.get_transaction_count(sender_a).await.unwrap(), 1);
+    assert_eq!(provider.get_transaction_count(sender_b).await.unwrap(), 0);
+    assert!(!provider.get_code_at(sender_a.create(0)).await.unwrap().is_empty());
+
+    proxy.restore_responses();
+    tester.clear();
+    tester
+        .unlocked()
+        .add_sig("BroadcastTestNoLinking", "deployDoesntPanic()")
+        .slow()
+        .arg("--resume");
+    tester.cmd.assert_failure();
+    assert_eq!(proxy.submission_count(), 1);
+    assert_eq!(submissions.lock().unwrap().len(), 1);
+    assert_eq!(provider.get_transaction_count(sender_a).await.unwrap(), 1);
+    assert_eq!(provider.get_transaction_count(sender_b).await.unwrap(), 0);
 });
 
 forgetest_async!(can_deploy_script_remember_key, |prj, cmd| {
@@ -5110,6 +5308,144 @@ forgetest_async!(script_batch_rewrites_creates_to_create2, |prj, cmd| {
     assert_create2_rewrite_dry_run(prj.root());
 });
 
+forgetest_async!(tempo_batch_resume_uses_checkpointed_hash, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.update_config(|config| config.transaction_timeout = 1);
+    let script = prj.add_source("MultiDeploy", MULTI_DEPLOY_SCRIPT);
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let (rpc, submissions) =
+        spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_sendRawTransaction").await;
+    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let sender = handle.dev_accounts().next().unwrap();
+
+    cmd.arg("script").arg(&script).args([
+        "--tc",
+        "MultiDeploy",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        private_key,
+        "--broadcast",
+        "--batch",
+        "--network",
+        "tempo",
+    ]);
+    let stderr = cmd.assert_failure().get_output().stderr.clone();
+    assert!(
+        String::from_utf8_lossy(&stderr).contains("Timeout waiting for batch transaction receipt"),
+        "{}",
+        String::from_utf8_lossy(&stderr)
+    );
+
+    let path = foundry_common::fs::json_files(&prj.root().join("broadcast"))
+        .find(|path| {
+            path.ends_with("run-latest.json") && !path.to_string_lossy().contains("dry-run")
+        })
+        .expect("no latest Tempo broadcast artifact");
+    let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    let transactions = sequence["transactions"].as_array().unwrap();
+    let pending = sequence["pending"].as_array().unwrap();
+    assert_eq!(transactions.len(), 3);
+    assert_eq!(pending.len(), 1);
+    assert!(sequence["receipts"].as_array().unwrap().is_empty());
+    assert_eq!(submissions.lock().unwrap().len(), 1);
+    let hash = pending[0].as_str().unwrap().to_owned();
+    assert!(transactions.iter().all(|tx| tx["hash"] == hash));
+
+    api.mine_one().await.unwrap();
+    api.anvil_set_auto_mine(true).await.unwrap();
+    prj.update_config(|config| config.transaction_timeout = 30);
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--tc",
+        "MultiDeploy",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        private_key,
+        "--resume",
+        "--batch",
+        "--network",
+        "tempo",
+    ]);
+    cmd.assert_success();
+
+    let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    assert!(sequence["pending"].as_array().unwrap().is_empty());
+    let receipts = sequence["receipts"].as_array().unwrap();
+    assert_eq!(receipts.len(), 3);
+    assert!(receipts.iter().all(|receipt| receipt["transactionHash"] == hash));
+    let provider = handle.http_provider();
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 1);
+    assert_eq!(submissions.lock().unwrap().len(), 1);
+    let deployed = transactions
+        .iter()
+        .map(|tx| tx["contractAddress"].as_str().unwrap().parse::<Address>().unwrap())
+        .collect::<Vec<_>>();
+    for address in &deployed {
+        assert!(!provider.get_code_at(*address).await.unwrap().is_empty());
+    }
+    assert_eq!(
+        provider.get_storage_at(deployed[1], U256::ZERO).await.unwrap(),
+        U256::from_be_slice(deployed[0].as_slice())
+    );
+    assert_eq!(provider.get_storage_at(deployed[2], U256::ZERO).await.unwrap(), U256::from(0x1234));
+});
+
+forgetest_async!(tempo_batch_resume_waits_for_pending_hash, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.update_config(|config| config.transaction_timeout = 1);
+    let script = prj.add_source("MultiDeploy", MULTI_DEPLOY_SCRIPT);
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let (rpc, submissions) =
+        spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_sendRawTransaction").await;
+    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let sender = handle.dev_accounts().next().unwrap();
+
+    cmd.arg("script").arg(&script).args([
+        "--tc",
+        "MultiDeploy",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        private_key,
+        "--broadcast",
+        "--batch",
+        "--network",
+        "tempo",
+    ]);
+    let stderr = cmd.assert_failure().get_output().stderr.clone();
+    assert!(
+        String::from_utf8_lossy(&stderr).contains("Timeout waiting for batch transaction receipt"),
+        "{}",
+        String::from_utf8_lossy(&stderr)
+    );
+    assert_eq!(submissions.lock().unwrap().len(), 1);
+
+    prj.update_config(|config| config.transaction_timeout = 30);
+    let mut resume = prj.forge_bin();
+    resume.arg("script").arg(&script).args([
+        "--tc",
+        "MultiDeploy",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        private_key,
+        "--resume",
+        "--batch",
+        "--network",
+        "tempo",
+    ]);
+    let child = KillOnDrop::spawn(&mut resume);
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    assert_eq!(submissions.lock().unwrap().len(), 1);
+    api.mine_one().await.unwrap();
+    assert!(child.wait().success());
+    assert_eq!(submissions.lock().unwrap().len(), 1);
+    assert_eq!(handle.http_provider().get_transaction_count(sender).await.unwrap(), 1);
+});
+
 // Same dry-run assertions against the live Moderato testnet.
 forgetest_async!(
     #[ignore]
@@ -5263,6 +5599,110 @@ contract DeployTempoAA is Script {
     for transaction in transactions {
         assert_eq!(transaction["transaction"]["feeToken"], alpha_usd.to_string().to_lowercase());
     }
+});
+
+forgetest_async!(tempo_script_resume_preserves_completed_prefix, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let script = prj.add_script(
+        "TempoResume.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract TempoResumeTarget {
+    uint256 public value;
+
+    function set(uint256 newValue) external {
+        value = newValue;
+    }
+}
+
+contract TempoResume is Script {
+    function run() external {
+        vm.startBroadcast();
+        TempoResumeTarget target = new TempoResumeTarget();
+        target.set(7);
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let (recording_rpc, submissions) =
+        spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_sendRawTransaction").await;
+    let (rpc, reject_after_first) = spawn_rpc_proxy_rejecting_method_after_when_enabled(
+        recording_rpc,
+        "eth_sendRawTransaction",
+        1,
+    )
+    .await;
+    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let sender = handle.dev_accounts().next().unwrap();
+    let fee_token = "0x20c0000000000000000000000000000000000001";
+    api.anvil_deal_tip20(sender, fee_token.parse::<Address>().unwrap(), U256::from(u64::MAX))
+        .await
+        .unwrap();
+
+    cmd.arg("script").arg(&script).args([
+        "--tc",
+        "TempoResume",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        private_key,
+        "--broadcast",
+        "--network",
+        "tempo",
+        "--tempo.fee-token",
+        fee_token,
+    ]);
+    let stderr = String::from_utf8_lossy(&cmd.assert_failure().get_output().stderr).into_owned();
+    assert!(stderr.contains("method is not allowed"), "{stderr}");
+
+    let path = foundry_common::fs::json_files(&prj.root().join("broadcast"))
+        .find(|path| {
+            path.ends_with("run-latest.json") && !path.to_string_lossy().contains("dry-run")
+        })
+        .expect("no latest Tempo broadcast artifact");
+    let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    let transactions = sequence["transactions"].as_array().unwrap();
+    assert_eq!(transactions.len(), 2);
+    assert_eq!(sequence["receipts"].as_array().unwrap().len(), 1);
+    assert!(sequence["pending"].as_array().unwrap().is_empty());
+    assert_eq!(submissions.lock().unwrap().len(), 1);
+    let first_hash = transactions[0]["hash"].as_str().unwrap().to_owned();
+    let remaining_payload = transactions[1]["transaction"].clone();
+    assert!(transactions[1]["hash"].is_null());
+    assert!(transactions.iter().all(|tx| tx["transaction"]["feeToken"] == fee_token));
+
+    reject_after_first.store(false, Ordering::SeqCst);
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--tc",
+        "TempoResume",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        private_key,
+        "--resume",
+        "--network",
+        "tempo",
+        "--tempo.fee-token",
+        fee_token,
+    ]);
+    cmd.assert_success();
+
+    let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    let transactions = sequence["transactions"].as_array().unwrap();
+    assert_eq!(transactions[0]["hash"], first_hash);
+    assert!(transactions[1]["hash"].is_string());
+    assert_eq!(transactions[1]["transaction"], remaining_payload);
+    assert_eq!(sequence["receipts"].as_array().unwrap().len(), 2);
+    assert!(sequence["pending"].as_array().unwrap().is_empty());
+    let provider = handle.http_provider();
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 2);
+    assert_eq!(submissions.lock().unwrap().len(), 2);
+    let target = transactions[0]["contractAddress"].as_str().unwrap().parse::<Address>().unwrap();
+    assert!(!provider.get_code_at(target).await.unwrap().is_empty());
+    assert_eq!(provider.get_storage_at(target, U256::ZERO).await.unwrap(), U256::from(7));
 });
 
 forgetest_async!(tempo_aa_script_broadcasts_with_local_sponsor, |prj, cmd| {
