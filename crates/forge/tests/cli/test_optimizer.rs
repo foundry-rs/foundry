@@ -3047,6 +3047,115 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 // <https://github.com/foundry-rs/foundry/issues/10492>
 // Preprocess test contracts with try constructor statements.
+// Synthetic deployments must respect static execution without changing native try boundaries.
+forgetest!(preprocess_static_deployment, |prj, cmd| {
+    prj.add_source(
+        "Target.sol",
+        r#"
+contract Empty {
+    constructor() payable {}
+}
+contract Target {
+    uint256 public value;
+    address public sender;
+    constructor(uint256 x) payable { value = x; sender = msg.sender; }
+}
+"#,
+    );
+    prj.add_test(
+        "StaticDeployment.t.sol",
+        r#"
+import {Empty, Target} from "../src/Target.sol";
+
+interface Vm {
+    function getNonce(address account) external view returns (uint64);
+}
+
+contract StaticDeploymentTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function deploy() external returns (Target) { return new Target(7); }
+    function deploy2() external returns (Target) { return new Target{salt: bytes32(uint256(1))}(7); }
+    function tryDeploy() external { try new Target(7) {} catch {} }
+    function tryDeploy2() external { try new Target{salt: bytes32(uint256(1))}(7) {} catch {} }
+    function creationCode() external view returns (bytes memory) { return type(Target).creationCode; }
+
+    function checkStatic(bytes memory data) internal {
+        uint64 nonce = vm.getNonce(address(this));
+        uint256 balance = address(this).balance;
+        (bool ok, bytes memory result) = address(this).staticcall(data);
+        require(!ok, "static deployment succeeded");
+        require(result.length == 0, "unexpected revert data");
+        require(vm.getNonce(address(this)) == nonce, "nonce changed");
+        require(address(this).balance == balance, "balance changed");
+    }
+
+    function test_static_create() public { checkStatic(abi.encodeCall(this.deploy, ())); }
+    function test_static_create2() public { checkStatic(abi.encodeCall(this.deploy2, ())); }
+    function test_static_try_create() public { checkStatic(abi.encodeCall(this.tryDeploy, ())); }
+    function test_static_try_create2() public { checkStatic(abi.encodeCall(this.tryDeploy2, ())); }
+
+    function test_regular_deployment() public {
+        Target a = this.deploy();
+        Target b = this.deploy2();
+        require(a.value() == 7 && b.value() == 7);
+        require(a.sender() == address(this) && b.sender() == address(this));
+    }
+
+    function test_static_creation_code() public {
+        (bool ok, bytes memory result) = address(this).staticcall(abi.encodeCall(this.creationCode, ()));
+        require(ok && abi.decode(result, (bytes)).length > 0);
+    }
+
+    function test_manual_deploy_code_static() public {
+        string memory empty = "src/Target.sol:Empty";
+        string memory target = "src/Target.sol:Target";
+        bytes memory args = abi.encode(uint256(7));
+        bytes32 salt = bytes32(uint256(1));
+        bytes[] memory calls = new bytes[](8);
+        calls[0] = abi.encodeWithSignature("deployCode(string)", empty);
+        calls[1] = abi.encodeWithSignature("deployCode(string,bytes)", target, args);
+        calls[2] = abi.encodeWithSignature("deployCode(string,uint256)", empty, 1);
+        calls[3] = abi.encodeWithSignature("deployCode(string,bytes,uint256)", target, args, 1);
+        calls[4] = abi.encodeWithSignature("deployCode(string,bytes32)", empty, salt);
+        calls[5] = abi.encodeWithSignature("deployCode(string,bytes,bytes32)", target, args, salt);
+        calls[6] = abi.encodeWithSignature("deployCode(string,uint256,bytes32)", empty, 1, salt);
+        calls[7] = abi.encodeWithSignature("deployCode(string,bytes,uint256,bytes32)", target, args, 1, salt);
+        uint64 nonce = vm.getNonce(address(this));
+        for (uint256 i; i < calls.length; ++i) {
+            (bool ok, bytes memory result) = address(vm).staticcall(calls[i]);
+            require(!ok && result.length == 0, "static deployCode succeeded");
+        }
+        require(vm.getNonce(address(this)) == nonce, "nonce changed");
+    }
+}
+"#,
+    );
+
+    for dynamic_test_linking in [false, true] {
+        prj.update_config(|config| config.dynamic_test_linking = dynamic_test_linking);
+        for force in [true, false] {
+            cmd.forge_fuse().arg("test");
+            if force {
+                cmd.arg("--force");
+            }
+            cmd.assert_success().stdout_eq(str![[r#"
+...
+Ran 7 tests for test/StaticDeployment.t.sol:StaticDeploymentTest
+[PASS] test_manual_deploy_code_static() ([GAS])
+[PASS] test_regular_deployment() ([GAS])
+[PASS] test_static_create() ([GAS])
+[PASS] test_static_create2() ([GAS])
+[PASS] test_static_creation_code() ([GAS])
+[PASS] test_static_try_create() ([GAS])
+[PASS] test_static_try_create2() ([GAS])
+Suite result: ok. 7 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+        }
+    }
+});
+
 forgetest_init!(preprocess_contract_with_try_ctor_stmt, |prj, cmd| {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
@@ -3148,10 +3257,10 @@ contract CounterB {
 }
     "#,
     );
-    // Only CounterB should compile.
+    // CounterB and its native try-deployment consumer should compile.
     cmd.assert_failure().stdout_eq(str![[r#"
 ...
-Compiling 1 files with [..]
+Compiling 2 files with [..]
 ...
 [PASS] test_try_counterA_creation() (gas: [..])
 [FAIL: EvmError: Revert] test_try_counterB_creation() (gas: [..])
@@ -3174,10 +3283,10 @@ contract CounterC {
 }
     "#,
     );
-    // Only CounterC should compile.
+    // CounterC and its native try-deployment consumer should compile.
     cmd.assert_failure().stdout_eq(str![[r#"
 ...
-Compiling 1 files with [..]
+Compiling 2 files with [..]
 ...
 [PASS] test_try_counterA_creation() (gas: [..])
 [FAIL: EvmError: Revert] test_try_counterB_creation() (gas: [..])
@@ -3200,10 +3309,10 @@ contract CounterC {
 }
     "#,
     );
-    // Only CounterC should compile and revert.
+    // CounterC and its native try-deployment consumer should compile and revert.
     cmd.assert_failure().stdout_eq(str![[r#"
 ...
-Compiling 1 files with [..]
+Compiling 2 files with [..]
 ...
 [PASS] test_try_counterA_creation() (gas: [..])
 [FAIL: EvmError: Revert] test_try_counterB_creation() (gas: [..])
@@ -3753,6 +3862,94 @@ Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
     }
 });
 
+forgetest!(preprocess_private_constructor_array_dimensions, |prj, cmd| {
+    let targets = r#"
+contract Nested {
+    uint256 private constant N = 2;
+    constructor(uint256[N][3] memory xs) { require(xs[2][1] == 7); }
+    function value() external pure returns (uint256) { return 111; }
+}
+contract Expression {
+    uint256 private constant N = 2;
+    constructor(uint256[N + 1] memory xs) { require(xs[2] == 7); }
+    function value() external pure returns (uint256) { return 111; }
+}
+contract Unnamed {
+    uint256 private constant N = 2;
+    constructor(uint256[N] memory) {}
+    function value() external pure returns (uint256) { return 111; }
+}
+contract Literal {
+    constructor(uint256[2] memory) {}
+    function value() external pure returns (uint256) { return 111; }
+}
+"#;
+    prj.add_test(
+        "PrivateDimensions.t.sol",
+        r#"
+import {Expression, Literal, Nested, Unnamed} from "../src/Targets.sol";
+
+contract PrivateDimensionsTest {
+    function test_nested() public {
+        uint256[2][3] memory xs;
+        xs[2][1] = 7;
+        require(new Nested(xs).value() == 111, "changed value");
+    }
+    function test_expression() public {
+        uint256[3] memory xs;
+        xs[2] = 7;
+        require(new Expression(xs).value() == 111, "changed value");
+    }
+    function test_unnamed() public {
+        require(new Unnamed([uint256(1), 2]).value() == 111, "changed value");
+    }
+    function test_literal() public {
+        require(new Literal([uint256(1), 2]).value() == 111, "changed value");
+    }
+}
+"#,
+    );
+
+    for dynamic_test_linking in [false, true] {
+        prj.update_config(|config| config.dynamic_test_linking = dynamic_test_linking);
+        prj.add_source("Targets.sol", targets);
+        cmd.forge_fuse().args(["test", "--force"]).assert_success();
+        cmd.forge_fuse().arg("test").assert_success();
+
+        prj.add_source("Targets.sol", &targets.replace("111", "222"));
+        for force in [false, true] {
+            cmd.forge_fuse().arg("test");
+            if force {
+                cmd.arg("--force");
+            }
+            cmd.assert_failure().stdout_eq(str![[r#"
+...
+Ran 4 tests for test/PrivateDimensions.t.sol:PrivateDimensionsTest
+[FAIL: changed value] test_expression() ([GAS])
+[FAIL: changed value] test_literal() ([GAS])
+[FAIL: changed value] test_nested() ([GAS])
+[FAIL: changed value] test_unnamed() ([GAS])
+Suite result: FAILED. 0 passed; 4 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+        }
+
+        prj.add_source("Targets.sol", targets);
+        cmd.forge_fuse().arg("test").assert_success();
+    }
+
+    cmd.forge_fuse()
+        .args(["test", "--match-test", "test_literal", "-vvvv"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Traces:
+...
+    ├─ [0] VM::deployCode("src/Targets.sol:Literal", 0x[..])
+...
+"#]]);
+});
+
 forgetest!(preprocess_generated_interface_name_collision, |prj, cmd| {
     let target = r#"
 contract Target {
@@ -3937,6 +4134,8 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
     }
 });
 
+// Windows filenames cannot contain double quotes.
+#[cfg(unix)]
 forgetest!(preprocess_generated_path_string_escaping, |prj, cmd| {
     let target = r#"
 contract Zero {
@@ -3985,6 +4184,8 @@ Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
     }
 });
 
+// Windows directory names cannot contain colons.
+#[cfg(unix)]
 forgetest!(preprocess_colon_in_artifact_path, |prj, cmd| {
     let target = r#"
 contract Zero {

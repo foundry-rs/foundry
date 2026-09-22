@@ -157,14 +157,14 @@ impl InMemoryBlockStates {
                         continue;
                     }
 
-                    let state_snapshot = state.0.clear_into_state_snapshot();
+                    let state_snapshot = state.read_as_state_snapshot();
                     if self.disk_cache.write(hash, &state_snapshot) {
+                        state.clear();
                         // Write succeeded, move state to on-disk tracking
                         self.on_disk_states.insert(hash, state);
                         self.oldest_on_disk.push_back(hash);
                     } else {
-                        // Write failed, restore state to memory to avoid data loss
-                        state.init_from_state_snapshot(state_snapshot);
+                        // Write failed, keep state in memory to avoid data loss
                         self.states.insert(hash, state);
                         self.present.push_front(hash);
                         // Increase limit temporarily to prevent infinite retry loop

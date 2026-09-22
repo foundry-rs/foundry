@@ -570,16 +570,16 @@ snapbox = { version = "1.2", features = ["json", "regex", "term-svg"] }
 idna_adapter = "=1.1.0"
 
 [patch.crates-io]
-solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "cee62c942f51dcfb9cda29ff475e53383395416a" }
-solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "cee62c942f51dcfb9cda29ff475e53383395416a" }
-solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "cee62c942f51dcfb9cda29ff475e53383395416a" }
-solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "cee62c942f51dcfb9cda29ff475e53383395416a" }
+solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "797d916e7a9d8856c68ae1f387bd52db15aded19" }
+solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "797d916e7a9d8856c68ae1f387bd52db15aded19" }
+solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "797d916e7a9d8856c68ae1f387bd52db15aded19" }
+solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "797d916e7a9d8856c68ae1f387bd52db15aded19" }
 
 ## foundry-core
-foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "4cb780ee83d041409543fad3d90df143214956c7" }
-foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "4cb780ee83d041409543fad3d90df143214956c7" }
-foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", rev = "4cb780ee83d041409543fad3d90df143214956c7" }
-foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "4cb780ee83d041409543fad3d90df143214956c7" }
+foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "81731e05a24dc5c4beede8fcb5c06542e25b71df" }
+foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "81731e05a24dc5c4beede8fcb5c06542e25b71df" }
+foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", rev = "81731e05a24dc5c4beede8fcb5c06542e25b71df" }
+foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "81731e05a24dc5c4beede8fcb5c06542e25b71df" }
 
 ## alloy-core
 # alloy-dyn-abi = { path = "../../alloy-rs/core/crates/dyn-abi" }

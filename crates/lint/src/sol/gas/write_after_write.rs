@@ -126,13 +126,15 @@ impl Analyzer<'_, '_> {
         let expr = expr.peel_parens();
         match &expr.kind {
             ExprKind::Assign(lhs, op, rhs) => {
-                // The RHS is evaluated before the assignment takes effect; a compound assignment
-                // also reads the current LHS value.
+                // Compound assignments read the LHS before writing it.
                 self.reads(rhs);
-                if op.is_none() {
-                    self.write_lhs(lhs, expr.span);
-                } else {
+                if op.is_some() {
                     self.reads(lhs);
+                    if let Some(var) = self.state_var(lhs) {
+                        self.pending.insert(var, expr.span);
+                    }
+                } else {
+                    self.write_lhs(lhs, expr.span);
                 }
             }
             // Pre/post increment and decrement read the variable, then write it.
@@ -156,7 +158,7 @@ impl Analyzer<'_, '_> {
         }
     }
 
-    /// Records a plain `=` write; tuple destructuring records each component with its own span.
+    /// Records assignment writes, preserving each tuple component's span.
     fn write_lhs(&mut self, lhs: &Expr<'_>, span: Span) {
         match &lhs.peel_parens().kind {
             ExprKind::Tuple(exprs) => {
@@ -206,7 +208,13 @@ impl Analyzer<'_, '_> {
                 self.reads(lhs);
                 self.reads(rhs);
             }
-            ExprKind::Unary(_, inner) | ExprKind::Payable(inner) | ExprKind::Member(inner, _) => {
+            ExprKind::Member(inner, _) => {
+                if let Some(var) = self.state_var(expr) {
+                    self.pending.remove(&var);
+                }
+                self.reads(inner);
+            }
+            ExprKind::Unary(_, inner) | ExprKind::Payable(inner) => {
                 self.reads(inner);
             }
             ExprKind::Index(base, index) => {
