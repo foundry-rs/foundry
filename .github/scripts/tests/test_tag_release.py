@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import pathlib
 import subprocess
 import tempfile
@@ -24,8 +25,10 @@ class ValidationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = manifest(tmp, "1.9.0-rc2")
             self.assertEqual(
-                MODULE.validate_release("release-1.9.0-rc2", path, ["nightly", "v1.8.3", "v1.9.0-rc1"]),
-                "1.9.0-rc2",
+                MODULE.validate_release(
+                    "release-1.9.0-rc2", path, ["nightly", "v1.8.3", "v1.9.0-rc1"]
+                )["from_tag"],
+                "v1.9.0-rc1",
             )
             for branch in ("master", "feature", "release-v1.9.0-rc2", "release-1.9.0", "release-1.9.0-rc02"):
                 with self.subTest(branch=branch), self.assertRaises(MODULE.ReleaseError):
@@ -34,9 +37,11 @@ class ValidationTests(unittest.TestCase):
     def test_candidate_must_be_strictly_newer(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = manifest(tmp, "1.9.0")
-            for latest in ("v1.9.0", "v1.9.1", "v2.0.0-rc1"):
+            for latest in ("v1.9.1", "v2.0.0-rc1"):
                 with self.subTest(latest=latest), self.assertRaisesRegex(MODULE.ReleaseError, "must be newer"):
                     MODULE.validate_release("release-1.9.0", path, [latest])
+            with self.assertRaisesRegex(MODULE.ReleaseError, "already exists"):
+                MODULE.validate_release("release-1.9.0", path, ["v1.9.0"])
 
     def test_versions_use_numeric_rc_ordering(self):
         tags = ["v1.8.3", "v1.9.0-rc1", "v1.9.0-rc9", "v1.9.0-rc10", "v1.9.0", "v1.9.1"]
@@ -44,25 +49,74 @@ class ValidationTests(unittest.TestCase):
 
     def test_requires_existing_release(self):
         with tempfile.TemporaryDirectory() as tmp:
-            with self.assertRaisesRegex(MODULE.ReleaseError, "no canonical release tags"):
+            with self.assertRaisesRegex(MODULE.ReleaseError, "no preceding strict stable tag"):
                 MODULE.validate_release("release-1.9.0", manifest(tmp, "1.9.0"), ["nightly"])
+
+    def test_requires_rc_predecessor(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = manifest(tmp, "1.9.0-rc2")
+            with self.assertRaisesRegex(MODULE.ReleaseError, "no preceding strict RC tag"):
+                MODULE.validate_release("release-1.9.0-rc2", path, ["v1.8.3"])
+
+    def test_metadata_selects_canonical_predecessor(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            stable = MODULE.validate_release(
+                "release-1.9.0", manifest(tmp, "1.9.0"), ["v1.8.2", "v1.8.3", "v1.9.0-rc1"],
+            )
+            self.assertEqual(stable["from_tag"], "v1.8.3")
+            rc = MODULE.validate_release(
+                "release-2.0.0-rc1", manifest(tmp, "2.0.0-rc1"), ["v1.9.0"],
+            )
+            self.assertEqual(rc["from_tag"], "v1.9.0")
+
+    def test_existing_candidate_must_match_exact_commit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = manifest(tmp, "1.9.0")
+            metadata = MODULE.validate_release(
+                "release-1.9.0", path, ["v1.8.3", "v1.9.0", "v1.9.1"], SHA, SHA,
+            )
+            self.assertEqual(metadata["tag_name"], "v1.9.0")
+            with self.assertRaisesRegex(MODULE.ReleaseError, "different commit"):
+                MODULE.validate_release(
+                    "release-1.9.0", path, ["v1.8.3", "v1.9.0"], SHA, "b" * 40,
+                )
 
 
 class TagTests(unittest.TestCase):
     def test_creates_tag_at_exact_commit(self):
-        result = subprocess.CompletedProcess([], 0, "", "")
-        with patch.object(MODULE.subprocess, "run", return_value=result) as run:
-            MODULE.create_tag("foundry-rs/foundry", "1.9.0-rc1", SHA)
-        run.assert_called_once_with([
+        created = subprocess.CompletedProcess([], 0, "", "")
+        resolved = subprocess.CompletedProcess(
+            [], 0, json.dumps({"object": {"type": "commit", "sha": SHA}}), "",
+        )
+        with patch.object(MODULE.subprocess, "run", side_effect=[created, resolved]) as run:
+            MODULE.create_or_verify_tag("foundry-rs/foundry", "1.9.0-rc1", SHA)
+        self.assertEqual(run.call_args_list[0].args[0], [
             "gh", "api", "--method", "POST", "repos/foundry-rs/foundry/git/refs",
             "-f", "ref=refs/tags/v1.9.0-rc1", "-f", f"sha={SHA}",
-        ], text=True, capture_output=True)
+        ])
+
+    def test_existing_tag_at_exact_commit_is_a_successful_retry(self):
+        exists = subprocess.CompletedProcess([], 1, "", "already exists")
+        resolved = subprocess.CompletedProcess(
+            [], 0, json.dumps({"object": {"type": "commit", "sha": SHA}}), "",
+        )
+        with patch.object(MODULE.subprocess, "run", side_effect=[exists, resolved]):
+            MODULE.create_or_verify_tag("foundry-rs/foundry", "1.9.0", SHA)
+
+    def test_existing_tag_at_different_commit_is_rejected(self):
+        exists = subprocess.CompletedProcess([], 1, "", "already exists")
+        resolved = subprocess.CompletedProcess(
+            [], 0, json.dumps({"object": {"type": "commit", "sha": "b" * 40}}), "",
+        )
+        with patch.object(MODULE.subprocess, "run", side_effect=[exists, resolved]):
+            with self.assertRaisesRegex(MODULE.ReleaseError, "expected"):
+                MODULE.create_or_verify_tag("foundry-rs/foundry", "1.9.0", SHA)
 
     def test_rejects_invalid_version_or_commit_before_api_call(self):
         with patch.object(MODULE.subprocess, "run") as run:
             for version, commit in (("v1.9.0", SHA), ("1.9.0-rc0", SHA), ("1.9.0", "master")):
                 with self.subTest(version=version, commit=commit), self.assertRaises(MODULE.ReleaseError):
-                    MODULE.create_tag("foundry-rs/foundry", version, commit)
+                    MODULE.create_or_verify_tag("foundry-rs/foundry", version, commit)
             run.assert_not_called()
 
 

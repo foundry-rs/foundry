@@ -78,7 +78,7 @@ def release_run(run_id, event, commit, tag, conclusion="success"):
         "event": event,
         "conclusion": conclusion,
         "head_sha": commit,
-        "head_branch": tag,
+        "head_branch": f"release-{tag.removeprefix('v')}" if event == "workflow_dispatch" else tag,
     }
 
 

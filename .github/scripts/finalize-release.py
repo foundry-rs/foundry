@@ -137,11 +137,14 @@ def require_release_run(commands, repo, tag, commit):
         "gh", "api", "--paginate", "--slurp",
         f"repos/{repo}/actions/workflows/release.yml/runs?head_sha={commit}&per_page=100",
     ]))
+    release_branch = f"release-{tag.removeprefix('v')}"
     matching = [
         run for page in pages for run in page.get("workflow_runs", [])
-        if run.get("event") in ("push", "workflow_dispatch")
-        and run.get("head_sha") == commit
-        and run.get("head_branch") == tag
+        if run.get("head_sha") == commit
+        and (
+            (run.get("event") == "push" and run.get("head_branch") == tag)
+            or (run.get("event") == "workflow_dispatch" and run.get("head_branch") == release_branch)
+        )
     ]
     if not matching:
         raise ReleaseError(f"no release.yml run found for {tag} at {commit}")
