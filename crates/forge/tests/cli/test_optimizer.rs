@@ -3937,6 +3937,8 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
     }
 });
 
+// Windows filenames cannot contain double quotes.
+#[cfg(unix)]
 forgetest!(preprocess_generated_path_string_escaping, |prj, cmd| {
     let target = r#"
 contract Zero {
@@ -3985,6 +3987,8 @@ Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
     }
 });
 
+// Windows directory names cannot contain colons.
+#[cfg(unix)]
 forgetest!(preprocess_colon_in_artifact_path, |prj, cmd| {
     let target = r#"
 contract Zero {
