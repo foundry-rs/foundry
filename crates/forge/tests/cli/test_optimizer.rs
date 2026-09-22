@@ -3753,6 +3753,94 @@ Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
     }
 });
 
+forgetest!(preprocess_private_constructor_array_dimensions, |prj, cmd| {
+    let targets = r#"
+contract Nested {
+    uint256 private constant N = 2;
+    constructor(uint256[N][3] memory xs) { require(xs[2][1] == 7); }
+    function value() external pure returns (uint256) { return 111; }
+}
+contract Expression {
+    uint256 private constant N = 2;
+    constructor(uint256[N + 1] memory xs) { require(xs[2] == 7); }
+    function value() external pure returns (uint256) { return 111; }
+}
+contract Unnamed {
+    uint256 private constant N = 2;
+    constructor(uint256[N] memory) {}
+    function value() external pure returns (uint256) { return 111; }
+}
+contract Literal {
+    constructor(uint256[2] memory) {}
+    function value() external pure returns (uint256) { return 111; }
+}
+"#;
+    prj.add_test(
+        "PrivateDimensions.t.sol",
+        r#"
+import {Expression, Literal, Nested, Unnamed} from "../src/Targets.sol";
+
+contract PrivateDimensionsTest {
+    function test_nested() public {
+        uint256[2][3] memory xs;
+        xs[2][1] = 7;
+        require(new Nested(xs).value() == 111, "changed value");
+    }
+    function test_expression() public {
+        uint256[3] memory xs;
+        xs[2] = 7;
+        require(new Expression(xs).value() == 111, "changed value");
+    }
+    function test_unnamed() public {
+        require(new Unnamed([uint256(1), 2]).value() == 111, "changed value");
+    }
+    function test_literal() public {
+        require(new Literal([uint256(1), 2]).value() == 111, "changed value");
+    }
+}
+"#,
+    );
+
+    for dynamic_test_linking in [false, true] {
+        prj.update_config(|config| config.dynamic_test_linking = dynamic_test_linking);
+        prj.add_source("Targets.sol", targets);
+        cmd.forge_fuse().args(["test", "--force"]).assert_success();
+        cmd.forge_fuse().arg("test").assert_success();
+
+        prj.add_source("Targets.sol", &targets.replace("111", "222"));
+        for force in [false, true] {
+            cmd.forge_fuse().arg("test");
+            if force {
+                cmd.arg("--force");
+            }
+            cmd.assert_failure().stdout_eq(str![[r#"
+...
+Ran 4 tests for test/PrivateDimensions.t.sol:PrivateDimensionsTest
+[FAIL: changed value] test_expression() ([GAS])
+[FAIL: changed value] test_literal() ([GAS])
+[FAIL: changed value] test_nested() ([GAS])
+[FAIL: changed value] test_unnamed() ([GAS])
+Suite result: FAILED. 0 passed; 4 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+        }
+
+        prj.add_source("Targets.sol", targets);
+        cmd.forge_fuse().arg("test").assert_success();
+    }
+
+    cmd.forge_fuse()
+        .args(["test", "--match-test", "test_literal", "-vvvv"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Traces:
+...
+    ├─ [0] VM::deployCode("src/Targets.sol:Literal", 0x[..])
+...
+"#]]);
+});
+
 forgetest!(preprocess_generated_interface_name_collision, |prj, cmd| {
     let target = r#"
 contract Target {
