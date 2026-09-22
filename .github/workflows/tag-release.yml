@@ -1,0 +1,81 @@
+name: Tag release
+
+permissions: {}
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: release-tagging-${{ github.repository }}
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  preflight:
+    name: Validate release branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.release_info.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate release version
+        id: release_info
+        env:
+          COMMIT: ${{ github.sha }}
+          REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          metadata=$(python3 .github/scripts/tag-release.py validate --ref "$REF" --commit "$COMMIT")
+          printf 'version=%s\n' "$(jq -r '.version' <<< "$metadata")" >> "$GITHUB_OUTPUT"
+
+  test-release:
+    needs: preflight
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/test.yml
+    with:
+      profile: default
+    secrets:
+      ETHERSCAN_API_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
+      ARBITRUM_RPC: ${{ secrets.ARBITRUM_RPC }}
+      ETH_SEPOLIA_RPC: ${{ secrets.ETH_SEPOLIA_RPC }}
+      TEMPO_MAINNET_RPC_URL: ${{ secrets.TEMPO_MAINNET_RPC_URL }}
+      TEMPO_TESTNET_RPC_URL: ${{ secrets.TEMPO_TESTNET_RPC_URL }}
+
+  tag-release:
+    name: Tag tested release and dispatch build
+    needs: [preflight, test-release]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Revalidate, create tag, and start release
+        env:
+          COMMIT: ${{ github.sha }}
+          REF: ${{ github.ref }}
+          VERSION: ${{ needs.preflight.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          metadata=$(python3 .github/scripts/tag-release.py validate --ref "$REF" --commit "$COMMIT")
+          if [[ "$(jq -r '.version' <<< "$metadata")" != "$VERSION" ]]; then
+            echo "::error::Release version changed after testing."
+            exit 1
+          fi
+          python3 .github/scripts/tag-release.py tag --version "$VERSION" --commit "$COMMIT"
+          # A separate tag-dispatched run gives signing and provenance the tag's OIDC identity.
+          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "v$VERSION" \
+            --raw-field "expected_commit=$COMMIT"

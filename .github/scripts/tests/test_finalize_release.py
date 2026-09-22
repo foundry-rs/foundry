@@ -78,7 +78,7 @@ def release_run(run_id, event, commit, tag, conclusion="success"):
         "event": event,
         "conclusion": conclusion,
         "head_sha": commit,
-        "head_branch": f"release-{tag.removeprefix('v')}" if event == "workflow_dispatch" else tag,
+        "head_branch": tag,
     }
 
 
@@ -143,6 +143,7 @@ class StableTests(unittest.TestCase):
             release_run(3, "schedule", "abc", "v1.0.0"),
             release_run(4, "workflow_dispatch", "def", "v1.0.0"),
             release_run(5, "workflow_dispatch", "abc", "v1.0.1"),
+            release_run(6, "workflow_dispatch", "abc", "release-1.0.0"),
         ]}
         push_only = {"workflow_runs": runs["workflow_runs"][:1]}
         self.assertEqual(

@@ -18,3 +18,6 @@ paths:
   .github/workflows/release.yml:
     ignore:
       - '^unexpected key "queue" for "concurrency" section\.'
+  .github/workflows/tag-release.yml:
+    ignore:
+      - '^unexpected key "queue" for "concurrency" section\.'
