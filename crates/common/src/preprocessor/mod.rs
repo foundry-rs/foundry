@@ -31,7 +31,7 @@ pub struct DynamicTestLinkingPreprocessor;
 
 impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
     fn cache_version(&self) -> u64 {
-        1
+        2
     }
 
     fn preprocess(
@@ -149,7 +149,7 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
 
 impl Preprocessor<MultiCompiler> for DynamicTestLinkingPreprocessor {
     fn cache_version(&self) -> u64 {
-        1
+        2
     }
 
     fn preprocess(
