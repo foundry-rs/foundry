@@ -1669,12 +1669,17 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                 }
             }
 
+            let execution_disable_fee_charge = ecx.cfg_env().disable_fee_charge;
+            if let Some(disable_fee_charge) = self.inner.outer_disable_fee_charge {
+                ecx.cfg_env_mut().disable_fee_charge = disable_fee_charge;
+            }
             cheatcode_outcome = cheatcodes.call_with_executor(
                 ecx,
                 call,
                 self.inner,
                 isolate && call.scheme == CallScheme::Call,
             );
+            ecx.cfg_env_mut().disable_fee_charge = execution_disable_fee_charge;
         }
 
         if let Some(trace_idx) = trace_idx
