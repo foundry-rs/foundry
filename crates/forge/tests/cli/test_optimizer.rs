@@ -3695,6 +3695,63 @@ contract TargetTest is Test {
     cmd.args(["build"]).assert_success();
 });
 
+// Constant initializers must stay native and retain their bytecode dependencies.
+forgetest!(preprocess_creation_code_in_constant_initializer, |prj, cmd| {
+    let target = r#"
+contract Target {
+    function value() external pure returns (uint256) { return 111; }
+}
+"#;
+    prj.add_test(
+        "ConstantCode.t.sol",
+        r#"
+import {Target} from "../src/Target.sol";
+
+contract ConstantCodeTest {
+    bytes constant CODE = type(Target).creationCode;
+    bytes32 constant CODE_HASH = keccak256(type(Target).creationCode);
+    bytes32 immutable initialHash = keccak256(type(Target).creationCode);
+
+    function test_constant_code() public {
+        require(CODE_HASH == initialHash, "stale code hash");
+        bytes memory code = CODE;
+        address deployed;
+        assembly { deployed := create(0, add(code, 32), mload(code)) }
+        require(Target(deployed).value() == 111, "changed value");
+    }
+}
+"#,
+    );
+
+    for dynamic_test_linking in [false, true] {
+        prj.update_config(|config| config.dynamic_test_linking = dynamic_test_linking);
+        prj.add_source("Target.sol", target);
+        cmd.forge_fuse().args(["test", "--force"]).assert_success();
+        cmd.forge_fuse().arg("test").assert_success().stdout_eq(str![[r#"
+No files changed, compilation skipped
+...
+"#]]);
+
+        prj.add_source("Target.sol", &target.replace("111", "222"));
+        for force in [false, true] {
+            cmd.forge_fuse().arg("test");
+            if force {
+                cmd.arg("--force");
+            }
+            cmd.assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/ConstantCode.t.sol:ConstantCodeTest
+[FAIL: changed value] test_constant_code() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+        }
+
+        prj.add_source("Target.sol", target);
+        cmd.forge_fuse().arg("test").assert_success();
+    }
+});
+
 // Test that `type(Contract).creationCode` keeps native pure semantics when it is used in a
 // modifier body that is applied to a pure function.
 forgetest_init!(preprocess_creation_code_in_modifier_used_by_pure_function, |prj, cmd| {
