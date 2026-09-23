@@ -4338,3 +4338,67 @@ Suite result: FAILED. 1 passed; 3 failed; 0 skipped; [ELAPSED]
 "#]]);
     }
 });
+
+forgetest!(preprocess_imported_constant_dependencies, |prj, cmd| {
+    let target =
+        "contract Target { function value() external pure returns (uint256) { return 11; } }";
+    for (import, value) in [
+        ("import {CODE} from '../src/Constants.sol';", "CODE"),
+        ("import {CODE as ALIAS} from '../src/Constants.sol';", "ALIAS"),
+        ("import {ALIAS} from '../src/Constants.sol';", "ALIAS"),
+        ("import * as Constants from '../src/Constants.sol';", "Constants.CODE"),
+    ] {
+        prj.add_source(
+            "Constants.sol",
+            "import './Target.sol'; bytes constant CODE = type(Target).creationCode; bytes constant ALIAS = CODE;",
+        );
+        prj.add_test(
+            "Constants.t.sol",
+            &format!(
+                r#"
+{import}
+import {{Target}} from '../src/Target.sol';
+contract ConstantsTest {{
+    function test_value() public {{
+        bytes memory code = {value};
+        address deployed;
+        assembly {{ deployed := create(0, add(code, 32), mload(code)) }}
+        require(Target(deployed).value() == 11, "value");
+    }}
+}}
+"#
+            ),
+        );
+        for dynamic in [false, true] {
+            prj.update_config(|config| config.dynamic_test_linking = dynamic);
+            prj.add_source("Target.sol", target);
+            cmd.forge_fuse().args(["test", "--force"]).assert_success();
+            cmd.forge_fuse().arg("test").assert_success().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/Constants.t.sol:ConstantsTest
+[PASS] test_value() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+            prj.add_source("Target.sol", &target.replace("11", "22"));
+            for force in [false, true] {
+                cmd.forge_fuse().arg("test");
+                if force {
+                    cmd.arg("--force");
+                }
+                cmd.assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/Constants.t.sol:ConstantsTest
+[FAIL: value] test_value() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+            }
+            prj.add_source("Target.sol", target);
+            cmd.forge_fuse().arg("test").assert_success();
+        }
+    }
+});
