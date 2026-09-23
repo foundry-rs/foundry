@@ -218,12 +218,12 @@ impl<FEN: FoundryEvmNetwork> PreprocessedState<FEN> {
         let sources_to_compile = source_files_iter(
             project.paths.sources.as_path(),
             MultiCompilerLanguage::FILE_EXTENSIONS,
-        )
-        .chain([target_path.clone()]);
+        );
 
         let output = ProjectCompiler::new()
             .external_compilers(&script_config.config, ExternalCompilerWorkflow::Script)
             .files(sources_to_compile)
+            .target_files([target_path.clone()])
             .dynamic_test_linking(script_config.config.dynamic_test_linking)
             .compile(&project)?;
 

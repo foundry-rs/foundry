@@ -44,8 +44,13 @@ pub enum ExternalCompilerWorkflow {
 
 /// Returns whether an artifact can be selected as a Forge test contract.
 pub fn external_artifact_is_test_eligible(build_id: &str) -> bool {
-    !build_id.starts_with("external:")
+    !is_external_artifact(build_id)
         || build_id.split(':').nth(3).is_some_and(|role| role == "forge-tests")
+}
+
+/// Returns whether an artifact was produced by an external compiler adapter.
+pub fn is_external_artifact(build_id: &str) -> bool {
+    build_id.starts_with("external:")
 }
 
 /// Returns whether a path belongs to a compiler built into Foundry.
@@ -64,6 +69,7 @@ pub(crate) struct ExternalCompilation {
     cache_root: PathBuf,
     cache_enabled: bool,
     write_outputs: bool,
+    complete_discovery: bool,
     active_units: BTreeMap<String, BTreeSet<String>>,
     pending_cache: Vec<PendingCache>,
 }
@@ -107,6 +113,7 @@ pub(crate) fn compile_external(
         cache_root: config.cache_path.join(EXTERNAL_CACHE_DIR),
         cache_enabled: config.cache,
         write_outputs,
+        complete_discovery: selected_paths.is_empty(),
         active_units,
         pending_cache,
     })
@@ -135,8 +142,10 @@ where
         let active_adapters = external.active_units.keys().cloned().collect();
         if external.cache_enabled {
             retire_children(&external.cache_root, &active_adapters, None)?;
-            for (adapter, units) in &external.active_units {
-                retire_children(&external.cache_root.join(adapter), units, Some("json"))?;
+            if external.complete_discovery {
+                for (adapter, units) in &external.active_units {
+                    retire_children(&external.cache_root.join(adapter), units, Some("json"))?;
+                }
             }
             for cache in &external.pending_cache {
                 write_cache(&cache.path, &cache.contents)?;
@@ -145,7 +154,9 @@ where
         retire_children(&external.output_root, &active_adapters, None)?;
         for (adapter, units) in &external.active_units {
             let adapter_root = external.output_root.join(adapter);
-            retire_children(&adapter_root, units, None)?;
+            if external.complete_discovery {
+                retire_children(&adapter_root, units, None)?;
+            }
             for unit in units {
                 let unit_root = adapter_root.join(unit);
                 if unit_root.exists() {
@@ -613,16 +624,21 @@ impl ExternalArtifact {
             "external artifact {} has runtime bytecode without creation bytecode",
             self.name
         );
+        ensure!(
+            self.link_references.is_empty() && self.deployed_link_references.is_empty(),
+            "external artifact {} must provide fully linked bytecode",
+            self.name
+        );
         let bytecode = self.bytecode.map(|bytes| CompactBytecode {
             object: BytecodeObject::Bytecode(bytes),
             source_map: self.source_map,
-            link_references: self.link_references,
+            link_references: Default::default(),
         });
         let deployed_bytecode = self.deployed_bytecode.map(|bytes| CompactDeployedBytecode {
             bytecode: Some(CompactBytecode {
                 object: BytecodeObject::Bytecode(bytes),
                 source_map: self.deployed_source_map,
-                link_references: self.deployed_link_references,
+                link_references: Default::default(),
             }),
             immutable_references: Default::default(),
         });
@@ -818,5 +834,27 @@ mod tests {
 
         let artifact = artifact.into_foundry_artifact().unwrap();
         assert_eq!(artifact.method_identifiers.unwrap()["balanceOf(address)"], "70a08231");
+    }
+
+    #[test]
+    fn rejects_unlinked_bytecode() {
+        for field in ["linkReferences", "deployedLinkReferences"] {
+            let mut value = serde_json::json!({
+                "source": "native/src/lib.fe",
+                "name": "Token",
+                "bytecode": "0x0000000000000000000000000000000000000000"
+            });
+            value[field] = serde_json::json!({
+                "native/src/lib.fe": {"Library": [{"start": 0, "length": 20}]}
+            });
+            let artifact: ExternalArtifact = serde_json::from_value(value).unwrap();
+            assert!(
+                artifact
+                    .into_foundry_artifact()
+                    .unwrap_err()
+                    .to_string()
+                    .contains("must provide fully linked bytecode")
+            );
+        }
     }
 }

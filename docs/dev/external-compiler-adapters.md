@@ -75,7 +75,8 @@ available as known contracts and deployment dependencies during `forge test`; AB
 alone do not opt them into execution as test suites.
 
 `selected_paths` contains explicit paths selected by the calling Forge command. The adapter decides
-which units own those paths and must still return each selected unit's complete input closure.
+which units own those paths and must still return each selected unit's complete input closure. An
+empty array requests complete discovery, so the adapter must return every active unit.
 
 ### `compile`
 
@@ -97,7 +98,7 @@ command. Each artifact supports these fields:
 | `bytecode` | no | Creation bytecode. |
 | `deployedBytecode` | no | Runtime bytecode; requires creation bytecode. |
 | `sourceMap`, `deployedSourceMap` | no | Solidity-format instruction source maps. |
-| `linkReferences`, `deployedLinkReferences` | no | Standard link-reference maps. |
+| `linkReferences`, `deployedLinkReferences` | no | Fully linked bytecode only; must be empty in protocol v1. |
 | `metadata` | no | Adapter-owned JSON metadata, serialized into Foundry's `rawMetadata` field. |
 | `sourceId` | no | Source ID used by the supplied source maps. |
 

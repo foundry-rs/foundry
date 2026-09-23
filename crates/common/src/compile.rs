@@ -260,12 +260,10 @@ impl ProjectCompiler {
         let external_compilers = self.external_compilers.take();
         let external_writes = self.external_writes && !project.no_artifacts;
         self.compile_with(|| {
-            let selected_paths =
-                if selected_paths.is_empty() { files.as_slice() } else { &selected_paths };
             let external = external_compilers
                 .as_ref()
                 .map(|(config, workflow)| {
-                    compile_external(config, *workflow, selected_paths, external_writes)
+                    compile_external(config, *workflow, &selected_paths, external_writes)
                 })
                 .transpose()?;
             let sources = if explicit_selection {

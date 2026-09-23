@@ -11,17 +11,24 @@ use foundry_cli::{
 };
 use foundry_common::{
     compile::{PathOrContractInfo, ProjectCompiler, compile_abi_project},
-    external_compiler::ExternalCompilerWorkflow,
+    external_compiler::{ExternalCompilerWorkflow, is_external_artifact},
     selectors::{SelectorImportData, import_selectors},
     shell,
 };
 use foundry_compilers::{
-    Project,
-    artifacts::output_selection::{ContractOutputSelection, EvmOutputSelection, OutputSelection},
+    Project, ProjectCompileOutput,
+    artifacts::{
+        ConfigurableContractArtifact,
+        output_selection::{ContractOutputSelection, EvmOutputSelection, OutputSelection},
+    },
     info::ContractInfo,
     multi::MultiCompiler,
 };
-use std::{collections::BTreeMap, fs::canonicalize};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs::canonicalize,
+    path::Path,
+};
 
 /// CLI arguments for `forge selectors`.
 #[derive(Clone, Debug, Parser)]
@@ -122,16 +129,7 @@ impl SelectorsSubcommands {
                     compile_abi_project(&mut project, compiler)?
                 };
                 let artifacts = if all {
-                    output
-                        .into_artifacts_with_files()
-                        .filter(|(file, _, _)| {
-                            let is_sources_path = file.starts_with(&project.paths.sources);
-                            let is_test = file.is_sol_test();
-
-                            is_sources_path && !is_test
-                        })
-                        .map(|(_, contract, artifact)| (contract, artifact))
-                        .collect()
+                    selector_artifacts(output, &project.paths.sources)
                 } else {
                     let contract_info = contract.unwrap();
                     let contract = contract_info.name().unwrap().to_string();
@@ -275,16 +273,7 @@ impl SelectorsSubcommands {
                         .clone();
                     vec![(contract, artifact)]
                 } else {
-                    outcome
-                        .into_artifacts_with_files()
-                        .filter(|(file, _, _)| {
-                            let is_sources_path = file.starts_with(&project.paths.sources);
-                            let is_test = file.is_sol_test();
-
-                            is_sources_path && !is_test
-                        })
-                        .map(|(_, contract, artifact)| (contract, artifact))
-                        .collect()
+                    selector_artifacts(outcome, &project.paths.sources)
                 };
 
                 let mut artifacts = artifacts.into_iter();
@@ -390,14 +379,7 @@ impl SelectorsSubcommands {
 
                 let (mut project, compiler) = project_from_paths(project_paths)?;
                 let outcome = compile_abi_project(&mut project, compiler.quiet(true))?;
-                let artifacts = outcome
-                    .into_artifacts_with_files()
-                    .filter(|(file, _, _)| {
-                        let is_sources_path = file.starts_with(&project.paths.sources);
-                        let is_test = file.is_sol_test();
-                        is_sources_path && !is_test
-                    })
-                    .collect::<Vec<_>>();
+                let artifacts = selector_artifacts(outcome, &project.paths.sources);
 
                 let mut table = Table::new();
                 if shell::is_markdown() {
@@ -411,7 +393,7 @@ impl SelectorsSubcommands {
                 let selector_str = selector.strip_prefix("0x").unwrap_or(selector.as_str());
                 let selector_bytes = hex::decode(selector_str)?;
 
-                for (_file, contract, artifact) in artifacts {
+                for (contract, artifact) in artifacts {
                     let abi = artifact.abi.ok_or_else(|| eyre::eyre!("Unable to fetch abi"))?;
 
                     for func in abi.functions() {
@@ -458,6 +440,24 @@ impl SelectorsSubcommands {
         }
         Ok(())
     }
+}
+
+fn selector_artifacts(
+    output: ProjectCompileOutput,
+    sources: &Path,
+) -> Vec<(String, ConfigurableContractArtifact)> {
+    let external_sources = output
+        .artifact_ids()
+        .filter(|(id, _)| is_external_artifact(&id.build_id))
+        .map(|(id, _)| id.source)
+        .collect::<BTreeSet<_>>();
+    output
+        .into_artifacts_with_files()
+        .filter(|(file, _, _)| {
+            (file.starts_with(sources) || external_sources.contains(file)) && !file.is_sol_test()
+        })
+        .map(|(_, contract, artifact)| (contract, artifact))
+        .collect()
 }
 
 fn project_from_paths(

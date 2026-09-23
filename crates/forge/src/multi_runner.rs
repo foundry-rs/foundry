@@ -832,9 +832,6 @@ impl MultiContractRunnerBuilder {
         let empty_filter = EmptyTestFilter::default();
         let resolver = Resolver::new(&linker);
         for (id, contract) in linked_contracts.iter() {
-            if !external_artifact_is_test_eligible(&id.build_id) {
-                continue;
-            }
             let Some(abi) = contract.abi.as_ref() else { continue };
             if abi.constructor.as_ref().is_some_and(|c| !c.inputs.is_empty())
                 || !test_matcher.matches_contract(&empty_filter, id, abi)
@@ -1075,7 +1072,8 @@ impl<'a> TestFunctionMatcher<'a> {
         id: &ArtifactId,
         abi: &JsonAbi,
     ) -> bool {
-        filter.matches_path(&id.source)
+        external_artifact_is_test_eligible(&id.build_id)
+            && filter.matches_path(&id.source)
             && filter.matches_contract(&id.name)
             && self.matching_test_functions(filter, id, abi).next().is_some()
     }

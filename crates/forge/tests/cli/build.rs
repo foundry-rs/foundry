@@ -49,10 +49,13 @@ forgetest!(external_compiler_builds_and_caches_native_project, |prj, cmd| {
 read -r initialize
 printf '%s\n' '{"id":1,"result":{"protocol":"1.0"}}'
 read -r discover
-printf '%s\n' '{"id":2,"result":{"units":[{"id":"app","compiler":{"name":"fe","version":"26.3.0"},"inputs":["native/fe.toml","native/src/lib.fe"],"capabilities":["build/1"],"effectiveSettings":{"optimization":"s"},"cacheable":true}]}}'
+case "$discover" in
+    *'.sol'*) printf '%s\n' '{"id":2,"result":{"units":[]}}' ;;
+    *) printf '%s\n' '{"id":2,"result":{"units":[{"id":"app","compiler":{"name":"fe","version":"26.3.0"},"inputs":["native/fe.toml","native/src/lib.fe"],"capabilities":["build/1"],"effectiveSettings":{"optimization":"s"},"cacheable":true}]}}' ;;
+esac
 if read -r compile; then
     : > "$0.compiled"
-    printf '%s\n' '{"id":3,"result":{"diagnostics":[],"artifacts":[{"source":"native/src/lib.fe","name":"Counter","abi":[{"type":"function","name":"testExternalArtifactIsDeployable","inputs":[],"outputs":[],"stateMutability":"nonpayable"}],"bytecode":"0x6005600c60003960056000f360006000fd","deployedBytecode":"0x60006000fd","metadata":{"language":"Fe"}}]}}'
+    printf '%s\n' '{"id":3,"result":{"diagnostics":[],"artifacts":[{"source":"native/src/lib.fe","name":"Counter","abi":[{"type":"function","name":"run","inputs":[],"outputs":[],"stateMutability":"nonpayable"},{"type":"function","name":"testExternalArtifactIsDeployable","inputs":[],"outputs":[],"stateMutability":"nonpayable"}],"bytecode":"0x6001600c60003960016000f300","deployedBytecode":"0x00","metadata":{"language":"Fe"}}]}}'
 fi
 "#,
     )
@@ -76,12 +79,23 @@ fi
     let artifact = prj.root().join("out/.external/fixture/app/native/src/lib.fe/Counter.json");
     let artifact_json: serde_json::Value =
         serde_json::from_slice(&fs::read(artifact).unwrap()).unwrap();
-    assert_eq!(artifact_json["bytecode"]["object"], "0x6005600c60003960056000f360006000fd");
+    assert_eq!(artifact_json["bytecode"]["object"], "0x6001600c60003960016000f300");
     assert_eq!(artifact_json["rawMetadata"], r#"{"language":"Fe"}"#);
+
+    let retained_cache = prj.root().join("cache/external-compilers/fixture/other.json");
+    let retained_artifact = prj.root().join("out/.external/fixture/other/Other.json");
+    fs::write(&retained_cache, "{}").unwrap();
+    fs::create_dir_all(retained_artifact.parent().unwrap()).unwrap();
+    fs::write(&retained_artifact, "{}").unwrap();
+    cmd.forge_fuse().args(["build", "native"]).assert_success();
+    assert!(retained_cache.exists(), "filtered build retired an unselected cache entry");
+    assert!(retained_artifact.exists(), "filtered build retired an unselected artifact");
 
     fs::remove_file(&invoked).unwrap();
     cmd.forge_fuse().arg("build").assert_success();
     assert!(!invoked.exists(), "cache hit unexpectedly invoked compilation");
+    assert!(!retained_cache.exists(), "complete discovery retained a stale cache entry");
+    assert!(!retained_artifact.exists(), "complete discovery retained a stale artifact");
 
     fs::write(native.join("src/lib.fe"), "pub contract Counter { pub fn value() -> u256 { 1 } }\n")
         .unwrap();
@@ -95,6 +109,14 @@ fi
     assert!(invoked.exists(), "inspect did not compile an uncached external unit");
     assert!(!prj.root().join("out/.external").exists());
     assert!(!prj.root().join("cache/external-compilers").exists());
+
+    let output = cmd.forge_fuse().args(["selectors", "list", "--no-group"]).assert_success();
+    assert!(output.get_output().stdout_lossy().contains("run()"));
+    cmd.forge_fuse().args(["script", "native/src/lib.fe:Counter"]).assert_success();
+    cmd.forge_fuse()
+        .args(["test", "--list", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"{}"#]].is_json());
 
     fs::create_dir_all(prj.root().join("test")).unwrap();
     fs::write(
@@ -114,12 +136,14 @@ contract ExternalArtifactTest {
         assembly ("memory-safe") {
             deployed := create(0, add(code, 0x20), mload(code))
         }
-        require(deployed != address(0) && deployed.code.length == 5);
+        require(deployed != address(0) && deployed.code.length == 1);
     }
 }
 "#,
     )
     .unwrap();
+    fs::remove_dir_all(prj.root().join("out/.external")).unwrap();
+    fs::remove_dir_all(prj.root().join("cache/external-compilers")).unwrap();
     cmd.forge_fuse()
         .args(["test", "--match-test", "testExternalArtifactIsDeployable"])
         .assert_success();
