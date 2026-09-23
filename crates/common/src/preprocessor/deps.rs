@@ -10,20 +10,60 @@ use foundry_compilers::{
 };
 use itertools::Itertools;
 use path_slash::PathExt;
-use solar::sema::{
-    Gcx, Hir,
-    hir::{
-        CallArgs, CallOptions, Contract, ContractId, ContractKind, Expr, ExprKind, Function,
-        FunctionId, FunctionKind, Res, SourceId, StateMutability, Stmt, StmtKind, TypeKind,
-        UsingDirective, UsingEntryKind, Variable, Visibility, Visit,
+use solar::{
+    ast::ItemKind,
+    sema::{
+        Gcx, Hir,
+        hir::{
+            CallArgs, CallArgsKind, CallOptions, Contract, ContractId, ContractKind, Expr,
+            ExprKind, Function, FunctionId, FunctionKind, Res, SourceId, StateMutability, Stmt,
+            StmtKind, TypeKind, UsingDirective, UsingEntryKind, Variable, Visibility, Visit,
+        },
+        interface::{SourceMap, data_structures::Never, source_map::FileName},
     },
-    interface::{SourceMap, data_structures::Never, source_map::FileName},
 };
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
     ops::{ControlFlow, Range},
     path::{Path, PathBuf},
 };
+
+/// Compiler and source context whose validation would be lost by rewriting construction.
+#[derive(Clone, Copy)]
+pub(super) struct ConstructorContext {
+    pub abi_coder_v2: bool,
+    pub supports_create2: bool,
+}
+
+impl ConstructorContext {
+    fn for_source(mut self, gcx: Gcx<'_>, source: SourceId) -> Self {
+        let ast = gcx
+            .sources
+            .get_file(&gcx.hir.source(source).file)
+            .and_then(|(_, source)| source.ast.as_ref());
+        let Some(ast) = ast else {
+            self.abi_coder_v2 = false;
+            return self;
+        };
+        for item in ast.items.iter() {
+            if let ItemKind::Pragma(pragma) = &item.kind
+                && let Some((name, Some(value))) = pragma.tokens.as_name_and_value()
+            {
+                match (name.as_str(), value.as_str()) {
+                    ("abicoder", "v1") => {
+                        self.abi_coder_v2 = false;
+                        return self;
+                    }
+                    ("abicoder", "v2") | ("experimental", "ABIEncoderV2") => {
+                        self.abi_coder_v2 = true;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        self
+    }
+}
 
 /// Holds data about referenced source contracts and bytecode dependencies.
 pub(crate) struct PreprocessorDependencies {
@@ -37,6 +77,7 @@ impl PreprocessorDependencies {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         gcx: Gcx<'_>,
+        constructor_context: ConstructorContext,
         paths: &[PathBuf],
         script_paths: &HashSet<PathBuf>,
         project_paths: &ProjectPathsConfig<SolcLanguage>,
@@ -135,6 +176,7 @@ impl PreprocessorDependencies {
                 src_dir,
                 root_dir,
                 is_script,
+                constructor_context.for_source(gcx, contract.source),
             );
             let mut using_dependencies = global_using_dependencies.clone();
             using_dependencies.extend(using_dependency_sources(
@@ -287,6 +329,8 @@ pub(crate) struct BytecodeDependency {
     loc: Range<usize>,
     /// HIR id of referenced contract.
     referenced_contract: ContractId,
+    /// The original expression must reach Solc to preserve its validation.
+    preserve_native: bool,
 }
 
 /// Walks over contract HIR and collects [`BytecodeDependency`]s and referenced contracts.
@@ -295,6 +339,8 @@ struct BytecodeDependencyCollector<'gcx, 'src> {
     gcx: Gcx<'gcx>,
     /// Contract whose lexically owned bytecode references may be rewritten.
     owner_contract: ContractId,
+    /// Constructor validation context of the source being rewritten.
+    constructor_context: ConstructorContext,
     /// Source path of the current contract.
     source_path: PathBuf,
     /// Project source dir, used to determine if referenced contract is a source contract.
@@ -330,10 +376,12 @@ impl<'gcx, 'src> BytecodeDependencyCollector<'gcx, 'src> {
         src_dir: &'src Path,
         root_dir: &'src Path,
         is_script: bool,
+        constructor_context: ConstructorContext,
     ) -> Self {
         Self {
             gcx,
             owner_contract,
+            constructor_context,
             source_path: normalize_path(&root_dir.join(source_path)),
             src_dir,
             root_dir,
@@ -410,7 +458,7 @@ impl<'gcx, 'src> BytecodeDependencyCollector<'gcx, 'src> {
         };
         let native_path = normalize_path(&self.root_dir.join(path));
 
-        if self.preserve_native_bytecode {
+        if self.preserve_native_bytecode || dependency.preserve_native {
             self.native_dependencies.insert(native_path);
             return;
         }
@@ -616,7 +664,8 @@ impl<'gcx> Visit<'gcx> for BytecodeDependencyCollector<'gcx, '_> {
             }
             ExprKind::Call(call_expr, call_args, named_args) => {
                 if let Some(dependency) = handle_call_expr(
-                    self.gcx.sess.source_map(),
+                    self.gcx,
+                    self.constructor_context,
                     expr,
                     call_expr,
                     call_args,
@@ -667,6 +716,7 @@ impl<'gcx> Visit<'gcx> for BytecodeDependencyCollector<'gcx, '_> {
                         kind,
                         loc: span_to_range(self.gcx.sess.source_map(), expr.span),
                         referenced_contract: contract_id,
+                        preserve_native: false,
                     });
                 }
             }
@@ -701,7 +751,8 @@ impl<'gcx> Visit<'gcx> for BytecodeDependencyCollector<'gcx, '_> {
 
 /// Helper function to analyze and extract bytecode dependency from a given call expression.
 fn handle_call_expr(
-    source_map: &SourceMap,
+    gcx: Gcx<'_>,
+    context: ConstructorContext,
     parent_expr: &Expr<'_>,
     call_expr: &Expr<'_>,
     call_args: &CallArgs<'_>,
@@ -711,6 +762,7 @@ fn handle_call_expr(
         && let TypeKind::Custom(item_id) = ty_new.kind
         && let Some(contract_id) = item_id.as_contract()
     {
+        let source_map = gcx.sess.source_map();
         let name = source_map.span_to_snippet(ty_new.span).ok()?;
 
         // Calculate the offset to remove call options and parentheses between the new type and
@@ -735,6 +787,13 @@ fn handle_call_expr(
             // The HIR callee excludes parentheses, so start at the full call expression.
             loc: span_to_range(source_map, parent_expr.span.with_hi(call_expr.span.hi())),
             referenced_contract: contract_id,
+            preserve_native: !valid_constructor_call(
+                gcx,
+                context,
+                contract_id,
+                call_args,
+                call_options,
+            ),
         });
     }
     None
@@ -909,4 +968,51 @@ fn unique_identifier(source: &str, mut identifier: String) -> String {
 
 fn import_alias(identifier: &str, local: &str) -> String {
     if identifier == local { identifier.to_string() } else { format!("{identifier} as {local}") }
+}
+
+/// Checks constraints that disappear when `new` is replaced by a cheatcode call.
+/// The generated argument struct retains type checks, but not source ABI-coder restrictions.
+/// Keep parameterized ABI-coder-v1 calls native rather than duplicating Solc ABI validation.
+fn valid_constructor_call(
+    gcx: Gcx<'_>,
+    context: ConstructorContext,
+    id: ContractId,
+    args: &CallArgs<'_>,
+    options: &Option<&CallOptions<'_>>,
+) -> bool {
+    let contract = gcx.hir.contract(id);
+    if contract.kind != ContractKind::Contract {
+        return false;
+    }
+    let constructor = contract.ctor.map(|id| gcx.hir.function(id));
+    let parameters = constructor.map_or(&[][..], |ctor| ctor.parameters);
+    if args.len() != parameters.len() || (!parameters.is_empty() && !context.abi_coder_v2) {
+        return false;
+    }
+    if let CallArgsKind::Named(args) = args.kind {
+        let mut names = HashSet::new();
+        if args.iter().any(|arg| {
+            !names.insert(arg.name.name)
+                || !parameters.iter().any(|id| {
+                    gcx.hir.variable(*id).name.is_some_and(|name| name.name == arg.name.name)
+                })
+        }) {
+            return false;
+        }
+    }
+    if let Some(options) = options {
+        let mut names = HashSet::new();
+        if options.args.iter().any(|arg| {
+            !names.insert(arg.name.name)
+                || match arg.name.as_str() {
+                    "salt" => !context.supports_create2,
+                    "value" => constructor
+                        .is_none_or(|ctor| ctor.state_mutability != StateMutability::Payable),
+                    _ => true,
+                }
+        }) {
+            return false;
+        }
+    }
+    true
 }
