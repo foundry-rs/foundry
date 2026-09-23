@@ -4434,3 +4434,235 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
 });
+
+forgetest!(preprocess_return_data_observation, |prj, cmd| {
+    prj.add_source("Target.sol", "contract Target {}");
+    // Each case has its own contract and helper source, so another observer cannot mask a
+    // discovery failure. Abstract bases keep inherited tests in the derived suite only.
+    for (case, helper, declarations) in [
+        (
+            "create",
+            "",
+            r#"
+contract ReturnDataTest {
+    function test_return_data() public {
+        new Target();
+        uint256 n;
+        assembly { n := returndatasize() }
+        require(n == 0, "create buffer");
+    }
+}"#,
+        ),
+        (
+            "namespace_create2",
+            "function size() view returns (uint256 n) { assembly { n := returndatasize() } }",
+            r#"
+import * as Observe from '../src/Observe.sol';
+contract ReturnDataTest {
+    function test_return_data() public {
+        new Target{salt: bytes32(uint256(7))}();
+        require(Observe.size() == 0, "create2 buffer");
+    }
+}"#,
+        ),
+        (
+            "inherited_producer",
+            "function size() view returns (uint256 n) { assembly { n := returndatasize() } }",
+            r#"
+import * as Observe from '../src/Observe.sol';
+abstract contract Base { function make() internal { new Target(); } }
+contract ReturnDataTest is Base {
+    function test_return_data() public {
+        make();
+        require(Observe.size() == 0, "inherited producer buffer");
+    }
+}"#,
+        ),
+        (
+            "inherited_observer",
+            "",
+            r#"
+abstract contract Base {
+    function make() internal virtual;
+    function test_return_data() public {
+        make();
+        uint256 n;
+        assembly { n := returndatasize() }
+        require(n == 0, "inherited observer buffer");
+    }
+}
+contract ReturnDataTest is Base {
+    function make() internal override { new Target(); }
+}"#,
+        ),
+        (
+            "using_initializer",
+            "library Reader { function size(uint256) internal view returns (uint256 n) { assembly { n := returndatasize() } } }",
+            r#"
+import {Reader} from '../src/Observe.sol';
+contract ReturnDataTest {
+    using Reader for uint256;
+    Target target = new Target();
+    uint256 observed = uint256(0).size();
+    function test_return_data() public view {
+        require(observed == 0, "initializer buffer");
+    }
+}"#,
+        ),
+        (
+            "using_function",
+            "function size(uint256) view returns (uint256 n) { assembly { n := returndatasize() } }",
+            r#"
+import {size} from '../src/Observe.sol';
+contract ReturnDataTest {
+    using {size} for uint256;
+    function test_return_data() public {
+        new Target();
+        require(uint256(0).size() == 0, "using function buffer");
+    }
+}"#,
+        ),
+        (
+            "aliased_using",
+            "function size(uint256) view returns (uint256 n) { assembly { n := returndatasize() } }",
+            r#"
+import {size as readSize} from '../src/Observe.sol';
+contract ReturnDataTest {
+    using {readSize} for uint256;
+    function test_return_data() public {
+        new Target();
+        require(uint256(0).readSize() == 0, "aliased using function buffer");
+    }
+}"#,
+        ),
+        (
+            "library",
+            "library Reader { function size(uint256) internal view returns (uint256 n) { assembly { n := returndatasize() } } }",
+            r#"
+import {Reader} from '../src/Observe.sol';
+contract ReturnDataTest {
+    function test_return_data() public {
+        new Target();
+        require(Reader.size(0) == 0, "library buffer");
+    }
+}"#,
+        ),
+        (
+            "parenthesized_library",
+            "library Reader { function size() internal pure returns (uint256 n) { assembly { n := returndatasize() } } }",
+            r#"
+import {Reader} from '../src/Observe.sol';
+contract ReturnDataTest {
+    function test_return_data() public {
+        new Target();
+        require((Reader).size() == 0, "parenthesized library buffer");
+    }
+}"#,
+        ),
+        (
+            "unary_operator",
+            "type Word is uint256; using {size as -} for Word global; function size(Word) pure returns (Word) { uint256 n; assembly { n := returndatasize() } return Word.wrap(n); }",
+            r#"
+import {Word} from '../src/Observe.sol';
+contract ReturnDataTest {
+    function test_return_data() public {
+        new Target();
+        require(Word.unwrap(-Word.wrap(0)) == 0, "unary operator buffer");
+    }
+}"#,
+        ),
+        (
+            "binary_operator",
+            "type Word is uint256; using {size as +} for Word global; function size(Word, Word) pure returns (Word) { uint256 n; assembly { n := returndatasize() } return Word.wrap(n); }",
+            r#"
+import {Word} from '../src/Observe.sol';
+contract ReturnDataTest {
+    function test_return_data() public {
+        new Target();
+        require(Word.unwrap(Word.wrap(0) + Word.wrap(0)) == 0, "binary operator buffer");
+    }
+}"#,
+        ),
+        (
+            "creation_code",
+            "",
+            r#"
+contract ReturnDataTest {
+    function ping() external pure returns (uint256) { return 77; }
+    function test_return_data() public {
+        this.ping();
+        bytes memory code = type(Target).creationCode;
+        uint256 value;
+        assembly { returndatacopy(0, 0, 32) value := mload(0) }
+        require(code.length > 0 && value == 77, "creation code buffer");
+    }
+}"#,
+        ),
+        (
+            "modifier",
+            "",
+            r#"
+contract ReturnDataTest {
+    modifier check() {
+        _;
+        uint256 n;
+        assembly { n := returndatasize() }
+        require(n == 0, "modifier buffer");
+    }
+    function test_return_data() public check { new Target(); }
+}"#,
+        ),
+        (
+            "function_pointer",
+            "function size() view returns (uint256 n) { assembly { n := returndatasize() } }",
+            r#"
+import {size} from '../src/Observe.sol';
+contract ReturnDataTest {
+    function test_return_data() public {
+        function() internal view returns (uint256) observe = size;
+        new Target();
+        require(observe() == 0, "function pointer buffer");
+    }
+}"#,
+        ),
+    ] {
+        prj.add_source("Observe.sol", helper);
+        prj.add_test(
+            "ReturnData.t.sol",
+            &format!("import '../src/Target.sol'; {declarations}")
+                .replace("test_return_data", &format!("test_{case}")),
+        );
+        for dynamic in [false, true] {
+            prj.update_config(|config| config.dynamic_test_linking = dynamic);
+            cmd.forge_fuse().args(["test", "--force"]).assert_success().stdout_eq(format!(
+                r#"...
+Ran 1 test for test/ReturnData.t.sol:ReturnDataTest
+[PASS] test_{case}() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+"#
+            ));
+        }
+    }
+});
+
+forgetest!(preprocess_inline_verbatim_diagnostics, |prj, cmd| {
+    prj.add_source("Target.sol", "contract Target {}");
+    for expression in ["let n := verbatim_0i_1o(hex\"3d\")", "verbatim_3i_0o(hex\"3e\", 0, 0, 0)"] {
+        prj.add_test(
+            "Verbatim.t.sol",
+            &format!("import '../src/Target.sol'; contract VerbatimTest {{ function test_verbatim() public {{ new Target(); assembly {{ {expression} }} }} }}"),
+        );
+        prj.update_config(|config| config.dynamic_test_linking = false);
+        let native = cmd
+            .forge_fuse()
+            .args(["build", "--force"])
+            .assert_failure()
+            .get_output()
+            .stderr
+            .clone();
+        prj.update_config(|config| config.dynamic_test_linking = true);
+        cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(native);
+    }
+});
