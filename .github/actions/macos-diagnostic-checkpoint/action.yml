@@ -13,16 +13,26 @@ runs:
         CHECKPOINT_NUMBER: ${{ inputs.number }}
       run: bash diagnostic/.github/scripts/macos-diagnostic-control.sh checkpoint "$CHECKPOINT_NUMBER"
     - name: Persist checkpoint
+      id: upload
+      continue-on-error: true
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
-        name: macos-${{ env.DIAGNOSTIC_MODE }}-${{ github.run_id }}-${{ github.run_attempt }}-checkpoint-${{ inputs.number }}
+        name: macos-${{ env.DIAGNOSTIC_VARIANT }}-${{ env.DIAGNOSTIC_MODE }}-${{ github.run_id }}-${{ github.run_attempt }}-checkpoint-${{ inputs.number }}
         path: ${{ runner.temp }}/macos-diagnostic/checkpoint-${{ inputs.number }}/*
         retention-days: 7
         if-no-files-found: error
-    - name: Record checkpoint completion
+    - name: Record upload outcome and keep sampling
+      if: always()
       shell: bash
       env:
         CHECKPOINT_NUMBER: ${{ inputs.number }}
+        UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
       run: |
-        printf '%s checkpoint-uploaded number=%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$CHECKPOINT_NUMBER" |
+        printf '%s checkpoint-upload-end number=%s outcome=%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$CHECKPOINT_NUMBER" "$UPLOAD_OUTCOME" |
           tee -a "$RUNNER_TEMP/macos-diagnostic/lifecycle.log"
+        if [[ "$UPLOAD_OUTCOME" == 'failure' ]]; then
+          # Capture fresh resolver/FD evidence immediately after an upload error.
+          node diagnostic/.github/scripts/macos-network-probe.cjs |
+            tee -a "$RUNNER_TEMP/macos-diagnostic/network.log"
+          echo '::warning::Checkpoint upload failed; continuing workload and sampling.'
+        fi

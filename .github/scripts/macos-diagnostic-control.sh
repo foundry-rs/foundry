@@ -66,18 +66,20 @@ case "${1:-}" in
     mkdir -p "$snapshot"
     # Explicit allowlist: no environment, command arguments, raw runner logs,
     # source, build products, credentials, or tool caches in periodic artifacts.
-    for file in resources.log lifecycle.log machine.txt toolchain.txt build-exit.txt; do
+    for file in resources.log network.log lifecycle.log machine.txt toolchain.txt build-exit.txt security-state.txt; do
       if [[ -f "$diagnostic_dir/$file" ]]; then
         cp "$diagnostic_dir/$file" "$snapshot/$file"
       fi
     done
     tail -60 "$diagnostic_dir/resources.log"
+    if [[ -f "$diagnostic_dir/network.log" ]]; then tail -50 "$diagnostic_dir/network.log"; fi
     tail -30 "$diagnostic_dir/workload.log"
     mark "checkpoint-ready number=$checkpoint"
     ;;
   finish)
     mark cleanup-start
     stop_process "$diagnostic_dir/monitor.pid"
+    stop_process "$diagnostic_dir/network-monitor.pid"
     if [[ ! -f "$diagnostic_dir/build-exit.txt" ]]; then
       mark workload-timeout-or-interruption
       stop_process "$diagnostic_dir/worker.pid"
