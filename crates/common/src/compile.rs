@@ -96,6 +96,10 @@ pub struct ProjectCompiler {
 
     /// External compiler configuration and the workflow consuming its artifacts.
     external_compilers: Option<(Config, ExternalCompilerWorkflow)>,
+
+    /// Preserves the caller's artifact policy when ABI caching enables artifacts on a cloned
+    /// project.
+    external_writes: bool,
 }
 
 impl Default for ProjectCompiler {
@@ -123,6 +127,7 @@ impl ProjectCompiler {
             dynamic_test_linking: false,
             abi_cache: false,
             external_compilers: None,
+            external_writes: true,
         }
     }
 
@@ -249,18 +254,19 @@ impl ProjectCompiler {
         // Taking is fine since we don't need these in `compile_with`.
         let files = std::mem::take(&mut self.files);
         let explicit_selection = !files.is_empty() || !self.selected_paths.is_empty();
-        let selected_paths = if self.selected_paths.is_empty() {
-            files.clone()
-        } else {
-            std::mem::take(&mut self.selected_paths)
-        };
+        let selected_paths = std::mem::take(&mut self.selected_paths);
         let preprocess = self.dynamic_test_linking;
         let abi_cache = self.abi_cache;
-        let external_compilers = self.external_compilers.clone();
+        let external_compilers = self.external_compilers.take();
+        let external_writes = self.external_writes && !project.no_artifacts;
         self.compile_with(|| {
+            let selected_paths =
+                if selected_paths.is_empty() { files.as_slice() } else { &selected_paths };
             let external = external_compilers
                 .as_ref()
-                .map(|(config, workflow)| compile_external(config, *workflow, &selected_paths))
+                .map(|(config, workflow)| {
+                    compile_external(config, *workflow, selected_paths, external_writes)
+                })
                 .transpose()?;
             let sources = if explicit_selection {
                 Source::read_all(files)?
@@ -273,13 +279,12 @@ impl ProjectCompiler {
             if preprocess {
                 compiler = compiler.with_preprocessor(DynamicTestLinkingPreprocessor);
             }
-            let mut output = if abi_cache {
-                compiler.compile_abi_cached().map_err(eyre::Report::from)?
-            } else {
-                compiler.compile().map_err(eyre::Report::from)?
-            };
-            if let Some(external) = external {
-                merge_external(&mut output, external, !project.no_artifacts)?;
+            let mut output =
+                if abi_cache { compiler.compile_abi_cached()? } else { compiler.compile()? };
+            if !output.has_compiler_errors()
+                && let Some(external) = external
+            {
+                merge_external(&mut output, external)?;
             }
             Ok(output)
         })
@@ -802,6 +807,7 @@ where
     let mut cached_project = project.clone();
     cached_project.no_artifacts = false;
     compiler.abi_cache = true;
+    compiler.external_writes = !project.no_artifacts;
     compile_abi_project(&mut cached_project, compiler)
 }
 

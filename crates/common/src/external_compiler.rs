@@ -9,7 +9,7 @@ use foundry_compilers::{
         BytecodeObject, CompactBytecode, CompactDeployedBytecode, ConfigurableContractArtifact,
         Offsets, contract::Contract,
     },
-    compilers::Compiler,
+    compilers::{Compiler, Language, multi::MultiCompilerLanguage},
 };
 use foundry_config::{Config, ExternalCompiler};
 use semver::Version;
@@ -49,48 +49,48 @@ pub fn external_artifact_is_test_eligible(build_id: &str) -> bool {
 }
 
 /// Returns whether a path belongs to a compiler built into Foundry.
-pub fn is_builtin_compiler_source(path: &Path) -> bool {
+pub(crate) fn is_builtin_compiler_source(path: &Path) -> bool {
     path.extension().and_then(OsStr::to_str).is_some_and(|extension| {
-        matches!(extension.to_ascii_lowercase().as_str(), "sol" | "vy" | "vyi" | "yul")
+        MultiCompilerLanguage::FILE_EXTENSIONS
+            .iter()
+            .any(|candidate| extension.eq_ignore_ascii_case(candidate))
     })
 }
 
 /// External artifacts and the unit inventory used to publish them.
-pub struct ExternalCompilation {
+pub(crate) struct ExternalCompilation {
     artifacts: Artifacts<ConfigurableContractArtifact>,
     output_root: PathBuf,
+    cache_root: PathBuf,
+    cache_enabled: bool,
+    write_outputs: bool,
     active_units: BTreeMap<String, BTreeSet<String>>,
+    pending_cache: Vec<PendingCache>,
 }
 
 /// Runs configured external compiler adapters and returns their normalized artifacts.
-pub fn compile_external(
+pub(crate) fn compile_external(
     config: &Config,
     workflow: ExternalCompilerWorkflow,
     selected_paths: &[PathBuf],
+    write_outputs: bool,
 ) -> Result<ExternalCompilation> {
-    if config.external_compilers.is_empty() {
-        return Ok(ExternalCompilation {
-            artifacts: Artifacts::default(),
-            output_root: config.out.join(EXTERNAL_ARTIFACT_DIR),
-            active_units: BTreeMap::new(),
-        });
-    }
-
     let mut external = Artifacts::default();
-    let mut identities = BTreeSet::new();
     let mut active_units = BTreeMap::new();
+    let mut pending_cache = Vec::new();
     for adapter in &config.external_compilers {
         ensure!(
             !active_units.contains_key(&adapter.id),
             "duplicate external compiler adapter ID `{}`",
             adapter.id
         );
-        let (artifacts, units) =
-            AdapterClient::new(config, adapter, workflow, selected_paths)?.compile()?;
+        let (artifacts, units, adapter_cache) =
+            AdapterClient::new(config, adapter, workflow, selected_paths)?
+                .compile(write_outputs)?;
         for (source, contracts) in artifacts {
             for name in contracts.keys() {
                 ensure!(
-                    identities.insert((source.clone(), name.clone())),
+                    external.get(&source).and_then(|existing| existing.get(name)).is_none(),
                     "external compiler artifact collision for {}:{name}",
                     source.display()
                 );
@@ -98,25 +98,24 @@ pub fn compile_external(
             external.as_mut().entry(source).or_default().extend(contracts);
         }
         active_units.insert(adapter.id.clone(), units);
+        pending_cache.extend(adapter_cache);
     }
-    retire_children(
-        &config.cache_path.join(EXTERNAL_CACHE_DIR),
-        &active_units.keys().cloned().collect(),
-        None,
-    )?;
 
     Ok(ExternalCompilation {
         artifacts: external,
         output_root: config.out.join(EXTERNAL_ARTIFACT_DIR),
+        cache_root: config.cache_path.join(EXTERNAL_CACHE_DIR),
+        cache_enabled: config.cache,
+        write_outputs,
         active_units,
+        pending_cache,
     })
 }
 
 /// Merges validated external artifacts into a built-in compilation result.
-pub fn merge_external<C>(
+pub(crate) fn merge_external<C>(
     output: &mut ProjectCompileOutput<C>,
     external: ExternalCompilation,
-    write_artifacts: bool,
 ) -> Result<()>
 where
     C: Compiler<CompilerContract = Contract>,
@@ -125,19 +124,25 @@ where
     for (source, contracts) in &external.artifacts {
         for name in contracts.keys() {
             ensure!(
-                merged.get(source).and_then(|existing| existing.get(name)).is_none(),
+                output.find(source, name).is_none(),
                 "external compiler artifact conflicts with built-in artifact {}:{name}",
                 source.display()
             );
         }
     }
 
-    if write_artifacts {
-        retire_children(
-            &external.output_root,
-            &external.active_units.keys().cloned().collect(),
-            None,
-        )?;
+    if external.write_outputs {
+        let active_adapters = external.active_units.keys().cloned().collect();
+        if external.cache_enabled {
+            retire_children(&external.cache_root, &active_adapters, None)?;
+            for (adapter, units) in &external.active_units {
+                retire_children(&external.cache_root.join(adapter), units, Some("json"))?;
+            }
+            for cache in &external.pending_cache {
+                write_cache(&cache.path, &cache.contents)?;
+            }
+        }
+        retire_children(&external.output_root, &active_adapters, None)?;
         for (adapter, units) in &external.active_units {
             let adapter_root = external.output_root.join(adapter);
             retire_children(&adapter_root, units, None)?;
@@ -197,7 +202,11 @@ impl<'a> AdapterClient<'a> {
         })
     }
 
-    fn compile(&self) -> Result<(Artifacts<ConfigurableContractArtifact>, BTreeSet<String>)> {
+    fn compile(
+        &self,
+        write_outputs: bool,
+    ) -> Result<(Artifacts<ConfigurableContractArtifact>, BTreeSet<String>, Vec<PendingCache>)>
+    {
         let mut process = AdapterProcess::spawn(self.root, &self.command, &self.adapter.args)
             .wrap_err_with(|| format!("failed to start external compiler `{}`", self.adapter.id))?;
         let initialized: InitializeResult = process.request(
@@ -233,7 +242,7 @@ impl<'a> AdapterClient<'a> {
 
         let mut artifacts = Artifacts::default();
         let mut active_units = BTreeSet::new();
-        let mut artifact_identities = BTreeSet::new();
+        let mut pending_cache = Vec::new();
         for unit in discovery.units {
             validate_id("build unit", &unit.id)?;
             ensure!(
@@ -276,21 +285,17 @@ impl<'a> AdapterClient<'a> {
                 }
             };
             emit_diagnostics(&self.adapter.id, &unit.id, &result.diagnostics)?;
-            if fresh && self.cache && unit.cacheable {
-                write_cache(&cache_path, &fingerprint, &result)?;
+            let cache = (write_outputs && fresh && self.cache && unit.cacheable)
+                .then(|| serialize_cache(&fingerprint, &result))
+                .transpose()?;
+            self.add_artifacts(&mut artifacts, &unit, &fingerprint, result)?;
+            if let Some(contents) = cache {
+                pending_cache.push(PendingCache { path: cache_path, contents });
             }
-            self.add_artifacts(
-                &mut artifacts,
-                &mut artifact_identities,
-                &unit,
-                &fingerprint,
-                result,
-            )?;
         }
 
         process.finish()?;
-        retire_children(&self.cache_root, &active_units, Some("json"))?;
-        Ok((artifacts, active_units))
+        Ok((artifacts, active_units, pending_cache))
     }
 
     fn fingerprint(&self, unit: &DiscoveredUnit) -> Result<String> {
@@ -320,7 +325,6 @@ impl<'a> AdapterClient<'a> {
     fn add_artifacts(
         &self,
         output: &mut Artifacts<ConfigurableContractArtifact>,
-        identities: &mut BTreeSet<(PathBuf, String)>,
         unit: &DiscoveredUnit,
         fingerprint: &str,
         result: CompileResult,
@@ -335,16 +339,16 @@ impl<'a> AdapterClient<'a> {
         for artifact in result.artifacts {
             let name = artifact.name.clone();
             validate_id("contract", &name)?;
-            let source = normalize_relative_path("source unit", &artifact.source)?;
+            let source = validate_relative_path("source unit", &artifact.source)?;
+            let source_path = self.root.join(source);
             ensure!(
-                identities.insert((source.clone(), name.clone())),
+                output.get(&source_path).and_then(|existing| existing.get(&name)).is_none(),
                 "external compiler `{}` returned duplicate artifact {}:{}",
                 self.adapter.id,
                 source.display(),
                 name
             );
-            let source_path = self.root.join(&source);
-            let artifact_path = unit_out.join(&source).join(format!("{name}.json"));
+            let artifact_path = unit_out.join(source).join(format!("{name}.json"));
             let contract = artifact.into_foundry_artifact()?;
             output.as_mut().entry(source_path).or_default().entry(name).or_default().push(
                 ArtifactFile {
@@ -550,7 +554,7 @@ struct CompileParams<'a> {
     workflow: ExternalCompilerWorkflow,
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CompileResult {
     #[serde(default)]
@@ -559,7 +563,7 @@ struct CompileResult {
     artifacts: Vec<ExternalArtifact>,
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Deserialize, Serialize)]
 struct ExternalDiagnostic {
     severity: DiagnosticSeverity,
     message: String,
@@ -577,7 +581,7 @@ enum DiagnosticSeverity {
     Info,
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ExternalArtifact {
     source: PathBuf,
@@ -622,10 +626,16 @@ impl ExternalArtifact {
             }),
             immutable_references: Default::default(),
         });
+        let method_identifiers = self
+            .abi
+            .functions()
+            .map(|function| (function.signature(), hex::encode(function.selector())))
+            .collect();
         Ok(ConfigurableContractArtifact {
             abi: Some(self.abi),
             bytecode,
             deployed_bytecode,
+            method_identifiers: Some(method_identifiers),
             raw_metadata: self.metadata.as_ref().map(serde_json::to_string).transpose()?,
             id: self.source_id,
             ..Default::default()
@@ -634,9 +644,14 @@ impl ExternalArtifact {
 }
 
 #[derive(Deserialize, Serialize)]
-struct CacheEntry {
+struct CacheEntry<R> {
     fingerprint: String,
-    result: CompileResult,
+    result: R,
+}
+
+struct PendingCache {
+    path: PathBuf,
+    contents: Vec<u8>,
 }
 
 fn emit_diagnostics(adapter: &str, unit: &str, diagnostics: &[ExternalDiagnostic]) -> Result<()> {
@@ -664,19 +679,20 @@ fn emit_diagnostics(adapter: &str, unit: &str, diagnostics: &[ExternalDiagnostic
 
 fn read_cache(path: &Path, fingerprint: &str) -> Result<Option<CompileResult>> {
     let Ok(file) = File::open(path) else { return Ok(None) };
-    let entry: CacheEntry = serde_json::from_reader(file)
+    let entry: CacheEntry<CompileResult> = serde_json::from_reader(file)
         .wrap_err_with(|| format!("failed to read external compiler cache {}", path.display()))?;
     Ok((entry.fingerprint == fingerprint).then_some(entry.result))
 }
 
-fn write_cache(path: &Path, fingerprint: &str, result: &CompileResult) -> Result<()> {
+fn serialize_cache(fingerprint: &str, result: &CompileResult) -> Result<Vec<u8>> {
+    Ok(serde_json::to_vec(&CacheEntry { fingerprint: fingerprint.to_owned(), result })?)
+}
+
+fn write_cache(path: &Path, contents: &[u8]) -> Result<()> {
     let parent = path.parent().context("external compiler cache path has no parent")?;
     fs::create_dir_all(parent)?;
     let mut temp = tempfile::NamedTempFile::new_in(parent)?;
-    serde_json::to_writer(
-        temp.as_file_mut(),
-        &CacheEntry { fingerprint: fingerprint.to_owned(), result: result.clone() },
-    )?;
+    temp.write_all(contents)?;
     temp.as_file_mut().flush()?;
     temp.persist(path).map_err(|error| error.error)?;
     Ok(())
@@ -695,7 +711,7 @@ fn retire_children(root: &Path, active: &BTreeSet<String>, extension: Option<&st
         } else {
             path.file_name()
         };
-        if name.is_some_and(|name| !active.contains(&name.to_string_lossy().into_owned())) {
+        if name.is_some_and(|name| !active.contains(name.to_string_lossy().as_ref())) {
             if path.is_dir() {
                 fs::remove_dir_all(path)?;
             } else {
@@ -709,15 +725,16 @@ fn retire_children(root: &Path, active: &BTreeSet<String>, extension: Option<&st
 fn validate_id(kind: &str, value: &str) -> Result<()> {
     ensure!(!value.is_empty(), "external compiler {kind} ID cannot be empty");
     ensure!(
-        value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.')),
+        !matches!(value, "." | "..")
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.')),
         "invalid external compiler {kind} ID `{value}`"
     );
     Ok(())
 }
 
-fn normalize_relative_path(kind: &str, path: &Path) -> Result<PathBuf> {
+fn validate_relative_path<'a>(kind: &str, path: &'a Path) -> Result<&'a Path> {
     ensure!(!path.as_os_str().is_empty(), "external compiler {kind} cannot be empty");
     ensure!(path.is_relative(), "external compiler {kind} must be relative: {}", path.display());
     ensure!(
@@ -725,11 +742,11 @@ fn normalize_relative_path(kind: &str, path: &Path) -> Result<PathBuf> {
         "external compiler {kind} contains an unsafe component: {}",
         path.display()
     );
-    Ok(path.to_path_buf())
+    Ok(path)
 }
 
-fn normalize_root_path(path: &Path) -> Result<PathBuf> {
-    if path == Path::new(".") { Ok(PathBuf::new()) } else { normalize_relative_path("root", path) }
+fn normalize_root_path(path: &Path) -> Result<&Path> {
+    if path == Path::new(".") { Ok(Path::new("")) } else { validate_relative_path("root", path) }
 }
 
 fn resolve_file(root: &Path, path: &Path) -> Result<PathBuf> {
@@ -746,28 +763,27 @@ fn hash_part(hasher: &mut Sha256, bytes: &[u8]) {
 }
 
 fn hash_file(hasher: &mut Sha256, path: &Path) -> Result<()> {
-    let mut file = File::open(path)?;
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)?;
-    hash_part(hasher, &bytes);
+    hash_part(hasher, &fs::read(path)?);
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        external_artifact_is_test_eligible, is_builtin_compiler_source, normalize_relative_path,
-        normalize_root_path, validate_id,
+        ExternalArtifact, external_artifact_is_test_eligible, is_builtin_compiler_source,
+        normalize_root_path, validate_id, validate_relative_path,
     };
     use std::path::Path;
 
     #[test]
     fn rejects_unsafe_protocol_paths_and_ids() {
-        assert!(normalize_relative_path("source", Path::new("src/main.fe")).is_ok());
-        assert!(normalize_relative_path("source", Path::new("../outside.fe")).is_err());
-        assert!(normalize_relative_path("source", Path::new("/outside.fe")).is_err());
+        assert!(validate_relative_path("source", Path::new("src/main.fe")).is_ok());
+        assert!(validate_relative_path("source", Path::new("../outside.fe")).is_err());
+        assert!(validate_relative_path("source", Path::new("/outside.fe")).is_err());
         assert_eq!(normalize_root_path(Path::new(".")).unwrap(), Path::new(""));
         assert!(validate_id("unit", "app-1").is_ok());
+        assert!(validate_id("unit", ".").is_err());
+        assert!(validate_id("unit", "..").is_err());
         assert!(validate_id("unit", "../app").is_err());
     }
 
@@ -783,5 +799,24 @@ mod tests {
         assert!(is_builtin_compiler_source(Path::new("src/Contract.sol")));
         assert!(is_builtin_compiler_source(Path::new("src/contract.VY")));
         assert!(!is_builtin_compiler_source(Path::new("native/src/lib.fe")));
+    }
+
+    #[test]
+    fn derives_method_identifiers_from_abi() {
+        let artifact: ExternalArtifact = serde_json::from_value(serde_json::json!({
+            "source": "native/src/lib.fe",
+            "name": "Token",
+            "abi": [{
+                "type": "function",
+                "name": "balanceOf",
+                "inputs": [{"name": "account", "type": "address"}],
+                "outputs": [{"name": "", "type": "uint256"}],
+                "stateMutability": "view"
+            }]
+        }))
+        .unwrap();
+
+        let artifact = artifact.into_foundry_artifact().unwrap();
+        assert_eq!(artifact.method_identifiers.unwrap()["balanceOf(address)"], "70a08231");
     }
 }

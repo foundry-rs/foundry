@@ -88,7 +88,13 @@ fi
     cmd.forge_fuse().arg("build").assert_success();
     assert!(invoked.exists(), "source change did not invalidate external compiler cache");
 
+    fs::remove_dir_all(prj.root().join("out/.external")).unwrap();
+    fs::remove_dir_all(prj.root().join("cache/external-compilers")).unwrap();
+    fs::remove_file(&invoked).unwrap();
     cmd.forge_fuse().args(["inspect", "native/src/lib.fe:Counter", "abi"]).assert_success();
+    assert!(invoked.exists(), "inspect did not compile an uncached external unit");
+    assert!(!prj.root().join("out/.external").exists());
+    assert!(!prj.root().join("cache/external-compilers").exists());
 
     fs::create_dir_all(prj.root().join("test")).unwrap();
     fs::write(

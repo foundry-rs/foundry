@@ -26,11 +26,11 @@ optimization = "s"
 ```
 
 `id` is a unique namespace for the adapter's artifacts and cache entries. It may contain ASCII
-letters, digits, `.`, `-`, and `_`. `command` is an absolute path or a path relative to the Foundry
-project root. Foundry executes it directly without a shell or PATH lookup. `roots` contains one or
-more compiler-native project roots relative to the Foundry project. `args` is an optional argument
-array, and `settings` is an optional JSON-compatible TOML table passed through without
-interpretation.
+letters, digits, `.`, `-`, and `_`, but may not be `.` or `..`. `command` is an absolute path or a
+path relative to the Foundry project root. Foundry executes it directly without a shell or PATH
+lookup. `roots` contains one or more compiler-native project roots relative to the Foundry project.
+`args` is an optional argument array, and `settings` is an optional JSON-compatible TOML table
+passed through without interpretation.
 
 Configuring an adapter authorizes that executable to run with the user's privileges. Foundry clears
 the child environment and starts it in the Foundry project root, but this process boundary is not
@@ -130,10 +130,11 @@ directories for adapters and units that disappear from complete discovery, and r
 unit directory so contracts no longer emitted by a unit are retired. `forge clean` removes these
 host-owned artifacts and cache entries with the normal `out` and `cache` directories.
 
-The adapter cache is unit-scoped and independent of the Solidity/Vyper compiler cache. Declaring a
-unit cacheable is a promise by the adapter that the discovery response lists its complete
-build-affecting input closure. Ambient inputs such as time, randomness, undeclared environment,
-mutable dependency caches, or unreported compiler resources require `cacheable = false`.
+The adapter cache is unit-scoped and independent of the Solidity/Vyper compiler cache. Read-only
+compilations may reuse it but do not update or retire cache entries. Declaring a unit cacheable is a
+promise by the adapter that the discovery response lists its complete build-affecting input
+closure. Ambient inputs such as time, randomness, undeclared environment, mutable dependency
+caches, or unreported compiler resources require `cacheable = false`.
 
 ## Forge integration and limits
 
