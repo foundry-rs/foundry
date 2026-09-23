@@ -132,7 +132,7 @@ def stable_aliases(candidate, all_releases):
     return aliases, version == max(versions)
 
 
-def require_release_run(commands, repo, tag, commit):
+def require_release_run(commands, repo, tag, commit, published):
     pages = json.loads(commands.output([
         "gh", "api", "--paginate", "--slurp",
         f"repos/{repo}/actions/workflows/release.yml/runs?head_sha={commit}&per_page=100",
@@ -146,9 +146,14 @@ def require_release_run(commands, repo, tag, commit):
     if not matching:
         raise ReleaseError(f"no release.yml run found for {tag} at {commit}")
     latest = max(matching, key=lambda run: run["id"])
-    if latest.get("conclusion") != "success":
+    if latest.get("conclusion") == "success":
+        return latest["id"]
+    if not published:
         raise ReleaseError(f"latest release.yml run for {tag} at {commit} was not successful")
-    return latest["id"]
+    successful = [run for run in matching if run.get("conclusion") == "success"]
+    if not successful:
+        raise ReleaseError(f"no successful release.yml run found for published release {tag} at {commit}")
+    return max(successful, key=lambda run: run["id"])["id"]
 
 
 def release_run_digest(commands, repo, run_id):
@@ -195,7 +200,7 @@ def finalize_stable(commands, repo, image, tag):
     commit = commands.output(["git", "rev-parse", f"{tag}^{{commit}}"])
     if not re.fullmatch(r"[0-9a-f]{40}", commit):
         raise ReleaseError(f"could not resolve {tag} to a full commit SHA")
-    run_id = require_release_run(commands, repo, tag, commit)
+    run_id = require_release_run(commands, repo, tag, commit, state.get("draft") is False)
     expected = release_run_digest(commands, repo, run_id)
     digest = verify_exact(commands, image, tag, expected)
     prerelease = pattern == RC

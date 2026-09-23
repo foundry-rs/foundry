@@ -62,8 +62,13 @@ def validate_release(ref, manifest, tags, commit=None, candidate_commit=None):
         if commit is None or candidate_commit != commit:
             raise ReleaseError(f"candidate tag {candidate} already exists at a different commit")
         releases = [(key, tag) for key, tag in releases if tag != candidate]
-    if not candidate_exists and releases and candidate_key <= max(releases)[0]:
-        _, latest = max(releases)
+    comparable_releases = (
+        [(key, tag) for key, tag in releases if STABLE.fullmatch(tag)]
+        if STABLE.fullmatch(candidate)
+        else releases
+    )
+    if not candidate_exists and comparable_releases and candidate_key <= max(comparable_releases)[0]:
+        _, latest = max(comparable_releases)
         raise ReleaseError(f"candidate {candidate} must be newer than latest release tag {latest}")
     stable_tags = [(key, tag) for key, tag in releases if STABLE.fullmatch(tag) and key < candidate_key]
     if match := RC.fullmatch(candidate):
