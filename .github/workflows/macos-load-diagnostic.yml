@@ -20,6 +20,10 @@ jobs:
       contents: read
       id-token: write
     env:
+      # A push exercises the full hardened job lifecycle without compiling.
+      # After inspecting that smoke run, rerun with debug logging for the build:
+      # gh run rerun RUN_ID --debug -R foundry-rs/foundry.
+      DIAGNOSTIC_MODE: ${{ github.run_attempt == 1 && 'smoke' || 'build' }}
       CARGO_TERM_COLOR: always
       CARGO_BUILD_JOBS: "2"
       MACOSX_DEPLOYMENT_TARGET: "11.0"
@@ -47,12 +51,14 @@ jobs:
             uname -m
             sysctl hw.memsize hw.ncpu
             printf 'ImageOS=%s\nImageVersion=%s\n' "${ImageOS:-unknown}" "${ImageVersion:-unknown}"
+            printf 'DiagnosticMode=%s\nRunnerDebug=%s\n' "$DIAGNOSTIC_MODE" "${RUNNER_DEBUG:-0}"
           } | tee "$RUNNER_TEMP/macos-diagnostic/machine.txt"
 
       - name: Secure runner (same pin as failing release)
         uses: tempoxyz/gh-actions/actions/secure-runner@44477a1dea964684252d6032489e5c8acde487cd # 2026-09-22T22-28-45Z-44477a1d
 
       - name: Check out the failing release source
+        if: env.DIAGNOSTIC_MODE == 'build'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: c756235f9bd49fc4759317ef2d7e19e54bcf5198
@@ -60,11 +66,13 @@ jobs:
           path: source
 
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1
+        if: env.DIAGNOSTIC_MODE == 'build'
         with:
           toolchain: 1.98.1
           targets: aarch64-apple-darwin
 
       - name: Record toolchain and Apple SDK
+        if: env.DIAGNOSTIC_MODE == 'build'
         working-directory: source
         shell: bash
         run: |
@@ -78,42 +86,165 @@ jobs:
             if command -v aegis >/dev/null 2>&1; then aegis --version || true; fi
           } | tee "$RUNNER_TEMP/macos-diagnostic/toolchain.txt"
 
-      - name: Fetch and build with live resource samples
-        working-directory: source
+      - name: Start detached diagnostic workload
+        timeout-minutes: 1
         shell: bash
-        run: |
-          set -euo pipefail
-          tail -n +1 -f "$RUNNER_TEMP/macos-diagnostic/resources.log" &
-          follower=$!
-          trap 'kill "$follower" 2>/dev/null || true; wait "$follower" 2>/dev/null || true' EXIT
-          cargo fetch --locked --target aarch64-apple-darwin 2>&1 |
-            tee "$RUNNER_TEMP/macos-diagnostic/fetch.log"
-          /usr/bin/time -l cargo build --locked --target aarch64-apple-darwin \
-            --profile dist --no-default-features \
-            --features aws-kms,gcp-kms,turnkey,cli,asm-keccak,js-tracer,base,monad,optimism,touch-id \
-            --features jemalloc --bins 2>&1 |
-            tee "$RUNNER_TEMP/macos-diagnostic/build.log"
+        run: bash diagnostic/.github/scripts/macos-diagnostic-control.sh start
 
-      - name: Stop resource sampling
+      # Fixed, bounded steps let the official artifact action run on this runner
+      # during compilation, without custom token handling or background uploads.
+      - name: Checkpoint 1
+        if: env.DIAGNOSTIC_DONE != '1'
+        timeout-minutes: 7
+        uses: ./diagnostic/.github/actions/macos-diagnostic-checkpoint
+        with:
+          number: "1"
+
+      - name: Checkpoint 2
+        if: env.DIAGNOSTIC_DONE != '1'
+        timeout-minutes: 7
+        uses: ./diagnostic/.github/actions/macos-diagnostic-checkpoint
+        with:
+          number: "2"
+
+      - name: Checkpoint 3
+        if: env.DIAGNOSTIC_DONE != '1'
+        timeout-minutes: 7
+        uses: ./diagnostic/.github/actions/macos-diagnostic-checkpoint
+        with:
+          number: "3"
+
+      - name: Checkpoint 4
+        if: env.DIAGNOSTIC_DONE != '1'
+        timeout-minutes: 7
+        uses: ./diagnostic/.github/actions/macos-diagnostic-checkpoint
+        with:
+          number: "4"
+
+      - name: Checkpoint 5
+        if: env.DIAGNOSTIC_DONE != '1'
+        timeout-minutes: 7
+        uses: ./diagnostic/.github/actions/macos-diagnostic-checkpoint
+        with:
+          number: "5"
+
+      - name: Checkpoint 6
+        if: env.DIAGNOSTIC_DONE != '1'
+        timeout-minutes: 7
+        uses: ./diagnostic/.github/actions/macos-diagnostic-checkpoint
+        with:
+          number: "6"
+
+      - name: Checkpoint 7
+        if: env.DIAGNOSTIC_DONE != '1'
+        timeout-minutes: 7
+        uses: ./diagnostic/.github/actions/macos-diagnostic-checkpoint
+        with:
+          number: "7"
+
+      - name: Checkpoint 8
+        if: env.DIAGNOSTIC_DONE != '1'
+        timeout-minutes: 7
+        uses: ./diagnostic/.github/actions/macos-diagnostic-checkpoint
+        with:
+          number: "8"
+
+      - name: Checkpoint 9
+        if: env.DIAGNOSTIC_DONE != '1'
+        timeout-minutes: 7
+        uses: ./diagnostic/.github/actions/macos-diagnostic-checkpoint
+        with:
+          number: "9"
+
+      - name: Checkpoint 10
+        if: env.DIAGNOSTIC_DONE != '1'
+        timeout-minutes: 7
+        uses: ./diagnostic/.github/actions/macos-diagnostic-checkpoint
+        with:
+          number: "10"
+
+      - name: Checkpoint 11
+        if: env.DIAGNOSTIC_DONE != '1'
+        timeout-minutes: 7
+        uses: ./diagnostic/.github/actions/macos-diagnostic-checkpoint
+        with:
+          number: "11"
+
+      - name: Checkpoint 12
+        if: env.DIAGNOSTIC_DONE != '1'
+        timeout-minutes: 7
+        uses: ./diagnostic/.github/actions/macos-diagnostic-checkpoint
+        with:
+          number: "12"
+
+      - name: Checkpoint 13
+        if: env.DIAGNOSTIC_DONE != '1'
+        timeout-minutes: 7
+        uses: ./diagnostic/.github/actions/macos-diagnostic-checkpoint
+        with:
+          number: "13"
+
+      - name: Checkpoint 14
+        if: env.DIAGNOSTIC_DONE != '1'
+        timeout-minutes: 7
+        uses: ./diagnostic/.github/actions/macos-diagnostic-checkpoint
+        with:
+          number: "14"
+
+      - name: Checkpoint 15
+        if: env.DIAGNOSTIC_DONE != '1'
+        timeout-minutes: 7
+        uses: ./diagnostic/.github/actions/macos-diagnostic-checkpoint
+        with:
+          number: "15"
+
+      - name: Checkpoint 16
+        if: env.DIAGNOSTIC_DONE != '1'
+        timeout-minutes: 7
+        uses: ./diagnostic/.github/actions/macos-diagnostic-checkpoint
+        with:
+          number: "16"
+
+      - name: Checkpoint 17
+        if: env.DIAGNOSTIC_DONE != '1'
+        timeout-minutes: 7
+        uses: ./diagnostic/.github/actions/macos-diagnostic-checkpoint
+        with:
+          number: "17"
+
+      - name: Checkpoint 18
+        if: env.DIAGNOSTIC_DONE != '1'
+        timeout-minutes: 7
+        uses: ./diagnostic/.github/actions/macos-diagnostic-checkpoint
+        with:
+          number: "18"
+
+      - name: Finish workload and stop sampling
         if: always()
+        timeout-minutes: 2
         shell: bash
-        run: |
-          pid_file="$RUNNER_TEMP/macos-diagnostic/monitor.pid"
-          if [[ -f "$pid_file" ]]; then
-            pid=$(<"$pid_file")
-            if [[ "$pid" =~ ^[0-9]+$ ]]; then kill "$pid" 2>/dev/null || true; fi
-          fi
-          if [[ -f "$RUNNER_TEMP/macos-diagnostic/resources.log" ]]; then
-            tail -100 "$RUNNER_TEMP/macos-diagnostic/resources.log"
-          fi
+        run: bash diagnostic/.github/scripts/macos-diagnostic-control.sh finish
 
       - name: Upload diagnostic logs only
+        id: final-upload
         if: always()
+        timeout-minutes: 3
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: macos-load-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}
+          name: macos-${{ env.DIAGNOSTIC_MODE }}-${{ github.run_id }}-${{ github.run_attempt }}-final
           path: |
-            ${{ runner.temp }}/macos-diagnostic/*.log
-            ${{ runner.temp }}/macos-diagnostic/*.txt
+            ${{ runner.temp }}/macos-diagnostic/resources.log
+            ${{ runner.temp }}/macos-diagnostic/lifecycle.log
+            ${{ runner.temp }}/macos-diagnostic/machine.txt
+            ${{ runner.temp }}/macos-diagnostic/toolchain.txt
+            ${{ runner.temp }}/macos-diagnostic/build-exit.txt
           retention-days: 7
-          if-no-files-found: warn
+          if-no-files-found: error
+
+      - name: Mark final upload completion
+        if: always()
+        timeout-minutes: 1
+        shell: bash
+        env:
+          UPLOAD_OUTCOME: ${{ steps.final-upload.outcome }}
+        run: printf '%s final-upload-end outcome=%s job-post-hooks-next\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$UPLOAD_OUTCOME"

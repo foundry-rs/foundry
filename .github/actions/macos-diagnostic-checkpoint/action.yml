@@ -1,0 +1,28 @@
+name: macOS diagnostic checkpoint
+description: Wait at most five minutes and persist allowlisted diagnostic measurements.
+inputs:
+  number:
+    description: Unique checkpoint number within this job.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Wait and snapshot
+      shell: bash
+      env:
+        CHECKPOINT_NUMBER: ${{ inputs.number }}
+      run: bash diagnostic/.github/scripts/macos-diagnostic-control.sh checkpoint "$CHECKPOINT_NUMBER"
+    - name: Persist checkpoint
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: macos-${{ env.DIAGNOSTIC_MODE }}-${{ github.run_id }}-${{ github.run_attempt }}-checkpoint-${{ inputs.number }}
+        path: ${{ runner.temp }}/macos-diagnostic/checkpoint-${{ inputs.number }}/*
+        retention-days: 7
+        if-no-files-found: error
+    - name: Record checkpoint completion
+      shell: bash
+      env:
+        CHECKPOINT_NUMBER: ${{ inputs.number }}
+      run: |
+        printf '%s checkpoint-uploaded number=%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$CHECKPOINT_NUMBER" |
+          tee -a "$RUNNER_TEMP/macos-diagnostic/lifecycle.log"
