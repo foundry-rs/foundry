@@ -70,13 +70,21 @@ root `Makefile` so published binaries expose the same surface as local release b
 
 Maintainers select stable and release-candidate versions, update the workspace version and
 `Cargo.lock` on the corresponding `release-X.Y.Z` or `release-X.Y.Z-rcN` branch, and run the
-[release workflow](../../.github/workflows/release.yml) from that branch. It validates the version,
+[tag release workflow](../../.github/workflows/tag-release.yml) from that branch. It validates the version,
 runs the full test matrix, creates the matching `vX.Y.Z` or `vX.Y.Z-rcN` tag at the tested commit,
-builds the artifacts, and generates PR-based notes in a draft GitHub release. After reviewing the
+and dispatches the [release workflow](../../.github/workflows/release.yml) on that tag with the tested
+SHA. The release workflow checks the tag and commit before building, signing, attesting, and generating
+PR-based notes in a draft GitHub release. This separate run preserves `refs/tags/vX.Y.Z[-rcN]` in the
+cosign identity and attestation source ref. After reviewing the
 notes and successful build, run the
 [finalization workflow](../../.github/workflows/finalize-release.yml) from `master` with that exact
 tag. It verifies the release workflow and recorded Docker digest before publishing and promoting
 eligible Docker aliases. Nightlies continue through the scheduled release workflow.
+
+To retry a tagged build, rerun its release workflow run, or dispatch `release.yml` on the same tag with
+`expected_commit` set to the full tested SHA. A successful tag workflow only confirms the build was
+dispatched; finalization requires the tag's release workflow to succeed. Both workflow files must be
+present on the default branch before dispatching them.
 
 For contribution policy and support channels, see [`CONTRIBUTING.md`](../../CONTRIBUTING.md).
 

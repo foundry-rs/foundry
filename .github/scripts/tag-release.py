@@ -103,6 +103,20 @@ def run(args):
     return subprocess.run(args, text=True, capture_output=True)
 
 
+def validate_tag(ref, manifest, tags, commit, candidate_commit, expected_commit):
+    version = manifest_version(manifest)
+    tag = f"v{version}"
+    version_key(tag)
+    if ref != f"refs/tags/{tag}":
+        raise ReleaseError(f"release build must run from refs/tags/{tag}")
+    if not expected_commit or not COMMIT.fullmatch(expected_commit) or commit != expected_commit:
+        raise ReleaseError("release build must match the exact tested commit")
+    if tag not in tags or candidate_commit != commit:
+        raise ReleaseError(f"release tag {tag} must resolve to the tested commit")
+    # Reuse predecessor selection and manifest checks after validating the actual tag ref.
+    return validate_release(f"refs/heads/release-{version}", manifest, tags, commit, candidate_commit)
+
+
 def remote_tag_commit(repo, tag):
     result = run(["gh", "api", f"repos/{repo}/git/ref/tags/{tag}"])
     if result.returncode:
@@ -157,14 +171,15 @@ def local_tag_commit(directory, tag):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=["validate", "tag"])
+    parser.add_argument("mode", choices=["validate", "validate-tag", "tag"])
     parser.add_argument("--ref")
     parser.add_argument("--version")
     parser.add_argument("--commit")
+    parser.add_argument("--expected-commit")
     parser.add_argument("--directory", type=pathlib.Path, default=pathlib.Path.cwd())
     args = parser.parse_args()
     try:
-        if args.mode == "validate":
+        if args.mode in ("validate", "validate-tag"):
             if args.ref is None or args.commit is None:
                 raise ReleaseError("validate requires --ref and --commit")
             tags = subprocess.check_output(
@@ -172,12 +187,15 @@ def main():
             ).splitlines()
             version = manifest_version(args.directory / "Cargo.toml")
             tag = f"v{version}"
-            metadata = validate_release(
+            validate = validate_tag if args.mode == "validate-tag" else validate_release
+            extra = {"expected_commit": args.expected_commit} if args.mode == "validate-tag" else {}
+            metadata = validate(
                 args.ref,
                 args.directory / "Cargo.toml",
                 tags,
                 args.commit,
                 local_tag_commit(args.directory, tag) if tag in tags else None,
+                **extra,
             )
             print(json.dumps(metadata))
         else:

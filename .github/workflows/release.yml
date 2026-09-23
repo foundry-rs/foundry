@@ -6,9 +6,14 @@ on:
   schedule:
     - cron: "0 6 * * *"
   workflow_dispatch:
+    inputs:
+      expected_commit:
+        description: Tested commit SHA (required for release tags; unused for master nightlies)
+        type: string
+        required: false
 
 concurrency:
-  group: ${{ (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/master' && format('release-tagging-{0}', github.repository)) || format('release-{0}-{1}-{2}', github.repository, github.ref, github.sha) }}
+  group: release-${{ github.repository }}-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: false
   queue: max
 
@@ -46,6 +51,7 @@ jobs:
         env:
           COMMIT: ${{ github.sha }}
           REF: ${{ github.ref }}
+          EXPECTED_COMMIT: ${{ inputs.expected_commit }}
         shell: bash
         run: |
           set -euo pipefail
@@ -59,7 +65,8 @@ jobs:
             from_tag=$(git for-each-ref --sort=-creatordate --count=1 \
               --format='%(refname:strip=2)' 'refs/tags/nightly-*')
           else
-            metadata=$(python3 .github/scripts/tag-release.py validate --ref "$REF" --commit "$COMMIT")
+            metadata=$(python3 .github/scripts/tag-release.py validate-tag --ref "$REF" \
+              --commit "$COMMIT" --expected-commit "$EXPECTED_COMMIT")
             version=$(jq -r '.version' <<< "$metadata")
             tag_name=$(jq -r '.tag_name' <<< "$metadata")
             release_tag_name="$tag_name"
@@ -78,57 +85,10 @@ jobs:
             printf 'from_tag=%s\n' "$from_tag"
           } >> "$GITHUB_OUTPUT"
 
-  test-release:
-    needs: preflight
-    if: needs.preflight.outputs.is_nightly != 'true'
-    permissions:
-      contents: read
-      id-token: write
-    uses: ./.github/workflows/test.yml
-    with:
-      profile: default
-    secrets:
-      ETHERSCAN_API_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
-      ARBITRUM_RPC: ${{ secrets.ARBITRUM_RPC }}
-      ETH_SEPOLIA_RPC: ${{ secrets.ETH_SEPOLIA_RPC }}
-      TEMPO_MAINNET_RPC_URL: ${{ secrets.TEMPO_MAINNET_RPC_URL }}
-      TEMPO_TESTNET_RPC_URL: ${{ secrets.TEMPO_TESTNET_RPC_URL }}
-
-  tag-release:
-    name: Tag tested release
-    needs: [preflight, test-release]
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: write
-    outputs:
-      from_tag: ${{ steps.release_info.outputs.from_tag }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Revalidate and create tag
-        id: release_info
-        env:
-          COMMIT: ${{ github.sha }}
-          REF: ${{ github.ref }}
-          VERSION: ${{ needs.preflight.outputs.version }}
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          metadata=$(python3 .github/scripts/tag-release.py validate --ref "$REF" --commit "$COMMIT")
-          if [[ "$(jq -r '.version' <<< "$metadata")" != "$VERSION" ]]; then
-            echo "::error::Release version changed after testing."
-            exit 1
-          fi
-          python3 .github/scripts/tag-release.py tag --version "$VERSION" --commit "$COMMIT"
-          printf 'from_tag=%s\n' "$(jq -r '.from_tag' <<< "$metadata")" >> "$GITHUB_OUTPUT"
-
   prepare:
     name: Prepare release
-    needs: [preflight, tag-release]
-    if: ${{ always() && needs.preflight.result == 'success' && (needs.preflight.outputs.is_nightly == 'true' || needs.tag-release.result == 'success') && (github.event_name != 'schedule' || github.repository == 'foundry-rs/foundry') }}
+    needs: preflight
+    if: github.event_name != 'schedule' || github.repository == 'foundry-rs/foundry'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -221,7 +181,7 @@ jobs:
         uses: mikepenz/release-changelog-builder-action@cb021f9b36a51a7c6f18e4679b6fa2cb77a1260c # v6.3.0
         with:
           configuration: "./.github/changelog.json"
-          fromTag: ${{ needs.tag-release.outputs.from_tag || needs.preflight.outputs.from_tag || '' }}
+          fromTag: ${{ needs.preflight.outputs.from_tag || '' }}
           # The canonical nightly tag is created only when the complete release
           # is published, so use its commit directly while building the notes.
           toTag: ${{ (env.IS_NIGHTLY == 'true' && github.sha) || needs.preflight.outputs.tag_name }}
@@ -597,6 +557,25 @@ jobs:
             --bundle "$FOUNDRY_SIGNATURE" \
             "$FILE_NAME"
 
+      - name: Verify archive signature and provenance
+        if: env.IS_NIGHTLY != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FILE_NAME: ${{ steps.artifacts.outputs.file_name }}
+          FOUNDRY_SIGNATURE: ${{ steps.artifacts.outputs.foundry_signature }}
+          REPOSITORY: ${{ github.repository }}
+          SOURCE_REF: ${{ github.ref }}
+          SOURCE_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cosign verify-blob "$FILE_NAME" --bundle "$FOUNDRY_SIGNATURE" \
+            --certificate-identity "https://github.com/${REPOSITORY}/.github/workflows/release.yml@${SOURCE_REF}" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com
+          gh attestation verify "$FILE_NAME" --repo "$REPOSITORY" \
+            --signer-workflow "$REPOSITORY/.github/workflows/release.yml" \
+            --source-ref "$SOURCE_REF" --source-digest "$SOURCE_SHA"
+
       - name: Record attestation URL
         env:
           ATTESTATION_URL: ${{ steps.attestation.outputs.attestation-url }}
@@ -675,8 +654,6 @@ jobs:
     runs-on: ubuntu-latest
     needs: [
       preflight,
-      test-release,
-      tag-release,
       prepare,
       release-docker,
       release-docker-metadata,

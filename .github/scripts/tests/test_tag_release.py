@@ -2,6 +2,7 @@ import importlib.util
 import json
 import pathlib
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -112,6 +113,86 @@ class ValidationTests(unittest.TestCase):
                 MODULE.validate_release(
                     "refs/heads/release-1.9.0", path, ["v1.8.3", "v1.9.0"], SHA, "b" * 40,
                 )
+
+
+class ReleaseBuildTests(unittest.TestCase):
+    def test_tag_build_metadata_for_stable_and_rc(self):
+        for version, previous in (("1.9.0", "v1.8.3"), ("1.9.0-rc2", "v1.9.0-rc1")):
+            with self.subTest(version=version), tempfile.TemporaryDirectory() as tmp:
+                tag = f"v{version}"
+                metadata = MODULE.validate_tag(
+                    f"refs/tags/{tag}", manifest(tmp, version), [previous, tag], SHA, SHA, SHA,
+                )
+                self.assertEqual(metadata, {
+                    "version": version,
+                    "tag_name": tag,
+                    "release_name": tag,
+                    "is_prerelease": "-rc" in version,
+                    "from_tag": previous,
+                })
+
+    def test_rejects_branches_and_mismatched_tags(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = manifest(tmp, "1.9.0")
+            for ref in ("refs/heads/release-1.9.0", "refs/heads/v1.9.0", "refs/tags/v1.9.1",
+                        "refs/tags/release-1.9.0", "v1.9.0"):
+                with self.subTest(ref=ref), self.assertRaisesRegex(MODULE.ReleaseError, "must run from"):
+                    MODULE.validate_tag(ref, path, ["v1.8.3", "v1.9.0"], SHA, SHA, SHA)
+
+    def test_requires_exact_tested_sha(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = manifest(tmp, "1.9.0")
+            for expected in (None, "", "master", SHA[:7], "b" * 40):
+                with self.subTest(expected=expected), self.assertRaisesRegex(MODULE.ReleaseError, "exact tested"):
+                    MODULE.validate_tag("refs/tags/v1.9.0", path, ["v1.8.3", "v1.9.0"], SHA, SHA, expected)
+
+    def test_rejects_missing_or_moved_tag(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = manifest(tmp, "1.9.0")
+            for tags, candidate in ((["v1.8.3"], None), (["v1.8.3", "v1.9.0"], "b" * 40)):
+                with self.subTest(tags=tags), self.assertRaisesRegex(MODULE.ReleaseError, "must resolve"):
+                    MODULE.validate_tag("refs/tags/v1.9.0", path, tags, SHA, candidate, SHA)
+
+    def test_retry_keeps_predecessor_after_newer_release(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            metadata = MODULE.validate_tag(
+                "refs/tags/v1.9.0", manifest(tmp, "1.9.0"),
+                ["v1.8.3", "v1.9.0", "v1.9.1"], SHA, SHA, SHA,
+            )
+            self.assertEqual(metadata["from_tag"], "v1.8.3")
+
+    def test_cli_checks_annotated_tag_and_dispatch_sha(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            def git(*args):
+                return subprocess.check_output([
+                    "git", "-C", tmp, "-c", "user.name=Release test", "-c",
+                    "user.email=release-test@example.invalid", *args,
+                ], text=True, stderr=subprocess.PIPE).strip()
+
+            git("init", "--quiet")
+            manifest(tmp, "1.9.0")
+            git("add", "Cargo.toml")
+            git("commit", "--quiet", "-m", "test: create release fixture")
+            git("tag", "v1.8.3")
+            git("tag", "-a", "v1.9.0", "-m", "Release fixture")
+            commit = git("rev-parse", "HEAD")
+            command = [
+                sys.executable, str(SCRIPT.resolve()), "validate-tag", "--directory", tmp,
+                "--ref", "refs/tags/v1.9.0", "--commit", commit,
+            ]
+            valid = subprocess.run(command + ["--expected-commit", commit], text=True, capture_output=True)
+            self.assertEqual(valid.returncode, 0, valid.stderr)
+            self.assertEqual(json.loads(valid.stdout)["from_tag"], "v1.8.3")
+            for extra in ([], ["--expected-commit", "b" * 40]):
+                rejected = subprocess.run(command + extra, text=True, capture_output=True)
+                self.assertNotEqual(rejected.returncode, 0)
+                self.assertIn("exact tested commit", rejected.stderr)
+
+            git("commit", "--quiet", "--allow-empty", "-m", "test: move release fixture")
+            git("tag", "--force", "v1.9.0")
+            moved = subprocess.run(command + ["--expected-commit", commit], text=True, capture_output=True)
+            self.assertNotEqual(moved.returncode, 0)
+            self.assertIn("must resolve to the tested commit", moved.stderr)
 
 
 class TagTests(unittest.TestCase):
