@@ -19,7 +19,7 @@ jobs:
       )
     permissions:
       contents: read
-    uses: tempoxyz/gh-actions/.github/workflows/pr-audit.yml@af809bfc35e4dd023bd52f6cc45e09809612a8cf
+    uses: tempoxyz/gh-actions/.github/workflows/pr-audit.yml@117919c943b804057be733b0c4034c5542e58959
     with:
       required-labels: |
         cyclops
@@ -45,7 +45,7 @@ jobs:
       issues: write
       pull-requests: read
     steps:
-      - uses: tempoxyz/gh-actions/actions/pr-audit-comment@af809bfc35e4dd023bd52f6cc45e09809612a8cf
+      - uses: tempoxyz/gh-actions/actions/pr-audit-comment@117919c943b804057be733b0c4034c5542e58959
         with:
           command-regex: '^(?:@decofe\s+)?(?:cyclops\s+audit|derek\s+audit)\b'
           permission-check-mode: association
