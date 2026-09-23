@@ -217,3 +217,76 @@ contract BaseExecuteTransactionTest {{
     ])
     .assert_success();
 });
+
+forgetest!(base_isolated_calls_do_not_charge_callers, |prj, cmd| {
+    prj.add_test(
+        "BaseIsolatedFees.t.sol",
+        r#"
+interface Vm {
+    function deal(address account, uint256 balance) external;
+    function prank(address sender) external;
+    function store(address target, bytes32 slot, bytes32 value) external;
+}
+
+contract Sink {
+    uint256 public hits;
+
+    fallback() external payable {
+        ++hits;
+    }
+}
+
+contract BaseIsolatedFeesTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address constant L1_BLOCK = 0x4200000000000000000000000000000000000015;
+    Sink sink;
+
+    function setUp() public {
+        sink = new Sink();
+
+        vm.store(L1_BLOCK, bytes32(uint256(1)), bytes32(uint256(0x28f53a5b)));
+        vm.store(
+            L1_BLOCK,
+            bytes32(uint256(3)),
+            bytes32(uint256(0x08dd00101c120000000000000002))
+        );
+        vm.store(L1_BLOCK, bytes32(uint256(7)), bytes32(uint256(0x0240f4f5)));
+    }
+
+    function test_zero_balance_caller_succeeds() public {
+        address caller = address(uint160(uint256(keccak256("caller"))));
+
+        vm.prank(caller);
+        (bool success,) = address(sink).call(hex"deadbeef");
+
+        require(success, "call failed");
+        require(sink.hits() == 1, "target was not called");
+    }
+
+    function test_funded_caller_balance_is_unchanged() public {
+        address caller = address(uint160(uint256(keccak256("caller"))));
+        vm.deal(caller, 1 ether);
+
+        vm.prank(caller);
+        (bool success,) = address(sink).call(hex"deadbeef");
+
+        require(success, "call failed");
+        require(caller.balance == 1 ether, "caller was charged");
+    }
+}
+"#,
+    );
+
+    cmd.args([
+        "test",
+        "--network",
+        "base",
+        "--hardfork",
+        "base:Azul",
+        "--chain-id",
+        "8453",
+        "--match-contract",
+        "BaseIsolatedFeesTest",
+    ])
+    .assert_success();
+});
