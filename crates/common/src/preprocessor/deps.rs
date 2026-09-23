@@ -10,15 +10,18 @@ use foundry_compilers::{
 };
 use itertools::Itertools;
 use path_slash::PathExt;
-use solar::sema::{
-    Gcx, Hir,
-    builtins::Builtin,
-    hir::{
-        CallArgs, CallOptions, Contract, ContractId, ContractKind, Expr, ExprKind, Function,
-        FunctionId, FunctionKind, Modifier, Res, SourceId, StateMutability, Stmt, StmtKind,
-        TypeKind, UsingDirective, UsingEntryKind, Variable, Visibility, Visit,
+use solar::{
+    ast::UserDefinableOperator,
+    sema::{
+        Gcx, Hir,
+        builtins::Builtin,
+        hir::{
+            CallArgs, CallOptions, Contract, ContractId, ContractKind, Expr, ExprKind, Function,
+            FunctionId, FunctionKind, Modifier, Res, SourceId, StateMutability, Stmt, StmtKind,
+            TypeKind, UsingDirective, UsingEntryKind, Variable, Visibility, Visit,
+        },
+        interface::{SourceMap, Symbol, data_structures::Never, source_map::FileName},
     },
-    interface::{SourceMap, Symbol, data_structures::Never, source_map::FileName},
 };
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
@@ -935,6 +938,7 @@ struct ReturnDataObserver<'gcx> {
     visited_contracts: HashSet<ContractId>,
     member_functions: HashSet<(FunctionId, Symbol)>,
     sources: HashSet<SourceId>,
+    operator_functions: HashSet<(FunctionId, UserDefinableOperator)>,
 }
 
 impl<'gcx> ReturnDataObserver<'gcx> {
@@ -947,6 +951,7 @@ impl<'gcx> ReturnDataObserver<'gcx> {
             visited_contracts: HashSet::new(),
             member_functions: HashSet::new(),
             sources: HashSet::new(),
+            operator_functions: HashSet::new(),
         }
     }
 
@@ -988,6 +993,9 @@ impl<'gcx> ReturnDataObserver<'gcx> {
                         }),
                     ),
                     UsingEntryKind::Functions(ids) => {
+                        if let Some(operator) = entry.operator {
+                            self.operator_functions.extend(ids.iter().map(|&id| (id, operator)));
+                        }
                         self.member_functions.extend(ids.iter().copied().filter_map(|id| {
                             entry
                                 .name
@@ -1059,6 +1067,22 @@ impl<'gcx> Visit<'gcx> for ReturnDataObserver<'gcx> {
     }
 
     fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
+        let operator = match &expr.kind {
+            ExprKind::Unary(op, _) => UserDefinableOperator::from_unop(op.kind),
+            ExprKind::Binary(_, op, _) => UserDefinableOperator::from_binop(op.kind),
+            _ => None,
+        };
+        if let Some(operator) = operator {
+            // Type checking has not selected an overload yet, so visit every visible binding.
+            let functions = self
+                .operator_functions
+                .iter()
+                .filter_map(|&(id, bound)| (bound == operator).then_some(id))
+                .collect::<Vec<_>>();
+            for id in functions {
+                self.visit_nested_function(id)?;
+            }
+        }
         match &expr.kind {
             ExprKind::Ident(resolutions) => {
                 for resolution in *resolutions {
@@ -1125,7 +1149,7 @@ impl<'gcx> Visit<'gcx> for ReturnDataObserver<'gcx> {
                 for id in functions {
                     self.visit_nested_function(id)?;
                 }
-                if let ExprKind::Ident(resolutions) = member.kind {
+                if let ExprKind::Ident(resolutions) = member.peel_parens().kind {
                     for resolution in resolutions {
                         if let Res::Item(item) = resolution
                             && let Some(id) = item.as_contract()

@@ -336,6 +336,21 @@ mod tests {
                 "import {R} from '../src/Read.sol';",
                 "R.size(0)",
             ),
+            (
+                "library R { function size(uint256) internal pure returns (uint256 n) { assembly { n := returndatasize() } } }",
+                "import {R} from '../src/Read.sol';",
+                "(R).size(0)",
+            ),
+            (
+                "type Word is uint256; using {size as -} for Word global; function size(Word) pure returns (Word) { uint256 n; assembly { n := returndatasize() } return Word.wrap(n); }",
+                "import {Word} from '../src/Read.sol';",
+                "Word.unwrap(-Word.wrap(0))",
+            ),
+            (
+                "type Word is uint256; using {size as +} for Word global; function size(Word, Word) pure returns (Word) { uint256 n; assembly { n := returndatasize() } return Word.wrap(n); }",
+                "import {Word} from '../src/Read.sol';",
+                "Word.unwrap(Word.wrap(0) + Word.wrap(0))",
+            ),
         ] {
             let (_root, paths, mut input) = input();
             input.input.sources.insert(PathBuf::from("src/Read.sol"), Source::new(helper));

@@ -5479,20 +5479,25 @@ fn is_sat_uses_single_var_witness_before_solver() {
 
 #[cfg(unix)]
 #[test]
-fn is_sat_uses_two_var_witness_before_solver() {
+fn is_sat_uses_bounded_multi_var_witness_before_solver() {
     let mut cx = SymCx::new();
-    let marker = portfolio_test_marker("two-var-is-sat");
+    let marker = portfolio_test_marker("bounded-multi-var-is-sat");
     let commands = vec![counted_solver_command(&marker, "unsat")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
-    let x = SymExpr::var(&mut cx, "calldata_0");
-    let y = SymExpr::var(&mut cx, "calldata_1");
-    let zero = SymExpr::zero(&mut cx);
-    let ten = SymExpr::constant(&mut cx, U256::from(10));
+    solver.enable_bounded_model_search();
+    let a = SymExpr::var(&mut cx, "calldata_0");
+    let b = SymExpr::var(&mut cx, "calldata_1");
+    let c = SymExpr::var(&mut cx, "calldata_2");
+    let d = SymExpr::var(&mut cx, "calldata_3");
+    let e = SymExpr::var(&mut cx, "calldata_4");
+    let limit = SymExpr::constant(&mut cx, U256::from(1) << 160);
     let constraints = vec![
-        SymBoolExpr::eq(&mut cx, x.clone(), zero.clone()).not(&mut cx),
-        SymBoolExpr::eq(&mut cx, y.clone(), zero).not(&mut cx),
-        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x, y.clone()),
-        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, y, ten),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, a, limit.clone()),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, b.clone(), limit.clone()),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, c, limit.clone()),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, d.clone(), limit.clone()),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, e, limit),
+        SymBoolExpr::eq(&mut cx, b, d).not(&mut cx),
     ];
 
     assert!(solver.is_sat(&mut cx, &constraints).unwrap());
@@ -5621,6 +5626,7 @@ fn model_uses_two_var_witness_before_solver() {
     let marker = portfolio_test_marker("two-var-model");
     let commands = vec![counted_solver_command(&marker, "unsat")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
+    solver.enable_bounded_model_search();
     let x = SymExpr::var(&mut cx, "calldata_0");
     let y = SymExpr::var(&mut cx, "calldata_1");
     let zero = SymExpr::zero(&mut cx);
@@ -5651,6 +5657,7 @@ fn is_sat_falls_through_when_two_var_witness_misses() {
     let marker = portfolio_test_marker("two-var-fallthrough");
     let commands = vec![counted_solver_command(&marker, "sat")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
+    solver.enable_bounded_model_search();
     let x = SymExpr::var(&mut cx, "calldata_0");
     let y = SymExpr::var(&mut cx, "calldata_1");
     let ten = SymExpr::constant(&mut cx, U256::from(10));
