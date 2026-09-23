@@ -89,19 +89,19 @@ Ran 1 test for test/Value.t.sol:ValueTest
 Traces:
   [[..]] ValueTest::test_arguments()
     ├─ [0] VM::deployCode("src/Target.sol:Target", 0x000000000000000000000000000000000000000000000000000000000000002a, 1000000000000000000 [1e18])
-    │   ├─ [41006] → new Target@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   ├─ [[..]] → new Target@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   │   └─ ← [Return] 203 bytes of code
     │   └─ ← [Return] Target: [0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f]
     ├─ [0] VM::deployCode("src/Target.sol:Target", 0x0000000000000000000000000000000000000000000000000000000000000007, 2000000000000000000 [2e18])
-    │   ├─ [41006] → new Target@0x2e234DAe75C793f67A35089C9d99245E1C58470b
+    │   ├─ [[..]] → new Target@0x2e234DAe75C793f67A35089C9d99245E1C58470b
     │   │   └─ ← [Return] 203 bytes of code
     │   └─ ← [Return] Target: [0x2e234DAe75C793f67A35089C9d99245E1C58470b]
     ├─ [0] VM::deployCode("src/Target.sol:Target", 0x0000000000000000000000000000000000000000000000000000000000000008)
-    │   ├─ [41006] → new Target@0xF62849F9A0B5Bf2913b396098F7c7019b51A820a
+    │   ├─ [[..]] → new Target@0xF62849F9A0B5Bf2913b396098F7c7019b51A820a
     │   │   └─ ← [Return] 203 bytes of code
     │   └─ ← [Return] Target: [0xF62849F9A0B5Bf2913b396098F7c7019b51A820a]
     ├─ [0] VM::deployCode("src/Target.sol:Target", 0x0000000000000000000000000000000000000000000000000000000000000009, 3000000000000000000 [3e18])
-    │   ├─ [41006] → new Target@0x5991A2dF15A8F6A256D3Ec51E99254Cd3fb576A9
+    │   ├─ [[..]] → new Target@0x5991A2dF15A8F6A256D3Ec51E99254Cd3fb576A9
     │   │   └─ ← [Return] 203 bytes of code
     │   └─ ← [Return] Target: [0x5991A2dF15A8F6A256D3Ec51E99254Cd3fb576A9]
     ├─ [303] Target::n() [staticcall]
@@ -3025,7 +3025,7 @@ Ran 1 test for test/Counter.t.sol:CounterTest
 Traces:
   [..] CounterTest::test_Increment()
     ├─ [0] VM::deployCode("src/Counter.sol:Counter")
-    │   ├─ [96345] → new Counter@0xF62849F9A0B5Bf2913b396098F7c7019b51A820a
+    │   ├─ [[..]] → new Counter@0xF62849F9A0B5Bf2913b396098F7c7019b51A820a
     │   │   └─ ← [Return] 481 bytes of code
     │   └─ ← [Return] Counter: [0xF62849F9A0B5Bf2913b396098F7c7019b51A820a]
     ├─ [..] Counter::setNumber(0)
@@ -4337,6 +4337,102 @@ Suite result: FAILED. 1 passed; 3 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
     }
+});
+
+forgetest!(preprocess_create_isolation_boundary, |prj, cmd| {
+    prj.add_source(
+        "Target.sol",
+        r#"
+interface Callback {
+    function read() external view returns (uint256);
+    function write() external;
+}
+contract Target {
+    uint256 public observed;
+    constructor() {
+        observed = Callback(msg.sender).read();
+        Callback(msg.sender).write();
+    }
+}
+"#,
+    );
+    for isolate in [false, true] {
+        prj.update_config(|config| {
+            config.isolate = isolate;
+            config.evm_version = EvmVersion::Cancun;
+        });
+        prj.add_test(
+            "Isolation.t.sol",
+            &format!(
+                r#"
+import {{Target}} from '../src/Target.sol';
+contract IsolationTest {{
+    function read() external view returns (uint256 n) {{ assembly {{ n := tload(0) }} }}
+    function write() external {{ assembly {{ tstore(0, 22) }} }}
+    function test_create() public {{
+        assembly {{ tstore(0, 11) }}
+        Target target = new Target();
+        require(target.observed() == {}, "constructor boundary");
+        uint256 n;
+        assembly {{ n := tload(0) }}
+        require(n == {}, "outer boundary");
+    }}
+    function test_create2() public {{
+        assembly {{ tstore(0, 11) }}
+        Target target = new Target{{salt: bytes32(uint256(7))}}();
+        require(target.observed() == 11, "salted constructor boundary");
+        uint256 n;
+        assembly {{ n := tload(0) }}
+        require(n == 22, "salted outer boundary");
+    }}
+}}
+"#,
+                if isolate { 0 } else { 11 },
+                if isolate { 11 } else { 22 },
+            ),
+        );
+        for dynamic in [false, true] {
+            prj.update_config(|config| config.dynamic_test_linking = dynamic);
+            cmd.forge_fuse().args(["test", "--force"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 2 tests for test/Isolation.t.sol:IsolationTest
+[PASS] test_create() ([GAS])
+[PASS] test_create2() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]]);
+        }
+    }
+    // Confirm the isolation regression exercised a rewritten CREATE and balanced nested traces.
+    cmd.forge_fuse()
+        .args(["test", "--match-test", r"^test_create\(", "-vvvv"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/Isolation.t.sol:IsolationTest
+[PASS] test_create() ([GAS])
+Traces:
+  [[..]] IsolationTest::test_create()
+    ├─ [0] VM::deployCode("src/Target.sol:Target")
+    │   ├─ [[..]] → new Target@[..]
+    │   │   ├─ [[..]] IsolationTest::read() [staticcall]
+    │   │   │   └─ ← [Return] 0
+    │   │   ├─ [[..]] IsolationTest::write()
+    │   │   │   └─ ← [Stop]
+    │   │   └─ ← [Return] [..] bytes of code
+    │   └─ ← [Return] Target: [..]
+    ├─ [[..]] Target::observed() [staticcall]
+    │   └─ ← [Return] 0
+    └─ ← [Stop]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
 });
 
 forgetest!(preprocess_constructor_validation, |prj, cmd| {
