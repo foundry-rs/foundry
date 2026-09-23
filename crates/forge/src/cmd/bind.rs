@@ -6,7 +6,7 @@ use forge_sol_macro_gen::{MultiSolMacroGen, SolMacroGen};
 use foundry_cli::{opts::BuildOpts, utils::LoadConfig};
 use foundry_common::{
     compile::{ProjectCompiler, compile_abi_project},
-    external_compiler::ExternalCompilerWorkflow,
+    external_compiler::{ExternalCompilerWorkflow, is_external_artifact_path},
     fs::json_files,
 };
 use foundry_compilers::{
@@ -137,7 +137,11 @@ impl BindArgs {
         let artifacts = config.out.clone();
         let enum_definitions = if self.skip_build {
             let paths = config.project_paths();
-            cached_enum_definitions(&paths, self.get_json_files(&artifacts)?.map(|(_, path)| path))
+            cached_enum_definitions(
+                &paths,
+                &artifacts,
+                self.get_json_files(&artifacts)?.map(|(_, path)| path),
+            )
         } else {
             let mut project = config.project()?;
             let output = compile_abi_project(
@@ -299,6 +303,7 @@ impl BindArgs {
 
 fn cached_enum_definitions(
     paths: &ProjectPathsConfig,
+    artifacts_root: &Path,
     artifacts: impl Iterator<Item = PathBuf>,
 ) -> BTreeMap<String, Vec<String>> {
     let Ok(graph) = Graph::<MultiCompilerParser>::resolve(paths) else {
@@ -322,7 +327,10 @@ fn cached_enum_definitions(
         .flat_map(|profiles| profiles.values())
         .map(|artifact| artifact.path.clone())
         .collect::<HashSet<_>>();
-    if artifacts.into_iter().any(|artifact| !cached_artifacts.contains(&artifact)) {
+    if artifacts.into_iter().any(|artifact| {
+        !is_external_artifact_path(artifacts_root, &artifact)
+            && !cached_artifacts.contains(&artifact)
+    }) {
         return BTreeMap::default();
     }
     enum_definitions(graph.parser())

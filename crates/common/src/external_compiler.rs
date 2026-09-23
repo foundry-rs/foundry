@@ -54,6 +54,11 @@ pub fn is_external_artifact(build_id: &str) -> bool {
     build_id.starts_with("external:")
 }
 
+/// Returns whether an artifact path belongs to an external compiler adapter.
+pub fn is_external_artifact_path(artifacts_root: &Path, path: &Path) -> bool {
+    path.starts_with(artifacts_root.join(EXTERNAL_ARTIFACT_DIR))
+}
+
 /// Returns whether a path belongs to a compiler built into Foundry.
 pub fn is_builtin_compiler_source(path: &Path) -> bool {
     path.extension().and_then(OsStr::to_str).is_some_and(|extension| {
@@ -93,6 +98,7 @@ pub(crate) fn compile_external(
     let mut external = Artifacts::default();
     let mut contracts = VersionedContracts::default();
     let mut active_units = BTreeMap::new();
+    let mut adapter_keys = BTreeSet::new();
     let mut pending_cache = Vec::new();
     for adapter in &config.external_compilers {
         ensure!(
@@ -100,6 +106,13 @@ pub(crate) fn compile_external(
             "duplicate external compiler adapter ID `{}`",
             adapter.id
         );
+        ensure!(
+            adapter_keys.insert(adapter.id.to_ascii_lowercase()),
+            "external compiler adapter ID `{}` collides on case-insensitive filesystems",
+            adapter.id
+        );
+        ensure_portable_child(&config.out.join(EXTERNAL_ARTIFACT_DIR), &adapter.id, None)?;
+        ensure_portable_child(&config.cache_path.join(EXTERNAL_CACHE_DIR), &adapter.id, None)?;
         let AdapterCompilation {
             artifacts,
             contracts: adapter_contracts,
@@ -273,9 +286,16 @@ impl<'a> AdapterClient<'a> {
         let mut artifacts = Artifacts::default();
         let mut contracts = VersionedContracts::default();
         let mut active_units = BTreeSet::new();
+        let mut unit_keys = BTreeSet::new();
         let mut pending_cache = Vec::new();
         for unit in discovery.units {
             validate_id("build unit", &unit.id)?;
+            ensure!(
+                active_units.insert(unit.id.clone()),
+                "external compiler `{}` returned duplicate unit ID `{}`",
+                self.adapter.id,
+                unit.id
+            );
             ensure!(
                 !unit.compiler.name.is_empty(),
                 "external compiler `{}` unit `{}` returned an empty compiler name",
@@ -283,14 +303,20 @@ impl<'a> AdapterClient<'a> {
                 unit.id
             );
             ensure!(
-                unit.capabilities.contains("build/1"),
-                "external compiler `{}` unit `{}` does not support `build/1`",
+                unit_keys.insert(unit.id.to_ascii_lowercase()),
+                "external compiler `{}` unit ID `{}` collides on case-insensitive filesystems",
                 self.adapter.id,
                 unit.id
             );
+            ensure_portable_child(&self.cache_root, &unit.id, Some("json"))?;
+            ensure_portable_child(
+                &self.out.join(EXTERNAL_ARTIFACT_DIR).join(&self.adapter.id),
+                &unit.id,
+                None,
+            )?;
             ensure!(
-                active_units.insert(unit.id.clone()),
-                "external compiler `{}` returned duplicate unit ID `{}`",
+                unit.capabilities.contains("build/1"),
+                "external compiler `{}` unit `{}` does not support `build/1`",
                 self.adapter.id,
                 unit.id
             );
@@ -369,6 +395,7 @@ impl<'a> AdapterClient<'a> {
             )
         })?;
         let unit_out = self.out.join(EXTERNAL_ARTIFACT_DIR).join(&self.adapter.id).join(&unit.id);
+        let mut artifact_paths = BTreeSet::new();
         for artifact in result.artifacts {
             let name = artifact.name.clone();
             validate_id("contract", &name)?;
@@ -382,6 +409,14 @@ impl<'a> AdapterClient<'a> {
                 name
             );
             let artifact_path = unit_out.join(&source).join(format!("{name}.json"));
+            let relative_artifact_path = source.join(format!("{name}.json"));
+            ensure!(
+                artifact_paths.insert(portable_storage_key(&relative_artifact_path)),
+                "external compiler `{}` unit `{}` artifact path `{}` collides on case-insensitive filesystems",
+                self.adapter.id,
+                unit.id,
+                relative_artifact_path.display()
+            );
             let (contract, compiler_contract) = artifact.into_foundry_outputs()?;
             let build_id = format!(
                 "external:{}:{}:{}:{fingerprint}",
@@ -798,6 +833,30 @@ fn retire_children(root: &Path, active: &BTreeSet<String>, extension: Option<&st
     Ok(())
 }
 
+fn ensure_portable_child(root: &Path, name: &str, extension: Option<&str>) -> Result<()> {
+    let Ok(entries) = fs::read_dir(root) else { return Ok(()) };
+    for entry in entries {
+        let path = entry?.path();
+        let Some(candidate) = (if let Some(extension) = extension {
+            (path.extension() == Some(OsStr::new(extension))).then(|| path.file_stem()).flatten()
+        } else {
+            path.file_name()
+        }) else {
+            continue;
+        };
+        let candidate = candidate.to_string_lossy();
+        ensure!(
+            candidate == name || !candidate.eq_ignore_ascii_case(name),
+            "external compiler storage namespace `{name}` collides with existing `{candidate}` on case-insensitive filesystems"
+        );
+    }
+    Ok(())
+}
+
+fn portable_storage_key(path: &Path) -> String {
+    path.to_string_lossy().to_ascii_lowercase()
+}
+
 fn validate_id(kind: &str, value: &str) -> Result<()> {
     ensure!(!value.is_empty(), "external compiler {kind} ID cannot be empty");
     ensure!(
@@ -846,10 +905,11 @@ fn hash_file(hasher: &mut Sha256, path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ExternalArtifact, external_artifact_is_test_eligible, is_builtin_compiler_source,
-        normalize_root_path, validate_id, validate_relative_path,
+        ExternalArtifact, ensure_portable_child, external_artifact_is_test_eligible,
+        is_builtin_compiler_source, is_external_artifact_path, normalize_root_path,
+        portable_storage_key, validate_id, validate_relative_path,
     };
-    use std::path::Path;
+    use std::{fs, path::Path};
 
     #[test]
     fn rejects_unsafe_protocol_paths_and_ids() {
@@ -875,6 +935,33 @@ mod tests {
         assert!(is_builtin_compiler_source(Path::new("src/Contract.sol")));
         assert!(is_builtin_compiler_source(Path::new("src/contract.VY")));
         assert!(!is_builtin_compiler_source(Path::new("native/src/lib.fe")));
+    }
+
+    #[test]
+    fn recognizes_external_artifact_paths() {
+        let out = Path::new("out");
+        assert!(is_external_artifact_path(
+            out,
+            Path::new("out/.external/adapter/unit/Contract.json")
+        ));
+        assert!(!is_external_artifact_path(out, Path::new("out/.external-other/Contract.json")));
+    }
+
+    #[test]
+    fn rejects_case_insensitive_storage_collisions() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("App")).unwrap();
+        assert!(ensure_portable_child(dir.path(), "app", None).is_err());
+        ensure_portable_child(dir.path(), "App", None).unwrap();
+
+        fs::write(dir.path().join("Build.json"), "{}").unwrap();
+        assert!(ensure_portable_child(dir.path(), "build", Some("json")).is_err());
+        ensure_portable_child(dir.path(), "Build", Some("json")).unwrap();
+
+        assert_eq!(
+            portable_storage_key(Path::new("native/Foo.fe/Counter.json")),
+            portable_storage_key(Path::new("native/foo.fe/counter.json"))
+        );
     }
 
     #[test]
