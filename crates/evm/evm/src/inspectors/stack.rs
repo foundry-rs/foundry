@@ -1022,6 +1022,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         ecx.tx_mut().set_caller(caller);
         ecx.tx_mut().set_kind(kind);
         ecx.tx_mut().set_data(input);
+        ecx.tx_mut().set_enveloped_tx(Bytes::new());
         ecx.tx_mut().set_value(value);
         let initial_gas = calculate_stipend(ecx.tx(), ecx.cfg());
         // Preserve the frame's regular gas and reservoir across the synthetic transaction

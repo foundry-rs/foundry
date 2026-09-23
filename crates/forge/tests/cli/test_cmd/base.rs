@@ -239,6 +239,9 @@ contract Sink {
 contract BaseIsolatedFeesTest {
     Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
     address constant L1_BLOCK = 0x4200000000000000000000000000000000000015;
+    address constant BASE_FEE_VAULT = 0x4200000000000000000000000000000000000019;
+    address constant L1_FEE_VAULT = 0x420000000000000000000000000000000000001A;
+    address constant OPERATOR_FEE_VAULT = 0x420000000000000000000000000000000000001b;
     Sink sink;
 
     function setUp() public {
@@ -251,6 +254,7 @@ contract BaseIsolatedFeesTest {
             bytes32(uint256(0x08dd00101c120000000000000002))
         );
         vm.store(L1_BLOCK, bytes32(uint256(7)), bytes32(uint256(0x0240f4f5)));
+        vm.store(L1_BLOCK, bytes32(uint256(8)), bytes32((uint256(1_000_000) << 64) | 7));
     }
 
     function test_zero_balance_caller_succeeds() public {
@@ -266,12 +270,21 @@ contract BaseIsolatedFeesTest {
     function test_funded_caller_balance_is_unchanged() public {
         address caller = address(uint160(uint256(keccak256("caller"))));
         vm.deal(caller, 1 ether);
+        uint256 baseFeeVaultBalance = BASE_FEE_VAULT.balance;
+        uint256 l1FeeVaultBalance = L1_FEE_VAULT.balance;
+        uint256 operatorFeeVaultBalance = OPERATOR_FEE_VAULT.balance;
 
         vm.prank(caller);
         (bool success,) = address(sink).call(hex"deadbeef");
 
         require(success, "call failed");
         require(caller.balance == 1 ether, "caller was charged");
+        require(BASE_FEE_VAULT.balance == baseFeeVaultBalance, "base fee vault was credited");
+        require(L1_FEE_VAULT.balance == l1FeeVaultBalance, "L1 fee vault was credited");
+        require(
+            OPERATOR_FEE_VAULT.balance == operatorFeeVaultBalance,
+            "operator fee vault was credited"
+        );
     }
 }
 "#,
