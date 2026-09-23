@@ -11,15 +11,16 @@ use foundry_compilers::{
 use itertools::Itertools;
 use path_slash::PathExt;
 use solar::{
-    ast::ItemKind,
+    ast::{ItemKind, UserDefinableOperator},
     sema::{
         Gcx, Hir,
+        builtins::Builtin,
         hir::{
             CallArgs, CallArgsKind, CallOptions, Contract, ContractId, ContractKind, Expr,
-            ExprKind, Function, FunctionId, FunctionKind, Res, SourceId, StateMutability, Stmt,
-            StmtKind, TypeKind, UsingDirective, UsingEntryKind, Variable, Visibility, Visit,
+            ExprKind, Function, FunctionId, FunctionKind, Modifier, Res, SourceId, StateMutability,
+            Stmt, StmtKind, TypeKind, UsingDirective, UsingEntryKind, Variable, Visibility, Visit,
         },
-        interface::{SourceMap, data_structures::Never, source_map::FileName},
+        interface::{SourceMap, Symbol, data_structures::Never, source_map::FileName},
     },
 };
 use std::{
@@ -122,6 +123,18 @@ impl PreprocessorDependencies {
             })
         };
 
+        // An internal call can observe return data left by another function. Analyze the whole
+        // owning contract and its reachable helpers before deciding which scopes can be rewritten.
+        let mut native_return_data_contracts = HashSet::new();
+        for (id, _, _, _) in candidate_contracts() {
+            let mut observer = ReturnDataObserver::new(gcx);
+            let _ = observer.visit_nested_contract(id);
+            if observer.observes_return_data {
+                native_return_data_contracts.insert(id);
+                native_return_data_contracts.extend(observer.contracts);
+            }
+        }
+
         // Collect current mocks.
         for (_, contract, _, path) in candidate_contracts() {
             let full_path = normalize_path(&root_dir.join(path));
@@ -178,6 +191,8 @@ impl PreprocessorDependencies {
                 is_script,
                 constructor_context.for_source(gcx, contract.source),
             );
+            deps_collector.preserve_native_bytecode =
+                native_return_data_contracts.contains(&contract_id);
             let mut using_dependencies = global_using_dependencies.clone();
             using_dependencies.extend(using_dependency_sources(
                 gcx,
@@ -1015,4 +1030,251 @@ fn valid_constructor_call(
         }
     }
     true
+}
+
+/// Finds return-buffer observations in a contract and the helpers it can call internally.
+struct ReturnDataObserver<'gcx> {
+    gcx: Gcx<'gcx>,
+    observes_return_data: bool,
+    functions: HashSet<FunctionId>,
+    contracts: HashSet<ContractId>,
+    visited_contracts: HashSet<ContractId>,
+    member_functions: HashSet<(FunctionId, Symbol)>,
+    sources: HashSet<SourceId>,
+    operator_functions: HashSet<(FunctionId, UserDefinableOperator)>,
+}
+
+impl<'gcx> ReturnDataObserver<'gcx> {
+    fn new(gcx: Gcx<'gcx>) -> Self {
+        Self {
+            gcx,
+            observes_return_data: false,
+            functions: HashSet::new(),
+            contracts: HashSet::new(),
+            visited_contracts: HashSet::new(),
+            member_functions: HashSet::new(),
+            sources: HashSet::new(),
+            operator_functions: HashSet::new(),
+        }
+    }
+
+    fn collect_member_functions(&mut self, source: SourceId, contract: Option<ContractId>) {
+        let bases = contract
+            .into_iter()
+            .flat_map(|id| self.gcx.hir.contract(id).linearized_bases)
+            .copied()
+            .collect::<Vec<_>>();
+        for &id in &bases {
+            self.member_functions.extend(
+                self.gcx
+                    .hir
+                    .contract(id)
+                    .functions()
+                    .filter_map(|id| self.gcx.hir.function(id).name.map(|name| (id, name.name))),
+            );
+        }
+        let directives = self
+            .gcx
+            .hir
+            .source(source)
+            .usings
+            .iter()
+            .chain(bases.iter().flat_map(|&id| self.gcx.hir.contract(id).usings))
+            .chain(
+                self.gcx
+                    .hir
+                    .source_ids()
+                    .flat_map(|id| self.gcx.hir.source(id).usings)
+                    .filter(|directive| directive.global),
+            );
+        for directive in directives {
+            for entry in directive.entries {
+                match entry.kind {
+                    UsingEntryKind::Library(id) => self.member_functions.extend(
+                        self.gcx.hir.contract(id).functions().filter_map(|id| {
+                            self.gcx.hir.function(id).name.map(|name| (id, name.name))
+                        }),
+                    ),
+                    UsingEntryKind::Functions(ids) => {
+                        if let Some(operator) = entry.operator {
+                            self.operator_functions.extend(ids.iter().map(|&id| (id, operator)));
+                        }
+                        self.member_functions.extend(ids.iter().copied().filter_map(|id| {
+                            entry
+                                .name
+                                .or_else(|| self.gcx.hir.function(id).name.map(|name| name.name))
+                                .map(|name| (id, name))
+                        }))
+                    }
+                    UsingEntryKind::Err(_) => {}
+                }
+            }
+        }
+    }
+}
+
+impl<'gcx> Visit<'gcx> for ReturnDataObserver<'gcx> {
+    type BreakValue = Never;
+
+    fn hir(&self) -> &'gcx Hir<'gcx> {
+        &self.gcx.hir
+    }
+
+    fn visit_nested_source(&mut self, id: SourceId) -> ControlFlow<Self::BreakValue> {
+        if self.sources.insert(id) {
+            let source = self.gcx.hir.source(id);
+            self.walk_nested_source(id)?;
+            for &(_, id) in source.imports {
+                self.visit_nested_source(id)?;
+            }
+        }
+        ControlFlow::Continue(())
+    }
+
+    fn visit_nested_contract(&mut self, id: ContractId) -> ControlFlow<Self::BreakValue> {
+        if self.visited_contracts.insert(id) {
+            let contract = self.gcx.hir.contract(id);
+            self.contracts.insert(id);
+            // State initializers run before functions are visited, but can already call methods
+            // supplied by contract-scoped using directives.
+            self.collect_member_functions(contract.source, Some(id));
+            // An inherited observer can call a derived override that produces return data. Treat
+            // the complete inheritance hierarchy as one execution scope before rewriting it.
+            for &base in contract.linearized_bases {
+                if base != id {
+                    self.visit_nested_contract(base)?;
+                }
+            }
+            self.walk_contract(contract)?;
+        }
+        ControlFlow::Continue(())
+    }
+
+    fn visit_nested_function(&mut self, id: FunctionId) -> ControlFlow<Self::BreakValue> {
+        if self.functions.insert(id) {
+            let function = self.gcx.hir.function(id);
+            self.collect_member_functions(function.source, function.contract);
+            if let Some(id) = function.contract {
+                self.contracts.insert(id);
+            }
+            self.walk_function(function)?;
+        }
+        ControlFlow::Continue(())
+    }
+
+    fn visit_modifier(&mut self, modifier: &'gcx Modifier<'gcx>) -> ControlFlow<Self::BreakValue> {
+        if let Some(id) = modifier.id.as_function() {
+            self.visit_nested_function(id)?;
+        }
+        self.walk_modifier(modifier)
+    }
+
+    fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
+        let operator = match &expr.kind {
+            ExprKind::Unary(op, _) => UserDefinableOperator::from_unop(op.kind),
+            ExprKind::Binary(_, op, _) => UserDefinableOperator::from_binop(op.kind),
+            _ => None,
+        };
+        if let Some(operator) = operator {
+            // Type checking has not selected an overload yet, so visit every visible binding.
+            let functions = self
+                .operator_functions
+                .iter()
+                .filter_map(|&(id, bound)| (bound == operator).then_some(id))
+                .collect::<Vec<_>>();
+            for id in functions {
+                self.visit_nested_function(id)?;
+            }
+        }
+        match &expr.kind {
+            ExprKind::Ident(resolutions) => {
+                for resolution in *resolutions {
+                    match resolution {
+                        Res::Builtin(Builtin::YulReturndatasize | Builtin::YulReturndatacopy) => {
+                            self.observes_return_data = true;
+                        }
+                        Res::Item(item) => {
+                            if let Some(id) = item.as_function() {
+                                self.visit_nested_function(id)?;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            ExprKind::Call(callee, _, _) => {
+                if let Some(id) = self.gcx.resolved_function(callee) {
+                    self.visit_nested_function(id)?;
+                }
+            }
+            ExprKind::Member(member, name) => {
+                // Resolve the complete namespace path, including renamed re-exports and library
+                // members, without visiting unrelated declarations in the imported sources.
+                let mut names = vec![*name];
+                let mut root = member.peel_parens();
+                while let ExprKind::Member(parent, name) = &root.kind {
+                    names.push(*name);
+                    root = parent.peel_parens();
+                }
+                if let ExprKind::Ident(resolutions) = &root.kind {
+                    names.reverse();
+                    for resolution in *resolutions {
+                        if let Res::Namespace(source) = resolution {
+                            if let Some(resolutions) =
+                                self.gcx.source_path_resolutions(&names, *source, None)
+                                && let Some(targets) = resolutions.last()
+                            {
+                                for target in targets {
+                                    if let Res::Item(item) = target {
+                                        if let Some(id) = item.as_function() {
+                                            self.visit_nested_function(id)?;
+                                        } else if let Some(id) = item.as_variable() {
+                                            self.visit_nested_var(id)?;
+                                        }
+                                    }
+                                }
+                            } else {
+                                // Retain the conservative fallback when name resolution is
+                                // incomplete.
+                                self.visit_nested_source(*source)?;
+                            }
+                        }
+                    }
+                }
+                // Type checking has not run, so include every visible overload of an inherited
+                // or using-for method with this name.
+                let functions = self
+                    .member_functions
+                    .iter()
+                    .copied()
+                    .filter_map(|(id, attached_name)| (attached_name == name.name).then_some(id))
+                    .collect::<Vec<_>>();
+                for id in functions {
+                    self.visit_nested_function(id)?;
+                }
+                if let ExprKind::Ident(resolutions) = member.peel_parens().kind {
+                    for resolution in resolutions {
+                        if let Res::Item(item) = resolution
+                            && let Some(id) = item.as_contract()
+                            && self.gcx.hir.contract(id).kind == ContractKind::Library
+                        {
+                            for id in self.gcx.hir.contract(id).functions() {
+                                if self
+                                    .gcx
+                                    .hir
+                                    .function(id)
+                                    .name
+                                    .is_some_and(|ident| ident.name == name.name)
+                                {
+                                    self.visit_nested_function(id)?;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        self.walk_expr(expr)
+    }
 }
