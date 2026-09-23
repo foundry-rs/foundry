@@ -66,7 +66,7 @@ case "${1:-}" in
     mkdir -p "$snapshot"
     # Explicit allowlist: no environment, command arguments, raw runner logs,
     # source, build products, credentials, or tool caches in periodic artifacts.
-    for file in resources.log network.log lifecycle.log machine.txt toolchain.txt build-exit.txt security-state.txt; do
+    for file in resources.log network.log network-immediate.log lifecycle.log machine.txt toolchain.txt build-exit.txt security-state.txt; do
       if [[ -f "$diagnostic_dir/$file" ]]; then
         cp "$diagnostic_dir/$file" "$snapshot/$file"
       fi

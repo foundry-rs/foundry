@@ -33,6 +33,6 @@ runs:
         if [[ "$UPLOAD_OUTCOME" == 'failure' ]]; then
           # Capture fresh resolver/FD evidence immediately after an upload error.
           node diagnostic/.github/scripts/macos-network-probe.cjs |
-            tee -a "$RUNNER_TEMP/macos-diagnostic/network.log"
+            tee -a "$RUNNER_TEMP/macos-diagnostic/network-immediate.log"
           echo '::warning::Checkpoint upload failed; continuing workload and sampling.'
         fi

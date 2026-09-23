@@ -48,7 +48,7 @@ jobs:
             > "$RUNNER_TEMP/macos-diagnostic/resources.log" 2>&1 < /dev/null &
           echo "$!" > "$RUNNER_TEMP/macos-diagnostic/monitor.pid"
           nohup bash diagnostic/.github/scripts/macos-network-monitor.sh \
-            > "$RUNNER_TEMP/macos-diagnostic/network.log" 2>&1 < /dev/null &
+            >> "$RUNNER_TEMP/macos-diagnostic/network.log" 2>&1 < /dev/null &
           echo "$!" > "$RUNNER_TEMP/macos-diagnostic/network-monitor.pid"
           {
             date -u
@@ -84,7 +84,7 @@ jobs:
             exit 1
           fi
           node diagnostic/.github/scripts/macos-network-probe.cjs |
-            tee -a "$RUNNER_TEMP/macos-diagnostic/network.log"
+            tee -a "$RUNNER_TEMP/macos-diagnostic/network-immediate.log"
 
       - name: Check out the failing release source
         if: env.DIAGNOSTIC_MODE == 'build'
@@ -264,6 +264,7 @@ jobs:
           path: |
             ${{ runner.temp }}/macos-diagnostic/resources.log
             ${{ runner.temp }}/macos-diagnostic/network.log
+            ${{ runner.temp }}/macos-diagnostic/network-immediate.log
             ${{ runner.temp }}/macos-diagnostic/security-state.txt
             ${{ runner.temp }}/macos-diagnostic/lifecycle.log
             ${{ runner.temp }}/macos-diagnostic/machine.txt
@@ -316,7 +317,7 @@ jobs:
             > "$RUNNER_TEMP/macos-diagnostic/resources.log" 2>&1 < /dev/null &
           echo "$!" > "$RUNNER_TEMP/macos-diagnostic/monitor.pid"
           nohup bash diagnostic/.github/scripts/macos-network-monitor.sh \
-            > "$RUNNER_TEMP/macos-diagnostic/network.log" 2>&1 < /dev/null &
+            >> "$RUNNER_TEMP/macos-diagnostic/network.log" 2>&1 < /dev/null &
           echo "$!" > "$RUNNER_TEMP/macos-diagnostic/network-monitor.pid"
           {
             date -u
@@ -349,7 +350,7 @@ jobs:
             exit 1
           fi
           node diagnostic/.github/scripts/macos-network-probe.cjs |
-            tee -a "$RUNNER_TEMP/macos-diagnostic/network.log"
+            tee -a "$RUNNER_TEMP/macos-diagnostic/network-immediate.log"
 
       - name: Check out the failing release source
         if: env.DIAGNOSTIC_MODE == 'build'
@@ -529,6 +530,7 @@ jobs:
           path: |
             ${{ runner.temp }}/macos-diagnostic/resources.log
             ${{ runner.temp }}/macos-diagnostic/network.log
+            ${{ runner.temp }}/macos-diagnostic/network-immediate.log
             ${{ runner.temp }}/macos-diagnostic/security-state.txt
             ${{ runner.temp }}/macos-diagnostic/lifecycle.log
             ${{ runner.temp }}/macos-diagnostic/machine.txt
