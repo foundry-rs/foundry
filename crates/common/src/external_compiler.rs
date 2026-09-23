@@ -7,11 +7,12 @@ use foundry_compilers::{
     ArtifactFile, Artifacts, ProjectCompileOutput,
     artifacts::{
         BytecodeObject, CompactBytecode, CompactDeployedBytecode, ConfigurableContractArtifact,
-        Offsets, contract::Contract,
+        Evm, Offsets, contract::Contract,
     },
     compilers::{Compiler, Language, multi::MultiCompilerLanguage},
+    contracts::{VersionedContract, VersionedContracts},
 };
-use foundry_config::{Config, ExternalCompiler};
+use foundry_config::{Config, DenyLevel, ExternalCompiler};
 use semver::Version;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
@@ -65,12 +66,20 @@ pub fn is_builtin_compiler_source(path: &Path) -> bool {
 /// External artifacts and the unit inventory used to publish them.
 pub(crate) struct ExternalCompilation {
     artifacts: Artifacts<ConfigurableContractArtifact>,
+    contracts: VersionedContracts<Contract>,
     output_root: PathBuf,
     cache_root: PathBuf,
     cache_enabled: bool,
     write_outputs: bool,
     complete_discovery: bool,
     active_units: BTreeMap<String, BTreeSet<String>>,
+    pending_cache: Vec<PendingCache>,
+}
+
+struct AdapterCompilation {
+    artifacts: Artifacts<ConfigurableContractArtifact>,
+    contracts: VersionedContracts<Contract>,
+    active_units: BTreeSet<String>,
     pending_cache: Vec<PendingCache>,
 }
 
@@ -82,6 +91,7 @@ pub(crate) fn compile_external(
     write_outputs: bool,
 ) -> Result<ExternalCompilation> {
     let mut external = Artifacts::default();
+    let mut contracts = VersionedContracts::default();
     let mut active_units = BTreeMap::new();
     let mut pending_cache = Vec::new();
     for adapter in &config.external_compilers {
@@ -90,9 +100,13 @@ pub(crate) fn compile_external(
             "duplicate external compiler adapter ID `{}`",
             adapter.id
         );
-        let (artifacts, units, adapter_cache) =
-            AdapterClient::new(config, adapter, workflow, selected_paths)?
-                .compile(write_outputs)?;
+        let AdapterCompilation {
+            artifacts,
+            contracts: adapter_contracts,
+            active_units: units,
+            pending_cache: adapter_cache,
+        } = AdapterClient::new(config, adapter, workflow, selected_paths)?
+            .compile(write_outputs)?;
         for (source, contracts) in artifacts {
             for name in contracts.keys() {
                 ensure!(
@@ -103,12 +117,16 @@ pub(crate) fn compile_external(
             }
             external.as_mut().entry(source).or_default().extend(contracts);
         }
+        for (source, source_contracts) in adapter_contracts {
+            contracts.as_mut().entry(source).or_default().extend(source_contracts);
+        }
         active_units.insert(adapter.id.clone(), units);
         pending_cache.extend(adapter_cache);
     }
 
     Ok(ExternalCompilation {
         artifacts: external,
+        contracts,
         output_root: config.out.join(EXTERNAL_ARTIFACT_DIR),
         cache_root: config.cache_path.join(EXTERNAL_CACHE_DIR),
         cache_enabled: config.cache,
@@ -170,6 +188,9 @@ where
     for (source, contracts) in external.artifacts {
         merged.as_mut().entry(source).or_default().extend(contracts);
     }
+    for (source, contracts) in external.contracts {
+        output.output_mut().contracts.as_mut().entry(source).or_default().extend(contracts);
+    }
     output.set_compiled_artifacts(merged);
     Ok(())
 }
@@ -180,6 +201,7 @@ struct AdapterClient<'a> {
     cache_root: PathBuf,
     cache: bool,
     force: bool,
+    deny: DenyLevel,
     profile: String,
     adapter: &'a ExternalCompiler,
     workflow: ExternalCompilerWorkflow,
@@ -205,6 +227,7 @@ impl<'a> AdapterClient<'a> {
             cache_root: config.cache_path.join(EXTERNAL_CACHE_DIR).join(&adapter.id),
             cache: config.cache,
             force: config.force,
+            deny: config.deny,
             profile: config.profile.to_string(),
             adapter,
             workflow,
@@ -213,11 +236,7 @@ impl<'a> AdapterClient<'a> {
         })
     }
 
-    fn compile(
-        &self,
-        write_outputs: bool,
-    ) -> Result<(Artifacts<ConfigurableContractArtifact>, BTreeSet<String>, Vec<PendingCache>)>
-    {
+    fn compile(&self, write_outputs: bool) -> Result<AdapterCompilation> {
         let mut process = AdapterProcess::spawn(self.root, &self.command, &self.adapter.args)
             .wrap_err_with(|| format!("failed to start external compiler `{}`", self.adapter.id))?;
         let initialized: InitializeResult = process.request(
@@ -252,6 +271,7 @@ impl<'a> AdapterClient<'a> {
         )?;
 
         let mut artifacts = Artifacts::default();
+        let mut contracts = VersionedContracts::default();
         let mut active_units = BTreeSet::new();
         let mut pending_cache = Vec::new();
         for unit in discovery.units {
@@ -295,18 +315,18 @@ impl<'a> AdapterClient<'a> {
                     (result, true)
                 }
             };
-            emit_diagnostics(&self.adapter.id, &unit.id, &result.diagnostics)?;
+            emit_diagnostics(&self.adapter.id, &unit.id, &result.diagnostics, self.deny)?;
             let cache = (write_outputs && fresh && self.cache && unit.cacheable)
                 .then(|| serialize_cache(&fingerprint, &result))
                 .transpose()?;
-            self.add_artifacts(&mut artifacts, &unit, &fingerprint, result)?;
+            self.add_artifacts(&mut artifacts, &mut contracts, &unit, &fingerprint, result, fresh)?;
             if let Some(contents) = cache {
                 pending_cache.push(PendingCache { path: cache_path, contents });
             }
         }
 
         process.finish()?;
-        Ok((artifacts, active_units, pending_cache))
+        Ok(AdapterCompilation { artifacts, contracts, active_units, pending_cache })
     }
 
     fn fingerprint(&self, unit: &DiscoveredUnit) -> Result<String> {
@@ -336,9 +356,11 @@ impl<'a> AdapterClient<'a> {
     fn add_artifacts(
         &self,
         output: &mut Artifacts<ConfigurableContractArtifact>,
+        contracts: &mut VersionedContracts<Contract>,
         unit: &DiscoveredUnit,
         fingerprint: &str,
         result: CompileResult,
+        fresh: bool,
     ) -> Result<()> {
         let version = Version::parse(&unit.compiler.version).wrap_err_with(|| {
             format!(
@@ -350,8 +372,8 @@ impl<'a> AdapterClient<'a> {
         for artifact in result.artifacts {
             let name = artifact.name.clone();
             validate_id("contract", &name)?;
-            let source = validate_relative_path("source unit", &artifact.source)?;
-            let source_path = self.root.join(source);
+            let source = validate_relative_path("source unit", &artifact.source)?.to_path_buf();
+            let source_path = self.root.join(&source);
             ensure!(
                 output.get(&source_path).and_then(|existing| existing.get(&name)).is_none(),
                 "external compiler `{}` returned duplicate artifact {}:{}",
@@ -359,23 +381,34 @@ impl<'a> AdapterClient<'a> {
                 source.display(),
                 name
             );
-            let artifact_path = unit_out.join(source).join(format!("{name}.json"));
-            let contract = artifact.into_foundry_artifact()?;
+            let artifact_path = unit_out.join(&source).join(format!("{name}.json"));
+            let (contract, compiler_contract) = artifact.into_foundry_outputs()?;
+            let build_id = format!(
+                "external:{}:{}:{}:{fingerprint}",
+                self.adapter.id,
+                unit.id,
+                if unit.capabilities.contains("forge-tests/1") { "forge-tests" } else { "build" }
+            );
+            if fresh {
+                contracts
+                    .as_mut()
+                    .entry(source_path.clone())
+                    .or_default()
+                    .entry(name.clone())
+                    .or_default()
+                    .push(VersionedContract {
+                        contract: compiler_contract,
+                        version: version.clone(),
+                        build_id: build_id.clone(),
+                        profile: self.profile.clone(),
+                    });
+            }
             output.as_mut().entry(source_path).or_default().entry(name).or_default().push(
                 ArtifactFile {
                     artifact: contract,
                     file: artifact_path,
                     version: version.clone(),
-                    build_id: format!(
-                        "external:{}:{}:{}:{fingerprint}",
-                        self.adapter.id,
-                        unit.id,
-                        if unit.capabilities.contains("forge-tests/1") {
-                            "forge-tests"
-                        } else {
-                            "build"
-                        }
-                    ),
+                    build_id,
                     profile: self.profile.clone(),
                 },
             );
@@ -618,7 +651,7 @@ struct ExternalArtifact {
 }
 
 impl ExternalArtifact {
-    fn into_foundry_artifact(self) -> Result<ConfigurableContractArtifact> {
+    fn into_foundry_outputs(self) -> Result<(ConfigurableContractArtifact, Contract)> {
         ensure!(
             self.bytecode.is_some() || self.deployed_bytecode.is_none(),
             "external artifact {} has runtime bytecode without creation bytecode",
@@ -646,8 +679,28 @@ impl ExternalArtifact {
             .abi
             .functions()
             .map(|function| (function.signature(), hex::encode(function.selector())))
-            .collect();
-        Ok(ConfigurableContractArtifact {
+            .collect::<BTreeMap<_, _>>();
+        let compiler_contract = Contract {
+            abi: Some(self.abi.clone()),
+            metadata: None,
+            userdoc: Default::default(),
+            devdoc: Default::default(),
+            ir: None,
+            storage_layout: Default::default(),
+            transient_storage_layout: Default::default(),
+            evm: Some(Evm {
+                assembly: None,
+                legacy_assembly: None,
+                bytecode: bytecode.clone().map(Into::into),
+                deployed_bytecode: deployed_bytecode.clone().map(Into::into),
+                method_identifiers: method_identifiers.clone(),
+                gas_estimates: None,
+            }),
+            ewasm: None,
+            ir_optimized: None,
+            ir_optimized_ast: None,
+        };
+        let artifact = ConfigurableContractArtifact {
             abi: Some(self.abi),
             bytecode,
             deployed_bytecode,
@@ -655,7 +708,8 @@ impl ExternalArtifact {
             raw_metadata: self.metadata.as_ref().map(serde_json::to_string).transpose()?,
             id: self.source_id,
             ..Default::default()
-        })
+        };
+        Ok((artifact, compiler_contract))
     }
 }
 
@@ -670,7 +724,12 @@ struct PendingCache {
     contents: Vec<u8>,
 }
 
-fn emit_diagnostics(adapter: &str, unit: &str, diagnostics: &[ExternalDiagnostic]) -> Result<()> {
+fn emit_diagnostics(
+    adapter: &str,
+    unit: &str,
+    diagnostics: &[ExternalDiagnostic],
+    deny: DenyLevel,
+) -> Result<()> {
     let mut errors = Vec::new();
     for diagnostic in diagnostics {
         let code = diagnostic.code.as_deref().map(|code| format!(" [{code}]")).unwrap_or_default();
@@ -685,6 +744,7 @@ fn emit_diagnostics(adapter: &str, unit: &str, diagnostics: &[ExternalDiagnostic
         );
         match diagnostic.severity {
             DiagnosticSeverity::Error => errors.push(message),
+            DiagnosticSeverity::Warning if deny.warnings() => errors.push(message),
             DiagnosticSeverity::Warning => sh_warn!("{message}")?,
             DiagnosticSeverity::Info => tracing::info!("{message}"),
         }
@@ -832,7 +892,7 @@ mod tests {
         }))
         .unwrap();
 
-        let artifact = artifact.into_foundry_artifact().unwrap();
+        let artifact = artifact.into_foundry_outputs().unwrap().0;
         assert_eq!(artifact.method_identifiers.unwrap()["balanceOf(address)"], "70a08231");
     }
 
@@ -850,7 +910,7 @@ mod tests {
             let artifact: ExternalArtifact = serde_json::from_value(value).unwrap();
             assert!(
                 artifact
-                    .into_foundry_artifact()
+                    .into_foundry_outputs()
                     .unwrap_err()
                     .to_string()
                     .contains("must provide fully linked bytecode")

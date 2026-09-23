@@ -55,7 +55,11 @@ case "$discover" in
 esac
 if read -r compile; then
     : > "$0.compiled"
-    printf '%s\n' '{"id":3,"result":{"diagnostics":[],"artifacts":[{"source":"native/src/lib.fe","name":"Counter","abi":[{"type":"function","name":"run","inputs":[],"outputs":[],"stateMutability":"nonpayable"},{"type":"function","name":"testExternalArtifactIsDeployable","inputs":[],"outputs":[],"stateMutability":"nonpayable"}],"bytecode":"0x6001600c60003960016000f300","deployedBytecode":"0x00","metadata":{"language":"Fe"}},{"source":"native/src/lib.fe","name":"CreationOnly","bytecode":"0x00","sourceId":1}]}}'
+    diagnostics='[]'
+    if [ -e "$0.warning" ]; then
+        diagnostics='[{"severity":"warning","message":"fixture warning"}]'
+    fi
+    printf '%s\n' "{\"id\":3,\"result\":{\"diagnostics\":$diagnostics,\"artifacts\":[{\"source\":\"native/src/lib.fe\",\"name\":\"Counter\",\"abi\":[{\"type\":\"function\",\"name\":\"run\",\"inputs\":[],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"testExternalArtifactIsDeployable\",\"inputs\":[],\"outputs\":[],\"stateMutability\":\"nonpayable\"}],\"bytecode\":\"0x6001600c60003960016000f300\",\"deployedBytecode\":\"0x00\",\"metadata\":{\"language\":\"Fe\"}},{\"source\":\"native/src/lib.fe\",\"name\":\"CreationOnly\",\"bytecode\":\"0x00\",\"sourceId\":1}]}}"
 fi
 "#,
     )
@@ -73,7 +77,24 @@ fi
         });
     });
 
-    cmd.forge_fuse().args(["build", "native"]).assert_success();
+    let output = cmd.forge_fuse().args(["build", "native", "--json"]).assert_success();
+    let build_json: serde_json::Value =
+        serde_json::from_slice(&output.get_output().stdout).unwrap();
+    let external_source = native.join("src/lib.fe");
+    let counter = &build_json["contracts"][external_source.to_string_lossy().as_ref()]["Counter"]
+        [0]["contract"];
+    assert_eq!(counter["abi"][0]["name"], "run");
+    assert_eq!(counter["evm"]["bytecode"]["object"], "6001600c60003960016000f300");
+
+    let builtin = prj.add_source("Builtin.sol", "contract Builtin {}");
+    let output = cmd.forge_fuse().args(["build", "--json", "--force"]).assert_success();
+    let build_json: serde_json::Value =
+        serde_json::from_slice(&output.get_output().stdout).unwrap();
+    assert!(
+        !build_json["contracts"][external_source.to_string_lossy().as_ref()]["Counter"].is_null()
+    );
+    assert!(!build_json["contracts"][builtin.to_string_lossy().as_ref()]["Builtin"].is_null());
+
     let invoked = adapter.with_extension("sh.compiled");
     assert!(invoked.exists());
     let artifact = prj.root().join("out/.external/fixture/app/native/src/lib.fe/Counter.json");
@@ -172,6 +193,15 @@ contract ExternalArtifactTest {
     cmd.forge_fuse()
         .args(["test", "--match-test", "testExternalArtifactIsDeployable"])
         .assert_success();
+
+    let warning = adapter.with_extension("sh.warning");
+    fs::write(&warning, "").unwrap();
+    fs::remove_dir_all(prj.root().join("cache/external-compilers")).unwrap();
+    cmd.forge_fuse().args(["build", "--deny", "warnings"]).assert_failure();
+    cmd.forge_fuse().args(["build", "--deny", "never"]).assert_success();
+    fs::remove_file(&invoked).unwrap();
+    cmd.forge_fuse().args(["build", "--deny", "warnings"]).assert_failure();
+    assert!(!invoked.exists(), "cached diagnostics unexpectedly recompiled the external unit");
 });
 
 #[cfg(unix)]
