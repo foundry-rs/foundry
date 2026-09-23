@@ -5536,7 +5536,7 @@ impl PersistedFingerprintProvenance {
         })
     }
 
-    fn edge_config(self) -> EdgeCovConfig {
+    const fn edge_config(self) -> EdgeCovConfig {
         match self {
             Self::CollisionFreeV1 { include_call_depth } => {
                 EdgeCovConfig::new(EdgeCovKind::CollisionFree, include_call_depth)
@@ -5926,6 +5926,7 @@ fn record_invariant_failure(
 }
 
 /// Persists a handler-side assertion bug with symbolic replay storage.
+#[expect(clippy::too_many_arguments)]
 fn record_handler_failure(
     failure_dir: &Path,
     reverter: Address,
