@@ -54,7 +54,7 @@ pub fn is_external_artifact(build_id: &str) -> bool {
 }
 
 /// Returns whether a path belongs to a compiler built into Foundry.
-pub(crate) fn is_builtin_compiler_source(path: &Path) -> bool {
+pub fn is_builtin_compiler_source(path: &Path) -> bool {
     path.extension().and_then(OsStr::to_str).is_some_and(|extension| {
         MultiCompilerLanguage::FILE_EXTENSIONS
             .iter()

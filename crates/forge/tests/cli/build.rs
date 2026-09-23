@@ -55,7 +55,7 @@ case "$discover" in
 esac
 if read -r compile; then
     : > "$0.compiled"
-    printf '%s\n' '{"id":3,"result":{"diagnostics":[],"artifacts":[{"source":"native/src/lib.fe","name":"Counter","abi":[{"type":"function","name":"run","inputs":[],"outputs":[],"stateMutability":"nonpayable"},{"type":"function","name":"testExternalArtifactIsDeployable","inputs":[],"outputs":[],"stateMutability":"nonpayable"}],"bytecode":"0x6001600c60003960016000f300","deployedBytecode":"0x00","metadata":{"language":"Fe"}}]}}'
+    printf '%s\n' '{"id":3,"result":{"diagnostics":[],"artifacts":[{"source":"native/src/lib.fe","name":"Counter","abi":[{"type":"function","name":"run","inputs":[],"outputs":[],"stateMutability":"nonpayable"},{"type":"function","name":"testExternalArtifactIsDeployable","inputs":[],"outputs":[],"stateMutability":"nonpayable"}],"bytecode":"0x6001600c60003960016000f300","deployedBytecode":"0x00","metadata":{"language":"Fe"}},{"source":"native/src/lib.fe","name":"CreationOnly","bytecode":"0x00","sourceId":1}]}}'
 fi
 "#,
     )
@@ -113,6 +113,31 @@ fi
     let output = cmd.forge_fuse().args(["selectors", "list", "--no-group"]).assert_success();
     assert!(output.get_output().stdout_lossy().contains("run()"));
     cmd.forge_fuse().args(["script", "native/src/lib.fe:Counter"]).assert_success();
+
+    prj.add_script(
+        "UseExternal.s.sol",
+        r#"interface Vm {
+    function getCode(string calldata artifact) external returns (bytes memory);
+}
+
+contract UseExternal {
+    Vm private constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function run() external {
+        bytes memory code = vm.getCode("Counter");
+        address deployed;
+        assembly ("memory-safe") {
+            deployed := create(0, add(code, 0x20), mload(code))
+        }
+        require(deployed != address(0) && deployed.code.length == 1);
+    }
+}
+"#,
+    );
+    fs::remove_dir_all(prj.root().join("out/.external")).unwrap();
+    fs::remove_dir_all(prj.root().join("cache/external-compilers")).unwrap();
+    cmd.forge_fuse().args(["script", "script/UseExternal.s.sol:UseExternal"]).assert_success();
+
     cmd.forge_fuse()
         .args(["test", "--list", "--json"])
         .assert_success()
