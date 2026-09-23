@@ -531,6 +531,7 @@ forgetest_init!(symbolic_invariant_handler_failure_stays_handler, |prj, cmd| {
     prj.update_config(|config| {
         config.invariant.runs = 0;
         config.invariant.fail_on_revert = false;
+        config.invariant.corpus.corpus_dir = Some("inv_corpus".into());
     });
     prj.add_test(
         "SymbolicInvariantHandlerFailure.t.sol",
