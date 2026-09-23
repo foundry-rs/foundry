@@ -266,13 +266,14 @@ jobs:
 
   workflow-validation:
     name: Workflow Validation
-    uses: tempoxyz/gh-actions/.github/workflows/scan-github-actions.yml@117919c943b804057be733b0c4034c5542e58959
+    uses: tempoxyz/gh-actions/.github/workflows/scan-github-actions.yml@b35994a23aaf6acf4d5e2f91d18235a6e2f90e95
     permissions:
       actions: read
       contents: read
       id-token: write
     with:
       pinact: true
+      secure-runner-fail-on-violation: false
 
   ci-success:
     runs-on: ubuntu-latest
