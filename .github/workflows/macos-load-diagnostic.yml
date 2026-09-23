@@ -1,0 +1,118 @@
+name: macOS load diagnostic
+
+# Temporary diagnostic branch only. Do not merge this workflow or the CI skips.
+on:
+  push:
+    branches: [centaur/macos-load-diag-1790155961]
+
+permissions: {}
+
+concurrency:
+  group: macos-load-diagnostic-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  diagnose:
+    if: github.repository == 'foundry-rs/foundry'
+    runs-on: macos-latest-xlarge
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_BUILD_JOBS: "2"
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+      LIBUSB_STATIC: "1"
+      SVM_TARGET_PLATFORM: macosx-aarch64
+      TAG_NAME: nightly
+    steps:
+      - name: Check out diagnostic instrumentation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          path: diagnostic
+
+      - name: Start resource sampling before hardening
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/macos-diagnostic"
+          nohup bash diagnostic/.github/scripts/macos-build-monitor.sh \
+            > "$RUNNER_TEMP/macos-diagnostic/resources.log" 2>&1 < /dev/null &
+          echo "$!" > "$RUNNER_TEMP/macos-diagnostic/monitor.pid"
+          {
+            date -u
+            sw_vers
+            uname -m
+            sysctl hw.memsize hw.ncpu
+            printf 'ImageOS=%s\nImageVersion=%s\n' "${ImageOS:-unknown}" "${ImageVersion:-unknown}"
+          } | tee "$RUNNER_TEMP/macos-diagnostic/machine.txt"
+
+      - name: Secure runner (same pin as failing release)
+        uses: tempoxyz/gh-actions/actions/secure-runner@44477a1dea964684252d6032489e5c8acde487cd # 2026-09-22T22-28-45Z-44477a1d
+
+      - name: Check out the failing release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: c756235f9bd49fc4759317ef2d7e19e54bcf5198
+          persist-credentials: false
+          path: source
+
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1
+        with:
+          toolchain: 1.98.1
+          targets: aarch64-apple-darwin
+
+      - name: Record toolchain and Apple SDK
+        working-directory: source
+        shell: bash
+        run: |
+          printf 'SDKROOT=%s\n' "$(xcrun -sdk macosx --show-sdk-path)" >> "$GITHUB_ENV"
+          {
+            git rev-parse HEAD
+            rustc -vV
+            cargo -vV
+            xcodebuild -version
+            xcrun -sdk macosx --show-sdk-path
+            if command -v aegis >/dev/null 2>&1; then aegis --version || true; fi
+          } | tee "$RUNNER_TEMP/macos-diagnostic/toolchain.txt"
+
+      - name: Fetch and build with live resource samples
+        working-directory: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          tail -n +1 -f "$RUNNER_TEMP/macos-diagnostic/resources.log" &
+          follower=$!
+          trap 'kill "$follower" 2>/dev/null || true; wait "$follower" 2>/dev/null || true' EXIT
+          cargo fetch --locked --target aarch64-apple-darwin 2>&1 |
+            tee "$RUNNER_TEMP/macos-diagnostic/fetch.log"
+          /usr/bin/time -l cargo build --locked --target aarch64-apple-darwin \
+            --profile dist --no-default-features \
+            --features aws-kms,gcp-kms,turnkey,cli,asm-keccak,js-tracer,base,monad,optimism,touch-id \
+            --features jemalloc --bins 2>&1 |
+            tee "$RUNNER_TEMP/macos-diagnostic/build.log"
+
+      - name: Stop resource sampling
+        if: always()
+        shell: bash
+        run: |
+          pid_file="$RUNNER_TEMP/macos-diagnostic/monitor.pid"
+          if [[ -f "$pid_file" ]]; then
+            pid=$(<"$pid_file")
+            if [[ "$pid" =~ ^[0-9]+$ ]]; then kill "$pid" 2>/dev/null || true; fi
+          fi
+          if [[ -f "$RUNNER_TEMP/macos-diagnostic/resources.log" ]]; then
+            tail -100 "$RUNNER_TEMP/macos-diagnostic/resources.log"
+          fi
+
+      - name: Upload diagnostic logs only
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: macos-load-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/macos-diagnostic/*.log
+            ${{ runner.temp }}/macos-diagnostic/*.txt
+          retention-days: 7
+          if-no-files-found: warn

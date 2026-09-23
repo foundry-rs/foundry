@@ -41,6 +41,7 @@ jobs:
   tempo-check:
     # Skip on PRs from forks and Dependabot, which cannot access the RPC secrets.
     if: |
+      github.head_ref != 'centaur/macos-load-diag-1790155961' &&
       (github.event_name != 'schedule' || github.repository == 'foundry-rs/foundry') &&
       (github.event_name != 'pull_request' ||
       (github.event.pull_request.head.repo.full_name == github.repository &&

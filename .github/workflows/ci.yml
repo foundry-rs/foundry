@@ -18,6 +18,7 @@ env:
 
 jobs:
   test:
+    if: github.head_ref != 'centaur/macos-load-diag-1790155961'
     uses: ./.github/workflows/test.yml
     permissions:
       id-token: write
@@ -32,6 +33,7 @@ jobs:
       TEMPO_TESTNET_RPC_URL: ${{ secrets.TEMPO_TESTNET_RPC_URL }}
 
   docs:
+    if: github.head_ref != 'centaur/macos-load-diag-1790155961'
     uses: ./.github/workflows/docs.yml
     permissions:
       contents: read
@@ -39,6 +41,7 @@ jobs:
       id-token: write
 
   doctest:
+    if: github.head_ref != 'centaur/macos-load-diag-1790155961'
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -64,6 +67,7 @@ jobs:
       - run: cargo test --workspace --doc --locked
 
   no-default-features:
+    if: github.head_ref != 'centaur/macos-load-diag-1790155961'
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -124,6 +128,7 @@ jobs:
       - run: cargo build --manifest-path crates/forge/Cargo.toml --features touch-id --target aarch64-apple-darwin --locked
 
   typos:
+    if: github.head_ref != 'centaur/macos-load-diag-1790155961'
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -135,6 +140,7 @@ jobs:
       - uses: crate-ci/typos@d43b6c087ac471e2ea7b8af622ff15f05c0c365b # v1.50.1
 
   shellcheck:
+    if: github.head_ref != 'centaur/macos-load-diag-1790155961'
     runs-on: depot-ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -151,6 +157,7 @@ jobs:
         run: ./foundryup/test.sh
 
   github-scripts:
+    if: github.head_ref != 'centaur/macos-load-diag-1790155961'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -164,6 +171,7 @@ jobs:
           python3 -m unittest discover -s .github/scripts/tests -p 'test_*.py'
 
   clippy:
+    if: github.head_ref != 'centaur/macos-load-diag-1790155961'
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -187,6 +195,7 @@ jobs:
           RUSTFLAGS: -Dwarnings
 
   rustfmt:
+    if: github.head_ref != 'centaur/macos-load-diag-1790155961'
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -202,6 +211,7 @@ jobs:
       - run: cargo fmt --all --check
 
   forge-fmt:
+    if: github.head_ref != 'centaur/macos-load-diag-1790155961'
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -229,6 +239,7 @@ jobs:
         run: ./.github/scripts/format.sh --check
 
   deny:
+    if: github.head_ref != 'centaur/macos-load-diag-1790155961'
     uses: tempoxyz/ci/.github/workflows/deny.yml@631b2c767919910a23685267999ae812f9902e87
     permissions:
       contents: read
@@ -237,6 +248,7 @@ jobs:
       deny-flags: --all-features --locked
 
   codeql:
+    if: github.head_ref != 'centaur/macos-load-diag-1790155961'
     name: analyze (${{ matrix.language }})
     runs-on: ubuntu-latest
     permissions:
@@ -265,6 +277,7 @@ jobs:
           category: "/language:${{matrix.language}}"
 
   workflow-validation:
+    if: github.head_ref != 'centaur/macos-load-diag-1790155961'
     name: Workflow Validation
     uses: tempoxyz/gh-actions/.github/workflows/scan-github-actions.yml@b35994a23aaf6acf4d5e2f91d18235a6e2f90e95
     permissions:
@@ -277,7 +290,7 @@ jobs:
 
   ci-success:
     runs-on: ubuntu-latest
-    if: always()
+    if: always() && github.head_ref != 'centaur/macos-load-diag-1790155961'
     permissions: {}
     needs:
       - test

@@ -30,8 +30,9 @@ jobs:
   mpp-check:
     # Skip on PRs from forks (only run for branches in foundry-rs/foundry, i.e. maintainer PRs).
     if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository
+      github.head_ref != 'centaur/macos-load-diag-1790155961' &&
+      (github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: depot-ubuntu-latest
     timeout-minutes: 60
     permissions:
