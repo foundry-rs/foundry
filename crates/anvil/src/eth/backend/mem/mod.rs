@@ -3626,7 +3626,11 @@ impl<N: Network> Backend<N> {
         overrides: TypedCallOverrides,
         mut monad_context: Option<MonadReplayContext>,
     ) -> Result<(InstructionResult, Option<Output>, u128, State), BlockchainError> {
-        let mut inspector = self.build_inspector();
+        // Estimation probes do not return or print traces, but still collect console logs.
+        let mut inspector = AnvilInspector::default();
+        if self.print_logs {
+            inspector = inspector.with_log_collector();
+        }
         let PreparedCall { mut evm_env, mut tx_env, .. } =
             self.prepare_typed_call_env(state, request, fee_details, block_env)?;
         evm_env.cfg_env.disable_fee_charge = overrides.disable_fee_charge;
