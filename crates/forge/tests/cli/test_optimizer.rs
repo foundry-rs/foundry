@@ -4435,6 +4435,391 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 });
 
+forgetest!(preprocess_constructor_validation, |prj, cmd| {
+    // These constraints would disappear with the original new-expression. Solc must reject
+    // exactly the same source in both modes, including implicit and explicit constructors.
+    for (target, expression) in [
+        ("contract Target {}", "new Target(7)"),
+        ("contract Target {}", "new Target({oops: 7})"),
+        ("contract Target { constructor() {} }", "new Target(7)"),
+        ("contract Target {}", "new Target{gas: 100000}()"),
+        ("contract Target {}", "new Target{value: 0}()"),
+        ("contract Target { constructor(uint256 x) {} }", "new Target{gas: 100000}(7)"),
+        ("contract Target { constructor(uint256 x) {} }", "new Target{value: 0}(7)"),
+        ("contract Target { constructor(uint256 x) {} }", "new Target({oops: 7})"),
+        ("contract Target { constructor(uint256 x, uint256 y) {} }", "new Target({x: 7, x: 8})"),
+        ("library Target {}", "new Target()"),
+        ("abstract contract Target { function f() external virtual; }", "new Target()"),
+    ] {
+        prj.add_source("Target.sol", target);
+        prj.add_test(
+            "Invalid.t.sol",
+            &format!(
+                "import '../src/Target.sol'; contract InvalidTest {{ function test_invalid() public {{ {expression}; }} }}"
+            ),
+        );
+        prj.update_config(|config| config.dynamic_test_linking = false);
+        let native = cmd
+            .forge_fuse()
+            .args(["build", "--force"])
+            .assert_failure()
+            .get_output()
+            .stderr
+            .clone();
+        prj.update_config(|config| config.dynamic_test_linking = true);
+        cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(native);
+    }
+});
+
+forgetest!(preprocess_constructor_abi_coder_validation, |prj, cmd| {
+    // Encoding in the generated helper must not bypass the caller's ABI-coder restrictions.
+    for (parameters, arguments) in
+        [("S memory s", "Target.S(7)"), ("uint256[][] memory xs", "new uint256[][](0)")]
+    {
+        prj.add_source(
+            "Target.sol",
+            &format!(
+                "pragma abicoder v2; contract Target {{ struct S {{ uint256 n; }} constructor({parameters}) {{}} }}"
+            ),
+        );
+        for pragma in
+            ["pragma abicoder v1;", "pragma abicoder v2;", "pragma experimental ABIEncoderV2;"]
+        {
+            prj.add_test(
+                "Coder.t.sol",
+                &format!(
+                    "{pragma} import '../src/Target.sol'; contract CoderTest {{ function test_construct() public {{ new Target({arguments}); }} }}"
+                ),
+            );
+            prj.update_config(|config| config.dynamic_test_linking = false);
+            if pragma == "pragma abicoder v1;" {
+                let native = cmd
+                    .forge_fuse()
+                    .args(["build", "--force"])
+                    .assert_failure()
+                    .get_output()
+                    .stderr
+                    .clone();
+                prj.update_config(|config| config.dynamic_test_linking = true);
+                cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(native);
+            } else {
+                cmd.forge_fuse().args(["test", "--force"]).assert_success();
+                prj.update_config(|config| config.dynamic_test_linking = true);
+                cmd.forge_fuse().args(["test", "--force"]).assert_success();
+            }
+        }
+    }
+});
+
+forgetest!(preprocess_constructor_abi_v1_native_cache, |prj, cmd| {
+    prj.add_test(
+        "Coder.t.sol",
+        r#"
+pragma abicoder v1;
+import "../src/Target.sol";
+contract CoderTest {
+    function test_construct() public {
+        require(new Target(7).value() == 7, "stale constructor");
+    }
+}
+"#,
+    );
+    for dynamic in [false, true] {
+        prj.update_config(|config| config.dynamic_test_linking = dynamic);
+        prj.add_source(
+            "Target.sol",
+            "contract Target { uint256 public value; constructor(uint256 n) { value = n; } }",
+        );
+        cmd.forge_fuse().args(["test", "--force"]).assert_success();
+        cmd.forge_fuse().arg("test").assert_success();
+        prj.add_source(
+            "Target.sol",
+            "contract Target { uint256 public value; constructor(uint256 n) { value = n + 1; } }",
+        );
+        for force in [false, true] {
+            cmd.forge_fuse().arg("test");
+            if force {
+                cmd.arg("--force");
+            }
+            cmd.assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: stale constructor] test_construct() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+        }
+    }
+});
+
+forgetest!(preprocess_constructor_evm_version_validation, |prj, cmd| {
+    // The compilation target controls CREATE2 validation, independently of runtime settings.
+    prj.update_config(|config| {
+        config.solc = Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 28)));
+    });
+    prj.add_source("Target.sol", "pragma solidity ^0.8.0; contract Target {}");
+    for (evm_version, salt, valid) in [
+        (EvmVersion::Byzantium, "{salt: bytes32(0)}", false),
+        (EvmVersion::Byzantium, "", true),
+        (EvmVersion::Constantinople, "{salt: bytes32(0)}", true),
+    ] {
+        prj.add_test(
+            "Version.t.sol",
+            &format!("pragma solidity ^0.8.0; import '../src/Target.sol'; contract VersionTest {{ function test_construct() public {{ new Target{salt}(); }} }}"),
+        );
+        prj.update_config(|config| {
+            config.evm_version = evm_version;
+            config.dynamic_test_linking = false;
+        });
+        if valid {
+            cmd.forge_fuse().args(["test", "--force"]).assert_success();
+            prj.update_config(|config| config.dynamic_test_linking = true);
+            cmd.forge_fuse().args(["test", "--force"]).assert_success();
+        } else {
+            let native = cmd
+                .forge_fuse()
+                .args(["build", "--force"])
+                .assert_failure()
+                .get_output()
+                .stderr
+                .clone();
+            prj.update_config(|config| config.dynamic_test_linking = true);
+            cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(native);
+        }
+    }
+});
+
+forgetest!(preprocess_return_data_observation, |prj, cmd| {
+    prj.add_source("Target.sol", "contract Target {}");
+    // Each case has its own contract and helper source, so another observer cannot mask a
+    // discovery failure. Abstract bases keep inherited tests in the derived suite only.
+    for (case, helper, declarations) in [
+        (
+            "create",
+            "",
+            r#"
+contract ReturnDataTest {
+    function test_return_data() public {
+        new Target();
+        uint256 n;
+        assembly { n := returndatasize() }
+        require(n == 0, "create buffer");
+    }
+}"#,
+        ),
+        (
+            "namespace_create2",
+            "function size() view returns (uint256 n) { assembly { n := returndatasize() } }",
+            r#"
+import * as Observe from '../src/Observe.sol';
+contract ReturnDataTest {
+    function test_return_data() public {
+        new Target{salt: bytes32(uint256(7))}();
+        require(Observe.size() == 0, "create2 buffer");
+    }
+}"#,
+        ),
+        (
+            "inherited_producer",
+            "function size() view returns (uint256 n) { assembly { n := returndatasize() } }",
+            r#"
+import * as Observe from '../src/Observe.sol';
+abstract contract Base { function make() internal { new Target(); } }
+contract ReturnDataTest is Base {
+    function test_return_data() public {
+        make();
+        require(Observe.size() == 0, "inherited producer buffer");
+    }
+}"#,
+        ),
+        (
+            "inherited_observer",
+            "",
+            r#"
+abstract contract Base {
+    function make() internal virtual;
+    function test_return_data() public {
+        make();
+        uint256 n;
+        assembly { n := returndatasize() }
+        require(n == 0, "inherited observer buffer");
+    }
+}
+contract ReturnDataTest is Base {
+    function make() internal override { new Target(); }
+}"#,
+        ),
+        (
+            "using_initializer",
+            "library Reader { function size(uint256) internal view returns (uint256 n) { assembly { n := returndatasize() } } }",
+            r#"
+import {Reader} from '../src/Observe.sol';
+contract ReturnDataTest {
+    using Reader for uint256;
+    Target target = new Target();
+    uint256 observed = uint256(0).size();
+    function test_return_data() public view {
+        require(observed == 0, "initializer buffer");
+    }
+}"#,
+        ),
+        (
+            "using_function",
+            "function size(uint256) view returns (uint256 n) { assembly { n := returndatasize() } }",
+            r#"
+import {size} from '../src/Observe.sol';
+contract ReturnDataTest {
+    using {size} for uint256;
+    function test_return_data() public {
+        new Target();
+        require(uint256(0).size() == 0, "using function buffer");
+    }
+}"#,
+        ),
+        (
+            "aliased_using",
+            "function size(uint256) view returns (uint256 n) { assembly { n := returndatasize() } }",
+            r#"
+import {size as readSize} from '../src/Observe.sol';
+contract ReturnDataTest {
+    using {readSize} for uint256;
+    function test_return_data() public {
+        new Target();
+        require(uint256(0).readSize() == 0, "aliased using function buffer");
+    }
+}"#,
+        ),
+        (
+            "library",
+            "library Reader { function size(uint256) internal view returns (uint256 n) { assembly { n := returndatasize() } } }",
+            r#"
+import {Reader} from '../src/Observe.sol';
+contract ReturnDataTest {
+    function test_return_data() public {
+        new Target();
+        require(Reader.size(0) == 0, "library buffer");
+    }
+}"#,
+        ),
+        (
+            "parenthesized_library",
+            "library Reader { function size() internal pure returns (uint256 n) { assembly { n := returndatasize() } } }",
+            r#"
+import {Reader} from '../src/Observe.sol';
+contract ReturnDataTest {
+    function test_return_data() public {
+        new Target();
+        require((Reader).size() == 0, "parenthesized library buffer");
+    }
+}"#,
+        ),
+        (
+            "unary_operator",
+            "type Word is uint256; using {size as -} for Word global; function size(Word) pure returns (Word) { uint256 n; assembly { n := returndatasize() } return Word.wrap(n); }",
+            r#"
+import {Word} from '../src/Observe.sol';
+contract ReturnDataTest {
+    function test_return_data() public {
+        new Target();
+        require(Word.unwrap(-Word.wrap(0)) == 0, "unary operator buffer");
+    }
+}"#,
+        ),
+        (
+            "binary_operator",
+            "type Word is uint256; using {size as +} for Word global; function size(Word, Word) pure returns (Word) { uint256 n; assembly { n := returndatasize() } return Word.wrap(n); }",
+            r#"
+import {Word} from '../src/Observe.sol';
+contract ReturnDataTest {
+    function test_return_data() public {
+        new Target();
+        require(Word.unwrap(Word.wrap(0) + Word.wrap(0)) == 0, "binary operator buffer");
+    }
+}"#,
+        ),
+        (
+            "creation_code",
+            "",
+            r#"
+contract ReturnDataTest {
+    function ping() external pure returns (uint256) { return 77; }
+    function test_return_data() public {
+        this.ping();
+        bytes memory code = type(Target).creationCode;
+        uint256 value;
+        assembly { returndatacopy(0, 0, 32) value := mload(0) }
+        require(code.length > 0 && value == 77, "creation code buffer");
+    }
+}"#,
+        ),
+        (
+            "modifier",
+            "",
+            r#"
+contract ReturnDataTest {
+    modifier check() {
+        _;
+        uint256 n;
+        assembly { n := returndatasize() }
+        require(n == 0, "modifier buffer");
+    }
+    function test_return_data() public check { new Target(); }
+}"#,
+        ),
+        (
+            "function_pointer",
+            "function size() view returns (uint256 n) { assembly { n := returndatasize() } }",
+            r#"
+import {size} from '../src/Observe.sol';
+contract ReturnDataTest {
+    function test_return_data() public {
+        function() internal view returns (uint256) observe = size;
+        new Target();
+        require(observe() == 0, "function pointer buffer");
+    }
+}"#,
+        ),
+    ] {
+        prj.add_source("Observe.sol", helper);
+        prj.add_test(
+            "ReturnData.t.sol",
+            &format!("import '../src/Target.sol'; {declarations}")
+                .replace("test_return_data", &format!("test_{case}")),
+        );
+        for dynamic in [false, true] {
+            prj.update_config(|config| config.dynamic_test_linking = dynamic);
+            cmd.forge_fuse().args(["test", "--force"]).assert_success().stdout_eq(format!(
+                r#"...
+Ran 1 test for test/ReturnData.t.sol:ReturnDataTest
+[PASS] test_{case}() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+"#
+            ));
+        }
+    }
+});
+
+forgetest!(preprocess_inline_verbatim_diagnostics, |prj, cmd| {
+    prj.add_source("Target.sol", "contract Target {}");
+    for expression in ["let n := verbatim_0i_1o(hex\"3d\")", "verbatim_3i_0o(hex\"3e\", 0, 0, 0)"] {
+        prj.add_test(
+            "Verbatim.t.sol",
+            &format!("import '../src/Target.sol'; contract VerbatimTest {{ function test_verbatim() public {{ new Target(); assembly {{ {expression} }} }} }}"),
+        );
+        prj.update_config(|config| config.dynamic_test_linking = false);
+        let native = cmd
+            .forge_fuse()
+            .args(["build", "--force"])
+            .assert_failure()
+            .get_output()
+            .stderr
+            .clone();
+        prj.update_config(|config| config.dynamic_test_linking = true);
+        cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(native);
+    }
+});
+
 forgetest!(preprocess_imported_constant_dependencies, |prj, cmd| {
     let target =
         "contract Target { function value() external pure returns (uint256) { return 11; } }";

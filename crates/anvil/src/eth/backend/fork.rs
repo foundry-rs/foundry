@@ -3,7 +3,10 @@
 use crate::eth::{backend::db::Db, error::BlockchainError};
 use alloy_chains::NamedChain;
 use alloy_consensus::{BlockHeader, TrieAccount};
-use alloy_eips::eip2930::AccessListResult;
+use alloy_eips::{
+    eip2930::AccessListResult,
+    eip7928::{BlockAccessList, compute_block_access_list_hash, validate_block_access_list},
+};
 use alloy_network::{
     AnyNetwork, AnyRpcBlock, BlockResponse, Network, TransactionResponse,
     primitives::HeaderResponse,
@@ -35,9 +38,9 @@ use alloy_rpc_types_eth::{AccountInfo, Bundle, EthCallResponse, StateContext};
 use alloy_rpc_types_mev::{EthCallBundle, EthCallBundleResponse};
 use alloy_serde::WithOtherFields;
 use alloy_transport::TransportError;
-use foundry_common::provider::RetryProvider;
+use foundry_common::provider::{RetryProvider, is_rpc_method_not_found};
 use foundry_evm::{
-    backend::{AccountFetchPolicy, account_fetch_policy_for_source},
+    backend::{AccountFetchPolicy, BlockchainDb, account_fetch_policy_for_source},
     hardfork::FoundryHardfork,
 };
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
@@ -46,7 +49,11 @@ use parking_lot::{
     RawRwLock, RwLock,
     lock_api::{RwLockReadGuard, RwLockWriteGuard},
 };
-use revm::context_interface::block::BlobExcessGasAndPrice;
+use revm::{
+    context_interface::block::BlobExcessGasAndPrice,
+    primitives::hardfork::SpecId,
+    state::{AccountInfo as RevmAccountInfo, Bytecode},
+};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::RwLock as AsyncRwLock;
 
@@ -908,6 +915,8 @@ pub struct ClientForkConfig<N: Network = AnyNetwork> {
     pub hardfork: Option<FoundryHardfork>,
     /// Stable endpoint identity captured with the fork block.
     pub(crate) endpoint_identity: ForkEndpointIdentity,
+    /// Discovery identified a local node or could not rule out mutable source state.
+    pub(crate) state_is_mutable: bool,
     /// The timestamp for the forked block
     pub timestamp: u64,
     /// The basefee of the forked block
@@ -955,6 +964,120 @@ impl<N: Network> ClientForkConfig<N> {
         trace!(target: "fork", "Updated block number={} hash={:?}", block_number, block_hash);
     }
 }
+
+impl ClientForkConfig {
+    /// Accepts only a single, immutable Ethereum source under Cancun deletion rules.
+    fn bal_eligible(&self) -> bool {
+        let identity = self.endpoint_identity;
+        !self.state_is_mutable
+            && self.fork_urls.len() == 1
+            && !identity.is_authoritative()
+            && identity.network.is_none_or(|network| network.is_ethereum())
+            && matches!(
+                NamedChain::try_from(identity.source_chain_id),
+                Ok(NamedChain::Mainnet
+                    | NamedChain::Sepolia
+                    | NamedChain::Holesky
+                    | NamedChain::Hoodi)
+            )
+            && matches!(
+                FoundryHardfork::from_chain_and_timestamp(identity.source_chain_id, self.timestamp),
+                Some(hardfork @ FoundryHardfork::Ethereum(_)) if SpecId::from(hardfork) >= SpecId::CANCUN
+            )
+    }
+
+    /// Prefills the remote cache before local overrides, without making BAL support mandatory.
+    pub(crate) async fn prefill_cache(&self, db: &BlockchainDb) {
+        if !self.bal_eligible() || db.meta().read().fork_hash != Some(self.block_hash) {
+            return;
+        }
+
+        let prefill = async {
+            let bal = match self
+                .provider
+                .raw_request("eth_getBlockAccessList".into(), (self.block_hash,))
+                .await
+            {
+                Err(error) if is_rpc_method_not_found(&error) => {
+                    self.provider.get_block_access_list_by_hash(self.block_hash).await
+                }
+                response => response,
+            };
+            let Some(bal) = bal? else { return Ok(()) };
+            let Some(block) = self.provider.get_block(BlockId::hash(self.block_hash)).await? else {
+                return Ok(());
+            };
+            eyre::ensure!(block.header.hash == self.block_hash, "fork block hash mismatch");
+            validate_bal(&bal, block.transactions.len(), block.header.block_access_list_hash())?;
+
+            // Anvil can mutate state without changing the block hash. Discard the BAL if
+            // the source became local or its identity is now inconclusive.
+            match self
+                .provider
+                .raw_request::<_, serde_json::Value>("anvil_nodeInfo".into(), ())
+                .await
+            {
+                Err(error) if is_rpc_method_not_found(&error) => {}
+                _ => return Ok(()),
+            }
+            cache_bal(db, bal);
+            Ok::<_, eyre::Report>(())
+        };
+        // Include retries and validation RPCs in the optional startup budget.
+        match tokio::time::timeout(Duration::from_millis(500), prefill).await {
+            Ok(Ok(())) => {}
+            Ok(Err(_)) => debug!(target: "node", "fork BAL prefill unavailable"),
+            Err(_) => debug!(target: "node", "fork BAL prefill timed out"),
+        }
+    }
+}
+
+/// Validates the entire response before any part of it can enter the cache.
+fn validate_bal(
+    bal: &BlockAccessList,
+    transaction_count: usize,
+    expected_hash: Option<B256>,
+) -> eyre::Result<()> {
+    validate_block_access_list(bal, transaction_count)?;
+    if let Some(expected_hash) = expected_hash {
+        eyre::ensure!(compute_block_access_list_hash(bal) == expected_hash, "BAL hash mismatch");
+    }
+    for account in bal {
+        for change in &account.code_changes {
+            Bytecode::new_raw_checked(change.new_code.clone())?;
+        }
+    }
+    Ok(())
+}
+
+/// Inserts validated post-state without inventing missing account fields or read-only slot values.
+fn cache_bal(db: &BlockchainDb, bal: BlockAccessList) {
+    let mut storage = db.storage().write();
+    let mut accounts = db.accounts().write();
+    for account in bal {
+        if let (Some(balance), Some(nonce), Some(code)) =
+            (account.balance_post_state(), account.nonce_post_state(), account.code_changes.last())
+        {
+            let code = Bytecode::new_raw(code.new_code.clone());
+            accounts.entry(account.address).or_insert_with(|| RevmAccountInfo {
+                balance,
+                nonce,
+                code_hash: code.hash_slow(),
+                code: Some(code),
+                account_id: None,
+            });
+        }
+        if !account.storage_changes.is_empty() {
+            let slots = storage.entry(account.address).or_default();
+            for (slot, value) in account.storage_post_states() {
+                slots.entry(slot).or_insert(value);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod bal_tests;
 
 /// Contains cached state fetched to serve EthApi requests
 ///
