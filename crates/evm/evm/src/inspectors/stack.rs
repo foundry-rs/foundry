@@ -675,8 +675,14 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
     /// Set whether to enable the edge coverage collector with default config.
     #[inline]
     pub fn collect_edge_coverage(&mut self, yes: bool) {
-        self.edge_coverage =
-            yes.then(|| EdgeCovInspector::with_config(EdgeCovConfig::default()).into());
+        self.edge_coverage = yes.then(|| EdgeCovInspector::default().into());
+        self.refresh_static_step_dispatch();
+    }
+
+    /// Enable edge coverage with an explicit configuration.
+    #[inline]
+    pub fn collect_edge_coverage_with_edge_config(&mut self, config: EdgeCovConfig) {
+        self.edge_coverage = Some(EdgeCovInspector::with_config(config).into());
         self.refresh_static_step_dispatch();
     }
 
