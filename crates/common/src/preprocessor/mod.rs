@@ -234,7 +234,7 @@ mod tests {
             ("test/Mock.sol", "import '../src/Dep.sol'; contract Mock is Dep {}"),
             (
                 "test/Deploy.sol",
-                "import '../src/Dep.sol'; contract Deploy { function deploy() public returns (Dep) { return new Dep(); } function native() public pure returns (bytes memory) { return type(Dep).creationCode; } }",
+                "import '../src/Dep.sol'; contract Deploy { bytes constant CODE = type(Dep).creationCode; bytes32 constant CODE_HASH = keccak256(type(Dep).creationCode); bytes32 immutable codeHash = keccak256(type(Dep).creationCode); function deploy() public returns (Dep) { return new Dep(); } function native() public pure returns (bytes memory) { return type(Dep).creationCode; } }",
             ),
         ]
         .into_iter()
@@ -257,6 +257,22 @@ mod tests {
         let source = &input.input.sources[&PathBuf::from("test/Deploy.sol")].content;
         assert!(!source.contains("return new Dep();"), "eligible deployment was not rewritten");
         assert!(source.contains("type(Dep).creationCode"), "native dependency was lost");
+        assert!(
+            source.contains("bytes constant CODE = type(Dep).creationCode"),
+            "constant creation code was rewritten"
+        );
+        assert!(
+            source.contains("bytes32 constant CODE_HASH = keccak256(type(Dep).creationCode)"),
+            "constant creation code hash was rewritten"
+        );
+        assert!(
+            !source.contains("immutable codeHash = keccak256(type(Dep).creationCode)"),
+            "constant preservation leaked into the immutable initializer"
+        );
+        assert!(
+            source.contains("immutable codeHash = keccak256(VmContractHelper"),
+            "immutable creation code was not rewritten"
+        );
         assert!(mocks.contains(&paths.root.join("test/Mock.sol")));
     }
 
