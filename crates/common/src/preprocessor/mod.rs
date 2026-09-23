@@ -1,7 +1,7 @@
 use crate::{errors::convert_solar_errors, fs::normalize_path};
 use foundry_compilers::{
     Compiler, ProjectPathsConfig, SourceParser, apply_updates,
-    artifacts::SolcLanguage,
+    artifacts::{EvmVersion, SolcLanguage},
     error::Result,
     multi::{MultiCompiler, MultiCompilerInput, MultiCompilerLanguage},
     project::{NativeDependencyState, Preprocessor, PreprocessorState},
@@ -18,7 +18,7 @@ mod data;
 use data::{collect_preprocessor_data, create_deploy_helpers};
 
 mod deps;
-use deps::{PreprocessorDependencies, remove_bytecode_dependencies};
+use deps::{ConstructorContext, PreprocessorDependencies, remove_bytecode_dependencies};
 
 /// Preprocessor that replaces static bytecode linking in tests and scripts (`new Contract`) with
 /// dynamic linkage through (`Vm.create*`).
@@ -31,7 +31,7 @@ pub struct DynamicTestLinkingPreprocessor;
 
 impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
     fn cache_version(&self) -> u64 {
-        5
+        6
     }
 
     fn preprocess(
@@ -68,6 +68,16 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
             return Ok(());
         }
 
+        let constructor_context = ConstructorContext {
+            abi_coder_v2: input.version >= semver::Version::new(0, 8, 0),
+            // Without an explicit target, preserve native validation rather than guessing the
+            // selected compiler's default EVM version.
+            supports_create2: input
+                .input
+                .settings
+                .evm_version
+                .is_some_and(|version| version >= EvmVersion::Constantinople),
+        };
         let original_sources = input.input.sources.clone();
         let mut parser_paths = paths.clone();
         parser_paths.include_paths.extend(input.cli_settings.include_paths.iter().cloned());
@@ -108,6 +118,7 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
             // but vm.deployCode runs at a deeper depth and bypasses that redirect).
             let deps = PreprocessorDependencies::new(
                 gcx,
+                constructor_context,
                 &preprocessed_paths,
                 &script_paths,
                 paths,
@@ -149,7 +160,7 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
 
 impl Preprocessor<MultiCompiler> for DynamicTestLinkingPreprocessor {
     fn cache_version(&self) -> u64 {
-        5
+        6
     }
 
     fn preprocess(
@@ -306,6 +317,69 @@ mod tests {
         .unwrap();
         let MultiCompilerInput::Solc(input) = input else { unreachable!() };
         assert_preprocessed(&paths, &input, &mocks);
+    }
+
+    #[test]
+    fn constructor_abi_context_preserves_source_pragmas_and_version_defaults() {
+        for (minor, pragma, native) in [
+            (7, "", true),
+            (8, "", false),
+            (8, "pragma abicoder /* comment */ v1;", true),
+            (7, "pragma abicoder v2;", false),
+            (7, "pragma experimental ABIEncoderV2;", false),
+        ] {
+            let (_root, paths, mut input) = input();
+            input.version = Version::new(0, minor, 6);
+            input.input.sources = [
+                ("src/Dep.sol", "contract Dep { constructor(uint256 n) {} }".to_string()),
+                ("test/Deploy.sol", format!("{pragma} import '../src/Dep.sol'; contract Deploy {{ function deploy() public {{ new Dep(7); }} }}")),
+                // A pragma in another source must not change this source's ABI context.
+                ("test/Other.sol", "pragma abicoder v2; import '../src/Dep.sol'; contract Other { function deploy() public { new Dep(7); } }".to_string()),
+            ].into_iter().map(|(path, source)| (PathBuf::from(path), Source::new(source))).collect();
+            <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::preprocess(
+                &DynamicTestLinkingPreprocessor,
+                &SolcCompiler::default(),
+                &mut input,
+                &paths,
+                &mut HashSet::new(),
+            )
+            .unwrap();
+            let source = &input.input.sources[&PathBuf::from("test/Deploy.sol")].content;
+            assert_eq!(source.contains("new Dep(7)"), native, "0.{minor}.6 {pragma}");
+            let other = &input.input.sources[&PathBuf::from("test/Other.sol")].content;
+            assert!(!other.contains("new Dep(7)"), "unrelated v2 source was not rewritten");
+        }
+    }
+
+    #[test]
+    fn constructor_salt_uses_compiler_evm_target() {
+        for (evm_version, native) in [
+            (None, true),
+            (Some(EvmVersion::Byzantium), true),
+            (Some(EvmVersion::Constantinople), false),
+            (Some(EvmVersion::Prague), false),
+        ] {
+            let (_root, paths, mut input) = input();
+            input.input.settings.evm_version = evm_version;
+            input.input.sources.insert(
+                PathBuf::from("test/Deploy.sol"),
+                Source::new("pragma abicoder v1; import '../src/Dep.sol'; contract Deploy { function deploy() public { new Dep{salt: bytes32(0)}(); } function plain() public { new Dep(); } }"),
+            );
+            <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::preprocess(
+                &DynamicTestLinkingPreprocessor,
+                &SolcCompiler::default(),
+                &mut input,
+                &paths,
+                &mut HashSet::new(),
+            )
+            .unwrap();
+            let source = &input.input.sources[&PathBuf::from("test/Deploy.sol")].content;
+            assert_eq!(source.contains("new Dep{salt:"), native, "{evm_version:?}");
+            assert!(
+                !source.contains("new Dep();"),
+                "ordinary parameterless CREATE was not rewritten"
+            );
+        }
     }
 
     #[test]

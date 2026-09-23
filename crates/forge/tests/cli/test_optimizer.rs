@@ -4435,6 +4435,159 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 });
 
+forgetest!(preprocess_constructor_validation, |prj, cmd| {
+    // These constraints would disappear with the original new-expression. Solc must reject
+    // exactly the same source in both modes, including implicit and explicit constructors.
+    for (target, expression) in [
+        ("contract Target {}", "new Target(7)"),
+        ("contract Target {}", "new Target({oops: 7})"),
+        ("contract Target { constructor() {} }", "new Target(7)"),
+        ("contract Target {}", "new Target{gas: 100000}()"),
+        ("contract Target {}", "new Target{value: 0}()"),
+        ("contract Target { constructor(uint256 x) {} }", "new Target{gas: 100000}(7)"),
+        ("contract Target { constructor(uint256 x) {} }", "new Target{value: 0}(7)"),
+        ("contract Target { constructor(uint256 x) {} }", "new Target({oops: 7})"),
+        ("contract Target { constructor(uint256 x, uint256 y) {} }", "new Target({x: 7, x: 8})"),
+        ("library Target {}", "new Target()"),
+        ("abstract contract Target { function f() external virtual; }", "new Target()"),
+    ] {
+        prj.add_source("Target.sol", target);
+        prj.add_test(
+            "Invalid.t.sol",
+            &format!(
+                "import '../src/Target.sol'; contract InvalidTest {{ function test_invalid() public {{ {expression}; }} }}"
+            ),
+        );
+        prj.update_config(|config| config.dynamic_test_linking = false);
+        let native = cmd
+            .forge_fuse()
+            .args(["build", "--force"])
+            .assert_failure()
+            .get_output()
+            .stderr
+            .clone();
+        prj.update_config(|config| config.dynamic_test_linking = true);
+        cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(native);
+    }
+});
+
+forgetest!(preprocess_constructor_abi_coder_validation, |prj, cmd| {
+    // Encoding in the generated helper must not bypass the caller's ABI-coder restrictions.
+    for (parameters, arguments) in
+        [("S memory s", "Target.S(7)"), ("uint256[][] memory xs", "new uint256[][](0)")]
+    {
+        prj.add_source(
+            "Target.sol",
+            &format!(
+                "pragma abicoder v2; contract Target {{ struct S {{ uint256 n; }} constructor({parameters}) {{}} }}"
+            ),
+        );
+        for pragma in
+            ["pragma abicoder v1;", "pragma abicoder v2;", "pragma experimental ABIEncoderV2;"]
+        {
+            prj.add_test(
+                "Coder.t.sol",
+                &format!(
+                    "{pragma} import '../src/Target.sol'; contract CoderTest {{ function test_construct() public {{ new Target({arguments}); }} }}"
+                ),
+            );
+            prj.update_config(|config| config.dynamic_test_linking = false);
+            if pragma == "pragma abicoder v1;" {
+                let native = cmd
+                    .forge_fuse()
+                    .args(["build", "--force"])
+                    .assert_failure()
+                    .get_output()
+                    .stderr
+                    .clone();
+                prj.update_config(|config| config.dynamic_test_linking = true);
+                cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(native);
+            } else {
+                cmd.forge_fuse().args(["test", "--force"]).assert_success();
+                prj.update_config(|config| config.dynamic_test_linking = true);
+                cmd.forge_fuse().args(["test", "--force"]).assert_success();
+            }
+        }
+    }
+});
+
+forgetest!(preprocess_constructor_abi_v1_native_cache, |prj, cmd| {
+    prj.add_test(
+        "Coder.t.sol",
+        r#"
+pragma abicoder v1;
+import "../src/Target.sol";
+contract CoderTest {
+    function test_construct() public {
+        require(new Target(7).value() == 7, "stale constructor");
+    }
+}
+"#,
+    );
+    for dynamic in [false, true] {
+        prj.update_config(|config| config.dynamic_test_linking = dynamic);
+        prj.add_source(
+            "Target.sol",
+            "contract Target { uint256 public value; constructor(uint256 n) { value = n; } }",
+        );
+        cmd.forge_fuse().args(["test", "--force"]).assert_success();
+        cmd.forge_fuse().arg("test").assert_success();
+        prj.add_source(
+            "Target.sol",
+            "contract Target { uint256 public value; constructor(uint256 n) { value = n + 1; } }",
+        );
+        for force in [false, true] {
+            cmd.forge_fuse().arg("test");
+            if force {
+                cmd.arg("--force");
+            }
+            cmd.assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: stale constructor] test_construct() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+        }
+    }
+});
+
+forgetest!(preprocess_constructor_evm_version_validation, |prj, cmd| {
+    // The compilation target controls CREATE2 validation, independently of runtime settings.
+    prj.update_config(|config| {
+        config.solc = Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 28)));
+    });
+    prj.add_source("Target.sol", "pragma solidity ^0.8.0; contract Target {}");
+    for (evm_version, salt, valid) in [
+        (EvmVersion::Byzantium, "{salt: bytes32(0)}", false),
+        (EvmVersion::Byzantium, "", true),
+        (EvmVersion::Constantinople, "{salt: bytes32(0)}", true),
+    ] {
+        prj.add_test(
+            "Version.t.sol",
+            &format!("pragma solidity ^0.8.0; import '../src/Target.sol'; contract VersionTest {{ function test_construct() public {{ new Target{salt}(); }} }}"),
+        );
+        prj.update_config(|config| {
+            config.evm_version = evm_version;
+            config.dynamic_test_linking = false;
+        });
+        if valid {
+            cmd.forge_fuse().args(["test", "--force"]).assert_success();
+            prj.update_config(|config| config.dynamic_test_linking = true);
+            cmd.forge_fuse().args(["test", "--force"]).assert_success();
+        } else {
+            let native = cmd
+                .forge_fuse()
+                .args(["build", "--force"])
+                .assert_failure()
+                .get_output()
+                .stderr
+                .clone();
+            prj.update_config(|config| config.dynamic_test_linking = true);
+            cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(native);
+        }
+    }
+});
+
 forgetest!(preprocess_return_data_observation, |prj, cmd| {
     prj.add_source("Target.sol", "contract Target {}");
     // Each case has its own contract and helper source, so another observer cannot mask a
