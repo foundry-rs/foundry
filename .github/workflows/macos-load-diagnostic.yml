@@ -33,7 +33,8 @@ jobs:
           persist-credentials: false
           path: diagnostic
 
-      - name: Start resource sampling before hardening
+      # StepSecurity's pre-job hook runs before all ordinary workflow steps.
+      - name: Start resource sampling before the main hardening step
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/macos-diagnostic"
