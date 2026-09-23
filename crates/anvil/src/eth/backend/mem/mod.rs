@@ -3971,27 +3971,24 @@ impl<N: Network> Backend<N> {
         hash: B256,
         trace_types: HashSet<TraceType>,
     ) -> Result<TraceResults, BlockchainError> {
-        let block_number =
-            self.blockchain.storage.read().transactions.get(&hash).map(|tx| tx.block_number);
+        let mined = self.blockchain.storage.read().transactions.contains_key(&hash);
 
         // If the transaction was mined locally, replay it locally. Do not fall
         // through to the fork when the local replay fails; that would misreport
         // a local data problem as an upstream transaction lookup.
-        if let Some(block_number) = block_number {
-            let results = self
-                .mined_parity_trace_replay_block_transactions(block_number, &trace_types)?
-                .ok_or(BlockchainError::BlockNotFound)?;
-
-            return results
-                .into_iter()
-                .find(|result| result.transaction_hash == hash)
-                .map(|result| result.full_trace)
-                .ok_or_else(|| {
-                    BlockchainError::Internal(format!(
-                        "replayed block {block_number} for local transaction {hash:?}, \
-                         but its trace was missing"
-                    ))
-                });
+        if mined {
+            let inspector =
+                TracingInspector::new(TracingInspectorConfig::from_parity_config(&trace_types));
+            return self.replay_tx_with_inspector(
+                hash,
+                inspector,
+                |result, cache_db, inspector, _, _| {
+                    inspector
+                        .into_parity_builder()
+                        .into_trace_results_with_state(&result, &trace_types, &cache_db)
+                        .map_err(BlockchainError::from)
+                },
+            )?;
         }
 
         // Not known locally: forward to the fork if present.
@@ -4158,6 +4155,64 @@ impl<N: Network> Backend<N> {
         }
 
         Ok(results)
+    }
+
+    fn replay_tx_with_inspector<I, F, T>(
+        &self,
+        hash: B256,
+        mut inspector: I,
+        f: F,
+    ) -> Result<T, BlockchainError>
+    where
+        for<'a> I: BackendInspector<WrapDatabaseRef<&'a CacheDB<Box<&'a StateDb>>>> + 'a,
+        for<'a> F:
+            FnOnce(ResultAndState<HaltReason>, CacheDB<Box<&'a StateDb>>, I, TxEnv, EvmEnv) -> T,
+    {
+        let block = {
+            let storage = self.blockchain.storage.read();
+            let MinedTransaction { block_hash, .. } =
+                storage.transactions.get(&hash).ok_or(BlockchainError::TransactionNotFound)?;
+
+            storage.blocks.get(block_hash).cloned().ok_or(BlockchainError::BlockNotFound)?
+        };
+
+        let index = block
+            .body
+            .transactions
+            .iter()
+            .position(|tx| tx.hash() == hash)
+            .expect("transaction not found in block");
+
+        let trace = |parent_state: &StateDb| -> Result<T, BlockchainError> {
+            let (mut cache_db, evm_env, hardfork) =
+                self.prepare_block_replay_with_db(&block, Box::new(parent_state))?;
+            self.replay_mined_transaction_prefix(&mut cache_db, &evm_env, hardfork, &block, index)?;
+
+            let target_tx = block.body.transactions[index].clone();
+            let target_tx = self.pending_mined_transaction(target_tx)?;
+            let monad_context = self.active_monad_context_for_mined_block(&block)?;
+            let transaction_context = monad_execution_context_at(monad_context.as_ref(), index);
+            let (result, base_tx_env) = self.replay_envelope_with_inspector_ref_and_context(
+                &cache_db,
+                &evm_env,
+                &mut inspector,
+                &target_tx,
+                EnvelopeExecution::replay(transaction_context, hardfork),
+            )?;
+
+            Ok(f(result, cache_db, inspector, base_tx_env, evm_env))
+        };
+
+        let read_guard = self.states.upgradable_read();
+        if let Some(state) = read_guard.get_state(&block.header.parent_hash) {
+            trace(state)
+        } else {
+            let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
+            let state = write_guard
+                .get_on_disk_state(&block.header.parent_hash)
+                .ok_or(BlockchainError::BlockNotFound)?;
+            trace(state)
+        }
     }
 
     // Returns the traces matching a given filter
@@ -6914,67 +6969,6 @@ where
             Ok(db.basic_ref(address)?.unwrap_or_default().nonce)
         })
         .await?
-    }
-
-    fn replay_tx_with_inspector<I, F, T>(
-        &self,
-        hash: B256,
-        mut inspector: I,
-        f: F,
-    ) -> Result<T, BlockchainError>
-    where
-        for<'a> I: BackendInspector<WrapDatabaseRef<&'a CacheDB<Box<&'a StateDb>>>> + 'a,
-        for<'a> F:
-            FnOnce(ResultAndState<HaltReason>, CacheDB<Box<&'a StateDb>>, I, TxEnv, EvmEnv) -> T,
-    {
-        let block = {
-            let storage = self.blockchain.storage.read();
-            let MinedTransaction { block_hash, .. } = storage
-                .transactions
-                .get(&hash)
-                .cloned()
-                .ok_or(BlockchainError::TransactionNotFound)?;
-
-            storage.blocks.get(&block_hash).cloned().ok_or(BlockchainError::BlockNotFound)?
-        };
-
-        let index = block
-            .body
-            .transactions
-            .iter()
-            .position(|tx| tx.hash() == hash)
-            .expect("transaction not found in block");
-
-        let trace = |parent_state: &StateDb| -> Result<T, BlockchainError> {
-            let (mut cache_db, evm_env, hardfork) =
-                self.prepare_block_replay_with_db(&block, Box::new(parent_state))?;
-            self.replay_mined_transaction_prefix(&mut cache_db, &evm_env, hardfork, &block, index)?;
-
-            let target_tx = block.body.transactions[index].clone();
-            let target_tx = self.pending_mined_transaction(target_tx)?;
-            let monad_context = self.active_monad_context_for_mined_block(&block)?;
-            let transaction_context = monad_execution_context_at(monad_context.as_ref(), index);
-            let (result, base_tx_env) = self.replay_envelope_with_inspector_ref_and_context(
-                &cache_db,
-                &evm_env,
-                &mut inspector,
-                &target_tx,
-                EnvelopeExecution::replay(transaction_context, hardfork),
-            )?;
-
-            Ok(f(result, cache_db, inspector, base_tx_env, evm_env))
-        };
-
-        let read_guard = self.states.upgradable_read();
-        if let Some(state) = read_guard.get_state(&block.header.parent_hash) {
-            trace(state)
-        } else {
-            let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
-            let state = write_guard
-                .get_on_disk_state(&block.header.parent_hash)
-                .ok_or(BlockchainError::BlockNotFound)?;
-            trace(state)
-        }
     }
 
     /// Traces the transaction with the js tracer
