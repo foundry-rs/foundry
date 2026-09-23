@@ -363,6 +363,8 @@ pub struct InnerContextData {
     original_origin: Address,
     /// Accounts that were created locally before entering the nested EVM context.
     locally_created_accounts: AddressHashSet,
+    /// Depth of the isolated root frame in the surrounding trace.
+    root_depth: usize,
 }
 
 /// Gas accounting carried across an isolated frame's synthetic transaction boundary.
@@ -463,6 +465,8 @@ pub struct InspectorStackInner {
     top_level_frame_failed_before_rewrite: bool,
     /// Whether the root call of the active isolated transaction executed as a precompile.
     isolated_call_was_precompile: Option<bool>,
+    /// Synthetic CREATE depth corresponding to an outer top-level deployment.
+    synthetic_create_depth: Option<usize>,
     /// Address that reverted the call, if any.
     pub reverter: Option<Address>,
     /// LIFO stack tracking CREATE2 frames that were redirected to the CREATE2 factory.
@@ -505,8 +509,12 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         ecx: &mut FoundryContextFor<'_, FEN>,
         f: NestedEvmClosureFor<'_, FEN>,
     ) -> Result<(), EVMError<DatabaseError>> {
+        let previous = self.synthetic_create_depth;
+        self.synthetic_create_depth = (ecx.journal().depth() == 1).then_some(2);
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
-        with_inherited_evm::<FEN::EvmFactory, _>(ecx, &mut inspector, f)
+        let result = with_inherited_evm::<FEN::EvmFactory, _>(ecx, &mut inspector, f);
+        self.synthetic_create_depth = previous;
+        result
     }
 
     fn with_fresh_nested_evm(
@@ -569,6 +577,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         self.inner_context_data = enabled.then(|| InnerContextData {
             original_origin: original_origin.expect("origin required when enabling inner ctx"),
             locally_created_accounts: AddressHashSet::default(),
+            root_depth: 1,
         });
     }
 }
@@ -1036,9 +1045,11 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             .iter()
             .filter_map(|(addr, acc)| acc.is_created_locally().then_some(*addr))
             .collect();
+        let root_depth = ecx.journal().depth();
         self.inner_context_data = Some(InnerContextData {
             original_origin: cached_tx_env.caller(),
             locally_created_accounts,
+            root_depth,
         });
         self.in_inner_context = true;
 
@@ -1079,8 +1090,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                         true,
                     );
                 }
-                // Set depth to 1 to make sure traces are collected correctly.
-                evm.journal_inner_mut().depth = 1;
+                // Preserve the surrounding trace depth, including a synthetic CREATE frame.
+                evm.journal_inner_mut().depth = root_depth;
                 let res = evm.transact_raw(tx_env);
                 nested_chain_context = Some(evm.chain_mut().clone());
                 #[cfg(feature = "monad")]
@@ -1542,7 +1553,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         ecx: &mut FoundryContextFor<'_, FEN>,
         call: &mut CallInputs,
     ) -> Option<CallOutcome> {
-        if self.in_inner_context && ecx.journal().depth() == 1 {
+        if self.is_inner_context_root(ecx.journal().depth()) {
             self.adjust_evm_data_for_inner_context(ecx);
             return None;
         }
@@ -1736,7 +1747,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
     ) {
         // We are processing inner context outputs in the outer context, so need to avoid processing
         // twice.
-        if self.in_inner_context && ecx.journal().depth() == 1 {
+        if self.is_inner_context_root(ecx.journal().depth()) {
             self.isolated_call_was_precompile = Some(outcome.was_precompile_called);
             return;
         }
@@ -1768,7 +1779,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         ecx: &mut FoundryContextFor<'_, FEN>,
         create: &mut CreateInputs,
     ) -> Option<CreateOutcome> {
-        if self.in_inner_context && ecx.journal().depth() == 1 {
+        if self.is_inner_context_root(ecx.journal().depth()) {
             self.adjust_evm_data_for_inner_context(ecx);
             return None;
         }
@@ -1829,7 +1840,8 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         if !matches!(create.scheme(), CreateScheme::Create2 { .. })
             && self.enable_isolation
             && !self.in_inner_context
-            && ecx.journal().depth() == 1
+            && (ecx.journal().depth() == 1
+                || self.synthetic_create_depth == Some(ecx.journal().depth()))
         {
             // In isolation mode, transact_inner returns None for the address on revert; pre-compute
             // the would-be deployed address so create_end can enforce expected_revert reverter
@@ -1887,7 +1899,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
 
         // We are processing inner context outputs in the outer context, so need to avoid processing
         // twice.
-        if self.in_inner_context && ecx.journal().depth() == 1 {
+        if self.is_inner_context_root(ecx.journal().depth()) {
             return;
         }
 
@@ -2164,6 +2176,12 @@ impl InspectorStackInner {
         let counter = self.batch_create_counter;
         self.batch_create_counter = counter.wrapping_add(1);
         compute_batch_create_salt(process_salt, chain_id, nonce, counter)
+    }
+
+    /// Whether this frame duplicates the outer frame that entered an isolated transaction.
+    fn is_inner_context_root(&self, depth: usize) -> bool {
+        self.in_inner_context
+            && self.inner_context_data.as_ref().is_some_and(|inner| depth == inner.root_depth)
     }
 }
 
