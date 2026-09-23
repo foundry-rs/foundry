@@ -12,8 +12,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  hardened:
-    name: hardened / macOS diagnostic
+  aegis-only:
+    name: Aegis only / macOS diagnostic
     if: github.repository == 'foundry-rs/foundry'
     runs-on: macos-latest-xlarge
     timeout-minutes: 120
@@ -21,11 +21,9 @@ jobs:
       contents: read
       id-token: write
     env:
-      DIAGNOSTIC_VARIANT: hardened
-      # A push exercises each job's lifecycle without compiling.
-      # After inspecting that smoke run, rerun with debug logging for the build:
-      # gh run rerun RUN_ID --debug -R foundry-rs/foundry.
-      DIAGNOSTIC_MODE: ${{ github.run_attempt == 1 && 'smoke' || 'build' }}
+      DIAGNOSTIC_VARIANT: aegis-only
+      # One build on push; no paired control or separate cloud smoke run.
+      DIAGNOSTIC_MODE: build
       CARGO_TERM_COLOR: always
       CARGO_BUILD_JOBS: "2"
       MACOSX_DEPLOYMENT_TARGET: "11.0"
@@ -39,8 +37,7 @@ jobs:
           persist-credentials: false
           path: diagnostic
 
-      # StepSecurity's pre-job hook runs before all ordinary workflow steps.
-      - name: Start resource sampling before the main hardening step
+      - name: Start resource sampling before installing Aegis
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/macos-diagnostic"
@@ -62,8 +59,10 @@ jobs:
             printf 'DiagnosticMode=%s\nRunnerDebug=%s\n' "$DIAGNOSTIC_MODE" "${RUNNER_DEBUG:-0}"
           } | tee "$RUNNER_TEMP/macos-diagnostic/machine.txt"
 
-      - name: Secure runner (same pin as failing release)
-        uses: tempoxyz/gh-actions/actions/secure-runner@44477a1dea964684252d6032489e5c8acde487cd # 2026-09-22T22-28-45Z-44477a1d
+      # Use the same nested Aegis action as the failing release's wrapper.
+      # Do not reference secure-runner: StepSecurity has a pre-job hook.
+      - name: Install Aegis only (without StepSecurity)
+        uses: tempoxyz/gh-actions/actions/socket-firewall@7e2ea6e1a8f5a22f16c2d4b389ffde25da93fa1b # 2026-09-22T22-21-59Z-7e2ea6e1
 
       - name: Verify security-agent state
         timeout-minutes: 1
@@ -75,278 +74,12 @@ jobs:
             printf 'Variant=%s\n' "$DIAGNOSTIC_VARIANT"
             if [[ -n "$agents" ]]; then printf '%s\n' "$agents"; else echo 'No matching security agents'; fi
           } | tee "$RUNNER_TEMP/macos-diagnostic/security-state.txt"
-          if [[ "$DIAGNOSTIC_VARIANT" == unhardened && -n "$agents" ]]; then
-            echo '::error::Control runner already has security agents; refusing contaminated comparison.'
+          if [[ "$agents" == *HardenRunner* || "$agents" == *harden-runner* ]]; then
+            echo '::error::StepSecurity is present; refusing a contaminated Aegis-only run.'
             exit 1
           fi
-          if [[ "$DIAGNOSTIC_VARIANT" == hardened && ( "$agents" != *HardenRunner* || "$agents" != */aegis* ) ]]; then
-            echo '::error::Expected security agents were not observed.'
-            exit 1
-          fi
-          node diagnostic/.github/scripts/macos-network-probe.cjs |
-            tee -a "$RUNNER_TEMP/macos-diagnostic/network-immediate.log"
-
-      - name: Check out the failing release source
-        if: env.DIAGNOSTIC_MODE == 'build'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: c756235f9bd49fc4759317ef2d7e19e54bcf5198
-          persist-credentials: false
-          path: source
-
-      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1
-        if: env.DIAGNOSTIC_MODE == 'build'
-        with:
-          toolchain: 1.98.1
-          targets: aarch64-apple-darwin
-
-      - name: Record toolchain and Apple SDK
-        if: env.DIAGNOSTIC_MODE == 'build'
-        working-directory: source
-        shell: bash
-        run: |
-          printf 'SDKROOT=%s\n' "$(xcrun -sdk macosx --show-sdk-path)" >> "$GITHUB_ENV"
-          {
-            git rev-parse HEAD
-            rustc -vV
-            cargo -vV
-            xcodebuild -version
-            xcrun -sdk macosx --show-sdk-path
-            if command -v aegis >/dev/null 2>&1; then aegis --version || true; fi
-          } | tee "$RUNNER_TEMP/macos-diagnostic/toolchain.txt"
-
-      - name: Start detached diagnostic workload
-        timeout-minutes: 1
-        shell: bash
-        run: bash diagnostic/.github/scripts/macos-diagnostic-control.sh start
-
-      # Fixed, bounded steps let the official artifact action run on this runner
-      # during compilation, without custom token handling or background uploads.
-      - name: Checkpoint 1
-        if: env.DIAGNOSTIC_DONE != '1'
-        timeout-minutes: 7
-        uses: ./diagnostic/.github/actions/macos-diagnostic-checkpoint
-        with:
-          number: "1"
-
-      - name: Checkpoint 2
-        if: env.DIAGNOSTIC_DONE != '1'
-        timeout-minutes: 7
-        uses: ./diagnostic/.github/actions/macos-diagnostic-checkpoint
-        with:
-          number: "2"
-
-      - name: Checkpoint 3
-        if: env.DIAGNOSTIC_DONE != '1'
-        timeout-minutes: 7
-        uses: ./diagnostic/.github/actions/macos-diagnostic-checkpoint
-        with:
-          number: "3"
-
-      - name: Checkpoint 4
-        if: env.DIAGNOSTIC_DONE != '1'
-        timeout-minutes: 7
-        uses: ./diagnostic/.github/actions/macos-diagnostic-checkpoint
-        with:
-          number: "4"
-
-      - name: Checkpoint 5
-        if: env.DIAGNOSTIC_DONE != '1'
-        timeout-minutes: 7
-        uses: ./diagnostic/.github/actions/macos-diagnostic-checkpoint
-        with:
-          number: "5"
-
-      - name: Checkpoint 6
-        if: env.DIAGNOSTIC_DONE != '1'
-        timeout-minutes: 7
-        uses: ./diagnostic/.github/actions/macos-diagnostic-checkpoint
-        with:
-          number: "6"
-
-      - name: Checkpoint 7
-        if: env.DIAGNOSTIC_DONE != '1'
-        timeout-minutes: 7
-        uses: ./diagnostic/.github/actions/macos-diagnostic-checkpoint
-        with:
-          number: "7"
-
-      - name: Checkpoint 8
-        if: env.DIAGNOSTIC_DONE != '1'
-        timeout-minutes: 7
-        uses: ./diagnostic/.github/actions/macos-diagnostic-checkpoint
-        with:
-          number: "8"
-
-      - name: Checkpoint 9
-        if: env.DIAGNOSTIC_DONE != '1'
-        timeout-minutes: 7
-        uses: ./diagnostic/.github/actions/macos-diagnostic-checkpoint
-        with:
-          number: "9"
-
-      - name: Checkpoint 10
-        if: env.DIAGNOSTIC_DONE != '1'
-        timeout-minutes: 7
-        uses: ./diagnostic/.github/actions/macos-diagnostic-checkpoint
-        with:
-          number: "10"
-
-      - name: Checkpoint 11
-        if: env.DIAGNOSTIC_DONE != '1'
-        timeout-minutes: 7
-        uses: ./diagnostic/.github/actions/macos-diagnostic-checkpoint
-        with:
-          number: "11"
-
-      - name: Checkpoint 12
-        if: env.DIAGNOSTIC_DONE != '1'
-        timeout-minutes: 7
-        uses: ./diagnostic/.github/actions/macos-diagnostic-checkpoint
-        with:
-          number: "12"
-
-      - name: Checkpoint 13
-        if: env.DIAGNOSTIC_DONE != '1'
-        timeout-minutes: 7
-        uses: ./diagnostic/.github/actions/macos-diagnostic-checkpoint
-        with:
-          number: "13"
-
-      - name: Checkpoint 14
-        if: env.DIAGNOSTIC_DONE != '1'
-        timeout-minutes: 7
-        uses: ./diagnostic/.github/actions/macos-diagnostic-checkpoint
-        with:
-          number: "14"
-
-      - name: Checkpoint 15
-        if: env.DIAGNOSTIC_DONE != '1'
-        timeout-minutes: 7
-        uses: ./diagnostic/.github/actions/macos-diagnostic-checkpoint
-        with:
-          number: "15"
-
-      - name: Checkpoint 16
-        if: env.DIAGNOSTIC_DONE != '1'
-        timeout-minutes: 7
-        uses: ./diagnostic/.github/actions/macos-diagnostic-checkpoint
-        with:
-          number: "16"
-
-      - name: Checkpoint 17
-        if: env.DIAGNOSTIC_DONE != '1'
-        timeout-minutes: 7
-        uses: ./diagnostic/.github/actions/macos-diagnostic-checkpoint
-        with:
-          number: "17"
-
-      - name: Checkpoint 18
-        if: env.DIAGNOSTIC_DONE != '1'
-        timeout-minutes: 7
-        uses: ./diagnostic/.github/actions/macos-diagnostic-checkpoint
-        with:
-          number: "18"
-
-      - name: Finish workload and stop sampling
-        if: always()
-        timeout-minutes: 2
-        shell: bash
-        run: bash diagnostic/.github/scripts/macos-diagnostic-control.sh finish
-
-      - name: Upload diagnostic logs only
-        id: final-upload
-        if: always()
-        timeout-minutes: 3
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: macos-${{ env.DIAGNOSTIC_VARIANT }}-${{ env.DIAGNOSTIC_MODE }}-${{ github.run_id }}-${{ github.run_attempt }}-final
-          path: |
-            ${{ runner.temp }}/macos-diagnostic/resources.log
-            ${{ runner.temp }}/macos-diagnostic/network.log
-            ${{ runner.temp }}/macos-diagnostic/network-immediate.log
-            ${{ runner.temp }}/macos-diagnostic/security-state.txt
-            ${{ runner.temp }}/macos-diagnostic/lifecycle.log
-            ${{ runner.temp }}/macos-diagnostic/machine.txt
-            ${{ runner.temp }}/macos-diagnostic/toolchain.txt
-            ${{ runner.temp }}/macos-diagnostic/build-exit.txt
-          retention-days: 7
-          if-no-files-found: error
-
-      - name: Mark final upload completion
-        if: always()
-        timeout-minutes: 1
-        shell: bash
-        env:
-          UPLOAD_OUTCOME: ${{ steps.final-upload.outcome }}
-        run: printf '%s final-upload-end outcome=%s job-post-hooks-next\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$UPLOAD_OUTCOME"
-
-  unhardened:
-    name: unhardened / macOS diagnostic
-    if: github.repository == 'foundry-rs/foundry'
-    runs-on: macos-latest-xlarge
-    timeout-minutes: 120
-    permissions:
-      contents: read
-      id-token: write
-    env:
-      DIAGNOSTIC_VARIANT: unhardened
-      # A push exercises each job's lifecycle without compiling.
-      # After inspecting that smoke run, rerun with debug logging for the build:
-      # gh run rerun RUN_ID --debug -R foundry-rs/foundry.
-      DIAGNOSTIC_MODE: ${{ github.run_attempt == 1 && 'smoke' || 'build' }}
-      CARGO_TERM_COLOR: always
-      CARGO_BUILD_JOBS: "2"
-      MACOSX_DEPLOYMENT_TARGET: "11.0"
-      LIBUSB_STATIC: "1"
-      SVM_TARGET_PLATFORM: macosx-aarch64
-      TAG_NAME: nightly
-    steps:
-      - name: Check out diagnostic instrumentation
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          path: diagnostic
-
-      # StepSecurity's pre-job hook runs before all ordinary workflow steps.
-      - name: Start resource sampling before the main hardening step
-        shell: bash
-        run: |
-          mkdir -p "$RUNNER_TEMP/macos-diagnostic"
-          nohup bash diagnostic/.github/scripts/macos-build-monitor.sh \
-            > "$RUNNER_TEMP/macos-diagnostic/resources.log" 2>&1 < /dev/null &
-          echo "$!" > "$RUNNER_TEMP/macos-diagnostic/monitor.pid"
-          nohup bash diagnostic/.github/scripts/macos-network-monitor.sh \
-            >> "$RUNNER_TEMP/macos-diagnostic/network.log" 2>&1 < /dev/null &
-          echo "$!" > "$RUNNER_TEMP/macos-diagnostic/network-monitor.pid"
-          {
-            date -u
-            printf 'DiagnosticVariant=%s\n' "$DIAGNOSTIC_VARIANT"
-            printf 'SoftDescriptorLimit=%s\n' "$(ulimit -n)"
-            node --version
-            sw_vers
-            uname -m
-            sysctl hw.memsize hw.ncpu
-            printf 'ImageOS=%s\nImageVersion=%s\n' "${ImageOS:-unknown}" "${ImageVersion:-unknown}"
-            printf 'DiagnosticMode=%s\nRunnerDebug=%s\n' "$DIAGNOSTIC_MODE" "${RUNNER_DEBUG:-0}"
-          } | tee "$RUNNER_TEMP/macos-diagnostic/machine.txt"
-
-      - name: Verify security-agent state
-        timeout-minutes: 1
-        shell: bash
-        run: |
-          agents=$(ps -axo comm= | awk '/HardenRunner|harden-runner|\/aegis$/')
-          {
-            date -u
-            printf 'Variant=%s\n' "$DIAGNOSTIC_VARIANT"
-            if [[ -n "$agents" ]]; then printf '%s\n' "$agents"; else echo 'No matching security agents'; fi
-          } | tee "$RUNNER_TEMP/macos-diagnostic/security-state.txt"
-          if [[ "$DIAGNOSTIC_VARIANT" == unhardened && -n "$agents" ]]; then
-            echo '::error::Control runner already has security agents; refusing contaminated comparison.'
-            exit 1
-          fi
-          if [[ "$DIAGNOSTIC_VARIANT" == hardened && ( "$agents" != *HardenRunner* || "$agents" != */aegis* ) ]]; then
-            echo '::error::Expected security agents were not observed.'
+          if [[ "$agents" != */aegis ]]; then
+            echo '::error::Expected Aegis service was not observed.'
             exit 1
           fi
           node diagnostic/.github/scripts/macos-network-probe.cjs |
