@@ -31,7 +31,7 @@ pub struct DynamicTestLinkingPreprocessor;
 
 impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
     fn cache_version(&self) -> u64 {
-        2
+        5
     }
 
     fn preprocess(
@@ -149,7 +149,7 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
 
 impl Preprocessor<MultiCompiler> for DynamicTestLinkingPreprocessor {
     fn cache_version(&self) -> u64 {
-        2
+        5
     }
 
     fn preprocess(
@@ -306,5 +306,139 @@ mod tests {
         .unwrap();
         let MultiCompilerInput::Solc(input) = input else { unreachable!() };
         assert_preprocessed(&paths, &input, &mocks);
+    }
+
+    #[test]
+    fn return_data_fallback_follows_helpers_without_disabling_unrelated_contracts() {
+        for (helper, declarations, expression) in [
+            (
+                "function size(uint256) view returns (uint256 n) { assembly { n := returndatasize() } }",
+                "import * as R from '../src/Read.sol';",
+                "R.size(0)",
+            ),
+            (
+                "function size(uint256) view returns (uint256 n) { assembly { n := returndatasize() } }",
+                "import {size} from '../src/Read.sol'; using {size} for uint256;",
+                "uint256(0).size()",
+            ),
+            (
+                "function size(uint256) view returns (uint256 n) { assembly { n := returndatasize() } }",
+                "import {size as readSize} from '../src/Read.sol'; using {readSize} for uint256;",
+                "uint256(0).readSize()",
+            ),
+            (
+                "library R { function size(uint256) internal view returns (uint256 n) { assembly { n := returndatasize() } } }",
+                "import {R} from '../src/Read.sol'; using R for uint256;",
+                "uint256(0).size()",
+            ),
+            (
+                "library R { function size(uint256) internal view returns (uint256 n) { assembly { n := returndatasize() } } }",
+                "import {R} from '../src/Read.sol';",
+                "R.size(0)",
+            ),
+        ] {
+            let (_root, paths, mut input) = input();
+            input.input.sources.insert(PathBuf::from("src/Read.sol"), Source::new(helper));
+            let observer = format!(
+                "{declarations} import '../src/Dep.sol'; contract Observer {{ function observe() public {{ new Dep(); require({expression} == 0); }} }}"
+            );
+            let safe = "import '../src/Read.sol'; import '../src/Dep.sol'; contract Safe { function deploy() public { new Dep(); } }";
+            input.input.sources.insert(PathBuf::from("test/Observer.sol"), Source::new(&observer));
+            input.input.sources.insert(PathBuf::from("test/Safe.sol"), Source::new(safe));
+            <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::preprocess(
+                &DynamicTestLinkingPreprocessor,
+                &SolcCompiler::default(),
+                &mut input,
+                &paths,
+                &mut HashSet::new(),
+            )
+            .unwrap();
+            assert_eq!(
+                input.input.sources[&PathBuf::from("test/Observer.sol")].content.as_str(),
+                observer
+            );
+            assert_ne!(input.input.sources[&PathBuf::from("test/Safe.sol")].content.as_str(), safe);
+        }
+    }
+
+    #[test]
+    fn return_data_fallback_includes_inherited_observers() {
+        assert_return_data_scope_native(
+            "abstract contract Base { function make() internal virtual; function observe() public { make(); uint256 n; assembly { n := returndatasize() } require(n == 0); } } contract Derived is Base { function make() internal override { new Dep(); } }",
+        );
+    }
+
+    #[test]
+    fn return_data_fallback_collects_using_before_initializers() {
+        assert_return_data_scope_native(
+            "library Reader { function size(uint256) internal view returns (uint256 n) { assembly { n := returndatasize() } } } contract Initializer { using Reader for uint256; Dep target = new Dep(); uint256 observed = uint256(0).size(); function observe() public view { require(observed == 0); } }",
+        );
+    }
+
+    fn assert_return_data_scope_native(declarations: &str) {
+        let (_root, paths, mut input) = input();
+        let observer = format!("import '../src/Dep.sol'; {declarations}");
+        let safe =
+            "import '../src/Dep.sol'; contract Safe { function deploy() public { new Dep(); } }";
+        input.input.sources.insert(PathBuf::from("test/Observer.sol"), Source::new(&observer));
+        input.input.sources.insert(PathBuf::from("test/Safe.sol"), Source::new(safe));
+        <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::preprocess(
+            &DynamicTestLinkingPreprocessor,
+            &SolcCompiler::default(),
+            &mut input,
+            &paths,
+            &mut HashSet::new(),
+        )
+        .unwrap();
+        assert_eq!(
+            input.input.sources[&PathBuf::from("test/Observer.sol")].content.as_str(),
+            observer
+        );
+        assert_ne!(input.input.sources[&PathBuf::from("test/Safe.sol")].content.as_str(), safe);
+    }
+
+    #[test]
+    fn return_data_namespace_resolution_selects_exports() {
+        for (namespace, expression, native) in [
+            ("Read", "R.identity(7)", false),
+            ("Read", "R.size(0)", true),
+            ("Export", "R.identity(7)", false),
+            ("Export", "R.observe(0)", true),
+            ("Nested", "R.Inner.identity(7)", false),
+            ("Nested", "R.Inner.observe(0)", true),
+            ("Read", "R.Reader.identity(7)", false),
+            ("Read", "R.Reader.size(0)", true),
+            ("Export", "R.Renamed.identity(7)", false),
+            ("Export", "R.Renamed.size(0)", true),
+        ] {
+            let (_root, paths, mut input) = input();
+            for (path, source) in [
+                (
+                    "src/Read.sol",
+                    "function identity(uint256 n) pure returns (uint256) { return n; } function size(uint256) view returns (uint256 n) { assembly { n := returndatasize() } } library Reader { function identity(uint256 n) internal pure returns (uint256) { return n; } function size(uint256) internal view returns (uint256 n) { assembly { n := returndatasize() } } }",
+                ),
+                (
+                    "src/Export.sol",
+                    "import {size as observe, identity, Reader as Renamed} from './Read.sol';",
+                ),
+                ("src/Nested.sol", "import * as Inner from './Export.sol';"),
+            ] {
+                input.input.sources.insert(PathBuf::from(path), Source::new(source));
+            }
+            let source = format!(
+                "import '../src/Dep.sol'; import * as R from '../src/{namespace}.sol'; contract Case {{ function run() public {{ new Dep(); {expression}; }} }}"
+            );
+            input.input.sources.insert(PathBuf::from("test/Case.sol"), Source::new(&source));
+            <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::preprocess(
+                &DynamicTestLinkingPreprocessor,
+                &SolcCompiler::default(),
+                &mut input,
+                &paths,
+                &mut HashSet::new(),
+            )
+            .unwrap();
+            let actual = &input.input.sources[&PathBuf::from("test/Case.sol")].content;
+            assert_eq!(actual.contains("new Dep();"), native, "{namespace}: {expression}");
+        }
     }
 }
