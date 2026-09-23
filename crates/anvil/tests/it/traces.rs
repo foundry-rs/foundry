@@ -2123,6 +2123,84 @@ async fn test_trace_replay_transaction() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_trace_replay_transaction_preserves_prefix_state() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_wallets().next().unwrap().address();
+    let contract = Address::random();
+    // Return the old slot value and store calldata[0], reverting after the write if it is zero.
+    api.anvil_set_code(
+        contract,
+        Bytes::from_hex("600054600052600035806000551560165760206000f35b60006000fd").unwrap(),
+    )
+    .await
+    .unwrap();
+    api.anvil_set_storage_at(contract, U256::ZERO, B256::from(U256::from(3))).await.unwrap();
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let values = [5u64, 0, 13, 8];
+    let mut hashes = Vec::new();
+    for (nonce, value) in values.into_iter().enumerate() {
+        let tx = TransactionRequest::default()
+            .from(from)
+            .to(contract)
+            .nonce(nonce as u64)
+            .gas_limit(100_000)
+            .input(Bytes::copy_from_slice(&U256::from(value).to_be_bytes::<32>()).into());
+        hashes.push(api.send_transaction(WithOtherFields::new(tx)).await.unwrap());
+    }
+    api.mine_one().await.unwrap();
+    let block_number = provider.get_block_number().await.unwrap();
+    let old_values = [3u64, 5, 5, 13];
+
+    for trace_types in [
+        vec![TraceType::Trace, TraceType::VmTrace, TraceType::StateDiff],
+        vec![TraceType::Trace],
+        vec![TraceType::VmTrace],
+        vec![TraceType::StateDiff],
+        vec![],
+    ] {
+        let block_results = api
+            .trace_replay_block_transactions(
+                block_number.into(),
+                trace_types.iter().copied().collect(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(block_results.len(), hashes.len());
+        for (index, hash) in hashes.iter().copied().enumerate() {
+            let result: TraceResults = provider
+                .client()
+                .request("trace_replayTransaction", (hash, &trace_types))
+                .await
+                .unwrap();
+            assert_eq!(block_results[index].transaction_hash, hash);
+            assert_eq!(result, block_results[index].full_trace);
+            if values[index] == 0 {
+                assert!(result.output.is_empty());
+                if trace_types.contains(&TraceType::Trace) {
+                    assert!(result.trace[0].error.is_some());
+                }
+            } else {
+                assert_eq!(
+                    result.output.as_ref(),
+                    U256::from(old_values[index]).to_be_bytes::<32>()
+                );
+                if let Some(state_diff) = &result.state_diff {
+                    let change = state_diff[&contract].storage[&B256::ZERO].as_changed().unwrap();
+                    assert_eq!(change.from, B256::from(U256::from(old_values[index])));
+                    assert_eq!(change.to, B256::from(U256::from(values[index])));
+                }
+            }
+        }
+    }
+    // Replays must not mutate the live chain.
+    assert_eq!(provider.get_storage_at(contract, U256::ZERO).await.unwrap(), U256::from(8));
+    assert_eq!(provider.get_transaction_count(from).await.unwrap(), hashes.len() as u64);
+    assert_eq!(provider.get_block_number().await.unwrap(), block_number);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_debug_trace_block_by_number() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
