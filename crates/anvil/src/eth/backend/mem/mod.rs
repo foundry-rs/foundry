@@ -7481,22 +7481,7 @@ where
         opts: GethDebugTracingOptions,
     ) -> Result<Vec<TraceResult>, BlockchainError> {
         if let Some(block) = self.blockchain.get_block_by_hash(&block_hash) {
-            let mut traces = Vec::new();
-            for tx in &block.body.transactions {
-                let tx_hash = tx.hash();
-                match self.debug_trace_transaction(tx_hash, opts.clone()).await {
-                    Ok(trace) => {
-                        traces.push(TraceResult::Success { result: trace, tx_hash: Some(tx_hash) });
-                    }
-                    Err(error) => {
-                        traces.push(TraceResult::Error {
-                            error: error.to_string(),
-                            tx_hash: Some(tx_hash),
-                        });
-                    }
-                }
-            }
-            return Ok(traces);
+            return Ok(self.debug_trace_mined_block(&block, opts).await);
         }
 
         if let Some(fork) = self.get_fork() {
@@ -7515,22 +7500,7 @@ where
         let number = self.convert_block_number(Some(block_number));
 
         if let Some(block) = self.get_block(BlockId::Number(BlockNumber::Number(number))) {
-            let mut traces = Vec::new();
-            for tx in &block.body.transactions {
-                let tx_hash = tx.hash();
-                match self.debug_trace_transaction(tx_hash, opts.clone()).await {
-                    Ok(trace) => {
-                        traces.push(TraceResult::Success { result: trace, tx_hash: Some(tx_hash) });
-                    }
-                    Err(error) => {
-                        traces.push(TraceResult::Error {
-                            error: error.to_string(),
-                            tx_hash: Some(tx_hash),
-                        });
-                    }
-                }
-            }
-            return Ok(traces);
+            return Ok(self.debug_trace_mined_block(&block, opts).await);
         }
 
         if let Some(fork) = self.get_fork() {
@@ -7538,6 +7508,111 @@ where
         }
 
         Err(BlockchainError::BlockNotFound)
+    }
+
+    async fn debug_trace_mined_block(
+        &self,
+        block: &Block,
+        opts: GethDebugTracingOptions,
+    ) -> Vec<TraceResult> {
+        if block.body.transactions.is_empty() {
+            return Vec::new();
+        }
+
+        // A single transaction has no prefix replay to share.
+        if block.body.transactions.len() > 1
+            && matches!(
+                opts.tracer,
+                Some(GethDebugTracerType::BuiltInTracer(GethDebugBuiltInTracerType::CallTracer))
+            )
+            && let Ok(config) = call_config_from_tracer_config(opts.tracer_config.clone())
+            && let Ok(traces) = self.replay_block_call_traces(block, config)
+        {
+            return traces;
+        }
+
+        // Preserve per-transaction errors and fork lookup when sequential replay is unavailable.
+        let mut traces = Vec::with_capacity(block.body.transactions.len());
+        for tx in &block.body.transactions {
+            let tx_hash = tx.hash();
+            traces.push(match self.debug_trace_transaction(tx_hash, opts.clone()).await {
+                Ok(result) => TraceResult::Success { result, tx_hash: Some(tx_hash) },
+                Err(error) => {
+                    TraceResult::Error { error: error.to_string(), tx_hash: Some(tx_hash) }
+                }
+            });
+        }
+        traces
+    }
+
+    /// Replays a local block once, keeping each transaction's committed state for the next call.
+    fn replay_block_call_traces(
+        &self,
+        block: &Block,
+        config: CallConfig,
+    ) -> Result<Vec<TraceResult>, BlockchainError> {
+        let gas_used = {
+            let storage = self.blockchain.storage.read();
+            let block_hash = block.header.hash_slow();
+            block
+                .body
+                .transactions
+                .iter()
+                .enumerate()
+                .map(|(index, tx)| {
+                    let hash = tx.hash();
+                    let mined = storage
+                        .transactions
+                        .get(&hash)
+                        .ok_or(BlockchainError::TransactionNotFound)?;
+                    if mined.block_hash != block_hash
+                        || mined.info.transaction_index as usize != index
+                        || mined.info.transaction_hash != hash
+                    {
+                        return Err(BlockchainError::TransactionNotFound);
+                    }
+                    Ok(mined.info.gas_used)
+                })
+                .collect::<Result<Vec<_>, BlockchainError>>()?
+        };
+
+        let trace = |parent_state: &StateDb| -> Result<Vec<TraceResult>, BlockchainError> {
+            let (mut cache_db, evm_env, hardfork) =
+                self.prepare_block_replay(block, parent_state)?;
+            let monad_context = self.active_monad_context_for_mined_block(block)?;
+            let mut traces = Vec::with_capacity(block.body.transactions.len());
+            for (index, (tx, gas_used)) in block.body.transactions.iter().zip(&gas_used).enumerate()
+            {
+                let mut inspector =
+                    TracingInspector::new(TracingInspectorConfig::from_geth_call_config(&config));
+                let pending = self.pending_mined_transaction(tx.clone())?;
+                let transaction_context = monad_execution_context_at(monad_context.as_ref(), index);
+                let (result, _) = self.replay_envelope_with_inspector_ref_and_context(
+                    &cache_db,
+                    &evm_env,
+                    &mut inspector,
+                    &pending,
+                    EnvelopeExecution::replay(transaction_context, hardfork),
+                )?;
+                traces.push(TraceResult::Success {
+                    result: inspector.geth_builder().geth_call_traces(config, *gas_used).into(),
+                    tx_hash: Some(tx.hash()),
+                });
+                cache_db.commit(result.state);
+            }
+            Ok(traces)
+        };
+
+        let read_guard = self.states.upgradable_read();
+        if let Some(state) = read_guard.get_state(&block.header.parent_hash) {
+            trace(state)
+        } else {
+            let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
+            let state = write_guard
+                .get_on_disk_state(&block.header.parent_hash)
+                .ok_or(BlockchainError::BlockNotFound)?;
+            trace(state)
+        }
     }
 
     fn geth_trace(
