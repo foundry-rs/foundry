@@ -1185,6 +1185,15 @@ impl<N: Network> Backend<N> {
         self.mining.lock().await
     }
 
+    /// Locks block production and returns an owned guard.
+    ///
+    /// Use this instead of [`Self::lock_mining`] when the lock must outlive the scope that takes
+    /// it, for example when a multi-block mine runs on a blocking task and its caller keeps
+    /// reading the chain it just extended.
+    pub(crate) async fn lock_mining_owned(&self) -> tokio::sync::OwnedMutexGuard<()> {
+        self.mining.clone().lock_owned().await
+    }
+
     /// Returns the `AccountInfo` from the database
     pub async fn get_account(&self, address: Address) -> DatabaseResult<AccountInfo> {
         Ok(self.db.read().await.basic_ref(address)?.unwrap_or_default())
@@ -5527,6 +5536,15 @@ where
         pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
     ) -> Result<MinedBlockOutcome<FoundryTxEnvelope>, BlockchainError> {
         self.do_mine_block(pool_transactions).await
+    }
+
+    /// Mines a block while the caller holds the mining lock.
+    pub(crate) async fn mine_block_with_guard(
+        &self,
+        pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
+        _mining_guard: &tokio::sync::OwnedMutexGuard<()>,
+    ) -> Result<MinedBlockOutcome<FoundryTxEnvelope>, BlockchainError> {
+        self.do_mine_block_locked(pool_transactions).await
     }
 
     /// Replays a transaction-hash fork prefix before the live pool and miner are created.

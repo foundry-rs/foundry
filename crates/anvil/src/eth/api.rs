@@ -4167,12 +4167,16 @@ impl EthApi<FoundryNetwork> {
         }
 
         self.on_blocking_task(|this| async move {
+            // Hold the mining lock for the whole run, so a concurrent chain-height mutation cannot
+            // unwind blocks this call already mined, and so an interval's time increase stays
+            // paired with the block it was applied for.
+            let mining_guard = this.backend.lock_mining_owned().await;
             // mine all the blocks
             for _ in 0..blocks.saturating_to::<u64>() {
                 // If we have an interval, jump forwards in time to the "next" timestamp
                 let pending_increase =
                     interval.map(|interval| this.backend.time().apply_time_increase(interval));
-                if let Err(error) = this.mine_one().await {
+                if let Err(error) = this.mine_one_with_guard(&mining_guard).await {
                     if let Some(pending) = pending_increase {
                         this.backend.time().revert_time_increase(pending);
                     }
@@ -4566,7 +4570,9 @@ impl EthApi<FoundryNetwork> {
     pub async fn evm_mine_detailed(&self, opts: Option<MineOptions>) -> Result<Vec<AnyRpcBlock>> {
         node_info!("evm_mine_detailed");
 
-        let mined_blocks = self.do_evm_mine(opts).await?;
+        // Keep the mining lock for the block reads below: the chain height this reports must still
+        // cover every block that was just mined.
+        let (mined_blocks, _mining_guard) = self.do_evm_mine(opts).await?;
 
         let mut blocks = Vec::with_capacity(mined_blocks as usize);
 
@@ -4751,12 +4757,17 @@ impl EthApi<FoundryNetwork> {
 }
 
 impl EthApi<FoundryNetwork> {
-    /// Executes the `evm_mine` and returns the number of blocks mined
-    async fn do_evm_mine(&self, opts: Option<MineOptions>) -> Result<u64> {
+    /// Executes the `evm_mine` and returns the number of blocks mined, along with the mining lock
+    /// they were mined under so a caller can keep reading the chain it just extended.
+    async fn do_evm_mine(
+        &self,
+        opts: Option<MineOptions>,
+    ) -> Result<(u64, tokio::sync::OwnedMutexGuard<()>)> {
         let mut blocks_to_mine = 1u64;
+        let mut next_timestamp = None;
 
         if let Some(opts) = opts {
-            let timestamp = match opts {
+            next_timestamp = match opts {
                 MineOptions::Timestamp(timestamp) => timestamp,
                 MineOptions::Options { timestamp, blocks } => {
                     if let Some(blocks) = blocks {
@@ -4765,24 +4776,30 @@ impl EthApi<FoundryNetwork> {
                     timestamp
                 }
             };
-            if let Some(timestamp) = timestamp {
-                // timestamp was explicitly provided to be the next timestamp
-                self.evm_set_next_block_timestamp(timestamp)?;
-            }
         }
 
         // this can be blocking for a bit, especially in forking mode
         // <https://github.com/foundry-rs/foundry/issues/6036>
-        self.on_blocking_task(|this| async move {
-            // mine all the blocks
-            for _ in 0..blocks_to_mine {
-                this.mine_one().await?;
-            }
-            Ok(())
-        })
-        .await?;
+        //
+        // Hold the mining lock for the whole run instead of re-taking it per block, so that no
+        // concurrent chain-height mutation can unwind blocks this call already mined, and so the
+        // requested next-block timestamp cannot be consumed by another block producer first.
+        let mining_guard = self
+            .on_blocking_task(|this| async move {
+                let mining_guard = this.backend.lock_mining_owned().await;
+                if let Some(timestamp) = next_timestamp {
+                    // timestamp was explicitly provided to be the next timestamp
+                    this.evm_set_next_block_timestamp(timestamp)?;
+                }
+                // mine all the blocks
+                for _ in 0..blocks_to_mine {
+                    this.mine_one_with_guard(&mining_guard).await?;
+                }
+                Ok(mining_guard)
+            })
+            .await?;
 
-        Ok(blocks_to_mine)
+        Ok((blocks_to_mine, mining_guard))
     }
 
     async fn do_estimate_gas(
@@ -4955,8 +4972,17 @@ impl EthApi<FoundryNetwork> {
 
     /// Mines exactly one block
     pub async fn mine_one(&self) -> Result<()> {
+        let mining_guard = self.backend.lock_mining_owned().await;
+        self.mine_one_with_guard(&mining_guard).await
+    }
+
+    /// Mines exactly one block while the caller holds the mining lock.
+    async fn mine_one_with_guard(
+        &self,
+        mining_guard: &tokio::sync::OwnedMutexGuard<()>,
+    ) -> Result<()> {
         let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
-        let outcome = self.backend.mine_block(transactions).await?;
+        let outcome = self.backend.mine_block_with_guard(transactions, mining_guard).await?;
 
         trace!(target: "node", blocknumber = ?outcome.block_number, "mined block");
         self.pool.on_mined_block(outcome);
@@ -5695,6 +5721,48 @@ fn reward_at_percentile(rewards: &[u128], percentile: f64) -> u128 {
 mod tests {
     use super::*;
     use crate::{NodeConfig, spawn};
+
+    /// A chain-height mutation landing mid-mine used to leave `evm_mine_detailed` reading a
+    /// height that no longer covered every block it had mined, which underflowed its block
+    /// lookup. The mined task's `unwrap` below is what catches that.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn evm_mine_detailed_handles_concurrent_rollback() {
+        tokio::time::timeout(Duration::from_secs(30), async {
+            for _ in 0..20 {
+                let (api, _handle) = spawn(NodeConfig::test().with_no_mining(true)).await;
+                let mining_api = api.clone();
+                let mining = tokio::spawn(async move {
+                    mining_api
+                        .evm_mine_detailed(Some(MineOptions::Options {
+                            timestamp: None,
+                            blocks: Some(50),
+                        }))
+                        .await
+                });
+
+                while !mining.is_finished() {
+                    if api.backend.best_number() >= 5 {
+                        api.anvil_rollback(Some(5)).await.unwrap();
+                    }
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+
+                let blocks = mining.await.unwrap().unwrap();
+                assert_eq!(blocks.len(), 50);
+                let numbers = blocks.iter().map(|block| block.header.number).collect::<Vec<_>>();
+                assert!(
+                    numbers.windows(2).all(|pair| pair[0] < pair[1]),
+                    "mined block numbers are not strictly increasing: {numbers:?}"
+                );
+                if api.backend.best_number() < 50 {
+                    return;
+                }
+            }
+            panic!("rollback did not shorten the mined block range");
+        })
+        .await
+        .unwrap();
+    }
 
     #[cfg(feature = "base")]
     #[tokio::test(flavor = "multi_thread")]
