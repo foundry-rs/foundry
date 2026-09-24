@@ -18,7 +18,8 @@ use solar::{
         hir::{
             CallArgs, CallArgsKind, CallOptions, Contract, ContractId, ContractKind, Expr,
             ExprKind, Function, FunctionId, FunctionKind, Modifier, Res, SourceId, StateMutability,
-            Stmt, StmtKind, TypeKind, UsingDirective, UsingEntryKind, Variable, Visibility, Visit,
+            Stmt, StmtKind, TypeKind, UsingDirective, UsingEntryKind, Variable, VariableId,
+            Visibility, Visit,
         },
         interface::{SourceMap, Symbol, data_structures::Never, source_map::FileName},
     },
@@ -381,6 +382,8 @@ struct BytecodeDependencyCollector<'gcx, 'src> {
     visited_functions: HashSet<FunctionId>,
     /// Imported sources already classified as native dependencies.
     visited_sources: HashSet<SourceId>,
+    /// Constants followed while finding embedded initializers, including aliases and cycles.
+    visited_variables: HashSet<VariableId>,
 }
 
 impl<'gcx, 'src> BytecodeDependencyCollector<'gcx, 'src> {
@@ -408,6 +411,7 @@ impl<'gcx, 'src> BytecodeDependencyCollector<'gcx, 'src> {
             has_unresolved_native_dependency: false,
             visited_functions: HashSet::new(),
             visited_sources: HashSet::new(),
+            visited_variables: HashSet::new(),
         }
     }
 
@@ -538,6 +542,25 @@ impl<'gcx, 'src> BytecodeDependencyCollector<'gcx, 'src> {
         }
 
         self.dependencies.push(dependency);
+    }
+
+    /// Follows constants whose initializer can embed code from another source.
+    fn collect_variable_dependency(&mut self, id: VariableId) {
+        let variable = self.gcx.hir.variable(id);
+        if !variable.is_constant() || !self.visited_variables.insert(id) {
+            return;
+        }
+        if let FileName::Real(path) = &self.gcx.hir.source(variable.source).file.name {
+            let path = normalize_path(&self.root_dir.join(path));
+            if path != self.source_path {
+                self.native_dependencies.insert(path);
+            }
+        } else {
+            self.has_unresolved_native_dependency = true;
+        }
+        if let Some(initializer) = variable.initializer {
+            self.collect_native_expr(initializer);
+        }
     }
 }
 
@@ -671,6 +694,8 @@ impl<'gcx> Visit<'gcx> for BytecodeDependencyCollector<'gcx, '_> {
                         Res::Item(item) => {
                             if let Some(function_id) = item.as_function() {
                                 self.collect_function_dependency(function_id);
+                            } else if let Some(variable_id) = item.as_variable() {
+                                self.collect_variable_dependency(variable_id);
                             }
                         }
                         _ => {}
