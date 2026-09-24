@@ -475,6 +475,36 @@ contract ArbitrarySendErc20 {
         token.transferFrom(from, to, a);
     }
 
+    // `from` round-tripped through a numeric cast (address -> uint160 -> address) must still
+    // resolve back to the same underlying variable so the permit correlates with the pull.
+    function okPermitNumericCastFrom(
+        address from,
+        address to,
+        uint256 a,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) public {
+        token.permit(address(uint160(from)), address(this), a, deadline, v, r, s);
+        token.transferFrom(address(uint160(from)), to, a);
+    }
+
+    // Same numeric-cast round-trip, but the pull uses a *different* raw variable - must still warn.
+    function badPermitNumericCastFromMismatch(
+        address from,
+        address other_,
+        address to,
+        uint256 a,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) public {
+        token.permit(address(uint160(from)), address(this), a, deadline, v, r, s);
+        token.transferFrom(address(uint160(other_)), to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+    }
+
     // ERC721 same-named methods must NOT trigger this lint.
     function okErc721TransferFrom(address from, address to, uint256 id) public {
         nft.transferFrom(from, to, id);
@@ -598,6 +628,45 @@ contract ArbitrarySendErc20 {
     ) public {
         receiver.onFlashLoan(msg.sender, address(token), amount, fee, data);
         token.transferFrom(address(receiver), address(this), other); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+    }
+
+    // The callback commits to a truncated amount (via a narrowing cast); the pull-back still
+    // claims the full untruncated `amount + fee`. Peeling the numeric cast for amount/fee must
+    // stay narrow (no cast-peeling at all), or this would be wrongly treated as matching.
+    function badFlashLoanCallbackAmountTruncated(
+        IERC3156FlashBorrower receiver,
+        uint256 amount,
+        uint256 fee,
+        bytes calldata data
+    ) public {
+        receiver.onFlashLoan(msg.sender, address(token), uint160(amount), fee, data);
+        token.transferFrom(address(receiver), address(this), amount + fee); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+    }
+
+    // Same hazard, mirrored: full callback amount, but the pull-back sums a locally truncated
+    // stand-in for the fee.
+    function badFlashLoanPullFeeTruncated(
+        IERC3156FlashBorrower receiver,
+        uint256 amount,
+        uint256 fee,
+        bytes calldata data
+    ) public {
+        receiver.onFlashLoan(msg.sender, address(token), amount, fee, data);
+        token.transferFrom(address(receiver), address(this), amount + uint256(uint160(fee))); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+    }
+
+    // Same hazard again, but through the `sum_of` local-alias fallback rather than a direct
+    // `amount + fee` expression: the pull-back passes a truncated stand-in for the local that
+    // holds the real sum.
+    function badFlashLoanSumOfLocalTruncated(
+        IERC3156FlashBorrower receiver,
+        uint256 amount,
+        uint256 fee,
+        bytes calldata data
+    ) public {
+        receiver.onFlashLoan(msg.sender, address(token), amount, fee, data);
+        uint256 total = amount + fee;
+        token.transferFrom(address(receiver), address(this), uint256(uint160(total))); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
     // Second pull-back after the obligation has been consumed.
