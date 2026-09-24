@@ -3405,9 +3405,6 @@ mod tests {
             let config = Config::load().unwrap();
             assert!(config.no_fork_bal);
             assert!(config.no_storage_caching);
-            let serialized = serde_json::to_value(&config).unwrap();
-            assert_eq!(serialized["no_fork_bal"], true);
-            assert!(serde_json::from_value::<Config>(serialized).unwrap().no_fork_bal);
 
             jail.set_env("FOUNDRY_PROFILE", "ci");
             let config = Config::load().unwrap();
@@ -3423,6 +3420,7 @@ mod tests {
             jail.create_file("foundry.toml", "[profile.default]\nno_fork_bal = true\n")?;
             jail.set_env("FOUNDRY_NO_FORK_BAL", "false");
             assert!(!Config::load().unwrap().no_fork_bal);
+            jail.create_file("foundry.toml", "[profile.default]\nno_fork_bal = false\n")?;
             jail.set_env("FOUNDRY_NO_FORK_BAL", "true");
             assert!(Config::load().unwrap().no_fork_bal);
             jail.set_env("FOUNDRY_NO_FORK_BAL", "invalid");

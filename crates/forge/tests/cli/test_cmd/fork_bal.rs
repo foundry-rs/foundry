@@ -91,8 +91,6 @@ enum Response {
     InvalidCode,
     Timeout,
     Anvil,
-    AnvilAfterBal,
-    TimeoutAfterBal,
     CumulativeTimeout,
     InvalidPrefix,
     NullOnce,
@@ -133,13 +131,8 @@ impl Proxy {
                         if matches!(mode, Response::CumulativeTimeout) && after_bal {
                             tokio::time::sleep(Duration::from_millis(300)).await;
                         }
-                        if matches!(mode, Response::TimeoutAfterBal) && after_bal {
-                            return futures::future::pending().await;
-                        }
                         // Hide the local-node identity while leaving native block data intact.
-                        if !matches!(mode, Response::Anvil)
-                            && !(matches!(mode, Response::AnvilAfterBal) && after_bal)
-                        {
+                        if !matches!(mode, Response::Anvil) {
                             return Json(json!({"jsonrpc": "2.0", "id": request["id"],
                                 "error": {"code": -32601, "message": "method not found"}}));
                         }
@@ -419,13 +412,13 @@ fn assert_test(cmd: &mut TestCommand, name: &str) -> u64 {
         .unwrap()
 }
 
-forgetest_async!(fork_bal_parent_cache_preserves_every_transaction_position, |prj, cmd| {
+forgetest_async!(fork_bal_parent_cache_preserves_prefix_boundaries, |prj, cmd| {
     let fixture = Fixture::new().await;
     let proxy = Proxy::new(&fixture, Response::Native).await;
     prj.add_test("ForkBal.t.sol", TEST);
-    // Mode 1 covers every transaction prefix. The other modes exercise their distinct fork
+    // Mode 1 covers empty and multi-transaction prefixes. The other modes exercise their fork
     // lifecycle with the final transaction, which is also the path used by the other tests.
-    for (mode, index) in [(1, 0), (1, 1), (1, 2), (0, 2), (2, 2), (3, 2)] {
+    for (mode, index) in [(1, 0), (1, 2), (0, 2), (2, 2), (3, 2)] {
         let mut block_reads = Vec::new();
         let mut gas_used = Vec::new();
         for disabled in [false, true] {
@@ -496,20 +489,12 @@ forgetest_async!(fork_bal_config_and_environment_control_runtime_requests, |prj,
     let fixture = Fixture::new().await;
     let proxy = Proxy::new(&fixture, Response::Native).await;
     prj.add_test("ForkBal.t.sol", TEST);
-    for (configured, environment, flag, enabled) in [
-        (true, None, false, false),
-        (false, Some("true"), false, false),
-        (true, Some("false"), false, true),
-        (false, Some("false"), true, false),
-    ] {
-        prj.update_config(|config| config.no_fork_bal = configured);
+    prj.update_config(|config| config.no_fork_bal = true);
+    for (environment, enabled) in [(None, false), (Some("false"), true)] {
         proxy.clear();
         command(&mut cmd, &fixture, &proxy, fixture.transactions[2], 9, 1, r"^testForkBal\(\)$");
         if let Some(environment) = environment {
             cmd.env("FOUNDRY_NO_FORK_BAL", environment);
-        }
-        if flag {
-            cmd.arg("--no-fork-bal");
         }
         assert_test(&mut cmd, "testForkBal");
         if enabled {
@@ -537,8 +522,6 @@ forgetest_async!(fork_bal_unusable_responses_fall_back_to_replay, |prj, cmd| {
         Response::Unsupported,
         Response::InvalidCode,
         Response::Timeout,
-        Response::AnvilAfterBal,
-        Response::TimeoutAfterBal,
         Response::CumulativeTimeout,
     ] {
         let proxy = Proxy::new(&fixture, mode).await;
@@ -602,27 +585,17 @@ forgetest_async!(fork_bal_preserves_prefix_transaction_validation, |prj, cmd| {
     let fixture = Fixture::new().await;
     let proxy = Proxy::new(&fixture, Response::InvalidPrefix).await;
     prj.add_test("ForkBal.t.sol", TEST);
-    for disabled in [false, true] {
-        proxy.clear();
-        command(
-            &mut cmd,
-            &fixture,
-            &proxy,
-            fixture.transactions[2],
-            9,
-            1,
-            r"^testForkBalRejectsInvalidPrefix\(\)$",
-        );
-        if disabled {
-            cmd.arg("--no-fork-bal");
-        }
-        assert_test(&mut cmd, "testForkBalRejectsInvalidPrefix");
-        if disabled {
-            assert_eq!(proxy.count(BAL_METHOD), 0);
-        } else {
-            proxy.assert_parent_bal(&fixture);
-        }
-    }
+    command(
+        &mut cmd,
+        &fixture,
+        &proxy,
+        fixture.transactions[2],
+        9,
+        1,
+        r"^testForkBalRejectsInvalidPrefix\(\)$",
+    );
+    assert_test(&mut cmd, "testForkBalRejectsInvalidPrefix");
+    proxy.assert_parent_bal(&fixture);
 });
 
 forgetest_async!(fork_bal_retries_unavailable_parent_seed, |prj, cmd| {

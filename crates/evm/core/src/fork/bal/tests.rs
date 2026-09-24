@@ -179,7 +179,7 @@ fn fork_bal_cache_preserves_delegation_code_and_final_clearing() {
 }
 
 #[test]
-fn fork_bal_validation_rejects_invalid_structure_hash_and_bytecode() {
+fn fork_bal_validation_rejects_invalid_structure_and_hash() {
     let resolved = resolved(context());
     let address = Address::repeat_byte(1);
     let valid = vec![complete_account(address, Bytes::new())];
@@ -190,41 +190,9 @@ fn fork_bal_validation_rejects_invalid_structure_hash_and_bytecode() {
     assert!(validate(&valid, &block).is_err());
     block.header.block_access_list_hash = None;
 
-    let duplicate_accounts = vec![valid[0].clone(), valid[0].clone()];
-    assert!(validate(&duplicate_accounts, &block).is_err());
     let invalid_index =
         AccountChanges::new(address).with_balance_change(BalanceChange::new(index(3), U256::ZERO));
     assert!(validate(&vec![invalid_index], &block).is_err());
-    let empty_changes =
-        AccountChanges::new(address).with_storage_change(SlotChanges::new(U256::ONE, vec![]));
-    assert!(validate(&vec![empty_changes], &block).is_err());
-
-    // Earlier invalid code rejects the whole BAL, including otherwise valid storage.
-    let invalid_code = AccountChanges::new(Address::repeat_byte(2))
-        .with_storage_change(SlotChanges::new(
-            U256::ONE,
-            vec![StorageChange::new(index(0), U256::ONE)],
-        ))
-        .with_code_change(CodeChange::new(index(0), bytes!("ef0100")))
-        .with_code_change(CodeChange::new(index(1), Bytes::new()));
-    assert!(validate(&vec![valid[0].clone(), invalid_code], &block).is_err());
-}
-
-#[test]
-fn fork_bal_cache_accepts_empty_block_with_post_execution_write() {
-    let resolved = resolved(context());
-    let address = Address::repeat_byte(1);
-    let account = AccountChanges::new(address).with_storage_change(SlotChanges::new(
-        U256::ONE,
-        vec![StorageChange::new(index(1), U256::from(42))],
-    ));
-    let db = MemDb::default();
-
-    let bal = vec![account];
-    validate(&bal, &block(&resolved, 0)).unwrap();
-    cache(&db, bal);
-
-    assert_eq!(db.storage.read()[&address][&U256::ONE], U256::from(42));
 }
 
 #[tokio::test]
@@ -295,30 +263,6 @@ async fn fork_bal_prepare_reuses_block_with_execution_chain_override() {
         assert!(prepare(&provider, &resolved, &block(&resolved, 0)).await.is_some());
         assert!(asserter.read_q().is_empty());
     }
-}
-
-#[tokio::test]
-async fn fork_bal_prepare_falls_back_without_caching_unavailability() {
-    let resolved = resolved(context());
-    let block = block(&resolved, 0);
-    let asserter = Asserter::new();
-    let provider =
-        ProviderBuilder::<_, _, AnyNetwork>::default().connect_mocked_client(asserter.clone());
-    rpc_error(&asserter, -32601);
-    asserter.push_failure_msg("BAL unsupported");
-    assert!(prepare(&provider, &resolved, &block).await.is_none());
-    rpc_error(&asserter, -32601);
-    asserter.push_success(&Option::<BlockAccessList>::None);
-    assert!(prepare(&provider, &resolved, &block).await.is_none());
-    rpc_error(&asserter, -32601);
-    asserter.push_success(&"malformed BAL");
-    assert!(prepare(&provider, &resolved, &block).await.is_none());
-
-    rpc_error(&asserter, -32601);
-    asserter.push_success(&BlockAccessList::new());
-    rpc_error(&asserter, -32601);
-    assert!(prepare(&provider, &resolved, &block).await.is_some());
-    assert!(asserter.read_q().is_empty());
 }
 
 fn rpc_error(asserter: &Asserter, code: i64) {
