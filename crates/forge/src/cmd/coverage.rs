@@ -30,6 +30,7 @@ use rayon::prelude::*;
 use semver::Version;
 use std::{
     collections::BTreeSet,
+    fs,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -240,6 +241,27 @@ impl CoverageArgs {
     ) -> Result<(Project, ProjectCompileOutput)> {
         let mut project = config.ephemeral_project()?;
 
+        // Claim only an unused directory; unowned or unavailable storage retains ordinary
+        // ephemeral compilation. Compiler responses are replaced atomically.
+        let cache = config.cache.then(|| config.coverage_cache_path()).flatten().and_then(|path| {
+            fs::create_dir_all(path.parent()?).ok()?;
+            match fs::create_dir(&path) {
+                Ok(()) => {
+                    if fs::File::create_new(path.join(Config::COVERAGE_CACHE_MARKER)).is_err() {
+                        let _ = fs::remove_dir(&path);
+                        return None;
+                    }
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                    if !path.join(Config::COVERAGE_CACHE_MARKER).is_file() {
+                        return None;
+                    }
+                }
+                Err(_) => return None,
+            }
+            Some(path)
+        });
+
         if self.ir_minimum {
             sh_warn!(
                 "`--ir-minimum` enables `viaIR` with minimum optimization, \
@@ -259,7 +281,9 @@ impl CoverageArgs {
 
         config.disable_optimizations(&mut project, self.ir_minimum);
 
-        let mut compiler = ProjectCompiler::new().dynamic_test_linking(config.dynamic_test_linking);
+        let mut compiler = ProjectCompiler::new()
+            .dynamic_test_linking(config.dynamic_test_linking)
+            .response_cache(cache);
         if filter.args().path_pattern.is_some() || filter.args().path_pattern_inverse.is_some() {
             let sources = source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
                 .chain(

@@ -46,7 +46,7 @@ use std::{
     borrow::Cow,
     collections::BTreeMap,
     fs, io,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     str::FromStr,
 };
 
@@ -1448,6 +1448,16 @@ impl Config {
     ) -> Result<Vec<String>, SolcError> {
         let mut warnings = Vec::new();
 
+        if let Some(coverage_cache) = self.coverage_cache_path()
+            && let Err(err) = fs::remove_dir_all(&coverage_cache)
+            && err.kind() != io::ErrorKind::NotFound
+        {
+            warnings.push(format!(
+                "failed to remove coverage cache {}: {err}",
+                coverage_cache.display()
+            ));
+        }
+
         if let Err(err) = project.cleanup() {
             warnings.push(format!("failed to clean project artifacts: {err}"));
         }
@@ -1486,6 +1496,42 @@ impl Config {
         remove_test_dir(&self.invariant.failure_persist_dir);
 
         Ok(warnings)
+    }
+
+    /// Marks directories owned by the coverage compiler cache.
+    pub const COVERAGE_CACHE_MARKER: &str = ".foundry-coverage-cache";
+
+    /// Returns the coverage cache directory when it does not overlap project data.
+    pub fn coverage_cache_path(&self) -> Option<PathBuf> {
+        // Resolve existing ancestors so symlinks and parent components cannot make cleanup
+        // target a protected directory. Unresolvable paths disable this optional cache.
+        let resolve = |path: PathBuf| {
+            let existing = path.ancestors().find(|path| path.exists())?;
+            let suffix = path.strip_prefix(existing).ok()?;
+            if suffix.components().any(|part| !matches!(part, Component::Normal(_))) {
+                return None;
+            }
+            Some(fs::canonicalize(existing).ok()?.join(suffix))
+        };
+        let root = resolve(self.root.clone())?;
+        let cache = resolve(self.root.join(&self.cache_path).join("coverage"))?;
+        if root.starts_with(&cache) {
+            return None;
+        }
+        for path in [&self.src, &self.test, &self.script, &self.out]
+            .into_iter()
+            .chain(&self.libs)
+            .chain(&self.build_info_path)
+        {
+            let path = resolve(self.root.join(path))?;
+            if path.starts_with(&cache) || cache.starts_with(path) {
+                return None;
+            }
+        }
+        if cache.exists() && !cache.join(Self::COVERAGE_CACHE_MARKER).is_file() {
+            return None;
+        }
+        Some(cache)
     }
 
     /// Ensures that the configured version is installed if explicitly set
@@ -9231,5 +9277,35 @@ mod tests {
             assert!(config.coverage.exclude_tests);
             Ok(())
         });
+    }
+
+    #[test]
+    fn coverage_cache_protects_project_paths() {
+        let directory = tempdir().unwrap();
+        let root = directory.path().join("coverage");
+        fs::create_dir(&root).unwrap();
+        let mut config = Config::with_root(&root);
+        config.cache_path = "..".into();
+        assert!(config.coverage_cache_path().is_none());
+        config.cache_path = "src".into();
+        assert!(config.coverage_cache_path().is_none());
+        config.cache_path = "cache".into();
+        let cache = config.coverage_cache_path().unwrap();
+        fs::create_dir_all(&cache).unwrap();
+        fs::write(cache.join("user-data"), "preserve").unwrap();
+        assert!(config.coverage_cache_path().is_none());
+        fs::write(cache.join(Config::COVERAGE_CACHE_MARKER), "").unwrap();
+        assert_eq!(config.coverage_cache_path(), Some(cache));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn coverage_cache_rejects_symlink_overlap() {
+        let directory = tempdir().unwrap();
+        let root = directory.path();
+        fs::create_dir(root.join("src")).unwrap();
+        std::os::unix::fs::symlink(root.join("src"), root.join("cache")).unwrap();
+        let config = Config::with_root(root);
+        assert!(config.coverage_cache_path().is_none());
     }
 }

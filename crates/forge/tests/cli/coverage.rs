@@ -4074,3 +4074,192 @@ fn coverage_help_renders_notes() {
     )));
     assert!(!help.contains("\\n"));
 }
+
+// Coverage must retain enum bounds and artifact paths across source edits and filtered requests.
+forgetest!(coverage_cache_preserves_reports_and_analysis, |prj, cmd| {
+    for dynamic_test_linking in [false, true] {
+        prj.clear_cache_dir();
+        prj.update_config(|config| {
+            config.dynamic_test_linking = dynamic_test_linking;
+            config.fuzz.runs = 8;
+        });
+        prj.add_source(
+            "A.sol",
+            "contract A { function value() external pure returns (uint256) { return 1; } }",
+        );
+        prj.add_source("B.sol", "contract B { enum E { X, Y } function value(E e) external pure returns (uint256) { return uint256(e); } }");
+        prj.add_source(
+            "Unused.sol",
+            "function unused(uint256 x) pure returns (uint256) { return x + 1; }",
+        );
+        prj.add_test("A.t.sol", r#"
+import {A} from "../src/A.sol";
+interface Vm {
+    function getArtifactPathByCode(bytes calldata code) external view returns (string memory);
+    function projectRoot() external view returns (string memory);
+}
+contract ATest {
+    function testValue() public {
+        require(new A().value() > 0);
+    }
+    function testArtifactPath() public view {
+        Vm vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+        require(keccak256(bytes(vm.getArtifactPathByCode(type(A).creationCode))) == keccak256(bytes(string.concat(vm.projectRoot(), "/out/A.sol/A.json"))));
+    }
+}
+"#);
+        prj.add_test(
+            "B.t.sol",
+            r#"
+import {B} from "../src/B.sol";
+contract BTest {
+    function testEnum(B.E e) public { require(new B().value(e) == uint256(e)); }
+}
+"#,
+        );
+        for stage in 0..4 {
+            if stage == 1 {
+                prj.add_source(
+                    "A.sol",
+                    "contract A { function value() external pure returns (uint256) { return 2; } }",
+                );
+            } else if stage == 2 {
+                fs::remove_file(prj.root().join("src/Unused.sol")).unwrap();
+            }
+            let mut reference = None::<String>;
+            for cached in [false, true, true] {
+                prj.update_config(|config| config.cache = cached);
+                cmd.forge_fuse().args(["coverage", "--report=lcov"]);
+                if stage == 3 {
+                    cmd.args(["--match-path", "test/A.t.sol"]);
+                }
+                cmd.assert_success();
+                let report = fs::read_to_string(prj.root().join("lcov.info")).unwrap();
+                if let Some(expected) = &reference {
+                    foundry_test_utils::snapbox::assert_data_eq!(report, expected.clone());
+                } else {
+                    reference = Some(report);
+                }
+            }
+        }
+    }
+});
+
+// The compiler can prune a build containing only free functions because it has no contract
+// artifacts. A warm coverage run must still report that source.
+forgetest!(coverage_cache_preserves_free_only_builds, |prj, cmd| {
+    prj.update_config(|config| {
+        config.additional_compiler_profiles = vec![SettingsOverrides {
+            name: "via-ir".to_owned(),
+            via_ir: Some(true),
+            evm_version: None,
+            optimizer: None,
+            optimizer_runs: None,
+            bytecode_hash: None,
+        }];
+        config.compilation_restrictions = vec![CompilationRestrictions {
+            paths: "src/Free.sol".parse().unwrap(),
+            version: None,
+            via_ir: Some(true),
+            bytecode_hash: None,
+            min_optimizer_runs: None,
+            optimizer_runs: None,
+            max_optimizer_runs: None,
+            min_evm_version: None,
+            evm_version: None,
+            max_evm_version: None,
+        }];
+    });
+    prj.add_source("Free.sol", "function unused() pure returns (uint256) { return 42; }");
+    prj.add_test("Coverage.t.sol", "contract CoverageTest { function testPass() public {} }");
+    let mut reference = None::<String>;
+    for cached in [false, true, true] {
+        prj.update_config(|config| config.cache = cached);
+        cmd.forge_fuse().args(["coverage", "--report=lcov"]).assert_success();
+        let report = fs::read_to_string(prj.root().join("lcov.info")).unwrap();
+        if let Some(expected) = &reference {
+            foundry_test_utils::snapbox::assert_data_eq!(report, expected.clone());
+        } else {
+            reference = Some(report);
+        }
+    }
+});
+
+forgetest!(coverage_cache_isolated_and_cleaned, |prj, cmd| {
+    prj.update_config(|config| {
+        config.cache_path = "custom-cache".into();
+        config.out = "custom-out".into();
+        config.build_info = true;
+        config.build_info_path = Some("custom-build-info".into());
+    });
+    prj.add_source(
+        "A.sol",
+        "contract A { function value() external pure returns (uint256) { return 1; } }",
+    );
+    prj.add_test("A.t.sol", "import {A} from '../src/A.sol'; contract ATest { function testValue() public { require(new A().value() == 1); } }");
+    cmd.forge_fuse().arg("build").assert_success();
+    let artifact = prj.root().join("custom-out/A.sol/A.json");
+    let original = fs::read(&artifact).unwrap();
+    let cache = prj.root().join("custom-cache/coverage");
+    for _ in 0..2 {
+        cmd.forge_fuse().arg("coverage").assert_success();
+        assert_eq!(fs::read(&artifact).unwrap(), original);
+        assert!(cache.is_dir());
+    }
+    let marker = cache.join("force-marker");
+    fs::write(&marker, "old cache").unwrap();
+    cmd.forge_fuse().args(["coverage", "--force"]).assert_success();
+    assert!(!marker.exists());
+    assert!(!artifact.exists());
+    cmd.forge_fuse().arg("clean").assert_success();
+    assert!(!cache.exists());
+    prj.update_config(|config| config.cache = false);
+    cmd.forge_fuse().arg("coverage").assert_success();
+    assert!(!cache.exists());
+});
+
+forgetest!(coverage_cache_respects_warning_denial, |prj, cmd| {
+    prj.add_test(
+        "Warning.t.sol",
+        "contract WarningTest { function testWarning() public { uint256 unused = 1; } }",
+    );
+    cmd.forge_fuse().arg("coverage").assert_success();
+    // Replayed compiler responses must retain the diagnostics needed for a changed warning policy.
+    cmd.forge_fuse().args(["coverage", "--deny", "warnings"]).assert_failure();
+});
+
+forgetest!(coverage_cache_preserves_artifact_names_after_deletion, |prj, cmd| {
+    prj.add_source(
+        "A.sol",
+        "contract A { function value() public pure returns (uint256) { return 1; } }",
+    );
+    prj.add_source(
+        "nested/A.sol",
+        "contract A { function value() public pure returns (uint256) { return 2; } }",
+    );
+    for (stage, expected) in ["nested/A.sol/A.json", "A.sol/A.json"].into_iter().enumerate() {
+        if stage == 1 {
+            fs::remove_file(prj.root().join("src/A.sol")).unwrap();
+        }
+        prj.add_test("Names.t.sol", &format!(r#"
+import {{A}} from "../src/nested/A.sol";
+interface Vm {{
+    function getArtifactPathByCode(bytes calldata code) external view returns (string memory);
+    function getArtifactPathByDeployedCode(bytes calldata code) external view returns (string memory);
+    function projectRoot() external view returns (string memory);
+}}
+contract NamesTest {{
+    function testNames() public view {{
+        Vm vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+        bytes32 expected = keccak256(bytes(string.concat(vm.projectRoot(), "/out/{expected}")));
+        require(keccak256(bytes(vm.getArtifactPathByCode(type(A).creationCode))) == expected);
+        require(keccak256(bytes(vm.getArtifactPathByDeployedCode(type(A).runtimeCode))) == expected);
+    }}
+}}
+"#));
+        for cached in [false, true, true] {
+            prj.update_config(|config| config.cache = cached);
+            cmd.forge_fuse().arg("coverage").assert_success();
+        }
+    }
+});
