@@ -5141,25 +5141,19 @@ impl EthApi<FoundryNetwork> {
 
         let from = *pending_transaction.sender();
         #[cfg(feature = "base")]
-        let (requires, provides) =
-            if let Some(markers) = self.eip8130_nonce_markers(&pending_transaction).await? {
-                markers
-            } else if let Some(markers) = tempo_parallel_nonce_markers(&pending_transaction) {
-                markers
-            } else {
-                let nonce = pending_transaction.transaction.nonce();
-                let on_chain_nonce = self.backend.current_nonce(from).await?;
-                nonce_markers(&pending_transaction, nonce, on_chain_nonce, from)
-            };
+        let base_markers = self.eip8130_nonce_markers(&pending_transaction).await?;
         #[cfg(not(feature = "base"))]
-        let (requires, provides) =
-            if let Some(markers) = tempo_parallel_nonce_markers(&pending_transaction) {
-                markers
-            } else {
-                let nonce = pending_transaction.transaction.nonce();
-                let on_chain_nonce = self.backend.current_nonce(from).await?;
-                nonce_markers(&pending_transaction, nonce, on_chain_nonce, from)
-            };
+        let base_markers = None;
+
+        let (requires, provides) = if let Some(markers) =
+            base_markers.or_else(|| tempo_parallel_nonce_markers(&pending_transaction))
+        {
+            markers
+        } else {
+            let nonce = pending_transaction.transaction.nonce();
+            let on_chain_nonce = self.backend.current_nonce(from).await?;
+            nonce_markers(&pending_transaction, nonce, on_chain_nonce, from)
+        };
 
         debug_assert!(requires != provides);
         let priority = self.transaction_priority(&pending_transaction.transaction);

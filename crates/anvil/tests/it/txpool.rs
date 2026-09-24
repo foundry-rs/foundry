@@ -501,3 +501,39 @@ async fn anvil_drop_transaction_removes_nonce_dependents() {
     assert!(provider.get_transaction_by_hash(dependent_hash).await.unwrap().is_none());
     assert!(provider.get_transaction_by_hash(transitive_dependent_hash).await.unwrap().is_none());
 }
+
+/// Dropping a queued transaction must also remove its queued nonce dependents.
+#[tokio::test(flavor = "multi_thread")]
+async fn anvil_drop_transaction_removes_queued_nonce_dependents() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let account = accounts[0].address();
+    let recipient = accounts[1].address();
+    let transaction = |nonce| {
+        WithOtherFields::new(
+            TransactionRequest::default()
+                .with_to(recipient)
+                .with_from(account)
+                .with_value(U256::from(1))
+                .with_nonce(nonce),
+        )
+    };
+
+    let first_hash = *provider.send_transaction(transaction(5)).await.unwrap().tx_hash();
+    let dependent_hash = *provider.send_transaction(transaction(6)).await.unwrap().tx_hash();
+    let transitive_hash = *provider.send_transaction(transaction(7)).await.unwrap().tx_hash();
+
+    let status = provider.txpool_status().await.unwrap();
+    assert_eq!(status.queued, 3);
+
+    assert_eq!(api.anvil_drop_transaction(first_hash).await.unwrap(), Some(first_hash));
+
+    let status = provider.txpool_status().await.unwrap();
+    assert_eq!(status.queued, 0);
+    assert!(provider.get_transaction_by_hash(dependent_hash).await.unwrap().is_none());
+    assert!(provider.get_transaction_by_hash(transitive_hash).await.unwrap().is_none());
+}
