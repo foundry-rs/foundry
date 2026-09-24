@@ -521,29 +521,6 @@ forgetest!(can_show_config, |prj, cmd| {
     assert_eq!(expected, output);
 });
 
-forgetest!(fork_bal_config_precedence, |prj, cmd| {
-    assert!(!cmd.config().no_fork_bal);
-    prj.write_config(Config { no_fork_bal: true, no_storage_caching: true, ..Default::default() });
-    let config = cmd.config();
-    assert!(config.no_fork_bal);
-    assert!(config.no_storage_caching);
-    let evm_opts = Config::figment_with_root(prj.root()).extract::<EvmOpts>().unwrap();
-    assert!(evm_opts.no_fork_bal);
-
-    cmd.env("FOUNDRY_NO_FORK_BAL", "false");
-    let config = cmd.config();
-    assert!(!config.no_fork_bal);
-    assert!(config.no_storage_caching);
-
-    let expected = Config { no_fork_bal: true, ..config };
-    cmd.env("FOUNDRY_NO_FORK_BAL", "false");
-    cmd.args(["config", "--no-fork-bal", "--json"])
-        .assert_json_stdout(serde_json::to_string(&expected).unwrap());
-
-    prj.write_config(Config::default());
-    assert!(prj.config_from_output(["--no-fork-bal"]).no_fork_bal);
-});
-
 forgetest!(can_select_profile_with_cli, |prj, cmd| {
     prj.create_file(
         Config::FILE_NAME,

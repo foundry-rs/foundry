@@ -308,45 +308,37 @@ fn id<S: serde::Serializer>(chain: &Option<Chain>, s: S) -> Result<S::Ok, S::Err
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_config::NamedChain;
+    use foundry_config::{
+        NamedChain,
+        figment::{Figment, providers::Serialized},
+    };
 
     #[test]
     fn fork_bal_cli_preserves_config_unless_explicit() {
-        for configured in [false, true] {
-            let config = Config { no_fork_bal: configured, ..Default::default() };
-            let args = EvmArgs::parse_from(["foundry-cli"]);
-            let merged =
-                Config::from_provider(figment::Figment::from(&config).merge(args)).unwrap();
-            assert_eq!(merged.no_fork_bal, configured);
-
-            let args = EvmArgs::parse_from(["foundry-cli", "--no-fork-bal"]);
-            let merged = Config::from_provider(figment::Figment::from(config).merge(args)).unwrap();
-            assert!(merged.no_fork_bal);
-        }
-    }
-
-    #[test]
-    fn fork_bal_cli_overrides_environment() {
-        figment::Jail::expect_with(|jail| {
-            jail.create_file(
-                "foundry.toml",
-                "[profile.default]\nno_fork_bal = true\n[profile.ci]\nno_fork_bal = false\n",
-            )?;
-            for profile in ["default", "ci"] {
-                jail.set_env("FOUNDRY_PROFILE", profile);
-                for environment in [false, true] {
-                    jail.set_env("FOUNDRY_NO_FORK_BAL", environment.to_string());
-                    let args = EvmArgs::parse_from(["foundry-cli"]);
-                    let config = Config::from_provider(Config::figment().merge(args)).unwrap();
-                    assert_eq!(config.no_fork_bal, environment);
-
-                    let args = EvmArgs::parse_from(["foundry-cli", "--no-fork-bal"]);
-                    let config = Config::from_provider(Config::figment().merge(args)).unwrap();
-                    assert!(config.no_fork_bal);
+        for profile in ["default", "ci"] {
+            for configured in [false, true] {
+                for environment in [None, Some(false), Some(true)] {
+                    for flag in [false, true] {
+                        let config = Config { no_fork_bal: configured, ..Default::default() };
+                        let mut figment =
+                            Figment::from(Serialized::defaults(config).profile(profile))
+                                .select(profile);
+                        if let Some(environment) = environment {
+                            figment = figment.merge(Serialized::global("no_fork_bal", environment));
+                        }
+                        let args = EvmArgs::parse_from(
+                            ["foundry-cli"].into_iter().chain(flag.then_some("--no-fork-bal")),
+                        );
+                        let merged = Config::from_provider(figment.merge(args)).unwrap();
+                        assert_eq!(
+                            merged.no_fork_bal,
+                            flag || environment.unwrap_or(configured),
+                            "profile={profile}, configured={configured}, environment={environment:?}, flag={flag}",
+                        );
+                    }
                 }
             }
-            Ok(())
-        });
+        }
     }
 
     #[test]

@@ -39,10 +39,11 @@ struct Fixture {
 
 impl Fixture {
     async fn new() -> Self {
+        // Amsterdam makes Anvil produce native BALs and their block-header commitments.
         let (api, handle) = spawn(
             NodeConfig::test()
                 .with_chain_id(Some(1u64))
-                .with_hardfork(Some(EthereumHardfork::Cancun.into()))
+                .with_hardfork(Some(EthereumHardfork::Amsterdam.into()))
                 .with_genesis_timestamp(Some(1_800_000_000u64))
                 .with_no_mining(true),
         )
@@ -60,6 +61,7 @@ impl Fixture {
         rpc(&endpoint, "eth_sendTransaction", send(0)).await;
         api.mine_one().await.unwrap();
         let parent = rpc(&endpoint, "eth_getBlockByNumber", json!(["latest", false])).await;
+        assert!(parent["blockAccessListHash"].is_string(), "missing native BAL commitment");
         assert_eq!(
             rpc(&endpoint, "eth_getStorageAt", json!([COUNTER, "0x0", "latest"])).await,
             json!(B256::from(U256::from(7))),
@@ -83,22 +85,13 @@ impl Fixture {
 
 #[derive(Clone, Copy, Debug)]
 enum Response {
-    Valid,
+    Native,
     Legacy,
     Unsupported,
-    InternalError,
-    Null,
-    Malformed,
-    Invalid,
     InvalidCode,
-    WrongCommitment,
     Timeout,
-    PreCancun,
-    UnknownChain,
     Anvil,
-    Ambiguous,
     AnvilAfterBal,
-    AmbiguousAfterBal,
     TimeoutAfterBal,
     CumulativeTimeout,
     InvalidPrefix,
@@ -143,12 +136,7 @@ impl Proxy {
                         if matches!(mode, Response::TimeoutAfterBal) && after_bal {
                             return futures::future::pending().await;
                         }
-                        let ambiguous = matches!(mode, Response::Ambiguous)
-                            || (matches!(mode, Response::AmbiguousAfterBal) && after_bal);
-                        if ambiguous {
-                            return Json(json!({"jsonrpc": "2.0", "id": request["id"],
-                                "error": {"code": -32603, "message": "internal error"}}));
-                        }
+                        // Hide the local-node identity while leaving native block data intact.
                         if !matches!(mode, Response::Anvil)
                             && !(matches!(mode, Response::AnvilAfterBal) && after_bal)
                         {
@@ -168,42 +156,36 @@ impl Proxy {
                         if matches!(mode, Response::CumulativeTimeout) {
                             tokio::time::sleep(Duration::from_millis(300)).await;
                         }
-                        if matches!(mode, Response::InternalError) {
-                            return Json(json!({"jsonrpc": "2.0", "id": request["id"],
-                                "error": {"code": -32603, "message": "internal error"}}));
+                        if matches!(mode, Response::Timeout) {
+                            return futures::future::pending().await;
                         }
-                        let mut bal = json!([{
-                            "address": COUNTER,
-                            "storageChanges": [{"key": "0x0", "changes": [
-                                {"index": "0x1", "value": "0x7"}
-                            ]}],
-                            "storageReads": ["0x1"],
-                            "balanceChanges": [], "nonceChanges": [], "codeChanges": []
-                        }]);
-                        match mode {
-                            Response::Null => bal = Value::Null,
-                            Response::NullOnce if !after_bal => bal = Value::Null,
-                            Response::Malformed => bal = json!([{"address": "invalid"}]),
-                            Response::Invalid => {
-                                bal[0]["storageChanges"][0]["changes"][0]["index"] = json!("0xff");
-                            }
-                            Response::InvalidCode => {
-                                // Reject earlier invalid code before caching the valid first
-                                // account.
-                                bal.as_array_mut().unwrap().push(json!({
-                                    "address": "0x000000000000000000000000000000000000ba11",
-                                    "storageChanges": [], "storageReads": [],
-                                    "balanceChanges": [], "nonceChanges": [],
-                                    "codeChanges": [
-                                        {"index": "0x0", "code": "0xef0100"},
-                                        {"index": "0x1", "code": "0x"}
-                                    ]
-                                }));
-                            }
-                            Response::Timeout => return futures::future::pending().await,
-                            _ => {}
+                        if matches!(mode, Response::NullOnce) && !after_bal {
+                            return Json(
+                                json!({"jsonrpc": "2.0", "id": request["id"], "result": null}),
+                            );
                         }
-                        return Json(json!({"jsonrpc": "2.0", "id": request["id"], "result": bal}));
+                        if matches!(mode, Response::InvalidCode) {
+                            // Valid storage must not enter the cache if a later account is invalid.
+                            let bal = json!([{
+                                "address": COUNTER,
+                                "storageChanges": [{"key": "0x0", "changes": [
+                                    {"index": "0x1", "value": "0x7"}
+                                ]}],
+                                "storageReads": ["0x1"],
+                                "balanceChanges": [], "nonceChanges": [], "codeChanges": []
+                            }, {
+                                "address": "0x000000000000000000000000000000000000ba11",
+                                "storageChanges": [], "storageReads": [],
+                                "balanceChanges": [], "nonceChanges": [],
+                                "codeChanges": [
+                                    {"index": "0x0", "code": "0xef0100"},
+                                    {"index": "0x1", "code": "0x"}
+                                ]
+                            }]);
+                            return Json(
+                                json!({"jsonrpc": "2.0", "id": request["id"], "result": bal}),
+                            );
+                        }
                     }
                     let mut response = client
                         .post(upstream)
@@ -214,23 +196,19 @@ impl Proxy {
                         .json::<Value>()
                         .await
                         .unwrap();
-                    if method == "eth_chainId" && matches!(mode, Response::UnknownChain) {
-                        response["result"] = json!("0x7a69");
-                    }
                     if matches!(method, "eth_getBlockByHash" | "eth_getBlockByNumber") {
-                        if matches!(mode, Response::PreCancun) {
-                            response["result"]["timestamp"] = json!("0x60000000");
+                        // Exercise bytecode validation without an earlier commitment mismatch.
+                        if matches!(mode, Response::InvalidCode) {
+                            response["result"]
+                                .as_object_mut()
+                                .unwrap()
+                                .remove("blockAccessListHash");
                         }
                         if matches!(mode, Response::InvalidPrefix)
                             && response["result"]["parentHash"] == parent_hash
                             && request["params"][1] == true
                         {
                             response["result"]["transactions"][0]["gas"] = json!("0x0");
-                        }
-                        if matches!(mode, Response::WrongCommitment)
-                            && response["result"]["hash"] == parent_hash
-                        {
-                            response["result"]["blockAccessListHash"] = json!(B256::ZERO);
                         }
                     }
                     Json(response)
@@ -443,46 +421,46 @@ fn assert_test(cmd: &mut TestCommand, name: &str) -> u64 {
 
 forgetest_async!(fork_bal_parent_cache_preserves_every_transaction_position, |prj, cmd| {
     let fixture = Fixture::new().await;
-    let proxy = Proxy::new(&fixture, Response::Valid).await;
+    let proxy = Proxy::new(&fixture, Response::Native).await;
     prj.add_test("ForkBal.t.sol", TEST);
-    for mode in 0..4 {
-        for (index, target) in fixture.transactions.iter().enumerate() {
-            let mut block_reads = Vec::new();
-            let mut gas_used = Vec::new();
-            for disabled in [false, true] {
-                proxy.clear();
-                command(
-                    &mut cmd,
-                    &fixture,
-                    &proxy,
-                    *target,
-                    7 + index as u64,
-                    mode,
-                    r"^testForkBal\(\)$",
-                );
-                if disabled {
-                    cmd.arg("--no-fork-bal");
-                }
-                gas_used.push(assert_test(&mut cmd, "testForkBal"));
-                block_reads.push(proxy.count("eth_getBlockByHash"));
-                if disabled {
-                    assert_eq!(proxy.count(BAL_METHOD), 0);
-                    assert!(proxy.slot_reads(U256::ZERO) > 0);
-                } else {
-                    proxy.assert_parent_bal(&fixture);
-                    assert_eq!(proxy.slot_reads(U256::ZERO), 0, "mode={mode}, index={index}");
-                }
-                assert!(proxy.slot_reads(U256::from(1)) > 0, "read-only slots need RPC fallback");
+    // Mode 1 covers every transaction prefix. The other modes exercise their distinct fork
+    // lifecycle with the final transaction, which is also the path used by the other tests.
+    for (mode, index) in [(1, 0), (1, 1), (1, 2), (0, 2), (2, 2), (3, 2)] {
+        let mut block_reads = Vec::new();
+        let mut gas_used = Vec::new();
+        for disabled in [false, true] {
+            proxy.clear();
+            command(
+                &mut cmd,
+                &fixture,
+                &proxy,
+                fixture.transactions[index],
+                7 + index as u64,
+                mode,
+                r"^testForkBal\(\)$",
+            );
+            if disabled {
+                cmd.arg("--no-fork-bal");
             }
-            assert_eq!(block_reads[0], block_reads[1], "BAL fetched an extra block: mode={mode}");
-            assert_eq!(gas_used[0], gas_used[1], "BAL changed gas: mode={mode}, index={index}");
+            gas_used.push(assert_test(&mut cmd, "testForkBal"));
+            block_reads.push(proxy.count("eth_getBlockByHash"));
+            if disabled {
+                assert_eq!(proxy.count(BAL_METHOD), 0);
+                assert!(proxy.slot_reads(U256::ZERO) > 0);
+            } else {
+                proxy.assert_parent_bal(&fixture);
+                assert_eq!(proxy.slot_reads(U256::ZERO), 0, "mode={mode}, index={index}");
+            }
+            assert!(proxy.slot_reads(U256::from(1)) > 0, "read-only slots need RPC fallback");
         }
+        assert_eq!(block_reads[0], block_reads[1], "BAL fetched an extra block: mode={mode}");
+        assert_eq!(gas_used[0], gas_used[1], "BAL changed gas: mode={mode}, index={index}");
     }
 });
 
 forgetest_async!(fork_bal_keeps_local_writes_snapshots_and_persistent_accounts, |prj, cmd| {
     let fixture = Fixture::new().await;
-    let proxy = Proxy::new(&fixture, Response::Valid).await;
+    let proxy = Proxy::new(&fixture, Response::Native).await;
     prj.add_test("ForkBal.t.sol", TEST);
     let mut gas_used = Vec::new();
     let mut probes = Vec::new();
@@ -516,7 +494,7 @@ forgetest_async!(fork_bal_keeps_local_writes_snapshots_and_persistent_accounts, 
 
 forgetest_async!(fork_bal_config_and_environment_control_runtime_requests, |prj, cmd| {
     let fixture = Fixture::new().await;
-    let proxy = Proxy::new(&fixture, Response::Valid).await;
+    let proxy = Proxy::new(&fixture, Response::Native).await;
     prj.add_test("ForkBal.t.sol", TEST);
     for (configured, environment, flag, enabled) in [
         (true, None, false, false),
@@ -547,24 +525,26 @@ forgetest_async!(fork_bal_config_and_environment_control_runtime_requests, |prj,
 forgetest_async!(fork_bal_unusable_responses_fall_back_to_replay, |prj, cmd| {
     let fixture = Fixture::new().await;
     prj.add_test("ForkBal.t.sol", TEST);
+    let baseline = Proxy::new(&fixture, Response::Native).await;
+    command(&mut cmd, &fixture, &baseline, fixture.transactions[2], 9, 1, r"^testForkBal\(\)$")
+        .arg("--no-fork-bal");
+    let gas_used = assert_test(&mut cmd, "testForkBal");
+    let block_reads = baseline.count("eth_getBlockByHash");
+    assert_eq!(baseline.count(BAL_METHOD), 0);
+    assert!(baseline.slot_reads(U256::ZERO) > 0);
+    // Core BAL tests cover the remaining validation and source-eligibility combinations.
     for mode in [
         Response::Unsupported,
-        Response::InternalError,
-        Response::Null,
-        Response::Malformed,
-        Response::Invalid,
         Response::InvalidCode,
-        Response::WrongCommitment,
         Response::Timeout,
         Response::AnvilAfterBal,
-        Response::AmbiguousAfterBal,
         Response::TimeoutAfterBal,
         Response::CumulativeTimeout,
     ] {
         let proxy = Proxy::new(&fixture, mode).await;
         command(&mut cmd, &fixture, &proxy, fixture.transactions[2], 9, 1, r"^testForkBal\(\)$");
         let started = Instant::now();
-        assert_test(&mut cmd, "testForkBal");
+        assert_eq!(assert_test(&mut cmd, "testForkBal"), gas_used, "BAL changed gas: {mode:?}");
         assert!(
             started.elapsed() < Duration::from_secs(20),
             "optional BAL request delayed the fork: {mode:?}"
@@ -576,11 +556,6 @@ forgetest_async!(fork_bal_unusable_responses_fall_back_to_replay, |prj, cmd| {
             "only method-not-found may use the legacy BAL method: {mode:?}"
         );
         assert!(proxy.slot_reads(U256::ZERO) > 0, "invalid BAL was used: {mode:?}");
-        let block_reads = proxy.count("eth_getBlockByHash");
-        proxy.clear();
-        command(&mut cmd, &fixture, &proxy, fixture.transactions[2], 9, 1, r"^testForkBal\(\)$")
-            .arg("--no-fork-bal");
-        assert_test(&mut cmd, "testForkBal");
         assert_eq!(proxy.count("eth_getBlockByHash"), block_reads, "extra block read: {mode:?}");
     }
 });
@@ -588,14 +563,11 @@ forgetest_async!(fork_bal_unusable_responses_fall_back_to_replay, |prj, cmd| {
 forgetest_async!(fork_bal_skips_ineligible_ordinary_and_pending_forks, |prj, cmd| {
     let fixture = Fixture::new().await;
     prj.add_test("ForkBal.t.sol", TEST);
-    for mode in [Response::PreCancun, Response::UnknownChain, Response::Anvil, Response::Ambiguous]
-    {
-        let proxy = Proxy::new(&fixture, mode).await;
-        command(&mut cmd, &fixture, &proxy, fixture.transactions[0], 7, 1, r"^testForkBal\(\)$");
-        assert_test(&mut cmd, "testForkBal");
-        assert_eq!(proxy.count(BAL_METHOD), 0, "ineligible source: {mode:?}");
-    }
-    let proxy = Proxy::new(&fixture, Response::Valid).await;
+    let proxy = Proxy::new(&fixture, Response::Anvil).await;
+    command(&mut cmd, &fixture, &proxy, fixture.transactions[0], 7, 1, r"^testForkBal\(\)$");
+    assert_test(&mut cmd, "testForkBal");
+    assert_eq!(proxy.count(BAL_METHOD), 0, "mutable Anvil source");
+    let proxy = Proxy::new(&fixture, Response::Native).await;
     command(
         &mut cmd,
         &fixture,
@@ -673,8 +645,8 @@ forgetest_async!(fork_bal_retries_unavailable_parent_seed, |prj, cmd| {
 
 forgetest_async!(fork_bal_reuses_parent_seed_only_for_the_same_source, |prj, cmd| {
     let fixture = Fixture::new().await;
-    let first = Proxy::new(&fixture, Response::Valid).await;
-    let second = Proxy::new(&fixture, Response::Valid).await;
+    let first = Proxy::new(&fixture, Response::Native).await;
+    let second = Proxy::new(&fixture, Response::Native).await;
     prj.add_test("ForkBal.t.sol", TEST);
     command(
         &mut cmd,
