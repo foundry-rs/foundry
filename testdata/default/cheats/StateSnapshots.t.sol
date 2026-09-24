@@ -126,6 +126,27 @@ contract StateSnapshotDeleteFromSetUpTest is Test {
     }
 }
 
+/// forge-config: default.isolate = true
+contract StateSnapshotIsolationTest is Test {
+    uint256 value;
+
+    function testRevertFromIsolatedCallRestoresAbsentState() public {
+        address target = address(0xBEEF);
+        uint256 snapshotId = vm.snapshotState();
+        value = 2;
+        vm.deal(target, 5 ether);
+
+        assertTrue(this.restore(snapshotId));
+
+        assertEq(value, 0);
+        assertEq(target.balance, 0);
+    }
+
+    function restore(uint256 snapshotId) external returns (bool) {
+        return vm.revertToState(snapshotId);
+    }
+}
+
 // TODO: remove this test suite once `snapshot*` has been deprecated in favor of `snapshotState*`.
 contract DeprecatedStateSnapshotTest is Test {
     Storage store;

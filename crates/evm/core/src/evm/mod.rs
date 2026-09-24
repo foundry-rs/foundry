@@ -320,10 +320,17 @@ pub fn prepare_child_state(journal: &JournaledState) -> EvmState {
 /// Merges a child's returned account state into its suspended parent.
 ///
 /// Preserve parent warmth and original storage values, import child account flags and current
-/// values, and retain untouched parent accounts and slots. Newly loaded accounts and slots keep
-/// their child metadata. This operates on the EVM's returned state, not on an unfiltered write set;
-/// the caller retains responsibility for execution errors and family-specific reconciliation.
+/// values, and remove parent accounts and slots absent from the child. Newly loaded accounts and
+/// slots keep their child metadata. This operates on the EVM's returned state, not on an unfiltered
+/// write set; the caller retains responsibility for execution errors and family-specific
+/// reconciliation.
 pub fn merge_child_state(parent: &mut EvmState, child: EvmState) {
+    parent.retain(|address, parent_account| {
+        let Some(child_account) = child.get(address) else { return false };
+        parent_account.storage.retain(|key, _| child_account.storage.contains_key(key));
+        true
+    });
+
     for (address, mut account) in child {
         let Some(parent_account) = parent.get_mut(&address) else {
             parent.insert(address, account);
@@ -569,5 +576,34 @@ mod tests {
                 assert_eq!(account.storage[&key].is_cold, parent_cold && child_cold);
             }
         }
+    }
+
+    #[test]
+    fn settlement_removes_state_absent_from_child() {
+        let retained_address = Address::with_last_byte(0x42);
+        let removed_address = Address::with_last_byte(0x43);
+        let retained_key = U256::ONE;
+        let removed_key = U256::from(2);
+        let mut retained_account = Account::from(AccountInfo::default());
+        retained_account
+            .storage
+            .insert(retained_key, EvmStorageSlot::new(U256::ONE, TransactionId::ZERO));
+        retained_account
+            .storage
+            .insert(removed_key, EvmStorageSlot::new(U256::from(2), TransactionId::ZERO));
+        let mut parent = EvmState::from_iter([
+            (retained_address, retained_account),
+            (removed_address, Account::from(AccountInfo::default())),
+        ]);
+        let mut child_account = Account::from(AccountInfo::default());
+        child_account
+            .storage
+            .insert(retained_key, EvmStorageSlot::new(U256::ONE, TransactionId::ZERO));
+
+        merge_child_state(&mut parent, EvmState::from_iter([(retained_address, child_account)]));
+
+        assert!(!parent.contains_key(&removed_address));
+        assert!(parent[&retained_address].storage.contains_key(&retained_key));
+        assert!(!parent[&retained_address].storage.contains_key(&removed_key));
     }
 }
