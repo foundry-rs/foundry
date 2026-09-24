@@ -1,5 +1,5 @@
 use crate::{
-    FoundryChain, FoundryContextExt, FoundryInspectorExt,
+    FoundryChain, FoundryContextExt, FoundryInspectorExt, FoundryTransaction,
     backend::{DatabaseExt, JournaledState},
     constants::SYSTEM_PRECOMPILE_STUB,
     evm::{
@@ -168,6 +168,11 @@ impl<'db, I: FoundryInspectorExt<BaseContext<&'db mut dyn DatabaseExt<BaseEvmFac
     }
 
     fn transact_raw(&mut self, tx: Self::Tx) -> eyre::Result<ResultAndState<HaltReason>> {
+        if self.ctx().cfg().disable_fee_charge
+            && tx.enveloped_tx().is_some_and(|enveloped| enveloped.is_empty())
+        {
+            self.ctx_mut().chain_mut().clear_tx_l1_cost();
+        }
         let ResultAndState { result, state } =
             Evm::transact_raw(self, tx).map_err(map_base_error)?;
         let result = result.map_haltreason(|halt| match halt {
