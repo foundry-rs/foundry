@@ -287,6 +287,21 @@ contract BaseIsolatedFeesTest {
             "operator fee vault was credited"
         );
     }
+
+    function test_create_does_not_credit_fee_vaults() public {
+        uint256 baseFeeVaultBalance = BASE_FEE_VAULT.balance;
+        uint256 l1FeeVaultBalance = L1_FEE_VAULT.balance;
+        uint256 operatorFeeVaultBalance = OPERATOR_FEE_VAULT.balance;
+
+        new Sink();
+
+        require(BASE_FEE_VAULT.balance == baseFeeVaultBalance, "base fee vault was credited");
+        require(L1_FEE_VAULT.balance == l1FeeVaultBalance, "L1 fee vault was credited");
+        require(
+            OPERATOR_FEE_VAULT.balance == operatorFeeVaultBalance,
+            "operator fee vault was credited"
+        );
+    }
 }
 "#,
     );
@@ -328,12 +343,31 @@ forgetest!(base_isolated_snapshot_does_not_disable_broadcast_fees, |prj, cmd| {
 interface Vm {{
     function broadcastRawTransaction(bytes calldata data) external;
     function deal(address account, uint256 balance) external;
+    function fee(uint256 newBasefee) external;
     function revertToState(uint256 snapshotId) external returns (bool);
+    function revertToStateAndDelete(uint256 snapshotId) external returns (bool);
     function snapshotState() external returns (uint256);
+    function store(address target, bytes32 slot, bytes32 value) external;
 }}
 
 contract BaseIsolatedSnapshotFeesTest {{
     Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address constant L1_BLOCK = 0x4200000000000000000000000000000000000015;
+    address constant BASE_FEE_VAULT = 0x4200000000000000000000000000000000000019;
+    address constant L1_FEE_VAULT = 0x420000000000000000000000000000000000001A;
+    address constant OPERATOR_FEE_VAULT = 0x420000000000000000000000000000000000001b;
+
+    function setUp() public {{
+        vm.fee(1 gwei);
+        vm.store(L1_BLOCK, bytes32(uint256(1)), bytes32(uint256(0x28f53a5b)));
+        vm.store(
+            L1_BLOCK,
+            bytes32(uint256(3)),
+            bytes32(uint256(0x08dd00101c120000000000000002))
+        );
+        vm.store(L1_BLOCK, bytes32(uint256(7)), bytes32(uint256(0x0240f4f5)));
+        vm.store(L1_BLOCK, bytes32(uint256(8)), bytes32((uint256(1_000_000) << 64) | 7));
+    }}
 
     function test_snapshot_from_isolated_helper_does_not_disable_broadcast_fees() public {{
         address sender = {sender};
@@ -350,6 +384,45 @@ contract BaseIsolatedSnapshotFeesTest {{
 
     function snapshotInHelper() external returns (uint256) {{
         return vm.snapshotState();
+    }}
+
+    function test_revert_inside_isolated_helper_does_not_credit_fee_vaults() public {{
+        assertRevertDoesNotCreditFeeVaults(false);
+    }}
+
+    function test_revert_and_delete_inside_isolated_helper_does_not_credit_fee_vaults() public {{
+        assertRevertDoesNotCreditFeeVaults(true);
+    }}
+
+    function assertRevertDoesNotCreditFeeVaults(bool deleteSnapshot) internal {{
+        this.setFeeInHelper(2 gwei);
+        require(block.basefee == 2 gwei, "fee override not set");
+        uint256 baseFeeVaultBalance = BASE_FEE_VAULT.balance;
+        uint256 l1FeeVaultBalance = L1_FEE_VAULT.balance;
+        uint256 operatorFeeVaultBalance = OPERATOR_FEE_VAULT.balance;
+        uint256 snapshot = vm.snapshotState();
+
+        this.revertInHelper(snapshot, deleteSnapshot);
+
+        require(block.basefee == 2 gwei, "fee override not preserved after helper");
+        require(BASE_FEE_VAULT.balance == baseFeeVaultBalance, "base fee vault was credited");
+        require(L1_FEE_VAULT.balance == l1FeeVaultBalance, "L1 fee vault was credited");
+        require(
+            OPERATOR_FEE_VAULT.balance == operatorFeeVaultBalance,
+            "operator fee vault was credited"
+        );
+    }}
+
+    function setFeeInHelper(uint256 basefee) external {{
+        vm.fee(basefee);
+    }}
+
+    function revertInHelper(uint256 snapshot, bool deleteSnapshot) external {{
+        bool success = deleteSnapshot
+            ? vm.revertToStateAndDelete(snapshot)
+            : vm.revertToState(snapshot);
+        require(success, "snapshot revert failed");
+        require(block.basefee == 2 gwei, "fee override not preserved inside helper");
     }}
 }}
 "#,

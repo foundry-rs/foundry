@@ -24,7 +24,7 @@ use foundry_common::{
     tempo::{TIP20_MAX_LOGO_URI_BYTES, Tip20LogoUriValidationError, validate_tip20_logo_uri},
 };
 use foundry_evm_core::{
-    FoundryBlock, FoundryTransaction,
+    FoundryBlock, FoundryChain, FoundryTransaction,
     backend::{DatabaseError, DatabaseExt, RevertStateSnapshotAction},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
     eip2935::{
@@ -1646,6 +1646,20 @@ fn sync_tx_after_env_override_restore<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCt
     }
 }
 
+fn restore_isolation_fee_accounting<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCtxt<'_, '_, FEN>) {
+    if !ccx.state.in_isolation_context {
+        return;
+    }
+
+    let basefee = ccx.ecx.block().basefee();
+    if basefee != 0 {
+        let fork_id = ccx.ecx.db().active_fork_id();
+        ccx.state.env_overrides_for_mut(fork_id).basefee.get_or_insert(basefee);
+        ccx.ecx.block_mut().set_basefee(0);
+    }
+    ccx.ecx.chain_mut().clear_transaction_fee_cache();
+}
+
 fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
     snapshot_id: U256,
@@ -1684,6 +1698,7 @@ fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
         }
         ccx.state.revert_created_accounts(snapshot_id, false);
         sync_tx_after_env_override_restore(ccx);
+        restore_isolation_fee_accounting(ccx);
         Ok(true.abi_encode())
     } else {
         Ok(false.abi_encode())
@@ -1726,6 +1741,7 @@ fn inner_revert_to_state_and_delete<FEN: FoundryEvmNetwork>(
         }
         ccx.state.revert_created_accounts(snapshot_id, true);
         sync_tx_after_env_override_restore(ccx);
+        restore_isolation_fee_accounting(ccx);
         Ok(true.abi_encode())
     } else {
         Ok(false.abi_encode())

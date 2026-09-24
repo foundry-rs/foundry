@@ -444,6 +444,9 @@ pub trait FoundryChain<Tx>: Clone + Debug + Default + Send + Sync {
 
     /// Refreshes journal state derived from the active chain position.
     fn refresh_journal<J: FoundryJournal>(&self, _journal: &mut J) {}
+
+    /// Clears cached protocol fees after a synthetic transaction restores chain context.
+    fn clear_transaction_fee_cache(&mut self) {}
 }
 
 impl<Tx> FoundryChain<Tx> for () {}
