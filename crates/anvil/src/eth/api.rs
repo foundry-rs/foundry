@@ -2958,7 +2958,7 @@ impl EthApi<FoundryNetwork> {
             self.accounts()?.first().copied().ok_or(BlockchainError::NoSignerAvailable)
         })?;
 
-        let (nonce, _) = self.request_nonce_for_transaction(&request, from).await?;
+        let nonce = self.request_nonce_for_transaction(&request, from).await?;
 
         let request = self.build_tx_request(request, nonce).await?;
 
@@ -2979,7 +2979,7 @@ impl EthApi<FoundryNetwork> {
         let from = request.from().map(Ok).unwrap_or_else(|| {
             self.accounts()?.first().copied().ok_or(BlockchainError::NoSignerAvailable)
         })?;
-        let (nonce, on_chain_nonce) = self.request_nonce_for_transaction(&request, from).await?;
+        let nonce = self.request_nonce_for_transaction(&request, from).await?;
 
         let typed_tx = self.build_tx_request(request, nonce).await?;
 
@@ -2994,20 +2994,7 @@ impl EthApi<FoundryNetwork> {
             self.ensure_typed_transaction_supported(&transaction)?;
             PendingTransaction::new(transaction)?
         };
-        // pre-validate
-        self.backend.validate_pool_transaction(&pending_transaction).await?;
-
-        #[cfg(feature = "base")]
-        let (requires, provides) =
-            if let Some(markers) = self.eip8130_nonce_markers(&pending_transaction).await? {
-                markers
-            } else {
-                nonce_markers(&pending_transaction, nonce, on_chain_nonce, from)
-            };
-        #[cfg(not(feature = "base"))]
-        let (requires, provides) = nonce_markers(&pending_transaction, nonce, on_chain_nonce, from);
-
-        self.add_pending_transaction(pending_transaction, requires, provides)
+        self.add_pending_transaction(pending_transaction).await
     }
 
     /// Resends a pending transaction with an updated gas price or gas limit.
@@ -3056,20 +3043,7 @@ impl EthApi<FoundryNetwork> {
             PendingTransaction::new(transaction)?
         };
 
-        self.backend.validate_pool_transaction(&pending_transaction).await?;
-
-        let on_chain_nonce = self.backend.current_nonce(from).await?;
-        #[cfg(feature = "base")]
-        let (requires, provides) =
-            if let Some(markers) = self.eip8130_nonce_markers(&pending_transaction).await? {
-                markers
-            } else {
-                nonce_markers(&pending_transaction, nonce, on_chain_nonce, from)
-            };
-        #[cfg(not(feature = "base"))]
-        let (requires, provides) = nonce_markers(&pending_transaction, nonce, on_chain_nonce, from);
-
-        self.add_pending_transaction(pending_transaction, requires, provides)
+        self.add_pending_transaction(pending_transaction).await
     }
 
     /// Waits for a transaction to be included in a block and returns its receipt (no timeout).
@@ -3193,35 +3167,7 @@ impl EthApi<FoundryNetwork> {
             BlockchainError::RecoveryError(error)
         })?;
 
-        // pre-validate
-        self.backend.validate_pool_transaction(&pending_transaction).await?;
-
-        let from = *pending_transaction.sender();
-
-        #[cfg(feature = "base")]
-        let (requires, provides) =
-            if let Some(markers) = self.eip8130_nonce_markers(&pending_transaction).await? {
-                markers
-            } else if let Some(markers) = tempo_parallel_nonce_markers(&pending_transaction) {
-                markers
-            } else {
-                let on_chain_nonce = self.backend.current_nonce(from).await?;
-                let nonce = pending_transaction.transaction.nonce();
-                (required_marker(nonce, on_chain_nonce, from), vec![to_marker(nonce, from)])
-            };
-        // Tempo txs use a 2D nonce system — no sequential ordering by account nonce.
-        #[cfg(not(feature = "base"))]
-        let (requires, provides) = if let Some((requires, provides)) =
-            tempo_parallel_nonce_markers(&pending_transaction)
-        {
-            (requires, provides)
-        } else {
-            let on_chain_nonce = self.backend.current_nonce(from).await?;
-            let nonce = pending_transaction.transaction.nonce();
-            (required_marker(nonce, on_chain_nonce, from), vec![to_marker(nonce, from)])
-        };
-
-        self.add_pending_transaction(pending_transaction, requires, provides)
+        self.add_pending_transaction(pending_transaction).await
     }
 
     /// Sends a signed transaction with an ignored transaction condition.
@@ -3713,7 +3659,7 @@ impl EthApi<FoundryNetwork> {
             None => self.accounts()?.first().copied().ok_or(BlockchainError::NoSignerAvailable)?,
         };
 
-        let nonce = self.request_nonce_for_transaction(&request, from).await?.0;
+        let nonce = self.request_nonce_for_transaction(&request, from).await?;
 
         // Prefill gas limit with estimated gas and bubble up estimation errors directly.
         if request.gas_limit().is_none() {
@@ -4673,7 +4619,7 @@ impl EthApi<FoundryNetwork> {
         // either use the impersonated account of the request's `from` field
         let from = request.from().ok_or(BlockchainError::NoSignerAvailable)?;
 
-        let (nonce, on_chain_nonce) = self.request_nonce_for_transaction(&request, from).await?;
+        let nonce = self.request_nonce_for_transaction(&request, from).await?;
 
         let typed_tx = self.build_tx_request(request, nonce).await?;
 
@@ -4683,20 +4629,7 @@ impl EthApi<FoundryNetwork> {
 
         let pending_transaction = PendingTransaction::with_impersonated(transaction, from);
 
-        // pre-validate
-        self.backend.validate_pool_transaction(&pending_transaction).await?;
-
-        #[cfg(feature = "base")]
-        let (requires, provides) =
-            if let Some(markers) = self.eip8130_nonce_markers(&pending_transaction).await? {
-                markers
-            } else {
-                nonce_markers(&pending_transaction, nonce, on_chain_nonce, from)
-            };
-        #[cfg(not(feature = "base"))]
-        let (requires, provides) = nonce_markers(&pending_transaction, nonce, on_chain_nonce, from);
-
-        self.add_pending_transaction(pending_transaction, requires, provides)
+        self.add_pending_transaction(pending_transaction).await
     }
 
     /// Returns a summary of all the transactions currently pending for inclusion in the next
@@ -5188,32 +5121,47 @@ impl EthApi<FoundryNetwork> {
 
     /// Returns the nonce for this request
     ///
-    /// This returns a tuple of `(request nonce, highest nonce)`
-    /// If the nonce field of the `request` is `None` then the tuple will be `(highest nonce,
-    /// highest nonce)`.
-    ///
-    /// This will also check the tx pool for pending transactions from the sender.
-    async fn request_nonce(
-        &self,
-        request: &TransactionRequest,
-        from: Address,
-    ) -> Result<(u64, u64)> {
-        let highest_nonce =
-            self.get_transaction_count(from, Some(BlockId::Number(BlockNumber::Pending))).await?;
-        let nonce = request.nonce.unwrap_or(highest_nonce);
-
-        Ok((nonce, highest_nonce))
+    /// If the nonce field of the `request` is `None`, this accounts for pending transactions from
+    /// the sender.
+    async fn request_nonce(&self, request: &TransactionRequest, from: Address) -> Result<u64> {
+        if let Some(nonce) = request.nonce {
+            Ok(nonce)
+        } else {
+            self.get_transaction_count(from, Some(BlockId::Number(BlockNumber::Pending))).await
+        }
     }
 
     /// Adds the given transaction to the pool
-    fn add_pending_transaction(
+    async fn add_pending_transaction(
         &self,
         pending_transaction: PendingTransaction<FoundryTxEnvelope>,
-        requires: Vec<TxMarker>,
-        provides: Vec<TxMarker>,
     ) -> Result<TxHash> {
-        debug_assert!(requires != provides);
+        let _mining = self.backend.lock_mining().await;
+        self.backend.validate_pool_transaction(&pending_transaction).await?;
+
         let from = *pending_transaction.sender();
+        #[cfg(feature = "base")]
+        let (requires, provides) =
+            if let Some(markers) = self.eip8130_nonce_markers(&pending_transaction).await? {
+                markers
+            } else if let Some(markers) = tempo_parallel_nonce_markers(&pending_transaction) {
+                markers
+            } else {
+                let nonce = pending_transaction.transaction.nonce();
+                let on_chain_nonce = self.backend.current_nonce(from).await?;
+                nonce_markers(&pending_transaction, nonce, on_chain_nonce, from)
+            };
+        #[cfg(not(feature = "base"))]
+        let (requires, provides) =
+            if let Some(markers) = tempo_parallel_nonce_markers(&pending_transaction) {
+                markers
+            } else {
+                let nonce = pending_transaction.transaction.nonce();
+                let on_chain_nonce = self.backend.current_nonce(from).await?;
+                nonce_markers(&pending_transaction, nonce, on_chain_nonce, from)
+            };
+
+        debug_assert!(requires != provides);
         let priority = self.transaction_priority(&pending_transaction.transaction);
         let pool_transaction =
             PoolTransaction { requires, provides, pending_transaction, priority, is_replay: false };
@@ -5451,15 +5399,15 @@ impl EthApi<FoundryNetwork> {
         &self,
         request: &FoundryTransactionRequest,
         from: Address,
-    ) -> Result<(u64, u64)> {
+    ) -> Result<u64> {
         if let FoundryTransactionRequest::Tempo(request) = request
             && let Some(nonce_key) = request.nonce_key.filter(|key| !key.is_zero())
         {
             if let Some(nonce) = request.nonce() {
-                return Ok((nonce, 0));
+                return Ok(nonce);
             }
             let nonce = self.backend.tempo_nonce(from, nonce_key, None).await?;
-            return Ok((nonce, 0));
+            return Ok(nonce);
         }
         self.request_nonce(request.as_ref(), from).await
     }

@@ -461,3 +461,43 @@ async fn anvil_drop_transaction_removes_queued_tx() {
     assert_eq!(status.queued, 0, "the queued tx must actually be removed from the pool");
     assert!(provider.get_transaction_by_hash(hash).await.unwrap().is_none());
 }
+
+/// Dropping a transaction must also remove transactions that depend on its nonce.
+#[tokio::test(flavor = "multi_thread")]
+async fn anvil_drop_transaction_removes_nonce_dependents() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let account = accounts[0].address();
+    let recipient = accounts[1].address();
+    let transaction = |nonce| {
+        WithOtherFields::new(
+            TransactionRequest::default()
+                .with_to(recipient)
+                .with_from(account)
+                .with_value(U256::from(1))
+                .with_nonce(nonce),
+        )
+    };
+
+    let first = provider.send_transaction(transaction(0)).await.unwrap();
+    let first_hash = *first.tx_hash();
+    let dependent = provider.send_transaction(transaction(1)).await.unwrap();
+    let dependent_hash = *dependent.tx_hash();
+    let transitive_dependent = provider.send_transaction(transaction(2)).await.unwrap();
+    let transitive_dependent_hash = *transitive_dependent.tx_hash();
+
+    let status = provider.txpool_status().await.unwrap();
+    assert_eq!(status.pending, 3);
+
+    let dropped = api.anvil_drop_transaction(first_hash).await.unwrap();
+    assert_eq!(dropped, Some(first_hash));
+
+    let status = provider.txpool_status().await.unwrap();
+    assert_eq!(status.pending, 0);
+    assert!(provider.get_transaction_by_hash(dependent_hash).await.unwrap().is_none());
+    assert!(provider.get_transaction_by_hash(transitive_dependent_hash).await.unwrap().is_none());
+}
