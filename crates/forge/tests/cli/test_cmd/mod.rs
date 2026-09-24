@@ -1111,6 +1111,22 @@ contract ProfilesTest {
     assert!(prj.artifacts().join("Lib.sol/Lib.json").exists());
     assert!(prj.artifacts().join("Lib.sol/Lib.prod.json").exists());
 
+    prj.add_source(
+        "Prod.sol",
+        r#"
+pragma solidity >=0.8.0;
+
+import "src/Lib.sol";
+
+contract Prod {
+    function identity(uint256 value) external view returns (uint256) {
+        return Lib.identity(value + 0);
+    }
+}
+"#,
+    );
+    cmd.forge_fuse().arg("test").assert_success();
+
     prj.update_config(|config| config.create2_deployer = Address::ZERO);
     cmd.forge_fuse().arg("test").assert_success();
 });

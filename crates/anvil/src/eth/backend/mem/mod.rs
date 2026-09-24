@@ -5248,7 +5248,10 @@ impl<N: Network> Backend<N> {
     }
 
     /// Reverts the state to the state snapshot identified by the given `id`.
-    pub async fn revert_state_snapshot(&self, id: U256) -> Result<bool, BlockchainError> {
+    pub async fn revert_state_snapshot(&self, id: U256) -> Result<bool, BlockchainError>
+    where
+        N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
+    {
         let Some((num, hash, fees, time_offset)) =
             self.active_state_snapshots.lock().get(&id).map(|snapshot| {
                 (snapshot.block_number, snapshot.block_hash, snapshot.fees, snapshot.time_offset)
@@ -5257,6 +5260,7 @@ impl<N: Network> Backend<N> {
             return Ok(false);
         };
         let block = self.block_by_hash(hash).await?.ok_or(BlockchainError::BlockNotFound)?;
+        let removed_logs = self.removed_logs_since(num);
         if !self.db.write().await.revert_state(id, RevertStateSnapshotAction::RevertRemove) {
             return Ok(false);
         }
@@ -5267,6 +5271,9 @@ impl<N: Network> Backend<N> {
         }
         // Revert the storage that's newer than the snapshot.
         self.blockchain.storage.write().unwind_to(num, hash);
+        if !removed_logs.is_empty() {
+            self.notify_on_removed_logs(removed_logs);
+        }
 
         let reset_time = block.header.timestamp();
         self.time.reset_with_offset(reset_time, time_offset);
@@ -5371,9 +5378,9 @@ where
     /// Returns all logs of the blocks with a number greater than `block_number`, marked as
     /// removed.
     ///
-    /// This is used during a reorg to capture the logs of the blocks that are about to be
-    /// unwound before their transactions and receipts are cleared from storage, so they can be
-    /// re-delivered to log subscriptions and filters with `removed: true`.
+    /// This captures the logs of blocks that are about to be unwound before their transactions
+    /// and receipts are cleared from storage, so they can be re-delivered to log subscriptions
+    /// and filters with `removed: true`.
     fn removed_logs_since(&self, block_number: u64) -> Vec<Log> {
         let storage = self.blockchain.storage.read();
         let mut all_logs = Vec::new();
