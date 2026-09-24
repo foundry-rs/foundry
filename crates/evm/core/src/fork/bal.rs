@@ -1,4 +1,4 @@
-//! Prefills immutable parent-block state before replaying a transaction fork's prefix.
+//! Validates and caches BAL post-state, and prepares transaction forks' parent-block BALs.
 
 use super::ResolvedFork;
 use crate::opts::ForkContext;
@@ -9,7 +9,10 @@ use alloy_eips::eip7928::{
 };
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::{AnyNetwork, AnyRpcBlock};
-use alloy_primitives::map::U256Map;
+use alloy_primitives::{
+    B256, U256,
+    map::{AddressHashMap, U256Map},
+};
 use alloy_provider::Provider;
 use eyre::{Result, WrapErr};
 use foundry_common::provider::is_rpc_method_not_found;
@@ -49,7 +52,9 @@ pub(super) async fn prepare<P: Provider<AnyNetwork>>(
                 response => response,
             }
             .ok()??;
-        if let Err(err) = validate(&bal, block) {
+        if let Err(err) =
+            validate_bal(&bal, block.transactions.len(), block.header.block_access_list_hash())
+        {
             debug!(target: "backend::fork", block_hash = %resolved.hash(), %err, "ignoring invalid fork BAL");
             return None;
         }
@@ -87,9 +92,15 @@ async fn immutable_source<P: Provider<AnyNetwork>>(provider: &P) -> bool {
 }
 
 /// Validates the entire BAL before any values can enter the cache.
-fn validate(bal: &BlockAccessList, block: &AnyRpcBlock) -> Result<()> {
-    validate_block_access_list(bal, block.transactions.len()).wrap_err("invalid BAL structure")?;
-    if let Some(expected_hash) = block.header.block_access_list_hash() {
+///
+/// Callers must separately establish that the BAL and cache belong to the same immutable block.
+pub fn validate_bal(
+    bal: &BlockAccessList,
+    transaction_count: usize,
+    expected_hash: Option<B256>,
+) -> Result<()> {
+    validate_block_access_list(bal, transaction_count).wrap_err("invalid BAL structure")?;
+    if let Some(expected_hash) = expected_hash {
         eyre::ensure!(compute_block_access_list_hash(bal) == expected_hash, "BAL hash mismatch");
     }
     for account in bal {
@@ -104,8 +115,24 @@ fn validate(bal: &BlockAccessList, block: &AnyRpcBlock) -> Result<()> {
 /// Inserts a validated BAL's post-state into its selected remote cache, retaining existing values.
 pub(super) fn cache(db: &MemDb, bal: BlockAccessList) {
     let mut accounts = db.accounts.write();
+    let inserted_accounts = cache_bal_accounts(&mut accounts, &bal);
+    drop(accounts);
+
+    let mut storage = db.storage.write();
+    let inserted_slots = cache_bal_storage(&mut storage, &bal);
+    debug!(target: "backend::fork", inserted_accounts, inserted_slots, "prefilled fork cache from BAL");
+}
+
+/// Inserts complete account post-states, retaining existing accounts, and returns the added count.
+///
+/// The BAL must pass [`validate_bal`] before either cache map is modified. Callers own locking and
+/// must ensure that the selected cache belongs to the BAL's immutable source block.
+pub fn cache_bal_accounts(
+    accounts: &mut AddressHashMap<AccountInfo>,
+    bal: &BlockAccessList,
+) -> usize {
     let accounts_before = accounts.len();
-    for account in &bal {
+    for account in bal {
         if let (Some(balance), Some(nonce), Some(code)) =
             (account.balance_post_state(), account.nonce_post_state(), account.code_changes.last())
         {
@@ -121,10 +148,17 @@ pub(super) fn cache(db: &MemDb, bal: BlockAccessList) {
             });
         }
     }
-    let inserted_accounts = accounts.len() - accounts_before;
-    drop(accounts);
+    accounts.len() - accounts_before
+}
 
-    let mut storage = db.storage.write();
+/// Inserts final slot writes, retaining cached values and leaving read-only slots unknown.
+///
+/// Returns the number of added slots. The same validation and cache-identity requirements as
+/// [`cache_bal_accounts`] apply.
+pub fn cache_bal_storage(
+    storage: &mut AddressHashMap<U256Map<U256>>,
+    bal: &BlockAccessList,
+) -> usize {
     let mut inserted_slots = 0;
     for account in bal {
         if !account.storage_changes.is_empty() {
@@ -138,7 +172,7 @@ pub(super) fn cache(db: &MemDb, bal: BlockAccessList) {
             inserted_slots += cached_slots.len() - slots_before;
         }
     }
-    debug!(target: "backend::fork", inserted_accounts, inserted_slots, "prefilled fork cache from BAL");
+    inserted_slots
 }
 
 #[cfg(test)]

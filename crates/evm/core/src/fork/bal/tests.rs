@@ -7,7 +7,7 @@ use alloy_eips::{
     },
 };
 use alloy_network::{AnyHeader, AnyRpcHeader};
-use alloy_primitives::{Address, B256, Bytes, U256, bytes};
+use alloy_primitives::{Address, Bytes, bytes};
 use alloy_provider::{ProviderBuilder, mock::Asserter};
 use alloy_rpc_types::{Block, BlockTransactions};
 use foundry_config::FoundryHardfork;
@@ -63,8 +63,6 @@ fn complete_account(address: Address, code: Bytes) -> AccountChanges {
 
 #[test]
 fn fork_bal_cache_keeps_final_zero_and_system_writes() {
-    let resolved = resolved(context());
-    let block = block(&resolved, 2);
     let address = Address::repeat_byte(1);
     let slot = U256::from(1);
     let system_slot = U256::from(2);
@@ -84,7 +82,7 @@ fn fork_bal_cache_keeps_final_zero_and_system_writes() {
     let db = MemDb::default();
 
     let bal = vec![account];
-    validate(&bal, &block).unwrap();
+    validate_bal(&bal, 2, None).unwrap();
     cache(&db, bal);
 
     let storage = db.storage.read();
@@ -95,7 +93,6 @@ fn fork_bal_cache_keeps_final_zero_and_system_writes() {
 
 #[test]
 fn fork_bal_cache_leaves_partial_accounts_and_reads_unknown() {
-    let resolved = resolved(context());
     let address = Address::repeat_byte(1);
     let account = AccountChanges::new(address)
         .with_balance_change(BalanceChange::new(index(1), U256::from(42)))
@@ -103,7 +100,7 @@ fn fork_bal_cache_leaves_partial_accounts_and_reads_unknown() {
     let db = MemDb::default();
 
     let bal = vec![account];
-    validate(&bal, &block(&resolved, 1)).unwrap();
+    validate_bal(&bal, 1, None).unwrap();
     cache(&db, bal);
 
     assert!(db.accounts.read().is_empty());
@@ -112,7 +109,6 @@ fn fork_bal_cache_leaves_partial_accounts_and_reads_unknown() {
 
 #[test]
 fn fork_bal_cache_preserves_cached_values_and_merges_slots() {
-    let resolved = resolved(context());
     let address = Address::repeat_byte(1);
     let account = complete_account(address, Bytes::new())
         .with_storage_change(SlotChanges::new(
@@ -132,7 +128,7 @@ fn fork_bal_cache_preserves_cached_values_and_merges_slots() {
     );
 
     let bal = vec![account];
-    validate(&bal, &block(&resolved, 1)).unwrap();
+    validate_bal(&bal, 1, None).unwrap();
     cache(&db, bal);
 
     assert_eq!(db.accounts.read()[&address], cached_account);
@@ -150,7 +146,6 @@ fn fork_bal_cache_preserves_cached_values_and_merges_slots() {
 
 #[test]
 fn fork_bal_cache_preserves_delegation_code_and_final_clearing() {
-    let resolved = resolved(context());
     let authority = Address::repeat_byte(1);
     let cleared = Address::repeat_byte(2);
     let delegation = bytes!("ef01000000000000000000000000000000000000000042");
@@ -161,7 +156,7 @@ fn fork_bal_cache_preserves_delegation_code_and_final_clearing() {
     let db = MemDb::default();
 
     let bal = vec![complete_account(authority, delegation.clone()), cleared_account];
-    validate(&bal, &block(&resolved, 2)).unwrap();
+    validate_bal(&bal, 2, None).unwrap();
     cache(&db, bal);
 
     let accounts = db.accounts.read();
@@ -180,19 +175,18 @@ fn fork_bal_cache_preserves_delegation_code_and_final_clearing() {
 
 #[test]
 fn fork_bal_validation_rejects_invalid_structure_and_hash() {
-    let resolved = resolved(context());
     let address = Address::repeat_byte(1);
     let valid = vec![complete_account(address, Bytes::new())];
-    let mut block = block(&resolved, 1);
-    block.header.block_access_list_hash = Some(compute_block_access_list_hash(&valid));
-    assert!(validate(&valid, &block).is_ok());
-    block.header.block_access_list_hash = Some(B256::ZERO);
-    assert!(validate(&valid, &block).is_err());
-    block.header.block_access_list_hash = None;
+    let commitment = compute_block_access_list_hash(&valid);
+    assert!(validate_bal(&valid, 1, Some(commitment)).is_ok());
+    assert!(validate_bal(&valid, 1, Some(B256::ZERO)).is_err());
+
+    let duplicate_accounts = vec![valid[0].clone(), valid[0].clone()];
+    assert!(validate_bal(&duplicate_accounts, 1, None).is_err());
 
     let invalid_index =
         AccountChanges::new(address).with_balance_change(BalanceChange::new(index(3), U256::ZERO));
-    assert!(validate(&vec![invalid_index], &block).is_err());
+    assert!(validate_bal(&vec![invalid_index], 1, None).is_err());
 }
 
 #[tokio::test]
@@ -316,4 +310,93 @@ async fn fork_bal_prepare_uses_legacy_rpc_only_for_method_not_found() {
         assert_eq!(bal.is_some(), code == -32601);
         assert_eq!(asserter.read_q().len(), if code == -32601 { 0 } else { 2 });
     }
+}
+
+#[test]
+fn fork_bal_validation_rejects_invalid_earlier_code() {
+    let address = Address::repeat_byte(1);
+    for complete in [false, true] {
+        let invalid_code = bytes!("ef0100");
+        let account = if complete {
+            complete_account(address, invalid_code)
+        } else {
+            AccountChanges::new(address).with_code_change(CodeChange::new(index(1), invalid_code))
+        }
+        .with_code_change(CodeChange::new(index(2), Bytes::new()));
+        let bal = vec![account];
+
+        validate_block_access_list(&bal, 2).unwrap();
+        assert!(validate_bal(&bal, 2, None).is_err(), "complete account: {complete}");
+    }
+}
+
+#[test]
+fn fork_bal_cache_keeps_empty_block_post_execution_writes() {
+    let address = Address::repeat_byte(1);
+    let account = AccountChanges::new(address).with_storage_change(SlotChanges::new(
+        U256::ONE,
+        vec![StorageChange::new(index(1), U256::from(42))],
+    ));
+    let bal = vec![account];
+    let db = MemDb::default();
+
+    validate_bal(&bal, 0, None).unwrap();
+    cache(&db, bal);
+
+    assert_eq!(db.storage.read()[&address][&U256::ONE], U256::from(42));
+    assert!(db.accounts.read().is_empty());
+
+    let invalid = AccountChanges::new(address).with_storage_change(SlotChanges::new(
+        U256::ONE,
+        vec![StorageChange::new(index(2), U256::from(42))],
+    ));
+    assert!(validate_bal(&vec![invalid], 0, None).is_err());
+}
+
+#[test]
+fn fork_bal_cache_counts_only_new_entries() {
+    let cached_address = Address::repeat_byte(1);
+    let new_address = Address::repeat_byte(2);
+    let partial_address = Address::repeat_byte(3);
+    let bal = vec![
+        complete_account(cached_address, Bytes::new())
+            .with_storage_change(SlotChanges::new(
+                U256::ONE,
+                vec![StorageChange::new(index(1), U256::from(11))],
+            ))
+            .with_storage_change(SlotChanges::new(
+                U256::from(2),
+                vec![StorageChange::new(index(1), U256::from(22))],
+            )),
+        complete_account(new_address, Bytes::new()).with_storage_change(SlotChanges::new(
+            U256::ONE,
+            vec![StorageChange::new(index(1), U256::ZERO)],
+        )),
+        AccountChanges::new(partial_address)
+            .with_balance_change(BalanceChange::new(index(1), U256::from(42)))
+            .with_storage_read(U256::ONE),
+    ];
+    let db = MemDb::default();
+    let cached_account = AccountInfo { balance: U256::from(99), ..Default::default() };
+    db.accounts.write().insert(cached_address, cached_account.clone());
+    db.storage.write().entry(cached_address).or_default().insert(U256::ONE, U256::from(101));
+
+    validate_bal(&bal, 1, None).unwrap();
+    assert_eq!(cache_bal_accounts(&mut db.accounts.write(), &bal), 1);
+    assert_eq!(cache_bal_storage(&mut db.storage.write(), &bal), 2);
+    assert_eq!(cache_bal_accounts(&mut db.accounts.write(), &bal), 0);
+    assert_eq!(cache_bal_storage(&mut db.storage.write(), &bal), 0);
+
+    let accounts = db.accounts.read();
+    assert_eq!(accounts.len(), 2);
+    assert_eq!(accounts[&cached_address], cached_account);
+    assert_eq!(accounts[&new_address].balance, U256::from(42));
+    drop(accounts);
+    let storage = db.storage.read();
+    assert_eq!(storage.len(), 2);
+    assert_eq!(
+        storage[&cached_address],
+        [(U256::ONE, U256::from(101)), (U256::from(2), U256::from(22))].into_iter().collect()
+    );
+    assert_eq!(storage[&new_address], [(U256::ONE, U256::ZERO)].into_iter().collect());
 }
