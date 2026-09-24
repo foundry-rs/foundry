@@ -474,13 +474,13 @@ forgetest_async!(fork_bal_keeps_local_writes_snapshots_and_persistent_accounts, 
         }
         gas_used.push(assert_test(&mut cmd, "testForkBalLifecycle"));
         probes.push(proxy.count("anvil_nodeInfo"));
-        if !disabled {
+        if disabled {
+            assert_eq!(proxy.count(BAL_METHOD), 0);
+            assert_eq!(proxy.count(LEGACY_BAL_METHOD), 0);
+        } else {
             proxy.assert_parent_bal(&fixture);
             assert_eq!(proxy.count(BAL_METHOD), 1, "the same parent cache was prewarmed twice");
             assert_eq!(proxy.slot_reads(U256::ZERO), 0);
-        } else {
-            assert_eq!(proxy.count(BAL_METHOD), 0);
-            assert_eq!(proxy.count(LEGACY_BAL_METHOD), 0);
         }
     }
     assert_eq!(gas_used[0], gas_used[1], "BAL changed local execution gas");
