@@ -88,16 +88,173 @@ contract IsolatedSnapshotEnclosingRevertTest is Test {
         revert("expected test revert");
     }
 
+    function test_revert_after_isolated_restore_and_write() public {
+        uint256 snapshotId = vm.snapshotState();
+        value = 2;
+
+        this.restoreAndWrite(snapshotId);
+        assertEq(value, 4);
+        revert("expected post-restore revert");
+    }
+
+    function test_reverted_isolated_restore_does_not_escape() public {
+        value = 1;
+        uint256 snapshotId = vm.snapshotState();
+        value = 2;
+
+        vm.expectRevert("expected call revert");
+        this.restoreThenRevert(snapshotId);
+
+        assertEq(value, 2);
+    }
+
+    function test_caught_nested_restore_revert_does_not_escape() public {
+        value = 1;
+        uint256 snapshotId = vm.snapshotState();
+        value = 2;
+
+        this.catchRestoreRevert(snapshotId);
+
+        assertEq(value, 4);
+    }
+
+    function test_successful_restore_survives_reverted_sibling() public {
+        this.runRevertedSiblingCase();
+    }
+
+    function test_reverted_constructor_preserves_nonce() public {
+        this.runRevertedConstructorCase();
+    }
+
+    function test_execute_transaction_restore_does_not_escape_reverted_isolated_call() public {
+        value = 1;
+        bytes memory rawTx = signedTransaction(abi.encodeCall(this.snapshotAndRestore, ()));
+
+        vm.expectRevert("outer failed");
+        this.outerExecute(rawTx);
+
+        assertEq(value, 1);
+    }
+
     function restore(uint256 snapshotId) external returns (bool) {
         return vm.revertToState(snapshotId);
     }
+
+    function restoreAndWrite(uint256 snapshotId) external {
+        require(vm.revertToState(snapshotId));
+        value = 4;
+    }
+
+    function restoreThenRevert(uint256 snapshotId) external {
+        value = 3;
+        require(vm.revertToState(snapshotId));
+        revert("expected call revert");
+    }
+
+    function catchRestoreRevert(uint256 snapshotId) external {
+        try this.restoreThenRevert(snapshotId) {} catch {}
+        assertEq(value, 2);
+        value = 4;
+    }
+
+    function runRevertedSiblingCase() external {
+        this.restoreLocally();
+        value = 4;
+
+        try this.unrelatedRevert() {} catch {}
+
+        assertEq(value, 4);
+    }
+
+    function restoreLocally() external {
+        value = 1;
+        uint256 snapshotId = vm.snapshotState();
+        value = 2;
+        require(vm.revertToState(snapshotId));
+    }
+
+    function unrelatedRevert() external pure {
+        revert("unrelated revert");
+    }
+
+    function runRevertedConstructorCase() external {
+        uint64 nonce = vm.getNonce(address(this));
+        try new RevertingSnapshotConstructor() {} catch {}
+        assertEq(vm.getNonce(address(this)), nonce + 1);
+
+        address expected = vm.computeCreateAddress(address(this), nonce + 1);
+        SuccessfulDeployment deployed = new SuccessfulDeployment();
+        assertEq(address(deployed), expected);
+    }
+
+    function outerExecute(bytes calldata rawTx) external {
+        value = 2;
+        vm.executeTransaction(rawTx);
+        revert("outer failed");
+    }
+
+    function snapshotAndRestore() external {
+        uint256 snapshotId = vm.snapshotState();
+        require(vm.revertToState(snapshotId));
+    }
+
+    function signedTransaction(bytes memory data) internal returns (bytes memory) {
+        uint256 privateKey = 1;
+        vm.chainId(1);
+        vm.deal(vm.addr(privateKey), 1 ether);
+
+        bytes[] memory unsigned = new bytes[](9);
+        unsigned[1] = hex"01";
+        unsigned[2] = hex"030d40";
+        unsigned[3] = abi.encodePacked(address(this));
+        unsigned[5] = data;
+        unsigned[6] = hex"01";
+
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKey, keccak256(vm.toRlp(unsigned)));
+        bytes[] memory signed = new bytes[](9);
+        for (uint256 i; i < 6; i++) {
+            signed[i] = unsigned[i];
+        }
+        signed[6] = abi.encodePacked(v + 10);
+        signed[7] = trimLeadingZeros(r);
+        signed[8] = trimLeadingZeros(s);
+        return vm.toRlp(signed);
+    }
+
+    function trimLeadingZeros(bytes32 value_) internal pure returns (bytes memory out) {
+        uint256 offset;
+        while (offset < 32 && value_[offset] == bytes1(0)) {
+            offset++;
+        }
+        out = new bytes(32 - offset);
+        for (uint256 i; i < out.length; i++) {
+            out[i] = value_[offset + i];
+        }
+    }
 }
+
+contract RevertingSnapshotConstructor is Test {
+    constructor() {
+        uint256 snapshotId = vm.snapshotState();
+        vm.deal(address(0xBEEF), 1 ether);
+        require(vm.revertToState(snapshotId));
+        revert("expected constructor revert");
+    }
+}
+
+contract SuccessfulDeployment {}
 "#,
     );
 
     cmd.arg("test").assert_failure().stdout_eq(str![[r#"
 ...
+[PASS] test_caught_nested_restore_revert_does_not_escape() ([GAS])
+[PASS] test_execute_transaction_restore_does_not_escape_reverted_isolated_call() ([GAS])
 [FAIL: expected test revert] test_revert_after_isolated_restore() ([GAS])
+[FAIL: expected post-restore revert] test_revert_after_isolated_restore_and_write() ([GAS])
+[PASS] test_reverted_constructor_preserves_nonce() ([GAS])
+[PASS] test_reverted_isolated_restore_does_not_escape() ([GAS])
+[PASS] test_successful_restore_survives_reverted_sibling() ([GAS])
 ...
 "#]]);
 });
