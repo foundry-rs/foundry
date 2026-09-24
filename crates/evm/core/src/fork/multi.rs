@@ -432,7 +432,8 @@ impl<
         // Need to create a new fork.
         let task_id =
             resolved_id.unwrap_or_else(|| ForkId::new(&fork.url, fork.evm_opts.fork_block_number));
-        let future = Box::pin(create_fork(fork, expected_identity, prewarm_bal, already_prewarmed));
+        let needs_bal = prewarm_bal && !already_prewarmed;
+        let future = Box::pin(create_fork(fork, expected_identity, needs_bal));
         self.pending_tasks.push(ForkTask::Create {
             future,
             id: task_id,
@@ -764,7 +765,6 @@ async fn create_fork<
     mut fork: CreateFork,
     expected_identity: Option<ForkContext>,
     prewarm_bal: bool,
-    already_prewarmed: bool,
 ) -> eyre::Result<(
     ForkId,
     CreatedFork<N, SPEC, BLOCK>,
@@ -850,7 +850,7 @@ async fn create_fork<
 
     let provider = fork.evm_opts.fork_provider_with_url::<N>(&fork.url)?;
     let seed = if let Some(block) = bal_block {
-        bal::prepare(&any_provider, &resolved, &block, already_prewarmed).await
+        bal::prepare(&any_provider, &resolved, &block).await
     } else {
         None
     };

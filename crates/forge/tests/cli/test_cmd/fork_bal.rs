@@ -471,6 +471,7 @@ forgetest_async!(fork_bal_keeps_local_writes_snapshots_and_persistent_accounts, 
     let proxy = Proxy::new(&fixture, Response::Valid).await;
     prj.add_test("ForkBal.t.sol", TEST);
     let mut gas_used = Vec::new();
+    let mut probes = Vec::new();
     for disabled in [false, true] {
         proxy.clear();
         command(
@@ -486,6 +487,7 @@ forgetest_async!(fork_bal_keeps_local_writes_snapshots_and_persistent_accounts, 
             cmd.arg("--no-fork-bal");
         }
         gas_used.push(assert_test(&mut cmd, "testForkBalLifecycle"));
+        probes.push(proxy.count("anvil_nodeInfo"));
         if !disabled {
             proxy.assert_parent_bal(&fixture);
             assert_eq!(proxy.count(BAL_METHOD), 1, "the same parent cache was prewarmed twice");
@@ -493,6 +495,9 @@ forgetest_async!(fork_bal_keeps_local_writes_snapshots_and_persistent_accounts, 
         }
     }
     assert_eq!(gas_used[0], gas_used[1], "BAL changed local execution gas");
+    // Only the first seed adds source probes; ordinary identity checks remain on reuse.
+    assert!(probes[1] > 0);
+    assert_eq!(probes[0], probes[1] + 2);
 });
 
 forgetest_async!(fork_bal_config_and_environment_control_runtime_requests, |prj, cmd| {

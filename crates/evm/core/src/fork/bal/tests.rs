@@ -309,7 +309,7 @@ async fn fork_bal_prepare_skips_mutable_and_custom_sources_without_requests() {
         asserter.push_success(&BlockAccessList::new());
         let provider =
             ProviderBuilder::<_, _, AnyNetwork>::default().connect_mocked_client(asserter.clone());
-        assert!(prepare(&provider, &resolved, &block(&resolved, 0), false).await.is_none());
+        assert!(prepare(&provider, &resolved, &block(&resolved, 0)).await.is_none());
         assert_eq!(asserter.read_q().len(), 1);
     }
 }
@@ -331,7 +331,7 @@ async fn fork_bal_prepare_checks_parent_identity_and_source_timestamp_before_bal
         let provider =
             ProviderBuilder::<_, _, AnyNetwork>::default().connect_mocked_client(asserter.clone());
 
-        assert!(prepare(&provider, &resolved, &block, false).await.is_none());
+        assert!(prepare(&provider, &resolved, &block).await.is_none());
         assert_eq!(asserter.read_q().len(), 1);
     }
 }
@@ -352,7 +352,7 @@ async fn fork_bal_prepare_reuses_block_with_execution_chain_override() {
         let provider =
             ProviderBuilder::<_, _, AnyNetwork>::default().connect_mocked_client(asserter.clone());
 
-        assert!(prepare(&provider, &resolved, &block(&resolved, 0), false).await.is_some());
+        assert!(prepare(&provider, &resolved, &block(&resolved, 0)).await.is_some());
         assert!(asserter.read_q().is_empty());
     }
 }
@@ -366,18 +366,18 @@ async fn fork_bal_prepare_falls_back_without_caching_unavailability() {
         ProviderBuilder::<_, _, AnyNetwork>::default().connect_mocked_client(asserter.clone());
     rpc_error(&asserter, -32601);
     asserter.push_failure_msg("BAL unsupported");
-    assert!(prepare(&provider, &resolved, &block, false).await.is_none());
+    assert!(prepare(&provider, &resolved, &block).await.is_none());
     rpc_error(&asserter, -32601);
     asserter.push_success(&Option::<BlockAccessList>::None);
-    assert!(prepare(&provider, &resolved, &block, false).await.is_none());
+    assert!(prepare(&provider, &resolved, &block).await.is_none());
     rpc_error(&asserter, -32601);
     asserter.push_success(&"malformed BAL");
-    assert!(prepare(&provider, &resolved, &block, false).await.is_none());
+    assert!(prepare(&provider, &resolved, &block).await.is_none());
 
     rpc_error(&asserter, -32601);
     asserter.push_success(&BlockAccessList::new());
     rpc_error(&asserter, -32601);
-    assert!(prepare(&provider, &resolved, &block, false).await.is_some());
+    assert!(prepare(&provider, &resolved, &block).await.is_some());
     assert!(asserter.read_q().is_empty());
 }
 
@@ -409,7 +409,7 @@ async fn fork_bal_prepare_requires_immutable_source_before_and_after_bal() {
             let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
                 .connect_mocked_client(asserter.clone());
 
-            assert!(prepare(&provider, &resolved, &block, false).await.is_none());
+            assert!(prepare(&provider, &resolved, &block).await.is_none());
             assert_eq!(asserter.read_q().len(), 1, "requests continued after an uncertain source");
         }
     }
@@ -428,24 +428,8 @@ async fn fork_bal_prepare_uses_legacy_rpc_only_for_method_not_found() {
         let provider =
             ProviderBuilder::<_, _, AnyNetwork>::default().connect_mocked_client(asserter.clone());
 
-        let seed = prepare(&provider, &resolved, &block, false).await;
+        let seed = prepare(&provider, &resolved, &block).await;
         assert_eq!(seed.is_some(), code == -32601);
         assert_eq!(asserter.read_q().len(), if code == -32601 { 0 } else { 2 });
-    }
-}
-
-#[tokio::test]
-async fn fork_bal_reused_cache_retains_source_checks_without_fetching_bal() {
-    let resolved = resolved(context());
-    let block = block(&resolved, 0);
-    for first_probe in [-32601, -32603] {
-        let asserter = Asserter::new();
-        rpc_error(&asserter, first_probe);
-        rpc_error(&asserter, -32601);
-        let provider =
-            ProviderBuilder::<_, _, AnyNetwork>::default().connect_mocked_client(asserter.clone());
-
-        assert!(prepare(&provider, &resolved, &block, true).await.is_none());
-        assert_eq!(asserter.read_q().len(), usize::from(first_probe != -32601));
     }
 }
