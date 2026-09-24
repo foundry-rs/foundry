@@ -1,22 +1,17 @@
 //! Tests for BAL source eligibility, validation and fork cache insertion.
 
-use super::{ClientForkConfig, ForkEndpointIdentity, cache_bal, validate_bal};
+use super::*;
 use alloy_eips::eip7928::{
     AccountChanges, BalanceChange, BlockAccessIndex, CodeChange, NonceChange, SlotChanges,
     StorageChange, compute_block_access_list_hash,
 };
-use alloy_network::{AnyHeader, AnyNetwork, AnyRpcBlock, AnyRpcHeader};
-use alloy_primitives::{Address, B256, Bytes, U256, bytes};
+use alloy_network::{AnyHeader, AnyRpcHeader};
+use alloy_primitives::bytes;
 use alloy_provider::ProviderBuilder;
-use alloy_rpc_types::{Block, BlockTransactions};
+use alloy_rpc_types::Block;
 use alloy_transport::mock::Asserter;
-use foundry_evm::{
-    backend::{BlockchainDb, BlockchainDbMeta},
-    hardfork::EthereumHardfork,
-};
-use foundry_evm_networks::NetworkVariant;
+use foundry_evm::{backend::BlockchainDbMeta, hardfork::EthereumHardfork};
 use revm::{context::BlockEnv, state::AccountInfo};
-use std::{sync::Arc, time::Duration};
 
 fn database(hash: B256) -> BlockchainDb {
     BlockchainDb::new(

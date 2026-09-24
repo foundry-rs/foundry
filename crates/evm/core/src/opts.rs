@@ -88,6 +88,10 @@ pub struct EvmOpts {
     /// Disables storage caching entirely.
     pub no_storage_caching: bool,
 
+    /// Disables parent-block BAL cache prewarming for transaction-hash forks.
+    #[serde(default)]
+    pub no_fork_bal: bool,
+
     /// The initial balance of each deployed test contract.
     pub initial_balance: U256,
 
@@ -311,6 +315,7 @@ impl Default for EvmOpts {
             compute_units_per_second: None,
             no_rpc_rate_limit: false,
             no_storage_caching: false,
+            no_fork_bal: false,
             initial_balance: U256::default(),
             sender: Address::default(),
             ffi: false,
@@ -956,7 +961,7 @@ impl EvmOpts {
         let mut node_info_probe = self.anvil_node_info_probe();
         node_info_probe.identified |= fork.context().hardfork.is_some();
         for _ in 0..3 {
-            let (evm_env, endpoint) = self
+            let (evm_env, endpoint, _) = self
                 .fork_evm_env_at_resolved_with_context(&provider, fork, &mut node_info_probe)
                 .await?;
             let gas_price =
@@ -1182,7 +1187,7 @@ impl EvmOpts {
         provider: &P,
         expected: &ResolvedFork,
         node_info_probe: &mut AnvilNodeInfoProbe,
-    ) -> eyre::Result<(EvmEnv<SPEC, BLOCK>, ForkContext)> {
+    ) -> eyre::Result<(EvmEnv<SPEC, BLOCK>, ForkContext, N::BlockResponse)> {
         let (block, _, context) = self
             .resolve_fork_block_with_context(
                 provider,
@@ -1198,10 +1203,10 @@ impl EvmOpts {
         let chain_id = self.chain_id_override().unwrap_or(context.execution_chain_id);
         let evm_env =
             self.fork_env_from_block::<SPEC, BLOCK, N>(chain_id, context.source_chain_id, &block);
-        Ok((evm_env, context))
+        Ok((evm_env, context, block))
     }
 
-    /// Reconstructs the fork environment at an already resolved exact block.
+    /// Reconstructs the fork environment and retains its validated source block.
     pub(crate) async fn fork_evm_env_at_resolved<
         SPEC: Into<SpecId> + Default + Copy,
         BLOCK: FoundryBlock + Default,
@@ -1211,13 +1216,13 @@ impl EvmOpts {
         &self,
         provider: &P,
         expected: &ResolvedFork,
-    ) -> eyre::Result<EvmEnv<SPEC, BLOCK>> {
+    ) -> eyre::Result<(EvmEnv<SPEC, BLOCK>, N::BlockResponse)> {
         let mut node_info_probe = self.anvil_node_info_probe();
         node_info_probe.identified |= expected.context().hardfork.is_some();
-        let (evm_env, _) = self
+        let (evm_env, _, block) = self
             .fork_evm_env_at_resolved_with_context(provider, expected, &mut node_info_probe)
             .await?;
-        Ok(evm_env)
+        Ok((evm_env, block))
     }
 
     fn fork_env_from_block<
@@ -2679,6 +2684,27 @@ mod tests {
             error.to_string().contains("changed after its execution context was selected"),
             "{error}"
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn resolved_fork_environment_retains_exact_block() {
+        let (api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
+        let evm_opts = EvmOpts { fork_url: Some(handle.http_endpoint()), ..Default::default() };
+        let fork = evm_opts.resolve_fork().await.unwrap().unwrap();
+        let provider = handle.http_provider();
+
+        api.anvil_mine(Some(U256::from(1)), None).await.unwrap();
+        assert!(provider.get_block_number().await.unwrap() > fork.number());
+
+        let (evm_env, block) = evm_opts
+            .fork_evm_env_at_resolved::<SpecId, BlockEnv, _, _>(&provider, &fork)
+            .await
+            .unwrap();
+
+        assert_eq!(block.header().hash(), fork.hash());
+        assert_eq!(block.header().number(), fork.number());
+        assert_eq!(evm_env.block_env.number, U256::from(fork.number()));
+        assert_eq!(evm_env.block_env.timestamp, U256::from(block.header().timestamp()));
     }
 
     #[tokio::test(flavor = "multi_thread")]

@@ -3,10 +3,7 @@
 use crate::eth::{backend::db::Db, error::BlockchainError};
 use alloy_chains::NamedChain;
 use alloy_consensus::{BlockHeader, TrieAccount};
-use alloy_eips::{
-    eip2930::AccessListResult,
-    eip7928::{BlockAccessList, compute_block_access_list_hash, validate_block_access_list},
-};
+use alloy_eips::{eip2930::AccessListResult, eip7928::BlockAccessList};
 use alloy_network::{
     AnyNetwork, AnyRpcBlock, BlockResponse, Network, TransactionResponse,
     primitives::HeaderResponse,
@@ -41,6 +38,7 @@ use alloy_transport::TransportError;
 use foundry_common::provider::{RetryProvider, is_rpc_method_not_found};
 use foundry_evm::{
     backend::{AccountFetchPolicy, BlockchainDb, account_fetch_policy_for_source},
+    fork::{cache_bal_accounts, cache_bal_storage, validate_bal},
     hardfork::FoundryHardfork,
 };
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
@@ -49,11 +47,7 @@ use parking_lot::{
     RawRwLock, RwLock,
     lock_api::{RwLockReadGuard, RwLockWriteGuard},
 };
-use revm::{
-    context_interface::block::BlobExcessGasAndPrice,
-    primitives::hardfork::SpecId,
-    state::{AccountInfo as RevmAccountInfo, Bytecode},
-};
+use revm::{context_interface::block::BlobExcessGasAndPrice, primitives::hardfork::SpecId};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::RwLock as AsyncRwLock;
 
@@ -1032,48 +1026,12 @@ impl ClientForkConfig {
     }
 }
 
-/// Validates the entire response before any part of it can enter the cache.
-fn validate_bal(
-    bal: &BlockAccessList,
-    transaction_count: usize,
-    expected_hash: Option<B256>,
-) -> eyre::Result<()> {
-    validate_block_access_list(bal, transaction_count)?;
-    if let Some(expected_hash) = expected_hash {
-        eyre::ensure!(compute_block_access_list_hash(bal) == expected_hash, "BAL hash mismatch");
-    }
-    for account in bal {
-        for change in &account.code_changes {
-            Bytecode::new_raw_checked(change.new_code.clone())?;
-        }
-    }
-    Ok(())
-}
-
 /// Inserts validated post-state without inventing missing account fields or read-only slot values.
 fn cache_bal(db: &BlockchainDb, bal: BlockAccessList) {
     let mut storage = db.storage().write();
     let mut accounts = db.accounts().write();
-    for account in bal {
-        if let (Some(balance), Some(nonce), Some(code)) =
-            (account.balance_post_state(), account.nonce_post_state(), account.code_changes.last())
-        {
-            let code = Bytecode::new_raw(code.new_code.clone());
-            accounts.entry(account.address).or_insert_with(|| RevmAccountInfo {
-                balance,
-                nonce,
-                code_hash: code.hash_slow(),
-                code: Some(code),
-                account_id: None,
-            });
-        }
-        if !account.storage_changes.is_empty() {
-            let slots = storage.entry(account.address).or_default();
-            for (slot, value) in account.storage_post_states() {
-                slots.entry(slot).or_insert(value);
-            }
-        }
-    }
+    cache_bal_accounts(&mut accounts, &bal);
+    cache_bal_storage(&mut storage, &bal);
 }
 
 #[cfg(test)]

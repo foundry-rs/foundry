@@ -21,6 +21,7 @@ mod base;
 mod brutalize;
 mod core;
 mod exact_fork;
+mod fork_bal;
 mod fuzz;
 mod invariant;
 mod logs;

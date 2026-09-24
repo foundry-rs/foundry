@@ -39,7 +39,9 @@ use foundry_common::{
 use foundry_evm_core::{
     Breakpoints, EvmEnv, FoundryTransaction, InspectorExt,
     abi::Vm::stopExpectSafeMemoryCall,
-    backend::{ContextUpdateFor, DatabaseError, DatabaseExt, LocalForkId, RevertDiagnostic},
+    backend::{
+        ContextUpdateFor, DatabaseError, DatabaseExt, JournaledState, LocalForkId, RevertDiagnostic,
+    },
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
     env::FoundryContextExt,
     evm::{
@@ -929,6 +931,12 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// Journal restored by a state snapshot inside an isolated transaction, to be applied to its
     /// suspended parent alongside the returned state.
     pub pending_isolated_snapshot_journal: Option<Vec<JournalEntry>>,
+
+    /// Whether snapshot restorations belong to the active isolated transaction.
+    pub track_isolated_snapshots: bool,
+
+    /// Snapshot restorations that may need to be unwound with an enclosing isolated frame.
+    pub isolated_snapshot_restores: Vec<JournaledState>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -1014,6 +1022,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             context_snapshots: Default::default(),
             in_isolation_context: false,
             pending_isolated_snapshot_journal: None,
+            track_isolated_snapshots: false,
+            isolated_snapshot_restores: Vec::new(),
         }
     }
 
