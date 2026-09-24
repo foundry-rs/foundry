@@ -76,6 +76,45 @@ async fn new_filter_seeds_historic_logs_only_with_from_block() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn reverting_snapshot_reports_removed_logs() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let account = wallet.address();
+    let signer: EthereumWallet = wallet.into();
+    let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
+
+    let contract =
+        SimpleStorage::deploy(provider.clone(), "initial value".to_string()).await.unwrap();
+    let filter = Filter::new().address(*contract.address());
+    let filter_id: String = provider.client().request("eth_newFilter", (filter,)).await.unwrap();
+    let snapshot = api.evm_snapshot().await.unwrap();
+
+    contract
+        .setValue("reverted value".to_string())
+        .from(account)
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    let changes: Vec<Log> =
+        provider.client().request("eth_getFilterChanges", (filter_id.clone(),)).await.unwrap();
+    assert_eq!(changes.len(), 1);
+    assert!(!changes[0].removed);
+
+    assert!(api.evm_revert(snapshot).await.unwrap());
+
+    let removed: Vec<Log> =
+        provider.client().request("eth_getFilterChanges", (filter_id,)).await.unwrap();
+    let mut expected = changes[0].clone();
+    expected.removed = true;
+    assert_eq!(removed, vec![expected]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn get_filter_logs_ignores_poll_position() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
 

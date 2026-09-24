@@ -3626,7 +3626,11 @@ impl<N: Network> Backend<N> {
         overrides: TypedCallOverrides,
         mut monad_context: Option<MonadReplayContext>,
     ) -> Result<(InstructionResult, Option<Output>, u128, State), BlockchainError> {
-        let mut inspector = self.build_inspector();
+        // Estimation probes do not return or print traces, but still collect console logs.
+        let mut inspector = AnvilInspector::default();
+        if self.print_logs {
+            inspector = inspector.with_log_collector();
+        }
         let PreparedCall { mut evm_env, mut tx_env, .. } =
             self.prepare_typed_call_env(state, request, fee_details, block_env)?;
         evm_env.cfg_env.disable_fee_charge = overrides.disable_fee_charge;
@@ -3971,27 +3975,24 @@ impl<N: Network> Backend<N> {
         hash: B256,
         trace_types: HashSet<TraceType>,
     ) -> Result<TraceResults, BlockchainError> {
-        let block_number =
-            self.blockchain.storage.read().transactions.get(&hash).map(|tx| tx.block_number);
+        let mined = self.blockchain.storage.read().transactions.contains_key(&hash);
 
         // If the transaction was mined locally, replay it locally. Do not fall
         // through to the fork when the local replay fails; that would misreport
         // a local data problem as an upstream transaction lookup.
-        if let Some(block_number) = block_number {
-            let results = self
-                .mined_parity_trace_replay_block_transactions(block_number, &trace_types)?
-                .ok_or(BlockchainError::BlockNotFound)?;
-
-            return results
-                .into_iter()
-                .find(|result| result.transaction_hash == hash)
-                .map(|result| result.full_trace)
-                .ok_or_else(|| {
-                    BlockchainError::Internal(format!(
-                        "replayed block {block_number} for local transaction {hash:?}, \
-                         but its trace was missing"
-                    ))
-                });
+        if mined {
+            let inspector =
+                TracingInspector::new(TracingInspectorConfig::from_parity_config(&trace_types));
+            return self.replay_tx_with_inspector(
+                hash,
+                inspector,
+                |result, cache_db, inspector, _, _| {
+                    inspector
+                        .into_parity_builder()
+                        .into_trace_results_with_state(&result, &trace_types, &cache_db)
+                        .map_err(BlockchainError::from)
+                },
+            )?;
         }
 
         // Not known locally: forward to the fork if present.
@@ -4158,6 +4159,64 @@ impl<N: Network> Backend<N> {
         }
 
         Ok(results)
+    }
+
+    fn replay_tx_with_inspector<I, F, T>(
+        &self,
+        hash: B256,
+        mut inspector: I,
+        f: F,
+    ) -> Result<T, BlockchainError>
+    where
+        for<'a> I: BackendInspector<WrapDatabaseRef<&'a CacheDB<Box<&'a StateDb>>>> + 'a,
+        for<'a> F:
+            FnOnce(ResultAndState<HaltReason>, CacheDB<Box<&'a StateDb>>, I, TxEnv, EvmEnv) -> T,
+    {
+        let block = {
+            let storage = self.blockchain.storage.read();
+            let MinedTransaction { block_hash, .. } =
+                storage.transactions.get(&hash).ok_or(BlockchainError::TransactionNotFound)?;
+
+            storage.blocks.get(block_hash).cloned().ok_or(BlockchainError::BlockNotFound)?
+        };
+
+        let index = block
+            .body
+            .transactions
+            .iter()
+            .position(|tx| tx.hash() == hash)
+            .expect("transaction not found in block");
+
+        let trace = |parent_state: &StateDb| -> Result<T, BlockchainError> {
+            let (mut cache_db, evm_env, hardfork) =
+                self.prepare_block_replay_with_db(&block, Box::new(parent_state))?;
+            self.replay_mined_transaction_prefix(&mut cache_db, &evm_env, hardfork, &block, index)?;
+
+            let target_tx = block.body.transactions[index].clone();
+            let target_tx = self.pending_mined_transaction(target_tx)?;
+            let monad_context = self.active_monad_context_for_mined_block(&block)?;
+            let transaction_context = monad_execution_context_at(monad_context.as_ref(), index);
+            let (result, base_tx_env) = self.replay_envelope_with_inspector_ref_and_context(
+                &cache_db,
+                &evm_env,
+                &mut inspector,
+                &target_tx,
+                EnvelopeExecution::replay(transaction_context, hardfork),
+            )?;
+
+            Ok(f(result, cache_db, inspector, base_tx_env, evm_env))
+        };
+
+        let read_guard = self.states.upgradable_read();
+        if let Some(state) = read_guard.get_state(&block.header.parent_hash) {
+            trace(state)
+        } else {
+            let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
+            let state = write_guard
+                .get_on_disk_state(&block.header.parent_hash)
+                .ok_or(BlockchainError::BlockNotFound)?;
+            trace(state)
+        }
     }
 
     // Returns the traces matching a given filter
@@ -4806,6 +4865,9 @@ impl<N: Network> Backend<N> {
                 staged_client_config.block_hash,
             );
         }
+        if !staged_config.no_bal && !staged_config.no_fork_node_info {
+            staged_client_config.prefill_cache(staged_db.inner()).await;
+        }
         let mut invalidated_cache_namespaces = Vec::new();
         if cache_identity_changed && !staged_config.no_storage_caching {
             if let Some(source) = &previous_source
@@ -5186,7 +5248,10 @@ impl<N: Network> Backend<N> {
     }
 
     /// Reverts the state to the state snapshot identified by the given `id`.
-    pub async fn revert_state_snapshot(&self, id: U256) -> Result<bool, BlockchainError> {
+    pub async fn revert_state_snapshot(&self, id: U256) -> Result<bool, BlockchainError>
+    where
+        N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
+    {
         let Some((num, hash, fees, time_offset)) =
             self.active_state_snapshots.lock().get(&id).map(|snapshot| {
                 (snapshot.block_number, snapshot.block_hash, snapshot.fees, snapshot.time_offset)
@@ -5195,6 +5260,7 @@ impl<N: Network> Backend<N> {
             return Ok(false);
         };
         let block = self.block_by_hash(hash).await?.ok_or(BlockchainError::BlockNotFound)?;
+        let removed_logs = self.removed_logs_since(num);
         if !self.db.write().await.revert_state(id, RevertStateSnapshotAction::RevertRemove) {
             return Ok(false);
         }
@@ -5205,6 +5271,9 @@ impl<N: Network> Backend<N> {
         }
         // Revert the storage that's newer than the snapshot.
         self.blockchain.storage.write().unwind_to(num, hash);
+        if !removed_logs.is_empty() {
+            self.notify_on_removed_logs(removed_logs);
+        }
 
         let reset_time = block.header.timestamp();
         self.time.reset_with_offset(reset_time, time_offset);
@@ -5309,9 +5378,9 @@ where
     /// Returns all logs of the blocks with a number greater than `block_number`, marked as
     /// removed.
     ///
-    /// This is used during a reorg to capture the logs of the blocks that are about to be
-    /// unwound before their transactions and receipts are cleared from storage, so they can be
-    /// re-delivered to log subscriptions and filters with `removed: true`.
+    /// This captures the logs of blocks that are about to be unwound before their transactions
+    /// and receipts are cleared from storage, so they can be re-delivered to log subscriptions
+    /// and filters with `removed: true`.
     fn removed_logs_since(&self, block_number: u64) -> Vec<Log> {
         let storage = self.blockchain.storage.read();
         let mut all_logs = Vec::new();
@@ -5855,6 +5924,14 @@ where
         pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
     ) -> Result<MinedBlockOutcome<FoundryTxEnvelope>, BlockchainError> {
         let _mining_guard = self.mining.lock().await;
+        self.do_mine_block_locked(pool_transactions).await
+    }
+
+    /// Mines a block while the caller holds the mining lock.
+    async fn do_mine_block_locked(
+        &self,
+        pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
+    ) -> Result<MinedBlockOutcome<FoundryTxEnvelope>, BlockchainError> {
         trace!(target: "backend", "creating new block with {} transactions", pool_transactions.len());
 
         let (outcome, header, block_hash) = {
@@ -6120,23 +6197,19 @@ where
         Ok(outcome)
     }
 
-    /// Reorg the chain to a common height and execute blocks to build new chain.
+    /// Mines replacement blocks after the caller has rewound the chain for a reorg.
     ///
-    /// The state of the chain is rewound using `rewind` to the common block, including the db,
-    /// storage, and env.
-    ///
-    /// Finally, `do_mine_block` is called to create the new chain.
+    /// The caller must hold the mining lock across ancestor selection, rollback, and this method.
     pub async fn reorg(
         &self,
         depth: u64,
         tx_pairs: HashMap<u64, Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>>,
-        common_block: Block,
+        _mining_guard: &tokio::sync::MutexGuard<'_, ()>,
     ) -> Result<(), BlockchainError> {
-        self.rollback(common_block).await?;
         // Create the new reorged chain, filling the blocks with transactions if supplied
         for i in 0..depth {
             let to_be_mined = tx_pairs.get(&i).cloned().unwrap_or_else(Vec::new);
-            let outcome = self.do_mine_block(to_be_mined).await?;
+            let outcome = self.do_mine_block_locked(to_be_mined).await?;
             node_info!(
                 "    Mined reorg block number {}. With {} valid txs and with invalid {} txs",
                 outcome.block_number,
@@ -6912,67 +6985,6 @@ where
         .await?
     }
 
-    fn replay_tx_with_inspector<I, F, T>(
-        &self,
-        hash: B256,
-        mut inspector: I,
-        f: F,
-    ) -> Result<T, BlockchainError>
-    where
-        for<'a> I: BackendInspector<WrapDatabaseRef<&'a CacheDB<Box<&'a StateDb>>>> + 'a,
-        for<'a> F:
-            FnOnce(ResultAndState<HaltReason>, CacheDB<Box<&'a StateDb>>, I, TxEnv, EvmEnv) -> T,
-    {
-        let block = {
-            let storage = self.blockchain.storage.read();
-            let MinedTransaction { block_hash, .. } = storage
-                .transactions
-                .get(&hash)
-                .cloned()
-                .ok_or(BlockchainError::TransactionNotFound)?;
-
-            storage.blocks.get(&block_hash).cloned().ok_or(BlockchainError::BlockNotFound)?
-        };
-
-        let index = block
-            .body
-            .transactions
-            .iter()
-            .position(|tx| tx.hash() == hash)
-            .expect("transaction not found in block");
-
-        let trace = |parent_state: &StateDb| -> Result<T, BlockchainError> {
-            let (mut cache_db, evm_env, hardfork) =
-                self.prepare_block_replay_with_db(&block, Box::new(parent_state))?;
-            self.replay_mined_transaction_prefix(&mut cache_db, &evm_env, hardfork, &block, index)?;
-
-            let target_tx = block.body.transactions[index].clone();
-            let target_tx = self.pending_mined_transaction(target_tx)?;
-            let monad_context = self.active_monad_context_for_mined_block(&block)?;
-            let transaction_context = monad_execution_context_at(monad_context.as_ref(), index);
-            let (result, base_tx_env) = self.replay_envelope_with_inspector_ref_and_context(
-                &cache_db,
-                &evm_env,
-                &mut inspector,
-                &target_tx,
-                EnvelopeExecution::replay(transaction_context, hardfork),
-            )?;
-
-            Ok(f(result, cache_db, inspector, base_tx_env, evm_env))
-        };
-
-        let read_guard = self.states.upgradable_read();
-        if let Some(state) = read_guard.get_state(&block.header.parent_hash) {
-            trace(state)
-        } else {
-            let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
-            let state = write_guard
-                .get_on_disk_state(&block.header.parent_hash)
-                .ok_or(BlockchainError::BlockNotFound)?;
-            trace(state)
-        }
-    }
-
     /// Traces the transaction with the js tracer
     #[cfg(feature = "js-tracer")]
     pub async fn trace_tx_with_js_tracer(
@@ -7320,11 +7332,15 @@ where
     ///
     /// The state of the chain is rewound using `rewind` to the common block, including the db,
     /// storage, and env.
-    pub async fn rollback(&self, common_block: Block) -> Result<(), BlockchainError> {
+    pub async fn rollback(
+        &self,
+        common_block: Block,
+        _mining_guard: &tokio::sync::MutexGuard<'_, ()>,
+    ) -> Result<(), BlockchainError> {
         let hash = common_block.header.hash_slow();
 
         // Get the database at the common block
-        let common_state = {
+        let (common_state, replace_accounts) = {
             let return_state_or_throw_err =
                 |db: Option<&StateDb>| -> Result<AddressMap<DbAccount>, BlockchainError> {
                     let state_db = db.ok_or(BlockchainError::DataUnavailable)?;
@@ -7335,13 +7351,15 @@ where
 
             let read_guard = self.states.upgradable_read();
             if let Some(db) = read_guard.get_state(&hash) {
-                return_state_or_throw_err(Some(db))?
+                (return_state_or_throw_err(Some(db))?, true)
             } else {
                 let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
-                return_state_or_throw_err(write_guard.get_on_disk_state(&hash))?
+                (return_state_or_throw_err(write_guard.get_on_disk_state(&hash))?, false)
             }
         };
 
+        // Acquire the only awaited mutation lock before publishing any part of the rewind.
+        let mut db = self.db.write().await;
         {
             // Collect the logs of the blocks that are about to be removed from the canonical
             // chain, while their transactions and receipts are still in storage
@@ -7375,25 +7393,23 @@ where
             self.cheats.clear_next_block_prevrandao();
         }
 
-        {
-            // Collect block hashes before acquiring db lock to avoid holding blockchain storage
-            // lock across await. Only collect the last 256 blocks since that's all BLOCKHASH can
-            // access.
-            let block_hashes: Vec<_> = {
-                let storage = self.blockchain.storage.read();
-                let min_block = common_block.header.number().saturating_sub(256);
-                storage
-                    .hashes
-                    .iter()
-                    .filter(|(num, _)| **num >= min_block)
-                    .map(|(&num, &hash)| (num, hash))
-                    .collect()
-            };
+        // Only collect the last 256 block hashes since that's all BLOCKHASH can access.
+        let block_hashes: Vec<_> = {
+            let storage = self.blockchain.storage.read();
+            let min_block = common_block.header.number().saturating_sub(256);
+            storage
+                .hashes
+                .iter()
+                .filter(|(num, _)| **num >= min_block)
+                .map(|(&num, &hash)| (num, hash))
+                .collect()
+        };
 
-            // Acquire db lock once for the entire restore operation to reduce lock churn.
-            let mut db = self.db.write().await;
-            db.clear();
+        db.clear();
 
+        if replace_accounts && let Some(accounts) = db.maybe_as_full_db_mut() {
+            *accounts = common_state;
+        } else {
             // Insert account info before storage to prevent fork-mode RPC fetches after clear.
             for (address, acc) in common_state {
                 db.insert_account(address, acc.info);
@@ -7401,12 +7417,11 @@ where
                     db.set_storage_at(address, key.into(), value.into())?;
                 }
             }
+        }
 
-            // Restore block hashes from blockchain storage (now unwound, contains only valid
-            // blocks).
-            for (block_num, hash) in block_hashes {
-                db.insert_block_hash(U256::from(block_num), hash);
-            }
+        // Restore block hashes from blockchain storage (now unwound, contains only valid blocks).
+        for (block_num, hash) in block_hashes {
+            db.insert_block_hash(U256::from(block_num), hash);
         }
 
         Ok(())
@@ -7466,22 +7481,7 @@ where
         opts: GethDebugTracingOptions,
     ) -> Result<Vec<TraceResult>, BlockchainError> {
         if let Some(block) = self.blockchain.get_block_by_hash(&block_hash) {
-            let mut traces = Vec::new();
-            for tx in &block.body.transactions {
-                let tx_hash = tx.hash();
-                match self.debug_trace_transaction(tx_hash, opts.clone()).await {
-                    Ok(trace) => {
-                        traces.push(TraceResult::Success { result: trace, tx_hash: Some(tx_hash) });
-                    }
-                    Err(error) => {
-                        traces.push(TraceResult::Error {
-                            error: error.to_string(),
-                            tx_hash: Some(tx_hash),
-                        });
-                    }
-                }
-            }
-            return Ok(traces);
+            return Ok(self.debug_trace_mined_block(&block, opts).await);
         }
 
         if let Some(fork) = self.get_fork() {
@@ -7500,22 +7500,7 @@ where
         let number = self.convert_block_number(Some(block_number));
 
         if let Some(block) = self.get_block(BlockId::Number(BlockNumber::Number(number))) {
-            let mut traces = Vec::new();
-            for tx in &block.body.transactions {
-                let tx_hash = tx.hash();
-                match self.debug_trace_transaction(tx_hash, opts.clone()).await {
-                    Ok(trace) => {
-                        traces.push(TraceResult::Success { result: trace, tx_hash: Some(tx_hash) });
-                    }
-                    Err(error) => {
-                        traces.push(TraceResult::Error {
-                            error: error.to_string(),
-                            tx_hash: Some(tx_hash),
-                        });
-                    }
-                }
-            }
-            return Ok(traces);
+            return Ok(self.debug_trace_mined_block(&block, opts).await);
         }
 
         if let Some(fork) = self.get_fork() {
@@ -7523,6 +7508,111 @@ where
         }
 
         Err(BlockchainError::BlockNotFound)
+    }
+
+    async fn debug_trace_mined_block(
+        &self,
+        block: &Block,
+        opts: GethDebugTracingOptions,
+    ) -> Vec<TraceResult> {
+        if block.body.transactions.is_empty() {
+            return Vec::new();
+        }
+
+        // A single transaction has no prefix replay to share.
+        if block.body.transactions.len() > 1
+            && matches!(
+                opts.tracer,
+                Some(GethDebugTracerType::BuiltInTracer(GethDebugBuiltInTracerType::CallTracer))
+            )
+            && let Ok(config) = call_config_from_tracer_config(opts.tracer_config.clone())
+            && let Ok(traces) = self.replay_block_call_traces(block, config)
+        {
+            return traces;
+        }
+
+        // Preserve per-transaction errors and fork lookup when sequential replay is unavailable.
+        let mut traces = Vec::with_capacity(block.body.transactions.len());
+        for tx in &block.body.transactions {
+            let tx_hash = tx.hash();
+            traces.push(match self.debug_trace_transaction(tx_hash, opts.clone()).await {
+                Ok(result) => TraceResult::Success { result, tx_hash: Some(tx_hash) },
+                Err(error) => {
+                    TraceResult::Error { error: error.to_string(), tx_hash: Some(tx_hash) }
+                }
+            });
+        }
+        traces
+    }
+
+    /// Replays a local block once, keeping each transaction's committed state for the next call.
+    fn replay_block_call_traces(
+        &self,
+        block: &Block,
+        config: CallConfig,
+    ) -> Result<Vec<TraceResult>, BlockchainError> {
+        let gas_used = {
+            let storage = self.blockchain.storage.read();
+            let block_hash = block.header.hash_slow();
+            block
+                .body
+                .transactions
+                .iter()
+                .enumerate()
+                .map(|(index, tx)| {
+                    let hash = tx.hash();
+                    let mined = storage
+                        .transactions
+                        .get(&hash)
+                        .ok_or(BlockchainError::TransactionNotFound)?;
+                    if mined.block_hash != block_hash
+                        || mined.info.transaction_index as usize != index
+                        || mined.info.transaction_hash != hash
+                    {
+                        return Err(BlockchainError::TransactionNotFound);
+                    }
+                    Ok(mined.info.gas_used)
+                })
+                .collect::<Result<Vec<_>, BlockchainError>>()?
+        };
+
+        let trace = |parent_state: &StateDb| -> Result<Vec<TraceResult>, BlockchainError> {
+            let (mut cache_db, evm_env, hardfork) =
+                self.prepare_block_replay(block, parent_state)?;
+            let monad_context = self.active_monad_context_for_mined_block(block)?;
+            let mut traces = Vec::with_capacity(block.body.transactions.len());
+            for (index, (tx, gas_used)) in block.body.transactions.iter().zip(&gas_used).enumerate()
+            {
+                let mut inspector =
+                    TracingInspector::new(TracingInspectorConfig::from_geth_call_config(&config));
+                let pending = self.pending_mined_transaction(tx.clone())?;
+                let transaction_context = monad_execution_context_at(monad_context.as_ref(), index);
+                let (result, _) = self.replay_envelope_with_inspector_ref_and_context(
+                    &cache_db,
+                    &evm_env,
+                    &mut inspector,
+                    &pending,
+                    EnvelopeExecution::replay(transaction_context, hardfork),
+                )?;
+                traces.push(TraceResult::Success {
+                    result: inspector.geth_builder().geth_call_traces(config, *gas_used).into(),
+                    tx_hash: Some(tx.hash()),
+                });
+                cache_db.commit(result.state);
+            }
+            Ok(traces)
+        };
+
+        let read_guard = self.states.upgradable_read();
+        if let Some(state) = read_guard.get_state(&block.header.parent_hash) {
+            trace(state)
+        } else {
+            let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
+            let state = write_guard
+                .get_on_disk_state(&block.header.parent_hash)
+                .ok_or(BlockchainError::BlockNotFound)?;
+            trace(state)
+        }
     }
 
     fn geth_trace(

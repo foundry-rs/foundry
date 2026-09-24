@@ -7,6 +7,7 @@ contract WriteAfterWrite {
     uint256 public x;
     uint256 public y;
     mapping(address => uint256) public balances;
+    mapping(uint256 => uint256) internal slots;
 
     // bad: first write to x is dead
     function bad1() public {
@@ -166,6 +167,62 @@ contract WriteAfterWrite {
         x = v;
     }
 
+    // bad: compound result overwritten without a read
+    function bad12(uint256 v) public {
+        x += 1;
+        x = v;
+    }
+
+    // bad: subtraction result overwritten without a read
+    function bad13(uint256 v) public {
+        x -= 1;
+        x = v;
+    }
+
+    // bad: only the compound write is dead; it reads the preceding plain write
+    function bad14() public {
+        x = 1;
+        x += 2;
+        x = 3;
+    }
+
+    // bad: reading x does not consume an unrelated pending write to y
+    function bad15() public {
+        y = 1;
+        x += 2;
+        y = 3;
+    }
+
+    // bad: compound assignments nested in other expressions are still writes
+    function bad16() public {
+        uint256 z = (x += 1);
+        x = 2;
+        z;
+    }
+
+    // bad: multiplication assignment is tracked as a write
+    function bad17() public {
+        x *= 2;
+        x = 3;
+    }
+
+    // good: compound assignment reads the earlier write
+    function good16(uint256 v) public {
+        x = v;
+        x *= 2;
+    }
+
+    // good: evaluating an indexed compound LHS must not process its index twice
+    function good17() public {
+        slots[x = 1] += 1;
+    }
+
+    // bad: evaluating the indexed LHS retains its nested write
+    function bad18() public {
+        slots[x = 1] += 1;
+        x = 2;
+    }
+
     // good: no false positive for writes after a return (unreachable code)
     function good13(uint256 v) public returns (uint256) {
         x = v;
@@ -208,6 +265,32 @@ contract ModifierBad {
         x = 1;
         x = 2;
         _;
+    }
+}
+
+contract QualifiedBase {
+    uint256 internal x;
+}
+
+contract QualifiedStateVar is QualifiedBase {
+    // good: a qualified compound assignment reads the preceding write
+    function goodQualifiedCompound() public {
+        x = 1;
+        QualifiedBase.x += 1;
+    }
+
+    // bad: a qualified compound assignment is still tracked as a write
+    function badQualifiedCompound() public {
+        QualifiedBase.x += 1;
+        x = 2;
+    }
+
+    // good: a qualified read consumes the pending compound write
+    function goodQualifiedRead() public {
+        QualifiedBase.x += 1;
+        uint256 observed = QualifiedBase.x;
+        x = 2;
+        observed;
     }
 }
 

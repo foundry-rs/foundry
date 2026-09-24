@@ -317,6 +317,7 @@ impl NodeArgs {
             .with_fork_headers(self.evm.fork_headers)
             .with_fork_chain_id(self.evm.fork_chain_id.map(u64::from).map(U256::from))
             .with_no_fork_node_info(self.evm.no_fork_node_info)
+            .with_no_bal(self.evm.no_bal)
             .with_fork_state_by_number(self.evm.fork_state_by_number)
             .fork_request_timeout(self.evm.fork_request_timeout.map(Duration::from_millis))
             .fork_request_retries(self.evm.fork_request_retries)
@@ -591,6 +592,14 @@ pub struct AnvilEvmArgs {
     /// finishes.
     #[arg(long, requires = "fork_url", help_heading = "Fork config")]
     pub no_fork_node_info: bool,
+
+    /// Disable pre-filling the fork cache with block access list (BAL) post-state.
+    ///
+    /// By default, eligible Ethereum forks briefly try fetching a BAL at the fork block.
+    /// Missing or invalid BALs fall back to ordinary state reads. This setting also applies
+    /// to subsequent resets and does not disable serving BAL RPC methods.
+    #[arg(long, help_heading = "Fork config")]
+    pub no_bal: bool,
 
     /// Read fork state by block number instead of by block hash.
     ///
@@ -982,6 +991,16 @@ mod tests {
                     .unwrap();
             assert!(config.networks.execution_network().is_ethereum());
         }
+    }
+
+    #[test]
+    fn fork_bal_can_be_disabled() {
+        let args =
+            NodeArgs::try_parse_from(["anvil", "--fork-url", "http://localhost:8545", "--no-bal"]);
+        let config = args.unwrap().into_node_config().unwrap();
+        assert!(config.no_bal);
+        assert!(!NodeArgs::parse_from(["anvil"]).into_node_config().unwrap().no_bal);
+        assert!(NodeArgs::parse_from(["anvil", "--no-bal"]).into_node_config().unwrap().no_bal);
     }
 
     #[test]
