@@ -9,7 +9,7 @@ use alloy_eips::eip7928::{
 };
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::{AnyNetwork, AnyRpcBlock};
-use alloy_primitives::{Address, B256, U256, map::U256Map};
+use alloy_primitives::map::U256Map;
 use alloy_provider::Provider;
 use eyre::{Result, WrapErr};
 use foundry_common::provider::is_rpc_method_not_found;
@@ -18,20 +18,12 @@ use foundry_fork_db::cache::MemDb;
 use revm::state::{AccountInfo, Bytecode};
 use std::time::Duration;
 
-/// Validated values tied to one exact block, configured source, and endpoint context.
-#[derive(Debug)]
-pub(super) struct PreparedBalSeed {
-    fingerprint: B256,
-    accounts: Vec<(Address, AccountInfo)>,
-    storage: Vec<(Address, Vec<(U256, U256)>)>,
-}
-
-/// Prepares optional parent state without mutating a database or propagating BAL failures.
+/// Fetches and validates a parent BAL without mutating a database or propagating BAL failures.
 pub(super) async fn prepare<P: Provider<AnyNetwork>>(
     provider: &P,
     resolved: &ResolvedFork,
     block: &AnyRpcBlock,
-) -> Option<PreparedBalSeed> {
+) -> Option<BlockAccessList> {
     if !eligible_source(resolved.context())
         || block.header.hash != resolved.hash()
         || block.header.number() != resolved.number()
@@ -57,24 +49,21 @@ pub(super) async fn prepare<P: Provider<AnyNetwork>>(
                 response => response,
             }
             .ok()??;
-        let seed = match PreparedBalSeed::new(bal, block, resolved) {
-            Ok(seed) => seed,
-            Err(err) => {
-                debug!(target: "backend::fork", block_hash = %resolved.hash(), %err, "ignoring invalid fork BAL");
-                return None;
-            }
-        };
+        if let Err(err) = validate(&bal, block) {
+            debug!(target: "backend::fork", block_hash = %resolved.hash(), %err, "ignoring invalid fork BAL");
+            return None;
+        }
         // A local node can change state without changing its block hash.
-        immutable_source(provider).await.then_some(seed)
+        immutable_source(provider).await.then_some(bal)
     };
 
     // Reuse the validated block; optional BAL and source probes share one budget, including
     // retries.
-    let seed = tokio::time::timeout(Duration::from_millis(500), prepare).await.ok().flatten();
-    if seed.is_none() {
+    let bal = tokio::time::timeout(Duration::from_millis(500), prepare).await.ok().flatten();
+    if bal.is_none() {
         debug!(target: "backend::fork", block_hash = %resolved.hash(), "fork BAL unavailable or ineligible");
     }
-    seed
+    bal
 }
 
 fn eligible_source(context: ForkContext) -> bool {
@@ -97,84 +86,59 @@ async fn immutable_source<P: Provider<AnyNetwork>>(provider: &P) -> bool {
     )
 }
 
-impl PreparedBalSeed {
-    fn new(bal: BlockAccessList, block: &AnyRpcBlock, resolved: &ResolvedFork) -> Result<Self> {
-        eyre::ensure!(
-            block.header.hash == resolved.hash() && block.header.number() == resolved.number(),
-            "BAL block identity mismatch"
-        );
-        validate_block_access_list(&bal, block.transactions.len())
-            .wrap_err("invalid BAL structure")?;
-        if let Some(expected_hash) = block.header.block_access_list_hash() {
-            eyre::ensure!(
-                compute_block_access_list_hash(&bal) == expected_hash,
-                "BAL hash mismatch"
-            );
-        }
-
-        let mut accounts = Vec::new();
-        let mut storage = Vec::new();
-        for account in bal {
-            if !account.storage_changes.is_empty() {
-                let mut slots = Vec::with_capacity(account.storage_changes.len());
-                slots.extend(account.storage_post_states());
-                storage.push((account.address, slots));
-            }
-            let balance = account.balance_post_state();
-            let nonce = account.nonce_post_state();
-            let mut code = None;
-            // Reject invalid code even in earlier changes or incomplete accounts.
-            for change in account.code_changes {
-                code =
-                    Some(Bytecode::new_raw_checked(change.new_code).wrap_err("invalid BAL code")?);
-            }
-            if let (Some(balance), Some(nonce), Some(code)) = (balance, nonce, code) {
-                accounts.push((
-                    account.address,
-                    AccountInfo {
-                        balance,
-                        nonce,
-                        code_hash: code.hash_slow(),
-                        code: Some(code),
-                        account_id: None,
-                    },
-                ));
-            }
-        }
-
-        Ok(Self { fingerprint: resolved.fingerprint(), accounts, storage })
+/// Validates the entire BAL before any values can enter the cache.
+fn validate(bal: &BlockAccessList, block: &AnyRpcBlock) -> Result<()> {
+    validate_block_access_list(bal, block.transactions.len()).wrap_err("invalid BAL structure")?;
+    if let Some(expected_hash) = block.header.block_access_list_hash() {
+        eyre::ensure!(compute_block_access_list_hash(bal) == expected_hash, "BAL hash mismatch");
     }
-
-    /// Seeds the selected remote cache, retaining accounts and slots already present.
-    pub(super) fn apply(self, db: &MemDb, resolved: &ResolvedFork) -> bool {
-        if self.fingerprint != resolved.fingerprint() {
-            debug!(target: "backend::fork", "ignoring fork BAL for a different cache identity");
-            return false;
+    for account in bal {
+        // Reject invalid code even in earlier changes or incomplete accounts.
+        for change in &account.code_changes {
+            Bytecode::new_raw_checked(change.new_code.clone()).wrap_err("invalid BAL code")?;
         }
+    }
+    Ok(())
+}
 
-        let mut accounts = db.accounts.write();
-        let accounts_before = accounts.len();
-        for (address, account) in self.accounts {
-            accounts.entry(address).or_insert(account);
+/// Inserts a validated BAL's post-state into its selected remote cache, retaining existing values.
+pub(super) fn cache(db: &MemDb, bal: BlockAccessList) {
+    let mut accounts = db.accounts.write();
+    let accounts_before = accounts.len();
+    for account in &bal {
+        if let (Some(balance), Some(nonce), Some(code)) =
+            (account.balance_post_state(), account.nonce_post_state(), account.code_changes.last())
+        {
+            accounts.entry(account.address).or_insert_with(|| {
+                let code = Bytecode::new_raw(code.new_code.clone());
+                AccountInfo {
+                    balance,
+                    nonce,
+                    code_hash: code.hash_slow(),
+                    code: Some(code),
+                    account_id: None,
+                }
+            });
         }
-        let inserted_accounts = accounts.len() - accounts_before;
-        drop(accounts);
+    }
+    let inserted_accounts = accounts.len() - accounts_before;
+    drop(accounts);
 
-        let mut storage = db.storage.write();
-        let mut inserted_slots = 0;
-        for (address, slots) in self.storage {
-            let cached_slots = storage.entry(address).or_insert_with(|| {
-                U256Map::with_capacity_and_hasher(slots.len(), Default::default())
+    let mut storage = db.storage.write();
+    let mut inserted_slots = 0;
+    for account in bal {
+        if !account.storage_changes.is_empty() {
+            let cached_slots = storage.entry(account.address).or_insert_with(|| {
+                U256Map::with_capacity_and_hasher(account.storage_changes.len(), Default::default())
             });
             let slots_before = cached_slots.len();
-            for (slot, value) in slots {
+            for (slot, value) in account.storage_post_states() {
                 cached_slots.entry(slot).or_insert(value);
             }
             inserted_slots += cached_slots.len() - slots_before;
         }
-        debug!(target: "backend::fork", block_hash = %resolved.hash(), inserted_accounts, inserted_slots, "prefilled fork cache from BAL");
-        true
     }
+    debug!(target: "backend::fork", inserted_accounts, inserted_slots, "prefilled fork cache from BAL");
 }
 
 #[cfg(test)]

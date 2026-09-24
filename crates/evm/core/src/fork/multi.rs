@@ -3,12 +3,9 @@
 //! The design is similar to the single `SharedBackend`, `BackendHandler` but supports multiple
 //! concurrently active pairs at once.
 
-use super::{
-    CreateFork, ResolvedFork,
-    bal::{self, PreparedBalSeed},
-};
+use super::{CreateFork, ResolvedFork, bal};
 use crate::{FoundryBlock, opts::ForkContext};
-use alloy_eips::BlockNumHash;
+use alloy_eips::{BlockNumHash, eip7928::BlockAccessList};
 use alloy_evm::EvmEnv;
 use alloy_network::{AnyNetwork, Network};
 use alloy_primitives::{U256, map::HashMap};
@@ -283,7 +280,7 @@ type CreateFuture<N, SPEC, BLOCK> = Pin<
                     ForkId,
                     CreatedFork<N, SPEC, BLOCK>,
                     BackendHandler<N, BLOCK>,
-                    Option<PreparedBalSeed>,
+                    Option<BlockAccessList>,
                 )>,
             > + Send,
     >,
@@ -596,29 +593,39 @@ impl<
                 } => {
                     if let Poll::Ready(resp) = future.poll_unpin(cx) {
                         match resp {
-                            Ok((fork_id, fork, handler, seed)) => {
-                                let (fork_id, fork) =
-                                    if let Some(mut cached) = this.forks.get(&fork_id).cloned() {
-                                        // Consumers share immutable state, but retain their own
-                                        // opt-out.
-                                        cached.opts.evm_opts.no_fork_bal =
-                                            fork.opts.evm_opts.no_fork_bal;
-                                        (cached.inc_senders(fork_id), cached)
-                                    } else {
-                                        this.handlers.push((fork_id.clone(), handler));
-                                        (fork_id, fork)
-                                    };
+                            Ok((fork_id, fork, handler, mut bal)) => {
+                                let (fork_id, fork) = if let Some(mut cached) =
+                                    this.forks.get(&fork_id).cloned()
+                                {
+                                    let source = fork
+                                        .opts
+                                        .resolved
+                                        .as_ref()
+                                        .expect("created fork is resolved");
+                                    let selected = cached
+                                        .opts
+                                        .resolved
+                                        .as_ref()
+                                        .expect("created fork is resolved");
+                                    if bal.is_some()
+                                        && source.fingerprint() != selected.fingerprint()
+                                    {
+                                        debug!(target: "backend::fork", "ignoring fork BAL for a different cache identity");
+                                        bal = None;
+                                    }
+                                    // Consumers share immutable state, but retain their own
+                                    // opt-out.
+                                    cached.opts.evm_opts.no_fork_bal =
+                                        fork.opts.evm_opts.no_fork_bal;
+                                    (cached.inc_senders(fork_id), cached)
+                                } else {
+                                    this.handlers.push((fork_id.clone(), handler));
+                                    (fork_id, fork)
+                                };
                                 // Apply only after choosing the backend, including an existing
                                 // cache.
-                                if let Some(seed) = seed
-                                    && seed.apply(
-                                        &fork.backend.data(),
-                                        fork.opts
-                                            .resolved
-                                            .as_ref()
-                                            .expect("created fork is resolved"),
-                                    )
-                                {
+                                if let Some(bal) = bal {
+                                    bal::cache(&fork.backend.data(), bal);
                                     fork.bal_prewarmed.store(true, Ordering::Relaxed);
                                 }
                                 this.insert_new_fork(fork_id, fork, sender, additional_senders);
@@ -769,7 +776,7 @@ async fn create_fork<
     ForkId,
     CreatedFork<N, SPEC, BLOCK>,
     BackendHandler<N, BLOCK>,
-    Option<PreparedBalSeed>,
+    Option<BlockAccessList>,
 )> {
     // Ensure evm_opts reflects the fork URL (may differ from the resolved CreateFork url when
     // created via cheatcodes, where evm_opts is cloned from the base config).
@@ -849,7 +856,7 @@ async fn create_fork<
     };
 
     let provider = fork.evm_opts.fork_provider_with_url::<N>(&fork.url)?;
-    let seed = if let Some(block) = bal_block {
+    let bal = if let Some(block) = bal_block {
         bal::prepare(&any_provider, &resolved, &block).await
     } else {
         None
@@ -865,16 +872,20 @@ async fn create_fork<
     fork.resolved = Some(resolved);
     let fork = CreatedFork::new(fork, evm_env, backend);
 
-    Ok((fork_id, fork, handler, seed))
+    Ok((fork_id, fork, handler, bal))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use alloy_chains::NamedChain;
-    use alloy_primitives::B256;
+    use alloy_eips::eip7928::{AccountChanges, BlockAccessIndex, SlotChanges, StorageChange};
+    use alloy_primitives::{Address, B256};
+    use alloy_provider::{ProviderBuilder, mock::Asserter};
     use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
     use foundry_fork_db::AccountFetchPolicy;
+    use futures::task::noop_waker_ref;
+    use revm::context::BlockEnv;
 
     fn context(block_number: u64) -> ForkContext {
         ForkContext {
@@ -980,5 +991,92 @@ mod tests {
         let (sender, _) = oneshot_channel();
         handler.create_fork_with_identity(fork, None, true, sender);
         assert_eq!(handler.pending_tasks.len(), 3, "matching prewarm requests can share creation");
+    }
+
+    #[test]
+    fn fork_bal_fills_selected_cache_only_for_matching_identity() {
+        let url = "http://localhost:8545";
+        let block = BlockNumHash::new(1, B256::with_last_byte(1));
+        let address = Address::with_last_byte(1);
+        let create = |resolved: ResolvedFork| {
+            let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
+                .connect_mocked_client(Asserter::new());
+            let env = EvmEnv::<SpecId>::default();
+            let meta = BlockchainDbMeta::new(env.block_env.clone(), url.to_string())
+                .with_fork_identity(resolved.hash(), resolved.source_id());
+            let (backend, handler) = SharedBackend::new_with_anchor(
+                provider,
+                BlockchainDb::new(meta, None),
+                ForkBlock::with_rpc_number(1, 1, resolved.hash()),
+            )
+            .unwrap();
+            let opts = CreateFork {
+                enable_caching: false,
+                url: url.to_string(),
+                evm_opts: Default::default(),
+                resolved: Some(resolved),
+            };
+            (CreatedFork::new(opts, env, backend), handler)
+        };
+
+        for (profile, matches) in
+            [(NetworkConfigs::default(), true), (NetworkConfigs::with_ethereum(), false)]
+        {
+            let cached = ResolvedFork::new(url, None, None, None, block, context(1));
+            let candidate = ResolvedFork::new(
+                url,
+                None,
+                None,
+                Some(1),
+                block,
+                ForkContext { network_profile: profile, ..context(1) },
+            );
+            let id = ForkId::resolved(url, &candidate);
+            // The key uses a profile name; BAL reuse checks the complete source identity.
+            assert_eq!(id, ForkId::resolved(url, &cached));
+            assert_eq!(candidate.fingerprint() == cached.fingerprint(), matches);
+            let (cached, cached_handler) = create(cached);
+            let cached_db = cached.backend.data();
+            let (candidate, candidate_handler) = create(candidate);
+            let candidate_db = candidate.backend.data();
+            let bal = vec![AccountChanges::new(address).with_storage_change(SlotChanges::new(
+                U256::ONE,
+                vec![StorageChange::new(BlockAccessIndex::new(1), U256::from(42))],
+            ))];
+            let (_incoming, receiver) = channel(1);
+            let mut manager = MultiForkHandler::<AnyNetwork, SpecId, BlockEnv>::new(receiver);
+            manager.forks.insert(id.clone(), cached);
+            manager.handlers.push((id.clone(), cached_handler));
+            let (sender, receiver) = oneshot_channel();
+            manager.pending_tasks.push(ForkTask::Create {
+                future: Box::pin(futures::future::ready(Ok((
+                    id.clone(),
+                    candidate,
+                    candidate_handler,
+                    Some(bal),
+                )))),
+                id: id.clone(),
+                prewarm_bal: true,
+                no_fork_bal: false,
+                sender,
+                additional_senders: Vec::new(),
+            });
+
+            assert!(manager.poll_unpin(&mut Context::from_waker(noop_waker_ref())).is_pending());
+            let result = receiver.try_recv().unwrap().unwrap();
+            assert!(Arc::ptr_eq(&result.backend.data(), &cached_db));
+            assert!(candidate_db.accounts.read().is_empty());
+            assert!(candidate_db.storage.read().is_empty());
+            assert_eq!(
+                cached_db
+                    .storage
+                    .read()
+                    .get(&address)
+                    .and_then(|slots| slots.get(&U256::ONE))
+                    .copied(),
+                matches.then_some(U256::from(42)),
+            );
+            assert_eq!(manager.forks[&id].bal_prewarmed.load(Ordering::Relaxed), matches);
+        }
     }
 }

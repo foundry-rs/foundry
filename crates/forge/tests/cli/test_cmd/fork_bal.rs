@@ -90,6 +90,7 @@ enum Response {
     Null,
     Malformed,
     Invalid,
+    InvalidCode,
     WrongCommitment,
     Timeout,
     PreCancun,
@@ -185,6 +186,19 @@ impl Proxy {
                             Response::Malformed => bal = json!([{"address": "invalid"}]),
                             Response::Invalid => {
                                 bal[0]["storageChanges"][0]["changes"][0]["index"] = json!("0xff");
+                            }
+                            Response::InvalidCode => {
+                                // Reject earlier invalid code before caching the valid first
+                                // account.
+                                bal.as_array_mut().unwrap().push(json!({
+                                    "address": "0x000000000000000000000000000000000000ba11",
+                                    "storageChanges": [], "storageReads": [],
+                                    "balanceChanges": [], "nonceChanges": [],
+                                    "codeChanges": [
+                                        {"index": "0x0", "code": "0xef0100"},
+                                        {"index": "0x1", "code": "0x"}
+                                    ]
+                                }));
                             }
                             Response::Timeout => return futures::future::pending().await,
                             _ => {}
@@ -539,6 +553,7 @@ forgetest_async!(fork_bal_unusable_responses_fall_back_to_replay, |prj, cmd| {
         Response::Null,
         Response::Malformed,
         Response::Invalid,
+        Response::InvalidCode,
         Response::WrongCommitment,
         Response::Timeout,
         Response::AnvilAfterBal,

@@ -7,7 +7,7 @@ use alloy_eips::{
     },
 };
 use alloy_network::{AnyHeader, AnyRpcHeader};
-use alloy_primitives::{Bytes, bytes};
+use alloy_primitives::{Address, B256, Bytes, U256, bytes};
 use alloy_provider::{ProviderBuilder, mock::Asserter};
 use alloy_rpc_types::{Block, BlockTransactions};
 use foundry_config::FoundryHardfork;
@@ -62,7 +62,7 @@ fn complete_account(address: Address, code: Bytes) -> AccountChanges {
 }
 
 #[test]
-fn fork_bal_seed_keeps_final_zero_and_system_writes() {
+fn fork_bal_cache_keeps_final_zero_and_system_writes() {
     let resolved = resolved(context());
     let block = block(&resolved, 2);
     let address = Address::repeat_byte(1);
@@ -83,7 +83,9 @@ fn fork_bal_seed_keeps_final_zero_and_system_writes() {
         ));
     let db = MemDb::default();
 
-    PreparedBalSeed::new(vec![account], &block, &resolved).unwrap().apply(&db, &resolved);
+    let bal = vec![account];
+    validate(&bal, &block).unwrap();
+    cache(&db, bal);
 
     let storage = db.storage.read();
     assert_eq!(storage[&address][&slot], U256::ZERO);
@@ -92,7 +94,7 @@ fn fork_bal_seed_keeps_final_zero_and_system_writes() {
 }
 
 #[test]
-fn fork_bal_seed_leaves_partial_accounts_and_reads_unknown() {
+fn fork_bal_cache_leaves_partial_accounts_and_reads_unknown() {
     let resolved = resolved(context());
     let address = Address::repeat_byte(1);
     let account = AccountChanges::new(address)
@@ -100,16 +102,16 @@ fn fork_bal_seed_leaves_partial_accounts_and_reads_unknown() {
         .with_storage_read(U256::from(2));
     let db = MemDb::default();
 
-    PreparedBalSeed::new(vec![account], &block(&resolved, 1), &resolved)
-        .unwrap()
-        .apply(&db, &resolved);
+    let bal = vec![account];
+    validate(&bal, &block(&resolved, 1)).unwrap();
+    cache(&db, bal);
 
     assert!(db.accounts.read().is_empty());
     assert!(db.storage.read().is_empty());
 }
 
 #[test]
-fn fork_bal_seed_preserves_cached_values_and_merges_slots() {
+fn fork_bal_cache_preserves_cached_values_and_merges_slots() {
     let resolved = resolved(context());
     let address = Address::repeat_byte(1);
     let account = complete_account(address, Bytes::new())
@@ -129,9 +131,9 @@ fn fork_bal_seed_preserves_cached_values_and_merges_slots() {
         [(U256::from(1), U256::from(101)), (U256::from(3), U256::from(303))].into_iter().collect(),
     );
 
-    PreparedBalSeed::new(vec![account], &block(&resolved, 1), &resolved)
-        .unwrap()
-        .apply(&db, &resolved);
+    let bal = vec![account];
+    validate(&bal, &block(&resolved, 1)).unwrap();
+    cache(&db, bal);
 
     assert_eq!(db.accounts.read()[&address], cached_account);
     assert_eq!(
@@ -147,7 +149,7 @@ fn fork_bal_seed_preserves_cached_values_and_merges_slots() {
 }
 
 #[test]
-fn fork_bal_seed_preserves_delegation_code_and_final_clearing() {
+fn fork_bal_cache_preserves_delegation_code_and_final_clearing() {
     let resolved = resolved(context());
     let authority = Address::repeat_byte(1);
     let cleared = Address::repeat_byte(2);
@@ -158,13 +160,9 @@ fn fork_bal_seed_preserves_delegation_code_and_final_clearing() {
         .with_code_change(CodeChange::new(index(2), Bytes::new()));
     let db = MemDb::default();
 
-    PreparedBalSeed::new(
-        vec![complete_account(authority, delegation.clone()), cleared_account],
-        &block(&resolved, 2),
-        &resolved,
-    )
-    .unwrap()
-    .apply(&db, &resolved);
+    let bal = vec![complete_account(authority, delegation.clone()), cleared_account];
+    validate(&bal, &block(&resolved, 2)).unwrap();
+    cache(&db, bal);
 
     let accounts = db.accounts.read();
     let account = &accounts[&authority];
@@ -181,79 +179,27 @@ fn fork_bal_seed_preserves_delegation_code_and_final_clearing() {
 }
 
 #[test]
-fn fork_bal_seed_rejects_changed_cache_identity_without_mutation() {
-    let source = resolved(context());
-    let block = block(&source, 1);
-    let account = complete_account(Address::repeat_byte(1), Bytes::new()).with_storage_change(
-        SlotChanges::new(U256::ONE, vec![StorageChange::new(index(1), U256::ONE)]),
-    );
-    let mut changed_context = context();
-    changed_context.instance_id = Some(B256::repeat_byte(2));
-    let changed = [
-        source.at_block(BlockNumHash::new(source.number(), B256::repeat_byte(2))),
-        source.at_block(BlockNumHash::new(source.number() + 1, source.hash())),
-        ResolvedFork::new("http://localhost:8546", None, None, None, source.block(), context()),
-        ResolvedFork::new(
-            "http://localhost:8545",
-            Some(&["X-Test: different".to_string()]),
-            None,
-            None,
-            source.block(),
-            context(),
-        ),
-        ResolvedFork::new(
-            "http://localhost:8545",
-            None,
-            Some("different-test-value"),
-            None,
-            source.block(),
-            context(),
-        ),
-        resolved(changed_context),
-    ];
-
-    for selected in changed {
-        let db = MemDb::default();
-        assert!(
-            !PreparedBalSeed::new(vec![account.clone()], &block, &source)
-                .unwrap()
-                .apply(&db, &selected)
-        );
-        assert!(db.accounts.read().is_empty());
-        assert!(db.storage.read().is_empty());
-    }
-
-    // An exact cache can be reused even when originally resolved through `latest`.
-    let latest =
-        ResolvedFork::new("http://localhost:8545", None, None, None, source.block(), context());
-    let db = MemDb::default();
-    assert!(PreparedBalSeed::new(vec![account], &block, &source).unwrap().apply(&db, &latest));
-    assert_eq!(db.accounts.read().len(), 1);
-    assert_eq!(db.storage.read().len(), 1);
-}
-
-#[test]
-fn fork_bal_seed_rejects_invalid_structure_hash_and_bytecode() {
+fn fork_bal_validation_rejects_invalid_structure_hash_and_bytecode() {
     let resolved = resolved(context());
     let address = Address::repeat_byte(1);
     let valid = vec![complete_account(address, Bytes::new())];
     let mut block = block(&resolved, 1);
     block.header.block_access_list_hash = Some(compute_block_access_list_hash(&valid));
-    assert!(PreparedBalSeed::new(valid.clone(), &block, &resolved).is_ok());
+    assert!(validate(&valid, &block).is_ok());
     block.header.block_access_list_hash = Some(B256::ZERO);
-    assert!(PreparedBalSeed::new(valid.clone(), &block, &resolved).is_err());
+    assert!(validate(&valid, &block).is_err());
     block.header.block_access_list_hash = None;
 
     let duplicate_accounts = vec![valid[0].clone(), valid[0].clone()];
-    assert!(PreparedBalSeed::new(duplicate_accounts, &block, &resolved).is_err());
+    assert!(validate(&duplicate_accounts, &block).is_err());
     let invalid_index =
         AccountChanges::new(address).with_balance_change(BalanceChange::new(index(3), U256::ZERO));
-    assert!(PreparedBalSeed::new(vec![invalid_index], &block, &resolved).is_err());
+    assert!(validate(&vec![invalid_index], &block).is_err());
     let empty_changes =
         AccountChanges::new(address).with_storage_change(SlotChanges::new(U256::ONE, vec![]));
-    assert!(PreparedBalSeed::new(vec![empty_changes], &block, &resolved).is_err());
+    assert!(validate(&vec![empty_changes], &block).is_err());
 
-    // Earlier invalid code rejects the whole seed, including already prepared storage.
+    // Earlier invalid code rejects the whole BAL, including otherwise valid storage.
     let invalid_code = AccountChanges::new(Address::repeat_byte(2))
         .with_storage_change(SlotChanges::new(
             U256::ONE,
@@ -261,17 +207,11 @@ fn fork_bal_seed_rejects_invalid_structure_hash_and_bytecode() {
         ))
         .with_code_change(CodeChange::new(index(0), bytes!("ef0100")))
         .with_code_change(CodeChange::new(index(1), Bytes::new()));
-    assert!(PreparedBalSeed::new(vec![valid[0].clone(), invalid_code], &block, &resolved).is_err());
-
-    block.header.hash = B256::repeat_byte(2);
-    assert!(PreparedBalSeed::new(valid.clone(), &block, &resolved).is_err());
-    block.header.hash = resolved.hash();
-    block.header.number += 1;
-    assert!(PreparedBalSeed::new(valid, &block, &resolved).is_err());
+    assert!(validate(&vec![valid[0].clone(), invalid_code], &block).is_err());
 }
 
 #[test]
-fn fork_bal_seed_accepts_empty_block_with_post_execution_write() {
+fn fork_bal_cache_accepts_empty_block_with_post_execution_write() {
     let resolved = resolved(context());
     let address = Address::repeat_byte(1);
     let account = AccountChanges::new(address).with_storage_change(SlotChanges::new(
@@ -280,9 +220,9 @@ fn fork_bal_seed_accepts_empty_block_with_post_execution_write() {
     ));
     let db = MemDb::default();
 
-    PreparedBalSeed::new(vec![account], &block(&resolved, 0), &resolved)
-        .unwrap()
-        .apply(&db, &resolved);
+    let bal = vec![account];
+    validate(&bal, &block(&resolved, 0)).unwrap();
+    cache(&db, bal);
 
     assert_eq!(db.storage.read()[&address][&U256::ONE], U256::from(42));
 }
@@ -428,8 +368,8 @@ async fn fork_bal_prepare_uses_legacy_rpc_only_for_method_not_found() {
         let provider =
             ProviderBuilder::<_, _, AnyNetwork>::default().connect_mocked_client(asserter.clone());
 
-        let seed = prepare(&provider, &resolved, &block).await;
-        assert_eq!(seed.is_some(), code == -32601);
+        let bal = prepare(&provider, &resolved, &block).await;
+        assert_eq!(bal.is_some(), code == -32601);
         assert_eq!(asserter.read_q().len(), if code == -32601 { 0 } else { 2 });
     }
 }
