@@ -1654,7 +1654,7 @@ fn restore_isolation_fee_accounting<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCtxt
     let basefee = ccx.ecx.block().basefee();
     if basefee != 0 {
         let fork_id = ccx.ecx.db().active_fork_id();
-        ccx.state.env_overrides_for_mut(fork_id).implicit_basefee = Some(basefee);
+        ccx.state.env_overrides_for_mut(fork_id).implicit_basefee.get_or_insert(basefee);
         ccx.ecx.block_mut().set_basefee(0);
     }
     ccx.ecx.chain_mut().clear_transaction_fee_cache();

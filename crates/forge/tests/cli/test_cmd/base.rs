@@ -501,6 +501,26 @@ contract BaseForkIsolatedSnapshotFeeTest {{
         }}
     }}
 
+    function test_repeated_restore_keeps_implicit_fee_fork() public {{
+        assertRepeatedRestore(false);
+    }}
+
+    function test_repeated_restore_and_delete_keeps_implicit_fee_fork() public {{
+        assertRepeatedRestore(true);
+    }}
+
+    function assertRepeatedRestore(bool deleteSnapshot) internal {{
+        vm.createSelectFork(RPC, FIRST_BLOCK);
+        uint256 firstSnapshot = vm.snapshotState();
+        vm.rollFork(SECOND_BLOCK);
+        this.revertInHelper(firstSnapshot, deleteSnapshot);
+        require(block.basefee == 1 gwei, "first snapshot base fee not restored");
+
+        uint256 secondSnapshot = vm.snapshotState();
+        this.revertInHelper(secondSnapshot, deleteSnapshot);
+        require(block.basefee == 1 gwei, "implicit base fee overwritten on second revert");
+    }}
+
     function revertInHelper(uint256 snapshot, bool deleteSnapshot) external {{
         bool success = deleteSnapshot
             ? vm.revertToStateAndDelete(snapshot)
