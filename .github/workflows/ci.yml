@@ -132,6 +132,7 @@ jobs:
       contents: read
       id-token: write
     env:
+      RUSTC_WRAPPER: ""
       SVM_TARGET_PLATFORM: macosx-amd64
     steps:
       - name: Secure runner
