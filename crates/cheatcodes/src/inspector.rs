@@ -39,7 +39,9 @@ use foundry_common::{
 use foundry_evm_core::{
     Breakpoints, EvmEnv, FoundryTransaction, InspectorExt,
     abi::Vm::stopExpectSafeMemoryCall,
-    backend::{ContextUpdateFor, DatabaseError, DatabaseExt, LocalForkId, RevertDiagnostic},
+    backend::{
+        ContextUpdateFor, DatabaseError, DatabaseExt, JournaledState, LocalForkId, RevertDiagnostic,
+    },
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
     env::FoundryContextExt,
     evm::{
@@ -920,6 +922,16 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// route the change through `EnvOverrides` instead of the actual env
     /// when `true`, so they don't fight with the fee-accounting zeroing.
     pub in_isolation_context: bool,
+
+    /// Journal restored by a state snapshot inside an isolated transaction, to be applied to its
+    /// suspended parent alongside the returned state.
+    pub pending_isolated_snapshot_journal: Option<Vec<JournalEntry>>,
+
+    /// Whether snapshot restorations belong to the active isolated transaction.
+    pub track_isolated_snapshots: bool,
+
+    /// Snapshot restorations that may need to be unwound with an enclosing isolated frame.
+    pub isolated_snapshot_restores: Vec<JournaledState>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -1004,6 +1016,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             #[cfg(feature = "monad")]
             context_snapshots: Default::default(),
             in_isolation_context: false,
+            pending_isolated_snapshot_journal: None,
+            track_isolated_snapshots: false,
+            isolated_snapshot_restores: Vec::new(),
         }
     }
 
@@ -1307,7 +1322,13 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
         apply_dispatch(
             &decoded,
-            &mut CheatsCtxt { state: self, ecx, gas_limit: call.gas_limit, caller },
+            &mut CheatsCtxt {
+                state: self,
+                ecx,
+                gas_limit: call.gas_limit,
+                caller,
+                is_static: call.is_static,
+            },
             executor,
         )
     }
@@ -1327,7 +1348,13 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         ecx.db_mut().ensure_cheatcode_access_forking_mode(&caller)?;
 
         crate::monad::apply_monad_cheatcode(
-            &mut CheatsCtxt { state: self, ecx, gas_limit: call.gas_limit, caller },
+            &mut CheatsCtxt {
+                state: self,
+                ecx,
+                gas_limit: call.gas_limit,
+                caller,
+                is_static: call.is_static,
+            },
             &input,
         )
     }

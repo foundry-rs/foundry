@@ -510,6 +510,11 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
     value: Option<U256>,
     salt: Option<U256>,
 ) -> Result {
+    // Synthetic creation bypasses the CREATE opcode's static-context check.
+    if ccx.is_static {
+        return Err(crate::Error::from(Bytes::new()));
+    }
+
     let mut bytecode = get_artifact_code(ccx.state, path, false)?.to_vec();
 
     // If active broadcast then set flag to deploy from code.

@@ -444,6 +444,62 @@ fn calldata_selector_load_simplifies_to_concrete_word() {
 }
 
 #[test]
+fn calldata_variants_partition_address_inputs() {
+    let mut cx = SymCx::new();
+    let config = SymbolicConfig::default();
+
+    let single = Function::parse("check(address,uint256)").unwrap();
+    let variants = symbolic_calldata_variants(&mut cx, &single, &config).unwrap();
+    assert_eq!(variants.len(), 1);
+
+    // Two addresses: distinct, or the same account.
+    let pair = Function::parse("check(address,address)").unwrap();
+    let variants = symbolic_calldata_variants(&mut cx, &pair, &config).unwrap();
+    assert_eq!(variants.len(), 2);
+    let distinct = variants[0].call_data(&mut cx);
+    assert_ne!(distinct.load(&mut cx, 4).unwrap(), distinct.load(&mut cx, 36).unwrap());
+    let equal = variants[1].call_data(&mut cx);
+    assert_eq!(equal.load(&mut cx, 4).unwrap(), equal.load(&mut cx, 36).unwrap());
+
+    let first = Address::from([0x11; 20]);
+    let second = Address::from([0x22; 20]);
+    let distinct_args = vec![DynSolValue::Address(first), DynSolValue::Address(second)];
+    let distinct_seed = SymbolicConcreteInput {
+        calldata: Bytes::from(pair.abi_encode_input(&distinct_args).unwrap()),
+        args: distinct_args,
+    };
+    assert!(variants[0].seed_model(&mut cx, &distinct_seed).is_some());
+    assert!(variants[1].seed_model(&mut cx, &distinct_seed).is_none());
+    let equal_args = vec![DynSolValue::Address(first), DynSolValue::Address(first)];
+    let equal_seed = SymbolicConcreteInput {
+        calldata: Bytes::from(pair.abi_encode_input(&equal_args).unwrap()),
+        args: equal_args,
+    };
+    assert!(variants[0].seed_model(&mut cx, &equal_seed).is_none());
+    assert!(variants[1].seed_model(&mut cx, &equal_seed).is_some());
+
+    // Three addresses: the five set partitions.
+    let triple = Function::parse("check(address,address,address)").unwrap();
+    let variants = symbolic_calldata_variants(&mut cx, &triple, &config).unwrap();
+    assert_eq!(variants.len(), 5);
+    let mut class_counts = variants
+        .iter()
+        .map(|variant| {
+            let calldata = variant.call_data(&mut cx);
+            let words = [4, 36, 68].map(|offset| calldata.load(&mut cx, offset).unwrap());
+            words.iter().enumerate().filter(|(idx, word)| !words[..*idx].contains(word)).count()
+        })
+        .collect::<Vec<_>>();
+    class_counts.sort_unstable();
+    assert_eq!(class_counts, vec![1, 2, 2, 2, 3]);
+    let config = SymbolicConfig { width: Some(2), ..config };
+    assert!(matches!(
+        symbolic_calldata_variants(&mut cx, &triple, &config),
+        Err(SymbolicError::CalldataVariantLimit(2))
+    ));
+}
+
+#[test]
 fn artifact_json_fallback_paths_uses_foundry_artifact_basename() {
     assert_eq!(
         artifact_json_fallback_paths("src/01_NomadZeroRoot.sol:NomadLike"),
@@ -5423,20 +5479,25 @@ fn is_sat_uses_single_var_witness_before_solver() {
 
 #[cfg(unix)]
 #[test]
-fn is_sat_uses_two_var_witness_before_solver() {
+fn is_sat_uses_bounded_multi_var_witness_before_solver() {
     let mut cx = SymCx::new();
-    let marker = portfolio_test_marker("two-var-is-sat");
+    let marker = portfolio_test_marker("bounded-multi-var-is-sat");
     let commands = vec![counted_solver_command(&marker, "unsat")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
-    let x = SymExpr::var(&mut cx, "calldata_0");
-    let y = SymExpr::var(&mut cx, "calldata_1");
-    let zero = SymExpr::zero(&mut cx);
-    let ten = SymExpr::constant(&mut cx, U256::from(10));
+    solver.enable_bounded_model_search();
+    let a = SymExpr::var(&mut cx, "calldata_0");
+    let b = SymExpr::var(&mut cx, "calldata_1");
+    let c = SymExpr::var(&mut cx, "calldata_2");
+    let d = SymExpr::var(&mut cx, "calldata_3");
+    let e = SymExpr::var(&mut cx, "calldata_4");
+    let limit = SymExpr::constant(&mut cx, U256::from(1) << 160);
     let constraints = vec![
-        SymBoolExpr::eq(&mut cx, x.clone(), zero.clone()).not(&mut cx),
-        SymBoolExpr::eq(&mut cx, y.clone(), zero).not(&mut cx),
-        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x, y.clone()),
-        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, y, ten),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, a, limit.clone()),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, b.clone(), limit.clone()),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, c, limit.clone()),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, d.clone(), limit.clone()),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, e, limit),
+        SymBoolExpr::eq(&mut cx, b, d).not(&mut cx),
     ];
 
     assert!(solver.is_sat(&mut cx, &constraints).unwrap());
@@ -5565,6 +5626,7 @@ fn model_uses_two_var_witness_before_solver() {
     let marker = portfolio_test_marker("two-var-model");
     let commands = vec![counted_solver_command(&marker, "unsat")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
+    solver.enable_bounded_model_search();
     let x = SymExpr::var(&mut cx, "calldata_0");
     let y = SymExpr::var(&mut cx, "calldata_1");
     let zero = SymExpr::zero(&mut cx);
@@ -5595,6 +5657,7 @@ fn is_sat_falls_through_when_two_var_witness_misses() {
     let marker = portfolio_test_marker("two-var-fallthrough");
     let commands = vec![counted_solver_command(&marker, "sat")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
+    solver.enable_bounded_model_search();
     let x = SymExpr::var(&mut cx, "calldata_0");
     let y = SymExpr::var(&mut cx, "calldata_1");
     let ten = SymExpr::constant(&mut cx, U256::from(10));
