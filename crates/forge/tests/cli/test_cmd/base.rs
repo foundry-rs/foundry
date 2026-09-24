@@ -446,6 +446,88 @@ contract BaseIsolatedSnapshotFeesTest {{
     .assert_success();
 });
 
+forgetest_async!(base_fork_isolated_snapshot_fee_tracks_roll, |prj, cmd| {
+    let (api, handle) =
+        spawn(NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Azul.into()))).await;
+    let provider = handle.http_provider();
+
+    api.anvil_set_next_block_base_fee_per_gas(U256::from(1_000_000_000)).await.unwrap();
+    api.mine_one().await.unwrap();
+    let first_block = provider.get_block_number().await.unwrap();
+    api.anvil_set_next_block_base_fee_per_gas(U256::from(2_000_000_000)).await.unwrap();
+    api.mine_one().await.unwrap();
+    let second_block = provider.get_block_number().await.unwrap();
+
+    prj.add_test(
+        "BaseForkIsolatedSnapshotFee.t.sol",
+        &format!(
+            r#"
+interface Vm {{
+    function createSelectFork(string calldata url, uint256 blockNumber) external returns (uint256);
+    function fee(uint256 newBasefee) external;
+    function revertToState(uint256 snapshotId) external returns (bool);
+    function revertToStateAndDelete(uint256 snapshotId) external returns (bool);
+    function rollFork(uint256 blockNumber) external;
+    function snapshotState() external returns (uint256);
+}}
+
+contract BaseForkIsolatedSnapshotFeeTest {{
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    string constant RPC = "{rpc}";
+    uint256 constant FIRST_BLOCK = {first_block};
+    uint256 constant SECOND_BLOCK = {second_block};
+
+    function test_implicit_fee_follows_fork_roll() public {{
+        vm.createSelectFork(RPC, FIRST_BLOCK);
+        for (uint256 i; i < 2; ++i) {{
+            uint256 snapshot = vm.snapshotState();
+            this.revertInHelper(snapshot, i == 1);
+            require(block.basefee == 1 gwei, "snapshot base fee not restored");
+            vm.rollFork(SECOND_BLOCK);
+            require(block.basefee == 2 gwei, "old base fee pinned after fork roll");
+            vm.rollFork(FIRST_BLOCK);
+        }}
+    }}
+
+    function test_explicit_fee_survives_fork_roll() public {{
+        vm.createSelectFork(RPC, FIRST_BLOCK);
+        vm.fee(3 gwei);
+        for (uint256 i; i < 2; ++i) {{
+            uint256 snapshot = vm.snapshotState();
+            this.revertInHelper(snapshot, i == 1);
+            vm.rollFork(SECOND_BLOCK);
+            require(block.basefee == 3 gwei, "explicit fee lost after fork roll");
+            vm.rollFork(FIRST_BLOCK);
+        }}
+    }}
+
+    function revertInHelper(uint256 snapshot, bool deleteSnapshot) external {{
+        bool success = deleteSnapshot
+            ? vm.revertToStateAndDelete(snapshot)
+            : vm.revertToState(snapshot);
+        require(success, "snapshot revert failed");
+    }}
+}}
+"#,
+            rpc = handle.http_endpoint(),
+        ),
+    );
+
+    cmd.args([
+        "test",
+        "--isolate",
+        "--network",
+        "base",
+        "--hardfork",
+        "base:Azul",
+        "--chain-id",
+        "8453",
+        "--match-contract",
+        "BaseForkIsolatedSnapshotFeeTest",
+    ])
+    .assert_success();
+});
+
 forgetest_async!(base_fork_isolated_inactive_hash_roll_charges_replayed_fees, |prj, cmd| {
     let (api, handle) =
         spawn(NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Azul.into()))).await;

@@ -308,6 +308,8 @@ pub struct RecordDebugStepInfo {
 pub struct EnvOverrides {
     /// Override for the `BASEFEE` opcode (set via `vm.fee`).
     pub basefee: Option<u64>,
+    /// Base fee restored from a snapshot during isolation, valid until the fork is rolled.
+    pub implicit_basefee: Option<u64>,
     /// Override for the `GASPRICE` opcode (set via `vm.txGasPrice`).
     pub gas_price: Option<u128>,
     /// Override for the `BLOBHASH` opcode (set via `vm.blobhashes`).
@@ -338,7 +340,10 @@ impl EnvOverrides {
     /// Whether any override is set.
     #[inline]
     pub const fn is_any_set(&self) -> bool {
-        self.basefee.is_some() || self.gas_price.is_some() || self.blob_hashes.is_some()
+        self.basefee.is_some()
+            || self.implicit_basefee.is_some()
+            || self.gas_price.is_some()
+            || self.blob_hashes.is_some()
     }
 }
 
@@ -3341,7 +3346,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         let Some(opcode) = env_overrides.pending_opcode.take() else { return };
         match opcode {
             op::BASEFEE => {
-                if let Some(basefee) = env_overrides.basefee {
+                if let Some(basefee) = env_overrides.basefee.or(env_overrides.implicit_basefee) {
                     // BASEFEE pushed one value; replace it.
                     Self::replace_top_of_stack(interpreter, U256::from(basefee));
                 }
