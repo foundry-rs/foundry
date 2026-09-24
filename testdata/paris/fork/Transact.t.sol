@@ -11,6 +11,7 @@ interface IERC20 {
 
 contract TransactOnForkTest is Test {
     IERC20 constant USDT = IERC20(0xdAC17F958D2ee523a2206206994597C13D831ec7);
+    bytes constant ALWAYS_REVERT = hex"60006000fd";
 
     event Transfer(address indexed from, address indexed to, uint256 value);
 
@@ -95,5 +96,65 @@ contract TransactOnForkTest is Test {
 
         // recorded a `Transfer` log
         assertEq(logs.length, 1);
+    }
+
+    function testTransactUsesEtchedCode() public {
+        vm.createSelectFork("mainnet", 16260609);
+        vm.etch(address(USDT), ALWAYS_REVERT);
+        vm.recordLogs();
+
+        vm.transact(0x33350512fec589e635865cbdb38fa3a20a2aa160c52611f1783d0ba24ad13c8c);
+
+        assertEq(vm.getRecordedLogs().length, 0);
+        assertEq(address(USDT).code, ALWAYS_REVERT);
+    }
+
+    function testTransactUsesPersistentEtchedCode() public {
+        vm.createSelectFork("mainnet", 16260609);
+        vm.etch(address(USDT), ALWAYS_REVERT);
+        vm.makePersistent(address(USDT));
+        vm.recordLogs();
+
+        vm.transact(0x33350512fec589e635865cbdb38fa3a20a2aa160c52611f1783d0ba24ad13c8c);
+
+        assertEq(vm.getRecordedLogs().length, 0);
+        assertEq(address(USDT).code, ALWAYS_REVERT);
+    }
+
+    function testTransactOnInactiveForkUsesTargetState() public {
+        uint256 active = vm.createSelectFork("mainnet", 16260608);
+        uint256 inactive = vm.createFork("mainnet", 16260609);
+        address account = address(0xF00D);
+        vm.selectFork(inactive);
+        uint256 targetBalance = account.balance;
+        bytes32 targetCodeHash = keccak256(address(USDT).code);
+        vm.selectFork(active);
+        vm.deal(account, targetBalance + 1);
+        vm.etch(address(USDT), ALWAYS_REVERT);
+
+        vm.transact(inactive, 0x33350512fec589e635865cbdb38fa3a20a2aa160c52611f1783d0ba24ad13c8c);
+
+        vm.selectFork(inactive);
+        assertEq(account.balance, targetBalance);
+        assertEq(keccak256(address(USDT).code), targetCodeHash);
+    }
+
+    function testTransactOnInactiveForkUsesPersistentState() public {
+        uint256 active = vm.createSelectFork("mainnet", 16260608);
+        uint256 inactive = vm.createFork("mainnet", 16260609);
+        address account = address(0xF00D);
+        vm.selectFork(inactive);
+        uint256 targetBalance = account.balance;
+        vm.selectFork(active);
+        vm.deal(account, targetBalance + 1);
+        vm.etch(address(USDT), ALWAYS_REVERT);
+        vm.makePersistent(account);
+        vm.makePersistent(address(USDT));
+
+        vm.transact(inactive, 0x33350512fec589e635865cbdb38fa3a20a2aa160c52611f1783d0ba24ad13c8c);
+
+        vm.selectFork(inactive);
+        assertEq(account.balance, targetBalance + 1);
+        assertEq(address(USDT).code, ALWAYS_REVERT);
     }
 }

@@ -107,6 +107,7 @@ struct TransactionInputs<FEN: FoundryEvmNetwork> {
     tx_env: TxEnvFor<FEN>,
     chain_context: ChainFor<FEN>,
     rpc_block_number: u64,
+    journaled_state: JournaledState,
 }
 
 /// Environment and network configuration used while replaying transactions.
@@ -2325,6 +2326,17 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         #[cfg(not(feature = "monad"))]
         let context_update = std::marker::PhantomData;
 
+        let mut replay_journaled_state = if _affects_active {
+            journaled_state.clone()
+        } else {
+            self.inner.get_fork_by_id(id)?.journaled_state.clone()
+        };
+        if !_affects_active {
+            for addr in persistent_accounts.iter().copied() {
+                merge_journaled_state_data(addr, journaled_state, &mut replay_journaled_state);
+            }
+        }
+
         let fork = self.inner.get_fork_by_id_mut(id)?;
         commit_transaction::<FEN>(
             TransactionInputs {
@@ -2332,6 +2344,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
                 tx_env,
                 chain_context,
                 rpc_block_number: block.header().number(),
+                journaled_state: replay_journaled_state,
             },
             journaled_state,
             fork,
@@ -3315,15 +3328,22 @@ fn commit_transaction<FEN: FoundryEvmNetwork>(
         <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'db>,
     >,
 ) -> eyre::Result<()> {
-    let TransactionInputs { evm_env, tx_env, chain_context, rpc_block_number } = transaction;
+    let TransactionInputs {
+        evm_env,
+        tx_env,
+        chain_context,
+        rpc_block_number,
+        journaled_state: replay_journaled_state,
+    } = transaction;
     let now = Instant::now();
+    let base_state = replay_journaled_state.state.clone();
     let res = {
         let fork = fork.clone();
-        let journaled_state = journaled_state.clone();
-        let depth = journaled_state.depth;
+        let depth = replay_journaled_state.depth;
         let mut db: Backend<FEN> =
-            Backend::new_with_fork(fork_id, fork, journaled_state, networks)?;
+            Backend::new_with_fork(fork_id, fork, replay_journaled_state, networks)?;
         db.fork_block_number_override = Some(rpc_block_number);
+        db.commit(base_state.clone());
 
         let mut evm = FEN::EvmFactory::default()
             .create_nested_evm_with_inspector(&mut db, evm_env, inspector);
@@ -3333,7 +3353,7 @@ fn commit_transaction<FEN: FoundryEvmNetwork>(
     };
     trace!(elapsed = ?now.elapsed(), "transacted transaction");
 
-    apply_state_changeset(res.state, journaled_state, fork, persistent_accounts)?;
+    apply_state_changeset(base_state, res.state, journaled_state, fork, persistent_accounts)?;
     Ok(())
 }
 
@@ -3359,6 +3379,7 @@ pub fn update_state<DB: Database>(
 /// Applies the changeset of a transaction to the active journaled state and also commits it in the
 /// forked db
 fn apply_state_changeset<N: Network, B: ForkBlockEnv>(
+    base_state: EvmState,
     state: EvmState,
     journaled_state: &mut JournaledState,
     fork: &mut Fork<N, B>,
@@ -3369,6 +3390,7 @@ fn apply_state_changeset<N: Network, B: ForkBlockEnv>(
     let mut staged_db = fork.db.clone();
     let mut staged_journaled_state = journaled_state.clone();
     let mut staged_fork_journaled_state = fork.journaled_state.clone();
+    staged_db.commit(base_state);
     staged_db.commit(state);
     update_state(&mut staged_journaled_state.state, &mut staged_db, Some(persistent_accounts))?;
     update_state(
@@ -3815,12 +3837,15 @@ mod tests {
         let externally_loaded = Address::with_last_byte(1);
         let fork_loaded = Address::with_last_byte(2);
         let committed = Address::with_last_byte(3);
+        let seeded = Address::with_last_byte(4);
         let missing_slot = U256::from(1);
 
         let cached_external = AccountInfo { balance: U256::from(11), ..Default::default() };
         let cached_fork = AccountInfo { balance: U256::from(12), ..Default::default() };
+        let cached_seeded = AccountInfo { balance: U256::from(14), ..Default::default() };
         fork.db.insert_account_info(externally_loaded, cached_external);
         fork.db.insert_account_info(fork_loaded, cached_fork);
+        fork.db.insert_account_info(seeded, cached_seeded);
 
         let mut journaled_state = JournalInner::new();
         let external_account = Account::default()
@@ -3840,10 +3865,22 @@ mod tests {
         let mut state = EvmState::default();
         state.insert(committed, committed_account);
 
-        let result =
-            apply_state_changeset(state, &mut journaled_state, &mut fork, &AddressSet::default());
+        let mut seeded_account = Account::default()
+            .with_info(AccountInfo { balance: U256::from(15), ..Default::default() });
+        seeded_account.mark_touch();
+        let mut base_state = EvmState::default();
+        base_state.insert(seeded, seeded_account);
+
+        let result = apply_state_changeset(
+            base_state,
+            state,
+            &mut journaled_state,
+            &mut fork,
+            &AddressSet::default(),
+        );
         assert!(result.is_err());
         assert!(!fork.db.cache.accounts.contains_key(&committed));
+        assert_eq!(fork.db.basic_ref(seeded).unwrap().unwrap().balance, U256::from(14));
         assert_eq!(journaled_state.state[&externally_loaded].info.balance, U256::from(1));
         assert_eq!(fork.journaled_state.state[&fork_loaded].info.balance, U256::from(2));
     }
@@ -3869,8 +3906,13 @@ mod tests {
         let mut state = EvmState::default();
         state.insert(address, touched_account);
 
-        let result =
-            apply_state_changeset(state, &mut journaled_state, &mut fork, &AddressSet::default());
+        let result = apply_state_changeset(
+            EvmState::default(),
+            state,
+            &mut journaled_state,
+            &mut fork,
+            &AddressSet::default(),
+        );
         assert!(result.is_err());
         assert_eq!(fork.db.cache.accounts[&address].account_state, AccountState::NotExisting);
         assert_eq!(journaled_state.state[&address].info.balance, U256::from(1));
