@@ -833,7 +833,10 @@ impl<N: Network> EthApi<N> {
     /// Takes a single parameter, which is the snapshot id to revert to.
     ///
     /// Handler for RPC call: `evm_revert`
-    pub async fn evm_revert(&self, id: U256) -> Result<bool> {
+    pub async fn evm_revert(&self, id: U256) -> Result<bool>
+    where
+        N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
+    {
         node_info!("evm_revert");
         let _lifecycle = self.lifecycle_lock.read().await;
         let _mining = self.backend.lock_mining().await;
