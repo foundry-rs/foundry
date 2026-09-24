@@ -439,6 +439,7 @@ forgetest_async!(fork_bal_parent_cache_preserves_prefix_boundaries, |prj, cmd| {
             block_reads.push(proxy.count("eth_getBlockByHash"));
             if disabled {
                 assert_eq!(proxy.count(BAL_METHOD), 0);
+                assert_eq!(proxy.count(LEGACY_BAL_METHOD), 0);
                 assert!(proxy.slot_reads(U256::ZERO) > 0);
             } else {
                 proxy.assert_parent_bal(&fixture);
@@ -477,6 +478,9 @@ forgetest_async!(fork_bal_keeps_local_writes_snapshots_and_persistent_accounts, 
             proxy.assert_parent_bal(&fixture);
             assert_eq!(proxy.count(BAL_METHOD), 1, "the same parent cache was prewarmed twice");
             assert_eq!(proxy.slot_reads(U256::ZERO), 0);
+        } else {
+            assert_eq!(proxy.count(BAL_METHOD), 0);
+            assert_eq!(proxy.count(LEGACY_BAL_METHOD), 0);
         }
     }
     assert_eq!(gas_used[0], gas_used[1], "BAL changed local execution gas");
@@ -502,6 +506,7 @@ forgetest_async!(fork_bal_config_and_environment_control_runtime_requests, |prj,
             assert_eq!(proxy.slot_reads(U256::ZERO), 0);
         } else {
             assert_eq!(proxy.count(BAL_METHOD), 0);
+            assert_eq!(proxy.count(LEGACY_BAL_METHOD), 0);
             assert!(proxy.slot_reads(U256::ZERO) > 0);
         }
     }
@@ -516,6 +521,7 @@ forgetest_async!(fork_bal_unusable_responses_fall_back_to_replay, |prj, cmd| {
     let gas_used = assert_test(&mut cmd, "testForkBal");
     let block_reads = baseline.count("eth_getBlockByHash");
     assert_eq!(baseline.count(BAL_METHOD), 0);
+    assert_eq!(baseline.count(LEGACY_BAL_METHOD), 0);
     assert!(baseline.slot_reads(U256::ZERO) > 0);
     // Core BAL tests cover the remaining validation and source-eligibility combinations.
     for mode in [
@@ -636,5 +642,131 @@ forgetest_async!(fork_bal_reuses_parent_seed_only_for_the_same_source, |prj, cmd
         proxy.assert_parent_bal(&fixture);
         assert_eq!(proxy.count(BAL_METHOD), 1, "each source must prepare its own parent seed");
         assert_eq!(proxy.slot_reads(U256::ZERO), 0);
+    }
+});
+
+forgetest_async!(fork_bal_inline_config_controls_runtime_requests, |prj, cmd| {
+    let fixture = Fixture::new().await;
+    let proxy = Proxy::new(&fixture, Response::Native).await;
+    for (config_disabled, contract_override, function_override) in [
+        (false, None, Some(true)),
+        (false, Some(true), None),
+        (true, None, Some(false)),
+        (true, Some(false), None),
+        (false, Some(true), Some(false)),
+        (true, Some(false), Some(true)),
+    ] {
+        prj.update_config(|config| config.no_fork_bal = config_disabled);
+        let mut source = TEST.to_owned();
+        if let Some(disabled) = contract_override {
+            source = source.replace(
+                "contract ForkBalTest {",
+                &format!(
+                    "/// forge-config: default.no_fork_bal = {disabled}\ncontract ForkBalTest {{"
+                ),
+            );
+        }
+        if let Some(disabled) = function_override {
+            source = source.replace(
+                "    function testForkBal() public {",
+                &format!(
+                    "    /// forge-config: default.no_fork_bal = {disabled}\n    function testForkBal() public {{"
+                ),
+            );
+        }
+        prj.add_test("ForkBal.t.sol", &source);
+        let disabled = function_override.or(contract_override).unwrap_or(config_disabled);
+        for mode in 0..=3 {
+            proxy.clear();
+            command(
+                &mut cmd,
+                &fixture,
+                &proxy,
+                fixture.transactions[2],
+                9,
+                mode,
+                r"^testForkBal\(\)$",
+            );
+            assert_test(&mut cmd, "testForkBal");
+            assert_eq!(
+                proxy.count(BAL_METHOD),
+                usize::from(!disabled),
+                "config={config_disabled}, contract={contract_override:?}, function={function_override:?}, mode={mode}"
+            );
+            assert_eq!(proxy.count(LEGACY_BAL_METHOD), 0);
+            if disabled {
+                assert!(proxy.slot_reads(U256::ZERO) > 0);
+            } else {
+                proxy.assert_parent_bal(&fixture);
+                assert_eq!(proxy.slot_reads(U256::ZERO), 0);
+            }
+        }
+    }
+});
+
+forgetest_async!(fork_bal_setup_forks_keep_creation_policy_on_roll, |prj, cmd| {
+    let fixture = Fixture::new().await;
+    let proxy = Proxy::new(&fixture, Response::Native).await;
+    for disabled in [false, true] {
+        prj.update_config(|config| config.no_fork_bal = disabled);
+        let source = TEST.replace(
+            "    function testForkBal() public {",
+            &format!(
+                r#"
+    uint256 setupActive;
+    uint256 setupInactive;
+
+    function setUp() public {{
+        string memory url = vm.envString("BAL_RPC_URL");
+        uint256 parent = vm.envUint("BAL_PARENT");
+        setupActive = vm.createSelectFork(url, parent);
+        setupInactive = vm.createFork(url, parent);
+    }}
+
+    /// forge-config: default.no_fork_bal = {}
+    function testForkBalSetupRoll() public {{
+        bytes32 target = vm.envBytes32("BAL_TARGET");
+        if (vm.envUint("BAL_MODE") == 2) {{
+            vm.rollFork(target);
+        }} else {{
+            vm.rollFork(setupInactive, target);
+            require(vm.activeFork() == setupActive, "inactive roll selected the fork");
+            require(value() == 7, "inactive roll changed active state");
+            vm.selectFork(setupInactive);
+        }}
+        require(value() == 9, "wrong prefix state");
+        require(uint256(vm.load(counter, bytes32(uint256(1)))) == 19, "lost read-only slot");
+    }}
+
+    function testForkBal() public {{"#,
+                !disabled
+            ),
+        );
+        prj.add_test("ForkBal.t.sol", &source);
+        for mode in [2, 3] {
+            proxy.clear();
+            command(
+                &mut cmd,
+                &fixture,
+                &proxy,
+                fixture.transactions[2],
+                9,
+                mode,
+                r"^testForkBalSetupRoll\(\)$",
+            );
+            assert_test(&mut cmd, "testForkBalSetupRoll");
+            assert_eq!(
+                proxy.count(BAL_METHOD),
+                usize::from(!disabled),
+                "disabled={disabled}, mode={mode}"
+            );
+            assert_eq!(proxy.count(LEGACY_BAL_METHOD), 0);
+            if disabled {
+                assert!(proxy.slot_reads(U256::ZERO) > 0);
+            } else {
+                proxy.assert_parent_bal(&fixture);
+                assert_eq!(proxy.slot_reads(U256::ZERO), 0);
+            }
+        }
     }
 });

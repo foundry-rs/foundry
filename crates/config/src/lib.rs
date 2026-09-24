@@ -512,6 +512,11 @@ pub struct Config {
     ///
     /// Defaults to `false`. Independent of disk storage caching; preceding transactions are
     /// still replayed when prewarming is enabled.
+    ///
+    /// Each fork retains the value set at creation, including for subsequent transaction-hash
+    /// rolls. Contract-level inline configuration applies to forks created in `setUp`.
+    /// Function-level inline configuration applies to forks created in that test, but does not
+    /// change forks already created by `setUp`.
     #[serde(default)]
     pub no_fork_bal: bool,
     /// Disables rate limiting entirely. This overrides any settings made in
