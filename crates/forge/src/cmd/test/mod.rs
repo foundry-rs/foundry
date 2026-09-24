@@ -850,6 +850,7 @@ pub struct TestArgs {
     pub symbolic_use_fuzz_frontiers: bool,
 
     /// Check invariants from imported stateful fuzz frontier prefixes before flipping comparisons.
+    /// Also enables invariant frontier seeding.
     #[arg(long, env = "FOUNDRY_SYMBOLIC_CHECK_INVARIANT_FRONTIERS")]
     pub symbolic_check_invariant_frontiers: bool,
 
