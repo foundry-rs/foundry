@@ -8,6 +8,8 @@ pub use multi::{ForkId, ForkResult, MultiFork, MultiForkHandler};
 mod resolved;
 pub use resolved::ResolvedFork;
 
+mod bal;
+
 /// Represents a _fork_ of a remote chain whose data is available only via the `url` endpoint.
 #[derive(Clone, Debug)]
 pub struct CreateFork {

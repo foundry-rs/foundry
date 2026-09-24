@@ -77,6 +77,13 @@ pub struct EvmArgs {
     #[serde(skip)]
     pub no_storage_caching: bool,
 
+    /// Disable parent-block BAL cache prewarming for transaction-hash fork cheatcodes.
+    ///
+    /// Preceding transactions are still replayed when prewarming is enabled.
+    #[arg(long)]
+    #[serde(skip)]
+    pub no_fork_bal: bool,
+
     /// The initial balance of deployed test contracts.
     #[arg(long, value_name = "BALANCE")]
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -199,7 +206,12 @@ impl Provider for EvmArgs {
             dict.insert("celo".to_string(), true.into());
         }
 
-        Ok(Map::from([(Config::selected_profile(), dict)]))
+        let mut data = Map::from([(Config::selected_profile(), dict)]);
+        if self.no_fork_bal {
+            // Environment values use the global profile, which overrides the selected profile.
+            data.entry(Profile::Global).or_default().insert("no_fork_bal".to_string(), true.into());
+        }
+        Ok(data)
     }
 }
 
@@ -297,6 +309,45 @@ fn id<S: serde::Serializer>(chain: &Option<Chain>, s: S) -> Result<S::Ok, S::Err
 mod tests {
     use super::*;
     use foundry_config::NamedChain;
+
+    #[test]
+    fn fork_bal_cli_preserves_config_unless_explicit() {
+        for configured in [false, true] {
+            let config = Config { no_fork_bal: configured, ..Default::default() };
+            let args = EvmArgs::parse_from(["foundry-cli"]);
+            let merged =
+                Config::from_provider(figment::Figment::from(&config).merge(args)).unwrap();
+            assert_eq!(merged.no_fork_bal, configured);
+
+            let args = EvmArgs::parse_from(["foundry-cli", "--no-fork-bal"]);
+            let merged = Config::from_provider(figment::Figment::from(config).merge(args)).unwrap();
+            assert!(merged.no_fork_bal);
+        }
+    }
+
+    #[test]
+    fn fork_bal_cli_overrides_environment() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                "[profile.default]\nno_fork_bal = true\n[profile.ci]\nno_fork_bal = false\n",
+            )?;
+            for profile in ["default", "ci"] {
+                jail.set_env("FOUNDRY_PROFILE", profile);
+                for environment in [false, true] {
+                    jail.set_env("FOUNDRY_NO_FORK_BAL", environment.to_string());
+                    let args = EvmArgs::parse_from(["foundry-cli"]);
+                    let config = Config::from_provider(Config::figment().merge(args)).unwrap();
+                    assert_eq!(config.no_fork_bal, environment);
+
+                    let args = EvmArgs::parse_from(["foundry-cli", "--no-fork-bal"]);
+                    let config = Config::from_provider(Config::figment().merge(args)).unwrap();
+                    assert!(config.no_fork_bal);
+                }
+            }
+            Ok(())
+        });
+    }
 
     #[test]
     fn compute_units_per_second_skips_when_none() {

@@ -508,6 +508,12 @@ pub struct Config {
     /// Disables storage caching entirely. This overrides any settings made in
     /// `rpc_storage_caching`
     pub no_storage_caching: bool,
+    /// Disables parent-block BAL cache prewarming for transaction-hash forks.
+    ///
+    /// Defaults to `false`. Independent of disk storage caching; preceding transactions are
+    /// still replayed when prewarming is enabled.
+    #[serde(default)]
+    pub no_fork_bal: bool,
     /// Disables rate limiting entirely. This overrides any settings made in
     /// `compute_units_per_second`
     pub no_rpc_rate_limit: bool,
@@ -3008,6 +3014,7 @@ impl Default for Config {
             rpc_endpoints: Default::default(),
             etherscan: Default::default(),
             no_storage_caching: false,
+            no_fork_bal: false,
             no_rpc_rate_limit: false,
             use_literal_content: false,
             bytecode_hash: BytecodeHash::Ipfs,
@@ -3378,6 +3385,50 @@ mod tests {
 
         config.no_storage_caching = false;
         assert!(!config.enable_caching(url, NamedChain::Dev));
+    }
+
+    #[test]
+    fn test_fork_bal_config() {
+        figment::Jail::expect_with(|jail| {
+            assert!(!Config::load().unwrap().no_fork_bal);
+            jail.create_file(
+                "foundry.toml",
+                r"
+                [profile.default]
+                no_fork_bal = true
+                no_storage_caching = true
+
+                [profile.ci]
+                no_fork_bal = false
+                ",
+            )?;
+            let config = Config::load().unwrap();
+            assert!(config.no_fork_bal);
+            assert!(config.no_storage_caching);
+            let serialized = serde_json::to_value(&config).unwrap();
+            assert_eq!(serialized["no_fork_bal"], true);
+            assert!(serde_json::from_value::<Config>(serialized).unwrap().no_fork_bal);
+
+            jail.set_env("FOUNDRY_PROFILE", "ci");
+            let config = Config::load().unwrap();
+            assert!(!config.no_fork_bal);
+            assert!(config.no_storage_caching);
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_fork_bal_environment() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file("foundry.toml", "[profile.default]\nno_fork_bal = true\n")?;
+            jail.set_env("FOUNDRY_NO_FORK_BAL", "false");
+            assert!(!Config::load().unwrap().no_fork_bal);
+            jail.set_env("FOUNDRY_NO_FORK_BAL", "true");
+            assert!(Config::load().unwrap().no_fork_bal);
+            jail.set_env("FOUNDRY_NO_FORK_BAL", "invalid");
+            assert!(Config::load().is_err());
+            Ok(())
+        });
     }
 
     #[test]
@@ -4558,6 +4609,7 @@ mod tests {
                 memory_limit = 134217728
                 names = false
                 no_storage_caching = false
+                no_fork_bal = false
                 no_rpc_rate_limit = false
                 offline = false
                 optimizer = true
