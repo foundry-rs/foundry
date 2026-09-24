@@ -561,6 +561,43 @@ contract SymbolicPass {
     );
 });
 
+forgetest_init!(symbolic_cli_accepts_zero_init_storage_layout, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_cli_accepts_zero_init_storage_layout because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicZeroInit.t.sol",
+        r#"
+contract SymbolicZeroInit {
+    function checkNoop(uint256) public pure {}
+}
+"#,
+    );
+
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--symbolic-storage-layout",
+            "zero_init",
+            "--json",
+            "--match-test",
+            "checkNoop",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let result = json_test_result(&output, "checkNoop(uint256)");
+    assert_eq!(result["symbolic"]["status"], "pass");
+    assert_eq!(result["symbolic"]["bounds"]["storage_layout"], "zero_init");
+});
+
 forgetest_init!(symbolic_proves_bounded_carry_after_shift, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(
