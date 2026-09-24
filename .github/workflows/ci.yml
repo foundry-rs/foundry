@@ -130,6 +130,7 @@ jobs:
     timeout-minutes: 240
     permissions:
       contents: read
+      id-token: write
     env:
       SVM_TARGET_PLATFORM: macosx-amd64
     steps:
