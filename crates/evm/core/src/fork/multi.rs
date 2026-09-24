@@ -878,12 +878,19 @@ async fn create_fork<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::opts::EvmOpts;
     use alloy_chains::NamedChain;
     use alloy_eips::eip7928::{AccountChanges, BlockAccessIndex, SlotChanges, StorageChange};
-    use alloy_primitives::{Address, B256};
-    use alloy_provider::{ProviderBuilder, mock::Asserter};
+    use alloy_network::TransactionBuilder;
+    use alloy_primitives::{Address, B256, bytes};
+    use alloy_provider::{Provider, ProviderBuilder, mock::Asserter};
+    use alloy_rpc_types::TransactionRequest;
+    use alloy_serde::WithOtherFields;
     use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
     use foundry_fork_db::AccountFetchPolicy;
+    use foundry_test_utils::rpc::{
+        spawn_rpc_proxy_method_not_found_before, spawn_rpc_proxy_recording_method,
+    };
     use futures::task::noop_waker_ref;
     use revm::context::BlockEnv;
 
@@ -994,7 +1001,7 @@ mod tests {
     }
 
     #[test]
-    fn fork_bal_fills_selected_cache_only_for_matching_identity() {
+    fn fork_bal_fills_selected_cache_for_equivalent_profiles() {
         let url = "http://localhost:8545";
         let block = BlockNumHash::new(1, B256::with_last_byte(1));
         let address = Address::with_last_byte(1);
@@ -1019,9 +1026,7 @@ mod tests {
             (CreatedFork::new(opts, env, backend), handler)
         };
 
-        for (profile, matches) in
-            [(NetworkConfigs::default(), true), (NetworkConfigs::with_ethereum(), false)]
-        {
+        for profile in [NetworkConfigs::default(), NetworkConfigs::with_ethereum()] {
             let cached = ResolvedFork::new(url, None, None, None, block, context(1));
             let candidate = ResolvedFork::new(
                 url,
@@ -1032,9 +1037,8 @@ mod tests {
                 ForkContext { network_profile: profile, ..context(1) },
             );
             let id = ForkId::resolved(url, &candidate);
-            // The key uses a profile name; BAL reuse checks the complete source identity.
             assert_eq!(id, ForkId::resolved(url, &cached));
-            assert_eq!(candidate.fingerprint() == cached.fingerprint(), matches);
+            assert_eq!(candidate.fingerprint(), cached.fingerprint());
             let (cached, cached_handler) = create(cached);
             let cached_db = cached.backend.data();
             let (candidate, candidate_handler) = create(candidate);
@@ -1074,9 +1078,113 @@ mod tests {
                     .get(&address)
                     .and_then(|slots| slots.get(&U256::ONE))
                     .copied(),
-                matches.then_some(U256::from(42)),
+                Some(U256::from(42)),
             );
-            assert_eq!(manager.forks[&id].bal_prewarmed.load(Ordering::Relaxed), matches);
+            assert!(manager.forks[&id].bal_prewarmed.load(Ordering::Relaxed));
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fork_bal_reuses_prewarmed_cache_only_for_equivalent_identities() {
+        let (api, handle) = anvil::spawn(
+            anvil::NodeConfig::test()
+                .with_chain_id(Some(1u64))
+                .with_hardfork(Some(anvil::EthereumHardfork::Amsterdam.into()))
+                .with_genesis_timestamp(Some(1_800_000_000u64))
+                .with_no_mining(true),
+        )
+        .await;
+        let address = Address::with_last_byte(0x42);
+        api.anvil_set_code(address, bytes!("602a60015500")).await.unwrap();
+        api.send_transaction(WithOtherFields::new(
+            TransactionRequest::default()
+                .with_from(handle.dev_accounts().next().unwrap())
+                .with_to(address)
+                .with_nonce(0)
+                .with_gas_limit(100_000)
+                .with_gas_price(2_000_000_000),
+        ))
+        .await
+        .unwrap();
+        api.mine_one().await.unwrap();
+        let block = handle.http_provider().get_block_by_number(1.into()).await.unwrap().unwrap();
+        let block = BlockNumHash::new(1, block.header.hash);
+        // Expose native BALs through an endpoint without mutable Anvil identity.
+        let endpoint = spawn_rpc_proxy_method_not_found_before(
+            handle.http_endpoint(),
+            "anvil_nodeInfo",
+            usize::MAX,
+        )
+        .await;
+        let (endpoint, bal_requests) =
+            spawn_rpc_proxy_recording_method(endpoint, "eth_getBlockAccessList").await;
+        let (endpoint, probes) = spawn_rpc_proxy_recording_method(endpoint, "anvil_nodeInfo").await;
+        let (_incoming, receiver) = channel(1);
+        let mut manager = MultiForkHandler::<AnyNetwork, SpecId, BlockEnv>::new(receiver);
+        let mut first = None;
+        let mut probe_counts = Vec::new();
+        let other_headers = ["X-Test-Source: other".to_string()];
+
+        for (profile, headers) in [
+            (NetworkConfigs::default(), None),
+            (NetworkConfigs::with_ethereum(), None),
+            (NetworkConfigs::default(), None),
+            (NetworkConfigs::default(), Some(other_headers.as_slice())),
+        ] {
+            let resolved = ResolvedFork::new(
+                &endpoint,
+                headers,
+                None,
+                Some(1),
+                block,
+                ForkContext { network_profile: profile, ..context(1) },
+            );
+            let fingerprint = resolved.fingerprint();
+            let fork = CreateFork {
+                enable_caching: false,
+                url: endpoint.clone(),
+                evm_opts: EvmOpts {
+                    fork_url: Some(endpoint.clone()),
+                    fork_block_number: Some(1),
+                    fork_headers: headers.map(<[_]>::to_vec),
+                    networks: profile,
+                    ..Default::default()
+                },
+                resolved: Some(resolved),
+            };
+            let before = probes.lock().unwrap().len();
+            let (sender, receiver) = oneshot_channel();
+            manager.create_fork_with_identity(fork, None, true, sender);
+            let result = tokio::time::timeout(
+                Duration::from_secs(10),
+                futures::future::poll_fn(|cx| {
+                    assert!(manager.poll_unpin(cx).is_pending());
+                    match receiver.try_recv() {
+                        Ok(result) => Poll::Ready(result),
+                        Err(std::sync::mpsc::TryRecvError::Empty) => Poll::Pending,
+                        Err(error) => panic!("fork response channel closed: {error}"),
+                    }
+                }),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+
+            let db = result.backend.data();
+            assert_eq!(
+                Arc::ptr_eq(first.get_or_insert_with(|| db.clone()), &db),
+                headers.is_none(),
+            );
+            assert_eq!(result.resolved.fingerprint(), fingerprint);
+            assert_eq!(db.storage.read()[&address][&U256::ONE], U256::from(42));
+            assert!(manager.forks[&result.id].bal_prewarmed.load(Ordering::Relaxed));
+            assert_eq!(bal_requests.lock().unwrap().len(), if headers.is_some() { 2 } else { 1 });
+            probe_counts.push(probes.lock().unwrap().len() - before);
+        }
+
+        // Only cold caches need the two source probes surrounding BAL preparation.
+        assert_eq!(probe_counts[0], probe_counts[1] + 2);
+        assert_eq!(probe_counts[1], probe_counts[2]);
+        assert_eq!(probe_counts[0], probe_counts[3]);
     }
 }
