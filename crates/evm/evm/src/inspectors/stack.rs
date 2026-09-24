@@ -1129,6 +1129,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let was_precompile_called = self.isolated_call_was_precompile.take().unwrap_or(false);
 
         let Ok(res) = res else {
+            if let Some(cheats) = self.cheatcodes.as_deref_mut() {
+                cheats.pending_isolated_snapshot_journal = None;
+            }
             #[cfg(feature = "monad")]
             foundry_evm_core::FoundryJournal::restore_reserve_balance(
                 ecx.journal_mut(),
@@ -1158,6 +1161,14 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
 
         let rolled_back = !res.result.is_success();
 
+        if let Some(restored_journal) = self
+            .cheatcodes
+            .as_deref_mut()
+            .and_then(|cheats| cheats.pending_isolated_snapshot_journal.take())
+        {
+            let (_, journaled_state) = ecx.db_journal_inner_mut();
+            journaled_state.journal = restored_journal;
+        }
         merge_child_state(ecx.journal_mut().evm_state_mut(), res.state);
         #[cfg(feature = "monad")]
         foundry_evm_core::FoundryJournal::restore_reserve_balance(

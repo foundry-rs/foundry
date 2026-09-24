@@ -69,6 +69,39 @@ Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing te
 "#]]);
 });
 
+forgetest_init!(isolated_snapshot_enclosing_revert, |prj, cmd| {
+    prj.add_test(
+        "IsolatedSnapshotEnclosingRevert.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+/// forge-config: default.isolate = true
+contract IsolatedSnapshotEnclosingRevertTest is Test {
+    uint256 value;
+
+    function test_revert_after_isolated_restore() public {
+        uint256 snapshotId = vm.snapshotState();
+        value = 2;
+        vm.deal(address(0xBEEF), 5 ether);
+
+        require(this.restore(snapshotId));
+        revert("expected test revert");
+    }
+
+    function restore(uint256 snapshotId) external returns (bool) {
+        return vm.revertToState(snapshotId);
+    }
+}
+"#,
+    );
+
+    cmd.arg("test").assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: expected test revert] test_revert_after_isolated_restore() ([GAS])
+...
+"#]]);
+});
+
 // https://github.com/foundry-rs/foundry/issues/3189
 forgetest_init!(issue_3189, |prj, cmd| {
     prj.add_test(

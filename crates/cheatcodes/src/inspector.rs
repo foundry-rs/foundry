@@ -920,6 +920,10 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// route the change through `EnvOverrides` instead of the actual env
     /// when `true`, so they don't fight with the fee-accounting zeroing.
     pub in_isolation_context: bool,
+
+    /// Journal restored by a state snapshot inside an isolated transaction, to be applied to its
+    /// suspended parent alongside the returned state.
+    pub pending_isolated_snapshot_journal: Option<Vec<JournalEntry>>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -1004,6 +1008,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             #[cfg(feature = "monad")]
             context_snapshots: Default::default(),
             in_isolation_context: false,
+            pending_isolated_snapshot_journal: None,
         }
     }
 

@@ -1660,6 +1660,9 @@ fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
         caller,
         RevertStateSnapshotAction::RevertKeep,
     ) {
+        if ccx.state.in_isolation_context {
+            ccx.state.pending_isolated_snapshot_journal = Some(restored.journal.clone());
+        }
         ccx.ecx.set_journal_inner(restored);
         #[cfg(feature = "monad")]
         {
@@ -1704,6 +1707,9 @@ fn inner_revert_to_state_and_delete<FEN: FoundryEvmNetwork>(
         caller,
         RevertStateSnapshotAction::RevertRemove,
     ) {
+        if ccx.state.in_isolation_context {
+            ccx.state.pending_isolated_snapshot_journal = Some(restored.journal.clone());
+        }
         ccx.ecx.set_journal_inner(restored);
         #[cfg(feature = "monad")]
         {
