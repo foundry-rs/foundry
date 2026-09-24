@@ -3,20 +3,18 @@ name: release
 permissions: {}
 
 on:
-  push:
-    tags:
-      - "v*.*.*"
   schedule:
     - cron: "0 6 * * *"
   workflow_dispatch:
 
 concurrency:
-  group: release-${{ github.repository }}-${{ github.ref }}-${{ github.sha }}
+  group: ${{ (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/master' && format('release-tagging-{0}', github.repository)) || format('release-{0}-{1}-{2}', github.repository, github.ref, github.sha) }}
   cancel-in-progress: false
+  queue: max
 
 env:
   CARGO_TERM_COLOR: always
-  IS_NIGHTLY: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+  IS_NIGHTLY: ${{ github.event_name == 'schedule' || github.ref == 'refs/heads/master' }}
 
   # Keep the base features in sync with `docker-publish.yml`.
   # Platform-specific release features are added in the build step.
@@ -24,116 +22,129 @@ env:
   RUST_FEATURES: aws-kms,gcp-kms,turnkey,cli,asm-keccak,js-tracer,base,monad,optimism
 
 jobs:
+  preflight:
+    name: Prepare release metadata
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.release_info.outputs.version }}
+      tag_name: ${{ steps.release_info.outputs.tag_name }}
+      release_tag_name: ${{ steps.release_info.outputs.release_tag_name }}
+      release_name: ${{ steps.release_info.outputs.release_name }}
+      is_prerelease: ${{ steps.release_info.outputs.is_prerelease }}
+      is_nightly: ${{ steps.release_info.outputs.is_nightly }}
+      from_tag: ${{ steps.release_info.outputs.from_tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Compute release metadata
+        id: release_info
+        env:
+          COMMIT: ${{ github.sha }}
+          REF: ${{ github.ref }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$IS_NIGHTLY" == true ]]; then
+            version=""
+            tag_name="nightly-${COMMIT}"
+            release_tag_name="staging-release-${COMMIT}"
+            release_name="Nightly ($(date '+%Y-%m-%d'))"
+            is_prerelease=true
+            is_nightly=true
+            from_tag=$(git for-each-ref --sort=-creatordate --count=1 \
+              --format='%(refname:strip=2)' 'refs/tags/nightly-*')
+          else
+            metadata=$(python3 .github/scripts/tag-release.py validate --ref "$REF" --commit "$COMMIT")
+            version=$(jq -r '.version' <<< "$metadata")
+            tag_name=$(jq -r '.tag_name' <<< "$metadata")
+            release_tag_name="$tag_name"
+            release_name=$(jq -r '.release_name' <<< "$metadata")
+            is_prerelease=$(jq -r '.is_prerelease' <<< "$metadata")
+            is_nightly=false
+            from_tag=$(jq -r '.from_tag' <<< "$metadata")
+          fi
+          {
+            printf 'version=%s\n' "$version"
+            printf 'tag_name=%s\n' "$tag_name"
+            printf 'release_tag_name=%s\n' "$release_tag_name"
+            printf 'release_name=%s\n' "$release_name"
+            printf 'is_prerelease=%s\n' "$is_prerelease"
+            printf 'is_nightly=%s\n' "$is_nightly"
+            printf 'from_tag=%s\n' "$from_tag"
+          } >> "$GITHUB_OUTPUT"
+
+  test-release:
+    needs: preflight
+    if: needs.preflight.outputs.is_nightly != 'true'
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/test.yml
+    with:
+      profile: default
+    secrets:
+      ETHERSCAN_API_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
+      ARBITRUM_RPC: ${{ secrets.ARBITRUM_RPC }}
+      ETH_SEPOLIA_RPC: ${{ secrets.ETH_SEPOLIA_RPC }}
+      TEMPO_MAINNET_RPC_URL: ${{ secrets.TEMPO_MAINNET_RPC_URL }}
+      TEMPO_TESTNET_RPC_URL: ${{ secrets.TEMPO_TESTNET_RPC_URL }}
+
+  tag-release:
+    name: Tag tested release
+    needs: [preflight, test-release]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    outputs:
+      from_tag: ${{ steps.release_info.outputs.from_tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Revalidate and create tag
+        id: release_info
+        env:
+          COMMIT: ${{ github.sha }}
+          REF: ${{ github.ref }}
+          VERSION: ${{ needs.preflight.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          metadata=$(python3 .github/scripts/tag-release.py validate --ref "$REF" --commit "$COMMIT")
+          if [[ "$(jq -r '.version' <<< "$metadata")" != "$VERSION" ]]; then
+            echo "::error::Release version changed after testing."
+            exit 1
+          fi
+          python3 .github/scripts/tag-release.py tag --version "$VERSION" --commit "$COMMIT"
+          printf 'from_tag=%s\n' "$(jq -r '.from_tag' <<< "$metadata")" >> "$GITHUB_OUTPUT"
+
   prepare:
     name: Prepare release
-    if: github.event_name != 'schedule' || github.repository == 'foundry-rs/foundry'
+    needs: [preflight, tag-release]
+    if: ${{ always() && needs.preflight.result == 'success' && (needs.preflight.outputs.is_nightly == 'true' || needs.tag-release.result == 'success') && (github.event_name != 'schedule' || github.repository == 'foundry-rs/foundry') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: write
       pull-requests: read
     outputs:
-      tag_name: ${{ steps.release_info.outputs.tag_name }}
-      release_tag_name: ${{ steps.release_info.outputs.release_tag_name }}
-      release_name: ${{ steps.release_info.outputs.release_name }}
+      tag_name: ${{ needs.preflight.outputs.tag_name }}
+      release_tag_name: ${{ needs.preflight.outputs.release_tag_name }}
+      release_name: ${{ needs.preflight.outputs.release_name }}
       changelog: ${{ steps.build_changelog.outputs.changelog }}
       skip_assets: ${{ steps.existing_release.outputs.skip_assets || 'false' }}
     steps:
-      - name: Validate manual release ref
-        if: ${{ github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/master' }}
-        env:
-          REF: ${{ github.ref }}
-        run: |
-          echo "::error::Manual nightly releases must run from refs/heads/master, not $REF."
-          exit 1
-
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
-
-      - name: Compute release name and tag
-        id: release_info
-        shell: bash
-        run: |
-          set -euo pipefail
-          stable_pattern='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
-          rc_pattern='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-rc([1-9][0-9]*)$'
-
-          previous_tag() {
-            local current="$1"
-            local pattern="$2"
-            {
-              while read -r tag; do
-                if [[ "$tag" =~ $pattern ]]; then
-                  printf '%s\n' "$tag"
-                fi
-              done < <(git tag -l)
-              printf '%s\n' "$current"
-            } |
-              sort -V -u |
-              awk -v current="$current" '
-                $0 == current { found=1 }
-                !found { previous=$0 }
-                END { print previous }
-              '
-          }
-
-          if [[ ${IS_NIGHTLY} == 'true' ]]; then
-            tag_name="nightly-${GITHUB_SHA}"
-            release_tag_name="staging-release-${GITHUB_SHA}"
-            release_name="Nightly ($(date '+%Y-%m-%d'))"
-            is_prerelease=true
-            # Find the previous nightly tag for changelog generation,
-            # sorted by tag creation date (most recent first).
-            from_tag=$(git for-each-ref --sort=-creatordate --count=1 \
-              --format='%(refname:strip=2)' 'refs/tags/nightly-*')
-          else
-            tag_name="$GITHUB_REF_NAME"
-            release_tag_name="$tag_name"
-            release_name="$GITHUB_REF_NAME"
-
-            if [[ "$GITHUB_REF_NAME" =~ $stable_pattern ]]; then
-              PREV_STABLE=$(previous_tag "$GITHUB_REF_NAME" "$stable_pattern")
-              if [[ -z "$PREV_STABLE" ]]; then
-                echo "::error::No preceding strict stable tag found for $GITHUB_REF_NAME."
-                exit 1
-              fi
-              is_prerelease=false
-              from_tag="$PREV_STABLE"
-            elif [[ "$GITHUB_REF_NAME" =~ $rc_pattern ]]; then
-              core="v${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
-              core_rc_pattern="^v${BASH_REMATCH[1]}\.${BASH_REMATCH[2]}\.${BASH_REMATCH[3]}-rc([1-9][0-9]*)$"
-              rc_number=${BASH_REMATCH[4]}
-              is_prerelease=true
-
-              # Prefer the preceding strict RC for this version. For rc1, fall
-              # back to the preceding strict stable release.
-              PREV_RC=$(previous_tag "$GITHUB_REF_NAME" "$core_rc_pattern")
-              if [[ -n "$PREV_RC" ]]; then
-                from_tag="$PREV_RC"
-              elif [[ "$rc_number" == 1 ]]; then
-                from_tag=$(previous_tag "$core" "$stable_pattern")
-              else
-                echo "::error::No preceding strict RC tag found for $GITHUB_REF_NAME."
-                exit 1
-              fi
-              if [[ -z "$from_tag" ]]; then
-                echo "::error::No preceding strict stable tag found for $GITHUB_REF_NAME."
-                exit 1
-              fi
-            else
-              echo "::error::Release tag must be vX.Y.Z or vX.Y.Z-rcN without leading zeroes."
-              exit 1
-            fi
-          fi
-          {
-            printf 'tag_name=%s\n' "$tag_name"
-            printf 'release_tag_name=%s\n' "$release_tag_name"
-            printf 'release_name=%s\n' "$release_name"
-            printf 'is_prerelease=%s\n' "$is_prerelease"
-            printf 'from_tag=%s\n' "$from_tag"
-          } >> "$GITHUB_OUTPUT"
 
       - name: Check existing nightly release
         id: existing_release
@@ -141,8 +152,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-          TAG_NAME: ${{ steps.release_info.outputs.tag_name }}
-          RELEASE_TAG_NAME: ${{ steps.release_info.outputs.release_tag_name }}
+          TAG_NAME: ${{ needs.preflight.outputs.tag_name }}
+          RELEASE_TAG_NAME: ${{ needs.preflight.outputs.release_tag_name }}
           EXPECTED_SHA: ${{ github.sha }}
         shell: bash
         run: |
@@ -210,10 +221,10 @@ jobs:
         uses: mikepenz/release-changelog-builder-action@cb021f9b36a51a7c6f18e4679b6fa2cb77a1260c # v6.3.0
         with:
           configuration: "./.github/changelog.json"
-          fromTag: ${{ steps.release_info.outputs.from_tag || '' }}
+          fromTag: ${{ needs.tag-release.outputs.from_tag || needs.preflight.outputs.from_tag || '' }}
           # The canonical nightly tag is created only when the complete release
           # is published, so use its commit directly while building the notes.
-          toTag: ${{ (env.IS_NIGHTLY == 'true' && github.sha) || steps.release_info.outputs.tag_name }}
+          toTag: ${{ (env.IS_NIGHTLY == 'true' && github.sha) || needs.preflight.outputs.tag_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -228,11 +239,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-          TAG_NAME: ${{ steps.release_info.outputs.release_tag_name }}
-          FINAL_TAG_NAME: ${{ steps.release_info.outputs.tag_name }}
-          RELEASE_NAME: ${{ steps.release_info.outputs.release_name }}
+          TAG_NAME: ${{ needs.preflight.outputs.release_tag_name }}
+          FINAL_TAG_NAME: ${{ needs.preflight.outputs.tag_name }}
+          RELEASE_NAME: ${{ needs.preflight.outputs.release_name }}
           CHANGELOG: ${{ steps.build_changelog.outputs.changelog }}
-          EXPECTED_PRERELEASE: ${{ steps.release_info.outputs.is_prerelease }}
+          EXPECTED_PRERELEASE: ${{ needs.preflight.outputs.is_prerelease }}
         shell: bash
         run: |
           set -euo pipefail
@@ -287,6 +298,7 @@ jobs:
     name: Record Docker digest
     runs-on: ubuntu-latest
     needs: [prepare, release-docker]
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.release-docker.result == 'success' }}
     permissions:
       contents: read
     steps:
@@ -321,7 +333,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 240
     needs: [prepare]
-    if: ${{ needs.prepare.outputs.skip_assets != 'true' }}
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.prepare.outputs.skip_assets != 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -636,7 +648,7 @@ jobs:
     name: Publish nightly release
     runs-on: ubuntu-latest
     needs: [prepare, release-docker, release-docker-metadata, release]
-    if: ${{ always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && needs.prepare.result == 'success' && needs.release-docker.result == 'success' && needs.release-docker-metadata.result == 'success' && (needs.release.result == 'success' || (needs.prepare.outputs.skip_assets == 'true' && needs.release.result == 'skipped')) }}
+    if: ${{ always() && (github.event_name == 'schedule' || github.ref == 'refs/heads/master') && needs.prepare.result == 'success' && needs.release-docker.result == 'success' && needs.release-docker-metadata.result == 'success' && (needs.release.result == 'success' || (needs.prepare.outputs.skip_assets == 'true' && needs.release.result == 'skipped')) }}
     concurrency:
       group: release-nightly-promotion
       cancel-in-progress: false
@@ -668,6 +680,9 @@ jobs:
     name: Open an issue
     runs-on: ubuntu-latest
     needs: [
+      preflight,
+      test-release,
+      tag-release,
       prepare,
       release-docker,
       release-docker-metadata,
