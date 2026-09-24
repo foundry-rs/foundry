@@ -123,6 +123,62 @@ jobs:
           cargo build --manifest-path crates/forge/Cargo.toml --features touch-id --target x86_64-apple-darwin --locked
       - run: cargo build --manifest-path crates/forge/Cargo.toml --features touch-id --target aarch64-apple-darwin --locked
 
+  release-intel-macos-pr:
+    name: release Intel macOS (PR validation)
+    if: github.event_name == 'pull_request'
+    runs-on: macos-15-large
+    timeout-minutes: 240
+    permissions:
+      contents: read
+    env:
+      SVM_TARGET_PLATFORM: macosx-amd64
+    steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@117919c943b804057be733b0c4034c5542e58959
+        with:
+          disable-enforcement: true
+      - name: Install Aegis on macOS
+        uses: tempoxyz/gh-actions/actions/socket-firewall@d39baa2b43f5eba5d261c047521a4fbd56101129
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1
+        with:
+          toolchain: stable
+          targets: x86_64-apple-darwin
+      - uses: rui314/setup-mold@10ca16bf91dc22e05ebdc935cad9c75ea248f621 # v1
+      - name: Fetch locked dependencies
+        run: cargo fetch --locked --target x86_64-apple-darwin
+      - name: macOS setup
+        run: |
+          {
+            printf 'SDKROOT=%s\n' "$(xcrun -sdk macosx --show-sdk-path)"
+            printf 'MACOSX_DEPLOYMENT_TARGET=10.12\n'
+          } >> "$GITHUB_ENV"
+          xcrun --find clang
+          xcrun --find ld
+          xcrun -sdk macosx --show-sdk-version
+      - name: Build release binaries
+        run: |
+          cargo build --locked --target x86_64-apple-darwin --profile dist \
+            --no-default-features \
+            --features aws-kms,gcp-kms,turnkey,cli,asm-keccak,js-tracer,base,monad,optimism,jemalloc \
+            --bins
+      - name: Verify Intel binaries and deployment target
+        run: |
+          set -euo pipefail
+          for name in anvil cast chisel forge solar; do
+            bin="target/x86_64-apple-darwin/dist/$name"
+            [[ "$(lipo -archs "$bin")" == 'x86_64' ]]
+            minos=$(otool -l "$bin" | awk '
+              $1 == "cmd" && ($2 == "LC_BUILD_VERSION" || $2 == "LC_VERSION_MIN_MACOSX") { found = 1; next }
+              found && ($1 == "minos" || $1 == "version") { print $2; exit }
+            ')
+            echo "$name minimum macOS version: $minos"
+            [[ "$minos" == '10.12' || "$minos" == '10.12.0' ]]
+            "$bin" --version
+          done
+
   typos:
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
