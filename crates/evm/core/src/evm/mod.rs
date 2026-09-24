@@ -320,16 +320,18 @@ pub fn prepare_child_state(journal: &JournaledState) -> EvmState {
 /// Merges a child's returned account state into its suspended parent.
 ///
 /// Preserve parent warmth and original storage values, import child account flags and current
-/// values, and remove parent accounts and slots absent from the child. Newly loaded accounts and
-/// slots keep their child metadata. This operates on the EVM's returned state, not on an unfiltered
-/// write set; the caller retains responsibility for execution errors and family-specific
-/// reconciliation.
-pub fn merge_child_state(parent: &mut EvmState, child: EvmState) {
-    parent.retain(|address, parent_account| {
-        let Some(child_account) = child.get(address) else { return false };
-        parent_account.storage.retain(|key, _| child_account.storage.contains_key(key));
-        true
-    });
+/// values, and optionally remove parent accounts and slots absent from the child. Newly loaded
+/// accounts and slots keep their child metadata. This operates on the EVM's returned state, not on
+/// an unfiltered write set; the caller retains responsibility for execution errors and
+/// family-specific reconciliation.
+pub fn merge_child_state(parent: &mut EvmState, child: EvmState, remove_absent: bool) {
+    if remove_absent {
+        parent.retain(|address, parent_account| {
+            let Some(child_account) = child.get(address) else { return false };
+            parent_account.storage.retain(|key, _| child_account.storage.contains_key(key));
+            true
+        });
+    }
 
     for (address, mut account) in child {
         let Some(parent_account) = parent.get_mut(&address) else {
@@ -563,7 +565,7 @@ mod tests {
                 slot.is_cold = child_cold;
                 account.storage.insert(key, slot);
 
-                merge_child_state(&mut parent, EvmState::from_iter([(address, account)]));
+                merge_child_state(&mut parent, EvmState::from_iter([(address, account)]), false);
 
                 let account = &parent[&address];
                 assert!(account.is_created_locally());
@@ -579,7 +581,7 @@ mod tests {
     }
 
     #[test]
-    fn settlement_removes_state_absent_from_child() {
+    fn settlement_only_removes_state_absent_from_child_when_requested() {
         let retained_address = Address::with_last_byte(0x42);
         let removed_address = Address::with_last_byte(0x43);
         let retained_key = U256::ONE;
@@ -600,7 +602,15 @@ mod tests {
             .storage
             .insert(retained_key, EvmStorageSlot::new(U256::ONE, TransactionId::ZERO));
 
-        merge_child_state(&mut parent, EvmState::from_iter([(retained_address, child_account)]));
+        let child = EvmState::from_iter([(retained_address, child_account)]);
+
+        let mut retained = parent.clone();
+        merge_child_state(&mut retained, child.clone(), false);
+
+        assert!(retained.contains_key(&removed_address));
+        assert!(retained[&retained_address].storage.contains_key(&removed_key));
+
+        merge_child_state(&mut parent, child, true);
 
         assert!(!parent.contains_key(&removed_address));
         assert!(parent[&retained_address].storage.contains_key(&retained_key));
