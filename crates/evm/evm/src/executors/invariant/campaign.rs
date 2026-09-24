@@ -120,8 +120,8 @@ impl InvariantCampaignState {
         self.total_runs.load(Ordering::Relaxed)
     }
 
-    pub fn record_calls(&self, calls: u64, gas_used: u64) {
-        self.total_txs.fetch_add(calls, Ordering::Relaxed);
+    pub fn record_call(&self, gas_used: u64) {
+        self.total_txs.fetch_add(1, Ordering::Relaxed);
         self.total_gas.fetch_add(gas_used, Ordering::Relaxed);
     }
 
@@ -625,9 +625,9 @@ mod tests {
         assert!(state.is_timed_campaign());
         assert!(state.should_stop());
 
-        state.record_calls(2, 20);
-        state.record_calls(3, 30);
-        assert_eq!(state.throughput_totals(), (5, 50));
+        state.record_call(20);
+        state.record_call(30);
+        assert_eq!(state.throughput_totals(), (2, 50));
         assert_eq!(state.increment_runs(), 1);
         assert_eq!(state.total_runs(), 1);
     }

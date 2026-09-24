@@ -42,7 +42,7 @@ use foundry_evm_core::{
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::{
-    BasicTxDetails, FuzzFixtures, ObservedCall,
+    BasicTxDetails, FuzzCase, FuzzFixtures, ObservedCall,
     invariant::{
         ArtifactFilters, FuzzRunIdentifiedContracts, InvariantContract, RandomCallGenerator,
         SenderFilters, TargetedContract, TargetedContracts,
@@ -718,7 +718,7 @@ impl InvariantTest {
                 .push(run.run_traces.into_iter().map(|arena| arena.arena).collect());
         }
         self.test_data.runs += 1;
-        self.test_data.calls += run.calls;
+        self.test_data.calls += run.fuzz_runs.len();
 
         // Revert state to not persist values between runs.
         self.fuzz_state.revert();
@@ -741,9 +741,8 @@ struct InvariantTestRun<FEN: FoundryEvmNetwork> {
     cmp_seq: Vec<Vec<crate::inspectors::CmpOperands>>,
     // Current invariant run executor.
     executor: Executor<FEN>,
-    // Calls and gas accumulated until this run is accepted.
-    calls: usize,
-    gas_used: u64,
+    // Invariant run stat reports (eg. gas usage).
+    fuzz_runs: Vec<FuzzCase>,
     // Contracts created during current invariant run.
     created_contracts: Vec<Address>,
     // Traces of each call of the invariant run call sequence.
@@ -789,8 +788,7 @@ impl<FEN: FoundryEvmNetwork> InvariantTestRun<FEN> {
             inputs,
             cmp_seq: Vec::with_capacity(depth),
             executor,
-            calls: 0,
-            gas_used: 0,
+            fuzz_runs: Vec::with_capacity(depth),
             created_contracts: vec![],
             run_traces: vec![],
             depth: 0,
@@ -805,10 +803,10 @@ impl<FEN: FoundryEvmNetwork> InvariantTestRun<FEN> {
 
     /// Releases per-run corpus payloads once the worker corpus manager has consumed them.
     ///
-    /// Successful runs only need call/gas totals, traces, and created-contract bookkeeping for
-    /// final reporting. Counterexample inputs are copied into
-    /// `InvariantTestData::last_run_inputs` before this point, so retaining the full per-run
-    /// input/cmp buffers until `end_run` only extends peak memory in long invariant campaigns.
+    /// Successful runs only need `fuzz_runs`, traces, and created-contract bookkeeping for final
+    /// reporting. Counterexample inputs are copied into `InvariantTestData::last_run_inputs`
+    /// before this point, so retaining the full per-run input/cmp buffers until `end_run` only
+    /// extends peak memory in long invariant campaigns.
     fn drop_corpus_payloads(&mut self) {
         self.inputs.clear();
         self.inputs.shrink_to_fit();
@@ -1346,9 +1344,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             invariant_test.invalidate_metric_key_cache(
                                 &current_run.created_contracts[created_before..],
                             );
-                            current_run.calls += 1;
-                            current_run.gas_used =
-                                current_run.gas_used.wrapping_add(result.gas_used);
+                            current_run
+                                .fuzz_runs
+                                .push(FuzzCase { gas: result.gas_used, stipend: result.stipend });
 
                             let continues = if should_check {
                                 let outcome = can_continue(
@@ -1561,7 +1559,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 );
             }
             invariant_test.merge_line_coverage(current_run.line_coverage.take());
-            campaign_state.record_calls(current_run.calls as u64, current_run.gas_used);
+            for fuzz_run in &current_run.fuzz_runs {
+                campaign_state.record_call(fuzz_run.gas);
+            }
             current_run.drop_corpus_payloads();
             invariant_test.end_run(current_run, gas_report_samples);
             runs += 1;
