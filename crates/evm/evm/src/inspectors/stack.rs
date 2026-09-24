@@ -463,6 +463,8 @@ pub struct InspectorStackInner {
     pub top_frame_journal: AddressMap<Account>,
     /// Whether the top-level frame failed before inspector result rewriting.
     top_level_frame_failed_before_rewrite: bool,
+    /// Fee policy to restore when an isolated call explicitly executes another transaction.
+    outer_disable_fee_charge: Option<bool>,
     /// Whether the root call of the active isolated transaction executed as a precompile.
     isolated_call_was_precompile: Option<bool>,
     /// Synthetic CREATE depth corresponding to an outer top-level deployment.
@@ -521,10 +523,14 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         &mut self,
         cheats: &mut Cheatcodes<FEN>,
         db: &mut <FoundryContextFor<'_, FEN> as ContextTr>::Db,
-        evm_env: EvmEnvFor<FEN>,
+        mut evm_env: EvmEnvFor<FEN>,
         chain_context: ChainFor<FEN>,
         f: NestedEvmClosureFor<'_, FEN>,
     ) -> Result<EvmEnvFor<FEN>, EVMError<DatabaseError>> {
+        let inherited_disable_fee_charge = evm_env.cfg_env.disable_fee_charge;
+        if let Some(disable_fee_charge) = self.outer_disable_fee_charge {
+            evm_env.cfg_env.disable_fee_charge = disable_fee_charge;
+        }
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
         let mut evm = FEN::EvmFactory::default().create_nested_evm_with_inspector(
             db,
@@ -533,7 +539,9 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         );
         *evm.chain_mut() = chain_context;
         f(&mut *evm)?;
-        Ok(evm.to_evm_env())
+        let mut evm_env = evm.to_evm_env();
+        evm_env.cfg_env.disable_fee_charge = inherited_disable_fee_charge;
+        Ok(evm_env)
     }
 
     fn transact_on_db(
@@ -543,7 +551,10 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         fork_id: Option<U256>,
         transaction: B256,
     ) -> eyre::Result<ContextUpdateFor<EvmFactoryFor<FEN>>> {
-        let evm_env = ecx.evm_clone();
+        let mut evm_env = ecx.evm_clone();
+        if let Some(disable_fee_charge) = self.outer_disable_fee_charge {
+            evm_env.cfg_env.disable_fee_charge = disable_fee_charge;
+        }
         let outer_tx_env = ecx.tx_clone();
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
         let (db, inner) = ecx.db_journal_inner_mut();
@@ -556,7 +567,10 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         ecx: &mut FoundryContextFor<'_, FEN>,
         tx_env: TxEnvFor<FEN>,
     ) -> eyre::Result<()> {
-        let evm_env = ecx.evm_clone();
+        let mut evm_env = ecx.evm_clone();
+        if let Some(disable_fee_charge) = self.outer_disable_fee_charge {
+            evm_env.cfg_env.disable_fee_charge = disable_fee_charge;
+        }
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
         let (db, inner) = ecx.db_journal_inner_mut();
         db.transact_from_tx(tx_env, evm_env, inner, &mut inspector)
@@ -1001,12 +1015,14 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         self.isolated_call_was_precompile = None;
 
         ecx.block_mut().set_basefee(0);
+        ecx.cfg_env_mut().disable_fee_charge = true;
 
         let chain_id = ecx.cfg().chain_id();
         ecx.tx_mut().set_chain_id(Some(chain_id));
         ecx.tx_mut().set_caller(caller);
         ecx.tx_mut().set_kind(kind);
         ecx.tx_mut().set_data(input);
+        ecx.tx_mut().set_enveloped_tx(Bytes::new());
         ecx.tx_mut().set_value(value);
         let initial_gas = calculate_stipend(ecx.tx(), ecx.cfg());
         // Preserve the frame's regular gas and reservoir across the synthetic transaction
@@ -1051,6 +1067,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             locally_created_accounts,
             root_depth,
         });
+        self.outer_disable_fee_charge = Some(cached_evm_env.cfg_env.disable_fee_charge);
         self.in_inner_context = true;
 
         // Tell cheatcodes we're entering the synthetic inner transaction so
@@ -1104,10 +1121,11 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 (res, evm.to_evm_env())
             };
 
-            // Restore env, preserving cheatcode cfg/block changes from the nested EVM
-            // but restoring the original tx and basefee (which we zeroed for the nested call).
+            // Restore env, preserving cheatcode cfg/block changes from the nested EVM but restoring
+            // the original tx and temporary fee overrides used for the nested call.
             let mut restored_evm_env = nested_env;
             restored_evm_env.block_env.set_basefee(cached_evm_env.block_env.basefee());
+            restored_evm_env.cfg_env.disable_fee_charge = cached_evm_env.cfg_env.disable_fee_charge;
             restored_evm_env.cfg_env.tx_gas_limit_cap = cached_evm_env.cfg_env.tx_gas_limit_cap;
             ecx.set_evm(restored_evm_env);
             ecx.set_tx(cached_tx_env);
@@ -1118,6 +1136,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
 
         self.in_inner_context = false;
         self.inner_context_data = None;
+        self.outer_disable_fee_charge = None;
 
         // Reset the cheatcodes isolation flag now that the synthetic inner
         // transaction has finished.
@@ -1661,12 +1680,17 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                 }
             }
 
+            let execution_disable_fee_charge = ecx.cfg_env().disable_fee_charge;
+            if let Some(disable_fee_charge) = self.inner.outer_disable_fee_charge {
+                ecx.cfg_env_mut().disable_fee_charge = disable_fee_charge;
+            }
             cheatcode_outcome = cheatcodes.call_with_executor(
                 ecx,
                 call,
                 self.inner,
                 isolate && call.scheme == CallScheme::Call,
             );
+            ecx.cfg_env_mut().disable_fee_charge = execution_disable_fee_charge;
         }
 
         if let Some(trace_idx) = trace_idx

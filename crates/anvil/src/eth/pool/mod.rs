@@ -155,7 +155,8 @@ impl<T> Pool<T> {
         let removed = {
             let mut pool = self.inner.write();
             let mut removed = pool.ready_transactions.remove_with_markers(vec![tx], None);
-            removed.extend(pool.pending_transactions.remove(vec![tx]));
+            let invalidated = removed.iter().flat_map(|tx| tx.provides.iter().cloned());
+            removed.extend(pool.pending_transactions.remove_with_dependents(vec![tx], invalidated));
             removed
         };
         trace!(target: "txpool", "Dropped transactions: {:?}", removed.iter().map(|tx| tx.hash()).collect::<Vec<_>>());

@@ -1283,7 +1283,8 @@ impl NodeConfig {
     pub fn print(&self, fork: Option<&ClientFork>) -> Result<()> {
         if let Some(path) = &self.config_out {
             let value = self.as_json(fork);
-            foundry_common::fs::write_json_file(path, &value).wrap_err("failed writing JSON")?;
+            foundry_common::fs::write_sensitive_json_file(path, &value)
+                .wrap_err("failed writing JSON")?;
         }
         if !self.silent {
             sh_println!("{}", self.as_string(fork))?;
@@ -2644,6 +2645,9 @@ mod tests {
     use super::*;
     use foundry_evm::{hardfork::EthereumHardfork, hardforks::latest_active_tempo_hardfork};
 
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+
     #[cfg(feature = "base")]
     use foundry_evm::hardforks::BaseUpgrade;
 
@@ -2978,5 +2982,18 @@ mod tests {
                 .generate()
                 .is_ok()
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn config_out_has_owner_only_permissions() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let config = NodeConfig::test().set_config_out(Some(path.clone()));
+
+        config.print(None).unwrap();
+
+        let mode = std::fs::metadata(path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
     }
 }
