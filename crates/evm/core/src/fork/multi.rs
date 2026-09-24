@@ -28,7 +28,7 @@ use std::{
     pin::Pin,
     sync::{
         Arc,
-        atomic::AtomicUsize,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc::{Sender as OneshotSender, channel as oneshot_channel},
     },
     time::Duration,
@@ -424,10 +424,15 @@ impl<
             return;
         }
 
+        let already_prewarmed = resolved_id
+            .as_ref()
+            .and_then(|id| self.forks.get(id))
+            .is_some_and(|fork| fork.bal_prewarmed.load(Ordering::Relaxed));
+
         // Need to create a new fork.
         let task_id =
             resolved_id.unwrap_or_else(|| ForkId::new(&fork.url, fork.evm_opts.fork_block_number));
-        let future = Box::pin(create_fork(fork, expected_identity, prewarm_bal));
+        let future = Box::pin(create_fork(fork, expected_identity, prewarm_bal, already_prewarmed));
         self.pending_tasks.push(ForkTask::Create {
             future,
             id: task_id,
@@ -604,14 +609,16 @@ impl<
                                     };
                                 // Apply only after choosing the backend, including an existing
                                 // cache.
-                                if let Some(seed) = seed {
-                                    seed.apply(
+                                if let Some(seed) = seed
+                                    && seed.apply(
                                         &fork.backend.data(),
                                         fork.opts
                                             .resolved
                                             .as_ref()
                                             .expect("created fork is resolved"),
-                                    );
+                                    )
+                                {
+                                    fork.bal_prewarmed.store(true, Ordering::Relaxed);
                                 }
                                 this.insert_new_fork(fork_id, fork, sender, additional_senders);
                             }
@@ -691,6 +698,8 @@ struct CreatedFork<N: Network, SPEC, BLOCK: ForkBlockEnv> {
     /// How many consumers there are, since a `SharedBacked` can be used by multiple
     /// consumers.
     num_senders: Arc<AtomicUsize>,
+    /// Whether this exact shared backend has successfully received a validated parent BAL.
+    bal_prewarmed: Arc<AtomicBool>,
 }
 
 impl<N: Network, SPEC, BLOCK: ForkBlockEnv> CreatedFork<N, SPEC, BLOCK> {
@@ -699,7 +708,13 @@ impl<N: Network, SPEC, BLOCK: ForkBlockEnv> CreatedFork<N, SPEC, BLOCK> {
         evm_env: EvmEnv<SPEC, BLOCK>,
         backend: SharedBackend<N, BLOCK>,
     ) -> Self {
-        Self { opts, evm_env, backend, num_senders: Arc::new(AtomicUsize::new(1)) }
+        Self {
+            opts,
+            evm_env,
+            backend,
+            num_senders: Arc::new(AtomicUsize::new(1)),
+            bal_prewarmed: Arc::default(),
+        }
     }
 
     /// Increment senders and return unique identifier of the fork.
@@ -749,6 +764,7 @@ async fn create_fork<
     mut fork: CreateFork,
     expected_identity: Option<ForkContext>,
     prewarm_bal: bool,
+    already_prewarmed: bool,
 ) -> eyre::Result<(
     ForkId,
     CreatedFork<N, SPEC, BLOCK>,
@@ -834,7 +850,7 @@ async fn create_fork<
 
     let provider = fork.evm_opts.fork_provider_with_url::<N>(&fork.url)?;
     let seed = if let Some(block) = bal_block {
-        bal::prepare(&any_provider, &resolved, &block).await
+        bal::prepare(&any_provider, &resolved, &block, already_prewarmed).await
     } else {
         None
     };

@@ -31,6 +31,7 @@ pub(super) async fn prepare<P: Provider<AnyNetwork>>(
     provider: &P,
     resolved: &ResolvedFork,
     block: &AnyRpcBlock,
+    already_prewarmed: bool,
 ) -> Option<PreparedBalSeed> {
     if !eligible_source(resolved.context())
         || block.header.hash != resolved.hash()
@@ -49,29 +50,36 @@ pub(super) async fn prepare<P: Provider<AnyNetwork>>(
         if !immutable_source(provider).await {
             return None;
         }
-        let bal =
-            match provider.raw_request("eth_getBlockAccessList".into(), (resolved.hash(),)).await {
+        let seed = if already_prewarmed {
+            None
+        } else {
+            let bal = match provider
+                .raw_request("eth_getBlockAccessList".into(), (resolved.hash(),))
+                .await
+            {
                 Err(error) if is_rpc_method_not_found(&error) => {
                     provider.get_block_access_list_by_hash(resolved.hash()).await
                 }
                 response => response,
             }
             .ok()??;
-        let seed = match PreparedBalSeed::new(bal, block, resolved) {
-            Ok(seed) => seed,
-            Err(err) => {
-                debug!(target: "backend::fork", block_hash = %resolved.hash(), %err, "ignoring invalid fork BAL");
-                return None;
+            match PreparedBalSeed::new(bal, block, resolved) {
+                Ok(seed) => Some(seed),
+                Err(err) => {
+                    debug!(target: "backend::fork", block_hash = %resolved.hash(), %err, "ignoring invalid fork BAL");
+                    return None;
+                }
             }
         };
+        // Reused caches retain the source checks without downloading the same BAL again.
         // A local node can change state without changing its block hash.
-        immutable_source(provider).await.then_some(seed)
+        immutable_source(provider).await.then_some(seed).flatten()
     };
 
     // Reuse the validated block; optional BAL and source probes share one budget, including
     // retries.
     let seed = tokio::time::timeout(Duration::from_millis(500), prepare).await.ok().flatten();
-    if seed.is_none() {
+    if seed.is_none() && !already_prewarmed {
         debug!(target: "backend::fork", block_hash = %resolved.hash(), "fork BAL unavailable or ineligible");
     }
     seed
@@ -146,10 +154,10 @@ impl PreparedBalSeed {
     }
 
     /// Seeds the selected remote cache, retaining accounts and slots already present.
-    pub(super) fn apply(self, db: &MemDb, resolved: &ResolvedFork) {
+    pub(super) fn apply(self, db: &MemDb, resolved: &ResolvedFork) -> bool {
         if self.fingerprint != resolved.fingerprint() {
             debug!(target: "backend::fork", "ignoring fork BAL for a different cache identity");
-            return;
+            return false;
         }
 
         let mut accounts = db.accounts.write();
@@ -173,6 +181,7 @@ impl PreparedBalSeed {
             inserted_slots += cached_slots.len() - slots_before;
         }
         debug!(target: "backend::fork", block_hash = %resolved.hash(), inserted_accounts, inserted_slots, "prefilled fork cache from BAL");
+        true
     }
 }
 

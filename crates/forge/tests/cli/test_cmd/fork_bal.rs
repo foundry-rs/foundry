@@ -101,6 +101,7 @@ enum Response {
     TimeoutAfterBal,
     CumulativeTimeout,
     InvalidPrefix,
+    NullOnce,
 }
 
 struct Proxy {
@@ -180,6 +181,7 @@ impl Proxy {
                         }]);
                         match mode {
                             Response::Null => bal = Value::Null,
+                            Response::NullOnce if !after_bal => bal = Value::Null,
                             Response::Malformed => bal = json!([{"address": "invalid"}]),
                             Response::Invalid => {
                                 bal[0]["storageChanges"][0]["changes"][0]["index"] = json!("0xff");
@@ -326,6 +328,7 @@ contract ForkBalTest {
     function testForkBalLifecycle() public {
         string memory url = vm.envString("BAL_RPC_URL");
         bytes32 target = vm.envBytes32("BAL_TARGET");
+        uint256 ordinary = vm.createFork(url, vm.envUint("BAL_PARENT"));
         uint256 first = vm.createSelectFork(url, target);
         require(value() == 9, "prefix missing");
         uint256 snapshot = vm.snapshotState();
@@ -344,6 +347,8 @@ contract ForkBalTest {
         require(value() == 90, "first fork local write lost");
         vm.selectFork(second);
         require(value() == 80, "second fork local write lost");
+        vm.selectFork(ordinary);
+        require(value() == 7, "ordinary fork inherited prefix state");
     }
 
     function testForkBalRejectsInvalidPrefix() public {
@@ -356,6 +361,28 @@ contract ForkBalTest {
     function testForkBalOrdinary() public {
         vm.createSelectFork(vm.envString("BAL_RPC_URL"), vm.envUint("BAL_PARENT"));
         require(value() == 7, "wrong ordinary fork");
+    }
+
+    function testForkBalRepeated() public {
+        string memory url = vm.envString("BAL_RPC_URL");
+        bytes32 target = vm.envBytes32("BAL_TARGET");
+        for (uint256 i; i < 3; ++i) {
+            vm.createSelectFork(url, target);
+            require(value() == 9, "wrong repeated prefix state");
+            vm.store(counter, bytes32(0), bytes32(uint256(90)));
+        }
+    }
+
+    function testForkBalSeparateSources() public {
+        string memory first = vm.envString("BAL_RPC_URL");
+        string memory second = vm.envString("BAL_OTHER_RPC_URL");
+        bytes32 target = vm.envBytes32("BAL_TARGET");
+        for (uint256 i; i < 2; ++i) {
+            vm.createSelectFork(first, target);
+            require(value() == 9, "wrong first source prefix state");
+            vm.createSelectFork(second, target);
+            require(value() == 9, "wrong second source prefix state");
+        }
     }
 }
 "#;
@@ -461,6 +488,7 @@ forgetest_async!(fork_bal_keeps_local_writes_snapshots_and_persistent_accounts, 
         gas_used.push(assert_test(&mut cmd, "testForkBalLifecycle"));
         if !disabled {
             proxy.assert_parent_bal(&fixture);
+            assert_eq!(proxy.count(BAL_METHOD), 1, "the same parent cache was prewarmed twice");
             assert_eq!(proxy.slot_reads(U256::ZERO), 0);
         }
     }
@@ -602,5 +630,46 @@ forgetest_async!(fork_bal_preserves_prefix_transaction_validation, |prj, cmd| {
         } else {
             proxy.assert_parent_bal(&fixture);
         }
+    }
+});
+
+forgetest_async!(fork_bal_retries_unavailable_parent_seed, |prj, cmd| {
+    let fixture = Fixture::new().await;
+    let proxy = Proxy::new(&fixture, Response::NullOnce).await;
+    prj.add_test("ForkBal.t.sol", TEST);
+    command(
+        &mut cmd,
+        &fixture,
+        &proxy,
+        fixture.transactions[2],
+        9,
+        1,
+        r"^testForkBalRepeated\(\)$",
+    );
+    assert_test(&mut cmd, "testForkBalRepeated");
+    proxy.assert_parent_bal(&fixture);
+    assert_eq!(proxy.count(BAL_METHOD), 2, "unavailable BAL must retry, then reuse its success");
+});
+
+forgetest_async!(fork_bal_reuses_parent_seed_only_for_the_same_source, |prj, cmd| {
+    let fixture = Fixture::new().await;
+    let first = Proxy::new(&fixture, Response::Valid).await;
+    let second = Proxy::new(&fixture, Response::Valid).await;
+    prj.add_test("ForkBal.t.sol", TEST);
+    command(
+        &mut cmd,
+        &fixture,
+        &first,
+        fixture.transactions[2],
+        9,
+        1,
+        r"^testForkBalSeparateSources\(\)$",
+    )
+    .env("BAL_OTHER_RPC_URL", &second.endpoint);
+    assert_test(&mut cmd, "testForkBalSeparateSources");
+    for proxy in [&first, &second] {
+        proxy.assert_parent_bal(&fixture);
+        assert_eq!(proxy.count(BAL_METHOD), 1, "each source must prepare its own parent seed");
+        assert_eq!(proxy.slot_reads(U256::ZERO), 0);
     }
 });
