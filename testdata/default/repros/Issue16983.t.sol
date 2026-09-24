@@ -23,6 +23,19 @@ contract Issue16983Test is Test {
         assertFactoryStorage();
     }
 
+    /// forge-config: default.isolate = true
+    function testForkReadsStorageAfterSwitchInsideIsolatedCall() public {
+        createDummyAtFactoryAddress();
+
+        this.switchForkAndReadOwner();
+        assertEq(FACTORY.feeAmountTickSpacing(500), 10);
+    }
+
+    function switchForkAndReadOwner() external {
+        vm.createSelectFork("base", 20_000_000);
+        assertEq(FACTORY.owner(), 0x31FAfd4889FA1269F7a13A66eE0fB458f27D72A9);
+    }
+
     function createDummyAtFactoryAddress() internal {
         vm.createSelectFork("base", 1_371_679);
         assertEq(address(FACTORY).code.length, 0);

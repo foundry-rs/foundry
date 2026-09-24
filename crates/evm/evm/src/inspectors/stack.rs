@@ -981,6 +981,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         value: U256,
     ) -> (InterpreterResult, Option<Address>, bool) {
         let IsolatedGas { regular_limit, reservoir, precharged_state } = gas;
+        let source_fork_id = ecx.db().active_fork_id();
         let cached_evm_env = ecx.evm_clone();
         let cached_tx_env = ecx.tx_clone();
         self.isolated_call_was_precompile = None;
@@ -1141,7 +1142,11 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
 
         let rolled_back = !res.result.is_success();
 
-        merge_child_state(ecx.journal_mut().evm_state_mut(), res.state);
+        if source_fork_id == ecx.db().active_fork_id() {
+            merge_child_state(ecx.journal_mut().evm_state_mut(), res.state);
+        } else {
+            *ecx.journal_mut().evm_state_mut() = res.state;
+        }
         #[cfg(feature = "monad")]
         foundry_evm_core::FoundryJournal::restore_reserve_balance(
             ecx.journal_mut(),
