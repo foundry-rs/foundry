@@ -69,7 +69,11 @@ pub fn base_code_sentinel_addresses(upgrade: BaseUpgrade) -> impl Iterator<Item 
         .filter(move |address| is_base_precompile_active_at(*address, upgrade))
 }
 
-impl FoundryChain<BaseTransaction<TxEnv>> for L1BlockInfo {}
+impl FoundryChain<BaseTransaction<TxEnv>> for L1BlockInfo {
+    fn clear_transaction_fee_cache(&mut self) {
+        self.clear_tx_l1_cost();
+    }
+}
 
 impl FoundryEvmFactory for BaseEvmFactory {
     type Chain = L1BlockInfo;
@@ -171,7 +175,7 @@ impl<'db, I: FoundryInspectorExt<BaseContext<&'db mut dyn DatabaseExt<BaseEvmFac
         if self.ctx().cfg().disable_fee_charge
             && tx.enveloped_tx().is_some_and(|enveloped| enveloped.is_empty())
         {
-            self.ctx_mut().chain_mut().clear_tx_l1_cost();
+            self.ctx_mut().chain_mut().clear_transaction_fee_cache();
         }
         let ResultAndState { result, state } =
             Evm::transact_raw(self, tx).map_err(map_base_error)?;
