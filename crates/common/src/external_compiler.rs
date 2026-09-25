@@ -164,6 +164,15 @@ impl<'a> AdapterClient<'a> {
                 .wrap_err_with(|| {
                     format!("failed to start external compiler `{}`", self.adapter.id)
                 })?;
+        let result = self.compile_units(output, &mut process);
+        process.finish(result)
+    }
+
+    fn compile_units(
+        &self,
+        output: &mut ExternalCompilation<'_>,
+        process: &mut AdapterProcess,
+    ) -> Result<()> {
         let initialized: InitializeResult = process.request(
             "initialize",
             json!({
@@ -258,7 +267,6 @@ impl<'a> AdapterClient<'a> {
             }
         }
 
-        process.finish()?;
         output.active_units.insert(self.adapter.id.clone(), active_units);
         Ok(())
     }
@@ -450,8 +458,11 @@ impl AdapterProcess {
         }
     }
 
-    fn finish(mut self) -> Result<()> {
+    fn finish(mut self, result: Result<()>) -> Result<()> {
         drop(self.stdin.take());
+        if result.is_err() {
+            let _ = self.child.kill();
+        }
         let status = self.child.wait()?;
         let stderr = self
             .stderr
@@ -459,6 +470,13 @@ impl AdapterProcess {
             .context("adapter stderr reader missing")?
             .join()
             .map_err(|_| eyre::eyre!("adapter stderr reader panicked"))??;
+        if stderr.is_empty() {
+            result?;
+        } else {
+            result.wrap_err_with(|| {
+                format!("adapter stderr: {}", String::from_utf8_lossy(&stderr).trim_end())
+            })?;
+        }
         ensure!(
             status.success(),
             "adapter exited with {status}: {}",

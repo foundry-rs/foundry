@@ -141,8 +141,10 @@ host-owned artifacts and cache entries with the normal `out` and `cache` directo
 
 The adapter cache is unit-scoped and independent of the Solidity/Vyper compiler cache. Read-only
 compilations (`forge inspect`, `forge test --list`, and selector queries) may reuse it but do not
-publish artifacts or update or retire cache entries. Declaring a unit cacheable is a promise by the adapter that the
-discovery response lists its complete build-affecting input closure. Ambient inputs such as time,
+publish artifacts or update or retire cache entries. `--force` (or `force = true`) retains Forge's
+existing cleanup semantics: it deletes prior artifacts and caches before compilation, including
+for read-only commands, which do not republish external outputs. Use `forge build` to restore them.
+Declaring a unit cacheable promises that discovery lists its complete build-affecting input closure. Ambient inputs such as time,
 randomness, undeclared environment, mutable dependency caches, or unreported compiler resources require `cacheable = false`.
 
 ## Forge integration and limits

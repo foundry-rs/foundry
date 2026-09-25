@@ -274,7 +274,9 @@ contract ExternalArtifactTest {
         .args(["test", "--match-test", "testExternalArtifactIsDeployable"])
         .assert_success();
 
-    cmd.forge_fuse().args(["coverage", "--report", "lcov"]).assert_success();
+    for _ in 0..2 {
+        cmd.forge_fuse().args(["coverage", "--report", "lcov"]).assert_success();
+    }
     let coverage = fs::read_to_string(prj.root().join("lcov.info")).unwrap();
     assert!(coverage.contains("SF:script/UseExternal.s.sol"), "{coverage}");
     assert!(!coverage.contains("native/"));
@@ -322,6 +324,53 @@ Context:
     fs::remove_file(&invoked).unwrap();
     cmd.forge_fuse().args(["build", "--deny", "warnings"]).assert_failure();
     assert!(!invoked.exists(), "cached diagnostics unexpectedly recompiled the external unit");
+
+    fs::remove_file(warning).unwrap();
+    for malformed in [false, true] {
+        if malformed {
+            fs::write(&cache, "not json").unwrap();
+            cmd.forge_fuse().arg("build").assert_failure();
+        }
+        cmd.forge_fuse().arg("clean").assert_success().stderr_eq("");
+        assert!(!prj.root().join("out/.external").exists());
+        assert!(!prj.root().join("cache/external-compilers").exists());
+        cmd.forge_fuse().arg("build").assert_success();
+        assert!(invoked.exists(), "clean retained the external compiler cache");
+        fs::remove_file(&invoked).unwrap();
+    }
+    for args in &read_only_commands {
+        prj.update_config(|config| config.force = true);
+        cmd.forge_fuse().args(args).assert_success();
+        assert!(!prj.root().join("out/.external").exists());
+        assert!(!prj.root().join("cache/external-compilers").exists());
+        prj.update_config(|config| config.force = false);
+        cmd.forge_fuse().arg("build").assert_success();
+    }
+
+    cmd.forge_fuse().arg("clean").assert_success();
+    let external = tempfile::tempdir().unwrap();
+    let sentinel = external.path().join("keep");
+    fs::write(&sentinel, "unchanged").unwrap();
+    fs::create_dir_all(prj.root().join("cache")).unwrap();
+    symlink(external.path(), prj.root().join("cache/external-compilers")).unwrap();
+    cmd.forge_fuse().arg("clean").assert_success().stderr_eq("");
+    assert!(prj.root().join("cache/external-compilers").symlink_metadata().is_err());
+    assert_eq!(fs::read_to_string(sentinel).unwrap(), "unchanged");
+
+    for (response, error) in [
+        ("", "adapter exited before responding to `initialize`"),
+        (
+            r#"{"id":1,"result":{"protocol":"2.0"}}"#,
+            "external compiler `fixture` selected unsupported protocol `2.0`",
+        ),
+    ] {
+        fs::write(&adapter, format!(
+            "#!/bin/sh\nread -r initialize\nprintf '%s\\n' 'native compiler diagnostic' >&2\nprintf '%s' '{response}'\n"
+        )).unwrap();
+        cmd.forge_fuse().arg("build").assert_failure().stderr_eq(format!(
+            "Error: adapter stderr: native compiler diagnostic\n\nContext:\n- {error}\n"
+        ));
+    }
 });
 
 #[cfg(unix)]
