@@ -1408,9 +1408,9 @@ impl Cheatcode for executeTransactionCall {
         let cold_state = prepare_child_state(ccx.ecx.journal_inner());
 
         // A fresh transaction owns an independent journal. Do not let snapshot bookkeeping from an
-        // enclosing isolated call cross into it or vice versa.
-        let track_isolated_snapshots = ccx.state.track_isolated_snapshots;
-        ccx.state.track_isolated_snapshots = false;
+        // enclosing call cross into it or vice versa.
+        let track_snapshot_restores = ccx.state.track_snapshot_restores;
+        ccx.state.track_snapshot_restores = false;
         let mut res = None;
         let mut cold_state = Some(cold_state);
         let nested_evm_env = {
@@ -1430,7 +1430,7 @@ impl Cheatcode for executeTransactionCall {
                 },
             )
         };
-        ccx.state.track_isolated_snapshots = track_isolated_snapshots;
+        ccx.state.track_snapshot_restores = track_snapshot_restores;
         let mut nested_evm_env = nested_evm_env?;
         let res = res.unwrap();
 
@@ -1680,9 +1680,11 @@ fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
         caller,
         RevertStateSnapshotAction::RevertKeep,
     ) {
-        if ccx.state.track_isolated_snapshots {
-            ccx.state.isolated_snapshot_restores.push(journaled_state);
-            ccx.state.pending_isolated_snapshot_journal = Some(restored.journal.clone());
+        if ccx.state.track_snapshot_restores {
+            ccx.state.snapshot_restores.push(journaled_state);
+            if ccx.state.in_isolation_context {
+                ccx.state.pending_isolated_snapshot_journal = Some(restored.journal.clone());
+            }
         }
         ccx.ecx.set_journal_inner(restored);
         #[cfg(feature = "monad")]
@@ -1729,9 +1731,11 @@ fn inner_revert_to_state_and_delete<FEN: FoundryEvmNetwork>(
         caller,
         RevertStateSnapshotAction::RevertRemove,
     ) {
-        if ccx.state.track_isolated_snapshots {
-            ccx.state.isolated_snapshot_restores.push(journaled_state);
-            ccx.state.pending_isolated_snapshot_journal = Some(restored.journal.clone());
+        if ccx.state.track_snapshot_restores {
+            ccx.state.snapshot_restores.push(journaled_state);
+            if ccx.state.in_isolation_context {
+                ccx.state.pending_isolated_snapshot_journal = Some(restored.journal.clone());
+            }
         }
         ccx.ecx.set_journal_inner(restored);
         #[cfg(feature = "monad")]

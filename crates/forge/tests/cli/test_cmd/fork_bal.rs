@@ -232,7 +232,7 @@ impl Proxy {
             .count()
     }
 
-    fn assert_parent_bal(&self, fixture: &Fixture) {
+    fn assert_parent_bal(&self, parent_hash: &Value) {
         let requests = self.requests.lock();
         let calls = requests
             .iter()
@@ -242,7 +242,7 @@ impl Proxy {
             .collect::<Vec<_>>();
         assert!(!calls.is_empty(), "parent BAL was never requested");
         for request in calls {
-            assert_eq!(request["params"], json!([fixture.parent["hash"]]));
+            assert_eq!(request["params"], json!([parent_hash]));
         }
     }
 
@@ -462,7 +462,7 @@ forgetest_async!(fork_bal_parent_cache_preserves_prefix_boundaries, |prj, cmd| {
                 assert_eq!(proxy.count(LEGACY_BAL_METHOD), 0);
                 assert!(proxy.slot_reads(U256::ZERO) > 0);
             } else {
-                proxy.assert_parent_bal(&fixture);
+                proxy.assert_parent_bal(&fixture.parent["hash"]);
                 assert_eq!(proxy.slot_reads(U256::ZERO), 0, "mode={mode}, index={index}");
             }
             assert!(proxy.slot_reads(U256::from(1)) > 0, "read-only slots need RPC fallback");
@@ -498,7 +498,7 @@ forgetest_async!(fork_bal_keeps_local_writes_snapshots_and_persistent_accounts, 
             assert_eq!(proxy.count(BAL_METHOD), 0);
             assert_eq!(proxy.count(LEGACY_BAL_METHOD), 0);
         } else {
-            proxy.assert_parent_bal(&fixture);
+            proxy.assert_parent_bal(&fixture.parent["hash"]);
             assert_eq!(proxy.count(BAL_METHOD), 1, "the same parent cache was prewarmed twice");
             assert_eq!(proxy.slot_reads(U256::ZERO), 0);
         }
@@ -522,7 +522,7 @@ forgetest_async!(fork_bal_config_and_environment_control_runtime_requests, |prj,
         }
         assert_test(&mut cmd, "testForkBal");
         if enabled {
-            proxy.assert_parent_bal(&fixture);
+            proxy.assert_parent_bal(&fixture.parent["hash"]);
             assert_eq!(proxy.slot_reads(U256::ZERO), 0);
         } else {
             assert_eq!(proxy.count(BAL_METHOD), 0);
@@ -558,7 +558,7 @@ forgetest_async!(fork_bal_unusable_responses_fall_back_to_replay, |prj, cmd| {
             started.elapsed() < Duration::from_secs(20),
             "optional BAL request delayed the fork: {mode:?}"
         );
-        proxy.assert_parent_bal(&fixture);
+        proxy.assert_parent_bal(&fixture.parent["hash"]);
         assert_eq!(
             proxy.count(LEGACY_BAL_METHOD),
             usize::from(matches!(mode, Response::Unsupported)),
@@ -600,7 +600,7 @@ forgetest_async!(fork_bal_supports_legacy_method, |prj, cmd| {
     prj.add_test("ForkBal.t.sol", TEST);
     command(&mut cmd, &fixture, &proxy, fixture.transactions[2], 9, 1, r"^testForkBal\(\)$");
     assert_test(&mut cmd, "testForkBal");
-    proxy.assert_parent_bal(&fixture);
+    proxy.assert_parent_bal(&fixture.parent["hash"]);
     assert_eq!(proxy.count(BAL_METHOD), 1);
     assert_eq!(proxy.count(LEGACY_BAL_METHOD), 1);
     assert_eq!(proxy.slot_reads(U256::ZERO), 0);
@@ -621,7 +621,7 @@ forgetest_async!(fork_bal_preserves_prefix_transaction_validation, |prj, cmd| {
         r"^testForkBalRejectsInvalidPrefix\(\)$",
     );
     assert_test(&mut cmd, "testForkBalRejectsInvalidPrefix");
-    proxy.assert_parent_bal(&fixture);
+    proxy.assert_parent_bal(&fixture.parent["hash"]);
 });
 
 forgetest_async!(fork_bal_retries_unavailable_parent_seed, |prj, cmd| {
@@ -638,7 +638,7 @@ forgetest_async!(fork_bal_retries_unavailable_parent_seed, |prj, cmd| {
         r"^testForkBalRepeated\(\)$",
     );
     assert_test(&mut cmd, "testForkBalRepeated");
-    proxy.assert_parent_bal(&fixture);
+    proxy.assert_parent_bal(&fixture.parent["hash"]);
     assert_eq!(proxy.count(BAL_METHOD), 2, "unavailable BAL must retry, then reuse its success");
 });
 
@@ -659,7 +659,7 @@ forgetest_async!(fork_bal_reuses_parent_seed_only_for_the_same_source, |prj, cmd
     .env("BAL_OTHER_RPC_URL", &second.endpoint);
     assert_test(&mut cmd, "testForkBalSeparateSources");
     for proxy in [&first, &second] {
-        proxy.assert_parent_bal(&fixture);
+        proxy.assert_parent_bal(&fixture.parent["hash"]);
         assert_eq!(proxy.count(BAL_METHOD), 1, "each source must prepare its own parent seed");
         assert_eq!(proxy.slot_reads(U256::ZERO), 0);
     }
@@ -717,7 +717,7 @@ forgetest_async!(fork_bal_inline_config_controls_runtime_requests, |prj, cmd| {
             if disabled {
                 assert!(proxy.slot_reads(U256::ZERO) > 0);
             } else {
-                proxy.assert_parent_bal(&fixture);
+                proxy.assert_parent_bal(&fixture.parent["hash"]);
                 assert_eq!(proxy.slot_reads(U256::ZERO), 0);
             }
         }
@@ -784,7 +784,7 @@ forgetest_async!(fork_bal_setup_forks_keep_creation_policy_on_roll, |prj, cmd| {
             if disabled {
                 assert!(proxy.slot_reads(U256::ZERO) > 0);
             } else {
-                proxy.assert_parent_bal(&fixture);
+                proxy.assert_parent_bal(&fixture.parent["hash"]);
                 assert_eq!(proxy.slot_reads(U256::ZERO), 0);
             }
         }
@@ -898,10 +898,8 @@ contract ForkBalTest {
                 assert_eq!(proxy.count(BAL_METHOD), 0);
                 assert!(proxy.account_reads(account) > 0, "disabled BAL must fetch the account");
             } else {
-                let requests = proxy.requests.lock();
-                let bal = requests.iter().find(|request| request["method"] == BAL_METHOD).unwrap();
-                assert_eq!(bal["params"], json!([parent["hash"]]));
-                drop(requests);
+                proxy.assert_parent_bal(&parent["hash"]);
+                assert_eq!(proxy.count(BAL_METHOD), 1);
                 assert_eq!(
                     proxy.account_reads(account),
                     0,

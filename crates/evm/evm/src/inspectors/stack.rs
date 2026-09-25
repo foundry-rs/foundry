@@ -424,7 +424,7 @@ struct PendingCallTrace {
 }
 
 #[derive(Clone, Copy, Debug)]
-struct IsolatedFrameCheckpoint {
+struct SnapshotFrameCheckpoint {
     checkpoint: JournalCheckpoint,
     restore_len: usize,
     return_depth: usize,
@@ -484,8 +484,8 @@ pub struct InspectorStackInner {
     pending_create2_redirects: Vec<PendingCreate2Redirect>,
     /// LIFO stack tracking the effective address of traced calls delegated to the EVM provider.
     pending_call_traces: Vec<PendingCallTrace>,
-    /// LIFO stack used to unwind snapshot restoration across reverted isolated frames.
-    isolated_frame_checkpoints: Vec<IsolatedFrameCheckpoint>,
+    /// LIFO stack used to unwind snapshot restoration across reverted frames.
+    snapshot_frame_checkpoints: Vec<SnapshotFrameCheckpoint>,
     /// Pending CREATE2 deployer validation error, deferred from `frame_start` to `create` so
     /// it goes through the normal inspector lifecycle (tracing, etc.).
     pub pending_create2_error: Option<CreateOutcome>,
@@ -567,9 +567,16 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
             evm_env.cfg_env.disable_fee_charge = disable_fee_charge;
         }
         let outer_tx_env = ecx.tx_clone();
-        let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
-        let (db, inner) = ecx.db_journal_inner_mut();
-        db.transact(fork_id, transaction, evm_env, &outer_tx_env, inner, &mut inspector)
+        // Transaction replay owns a fresh journal, separate from the suspended call's checkpoints.
+        let track_snapshot_restores = std::mem::replace(&mut cheats.track_snapshot_restores, false);
+        let result = {
+            let mut inspector =
+                InspectorStackRefMut { cheatcodes: Some(&mut *cheats), inner: self };
+            let (db, inner) = ecx.db_journal_inner_mut();
+            db.transact(fork_id, transaction, evm_env, &outer_tx_env, inner, &mut inspector)
+        };
+        cheats.track_snapshot_restores = track_snapshot_restores;
+        result
     }
 
     fn transact_from_tx_on_db(
@@ -582,9 +589,16 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         if let Some(disable_fee_charge) = self.outer_disable_fee_charge {
             evm_env.cfg_env.disable_fee_charge = disable_fee_charge;
         }
-        let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
-        let (db, inner) = ecx.db_journal_inner_mut();
-        db.transact_from_tx(tx_env, evm_env, inner, &mut inspector)
+        // Signed transaction execution must not record restorations against the caller's journal.
+        let track_snapshot_restores = std::mem::replace(&mut cheats.track_snapshot_restores, false);
+        let result = {
+            let mut inspector =
+                InspectorStackRefMut { cheatcodes: Some(&mut *cheats), inner: self };
+            let (db, inner) = ecx.db_journal_inner_mut();
+            db.transact_from_tx(tx_env, evm_env, inner, &mut inspector)
+        };
+        cheats.track_snapshot_restores = track_snapshot_restores;
+        result
     }
 
     fn console_log(&mut self, msg: &str) {
@@ -1082,16 +1096,17 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         self.outer_disable_fee_charge = Some(cached_evm_env.cfg_env.disable_fee_charge);
         self.in_inner_context = true;
 
-        // Tell cheatcodes we're entering the synthetic inner transaction so
-        // env-mutating cheatcodes route through `env_overrides` instead of
-        // fighting with the fee-accounting zeroing above. See `EnvOverrides`.
-        if let Some(cheats) = self.cheatcodes.as_deref_mut() {
-            cheats.pending_isolated_snapshot_journal = None;
-            cheats.track_isolated_snapshots = true;
-            cheats.isolated_snapshot_restores.clear();
-            cheats.in_isolation_context = true;
-        }
-        self.inner.isolated_frame_checkpoints.clear();
+        // Route environment changes through `env_overrides` inside the synthetic transaction.
+        // Each journal owns its rollback records, so suspend the parent's records until return.
+        let parent_snapshot_tracking = self.cheatcodes.as_deref_mut().map(|cheats| {
+            (
+                std::mem::replace(&mut cheats.track_snapshot_restores, true),
+                std::mem::replace(&mut cheats.in_isolation_context, true),
+                cheats.pending_isolated_snapshot_journal.take(),
+                std::mem::take(&mut cheats.snapshot_restores),
+            )
+        });
+        let parent_snapshot_frame_len = self.inner.snapshot_frame_checkpoints.len();
 
         let evm_env = ecx.evm_clone();
         let tx_env = ecx.tx_clone();
@@ -1154,22 +1169,24 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         self.inner_context_data = None;
         self.outer_disable_fee_charge = None;
 
-        // Reset the cheatcodes isolation flag now that the synthetic inner
-        // transaction has finished.
-        if let Some(cheats) = self.cheatcodes.as_deref_mut() {
-            cheats.in_isolation_context = false;
-            cheats.track_isolated_snapshots = false;
-        }
+        // Restore the suspended journal's tracking even when transaction execution failed.
+        let restored_journal = if let Some(cheats) = self.cheatcodes.as_deref_mut()
+            && let Some((track_restores, in_isolation, pending_journal, restores)) =
+                parent_snapshot_tracking
+        {
+            cheats.track_snapshot_restores = track_restores;
+            cheats.in_isolation_context = in_isolation;
+            cheats.snapshot_restores = restores;
+            std::mem::replace(&mut cheats.pending_isolated_snapshot_journal, pending_journal)
+        } else {
+            None
+        };
+        self.inner.snapshot_frame_checkpoints.truncate(parent_snapshot_frame_len);
 
         let mut gas = Gas::new_with_regular_gas_and_reservoir(regular_limit, reservoir);
         let was_precompile_called = self.isolated_call_was_precompile.take().unwrap_or(false);
 
         let Ok(res) = res else {
-            if let Some(cheats) = self.cheatcodes.as_deref_mut() {
-                cheats.pending_isolated_snapshot_journal = None;
-                cheats.isolated_snapshot_restores.clear();
-            }
-            self.inner.isolated_frame_checkpoints.clear();
             #[cfg(feature = "monad")]
             foundry_evm_core::FoundryJournal::restore_reserve_balance(
                 ecx.journal_mut(),
@@ -1199,15 +1216,15 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
 
         let rolled_back = !res.result.is_success();
 
-        let restored_journal = self
-            .cheatcodes
-            .as_deref_mut()
-            .and_then(|cheats| cheats.pending_isolated_snapshot_journal.take());
-        if let Some(cheats) = self.cheatcodes.as_deref_mut() {
-            cheats.isolated_snapshot_restores.clear();
-        }
-        self.inner.isolated_frame_checkpoints.clear();
         let restored_snapshot = if !rolled_back && let Some(restored_journal) = restored_journal {
+            // The parent's checkpoints refer to its journal, not the isolated transaction's.
+            // Retain the parent state before replacing that journal so an enclosing revert can
+            // still unwind the successful snapshot restoration.
+            if let Some(cheats) = self.cheatcodes.as_deref_mut()
+                && cheats.track_snapshot_restores
+            {
+                cheats.snapshot_restores.push(ecx.journal_inner().clone());
+            }
             let (_, journaled_state) = ecx.db_journal_inner_mut();
             journaled_state.journal = restored_journal;
             true
@@ -1433,19 +1450,20 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         }
     }
 
-    fn finish_isolated_snapshot_frame(&mut self, ecx: &mut FoundryContextFor<'_, FEN>) {
-        let Some(frame) = self.inner.isolated_frame_checkpoints.pop() else { return };
+    fn finish_snapshot_frame(&mut self, ecx: &mut FoundryContextFor<'_, FEN>) {
+        let Some(frame) = self.inner.snapshot_frame_checkpoints.pop() else { return };
 
         if frame.failed
             && let Some(cheats) = self.cheatcodes.as_deref_mut()
-            && cheats.isolated_snapshot_restores.len() > frame.restore_len
+            && cheats.snapshot_restores.len() > frame.restore_len
         {
-            let mut reverted = cheats.isolated_snapshot_restores.split_off(frame.restore_len);
+            let mut reverted = cheats.snapshot_restores.split_off(frame.restore_len);
             let mut journal = reverted.remove(0);
             journal.checkpoint_revert(frame.checkpoint);
             journal.depth = frame.return_depth;
-            cheats.pending_isolated_snapshot_journal =
-                (!cheats.isolated_snapshot_restores.is_empty()).then(|| journal.journal.clone());
+            cheats.pending_isolated_snapshot_journal = (cheats.in_isolation_context
+                && !cheats.snapshot_restores.is_empty())
+            .then(|| journal.journal.clone());
             ecx.set_journal_inner(journal);
         }
 
@@ -1465,8 +1483,8 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         interpreter: &mut Interpreter,
         ecx: &mut FoundryContextFor<'_, FEN>,
     ) {
-        if self.cheatcodes.as_deref().is_some_and(|cheats| cheats.track_isolated_snapshots)
-            && let Some(frame) = self.inner.isolated_frame_checkpoints.last_mut()
+        if self.cheatcodes.as_deref().is_some_and(|cheats| cheats.track_snapshot_restores)
+            && let Some(frame) = self.inner.snapshot_frame_checkpoints.last_mut()
             && frame.is_create
             && let Some(offset) = ecx.journal_inner().journal[frame.checkpoint.journal_i..]
                 .iter()
@@ -1548,9 +1566,19 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         ecx: &mut FoundryContextFor<'_, FEN>,
         frame_input: &mut FrameInput,
     ) -> Option<FrameResult> {
-        if self.cheatcodes.as_deref().is_some_and(|cheats| cheats.track_isolated_snapshots) {
+        // The root journal also handles delegatecalls when isolation is enabled.
+        if !self.in_inner_context
+            && ecx.journal().depth() == 0
+            && let Some(cheats) = self.cheatcodes.as_deref_mut()
+        {
+            cheats.track_snapshot_restores = true;
+            cheats.snapshot_restores.clear();
+            self.inner.snapshot_frame_checkpoints.clear();
+        }
+
+        if self.cheatcodes.as_deref().is_some_and(|cheats| cheats.track_snapshot_restores) {
             let journal = ecx.journal_inner();
-            self.inner.isolated_frame_checkpoints.push(IsolatedFrameCheckpoint {
+            self.inner.snapshot_frame_checkpoints.push(SnapshotFrameCheckpoint {
                 checkpoint: JournalCheckpoint {
                     log_i: journal.logs.len(),
                     journal_i: journal.journal.len(),
@@ -1559,7 +1587,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                 restore_len: self
                     .cheatcodes
                     .as_deref()
-                    .map_or(0, |cheats| cheats.isolated_snapshot_restores.len()),
+                    .map_or(0, |cheats| cheats.snapshot_restores.len()),
                 return_depth: journal.depth,
                 is_create: matches!(frame_input, FrameInput::Create(_)),
                 failed: false,
@@ -1651,8 +1679,8 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
     ) {
         let depth = ecx.journal().depth();
         self.finish_create2_redirect(depth, frame_result);
-        if self.cheatcodes.as_deref().is_some_and(|cheats| cheats.track_isolated_snapshots) {
-            self.finish_isolated_snapshot_frame(ecx);
+        if self.cheatcodes.as_deref().is_some_and(|cheats| cheats.track_snapshot_restores) {
+            self.finish_snapshot_frame(ecx);
         }
 
         let result = frame_result.instruction_result();
@@ -1660,6 +1688,11 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
             let failed = std::mem::take(&mut self.inner.top_level_frame_failed_before_rewrite)
                 || !result.is_ok();
             self.top_level_frame_end(ecx, failed);
+            if let Some(cheats) = self.cheatcodes.as_deref_mut() {
+                cheats.track_snapshot_restores = false;
+                cheats.snapshot_restores.clear();
+                self.inner.snapshot_frame_checkpoints.clear();
+            }
         }
     }
 
@@ -1865,8 +1898,8 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         inputs: &CallInputs,
         outcome: &mut CallOutcome,
     ) {
-        if self.cheatcodes.as_deref().is_some_and(|cheats| cheats.track_isolated_snapshots)
-            && let Some(frame) = self.inner.isolated_frame_checkpoints.last_mut()
+        if self.cheatcodes.as_deref().is_some_and(|cheats| cheats.track_snapshot_restores)
+            && let Some(frame) = self.inner.snapshot_frame_checkpoints.last_mut()
         {
             frame.failed |= !outcome.result.result.is_ok();
         }
@@ -2011,8 +2044,8 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         call: &CreateInputs,
         outcome: &mut CreateOutcome,
     ) {
-        if self.cheatcodes.as_deref().is_some_and(|cheats| cheats.track_isolated_snapshots)
-            && let Some(frame) = self.inner.isolated_frame_checkpoints.last_mut()
+        if self.cheatcodes.as_deref().is_some_and(|cheats| cheats.track_snapshot_restores)
+            && let Some(frame) = self.inner.snapshot_frame_checkpoints.last_mut()
         {
             frame.failed |= !outcome.result.result.is_ok();
         }

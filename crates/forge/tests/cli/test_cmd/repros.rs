@@ -1,6 +1,11 @@
 //! Regression tests for specific GitHub issues
 
+use alloy_primitives::{B256, Bytes, keccak256};
+use alloy_provider::Provider;
+use anvil::{EthereumHardfork, NodeConfig, spawn};
+use foundry_evm::constants::TEST_CONTRACT_ADDRESS;
 use foundry_test_utils::str;
+use serde_json::{Value, json};
 
 // https://github.com/foundry-rs/foundry/issues/3055
 forgetest_init!(issue_3055, |prj, cmd| {
@@ -75,7 +80,6 @@ forgetest_init!(isolated_snapshot_enclosing_revert, |prj, cmd| {
         r#"
 import "forge-std/Test.sol";
 
-/// forge-config: default.isolate = true
 contract IsolatedSnapshotEnclosingRevertTest is Test {
     uint256 value;
 
@@ -132,6 +136,16 @@ contract IsolatedSnapshotEnclosingRevertTest is Test {
 
         vm.expectRevert("outer failed");
         this.outerExecute(rawTx);
+
+        assertEq(value, 1);
+    }
+
+    function test_broadcast_raw_transaction_restore_does_not_escape_reverted_call() public {
+        value = 1;
+        bytes memory rawTx = signedTransaction(abi.encodeCall(this.snapshotAndRestore, ()));
+
+        vm.expectRevert("outer failed");
+        this.outerBroadcastRaw(rawTx);
 
         assertEq(value, 1);
     }
@@ -193,6 +207,12 @@ contract IsolatedSnapshotEnclosingRevertTest is Test {
         revert("outer failed");
     }
 
+    function outerBroadcastRaw(bytes calldata rawTx) external {
+        value = 2;
+        vm.broadcastRawTransaction(rawTx);
+        revert("outer failed");
+    }
+
     function snapshotAndRestore() external {
         uint256 snapshotId = vm.snapshotState();
         require(vm.revertToState(snapshotId));
@@ -246,8 +266,9 @@ contract SuccessfulDeployment {}
 "#,
     );
 
-    cmd.arg("test").assert_failure().stdout_eq(str![[r#"
+    cmd.args(["test", "--isolate"]).assert_failure().stdout_eq(str![[r#"
 ...
+[PASS] test_broadcast_raw_transaction_restore_does_not_escape_reverted_call() ([GAS])
 [PASS] test_caught_nested_restore_revert_does_not_escape() ([GAS])
 [PASS] test_execute_transaction_restore_does_not_escape_reverted_isolated_call() ([GAS])
 [FAIL: expected test revert] test_revert_after_isolated_restore() ([GAS])
@@ -256,6 +277,26 @@ contract SuccessfulDeployment {}
 [PASS] test_reverted_isolated_restore_does_not_escape() ([GAS])
 [PASS] test_successful_restore_survives_reverted_sibling() ([GAS])
 ...
+"#]]);
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--no-isolate",
+            "--match-test",
+            "test_(execute_transaction|broadcast_raw_transaction)",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 2 tests for test/IsolatedSnapshotEnclosingRevert.t.sol:IsolatedSnapshotEnclosingRevertTest
+[PASS] test_broadcast_raw_transaction_restore_does_not_escape_reverted_call() ([GAS])
+[PASS] test_execute_transaction_restore_does_not_escape_reverted_isolated_call() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
 "#]]);
 });
 
@@ -1410,9 +1451,7 @@ contract SnapshotDepthTest {
     for isolate in [false, true] {
         cmd.forge_fuse();
         cmd.args(["test", "--match-contract", "SnapshotDepthTest", "-vvv"]);
-        if isolate {
-            cmd.arg("--isolate");
-        }
+        cmd.arg(if isolate { "--isolate" } else { "--no-isolate" });
         cmd.assert_success().stdout_eq(str![[r#"
 ...
 Ran 4 tests for test/SnapshotDepth.t.sol:SnapshotDepthTest
@@ -1423,6 +1462,425 @@ Ran 4 tests for test/SnapshotDepth.t.sol:SnapshotDepthTest
 Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 4 tests passed, 0 failed, 0 skipped (4 total tests)
+
+"#]]);
+    }
+});
+
+forgetest!(snapshot_restore_respects_enclosing_revert, |prj, cmd| {
+    prj.add_test(
+        "SnapshotEnclosingRevert.t.sol",
+        r#"
+interface Vm {
+    function snapshotState() external returns (uint256);
+    function revertToState(uint256) external returns (bool);
+    function revertToStateAndDelete(uint256) external returns (bool);
+}
+
+contract SnapshotEnclosingRevertTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    uint256 value;
+
+    function testRevertedRestore() public {
+        checkRevertedRestore(false);
+    }
+
+    function testRevertedRestoreAndDelete() public {
+        checkRevertedRestore(true);
+    }
+
+    function testSuccessfulRestoreSurvivesRevertedSibling() public {
+        this.restoreThenRevertedSibling(false);
+        require(value == 4, "successful restore lost on return");
+    }
+
+    function testSuccessfulRestoreAndDeleteSurvivesRevertedSibling() public {
+        this.restoreThenRevertedSibling(true);
+        require(value == 4, "successful restore lost on return");
+    }
+
+    function checkRevertedRestore(bool remove) internal {
+        value = 1;
+        uint256 snapshotId = vm.snapshotState();
+        value = 2;
+
+        try this.restoreTwiceThenRevert(snapshotId, remove) {
+            revert("expected call revert");
+        } catch Error(string memory reason) {
+            require(keccak256(bytes(reason)) == keccak256("expected call revert"), "unexpected call revert");
+        }
+
+        require(value == 2, "reverted restore escaped");
+    }
+
+    function restoreTwiceThenRevert(uint256 snapshotId, bool remove) external {
+        value = 3;
+        restore(snapshotId, false);
+        require(value == 1, "first restore failed");
+        value = 4;
+        restore(snapshotId, remove);
+        require(value == 1, "second restore failed");
+        value = 5;
+        revert("expected call revert");
+    }
+
+    function restoreThenRevertedSibling(bool remove) external {
+        value = 1;
+        uint256 snapshotId = vm.snapshotState();
+        value = 2;
+        this.restore(snapshotId, remove);
+        require(value == 1, "successful restore failed");
+        value = 4;
+
+        try this.writeThenRevert() {
+            revert("expected sibling revert");
+        } catch Error(string memory reason) {
+            require(keccak256(bytes(reason)) == keccak256("expected sibling revert"), "unexpected sibling revert");
+        }
+
+        require(value == 4, "reverted sibling changed restored state");
+    }
+
+    function restore(uint256 snapshotId, bool remove) public {
+        require(remove ? vm.revertToStateAndDelete(snapshotId) : vm.revertToState(snapshotId));
+    }
+
+    function writeThenRevert() external {
+        value = 5;
+        revert("expected sibling revert");
+    }
+}
+"#,
+    );
+
+    for isolate in [false, true] {
+        cmd.forge_fuse();
+        cmd.args(["test", "--match-contract", "SnapshotEnclosingRevertTest", "-vvv"]);
+        cmd.arg(if isolate { "--isolate" } else { "--no-isolate" });
+        cmd.assert_success().stdout_eq(str![[r#"
+...
+Ran 4 tests for test/SnapshotEnclosingRevert.t.sol:SnapshotEnclosingRevertTest
+[PASS] testRevertedRestore() ([GAS])
+[PASS] testRevertedRestoreAndDelete() ([GAS])
+[PASS] testSuccessfulRestoreAndDeleteSurvivesRevertedSibling() ([GAS])
+[PASS] testSuccessfulRestoreSurvivesRevertedSibling() ([GAS])
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 4 tests passed, 0 failed, 0 skipped (4 total tests)
+
+"#]]);
+    }
+});
+
+forgetest_async!(fork_transact_snapshot_restore_respects_enclosing_revert, |prj, cmd| {
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_hardfork(Some(EthereumHardfork::Cancun.into()))
+            .with_no_mining(true),
+    )
+    .await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_wallets().next().unwrap().address();
+    // The mined recipient is empty; replay uses the persistent test contract at this address.
+    let transaction = provider
+        .raw_request::<_, B256>(
+            "eth_sendTransaction".into(),
+            (json!({
+                "from": sender,
+                "to": TEST_CONTRACT_ADDRESS,
+                "data": Bytes::copy_from_slice(&keccak256("snapshotAndRestore()")[..4]),
+                "gas": "0x100000",
+                "gasPrice": "0x77359400",
+            }),),
+        )
+        .await
+        .unwrap();
+    api.mine_one().await.unwrap();
+    let receipt = provider
+        .raw_request::<_, Value>("eth_getTransactionReceipt".into(), (transaction,))
+        .await
+        .unwrap();
+    assert_eq!(receipt["status"], "0x1");
+
+    let source = r#"
+interface Vm {
+    struct Log {
+        bytes32[] topics;
+        bytes data;
+        address emitter;
+    }
+
+    function createSelectFork(string calldata) external returns (uint256);
+    function recordLogs() external;
+    function getRecordedLogs() external returns (Log[] memory);
+    function snapshotState() external returns (uint256);
+    function revertToState(uint256) external returns (bool);
+    function transact(bytes32) external;
+    function transact(uint256, bytes32) external;
+}
+
+contract ForkTransactSnapshotTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    bytes32 constant transaction = <transaction>;
+    uint256 value;
+    uint256 forkId;
+
+    event SnapshotRestored();
+
+    function setUp() public {
+        require(address(this) == <test_contract_address>, "unexpected test address");
+        forkId = vm.createSelectFork("<rpc>");
+    }
+
+    function testTransactRestoreDoesNotEscapeRevertedCall() public {
+        checkEnclosingRevert(false);
+    }
+
+    function testTransactByIdRestoreDoesNotEscapeRevertedCall() public {
+        checkEnclosingRevert(true);
+    }
+
+    function testTransactResumesSnapshotTracking() public {
+        checkResumedTracking(false);
+    }
+
+    function testTransactByIdResumesSnapshotTracking() public {
+        checkResumedTracking(true);
+    }
+
+    function checkEnclosingRevert(bool useForkId) internal {
+        value = 1;
+        try this.transactThenRevert(useForkId) {
+            revert("expected outer revert");
+        } catch Error(string memory reason) {
+            require(keccak256(bytes(reason)) == keccak256("outer failed"), "unexpected outer revert");
+        }
+        require(value == 1, "fresh journal escaped to parent");
+    }
+
+    function checkResumedTracking(bool useForkId) internal {
+        value = 1;
+        uint256 snapshotId = vm.snapshotState();
+        value = 2;
+        transact(useForkId);
+        require(value == 2, "replay changed persistent state");
+
+        try this.restoreThenRevert(snapshotId) {
+            revert("expected call revert");
+        } catch Error(string memory reason) {
+            require(keccak256(bytes(reason)) == keccak256("expected call revert"), "unexpected call revert");
+        }
+        require(value == 2, "snapshot tracking did not resume");
+    }
+
+    function transactThenRevert(bool useForkId) external {
+        value = 2;
+        transact(useForkId);
+        revert("outer failed");
+    }
+
+    function transact(bool useForkId) internal {
+        vm.recordLogs();
+        if (useForkId) vm.transact(forkId, transaction);
+        else vm.transact(transaction);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        require(logs.length == 1, "missing replay event");
+        require(logs[0].emitter == address(this), "wrong replay emitter");
+        require(logs[0].topics[0] == keccak256("SnapshotRestored()"), "wrong replay event");
+    }
+
+    function snapshotAndRestore() external {
+        uint256 snapshotId = vm.snapshotState();
+        require(vm.revertToState(snapshotId));
+        emit SnapshotRestored();
+    }
+
+    function restoreThenRevert(uint256 snapshotId) external {
+        value = 3;
+        require(vm.revertToState(snapshotId));
+        value = 4;
+        revert("expected call revert");
+    }
+}
+"#
+    .replace("<transaction>", &transaction.to_string())
+    .replace("<test_contract_address>", &TEST_CONTRACT_ADDRESS.to_string())
+    .replace("<rpc>", &handle.http_endpoint());
+    prj.add_test("ForkTransactSnapshot.t.sol", &source);
+
+    for isolate in [false, true] {
+        cmd.forge_fuse().args([
+            "test",
+            "--match-contract",
+            "ForkTransactSnapshotTest",
+            "--evm-version",
+            "cancun",
+            "-vvv",
+        ]);
+        cmd.arg(if isolate { "--isolate" } else { "--no-isolate" });
+        cmd.assert_success().stdout_eq(str![[r#"
+...
+Ran 4 tests for test/ForkTransactSnapshot.t.sol:ForkTransactSnapshotTest
+[PASS] testTransactByIdRestoreDoesNotEscapeRevertedCall() ([GAS])
+[PASS] testTransactByIdResumesSnapshotTracking() ([GAS])
+[PASS] testTransactRestoreDoesNotEscapeRevertedCall() ([GAS])
+[PASS] testTransactResumesSnapshotTracking() ([GAS])
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 4 tests passed, 0 failed, 0 skipped (4 total tests)
+
+"#]]);
+    }
+});
+
+forgetest!(snapshot_restore_respects_delegatecall_revert, |prj, cmd| {
+    prj.add_test(
+        "DelegateSnapshot.t.sol",
+        r#"
+interface Vm {
+    function snapshotState() external returns (uint256);
+    function revertToState(uint256) external returns (bool);
+    function revertToStateAndDelete(uint256) external returns (bool);
+}
+
+contract DelegateSnapshotTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    uint256 value;
+
+    function testDelegateRestoreReverted() public {
+        checkRevertedRestore(false);
+    }
+
+    function testDelegateRestoreAndDeleteReverted() public {
+        checkRevertedRestore(true);
+    }
+
+    function testDelegateRestoreSurvivesRevertedSibling() public {
+        checkSuccessfulRestore(false);
+    }
+
+    function testDelegateRestoreAndDeleteSurvivesRevertedSibling() public {
+        checkSuccessfulRestore(true);
+    }
+
+    function testDelegateRestoreTrackingSurvivesCalls() public {
+        checkSnapshotBoundaries(false);
+    }
+
+    function testDelegateRestoreTrackingSurvivesCreates() public {
+        checkSnapshotBoundaries(true);
+    }
+
+    function checkRevertedRestore(bool remove) internal {
+        value = 1;
+        uint256 snapshotId = vm.snapshotState();
+        value = 2;
+        assertRevertedDelegate(abi.encodeCall(this.restoreThenRevert, (snapshotId, remove)));
+        require(value == 2, "reverted delegate restore escaped");
+    }
+
+    function checkSuccessfulRestore(bool remove) internal {
+        prepareSuccessfulRestore(remove);
+        assertRevertedDelegate(abi.encodeCall(this.writeThenRevert, ()));
+        require(value == 4, "reverted sibling changed successful restore");
+    }
+
+    function checkSnapshotBoundaries(bool create) internal {
+        uint256 snapshotId = prepareSuccessfulRestore(false);
+        if (create) {
+            require(address(new SnapshotBoundary(false)).code.length > 0, "creation failed");
+            try new SnapshotBoundary(true) {
+                revert("expected constructor revert");
+            } catch Error(string memory reason) {
+                require(keccak256(bytes(reason)) == keccak256("boundary failed"), "unexpected constructor revert");
+            }
+        } else {
+            this.snapshotBoundary(false);
+            try this.snapshotBoundary(true) {
+                revert("expected call revert");
+            } catch Error(string memory reason) {
+                require(keccak256(bytes(reason)) == keccak256("boundary failed"), "unexpected call revert");
+            }
+        }
+        require(value == 4, "boundary changed successful restore");
+
+        assertRevertedDelegate(abi.encodeCall(this.restoreThenRevert, (snapshotId, false)));
+        require(value == 4, "snapshot tracking lost across boundary");
+        assertRevertedDelegate(abi.encodeCall(this.writeThenRevert, ()));
+        require(value == 4, "reverted sibling changed successful restore");
+    }
+
+    function prepareSuccessfulRestore(bool remove) internal returns (uint256 snapshotId) {
+        value = 1;
+        snapshotId = vm.snapshotState();
+        value = 2;
+        (bool success,) = address(this).delegatecall(abi.encodeCall(this.restoreAndWrite, (snapshotId, remove)));
+        require(success, "delegate restore failed");
+        require(value == 4, "successful delegate restore lost");
+    }
+
+    function assertRevertedDelegate(bytes memory data) internal {
+        (bool success, bytes memory reason) = address(this).delegatecall(data);
+        require(!success, "delegatecall did not revert");
+        require(
+            keccak256(reason) == keccak256(abi.encodeWithSignature("Error(string)", "child failed")),
+            "unexpected delegatecall revert"
+        );
+    }
+
+    function restoreThenRevert(uint256 snapshotId, bool remove) external {
+        restoreAndWrite(snapshotId, remove);
+        value = 5;
+        revert("child failed");
+    }
+
+    function restoreAndWrite(uint256 snapshotId, bool remove) public {
+        value = 3;
+        require(remove ? vm.revertToStateAndDelete(snapshotId) : vm.revertToState(snapshotId));
+        require(value == 1, "snapshot was not restored");
+        value = 4;
+    }
+
+    function writeThenRevert() external {
+        value = 5;
+        revert("child failed");
+    }
+
+    function snapshotBoundary(bool fail) external {
+        uint256 snapshotId = vm.snapshotState();
+        value = 5;
+        require(vm.revertToState(snapshotId));
+        require(value == 4, "boundary snapshot was not restored");
+        if (fail) revert("boundary failed");
+    }
+}
+
+contract SnapshotBoundary {
+    constructor(bool fail) {
+        Vm vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+        uint256 snapshotId = vm.snapshotState();
+        require(vm.revertToState(snapshotId));
+        if (fail) revert("boundary failed");
+    }
+}
+"#,
+    );
+
+    for isolate in [false, true] {
+        cmd.forge_fuse().args(["test", "--match-contract", "DelegateSnapshotTest", "-vvv"]);
+        cmd.arg(if isolate { "--isolate" } else { "--no-isolate" });
+        cmd.assert_success().stdout_eq(str![[r#"
+...
+Ran 6 tests for test/DelegateSnapshot.t.sol:DelegateSnapshotTest
+[PASS] testDelegateRestoreAndDeleteReverted() ([GAS])
+[PASS] testDelegateRestoreAndDeleteSurvivesRevertedSibling() ([GAS])
+[PASS] testDelegateRestoreReverted() ([GAS])
+[PASS] testDelegateRestoreSurvivesRevertedSibling() ([GAS])
+[PASS] testDelegateRestoreTrackingSurvivesCalls() ([GAS])
+[PASS] testDelegateRestoreTrackingSurvivesCreates() ([GAS])
+Suite result: ok. 6 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 6 tests passed, 0 failed, 0 skipped (6 total tests)
 
 "#]]);
     }
