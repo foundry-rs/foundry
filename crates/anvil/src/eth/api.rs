@@ -1901,6 +1901,7 @@ impl EthApi<FoundryNetwork> {
             &request,
             FoundryTransactionRequest::Tempo(request) if request.key_id.is_some()
         );
+        let disable_fee_charge = is_tempo_keychain || inner.from.is_none();
 
         let gas_price = fees.gas_price.unwrap_or_default();
         // Check transfer value before any fast path, and cap gas limit by sender balance when the
@@ -1941,6 +1942,7 @@ impl EthApi<FoundryNetwork> {
             if maybe_transfer
                 && highest_gas_limit >= MIN_TRANSACTION_GAS
                 && let Some(to) = to
+                && !self.backend.is_precompile(to, &block_env)
                 && let Ok(target_code) = self.backend.get_code_with_state(&state, *to)
                 && target_code.as_ref().is_empty()
             {
@@ -1956,7 +1958,7 @@ impl EthApi<FoundryNetwork> {
             block_env.clone(),
             GasEstimateCallOptions::new(
                 highest_gas_limit as u64,
-                is_tempo_keychain,
+                disable_fee_charge,
                 monad_context.clone(),
             ),
         );
@@ -1996,7 +1998,7 @@ impl EthApi<FoundryNetwork> {
                 block_env.clone(),
                 GasEstimateCallOptions::new(
                     mid_gas_limit as u64,
-                    is_tempo_keychain,
+                    disable_fee_charge,
                     monad_context.clone(),
                 ),
             );

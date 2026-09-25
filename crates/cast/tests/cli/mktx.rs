@@ -451,7 +451,7 @@ casttest!(mktx_raw_unsigned_no_from_missing_gas_pricing, async |_prj, cmd| {
     ])
     .assert_success()
     .stdout_eq(str![[
-        r#"0x02e5827a69800184773594018252089400000000000000000000000000000000000000018080c0
+        r#"0x02e5827a6980018477359401825dc09400000000000000000000000000000000000000018080c0
 
 "#
     ]]);
