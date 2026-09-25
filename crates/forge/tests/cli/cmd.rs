@@ -104,7 +104,7 @@ contract Simple {
 
     prj.create_file(
         "foundry.toml",
-        format!(
+        &format!(
             r#"
 [default]
 evm_version = "cancun"
