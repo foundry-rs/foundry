@@ -1548,6 +1548,17 @@ impl<N: Network> Backend<N> {
         precompiles_map
     }
 
+    /// Returns whether the address is an active precompile in the given block environment.
+    pub fn is_precompile(&self, address: &Address, block_env: &BlockEnv) -> bool {
+        let mut evm_env = self.evm_env.read().clone();
+        evm_env.block_env = block_env.clone();
+        let mut precompiles = PrecompilesMap::from_static(Precompiles::new(
+            PrecompileSpecId::from_spec_id(self.spec_id()),
+        ));
+        self.inject_precompiles(&mut precompiles, &evm_env);
+        precompiles.get(address).is_some()
+    }
+
     /// Returns the system contracts for the current spec.
     pub fn system_contracts(&self) -> BTreeMap<SystemContract, Address> {
         let mut system_contracts = BTreeMap::<SystemContract, Address>::default();

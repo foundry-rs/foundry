@@ -1,6 +1,7 @@
 //! Gas related tests
 
 use crate::utils::http_provider_with_signer;
+use alloy_chains::NamedChain;
 use alloy_genesis::Genesis;
 use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes, U64, U256, bytes, uint};
@@ -16,6 +17,7 @@ use anvil::{
     spawn,
 };
 use foundry_evm::constants::HARDHAT_CONSOLE_ADDRESS;
+use foundry_evm_networks::arbitrum;
 use revm::context_interface::block::BlobExcessGasAndPrice;
 
 const GAS_TRANSFER: u64 = 21_000;
@@ -388,6 +390,49 @@ async fn test_estimate_gas_empty_data() {
     assert_eq!(gas_with_empty_data, U256::from(GAS_TRANSFER));
     assert!(gas_with_data > U256::from(GAS_TRANSFER));
     assert_eq!(gas_without_data, gas_with_empty_data);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_estimate_gas_empty_precompile_data() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    let identity_precompile = Address::with_last_byte(4);
+    let tx = TransactionRequest::default()
+        .with_to(identity_precompile)
+        .with_gas_price(1_000_000_000)
+        .with_input(vec![]);
+
+    let gas = api.estimate_gas(WithOtherFields::new(tx), None, Default::default()).await.unwrap();
+
+    assert_eq!(gas, U256::from(GAS_TRANSFER + 15));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_estimate_gas_block_precompile() {
+    let (api, handle) =
+        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Arbitrum as u64))).await;
+    let from = handle.dev_accounts().next().unwrap();
+    let empty_input = TransactionRequest::default()
+        .with_from(from)
+        .with_to(arbitrum::ARB_SYS_ADDRESS)
+        .with_input(vec![]);
+
+    let err = api
+        .estimate_gas(WithOtherFields::new(empty_input), None, Default::default())
+        .await
+        .unwrap_err();
+
+    assert_eq!(err.to_string(), "EVM error PrecompileError");
+
+    let valid_input = TransactionRequest::default()
+        .with_from(from)
+        .with_to(arbitrum::ARB_SYS_ADDRESS)
+        .with_input(Bytes::copy_from_slice(&arbitrum::ARB_BLOCK_NUMBER_SELECTOR));
+    let gas = api
+        .estimate_gas(WithOtherFields::new(valid_input), None, Default::default())
+        .await
+        .unwrap();
+
+    assert_eq!(gas, U256::from(0x52a8));
 }
 
 #[tokio::test(flavor = "multi_thread")]
