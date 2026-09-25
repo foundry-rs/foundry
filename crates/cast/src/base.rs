@@ -171,6 +171,10 @@ impl NumberWithBase {
         };
         let mut number = Self::parse_digits(s, base)?;
         if !is_nonnegative {
+            eyre::ensure!(
+                number <= I256::MIN.unsigned_abs(),
+                "value out of range for a signed 256-bit integer"
+            );
             number = number.wrapping_neg();
         }
         Ok(Self { number, is_nonnegative, base })

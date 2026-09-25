@@ -1,22 +1,17 @@
 //! Tests for BAL source eligibility, validation and fork cache insertion.
 
-use super::{ClientForkConfig, ForkEndpointIdentity, cache_bal, validate_bal};
+use super::*;
 use alloy_eips::eip7928::{
     AccountChanges, BalanceChange, BlockAccessIndex, CodeChange, NonceChange, SlotChanges,
     StorageChange, compute_block_access_list_hash,
 };
-use alloy_network::{AnyHeader, AnyNetwork, AnyRpcBlock, AnyRpcHeader};
-use alloy_primitives::{Address, B256, Bytes, U256, bytes};
+use alloy_network::{AnyHeader, AnyRpcHeader};
+use alloy_primitives::bytes;
 use alloy_provider::ProviderBuilder;
-use alloy_rpc_types::{Block, BlockTransactions};
+use alloy_rpc_types::Block;
 use alloy_transport::mock::Asserter;
-use foundry_evm::{
-    backend::{BlockchainDb, BlockchainDbMeta},
-    hardfork::EthereumHardfork,
-};
-use foundry_evm_networks::NetworkVariant;
+use foundry_evm::{backend::BlockchainDbMeta, hardfork::EthereumHardfork};
 use revm::{context::BlockEnv, state::AccountInfo};
-use std::{sync::Arc, time::Duration};
 
 fn database(hash: B256) -> BlockchainDb {
     BlockchainDb::new(
@@ -241,7 +236,7 @@ fn fork_bal_seed_preserves_storage_boundaries() {
         ));
     let db = database(hash);
 
-    cache_bal(&db, vec![account]);
+    cache_bal(db.db(), vec![account]);
 
     let storage = db.storage().read();
     assert_eq!(storage[&address][&slot], U256::ZERO);
@@ -255,7 +250,7 @@ fn fork_bal_seed_preserves_storage_boundaries() {
     ));
     let db = database(hash);
     validate_bal(&vec![post_execution.clone()], 0, None).unwrap();
-    cache_bal(&db, vec![post_execution]);
+    cache_bal(db.db(), vec![post_execution]);
     assert_eq!(db.storage().read()[&address][&post_execution_slot], U256::from(42));
 }
 
@@ -268,7 +263,7 @@ fn fork_bal_seed_leaves_partial_accounts_and_reads_unknown() {
         .with_storage_read(U256::from(2));
     let db = database(hash);
 
-    cache_bal(&db, vec![account]);
+    cache_bal(db.db(), vec![account]);
 
     assert!(db.accounts().read().is_empty());
     assert!(db.storage().read().is_empty());
@@ -302,7 +297,7 @@ fn fork_bal_seed_preserves_cached_values_and_merges_slots() {
         [(U256::from(1), U256::from(101)), (U256::from(3), U256::from(303))].into_iter().collect(),
     );
 
-    cache_bal(&db, vec![account]);
+    cache_bal(db.db(), vec![account]);
 
     assert_eq!(db.accounts().read()[&address], cached_account);
     assert_eq!(
@@ -326,7 +321,7 @@ fn fork_bal_seed_keeps_final_account_code() {
         let account = complete_account(address, bytes!("6001"))
             .with_code_change(CodeChange::new(index(2), code.clone()));
 
-        cache_bal(&db, vec![account]);
+        cache_bal(db.db(), vec![account]);
 
         let accounts = db.accounts().read();
         let account = &accounts[&address];

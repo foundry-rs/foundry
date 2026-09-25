@@ -8,7 +8,11 @@ fn record_candidate_limitation(
         error,
         SymbolicError::Timeout(_) | SymbolicError::Solver(_) | SymbolicError::SolverQueryLimit(_)
     );
-    limitation.get_or_insert_with(|| error.into());
+    if search_exhausted {
+        *limitation = Some(error.into());
+    } else {
+        limitation.get_or_insert_with(|| error.into());
+    }
     search_exhausted
 }
 
@@ -351,5 +355,38 @@ impl SymbolicExecutor {
             .collect::<Result<Vec<_>, SymbolicError>>()?;
         let storage = state.world.replay_storage_assignments(&model)?;
         Ok((sequence, storage))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fatal_candidate_limitation_replaces_earlier_nonfatal_reason() {
+        let mut limitation = None;
+        assert!(!record_candidate_limitation(
+            &mut limitation,
+            SymbolicError::Unsupported("first unsupported path"),
+        ));
+        assert!(record_candidate_limitation(&mut limitation, SymbolicError::Timeout(1)));
+        assert_eq!(limitation.unwrap().kind, SymbolicStopReason::Timeout);
+    }
+
+    #[test]
+    fn nonfatal_candidate_limitation_keeps_first_reason() {
+        let mut limitation = None;
+        assert!(!record_candidate_limitation(
+            &mut limitation,
+            SymbolicError::Unsupported("first unsupported path"),
+        ));
+        assert!(!record_candidate_limitation(
+            &mut limitation,
+            SymbolicError::Unsupported("second unsupported path"),
+        ));
+        assert_eq!(
+            limitation.unwrap().reason,
+            "unsupported symbolic execution feature: first unsupported path"
+        );
     }
 }

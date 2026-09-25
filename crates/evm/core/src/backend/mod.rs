@@ -1474,12 +1474,17 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         &mut self,
         id: LocalForkId,
         block: BlockNumHash,
+        prewarm_bal: bool,
         evm_env: &mut EvmEnvFor<FEN>,
         tx_env: Option<&TxEnvFor<FEN>>,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<ContextUpdateFor<FEN::EvmFactory>> {
         trace!(?id, ?block, "roll fork to exact block");
-        let rolled = self.forks.roll_fork_exact(self.inner.ensure_fork_id(id).cloned()?, block)?;
+        let rolled = self.forks.roll_fork_exact_with_bal(
+            self.inner.ensure_fork_id(id).cloned()?,
+            block,
+            prewarm_bal,
+        )?;
         self.apply_rolled_fork_with_context(id, rolled, evm_env, tx_env, journaled_state)
     }
 
@@ -1712,7 +1717,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         let context_update = std::marker::PhantomData;
 
         // The parent roll must not prepare an intermediate synthetic context.
-        self.roll_fork_exact_with_context(id, fork_block, evm_env, None, journaled_state)?;
+        self.roll_fork_exact_with_context(id, fork_block, mined, evm_env, None, journaled_state)?;
 
         let source_chain_id = self.inner.get_fork_by_id(id)?.source_chain_id;
         update_env_block::<AnyNetwork, _, _>(evm_env, &block, source_chain_id, self.networks);
@@ -1965,6 +1970,9 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
             // merge additional logs
             snapshot.merge(current_state);
             let BackendStateSnapshot { db, mut journaled_state, snap_evm_env } = snapshot;
+            // The snapshot restores state, not the call stack: keep the depth of the frame that
+            // reverts, otherwise reverting from a nested call desyncs the journal and tracer.
+            journaled_state.depth = current_state.depth;
             match db {
                 BackendDatabaseSnapshot::InMemory(mem_db) => {
                     self.mem_db = mem_db;

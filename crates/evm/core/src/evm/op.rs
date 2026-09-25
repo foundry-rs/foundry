@@ -41,7 +41,11 @@ pub type OpRevmEvm<'db, I> = RevmEvm<
     PrecompilesMap,
 >;
 
-impl FoundryChain<OpTx> for L1BlockInfo {}
+impl FoundryChain<OpTx> for L1BlockInfo {
+    fn clear_transaction_fee_cache(&mut self) {
+        self.clear_tx_l1_cost();
+    }
+}
 
 impl IntoInstructionResult for OpHaltReason {
     fn into_instruction_result(self) -> InstructionResult {
@@ -120,7 +124,7 @@ impl<'db, I: FoundryInspectorExt<OpEvmContext<&'db mut dyn DatabaseExt<OpEvmFact
         if self.ctx().cfg().disable_fee_charge
             && tx.enveloped_tx().is_some_and(|enveloped| enveloped.is_empty())
         {
-            self.ctx_mut().chain_mut().clear_tx_l1_cost();
+            self.ctx_mut().chain_mut().clear_transaction_fee_cache();
         }
         self.ctx().set_tx(tx);
 

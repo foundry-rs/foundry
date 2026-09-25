@@ -21,6 +21,7 @@ mod base;
 mod brutalize;
 mod core;
 mod exact_fork;
+mod fork_bal;
 mod fuzz;
 mod invariant;
 mod logs;
@@ -141,6 +142,12 @@ forgetest!(testdata, |_prj, cmd| {
 
     let orig_assert = cmd.args(args).assert();
     if orig_assert.get_output().status.success() {
+        return;
+    }
+    // Only test failures are retried: a crash writes no `--rerun` failures, so a retry would
+    // either rerun everything or only unrelated flaky failures and hide the crash.
+    if orig_assert.get_output().status.code() != Some(1) {
+        orig_assert.success();
         return;
     }
     let stdout = orig_assert.get_output().stdout_lossy();

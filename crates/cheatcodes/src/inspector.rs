@@ -39,7 +39,9 @@ use foundry_common::{
 use foundry_evm_core::{
     Breakpoints, EvmEnv, FoundryTransaction, InspectorExt,
     abi::Vm::stopExpectSafeMemoryCall,
-    backend::{ContextUpdateFor, DatabaseError, DatabaseExt, LocalForkId, RevertDiagnostic},
+    backend::{
+        ContextUpdateFor, DatabaseError, DatabaseExt, JournaledState, LocalForkId, RevertDiagnostic,
+    },
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
     env::FoundryContextExt,
     evm::{
@@ -308,6 +310,8 @@ pub struct RecordDebugStepInfo {
 pub struct EnvOverrides {
     /// Override for the `BASEFEE` opcode (set via `vm.fee`).
     pub basefee: Option<u64>,
+    /// Base fee restored from a snapshot during isolation, valid until the fork is rolled.
+    pub implicit_basefee: Option<u64>,
     /// Override for the `GASPRICE` opcode (set via `vm.txGasPrice`).
     pub gas_price: Option<u128>,
     /// Override for the `BLOBHASH` opcode (set via `vm.blobhashes`).
@@ -338,7 +342,10 @@ impl EnvOverrides {
     /// Whether any override is set.
     #[inline]
     pub const fn is_any_set(&self) -> bool {
-        self.basefee.is_some() || self.gas_price.is_some() || self.blob_hashes.is_some()
+        self.basefee.is_some()
+            || self.implicit_basefee.is_some()
+            || self.gas_price.is_some()
+            || self.blob_hashes.is_some()
     }
 }
 
@@ -924,6 +931,12 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// Journal restored by a state snapshot inside an isolated transaction, to be applied to its
     /// suspended parent alongside the returned state.
     pub pending_isolated_snapshot_journal: Option<Vec<JournalEntry>>,
+
+    /// Whether snapshot restorations belong to the active isolated transaction.
+    pub track_isolated_snapshots: bool,
+
+    /// Snapshot restorations that may need to be unwound with an enclosing isolated frame.
+    pub isolated_snapshot_restores: Vec<JournaledState>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -1009,6 +1022,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             context_snapshots: Default::default(),
             in_isolation_context: false,
             pending_isolated_snapshot_journal: None,
+            track_isolated_snapshots: false,
+            isolated_snapshot_restores: Vec::new(),
         }
     }
 
@@ -3346,7 +3361,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         let Some(opcode) = env_overrides.pending_opcode.take() else { return };
         match opcode {
             op::BASEFEE => {
-                if let Some(basefee) = env_overrides.basefee {
+                if let Some(basefee) = env_overrides.basefee.or(env_overrides.implicit_basefee) {
                     // BASEFEE pushed one value; replace it.
                     Self::replace_top_of_stack(interpreter, U256::from(basefee));
                 }
