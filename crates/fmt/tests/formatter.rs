@@ -470,6 +470,44 @@ fn yul_assignment_comment_is_idempotent() {
 }
 
 #[test]
+fn yul_for_loop_breaks_overflowing_blocks() {
+    let source = r#"contract C {
+    function f(bytes32 wordValue) internal pure {
+        assembly {
+            for {} lt(length, 0x20) { length := add(length, 1) } { if iszero(byte(length, shr(128, wordValue))) { break } }
+            for { let i := limbs } iszero(eq(i, endOfTheLimbsInTheScratchBuffer)) { i := add(i, 0x20) } { mstore(i, 0) }
+            for { let i := limbs } iszero(eq(i, endOfTheLimbsInTheScratchBufferMemoryRegionEnd)) { i := add(i, 0x20) } {
+                mstore(i, 0)
+            }
+        }
+    }
+}
+"#;
+    let expected = r#"contract C {
+    function f(bytes32 wordValue) internal pure {
+        assembly {
+            for {} lt(length, 0x20) { length := add(length, 1) } {
+                if iszero(byte(length, shr(128, wordValue))) { break }
+            }
+            for { let i := limbs } iszero(eq(i, endOfTheLimbsInTheScratchBuffer)) { i := add(i, 0x20) } {
+                mstore(i, 0)
+            }
+            for { let i := limbs } iszero(eq(i, endOfTheLimbsInTheScratchBufferMemoryRegionEnd)) {
+                i := add(i, 0x20)
+            } {
+                mstore(i, 0)
+            }
+        }
+    }
+}
+"#;
+
+    let config = Arc::new(FormatterConfig::default());
+    assert_eq!(format(source, Path::new("test.sol"), config.clone()), expected);
+    assert_eq!(format(expected, Path::new("test.sol"), config), expected);
+}
+
+#[test]
 fn return_expression_comment_is_idempotent() {
     let source = r#"contract C {
     function f() external pure returns (uint256, uint256, bool) {

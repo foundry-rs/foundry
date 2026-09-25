@@ -74,11 +74,35 @@ impl<'ast> State<'_, 'ast> {
                 self.space();
                 self.print_yul_expr(cond);
 
-                self.space();
-                self.print_yul_block(step, step.span, false, 0);
+                // The header may still be buffered, so measure its last line from the indentation.
+                // A multi-line init block leaves only its closing brace on that line.
+                let init_len = if self.is_multiline_yul_block(init) || init.len() > 1 {
+                    1
+                } else {
+                    4 + self.estimate_yul_block_size(init)
+                };
+                // {init} + ' ' + {cond} + ' ' + {step}
+                let header_len = init_len
+                    + self.estimate_size(cond.span)
+                    + self.estimate_yul_block_size(step)
+                    + 2;
+                let max_len = self.max_space_left(0);
+                // Leave room for ' {' so a breaking body keeps its brace on the header.
+                let break_step = !step.is_empty() && header_len + 2 >= max_len;
+                // ' ' + {body}, after the step block's closing brace if it breaks.
+                let body_prefix =
+                    if break_step || self.is_multiline_yul_block(step) || step.len() > 1 {
+                        2
+                    } else {
+                        header_len + 1
+                    };
+                let break_body = body_prefix + self.estimate_yul_block_size(body) >= max_len;
 
                 self.space();
-                self.print_yul_block(body, body.span, false, 0);
+                self.print_yul_block_inner(step, step.span, false, 0, break_step);
+
+                self.space();
+                self.print_yul_block_inner(body, body.span, false, 0, break_body);
 
                 self.end();
             }
@@ -210,6 +234,17 @@ impl<'ast> State<'_, 'ast> {
         skip_opening_brace: bool,
         prefix_len: usize,
     ) {
+        self.print_yul_block_inner(block, span, skip_opening_brace, prefix_len, false);
+    }
+
+    fn print_yul_block_inner(
+        &mut self,
+        block: &'ast yul::Block<'ast>,
+        span: Span,
+        skip_opening_brace: bool,
+        prefix_len: usize,
+        force_break: bool,
+    ) {
         if self.handle_span(span, false) {
             return;
         }
@@ -227,7 +262,7 @@ impl<'ast> State<'_, 'ast> {
         } else {
             false
         };
-        if can_inline_block {
+        if can_inline_block && !force_break {
             self.neverbreak();
             self.print_block_inner(
                 block,
@@ -289,6 +324,15 @@ impl<'ast> State<'_, 'ast> {
     }
 
     /// Checks if a block statement `{ ... }` contains more than one line of actual code.
+    /// Estimates a single-line block, printing empty ones as `{}` or `{ }` like the formatter.
+    fn estimate_yul_block_size(&self, block: &'ast yul::Block<'ast>) -> usize {
+        if block.is_empty() && !self.has_comment_between(block.span.lo(), block.span.hi()) {
+            2 + self.config.bracket_spacing as usize
+        } else {
+            self.estimate_size(block.span)
+        }
+    }
+
     fn is_multiline_yul_block(&self, block: &'ast yul::Block<'ast>) -> bool {
         if block.stmts.is_empty() {
             return false;
