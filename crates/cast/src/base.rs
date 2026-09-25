@@ -171,7 +171,6 @@ impl NumberWithBase {
         };
         let mut number = Self::parse_digits(s, base)?;
         if !is_nonnegative {
-            // A larger magnitude would wrap around to a different number when negated.
             eyre::ensure!(
                 number <= I256::MIN.unsigned_abs(),
                 "value out of range for a signed 256-bit integer"
