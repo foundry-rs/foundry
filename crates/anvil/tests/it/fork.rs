@@ -41,7 +41,6 @@ use anvil::{
 use axum::{Json, Router, routing::post};
 use foundry_common::provider::get_http_provider;
 use foundry_config::Config;
-use foundry_evm::hardfork::OpHardfork;
 use foundry_evm_networks::{NetworkConfigs, arbitrum};
 use foundry_primitives::{FoundryNetwork, FoundryReceiptEnvelope};
 use foundry_test_utils::rpc::{
@@ -50,7 +49,7 @@ use foundry_test_utils::rpc::{
     spawn_rpc_proxy_rejecting_method_after, spawn_rpc_proxy_rejecting_method_when_enabled,
     spawn_rpc_proxy_retyping_first_block_transaction,
 };
-use futures::StreamExt;
+use futures::{StreamExt, future::pending};
 use revm::{
     context::BlockEnv, context_interface::block::BlobExcessGasAndPrice,
     precompile::PrecompileStatus, primitives::hardfork::SpecId,
@@ -58,9 +57,15 @@ use revm::{
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    sync::{Arc, atomic::Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::Duration,
 };
+
+#[cfg(feature = "optimism")]
+use foundry_evm::hardfork::OpHardfork;
 
 const BLOCK_NUMBER: u64 = 14_608_400u64;
 const DEAD_BALANCE_AT_BLOCK_NUMBER: u128 = 12_556_069_338_441_120_059_867u128;
@@ -97,6 +102,157 @@ pub fn fork_config() -> NodeConfig {
     NodeConfig::test()
         .with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()))
         .with_fork_block_number(Some(BLOCK_NUMBER))
+}
+
+#[derive(Clone, Copy)]
+enum ForkProbeFailure {
+    Stall,
+    RateLimit,
+}
+
+/// Stalls or rate-limits a probe after the given number of successful requests.
+async fn spawn_failing_fork_probe(
+    endpoint: String,
+    method: &'static str,
+    successful_calls: usize,
+    failure: ForkProbeFailure,
+) -> String {
+    let client = reqwest::Client::new();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let router = Router::new().route(
+        "/",
+        post(move |Json(request): Json<Value>| {
+            let client = client.clone();
+            let endpoint = endpoint.clone();
+            let calls = calls.clone();
+            async move {
+                if request.get("method").and_then(Value::as_str) == Some(method)
+                    && calls.fetch_add(1, Ordering::Relaxed) >= successful_calls
+                {
+                    return match failure {
+                        ForkProbeFailure::Stall => pending::<Json<Value>>().await,
+                        ForkProbeFailure::RateLimit => Json(json!({
+                            "jsonrpc": "2.0",
+                            "id": request["id"],
+                            "error": { "code": -32005, "message": "rate limit exceeded" },
+                        })),
+                    };
+                }
+                Json(
+                    client
+                        .post(endpoint)
+                        .json(&request)
+                        .send()
+                        .await
+                        .unwrap()
+                        .json::<Value>()
+                        .await
+                        .unwrap(),
+                )
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    format!("http://{address}")
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_ignores_initial_anvil_node_info_timeout() {
+    let (_api, origin) =
+        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64))).await;
+    let fork_url = spawn_failing_fork_probe(
+        origin.http_endpoint(),
+        "anvil_nodeInfo",
+        0,
+        ForkProbeFailure::Stall,
+    )
+    .await;
+    let (api, _handle) = tokio::time::timeout(
+        Duration::from_secs(5),
+        spawn(
+            NodeConfig::test()
+                .with_eth_rpc_url(Some(fork_url))
+                .fork_request_timeout(Some(Duration::from_secs(60))),
+        ),
+    )
+    .await
+    .expect("optional node-info probes must not wait for the normal RPC timeout");
+
+    assert_eq!(api.chain_id(), NamedChain::Mainnet as u64);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_bounds_anvil_node_info_retry_backoff() {
+    let (_api, origin) =
+        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64))).await;
+    let fork_url = spawn_failing_fork_probe(
+        origin.http_endpoint(),
+        "anvil_nodeInfo",
+        0,
+        ForkProbeFailure::RateLimit,
+    )
+    .await;
+    let (api, _handle) = tokio::time::timeout(
+        Duration::from_secs(5),
+        spawn(
+            NodeConfig::test()
+                .with_eth_rpc_url(Some(fork_url))
+                .fork_retry_backoff(Some(Duration::from_secs(60))),
+        ),
+    )
+    .await
+    .expect("the probe deadline must include retry backoff");
+    assert_eq!(api.chain_id(), NamedChain::Mainnet as u64);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_ignores_anvil_node_info_timeout_after_identification() {
+    let (_api, origin) = spawn(NodeConfig::test()).await;
+    let fork_url = spawn_failing_fork_probe(
+        origin.http_endpoint(),
+        "anvil_nodeInfo",
+        1,
+        ForkProbeFailure::Stall,
+    )
+    .await;
+    let result = tokio::time::timeout(
+        Duration::from_secs(5),
+        try_spawn(
+            NodeConfig::test()
+                .with_eth_rpc_url(Some(fork_url))
+                .fork_request_timeout(Some(Duration::from_secs(60))),
+        ),
+    )
+    .await
+    .expect("identified node-info probes must have a bounded deadline");
+    let (api, _handle) = result.expect("node-info timeout must fall back after identification");
+    assert_eq!(api.chain_id(), origin.http_provider().get_chain_id().await.unwrap());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_ignores_anvil_metadata_timeout() {
+    let (_api, origin) = spawn(NodeConfig::test()).await;
+    let fork_url = spawn_failing_fork_probe(
+        origin.http_endpoint(),
+        "anvil_metadata",
+        0,
+        ForkProbeFailure::Stall,
+    )
+    .await;
+    let result = tokio::time::timeout(
+        Duration::from_secs(5),
+        try_spawn(
+            NodeConfig::test()
+                .with_eth_rpc_url(Some(fork_url))
+                .fork_request_timeout(Some(Duration::from_secs(60))),
+        ),
+    )
+    .await
+    .expect("metadata probes must have a bounded deadline");
+    let (api, _handle) = result.expect("metadata timeout must use the fallback identity");
+    assert_eq!(api.chain_id(), origin.http_provider().get_chain_id().await.unwrap());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -593,6 +749,151 @@ async fn test_fork_transaction_hash_replay_resolves_source_hardfork() {
         [target_hash]
     );
     assert!(replayed.header.parent_beacon_block_root.is_none());
+}
+
+#[cfg(feature = "optimism")]
+#[tokio::test(flavor = "multi_thread")]
+async fn test_ethereum_fork_transaction_hash_replay_preserves_optimism_source_hardfork() {
+    const CANYON_ERA_TIMESTAMP: u64 = 1_705_000_000;
+
+    let (origin_api, origin) = spawn(
+        NodeConfig::test()
+            .with_optimism()
+            .with_chain_id(Some(NamedChain::Optimism as u64))
+            .with_hardfork(Some(OpHardfork::Canyon.into()))
+            .with_genesis_timestamp(Some(CANYON_ERA_TIMESTAMP - 100)),
+    )
+    .await;
+    origin_api.anvil_set_auto_mine(false).await.unwrap();
+    origin_api.evm_set_next_block_timestamp(CANYON_ERA_TIMESTAMP).unwrap();
+    let provider = origin.http_provider();
+    let sender = origin.dev_wallets().next().unwrap().address();
+    let target = provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default().from(sender).to(Address::random()).value(U256::from(1)),
+        ))
+        .await
+        .unwrap();
+    let target_hash = *target.tx_hash();
+    origin_api.mine_one().await.unwrap();
+
+    let (fork_api, _) = spawn(
+        NodeConfig::test()
+            .with_networks(NetworkConfigs::with_ethereum())
+            .with_hardfork(Some(EthereumHardfork::Prague.into()))
+            .with_eth_rpc_url(Some(origin.http_endpoint()))
+            .with_fork_transaction_hash(Some(target_hash))
+            .with_no_mining(true),
+    )
+    .await;
+
+    let replayed =
+        fork_api.block_by_number_full(BlockNumberOrTag::Number(1)).await.unwrap().unwrap();
+    assert_eq!(
+        replayed
+            .transactions
+            .as_transactions()
+            .unwrap()
+            .iter()
+            .map(|tx| tx.tx_hash())
+            .collect::<Vec<_>>(),
+        [target_hash]
+    );
+    assert!(replayed.header.parent_beacon_block_root.is_none());
+}
+
+#[cfg(all(feature = "base", feature = "optimism"))]
+#[tokio::test(flavor = "multi_thread")]
+async fn test_ethereum_fork_transaction_hash_replay_preserves_base_id_op_source_hardfork() {
+    const AZUL_ERA_TIMESTAMP: u64 = 1_779_991_200;
+
+    let (origin_api, origin) = spawn(
+        NodeConfig::test()
+            .with_networks(NetworkConfigs::with_optimism())
+            .with_chain_id(Some(NamedChain::Base as u64))
+            .with_hardfork(Some(OpHardfork::Jovian.into()))
+            .with_genesis_timestamp(Some(AZUL_ERA_TIMESTAMP - 100)),
+    )
+    .await;
+    origin_api.anvil_set_auto_mine(false).await.unwrap();
+    origin_api.evm_set_next_block_timestamp(AZUL_ERA_TIMESTAMP).unwrap();
+    let provider = origin.http_provider();
+    let sender = origin.dev_wallets().next().unwrap().address();
+    let target = Address::random();
+    // CLZ is active in Base Azul/Osaka, but not OP Jovian/Prague. If replay leaks Base's schedule,
+    // this transaction succeeds and stores 255 instead of preserving the source failure.
+    origin_api.anvil_set_code(target, bytes!("60011e60005500")).await.unwrap();
+    let transaction = provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default().from(sender).to(target).gas_limit(100_000),
+        ))
+        .await
+        .unwrap();
+    let transaction_hash = *transaction.tx_hash();
+    origin_api.mine_one().await.unwrap();
+    assert!(!provider.get_transaction_receipt(transaction_hash).await.unwrap().unwrap().status());
+
+    let (fork_api, fork) = spawn(
+        NodeConfig::test()
+            .with_networks(NetworkConfigs::with_ethereum())
+            .with_hardfork(Some(EthereumHardfork::Prague.into()))
+            .with_eth_rpc_url(Some(origin.http_endpoint()))
+            .with_fork_transaction_hash(Some(transaction_hash))
+            .with_no_mining(true),
+    )
+    .await;
+    let replayed_receipt =
+        fork.http_provider().get_transaction_receipt(transaction_hash).await.unwrap().unwrap();
+
+    assert!(!fork_api.backend.is_optimism());
+    assert!(!replayed_receipt.status());
+    assert_eq!(fork.http_provider().get_storage_at(target, U256::ZERO).await.unwrap(), U256::ZERO);
+}
+
+#[cfg(all(feature = "base", feature = "optimism"))]
+#[tokio::test(flavor = "multi_thread")]
+async fn test_optimism_fork_transaction_hash_replay_uses_base_source_schedule() {
+    const AZUL_ERA_TIMESTAMP: u64 = 1_779_991_200;
+
+    let (origin_api, origin) = spawn(
+        NodeConfig::test_base()
+            .with_hardfork(Some(foundry_evm::hardforks::BaseUpgrade::Azul.into()))
+            .with_genesis_timestamp(Some(AZUL_ERA_TIMESTAMP - 100)),
+    )
+    .await;
+    origin_api.anvil_set_auto_mine(false).await.unwrap();
+    origin_api.evm_set_next_block_timestamp(AZUL_ERA_TIMESTAMP).unwrap();
+    let provider = origin.http_provider();
+    let sender = origin.dev_wallets().next().unwrap().address();
+    let target = Address::random();
+    // Base Azul enables CLZ, while the selected OP schedule remains Jovian/Prague. Replaying with
+    // the source's Base schedule would incorrectly preserve this successful state transition.
+    origin_api.anvil_set_code(target, bytes!("60011e60005500")).await.unwrap();
+    let transaction = provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default().from(sender).to(target).gas_limit(100_000),
+        ))
+        .await
+        .unwrap();
+    let transaction_hash = *transaction.tx_hash();
+    origin_api.mine_one().await.unwrap();
+    assert!(provider.get_transaction_receipt(transaction_hash).await.unwrap().unwrap().status());
+    assert_eq!(provider.get_storage_at(target, U256::ZERO).await.unwrap(), U256::from(255));
+
+    let (fork_api, fork) = spawn(
+        NodeConfig::test()
+            .with_networks(NetworkConfigs::with_optimism())
+            .with_eth_rpc_url(Some(origin.http_endpoint()))
+            .with_fork_transaction_hash(Some(transaction_hash))
+            .with_no_mining(true),
+    )
+    .await;
+    let replayed_receipt =
+        fork.http_provider().get_transaction_receipt(transaction_hash).await.unwrap().unwrap();
+
+    assert!(fork_api.backend.is_optimism());
+    assert!(!replayed_receipt.status());
+    assert_eq!(fork.http_provider().get_storage_at(target, U256::ZERO).await.unwrap(), U256::ZERO);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -3661,6 +3962,86 @@ async fn test_pre_cancun_fork_with_post_cancun_hardfork() {
     assert!(api.backend.evm_env().read().block_env.blob_excess_gas_and_price.is_none());
 }
 
+#[cfg(feature = "optimism")]
+#[tokio::test(flavor = "multi_thread")]
+async fn test_optimism_fork_preserves_ethereum_source_blob_header_fallback() {
+    const SHANGHAI_ERA_TIMESTAMP: u64 = 1_705_000_000;
+
+    let target = Address::random();
+    let (origin_api, origin) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(NamedChain::Mainnet as u64))
+            .with_hardfork(Some(EthereumHardfork::Shanghai.into()))
+            .with_genesis_timestamp(Some(SHANGHAI_ERA_TIMESTAMP)),
+    )
+    .await;
+    origin_api.anvil_set_code(target, bytes!("600060005260206000f3")).await.unwrap();
+    origin_api.mine_one().await.unwrap();
+    let origin_url =
+        spawn_rpc_proxy_rejecting_method_after(origin.http_endpoint(), "anvil_nodeInfo", 0).await;
+    let (api, fork) = spawn(
+        NodeConfig::test()
+            .with_optimism()
+            .with_eth_rpc_url(Some(origin_url))
+            .with_fork_block_number(Some(1u64)),
+    )
+    .await;
+
+    assert_eq!(
+        api.backend
+            .evm_env()
+            .read()
+            .block_env
+            .blob_excess_gas_and_price
+            .as_ref()
+            .map(|blob| blob.excess_blob_gas),
+        Some(0)
+    );
+    let request = TransactionRequest { to: Some(TxKind::Call(target)), ..Default::default() };
+    assert_eq!(fork.http_provider().call(request.into()).await.unwrap(), Bytes::from(vec![0; 32]));
+}
+
+#[cfg(all(feature = "base", not(feature = "optimism")))]
+#[tokio::test(flavor = "multi_thread")]
+async fn test_ethereum_fork_on_base_chain_id_preserves_missing_blob_header_fallback() {
+    const ECOTONE_ERA_TIMESTAMP: u64 = 1_710_374_401;
+
+    let target = Address::random();
+    let (origin_api, origin) = spawn(
+        NodeConfig::test()
+            .with_networks(NetworkConfigs::with_ethereum())
+            .with_chain_id(Some(NamedChain::Base as u64))
+            .with_hardfork(Some(EthereumHardfork::Shanghai.into()))
+            .with_genesis_timestamp(Some(ECOTONE_ERA_TIMESTAMP)),
+    )
+    .await;
+    origin_api.anvil_set_code(target, bytes!("600060005260206000f3")).await.unwrap();
+    origin_api.mine_one().await.unwrap();
+    let origin_url =
+        spawn_rpc_proxy_rejecting_method_after(origin.http_endpoint(), "anvil_nodeInfo", 0).await;
+    let (api, fork) = spawn(
+        NodeConfig::test()
+            .with_networks(NetworkConfigs::with_ethereum())
+            .with_eth_rpc_url(Some(origin_url))
+            .with_fork_block_number(Some(1u64))
+            .with_hardfork(Some(EthereumHardfork::Prague.into())),
+    )
+    .await;
+
+    assert_eq!(
+        api.backend
+            .evm_env()
+            .read()
+            .block_env
+            .blob_excess_gas_and_price
+            .as_ref()
+            .map(|blob| blob.excess_blob_gas),
+        Some(0)
+    );
+    let request = TransactionRequest { to: Some(TxKind::Call(target)), ..Default::default() };
+    assert_eq!(fork.http_provider().call(request.into()).await.unwrap(), Bytes::from(vec![0; 32]));
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn test_unknown_schedule_fork_with_post_cancun_hardfork() {
     let target = Address::random();
@@ -3758,6 +4139,7 @@ async fn spawn_rpc_proxy_with_blob_header_fields(
     format!("http://{address}")
 }
 
+#[cfg(feature = "optimism")]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_optimism_fork_keeps_excess_blob_gas_zero_after_mining() {
     // Base Jovian stores the DA footprint in `blobGasUsed`, but OP Stack clients keep

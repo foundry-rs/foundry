@@ -63,6 +63,9 @@ use foundry_evm_networks::NetworkConfigs;
 use foundry_wallets::{BrowserWalletOpts, WalletOpts};
 use std::str::FromStr;
 
+#[cfg(feature = "base")]
+use foundry_evm::core::evm::BaseEvmNetwork;
+
 #[cfg(feature = "monad")]
 use foundry_evm::core::evm::MonadEvmNetwork;
 
@@ -294,6 +297,19 @@ impl CallArgs {
                     evm_opts,
                     auth_preflight,
                     ExecutorBuilder::<TempoEvmNetwork>::new(),
+                )
+                .await;
+        }
+
+        #[cfg(feature = "base")]
+        if evm_opts.networks.is_base() {
+            super::validate_base_transaction_options(&self.tx)?;
+            return self
+                .run_with_network_and_opts::<BaseEvmNetwork>(
+                    config,
+                    evm_opts,
+                    auth_preflight,
+                    ExecutorBuilder::<BaseEvmNetwork>::new(),
                 )
                 .await;
         }
@@ -995,6 +1011,19 @@ mod tests {
         let config = Config::from_provider(Config::figment().merge(&args)).unwrap();
 
         assert_eq!(config.chain, Some(Chain::mainnet()));
+    }
+
+    /// Base chain IDs resolved to Optimism before Base support existed, so a build without the
+    /// `base` feature — which is what release binaries ship — must keep resolving them that way.
+    #[test]
+    #[cfg(all(not(feature = "base"), feature = "optimism"))]
+    fn chain_id_without_base_still_resolves_to_optimism() {
+        for chain_id in [8453, 84532] {
+            let networks = NetworkConfigs::default()
+                .try_with_chain_id(chain_id)
+                .unwrap_or_else(|error| panic!("chain ID {chain_id} must still resolve: {error}"));
+            assert!(networks.is_optimism(), "chain ID {chain_id} must resolve to Optimism");
+        }
     }
 
     #[test]

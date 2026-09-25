@@ -261,6 +261,44 @@ impl<T> PendingTransactions<T> {
         }
         removed
     }
+
+    /// Removes transactions and their transitive dependents from the waiting pool.
+    pub fn remove_with_dependents(
+        &mut self,
+        hashes: Vec<TxHash>,
+        invalidated: impl IntoIterator<Item = TxMarker>,
+    ) -> Vec<Arc<PoolTransaction<T>>> {
+        let mut required_by = HashMap::<TxMarker, Vec<TxHash>>::default();
+        for (hash, tx) in &self.waiting_queue {
+            for marker in &tx.transaction.requires {
+                required_by.entry(marker.clone()).or_default().push(*hash);
+            }
+        }
+
+        let mut to_remove = HashSet::<TxHash>::default();
+        let mut markers = invalidated.into_iter().collect::<Vec<_>>();
+        for hash in hashes {
+            if to_remove.insert(hash)
+                && let Some(tx) = self.waiting_queue.get(&hash)
+            {
+                markers.extend(tx.transaction.provides.iter().cloned());
+            }
+        }
+
+        while let Some(marker) = markers.pop() {
+            if let Some(dependents) = required_by.remove(&marker) {
+                for hash in dependents {
+                    if to_remove.insert(hash)
+                        && let Some(tx) = self.waiting_queue.get(&hash)
+                    {
+                        markers.extend(tx.transaction.provides.iter().cloned());
+                    }
+                }
+            }
+        }
+
+        self.remove(to_remove.into_iter().collect())
+    }
 }
 
 impl<T: Transaction> PendingTransactions<T> {

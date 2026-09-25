@@ -1419,6 +1419,35 @@ async fn fixed_and_mixed_mining_failures_remain_bounded() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_reorg_zero_depth_with_transactions_is_rejected() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    api.mine_one().await.unwrap();
+    let tip = api.block_number().unwrap();
+
+    // Nothing is mined by a reorg of depth 0, so a transaction can't be placed anywhere.
+    let err = api
+        .anvil_reorg(ReorgOptions {
+            depth: 0,
+            tx_block_pairs: vec![(TransactionData::JSON(TransactionRequest::default()), 0)],
+        })
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("Reorg depth must be at least 1"), "{err}");
+
+    // Block numbers are still checked against the last reorged block.
+    let err = api
+        .anvil_reorg(ReorgOptions {
+            depth: 1,
+            tx_block_pairs: vec![(TransactionData::JSON(TransactionRequest::default()), 1)],
+        })
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("must not exceed (depth-1) 0"), "{err}");
+
+    assert_eq!(api.block_number().unwrap(), tip);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_reorg_blockhash_opcode_consistency() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();

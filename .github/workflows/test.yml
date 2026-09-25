@@ -19,6 +19,8 @@ on:
         required: false
       TEMPO_MAINNET_RPC_URL:
         required: false
+      TEMPO_TESTNET_RPC_URL:
+        required: false
 
 concurrency:
   group: tests-${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -31,11 +33,6 @@ env:
   RUST_MIN_STACK: 4194304 # 2 * the default (2 * 1024 * 1024)
 
 jobs:
-  cargo-cooldown:
-    permissions:
-      contents: read
-    uses: ./.github/workflows/cargo-cooldown.yml
-
   matrices:
     name: build matrices
     runs-on: ubuntu-latest
@@ -66,20 +63,23 @@ jobs:
     runs-on: ${{ matrix.runner_label }}
     timeout-minutes: 60
     permissions:
+      id-token: write
       contents: read
-    needs: [cargo-cooldown, matrices]
+    needs: matrices
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.matrices.outputs.test-matrix) }}
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@117919c943b804057be733b0c4034c5542e58959
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1
         with:
           toolchain: stable
           target: ${{ matrix.target }}
-      - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
+      - uses: rui314/setup-mold@10ca16bf91dc22e05ebdc935cad9c75ea248f621 # v1
       - name: Install Linux system dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install --yes libudev-dev
@@ -108,6 +108,12 @@ jobs:
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: latest
+      - name: Install pnpm for external fixtures
+        if: contains(matrix.name, 'external')
+        uses: tempoxyz/gh-actions/vendor/pnpm/action-setup@117919c943b804057be733b0c4034c5542e58959
+        with:
+          version: 11.8.0
+          run_install: false
       - name: Setup Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
@@ -136,7 +142,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           cache-bin: false
-      - uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
+      - uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # v2.87.12
         with:
           tool: nextest
       - name: Setup Git config
@@ -151,6 +157,7 @@ jobs:
           ARBITRUM_RPC: ${{ secrets.ARBITRUM_RPC }}
           ETH_SEPOLIA_RPC: ${{ secrets.ETH_SEPOLIA_RPC }}
           TEMPO_MAINNET_RPC_URL: ${{ secrets.TEMPO_MAINNET_RPC_URL }}
+          TEMPO_TESTNET_RPC_URL: ${{ secrets.TEMPO_TESTNET_RPC_URL }}
           NEXTEST_FILTER: ${{ matrix.filter }}
           NEXTEST_PARTITION: ${{ matrix.partition_arg }}
         shell: bash
@@ -160,4 +167,4 @@ jobs:
             args+=(--partition "$NEXTEST_PARTITION")
           fi
           args+=(--no-fail-fast)
-          cargo nextest run --locked --features monad "${args[@]}"
+          cargo nextest run --locked --features base,monad "${args[@]}"

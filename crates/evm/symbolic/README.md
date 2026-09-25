@@ -40,7 +40,8 @@ Requirements:
 
 - The configured solver must be available. The default solver command is `z3`.
   Install it locally with your package manager, for example `brew install z3`
-  on macOS or `sudo apt-get install z3` on Ubuntu.
+  on macOS or `sudo apt-get install z3` on Ubuntu. Foundry avoids launching it
+  when bounded local model search can validate a satisfiable path directly.
 - `check*` and `prove*` tests are only selected when `--symbolic` is enabled
   and the contract is in a source path Forge compiles for the current project.
 - A reported counterexample must replay concretely before Forge prints it as a
@@ -210,8 +211,9 @@ persisted sequence deterministically:
 forge fuzz replay --match-test invariant_ --corpus-dir fuzz_corpus
 ```
 
-Pass `--symbolic-check-invariant-frontiers` to first check whether one symbolic
-invocation of each selected target can break a suite predicate from its replayed
+Pass `--symbolic-check-invariant-frontiers` to enable invariant frontier seeding
+and first check whether one symbolic invocation of each selected target can
+break a suite predicate from its replayed
 concrete prefix. Without `afterInvariant`, each invariant function is checked
 independently from the same post-call symbolic state. Forge uses the concrete
 campaign semantics: assertions and reverts indicate failure, while a Solidity
@@ -792,7 +794,7 @@ Known incomplete, bounded, or approximate surfaces include:
 
 | Area | Current behavior |
 |---|---|
-| Gas-dependent behavior | The engine does not use gas to prove properties. A raw `GAS` / `gasleft()` value is tolerated only as the direct gas operand to a CALL-family opcode and is not used to model gas availability. Explicit CALL-family gas caps are not enforced. Branches on observed gas may be explored through local solver witnesses, but they never produce counterexamples: arithmetic, call targets/values, calldata/returndata, memory/log offsets or sizes, `expectCall` gas matching, or counterexample models derived from observed gas report incomplete. Non-observable gas metering helpers are accepted as no-ops; observable gas read/snapshot helpers such as `lastCallGas`, `lastFrameGas`, `snapshotGasLastCall`, `snapshotGasLastFrame`, and `stopSnapshotGas` report incomplete and should not be used as symbolic properties. |
+| Gas-dependent behavior | The engine does not use gas to prove properties. A raw `GAS` / `gasleft()` value is tolerated only as the direct gas operand to a CALL-family opcode and is not used to model gas availability. Explicit or computed CALL-family gas caps report incomplete, including the caps emitted by Solidity `send` and `transfer`. Branches on observed gas may be explored through local solver witnesses, but they never produce counterexamples: arithmetic, call targets/values, calldata/returndata, memory/log offsets or sizes, `expectCall` gas matching, or counterexample models derived from observed gas report incomplete. Non-observable gas metering helpers are accepted as no-ops; observable gas read/snapshot helpers such as `lastCallGas`, `lastFrameGas`, `snapshotGasLastCall`, `snapshotGasLastFrame`, and `stopSnapshotGas` report incomplete and should not be used as symbolic properties. |
 | `SELFDESTRUCT` | Pre-Cancun deletion is modeled. Cancun/EIP-6780 is modeled for concrete beneficiaries: contracts created in the current top-level symbolic transaction are deleted, while existing contracts transfer balance and halt without deleting code or storage. Unresolved symbolic Cancun beneficiaries report incomplete. |
 | Symbolic account/code queries | `BALANCE`, `EXTCODESIZE`, `EXTCODEHASH`, and `EXTCODECOPY` on symbolic addresses are scoped to the engine's known symbolic/overlay/code-cache candidates plus the documented empty-account fallback. They do not prove quantified properties over every possible fork/backend account. |
 | Symbolic CALL targets | Concrete targets and symbolic targets constrained to known deployed-contract/precompile candidates are supported. By default, a feasible symbolic target outside the known candidate set reports incomplete. With `symbolic_call_targets = true`, the outside-candidate branch is modeled as an empty-account/no-code successful call, including value transfer for `CALL`; it does not model arbitrary unknown external code or custom/future precompiles. Symbolic cheatcode addresses/selectors still report incomplete. |

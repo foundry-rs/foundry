@@ -1973,6 +1973,201 @@ contract SymbolicConstrainedCheatcodes is Test {
     assert!(!stdout.contains("symbolic randomBytes len"), "{stdout}");
 });
 
+forgetest_init!(symbolic_address_inputs_may_alias, |prj, cmd| {
+    skip_unless_z3!("symbolic_address_inputs_may_alias");
+
+    prj.add_test(
+        "SymbolicAddressAlias.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicAddressAlias is Test {
+    // Fails concretely for any a == b: the second deal overwrites the first.
+    function checkDealsMayTargetOneAccount(address a, address b) public {
+        vm.deal(a, 10 ether);
+        vm.deal(b, 0);
+        assert(a.balance + b.balance == 10 ether);
+    }
+
+    function checkDistinctDealsAreIndependent(address a, address b) public {
+        vm.assume(a != b);
+        vm.deal(a, 10 ether);
+        vm.deal(b, 0);
+        assert(a.balance + b.balance == 10 ether);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-contract", "SymbolicAddressAlias"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+args=[0x0000000000000000000000000000000000000000, 0x0000000000000000000000000000000000000000]] checkDealsMayTargetOneAccount(address,address)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkDistinctDealsAreIndependent(address,address)
+"#]],
+    );
+});
+
+forgetest_init!(symbolic_cheatcode_state_survives_reverting_call, |prj, cmd| {
+    skip_unless_z3!("symbolic_cheatcode_state_survives_reverting_call");
+
+    prj.add_test(
+        "SymbolicRevertKeepsCheatcodes.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Token {
+    function balanceOf(address) external pure returns (uint256) {
+        return 7;
+    }
+}
+
+contract SymbolicRevertKeepsCheatcodes is Test {
+    uint256 constant DEADLINE = 1000;
+    Token token;
+
+    function setUp() public {
+        token = new Token();
+    }
+
+    function warpThenRevert(uint256 t) external {
+        vm.warp(t);
+        revert("boom");
+    }
+
+    function mockThenRevert(address user) external {
+        vm.mockCall(
+            address(token),
+            abi.encodeWithSelector(Token.balanceOf.selector, user),
+            abi.encode(uint256(5))
+        );
+        revert("boom");
+    }
+
+    // Concretely the warp outlives the revert, so any t >= DEADLINE breaks this.
+    function checkWarpSurvivesRevertingCall(uint256 t) public {
+        try this.warpThenRevert(t) {} catch {}
+        assert(block.timestamp < DEADLINE);
+    }
+
+    // Concretely the mock outlives the revert, so the mocked value is observed.
+    function checkMockSurvivesRevertingCall(address user) public {
+        try this.mockThenRevert(user) {} catch {}
+        assert(token.balanceOf(user) == 7);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-contract", "SymbolicRevertKeepsCheatcodes"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+args=[1000]] checkWarpSurvivesRevertingCall(uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL: panic: assertion failed (0x01); counterexample:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkMockSurvivesRevertingCall(address)
+"#]],
+    );
+    assert!(!stdout.contains("[PASS]"), "{stdout}");
+});
+
+forgetest_init!(symbolic_expect_call_follows_function_mock_redirect, |prj, cmd| {
+    skip_unless_z3!("symbolic_expect_call_follows_function_mock_redirect");
+
+    prj.add_test(
+        "SymbolicExpectCallRedirect.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Target {
+    function ping() external pure returns (uint256) {
+        return 1;
+    }
+}
+
+contract Redirect {
+    function ping() external pure returns (uint256) {
+        return 2;
+    }
+}
+
+contract SymbolicExpectCallRedirect is Test {
+    Target target;
+    Redirect redirect;
+
+    function setUp() public {
+        target = new Target();
+        redirect = new Redirect();
+    }
+
+    // The redirected call runs `redirect`'s code, so an expectation on `target` is never met.
+    function checkExpectCallOnRedirectedSource() public {
+        vm.mockFunction(address(target), address(redirect), abi.encodeWithSelector(Target.ping.selector));
+        vm.expectCall(address(target), abi.encodeWithSelector(Target.ping.selector));
+        target.ping();
+    }
+
+    function checkExpectCallOnRedirectTarget() public {
+        vm.mockFunction(address(target), address(redirect), abi.encodeWithSelector(Target.ping.selector));
+        vm.expectCall(address(redirect), abi.encodeWithSelector(Target.ping.selector));
+        assertEq(target.ping(), 2);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-contract", "SymbolicExpectCallRedirect"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+to be called 1 time, but was called 0 times; counterexample:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkExpectCallOnRedirectedSource()
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkExpectCallOnRedirectTarget()
+"#]],
+    );
+});
+
 forgetest_init!(symbolic_cheatcodes_reject_gas_deal_value, |prj, cmd| {
     skip_unless_z3!("symbolic_cheatcodes_reject_gas_deal_value");
 
@@ -2763,7 +2958,7 @@ contract SymbolicExpectCall is Test {
             uint64(50000),
             abi.encodeWithSelector(SymbolicExpectedCallTarget.ping.selector, uint256(13))
         );
-        assertEq(target.ping{gas: 50000}(13), 14);
+        assertEq(target.ping(13), 14);
 
         vm.expectCallMinGas(
             address(target),
@@ -2771,7 +2966,7 @@ contract SymbolicExpectCall is Test {
             uint64(25000),
             abi.encodeWithSelector(SymbolicExpectedCallTarget.ping.selector, uint256(14))
         );
-        assertEq(target.ping{gas: 50000}(14), 15);
+        assertEq(target.ping(14), 15);
     }
 
     function checkExpectCallSymbolicCallee(address expectedCallee) public {

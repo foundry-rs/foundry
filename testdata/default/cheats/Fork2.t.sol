@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity ^0.8.18;
+pragma solidity ^0.8.25;
 
 import "utils/Test.sol";
 
@@ -60,6 +60,13 @@ contract ForkTest is Test {
         assertEq(anotherFork, vm.activeFork());
     }
 
+    // ensures the blob fee market of the forked block is exposed
+    function testForkBlockBlobBaseFee() public {
+        // Mainnet block 22_000_000 (Cancun) carries 22_151_168 excess blob gas.
+        vm.createSelectFork("mainnet", 22_000_000);
+        assertEq(block.blobbasefee, 761, "blob base fee should follow the forked block header");
+    }
+
     // ensures forks have different block hashes
     function testBlockNumbersMismatch() public {
         vm.selectFork(mainnetFork);
@@ -92,6 +99,28 @@ contract ForkTest is Test {
 
         vm.selectFork(otherMain);
         assertEq(block.number, mainBlock + 1);
+    }
+
+    // test that rolling a fork that is not selected drops the accounts it had loaded, so reads
+    // after selecting it again come from the new block instead of the old journal
+    function testRollInactiveForkRefreshesLoadedState() public {
+        address weth = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
+        vm.selectFork(mainnetFork);
+        uint256 latest = block.number;
+
+        uint256 fork = vm.createSelectFork("mainnet", latest - 40);
+        // Load the account into the fork's journal at the old block.
+        uint256 staleBalance = weth.balance;
+        assertGt(staleBalance, 0);
+
+        vm.selectFork(optimismFork);
+        vm.rollFork(fork, latest - 10);
+        vm.selectFork(fork);
+        assertEq(block.number, latest - 10);
+        uint256 rolledBalance = weth.balance;
+
+        vm.createSelectFork("mainnet", latest - 10);
+        assertEq(rolledBalance, weth.balance);
     }
 
     // test that we can "roll" blocks until a transaction

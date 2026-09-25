@@ -84,7 +84,7 @@ use alloy_sol_types::{SolCall, SolValue, sol};
 use anvil_core::{
     eth::{
         EthRequest,
-        block::{BlockInfo, canonical_block},
+        block::{Block, BlockInfo, canonical_block},
         transaction::{MaybeImpersonatedTransaction, PendingTransaction},
     },
     types::{ReorgOptions, TransactionData},
@@ -126,8 +126,25 @@ use tokio::{
     try_join,
 };
 
+#[cfg(feature = "base")]
+use base_common_consensus::Eip8130Constants;
+#[cfg(feature = "base")]
+use base_common_evm::EIP8130_TRANSACTION_TYPE;
+#[cfg(feature = "base")]
+use base_common_precompiles::NonceManagerStorage;
+#[cfg(feature = "base")]
+use base_common_rpc_types::{BaseTransactionRequest, Eip8130Nonce};
+#[cfg(feature = "base")]
+use base_execution_eip8130::{FeeCheck, IntrinsicGas};
+
 /// The client version: `anvil/v{major}.{minor}.{patch}`
 pub const CLIENT_VERSION: &str = concat!("anvil/v", env!("CARGO_PKG_VERSION"));
+
+#[derive(Clone, Copy)]
+struct TransactionFeeDefaults {
+    gas_price: u128,
+    blob_gas_price: u128,
+}
 
 /// The entry point for executing eth api RPC call - The Eth RPC interface.
 ///
@@ -346,7 +363,17 @@ impl<N: Network> EthApi<N> {
     pub async fn anvil_set_chain_id(&self, chain_id: u64) -> Result<()> {
         node_info!("anvil_setChainId");
         self.backend.set_chain_id(chain_id);
+        #[cfg(feature = "base")]
+        self.invalidate_base_eip8130_pool();
         Ok(())
+    }
+
+    /// Invalidates EIP-8130 admission state after out-of-band state mutation.
+    #[cfg(feature = "base")]
+    fn invalidate_base_eip8130_pool(&self) {
+        if self.backend.is_base() {
+            let _ = self.pool.clear_transaction_type(EIP8130_TRANSACTION_TYPE);
+        }
     }
 
     /// Modifies the balance of an account.
@@ -355,6 +382,8 @@ impl<N: Network> EthApi<N> {
     pub async fn anvil_set_balance(&self, address: Address, balance: U256) -> Result<()> {
         node_info!("anvil_setBalance");
         self.backend.set_balance(address, balance).await?;
+        #[cfg(feature = "base")]
+        self.invalidate_base_eip8130_pool();
         Ok(())
     }
 
@@ -364,6 +393,8 @@ impl<N: Network> EthApi<N> {
     pub async fn anvil_set_code(&self, address: Address, code: Bytes) -> Result<()> {
         node_info!("anvil_setCode");
         self.backend.set_code(address, code).await?;
+        #[cfg(feature = "base")]
+        self.invalidate_base_eip8130_pool();
         Ok(())
     }
 
@@ -373,6 +404,8 @@ impl<N: Network> EthApi<N> {
     pub async fn anvil_set_nonce(&self, address: Address, nonce: U256) -> Result<()> {
         node_info!("anvil_setNonce");
         self.backend.set_nonce(address, nonce).await?;
+        #[cfg(feature = "base")]
+        self.invalidate_base_eip8130_pool();
         Ok(())
     }
 
@@ -387,6 +420,8 @@ impl<N: Network> EthApi<N> {
     ) -> Result<bool> {
         node_info!("anvil_setStorageAt");
         self.backend.set_storage_at(address, slot, val).await?;
+        #[cfg(feature = "base")]
+        self.invalidate_base_eip8130_pool();
         Ok(true)
     }
 
@@ -457,7 +492,7 @@ impl<N: Network> EthApi<N> {
         node_info!("anvil_nodeInfo");
         let _lifecycle = self.lifecycle_lock.read().await;
 
-        let evm_env = self.backend.evm_env().read();
+        let evm_env = self.backend.evm_env().read().clone();
         let fork_config = self.backend.get_fork();
         let tx_order = self.transaction_order.read();
         let hard_fork = self.backend.hardfork().name();
@@ -798,11 +833,19 @@ impl<N: Network> EthApi<N> {
     /// Takes a single parameter, which is the snapshot id to revert to.
     ///
     /// Handler for RPC call: `evm_revert`
-    pub async fn evm_revert(&self, id: U256) -> Result<bool> {
+    pub async fn evm_revert(&self, id: U256) -> Result<bool>
+    where
+        N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
+    {
         node_info!("evm_revert");
         let _lifecycle = self.lifecycle_lock.read().await;
         let _mining = self.backend.lock_mining().await;
-        self.backend.revert_state_snapshot(id).await
+        let reverted = self.backend.revert_state_snapshot(id).await?;
+        #[cfg(feature = "base")]
+        if reverted {
+            self.invalidate_base_eip8130_pool();
+        }
+        Ok(reverted)
     }
 
     /// Send transactions impersonating specific account and contract addresses.
@@ -1605,7 +1648,12 @@ impl EthApi<FoundryNetwork> {
     /// Handler for RPC call: `anvil_loadState`
     pub async fn anvil_load_state(&self, buf: Bytes) -> Result<bool> {
         node_info!("anvil_loadState");
-        self.backend.load_state_bytes(buf).await
+        let loaded = self.backend.load_state_bytes(buf).await?;
+        #[cfg(feature = "base")]
+        if loaded {
+            self.invalidate_base_eip8130_pool();
+        }
+        Ok(loaded)
     }
 
     async fn block_request(
@@ -1690,7 +1738,15 @@ impl EthApi<FoundryNetwork> {
             .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
         self.ensure_typed_transaction_supported(&transaction)?;
 
-        let pending_transaction = PendingTransaction::new(transaction)?;
+        #[cfg(feature = "base")]
+        let is_eip8130 = transaction.is_eip8130();
+        let pending_transaction = PendingTransaction::new(transaction).map_err(|error| {
+            #[cfg(feature = "base")]
+            if is_eip8130 {
+                return BlockchainError::Eip8130TransactionRejected(error.to_string());
+            }
+            BlockchainError::RecoveryError(error)
+        })?;
         let block_request = self.block_request(block_number).await?;
 
         self.backend
@@ -1708,6 +1764,39 @@ impl EthApi<FoundryNetwork> {
         Ok(())
     }
 
+    /// Returns a locally stored rollback ancestor, or the remote base of a Monad transaction-hash
+    /// fork when that integration is enabled.
+    async fn rollback_block(&self, number: u64) -> Result<Option<Block>> {
+        if let Some(block) = self.backend.get_block(number) {
+            return Ok(Some(block));
+        }
+        #[cfg(feature = "monad")]
+        {
+            if self.backend.is_monad() {
+                self.backend.monad_rollback_block(number).await
+            } else {
+                Ok(None)
+            }
+        }
+        #[cfg(not(feature = "monad"))]
+        {
+            Ok(None)
+        }
+    }
+
+    /// Rewinds through the selected execution family's recovery path.
+    async fn rollback_backend(
+        &self,
+        common_block: Block,
+        mining_guard: &tokio::sync::MutexGuard<'_, ()>,
+    ) -> Result<()> {
+        #[cfg(feature = "monad")]
+        if self.backend.is_monad() {
+            return self.backend.rollback_monad(common_block, mining_guard).await;
+        }
+        self.backend.rollback(common_block, mining_guard).await
+    }
+
     /// Rollback the chain to a specific depth.
     ///
     /// e.g depth = 3
@@ -1720,6 +1809,8 @@ impl EthApi<FoundryNetwork> {
     /// Handler for RPC call: `anvil_rollback`
     pub async fn anvil_rollback(&self, depth: Option<u64>) -> Result<()> {
         node_info!("anvil_rollback");
+        let _lifecycle = self.lifecycle_lock.write().await;
+        let mining_guard = self.backend.lock_mining().await;
         let depth = depth.unwrap_or(1);
 
         // Check reorg depth doesn't exceed current chain height
@@ -1732,9 +1823,9 @@ impl EthApi<FoundryNetwork> {
 
         // Get the common ancestor block
         let common_block =
-            self.backend.get_block(common_height).ok_or(BlockchainError::BlockNotFound)?;
+            self.rollback_block(common_height).await?.ok_or(BlockchainError::BlockNotFound)?;
 
-        self.backend.rollback(common_block).await?;
+        self.rollback_backend(common_block, &mining_guard).await?;
         Ok(())
     }
 
@@ -1756,6 +1847,32 @@ impl EthApi<FoundryNetwork> {
             inner.max_fee_per_blob_gas,
         )?
         .or_zero_fees();
+
+        #[cfg(feature = "base")]
+        if self.backend.is_base() && request.is_base() {
+            self.backend.ensure_base_eip8130_active_at(block_env.timestamp.saturating_to())?;
+            let gas_limit = block_env.gas_limit;
+            let result = self
+                .backend
+                .call_with_state_typed_gas_limit(
+                    state,
+                    request,
+                    fees,
+                    block_env,
+                    GasEstimateCallOptions::new(gas_limit, false, monad_context),
+                )
+                .try_into()?;
+            return match result {
+                GasEstimationCallResult::Success(gas) => Ok(gas),
+                GasEstimationCallResult::OutOfGas => {
+                    Err(InvalidTransactionError::BasicOutOfGas(u128::from(gas_limit)).into())
+                }
+                GasEstimationCallResult::Revert(output) => {
+                    Err(InvalidTransactionError::Revert(output).into())
+                }
+                GasEstimationCallResult::EvmError(error) => Err(BlockchainError::EvmError(error)),
+            };
+        }
 
         // get the highest possible gas limit, either the request's set value or the currently
         // configured gas limit
@@ -1902,8 +2019,8 @@ impl EthApi<FoundryNetwork> {
         trace!(target: "rpc::api", "executing eth request");
         // Fork reset and RPC URL replacement take the write lock internally after their fallible
         // remote staging work. Memory reset takes it before staging because it snapshots live
-        // state. Identity and snapshot methods also lock internally to keep direct API callers
-        // safe without recursively acquiring this fair RwLock.
+        // state. Identity, snapshot, and chain-rewind methods also lock internally to keep direct
+        // API callers safe without recursively acquiring this fair RwLock.
         let _lifecycle = if matches!(
             &request,
             EthRequest::Reset(_)
@@ -1912,6 +2029,8 @@ impl EthApi<FoundryNetwork> {
                 | EthRequest::AnvilMetadata(_)
                 | EthRequest::EvmSnapshot(_)
                 | EthRequest::EvmRevert(_)
+                | EthRequest::Reorg(_)
+                | EthRequest::Rollback(_)
         ) {
             None
         } else {
@@ -1994,8 +2113,21 @@ impl EthApi<FoundryNetwork> {
             EthRequest::EthGetBlockAccessListRaw(block_id) => {
                 self.block_access_list_raw(block_id).await.to_rpc_result()
             }
-            EthRequest::EthGetTransactionCount(addr, block) => {
-                self.transaction_count(addr, block).await.to_rpc_result()
+            EthRequest::EthGetTransactionCount(params) => {
+                let (address, block, nonce_key) = params.into_parts();
+                #[cfg(feature = "base")]
+                {
+                    self.transaction_count_with_key(address, block, nonce_key).await.to_rpc_result()
+                }
+                #[cfg(not(feature = "base"))]
+                {
+                    if nonce_key.is_some() {
+                        return ResponseResult::Error(RpcError::invalid_params(
+                            "nonce-key transaction counts require Base support",
+                        ));
+                    }
+                    self.transaction_count(address, block).await.to_rpc_result()
+                }
             }
             EthRequest::EthGetTransactionCountByHash(hash) => {
                 self.block_transaction_count_by_hash(hash).await.to_rpc_result()
@@ -2615,7 +2747,12 @@ impl EthApi<FoundryNetwork> {
             return Ok(fork.block_access_list(block_id).await?);
         }
 
-        Ok(None)
+        let block_access_list = match block_id {
+            BlockId::Hash(hash) => self.backend.block_access_list_by_hash(hash.block_hash),
+            BlockId::Number(_) => self.backend.block_access_list_by_number(number),
+        };
+        Ok(block_access_list
+            .map(|bal| serde_json::to_value(bal).expect("BAL serialization is infallible")))
     }
 
     /// Returns the EIP-7928 block access list for a block hash.
@@ -2626,6 +2763,12 @@ impl EthApi<FoundryNetwork> {
         block_hash: B256,
     ) -> Result<Option<serde_json::Value>> {
         node_info!("eth_getBlockAccessListByBlockHash");
+        if let Some(block_access_list) = self.backend.block_access_list_by_hash(block_hash) {
+            return Ok(Some(
+                serde_json::to_value(block_access_list).expect("BAL serialization is infallible"),
+            ));
+        }
+
         let Some(fork) = self.get_fork() else { return Ok(None) };
 
         // Only blocks we know to be mined after the fork point are guaranteed to be unknown
@@ -2656,7 +2799,10 @@ impl EthApi<FoundryNetwork> {
             return Ok(fork.block_access_list_by_number(block_number).await?);
         }
 
-        Ok(None)
+        Ok(self
+            .backend
+            .block_access_list_by_number(number)
+            .map(|bal| serde_json::to_value(bal).expect("BAL serialization is infallible")))
     }
 
     /// Returns the raw EIP-7928 block access list for a block.
@@ -2673,7 +2819,15 @@ impl EthApi<FoundryNetwork> {
             return Ok(fork.block_access_list_raw(block_id).await?);
         }
 
-        Ok(None)
+        let block_access_list = match block_id {
+            BlockId::Hash(hash) => self.backend.block_access_list_by_hash(hash.block_hash),
+            BlockId::Number(_) => self.backend.block_access_list_by_number(number),
+        };
+        Ok(block_access_list.map(|bal| {
+            let mut encoded = Vec::new();
+            alloy_rlp::encode_list(&bal, &mut encoded);
+            encoded.into()
+        }))
     }
 
     /// Returns the number of transactions sent from given address at given time (block number).
@@ -2689,6 +2843,40 @@ impl EthApi<FoundryNetwork> {
     ) -> Result<U256> {
         node_info!("eth_getTransactionCount");
         self.get_transaction_count(address, block_number).await.map(U256::from)
+    }
+
+    /// Returns a protocol or EIP-8130 channel nonce.
+    #[cfg(feature = "base")]
+    pub async fn transaction_count_with_key(
+        &self,
+        address: Address,
+        block_number: Option<BlockId>,
+        nonce_key: Option<U256>,
+    ) -> Result<U256> {
+        let Some(nonce_key) = nonce_key else {
+            return self.transaction_count(address, block_number).await;
+        };
+        if nonce_key.is_zero() {
+            return self.transaction_count(address, block_number).await;
+        }
+
+        let block_request = self.block_request(block_number).await?;
+        let timestamp = self.backend.block_request_timestamp(&block_request).await?;
+        self.backend.ensure_base_eip8130_active_at(timestamp)?;
+        if nonce_key == Eip8130Constants::NONCE_KEY_MAX {
+            return Err(RpcError::invalid_params(
+                "nonce_key NONCE_KEY_MAX selects the expiring-nonce channel which has no \
+                 per-channel counter",
+            )
+            .into());
+        }
+        let slot = NonceManagerStorage::nonce_slot(address, nonce_key)
+            .map_err(|error| RpcError::invalid_params(error.to_string()))?;
+        let word = self
+            .backend
+            .storage_at(NonceManagerStorage::ADDRESS, slot, Some(block_request))
+            .await?;
+        Ok(Eip8130Nonce::decode_channel_nonce(U256::from_be_bytes(word.0)))
     }
 
     /// Returns the number of transactions in a block with given block number.
@@ -2770,7 +2958,7 @@ impl EthApi<FoundryNetwork> {
             self.accounts()?.first().copied().ok_or(BlockchainError::NoSignerAvailable)
         })?;
 
-        let (nonce, _) = self.request_nonce_for_transaction(&request, from).await?;
+        let nonce = self.request_nonce_for_transaction(&request, from).await?;
 
         let request = self.build_tx_request(request, nonce).await?;
 
@@ -2791,7 +2979,7 @@ impl EthApi<FoundryNetwork> {
         let from = request.from().map(Ok).unwrap_or_else(|| {
             self.accounts()?.first().copied().ok_or(BlockchainError::NoSignerAvailable)
         })?;
-        let (nonce, on_chain_nonce) = self.request_nonce_for_transaction(&request, from).await?;
+        let nonce = self.request_nonce_for_transaction(&request, from).await?;
 
         let typed_tx = self.build_tx_request(request, nonce).await?;
 
@@ -2806,12 +2994,7 @@ impl EthApi<FoundryNetwork> {
             self.ensure_typed_transaction_supported(&transaction)?;
             PendingTransaction::new(transaction)?
         };
-        // pre-validate
-        self.backend.validate_pool_transaction(&pending_transaction).await?;
-
-        let (requires, provides) = nonce_markers(&pending_transaction, nonce, on_chain_nonce, from);
-
-        self.add_pending_transaction(pending_transaction, requires, provides)
+        self.add_pending_transaction(pending_transaction).await
     }
 
     /// Resends a pending transaction with an updated gas price or gas limit.
@@ -2860,12 +3043,7 @@ impl EthApi<FoundryNetwork> {
             PendingTransaction::new(transaction)?
         };
 
-        self.backend.validate_pool_transaction(&pending_transaction).await?;
-
-        let on_chain_nonce = self.backend.current_nonce(from).await?;
-        let (requires, provides) = nonce_markers(&pending_transaction, nonce, on_chain_nonce, from);
-
-        self.add_pending_transaction(pending_transaction, requires, provides)
+        self.add_pending_transaction(pending_transaction).await
     }
 
     /// Waits for a transaction to be included in a block and returns its receipt (no timeout).
@@ -2979,31 +3157,17 @@ impl EthApi<FoundryNetwork> {
             trace!(target: "node", tx = ?transaction.hash(), ?classification, "classified transaction lane");
         }
 
-        let pending_transaction = PendingTransaction::new(transaction)?;
+        #[cfg(feature = "base")]
+        let is_eip8130 = transaction.is_eip8130();
+        let pending_transaction = PendingTransaction::new(transaction).map_err(|error| {
+            #[cfg(feature = "base")]
+            if is_eip8130 {
+                return BlockchainError::Eip8130TransactionRejected(error.to_string());
+            }
+            BlockchainError::RecoveryError(error)
+        })?;
 
-        // pre-validate
-        self.backend.validate_pool_transaction(&pending_transaction).await?;
-
-        let from = *pending_transaction.sender();
-        let priority = self.transaction_priority(&pending_transaction.transaction);
-
-        // Tempo txs use a 2D nonce system — no sequential ordering by account nonce.
-        let (requires, provides) = if let Some((requires, provides)) =
-            tempo_parallel_nonce_markers(&pending_transaction)
-        {
-            (requires, provides)
-        } else {
-            let on_chain_nonce = self.backend.current_nonce(from).await?;
-            let nonce = pending_transaction.transaction.nonce();
-            (required_marker(nonce, on_chain_nonce, from), vec![to_marker(nonce, from)])
-        };
-
-        let pool_transaction =
-            PoolTransaction { requires, provides, pending_transaction, priority, is_replay: false };
-
-        let tx = self.pool.add_transaction(pool_transaction)?;
-        trace!(target: "node", "Added transaction: [{:?}] sender={:?}", tx.hash(), from);
-        Ok(*tx.hash())
+        self.add_pending_transaction(pending_transaction).await
     }
 
     /// Sends a signed transaction with an ignored transaction condition.
@@ -3174,6 +3338,16 @@ impl EthApi<FoundryNetwork> {
                 ));
             }
             return Ok(fork.call_raw(&request, Some(number.into())).await?);
+        }
+
+        #[cfg(feature = "base")]
+        if self.backend.is_base()
+            && serde_json::to_value(&request)
+                .and_then(serde_json::from_value::<BaseTransactionRequest>)
+                .is_ok_and(|request| request.as_eip8130().is_some())
+        {
+            let timestamp = self.backend.block_request_timestamp(&block_request).await?;
+            self.backend.ensure_base_eip8130_active_at(timestamp)?;
         }
 
         let fees = FeeDetails::new(
@@ -3396,6 +3570,19 @@ impl EthApi<FoundryNetwork> {
         }
         let typed_request = self.parse_transaction_request(request.clone())?;
 
+        #[cfg(feature = "base")]
+        if self.backend.is_base()
+            && serde_json::to_value(&request)
+                .and_then(serde_json::from_value::<BaseTransactionRequest>)
+                .is_ok_and(|request| request.as_eip8130().is_some())
+        {
+            let timestamp = self.backend.block_request_timestamp(&block_request).await?;
+            self.backend.ensure_base_eip8130_active_at(timestamp)?;
+            return Err(BlockchainError::InvalidTransactionRequest(
+                "eth_createAccessList does not support EIP-8130 transaction requests".to_string(),
+            ));
+        }
+
         self.backend
             .with_database_at_and_context(Some(block_request), |state, block_env, monad_context| {
                 let mut cache_db = CacheDB::new(state);
@@ -3472,7 +3659,7 @@ impl EthApi<FoundryNetwork> {
             None => self.accounts()?.first().copied().ok_or(BlockchainError::NoSignerAvailable)?,
         };
 
-        let nonce = self.request_nonce_for_transaction(&request, from).await?.0;
+        let nonce = self.request_nonce_for_transaction(&request, from).await?;
 
         // Prefill gas limit with estimated gas and bubble up estimation errors directly.
         if request.gas_limit().is_none() {
@@ -4201,8 +4388,23 @@ impl EthApi<FoundryNetwork> {
     /// Handler for RPC call: `anvil_reorg`
     pub async fn anvil_reorg(&self, options: ReorgOptions) -> Result<()> {
         node_info!("anvil_reorg");
+        let _lifecycle = self.lifecycle_lock.write().await;
+        let mining_guard = self.backend.lock_mining().await;
         let depth = options.depth;
-        let tx_block_pairs = options.tx_block_pairs;
+        let mut tx_block_pairs = options.tx_block_pairs;
+
+        if let Some((_, num)) = tx_block_pairs.iter().find(|(_, num)| *num >= depth) {
+            // A reorg of depth 0 mines no blocks, so there is nowhere to place the transactions.
+            let Some(last_block) = depth.checked_sub(1) else {
+                return Err(BlockchainError::RpcError(RpcError::invalid_params(
+                    "Reorg depth must be at least 1 to include transactions",
+                )));
+            };
+            return Err(BlockchainError::RpcError(RpcError::invalid_params(format!(
+                "Block number for reorg tx will exceed the reorged chain height. Block number {num} must not exceed (depth-1) {last_block}"
+            ))));
+        }
+        tx_block_pairs.sort_by_key(|a| a.1);
 
         // Check reorg depth doesn't exceed current chain height
         let current_height = self.backend.best_number();
@@ -4214,33 +4416,35 @@ impl EthApi<FoundryNetwork> {
 
         // Get the common ancestor block
         let common_block =
-            self.backend.get_block(common_height).ok_or(BlockchainError::BlockNotFound)?;
+            self.rollback_block(common_height).await?.ok_or(BlockchainError::BlockNotFound)?;
+
+        #[cfg(feature = "monad")]
+        let fee_defaults = if self.backend.is_monad() {
+            self.backend
+                .monad_rollback_fee_defaults(&common_block, self.lowest_suggestion_tip())
+                .await
+                .map(|(gas_price, blob_gas_price)| TransactionFeeDefaults {
+                    gas_price,
+                    blob_gas_price,
+                })
+        } else {
+            None
+        };
+        #[cfg(not(feature = "monad"))]
+        let fee_defaults = None;
 
         // Convert the transaction requests to pool transactions if they exist, otherwise use empty
         // hashmap
         let block_pool_txs = if tx_block_pairs.is_empty() {
             HashMap::default()
         } else {
-            let mut pairs = tx_block_pairs;
-
-            // Check the maximum block supplied number will not exceed the reorged chain height
-            if let Some((_, num)) = pairs.iter().find(|(_, num)| *num >= depth) {
-                return Err(BlockchainError::RpcError(RpcError::invalid_params(format!(
-                    "Block number for reorg tx will exceed the reorged chain height. Block number {num} must not exceed (depth-1) {}",
-                    depth - 1
-                ))));
-            }
-
-            // Sort by block number to make it easier to manage new nonces
-            pairs.sort_by_key(|a| a.1);
-
             // Manage nonces for each signer
             // address -> cumulative nonce
             let mut nonces: HashMap<Address, u64> = HashMap::default();
 
             let mut txs: HashMap<u64, Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>> =
                 HashMap::default();
-            for pair in pairs {
+            for pair in tx_block_pairs {
                 let (tx_data, block_index) = pair;
 
                 let pending = match tx_data {
@@ -4283,7 +4487,13 @@ impl EthApi<FoundryNetwork> {
                         );
 
                         // Build typed transaction request
-                        let typed_tx = self.build_tx_request(request.into(), *curr_nonce).await?;
+                        let typed_tx = self
+                            .build_tx_request_with_fee_defaults(
+                                request.into(),
+                                *curr_nonce,
+                                fee_defaults,
+                            )
+                            .await?;
 
                         // Increment nonce
                         *curr_nonce += 1;
@@ -4325,7 +4535,8 @@ impl EthApi<FoundryNetwork> {
             txs
         };
 
-        self.backend.reorg(depth, block_pool_txs, common_block).await?;
+        self.rollback_backend(common_block, &mining_guard).await?;
+        self.backend.reorg(depth, block_pool_txs, &mining_guard).await?;
         Ok(())
     }
 
@@ -4408,7 +4619,7 @@ impl EthApi<FoundryNetwork> {
         // either use the impersonated account of the request's `from` field
         let from = request.from().ok_or(BlockchainError::NoSignerAvailable)?;
 
-        let (nonce, on_chain_nonce) = self.request_nonce_for_transaction(&request, from).await?;
+        let nonce = self.request_nonce_for_transaction(&request, from).await?;
 
         let typed_tx = self.build_tx_request(request, nonce).await?;
 
@@ -4418,12 +4629,7 @@ impl EthApi<FoundryNetwork> {
 
         let pending_transaction = PendingTransaction::with_impersonated(transaction, from);
 
-        // pre-validate
-        self.backend.validate_pool_transaction(&pending_transaction).await?;
-
-        let (requires, provides) = nonce_markers(&pending_transaction, nonce, on_chain_nonce, from);
-
-        self.add_pending_transaction(pending_transaction, requires, provides)
+        self.add_pending_transaction(pending_transaction).await
     }
 
     /// Returns a summary of all the transactions currently pending for inclusion in the next
@@ -4800,8 +5006,17 @@ impl EthApi<FoundryNetwork> {
     /// to build a [`FoundryTypedTx`].
     async fn build_tx_request(
         &self,
+        request: FoundryTransactionRequest,
+        nonce: u64,
+    ) -> Result<FoundryTypedTx> {
+        self.build_tx_request_with_fee_defaults(request, nonce, None).await
+    }
+
+    async fn build_tx_request_with_fee_defaults(
+        &self,
         mut request: FoundryTransactionRequest,
         nonce: u64,
+        fee_defaults: Option<TransactionFeeDefaults>,
     ) -> Result<FoundryTypedTx> {
         let from = request.from().or(self.accounts()?.first().copied());
         if let Some(from) = from {
@@ -4837,8 +5052,9 @@ impl EthApi<FoundryNetwork> {
 
         // Fill missing tx type specific fields
         if let Err((tx_type, _)) = request.missing_keys() {
+            let gas_price = || fee_defaults.map_or_else(|| self.gas_price(), |fees| fees.gas_price);
             if tx_type.is_legacy() || tx_type.is_eip2930() {
-                request.gas_price().is_none().then(|| request.set_gas_price(self.gas_price()));
+                request.gas_price().is_none().then(|| request.set_gas_price(gas_price()));
             }
             if tx_type.is_eip2930() {
                 request
@@ -4854,7 +5070,7 @@ impl EthApi<FoundryNetwork> {
                 request
                     .max_fee_per_gas()
                     .is_none()
-                    .then(|| request.set_max_fee_per_gas(self.gas_price()));
+                    .then(|| request.set_max_fee_per_gas(gas_price()));
                 request
                     .max_priority_fee_per_gas()
                     .is_none()
@@ -4862,9 +5078,11 @@ impl EthApi<FoundryNetwork> {
             }
             if tx_type.is_eip4844() {
                 request.as_ref().max_fee_per_blob_gas().is_none().then(|| {
-                    request.as_mut().set_max_fee_per_blob_gas(
-                        self.backend.fees().get_next_block_blob_base_fee_per_gas(),
-                    )
+                    let blob_gas_price = fee_defaults.map_or_else(
+                        || self.backend.fees().get_next_block_blob_base_fee_per_gas(),
+                        |fees| fees.blob_gas_price,
+                    );
+                    request.as_mut().set_max_fee_per_blob_gas(blob_gas_price)
                 });
             }
         }
@@ -4903,38 +5121,195 @@ impl EthApi<FoundryNetwork> {
 
     /// Returns the nonce for this request
     ///
-    /// This returns a tuple of `(request nonce, highest nonce)`
-    /// If the nonce field of the `request` is `None` then the tuple will be `(highest nonce,
-    /// highest nonce)`.
-    ///
-    /// This will also check the tx pool for pending transactions from the sender.
-    async fn request_nonce(
-        &self,
-        request: &TransactionRequest,
-        from: Address,
-    ) -> Result<(u64, u64)> {
-        let highest_nonce =
-            self.get_transaction_count(from, Some(BlockId::Number(BlockNumber::Pending))).await?;
-        let nonce = request.nonce.unwrap_or(highest_nonce);
-
-        Ok((nonce, highest_nonce))
+    /// If the nonce field of the `request` is `None`, this accounts for pending transactions from
+    /// the sender.
+    async fn request_nonce(&self, request: &TransactionRequest, from: Address) -> Result<u64> {
+        if let Some(nonce) = request.nonce {
+            Ok(nonce)
+        } else {
+            self.get_transaction_count(from, Some(BlockId::Number(BlockNumber::Pending))).await
+        }
     }
 
     /// Adds the given transaction to the pool
-    fn add_pending_transaction(
+    async fn add_pending_transaction(
         &self,
         pending_transaction: PendingTransaction<FoundryTxEnvelope>,
-        requires: Vec<TxMarker>,
-        provides: Vec<TxMarker>,
     ) -> Result<TxHash> {
-        debug_assert!(requires != provides);
+        let _mining = self.backend.lock_mining().await;
+        self.backend.validate_pool_transaction(&pending_transaction).await?;
+
         let from = *pending_transaction.sender();
+        #[cfg(feature = "base")]
+        let base_markers = self.eip8130_nonce_markers(&pending_transaction).await?;
+        #[cfg(not(feature = "base"))]
+        let base_markers = None;
+
+        let (requires, provides) = if let Some(markers) =
+            base_markers.or_else(|| tempo_parallel_nonce_markers(&pending_transaction))
+        {
+            markers
+        } else {
+            let nonce = pending_transaction.transaction.nonce();
+            let on_chain_nonce = self.backend.current_nonce(from).await?;
+            nonce_markers(&pending_transaction, nonce, on_chain_nonce, from)
+        };
+
+        debug_assert!(requires != provides);
         let priority = self.transaction_priority(&pending_transaction.transaction);
         let pool_transaction =
             PoolTransaction { requires, provides, pending_transaction, priority, is_replay: false };
         let tx = self.pool.add_transaction(pool_transaction)?;
         trace!(target: "node", "Added transaction: [{:?}] sender={:?}", tx.hash(), from);
         Ok(*tx.hash())
+    }
+
+    /// Returns Base EIP-8130 channel/replay markers when the transaction does not use the
+    /// protocol nonce lane.
+    #[cfg(feature = "base")]
+    async fn eip8130_nonce_markers(
+        &self,
+        pending: &PendingTransaction<FoundryTxEnvelope>,
+    ) -> Result<Option<(Vec<TxMarker>, Vec<TxMarker>)>> {
+        if let FoundryTxEnvelope::Eip8130(signed) = pending.transaction.as_ref() {
+            let tx = signed.tx();
+            let now = self.backend.eip8130_pool_timestamp_ms();
+            signed
+                .validate_admission_static(self.backend.chain_id().to())
+                .map_err(|error| BlockchainError::Eip8130TransactionRejected(error.to_string()))?;
+            signed
+                .validate_timestamp(now)
+                .map_err(|error| BlockchainError::Eip8130TransactionRejected(error.to_string()))?;
+            if tx.nonce_key.is_zero() {
+                let state_nonce = self.backend.current_nonce(*pending.sender()).await?;
+                if tx.nonce_sequence < state_nonce {
+                    return Err(InvalidTransactionError::NonceTooLow.into());
+                }
+                let provides = vec![to_marker(tx.nonce_sequence, *pending.sender())];
+                self.ensure_eip8130_replacement_price(pending, &provides)?;
+                self.ensure_eip8130_payer_reservation(pending, &provides).await?;
+                return Ok(None);
+            }
+            if tx.nonce_key == Eip8130Constants::NONCE_KEY_MAX {
+                let replay_id = tx.replay_id(*pending.sender());
+                let slot = NonceManagerStorage::expiring_nonce_seen_slot(replay_id);
+                let word =
+                    self.backend.storage_at(NonceManagerStorage::ADDRESS, slot, None).await?;
+                let recorded_expiry =
+                    (U256::from_be_bytes(word.0) & U256::from(u64::MAX)).to::<u64>();
+                if recorded_expiry > now {
+                    return Err(BlockchainError::Eip8130TransactionRejected(
+                        "expiring nonce replay has already been recorded".to_string(),
+                    ));
+                }
+                let provides = vec![eip8130_replay_marker(replay_id)];
+                self.ensure_eip8130_replacement_price(pending, &provides)?;
+                self.ensure_eip8130_payer_reservation(pending, &provides).await?;
+                return Ok(Some((Vec::new(), provides)));
+            }
+
+            let slot = NonceManagerStorage::nonce_slot(*pending.sender(), tx.nonce_key)
+                .map_err(|error| BlockchainError::InvalidTransactionRequest(error.to_string()))?;
+            let word = self.backend.storage_at(NonceManagerStorage::ADDRESS, slot, None).await?;
+            let state_nonce =
+                Eip8130Nonce::decode_channel_nonce(U256::from_be_bytes(word.0)).to::<u64>();
+            if tx.nonce_sequence < state_nonce {
+                return Err(InvalidTransactionError::NonceTooLow.into());
+            }
+
+            let requires = if tx.nonce_sequence == state_nonce {
+                Vec::new()
+            } else {
+                vec![eip8130_channel_marker(*pending.sender(), tx.nonce_key, tx.nonce_sequence - 1)]
+            };
+            let provides =
+                vec![eip8130_channel_marker(*pending.sender(), tx.nonce_key, tx.nonce_sequence)];
+            self.ensure_eip8130_replacement_price(pending, &provides)?;
+            self.ensure_eip8130_payer_reservation(pending, &provides).await?;
+            return Ok(Some((requires, provides)));
+        }
+
+        Ok(None)
+    }
+
+    /// Enforces Base's default ten-percent EIP-8130 replacement price bump.
+    #[cfg(feature = "base")]
+    fn ensure_eip8130_replacement_price(
+        &self,
+        pending: &PendingTransaction<FoundryTxEnvelope>,
+        provides: &[TxMarker],
+    ) -> Result<()> {
+        let Some(existing) = self.pool.transaction_with_markers(*pending.sender(), provides) else {
+            return Ok(());
+        };
+        let FoundryTxEnvelope::Eip8130(incoming) = pending.transaction.as_ref() else {
+            return Ok(());
+        };
+        let FoundryTxEnvelope::Eip8130(current) = existing.pending_transaction.transaction.as_ref()
+        else {
+            return Ok(());
+        };
+
+        const PRICE_BUMP_PERCENT: u128 = 10;
+        let bumped =
+            |price: u128| price.saturating_mul(100 + PRICE_BUMP_PERCENT).saturating_add(99) / 100;
+        if incoming.tx().max_fee_per_gas < bumped(current.tx().max_fee_per_gas)
+            || incoming.tx().max_priority_fee_per_gas
+                < bumped(current.tx().max_priority_fee_per_gas)
+        {
+            return Err(
+                crate::eth::error::PoolError::ReplacementUnderpriced(*pending.hash()).into()
+            );
+        }
+        Ok(())
+    }
+
+    /// Reserves each payer's maximum EIP-8130 fee across pending transactions.
+    #[cfg(feature = "base")]
+    async fn ensure_eip8130_payer_reservation(
+        &self,
+        pending: &PendingTransaction<FoundryTxEnvelope>,
+        replacing_markers: &[TxMarker],
+    ) -> Result<()> {
+        let FoundryTxEnvelope::Eip8130(incoming) = pending.transaction.as_ref() else {
+            return Ok(());
+        };
+        let payer = incoming.tx().payer.unwrap_or(*pending.sender());
+        let incoming_cost = FeeCheck::max_fee_charge(
+            incoming.tx().gas_limit,
+            IntrinsicGas::max_payer_auth_cost(incoming)
+                .map_err(|error| BlockchainError::Eip8130TransactionRejected(error.to_string()))?,
+            incoming.tx().max_fee_per_gas,
+        );
+        let mut reserved = U256::ZERO;
+        for pooled in self.pool.all_transactions() {
+            if pooled.provides == replacing_markers {
+                continue;
+            }
+            let FoundryTxEnvelope::Eip8130(signed) =
+                pooled.pending_transaction.transaction.as_ref()
+            else {
+                continue;
+            };
+            if signed.tx().payer.unwrap_or(*pooled.pending_transaction.sender()) != payer {
+                continue;
+            }
+            let payer_auth = IntrinsicGas::max_payer_auth_cost(signed)
+                .map_err(|error| BlockchainError::Eip8130TransactionRejected(error.to_string()))?;
+            reserved = reserved.saturating_add(FeeCheck::max_fee_charge(
+                signed.tx().gas_limit,
+                payer_auth,
+                signed.tx().max_fee_per_gas,
+            ));
+        }
+        let balance = self.backend.get_account(payer).await?.balance;
+        let required = reserved.saturating_add(incoming_cost);
+        if balance < required {
+            return Err(BlockchainError::Eip8130TransactionRejected(format!(
+                "gas payer balance {balance} is below pending reservation {required}"
+            )));
+        }
+        Ok(())
     }
 
     /// additional validation against hardfork
@@ -4944,12 +5319,14 @@ impl EthApi<FoundryNetwork> {
             FoundryTxEnvelope::Eip1559(_) => self.backend.ensure_eip1559_active(),
             FoundryTxEnvelope::Eip4844(_) => self.backend.ensure_eip4844_active(),
             FoundryTxEnvelope::Eip7702(_) => self.backend.ensure_eip7702_active(),
-            #[cfg(feature = "optimism")]
-            FoundryTxEnvelope::Deposit(_) => self.backend.ensure_op_deposits_active(),
+            #[cfg(any(feature = "base", feature = "optimism"))]
+            FoundryTxEnvelope::Deposit(_) => self.backend.ensure_deposits_active(),
             #[cfg(feature = "optimism")]
             FoundryTxEnvelope::PostExec(_) => Err(BlockchainError::InvalidTransactionRequest(
                 "not implemented for post-exec tx".to_string(),
             )),
+            #[cfg(feature = "base")]
+            FoundryTxEnvelope::Eip8130(_) => self.backend.ensure_base_eip8130_submission_active(),
             FoundryTxEnvelope::Legacy(_) => Ok(()),
             FoundryTxEnvelope::Tempo(_) => self.backend.ensure_tempo_active(),
         }
@@ -5016,15 +5393,15 @@ impl EthApi<FoundryNetwork> {
         &self,
         request: &FoundryTransactionRequest,
         from: Address,
-    ) -> Result<(u64, u64)> {
+    ) -> Result<u64> {
         if let FoundryTransactionRequest::Tempo(request) = request
             && let Some(nonce_key) = request.nonce_key.filter(|key| !key.is_zero())
         {
             if let Some(nonce) = request.nonce() {
-                return Ok((nonce, 0));
+                return Ok(nonce);
             }
             let nonce = self.backend.tempo_nonce(from, nonce_key, None).await?;
-            return Ok((nonce, 0));
+            return Ok(nonce);
         }
         self.request_nonce(request.as_ref(), from).await
     }
@@ -5045,6 +5422,22 @@ fn required_marker(provided_nonce: u64, on_chain_nonce: u64, from: Address) -> V
     }
     let prev_nonce = provided_nonce.saturating_sub(1);
     if on_chain_nonce <= prev_nonce { vec![to_marker(prev_nonce, from)] } else { Vec::new() }
+}
+
+#[cfg(feature = "base")]
+fn eip8130_channel_marker(sender: Address, nonce_key: U256, nonce_sequence: u64) -> TxMarker {
+    let mut marker = b"base-eip8130-channel".to_vec();
+    marker.extend_from_slice(sender.as_slice());
+    marker.extend_from_slice(&nonce_key.to_be_bytes::<32>());
+    marker.extend_from_slice(&nonce_sequence.to_be_bytes());
+    marker
+}
+
+#[cfg(feature = "base")]
+fn eip8130_replay_marker(replay_id: B256) -> TxMarker {
+    let mut marker = b"base-eip8130-replay".to_vec();
+    marker.extend_from_slice(replay_id.as_slice());
+    marker
 }
 
 fn tempo_parallel_nonce_markers(
@@ -5128,6 +5521,13 @@ fn encode_rpc_transaction(transaction: &AnyRpcTransaction) -> Result<Bytes> {
 
 fn txpool_transaction_key(pending_transaction: &PendingTransaction<FoundryTxEnvelope>) -> String {
     match pending_transaction.transaction.as_ref() {
+        #[cfg(feature = "base")]
+        FoundryTxEnvelope::Eip8130(signed) if !signed.tx().nonce_key.is_zero() => {
+            if signed.tx().nonce_key == Eip8130Constants::NONCE_KEY_MAX {
+                return signed.tx().replay_id(*pending_transaction.sender()).to_string();
+            }
+            format!("{}:{}", signed.tx().nonce_key, signed.tx().nonce_sequence)
+        }
         FoundryTxEnvelope::Tempo(tx) if !tx.tx().nonce_key.is_zero() => {
             let tx = tx.tx();
             format!("{}:{}", tx.nonce_key, tx.nonce)
@@ -5295,6 +5695,20 @@ fn reward_at_percentile(rewards: &[u128], percentile: f64) -> u128 {
 mod tests {
     use super::*;
     use crate::{NodeConfig, spawn};
+
+    #[cfg(feature = "base")]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn base_requests_are_rejected_without_execution() {
+        let (api, _handle) = spawn(NodeConfig::test()).await;
+        for request in [serde_json::json!({ "type": "0x79" }), serde_json::json!({ "calls": [[]] })]
+        {
+            let request = serde_json::from_value(request).unwrap();
+            assert!(matches!(
+                api.parse_transaction_request(request),
+                Err(BlockchainError::BaseTransactionUnsupported)
+            ));
+        }
+    }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn set_rpc_url_installs_context_equivalent_identity_with_new_instance() {

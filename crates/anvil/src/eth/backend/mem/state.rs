@@ -404,13 +404,24 @@ impl TrieNode {
 /// the nodes touched by any particular block.
 pub fn state_trie_witness(accounts: &AddressMap<DbAccount>) -> (B256, Vec<Bytes>) {
     let mut rlp_buf = Vec::new();
-    let mut trie = IncrementalStateTrie::from_accounts(accounts, &mut rlp_buf);
+    let mut account_trie = IncrementalTrie::default();
     let mut nodes = Vec::new();
-    for storage_trie in trie.storage.values_mut() {
+    for (address, account) in accounts {
+        if account.account_state == AccountState::NotExisting {
+            continue;
+        }
+
+        // Keep only one storage trie alive while collecting the witness.
+        let mut storage_trie = IncrementalTrie::from_storage(&account.storage);
+        let storage_root = storage_trie.root_with_buf(&mut rlp_buf);
         storage_trie.root.collect_nodes(&mut rlp_buf, &mut nodes);
+        account_trie.insert(
+            keccak256(address),
+            trie_account_rlp_with_storage_root(&account.info, storage_root),
+        );
     }
-    trie.accounts.root.collect_nodes(&mut rlp_buf, &mut nodes);
-    let root = trie.root(&mut rlp_buf);
+    account_trie.root.collect_nodes(&mut rlp_buf, &mut nodes);
+    let root = account_trie.root_with_buf(&mut rlp_buf);
     nodes.sort_unstable();
     nodes.dedup();
     (root, nodes)

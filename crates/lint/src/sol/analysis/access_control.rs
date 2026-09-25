@@ -3,7 +3,7 @@
 
 use super::{
     branch_always_exits, is_require_or_assert, is_sender_member, lhs_local_var, loop_stmts,
-    stmt_expr, underlying_var, visit_stmts,
+    stmt_expr, tuple_elems, underlying_var, visit_stmts,
 };
 use solar::sema::{
     Gcx,
@@ -126,30 +126,76 @@ pub fn access_check_polarity<'gcx>(
     }
 }
 
-/// Locals initialized or assigned from a value that reads `msg.sender`.
-pub fn sender_aliases<'gcx>(
+/// Applies `stmt` to the set of locals holding a `msg.sender`-derived value: a local initialized
+/// or assigned from a value that reads the sender becomes an alias, and one reassigned from
+/// anything else stops being one.
+fn update_sender_aliases<'gcx>(
     gcx: Gcx<'gcx>,
-    stmts: impl IntoIterator<Item = &'gcx Stmt<'gcx>>,
-) -> HashSet<VariableId> {
-    let mut aliases = HashSet::new();
-    let _ = visit_stmts(&gcx.hir, stmts, |stmt| {
-        let (var_id, value) = match stmt.kind {
-            StmtKind::DeclSingle(var_id) => (Some(var_id), gcx.hir.variable(var_id).initializer),
-            StmtKind::Expr(expr) => match &expr.peel_parens().kind {
-                ExprKind::Assign(lhs, _, rhs) => (lhs_local_var(gcx, lhs), Some(*rhs)),
-                _ => (None, None),
-            },
-            _ => (None, None),
-        };
-        if let Some(var_id) = var_id
-            && let Some(value) = value
-            && expr_reads_sender(gcx, value, &mut HashSet::new(), &aliases)
-        {
+    stmt: &Stmt<'gcx>,
+    aliases: &mut HashSet<VariableId>,
+) {
+    let reads_sender = |value: Option<&Expr<'_>>, aliases: &HashSet<VariableId>| {
+        value.is_some_and(|value| expr_reads_sender(gcx, value, &mut HashSet::new(), aliases))
+    };
+    // A tuple assignment is simultaneous, so every right-hand side is classified against the
+    // aliases as they were before the statement, and the locals are updated afterwards.
+    let updates: Vec<(VariableId, bool)> = match stmt.kind {
+        StmtKind::DeclSingle(var_id) => match gcx.hir.variable(var_id).initializer {
+            Some(value) => vec![(var_id, reads_sender(Some(value), aliases))],
+            None => return,
+        },
+        StmtKind::DeclMulti(var_ids, value) => var_ids
+            .iter()
+            .enumerate()
+            .filter_map(|(i, var_id)| {
+                let value =
+                    tuple_elems(value).map_or(Some(value), |elems| elems.get(i).copied().flatten());
+                var_id.map(|var_id| (var_id, reads_sender(value, aliases)))
+            })
+            .collect(),
+        StmtKind::Expr(expr) => match &expr.peel_parens().kind {
+            ExprKind::Assign(lhs, _, rhs) => {
+                let mut updates = Vec::new();
+                collect_sender_alias_updates(gcx, lhs, Some(rhs), aliases, &mut updates);
+                updates
+            }
+            _ => return,
+        },
+        _ => return,
+    };
+    // Solidity commits tuple writes right-to-left, which matters when a local occurs more than
+    // once in the destination.
+    for (var_id, reads_sender) in updates.into_iter().rev() {
+        if reads_sender {
             aliases.insert(var_id);
+        } else {
+            aliases.remove(&var_id);
         }
-        ControlFlow::Continue(())
-    });
-    aliases
+    }
+}
+
+/// Recursively pairs tuple destinations with tuple literal elements. Any other right-hand side,
+/// such as a call returning a tuple, applies to every destination local.
+fn collect_sender_alias_updates(
+    gcx: Gcx<'_>,
+    lhs: &Expr<'_>,
+    rhs: Option<&Expr<'_>>,
+    aliases: &HashSet<VariableId>,
+    updates: &mut Vec<(VariableId, bool)>,
+) {
+    if let Some(lhs_elems) = tuple_elems(lhs) {
+        for (i, lhs) in lhs_elems.iter().enumerate() {
+            let Some(lhs) = lhs else { continue };
+            let rhs = rhs.and_then(|rhs| {
+                tuple_elems(rhs).map_or(Some(rhs), |elems| elems.get(i).copied().flatten())
+            });
+            collect_sender_alias_updates(gcx, lhs, rhs, aliases, updates);
+        }
+    } else if let Some(var_id) = lhs_local_var(gcx, lhs) {
+        let reads_sender =
+            rhs.is_some_and(|rhs| expr_reads_sender(gcx, rhs, &mut HashSet::new(), aliases));
+        updates.push((var_id, reads_sender));
+    }
 }
 
 /// Whether `expr` reads `msg.sender`/`tx.origin`, one of `aliases`, or calls a user function that
@@ -254,7 +300,10 @@ fn for_each_guard<'gcx>(
 ) -> ControlFlow<()> {
     let mut stmts = Vec::new();
     let _ = dominating_stmts(body.stmts, &mut stmts);
-    let aliases = sender_aliases(gcx, stmts.iter().copied());
+    // Aliases as of each statement: a check is evaluated against the locals that read the sender
+    // at that point, so a reassignment neither validates a later check nor invalidates an earlier
+    // one.
+    let mut aliases = HashSet::new();
     for stmt in stmts {
         if let StmtKind::If(cond, then_stmt, else_stmt) = stmt.kind {
             let exits = match access_check_polarity(gcx, cond, &aliases) {
@@ -267,6 +316,7 @@ fn for_each_guard<'gcx>(
             }
             continue;
         }
+        update_sender_aliases(gcx, stmt, &mut aliases);
         let Some(expr) = stmt_expr(&gcx.hir, stmt) else { continue };
         expr.visit(&mut |e| {
             match &e.kind {

@@ -8,7 +8,7 @@
 #[macro_use]
 extern crate tracing;
 
-use crate::cache::StorageCachingConfig;
+use crate::{cache::StorageCachingConfig, etherscan::EtherscanEnvProvider};
 use alloy_primitives::{Address, B256, FixedBytes, U256, address, map::AddressHashMap};
 use eyre::{ContextCompat, WrapErr};
 use figment::{
@@ -68,8 +68,7 @@ pub use endpoints::{
 };
 
 mod etherscan;
-pub use etherscan::EtherscanConfigError;
-use etherscan::{EtherscanConfigs, EtherscanEnvProvider, ResolvedEtherscanConfig};
+pub use etherscan::{EtherscanConfigError, EtherscanConfigs, ResolvedEtherscanConfig};
 
 pub mod resolve;
 pub use resolve::UnresolvedEnvVarError;
@@ -84,11 +83,13 @@ pub mod lint;
 pub use lint::{LinterConfig, Severity as LintSeverity};
 
 pub mod fs_permissions;
-pub use fs_permissions::FsPermissions;
 use fs_permissions::PathPermission;
+
+pub use fs_permissions::FsPermissions;
 
 pub mod error;
 use error::ExtractConfigError;
+
 pub use error::SolidityErrorCode;
 
 pub mod doc;
@@ -107,8 +108,9 @@ pub use alloy_chains::{Chain, NamedChain};
 pub use figment;
 
 pub mod providers;
-pub use providers::Remappings;
 use providers::*;
+
+pub use providers::Remappings;
 
 mod fuzz;
 pub use fuzz::{FuzzConfig, FuzzCorpusConfig, FuzzCorpusMutationWeights, FuzzDictionaryConfig};
@@ -148,8 +150,8 @@ pub use compilation::{CompilationRestrictions, SettingsOverrides};
 
 pub mod extend;
 use extend::Extends;
-
 use foundry_evm_networks::NetworkConfigs;
+
 pub use semver;
 
 #[cfg(not(test))]
@@ -506,6 +508,17 @@ pub struct Config {
     /// Disables storage caching entirely. This overrides any settings made in
     /// `rpc_storage_caching`
     pub no_storage_caching: bool,
+    /// Disables parent-block BAL cache prewarming for transaction-hash forks.
+    ///
+    /// Defaults to `false`. Independent of disk storage caching; preceding transactions are
+    /// still replayed when prewarming is enabled.
+    ///
+    /// Each fork retains the value set at creation, including for subsequent transaction-hash
+    /// rolls. Contract-level inline configuration applies to forks created in `setUp`.
+    /// Function-level inline configuration applies to forks created in that test, but does not
+    /// change forks already created by `setUp`.
+    #[serde(default)]
+    pub no_fork_bal: bool,
     /// Disables rate limiting entirely. This overrides any settings made in
     /// `compute_units_per_second`
     pub no_rpc_rate_limit: bool,
@@ -568,6 +581,13 @@ pub struct Config {
     /// Whether to enable safety checks for `vm.getCode` and `vm.getDeployedCode` invocations.
     /// If disabled, it is possible to access artifacts which were not recompiled or cached.
     pub unchecked_cheatcode_artifacts: bool,
+
+    /// Whether to decode the storage layouts of contracts outside the local project in state
+    /// diffs, by compiling the verified source a block explorer has for them.
+    ///
+    /// Resolved layouts are cached under the explorer cache directory; `forge cache clean`
+    /// clears them.
+    pub decode_external_storage: bool,
 
     /// CREATE2 salt to use for the library deployment in scripts.
     pub create2_library_salt: B256,
@@ -1834,40 +1854,16 @@ impl Config {
         &self,
         chain: Option<Chain>,
     ) -> Result<Option<ResolvedEtherscanConfig>, EtherscanConfigError> {
-        if let Some(maybe_alias) = self.etherscan_api_key.as_ref().or(self.eth_rpc_url.as_ref())
-            && self.etherscan.contains_key(maybe_alias)
-        {
-            return self.etherscan.clone().resolved().remove(maybe_alias).transpose();
-        }
+        self.etherscan.resolve_for(
+            self.etherscan_alias(),
+            self.etherscan_api_key.as_deref(),
+            chain.or(self.chain),
+        )
+    }
 
-        // try to find by comparing chain IDs after resolving
-        if let Some(res) = chain
-            .or(self.chain)
-            .and_then(|chain| self.etherscan.clone().resolved().find_chain(chain))
-        {
-            match (res, self.etherscan_api_key.as_ref()) {
-                (Ok(mut config), Some(key)) => {
-                    // we update the key, because if an etherscan_api_key is set, it should take
-                    // precedence over the entry, since this is usually set via env var or CLI args.
-                    config.key.clone_from(key);
-                    return Ok(Some(config));
-                }
-                (Ok(config), None) => return Ok(Some(config)),
-                (Err(err), None) => return Err(err),
-                (Err(_), Some(_)) => {
-                    // use the etherscan key as fallback
-                }
-            }
-        }
-
-        // etherscan fallback via API key
-        if let Some(key) = self.etherscan_api_key.as_ref() {
-            return Ok(ResolvedEtherscanConfig::create(
-                key,
-                chain.or(self.chain).unwrap_or_default(),
-            ));
-        }
-        Ok(None)
+    /// The `[etherscan]` entry to prefer over matching on chain id, if it names one.
+    pub fn etherscan_alias(&self) -> Option<&str> {
+        self.etherscan_api_key.as_deref().or(self.eth_rpc_url.as_deref())
     }
 
     /// Helper function to just get the API key
@@ -3023,6 +3019,7 @@ impl Default for Config {
             rpc_endpoints: Default::default(),
             etherscan: Default::default(),
             no_storage_caching: false,
+            no_fork_bal: false,
             no_rpc_rate_limit: false,
             use_literal_content: false,
             bytecode_hash: BytecodeHash::Ipfs,
@@ -3037,6 +3034,7 @@ impl Default for Config {
             bind_json: Default::default(),
             labels: Default::default(),
             unchecked_cheatcode_artifacts: false,
+            decode_external_storage: false,
             create2_library_salt: Self::DEFAULT_CREATE2_LIBRARY_SALT,
             create2_deployer: Self::DEFAULT_CREATE2_DEPLOYER,
             skip: vec![],
@@ -3300,6 +3298,9 @@ mod tests {
     };
     use tempfile::tempdir;
 
+    #[cfg(feature = "base")]
+    use foundry_evm_hardforks::BaseUpgrade;
+
     // Helper function to clear `__warnings` in config, since it will be populated during loading
     // from file, causing testing problem when comparing to those created from `default()`, etc.
     fn clear_warning(config: &mut Config) {
@@ -3389,6 +3390,48 @@ mod tests {
 
         config.no_storage_caching = false;
         assert!(!config.enable_caching(url, NamedChain::Dev));
+    }
+
+    #[test]
+    fn test_fork_bal_config() {
+        figment::Jail::expect_with(|jail| {
+            assert!(!Config::load().unwrap().no_fork_bal);
+            jail.create_file(
+                "foundry.toml",
+                r"
+                [profile.default]
+                no_fork_bal = true
+                no_storage_caching = true
+
+                [profile.ci]
+                no_fork_bal = false
+                ",
+            )?;
+            let config = Config::load().unwrap();
+            assert!(config.no_fork_bal);
+            assert!(config.no_storage_caching);
+
+            jail.set_env("FOUNDRY_PROFILE", "ci");
+            let config = Config::load().unwrap();
+            assert!(!config.no_fork_bal);
+            assert!(config.no_storage_caching);
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_fork_bal_environment() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file("foundry.toml", "[profile.default]\nno_fork_bal = true\n")?;
+            jail.set_env("FOUNDRY_NO_FORK_BAL", "false");
+            assert!(!Config::load().unwrap().no_fork_bal);
+            jail.create_file("foundry.toml", "[profile.default]\nno_fork_bal = false\n")?;
+            jail.set_env("FOUNDRY_NO_FORK_BAL", "true");
+            assert!(Config::load().unwrap().no_fork_bal);
+            jail.set_env("FOUNDRY_NO_FORK_BAL", "invalid");
+            assert!(Config::load().is_err());
+            Ok(())
+        });
     }
 
     #[test]
@@ -4569,6 +4612,7 @@ mod tests {
                 memory_limit = 134217728
                 names = false
                 no_storage_caching = false
+                no_fork_bal = false
                 no_rpc_rate_limit = false
                 offline = false
                 optimizer = true
@@ -5770,6 +5814,26 @@ mod tests {
             let config = Config::load().unwrap();
             assert_eq!(config.hardfork, Some(FoundryHardfork::Tempo(TempoHardfork::T3)));
             assert!(config.networks.is_tempo());
+
+            Ok(())
+        });
+    }
+
+    #[cfg(feature = "base")]
+    #[test]
+    fn base_upgrade_infers_base_network() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                hardfork = "base:Beryl"
+            "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.hardfork, Some(FoundryHardfork::Base(BaseUpgrade::Beryl)));
+            assert!(config.networks.is_base());
 
             Ok(())
         });

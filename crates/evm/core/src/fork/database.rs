@@ -13,7 +13,7 @@ use revm::{
     Database, DatabaseCommit,
     bytecode::Bytecode,
     context::BlockEnv,
-    database::{CacheDB, DatabaseRef},
+    database::{AccountState, CacheDB, DatabaseRef},
     primitives::AddressMap,
     state::{Account, AccountInfo},
 };
@@ -255,6 +255,13 @@ impl<N: Network, B: ForkBlockEnv> DatabaseRef for ForkDbStateSnapshot<N, B> {
         match self.local.cache.accounts.get(&address) {
             Some(account) => match account.storage.get(&index) {
                 Some(entry) => Ok(*entry),
+                None if matches!(
+                    account.account_state,
+                    AccountState::NotExisting | AccountState::StorageCleared
+                ) =>
+                {
+                    Ok(U256::ZERO)
+                }
                 None => self.storage_from_snapshot_or_backend(address, index),
             },
             None => self.storage_from_snapshot_or_backend(address, index),
@@ -273,7 +280,54 @@ impl<N: Network, B: ForkBlockEnv> DatabaseRef for ForkDbStateSnapshot<N, B> {
 mod tests {
     use super::*;
     use crate::backend::BlockchainDbMeta;
+    use alloy_network::AnyNetwork;
+    use alloy_provider::{ProviderBuilder, mock::Asserter};
     use foundry_common::provider::get_http_provider;
+    use revm::database::DbAccount;
+
+    fn fork_snapshot_with_closed_backend() -> ForkDbStateSnapshot<AnyNetwork> {
+        let provider =
+            ProviderBuilder::<_, _, AnyNetwork>::default().connect_mocked_client(Asserter::new());
+        let db = BlockchainDb::new(
+            BlockchainDbMeta::new(BlockEnv::default(), "http://localhost".to_string()),
+            None,
+        );
+        let (backend, handler) = SharedBackend::new(provider, db, None);
+        drop(handler);
+        ForkDbStateSnapshot {
+            local: CacheDB::new(backend),
+            state_snapshot: StateSnapshot::default(),
+        }
+    }
+
+    #[test]
+    fn fork_db_state_snapshot_respects_local_storage_clearing() {
+        let address = Address::random();
+        let slot = U256::from(42);
+        for account_state in [AccountState::NotExisting, AccountState::StorageCleared] {
+            let mut snapshot = fork_snapshot_with_closed_backend();
+            snapshot.state_snapshot.storage.entry(address).or_default().insert(slot, U256::from(7));
+            snapshot.local.cache.accounts.insert(
+                address,
+                DbAccount { account_state: account_state.clone(), ..Default::default() },
+            );
+
+            assert_eq!(snapshot.storage_ref(address, slot).unwrap(), U256::ZERO);
+            assert_eq!(snapshot.storage_ref(address, slot + U256::ONE).unwrap(), U256::ZERO);
+
+            if account_state == AccountState::StorageCleared {
+                snapshot
+                    .local
+                    .cache
+                    .accounts
+                    .get_mut(&address)
+                    .unwrap()
+                    .storage
+                    .insert(slot, U256::from(9));
+                assert_eq!(snapshot.storage_ref(address, slot).unwrap(), U256::from(9));
+            }
+        }
+    }
 
     /// Demonstrates that `Database::basic` for `ForkedDatabase` will always return the
     /// `AccountInfo`
@@ -303,28 +357,20 @@ mod tests {
         assert_eq!(loaded.unwrap(), info);
     }
 
-    /// Verifies that `ForkDbStateSnapshot::storage_ref` reads from `state_snapshot.storage`
-    /// when the slot is missing from `local.cache.accounts`. Without this lookup the call
-    /// would fall through to the backend and return the unrelated remote value.
-    #[tokio::test(flavor = "multi_thread")]
-    async fn fork_db_state_snapshot_reads_storage_from_snapshot() {
-        let rpc = foundry_test_utils::rpc::next_http_rpc_endpoint();
-        let provider = get_http_provider(rpc.clone());
-        let meta = BlockchainDbMeta::new(BlockEnv::default(), rpc);
-        let db = BlockchainDb::new(meta, None);
-        let backend = SharedBackend::spawn_backend(Arc::new(provider), db, None).await;
-
+    /// Reads cached remote storage without consulting the backend, including when the local
+    /// account is present but does not override the slot.
+    #[test]
+    fn fork_db_state_snapshot_reads_storage_from_snapshot() {
+        let mut snapshot = fork_snapshot_with_closed_backend();
         let address = Address::random();
         let slot = U256::from(42u64);
         let expected = U256::from(0xdeadbeefu64);
 
-        let mut state_snapshot = StateSnapshot::default();
-        state_snapshot.storage.entry(address).or_default().insert(slot, expected);
+        snapshot.state_snapshot.storage.entry(address).or_default().insert(slot, expected);
 
-        let snapshot = ForkDbStateSnapshot { local: CacheDB::new(backend), state_snapshot };
-
-        let got = DatabaseRef::storage_ref(&snapshot, address, slot).unwrap();
-        assert_eq!(got, expected);
+        assert_eq!(snapshot.storage_ref(address, slot).unwrap(), expected);
+        snapshot.local.cache.accounts.insert(address, DbAccount::default());
+        assert_eq!(snapshot.storage_ref(address, slot).unwrap(), expected);
     }
 
     #[tokio::test(flavor = "multi_thread")]

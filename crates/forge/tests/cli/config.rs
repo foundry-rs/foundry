@@ -102,6 +102,7 @@ via_ssa_cfg = false
 experimental = false
 ast = false
 no_storage_caching = false
+no_fork_bal = false
 no_rpc_rate_limit = false
 use_literal_content = false
 bytecode_hash = "ipfs"
@@ -112,6 +113,7 @@ isolate = true
 disable_block_gas_limit = false
 enable_tx_gas_limit = false
 unchecked_cheatcode_artifacts = false
+decode_external_storage = false
 create2_library_salt = "0x0000000000000000000000000000000000000000000000000000000000000000"
 create2_deployer = "0x4e59b44847b379578588920ca78fbf26c0b4956c"
 assertions_revert = true
@@ -466,6 +468,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
             endpoints: CachedEndpoints::Remote,
         },
         no_storage_caching: true,
+        no_fork_bal: true,
         no_rpc_rate_limit: true,
         use_literal_content: false,
         bytecode_hash: Default::default(),
@@ -485,6 +488,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         labels: Default::default(),
         isolate: true,
         unchecked_cheatcode_artifacts: false,
+        decode_external_storage: false,
         create2_library_salt: Config::DEFAULT_CREATE2_LIBRARY_SALT,
         create2_deployer: Config::DEFAULT_CREATE2_DEPLOYER,
         vyper: Default::default(),
@@ -2357,6 +2361,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "endpoints": "all"
   },
   "no_storage_caching": false,
+  "no_fork_bal": false,
   "no_rpc_rate_limit": false,
   "use_literal_content": false,
   "bytecode_hash": "ipfs",
@@ -2434,6 +2439,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "disable_block_gas_limit": false,
   "enable_tx_gas_limit": false,
   "unchecked_cheatcode_artifacts": false,
+  "decode_external_storage": false,
   "create2_library_salt": "0x0000000000000000000000000000000000000000000000000000000000000000",
   "create2_deployer": "0x4e59b44847b379578588920ca78fbf26c0b4956c",
   "vyper": {},

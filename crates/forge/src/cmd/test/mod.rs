@@ -93,6 +93,9 @@ use std::{
 use tempfile::TempDir;
 use yansi::Paint;
 
+#[cfg(feature = "base")]
+use foundry_evm::core::evm::BaseEvmNetwork;
+
 #[cfg(feature = "monad")]
 use foundry_evm::core::evm::MonadEvmNetwork;
 
@@ -103,8 +106,9 @@ mod evm_profile_server;
 mod filter;
 mod summary;
 use filter::RerunFailures;
-pub use filter::{FilterArgs, ProjectPathsAwareFilter, RerunFailure};
 use summary::{TestSummaryReport, format_invariant_metrics_table};
+
+pub use filter::{FilterArgs, ProjectPathsAwareFilter, RerunFailure};
 
 const DEBUGGER_MATCHING_TESTS_DISPLAY_LIMIT: usize = 12;
 const AUTO_FUZZ_FAILURE_DIR: &str = "fuzz";
@@ -213,50 +217,30 @@ fn count_fuzz_minimize_targets<FEN: FoundryEvmNetwork>(
         .sum()
 }
 
-#[derive(Clone, Copy)]
-enum NetworkDispatchKind {
-    Tempo,
-    #[cfg(feature = "monad")]
-    Monad,
-    #[cfg(feature = "optimism")]
-    Optimism,
-    Eth,
-}
-
-const fn network_dispatch_kind(evm_opts: &EvmOpts) -> NetworkDispatchKind {
-    if evm_opts.networks.is_tempo() {
-        return NetworkDispatchKind::Tempo;
-    }
-    #[cfg(feature = "monad")]
-    if evm_opts.networks.is_monad() {
-        return NetworkDispatchKind::Monad;
-    }
-    #[cfg(feature = "optimism")]
-    if evm_opts.networks.is_optimism() {
-        return NetworkDispatchKind::Optimism;
-    }
-    NetworkDispatchKind::Eth
-}
-
 /// Evaluates `$body` with `$fen` bound to the concrete network type selected by `$evm_opts`.
 macro_rules! dispatch_network {
     ($evm_opts:expr, | $fen:ident | $body:expr) => {
-        match network_dispatch_kind($evm_opts) {
-            NetworkDispatchKind::Tempo => {
+        match $evm_opts.networks.execution_network() {
+            #[cfg(feature = "base")]
+            NetworkVariant::Base => {
+                type $fen = BaseEvmNetwork;
+                $body
+            }
+            NetworkVariant::Tempo => {
                 type $fen = TempoEvmNetwork;
                 $body
             }
             #[cfg(feature = "monad")]
-            NetworkDispatchKind::Monad => {
+            NetworkVariant::Monad => {
                 type $fen = MonadEvmNetwork;
                 $body
             }
             #[cfg(feature = "optimism")]
-            NetworkDispatchKind::Optimism => {
+            NetworkVariant::Optimism => {
                 type $fen = OpEvmNetwork;
                 $body
             }
-            NetworkDispatchKind::Eth => {
+            NetworkVariant::Ethereum => {
                 type $fen = EthEvmNetwork;
                 $body
             }
@@ -866,6 +850,7 @@ pub struct TestArgs {
     pub symbolic_use_fuzz_frontiers: bool,
 
     /// Check invariants from imported stateful fuzz frontier prefixes before flipping comparisons.
+    /// Also enables invariant frontier seeding.
     #[arg(long, env = "FOUNDRY_SYMBOLIC_CHECK_INVARIANT_FRONTIERS")]
     pub symbolic_check_invariant_frontiers: bool,
 
@@ -972,8 +957,8 @@ pub struct TestArgs {
     #[arg(
         long,
         env = "FOUNDRY_SYMBOLIC_STORAGE_LAYOUT",
-        value_name = "solidity|generic",
-        value_parser = ["solidity", "generic"]
+        value_name = "solidity|generic|zero_init",
+        value_parser = ["solidity", "generic", "zero_init"]
     )]
     pub symbolic_storage_layout: Option<String>,
 
@@ -1053,6 +1038,11 @@ pub struct TestArgs {
         requires = "showmap_out",
     )]
     pub showmap_corpus_dir: Option<PathBuf>,
+
+    /// Decode the storage layouts of contracts outside the local project in state diffs, by
+    /// compiling the verified source a block explorer has for them.
+    #[arg(long)]
+    pub decode_external_storage: bool,
 
     #[command(flatten)]
     filter: FilterArgs,
@@ -3080,6 +3070,7 @@ impl Provider for TestArgs {
             "etherscan_api_key" =>
                 self.etherscan_api_key.as_ref().filter(|s| !s.trim().is_empty()).cloned(),
             "show_progress" => self.show_progress.then_some(true),
+            "decode_external_storage" => self.decode_external_storage.then_some(true),
         };
         // Mutation-testing CLI overrides
         if !mutation.is_empty() {

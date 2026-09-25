@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 use std::{
     env,
     sync::{
-        Arc, LazyLock,
+        Arc, LazyLock, Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
@@ -160,6 +160,16 @@ pub fn next_tempo_mainnet_rpc_endpoint() -> String {
     let url =
         env_rpc_url("TEMPO_MAINNET_RPC_URL").unwrap_or_else(|| "https://rpc.tempo.xyz".to_string());
     test_debug!("next_tempo_mainnet_rpc_endpoint() = {}", debug_url(&url));
+    url
+}
+
+/// Returns the HTTP RPC URL used to fork Tempo testnet.
+///
+/// Set `TEMPO_TESTNET_RPC_URL` to use a private archive endpoint instead of the public one.
+pub fn next_tempo_testnet_rpc_endpoint() -> String {
+    let url = env_rpc_url("TEMPO_TESTNET_RPC_URL")
+        .unwrap_or_else(|| "https://rpc.moderato.tempo.xyz".to_string());
+    test_debug!("next_tempo_testnet_rpc_endpoint() = {}", debug_url(&url));
     url
 }
 
@@ -354,6 +364,26 @@ pub async fn spawn_rpc_proxy_rejecting_method_when_enabled(
     (proxy, enabled)
 }
 
+/// Spawns an RPC proxy that forwards `successful_calls` requests to `method`, then rejects later
+/// requests while the returned switch is enabled.
+pub async fn spawn_rpc_proxy_rejecting_method_after_when_enabled(
+    endpoint: String,
+    method: &'static str,
+    successful_calls: usize,
+) -> (String, Arc<AtomicBool>) {
+    let enabled = Arc::new(AtomicBool::new(true));
+    let proxy = spawn_rpc_proxy_rejecting_method(
+        endpoint,
+        method,
+        RpcMethodRejection::AfterWhenEnabled(successful_calls, enabled.clone()),
+        StatusCode::FORBIDDEN,
+        -32004,
+        "method is not allowed",
+    )
+    .await;
+    (proxy, enabled)
+}
+
 /// Spawns an RPC proxy that returns method-not-found for the first `unavailable_calls` requests to
 /// `method`.
 pub async fn spawn_rpc_proxy_method_not_found_before(
@@ -488,11 +518,95 @@ pub async fn spawn_rpc_proxy_retyping_first_block_transaction(
     format!("http://{address}")
 }
 
+/// Spawns an RPC proxy that forwards every request upstream and passes each `method` result,
+/// together with the request params, through `map` before returning it.
+pub async fn spawn_rpc_proxy_mapping_method(
+    endpoint: String,
+    method: &'static str,
+    map: impl Fn(&Value, Value) -> Value + Send + Sync + 'static,
+) -> String {
+    let client = reqwest::Client::new();
+    let map = Arc::new(map);
+    let router = Router::new().route(
+        "/",
+        post(move |Json(request): Json<Value>| {
+            let client = client.clone();
+            let endpoint = endpoint.clone();
+            let map = map.clone();
+            async move {
+                let mut response = client
+                    .post(endpoint)
+                    .json(&request)
+                    .send()
+                    .await
+                    .unwrap()
+                    .json::<Value>()
+                    .await
+                    .unwrap();
+                if request.get("method").and_then(Value::as_str) == Some(method)
+                    && let Some(result) = response.get_mut("result")
+                {
+                    let params = request.get("params").cloned().unwrap_or(Value::Null);
+                    *result = map(&params, result.take());
+                }
+                Json(response)
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    format!("http://{address}")
+}
+
+/// Spawns an RPC proxy that records the params of every request to `method` before forwarding it.
+pub async fn spawn_rpc_proxy_recording_method(
+    endpoint: String,
+    method: &'static str,
+) -> (String, Arc<Mutex<Vec<Value>>>) {
+    let client = reqwest::Client::new();
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let router = Router::new().route(
+        "/",
+        post({
+            let requests = requests.clone();
+            move |Json(request): Json<Value>| {
+                let client = client.clone();
+                let endpoint = endpoint.clone();
+                let requests = requests.clone();
+                async move {
+                    if request.get("method").and_then(Value::as_str) == Some(method) {
+                        requests
+                            .lock()
+                            .unwrap()
+                            .push(request.get("params").cloned().unwrap_or(Value::Null));
+                    }
+                    let response = client
+                        .post(endpoint)
+                        .json(&request)
+                        .send()
+                        .await
+                        .unwrap()
+                        .json::<Value>()
+                        .await
+                        .unwrap();
+                    Json(response)
+                }
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    (format!("http://{address}"), requests)
+}
+
 #[derive(Clone)]
 enum RpcMethodRejection {
     Before(usize),
     After(usize),
     Enabled(Arc<AtomicBool>),
+    AfterWhenEnabled(usize, Arc<AtomicBool>),
 }
 
 impl RpcMethodRejection {
@@ -501,6 +615,9 @@ impl RpcMethodRejection {
             Self::Before(rejected_calls) => call < *rejected_calls,
             Self::After(successful_calls) => call >= *successful_calls,
             Self::Enabled(enabled) => enabled.load(Ordering::SeqCst),
+            Self::AfterWhenEnabled(successful_calls, enabled) => {
+                call >= *successful_calls && enabled.load(Ordering::SeqCst)
+            }
         }
     }
 }

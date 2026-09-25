@@ -1,0 +1,43 @@
+{
+  "chain_id": "0x2105",
+  "upgrade": "Beryl",
+  "block": {
+    "number": "0x2f4a86c",
+    "timestamp": "0x6a73adbb",
+    "gas_limit": "0x17d78400",
+    "base_fee_per_gas": "0x4c4b40",
+    "beneficiary": "0x4200000000000000000000000000000000000011",
+    "prevrandao": "0x0cda1d64ddf6cc46d3fac7eeb694170cbc526ab6d7f19413e24a72371f000373",
+    "excess_blob_gas": "0x0",
+    "parent_beacon_block_root": "0x7f1d71c6435bca667b35230362349a86d9c944c8c66ae1c73e991e0b6788ad7a",
+    "receipts_root": "0x43c0efac7d601d05e6c5aeb019396fe41915a9ea430c20141f3bfb36f6306c40",
+    "state_root": "0xd1751057c179aedf082a270a2f630930c624ed1d787246235b07363170118af3"
+  },
+  "transaction": {
+    "hash": "0x6d05122b7b96dd136db5fbd32d06f43d419e370eb7b937da8490f42ee53f6b8e",
+    "raw": "0x02f872822105823492830f424083a7d8c0825208944142fae9016da79039766351c67013544c9604a4860fd1f76b6e1680c001a0df62c066f583599b69dd50cecf0f8bb65f584c2d26b8b4a7a1a7d1d3e833f953a03b2db2297738bd498cab80e66b5beddea7fde1978679740beae23dbb1ac25fa1",
+    "from": "0x3f4e979d1b11f4a2e9c52b83e7e0f8f2fb8e9ec3",
+    "to": "0x4142fae9016da79039766351c67013544c9604a4",
+    "value": "0xfd1f76b6e16"
+  },
+  "parent_state": {
+    "caller_balance": "0x8e1b517c7801",
+    "caller_nonce": "0x3492",
+    "recipient_balance": "0x20a70521fa8e",
+    "recipient_code": "0x",
+    "l1_block_info_storage": [
+      ["0x1", "0x0000000000000000000000000000000000000000000000000000000007fc9e4b"],
+      ["0x3", "0x00000000000000000000000000000000000008dd00101c120000000000000002"],
+      ["0x7", "0x0000000000000000000000000000000000000000000000000000000000784987"],
+      ["0x8", "0x0000000000000000000000000000000000000094000000000000000000000000"]
+    ]
+  },
+  "expected": {
+    "status": true,
+    "gas_used": "0x5208",
+    "effective_gas_price": "0x5b8d80",
+    "l1_gas_used": "0x640",
+    "l1_fee": "0x4e9a3fe4",
+    "log_count": 0
+  }
+}

@@ -250,7 +250,8 @@ impl From<SymbolicError> for SymbolicInvariantSearchLimitation {
 pub struct SymbolicInvariantCandidateSearchResult {
     /// Unconfirmed candidates that must be replayed concretely by the caller.
     pub candidates: Vec<SymbolicInvariantCandidate>,
-    /// First encountered search limitation, if any. `None` is not a proof of safety.
+    /// First encountered search limitation, unless a later error exhausts the search.
+    /// `None` is not a proof of safety.
     pub limitation: Option<SymbolicInvariantSearchLimitation>,
 }
 
