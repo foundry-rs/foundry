@@ -146,6 +146,14 @@ struct TransactionFeeDefaults {
     blob_gas_price: u128,
 }
 
+#[cfg(test)]
+#[derive(Default)]
+struct MineDetailedTestHook {
+    first_block_mined: tokio::sync::Notify,
+    before_block_reads: tokio::sync::Notify,
+    resume: tokio::sync::Notify,
+}
+
 /// The entry point for executing eth api RPC call - The Eth RPC interface.
 ///
 /// This type is cheap to clone and can be used concurrently
@@ -182,6 +190,8 @@ pub struct EthApi<N: Network> {
     lifecycle_lock: Arc<tokio::sync::RwLock<()>>,
     /// Serializes reset preparation without blocking identity RPCs made by the target endpoint.
     reset_lock: Arc<tokio::sync::Mutex<()>>,
+    #[cfg(test)]
+    mine_detailed_test_hook: Option<Arc<MineDetailedTestHook>>,
 }
 
 impl<N: Network> Clone for EthApi<N> {
@@ -201,6 +211,8 @@ impl<N: Network> Clone for EthApi<N> {
             instance_id: self.instance_id.clone(),
             lifecycle_lock: self.lifecycle_lock.clone(),
             reset_lock: self.reset_lock.clone(),
+            #[cfg(test)]
+            mine_detailed_test_hook: self.mine_detailed_test_hook.clone(),
         }
     }
 }
@@ -236,6 +248,8 @@ impl<N: Network> EthApi<N> {
             instance_id: Arc::new(RwLock::new(B256::random())),
             lifecycle_lock: Arc::new(tokio::sync::RwLock::new(())),
             reset_lock: Arc::new(tokio::sync::Mutex::new(())),
+            #[cfg(test)]
+            mine_detailed_test_hook: None,
         }
     }
 
@@ -4574,6 +4588,12 @@ impl EthApi<FoundryNetwork> {
         // cover every block that was just mined.
         let (mined_blocks, _mining_guard) = self.do_evm_mine(opts).await?;
 
+        #[cfg(test)]
+        if let Some(hook) = &self.mine_detailed_test_hook {
+            hook.before_block_reads.notify_one();
+            hook.resume.notified().await;
+        }
+
         let mut blocks = Vec::with_capacity(mined_blocks as usize);
 
         let latest = self.backend.best_number();
@@ -4791,9 +4811,16 @@ impl EthApi<FoundryNetwork> {
                     // timestamp was explicitly provided to be the next timestamp
                     this.evm_set_next_block_timestamp(timestamp)?;
                 }
+                #[cfg(test)]
+                let mut first_block_hook = this.mine_detailed_test_hook.as_ref();
                 // mine all the blocks
                 for _ in 0..blocks_to_mine {
                     this.mine_one_with_guard(&mining_guard).await?;
+                    #[cfg(test)]
+                    if let Some(hook) = first_block_hook.take() {
+                        hook.first_block_mined.notify_one();
+                        hook.resume.notified().await;
+                    }
                 }
                 Ok(mining_guard)
             })
@@ -5722,43 +5749,44 @@ mod tests {
     use super::*;
     use crate::{NodeConfig, spawn};
 
-    /// A chain-height mutation landing mid-mine used to leave `evm_mine_detailed` reading a
-    /// height that no longer covered every block it had mined, which underflowed its block
-    /// lookup. The mined task's `unwrap` below is what catches that.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn evm_mine_detailed_handles_concurrent_rollback() {
         tokio::time::timeout(Duration::from_secs(30), async {
-            for _ in 0..20 {
-                let (api, _handle) = spawn(NodeConfig::test().with_no_mining(true)).await;
-                let mining_api = api.clone();
-                let mining = tokio::spawn(async move {
-                    mining_api
-                        .evm_mine_detailed(Some(MineOptions::Options {
-                            timestamp: None,
-                            blocks: Some(50),
-                        }))
-                        .await
-                });
+            let (mut api, _handle) = spawn(NodeConfig::test().with_no_mining(true)).await;
+            let hook = Arc::new(MineDetailedTestHook::default());
+            api.mine_detailed_test_hook = Some(hook.clone());
 
-                while !mining.is_finished() {
-                    if api.backend.best_number() >= 5 {
-                        api.anvil_rollback(Some(5)).await.unwrap();
-                    }
-                    tokio::time::sleep(Duration::from_millis(1)).await;
-                }
+            let mining_api = api.clone();
+            let mining = tokio::spawn(async move {
+                mining_api
+                    .evm_mine_detailed(Some(MineOptions::Options {
+                        timestamp: None,
+                        blocks: Some(3),
+                    }))
+                    .await
+            });
 
-                let blocks = mining.await.unwrap().unwrap();
-                assert_eq!(blocks.len(), 50);
-                let numbers = blocks.iter().map(|block| block.header.number).collect::<Vec<_>>();
-                assert!(
-                    numbers.windows(2).all(|pair| pair[0] < pair[1]),
-                    "mined block numbers are not strictly increasing: {numbers:?}"
-                );
-                if api.backend.best_number() < 50 {
-                    return;
-                }
+            hook.first_block_mined.notified().await;
+            let rollback = api.anvil_rollback(Some(1));
+            tokio::pin!(rollback);
+            assert!(futures::poll!(rollback.as_mut()).is_pending());
+
+            hook.resume.notify_one();
+            tokio::select! {
+                result = rollback.as_mut() => panic!("rollback completed during multi-block mining: {result:?}"),
+                () = hook.before_block_reads.notified() => {}
             }
-            panic!("rollback did not shorten the mined block range");
+            assert!(futures::poll!(rollback.as_mut()).is_pending());
+
+            hook.resume.notify_one();
+            let blocks = mining.await.unwrap().unwrap();
+            rollback.await.unwrap();
+
+            assert_eq!(
+                blocks.iter().map(|block| block.header.number).collect::<Vec<_>>(),
+                [1, 2, 3]
+            );
+            assert_eq!(api.backend.best_number(), 2);
         })
         .await
         .unwrap();
