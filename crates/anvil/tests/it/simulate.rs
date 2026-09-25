@@ -1627,6 +1627,45 @@ async fn test_simulate_selfdestruct_state_root_matches_mined_rpc() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_storage_written_after_selfdestruct_rpc() {
+    let (api, handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Shanghai.into()))).await;
+    let endpoint = handle.http_endpoint();
+    let sender = handle.dev_accounts().next().unwrap();
+    let contract = Address::with_last_byte(0x42);
+    api.anvil_set_code(contract, Bytes::from_static(&[0x60, 0x00, 0xff])).await.unwrap();
+    handle
+        .http_provider()
+        .send_transaction(WithOtherFields::new(TransactionRequest {
+            from: Some(sender),
+            to: Some(TxKind::Call(contract)),
+            gas: Some(100_000),
+            ..Default::default()
+        }))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    api.anvil_set_storage_at(contract, U256::from(1), B256::from(U256::from(5))).await.unwrap();
+
+    let transfer = json!({"calls": [{"from": sender, "to": contract, "value": "0x1"}]});
+    let single =
+        rpc_request(&endpoint, "eth_simulateV1", json!([{"blockStateCalls": [transfer.clone()]}]))
+            .await;
+    let multiple =
+        rpc_request(&endpoint, "eth_simulateV1", json!([{"blockStateCalls": [{}, transfer]}]))
+            .await;
+    assert!(single.get("error").is_none(), "{single}");
+    assert!(multiple.get("error").is_none(), "{multiple}");
+    assert_eq!(single["result"][0]["calls"][0]["status"], "0x1");
+    assert_eq!(multiple["result"][1]["calls"][0]["status"], "0x1");
+    // Shanghai has no block-level system writes: the empty block cannot affect state.
+    assert_eq!(single["result"][0]["stateRoot"], multiple["result"][1]["stateRoot"]);
+    assert_ne!(multiple["result"][0]["stateRoot"], multiple["result"][1]["stateRoot"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_simulate_state_override_preserves_selfdestructed_storage_rpc() {
     let config = NodeConfig::test()
         .with_hardfork(Some(EthereumHardfork::London.into()))

@@ -25,7 +25,7 @@ use crate::{
         macros::node_info,
         miner::FixedBlockTimeMiner,
         pool::{
-            Pool,
+            Pool, PoolSnapshot,
             transactions::{
                 PoolTransaction, TransactionOrder, TransactionPriority, TxMarker, to_marker,
             },
@@ -107,7 +107,7 @@ use futures::{
     StreamExt, TryFutureExt,
     channel::{mpsc::Receiver, oneshot},
 };
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use revm::{
     context::BlockEnv,
     context_interface::{
@@ -160,6 +160,8 @@ struct MineDetailedTestHook {
 pub struct EthApi<N: Network> {
     /// The transaction pool
     pool: Arc<Pool<N::TxEnvelope>>,
+    /// Transaction pool state captured by `evm_snapshot`.
+    pool_snapshots: Arc<Mutex<HashMap<U256, PoolSnapshot<N::TxEnvelope>>>>,
     /// Holds all blockchain related data
     /// In-Memory only for now
     pub backend: Arc<backend::mem::Backend<N>>,
@@ -198,6 +200,7 @@ impl<N: Network> Clone for EthApi<N> {
     fn clone(&self) -> Self {
         Self {
             pool: self.pool.clone(),
+            pool_snapshots: self.pool_snapshots.clone(),
             backend: self.backend.clone(),
             is_mining: self.is_mining,
             signers: self.signers.clone(),
@@ -235,6 +238,7 @@ impl<N: Network> EthApi<N> {
     ) -> Self {
         Self {
             pool,
+            pool_snapshots: Arc::new(Mutex::new(HashMap::default())),
             backend,
             is_mining: true,
             signers,
@@ -581,7 +585,10 @@ impl<N: Network> EthApi<N> {
         node_info!("evm_snapshot");
         let _lifecycle = self.lifecycle_lock.read().await;
         let _mining = self.backend.lock_mining().await;
-        Ok(self.backend.create_state_snapshot().await)
+        let pool = self.pool.snapshot();
+        let id = self.backend.create_state_snapshot().await;
+        self.pool_snapshots.lock().insert(id, pool);
+        Ok(id)
     }
 
     /// Jump forward in time by the given amount of time, in seconds.
@@ -828,6 +835,7 @@ impl<N: Network> EthApi<N> {
             self.backend.commit_fork_reset(staged).await?;
             self.reset_instance_id();
             self.pool.clear();
+            self.pool_snapshots.lock().clear();
             self.fee_history_cache.lock().clear();
         } else {
             let _lifecycle = self.lifecycle_lock.write().await;
@@ -838,6 +846,7 @@ impl<N: Network> EthApi<N> {
             self.backend.commit_memory_reset(staged).await?;
             self.reset_instance_id();
             self.pool.clear();
+            self.pool_snapshots.lock().clear();
             self.fee_history_cache.lock().clear();
         }
         Ok(())
@@ -855,9 +864,16 @@ impl<N: Network> EthApi<N> {
         let _lifecycle = self.lifecycle_lock.read().await;
         let _mining = self.backend.lock_mining().await;
         let reverted = self.backend.revert_state_snapshot(id).await?;
-        #[cfg(feature = "base")]
         if reverted {
-            self.invalidate_base_eip8130_pool();
+            let pool = {
+                let mut snapshots = self.pool_snapshots.lock();
+                let pool = snapshots.remove(&id);
+                snapshots.retain(|snapshot_id, _| *snapshot_id < id);
+                pool
+            };
+            if let Some(pool) = pool {
+                self.pool.restore(pool);
+            }
         }
         Ok(reverted)
     }
@@ -4184,13 +4200,13 @@ impl EthApi<FoundryNetwork> {
             // Hold the mining lock for the whole run, so a concurrent chain-height mutation cannot
             // unwind blocks this call already mined, and so an interval's time increase stays
             // paired with the block it was applied for.
-            let mining_guard = this.backend.lock_mining_owned().await;
+            let _mining_guard = this.backend.lock_mining_owned().await;
             // mine all the blocks
             for _ in 0..blocks.saturating_to::<u64>() {
                 // If we have an interval, jump forwards in time to the "next" timestamp
                 let pending_increase =
                     interval.map(|interval| this.backend.time().apply_time_increase(interval));
-                if let Err(error) = this.mine_one_with_guard(&mining_guard).await {
+                if let Err(error) = this.mine_one_locked().await {
                     if let Some(pending) = pending_increase {
                         this.backend.time().revert_time_increase(pending);
                     }
@@ -4784,10 +4800,8 @@ impl EthApi<FoundryNetwork> {
         opts: Option<MineOptions>,
     ) -> Result<(u64, tokio::sync::OwnedMutexGuard<()>)> {
         let mut blocks_to_mine = 1u64;
-        let mut next_timestamp = None;
-
-        if let Some(opts) = opts {
-            next_timestamp = match opts {
+        let next_timestamp = if let Some(opts) = opts {
+            match opts {
                 MineOptions::Timestamp(timestamp) => timestamp,
                 MineOptions::Options { timestamp, blocks } => {
                     if let Some(blocks) = blocks {
@@ -4795,8 +4809,10 @@ impl EthApi<FoundryNetwork> {
                     }
                     timestamp
                 }
-            };
-        }
+            }
+        } else {
+            None
+        };
 
         // this can be blocking for a bit, especially in forking mode
         // <https://github.com/foundry-rs/foundry/issues/6036>
@@ -4815,7 +4831,7 @@ impl EthApi<FoundryNetwork> {
                 let mut first_block_hook = this.mine_detailed_test_hook.as_ref();
                 // mine all the blocks
                 for _ in 0..blocks_to_mine {
-                    this.mine_one_with_guard(&mining_guard).await?;
+                    this.mine_one_locked().await?;
                     #[cfg(test)]
                     if let Some(hook) = first_block_hook.take() {
                         hook.first_block_mined.notify_one();
@@ -4999,17 +5015,14 @@ impl EthApi<FoundryNetwork> {
 
     /// Mines exactly one block
     pub async fn mine_one(&self) -> Result<()> {
-        let mining_guard = self.backend.lock_mining_owned().await;
-        self.mine_one_with_guard(&mining_guard).await
+        let _mining = self.backend.lock_mining().await;
+        self.mine_one_locked().await
     }
 
     /// Mines exactly one block while the caller holds the mining lock.
-    async fn mine_one_with_guard(
-        &self,
-        mining_guard: &tokio::sync::OwnedMutexGuard<()>,
-    ) -> Result<()> {
+    async fn mine_one_locked(&self) -> Result<()> {
         let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
-        let outcome = self.backend.mine_block_with_guard(transactions, mining_guard).await?;
+        let outcome = self.backend.mine_block_locked(transactions).await?;
 
         trace!(target: "node", blocknumber = ?outcome.block_number, "mined block");
         self.pool.on_mined_block(outcome);

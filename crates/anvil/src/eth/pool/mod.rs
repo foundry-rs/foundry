@@ -57,6 +57,12 @@ pub struct Pool<T> {
     transaction_listener: Mutex<Vec<Sender<TxHash>>>,
 }
 
+/// An independent snapshot of a transaction pool.
+#[derive(Debug)]
+pub(crate) struct PoolSnapshot<T> {
+    inner: PoolInner<T>,
+}
+
 impl<T> Default for Pool<T> {
     fn default() -> Self {
         Self { inner: RwLock::new(PoolInner::default()), transaction_listener: Default::default() }
@@ -66,6 +72,29 @@ impl<T> Default for Pool<T> {
 // == impl Pool ==
 
 impl<T> Pool<T> {
+    /// Returns an independent snapshot of the pool.
+    pub(crate) fn snapshot(&self) -> PoolSnapshot<T> {
+        let pool = self.inner.read();
+        PoolSnapshot {
+            inner: PoolInner {
+                ready_transactions: pool.ready_transactions.snapshot(),
+                pending_transactions: pool.pending_transactions.snapshot(),
+            },
+        }
+    }
+
+    /// Restores the pool to a previous snapshot.
+    pub(crate) fn restore(&self, snapshot: PoolSnapshot<T>) {
+        let ready = {
+            let mut pool = self.inner.write();
+            *pool = snapshot.inner;
+            pool.ready_transactions().map(|tx| tx.hash()).collect::<Vec<_>>()
+        };
+        for hash in ready {
+            self.notify_listener(hash);
+        }
+    }
+
     /// Returns an iterator that yields all transactions that are currently ready
     pub fn ready_transactions(&self) -> TransactionsIterator<T> {
         self.inner.read().ready_transactions()

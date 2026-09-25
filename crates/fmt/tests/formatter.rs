@@ -91,6 +91,52 @@ fn binary_assignment_layout_ignores_operator_spacing() {
 }
 
 #[test]
+fn line_end_operators_do_not_change_layout() {
+    for (source, expected) in [
+        (
+            r#"contract C {
+    function f() internal view returns (uint256) {
+        return
+            super._postOpGasBudget(userOp) +
+            Math.ternary(_fetchGuarantor(userOp) == address(0), 0, _guaranteedPostOpCost());
+    }
+}
+"#,
+            r#"contract C {
+    function f() internal view returns (uint256) {
+        return super._postOpGasBudget(userOp)
+            + Math.ternary(_fetchGuarantor(userOp) == address(0), 0, _guaranteedPostOpCost());
+    }
+}
+"#,
+        ),
+        (
+            r#"contract C {
+    function f() internal view returns (uint256) {
+        return c
+            ? super._postOpGasBudget(userOp) +
+                Math.ternary(_fetchGuarantor(userOp) == address(0), 0, _postOpBudget())
+            : 0;
+    }
+}
+"#,
+            r#"contract C {
+    function f() internal view returns (uint256) {
+        return c
+            ? super._postOpGasBudget(userOp) + Math.ternary(_fetchGuarantor(userOp) == address(0), 0, _postOpBudget())
+            : 0;
+    }
+}
+"#,
+        ),
+    ] {
+        let config = Arc::new(FormatterConfig::default());
+        assert_eq!(format(source, Path::new("test.sol"), config.clone()), expected);
+        assert_eq!(format(expected, Path::new("test.sol"), config), expected);
+    }
+}
+
+#[test]
 fn for_initializer_leading_comment_is_idempotent() {
     let source = r#"contract C {
     function f() external {
