@@ -8,11 +8,25 @@ use crate::{
 };
 use alloy_dyn_abi::DynSolType;
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, U256, address};
 use eyre::{Result, eyre};
 use foundry_config::InvariantConfig;
+use foundry_evm_core::constants::CALLER;
 use proptest::{prelude::*, test_runner::TestRunner};
 use std::{cell::RefCell, rc::Rc};
+
+/// Default invariant senders, modeled after Echidna's fixed sender pool.
+///
+/// The Foundry default deployer is included because owner/deployer-only paths are common in
+/// invariant targets.
+const DEFAULT_INVARIANT_SENDERS: [Address; 3] = [
+    address!("0x0000000000000000000000000000000000010000"),
+    address!("0x0000000000000000000000000000000000020000"),
+    CALLER,
+];
+
+const RANDOM_SENDER_WEIGHT: u32 = 1;
+const DEFAULT_SENDER_WEIGHT: u32 = 99;
 
 #[derive(Default)]
 struct PlannedCalls {
@@ -154,8 +168,9 @@ fn select_sender(
     dictionary_weight: u32,
 ) -> BoxedStrategy<Address> {
     if senders.targeted.is_empty() {
+        let default_senders = default_invariant_senders(&senders);
         let dictionary_weight = dictionary_weight.min(100);
-        prop_oneof![
+        let random_sender = prop_oneof![
             100 - dictionary_weight => fuzz_param(&DynSolType::Address),
             dictionary_weight => fuzz_param_from_state(&DynSolType::Address, state),
         ]
@@ -165,11 +180,27 @@ fn select_sender(
                 sender = Address::random();
             }
             sender
-        })
-        .boxed()
+        });
+        if default_senders.is_empty() {
+            random_sender.boxed()
+        } else {
+            prop_oneof![
+                DEFAULT_SENDER_WEIGHT => any::<prop::sample::Index>()
+                    .prop_map(move |index| *index.get(&default_senders)),
+                RANDOM_SENDER_WEIGHT => random_sender,
+            ]
+            .boxed()
+        }
     } else {
         any::<prop::sample::Index>().prop_map(move |index| *index.get(&senders.targeted)).boxed()
     }
+}
+
+fn default_invariant_senders(senders: &SenderFilters) -> Vec<Address> {
+    DEFAULT_INVARIANT_SENDERS
+        .into_iter()
+        .filter(|sender| !senders.excluded.contains(sender))
+        .collect()
 }
 
 #[cfg(test)]
@@ -246,5 +277,30 @@ mod tests {
         for _ in 0..32 {
             assert_eq!(generator.next_tx(&mut runner).unwrap().call_details.target, retained);
         }
+    }
+
+    #[test]
+    fn default_sender_pool_includes_foundry_deployer() {
+        let senders = SenderFilters::default();
+
+        assert_eq!(
+            default_invariant_senders(&senders),
+            vec![
+                address!("0x0000000000000000000000000000000000010000"),
+                address!("0x0000000000000000000000000000000000020000"),
+                CALLER,
+            ]
+        );
+    }
+
+    #[test]
+    fn default_sender_pool_respects_exclusions() {
+        let excluded = address!("0x0000000000000000000000000000000000010000");
+        let senders = SenderFilters::new(vec![], vec![excluded, CALLER]);
+
+        assert_eq!(
+            default_invariant_senders(&senders),
+            vec![address!("0x0000000000000000000000000000000000020000")]
+        );
     }
 }
