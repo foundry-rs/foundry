@@ -1509,6 +1509,7 @@ impl TestArgs {
         let output = compile_abi_project_cached(
             &mut project,
             ProjectCompiler::new()
+                .external_compilers(config)
                 .files(sources.iter().cloned())
                 .dynamic_test_linking(config.dynamic_test_linking)
                 .quiet(true),
@@ -1657,9 +1658,11 @@ impl TestArgs {
         trace!(target: "forge::test", ?filter, "using filter");
 
         let compiler = ProjectCompiler::new()
+            .external_compilers(&config)
             .dynamic_test_linking(config.dynamic_test_linking)
             .quiet(shell::is_json() || self.junit);
         let (output, selected_sources, inline_config) = if self.list {
+            let compiler = compiler.external_artifacts(false);
             // Only the ABI is needed to list tests, so skip the full compile when possible.
             let compiler = if filter.args().path_pattern.is_some()
                 && config.extra_output.is_empty()

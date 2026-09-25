@@ -16,7 +16,7 @@ use eyre::Result;
 use foundry_cli::opts::configure_pcx_from_compile_output;
 use foundry_common::{
     ContractsByArtifact, ContractsByArtifactBuilder, EmptyTestFilter, LIBRARY_DEPLOYER,
-    TestFunctionKind, get_contract_name,
+    TestFunctionKind, external_compiler::external_artifact_is_test_eligible, get_contract_name,
 };
 use foundry_compilers::{
     Artifact, ArtifactId, Compiler, ProjectCompileOutput,
@@ -1088,7 +1088,8 @@ impl<'a> TestFunctionMatcher<'a> {
         id: &ArtifactId,
         abi: &JsonAbi,
     ) -> bool {
-        filter.matches_path(&id.source)
+        external_artifact_is_test_eligible(&id.build_id)
+            && filter.matches_path(&id.source)
             && filter.matches_contract(&id.name)
             && self.matching_test_functions(filter, id, abi).next().is_some()
     }

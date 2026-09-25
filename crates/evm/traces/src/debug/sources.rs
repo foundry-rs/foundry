@@ -1,5 +1,7 @@
 use eyre::{Context, Result};
-use foundry_common::{compact_to_contract, strip_bytecode_placeholders};
+use foundry_common::{
+    compact_to_contract, external_compiler::is_external_artifact, strip_bytecode_placeholders,
+};
 use foundry_compilers::{
     Artifact, ProjectCompileOutput,
     artifacts::{
@@ -395,6 +397,7 @@ impl ContractSources {
 
         let artifacts: Vec<_> = output
             .artifact_ids()
+            .filter(|(id, _)| !is_external_artifact(&id.build_id))
             .collect::<Vec<_>>()
             .par_iter()
             .map(|(id, artifact)| {

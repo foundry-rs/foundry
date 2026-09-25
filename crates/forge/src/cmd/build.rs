@@ -105,13 +105,15 @@ impl BuildArgs {
 
         // Collect sources to compile if build subdirectories specified.
         let mut files = vec![];
+        let mut selected_paths = vec![];
         if let Some(paths) = &self.paths {
             for path in paths {
                 let joined = project.root().join(path);
                 let path = if joined.exists() { &joined } else { path };
+                selected_paths.push(path.clone());
                 files.extend(source_files_iter(path, MultiCompilerLanguage::FILE_EXTENSIONS));
             }
-            if files.is_empty() {
+            if files.is_empty() && config.external_compilers.is_empty() {
                 eyre::bail!("No source files found in specified build paths.");
             }
         }
@@ -119,7 +121,9 @@ impl BuildArgs {
         let format_json = shell::is_json();
 
         let mut output = ProjectCompiler::new()
+            .external_compilers(&config)
             .files(files)
+            .selected_paths(selected_paths)
             .dynamic_test_linking(config.dynamic_test_linking)
             .print_compiler_settings(shell::verbosity() >= 2)
             .print_names(self.names)

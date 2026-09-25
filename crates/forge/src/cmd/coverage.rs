@@ -319,8 +319,10 @@ impl CoverageArgs {
                 .collect::<BTreeSet<_>>()
         });
         let compile = |project: &Project| {
-            let mut compiler =
-                ProjectCompiler::new().dynamic_test_linking(config.dynamic_test_linking);
+            let mut compiler = ProjectCompiler::new()
+                .external_compilers(config)
+                .external_artifacts(false)
+                .dynamic_test_linking(config.dynamic_test_linking);
             if let Some(files) = &files {
                 compiler = compiler.files(files.iter().cloned());
             }

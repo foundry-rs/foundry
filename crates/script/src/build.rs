@@ -17,7 +17,7 @@ use foundry_cheatcodes::Wallets;
 use foundry_cli::opts::TempoOpts;
 use foundry_common::{
     ContractData, ContractsByArtifact, ContractsByArtifactBuilder, compile::ProjectCompiler,
-    provider::ProviderBuilder,
+    external_compiler::is_builtin_compiler_source, provider::ProviderBuilder,
 };
 use foundry_compilers::{
     ArtifactId, ProjectCompileOutput,
@@ -218,13 +218,18 @@ impl<FEN: FoundryEvmNetwork> PreprocessedState<FEN> {
         let sources_to_compile = source_files_iter(
             project.paths.sources.as_path(),
             MultiCompilerLanguage::FILE_EXTENSIONS,
-        )
-        .chain([target_path.clone()]);
+        );
 
-        let output = ProjectCompiler::new()
+        let compiler = ProjectCompiler::new()
+            .external_compilers(&script_config.config)
             .files(sources_to_compile)
-            .dynamic_test_linking(script_config.config.dynamic_test_linking)
-            .compile(&project)?;
+            .dynamic_test_linking(script_config.config.dynamic_test_linking);
+        let compiler = if is_builtin_compiler_source(&target_path) {
+            compiler.files([target_path.clone()])
+        } else {
+            compiler.target_files([target_path.clone()])
+        };
+        let output = compiler.compile(&project)?;
 
         let mut target_id: Option<ArtifactId> = None;
 

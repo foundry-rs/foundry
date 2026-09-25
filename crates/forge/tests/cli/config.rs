@@ -492,6 +492,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         create2_library_salt: Config::DEFAULT_CREATE2_LIBRARY_SALT,
         create2_deployer: Config::DEFAULT_CREATE2_DEPLOYER,
         vyper: Default::default(),
+        external_compilers: vec![],
         skip: vec![],
         dependencies: Default::default(),
         soldeer: Default::default(),

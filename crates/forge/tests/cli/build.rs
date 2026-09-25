@@ -12,6 +12,12 @@ use std::{
 };
 
 #[cfg(unix)]
+use anvil::{NodeConfig, spawn};
+#[cfg(unix)]
+use foundry_config::ExternalCompiler;
+#[cfg(unix)]
+use foundry_test_utils::forgetest_async;
+#[cfg(unix)]
 use std::os::unix::fs::{PermissionsExt, symlink};
 
 fn git(root: &Path, args: &[&str]) -> String {
@@ -32,6 +38,340 @@ fn add_local_submodule(root: &Path, path: &str) -> String {
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     git(&root.join(path), &["rev-parse", "HEAD"])
 }
+
+#[cfg(unix)]
+forgetest_async!(external_compiler_builds_and_caches_native_project, |prj, cmd| {
+    let native = prj.root().join("native");
+    fs::create_dir_all(native.join("src")).unwrap();
+    fs::write(native.join("fe.toml"), "[ingot]\nname = \"app\"\nversion = \"1.0.0\"\n").unwrap();
+    fs::write(native.join("src/lib.fe"), "pub contract Counter {}\n").unwrap();
+    fs::write(native.join("src/other.fe"), "pub contract Other {}\n").unwrap();
+
+    let adapter = prj.root().join("adapter.sh");
+    fs::write(
+        &adapter,
+        r#"#!/bin/sh
+read -r initialize
+printf '%s\n' '{"id":1,"result":{"protocol":"1.0"}}'
+read -r discover
+app='{"id":"app","compiler":{"name":"fe","version":"26.3.0"},"inputs":["native/fe.toml","native/src/lib.fe"],"capabilities":["build/1"],"effectiveSettings":{"optimization":"s"},"cacheable":true}'
+other='{"id":"other","compiler":{"name":"fe","version":"26.3.0"},"inputs":["native/src/other.fe"],"capabilities":["build/1"],"cacheable":true}'
+case "$discover" in
+    *'.sol'*) units='' ;;
+    *'lib.fe'*) units="$app" ;;
+    *) units="$app"; [ ! -e native/src/other.fe ] || units="$app,$other" ;;
+esac
+printf '{"id":2,"result":{"units":[%s]}}\n' "$units"
+id=3
+while read -r compile; do
+    source=lib.fe; name=Counter
+    case "$compile" in *'"unit":"other"'*) source=other.fe; name=Other ;; esac
+    : > "$0.compiled"
+    diagnostics='[]'
+    if [ -e "$0.warning" ]; then
+        diagnostics='[{"severity":"warning","message":"fixture warning"}]'
+    fi
+    printf '%s\n' "{\"id\":$id,\"result\":{\"diagnostics\":$diagnostics,\"artifacts\":[{\"source\":\"native/src/$source\",\"name\":\"$name\",\"metadata\":{\"language\":\"Fe\"},\"contract\":{\"abi\":[{\"type\":\"function\",\"name\":\"run\",\"inputs\":[],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"testExternalArtifactIsDeployable\",\"inputs\":[],\"outputs\":[],\"stateMutability\":\"nonpayable\"}],\"evm\":{\"bytecode\":{\"object\":\"0x6001600c60003960016000f300\"},\"deployedBytecode\":{\"object\":\"0x00\"}}}},{\"source\":\"native/src/$source\",\"name\":\"CreationOnly\",\"sourceId\":1,\"contract\":{\"evm\":{\"bytecode\":{\"object\":\"0x00\"}}}}]}}"
+    id=$((id + 1))
+done
+"#,
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&adapter).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&adapter, permissions).unwrap();
+    prj.update_config(|config| {
+        config.external_compilers.push(ExternalCompiler {
+            id: "fixture".to_string(),
+            command: adapter.clone(),
+            args: Vec::new(),
+            roots: vec!["native".into()],
+            settings: [("optimization".to_string(), "s".into())].into_iter().collect(),
+        });
+    });
+
+    let output = cmd.forge_fuse().args(["build", "native", "--json"]).assert_success();
+    let build_json: serde_json::Value =
+        serde_json::from_slice(&output.get_output().stdout).unwrap();
+    let external_source = native.join("src/lib.fe");
+    let counter = &build_json["contracts"][external_source.to_string_lossy().as_ref()]["Counter"]
+        [0]["contract"];
+    assert_eq!(counter["abi"][0]["name"], "run");
+    assert_eq!(counter["evm"]["bytecode"]["object"], "6001600c60003960016000f300");
+
+    let builtin = prj.add_source("Builtin.sol", "contract Builtin {}");
+    let output = cmd.forge_fuse().args(["build", "--json", "--force"]).assert_success();
+    let build_json: serde_json::Value =
+        serde_json::from_slice(&output.get_output().stdout).unwrap();
+    assert!(
+        !build_json["contracts"][external_source.to_string_lossy().as_ref()]["Counter"].is_null()
+    );
+    assert!(!build_json["contracts"][builtin.to_string_lossy().as_ref()]["Builtin"].is_null());
+
+    let invoked = adapter.with_extension("sh.compiled");
+    assert!(invoked.exists());
+    let artifact = prj.root().join("out/.external/fixture/app/native/src/lib.fe/Counter.json");
+    let artifact_json: serde_json::Value =
+        serde_json::from_slice(&fs::read(&artifact).unwrap()).unwrap();
+    assert_eq!(artifact_json["bytecode"]["object"], "0x6001600c60003960016000f300");
+    assert_eq!(artifact_json["rawMetadata"], r#"{"language":"Fe"}"#);
+
+    let retained_cache = prj.root().join("cache/external-compilers/fixture/other.json");
+    let retained_artifact =
+        prj.root().join("out/.external/fixture/other/native/src/other.fe/Other.json");
+    let cache_before = fs::read(&retained_cache).unwrap();
+    let artifact_before = fs::read(&retained_artifact).unwrap();
+    fs::remove_file(&invoked).unwrap();
+    cmd.forge_fuse().args(["build", "native/src/lib.fe"]).assert_success();
+    assert_eq!(fs::read(&retained_cache).unwrap(), cache_before);
+    assert_eq!(fs::read(&retained_artifact).unwrap(), artifact_before);
+    cmd.forge_fuse().arg("build").assert_success();
+    cmd.forge_fuse().args(["test", "--list"]).assert_success();
+    cmd.forge_fuse().arg("build").assert_success();
+    assert!(!invoked.exists(), "switching Forge commands unexpectedly recompiled the units");
+    assert_eq!(fs::read(&retained_cache).unwrap(), cache_before);
+    assert_eq!(fs::read(&retained_artifact).unwrap(), artifact_before);
+
+    fs::remove_file(native.join("src/other.fe")).unwrap();
+    let read_only_commands = [
+        vec!["inspect", "native/src/lib.fe:Counter", "abi"],
+        vec!["inspect", "native/src/lib.fe:Counter", "artifact"],
+        vec!["inspect", "native/src/lib.fe:Counter", "bytecode"],
+        vec!["inspect", "native/src/lib.fe:Counter", "deployedBytecode"],
+        vec!["test", "--list"],
+        vec!["selectors", "list"],
+        vec!["selectors", "find", "c0406226"],
+        vec!["selectors", "collision", "Counter", "Counter"],
+        vec!["selectors", "collision", "Counter", "Counter", "--extra-output", "metadata"],
+    ];
+    let counter_before = fs::read(&artifact).unwrap();
+    for build_info in [false, true] {
+        prj.update_config(|config| config.build_info = build_info);
+        for args in &read_only_commands {
+            cmd.forge_fuse().args(args).assert_success();
+            assert!(!invoked.exists(), "read-only command recompiled cached units: {args:?}");
+            assert_eq!(fs::read(&retained_cache).unwrap(), cache_before);
+            assert_eq!(fs::read(&retained_artifact).unwrap(), artifact_before);
+            assert_eq!(fs::read(&artifact).unwrap(), counter_before);
+        }
+    }
+    prj.update_config(|config| config.build_info = false);
+    cmd.forge_fuse().arg("build").assert_success();
+    assert!(!retained_cache.exists(), "complete discovery retained a stale cache entry");
+    assert!(!retained_artifact.exists(), "complete discovery retained a stale artifact");
+
+    fs::write(native.join("src/lib.fe"), "pub contract Counter { pub fn value() -> u256 { 1 } }\n")
+        .unwrap();
+    cmd.forge_fuse().arg("build").assert_success();
+    assert!(invoked.exists(), "source change did not invalidate external compiler cache");
+
+    fs::remove_dir_all(prj.root().join("out/.external")).unwrap();
+    fs::remove_dir_all(prj.root().join("cache/external-compilers")).unwrap();
+    prj.update_config(|config| config.build_info = true);
+    for args in &read_only_commands {
+        fs::remove_file(&invoked).unwrap();
+        cmd.forge_fuse().args(args).assert_success();
+        assert!(invoked.exists(), "read-only command did not compile an uncached unit: {args:?}");
+        assert!(!prj.root().join("out/.external").exists());
+        assert!(!prj.root().join("cache/external-compilers").exists());
+    }
+    cmd.forge_fuse().arg("build").assert_success();
+    let cache = prj.root().join("cache/external-compilers/fixture/app.json");
+    let cache_before = fs::read(&cache).unwrap();
+    fs::remove_dir_all(prj.root().join("out/.external")).unwrap();
+    fs::remove_file(&invoked).unwrap();
+    for args in &read_only_commands {
+        cmd.forge_fuse().args(args).assert_success();
+        assert!(!invoked.exists(), "read-only command did not reuse the external cache: {args:?}");
+        assert!(!prj.root().join("out/.external").exists());
+        assert_eq!(fs::read(&cache).unwrap(), cache_before);
+    }
+
+    prj.update_config(|config| config.build_info = false);
+    cmd.forge_fuse().args(["bind", "--select", "^Counter$"]).assert_success();
+    assert!(prj.root().join("out/bindings/src/counter.rs").is_file());
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    cmd.forge_fuse()
+        .args([
+            "create",
+            "native/src/lib.fe:Counter",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--unlocked",
+            "--from",
+            &handle.dev_accounts().next().unwrap().to_string(),
+            "--broadcast",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[..]
+Deployer: [..]
+Deployed to: [..]
+[TX_HASH]
+
+"#]]);
+
+    let output = cmd.forge_fuse().args(["selectors", "list", "--no-group"]).assert_success();
+    assert!(output.get_output().stdout_lossy().contains("run()"));
+    cmd.forge_fuse().args(["script", "native/src/lib.fe:Counter"]).assert_success();
+
+    prj.add_script(
+        "UseExternal.s.sol",
+        r#"interface Vm {
+    function getCode(string calldata artifact) external returns (bytes memory);
+}
+
+contract UseExternal {
+    Vm private constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function run() external {
+        bytes memory code = vm.getCode("Counter");
+        address deployed;
+        assembly ("memory-safe") {
+            deployed := create(0, add(code, 0x20), mload(code))
+        }
+        require(deployed != address(0) && deployed.code.length == 1);
+    }
+}
+"#,
+    );
+    fs::remove_dir_all(prj.root().join("out/.external")).unwrap();
+    fs::remove_dir_all(prj.root().join("cache/external-compilers")).unwrap();
+    cmd.forge_fuse().args(["script", "script/UseExternal.s.sol:UseExternal"]).assert_success();
+
+    cmd.forge_fuse()
+        .args(["test", "--list", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"{}"#]].is_json());
+
+    fs::create_dir_all(prj.root().join("test")).unwrap();
+    fs::write(
+        prj.root().join("test/ExternalArtifact.t.sol"),
+        r#"pragma solidity >=0.8.0;
+
+interface Vm {
+    function getCode(string calldata artifact) external returns (bytes memory);
+}
+
+contract ExternalArtifactTest {
+    Vm private constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function testExternalArtifactIsDeployable() public {
+        bytes memory code = vm.getCode("Counter");
+        address deployed;
+        assembly ("memory-safe") {
+            deployed := create(0, add(code, 0x20), mload(code))
+        }
+        require(deployed != address(0) && deployed.code.length == 1);
+    }
+}
+"#,
+    )
+    .unwrap();
+    fs::remove_dir_all(prj.root().join("out/.external")).unwrap();
+    fs::remove_dir_all(prj.root().join("cache/external-compilers")).unwrap();
+    cmd.forge_fuse()
+        .args(["test", "--match-test", "testExternalArtifactIsDeployable"])
+        .assert_success();
+
+    for _ in 0..2 {
+        cmd.forge_fuse().args(["coverage", "--report", "lcov"]).assert_success();
+    }
+    let coverage = fs::read_to_string(prj.root().join("lcov.info")).unwrap();
+    assert!(coverage.contains("SF:script/UseExternal.s.sol"), "{coverage}");
+    assert!(!coverage.contains("native/"));
+
+    let adapter_script = fs::read_to_string(&adapter).unwrap();
+    fs::write(
+        &adapter,
+        adapter_script.replacen(r#"["build/1"]"#, r#"["build/1","forge-tests/1"]"#, 1),
+    )
+    .unwrap();
+    cmd.forge_fuse().args(["test", "--match-contract", "^Counter$"]).assert_success().stdout_eq(
+        str![[r#"
+[..]
+
+Ran 1 test for native/src/lib.fe:Counter
+[PASS] testExternalArtifactIsDeployable() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]],
+    );
+    for name in ["Counter.V1", "Counter-V1"] {
+        fs::write(&adapter, adapter_script.replace("name=Counter", &format!("name={name}")))
+            .unwrap();
+        cmd.forge_fuse().arg("build").assert_failure().stderr_eq(format!(
+            "Error: external compiler contract name must contain only ASCII letters, digits, or underscores: {name}\n"
+        ));
+    }
+    fs::write(&adapter, adapter_script.replace("source=lib.fe", "source=missing.fe")).unwrap();
+    cmd.forge_fuse().arg("build").assert_failure().stderr_eq(str![[r#"
+Error: failed to canonicalize [..]/native/src/missing.fe
+
+Context:
+- [..]
+
+"#]]);
+    fs::write(&adapter, &adapter_script).unwrap();
+
+    let warning = adapter.with_extension("sh.warning");
+    fs::write(&warning, "").unwrap();
+    fs::remove_dir_all(prj.root().join("cache/external-compilers")).unwrap();
+    cmd.forge_fuse().args(["build", "--deny", "warnings"]).assert_failure();
+    cmd.forge_fuse().args(["build", "--deny", "never"]).assert_success();
+    fs::remove_file(&invoked).unwrap();
+    cmd.forge_fuse().args(["build", "--deny", "warnings"]).assert_failure();
+    assert!(!invoked.exists(), "cached diagnostics unexpectedly recompiled the external unit");
+
+    fs::remove_file(warning).unwrap();
+    for malformed in [false, true] {
+        if malformed {
+            fs::write(&cache, "not json").unwrap();
+            cmd.forge_fuse().arg("build").assert_failure();
+        }
+        cmd.forge_fuse().arg("clean").assert_success().stderr_eq("");
+        assert!(!prj.root().join("out/.external").exists());
+        assert!(!prj.root().join("cache/external-compilers").exists());
+        cmd.forge_fuse().arg("build").assert_success();
+        assert!(invoked.exists(), "clean retained the external compiler cache");
+        fs::remove_file(&invoked).unwrap();
+    }
+    for args in &read_only_commands {
+        prj.update_config(|config| config.force = true);
+        cmd.forge_fuse().args(args).assert_success();
+        assert!(!prj.root().join("out/.external").exists());
+        assert!(!prj.root().join("cache/external-compilers").exists());
+        prj.update_config(|config| config.force = false);
+        cmd.forge_fuse().arg("build").assert_success();
+    }
+
+    cmd.forge_fuse().arg("clean").assert_success();
+    let external = tempfile::tempdir().unwrap();
+    let sentinel = external.path().join("keep");
+    fs::write(&sentinel, "unchanged").unwrap();
+    fs::create_dir_all(prj.root().join("cache")).unwrap();
+    symlink(external.path(), prj.root().join("cache/external-compilers")).unwrap();
+    cmd.forge_fuse().arg("clean").assert_success().stderr_eq("");
+    assert!(prj.root().join("cache/external-compilers").symlink_metadata().is_err());
+    assert_eq!(fs::read_to_string(sentinel).unwrap(), "unchanged");
+
+    for (response, error) in [
+        ("", "adapter exited before responding to `initialize`"),
+        (
+            r#"{"id":1,"result":{"protocol":"2.0"}}"#,
+            "external compiler `fixture` selected unsupported protocol `2.0`",
+        ),
+    ] {
+        fs::write(&adapter, format!(
+            "#!/bin/sh\nread -r initialize\nprintf '%s\\n' 'native compiler diagnostic' >&2\nprintf '%s' '{response}'\n"
+        )).unwrap();
+        cmd.forge_fuse().arg("build").assert_failure().stderr_eq(format!(
+            "Error: adapter stderr: native compiler diagnostic\n\nContext:\n- {error}\n"
+        ));
+    }
+});
 
 #[cfg(unix)]
 forgetest!(local_compiler_runs_without_warning, |prj, cmd| {
