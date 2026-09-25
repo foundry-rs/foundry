@@ -29,6 +29,7 @@ use foundry_compilers::{
         Language,
         multi::{MultiCompilerLanguage, MultiCompilerParser},
     },
+    error::SolcError,
     utils::source_files_iter,
 };
 use foundry_config::{
@@ -281,6 +282,7 @@ impl CoverageArgs {
             project.paths.cache = path.join(SOLIDITY_FILES_CACHE_FILENAME);
             project.paths.artifacts = path.join("artifacts");
             project.paths.build_infos = path.join("build-info");
+            project.paths.slash_paths();
         }
 
         if self.ir_minimum {
@@ -407,7 +409,14 @@ impl CoverageArgs {
         })();
         let output = match cached_output {
             Ok(Some(output)) => output,
-            Err(err) if !err.chain().any(|cause| cause.is::<std::io::Error>()) => return Err(err),
+            Err(err)
+                if !err.chain().any(|cause| {
+                    cause.is::<std::io::Error>()
+                        || matches!(cause.downcast_ref(), Some(SolcError::Io(_)))
+                }) =>
+            {
+                return Err(err);
+            }
             result => {
                 if let Err(err) = result {
                     debug!(%err, "coverage cache unavailable; compiling without persistence");
