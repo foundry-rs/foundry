@@ -12,7 +12,7 @@ use crate::coverage::{
 use alloy_json_abi::StateMutability;
 use alloy_primitives::{Address, Bytes, U256, map::HashMap};
 use clap::{Parser, ValueHint};
-use eyre::{Result, ensure};
+use eyre::Result;
 use foundry_cli::utils::{FoundryPathExt, LoadConfig, STATIC_FUZZ_SEED};
 use foundry_common::{TestFilter, compile::ProjectCompiler, errors::convert_solar_errors};
 use foundry_compilers::{
@@ -143,10 +143,6 @@ impl CoverageArgs {
         self.ensure_mode_compatible()?;
 
         let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
-        ensure!(
-            config.external_compilers.is_empty(),
-            "forge coverage does not yet support external compiler adapters"
-        );
 
         // install missing dependencies
         self.install_missing_dependencies(&mut config)?;
@@ -263,7 +259,9 @@ impl CoverageArgs {
 
         config.disable_optimizations(&mut project, self.ir_minimum);
 
-        let mut compiler = ProjectCompiler::new().dynamic_test_linking(config.dynamic_test_linking);
+        let mut compiler = ProjectCompiler::new()
+            .external_compilers(config)
+            .dynamic_test_linking(config.dynamic_test_linking);
         if filter.args().path_pattern.is_some() || filter.args().path_pattern_inverse.is_some() {
             let sources = source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
                 .chain(

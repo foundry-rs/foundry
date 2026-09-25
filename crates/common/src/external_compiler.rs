@@ -43,7 +43,6 @@ impl<'a> ExternalCompilation<'a> {
     /// Runs adapters, staging their output until the built-in compilation succeeds.
     pub(crate) fn compile(
         config: &'a Config,
-
         selected_paths: &[PathBuf],
         write_outputs: bool,
     ) -> Result<Self> {
@@ -135,7 +134,6 @@ struct AdapterClient<'a> {
     config: &'a Config,
     cache_root: PathBuf,
     adapter: &'a ExternalCompiler,
-
     selected_paths: &'a [PathBuf],
     command: PathBuf,
 }
@@ -144,7 +142,6 @@ impl<'a> AdapterClient<'a> {
     fn new(
         config: &'a Config,
         adapter: &'a ExternalCompiler,
-
         selected_paths: &'a [PathBuf],
     ) -> Result<Self> {
         validate_id("adapter", &adapter.id)?;
@@ -309,8 +306,12 @@ impl<'a> AdapterClient<'a> {
         for artifact in result.artifacts {
             let name = artifact.name.clone();
             validate_id("contract", &name)?;
+            ensure!(
+                !name.contains('.'),
+                "external compiler contract name must not contain dots: {name}"
+            );
             let source = validate_relative_path("source unit", &artifact.source)?.to_path_buf();
-            let source_path = self.config.root.join(&source);
+            let source_path = resolve_file(&self.config.root, &source)?;
             ensure!(
                 output
                     .artifacts
@@ -676,8 +677,23 @@ fn write_cache(path: &Path, contents: &[u8]) -> Result<()> {
     Ok(())
 }
 
+fn storage_entries(root: &Path) -> Result<Option<fs::ReadDir>> {
+    match fs::symlink_metadata(root) {
+        Ok(metadata) => {
+            ensure!(
+                !metadata.is_symlink(),
+                "external compiler storage path is a symlink: {}",
+                root.display()
+            );
+            Ok(Some(fs::read_dir(root)?))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
 fn retire_children(root: &Path, active: &BTreeSet<String>, extension: Option<&str>) -> Result<()> {
-    let Ok(entries) = fs::read_dir(root) else { return Ok(()) };
+    let Some(entries) = storage_entries(root)? else { return Ok(()) };
     for entry in entries {
         let entry = entry?;
         let path = entry.path();
@@ -690,7 +706,7 @@ fn retire_children(root: &Path, active: &BTreeSet<String>, extension: Option<&st
             path.file_name()
         };
         if name.is_some_and(|name| !active.contains(name.to_string_lossy().as_ref())) {
-            if path.is_dir() {
+            if entry.file_type()?.is_dir() {
                 fs::remove_dir_all(path)?;
             } else {
                 fs::remove_file(path)?;
@@ -701,9 +717,10 @@ fn retire_children(root: &Path, active: &BTreeSet<String>, extension: Option<&st
 }
 
 fn ensure_portable_child(root: &Path, name: &str, extension: Option<&str>) -> Result<()> {
-    let Ok(entries) = fs::read_dir(root) else { return Ok(()) };
+    let Some(entries) = storage_entries(root)? else { return Ok(()) };
     for entry in entries {
-        let path = entry?.path();
+        let entry = entry?;
+        let path = entry.path();
         let Some(candidate) = (if let Some(extension) = extension {
             (path.extension() == Some(OsStr::new(extension))).then(|| path.file_stem()).flatten()
         } else {
@@ -712,6 +729,11 @@ fn ensure_portable_child(root: &Path, name: &str, extension: Option<&str>) -> Re
             continue;
         };
         let candidate = candidate.to_string_lossy();
+        ensure!(
+            candidate != name || !entry.file_type()?.is_symlink(),
+            "external compiler storage path is a symlink: {}",
+            path.display()
+        );
         ensure!(
             candidate == name || !candidate.eq_ignore_ascii_case(name),
             "external compiler storage namespace `{name}` collides with existing `{candidate}` on case-insensitive filesystems"
@@ -768,6 +790,9 @@ mod tests {
     };
     use std::{fs, path::Path};
 
+    #[cfg(unix)]
+    use {super::retire_children, std::os::unix::fs::symlink};
+
     #[test]
     fn rejects_unsafe_protocol_paths_and_ids() {
         assert!(validate_relative_path("source", Path::new("src/main.fe")).is_ok());
@@ -790,6 +815,22 @@ mod tests {
         fs::write(dir.path().join("Build.json"), "{}").unwrap();
         assert!(ensure_portable_child(dir.path(), "build", Some("json")).is_err());
         ensure_portable_child(dir.path(), "Build", Some("json")).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_linked_storage() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target");
+        fs::create_dir(&target).unwrap();
+        let sentinel = target.join("keep");
+        fs::write(&sentinel, "unchanged").unwrap();
+        let link = dir.path().join("linked");
+        symlink(&target, &link).unwrap();
+
+        assert!(retire_children(&link, &Default::default(), None).is_err());
+        assert!(ensure_portable_child(dir.path(), "linked", None).is_err());
+        assert_eq!(fs::read_to_string(sentinel).unwrap(), "unchanged");
     }
 
     #[test]

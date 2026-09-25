@@ -216,6 +216,12 @@ impl ProjectCompiler {
         self
     }
 
+    /// Controls whether external artifacts and their cache may be published.
+    pub const fn external_artifacts(mut self, write: bool) -> Self {
+        self.external_writes = write;
+        self
+    }
+
     /// Compiles the project.
     #[instrument(target = "forge::compile", skip_all)]
     pub fn compile<C: Compiler<CompilerContract = Contract>>(
@@ -799,7 +805,7 @@ where
     let mut cached_project = project.clone();
     cached_project.no_artifacts = false;
     compiler.abi_cache = true;
-    compiler.external_writes = !project.no_artifacts;
+    compiler.external_writes &= !project.no_artifacts;
     compile_abi_project(&mut cached_project, compiler)
 }
 

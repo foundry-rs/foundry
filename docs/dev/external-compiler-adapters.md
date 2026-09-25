@@ -92,7 +92,7 @@ command. Each artifact supports these fields:
 
 | Field | Required | Meaning |
 | --- | --- | --- |
-| `source` | yes | Project-relative logical source path. |
+| `source` | yes | Project-relative path to an existing source file. |
 | `name` | yes | Contract name. |
 | `contract` | yes | Existing compiler `Contract` JSON: `abi` and `evm` outputs. |
 | `metadata` | no | Adapter-owned JSON metadata, serialized into Foundry's `rawMetadata` field. |
@@ -105,9 +105,11 @@ requires creation bytecode. Foundry derives method identifiers from the ABI and 
 artifact converter to produce ABI/bytecode artifacts. Debugging and additional compiler outputs
 remain outside this protocol's initial integration.
 
-Source paths must be relative and may not contain `.` or `..` components. Contract and unit IDs use
-the same restricted character set as adapter IDs. Foundry rejects duplicate `(source, contract)`
-identities across adapters and conflicts with built-in compiler artifacts.
+Source paths must be relative and may not contain `.` or `..` components. Unit IDs use the same
+restricted character set as adapter IDs. Contract names use that set without dots, which Foundry
+reserves for artifact version and profile suffixes. Source identities are canonicalized to match
+path-qualified Forge commands; virtual source files are not supported. Foundry rejects duplicate
+`(source, contract)` identities across adapters and conflicts with built-in compiler artifacts.
 
 After the last response Foundry closes stdin and requires the adapter to exit successfully. A
 protocol error, compiler error diagnostic, malformed artifact, or nonzero exit fails the Forge
@@ -138,28 +140,28 @@ unit directory so contracts no longer emitted by a unit are retired. `forge clea
 host-owned artifacts and cache entries with the normal `out` and `cache` directories.
 
 The adapter cache is unit-scoped and independent of the Solidity/Vyper compiler cache. Read-only
-compilations may reuse it but do not update or retire cache entries. Declaring a unit cacheable is a
-promise by the adapter that the discovery response lists its complete build-affecting input
-closure. Ambient inputs such as time, randomness, undeclared environment, mutable dependency
-caches, or unreported compiler resources require `cacheable = false`.
+compilations, including every `forge inspect` field, may reuse it but do not publish artifacts or
+update or retire cache entries. Declaring a unit cacheable is a promise by the adapter that the
+discovery response lists its complete build-affecting input closure. Ambient inputs such as time,
+randomness, undeclared environment, mutable dependency caches, or unreported compiler resources require `cacheable = false`.
 
 ## Forge integration and limits
 
 Adapter-aware compilation is enabled for `forge build`, `forge test`, scripts, `forge inspect`,
-`forge bind`, `forge selectors`, and `forge create`. Adapter-only projects bypass the built-in
-"Nothing to compile" exit. Mixed projects compile the external units first, then the built-in
-sources, and merge their normalized artifacts only after both compilers succeed.
+`forge bind`, `forge selectors`, `forge create`, and `forge coverage`. Adapter-only projects bypass
+the built-in "Nothing to compile" exit. Mixed projects compile the external units first, then the
+built-in sources, and merge their normalized artifacts only after both compilers succeed.
 
 Commands that select one external contract before compilation, such as `forge inspect` and
 `forge create`, require a path-qualified identifier such as `contracts/src/lib.fe:Counter` because
 Foundry cannot infer an adapter-owned source path from a contract name before discovery.
 
-`forge coverage` rejects projects with configured external compilers because coverage cannot yet
-combine external source analysis with Solidity analysis. Source-level debugging and verification
-reproduction for external artifacts are also outside the initial integration. Build and test
-execution still work without those optional workflows. Cross-compiler source imports and generated
-interface dependency scheduling are not supported; use ABI interfaces or artifact deployment at the
-language boundary.
+`forge coverage` can execute external contracts while reporting coverage for supported Solidity
+sources. External sources are excluded from source analysis and coverage reports. Source-level
+debugging and verification reproduction for external artifacts remain outside the initial integration.
+Build and test execution still work without those optional workflows. Cross-compiler source imports
+and generated interface dependency scheduling are not supported; use ABI interfaces or artifact
+deployment at the language boundary.
 
 The host does not install adapters, compilers, or native dependencies, and does not interpret
 language manifests. Adapter distribution, toolchain selection, dependency setup, protocol

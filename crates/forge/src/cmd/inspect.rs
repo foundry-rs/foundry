@@ -104,6 +104,7 @@ impl InspectArgs {
         }
         let compiler = ProjectCompiler::new()
             .external_compilers(&config)
+            .external_artifacts(false)
             .target_files([target_path.clone()])
             .quiet(true);
         let mut output = compiler.compile(&project)?;
