@@ -317,9 +317,12 @@ impl Cheatcode for eth_getProofCall {
         let block_number = u64::try_from(blockNumber)
             .map_err(|_| fmt_err!("block number must be less than 2^64"))?;
 
-        let url =
-            ccx.ecx.db().active_fork_url().ok_or_else(|| fmt_err!("no active fork URL found"))?;
-        let provider = ProviderBuilder::<AnyNetwork>::new(&url).build()?;
+        let fork = ccx
+            .ecx
+            .db()
+            .active_fork_options()
+            .ok_or_else(|| fmt_err!("no active fork URL found"))?;
+        let provider = fork.evm_opts.fork_provider_with_url::<AnyNetwork>(&fork.url)?;
         let proof = foundry_common::block_on(async move {
             provider.get_proof(*target, slots.clone()).number(block_number).await
         })

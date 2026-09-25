@@ -271,6 +271,16 @@ impl<
         self.handler.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
         Ok(rx.recv()?)
     }
+
+    /// Returns the options used to create the corresponding fork if it exists.
+    ///
+    /// Returns `None` if no matching fork is available.
+    pub fn get_fork_options(&self, id: impl Into<ForkId>) -> eyre::Result<Option<CreateFork>> {
+        let (sender, rx) = oneshot_channel();
+        let req = Request::GetForkOptions(id.into(), sender);
+        self.handler.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
+        Ok(rx.recv()?)
+    }
 }
 
 type CreateFuture<N, SPEC, BLOCK> = Pin<
@@ -309,6 +319,8 @@ enum Request<N: Network, SPEC, BLOCK: ForkBlockEnv> {
     ShutDown(OneshotSender<()>),
     /// Returns the Fork Url for the `ForkId` if it exists.
     GetForkUrl(ForkId, OneshotSender<Option<String>>),
+    /// Returns the options used to create the `ForkId` if it exists.
+    GetForkOptions(ForkId, OneshotSender<Option<CreateFork>>),
 }
 
 enum ForkTask<N: Network, SPEC, BLOCK: ForkBlockEnv> {
@@ -547,6 +559,10 @@ impl<
             }
             Request::GetForkUrl(fork_id, sender) => {
                 let fork = self.forks.get(&fork_id).map(|f| f.opts.url.clone());
+                let _ = sender.send(fork);
+            }
+            Request::GetForkOptions(fork_id, sender) => {
+                let fork = self.forks.get(&fork_id).map(|f| f.opts.clone());
                 let _ = sender.send(fork);
             }
         }
