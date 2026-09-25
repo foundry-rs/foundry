@@ -30,6 +30,42 @@ async fn rpc(endpoint: &str, method: &str, params: Value) -> Value {
     response["result"].clone()
 }
 
+fn node_config() -> NodeConfig {
+    // Amsterdam makes Anvil produce native BALs and their block-header commitments.
+    NodeConfig::test()
+        .with_chain_id(Some(1u64))
+        .with_hardfork(Some(EthereumHardfork::Amsterdam.into()))
+        .with_genesis_timestamp(Some(1_800_000_000u64))
+        .with_no_mining(true)
+}
+
+async fn send_transaction(endpoint: &str, transaction: Value) -> B256 {
+    serde_json::from_value(rpc(endpoint, "eth_sendTransaction", json!([transaction])).await)
+        .unwrap()
+}
+
+async fn mine_block(endpoint: &str) -> Value {
+    rpc(endpoint, "evm_mine", json!([])).await;
+    let block = rpc(endpoint, "eth_getBlockByNumber", json!(["latest", false])).await;
+    assert!(block["blockAccessListHash"].is_string(), "missing native BAL commitment");
+    block
+}
+
+async fn mine_prefix(
+    endpoint: &str,
+    parent_hash: &Value,
+    transaction: impl Fn(usize) -> Value,
+) -> [B256; 3] {
+    let mut transactions = [B256::ZERO; 3];
+    for (index, hash) in transactions.iter_mut().enumerate() {
+        *hash = send_transaction(endpoint, transaction(index + 1)).await;
+    }
+    let block = mine_block(endpoint).await;
+    assert_eq!(block["transactions"], json!(transactions));
+    assert_eq!(&block["parentHash"], parent_hash);
+    transactions
+}
+
 struct Fixture {
     handle: NodeHandle,
     parent: Value,
@@ -39,15 +75,7 @@ struct Fixture {
 
 impl Fixture {
     async fn new() -> Self {
-        // Amsterdam makes Anvil produce native BALs and their block-header commitments.
-        let (api, handle) = spawn(
-            NodeConfig::test()
-                .with_chain_id(Some(1u64))
-                .with_hardfork(Some(EthereumHardfork::Amsterdam.into()))
-                .with_genesis_timestamp(Some(1_800_000_000u64))
-                .with_no_mining(true),
-        )
-        .await;
+        let (api, handle) = spawn(node_config()).await;
         // Every transaction reads slot one and increments slot zero.
         api.anvil_set_code(COUNTER, bytes!("6001545060005460010160005500")).await.unwrap();
         api.anvil_set_storage_at(COUNTER, U256::ZERO, B256::from(U256::from(6))).await.unwrap();
@@ -55,30 +83,17 @@ impl Fixture {
         let endpoint = handle.http_endpoint();
         let sender = handle.dev_wallets().next().unwrap().address();
         let send = |nonce| {
-            json!([{"from": sender, "to": COUNTER, "nonce": format!("0x{nonce:x}"),
-                    "gas": "0x30d40", "gasPrice": "0x77359400"}])
+            json!({"from": sender, "to": COUNTER, "nonce": format!("0x{nonce:x}"),
+                   "gas": "0x30d40", "gasPrice": "0x77359400"})
         };
-        rpc(&endpoint, "eth_sendTransaction", send(0)).await;
-        api.mine_one().await.unwrap();
-        let parent = rpc(&endpoint, "eth_getBlockByNumber", json!(["latest", false])).await;
-        assert!(parent["blockAccessListHash"].is_string(), "missing native BAL commitment");
+        send_transaction(&endpoint, send(0)).await;
+        let parent = mine_block(&endpoint).await;
         assert_eq!(
             rpc(&endpoint, "eth_getStorageAt", json!([COUNTER, "0x0", "latest"])).await,
             json!(B256::from(U256::from(7))),
         );
-        let mut transactions = [B256::ZERO; 3];
-        for (index, hash) in transactions.iter_mut().enumerate() {
-            *hash = serde_json::from_value(
-                rpc(&endpoint, "eth_sendTransaction", send(index + 1)).await,
-            )
-            .unwrap();
-        }
-        api.mine_one().await.unwrap();
-        let block = rpc(&endpoint, "eth_getBlockByNumber", json!(["latest", false])).await;
-        assert_eq!(block["transactions"], json!(transactions));
-        assert_eq!(block["parentHash"], parent["hash"]);
-        let pending =
-            serde_json::from_value(rpc(&endpoint, "eth_sendTransaction", send(4)).await).unwrap();
+        let transactions = mine_prefix(&endpoint, &parent["hash"], send).await;
+        let pending = send_transaction(&endpoint, send(4)).await;
         Self { handle, parent, transactions, pending }
     }
 }
@@ -406,13 +421,23 @@ fn command<'a>(
         16,
     )
     .unwrap();
+    base_command(cmd, proxy, target, test);
+    cmd.env("BAL_PARENT", parent.to_string());
+    cmd.env("BAL_MODE", mode.to_string());
+    cmd.env("BAL_EXPECTED", expected.to_string());
+    cmd
+}
+
+fn base_command<'a>(
+    cmd: &'a mut TestCommand,
+    proxy: &Proxy,
+    target: B256,
+    test: &str,
+) -> &'a mut TestCommand {
     cmd.forge_fuse();
     cmd.cmd().env_remove("FOUNDRY_NO_FORK_BAL");
     cmd.env("BAL_RPC_URL", &proxy.endpoint);
     cmd.env("BAL_TARGET", target.to_string());
-    cmd.env("BAL_PARENT", parent.to_string());
-    cmd.env("BAL_MODE", mode.to_string());
-    cmd.env("BAL_EXPECTED", expected.to_string());
     cmd.env("FOUNDRY_NO_STORAGE_CACHING", "true");
     cmd.env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "true");
     cmd.args(["test", "--match-test", test, "--evm-version", "cancun"])
@@ -792,14 +817,7 @@ forgetest_async!(fork_bal_setup_forks_keep_creation_policy_on_roll, |prj, cmd| {
 });
 
 forgetest_async!(fork_bal_prefills_native_accounts_before_prefix_replay, |prj, cmd| {
-    let (api, handle) = spawn(
-        NodeConfig::test()
-            .with_chain_id(Some(1u64))
-            .with_hardfork(Some(EthereumHardfork::Amsterdam.into()))
-            .with_genesis_timestamp(Some(1_800_000_000u64))
-            .with_no_mining(true),
-    )
-    .await;
+    let (_, handle) = spawn(node_config()).await;
     let endpoint = handle.http_endpoint();
     let sender = handle.dev_wallets().next().unwrap().address();
     let account = sender.create(0);
@@ -807,37 +825,22 @@ forgetest_async!(fork_bal_prefills_native_accounts_before_prefix_replay, |prj, c
     // so prefix replay changes the deployed account's nonce as well as its balance and storage.
     let creation_code =
         bytes!("60016000556012601160003960126000f3600060006000f05060005460010160005500");
-    let deployment = rpc(
+    let deployment = send_transaction(
         &endpoint,
-        "eth_sendTransaction",
-        json!([{"from": sender, "data": creation_code, "value": "0x2a", "nonce": "0x0",
-                "gas": "0x30d40", "gasPrice": "0x77359400"}]),
+        json!({"from": sender, "data": creation_code, "value": "0x2a", "nonce": "0x0",
+               "gas": "0x30d40", "gasPrice": "0x77359400"}),
     )
     .await;
-    api.mine_one().await.unwrap();
+    let parent = mine_block(&endpoint).await;
     let receipt = rpc(&endpoint, "eth_getTransactionReceipt", json!([deployment])).await;
     assert_eq!(receipt["status"], "0x1");
     assert_eq!(receipt["contractAddress"], json!(account));
-    let parent = rpc(&endpoint, "eth_getBlockByNumber", json!(["latest", false])).await;
-    assert!(parent["blockAccessListHash"].is_string(), "missing native BAL commitment");
 
-    let mut transactions = Vec::new();
-    for nonce in 1..=3 {
-        transactions.push(
-            rpc(
-                &endpoint,
-                "eth_sendTransaction",
-                json!([{"from": sender, "to": account, "value": "0x5",
-                        "nonce": format!("0x{nonce:x}"), "gas": "0x30d40",
-                        "gasPrice": "0x77359400"}]),
-            )
-            .await,
-        );
-    }
-    api.mine_one().await.unwrap();
-    let block = rpc(&endpoint, "eth_getBlockByNumber", json!(["latest", false])).await;
-    assert_eq!(block["transactions"], json!(transactions));
-    assert_eq!(block["parentHash"], parent["hash"]);
+    let transactions = mine_prefix(&endpoint, &parent["hash"], |nonce| {
+        json!({"from": sender, "to": account, "value": "0x5",
+               "nonce": format!("0x{nonce:x}"), "gas": "0x30d40", "gasPrice": "0x77359400"})
+    })
+    .await;
 
     let proxy = Proxy::for_parent(endpoint, parent["hash"].clone(), Response::Native).await;
     prj.add_test(
@@ -881,15 +884,9 @@ contract ForkBalTest {
         let mut gas_used = Vec::new();
         for disabled in [false, true] {
             proxy.clear();
-            cmd.forge_fuse();
-            cmd.cmd().env_remove("FOUNDRY_NO_FORK_BAL");
-            cmd.env("BAL_RPC_URL", &proxy.endpoint);
+            base_command(&mut cmd, &proxy, transactions[index], "testForkBalAccounts");
             cmd.env("BAL_ACCOUNT", account.to_string());
-            cmd.env("BAL_TARGET", transactions[index].as_str().unwrap());
             cmd.env("BAL_PREFIX", index.to_string());
-            cmd.env("FOUNDRY_NO_STORAGE_CACHING", "true");
-            cmd.env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "true");
-            cmd.args(["test", "--match-test", "testForkBalAccounts", "--evm-version", "cancun"]);
             if disabled {
                 cmd.arg("--no-fork-bal");
             }
