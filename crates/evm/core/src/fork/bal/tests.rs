@@ -83,7 +83,7 @@ fn fork_bal_cache_keeps_final_zero_and_system_writes() {
 
     let bal = vec![account];
     validate_bal(&bal, 2, None).unwrap();
-    cache(&db, bal);
+    cache_bal(&db, bal);
 
     let storage = db.storage.read();
     assert_eq!(storage[&address][&slot], U256::ZERO);
@@ -101,7 +101,7 @@ fn fork_bal_cache_leaves_partial_accounts_and_reads_unknown() {
 
     let bal = vec![account];
     validate_bal(&bal, 1, None).unwrap();
-    cache(&db, bal);
+    cache_bal(&db, bal);
 
     assert!(db.accounts.read().is_empty());
     assert!(db.storage.read().is_empty());
@@ -129,19 +129,21 @@ fn fork_bal_cache_preserves_cached_values_and_merges_slots() {
 
     let bal = vec![account];
     validate_bal(&bal, 1, None).unwrap();
-    cache(&db, bal);
+    for _ in 0..2 {
+        cache_bal(&db, bal.clone());
 
-    assert_eq!(db.accounts.read()[&address], cached_account);
-    assert_eq!(
-        db.storage.read()[&address],
-        [
-            (U256::from(1), U256::from(101)),
-            (U256::from(2), U256::from(22)),
-            (U256::from(3), U256::from(303)),
-        ]
-        .into_iter()
-        .collect()
-    );
+        assert_eq!(db.accounts.read()[&address], cached_account);
+        assert_eq!(
+            db.storage.read()[&address],
+            [
+                (U256::from(1), U256::from(101)),
+                (U256::from(2), U256::from(22)),
+                (U256::from(3), U256::from(303)),
+            ]
+            .into_iter()
+            .collect()
+        );
+    }
 }
 
 #[test]
@@ -157,7 +159,7 @@ fn fork_bal_cache_preserves_delegation_code_and_final_clearing() {
 
     let bal = vec![complete_account(authority, delegation.clone()), cleared_account];
     validate_bal(&bal, 2, None).unwrap();
-    cache(&db, bal);
+    cache_bal(&db, bal);
 
     let accounts = db.accounts.read();
     let account = &accounts[&authority];
@@ -341,7 +343,7 @@ fn fork_bal_cache_keeps_empty_block_post_execution_writes() {
     let db = MemDb::default();
 
     validate_bal(&bal, 0, None).unwrap();
-    cache(&db, bal);
+    cache_bal(&db, bal);
 
     assert_eq!(db.storage.read()[&address][&U256::ONE], U256::from(42));
     assert!(db.accounts.read().is_empty());

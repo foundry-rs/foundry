@@ -1038,6 +1038,31 @@ impl CallTraceDecoder {
         }
     }
 
+    /// Returns the same function signature as [`Self::decode_function`] without formatting
+    /// arguments and return values when the ABI identifies a single function.
+    pub async fn decode_function_signature(&self, trace: &CallTrace) -> Option<String> {
+        if !trace.kind.is_any_create()
+            && trace.address != DEFAULT_CREATE2_DEPLOYER
+            && !precompiles::is_known_precompile_call(
+                trace,
+                self.networks,
+                self.chain_id,
+                self.hardfork,
+            )
+            && is_abi_call_data(&trace.data)
+            && let Some(selector) = trace.data.first_chunk().map(Selector::from)
+            && let Some([function]) = self.functions_for_selector(trace.address, &selector)
+            && self
+                .fallback_contracts
+                .get(&trace.address)
+                .is_none_or(|selectors| selectors.contains(&selector))
+        {
+            return Some(function.signature());
+        }
+
+        self.decode_function(trace).await.call_data.map(|data| data.signature)
+    }
+
     /// Decodes a call trace.
     pub async fn decode_function(&self, trace: &CallTrace) -> DecodedCallTrace {
         let label = if self.disable_labels {
@@ -1876,6 +1901,7 @@ fn constructor_signature(constructor: &Constructor) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::CallKind;
     use alloy_primitives::{address, aliases::U96, hex};
     use alloy_sol_types::{SolCall, SolError, SolEvent};
     use foundry_evm_core::precompiles::P256_VERIFY;
@@ -1998,6 +2024,86 @@ mod tests {
             Vec::<(String, usize, String)>::new(),
             "Monad reserve-balance event selectors drifted from monad_revm",
         );
+    }
+
+    #[tokio::test]
+    async fn function_signature_matches_full_decoding() {
+        let address = Address::repeat_byte(0x11);
+        let fallback = Address::repeat_byte(0x22);
+        let no_fallback = Address::repeat_byte(0x33);
+        let scoped = Address::repeat_byte(0x44);
+        let known_fallback = Address::repeat_byte(0x55);
+        let mut decoder = CallTraceDecoder::new().clone();
+        let function = Function::parse("roundTrip(uint256[]) returns (uint256[])").unwrap();
+        let data = function
+            .abi_encode_input(&[DynSolValue::Array(vec![DynSolValue::Uint(U256::MAX, 256)])])
+            .unwrap();
+        decoder.push_function(function.clone());
+        decoder.push_address_function(scoped, function.clone());
+        decoder.fallback_contracts.insert(fallback, HashSet::default());
+        decoder
+            .fallback_contracts
+            .insert(known_fallback, HashSet::from_iter([function.selector()]));
+        decoder.receive_contracts.insert(fallback);
+        decoder.non_fallback_contracts.insert(no_fallback, HashSet::default());
+        decoder
+            .constructors_by_address
+            .insert(address, Constructor::parse("constructor()").unwrap());
+        decoder.constructor_args_offsets.insert(address, 0);
+
+        // A global collision still resolves through the existing calldata checks.
+        let transfer = Function::parse("transferFrom(address,address,uint256)").unwrap();
+        let collision = Function::parse("gasprice_bit_ether(int128)").unwrap();
+        assert_eq!(transfer.selector(), collision.selector());
+        let collision_data =
+            [collision.selector().as_slice(), &U256::from(1).to_be_bytes::<32>()].concat();
+        decoder.push_function(transfer.clone());
+        decoder.push_function(collision);
+        decoder.push_address_function(scoped, transfer);
+
+        for address in [
+            address,
+            fallback,
+            no_fallback,
+            scoped,
+            known_fallback,
+            IDENTITY,
+            DEFAULT_CREATE2_DEPLOYER,
+        ] {
+            for kind in [CallKind::Call, CallKind::DelegateCall, CallKind::Create] {
+                for success in [true, false] {
+                    for data in [
+                        vec![],
+                        vec![1, 2, 3],
+                        vec![0xff; SELECTOR_LEN],
+                        function.selector().to_vec(),
+                        [function.selector().as_slice(), &[0xff; 32]].concat(),
+                        data.clone(),
+                        collision_data.clone(),
+                    ] {
+                        let trace = CallTrace {
+                            address,
+                            kind,
+                            success,
+                            status: (!success).then_some(InstructionResult::Revert),
+                            data: data.into(),
+                            output: vec![0xff; 64].into(),
+                            ..Default::default()
+                        };
+                        assert_eq!(
+                            decoder.decode_function_signature(&trace).await,
+                            decoder
+                                .decode_function(&trace)
+                                .await
+                                .call_data
+                                .map(|data| data.signature),
+                            "{address} {kind:?} success={success} calldata={}",
+                            trace.data,
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]

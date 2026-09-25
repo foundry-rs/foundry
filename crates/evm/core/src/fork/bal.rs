@@ -113,24 +113,23 @@ pub fn validate_bal(
 }
 
 /// Inserts a validated BAL's post-state into its selected remote cache, retaining existing values.
-pub(super) fn cache(db: &MemDb, bal: BlockAccessList) {
+///
+/// The BAL must pass [`validate_bal`] before this call, and the cache must belong to its immutable
+/// source block. Account and storage locks are acquired separately; insertion is not atomic across
+/// the two maps.
+pub fn cache_bal(db: &MemDb, bal: BlockAccessList) {
     let mut accounts = db.accounts.write();
     let inserted_accounts = cache_bal_accounts(&mut accounts, &bal);
     drop(accounts);
 
     let mut storage = db.storage.write();
     let inserted_slots = cache_bal_storage(&mut storage, &bal);
+    drop(storage);
     debug!(target: "backend::fork", inserted_accounts, inserted_slots, "prefilled fork cache from BAL");
 }
 
 /// Inserts complete account post-states, retaining existing accounts, and returns the added count.
-///
-/// The BAL must pass [`validate_bal`] before either cache map is modified. Callers own locking and
-/// must ensure that the selected cache belongs to the BAL's immutable source block.
-pub fn cache_bal_accounts(
-    accounts: &mut AddressHashMap<AccountInfo>,
-    bal: &BlockAccessList,
-) -> usize {
+fn cache_bal_accounts(accounts: &mut AddressHashMap<AccountInfo>, bal: &BlockAccessList) -> usize {
     let accounts_before = accounts.len();
     for account in bal {
         if let (Some(balance), Some(nonce), Some(code)) =
@@ -153,12 +152,8 @@ pub fn cache_bal_accounts(
 
 /// Inserts final slot writes, retaining cached values and leaving read-only slots unknown.
 ///
-/// Returns the number of added slots. The same validation and cache-identity requirements as
-/// [`cache_bal_accounts`] apply.
-pub fn cache_bal_storage(
-    storage: &mut AddressHashMap<U256Map<U256>>,
-    bal: &BlockAccessList,
-) -> usize {
+/// Returns the number of added slots.
+fn cache_bal_storage(storage: &mut AddressHashMap<U256Map<U256>>, bal: &BlockAccessList) -> usize {
     let mut inserted_slots = 0;
     for account in bal {
         if !account.storage_changes.is_empty() {
