@@ -136,6 +136,7 @@ impl LogsArgs {
                     }
                 },
                 log = subscription.next() => {
+                    let Some(log) = log else { break };
                     if format_json {
                         if !first {
                             write!(output, ",")?;
@@ -143,10 +144,7 @@ impl LogsArgs {
                         first = false;
                         write!(output, "{}", serde_json::to_string(&log).unwrap())?;
                     } else {
-                        let (formatted, decode_failed) = log
-                            .as_ref()
-                            .map(|log| format_log(log, event.as_ref()))
-                            .unwrap_or_default();
+                        let (formatted, decode_failed) = format_log(&log, event.as_ref());
                         if decode_failed && !warned_decode_failure {
                             warned_decode_failure = true;
                             sh_warn!(
@@ -233,17 +231,15 @@ fn build_filter(
     sig_or_topic: Option<String>,
     topics_or_args: Vec<String>,
 ) -> Result<(Filter, Option<Event>)> {
-    let mut event = None;
-    let topics = match sig_or_topic {
+    let (topics, event) = match sig_or_topic {
         Some(sig_or_topic) => match foundry_common::abi::get_event(&sig_or_topic) {
             Ok(parsed) => {
                 let topics = event_topics(&parsed, &topics_or_args)?;
-                event = Some(parsed);
-                topics
+                (topics, Some(parsed))
             }
-            Err(_) => raw_topics([vec![sig_or_topic], topics_or_args].concat())?,
+            Err(_) => (raw_topics([vec![sig_or_topic], topics_or_args].concat())?, None),
         },
-        None => Default::default(),
+        None => (Default::default(), None),
     };
 
     let mut filter = Filter {

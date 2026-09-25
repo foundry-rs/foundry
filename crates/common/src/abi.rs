@@ -1,7 +1,7 @@
 //! ABI related helper functions.
 
 use alloy_chains::Chain;
-use alloy_dyn_abi::{DecodedEvent, DynSolType, DynSolValue, FunctionExt, JsonAbiExt, Specifier};
+use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt, JsonAbiExt, Specifier};
 use alloy_json_abi::{Error, Event, Function, Param};
 use alloy_primitives::{Address, LogData, hex};
 use eyre::{Context, ContextCompat, Result};
@@ -110,10 +110,9 @@ pub fn get_event(sig: &str) -> Result<Event> {
 
 /// ABI-decodes the non-indexed parameters (the log data) of an event.
 ///
-/// Indexed parameters are stored in the log topics rather than in the data, so they are skipped
-/// here and the returned [`DecodedEvent`] has an empty `indexed`. This allows decoding the data
-/// of a log without knowing its topics.
-pub fn abi_decode_event_data(event: &Event, data: &[u8]) -> Result<DecodedEvent> {
+/// Indexed parameters are stored in the log topics rather than in the data, so they are skipped.
+/// This allows decoding the data of a log without knowing its topics.
+pub fn abi_decode_event_data(event: &Event, data: &[u8]) -> Result<Vec<DynSolValue>> {
     let body = DynSolType::Tuple(
         event
             .inputs
@@ -122,14 +121,9 @@ pub fn abi_decode_event_data(event: &Event, data: &[u8]) -> Result<DecodedEvent>
             .map(|input| input.resolve())
             .collect::<Result<_, _>>()?,
     );
-    let body = match body.abi_decode_sequence(data)? {
+    Ok(match body.abi_decode_sequence(data)? {
         DynSolValue::Tuple(values) => values,
         _ => unreachable!("body is a tuple"),
-    };
-    Ok(DecodedEvent {
-        selector: (!event.anonymous).then(|| event.selector()),
-        indexed: vec![],
-        body,
     })
 }
 
@@ -381,10 +375,8 @@ mod tests {
         .abi_encode_params();
 
         let decoded = abi_decode_event_data(&event, &data).unwrap();
-        assert_eq!(decoded.selector, Some(event.selector()));
-        assert!(decoded.indexed.is_empty());
         assert_eq!(
-            decoded.body,
+            decoded,
             vec![DynSolValue::String("hello".into()), DynSolValue::Uint(U256::from(42), 256)]
         );
     }
@@ -401,7 +393,7 @@ mod tests {
 
         let decoded = abi_decode_event_data(&event, &data).unwrap();
         assert_eq!(
-            decoded.body,
+            decoded,
             vec![DynSolValue::Uint(U256::from(1), 256), DynSolValue::Address(addr)]
         );
     }

@@ -438,7 +438,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             print_tokens(&abi_decode_calldata("Any(string)", &data, true, true)?)?;
         }
         CastSubcommand::DecodeEvent { sig, data } => {
-            let decoded_event = if let Some(event_sig) = sig {
+            let decoded_values = if let Some(event_sig) = sig {
                 let event = get_event(&event_sig)?;
                 abi_decode_event_data(&event, &hex::decode(data)?)?
             } else {
@@ -452,8 +452,9 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 let data = data.get(64..).unwrap_or_default();
                 get_event(&event.signature())?
                     .decode_log_parts(core::iter::once(selector), &hex::decode(data)?)?
+                    .body
             };
-            print_tokens(&decoded_event.body)?;
+            print_tokens(&decoded_values)?;
         }
         CastSubcommand::DecodeError { sig, data } => {
             let error = if let Some(err_sig) = sig {
