@@ -82,7 +82,6 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
-    cmp::min,
     collections::BTreeMap,
     ops::Deref,
     path::{Path, PathBuf},
@@ -2063,7 +2062,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
     ) -> Result<(Vec<BasicTxDetails>, CheckSequenceOutcome)> {
         let config = &self.config.invariant;
         let txes = base_counterexamples_to_txes(call_sequence, config.show_solidity);
-        let sequence = (0..min(txes.len(), config.depth as usize)).collect::<Vec<_>>();
+        // Replay the whole persisted sequence: it was produced under the depth of an earlier run,
+        // and cutting it to the current depth would turn a still-failing sequence into a pass.
+        let sequence = (0..txes.len()).collect::<Vec<_>>();
         let outcome = check_sequence(
             self.clone_executor_with_symbolic_storage(storage)?,
             &txes,
@@ -2131,7 +2132,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     fingerprint != handler_edge_fingerprint(None, target, selector)
                 });
             let txes = base_counterexamples_to_txes(&mut call_sequence, config.show_solidity);
-            let sequence = (0..min(txes.len(), config.depth as usize)).collect::<Vec<_>>();
+            let sequence = (0..txes.len()).collect::<Vec<_>>();
             let mut replay_executor = match self.clone_executor_with_symbolic_storage(&storage) {
                 Ok(executor) => executor,
                 Err(err) => {
