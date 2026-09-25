@@ -30,6 +30,8 @@ pub struct SensitiveTransactionMetadata {
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct SensitiveScriptSequence {
     pub transactions: VecDeque<SensitiveTransactionMetadata>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_generation: Option<TxHash>,
 }
 
 /// Helper that saves the transactions sequence and its state on which transactions have been
@@ -52,6 +54,8 @@ pub struct ScriptSequence<N: Network> {
     pub timestamp: u128,
     pub chain: u64,
     pub commit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_generation: Option<TxHash>,
 }
 
 impl<N: Network> Default for ScriptSequence<N> {
@@ -66,6 +70,7 @@ impl<N: Network> Default for ScriptSequence<N> {
             timestamp: Default::default(),
             chain: Default::default(),
             commit: Default::default(),
+            recovery_generation: Default::default(),
         }
     }
 }
@@ -78,6 +83,7 @@ impl<N: Network> From<&ScriptSequence<N>> for SensitiveScriptSequence {
                 .iter()
                 .map(|tx| SensitiveTransactionMetadata { rpc: tx.rpc.clone() })
                 .collect(),
+            recovery_generation: sequence.recovery_generation,
         }
     }
 }
@@ -237,6 +243,11 @@ impl<N: Network> ScriptSequence<N> {
 
     /// Copies RPC URLs from a matching sensitive-cache sequence.
     pub fn fill_sensitive(&mut self, sensitive: &SensitiveScriptSequence) -> Result<()> {
+        if self.recovery_generation != sensitive.recovery_generation {
+            eyre::bail!(
+                "the broadcast file and its sensitive-cache counterpart belong to different recovery generations"
+            );
+        }
         let transactions_len = self.transactions.len();
         let sensitive_len = sensitive.transactions.len();
         if transactions_len != sensitive_len {
@@ -303,6 +314,7 @@ mod tests {
                 transactions: (0..count)
                     .map(|_| SensitiveTransactionMetadata { rpc: "replacement".to_string() })
                     .collect(),
+                recovery_generation: None,
             };
             assert_eq!(
                 sequence.fill_sensitive(&sensitive).unwrap_err().to_string(),
@@ -326,11 +338,27 @@ mod tests {
                 .into_iter()
                 .map(|rpc| SensitiveTransactionMetadata { rpc: rpc.to_string() })
                 .collect(),
+            recovery_generation: None,
         };
         sequence.fill_sensitive(&sensitive).unwrap();
         assert_eq!(
             sequence.transactions.iter().map(|tx| tx.rpc.as_str()).collect::<Vec<_>>(),
             ["restored-first", "restored-second"]
+        );
+    }
+
+    #[test]
+    fn fill_sensitive_rejects_a_different_recovery_generation() {
+        let mut sequence = sequence_with_two_transactions();
+        sequence.recovery_generation = Some(TxHash::ZERO);
+        let sensitive = SensitiveScriptSequence {
+            transactions: Default::default(),
+            recovery_generation: Some(TxHash::with_last_byte(1)),
+        };
+
+        assert_eq!(
+            sequence.fill_sensitive(&sensitive).unwrap_err().to_string(),
+            "the broadcast file and its sensitive-cache counterpart belong to different recovery generations"
         );
     }
 
