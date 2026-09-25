@@ -4671,7 +4671,47 @@ contract SymbolicInvariantCandidateSeed is Test {
         cmd.forge_fuse();
         cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
         cmd.env("FOUNDRY_INVARIANT_FAILURE_PERSIST_DIR", failure_dir);
+        cmd.env("FOUNDRY_INVARIANT_DEPTH", "2");
+        cmd.env("FOUNDRY_INVARIANT_CHECK_INTERVAL", "0");
+        let nonterminal_output = cmd
+            .args([
+                "test",
+                "--match-contract",
+                "SymbolicInvariantCandidateSeed",
+                "--threads",
+                "1",
+                "--invariant-frontier-dir",
+                "candidate_frontiers",
+                "--invariant-corpus-dir",
+                "nonterminal_candidate_corpus",
+                "--symbolic-use-fuzz-frontiers",
+                "--symbolic-check-invariant-frontiers",
+                "--symbolic-frontier-limit",
+                "1",
+                "--symbolic-frontier-ids",
+                &target_frontier_id,
+            ])
+            .assert_success()
+            .get_output()
+            .clone();
+        let nonterminal_corpus = prj
+            .root()
+            .join("nonterminal_candidate_corpus")
+            .join("SymbolicInvariantCandidateSeed")
+            .join("worker0")
+            .join("corpus");
+        assert!(
+            std::fs::read_dir(&nonterminal_corpus)
+                .is_ok_and(|mut entries| entries.next().is_some()),
+            "empty {}\nstdout={}\nstderr={}",
+            nonterminal_corpus.display(),
+            nonterminal_output.stdout_lossy(),
+            nonterminal_output.stderr_lossy()
+        );
+
+        cmd.env("FOUNDRY_INVARIANT_DEPTH", "1");
         let output = cmd
+            .forge_fuse()
             .args([
                 "test",
                 "--match-contract",
@@ -4683,6 +4723,41 @@ contract SymbolicInvariantCandidateSeed is Test {
                 "candidate_frontiers",
                 "--invariant-corpus-dir",
                 "candidate_corpus",
+                "--symbolic-use-fuzz-frontiers",
+                "--symbolic-frontier-limit",
+                "1",
+                "--symbolic-frontier-ids",
+                &target_frontier_id,
+            ])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        let result = json_test_result(&output, "invariant_anchor()");
+        let failures = result["invariant_failures"].as_array().unwrap();
+        assert_eq!(failures[0]["name"], "invariant_anchor");
+        assert_eq!(failures[1]["name"], "invariant_notBroken");
+
+        let broken_worker = prj
+            .root()
+            .join("broken_candidate_corpus")
+            .join("SymbolicInvariantCandidateSeed")
+            .join("worker0");
+        std::fs::create_dir_all(broken_worker.parent().unwrap()).unwrap();
+        std::fs::write(&broken_worker, b"not a directory").unwrap();
+        let output = cmd
+            .forge_fuse()
+            .args([
+                "test",
+                "--match-contract",
+                "SymbolicInvariantCandidateSeed",
+                "--json",
+                "--threads",
+                "1",
+                "--invariant-frontier-dir",
+                "candidate_frontiers",
+                "--invariant-corpus-dir",
+                "broken_candidate_corpus",
                 "--symbolic-use-fuzz-frontiers",
                 "--symbolic-frontier-limit",
                 "1",
@@ -4971,10 +5046,10 @@ contract SymbolicInvariantPropertySeed is Test {
     assert_eq!(result["symbolic"]["replay"]["status"], "confirmed");
 });
 
-forgetest_init!(symbolic_invariant_frontier_seeding_checks_after_invariant, |prj, cmd| {
+forgetest_init!(symbolic_invariant_frontier_seeding_defers_hook, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(
-            "skipping symbolic_invariant_frontier_seeding_checks_after_invariant because z3 is not available"
+            "skipping symbolic_invariant_frontier_seeding_defers_hook because z3 is not available"
         );
         return;
     }
@@ -5024,7 +5099,7 @@ contract SymbolicInvariantHookSeed is Test {
             "--runs",
             "1",
             "--depth",
-            "1",
+            "2",
             "--seed",
             "0xdef0",
             "--threads",
@@ -5073,7 +5148,7 @@ contract SymbolicInvariantHookSeed is Test {
             "--symbolic-frontier-limit",
             "1",
         ])
-        .assert_failure()
+        .assert_success()
         .get_output()
         .clone();
     let corpus_path = prj

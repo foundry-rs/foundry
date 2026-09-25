@@ -3582,6 +3582,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             let Some(call) = sequence.get(call_index) else {
                 continue;
             };
+            let accepted_calls = call_index + 1;
+            let terminal_checkpoint = accepted_calls == invariant_config.depth as usize;
+            let predicate_checkpoint = invariant_contract.is_optimization()
+                || terminal_checkpoint
+                || invariant_config.check_interval == 1
+                || (invariant_config.check_interval > 1
+                    && accepted_calls.is_multiple_of(invariant_config.check_interval as usize));
             let Some(selector) = call
                 .call_details
                 .calldata
@@ -3678,20 +3685,26 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         &sequence[..call_index],
                     )
                 {
-                    match replay.failure_site.expect("failing replay has a failure site") {
+                    let failure_site =
+                        replay.failure_site.expect("failing replay has a failure site");
+                    let report_failure = match failure_site {
                         CheckSequenceFailureSite::Invariant { .. } => {
                             seeded_invariants.insert(invariant_idx);
+                            predicate_checkpoint
                         }
                         CheckSequenceFailureSite::AfterInvariant { .. } => {
                             after_invariant_seeded = true;
+                            terminal_checkpoint
                         }
                         CheckSequenceFailureSite::SequenceCall { .. } => unreachable!(),
+                    };
+                    if report_failure {
+                        confirmed_failures.push(ConfirmedFrontierInvariantFailure {
+                            invariant_idx,
+                            call_sequence: solved_sequence.clone(),
+                            replay,
+                        });
                     }
-                    confirmed_failures.push(ConfirmedFrontierInvariantFailure {
-                        invariant_idx,
-                        call_sequence: solved_sequence.clone(),
-                        replay,
-                    });
                     match persist_corpus_seed(&invariant_config.corpus, solved_sequence) {
                         Ok(path) => {
                             if let Some(path) = path {
@@ -3772,42 +3785,48 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 }
 
                 let replay_order = (0..solved_sequence.len()).collect::<Vec<_>>();
-                let broken_invariants = (0..invariant_contract.invariant_fns.len())
-                    .filter(|idx| !seeded_invariants.contains(idx))
-                    .filter_map(|invariant_idx| {
-                        let replay = self.replay_invariant_sequence(
-                            invariant_contract,
-                            invariant_idx,
-                            &solved_sequence,
-                            &replay_order,
-                            false,
-                        )?;
-                        matches!(
-                            replay.failure_site,
-                            Some(CheckSequenceFailureSite::Invariant { selector, .. })
-                                if selector == invariant_contract.invariant_fns[invariant_idx].0.selector()
-                        )
-                        .then_some((invariant_idx, replay))
-                    })
-                    .collect::<Vec<_>>();
-                let after_invariant_failure =
-                    if invariant_contract.call_after_invariant && !after_invariant_seeded {
-                        self.replay_invariant_sequence(
-                            invariant_contract,
-                            invariant_contract.anchor_idx,
-                            &solved_sequence,
-                            &replay_order,
-                            true,
-                        )
-                        .filter(|replay| {
+                let broken_invariants = if predicate_checkpoint {
+                    (0..invariant_contract.invariant_fns.len())
+                        .filter(|idx| !seeded_invariants.contains(idx))
+                        .filter_map(|invariant_idx| {
+                            let replay = self.replay_invariant_sequence(
+                                invariant_contract,
+                                invariant_idx,
+                                &solved_sequence,
+                                &replay_order,
+                                false,
+                            )?;
                             matches!(
                                 replay.failure_site,
-                                Some(CheckSequenceFailureSite::AfterInvariant { .. })
+                                Some(CheckSequenceFailureSite::Invariant { selector, .. })
+                                    if selector == invariant_contract.invariant_fns[invariant_idx].0.selector()
                             )
+                            .then_some((invariant_idx, replay))
                         })
-                    } else {
-                        None
-                    };
+                        .collect::<Vec<_>>()
+                } else {
+                    Vec::new()
+                };
+                let after_invariant_failure = if terminal_checkpoint
+                    && invariant_contract.call_after_invariant
+                    && !after_invariant_seeded
+                {
+                    self.replay_invariant_sequence(
+                        invariant_contract,
+                        invariant_contract.anchor_idx,
+                        &solved_sequence,
+                        &replay_order,
+                        true,
+                    )
+                    .filter(|replay| {
+                        matches!(
+                            replay.failure_site,
+                            Some(CheckSequenceFailureSite::AfterInvariant { .. })
+                        )
+                    })
+                } else {
+                    None
+                };
                 if !broken_invariants.is_empty() || after_invariant_failure.is_some() {
                     for (invariant_idx, replay) in &broken_invariants {
                         confirmed_failures.push(ConfirmedFrontierInvariantFailure {
@@ -4850,9 +4869,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             persisted_handler_failures,
         ) {
             Ok(x) => x,
-            Err(e) => {
+            Err(e) if replayed_predicate_failures.is_empty() => {
                 self.result.invariant_setup_fail(e);
                 return self.result;
+            }
+            Err(e) => {
+                warn!(%e, "invariant campaign setup failed after replay-confirmed frontier failure");
+                Default::default()
             }
         };
         let mut replayed_predicate_metadata = BTreeMap::new();
