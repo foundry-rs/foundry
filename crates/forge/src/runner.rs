@@ -82,7 +82,6 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
-    cmp::min,
     collections::BTreeMap,
     ops::Deref,
     path::{Path, PathBuf},
@@ -2063,7 +2062,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
     ) -> Result<(Vec<BasicTxDetails>, CheckSequenceOutcome)> {
         let config = &self.config.invariant;
         let txes = base_counterexamples_to_txes(call_sequence, config.show_solidity);
-        let sequence = (0..min(txes.len(), config.depth as usize)).collect::<Vec<_>>();
+        // Replay the whole persisted sequence: it was produced under the depth of an earlier run,
+        // and cutting it to the current depth would turn a still-failing sequence into a pass.
+        let sequence = (0..txes.len()).collect::<Vec<_>>();
         let outcome = check_sequence(
             self.clone_executor_with_symbolic_storage(storage)?,
             &txes,
@@ -2131,7 +2132,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     fingerprint != handler_edge_fingerprint(None, target, selector)
                 });
             let txes = base_counterexamples_to_txes(&mut call_sequence, config.show_solidity);
-            let sequence = (0..min(txes.len(), config.depth as usize)).collect::<Vec<_>>();
+            let sequence = (0..txes.len()).collect::<Vec<_>>();
             let mut replay_executor = match self.clone_executor_with_symbolic_storage(&storage) {
                 Ok(executor) => executor,
                 Err(err) => {
@@ -2619,7 +2620,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
 
         let Some(frontier_dir) = invariant_config.corpus.frontier_dir.as_ref() else {
             let _ = sh_warn!(
-                "`--symbolic-use-fuzz-frontiers` requires `--invariant-frontier-dir` or \
+                "Symbolic invariant frontier seeding requires `--invariant-frontier-dir` or \
                  `invariant.frontier_dir`; running without targeted frontier seeds"
             );
             return Vec::new();
@@ -3538,12 +3539,14 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         targeted_contracts: &FuzzRunIdentifiedContracts,
         dynamic_target_ctx: &DynamicTargetCtx<'_>,
     ) {
-        if !self.config.symbolic.use_fuzz_frontiers {
+        if !self.config.symbolic.use_fuzz_frontiers
+            && !self.config.symbolic.check_invariant_frontiers
+        {
             return;
         }
         if invariant_config.corpus.corpus_dir.is_none() {
             let _ = sh_warn!(
-                "`--symbolic-use-fuzz-frontiers` requires `--invariant-corpus-dir` or \
+                "Symbolic invariant frontier seeding requires `--invariant-corpus-dir` or \
                  `invariant.corpus_dir`; skipping targeted invariant frontier seeding"
             );
             return;
@@ -4385,7 +4388,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             return self.result;
         }
 
-        if self.config.symbolic.use_fuzz_frontiers {
+        if self.config.symbolic.use_fuzz_frontiers || self.config.symbolic.check_invariant_frontiers
+        {
             let dynamic_target_ctx = evm.dynamic_target_ctx();
             let invariant_config = evm.config();
             self.try_seed_invariant_corpus_from_frontiers(

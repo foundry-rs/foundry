@@ -497,9 +497,13 @@ impl<'sess> State<'sess, '_> {
                 // - ends with a bracket and fmt config forces bracket spacing.
                 // - ends with ',' a line break or a space are required.
                 // - ends with ';' a line break is required.
+                // - ends with an operator, mirroring lines that start with one.
                 prev_needs_space = match line.chars().next_back() {
                     Some('[' | '(' | '{') => self.config.bracket_spacing,
                     Some(',' | ';') => true,
+                    Some(
+                        '&' | '|' | '=' | '>' | '<' | '+' | '-' | '*' | '/' | '%' | '^' | '?' | ':',
+                    ) => !line.ends_with("*/"),
                     _ => false,
                 };
             }

@@ -363,7 +363,7 @@ impl SymbolicExecutor {
         if let Err(error) =
             self.search_invariant_candidates_inner(&input, &mut candidates, &mut limitation)
         {
-            limitation.get_or_insert_with(|| error.into());
+            limitation = Some(error.into());
         }
         // Deferred hard-arithmetic branches are now sent to SMT before candidate search finishes.
         // Only branches that nested execution could not escalate remain incomplete.

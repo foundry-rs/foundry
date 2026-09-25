@@ -416,6 +416,9 @@ pub enum CastSubcommand {
     AccessList(AccessListArgs),
     /// Get logs by signature or topic
     ///
+    /// Event declarations decode matching logs in text output. Indexed parameters must be marked
+    /// `indexed` in the declaration. JSON output remains raw.
+    ///
     /// Examples:
     /// - cast logs "Transfer(address indexed from, address indexed to, uint256 value)"
     /// - cast logs --address $TOKEN --from-block 21000000 --to-block latest $TOPIC_0
@@ -725,8 +728,13 @@ pub enum CastSubcommand {
 
     /// Decode event data
     ///
+    /// Parameters marked `indexed` in the supplied signature are emitted as log topics rather than
+    /// data, so they are ignored when decoding. With `--sig`, DATA must contain only the encoded
+    /// non-indexed event data, without topics.
+    ///
     /// Examples:
-    /// - cast decode-event --sig "Transfer(address,address,uint256)" $DATA
+    /// - cast decode-event --sig "Transfer(address indexed from, address indexed to, uint256
+    ///   value)" $DATA
     /// - cast decode-event $DATA (topic0-prefixed data; looks up the signature)
     #[command(verbatim_doc_comment, visible_aliases = &["event-decode", "--event-decode", "ed"])]
     DecodeEvent {

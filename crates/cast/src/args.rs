@@ -32,8 +32,8 @@ use foundry_cli::{
 };
 use foundry_common::{
     abi::{
-        abi_decode_calldata, encode_function_args, encode_function_args_packed, get_error,
-        get_event, get_func,
+        abi_decode_calldata, abi_decode_event_data, encode_function_args,
+        encode_function_args_packed, get_error, get_event, get_func,
     },
     fmt::{UIfmt, UIfmtSignatureExt, format_uint_exp, get_pretty_block_attr, get_pretty_tx_attr},
     fs,
@@ -438,9 +438,9 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             print_tokens(&abi_decode_calldata("Any(string)", &data, true, true)?)?;
         }
         CastSubcommand::DecodeEvent { sig, data } => {
-            let decoded_event = if let Some(event_sig) = sig {
+            let decoded_values = if let Some(event_sig) = sig {
                 let event = get_event(&event_sig)?;
-                event.decode_log_parts(core::iter::once(event.selector()), &hex::decode(data)?)?
+                abi_decode_event_data(&event, &hex::decode(data)?)?
             } else {
                 let data = strip_0x(&data);
                 let selector: B256 = data.get(..64).unwrap_or_default().parse()?;
@@ -452,8 +452,9 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 let data = data.get(64..).unwrap_or_default();
                 get_event(&event.signature())?
                     .decode_log_parts(core::iter::once(selector), &hex::decode(data)?)?
+                    .body
             };
-            print_tokens(&decoded_event.body)?;
+            print_tokens(&decoded_values)?;
         }
         CastSubcommand::DecodeError { sig, data } => {
             let error = if let Some(err_sig) = sig {

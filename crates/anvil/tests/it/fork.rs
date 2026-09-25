@@ -49,7 +49,10 @@ use foundry_test_utils::rpc::{
     spawn_rpc_proxy_rejecting_method_after, spawn_rpc_proxy_rejecting_method_when_enabled,
     spawn_rpc_proxy_retyping_first_block_transaction,
 };
-use futures::{StreamExt, future::pending};
+use futures::{
+    StreamExt,
+    future::{join_all, pending},
+};
 use revm::{
     context::BlockEnv, context_interface::block::BlobExcessGasAndPrice,
     precompile::PrecompileStatus, primitives::hardfork::SpecId,
@@ -5197,4 +5200,38 @@ async fn test_anvil_reset_from_local_node_rejects_zksync_source_atomically() {
     assert_eq!(handle.http_provider().get_block_number().await.unwrap(), original_block);
     assert_eq!(handle.http_provider().get_chain_id().await.unwrap(), original_chain_id);
     assert_eq!(api.instance_id(), original_instance_id);
+}
+
+// <https://github.com/foundry-rs/foundry/issues/11486>
+#[test]
+fn test_fork_uncached_reads_do_not_deadlock_saturated_runtime() {
+    // The origin is a separate node, so it gets its own runtime.
+    let origin_rt = tokio::runtime::Runtime::new().unwrap();
+    let (_origin_api, origin_handle) = origin_rt.block_on(spawn(NodeConfig::test()));
+    let origin_url = origin_handle.http_endpoint();
+
+    // With one worker and one blocking thread, two concurrent uncached account reads occupy
+    // every thread of the fork's runtime.
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .max_blocking_threads(1)
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let (api, _handle) = spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_url))).await;
+            let reads = (0..8).map(|_| {
+                let api = api.clone();
+                tokio::spawn(async move { api.balance(Address::random(), None).await })
+            });
+            for read in join_all(reads).await {
+                read.unwrap().unwrap();
+            }
+        });
+        done_tx.send(()).unwrap();
+    });
+
+    done_rx.recv_timeout(Duration::from_secs(60)).expect("fork node deadlocked");
 }

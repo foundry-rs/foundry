@@ -2269,7 +2269,16 @@ latest block number: {latest_block}"
         } else {
             SharedBackend::new_with_anchor(Arc::clone(&provider), block_chain_db.clone(), anchor)?
         };
-        tokio::spawn(handler);
+        // The handler gets its own thread and runtime: `SharedBackend` reads block the calling
+        // thread via `block_in_place`, so under enough concurrent reads they can occupy every
+        // thread of the node's runtime and leave none to poll the handler they wait on.
+        std::thread::Builder::new().name("fork-backend".into()).spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build fork backend runtime")
+                .block_on(handler)
+        })?;
 
         let config = ClientForkConfig {
             fork_urls: self.fork_urls.clone(),
