@@ -2543,10 +2543,9 @@ impl<'ast> State<'_, 'ast> {
                 && self.peek_comment_before(then.span.hi()).is_none()
             {
                 self.neverbreak();
-                self.print_sep(Separator::Nbsp);
-            } else {
-                self.print_sep(Separator::Space);
             }
+            // Keep the body on the closing parenthesis so the condition breaks instead.
+            self.print_sep(Separator::Nbsp);
         }
         self.end();
         self.print_stmt_as_block(then, then.span.hi(), inline);
@@ -2912,7 +2911,7 @@ impl<'ast> State<'_, 'ast> {
 
         // If the condition fits in one line, 6 chars: 'if (' + {cond} + ') ' + {then}
         // Otherwise chars: ') ' + {then}
-        let then_margin = if 6 + cond_len < self.space_left() { 6 + cond_len } else { 2 };
+        let then_margin = if 6 + cond_len <= self.space_left() { 6 + cond_len } else { 2 };
 
         if !self.is_inline_stmt(then, then_margin) {
             return false;

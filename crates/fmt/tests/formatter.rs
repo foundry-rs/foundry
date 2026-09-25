@@ -202,6 +202,42 @@ fn block_opening_comment_run_is_idempotent() {
 }
 
 #[test]
+fn if_body_stays_on_condition_line() {
+    let source = r#"contract C {
+    function f(IHooks self) internal pure returns (bool) {
+        if (!self.hasPermission(AFTER_ADD_LIQUIDITY_FLAG) && self.hasPermission(AFTER_ADD_LIQUIDITY_RETURN_DELTA_FLAG)) return false;
+        if (!self.hasPermission(AFTER_ADD_LIQUIDITY_FLAG) && self.hasPermission(AFTER_ADD_LIQUIDITY_RETURNS_DELTA_FLAG)) return false;
+        if (!self.hasPermission(AFTER_ADD_LIQUIDITY_FLAG) && self.hasPermission(AFTER_ADD_LIQUIDITY_RETURNS_DELTA_FLAG)) {
+            return false;
+        }
+    }
+}
+"#;
+    let expected = r#"contract C {
+    function f(IHooks self) internal pure returns (bool) {
+        if (
+            !self.hasPermission(AFTER_ADD_LIQUIDITY_FLAG) && self.hasPermission(AFTER_ADD_LIQUIDITY_RETURN_DELTA_FLAG)
+        ) {
+            return false;
+        }
+        if (
+            !self.hasPermission(AFTER_ADD_LIQUIDITY_FLAG) && self.hasPermission(AFTER_ADD_LIQUIDITY_RETURNS_DELTA_FLAG)
+        ) return false;
+        if (
+            !self.hasPermission(AFTER_ADD_LIQUIDITY_FLAG) && self.hasPermission(AFTER_ADD_LIQUIDITY_RETURNS_DELTA_FLAG)
+        ) {
+            return false;
+        }
+    }
+}
+"#;
+
+    let config = Arc::new(FormatterConfig::default());
+    assert_eq!(format(source, Path::new("test.sol"), config.clone()), expected);
+    assert_eq!(format(expected, Path::new("test.sol"), config), expected);
+}
+
+#[test]
 fn chained_named_call_layout_ignores_source_spacing() {
     let path = Path::new("test.sol");
 
