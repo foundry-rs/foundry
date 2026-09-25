@@ -278,6 +278,23 @@ Error: value out of range for a signed 256-bit integer
 "#]]);
 });
 
+casttest!(to_base_rejects_magnitude_beyond_i256_range, |_prj, cmd| {
+    for args in [
+        ["to-dec", "--", "-0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"],
+        [
+            "to-hex",
+            "--",
+            "-57896044618658097711785492504343953926634992332820282019728792003956564819969",
+        ],
+        ["to-int256", "--", "-0x8000000000000000000000000000000000000000000000000000000000000001"],
+    ] {
+        cmd.cast_fuse().args(args).assert_failure().stderr_eq(str![[r#"
+Error: value out of range for a signed 256-bit integer
+
+"#]]);
+    }
+});
+
 casttest!(keccak_stdin_bytes, |_prj, cmd| {
     cmd.args(["keccak"]).stdin("0x12").assert_success().stdout_eq(str![[r#"
 0x5fa2358263196dbbf23d1ca7a509451f7a2f64c15837bfbb81298b1e3e24e4fa

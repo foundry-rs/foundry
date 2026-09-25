@@ -171,6 +171,11 @@ impl NumberWithBase {
         };
         let mut number = Self::parse_digits(s, base)?;
         if !is_nonnegative {
+            // A larger magnitude would wrap around to a different number when negated.
+            eyre::ensure!(
+                number <= I256::MIN.unsigned_abs(),
+                "value out of range for a signed 256-bit integer"
+            );
             number = number.wrapping_neg();
         }
         Ok(Self { number, is_nonnegative, base })
@@ -377,6 +382,24 @@ mod tests {
             // Decimal digits never carry the sign; `Display` adds it back.
             assert_eq!(num.with_base(Decimal).format(), n.to_string().trim_start_matches('-'));
             assert_eq!(format!("{num}"), n.to_string());
+        }
+    }
+
+    #[test]
+    fn rejects_negative_numbers_beyond_i256_min() {
+        let min = NumberWithBase::parse_int(&I256::MIN.to_string(), None).unwrap();
+        assert_eq!(min.number(), I256::MIN.into_raw());
+        assert_eq!(format!("{min}"), I256::MIN.to_string());
+
+        for s in [
+            "-0x8000000000000000000000000000000000000000000000000000000000000001",
+            "-0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "-57896044618658097711785492504343953926634992332820282019728792003956564819969",
+        ] {
+            assert_eq!(
+                NumberWithBase::parse_int(s, None).unwrap_err().to_string(),
+                "value out of range for a signed 256-bit integer"
+            );
         }
     }
 }
