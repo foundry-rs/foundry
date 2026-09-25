@@ -956,8 +956,8 @@ pub struct TestArgs {
     #[arg(
         long,
         env = "FOUNDRY_SYMBOLIC_STORAGE_LAYOUT",
-        value_name = "solidity|generic",
-        value_parser = ["solidity", "generic"]
+        value_name = "solidity|generic|zero_init",
+        value_parser = ["solidity", "generic", "zero_init"]
     )]
     pub symbolic_storage_layout: Option<String>,
 
