@@ -311,6 +311,42 @@ impl Cheatcode for eth_getLogsCall {
     }
 }
 
+impl Cheatcode for eth_getProofCall {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        let Self { target, slots, blockNumber } = self;
+        let block_number = u64::try_from(blockNumber)
+            .map_err(|_| fmt_err!("block number must be less than 2^64"))?;
+
+        let fork = ccx
+            .ecx
+            .db()
+            .active_fork_options()
+            .ok_or_else(|| fmt_err!("no active fork URL found"))?;
+        let provider = fork.evm_opts.fork_provider_with_url::<AnyNetwork>(&fork.url)?;
+        let proof = foundry_common::block_on(async move {
+            provider.get_proof(*target, slots.clone()).number(block_number).await
+        })
+        .map_err(|e| fmt_err!("failed to get proof: {e}"))?;
+
+        let storage_proof = proof
+            .storage_proof
+            .into_iter()
+            .map(|p| EthStorageProof { key: p.key.as_b256(), value: p.value, proof: p.proof })
+            .collect();
+
+        Ok(EthGetProof {
+            account: proof.address,
+            balance: proof.balance,
+            codeHash: proof.code_hash,
+            nonce: proof.nonce,
+            storageHash: proof.storage_hash,
+            accountProof: proof.account_proof,
+            storageProof: storage_proof,
+        }
+        .abi_encode())
+    }
+}
+
 impl Cheatcode for getRawBlockHeaderCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { blockNumber } = self;

@@ -391,6 +391,9 @@ pub trait DatabaseExt<F: FoundryEvmFactory>:
     /// Returns the Fork url that's currently used in the database, if fork mode is on
     fn active_fork_url(&self) -> Option<String>;
 
+    /// Returns the options used to create the active fork, if fork mode is on.
+    fn active_fork_options(&self) -> Option<CreateFork>;
+
     /// Returns the source chain ID of the active fork, independent of execution overrides.
     fn active_fork_source_chain_id(&self) -> Option<u64>;
 
@@ -2400,6 +2403,11 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
     fn active_fork_url(&self) -> Option<String> {
         let fork = self.inner.issued_local_fork_ids.get(&self.active_fork_id()?)?;
         self.forks.get_fork_url(fork.clone()).ok()?
+    }
+
+    fn active_fork_options(&self) -> Option<CreateFork> {
+        let fork = self.inner.issued_local_fork_ids.get(&self.active_fork_id()?)?;
+        self.forks.get_fork_options(fork.clone()).ok()?
     }
 
     fn active_fork_source_chain_id(&self) -> Option<u64> {

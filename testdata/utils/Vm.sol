@@ -13,6 +13,8 @@ interface Vm {
     struct Log { bytes32[] topics; bytes data; address emitter; }
     struct Rpc { string key; string url; }
     struct EthGetLogs { address emitter; bytes32[] topics; bytes data; bytes32 blockHash; uint64 blockNumber; bytes32 transactionHash; uint64 transactionIndex; uint256 logIndex; bool removed; }
+    struct EthStorageProof { bytes32 key; uint256 value; bytes[] proof; }
+    struct EthGetProof { address account; uint256 balance; bytes32 codeHash; uint64 nonce; bytes32 storageHash; bytes[] accountProof; EthStorageProof[] storageProof; }
     struct DirEntry { string errorMessage; string path; uint64 depth; bool isDir; bool isSymlink; }
     struct FsMetadata { bool isDir; bool isSymlink; uint256 length; bool readOnly; uint256 modified; uint256 accessed; uint256 created; }
     struct Wallet { address addr; uint256 publicKeyX; uint256 publicKeyY; uint256 privateKey; }
@@ -256,6 +258,7 @@ interface Vm {
     function envUint(string calldata name, string calldata delim) external view returns (uint256[] memory value);
     function etch(address target, bytes calldata newRuntimeBytecode) external;
     function eth_getLogs(uint256 fromBlock, uint256 toBlock, address target, bytes32[] calldata topics) external view returns (EthGetLogs[] memory logs);
+    function eth_getProof(address target, bytes32[] calldata slots, uint256 blockNumber) external view returns (EthGetProof memory proof);
     function executeTransaction(bytes calldata rawTx) external returns (bytes memory);
     function exists(string calldata path) external view returns (bool result);
     function expectCallMinGas(address callee, uint256 msgValue, uint64 minGas, bytes calldata data) external;

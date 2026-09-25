@@ -1,7 +1,8 @@
 //! Contains various tests for `forge test`.
 
 use crate::utils::assert_debug_dump_identifies_contract;
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_provider::Provider;
 use anvil::{NodeConfig, spawn};
 use foundry_config::{CompilationRestrictions, SettingsOverrides, filter::GlobMatcher};
 use foundry_test_utils::{
@@ -6954,4 +6955,118 @@ Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 
 "#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/9886>
+forgetest_async!(fork_eth_get_proof, |prj, cmd| {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let target = Address::repeat_byte(0x42);
+    let slot = B256::with_last_byte(1);
+
+    api.anvil_set_code(target, Bytes::from_static(&[0x00])).await.unwrap();
+    api.anvil_set_balance(target, U256::from(1337)).await.unwrap();
+    api.anvil_set_storage_at(target, slot.into(), B256::with_last_byte(0xaa)).await.unwrap();
+    api.anvil_mine(Some(U256::ONE), None).await.unwrap();
+
+    let provider = handle.http_provider();
+    let historical_block = provider.get_block_number().await.unwrap();
+    let historical_state_root =
+        provider.get_block(historical_block.into()).await.unwrap().unwrap().header.state_root;
+
+    api.anvil_mine(Some(U256::ONE), None).await.unwrap();
+    api.anvil_set_balance(target, U256::from(7331)).await.unwrap();
+    api.anvil_set_storage_at(target, slot.into(), B256::with_last_byte(0xbb)).await.unwrap();
+    api.anvil_mine(Some(U256::ONE), None).await.unwrap();
+    let fork_block = provider.get_block_number().await.unwrap();
+
+    let (_, fork_handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(handle.http_endpoint()))
+            .with_fork_block_number(Some(fork_block)),
+    )
+    .await;
+    let endpoint = rpc::spawn_rpc_proxy_requiring_header(
+        fork_handle.http_endpoint(),
+        "authorization",
+        "Bearer secret",
+    )
+    .await;
+    std::fs::write(
+        prj.config(),
+        format!(
+            r#"[rpc_endpoints]
+authenticated = {{ endpoint = "{endpoint}", auth = "Bearer secret" }}
+"#
+        ),
+    )
+    .unwrap();
+
+    prj.add_test(
+        "EthGetProofFork.t.sol",
+        &format!(
+            r#"
+interface Vm {{
+    struct EthStorageProof {{ bytes32 key; uint256 value; bytes[] proof; }}
+    struct EthGetProof {{ address account; uint256 balance; bytes32 codeHash; uint64 nonce; bytes32 storageHash; bytes[] accountProof; EthStorageProof[] storageProof; }}
+    function createSelectFork(string calldata urlOrAlias) external returns (uint256 forkId);
+    function deal(address account, uint256 newBalance) external;
+    function eth_getProof(address target, bytes32[] calldata slots, uint256 blockNumber) external view returns (EthGetProof memory proof);
+    function store(address target, bytes32 slot, bytes32 value) external;
+}}
+
+contract EthGetProofForkTest {{
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function testForkEthGetProof() public {{
+        vm.createSelectFork("authenticated");
+        address target = {target};
+        bytes32[] memory slots = new bytes32[](2);
+        slots[0] = {slot};
+        slots[1] = bytes32(uint256(2));
+        vm.deal(target, 9999);
+        vm.store(target, slots[0], bytes32(uint256(0xcc)));
+
+        Vm.EthGetProof memory proof = vm.eth_getProof(target, slots, {historical_block});
+
+        require(proof.account == target, "account");
+        require(proof.balance == 1337, "balance");
+        require(proof.codeHash == target.codehash, "code hash");
+        require(proof.nonce == 0, "nonce");
+        require(keccak256(proof.accountProof[0]) == {historical_state_root}, "account proof root");
+
+        require(proof.storageProof.length == 2, "storage proof length");
+        require(proof.storageProof[0].key == slots[0], "first key");
+        require(proof.storageProof[0].value == 0xaa, "first value");
+        require(keccak256(proof.storageProof[0].proof[0]) == proof.storageHash, "storage proof root");
+        require(proof.storageProof[1].key == slots[1], "second key");
+        require(proof.storageProof[1].value == 0, "second value");
+
+        proof = vm.eth_getProof(target, slots, {fork_block});
+        require(proof.balance == 7331, "current balance");
+        require(proof.storageProof[0].value == 0xbb, "current storage");
+    }}
+
+    function testForkEthGetProofUnknownBlock() public {{
+        vm.createSelectFork("authenticated");
+        try vm.eth_getProof({target}, new bytes32[](0), {fork_block} + 100) {{
+            revert("expected an unknown block to fail");
+        }} catch {{}}
+    }}
+}}
+"#
+        ),
+    );
+
+    cmd.args(["test", "--match-test", "testForkEthGetProof"]).assert_success().stdout_eq(str![[
+        r#"
+...
+Ran 2 tests for test/EthGetProofFork.t.sol:EthGetProofForkTest
+[PASS] testForkEthGetProof() ([GAS])
+[PASS] testForkEthGetProofUnknownBlock() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#
+    ]]);
 });

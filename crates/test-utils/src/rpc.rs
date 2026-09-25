@@ -1,7 +1,12 @@
 //! RPC testing utilities.
 
 use alloy_primitives::B256;
-use axum::{Json, Router, http::StatusCode, response::IntoResponse, routing::post};
+use axum::{
+    Json, Router,
+    http::{HeaderMap, StatusCode},
+    response::IntoResponse,
+    routing::post,
+};
 use foundry_config::{
     NamedChain::{
         self, Arbitrum, Base, BinanceSmartChainTestnet, Celo, Gnosis, Hyperliquid, Mainnet,
@@ -599,6 +604,57 @@ pub async fn spawn_rpc_proxy_recording_method(
     let address = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     (format!("http://{address}"), requests)
+}
+
+/// Spawns an RPC proxy that forwards requests containing the required header and rejects all
+/// others.
+pub async fn spawn_rpc_proxy_requiring_header(
+    endpoint: String,
+    header_name: &'static str,
+    header_value: &'static str,
+) -> String {
+    let client = reqwest::Client::new();
+    let router = Router::new().route(
+        "/",
+        post(move |headers: HeaderMap, Json(request): Json<Value>| {
+            let client = client.clone();
+            let endpoint = endpoint.clone();
+            async move {
+                if headers.get(header_name).and_then(|value| value.to_str().ok())
+                    != Some(header_value)
+                {
+                    let id = request.get("id").cloned().unwrap_or(Value::Null);
+                    return (
+                        StatusCode::UNAUTHORIZED,
+                        Json(json!({
+                            "jsonrpc": "2.0",
+                            "id": id,
+                            "error": {
+                                "code": -32000,
+                                "message": "unauthorized",
+                            },
+                        })),
+                    )
+                        .into_response();
+                }
+
+                let response = client
+                    .post(endpoint)
+                    .json(&request)
+                    .send()
+                    .await
+                    .unwrap()
+                    .json::<Value>()
+                    .await
+                    .unwrap();
+                Json(response).into_response()
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    format!("http://{address}")
 }
 
 #[derive(Clone)]
