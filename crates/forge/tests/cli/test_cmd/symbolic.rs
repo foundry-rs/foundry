@@ -4312,7 +4312,6 @@ contract SymbolicInvariantRevertedPrefixTest is Test {
         "reverted_prefix_frontiers",
         "--invariant-corpus-dir",
         "reverted_prefix_corpus",
-        "--symbolic-use-fuzz-frontiers",
         "--symbolic-check-invariant-frontiers",
         "--symbolic-frontier-limit",
         "1",

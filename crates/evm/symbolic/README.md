@@ -211,8 +211,9 @@ persisted sequence deterministically:
 forge fuzz replay --match-test invariant_ --corpus-dir fuzz_corpus
 ```
 
-Pass `--symbolic-check-invariant-frontiers` to first check whether one symbolic
-invocation of each selected target can break a suite predicate from its replayed
+Pass `--symbolic-check-invariant-frontiers` to enable invariant frontier seeding
+and first check whether one symbolic invocation of each selected target can
+break a suite predicate from its replayed
 concrete prefix. Without `afterInvariant`, each invariant function is checked
 independently from the same post-call symbolic state. Forge uses the concrete
 campaign semantics: assertions and reverts indicate failure, while a Solidity

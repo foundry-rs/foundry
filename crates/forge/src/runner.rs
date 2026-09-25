@@ -2620,7 +2620,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
 
         let Some(frontier_dir) = invariant_config.corpus.frontier_dir.as_ref() else {
             let _ = sh_warn!(
-                "`--symbolic-use-fuzz-frontiers` requires `--invariant-frontier-dir` or \
+                "Symbolic invariant frontier seeding requires `--invariant-frontier-dir` or \
                  `invariant.frontier_dir`; running without targeted frontier seeds"
             );
             return Vec::new();
@@ -3539,12 +3539,14 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         targeted_contracts: &FuzzRunIdentifiedContracts,
         dynamic_target_ctx: &DynamicTargetCtx<'_>,
     ) {
-        if !self.config.symbolic.use_fuzz_frontiers {
+        if !self.config.symbolic.use_fuzz_frontiers
+            && !self.config.symbolic.check_invariant_frontiers
+        {
             return;
         }
         if invariant_config.corpus.corpus_dir.is_none() {
             let _ = sh_warn!(
-                "`--symbolic-use-fuzz-frontiers` requires `--invariant-corpus-dir` or \
+                "Symbolic invariant frontier seeding requires `--invariant-corpus-dir` or \
                  `invariant.corpus_dir`; skipping targeted invariant frontier seeding"
             );
             return;
@@ -4386,7 +4388,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             return self.result;
         }
 
-        if self.config.symbolic.use_fuzz_frontiers {
+        if self.config.symbolic.use_fuzz_frontiers || self.config.symbolic.check_invariant_frontiers
+        {
             let dynamic_target_ctx = evm.dynamic_target_ctx();
             let invariant_config = evm.config();
             self.try_seed_invariant_corpus_from_frontiers(
