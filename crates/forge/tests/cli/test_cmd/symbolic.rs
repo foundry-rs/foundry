@@ -3524,7 +3524,7 @@ contract SymbolicFuzzFrontierSeed {
             "--symbolic-frontier-selectors",
             &target_frontier_selector,
         ])
-        .assert_failure()
+        .assert_success()
         .get_output()
         .clone();
     let stdout = output.stdout_lossy();
