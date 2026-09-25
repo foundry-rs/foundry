@@ -641,7 +641,7 @@ impl<
                                 // Apply only after choosing the backend, including an existing
                                 // cache.
                                 if let Some(bal) = bal {
-                                    bal::cache(&fork.backend.data(), bal);
+                                    bal::cache_bal(&fork.backend.data(), bal);
                                     fork.bal_prewarmed.store(true, Ordering::Relaxed);
                                 }
                                 this.insert_new_fork(fork_id, fork, sender, additional_senders);
@@ -907,8 +907,9 @@ mod tests {
     use foundry_test_utils::rpc::{
         spawn_rpc_proxy_method_not_found_before, spawn_rpc_proxy_recording_method,
     };
-    use futures::task::noop_waker_ref;
+    use futures::{channel::oneshot, task::noop_waker_ref};
     use revm::context::BlockEnv;
+    use std::sync::mpsc::{Receiver as OneshotReceiver, TryRecvError};
 
     fn context(block_number: u64) -> ForkContext {
         ForkContext {
@@ -1202,5 +1203,124 @@ mod tests {
         assert_eq!(probe_counts[0], probe_counts[1] + 2);
         assert_eq!(probe_counts[1], probe_counts[2]);
         assert_eq!(probe_counts[0], probe_counts[3]);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fork_bal_shared_backend_preserves_opposite_policies_on_roll() {
+        let (api, handle) = anvil::spawn(
+            anvil::NodeConfig::test()
+                .with_chain_id(Some(1u64))
+                .with_hardfork(Some(anvil::EthereumHardfork::Amsterdam.into()))
+                .with_genesis_timestamp(Some(1_800_000_000u64))
+                .with_no_mining(true),
+        )
+        .await;
+        let mut blocks = Vec::new();
+        for number in 1..=3 {
+            api.mine_one().await.unwrap();
+            let block =
+                handle.http_provider().get_block_by_number(number.into()).await.unwrap().unwrap();
+            blocks.push(BlockNumHash::new(number, block.header.hash));
+        }
+        // Expose native BALs through an endpoint without mutable Anvil identity.
+        let endpoint = spawn_rpc_proxy_method_not_found_before(
+            handle.http_endpoint(),
+            "anvil_nodeInfo",
+            usize::MAX,
+        )
+        .await;
+        let (endpoint, bal_requests) =
+            spawn_rpc_proxy_recording_method(endpoint, "eth_getBlockAccessList").await;
+        let resolved = ResolvedFork::new(&endpoint, None, None, Some(1), blocks[0], context(1));
+
+        for disabled_first in [false, true] {
+            let (_incoming, receiver) = channel(1);
+            let mut manager = MultiForkHandler::<AnyNetwork, SpecId, BlockEnv>::new(receiver);
+            bal_requests.lock().unwrap().clear();
+            let mut requests = [false, true].map(|no_fork_bal| {
+                let fork = CreateFork {
+                    enable_caching: false,
+                    url: endpoint.clone(),
+                    evm_opts: EvmOpts {
+                        fork_url: Some(endpoint.clone()),
+                        fork_block_number: Some(1),
+                        no_fork_bal,
+                        ..Default::default()
+                    },
+                    resolved: Some(resolved.clone()),
+                };
+                let (sender, receiver) = oneshot_channel();
+                manager.create_fork(fork, sender);
+                let ForkTask::Create { future, .. } = manager.pending_tasks.last_mut().unwrap();
+                let original = std::mem::replace(future, Box::pin(futures::future::pending()));
+                let (release, gate) = oneshot::channel();
+                // Run real creation, but explicitly control which result reaches backend reuse.
+                *future = Box::pin(async move {
+                    let result = original.await;
+                    gate.await.unwrap();
+                    result
+                });
+                (no_fork_bal, release, receiver)
+            });
+            assert_eq!(manager.pending_tasks.len(), 2);
+            if disabled_first {
+                requests.reverse();
+            }
+            let [
+                (first_policy, first_gate, first_receiver),
+                (second_policy, second_gate, second_receiver),
+            ] = requests;
+            first_gate.send(()).unwrap();
+            let first = complete_fork(&mut manager, first_receiver).await;
+            assert!(matches!(second_receiver.try_recv(), Err(TryRecvError::Empty)));
+            assert_eq!(manager.pending_tasks.len(), 1);
+            second_gate.send(()).unwrap();
+            let second = complete_fork(&mut manager, second_receiver).await;
+
+            assert_ne!(first.id, second.id);
+            assert!(Arc::ptr_eq(&first.backend.data(), &second.backend.data()));
+            assert_eq!(manager.forks[&first.id].opts.evm_opts.no_fork_bal, first_policy);
+            assert_eq!(manager.forks[&second.id].opts.evm_opts.no_fork_bal, second_policy);
+            assert!(bal_requests.lock().unwrap().is_empty());
+
+            // Each roll targets a cold block so shared prewarming cannot mask a lost policy.
+            for (no_fork_bal, fork, block) in
+                [(first_policy, first, blocks[1]), (second_policy, second, blocks[2])]
+            {
+                bal_requests.lock().unwrap().clear();
+                let (sender, receiver) = oneshot_channel();
+                manager.on_request(Request::RollForkExact(fork.id, block, true, sender));
+                let rolled = complete_fork(&mut manager, receiver).await;
+                assert_eq!(rolled.resolved.block(), block);
+                assert_eq!(manager.forks[&rolled.id].opts.evm_opts.no_fork_bal, no_fork_bal);
+                assert_eq!(
+                    manager.forks[&rolled.id].bal_prewarmed.load(Ordering::Relaxed),
+                    !no_fork_bal,
+                );
+                let expected =
+                    if no_fork_bal { vec![] } else { vec![serde_json::json!([block.hash])] };
+                assert_eq!(*bal_requests.lock().unwrap(), expected);
+            }
+        }
+    }
+
+    async fn complete_fork(
+        manager: &mut MultiForkHandler<AnyNetwork, SpecId, BlockEnv>,
+        receiver: OneshotReceiver<eyre::Result<ForkResult<AnyNetwork, SpecId, BlockEnv>>>,
+    ) -> ForkResult<AnyNetwork, SpecId, BlockEnv> {
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            futures::future::poll_fn(|cx| {
+                assert!(manager.poll_unpin(cx).is_pending());
+                match receiver.try_recv() {
+                    Ok(result) => Poll::Ready(result),
+                    Err(TryRecvError::Empty) => Poll::Pending,
+                    Err(error) => panic!("fork response channel closed: {error}"),
+                }
+            }),
+        )
+        .await
+        .unwrap()
+        .unwrap()
     }
 }
