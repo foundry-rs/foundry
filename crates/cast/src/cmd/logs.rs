@@ -17,7 +17,6 @@ use foundry_cli::{
     utils::{self, LoadConfig},
 };
 use foundry_common::{
-    abi::get_indexed_event,
     fmt::{UIfmt, format_token},
     shell,
 };
@@ -61,8 +60,6 @@ pub struct LogQueryArgs {
 
     /// The signature of the event to filter logs by which will be converted to the first topic or
     /// a topic to filter on.
-    ///
-    /// When an event signature is provided, matching logs are decoded in text output.
     #[arg(value_name = "SIG_OR_TOPIC")]
     sig_or_topic: Option<String>,
 
@@ -489,11 +486,6 @@ fn format_log(log: &Log, event: Option<&Event>) -> (String, bool) {
 
 /// Formats decoded event parameters in declaration order.
 fn format_log_params(event: &Event, log: &Log) -> Option<String> {
-    let event = if event.inputs.iter().any(|input| input.indexed) {
-        event.clone()
-    } else {
-        get_indexed_event(event.clone(), log.data())
-    };
     let decoded = event.decode_log(log.data()).ok()?;
     let mut indexed = decoded.indexed.iter();
     let mut body = decoded.body.iter();
@@ -563,18 +555,57 @@ mod tests {
     }
 
     #[test]
-    fn format_log_params_infers_indexed_flags() {
-        let event =
-            Event::parse("event Transfer(address from, address to, uint256 value)").unwrap();
-        let from = Address::repeat_byte(0x11);
-        let to = Address::repeat_byte(0x22);
+    fn format_log_params_requires_explicit_indexed_flags() {
+        let event = Event::parse("event Ev(uint256 id, address owner)").unwrap();
+        let owner = Address::repeat_byte(0x22);
         let log = rpc_log(
-            vec![event.selector(), from.into_word(), to.into_word()],
-            DynSolValue::Uint(U256::from(42), 256).abi_encode(),
+            vec![event.selector(), B256::from(U256::from(7))],
+            DynSolValue::Address(owner).abi_encode(),
+        );
+
+        assert_eq!(format_log_params(&event, &log), None);
+    }
+
+    #[test]
+    fn format_log_params_preserves_declaration_order() {
+        let event =
+            Event::parse("event Ev(uint256 a, bytes32 indexed b, address c, bytes32 indexed d)")
+                .unwrap();
+        let b = B256::repeat_byte(0x11);
+        let c = Address::repeat_byte(0x22);
+        let d = B256::repeat_byte(0x33);
+        let data = DynSolValue::Tuple(vec![
+            DynSolValue::Uint(U256::from(7), 256),
+            DynSolValue::Address(c),
+        ])
+        .abi_encode_params();
+        let log = rpc_log(vec![event.selector(), b, d], data);
+
+        let params = format_log_params(&event, &log).unwrap();
+        assert_eq!(params, format!("\ndecoded:\n\ta: 7\n\tb: {b}\n\tc: {c}\n\td: {d}"));
+    }
+
+    #[test]
+    fn format_log_params_decodes_anonymous_event() {
+        let event = Event::parse("event Ev(bytes32 indexed key, uint256 value) anonymous").unwrap();
+        let key = B256::repeat_byte(0x44);
+        let log = rpc_log(vec![key], DynSolValue::Uint(U256::from(9), 256).abi_encode());
+
+        let params = format_log_params(&event, &log).unwrap();
+        assert_eq!(params, format!("\ndecoded:\n\tkey: {key}\n\tvalue: 9"));
+    }
+
+    #[test]
+    fn format_log_params_displays_dynamic_indexed_hash() {
+        let event = Event::parse("event Ev(string indexed key, uint256 value)").unwrap();
+        let key = keccak256("hello");
+        let log = rpc_log(
+            vec![event.selector(), key],
+            DynSolValue::Uint(U256::from(9), 256).abi_encode(),
         );
 
         let params = format_log_params(&event, &log).unwrap();
-        assert_eq!(params, format!("\ndecoded:\n\tfrom: {from}\n\tto: {to}\n\tvalue: 42"));
+        assert_eq!(params, format!("\ndecoded:\n\tkey: {key}\n\tvalue: 9"));
     }
 
     #[test]
