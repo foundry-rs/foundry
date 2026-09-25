@@ -11,8 +11,11 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     vergen::Emitter::new().add_instructions(&build)?.add_instructions(&git)?.emit_and_set()?;
 
-    let sha = env_var("VERGEN_GIT_SHA");
-    let sha_short = &sha[..10];
+    // `vergen` warns and carries on when it cannot reach a git worktree, so `VERGEN_GIT_SHA` is
+    // simply unset when building outside one, e.g. from a release source tarball. Fall back the
+    // same way `TAG_NAME` does below instead of assuming the variable is set and long enough.
+    let sha = try_env_var("VERGEN_GIT_SHA").unwrap_or_else(|| String::from("unknown"));
+    let sha_short = sha.get(..10).unwrap_or(&sha);
 
     let tag_name = try_env_var("TAG_NAME").unwrap_or_else(|| String::from("dev"));
     let version = release_version(&env_var("CARGO_PKG_VERSION"), &tag_name);

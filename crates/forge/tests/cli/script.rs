@@ -37,6 +37,23 @@ use std::{
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
 
+forgetest!(script_slow_help_explains_presimulation, |_prj, cmd| {
+    cmd.args(["script", "--help"]).assert_success().stderr_eq(str![""]).stdout_eq(str![[r#"
+...
+      --slow
+          Makes sure a transaction is sent, only after its previous one has been confirmed and
+          succeeded.
+[..]
+          Transactions are prepared during local script execution, before broadcasting. This flag
+          does not re-run the script or update transaction destinations and calldata derived from
+          simulated return values.
+[..]
+          State changes or front-running can make those values stale, even with this flag.
+
+...
+"#]]);
+});
+
 fn latest_dry_run_sequence(root: &Path) -> ScriptSequence<Ethereum> {
     let path = foundry_common::fs::json_files(&root.join("broadcast"))
         .find(|path| path.ends_with("dry-run/run-latest.json"))

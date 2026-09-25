@@ -3,6 +3,7 @@
 //! Anvil builds block access lists for locally mined Amsterdam blocks and forwards requests for
 //! blocks that predate a fork to the upstream node.
 
+use crate::abi::{COUNTER_INIT_CODE, COUNTER_RUNTIME_CODE};
 use alloy_eips::{
     eip2935::HISTORY_STORAGE_ADDRESS,
     eip4788::BEACON_ROOTS_ADDRESS,
@@ -13,7 +14,7 @@ use alloy_eips::{
     },
 };
 use alloy_network::{Network, TransactionBuilder};
-use alloy_primitives::{Address, B256, Bytes, U256, hex};
+use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest};
 use alloy_serde::WithOtherFields;
@@ -149,13 +150,10 @@ async fn locally_mined_block_access_list_records_every_phase() {
     let nonce = provider.get_transaction_count(sender).await.unwrap();
     let contract = sender.create(nonce);
 
-    // The constructor stores 1 in slot zero and every call increments it.
-    let runtime = hex!("60005460010160005500");
-    let init = hex!("6001600055600a6011600039600a6000f360005460010160005500");
     let deploy = TransactionRequest::default()
         .with_from(sender)
         .with_nonce(nonce)
-        .with_deploy_code(Bytes::copy_from_slice(&init))
+        .with_deploy_code(COUNTER_INIT_CODE)
         .with_gas_limit(1_000_000);
     let call = TransactionRequest::default()
         .with_from(sender)
@@ -199,10 +197,7 @@ async fn locally_mined_block_access_list_records_every_phase() {
     );
     let contract_changes = account(&bal, contract);
     assert_eq!(contract_changes.nonce_changes, [NonceChange::new(index(1), 1)]);
-    assert_eq!(
-        contract_changes.code_changes,
-        [CodeChange::new(index(1), Bytes::copy_from_slice(&runtime))]
-    );
+    assert_eq!(contract_changes.code_changes, [CodeChange::new(index(1), COUNTER_RUNTIME_CODE)]);
     assert_eq!(
         contract_changes.storage_changes,
         [SlotChanges::new(
@@ -275,7 +270,8 @@ async fn test_fork_block_access_list_forwards_pre_fork_blocks() {
     )
     .await;
 
-    let (_api, handle) = spawn(NodeConfig::test().with_eth_rpc_url(Some(proxy))).await;
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(proxy)).with_no_bal(true)).await;
     let provider = handle.http_provider();
 
     // The fork block itself predates the fork, so the request reaches the upstream node.

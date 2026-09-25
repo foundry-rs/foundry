@@ -130,6 +130,7 @@ struct ForkOverrides {
 
 struct StableForkSnapshot {
     endpoint_identity: ForkEndpointIdentity,
+    state_is_mutable: bool,
     block_number: u64,
     transaction_replay: Option<ForkTransactionReplay>,
     block: Option<AnyRpcBlock>,
@@ -150,11 +151,13 @@ const FORK_IDENTITY_PROBE_TIMEOUT: Duration = Duration::from_millis(500);
 struct AnvilNodeInfoProbe {
     identified: bool,
     skip: bool,
+    /// A failed probe could not distinguish an unsupported method from a mutable Anvil source.
+    inconclusive: bool,
 }
 
 impl AnvilNodeInfoProbe {
     const fn new(identified: bool, skip: bool) -> Self {
-        Self { identified, skip }
+        Self { identified, skip, inconclusive: false }
     }
 
     async fn request(&mut self, provider: &RetryProvider) -> Result<Option<NodeInfo>> {
@@ -167,6 +170,7 @@ impl AnvilNodeInfoProbe {
         )
         .await
         else {
+            self.inconclusive = true;
             return Ok(None);
         };
         match response {
@@ -174,7 +178,10 @@ impl AnvilNodeInfoProbe {
                 self.identified = true;
                 Ok(Some(node_info))
             }
-            Err(_) if !self.identified => Ok(None),
+            Err(error) if !self.identified => {
+                self.inconclusive |= !is_rpc_method_not_found(&error);
+                Ok(None)
+            }
             Err(error) => {
                 Err(error).wrap_err("failed to determine network family from fork endpoint")
             }
@@ -267,6 +274,8 @@ pub struct NodeConfig {
     pub fork_chain_id: Option<U256>,
     /// Skip `anvil_nodeInfo` / `anvil_metadata` probes against the fork URL.
     pub no_fork_node_info: bool,
+    /// Disables opportunistic BAL post-state prefill of the remote fork cache.
+    pub no_bal: bool,
     /// Address fork state reads by block number instead of by block hash.
     pub fork_state_by_number: bool,
     /// Chain ID discovered from the active fork source.
@@ -676,6 +685,7 @@ impl Default for NodeConfig {
             fork_retry_backoff: Duration::from_millis(1_000),
             fork_chain_id: None,
             no_fork_node_info: false,
+            no_bal: false,
             fork_state_by_number: false,
             fork_source_chain_id: None,
             fork_execution_chain_id: None,
@@ -1134,6 +1144,13 @@ impl NodeConfig {
         self
     }
 
+    /// Disables opportunistic BAL post-state prefill of the remote fork cache.
+    #[must_use]
+    pub const fn with_no_bal(mut self, no_bal: bool) -> Self {
+        self.no_bal = no_bal;
+        self
+    }
+
     /// Sets the `fork_chain_id` to use to fork off local cache from
     #[must_use]
     pub const fn with_fork_chain_id(mut self, fork_chain_id: Option<U256>) -> Self {
@@ -1266,7 +1283,8 @@ impl NodeConfig {
     pub fn print(&self, fork: Option<&ClientFork>) -> Result<()> {
         if let Some(path) = &self.config_out {
             let value = self.as_json(fork);
-            foundry_common::fs::write_json_file(path, &value).wrap_err("failed writing JSON")?;
+            foundry_common::fs::write_sensitive_json_file(path, &value)
+                .wrap_err("failed writing JSON")?;
         }
         if !self.silent {
             sh_println!("{}", self.as_string(fork))?;
@@ -1627,6 +1645,9 @@ impl NodeConfig {
     {
         let (db, config, replay) =
             self.setup_fork_db_config_with_replay(eth_rpc_url, evm_env, fees, None).await?;
+        if !self.no_bal && !self.no_fork_node_info {
+            config.prefill_cache(db.inner()).await;
+        }
         let db: Arc<TokioRwLock<Box<dyn Db>>> = Arc::new(TokioRwLock::new(Box::new(db)));
         let fork = ClientFork::new(config, Arc::clone(&db));
         Ok((db, Some(fork), replay))
@@ -1834,6 +1855,7 @@ impl NodeConfig {
             if before == after {
                 return Ok(StableForkSnapshot {
                     endpoint_identity: before,
+                    state_is_mutable: node_info_probe.identified || node_info_probe.inconclusive,
                     block_number,
                     transaction_replay,
                     block,
@@ -1933,6 +1955,9 @@ impl NodeConfig {
         let (db, config, replay) =
             self.setup_fork_db_config_with_replay(eth_rpc_url, evm_env, fees, None).await?;
         eyre::ensure!(replay.is_none(), "transaction-hash fork replay requires full node startup");
+        if !self.no_bal && !self.no_fork_node_info {
+            config.prefill_cache(db.inner()).await;
+        }
         Ok((db, config))
     }
 
@@ -1981,6 +2006,7 @@ impl NodeConfig {
         // reset between any two RPC calls, so verify the endpoint identity on both sides.
         let StableForkSnapshot {
             endpoint_identity: fork_identity,
+            state_is_mutable,
             block_number: fork_block_number,
             transaction_replay: fork_transaction_replay,
             block,
@@ -2258,6 +2284,7 @@ latest block number: {latest_block}"
             fork_chain_id: self.fork_chain_id.map(|chain_id| chain_id.to()),
             hardfork: Some(effective_hardfork),
             endpoint_identity: fork_identity,
+            state_is_mutable,
             timestamp: block.header.timestamp(),
             base_fee: block.header.base_fee_per_gas().map(|g| g as u128),
             timeout: self.fork_request_timeout,
@@ -2618,6 +2645,9 @@ mod tests {
     use super::*;
     use foundry_evm::{hardfork::EthereumHardfork, hardforks::latest_active_tempo_hardfork};
 
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+
     #[cfg(feature = "base")]
     use foundry_evm::hardforks::BaseUpgrade;
 
@@ -2952,5 +2982,18 @@ mod tests {
                 .generate()
                 .is_ok()
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn config_out_has_owner_only_permissions() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let config = NodeConfig::test().set_config_out(Some(path.clone()));
+
+        config.print(None).unwrap();
+
+        let mode = std::fs::metadata(path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
     }
 }

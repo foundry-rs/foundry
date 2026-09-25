@@ -52,7 +52,7 @@ use foundry_evm::{
             CheckSequenceFailureSite, CheckSequenceOptions, CheckSequenceOutcome,
             HandlerAssertionFailure, InvariantExecutor, InvariantFuzzError, ReplayErrorResult,
             check_sequence, did_fail_on_assert, execute_tx, execute_tx_and_register_created,
-            replay_error, replay_handler_failure_sequence, replay_run,
+            handler_edge_fingerprint, replay_error, replay_handler_failure_sequence, replay_run,
         },
         persist_corpus_seed, read_corpus_dir, replay_corpus_to_showmap,
         replay_sequence_for_minimization, should_ignore_revert,
@@ -65,7 +65,7 @@ use foundry_evm::{
         },
         strategies::EvmFuzzState,
     },
-    inspectors::{CmpOperands, cheatcodes::Vm::AccountAccess},
+    inspectors::{CmpOperands, EdgeCovConfig, EdgeCovKind, cheatcodes::Vm::AccountAccess},
     revm::{bytecode::opcode, primitives::hardfork::SpecId},
     traces::{TraceKind, TraceRequirements, load_contracts},
 };
@@ -2108,7 +2108,11 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 continue;
             }
             let Some(InvariantPersistedFailure {
-                mut call_sequence, storage, failure_site, ..
+                mut call_sequence,
+                storage,
+                failure_site,
+                fingerprint_provenance,
+                ..
             }) = persisted_call_sequence(&path, current_settings)
             else {
                 continue;
@@ -2117,15 +2121,30 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 let _ = std::fs::remove_file(&path);
                 continue;
             }
+            let expected_site = failure_site.and_then(|site| match site {
+                SymbolicInvariantFailureSite::SequenceCall { target, selector, fingerprint } => {
+                    Some((target, selector, fingerprint))
+                }
+                _ => None,
+            });
+            let edge_fingerprinted =
+                expected_site.is_some_and(|(target, selector, fingerprint)| {
+                    fingerprint != handler_edge_fingerprint(None, target, selector)
+                });
             let txes = base_counterexamples_to_txes(&mut call_sequence, config.show_solidity);
             let sequence = (0..txes.len()).collect::<Vec<_>>();
-            let replay_executor = match self.clone_executor_with_symbolic_storage(&storage) {
+            let mut replay_executor = match self.clone_executor_with_symbolic_storage(&storage) {
                 Ok(executor) => executor,
                 Err(err) => {
                     error!(%err, "Failed to apply symbolic storage for handler-side assertion replay");
                     continue;
                 }
             };
+            if let Some(provenance) = fingerprint_provenance {
+                replay_executor
+                    .inspector_mut()
+                    .collect_edge_coverage_with_edge_config(provenance.edge_config());
+            }
             match replay_handler_failure_sequence(
                 replay_executor,
                 &txes,
@@ -2137,20 +2156,29 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     let _ = sh_warn!(
                         "Replayed handler-side assertion bug from {path:?}. \nRun `forge clean` or remove file to ignore."
                     );
-                    let actual_site = SymbolicInvariantFailureSite::SequenceCall {
-                        target: outcome.reverter,
-                        selector: outcome.selector,
-                        fingerprint: outcome.anchor_fingerprint,
-                    };
-                    if failure_site.is_some_and(|expected| expected != actual_site) {
-                        let _ = std::fs::remove_file(&path);
-                        continue;
+                    if let Some((target, selector, fingerprint)) = expected_site {
+                        let different_handler =
+                            target != outcome.reverter || selector != outcome.selector;
+                        let verified_fingerprint_mismatch = fingerprint_provenance.is_some()
+                            && fingerprint != outcome.anchor_fingerprint;
+                        if different_handler || verified_fingerprint_mismatch {
+                            let _ = std::fs::remove_file(&path);
+                            continue;
+                        }
                     }
+                    // Legacy edge fingerprints have no reproducible provenance. Retain their
+                    // identity after the handler site reproduces instead of replacing or deleting
+                    // them based on an unverifiable fingerprint.
+                    let fingerprint = if edge_fingerprinted && fingerprint_provenance.is_none() {
+                        expected_site.expect("edge fingerprint has a site").2
+                    } else {
+                        outcome.anchor_fingerprint
+                    };
                     let failure = HandlerAssertionFailure::from_replayed_sequence(
                         txes,
                         outcome.reverter,
                         outcome.selector,
-                        outcome.anchor_fingerprint,
+                        fingerprint,
                         outcome.revert_reason.unwrap_or_default(),
                     );
                     let site = (failure.reverter, failure.selector);
@@ -2167,6 +2195,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             SymbolicHandlerReplayStorage {
                                 call_sequence: failure.call_sequence.clone(),
                                 assignments: storage,
+                                fingerprint_provenance,
                             },
                         );
                         replayed.insert(site, InvariantFuzzError::HandlerAssertion(failure));
@@ -4307,6 +4336,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         assertion_failure,
                         &storage,
                         Some(confirmed_failure_site),
+                        None,
                     );
                 }
                 Ok(_) => {}
@@ -4583,6 +4613,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             SymbolicHandlerReplayStorage {
                                 call_sequence: call_sequence.clone(),
                                 assignments: storage,
+                                fingerprint_provenance: None,
                             },
                         );
                         persisted_handler_failures.insert(
@@ -4608,6 +4639,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         false,
                         &storage,
                         failure_site,
+                        None,
                     );
                     let mut invariant_failures = vec![InvariantFailure::Predicate {
                         name: anchor.name.clone(),
@@ -4813,6 +4845,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             case_data.assertion_failure,
                             &[],
                             None,
+                            None,
                         );
                     }
                     any_failure_persisted = true;
@@ -4877,6 +4910,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                                     &current_settings,
                                     case_data.assertion_failure,
                                     &[],
+                                    None,
                                     None,
                                 );
                             }
@@ -4952,10 +4986,20 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             .map(|failure| {
                 let (reverter, selector) = (failure.reverter, failure.selector);
                 let name = invariant_handler_failure_name(identified_contracts, reverter, selector);
-                let symbolic_storage = symbolic_handler_storage
+                let symbolic_replay = symbolic_handler_storage
                     .get(&(reverter, selector, failure.edge_fingerprint))
-                    .filter(|storage| storage.call_sequence == failure.call_sequence)
-                    .map_or(&[][..], |storage| &storage.assignments);
+                    .filter(|storage| storage.call_sequence == failure.call_sequence);
+                let symbolic_storage =
+                    symbolic_replay.map_or(&[][..], |storage| &storage.assignments);
+                let fingerprint_provenance = if let Some(replay) = symbolic_replay {
+                    replay.fingerprint_provenance
+                } else if failure.edge_fingerprint
+                    != handler_edge_fingerprint(None, reverter, selector)
+                {
+                    PersistedFingerprintProvenance::from_corpus(&invariant_config.corpus)
+                } else {
+                    None
+                };
                 let calls = base_counterexamples(
                     &failure.call_sequence,
                     identified_contracts,
@@ -4972,6 +5016,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         &calls,
                         &current_settings,
                         symbolic_storage,
+                        fingerprint_provenance,
                     );
                 }
                 let artifact = self.persist_sequence_artifact(
@@ -5467,6 +5512,41 @@ struct InvariantPersistedFailure {
     /// Exact failure site required to accept a persisted symbolic handler rerun.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     failure_site: Option<SymbolicInvariantFailureSite>,
+    /// Versioned configuration used to produce a reproducible edge fingerprint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    fingerprint_provenance: Option<PersistedFingerprintProvenance>,
+}
+
+/// Reproducible edge-fingerprint algorithms and their capture configuration.
+#[derive(Clone, Copy, Serialize, Deserialize)]
+#[serde(tag = "algorithm", rename_all = "snake_case")]
+enum PersistedFingerprintProvenance {
+    CollisionFreeV1 { include_call_depth: bool },
+    HashV1 { include_call_depth: bool },
+}
+
+impl PersistedFingerprintProvenance {
+    fn from_corpus(config: &FuzzCorpusConfig) -> Option<Self> {
+        config.collect_evm_edge_coverage().then(|| {
+            let include_call_depth = config.evm_edge_coverage_include_call_depth();
+            if config.evm_edge_coverage_collision_free() {
+                Self::CollisionFreeV1 { include_call_depth }
+            } else {
+                Self::HashV1 { include_call_depth }
+            }
+        })
+    }
+
+    const fn edge_config(self) -> EdgeCovConfig {
+        match self {
+            Self::CollisionFreeV1 { include_call_depth } => {
+                EdgeCovConfig::new(EdgeCovKind::CollisionFree, include_call_depth)
+            }
+            Self::HashV1 { include_call_depth } => {
+                EdgeCovConfig::new(EdgeCovKind::Hash, include_call_depth)
+            }
+        }
+    }
 }
 
 /// Persisted handler-side assertion bugs keyed by `(reverter, selector)`.
@@ -5478,6 +5558,7 @@ type SymbolicHandlerStorageMap = HashMap<(Address, Selector, B256), SymbolicHand
 struct SymbolicHandlerReplayStorage {
     call_sequence: Vec<BasicTxDetails>,
     assignments: Vec<SymbolicStorageAssignment>,
+    fingerprint_provenance: Option<PersistedFingerprintProvenance>,
 }
 
 /// Helper function to load failed call sequence from file.
@@ -5821,6 +5902,7 @@ fn record_invariant_failure(
     assertion_failure: bool,
     storage: &[SymbolicStorageAssignment],
     failure_site: Option<SymbolicInvariantFailureSite>,
+    fingerprint_provenance: Option<PersistedFingerprintProvenance>,
 ) {
     if let Some(parent) = failure_file.parent()
         && let Err(err) = foundry_common::fs::create_dir_all(parent)
@@ -5837,6 +5919,7 @@ fn record_invariant_failure(
             assertion_failure,
             storage: storage.to_vec(),
             failure_site,
+            fingerprint_provenance,
         },
     ) {
         error!(%err, "Failed to record call sequence");
@@ -5844,6 +5927,7 @@ fn record_invariant_failure(
 }
 
 /// Persists a handler-side assertion bug with symbolic replay storage.
+#[expect(clippy::too_many_arguments)]
 fn record_handler_failure(
     failure_dir: &Path,
     reverter: Address,
@@ -5852,6 +5936,7 @@ fn record_handler_failure(
     call_sequence: &[BaseCounterExample],
     settings: &InvariantSettings,
     storage: &[SymbolicStorageAssignment],
+    fingerprint_provenance: Option<PersistedFingerprintProvenance>,
 ) {
     let mut buf = [0u8; 24];
     buf[..20].copy_from_slice(reverter.as_slice());
@@ -5868,6 +5953,7 @@ fn record_handler_failure(
             selector,
             fingerprint,
         }),
+        fingerprint_provenance,
     );
 }
 

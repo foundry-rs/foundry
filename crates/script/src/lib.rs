@@ -232,6 +232,12 @@ pub struct ScriptArgs {
 
     /// Makes sure a transaction is sent,
     /// only after its previous one has been confirmed and succeeded.
+    ///
+    /// Transactions are prepared during local script execution, before broadcasting. This flag
+    /// does not re-run the script or update transaction destinations and calldata derived from
+    /// simulated return values.
+    ///
+    /// State changes or front-running can make those values stale, even with this flag.
     #[arg(long)]
     pub slow: bool,
 

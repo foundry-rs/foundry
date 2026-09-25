@@ -40,7 +40,8 @@ Requirements:
 
 - The configured solver must be available. The default solver command is `z3`.
   Install it locally with your package manager, for example `brew install z3`
-  on macOS or `sudo apt-get install z3` on Ubuntu.
+  on macOS or `sudo apt-get install z3` on Ubuntu. Foundry avoids launching it
+  when bounded local model search can validate a satisfiable path directly.
 - `check*` and `prove*` tests are only selected when `--symbolic` is enabled
   and the contract is in a source path Forge compiles for the current project.
 - A reported counterexample must replay concretely before Forge prints it as a
