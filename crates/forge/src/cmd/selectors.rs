@@ -24,11 +24,7 @@ use foundry_compilers::{
     info::ContractInfo,
     multi::MultiCompiler,
 };
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    fs::canonicalize,
-    path::Path,
-};
+use std::{collections::BTreeMap, fs::canonicalize, path::Path};
 
 /// CLI arguments for `forge selectors`.
 #[derive(Clone, Debug, Parser)]
@@ -446,17 +442,21 @@ fn selector_artifacts(
     output: ProjectCompileOutput,
     sources: &Path,
 ) -> Vec<(String, ConfigurableContractArtifact)> {
-    let external_sources = output
-        .artifact_ids()
-        .filter(|(id, _)| is_external_artifact(&id.build_id))
-        .map(|(id, _)| id.source)
-        .collect::<BTreeSet<_>>();
     output
-        .into_artifacts_with_files()
-        .filter(|(file, _, _)| {
-            (file.starts_with(sources) || external_sources.contains(file)) && !file.is_sol_test()
+        .into_artifacts()
+        .filter(|(id, _)| {
+            (id.source.starts_with(sources) || is_external_artifact(&id.build_id))
+                && !id.source.is_sol_test()
         })
-        .map(|(_, contract, artifact)| (contract, artifact))
+        .map(|(id, artifact)| {
+            let name = if is_external_artifact(&id.build_id) {
+                id.name
+            } else {
+                // Built-in artifact filenames may include compiler versions and profiles.
+                id.name.split('.').next().unwrap().to_owned()
+            };
+            (name, artifact)
+        })
         .collect()
 }
 

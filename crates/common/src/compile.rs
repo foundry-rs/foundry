@@ -3,7 +3,7 @@
 use crate::{
     TestFunctionExt,
     external_compiler::{
-        ExternalCompilerWorkflow, compile_external, is_builtin_compiler_source, merge_external,
+        ExternalCompilation, ExternalCompilerWorkflow, is_builtin_compiler_source,
     },
     preprocessor::DynamicTestLinkingPreprocessor,
     shell,
@@ -263,7 +263,12 @@ impl ProjectCompiler {
             let external = external_compilers
                 .as_ref()
                 .map(|(config, workflow)| {
-                    compile_external(config, *workflow, &selected_paths, external_writes)
+                    ExternalCompilation::compile(
+                        config,
+                        *workflow,
+                        &selected_paths,
+                        external_writes,
+                    )
                 })
                 .transpose()?;
             let sources = if explicit_selection {
@@ -282,7 +287,7 @@ impl ProjectCompiler {
             if !output.has_compiler_errors()
                 && let Some(external) = external
             {
-                merge_external(&mut output, external)?;
+                external.merge(&mut output)?;
             }
             Ok(output)
         })

@@ -6,7 +6,7 @@ use forge_sol_macro_gen::{MultiSolMacroGen, SolMacroGen};
 use foundry_cli::{opts::BuildOpts, utils::LoadConfig};
 use foundry_common::{
     compile::{ProjectCompiler, compile_abi_project},
-    external_compiler::{ExternalCompilerWorkflow, is_external_artifact_path},
+    external_compiler::ExternalCompilerWorkflow,
     fs::json_files,
 };
 use foundry_compilers::{
@@ -328,7 +328,7 @@ fn cached_enum_definitions(
         .map(|artifact| artifact.path.clone())
         .collect::<HashSet<_>>();
     if artifacts.into_iter().any(|artifact| {
-        !is_external_artifact_path(artifacts_root, &artifact)
+        !artifact.starts_with(artifacts_root.join(".external"))
             && !cached_artifacts.contains(&artifact)
     }) {
         return BTreeMap::default();
