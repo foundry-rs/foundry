@@ -201,8 +201,8 @@ site. Every accepted input produced by that solve is also replayed against each
 remaining invariant predicate and the suite hook, and exact failures are
 reported only at checkpoints where the concrete campaign would evaluate them;
 other candidates remain corpus seeds. `afterInvariant` failures are reported
-only at the configured terminal depth. This uses the existing solver results;
-it does not issue additional symbolic queries.
+only at a terminal depth allowed by the configured depth mode. This uses the
+existing solver results; it does not issue additional symbolic queries.
 Reverting candidates are retained only when they contain an assertion failure
 or the invariant suite enables `fail_on_revert`. Target calls carrying nonzero
 value are currently skipped because symbolic root calls do not yet apply the

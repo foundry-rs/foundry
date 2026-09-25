@@ -37,7 +37,7 @@ use foundry_common::{
 use foundry_compilers::utils::canonicalized;
 use foundry_config::{
     Config, FuzzConfig, FuzzCorpusConfig, FuzzDictionaryConfig, InlineConfig, InvariantConfig,
-    SymbolicConfig,
+    InvariantDepthMode, SymbolicConfig,
 };
 use foundry_evm::{
     constants::{CALLER, MAGIC_ASSUME},
@@ -3561,9 +3561,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         }
 
         let mut checked_property_calls = HashSet::<(usize, usize)>::default();
-        let mut seeded_invariants = confirmed_invariants.clone();
-        let mut after_invariant_seeded = false;
+        let mut reported_invariants = confirmed_invariants.clone();
+        let mut after_invariant_reported = false;
         let mut confirmed_failures = Vec::new();
+        let is_optimization = invariant_contract.is_optimization();
         let fail_on_revert = invariant_contract.invariant_fns.iter().any(|(_, policy)| *policy);
         for (frontier, sequence) in
             self.import_symbolic_invariant_frontiers(invariant_contract, invariant_config)
@@ -3583,9 +3584,20 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 continue;
             };
             let accepted_calls = call_index + 1;
-            let terminal_checkpoint = accepted_calls == invariant_config.depth as usize;
-            let predicate_checkpoint = invariant_contract.is_optimization()
-                || terminal_checkpoint
+            let terminal_checkpoint = match invariant_config.depth_mode {
+                InvariantDepthMode::Fixed => accepted_calls == invariant_config.depth as usize,
+                InvariantDepthMode::Random => {
+                    let min_depth = invariant_config.min_depth.max(1);
+                    let max_depth = invariant_config.depth.max(1);
+                    let accepted_calls = accepted_calls as u32;
+                    if invariant_config.depth <= min_depth {
+                        accepted_calls == max_depth
+                    } else {
+                        (min_depth..=max_depth).contains(&accepted_calls)
+                    }
+                }
+            };
+            let predicate_checkpoint = terminal_checkpoint
                 || invariant_config.check_interval == 1
                 || (invariant_config.check_interval > 1
                     && accepted_calls.is_multiple_of(invariant_config.check_interval as usize));
@@ -3652,13 +3664,15 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
 
             let input =
                 SymbolicConcreteInput { args, calldata: call.call_details.calldata.clone() };
-            let property_target_seeded = if invariant_contract.call_after_invariant {
-                seeded_invariants.contains(&invariant_contract.anchor_idx) || after_invariant_seeded
+            let property_target_reported = if invariant_contract.call_after_invariant {
+                reported_invariants.contains(&invariant_contract.anchor_idx)
+                    || after_invariant_reported
             } else {
-                seeded_invariants.len() == invariant_contract.invariant_fns.len()
+                reported_invariants.len() == invariant_contract.invariant_fns.len()
             };
-            if self.config.symbolic.check_invariant_frontiers
-                && !property_target_seeded
+            if !is_optimization
+                && self.config.symbolic.check_invariant_frontiers
+                && !property_target_reported
                 && checked_property_calls.insert((
                     frontier.sequence_index.expect("frontier sequence index was validated"),
                     call_index,
@@ -3668,7 +3682,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     vec![invariant_contract.anchor_idx]
                 } else {
                     (0..invariant_contract.invariant_fns.len())
-                        .filter(|idx| !seeded_invariants.contains(idx))
+                        .filter(|idx| !reported_invariants.contains(idx))
                         .collect::<Vec<_>>()
                 };
                 if invariant_indexes.len() > 1 {
@@ -3685,25 +3699,61 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         &sequence[..call_index],
                     )
                 {
+                    let replay_order = (0..solved_sequence.len()).collect::<Vec<_>>();
                     let failure_site =
                         replay.failure_site.expect("failing replay has a failure site");
-                    let report_failure = match failure_site {
-                        CheckSequenceFailureSite::Invariant { .. } => {
-                            seeded_invariants.insert(invariant_idx);
-                            predicate_checkpoint
+                    match failure_site {
+                        CheckSequenceFailureSite::Invariant { .. }
+                            if !is_optimization
+                                && predicate_checkpoint
+                                && reported_invariants.insert(invariant_idx) =>
+                        {
+                            confirmed_failures.push(ConfirmedFrontierInvariantFailure {
+                                invariant_idx,
+                                call_sequence: solved_sequence.clone(),
+                                replay,
+                            });
                         }
                         CheckSequenceFailureSite::AfterInvariant { .. } => {
-                            after_invariant_seeded = true;
-                            terminal_checkpoint
+                            let broken_invariants = if predicate_checkpoint && !is_optimization {
+                                (0..invariant_contract.invariant_fns.len())
+                                    .filter_map(|idx| {
+                                        self.replay_invariant_sequence(
+                                            invariant_contract,
+                                            idx,
+                                            &solved_sequence,
+                                            &replay_order,
+                                            false,
+                                        )
+                                        .map(|predicate_replay| (idx, predicate_replay))
+                                    })
+                                    .collect::<Vec<_>>()
+                            } else {
+                                Vec::new()
+                            };
+                            for (idx, predicate_replay) in &broken_invariants {
+                                if reported_invariants.insert(*idx) {
+                                    confirmed_failures.push(ConfirmedFrontierInvariantFailure {
+                                        invariant_idx: *idx,
+                                        call_sequence: solved_sequence.clone(),
+                                        replay: predicate_replay.clone(),
+                                    });
+                                }
+                            }
+                            if terminal_checkpoint
+                                && broken_invariants.is_empty()
+                                && !after_invariant_reported
+                            {
+                                after_invariant_reported = true;
+                                confirmed_failures.push(ConfirmedFrontierInvariantFailure {
+                                    invariant_idx,
+                                    call_sequence: solved_sequence.clone(),
+                                    replay,
+                                });
+                            }
                         }
-                        CheckSequenceFailureSite::SequenceCall { .. } => unreachable!(),
-                    };
-                    if report_failure {
-                        confirmed_failures.push(ConfirmedFrontierInvariantFailure {
-                            invariant_idx,
-                            call_sequence: solved_sequence.clone(),
-                            replay,
-                        });
+                        CheckSequenceFailureSite::Invariant { .. }
+                        | CheckSequenceFailureSite::SequenceCall { .. } => {}
                     }
                     match persist_corpus_seed(&invariant_config.corpus, solved_sequence) {
                         Ok(path) => {
@@ -3785,9 +3835,25 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 }
 
                 let replay_order = (0..solved_sequence.len()).collect::<Vec<_>>();
-                let broken_invariants = if predicate_checkpoint {
+                if is_optimization
+                    && self
+                        .replay_invariant_sequence(
+                            invariant_contract,
+                            invariant_contract.anchor_idx,
+                            &solved_sequence,
+                            &replay_order,
+                            false,
+                        )
+                        .is_some()
+                {
+                    debug!(
+                        id,
+                        "skipping invariant frontier seed rejected by optimization objective"
+                    );
+                    continue;
+                }
+                let broken_invariants = if predicate_checkpoint && !is_optimization {
                     (0..invariant_contract.invariant_fns.len())
-                        .filter(|idx| !seeded_invariants.contains(idx))
                         .filter_map(|invariant_idx| {
                             let replay = self.replay_invariant_sequence(
                                 invariant_contract,
@@ -3809,7 +3875,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 };
                 let after_invariant_failure = if terminal_checkpoint
                     && invariant_contract.call_after_invariant
-                    && !after_invariant_seeded
+                    && broken_invariants.is_empty()
+                    && !after_invariant_reported
                 {
                     self.replay_invariant_sequence(
                         invariant_contract,
@@ -3827,8 +3894,12 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 } else {
                     None
                 };
-                if !broken_invariants.is_empty() || after_invariant_failure.is_some() {
-                    for (invariant_idx, replay) in &broken_invariants {
+                let newly_broken_invariants = broken_invariants
+                    .iter()
+                    .filter(|(idx, _)| reported_invariants.insert(*idx))
+                    .collect::<Vec<_>>();
+                if !newly_broken_invariants.is_empty() || after_invariant_failure.is_some() {
+                    for (invariant_idx, replay) in newly_broken_invariants {
                         confirmed_failures.push(ConfirmedFrontierInvariantFailure {
                             invariant_idx: *invariant_idx,
                             call_sequence: solved_sequence.clone(),
@@ -3836,14 +3907,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         });
                     }
                     if let Some(replay) = after_invariant_failure.clone() {
+                        after_invariant_reported = true;
                         confirmed_failures.push(ConfirmedFrontierInvariantFailure {
                             invariant_idx: invariant_contract.anchor_idx,
                             call_sequence: solved_sequence.clone(),
                             replay,
                         });
                     }
-                    seeded_invariants.extend(broken_invariants.iter().map(|(idx, _)| *idx));
-                    after_invariant_seeded |= after_invariant_failure.is_some();
                     match persist_corpus_seed(&invariant_config.corpus, solved_sequence.clone()) {
                         Ok(path) => {
                             if let Some(path) = path {
