@@ -144,6 +144,12 @@ forgetest!(testdata, |_prj, cmd| {
     if orig_assert.get_output().status.success() {
         return;
     }
+    // Only test failures are retried: a crash writes no `--rerun` failures, so a retry would
+    // either rerun everything or only unrelated flaky failures and hide the crash.
+    if orig_assert.get_output().status.code() != Some(1) {
+        orig_assert.success();
+        return;
+    }
     let stdout = orig_assert.get_output().stdout_lossy();
     if let Some(i) = stdout.rfind("Suite result:") {
         test_debug!("--- short stdout ---\n\n{}\n\n---", &stdout[i..]);
