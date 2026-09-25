@@ -237,6 +237,48 @@ fn chained_named_call_layout_ignores_source_spacing() {
 }
 
 #[test]
+fn named_args_layout_ignores_brace_spacing() {
+    for (bracket_spacing, source, expected) in [
+        (
+            true,
+            r#"contract C {
+    function f() internal {
+        key = PoolKey({currency0: currency0, currency1: currency1, fee: 0, tickSpacing: 10, hooks: IHooks(address(0))});
+    }
+}
+"#,
+            r#"contract C {
+    function f() internal {
+        key =
+            PoolKey({ currency0: currency0, currency1: currency1, fee: 0, tickSpacing: 10, hooks: IHooks(address(0)) });
+    }
+}
+"#,
+        ),
+        (
+            false,
+            r#"contract C {
+    function f() internal {
+        key = PoolKey({ currency0: currency0, currency1: currency1, fee: 0, tickSpacing: 10, hooks: IHooks(hookContract) });
+    }
+}
+"#,
+            r#"contract C {
+    function f() internal {
+        key =
+            PoolKey({currency0: currency0, currency1: currency1, fee: 0, tickSpacing: 10, hooks: IHooks(hookContract)});
+    }
+}
+"#,
+        ),
+    ] {
+        let config = Arc::new(FormatterConfig { bracket_spacing, ..Default::default() });
+        assert_eq!(format(source, Path::new("test.sol"), config.clone()), expected);
+        assert_eq!(format(expected, Path::new("test.sol"), config), expected);
+    }
+}
+
+#[test]
 fn statement_trailing_blank_line_is_idempotent() {
     let source = r#"contract C {
     function f() external {

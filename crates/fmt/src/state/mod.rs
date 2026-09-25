@@ -468,11 +468,11 @@ impl<'sess> State<'sess, '_> {
                     // A line break or a space are required if this line:
                     // - starts with an operator.
                     // - starts with one of the ternary operators
-                    // - starts with a bracket and fmt config forces bracket spacing.
+                    // - starts with a brace and fmt config forces bracket spacing.
                     match char {
                         '&' | '|' | '=' | '>' | '<' | '+' | '-' | '*' | '/' | '%' | '^' | '?'
                         | ':' => size += 1,
-                        '}' | ')' | ']' if self.config.bracket_spacing => size += 1,
+                        '}' if self.config.bracket_spacing => size += 1,
                         _ => (),
                     }
                 }
@@ -492,13 +492,14 @@ impl<'sess> State<'sess, '_> {
                         break;
                     }
                 }
+                size = size.saturating_add_signed(self.named_args_spacing_delta(line));
 
                 // Next line requires a line break if this one:
-                // - ends with a bracket and fmt config forces bracket spacing.
+                // - ends with a brace and fmt config forces bracket spacing.
                 // - ends with ',' a line break or a space are required.
                 // - ends with ';' a line break is required.
                 prev_needs_space = match line.chars().next_back() {
-                    Some('[' | '(' | '{') => self.config.bracket_spacing,
+                    Some('{') => self.config.bracket_spacing,
                     Some(',' | ';') => true,
                     _ => false,
                 };
@@ -507,6 +508,42 @@ impl<'sess> State<'sess, '_> {
         }
 
         span.to_range().len()
+    }
+
+    /// Returns how much wider the named argument braces (`({` and `})`) on a source line print
+    /// than they are written, since `bracket_spacing` alone decides the spaces inside them.
+    fn named_args_spacing_delta(&self, line: &str) -> isize {
+        let space = isize::from(self.config.bracket_spacing);
+        let spaces = |s: &str| (s.len() - s.trim_start().len()) as isize;
+        let bytes = line.as_bytes();
+        let (mut delta, mut quote, mut i) = (0, None, 0);
+        while i < bytes.len() {
+            match (quote, bytes[i]) {
+                (Some(_), b'\\') => i += 1,
+                (Some(q), b) if b == q => quote = None,
+                (Some(_), _) => {}
+                (None, b @ (b'"' | b'\'')) => quote = Some(b),
+                (None, b'{') if i > 0 && bytes[i - 1] == b'(' => {
+                    let rest = &line[i + 1..];
+                    if let Some(after) = rest.trim_start().strip_prefix('}') {
+                        // `({})` prints as `({ })` with bracket spacing.
+                        delta += space - spaces(rest);
+                        i = line.len() - after.len() - 1;
+                    } else if !rest.is_empty() {
+                        delta += space - spaces(rest);
+                    }
+                }
+                (None, b'}') if bytes.get(i + 1) == Some(&b')') => {
+                    let before = line[..i].trim_end();
+                    if !before.is_empty() {
+                        delta += space - (i - before.len()) as isize;
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        delta
     }
 
     fn same_source_line(&self, a: BytePos, b: BytePos) -> bool {
