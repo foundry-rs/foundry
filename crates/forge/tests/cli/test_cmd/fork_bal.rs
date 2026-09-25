@@ -104,11 +104,13 @@ struct Proxy {
 
 impl Proxy {
     async fn new(fixture: &Fixture, mode: Response) -> Self {
-        let upstream = fixture.handle.http_endpoint();
+        Self::for_parent(fixture.handle.http_endpoint(), fixture.parent["hash"].clone(), mode).await
+    }
+
+    async fn for_parent(upstream: String, parent_hash: Value, mode: Response) -> Self {
         let client = reqwest::Client::new();
         let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
         let recorded = Arc::clone(&requests);
-        let parent_hash = fixture.parent["hash"].clone();
         let app = Router::new().route(
             "/",
             post(move |Json(request): Json<Value>| {
@@ -246,6 +248,24 @@ impl Proxy {
 
     fn clear(&self) {
         self.requests.lock().clear();
+    }
+
+    fn account_reads(&self, address: Address) -> usize {
+        self.requests
+            .lock()
+            .iter()
+            .filter(|request| {
+                matches!(
+                    request["method"].as_str(),
+                    Some(
+                        "eth_getAccountInfo"
+                            | "eth_getBalance"
+                            | "eth_getTransactionCount"
+                            | "eth_getCode"
+                    )
+                ) && request["params"][0] == json!(address)
+            })
+            .count()
     }
 }
 
@@ -768,5 +788,128 @@ forgetest_async!(fork_bal_setup_forks_keep_creation_policy_on_roll, |prj, cmd| {
                 assert_eq!(proxy.slot_reads(U256::ZERO), 0);
             }
         }
+    }
+});
+
+forgetest_async!(fork_bal_prefills_native_accounts_before_prefix_replay, |prj, cmd| {
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(1u64))
+            .with_hardfork(Some(EthereumHardfork::Amsterdam.into()))
+            .with_genesis_timestamp(Some(1_800_000_000u64))
+            .with_no_mining(true),
+    )
+    .await;
+    let endpoint = handle.http_endpoint();
+    let sender = handle.dev_wallets().next().unwrap().address();
+    let account = sender.create(0);
+    // Initialize slot zero to one. Each call creates an empty child and increments the slot,
+    // so prefix replay changes the deployed account's nonce as well as its balance and storage.
+    let creation_code =
+        bytes!("60016000556012601160003960126000f3600060006000f05060005460010160005500");
+    let deployment = rpc(
+        &endpoint,
+        "eth_sendTransaction",
+        json!([{"from": sender, "data": creation_code, "value": "0x2a", "nonce": "0x0",
+                "gas": "0x30d40", "gasPrice": "0x77359400"}]),
+    )
+    .await;
+    api.mine_one().await.unwrap();
+    let receipt = rpc(&endpoint, "eth_getTransactionReceipt", json!([deployment])).await;
+    assert_eq!(receipt["status"], "0x1");
+    assert_eq!(receipt["contractAddress"], json!(account));
+    let parent = rpc(&endpoint, "eth_getBlockByNumber", json!(["latest", false])).await;
+    assert!(parent["blockAccessListHash"].is_string(), "missing native BAL commitment");
+
+    let mut transactions = Vec::new();
+    for nonce in 1..=3 {
+        transactions.push(
+            rpc(
+                &endpoint,
+                "eth_sendTransaction",
+                json!([{"from": sender, "to": account, "value": "0x5",
+                        "nonce": format!("0x{nonce:x}"), "gas": "0x30d40",
+                        "gasPrice": "0x77359400"}]),
+            )
+            .await,
+        );
+    }
+    api.mine_one().await.unwrap();
+    let block = rpc(&endpoint, "eth_getBlockByNumber", json!(["latest", false])).await;
+    assert_eq!(block["transactions"], json!(transactions));
+    assert_eq!(block["parentHash"], parent["hash"]);
+
+    let proxy = Proxy::for_parent(endpoint, parent["hash"].clone(), Response::Native).await;
+    prj.add_test(
+        "ForkBal.t.sol",
+        r#"
+interface Vm {
+    function envString(string calldata) external returns (string memory);
+    function envAddress(string calldata) external returns (address);
+    function envBytes32(string calldata) external returns (bytes32);
+    function envUint(string calldata) external returns (uint256);
+    function createSelectFork(string calldata, bytes32) external returns (uint256);
+    function getNonce(address) external view returns (uint64);
+    function load(address, bytes32) external view returns (bytes32);
+}
+
+contract ForkBalTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function testForkBalAccounts() public {
+        address account = vm.envAddress("BAL_ACCOUNT");
+        uint256 prefix = vm.envUint("BAL_PREFIX");
+        vm.createSelectFork(vm.envString("BAL_RPC_URL"), vm.envBytes32("BAL_TARGET"));
+        require(account.balance == 42 + 5 * prefix, "wrong balance before target");
+        require(vm.getNonce(account) == 1 + prefix, "wrong nonce before target");
+        bytes32 codeHash = keccak256(hex"600060006000f05060005460010160005500");
+        require(keccak256(account.code) == codeHash, "wrong runtime code");
+        require(account.codehash == codeHash, "wrong code hash");
+        require(uint256(vm.load(account, bytes32(0))) == 1 + prefix, "wrong storage before target");
+
+        (bool ok,) = account.call{value: 1}("");
+        require(ok, "local call failed");
+        require(account.balance == 43 + 5 * prefix, "local balance change lost");
+        require(vm.getNonce(account) == 2 + prefix, "local nonce change lost");
+        require(uint256(vm.load(account, bytes32(0))) == 2 + prefix, "local storage change lost");
+    }
+}
+"#,
+    );
+
+    for index in [0, 2] {
+        let mut gas_used = Vec::new();
+        for disabled in [false, true] {
+            proxy.clear();
+            cmd.forge_fuse();
+            cmd.cmd().env_remove("FOUNDRY_NO_FORK_BAL");
+            cmd.env("BAL_RPC_URL", &proxy.endpoint);
+            cmd.env("BAL_ACCOUNT", account.to_string());
+            cmd.env("BAL_TARGET", transactions[index].as_str().unwrap());
+            cmd.env("BAL_PREFIX", index.to_string());
+            cmd.env("FOUNDRY_NO_STORAGE_CACHING", "true");
+            cmd.env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "true");
+            cmd.args(["test", "--match-test", "testForkBalAccounts", "--evm-version", "cancun"]);
+            if disabled {
+                cmd.arg("--no-fork-bal");
+            }
+            gas_used.push(assert_test(&mut cmd, "testForkBalAccounts"));
+            if disabled {
+                assert_eq!(proxy.count(BAL_METHOD), 0);
+                assert!(proxy.account_reads(account) > 0, "disabled BAL must fetch the account");
+            } else {
+                let requests = proxy.requests.lock();
+                let bal = requests.iter().find(|request| request["method"] == BAL_METHOD).unwrap();
+                assert_eq!(bal["params"], json!([parent["hash"]]));
+                drop(requests);
+                assert_eq!(
+                    proxy.account_reads(account),
+                    0,
+                    "parent BAL did not prefill the account"
+                );
+            }
+            assert_eq!(proxy.count(LEGACY_BAL_METHOD), 0);
+        }
+        assert_eq!(gas_used[0], gas_used[1], "BAL changed account execution gas: index={index}");
     }
 });
