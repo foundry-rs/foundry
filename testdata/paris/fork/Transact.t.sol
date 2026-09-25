@@ -9,6 +9,14 @@ interface IERC20 {
     function balanceOf(address account) external view returns (uint256);
 }
 
+contract CallerRecorder {
+    address public caller;
+
+    function recordCaller() external {
+        caller = msg.sender;
+    }
+}
+
 contract TransactOnForkTest is Test {
     IERC20 constant USDT = IERC20(0xdAC17F958D2ee523a2206206994597C13D831ec7);
     bytes constant ALWAYS_REVERT = hex"60006000fd";
@@ -121,6 +129,21 @@ contract TransactOnForkTest is Test {
         assertEq(address(USDT).code, ALWAYS_REVERT);
     }
 
+    function testSequentialTransactsPreservePersistentChanges() public {
+        vm.createSelectFork("mainnet", 16260609);
+        vm.makePersistent(address(USDT));
+        address sender = address(0x2e09BB78B3D64d98Da44D1C776fa77dcd133ED54);
+        address recipient = address(0xe688b84b23f322a994A53dbF8E15FA82CDB71127);
+        uint256 recipientBalance = recipient.balance;
+
+        vm.transact(0x33350512fec589e635865cbdb38fa3a20a2aa160c52611f1783d0ba24ad13c8c);
+        assertEq(USDT.balanceOf(sender), 6041000000);
+        vm.transact(0x1dd8ba92b071798e39d7075f230b89d30ccab4b519fee5416bcb997578460c1a);
+
+        assertEq(recipient.balance, recipientBalance + 0x42eec20fa78d6b);
+        assertEq(USDT.balanceOf(sender), 6041000000);
+    }
+
     function testTransactOnInactiveForkUsesTargetState() public {
         uint256 active = vm.createSelectFork("mainnet", 16260608);
         uint256 inactive = vm.createFork("mainnet", 16260609);
@@ -156,5 +179,19 @@ contract TransactOnForkTest is Test {
         vm.selectFork(inactive);
         assertEq(account.balance, targetBalance + 1);
         assertEq(address(USDT).code, ALWAYS_REVERT);
+    }
+
+    function testTransactOnInactiveForkDoesNotConsumePrank() public {
+        vm.createSelectFork("mainnet", 16260608);
+        uint256 inactive = vm.createFork("mainnet", 16260609);
+        CallerRecorder recorder = new CallerRecorder();
+        vm.makePersistent(address(recorder));
+        address alice = address(0xA11CE);
+
+        vm.prank(alice);
+        vm.transact(inactive, 0x33350512fec589e635865cbdb38fa3a20a2aa160c52611f1783d0ba24ad13c8c);
+        recorder.recordCaller();
+
+        assertEq(recorder.caller(), alice);
     }
 }

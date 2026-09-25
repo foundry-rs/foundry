@@ -3339,7 +3339,7 @@ fn commit_transaction<FEN: FoundryEvmNetwork>(
     let base_state = replay_journaled_state.state.clone();
     let res = {
         let fork = fork.clone();
-        let depth = replay_journaled_state.depth;
+        let depth = journaled_state.depth;
         let mut db: Backend<FEN> =
             Backend::new_with_fork(fork_id, fork, replay_journaled_state, networks)?;
         db.fork_block_number_override = Some(rpc_block_number);
@@ -3390,13 +3390,19 @@ fn apply_state_changeset<N: Network, B: ForkBlockEnv>(
     let mut staged_db = fork.db.clone();
     let mut staged_journaled_state = journaled_state.clone();
     let mut staged_fork_journaled_state = fork.journaled_state.clone();
+    let unchanged_persistent_accounts =
+        persistent_accounts.iter().filter(|addr| !state.contains_key(*addr)).copied().collect();
     staged_db.commit(base_state);
     staged_db.commit(state);
-    update_state(&mut staged_journaled_state.state, &mut staged_db, Some(persistent_accounts))?;
+    update_state(
+        &mut staged_journaled_state.state,
+        &mut staged_db,
+        Some(&unchanged_persistent_accounts),
+    )?;
     update_state(
         &mut staged_fork_journaled_state.state,
         &mut staged_db,
-        Some(persistent_accounts),
+        Some(&unchanged_persistent_accounts),
     )?;
 
     fork.db = staged_db;
