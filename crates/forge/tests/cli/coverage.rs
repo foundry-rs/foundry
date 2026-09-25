@@ -4117,7 +4117,7 @@ contract BTest {
 }
 "#,
         );
-        for stage in 0..4 {
+        for stage in 0..6 {
             if stage == 1 {
                 prj.add_source(
                     "A.sol",
@@ -4125,6 +4125,8 @@ contract BTest {
                 );
             } else if stage == 2 {
                 fs::remove_file(prj.root().join("src/Unused.sol")).unwrap();
+            } else if stage == 5 {
+                prj.update_config(|config| config.evm_version = "paris".parse().unwrap());
             }
             let mut reference = None::<String>;
             for cached in [false, true, true] {
@@ -4206,11 +4208,19 @@ forgetest!(coverage_cache_isolated_and_cleaned, |prj, cmd| {
         assert_eq!(fs::read(&artifact).unwrap(), original);
         assert!(cache.is_dir());
     }
+    cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
+No files changed, compilation skipped
+...
+"#]]);
     let marker = cache.join("force-marker");
     fs::write(&marker, "old cache").unwrap();
     cmd.forge_fuse().args(["coverage", "--force"]).assert_success();
     assert!(!marker.exists());
     assert!(!artifact.exists());
+    cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
+No files changed, compilation skipped
+...
+"#]]);
     cmd.forge_fuse().arg("clean").assert_success();
     assert!(!cache.exists());
     prj.update_config(|config| config.cache = false);
@@ -4224,7 +4234,7 @@ forgetest!(coverage_cache_respects_warning_denial, |prj, cmd| {
         "contract WarningTest { function testWarning() public { uint256 unused = 1; } }",
     );
     cmd.forge_fuse().arg("coverage").assert_success();
-    // Replayed compiler responses must retain the diagnostics needed for a changed warning policy.
+    // Warning denial must compile again because cached artifacts do not retain diagnostics.
     cmd.forge_fuse().args(["coverage", "--deny", "warnings"]).assert_failure();
 });
 

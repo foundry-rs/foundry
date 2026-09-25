@@ -83,9 +83,6 @@ pub struct ProjectCompiler {
 
     /// Whether ABI acquisition may consult the compiler-owned ABI cache.
     abi_cache: bool,
-
-    /// Optional storage for exact compiler responses.
-    response_cache: Option<PathBuf>,
 }
 
 impl Default for ProjectCompiler {
@@ -111,7 +108,6 @@ impl ProjectCompiler {
             files: Vec::new(),
             dynamic_test_linking: false,
             abi_cache: false,
-            response_cache: None,
         }
     }
 
@@ -179,12 +175,6 @@ impl ProjectCompiler {
         self
     }
 
-    /// Sets optional storage for exact compiler responses.
-    pub fn response_cache(mut self, path: Option<PathBuf>) -> Self {
-        self.response_cache = path;
-        self
-    }
-
     /// Compiles the project.
     #[instrument(target = "forge::compile", skip_all)]
     pub fn compile<C: Compiler<CompilerContract = Contract>>(
@@ -211,7 +201,6 @@ impl ProjectCompiler {
         let files = std::mem::take(&mut self.files);
         let preprocess = self.dynamic_test_linking;
         let abi_cache = self.abi_cache;
-        let response_cache = self.response_cache.take();
         self.compile_with(|| {
             let sources = if files.is_empty() {
                 project.paths.read_input_files()?
@@ -226,8 +215,6 @@ impl ProjectCompiler {
             }
             if abi_cache {
                 compiler.compile_abi_cached().map_err(Into::into)
-            } else if let Some(directory) = &response_cache {
-                compiler.compile_with_response_cache(directory).map_err(Into::into)
             } else {
                 compiler.compile().map_err(Into::into)
             }
