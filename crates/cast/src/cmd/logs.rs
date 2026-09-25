@@ -217,7 +217,7 @@ impl LogQueryArgs {
         let to_block =
             convert_block_number(&provider, Some(to_block.unwrap_or_else(BlockId::latest))).await?;
         let (filter, event) =
-            build_filter_with_event(from_block, to_block, addresses, sig_or_topic, topics_or_args)?;
+            build_filter(from_block, to_block, addresses, sig_or_topic, topics_or_args)?;
 
         Ok((filter, query_size, event))
     }
@@ -226,18 +226,7 @@ impl LogQueryArgs {
 /// Builds a Filter by first trying to parse the `sig_or_topic` as an event signature. If
 /// successful, `topics_or_args` is parsed as indexed inputs and converted to topics. Otherwise,
 /// `sig_or_topic` is prepended to `topics_or_args` and used as raw topics.
-#[cfg(test)]
 fn build_filter(
-    from_block: Option<BlockNumberOrTag>,
-    to_block: Option<BlockNumberOrTag>,
-    address: Option<Vec<Address>>,
-    sig_or_topic: Option<String>,
-    topics_or_args: Vec<String>,
-) -> Result<Filter> {
-    Ok(build_filter_with_event(from_block, to_block, address, sig_or_topic, topics_or_args)?.0)
-}
-
-fn build_filter_with_event(
     from_block: Option<BlockNumberOrTag>,
     to_block: Option<BlockNumberOrTag>,
     address: Option<Vec<Address>>,
@@ -630,6 +619,7 @@ mod tests {
             Some(sig_or_topic.to_string()),
             args.iter().map(|s| s.to_string()).collect(),
         )
+        .map(|(filter, _)| filter)
     }
 
     fn topics(topics: [Topic; 4]) -> Filter {
@@ -646,7 +636,8 @@ mod tests {
 
         let from_block = Some(BlockNumberOrTag::from(1337));
         let to_block = Some(BlockNumberOrTag::Latest);
-        let basic = build_filter(from_block, to_block, Some(vec![addr]), None, vec![]).unwrap();
+        let (basic, _) =
+            build_filter(from_block, to_block, Some(vec![addr]), None, vec![]).unwrap();
         assert_eq!(
             basic,
             Filter {
@@ -740,7 +731,7 @@ mod tests {
         .unwrap_err();
         assert!(too_many.to_string().contains("too many indexed inputs"), "{too_many}");
 
-        let multiple = build_filter(
+        let (multiple, _) = build_filter(
             None,
             None,
             Some(vec![Address::ZERO, addr]),
