@@ -2247,7 +2247,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         trace!(?maybe_id, ?transaction, "execute transaction");
         let persistent_accounts = self.inner.persistent_accounts.clone();
         let id = self.ensure_fork(maybe_id)?;
-        let _affects_active = self.is_active_fork(id);
+        let affects_active = self.is_active_fork(id);
         let fork_id = self.ensure_fork_id(id).cloned()?;
 
         // This is a bit ambiguous because the user wants to transact an arbitrary transaction in
@@ -2310,7 +2310,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
             None
         };
         #[cfg(feature = "monad")]
-        let context_update = if _affects_active {
+        let context_update = if affects_active {
             ContextUpdate::Replace(if let Some(context) = block_context {
                 Self::context_for_block_position(
                     context,
@@ -2326,12 +2326,12 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         #[cfg(not(feature = "monad"))]
         let context_update = std::marker::PhantomData;
 
-        let mut replay_journaled_state = if _affects_active {
+        let mut replay_journaled_state = if affects_active {
             journaled_state.clone()
         } else {
             self.inner.get_fork_by_id(id)?.journaled_state.clone()
         };
-        if !_affects_active {
+        if !affects_active {
             for addr in persistent_accounts.iter().copied() {
                 merge_journaled_state_data(addr, journaled_state, &mut replay_journaled_state);
             }
