@@ -28,12 +28,12 @@ use foundry_evm_coverage::HitMaps;
 use foundry_evm_networks::{NetworkConfigs, arbitrum};
 use foundry_evm_traces::{SparsedTraceArena, TraceRequirements};
 use revm::{
-    Inspector,
+    Inspector, JournalEntry,
     context::{
         Block, Cfg, ContextTr, JournalTr, Transaction, TransactionType,
         result::{EVMError, ExecutionResult, Output},
     },
-    context_interface::CreateScheme,
+    context_interface::{CreateScheme, journaled_state::JournalCheckpoint},
     handler::FrameResult,
     interpreter::{
         CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, FrameInput, Gas,
@@ -423,6 +423,15 @@ struct PendingCallTrace {
     executed_address: Option<Address>,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct IsolatedFrameCheckpoint {
+    checkpoint: JournalCheckpoint,
+    restore_len: usize,
+    return_depth: usize,
+    is_create: bool,
+    failed: bool,
+}
+
 /// All used inspectors besides [Cheatcodes].
 ///
 /// See [`InspectorStack`].
@@ -475,6 +484,8 @@ pub struct InspectorStackInner {
     pending_create2_redirects: Vec<PendingCreate2Redirect>,
     /// LIFO stack tracking the effective address of traced calls delegated to the EVM provider.
     pending_call_traces: Vec<PendingCallTrace>,
+    /// LIFO stack used to unwind snapshot restoration across reverted isolated frames.
+    isolated_frame_checkpoints: Vec<IsolatedFrameCheckpoint>,
     /// Pending CREATE2 deployer validation error, deferred from `frame_start` to `create` so
     /// it goes through the normal inspector lifecycle (tracing, etc.).
     pub pending_create2_error: Option<CreateOutcome>,
@@ -1010,6 +1021,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         value: U256,
     ) -> (InterpreterResult, Option<Address>, bool) {
         let IsolatedGas { regular_limit, reservoir, precharged_state } = gas;
+        let source_fork_id = ecx.db().active_fork_id();
         let cached_evm_env = ecx.evm_clone();
         let cached_tx_env = ecx.tx_clone();
         self.isolated_call_was_precompile = None;
@@ -1074,8 +1086,12 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         // env-mutating cheatcodes route through `env_overrides` instead of
         // fighting with the fee-accounting zeroing above. See `EnvOverrides`.
         if let Some(cheats) = self.cheatcodes.as_deref_mut() {
+            cheats.pending_isolated_snapshot_journal = None;
+            cheats.track_isolated_snapshots = true;
+            cheats.isolated_snapshot_restores.clear();
             cheats.in_isolation_context = true;
         }
+        self.inner.isolated_frame_checkpoints.clear();
 
         let evm_env = ecx.evm_clone();
         let tx_env = ecx.tx_clone();
@@ -1142,6 +1158,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         // transaction has finished.
         if let Some(cheats) = self.cheatcodes.as_deref_mut() {
             cheats.in_isolation_context = false;
+            cheats.track_isolated_snapshots = false;
         }
 
         let mut gas = Gas::new_with_regular_gas_and_reservoir(regular_limit, reservoir);
@@ -1150,7 +1167,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let Ok(res) = res else {
             if let Some(cheats) = self.cheatcodes.as_deref_mut() {
                 cheats.pending_isolated_snapshot_journal = None;
+                cheats.isolated_snapshot_restores.clear();
             }
+            self.inner.isolated_frame_checkpoints.clear();
             #[cfg(feature = "monad")]
             foundry_evm_core::FoundryJournal::restore_reserve_balance(
                 ecx.journal_mut(),
@@ -1180,15 +1199,26 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
 
         let rolled_back = !res.result.is_success();
 
-        if let Some(restored_journal) = self
+        let restored_journal = self
             .cheatcodes
             .as_deref_mut()
-            .and_then(|cheats| cheats.pending_isolated_snapshot_journal.take())
-        {
+            .and_then(|cheats| cheats.pending_isolated_snapshot_journal.take());
+        if let Some(cheats) = self.cheatcodes.as_deref_mut() {
+            cheats.isolated_snapshot_restores.clear();
+        }
+        self.inner.isolated_frame_checkpoints.clear();
+        let restored_snapshot = if !rolled_back && let Some(restored_journal) = restored_journal {
             let (_, journaled_state) = ecx.db_journal_inner_mut();
             journaled_state.journal = restored_journal;
+            true
+        } else {
+            false
+        };
+        if source_fork_id == ecx.db().active_fork_id() {
+            merge_child_state(ecx.journal_mut().evm_state_mut(), res.state, restored_snapshot);
+        } else {
+            *ecx.journal_mut().evm_state_mut() = res.state;
         }
-        merge_child_state(ecx.journal_mut().evm_state_mut(), res.state);
         #[cfg(feature = "monad")]
         foundry_evm_core::FoundryJournal::restore_reserve_balance(
             ecx.journal_mut(),
@@ -1402,6 +1432,29 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             cheats.step_end(interpreter, ecx);
         }
     }
+
+    fn finish_isolated_snapshot_frame(&mut self, ecx: &mut FoundryContextFor<'_, FEN>) {
+        let Some(frame) = self.inner.isolated_frame_checkpoints.pop() else { return };
+
+        if frame.failed
+            && let Some(cheats) = self.cheatcodes.as_deref_mut()
+            && cheats.isolated_snapshot_restores.len() > frame.restore_len
+        {
+            let mut reverted = cheats.isolated_snapshot_restores.split_off(frame.restore_len);
+            let mut journal = reverted.remove(0);
+            journal.checkpoint_revert(frame.checkpoint);
+            journal.depth = frame.return_depth;
+            cheats.pending_isolated_snapshot_journal =
+                (!cheats.isolated_snapshot_restores.is_empty()).then(|| journal.journal.clone());
+            ecx.set_journal_inner(journal);
+        }
+
+        if let Some(cheats) = self.cheatcodes.as_deref_mut()
+            && cheats.pending_isolated_snapshot_journal.is_some()
+        {
+            cheats.pending_isolated_snapshot_journal = Some(ecx.journal_inner().journal.clone());
+        }
+    }
 }
 
 impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
@@ -1412,6 +1465,16 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         interpreter: &mut Interpreter,
         ecx: &mut FoundryContextFor<'_, FEN>,
     ) {
+        if self.cheatcodes.as_deref().is_some_and(|cheats| cheats.track_isolated_snapshots)
+            && let Some(frame) = self.inner.isolated_frame_checkpoints.last_mut()
+            && frame.is_create
+            && let Some(offset) = ecx.journal_inner().journal[frame.checkpoint.journal_i..]
+                .iter()
+                .position(|entry| matches!(entry, JournalEntry::AccountCreated { .. }))
+        {
+            frame.checkpoint.journal_i += offset;
+        }
+
         let address = interpreter.input.target_address();
         let should_mark_created_locally = self.locally_created_accounts.contains(&address)
             || self
@@ -1420,6 +1483,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                 .is_some_and(|ctx| ctx.locally_created_accounts.contains(&address));
         if should_mark_created_locally
             && let Some(account) = ecx.journal_mut().evm_state_mut().get_mut(&address)
+            && account.is_created()
         {
             account.mark_created_locally();
         }
@@ -1484,6 +1548,24 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         ecx: &mut FoundryContextFor<'_, FEN>,
         frame_input: &mut FrameInput,
     ) -> Option<FrameResult> {
+        if self.cheatcodes.as_deref().is_some_and(|cheats| cheats.track_isolated_snapshots) {
+            let journal = ecx.journal_inner();
+            self.inner.isolated_frame_checkpoints.push(IsolatedFrameCheckpoint {
+                checkpoint: JournalCheckpoint {
+                    log_i: journal.logs.len(),
+                    journal_i: journal.journal.len(),
+                    selfdestructed_i: journal.selfdestructed_addresses.len(),
+                },
+                restore_len: self
+                    .cheatcodes
+                    .as_deref()
+                    .map_or(0, |cheats| cheats.isolated_snapshot_restores.len()),
+                return_depth: journal.depth,
+                is_create: matches!(frame_input, FrameInput::Create(_)),
+                failed: false,
+            });
+        }
+
         if let FrameInput::Create(inputs) = frame_input
             && self.should_use_create2_factory(ecx.journal().depth(), inputs)
         {
@@ -1569,6 +1651,9 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
     ) {
         let depth = ecx.journal().depth();
         self.finish_create2_redirect(depth, frame_result);
+        if self.cheatcodes.as_deref().is_some_and(|cheats| cheats.track_isolated_snapshots) {
+            self.finish_isolated_snapshot_frame(ecx);
+        }
 
         let result = frame_result.instruction_result();
         if !self.in_inner_context && depth == 0 {
@@ -1780,6 +1865,12 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         inputs: &CallInputs,
         outcome: &mut CallOutcome,
     ) {
+        if self.cheatcodes.as_deref().is_some_and(|cheats| cheats.track_isolated_snapshots)
+            && let Some(frame) = self.inner.isolated_frame_checkpoints.last_mut()
+        {
+            frame.failed |= !outcome.result.result.is_ok();
+        }
+
         // We are processing inner context outputs in the outer context, so need to avoid processing
         // twice.
         if self.is_inner_context_root(ecx.journal().depth()) {
@@ -1920,6 +2011,12 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         call: &CreateInputs,
         outcome: &mut CreateOutcome,
     ) {
+        if self.cheatcodes.as_deref().is_some_and(|cheats| cheats.track_isolated_snapshots)
+            && let Some(frame) = self.inner.isolated_frame_checkpoints.last_mut()
+        {
+            frame.failed |= !outcome.result.result.is_ok();
+        }
+
         if outcome.result.result.is_ok()
             && let Some(address) = outcome.address
         {
