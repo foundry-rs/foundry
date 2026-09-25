@@ -354,6 +354,37 @@ async fn test_load_state_stale_blocks_preserve_canonical_head() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn test_load_state_removes_canonical_mappings_above_restored_head() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    api.mine_one().await.unwrap();
+    let older_dump = api.anvil_dump_state(None).await.unwrap();
+
+    let receipt = handle
+        .http_provider()
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default()
+                .with_from(address!("f39fd6e51aad88f6f4ce6ab8827279cfffb92266"))
+                .with_to(Address::ZERO),
+        ))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let block_hash = receipt.block_hash.unwrap();
+    let transaction_hash = receipt.transaction_hash;
+
+    assert!(api.anvil_load_state(older_dump).await.unwrap());
+    assert_eq!(api.block_number().unwrap(), U256::from(1));
+    assert!(api.block_by_number(2.into()).await.unwrap().is_none());
+    assert!(api.block_transaction_count_by_number(2.into()).await.unwrap().is_none());
+    assert!(api.transaction_by_block_number_and_index(2.into(), 0.into()).await.unwrap().is_none());
+
+    assert!(api.block_by_hash(block_hash).await.unwrap().is_some());
+    assert!(api.transaction_by_hash(transaction_hash).await.unwrap().is_some());
+}
+
 // <https://github.com/foundry-rs/foundry/issues/12645>
 #[tokio::test(flavor = "multi_thread")]
 async fn finalized_block_hash_consistent_after_load_state() {
