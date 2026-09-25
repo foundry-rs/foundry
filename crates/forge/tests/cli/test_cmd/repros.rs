@@ -1342,3 +1342,88 @@ Ran 1 test suite [ELAPSED]: 0 tests passed, 0 failed, 1 skipped (1 total tests)
 
 "#]]);
 });
+
+forgetest!(snapshot_restore_preserves_call_depth, |prj, cmd| {
+    prj.add_test(
+        "SnapshotDepth.t.sol",
+        r#"
+interface Vm {
+    function snapshotState() external returns (uint256);
+    function revertToState(uint256) external returns (bool);
+    function revertToStateAndDelete(uint256) external returns (bool);
+}
+
+contract SnapshotDepthTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    uint256 value;
+
+    function testRestoreOuterSnapshot() public {
+        restoreOuterSnapshot(false);
+    }
+
+    function testRestoreOuterSnapshotAndDelete() public {
+        restoreOuterSnapshot(true);
+    }
+
+    function testRestoreNestedSnapshot() public {
+        restoreNestedSnapshot(false);
+    }
+
+    function testRestoreNestedSnapshotAndDelete() public {
+        restoreNestedSnapshot(true);
+    }
+
+    function restoreOuterSnapshot(bool remove) internal {
+        uint256 snapshotId = vm.snapshotState();
+        value = 2;
+        this.restore(snapshotId, remove);
+        require(value == 0, "outer snapshot state not restored");
+        this.write();
+        require(value == 3, "call after restore failed");
+    }
+
+    function restoreNestedSnapshot(bool remove) internal {
+        uint256 snapshotId = this.snapshot();
+        value = 2;
+        restore(snapshotId, remove);
+        require(value == 1, "nested snapshot state not restored");
+        this.write();
+        require(value == 3, "call after restore failed");
+    }
+
+    function snapshot() external returns (uint256) {
+        value = 1;
+        return vm.snapshotState();
+    }
+
+    function restore(uint256 snapshotId, bool remove) public {
+        require(remove ? vm.revertToStateAndDelete(snapshotId) : vm.revertToState(snapshotId));
+    }
+
+    function write() external {
+        value = 3;
+    }
+}
+"#,
+    );
+
+    for isolate in [false, true] {
+        cmd.forge_fuse();
+        cmd.args(["test", "--match-contract", "SnapshotDepthTest", "-vvv"]);
+        if isolate {
+            cmd.arg("--isolate");
+        }
+        cmd.assert_success().stdout_eq(str![[r#"
+...
+Ran 4 tests for test/SnapshotDepth.t.sol:SnapshotDepthTest
+[PASS] testRestoreNestedSnapshot() ([GAS])
+[PASS] testRestoreNestedSnapshotAndDelete() ([GAS])
+[PASS] testRestoreOuterSnapshot() ([GAS])
+[PASS] testRestoreOuterSnapshotAndDelete() ([GAS])
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 4 tests passed, 0 failed, 0 skipped (4 total tests)
+
+"#]]);
+    }
+});
