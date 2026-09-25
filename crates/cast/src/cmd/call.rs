@@ -87,11 +87,11 @@ use foundry_evm::core::evm::OpEvmNetwork;
 ///
 /// ```bash
 /// cast call 0x... "transfer(address,uint256)" 0x... 100 \
-///   --override-balance 0x123:0x1234 \
-///   --override-nonce 0x123:1 \
-///   --override-code 0x123:0x1234 \
-///   --override-state 0x123:0x1:0x1234
-///   --override-state-diff 0x123:0x1:0x1234
+///   --override-balance 0x0000000000000000000000000000000000000001:0x1234 \
+///   --override-nonce 0x0000000000000000000000000000000000000001:1 \
+///   --override-code 0x0000000000000000000000000000000000000001:0x1234 \
+///   --override-state 0x0000000000000000000000000000000000000001:0x1:0x1234 \
+///   --override-state-diff 0x0000000000000000000000000000000000000001:0x1:0x1234
 /// ```
 ///
 /// `--delegate` builds on the same mechanism: it overrides the code of the `--from` address with
