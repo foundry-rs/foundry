@@ -8179,6 +8179,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
             storage.hashes.insert(number, hash);
             storage.best_number = number;
             storage.best_hash = hash;
+            storage.hashes.retain(|block_number, _| *block_number <= number);
         }
 
         #[cfg(feature = "monad")]
