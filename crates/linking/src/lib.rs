@@ -276,8 +276,18 @@ impl<'a> Linker<'a> {
             .copied()
             .filter(|id| id.build_id == target.build_id && id.profile == target.profile)
             .collect::<Vec<_>>();
-        let candidates =
-            if same_build_and_profile.is_empty() { candidates } else { same_build_and_profile };
+        let same_profile = candidates
+            .iter()
+            .copied()
+            .filter(|id| id.profile == target.profile)
+            .collect::<Vec<_>>();
+        let candidates = if !same_build_and_profile.is_empty() {
+            same_build_and_profile
+        } else if !same_profile.is_empty() {
+            same_profile
+        } else {
+            candidates
+        };
 
         if candidates.len() > 1 {
             return Err(LinkerError::ConflictingLibraryArtifacts {
@@ -382,7 +392,7 @@ impl<'a> Linker<'a> {
                 });
             }
             let Some(address) = configured.first().copied() else { continue };
-            let canonical = libraries.libs.entry(file.clone()).or_default();
+            let canonical = libraries.libs.entry(file).or_default();
             if exact {
                 canonical.insert(name, address.to_checksum(None));
             } else {
@@ -1914,7 +1924,7 @@ mod tests {
     }
 
     #[test]
-    fn linking_resolves_same_version_library_from_target_build() {
+    fn linking_resolves_same_version_library_from_target_build_or_profile() {
         let test = LinkerTest::new(&testdata().join("default/linking/simple"), true);
         let linker = Linker::new(test.project.root(), test.output.artifact_ids().collect());
         let (library_id, library) = linker
@@ -1931,6 +1941,9 @@ mod tests {
             .unwrap();
 
         let mut contracts = linker.contracts.clone();
+        let mut stale_consumer_id = consumer_id.clone();
+        stale_consumer_id.build_id = "stale".to_string();
+        contracts.insert(stale_consumer_id.clone(), consumer.clone());
         let mut other_library_id = library_id;
         other_library_id.build_id = "other".to_string();
         other_library_id.profile = "other".to_string();
@@ -1943,6 +1956,14 @@ mod tests {
         let linker = Linker::new(test.project.root(), contracts);
         linker
             .link_with_create2(Libraries::default(), Address::ZERO, B256::ZERO, [&consumer_id])
+            .unwrap();
+        linker
+            .link_with_create2(
+                Libraries::default(),
+                Address::ZERO,
+                B256::ZERO,
+                [&stale_consumer_id],
+            )
             .unwrap();
 
         let Err(err) = linker.link_with_create2(

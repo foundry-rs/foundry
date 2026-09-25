@@ -1,4 +1,3 @@
-use super::install;
 use clap::{Parser, ValueHint};
 use eyre::{Result, eyre};
 use forge_lint::{
@@ -11,7 +10,11 @@ use foundry_cli::{
 };
 use foundry_common::shell;
 use foundry_compilers::{FileFilter, solc::SolcLanguage, utils::SOLC_EXTENSIONS};
-use foundry_config::{SkipBuildFilters, filter::expand_globs, lint::Severity};
+use foundry_config::{
+    SkipBuildFilters,
+    filter::{expand_globs, is_ignored_path},
+    lint::Severity,
+};
 use std::path::PathBuf;
 
 /// CLI arguments for `forge lint`.
@@ -32,6 +35,11 @@ pub struct LintArgs {
     #[arg(long = "only-lint", value_name = "LINT_ID", num_args(1..))]
     pub(crate) lint: Option<Vec<String>>,
 
+    /// Report inline suppression comments (e.g. `// forge-lint: disable-next-line(...)`) that did
+    /// not suppress any diagnostic during the run.
+    #[arg(long)]
+    pub(crate) report_unused_suppressions: bool,
+
     #[command(flatten)]
     pub(crate) build: BuildOpts,
 }
@@ -41,13 +49,7 @@ foundry_config::impl_figment_convert!(LintArgs, build);
 impl LintArgs {
     pub async fn run(self) -> Result<()> {
         let format_json = shell::is_json();
-        let mut config = self.load_config()?;
-
-        if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
-        {
-            // Need to re-configure here to also catch additional remappings.
-            config = self.load_config()?;
-        }
+        let config = self.load_config_with_dependencies()?;
 
         let project = config.ephemeral_project()?;
         let path_config = config.project_paths();
@@ -65,7 +67,7 @@ impl LintArgs {
                 config
                     .project_paths::<SolcLanguage>()
                     .input_files_iter()
-                    .filter(|p| !(ignored.contains(p) || ignored.contains(&cwd.join(p))))
+                    .filter(|p| !is_ignored_path(p, &ignored, &cwd))
                     .collect()
             }
             paths => {
@@ -117,6 +119,7 @@ impl LintArgs {
             .with_lints(include)
             .without_lints(exclude)
             .with_severity(if severity.is_empty() { None } else { Some(severity) })
+            .with_report_unused_suppressions(self.report_unused_suppressions)
             .with_lint_specific(&config.lint.lint_specific);
 
         let mut opts = solar::interface::config::CompileOpts::default();

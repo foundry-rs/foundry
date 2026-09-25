@@ -1,7 +1,10 @@
 use super::UIfmt;
 use alloy_primitives::{Address, Bytes, FixedBytes, I256, U256};
-use comfy_table::{Table, TableComponent, presets::UTF8_FULL};
+use comfy_table::{ContentLineStyle, LineStyle, Table, TableStyle};
 use std::fmt::{self, Write};
+
+/// Maximum accepted `%<n>e` precision.
+const MAX_EXPONENTIAL_PRECISION: usize = 1024;
 
 /// A piece is a portion of the format string which represents the next part to emit.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -109,7 +112,10 @@ impl<'a> Parser<'a> {
             let n = self.integer(start);
             if let Some((_, 'e')) = self.peek() {
                 self.chars.next();
-                return Ok(FormatSpec::Exponential(n));
+                return n
+                    .filter(|&precision| precision <= MAX_EXPONENTIAL_PRECISION)
+                    .map(|precision| FormatSpec::Exponential(Some(precision)))
+                    .ok_or(ParseArgError::Err);
             }
         }
 
@@ -229,18 +235,7 @@ impl ConsoleFmt for U256 {
                     format!("{integer}.{decimal}e{log}")
                 }
             }
-            FormatSpec::Exponential(Some(precision)) => {
-                let exp10 = Self::from(10).pow(Self::from(precision));
-                let amount = *self;
-                let integer = amount / exp10;
-                let decimal = (amount % exp10).to_string();
-                let decimal = format!("{decimal:0>precision$}").trim_end_matches('0').to_string();
-                if decimal.is_empty() {
-                    format!("{integer}")
-                } else {
-                    format!("{integer}.{decimal}")
-                }
-            }
+            FormatSpec::Exponential(Some(precision)) => format_fixed(*self, "", precision),
         }
     }
 }
@@ -276,17 +271,22 @@ impl ConsoleFmt for I256 {
             FormatSpec::Exponential(Some(precision)) => {
                 let amount = *self;
                 let sign = if amount.is_negative() { "-" } else { "" };
-                let exp10 = Self::exp10(precision);
-                let integer = (amount / exp10).twos_complement();
-                let decimal = (amount % exp10).twos_complement().to_string();
-                let decimal = format!("{decimal:0>precision$}").trim_end_matches('0').to_string();
-                if decimal.is_empty() {
-                    format!("{sign}{integer}")
-                } else {
-                    format!("{sign}{integer}.{decimal}")
-                }
+                format_fixed(amount.unsigned_abs(), sign, precision)
             }
         }
+    }
+}
+
+fn format_fixed(amount: U256, sign: &str, precision: usize) -> String {
+    let (integer, decimal) = U256::from(10)
+        .checked_pow(U256::from(precision))
+        .map_or((U256::ZERO, amount), |exp10| (amount / exp10, amount % exp10));
+    let decimal = decimal.to_string();
+    let decimal = format!("{decimal:0>precision$}").trim_end_matches('0').to_string();
+    if decimal.is_empty() {
+        format!("{sign}{integer}")
+    } else {
+        format!("{sign}{integer}.{decimal}")
     }
 }
 
@@ -418,18 +418,16 @@ pub fn console_table_format(
     };
     let values_strings: Vec<String> = values.iter().map(|v| v.fmt(FormatSpec::String)).collect();
 
+    const STYLE: TableStyle = TableStyle::new()
+        .top_border(LineStyle::new('┌', '─', '┬', '┐'))
+        .header_lines(ContentLineStyle::new('│', '│', '│'))
+        .header_separator(LineStyle::new('├', '─', '┼', '┤'))
+        .content_lines(ContentLineStyle::new('│', '│', '│'))
+        .bottom_border(LineStyle::new('└', '─', '┴', '┘'));
+
     let mut table = Table::new();
-    table.load_preset(UTF8_FULL);
-    table.set_style(TableComponent::VerticalLines, '│');
-    table.set_style(TableComponent::HeaderLines, '─');
-    table.set_style(TableComponent::MiddleHeaderIntersections, '┼');
-    table.set_style(TableComponent::LeftHeaderIntersection, '├');
-    table.set_style(TableComponent::RightHeaderIntersection, '┤');
+    table.load_style(STYLE);
     table.set_header(vec!["(index)", "Values"]);
-    table.remove_style(TableComponent::HorizontalLines);
-    table.remove_style(TableComponent::MiddleIntersections);
-    table.remove_style(TableComponent::LeftBorderIntersections);
-    table.remove_style(TableComponent::RightBorderIntersections);
     for i in 0..keys_strings.len().max(values_strings.len()) {
         let key = keys_strings.get(i).map(String::as_str).unwrap_or("");
         let value = values_strings.get(i).map(String::as_str).unwrap_or("");
@@ -592,6 +590,53 @@ mod tests {
         assert_eq!(
             "%5d123456.789%2f%3f%e1",
             console_format("%5d%3e%2f%3f%e1", &[&U256::from(123456789)])
+        );
+    }
+
+    // Overflow used to panic or silently produce incorrect digits.
+    #[test]
+    fn test_console_log_exponential_precision_overflow() {
+        let fmt_1 = |spec: &str, arg: &dyn ConsoleFmt| console_format(spec, &[arg]);
+
+        // 10^256 wraps to zero with unchecked exponentiation.
+        assert_eq!(format!("0.{}1", "0".repeat(255)), fmt_1("%256e", &U256::from(1)));
+
+        // 10^78 overflows U256; 10^77 still fits.
+        let ten_pow_77 = U256::from(10).pow(U256::from(77u64));
+        assert_eq!("0.1", fmt_1("%78e", &ten_pow_77));
+
+        assert_eq!("1", fmt_1("%77e", &ten_pow_77));
+
+        // 10^77 exceeds I256::MAX.
+        assert_eq!(format!("0.{}1", "0".repeat(76)), fmt_1("%77e", &I256::try_from(1).unwrap()));
+        assert_eq!(format!("-0.{}1", "0".repeat(76)), fmt_1("%77e", &I256::try_from(-1).unwrap()));
+
+        // Preserve the value at the maximum accepted precision.
+        assert_eq!(format!("0.{}1", "0".repeat(1023)), fmt_1("%1024e", &U256::from(1)));
+
+        // Invalid precisions remain literal and do not consume the value.
+        assert_eq!("%1025e 1", fmt_1("%1025e", &U256::from(1)));
+        assert_eq!("%99999999999999999999e 1", fmt_1("%99999999999999999999e", &U256::from(1)));
+
+        assert_eq!("1", fmt_1("%18e", &U256::from(1_000_000_000_000_000_000u64)));
+
+        assert_eq!("0", fmt_1("%0e", &U256::from(0)));
+        assert_eq!("0", fmt_1("%256e", &U256::from(0)));
+
+        // Check signed and unsigned extrema at their overflow boundaries.
+        let expect_fallback = |digits: String, precision: usize, sign: &str| {
+            let padded = format!("{digits:0>precision$}");
+            let trimmed = padded.trim_end_matches('0');
+            if trimmed.is_empty() { format!("{sign}0") } else { format!("{sign}0.{trimmed}") }
+        };
+        assert_eq!(expect_fallback(U256::MAX.to_string(), 78, ""), fmt_1("%78e", &U256::MAX));
+        assert_eq!(
+            expect_fallback(I256::MIN.unsigned_abs().to_string(), 77, "-"),
+            fmt_1("%77e", &I256::MIN)
+        );
+        assert_eq!(
+            expect_fallback(I256::MAX.unsigned_abs().to_string(), 77, ""),
+            fmt_1("%77e", &I256::MAX)
         );
     }
 

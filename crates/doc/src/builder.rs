@@ -5,7 +5,10 @@ use crate::{
 };
 use eyre::Result;
 use foundry_compilers::{compilers::solc::SOLC_EXTENSIONS, utils::source_files_iter};
-use foundry_config::{DocConfig, filter::expand_globs};
+use foundry_config::{
+    DocConfig,
+    filter::{expand_globs, is_ignored_path},
+};
 use rayon::prelude::*;
 use solar::{config::CompilerStage, sema::Compiler};
 use std::{
@@ -94,14 +97,14 @@ impl DocBuilder {
         });
 
         let mut sources: Vec<(PathBuf, bool)> = source_files_iter(&self.sources, SOLC_EXTENSIONS)
-            .filter(|p| !ignored.contains(p) && !ignored.contains(&self.root.join(p)))
+            .filter(|p| !is_ignored_path(p, &ignored, &self.root))
             .map(|p| (p, false))
             .collect();
 
         if self.include_libraries {
             for lib_dir in &self.libraries {
                 let lib_sources = source_files_iter(lib_dir, SOLC_EXTENSIONS)
-                    .filter(|p| !ignored.contains(p) && !ignored.contains(&self.root.join(p)))
+                    .filter(|p| !is_ignored_path(p, &ignored, &self.root))
                     .map(|p| (p, true));
                 sources.extend(lib_sources);
             }
@@ -315,6 +318,7 @@ impl DocBuilder {
                 let mut manifest_lines: Vec<String> =
                     all_rel.iter().map(|p| p.to_string_lossy().into_owned()).collect();
                 manifest_lines.sort();
+                fs::create_dir_all(&pages_dir)?;
                 fs::write(&manifest_path, manifest_lines.join("\n") + "\n")?;
             }
 

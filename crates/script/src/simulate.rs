@@ -26,7 +26,7 @@ use foundry_common::{
 use foundry_evm::{
     core::{FoundryBlock, evm::FoundryEvmNetwork},
     traces::{
-        CallTraceDecoder, debug::ContractSources, decode_trace_arena, prune_trace_depth,
+        CallTraceDecoder, Traces, debug::ContractSources, decode_trace_arena, prune_trace_depth,
         render_trace_arena_inner,
     },
 };
@@ -38,6 +38,9 @@ use std::{
     mem,
     sync::Arc,
 };
+
+#[cfg(feature = "monad")]
+mod monad;
 
 /// Same as [ExecutedState](crate::execute::ExecutedState), but also contains [ExecutionArtifacts]
 /// which are obtained from [ScriptResult].
@@ -54,6 +57,8 @@ pub struct PreSimulationState<FEN: FoundryEvmNetwork> {
     pub execution_result: ScriptResult<FEN::Network>,
     pub execution_artifacts: ExecutionArtifacts,
 }
+
+type SimulationOutcome<N> = (String, Option<TransactionWithMetadata<N>>, bool, Traces);
 
 struct RpcSimulationContext<R> {
     runner: RwLock<R>,
@@ -91,8 +96,7 @@ async fn build_rpc_simulation_context<FEN: FoundryEvmNetwork>(
 ) -> Result<(String, RpcSimulationContext<ScriptRunner<FEN>>)> {
     let mut script_config = script_config.clone();
     script_config.set_fork_url(rpc.clone());
-    let mut runner = script_config._get_runner(None, false, false).await?;
-    runner.executor.enable_block_context_progression()?;
+    let runner = script_config._get_runner(None, false, false).await?;
     let decoder = build_trace_decoder_for_context(
         args,
         &script_config,
@@ -127,22 +131,37 @@ async fn build_rpc_decoder<FEN: FoundryEvmNetwork>(
 }
 
 impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
-    /// If simulation is enabled, simulates transactions against the fork and fills gas estimation
-    /// and execution metadata. Otherwise, fills metadata that can be derived without transaction
-    /// simulation using each RPC's resolved execution context.
+    /// Simulates ordinary transactions against the fork and fills gas estimation and execution
+    /// metadata.
     ///
-    /// Both modes will panic if any of the transactions have None for the `rpc` field.
-    pub async fn fill_metadata(self) -> Result<FilledTransactionsState<FEN>> {
-        let address_to_abi = self.build_address_to_abi_map();
-        let contexts = if self.args.skip_simulation {
-            RpcContexts::Decoding(self.build_rpc_decoders().await?)
-        } else {
-            RpcContexts::Simulation(Arc::new(
-                self.build_runners().await?.into_iter().collect::<HashMap<_, _>>(),
-            ))
-        };
+    /// Panics if any transaction has no `rpc` field. Monad simulation has a concrete owner and
+    /// must not use this entry point.
+    pub(crate) async fn fill_ordinary_metadata(self) -> Result<FilledTransactionsState<FEN>> {
+        if self.args.skip_simulation {
+            return self.fill_without_simulation().await;
+        }
 
-        let mut transactions = self
+        let contexts = Arc::new(self.build_runners().await?.into_iter().collect::<HashMap<_, _>>());
+        let transactions =
+            self.transaction_metadata(&RpcContexts::Simulation(Arc::clone(&contexts)))?;
+        let transactions = self.simulate_and_fill_with_contexts(transactions, contexts).await?;
+        Ok(self.into_filled(transactions))
+    }
+
+    /// Fills metadata derived without transaction simulation using each RPC's resolved context.
+    pub(crate) async fn fill_without_simulation(self) -> Result<FilledTransactionsState<FEN>> {
+        let contexts = RpcContexts::<ScriptRunner<FEN>>::Decoding(self.build_rpc_decoders().await?);
+        let transactions = self.transaction_metadata(&contexts)?;
+        sh_println!("\nSKIPPING ON CHAIN SIMULATION.")?;
+        Ok(self.into_filled(transactions))
+    }
+
+    fn transaction_metadata<R>(
+        &self,
+        contexts: &RpcContexts<R>,
+    ) -> Result<VecDeque<TransactionWithMetadata<FEN::Network>>> {
+        let address_to_abi = self.build_address_to_abi_map();
+        let transactions = self
             .execution_result
             .transactions
             .clone()
@@ -171,14 +190,14 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
             })
             .collect::<Result<VecDeque<_>>>()?;
 
-        match contexts {
-            RpcContexts::Simulation(contexts) => {
-                transactions = self.simulate_and_fill_with_contexts(transactions, contexts).await?;
-            }
-            RpcContexts::Decoding(_) => sh_println!("\nSKIPPING ON CHAIN SIMULATION.")?,
-        }
+        Ok(transactions)
+    }
 
-        Ok(FilledTransactionsState {
+    fn into_filled(
+        self,
+        transactions: VecDeque<TransactionWithMetadata<FEN::Network>>,
+    ) -> FilledTransactionsState<FEN> {
+        FilledTransactionsState {
             args: self.args,
             script_config: self.script_config,
             script_wallets: self.script_wallets,
@@ -186,7 +205,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
             build_data: self.build_data,
             execution_artifacts: self.execution_artifacts,
             transactions,
-        })
+        }
     }
 
     /// Executes every transaction in its RPC-specific simulation context and collects gas usage
@@ -197,8 +216,6 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
         contexts: Arc<HashMap<String, RpcSimulationContext<ScriptRunner<FEN>>>>,
     ) -> Result<VecDeque<TransactionWithMetadata<FEN::Network>>> {
         trace!(target: "script", "executing onchain simulation");
-
-        let mut final_txs = VecDeque::new();
 
         // Executes all transactions from the different forks concurrently.
         let futs = transactions
@@ -227,7 +244,6 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
 
                 // Simulate mining the transaction if the user passes `--slow`.
                 if self.args.slow {
-                    runner.executor.advance_block_context();
                     let block_number = runner.executor.evm_env().block_env.number() + U256::from(1);
                     runner.executor.evm_env_mut().block_env.set_number(block_number);
                 }
@@ -250,19 +266,33 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
             })
             .collect::<Vec<_>>();
 
-        let tracing = &self.script_config.config.tracing;
-        if !shell::is_json() && tracing.verbosity > 3 {
+        self.show_simulation_header()?;
+        self.collect_simulation_results(join_all(futs).await, &contexts).await
+    }
+
+    fn show_simulation_header(&self) -> Result<()> {
+        if !shell::is_json() && self.script_config.config.tracing.verbosity > 3 {
             sh_println!("==========================")?;
             sh_println!("Simulated On-chain Traces:\n")?;
         }
+        Ok(())
+    }
+
+    async fn collect_simulation_results<R>(
+        &self,
+        results: Vec<Result<SimulationOutcome<FEN::Network>>>,
+        contexts: &HashMap<String, RpcSimulationContext<R>>,
+    ) -> Result<VecDeque<TransactionWithMetadata<FEN::Network>>> {
+        let mut final_txs = VecDeque::new();
+        let tracing = &self.script_config.config.tracing;
 
         let mut abort = false;
-        for res in join_all(futs).await {
+        for res in results {
             let (rpc, tx, is_noop_tx, mut traces) = res?;
 
             // Transaction will be `None`, if execution didn't pass.
             if !shell::is_json() && (tx.is_none() || tracing.verbosity > 3) {
-                let decoder = &context_for_rpc(&contexts, &rpc).decoder;
+                let decoder = &context_for_rpc(contexts, &rpc).decoder;
                 for (_, trace) in &mut traces {
                     decode_trace_arena(trace, decoder).await;
                     if let Some(trace_depth) = tracing.trace_depth {
@@ -384,6 +414,7 @@ mod tests {
     use foundry_config::Config;
     use foundry_evm::{
         core::{evm::MonadEvmNetwork, opts::EvmOpts},
+        executors::ExecutorBuilder,
         hardforks::MonadHardfork,
     };
     use foundry_evm_networks::NetworkConfigs;
@@ -419,6 +450,7 @@ mod tests {
         let script_config = ScriptConfig::<MonadEvmNetwork>::new(
             Config::default(),
             evm_opts,
+            ExecutorBuilder::<MonadEvmNetwork>::new(),
             false,
             TempoOpts::default(),
             Some(0),
@@ -463,7 +495,7 @@ mod tests {
         assert_eq!(monad_eight_runner.evm_opts.networks, NetworkConfigs::with_monad());
         assert!(!monad_eight_runner.evm_opts.fork_network_is_inferred);
         assert_eq!(monad_eight.decoder.chain_id, Some(NamedChain::Monad as u64));
-        assert_eq!(monad_eight.decoder.monad_hardfork(), Some(MonadHardfork::MonadEight));
+        assert_eq!(monad_eight.decoder.hardfork(), Some(MonadHardfork::MonadEight.into()));
         assert!(!monad_eight.decoder.precompile_labels().contains_key(&RESERVE_BALANCE_ADDRESS));
 
         let monad_nine = context_for_rpc(&contexts, &monad_nine_rpc);
@@ -475,7 +507,7 @@ mod tests {
         assert_eq!(monad_nine_runner.evm_opts.networks, NetworkConfigs::with_monad());
         assert!(!monad_nine_runner.evm_opts.fork_network_is_inferred);
         assert_eq!(monad_nine.decoder.chain_id, Some(NamedChain::Monad as u64));
-        assert_eq!(monad_nine.decoder.monad_hardfork(), Some(MonadHardfork::MonadNine));
+        assert_eq!(monad_nine.decoder.hardfork(), Some(MonadHardfork::MonadNine.into()));
         assert_eq!(
             monad_nine.decoder.precompile_labels().get(&RESERVE_BALANCE_ADDRESS),
             Some(&"ReserveBalance".to_string())
@@ -509,6 +541,7 @@ mod tests {
                 networks: NetworkConfigs::with_monad(),
                 ..Default::default()
             },
+            ExecutorBuilder::<MonadEvmNetwork>::new(),
             false,
             TempoOpts::default(),
             Some(0),
@@ -545,11 +578,11 @@ mod tests {
         .collect::<HashMap<_, _>>();
 
         let monad_eight = decoders.get(&monad_eight_rpc).unwrap();
-        assert_eq!(monad_eight.monad_hardfork(), Some(MonadHardfork::MonadEight));
+        assert_eq!(monad_eight.hardfork(), Some(MonadHardfork::MonadEight.into()));
         assert!(!monad_eight.precompile_labels().contains_key(&RESERVE_BALANCE_ADDRESS));
 
         let monad_nine = decoders.get(&monad_nine_rpc).unwrap();
-        assert_eq!(monad_nine.monad_hardfork(), Some(MonadHardfork::MonadNine));
+        assert_eq!(monad_nine.hardfork(), Some(MonadHardfork::MonadNine.into()));
         assert_eq!(
             monad_nine.precompile_labels().get(&RESERVE_BALANCE_ADDRESS),
             Some(&"ReserveBalance".to_string())
@@ -564,6 +597,7 @@ mod tests {
         let script_config = ScriptConfig::<MonadEvmNetwork>::new(
             Config::default(),
             EvmOpts { fork_url: Some(monad.http_endpoint()), ..Default::default() },
+            ExecutorBuilder::<MonadEvmNetwork>::new(),
             false,
             TempoOpts::default(),
             Some(0),
@@ -655,6 +689,7 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
                     self.execution_artifacts.rpc_data.chain_ids.get(&tx.rpc).copied(),
                     self.args.legacy,
                     self.script_config.config.eip1559_fee_estimate,
+                    &self.script_config.config,
                 )
                 .await?;
 
@@ -810,7 +845,7 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
                     });
                     if let Some((base_fee, priority_fee)) = &fee_breakdown {
                         json["estimated_max_fee_per_gas"] =
-                            serde_json::Value::from(estimated_gas_price.clone());
+                            serde_json::Value::from(estimated_gas_price);
                         json["estimated_base_fee_per_gas"] =
                             serde_json::Value::from(base_fee.clone());
                         json["estimated_max_priority_fee_per_gas"] =

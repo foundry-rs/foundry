@@ -1,15 +1,15 @@
 //! OP-stack-specific helpers and type aliases used by [`super::FoundryNetwork`] and
 //! [`super::FoundryTxReceipt`].
 
+use crate::FoundryReceiptEnvelope;
 use alloy_consensus::{Receipt, ReceiptWithBloom, TxReceipt};
 use alloy_primitives::U64;
 use alloy_rpc_types::Log;
 use alloy_serde::OtherFields;
 use op_alloy_consensus::{OpDepositReceipt, OpDepositReceiptWithBloom};
 
-use crate::FoundryReceiptEnvelope;
-
 /// JSON-RPC transaction response type used by [`super::FoundryNetwork`].
+#[cfg(feature = "optimism")]
 pub type FoundryTransactionResponse = op_alloy_rpc_types::Transaction<crate::FoundryTxEnvelope>;
 
 /// Build a [`FoundryReceiptEnvelope::Deposit`] from a `ReceiptWithBloom<Log>` plus the OP

@@ -1,11 +1,27 @@
 version: 2
+multi-ecosystem-groups:
+  code-weekly:
+    open-pull-requests-limit: 5
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: UTC
 updates:
+  - package-ecosystem: npm
+    directory: /editors/vscode
+    patterns: ["*"]
+    multi-ecosystem-group: code-weekly
+    cooldown:
+      default-days: 7
+  - package-ecosystem: cargo
+    directory: /editors/zed
+    patterns: ["*"]
+    multi-ecosystem-group: code-weekly
+    cooldown:
+      default-days: 7
   - package-ecosystem: github-actions
     directory: /
-    labels:
-      - dependencies
-      - github_actions
-      - L-ignore
     schedule:
       interval: weekly
       day: monday
@@ -19,15 +35,20 @@ updates:
           - '*'
   - package-ecosystem: cargo
     directory: /
-    schedule:
-      interval: weekly
-      day: monday
-      time: "09:00"
-      timezone: UTC
+    patterns: ["*"]
+    multi-ecosystem-group: code-weekly
     cooldown:
       default-days: 7
-    open-pull-requests-limit: 5
-    groups:
-      cargo-weekly:
-        patterns:
-          - '*'
+    ignore:
+      - dependency-name: syn
+        update-types:
+          - version-update:semver-major
+      - dependency-name: prettyplease
+        update-types:
+          - version-update:semver-minor
+      - dependency-name: p256
+        update-types:
+          - version-update:semver-minor
+      - dependency-name: ecdsa
+        update-types:
+          - version-update:semver-minor

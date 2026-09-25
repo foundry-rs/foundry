@@ -3,7 +3,8 @@
 use crate::result::{TestKind, TestOutcome, TestResult, TestStatus};
 use alloy_primitives::map::{HashMap, HashSet};
 use comfy_table::{
-    Attribute, Cell, Color, Row, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN,
+    Attribute, Cell, Color, Row, Table,
+    presets::{ASCII_FULL, ASCII_MARKDOWN},
 };
 use evm_disassembler::disassemble_bytes;
 use foundry_common::{fs, shell};
@@ -43,9 +44,9 @@ impl Default for CoverageSummaryReporter {
     fn default() -> Self {
         let mut table = Table::new();
         if shell::is_markdown() {
-            table.load_preset(ASCII_MARKDOWN);
+            table.load_style(ASCII_MARKDOWN);
         } else {
-            table.apply_modifier(UTF8_ROUND_CORNERS);
+            table.load_style(ASCII_FULL.with_rounded_corners());
         }
 
         table.set_header(vec![
@@ -195,7 +196,7 @@ impl CoverageReporter for LcovReporter {
                     CoverageItemKind::Line | CoverageItemKind::Statement
                         if recorded_lines.insert(line) =>
                     {
-                        writeln!(out, "DA:{line},{hits}")?;
+                        writeln!(out, "DA:{line},{}", line_hits[&line])?;
                     }
                     CoverageItemKind::Branch { branch_id, path_id, .. } => {
                         // Per LCOV spec: "-" means the expression was never evaluated (line not
@@ -472,14 +473,15 @@ impl CoverageReporter for DebugReporter {
         }
 
         for (contract_id, (cta, rta)) in &report.anchors {
-            if cta.is_empty() && rta.is_empty() {
+            if cta.anchors.is_empty() && rta.anchors.is_empty() {
                 continue;
             }
 
             let anchors = cta
+                .anchors
                 .iter()
                 .map(|anchor| (false, anchor))
-                .chain(rta.iter().map(|anchor| (true, anchor)))
+                .chain(rta.anchors.iter().map(|anchor| (true, anchor)))
                 .filter_map(|(is_runtime, anchor)| {
                     let item = report
                         .analyses

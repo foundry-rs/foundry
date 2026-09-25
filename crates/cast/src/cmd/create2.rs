@@ -1,5 +1,5 @@
 use alloy_dyn_abi::JsonAbiExt;
-use alloy_primitives::{Address, B256, U256, hex, keccak256};
+use alloy_primitives::{Address, B256, U256, hex, hex::FromHex, keccak256};
 use clap::{Args, Parser, Subcommand};
 use eyre::{Result, WrapErr};
 use foundry_cli::{
@@ -36,14 +36,6 @@ struct InitCodeHashArgs {
 
     #[command(flatten)]
     build: BuildOpts,
-}
-
-impl Create2Subcommand {
-    fn run(&self) -> Result<()> {
-        match self {
-            Self::InitCodeHash(args) => args.run(),
-        }
-    }
 }
 
 impl InitCodeHashArgs {
@@ -157,26 +149,16 @@ pub struct Create2Args {
     no_random: bool,
 }
 
-pub struct Create2Output {
-    pub address: Address,
-    pub salt: B256,
-}
-
 impl Create2Args {
     pub fn execute(self) -> Result<()> {
-        if let Some(command) = &self.command {
-            return command.run();
+        if let Some(Create2Subcommand::InitCodeHash(args)) = &self.command {
+            return args.run();
         }
         self.run().map(drop)
     }
 
-    pub fn run(self) -> Result<Create2Output> {
-        if self.command.is_some() {
-            eyre::bail!(
-                "`Create2Args::run` does not support subcommands; use `Create2Args::execute` instead"
-            );
-        }
-
+    /// Mines (or derives) the salt and returns the resulting address and salt.
+    fn run(self) -> Result<(Address, B256)> {
         let Self {
             command: _,
             starts_with,
@@ -193,19 +175,17 @@ impl Create2Args {
             no_random,
         } = self;
 
-        let init_code_hash = if let Some(init_code_hash) = init_code_hash {
-            hex::FromHex::from_hex(init_code_hash)
-        } else if let Some(init_code) = init_code {
-            hex::decode(init_code).map(keccak256)
-        } else {
-            unreachable!();
-        }?;
+        let init_code_hash = match (init_code_hash, init_code) {
+            (Some(init_code_hash), _) => B256::from_hex(init_code_hash)?,
+            // Clap requires one of the two.
+            (None, init_code) => keccak256(hex::decode(init_code.unwrap_or_default())?),
+        };
 
         if let Some(salt) = salt {
-            let salt = hex::FromHex::from_hex(salt)?;
+            let salt = B256::from_hex(salt)?;
             let address = deployer.create2(salt, init_code_hash);
             sh_println!("{address}\t{salt}")?;
-            return Ok(Create2Output { address, salt });
+            return Ok((address, salt));
         }
 
         let mut regexs = vec![];
@@ -247,10 +227,10 @@ impl Create2Args {
 
         let regex = RegexSetBuilder::new(regexs).case_insensitive(!case_sensitive).build()?;
 
-        let mut n_threads = threads.unwrap_or(0);
-        if n_threads == 0 {
-            n_threads = std::thread::available_parallelism().map_or(1, |n| n.get());
-        }
+        let mut n_threads = match threads {
+            Some(n) if n != 0 => n,
+            _ => std::thread::available_parallelism().map_or(1, |n| n.get()),
+        };
         if cfg!(test) {
             n_threads = n_threads.min(2);
         }
@@ -307,7 +287,7 @@ impl Create2Args {
             sh_println!("{address}\t{salt}")?;
         }
 
-        Ok(Create2Output { address, salt })
+        Ok((address, salt))
     }
 }
 
@@ -324,95 +304,64 @@ mod tests {
     use alloy_primitives::{address, b256};
     use std::str::FromStr;
 
-    #[test]
-    fn create2_subcommand_is_rejected_by_legacy_runner() {
-        let args = Create2Args::parse_from(["foundry-cli", "init-code-hash", "MissingContract"]);
-        let err = args.run().err().unwrap();
-        assert_eq!(
-            err.to_string(),
-            "`Create2Args::run` does not support subcommands; use `Create2Args::execute` instead"
-        );
+    const ZERO_HASH: &str =
+        "--init-code-hash=0x0000000000000000000000000000000000000000000000000000000000000000";
+
+    fn run(args: &[&str]) -> Result<(Address, B256)> {
+        Create2Args::parse_from(["foundry-cli"].iter().chain(args)).run()
     }
 
     #[test]
     fn basic_create2() {
-        let mk_args = |args: &[&str]| {
-            Create2Args::parse_from(["foundry-cli", "--init-code-hash=0x0000000000000000000000000000000000000000000000000000000000000000"].iter().chain(args))
-        };
+        for (flag, pattern) in [
+            ("--starts-with", "aa"),
+            ("--ends-with", "bb"),
+            ("--starts-with", "aaa"),
+            ("--ends-with", "bbb"),
+            ("--starts-with", "0xaa"),
+            ("--starts-with", "0xaaa"),
+        ] {
+            let (address, _) = run(&[ZERO_HASH, flag, pattern]).unwrap();
+            let address = format!("{address:x}");
+            let pattern = pattern.trim_start_matches("0x");
+            assert!(
+                if flag == "--starts-with" {
+                    address.starts_with(pattern)
+                } else {
+                    address.ends_with(pattern)
+                },
+                "{flag} {pattern}: {address}"
+            );
+        }
 
-        // even hex chars
-        let args = mk_args(&["--starts-with", "aa"]);
-        let create2_out = args.run().unwrap();
-        assert!(format!("{:x}", create2_out.address).starts_with("aa"));
-
-        let args = mk_args(&["--ends-with", "bb"]);
-        let create2_out = args.run().unwrap();
-        assert!(format!("{:x}", create2_out.address).ends_with("bb"));
-
-        // odd hex chars
-        let args = mk_args(&["--starts-with", "aaa"]);
-        let create2_out = args.run().unwrap();
-        assert!(format!("{:x}", create2_out.address).starts_with("aaa"));
-
-        let args = mk_args(&["--ends-with", "bbb"]);
-        let create2_out = args.run().unwrap();
-        assert!(format!("{:x}", create2_out.address).ends_with("bbb"));
-
-        // even hex chars with 0x prefix
-        let args = mk_args(&["--starts-with", "0xaa"]);
-        let create2_out = args.run().unwrap();
-        assert!(format!("{:x}", create2_out.address).starts_with("aa"));
-
-        // odd hex chars with 0x prefix
-        let args = mk_args(&["--starts-with", "0xaaa"]);
-        let create2_out = args.run().unwrap();
-        assert!(format!("{:x}", create2_out.address).starts_with("aaa"));
-
-        // check fails on wrong chars
-        let args = mk_args(&["--starts-with", "0xerr"]);
-        let create2_out = args.run();
-        assert!(create2_out.is_err());
-
-        // check fails on wrong x prefixed string provided
-        let args = mk_args(&["--starts-with", "x00"]);
-        let create2_out = args.run();
-        assert!(create2_out.is_err());
+        // Non-hex and misplaced prefixes are rejected.
+        assert!(run(&[ZERO_HASH, "--starts-with", "0xerr"]).is_err());
+        assert!(run(&[ZERO_HASH, "--starts-with", "x00"]).is_err());
     }
 
     #[test]
     fn matches_pattern() {
-        let args = Create2Args::parse_from([
-            "foundry-cli",
-            "--init-code-hash=0x0000000000000000000000000000000000000000000000000000000000000000",
-            "--matching=0xbbXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
-        ]);
-        let create2_out = args.run().unwrap();
-        let address = create2_out.address;
+        let (address, _) =
+            run(&[ZERO_HASH, "--matching=0xbbXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"]).unwrap();
         assert!(format!("{address:x}").starts_with("bb"));
     }
 
     #[test]
     fn create2_salt() {
-        let args = Create2Args::parse_from([
-            "foundry-cli",
+        let (address, _) = run(&[
             "--deployer=0x8ba1f109551bD432803012645Ac136ddd64DBA72",
             "--salt=0x7c5ea36004851c764c44143b1dcb59679b11c9a68e5f41497f6cf3d480715331",
             "--init-code=0x6394198df16000526103ff60206004601c335afa6040516060f3",
-        ]);
-        let create2_out = args.run().unwrap();
-        let address = create2_out.address;
+        ])
+        .unwrap();
         assert_eq!(address, address!("0x533AE9D683B10C02EBDB05471642F85230071FC3"));
     }
 
     #[test]
     fn create2_init_code() {
         let init_code = "00";
-        let args =
-            Create2Args::parse_from(["foundry-cli", "--starts-with=cc", "--init-code", init_code]);
-        let create2_out = args.run().unwrap();
-        let address = create2_out.address;
+        let (address, salt) = run(&["--starts-with=cc", "--init-code", init_code]).unwrap();
         assert!(format!("{address:x}").starts_with("cc"));
-        let salt = create2_out.salt;
         let deployer = Address::from_str(DEPLOYER).unwrap();
         assert_eq!(address, deployer.create2_from_code(salt, hex::decode(init_code).unwrap()));
     }
@@ -420,87 +369,54 @@ mod tests {
     #[test]
     fn create2_init_code_hash() {
         let init_code_hash = "bc36789e7a1e281436464229828f817d6612f7b477d66591ff96a9e064bcc98a";
-        let args = Create2Args::parse_from([
-            "foundry-cli",
-            "--starts-with=dd",
-            "--init-code-hash",
-            init_code_hash,
-        ]);
-        let create2_out = args.run().unwrap();
-        let address = create2_out.address;
+        let (address, salt) =
+            run(&["--starts-with=dd", "--init-code-hash", init_code_hash]).unwrap();
         assert!(format!("{address:x}").starts_with("dd"));
-
-        let salt = create2_out.salt;
         let deployer = Address::from_str(DEPLOYER).unwrap();
-
-        assert_eq!(
-            address,
-            deployer
-                .create2(salt, B256::from_slice(hex::decode(init_code_hash).unwrap().as_slice()))
-        );
+        assert_eq!(address, deployer.create2(salt, B256::from_str(init_code_hash).unwrap()));
     }
 
     #[test]
     fn create2_caller() {
-        let init_code_hash = "bc36789e7a1e281436464229828f817d6612f7b477d66591ff96a9e064bcc98a";
-        let args = Create2Args::parse_from([
-            "foundry-cli",
+        let (address, salt) = run(&[
             "--starts-with=dd",
-            "--init-code-hash",
-            init_code_hash,
+            "--init-code-hash=bc36789e7a1e281436464229828f817d6612f7b477d66591ff96a9e064bcc98a",
             "--caller=0x66f9664f97F2b50F62D13eA064982f936dE76657",
-        ]);
-        let create2_out = args.run().unwrap();
-        let address = create2_out.address;
-        let salt = create2_out.salt;
+        ])
+        .unwrap();
         assert!(format!("{address:x}").starts_with("dd"));
         assert!(format!("{salt:x}").starts_with("66f9664f97f2b50f62d13ea064982f936de76657"));
     }
 
     #[test]
     fn deterministic_seed() {
-        let args = Create2Args::parse_from([
-            "foundry-cli",
+        let (address, salt) = run(&[
             "--starts-with=0x00",
             "--init-code-hash=0x479d7e8f31234e208d704ba1a123c76385cea8a6981fd675b784fbd9cffb918d",
             "--seed=0x479d7e8f31234e208d704ba1a123c76385cea8a6981fd675b784fbd9cffb918d",
             "-j1",
-        ]);
-        let out = args.run().unwrap();
-        assert_eq!(out.address, address!("0x00614b3D65ac4a09A376a264fE1aE5E5E12A6C43"));
+        ])
+        .unwrap();
+        assert_eq!(address, address!("0x00614b3D65ac4a09A376a264fE1aE5E5E12A6C43"));
         assert_eq!(
-            out.salt,
-            b256!("0x322113f523203e2c0eb00bbc8e69208b0eb0c8dad0eaac7b01d64ff016edb40d"),
+            salt,
+            b256!("0x322113f523203e2c0eb00bbc8e69208b0eb0c8dad0eaac7b01d64ff016edb40d")
         );
     }
 
     #[test]
     fn deterministic_output() {
-        let args = Create2Args::parse_from([
-            "foundry-cli",
+        let (address, salt) = run(&[
             "--starts-with=0x00",
             "--init-code-hash=0x479d7e8f31234e208d704ba1a123c76385cea8a6981fd675b784fbd9cffb918d",
             "--no-random",
             "-j1",
-        ]);
-        let out = args.run().unwrap();
-        assert_eq!(out.address, address!("0x00bF495b8b42fdFeb91c8bCEB42CA4eE7186AEd2"));
-        assert_eq!(
-            out.salt,
-            b256!("0x000000000000000000000000000000000000000000000000df00000000000000"),
-        );
-    }
-
-    #[test]
-    fn j0() {
-        let args = Create2Args::try_parse_from([
-            "foundry-cli",
-            "--starts-with=00",
-            "--init-code-hash",
-            &B256::ZERO.to_string(),
-            "-j0",
         ])
         .unwrap();
-        assert_eq!(args.threads, Some(0));
+        assert_eq!(address, address!("0x00bF495b8b42fdFeb91c8bCEB42CA4eE7186AEd2"));
+        assert_eq!(
+            salt,
+            b256!("0x000000000000000000000000000000000000000000000000df00000000000000")
+        );
     }
 }

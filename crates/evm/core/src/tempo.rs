@@ -16,10 +16,12 @@ use tempo_hardfork::TempoHardfork;
 use tempo_precompiles::{
     error::TempoPrecompileError,
     storage::{PrecompileStorageProvider, StorageCtx},
-    tip20::{ISSUER_ROLE, ITIP20, TIP20Token},
+    tip20::{ITIP20, TIP20Token},
     tip20_factory::TIP20Factory,
     validator_config,
 };
+
+use crate::constants::SYSTEM_PRECOMPILE_STUB;
 
 pub use foundry_common::tempo::{
     ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
@@ -122,7 +124,7 @@ fn initialize_tempo_genesis_inner_with_precompiles(
     let mut ctx = StorageCtx;
 
     // Set sentinel bytecode for precompile addresses
-    let sentinel = Bytecode::new_legacy(Bytes::from_static(&[0xef]));
+    let sentinel = Bytecode::new_legacy(Bytes::from_static(SYSTEM_PRECOMPILE_STUB));
     for precompile in precompiles {
         ctx.set_code(precompile, sentinel.clone())?;
     }
@@ -227,7 +229,7 @@ fn create_and_mint_token(
     )?;
 
     let mut token = TIP20Token::from_address(token_address)?;
-    token.grant_role_internal(admin, *ISSUER_ROLE)?;
+    token.grant_role_internal(admin, TIP20Token::issuer_role())?;
     token.mint(admin, ITIP20::mintCall { to: recipient, amount: mint_amount })?;
     if admin != recipient {
         token.mint(admin, ITIP20::mintCall { to: admin, amount: mint_amount })?;

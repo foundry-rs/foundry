@@ -1,19 +1,9 @@
 //! Helper types for working with [revm]
 
-#[cfg(feature = "monad")]
-use std::collections::BTreeSet;
-use std::{
-    collections::BTreeMap,
-    fmt::{self, Debug},
-    fs::File,
-    io::BufReader,
-    path::Path,
-};
-
+use crate::mem::storage::MinedTransaction;
 use alloy_consensus::BlockBody;
-#[cfg(test)]
-use alloy_consensus::Header;
-use alloy_eips::eip4895::Withdrawals;
+use alloy_eips::{eip4895::Withdrawals, eip7928::BlockAccessList};
+use alloy_evm::block::BalIndexedDatabase;
 use alloy_network::Network;
 use alloy_primitives::{
     Address, B256, Bytes, U256, keccak256,
@@ -29,25 +19,28 @@ use foundry_evm::backend::{
     BlockchainDb, DatabaseError, DatabaseResult, EmptyDBWrapper, MemDb, RevertStateSnapshotAction,
     StateSnapshot,
 };
-#[cfg(feature = "monad")]
-use foundry_evm::hardfork::MonadHardfork;
 use foundry_primitives::{FoundryHeader, FoundryReceiptEnvelope, FoundryTxEnvelope};
 use revm::{
     Database, DatabaseCommit,
     bytecode::Bytecode,
     context::BlockEnv,
     context_interface::block::BlobExcessGasAndPrice,
-    database::{AccountState, CacheDB, DatabaseRef, DbAccount},
+    database::{AccountState, CacheDB, DatabaseRef, DbAccount, bal::BalState},
     primitives::{KECCAK_EMPTY, eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE},
-    state::AccountInfo,
+    state::{AccountInfo, bal::BlockAccessIndex},
 };
 use serde::{
     Deserialize, Deserializer, Serialize,
     de::{Error as DeError, MapAccess, Visitor},
 };
 use serde_json::Value;
-
-use crate::mem::storage::MinedTransaction;
+use std::{
+    collections::BTreeMap,
+    fmt::{self, Debug},
+    fs::File,
+    io::BufReader,
+    path::Path,
+};
 
 /// Number of preceding block hashes available to the EVM's `BLOCKHASH` opcode.
 pub(crate) const BLOCKHASH_HISTORY: u64 = 256;
@@ -59,7 +52,7 @@ pub struct MonadBlockReplayProfile {
     /// Chain ID active when the block was executed.
     pub execution_chain_id: u64,
     /// Monad hardfork active when the block was executed.
-    pub hardfork: MonadHardfork,
+    pub hardfork: foundry_evm::hardfork::MonadHardfork,
 }
 
 /// Inserts a block hash, discards entries outside the EVM-visible cache, and returns its head.
@@ -76,6 +69,10 @@ pub(crate) fn cache_block_hash(block_hashes: &mut U256Map<B256>, number: U256, h
 /// Helper trait get access to the full state data of the database
 pub trait MaybeFullDatabase: DatabaseRef<Error = DatabaseError> + Debug {
     fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
+        None
+    }
+
+    fn maybe_as_full_db_mut(&mut self) -> Option<&mut AddressMap<DbAccount>> {
         None
     }
 
@@ -141,6 +138,10 @@ where
         T::maybe_as_full_db(self)
     }
 
+    fn maybe_as_full_db_mut(&mut self) -> Option<&mut AddressMap<DbAccount>> {
+        T::maybe_as_full_db_mut(self)
+    }
+
     fn maybe_full_db(&self) -> Option<AddressMap<DbAccount>> {
         T::maybe_full_db(self)
     }
@@ -181,11 +182,21 @@ impl alloy_evm::Database for dyn Db {}
 
 /// A wrapper around [`CacheDB`].
 #[derive(Debug)]
-pub struct AnvilCacheDB<T>(pub CacheDB<T>);
+pub struct AnvilCacheDB<T>(pub CacheDB<T>, BalState);
 
 impl<T: DatabaseRef<Error = DatabaseError>> AnvilCacheDB<T> {
     pub fn new(inner: T) -> Self {
-        Self(CacheDB::new(inner))
+        Self(CacheDB::new(inner), BalState::default())
+    }
+
+    /// Enables EIP-7928 block access list recording.
+    pub fn enable_bal_recording(&mut self) {
+        self.1 = BalState::new().with_bal_builder();
+    }
+
+    /// Takes the recorded EIP-7928 block access list, if recording was enabled.
+    pub fn take_block_access_list(&mut self) -> Option<BlockAccessList> {
+        self.1.take_built_alloy_bal()
     }
 }
 
@@ -244,7 +255,30 @@ impl<T: DatabaseRef<Error = DatabaseError>> DatabaseRef for AnvilCacheDB<T> {
 
 impl<T: DatabaseRef<Error = DatabaseError> + fmt::Debug> DatabaseCommit for AnvilCacheDB<T> {
     fn commit(&mut self, changes: revm::state::EvmState) {
+        self.1.commit(&changes);
         self.0.commit(changes)
+    }
+}
+
+impl<T: DatabaseRef<Error = DatabaseError> + fmt::Debug> BalIndexedDatabase for AnvilCacheDB<T> {
+    fn set_bal_index(&mut self, index: u64) {
+        self.1.bal_index = BlockAccessIndex::new(index);
+    }
+
+    fn bump_bal_index(&mut self) {
+        self.1.bump_bal_index();
+    }
+}
+
+impl<T: DatabaseRef<Error = DatabaseError> + fmt::Debug> BalIndexedDatabase
+    for &mut AnvilCacheDB<T>
+{
+    fn set_bal_index(&mut self, index: u64) {
+        (**self).set_bal_index(index);
+    }
+
+    fn bump_bal_index(&mut self) {
+        (**self).bump_bal_index();
     }
 }
 
@@ -726,7 +760,7 @@ pub struct SerializableState {
     /// used, so it is preserved even while the corresponding transaction bodies are retained.
     #[cfg(feature = "monad")]
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub monad_block_participants: BTreeMap<B256, BTreeSet<Address>>,
+    pub monad_block_participants: BTreeMap<B256, std::collections::BTreeSet<Address>>,
     /// Execution profile used for each locally stored Monad block.
     #[cfg(feature = "monad")]
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -915,6 +949,7 @@ impl IntoIterator for SerializableHistoricalStates {
 #[cfg(test)]
 mod test {
     use super::*;
+    use alloy_consensus::Header;
     use std::fs;
 
     #[test]

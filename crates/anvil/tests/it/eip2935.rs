@@ -12,22 +12,24 @@ use alloy_rpc_types::{
     TransactionRequest,
     simulate::{SimBlock, SimulatePayload},
     trace::{
+        geth::{GethDebugBuiltInTracerType, GethDebugTracingOptions, TraceResult},
         opcode::{BlockOpcodeGas, TransactionOpcodeGas},
         parity::{Delta, TraceResults, TraceResultsWithTransactionHash, TraceType},
     },
 };
 use alloy_serde::WithOtherFields;
 use anvil::{NodeConfig, PrecompileFactory, spawn};
-#[cfg(feature = "optimism")]
-use foundry_evm::hardfork::OpHardfork;
 use foundry_evm::hardfork::{EthereumHardfork, TempoHardfork};
-#[cfg(feature = "optimism")]
-use foundry_evm_networks::NetworkConfigs;
 use revm::precompile::{PrecompileError, PrecompileOutput, PrecompileStatus};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
+
+#[cfg(feature = "optimism")]
+use foundry_evm::hardfork::OpHardfork;
+#[cfg(feature = "optimism")]
+use foundry_evm_networks::NetworkConfigs;
 
 const REPLAY_PRE_EXECUTION_ERROR: &str = "replay pre-execution sentinel";
 
@@ -338,6 +340,17 @@ async fn eip2935_local_block_replay_applies_pre_execution_changes() {
         ))
         .await
         .unwrap();
+    let second_hash = api
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default()
+                .from(from)
+                .to(probe)
+                .nonce(1)
+                .with_input(call_data)
+                .with_gas_limit(100_000),
+        ))
+        .await
+        .unwrap();
     api.mine_one().await.unwrap();
     let receipt = pending.get_receipt().await.unwrap();
     let block_number = receipt.block_number.unwrap();
@@ -358,6 +371,22 @@ async fn eip2935_local_block_replay_applies_pre_execution_changes() {
         .expect("probe should change")
         .storage;
     assert_eq!(storage.get(&B256::ZERO), Some(&Delta::changed(B256::ZERO, parent.header.hash)));
+
+    let options = GethDebugTracingOptions::default()
+        .with_tracer(GethDebugBuiltInTracerType::CallTracer.into());
+    let result = api
+        .backend
+        .debug_trace_transaction(receipt.transaction_hash, options.clone())
+        .await
+        .unwrap();
+    let second = api.backend.debug_trace_transaction(second_hash, options.clone()).await.unwrap();
+    assert_eq!(
+        api.backend.debug_trace_block_by_number(block_number.into(), options).await.unwrap(),
+        vec![
+            TraceResult::Success { result, tx_hash: Some(receipt.transaction_hash) },
+            TraceResult::Success { result: second, tx_hash: Some(second_hash) },
+        ],
+    );
 
     let opcode_gas: Option<BlockOpcodeGas> = provider
         .raw_request("trace_blockOpcodeGas".into(), (BlockId::number(block_number),))
@@ -423,8 +452,82 @@ async fn eip2935_local_block_replay_propagates_pre_execution_errors() {
         assert!(response.message.contains(REPLAY_PRE_EXECUTION_ERROR), "{response:?}");
     }
 
+    let options = GethDebugTracingOptions::default()
+        .with_tracer(GethDebugBuiltInTracerType::CallTracer.into());
+    let error = api
+        .backend
+        .debug_trace_transaction(receipt.transaction_hash, options.clone())
+        .await
+        .unwrap_err();
+    assert_eq!(
+        api.backend
+            .debug_trace_block_by_number(block_number.into(), options.clone())
+            .await
+            .unwrap(),
+        vec![TraceResult::Error {
+            error: error.to_string(),
+            tx_hash: Some(receipt.transaction_hash)
+        }],
+    );
+    assert!(
+        api.backend
+            .debug_trace_block_by_number(empty_block_number.into(), options)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
     let genesis_opcode_gas: Option<BlockOpcodeGas> =
         provider.raw_request("trace_blockOpcodeGas".into(), (BlockId::number(0),)).await.unwrap();
     assert!(genesis_opcode_gas.expect("genesis block should exist").transactions.is_empty());
     assert_eq!(provider.get_block_number().await.unwrap(), empty_block_number);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn geth_block_replay_discards_partial_results_on_execution_error() {
+    let fail = Arc::new(AtomicBool::new(false));
+    // Cancun has no history system call, so the injected failure occurs only in the second tx.
+    let config = NodeConfig::test()
+        .with_hardfork(Some(EthereumHardfork::Cancun.into()))
+        .with_precompile_factory(FailingHistoryPrecompile(Arc::clone(&fail)));
+    let (api, handle) = spawn(config).await;
+    let provider = handle.http_provider();
+    let mut wallets = handle.dev_wallets();
+    let from = wallets.next().unwrap().address();
+    let to = wallets.next().unwrap().address();
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let mut hashes = Vec::new();
+    for (nonce, target) in [to, HISTORY_STORAGE_ADDRESS, to].into_iter().enumerate() {
+        let transaction = TransactionRequest::default()
+            .from(from)
+            .to(target)
+            .nonce(nonce as u64)
+            .value(U256::from(1))
+            .gas_limit(30_000);
+        hashes.push(api.send_transaction(WithOtherFields::new(transaction)).await.unwrap());
+    }
+    api.mine_one().await.unwrap();
+    let balance = provider.get_balance(to).await.unwrap();
+    let block_number = provider.get_block_number().await.unwrap();
+    fail.store(true, Ordering::SeqCst);
+
+    let options = GethDebugTracingOptions::default()
+        .with_tracer(GethDebugBuiltInTracerType::CallTracer.into());
+    let mut expected = Vec::new();
+    for hash in hashes {
+        expected.push(match api.backend.debug_trace_transaction(hash, options.clone()).await {
+            Ok(result) => TraceResult::Success { result, tx_hash: Some(hash) },
+            Err(error) => TraceResult::Error { error: error.to_string(), tx_hash: Some(hash) },
+        });
+    }
+    assert!(matches!(expected[0], TraceResult::Success { .. }));
+    assert!(matches!(expected[1], TraceResult::Error { .. }));
+    assert!(matches!(expected[2], TraceResult::Error { .. }));
+    assert_eq!(
+        api.backend.debug_trace_block_by_number(block_number.into(), options).await.unwrap(),
+        expected,
+    );
+    assert_eq!(provider.get_balance(to).await.unwrap(), balance);
+    assert_eq!(provider.get_transaction_count(from).await.unwrap(), 3);
+    assert_eq!(provider.get_block_number().await.unwrap(), block_number);
 }

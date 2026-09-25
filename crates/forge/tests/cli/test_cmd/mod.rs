@@ -6,17 +6,22 @@ use anvil::{NodeConfig, spawn};
 use foundry_config::{CompilationRestrictions, SettingsOverrides, filter::GlobMatcher};
 use foundry_test_utils::{
     TestCommand,
-    rpc::{self, rpc_endpoints},
+    rpc::{self, next_etherscan_api_key, rpc_endpoints},
     str,
     util::{OTHER_SOLC_VERSION, OutputExt, SOLC_VERSION},
 };
 use similar_asserts::assert_eq;
-#[cfg(unix)]
-use std::fs;
 use std::{io::Write, path::PathBuf, str::FromStr};
 
+#[cfg(unix)]
+use std::fs;
+
+#[cfg(feature = "base")]
+mod base;
 mod brutalize;
 mod core;
+mod exact_fork;
+mod fork_bal;
 mod fuzz;
 mod invariant;
 mod logs;
@@ -48,7 +53,6 @@ fn setup_testdata_cmd(cmd: &mut TestCommand) {
     let testdata =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata").canonicalize().unwrap();
     cmd.current_dir(&testdata);
-    cmd.arg("--allow-project-env");
 
     let mut dotenv = std::fs::File::create(testdata.join(".env")).unwrap();
     for (name, endpoint) in rpc_endpoints().iter() {
@@ -140,6 +144,12 @@ forgetest!(testdata, |_prj, cmd| {
     if orig_assert.get_output().status.success() {
         return;
     }
+    // Only test failures are retried: a crash writes no `--rerun` failures, so a retry would
+    // either rerun everything or only unrelated flaky failures and hide the crash.
+    if orig_assert.get_output().status.code() != Some(1) {
+        orig_assert.success();
+        return;
+    }
     let stdout = orig_assert.get_output().stdout_lossy();
     if let Some(i) = stdout.rfind("Suite result:") {
         test_debug!("--- short stdout ---\n\n{}\n\n---", &stdout[i..]);
@@ -172,6 +182,63 @@ forgetest!(flaky_testdata, |_prj, cmd| {
     setup_testdata_cmd(&mut cmd);
     let mc = format!("--mc=({FLAKY_TESTDATA_RUN_CONTRACTS})");
     cmd.args(["test", &mc]).assert_success();
+});
+
+// Ensures `vm.deployCode` works with the optimism network family active, covering the OP EVM's
+// nested frame execution path which is only reachable through this cheatcode.
+forgetest_init!(deploy_code_cheatcode_on_optimism_network, |prj, cmd| {
+    prj.update_config(|config| {
+        config.networks = foundry_evm_networks::NetworkConfigs::with_optimism();
+    });
+
+    prj.add_source(
+        "OpCounter.sol",
+        r#"
+contract OpCounter {
+    uint256 public number;
+
+    constructor(uint256 initial) {
+        number = initial;
+    }
+
+    function increment() external {
+        number++;
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "OpDeployCode.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {OpCounter} from "../src/OpCounter.sol";
+
+contract OpDeployCodeTest is Test {
+    function testDeployCodeOnOptimism() public {
+        address deployed = vm.deployCode("src/OpCounter.sol:OpCounter", abi.encode(41));
+        assertGt(deployed.code.length, 0);
+
+        OpCounter counter = OpCounter(deployed);
+        assertEq(counter.number(), 41);
+        counter.increment();
+        assertEq(counter.number(), 42);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--match-contract", "OpDeployCodeTest"]).assert_success().stdout_eq(str![[
+        r#"
+...
+Ran 1 test for test/OpDeployCode.t.sol:OpDeployCodeTest
+[PASS] testDeployCodeOnOptimism() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#
+    ]]);
 });
 
 // tests that test filters are handled correctly
@@ -228,6 +295,197 @@ Warning: No tests found in project! Forge looks for functions that start with `t
 Warning: No tests found in project! Forge looks for functions that start with `test`
 
 "#]]);
+});
+
+// Test that `--decode-external-storage` decodes storage layouts of external contracts
+// fetched from Etherscan when using state diff recording on a fork.
+// Uses 1inch token (non-proxy, Solidity 0.6.12) which supports storageLayout output.
+forgetest_init!(decode_external_storage_on_fork, |prj, cmd| {
+    let endpoint = rpc::next_http_archive_rpc_url();
+    let etherscan_api_key = next_etherscan_api_key();
+
+    prj.add_test(
+        "DecodeExternalStorage.t.sol",
+        &r#"
+import {Test} from "forge-std/Test.sol";
+
+interface IERC20 {
+    function transfer(address to, uint256 amount) external returns (bool);
+}
+
+contract DecodeExternalStorageTest is Test {
+    // 1inch token on mainnet (non-proxy, compiled with Solidity 0.6.12)
+    address constant ONE_INCH = 0x111111111117dC0aa78b770fA6A738034120C302;
+    // A large 1inch holder
+    address constant WHALE = 0xF977814e90dA44bFA03b6295A0616a897441aceC;
+
+    function test_externalStorageDecoding() public {
+        vm.createSelectFork("<url>");
+
+        vm.prank(WHALE);
+
+        vm.startStateDiffRecording();
+        IERC20(ONE_INCH).transfer(address(this), 1 ether);
+        string memory diff = vm.getStateDiffJson();
+
+        // When external storage decoding is enabled, the JSON should contain
+        // the decoded mapping label "_balances" from the 1inch token's storage layout.
+        assertTrue(vm.contains(diff, "_balances"), "expected decoded '_balances' label in state diff");
+    }
+}
+   "#
+        .replace("<url>", &endpoint),
+    );
+
+    cmd.args([
+        "test",
+        "-vvvv",
+        "--mt",
+        "test_externalStorageDecoding",
+        "--decode-external-storage",
+        "--etherscan-api-key",
+        &etherscan_api_key,
+    ])
+    .assert_success();
+});
+
+// Test that `--decode-external-storage` correctly resolves proxy contracts
+// by fetching the implementation's storage layout (e.g., USDC is an EIP-1967 proxy).
+forgetest_init!(decode_external_storage_proxy_on_fork, |prj, cmd| {
+    let endpoint = rpc::next_http_archive_rpc_url();
+    let etherscan_api_key = next_etherscan_api_key();
+
+    prj.add_test(
+        "DecodeExternalStorageProxy.t.sol",
+        &r#"
+import {Test} from "forge-std/Test.sol";
+
+interface IUSDC {
+    function transfer(address to, uint256 amount) external returns (bool);
+    function balanceOf(address account) external view returns (uint256);
+}
+
+contract DecodeExternalStorageProxyTest is Test {
+    // USDC on mainnet (EIP-1967 proxy -> FiatTokenV2_2 implementation)
+    address constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
+    // A large USDC holder (Circle/Centre)
+    address constant USDC_WHALE = 0x55FE002aefF02F77364de339a1292923A15844B8;
+
+    function test_externalStorageDecodingProxy() public {
+        vm.createSelectFork("<url>");
+
+        // Impersonate a whale to perform a transfer
+        vm.prank(USDC_WHALE);
+
+        vm.startStateDiffRecording();
+        IUSDC(USDC).transfer(address(this), 1_000_000); // 1 USDC (6 decimals)
+        string memory diff = vm.getStateDiffJson();
+
+        // The implementation contract (FiatTokenV2_2) has a `balanceAndBlacklistStates` mapping.
+        // If proxy resolution works, the decoded JSON should contain the label
+        // from the implementation's storage layout, not raw hex slots.
+        assertTrue(vm.contains(diff, "balanceAndBlacklistStates"), "expected decoded 'balanceAndBlacklistStates' label from implementation storage layout");
+    }
+}
+   "#
+        .replace("<url>", &endpoint),
+    );
+
+    cmd.args([
+        "test",
+        "-vvvv",
+        "--mt",
+        "test_externalStorageDecodingProxy",
+        "--decode-external-storage",
+        "--etherscan-api-key",
+        &etherscan_api_key,
+    ])
+    .assert_success();
+});
+
+// A local proxy artifact must not override the layout of the bytecode that executed a delegated
+// storage write.
+forgetest_init!(decode_external_storage_prefers_delegatecall_layout, |prj, cmd| {
+    prj.add_test(
+        "DecodeDelegatecallStorage.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Implementation {
+    uint256 public implementationValue;
+    bytes32 public constant IMPLEMENTATION_SLOT =
+        0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
+
+    function setValue(uint256 value) external {
+        implementationValue = value;
+    }
+}
+
+contract TransparentUpgradeableProxy {
+    uint256 public guessedProxyValue;
+}
+
+contract Proxy {
+    uint256 public misleadingProxyValue;
+    bytes32 private constant IMPLEMENTATION_SLOT =
+        0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
+
+    constructor(address implementation) {
+        bytes32 slot = IMPLEMENTATION_SLOT;
+        assembly {
+            sstore(slot, implementation)
+        }
+    }
+
+    fallback() external payable {
+        bytes32 slot = IMPLEMENTATION_SLOT;
+        assembly {
+            let implementation := sload(slot)
+            calldatacopy(0, 0, calldatasize())
+            let success := delegatecall(gas(), implementation, 0, calldatasize(), 0, 0)
+            returndatacopy(0, 0, returndatasize())
+            if iszero(success) { revert(0, returndatasize()) }
+            return(0, returndatasize())
+        }
+    }
+}
+
+contract DecodeDelegatecallStorageTest is Test {
+    function test_usesRecordedImplementationLayout() public {
+        Implementation implementation = new Implementation();
+        Proxy proxy = new Proxy(address(implementation));
+
+        vm.startStateDiffRecording();
+        Implementation(address(proxy)).setValue(42);
+        string memory diff = vm.getStateDiffJson();
+
+        assertTrue(vm.contains(diff, "implementationValue"));
+        assertFalse(vm.contains(diff, "misleadingProxyValue"));
+        assertFalse(vm.contains(diff, "guessedProxyValue"));
+
+        vm.startStateDiffRecording();
+        Implementation(address(proxy)).setValue(43);
+        vm.chainId(1);
+        string memory priorChainDiff = vm.getStateDiffJson();
+
+        // The current journal can no longer prove the code identity recorded on the prior chain.
+        assertFalse(vm.contains(priorChainDiff, "implementationValue"));
+        assertFalse(vm.contains(priorChainDiff, "misleadingProxyValue"));
+        assertFalse(vm.contains(priorChainDiff, "guessedProxyValue"));
+    }
+}
+"#,
+    );
+
+    cmd.args([
+        "test",
+        "--mt",
+        "test_usesRecordedImplementationLayout",
+        "--decode-external-storage",
+        "--extra-output",
+        "storageLayout",
+    ])
+    .assert_success();
 });
 
 // tests that a warning is displayed if there are tests but none match a non-empty filter
@@ -860,6 +1118,22 @@ contract ProfilesTest {
     assert!(prj.artifacts().join("Lib.sol/Lib.json").exists());
     assert!(prj.artifacts().join("Lib.sol/Lib.prod.json").exists());
 
+    prj.add_source(
+        "Prod.sol",
+        r#"
+pragma solidity >=0.8.0;
+
+import "src/Lib.sol";
+
+contract Prod {
+    function identity(uint256 value) external view returns (uint256) {
+        return Lib.identity(value + 0);
+    }
+}
+"#,
+    );
+    cmd.forge_fuse().arg("test").assert_success();
+
     prj.update_config(|config| config.create2_deployer = Address::ZERO);
     cmd.forge_fuse().arg("test").assert_success();
 });
@@ -1264,6 +1538,29 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/16413>
+forgetest_async!(fork_endpoint_without_anvil_node_info, |prj, cmd| {
+    let (api, handle) = spawn(NodeConfig::test().with_chain_id(Some(1u64))).await;
+    api.anvil_mine(Some(U256::ONE), None).await.unwrap();
+    let endpoint =
+        rpc::spawn_rpc_proxy_rejecting_method_after(handle.http_endpoint(), "anvil_nodeInfo", 0)
+            .await;
+
+    prj.add_test(
+        "NonAnvilFork.t.sol",
+        r#"
+contract NonAnvilForkTest {
+    function testFork() external view {
+        require(block.chainid == 1, "wrong chain");
+        require(block.number == 1, "wrong block");
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--fork-url", &endpoint, "--match-test", "testFork"]).assert_success();
 });
 
 // <https://github.com/foundry-rs/foundry/issues/7574>
@@ -3098,6 +3395,11 @@ contract Counter {
         }
         number = newNumber;
     }
+    function revertWithData(bytes memory data) public pure {
+        assembly ("memory-safe") {
+            revert(add(data, 0x20), mload(data))
+        }
+    }
 }
 contract CounterTest is Test {
     Counter public counter;
@@ -3113,6 +3415,35 @@ contract CounterTest is Test {
         vm.expectRevert(abi.encodePacked(Counter.NumberNotEven.selector, uint(2)));
         counter.setNumber(1);
     }
+    function test_raw_message_matches_error_with_trailing_data() public {
+        vm.expectRevert(bytes("reason"));
+        counter.revertWithData(
+            abi.encodePacked(abi.encodeWithSignature("Error(string)", "reason"), uint256(2))
+        );
+    }
+    function test_rejects_trailing_expected_error_data() public {
+        vm.expectRevert(
+            abi.encodePacked(abi.encodeWithSignature("Error(string)", "reason"), uint256(2))
+        );
+        counter.revertWithData(abi.encodeWithSignature("Error(string)", "reason"));
+    }
+    // https://github.com/foundry-rs/foundry/issues/16424
+    function test_rejects_trailing_expected_custom_error_data() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(Counter.NumberNotEven.selector, uint256(1), uint256(2))
+        );
+        counter.setNumber(1);
+    }
+    function test_rejects_bare_string_actual() public {
+        vm.expectRevert(abi.encodeWithSignature("Error(string)", "reason"));
+        counter.revertWithData(bytes("reason"));
+    }
+    function test_rejects_padded_custom_error_data() public {
+        vm.expectRevert(abi.encodeWithSelector(Counter.NumberNotEven.selector, uint256(1)));
+        counter.revertWithData(
+            abi.encodePacked(abi.encodeWithSelector(Counter.NumberNotEven.selector, uint256(1)), bytes28(0))
+        );
+    }
 }
    "#,
     );
@@ -3121,6 +3452,11 @@ contract CounterTest is Test {
 ...
 [FAIL: Error != expected error: NumberNotEven(1) != RandomError()] test_decode() ([GAS])
 [FAIL: Error != expected error: NumberNotEven(1) != NumberNotEven(2)] test_decode_with_args() ([GAS])
+[PASS] test_raw_message_matches_error_with_trailing_data() ([GAS])
+[FAIL: Error != expected error: reason (raw 0x726561736f6e) != reason (raw 0x08c379a000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000006726561736f6e0000000000000000000000000000000000000000000000000000)] test_rejects_bare_string_actual() ([GAS])
+[FAIL: Error != expected error: NumberNotEven(1) (raw 0xeb598fa3000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000) != NumberNotEven(1) (raw 0xeb598fa30000000000000000000000000000000000000000000000000000000000000001)] test_rejects_padded_custom_error_data() ([GAS])
+[FAIL: Error != expected error: NumberNotEven(1) (raw 0xeb598fa30000000000000000000000000000000000000000000000000000000000000001) != NumberNotEven(1) (raw 0xeb598fa300000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002)] test_rejects_trailing_expected_custom_error_data() ([GAS])
+[FAIL: Error != expected error: reason (raw 0x08c379a000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000006726561736f6e0000000000000000000000000000000000000000000000000000) != reason (raw 0x08c379a000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000006726561736f6e00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002)] test_rejects_trailing_expected_error_data() ([GAS])
 ...
 "#]]);
 });
@@ -5495,6 +5831,7 @@ contract Counter {
 }
    ",
     );
+    prj.add_source("Broken.sol", "contract Broken { function broken() public { missing(); } }");
 
     let artifact = prj.paths().artifacts.join("Counter.sol/Counter.json");
     let output = cmd.args(["selectors", "list", "Counter"]).assert_success();
@@ -6462,14 +6799,19 @@ contract CounterTest is Test {
         .replace("<url>", &endpoint),
     );
 
-    cmd.args(["test", "--fork-url", &endpoint]).assert_failure().stdout_eq(str![[r#"
+    for dynamic_test_linking in [false, true] {
+        prj.update_config(|config| config.dynamic_test_linking = dynamic_test_linking);
+        cmd.forge_fuse()
+            .args(["test", "--force", "--fork-url", &endpoint])
+            .assert_failure()
+            .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
 Ran 2 tests for test/Counter.t.sol:CounterTest
 [FAIL: EvmError: Revert] test_roll_fork() (block: [..]) ([GAS])
-[FAIL: Contract 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f does not exist and is not marked as persistent, see `vm.makePersistent()`] test_select_fork() (block: [..]) ([GAS])
+[FAIL: EvmError: Revert] test_select_fork() (block: [..]) ([GAS])
 Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 0 tests passed, 2 failed, 0 skipped (2 total tests)
@@ -6477,7 +6819,7 @@ Ran 1 test suite [ELAPSED]: 0 tests passed, 2 failed, 0 skipped (2 total tests)
 Failing tests:
 Encountered 2 failing tests in test/Counter.t.sol:CounterTest
 [FAIL: EvmError: Revert] test_roll_fork() (block: [..]) ([GAS])
-[FAIL: Contract 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f does not exist and is not marked as persistent, see `vm.makePersistent()`] test_select_fork() (block: [..]) ([GAS])
+[FAIL: EvmError: Revert] test_select_fork() (block: [..]) ([GAS])
 
 Encountered a total of 2 failing tests, 0 tests succeeded
 
@@ -6485,6 +6827,7 @@ Tip: Run `forge test --rerun` to retry only the 2 failed tests
 Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
+    }
 });
 
 // <https://github.com/foundry-rs/foundry/issues/11632>
@@ -6576,7 +6919,7 @@ Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing te
 "#]]);
 });
 
-forgetest_init!(zero_runs, |prj, cmd| {
+forgetest_init!(zero_invariant_runs, |prj, cmd| {
     prj.wipe_contracts();
     prj.add_test(
         "ZeroRuns.t.sol",
@@ -6592,11 +6935,6 @@ contract Handler is Test {
 contract ZeroRuns is Test {
     Handler handler = new Handler();
 
-    /// forge-config: default.fuzz.runs = 0
-    function test_fuzzZeroRuns(uint256 x) public {
-        revert("unreachable");
-    }
-
     /// forge-config: default.invariant.runs = 0
     function invariant_zeroRuns() public {}
 
@@ -6608,13 +6946,12 @@ contract ZeroRuns is Test {
 
     cmd.args(["test"]).assert_success().stdout_eq(str![[r#"
 ...
-Ran 3 tests for test/ZeroRuns.t.sol:ZeroRuns
+Ran 2 tests for test/ZeroRuns.t.sol:ZeroRuns
 [PASS] invariant_zeroDepth() (runs: 256, calls: 0, reverts: 0)
 [PASS] invariant_zeroRuns() (runs: 0, calls: 0, reverts: 0)
-[PASS] test_fuzzZeroRuns(uint256) (runs: 0, [AVG_GAS])
-Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test suite [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 
 "#]]);
 });

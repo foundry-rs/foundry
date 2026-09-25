@@ -66,6 +66,11 @@ impl SymCalldata {
 }
 
 impl BoundedCopySize {
+    pub(crate) fn expand_memory(&self, cx: &mut SymCx, memory: &mut SymMemory, offset: SymExpr) {
+        let size = self.size_word(cx);
+        memory.expand_range(cx, offset, size);
+    }
+
     pub(crate) fn read_from_memory(
         &self,
         cx: &mut SymCx,

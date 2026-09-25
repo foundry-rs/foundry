@@ -1,9 +1,8 @@
-#[cfg(feature = "optimism")]
-use crate::cmd::da_estimate::DAEstimateArgs;
 use crate::cmd::{
     access_list::AccessListArgs,
     artifact::ArtifactArgs,
     b2e_payload::B2EPayloadArgs,
+    bal::BalArgs,
     batch_mktx::BatchMakeTxArgs,
     batch_send::BatchSendArgs,
     bind::BindArgs,
@@ -13,7 +12,9 @@ use crate::cmd::{
     create2::Create2Args,
     creation_code::CreationCodeArgs,
     erc20::Erc20Subcommand,
+    erc4626::Erc4626Subcommand,
     estimate::EstimateArgs,
+    events::EventsArgs,
     find_block::FindBlockArgs,
     interface::InterfaceArgs,
     keychain::{KeyAuthorizationSubcommand, KeychainSubcommand},
@@ -22,10 +23,11 @@ use crate::cmd::{
     receive_policy::ReceivePolicySubcommand,
     rpc::RpcArgs,
     run::RunArgs,
+    safe::SafeSubcommand,
     send::SendTxArgs,
     storage::StorageArgs,
     storage_credits::StorageCreditsSubcommand,
-    tempo::TempoSubcommand,
+    tempo::TempoArgs,
     tip20::Tip20Subcommand,
     tip403::Tip403Subcommand,
     trace::TraceArgs,
@@ -42,6 +44,10 @@ use foundry_cli::opts::{EtherscanOpts, GlobalArgs, RpcOpts};
 use foundry_common::version::{LONG_VERSION, SHORT_VERSION};
 use foundry_evm_networks::NetworkVariant;
 use std::{path::PathBuf, str::FromStr};
+
+#[cfg(any(feature = "base", feature = "optimism"))]
+use crate::cmd::da_estimate::DAEstimateArgs;
+
 /// A Swiss Army knife for interacting with Ethereum applications from the command line.
 #[derive(Parser)]
 #[command(
@@ -415,6 +421,18 @@ pub enum CastSubcommand {
     /// - cast logs --address $TOKEN --from-block 21000000 --to-block latest $TOPIC_0
     #[command(verbatim_doc_comment, visible_alias = "l")]
     Logs(LogsArgs),
+    /// Fetch and decode events from a transaction receipt or log filter.
+    ///
+    /// Examples:
+    /// - cast events $TX_HASH
+    /// - cast events --tx-hash $TX_HASH
+    /// - cast events --address $TOKEN --from-block 21000000 --to-block latest
+    /// - cast events --address $TOKEN "Transfer(address indexed,address indexed,uint256)"
+    ///
+    /// A lone 32-byte positional value is treated as a transaction hash. Qualify a raw topic with
+    /// an address, block range, additional topic, or query size.
+    #[command(verbatim_doc_comment, visible_alias = "ev")]
+    Events(EventsArgs),
     /// Get information about a block
     ///
     /// Examples:
@@ -455,6 +473,14 @@ pub enum CastSubcommand {
         #[command(flatten)]
         rpc: RpcOpts,
     },
+
+    /// Get the EIP-7928 block access list of a block
+    ///
+    /// Examples:
+    /// - cast bal latest
+    /// - cast bal 21000000 --raw
+    #[command(verbatim_doc_comment, visible_alias = "block-access-list")]
+    Bal(BalArgs),
 
     /// Perform a call on an account without publishing a transaction
     ///
@@ -1217,6 +1243,12 @@ pub enum CastSubcommand {
         command: WalletSubcommands,
     },
 
+    /// Create, propose, and sign Safe transactions.
+    Safe {
+        #[command(subcommand)]
+        command: SafeSubcommand,
+    },
+
     /// Download a contract creation code from Etherscan and RPC.
     #[command(visible_alias = "cc")]
     CreationCode(CreationCodeArgs),
@@ -1278,6 +1310,10 @@ pub enum CastSubcommand {
     },
 
     /// Runs a published transaction in a local environment and prints the trace
+    ///
+    /// If the node serves an EIP-7928 block access list (BAL) for the transaction's block, the
+    /// transaction's prestate is read from it instead of replaying the earlier transactions of
+    /// the block. Pass `--no-bal` to always replay the block.
     ///
     /// Examples:
     /// - cast run $TX_HASH
@@ -1351,7 +1387,7 @@ pub enum CastSubcommand {
         command: TxPoolSubcommands,
     },
     /// Estimates the data availability size of a given opstack block.
-    #[cfg(feature = "optimism")]
+    #[cfg(any(feature = "base", feature = "optimism"))]
     #[command(name = "da-estimate")]
     DAEstimate(DAEstimateArgs),
 
@@ -1360,6 +1396,13 @@ pub enum CastSubcommand {
     Erc20Token {
         #[command(subcommand)]
         command: Erc20Subcommand,
+    },
+
+    /// ERC-4626 tokenized vault operations.
+    #[command(name = "erc4626", visible_alias = "vault")]
+    Erc4626 {
+        #[command(subcommand)]
+        command: Erc4626Subcommand,
     },
 
     /// TIP-20 token operations (Tempo).
@@ -1404,11 +1447,8 @@ pub enum CastSubcommand {
         command: KeyAuthorizationSubcommand,
     },
 
-    /// Tempo wallet integration (login, etc.).
-    Tempo {
-        #[command(subcommand)]
-        command: TempoSubcommand,
-    },
+    /// Tempo wallet and zone operations.
+    Tempo(TempoArgs),
 
     /// TIP-1022 virtual address registry operations (Tempo).
     #[command(visible_alias = "vaddr")]
@@ -1441,8 +1481,6 @@ pub fn parse_slot(s: &str) -> Result<B256> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::SimpleCast;
-    use alloy_rpc_types::{BlockNumberOrTag, RpcBlockHash};
     use clap::CommandFactory;
 
     #[test]
@@ -1528,57 +1566,10 @@ mod tests {
                     "__$_$__$$$$$__$$_$$$_$$__$$___$$(address,address,uint256)".to_string()
                 );
 
-                let selector = SimpleCast::get_selector(&sig, 0).unwrap();
-                assert_eq!(selector.0, "0x23b872dd".to_string());
+                let selector = foundry_common::abi::get_func(&sig).unwrap().selector();
+                assert_eq!(selector.to_string(), "0x23b872dd");
             }
             _ => unreachable!(),
         };
-    }
-
-    #[test]
-    fn parse_block_ids() {
-        struct TestCase {
-            input: String,
-            expect: BlockId,
-        }
-
-        let test_cases = [
-            TestCase {
-                input: "0".to_string(),
-                expect: BlockId::Number(BlockNumberOrTag::Number(0u64)),
-            },
-            TestCase {
-                input: "0x56462c47c03df160f66819f0a79ea07def1569f8aac0fe91bb3a081159b61b4a"
-                    .to_string(),
-                expect: BlockId::Hash(RpcBlockHash::from_hash(
-                    "0x56462c47c03df160f66819f0a79ea07def1569f8aac0fe91bb3a081159b61b4a"
-                        .parse()
-                        .unwrap(),
-                    None,
-                )),
-            },
-            TestCase {
-                input: "latest".to_string(),
-                expect: BlockId::Number(BlockNumberOrTag::Latest),
-            },
-            TestCase {
-                input: "earliest".to_string(),
-                expect: BlockId::Number(BlockNumberOrTag::Earliest),
-            },
-            TestCase {
-                input: "pending".to_string(),
-                expect: BlockId::Number(BlockNumberOrTag::Pending),
-            },
-            TestCase { input: "safe".to_string(), expect: BlockId::Number(BlockNumberOrTag::Safe) },
-            TestCase {
-                input: "finalized".to_string(),
-                expect: BlockId::Number(BlockNumberOrTag::Finalized),
-            },
-        ];
-
-        for test in test_cases {
-            let result: BlockId = test.input.parse().unwrap();
-            assert_eq!(result, test.expect);
-        }
     }
 }

@@ -12,7 +12,7 @@ extern crate foundry_common;
 #[macro_use]
 extern crate tracing;
 
-use crate::{broadcast::BundledState, runner::ScriptRunner};
+use crate::{broadcast::BundledState, runner::ScriptRunner, simulate::PreSimulationState};
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_network::Network;
 use alloy_primitives::{
@@ -46,10 +46,6 @@ use foundry_config::{
     },
 };
 use foundry_debugger::DebuggerLayout;
-#[cfg(feature = "monad")]
-use foundry_evm::core::evm::MonadEvmNetwork;
-#[cfg(feature = "optimism")]
-use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     backend::Backend,
     core::{
@@ -70,6 +66,15 @@ use foundry_evm_networks::NetworkConfigs;
 use foundry_wallets::MultiWalletOpts;
 use serde::Serialize;
 use std::path::PathBuf;
+
+#[cfg(feature = "base")]
+use foundry_evm::core::evm::BaseEvmNetwork;
+
+#[cfg(feature = "monad")]
+use foundry_evm::core::evm::MonadEvmNetwork;
+
+#[cfg(feature = "optimism")]
+use foundry_evm::core::evm::OpEvmNetwork;
 
 mod broadcast;
 mod build;
@@ -93,6 +98,12 @@ pub use wallet_session::ScriptWalletSessionArgs;
 foundry_config::merge_impl_figment_convert!(ScriptArgs, build, evm);
 
 const DEFAULT_CONFIRMATIONS: u64 = 1;
+
+/// Shared preparation stops before execution-family-specific on-chain simulation.
+enum PreparedScript<FEN: FoundryEvmNetwork> {
+    Resume(Box<BundledState<FEN>>),
+    Simulate(Box<PreSimulationState<FEN>>),
+}
 
 /// CLI arguments for `forge script`.
 #[derive(Clone, Debug, Default, Parser)]
@@ -221,6 +232,12 @@ pub struct ScriptArgs {
 
     /// Makes sure a transaction is sent,
     /// only after its previous one has been confirmed and succeeded.
+    ///
+    /// Transactions are prepared during local script execution, before broadcasting. This flag
+    /// does not re-run the script or update transaction destinations and calldata derived from
+    /// simulated return values.
+    ///
+    /// State changes or front-running can make those values stale, even with this flag.
     #[arg(long)]
     pub slow: bool,
 
@@ -294,11 +311,21 @@ impl ScriptArgs {
         Ok(self.tempo.session_id()?.is_some())
     }
 
-    /// Loads config, resolves evm_opts (including network inference from fork), and returns them.
-    async fn resolved_evm_opts(&self) -> Result<(Config, EvmOpts)> {
-        let (mut config, mut evm_opts) = self.load_config_and_evm_opts()?;
-
+    /// Resolves evm_opts (including network inference from fork) using the loaded config.
+    async fn resolved_evm_opts(
+        &self,
+        mut config: Config,
+        mut evm_opts: EvmOpts,
+    ) -> Result<(Config, EvmOpts)> {
         if self.tempo.is_tempo() || self.has_tempo_session()? {
+            if evm_opts.networks.has_network_selection() {
+                let network = evm_opts.networks.execution_network();
+                eyre::ensure!(
+                    network.is_tempo(),
+                    "Tempo transaction options conflict with configured network `{}`",
+                    evm_opts.networks.execution_profile_name()
+                );
+            }
             // If Tempo tx options or a session are set, select the Tempo network.
             evm_opts.networks = NetworkConfigs::with_tempo();
         }
@@ -314,6 +341,7 @@ impl ScriptArgs {
         self,
         mut config: Config,
         mut evm_opts: EvmOpts,
+        executor_builder: ExecutorBuilder<FEN>,
     ) -> Result<PreprocessedState<FEN>> {
         let args = self;
         let mut tempo = args.tempo.clone();
@@ -351,8 +379,15 @@ impl ScriptArgs {
             config.extra_output.push(ContractOutputSelection::StorageLayout);
         }
 
-        let script_config =
-            ScriptConfig::new(config, evm_opts, args.batch, tempo, args.sender_nonce).await?;
+        let script_config = ScriptConfig::new(
+            config,
+            evm_opts,
+            executor_builder,
+            args.batch,
+            tempo,
+            args.sender_nonce,
+        )
+        .await?;
         Ok(PreprocessedState { args, script_config, script_wallets, browser_wallet })
     }
 
@@ -372,7 +407,9 @@ impl ScriptArgs {
             return self.run_wallet_session_wrapper();
         }
 
-        let (config, evm_opts) = self.resolved_evm_opts().await?;
+        let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
+        self.install_missing_dependencies(&mut config)?;
+        let (config, evm_opts) = self.resolved_evm_opts(config, evm_opts).await?;
 
         let is_tempo = evm_opts.networks.is_tempo();
 
@@ -389,11 +426,17 @@ impl ScriptArgs {
         if is_tempo {
             let batch = self.batch;
             return Box::pin(async move {
-                let bundled =
-                    match self.prepare_bundled::<TempoEvmNetwork>(config, evm_opts).await? {
-                        Some(bundled) => bundled,
-                        None => return Ok(()),
-                    };
+                let bundled = match self
+                    .prepare_bundled::<TempoEvmNetwork>(
+                        config,
+                        evm_opts,
+                        ExecutorBuilder::<TempoEvmNetwork>::new(),
+                    )
+                    .await?
+                {
+                    Some(bundled) => bundled,
+                    None => return Ok(()),
+                };
                 // batch mode owns its own pending recovery inside broadcast_batch(); running the
                 // generic wait_for_pending() first would race with that and could double-process
                 // an already-confirmed batch hash.
@@ -411,17 +454,53 @@ impl ScriptArgs {
             .await;
         }
 
+        #[cfg(feature = "base")]
+        if evm_opts.networks.is_base() {
+            return Box::pin(self.run_generic_script::<BaseEvmNetwork>(
+                config,
+                evm_opts,
+                ExecutorBuilder::<BaseEvmNetwork>::new(),
+            ))
+            .await;
+        }
+
         #[cfg(feature = "monad")]
         if evm_opts.networks.is_monad() {
-            return Box::pin(self.run_generic_script::<MonadEvmNetwork>(config, evm_opts)).await;
+            return Box::pin(async move {
+                let Some(prepared) = self
+                    .prepare_script(config, evm_opts, ExecutorBuilder::<MonadEvmNetwork>::new())
+                    .await?
+                else {
+                    return Ok(());
+                };
+                let bundled = match prepared {
+                    PreparedScript::Resume(bundled) => *bundled,
+                    PreparedScript::Simulate(state) => {
+                        state.fill_monad_metadata().await?.bundle().await?
+                    }
+                };
+                let Some(bundled) = Self::finish_bundle(bundled).await? else { return Ok(()) };
+                Self::broadcast_bundle(bundled).await
+            })
+            .await;
         }
 
         #[cfg(feature = "optimism")]
         if evm_opts.networks.is_optimism() {
-            return Box::pin(self.run_generic_script::<OpEvmNetwork>(config, evm_opts)).await;
+            return Box::pin(self.run_generic_script::<OpEvmNetwork>(
+                config,
+                evm_opts,
+                ExecutorBuilder::<OpEvmNetwork>::new(),
+            ))
+            .await;
         }
 
-        Box::pin(self.run_generic_script::<EthEvmNetwork>(config, evm_opts)).await
+        Box::pin(self.run_generic_script::<EthEvmNetwork>(
+            config,
+            evm_opts,
+            ExecutorBuilder::<EthEvmNetwork>::new(),
+        ))
+        .await
     }
 
     /// Prepares the bundled state (compile, simulate, bundle) and returns it
@@ -432,15 +511,36 @@ impl ScriptArgs {
         self,
         config: Config,
         evm_opts: EvmOpts,
+        executor_builder: ExecutorBuilder<FEN>,
     ) -> Result<Option<BundledState<FEN>>> {
-        let state = self.preprocess::<FEN>(config, evm_opts).await?;
+        let Some(prepared) = self.prepare_script(config, evm_opts, executor_builder).await? else {
+            return Ok(None);
+        };
+        let bundled = match prepared {
+            PreparedScript::Resume(bundled) => *bundled,
+            PreparedScript::Simulate(state) => {
+                state.fill_ordinary_metadata().await?.bundle().await?
+            }
+        };
+        Self::finish_bundle(bundled).await
+    }
+
+    /// Compiles and executes the local script, leaving on-chain simulation to its concrete owner.
+    #[allow(clippy::large_stack_frames)]
+    async fn prepare_script<FEN: FoundryEvmNetwork>(
+        self,
+        config: Config,
+        evm_opts: EvmOpts,
+        executor_builder: ExecutorBuilder<FEN>,
+    ) -> Result<Option<PreparedScript<FEN>>> {
+        let state = self.preprocess::<FEN>(config, evm_opts, executor_builder).await?;
         let create2_deployer = state.script_config.evm_opts.create2_deployer;
         let compiled = state.compile()?;
 
         // Move from `CompiledState` to `BundledState` either by resuming or executing and
         // simulating script.
-        let bundled = if compiled.args.resume {
-            compiled.resume().await?
+        let prepared = if compiled.args.resume {
+            PreparedScript::Resume(Box::new(compiled.resume().await?))
         } else {
             // Drive state machine to point at which we have everything needed for simulation.
             let pre_simulation = compiled
@@ -503,9 +603,15 @@ impl ScriptArgs {
                 create2_deployer,
             )?;
 
-            pre_simulation.fill_metadata().await?.bundle().await?
+            PreparedScript::Simulate(Box::new(pre_simulation))
         };
+        Ok(Some(prepared))
+    }
 
+    /// Performs the shared post-simulation output and verification preflight checks.
+    async fn finish_bundle<FEN: FoundryEvmNetwork>(
+        bundled: BundledState<FEN>,
+    ) -> Result<Option<BundledState<FEN>>> {
         // Exit early in case user didn't provide any broadcast/verify related flags.
         if !bundled.args.should_broadcast() {
             if !shell::is_json() {
@@ -533,13 +639,18 @@ impl ScriptArgs {
         self,
         config: Config,
         evm_opts: EvmOpts,
+        executor_builder: ExecutorBuilder<FEN>,
     ) -> Result<()> {
-        let bundled = match self.prepare_bundled::<FEN>(config, evm_opts).await? {
+        let bundled = match self.prepare_bundled::<FEN>(config, evm_opts, executor_builder).await? {
             Some(bundled) => bundled,
             None => return Ok(()),
         };
 
         // Wait for pending txes and broadcast others.
+        Self::broadcast_bundle(bundled).await
+    }
+
+    async fn broadcast_bundle<FEN: FoundryEvmNetwork>(bundled: BundledState<FEN>) -> Result<()> {
         let broadcasted = bundled.wait_for_pending().await?.broadcast().await?;
 
         if broadcasted.args.verify {
@@ -859,6 +970,8 @@ struct JsonResult<'a, N: Network> {
 pub struct ScriptConfig<FEN: FoundryEvmNetwork> {
     pub config: Config,
     pub evm_opts: EvmOpts,
+    /// Executor construction selected by concrete network dispatch.
+    pub executor_builder: ExecutorBuilder<FEN>,
     /// Exact network hardfork selected for script execution.
     pub hardfork: Option<FoundryHardfork>,
     /// Source chain used for trace decoding and external identifiers.
@@ -905,6 +1018,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
     pub(crate) async fn new(
         mut config: Config,
         mut evm_opts: EvmOpts,
+        executor_builder: ExecutorBuilder<FEN>,
         batch: bool,
         tempo: TempoOpts,
         sender_nonce_override: Option<u64>,
@@ -925,6 +1039,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         Ok(Self {
             config,
             evm_opts,
+            executor_builder,
             hardfork: None,
             source_chain_id: None,
             sender_nonce,
@@ -1040,7 +1155,11 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
             if let Some(backend) = self.backends.get(&resolved) {
                 backend.clone()
             } else {
-                let fork = self.evm_opts.get_fork_with_context(&self.config, resolved.context());
+                let fork = self.evm_opts.get_fork_resolved(
+                    &self.config,
+                    evm_env.cfg_env.chain_id,
+                    Some(&resolved),
+                );
                 let backend = Backend::spawn(fork)?;
                 self.backends.insert(resolved, backend.clone());
                 backend
@@ -1053,12 +1172,13 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         };
 
         // We need to enable tracing to decode contract names: local or external.
-        let mut builder = ExecutorBuilder::default()
+        let mut builder = self
+            .executor_builder
+            .clone()
             .inspectors(|stack| {
                 stack
                     .logs(self.config.live_logs)
                     .trace_requirements(script_trace_requirements(&self.config, debug))
-                    .networks(self.evm_opts.networks)
                     .create2_deployer(self.evm_opts.create2_deployer)
             })
             .gas_limit(self.evm_opts.gas_limit())
@@ -1088,9 +1208,11 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         // (e.g. script deployment, setUp) use the correct fee token for Tempo networks.
         tx_env.set_fee_token(self.tempo.fee_token);
 
-        let mut runner =
-            ScriptRunner::new(builder.build(evm_env, tx_env, db), self.evm_opts.clone())
-                .with_debug_bytecodes(debug);
+        let mut runner = ScriptRunner::new(
+            builder.build(evm_env, tx_env, db, self.evm_opts.networks),
+            self.evm_opts.clone(),
+        )
+        .with_debug_bytecodes(debug);
 
         if self.sender_nonce_override.is_some() {
             runner.executor.set_nonce(self.evm_opts.sender, self.sender_nonce)?;
@@ -1111,11 +1233,10 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         let fork_hardfork = fork_context.and_then(|context| context.hardfork);
         self.source_chain_id = fork_chain_id;
         self.hardfork = resolve_execution_spec(
-            &self.config,
-            self.evm_opts.networks,
+            self.config.evm_version,
+            self.config.hardfork,
             &mut evm_env,
             ExecutionSpecContext::local_or_fork(fork_chain_id, fork_hardfork),
-            None,
             None,
         );
         Ok((resolved, evm_env, tx_env))
@@ -1151,8 +1272,6 @@ mod tests {
         upsert_session_entry,
     };
     use foundry_config::UnresolvedEnvVarError;
-    #[cfg(feature = "monad")]
-    use foundry_evm::hardforks::MonadHardfork;
     use foundry_evm::{
         revm::context::Block as _,
         traces::{
@@ -1198,6 +1317,7 @@ mod tests {
         let mut config = ScriptConfig::<EthEvmNetwork>::new(
             Config::default(),
             evm_opts,
+            ExecutorBuilder::<EthEvmNetwork>::new(),
             false,
             TempoOpts::default(),
             None,
@@ -1237,6 +1357,7 @@ mod tests {
         let mut config = ScriptConfig::<EthEvmNetwork>::new(
             Config::default(),
             evm_opts,
+            ExecutorBuilder::<EthEvmNetwork>::new(),
             false,
             TempoOpts::default(),
             None,
@@ -1269,6 +1390,7 @@ mod tests {
         let mut config = ScriptConfig::<EthEvmNetwork>::new(
             Config::default(),
             evm_opts,
+            ExecutorBuilder::<EthEvmNetwork>::new(),
             false,
             TempoOpts::default(),
             None,
@@ -1300,6 +1422,7 @@ mod tests {
         let mut config = ScriptConfig::<EthEvmNetwork>::new(
             Config::default(),
             evm_opts,
+            ExecutorBuilder::<EthEvmNetwork>::new(),
             false,
             TempoOpts::default(),
             None,
@@ -1349,6 +1472,7 @@ mod tests {
         let mut config = ScriptConfig::<EthEvmNetwork>::new(
             Config::default(),
             evm_opts,
+            ExecutorBuilder::<EthEvmNetwork>::new(),
             false,
             TempoOpts::default(),
             None,
@@ -1409,6 +1533,7 @@ mod tests {
         let mut config = ScriptConfig::<EthEvmNetwork>::new(
             Config::default(),
             evm_opts,
+            ExecutorBuilder::<EthEvmNetwork>::new(),
             false,
             TempoOpts::default(),
             None,
@@ -1442,6 +1567,7 @@ mod tests {
         let mut config = ScriptConfig::<EthEvmNetwork>::new(
             Config::default(),
             evm_opts,
+            ExecutorBuilder::<EthEvmNetwork>::new(),
             false,
             TempoOpts::default(),
             None,
@@ -1483,6 +1609,7 @@ mod tests {
         let mut config = ScriptConfig::<EthEvmNetwork>::new(
             Config::default(),
             evm_opts,
+            ExecutorBuilder::<EthEvmNetwork>::new(),
             false,
             TempoOpts::default(),
             None,
@@ -1549,6 +1676,7 @@ mod tests {
         let mut config = ScriptConfig::<EthEvmNetwork>::new(
             Config::default(),
             evm_opts,
+            ExecutorBuilder::<EthEvmNetwork>::new(),
             false,
             TempoOpts::default(),
             None,
@@ -1861,6 +1989,7 @@ mod tests {
         let mut config = ScriptConfig::<EthEvmNetwork>::new(
             Config::default(),
             evm_opts,
+            ExecutorBuilder::<EthEvmNetwork>::new(),
             false,
             TempoOpts::default(),
             None,
@@ -1900,6 +2029,7 @@ mod tests {
         let mut config = ScriptConfig::<EthEvmNetwork>::new(
             Config::default(),
             evm_opts,
+            ExecutorBuilder::<EthEvmNetwork>::new(),
             false,
             TempoOpts::default(),
             Some(7),
@@ -1918,7 +2048,7 @@ mod tests {
         let (_origin_api, origin_handle) = spawn(
             NodeConfig::test_monad()
                 .with_chain_id(Some(NamedChain::MonadTestnet as u64))
-                .with_hardfork(Some(MonadHardfork::MonadNine.into())),
+                .with_hardfork(Some(foundry_evm::hardforks::MonadHardfork::MonadNine.into())),
         )
         .await;
         let (_fork_api, fork_handle) = spawn(
@@ -1936,6 +2066,7 @@ mod tests {
         let mut script = ScriptConfig::<MonadEvmNetwork>::new(
             config,
             evm_opts,
+            ExecutorBuilder::<MonadEvmNetwork>::new(),
             false,
             TempoOpts::default(),
             None,
@@ -1946,7 +2077,10 @@ mod tests {
         let _runner = script._get_runner(None, false, false).await.unwrap();
 
         assert_eq!(script.source_chain_id, Some(NamedChain::MonadTestnet as u64));
-        assert_eq!(script.hardfork, Some(FoundryHardfork::Monad(MonadHardfork::MonadNine)));
+        assert_eq!(
+            script.hardfork,
+            Some(FoundryHardfork::Monad(foundry_evm::hardforks::MonadHardfork::MonadNine))
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1963,6 +2097,7 @@ mod tests {
         let mut script = ScriptConfig::<TempoEvmNetwork>::new(
             config,
             evm_opts,
+            ExecutorBuilder::<TempoEvmNetwork>::new(),
             false,
             TempoOpts::default(),
             None,
@@ -2069,7 +2204,14 @@ mod tests {
             ..Default::default()
         };
 
-        let state = args.preprocess::<TempoEvmNetwork>(Config::default(), evm_opts).await.unwrap();
+        let state = args
+            .preprocess::<TempoEvmNetwork>(
+                Config::default(),
+                evm_opts,
+                ExecutorBuilder::<TempoEvmNetwork>::new(),
+            )
+            .await
+            .unwrap();
         assert_eq!(state.script_config.evm_opts.sender, root);
     }
 
@@ -2093,7 +2235,14 @@ mod tests {
         ]);
         let evm_opts = EvmOpts { networks: NetworkConfigs::with_tempo(), ..Default::default() };
 
-        let state = args.preprocess::<TempoEvmNetwork>(Config::default(), evm_opts).await.unwrap();
+        let state = args
+            .preprocess::<TempoEvmNetwork>(
+                Config::default(),
+                evm_opts,
+                ExecutorBuilder::<TempoEvmNetwork>::new(),
+            )
+            .await
+            .unwrap();
         assert_ne!(state.script_config.evm_opts.sender, root);
     }
 
@@ -2116,7 +2265,14 @@ mod tests {
         ]);
         let evm_opts = EvmOpts { networks: NetworkConfigs::with_tempo(), ..Default::default() };
 
-        let state = args.preprocess::<TempoEvmNetwork>(Config::default(), evm_opts).await.unwrap();
+        let state = args
+            .preprocess::<TempoEvmNetwork>(
+                Config::default(),
+                evm_opts,
+                ExecutorBuilder::<TempoEvmNetwork>::new(),
+            )
+            .await
+            .unwrap();
         assert_ne!(state.script_config.evm_opts.sender, root);
     }
 
@@ -2139,7 +2295,14 @@ mod tests {
         ]);
         let evm_opts = EvmOpts { networks: NetworkConfigs::with_tempo(), ..Default::default() };
 
-        let state = args.preprocess::<TempoEvmNetwork>(Config::default(), evm_opts).await.unwrap();
+        let state = args
+            .preprocess::<TempoEvmNetwork>(
+                Config::default(),
+                evm_opts,
+                ExecutorBuilder::<TempoEvmNetwork>::new(),
+            )
+            .await
+            .unwrap();
         assert_eq!(state.script_config.evm_opts.sender, root);
     }
 
@@ -2162,8 +2325,44 @@ mod tests {
         ]);
         let evm_opts = EvmOpts { networks: NetworkConfigs::with_tempo(), ..Default::default() };
 
-        let state = args.preprocess::<TempoEvmNetwork>(Config::default(), evm_opts).await.unwrap();
+        let state = args
+            .preprocess::<TempoEvmNetwork>(
+                Config::default(),
+                evm_opts,
+                ExecutorBuilder::<TempoEvmNetwork>::new(),
+            )
+            .await
+            .unwrap();
         assert_eq!(state.script_config.evm_opts.sender, root);
+    }
+
+    #[tokio::test]
+    async fn tempo_options_preserve_explicit_script_network() {
+        let temp = tempdir().unwrap();
+        let _guard = TempoHomeGuard::set(temp.path()).await;
+        for options in [
+            vec!["--tempo.fee-token", "0x20c0000000000000000000000000000000000000"],
+            vec![
+                "--tempo.session",
+                "0x4444444444444444444444444444444444444444444444444444444444444444",
+            ],
+        ] {
+            let args =
+                ScriptArgs::parse_from(["foundry-cli", "Contract.sol"].into_iter().chain(options));
+            for (networks, name) in [
+                (NetworkConfigs::with_ethereum(), "ethereum"),
+                (NetworkConfigs::with_celo(), "celo"),
+                #[cfg(feature = "base")]
+                (NetworkConfigs::with_base(), "base"),
+            ] {
+                let evm_opts = EvmOpts { networks, ..Default::default() };
+                let err = args.resolved_evm_opts(Config::default(), evm_opts).await.unwrap_err();
+                assert_eq!(
+                    err.to_string(),
+                    format!("Tempo transaction options conflict with configured network `{name}`")
+                );
+            }
+        }
     }
 
     #[tokio::test]
@@ -2175,7 +2374,8 @@ mod tests {
         unsafe { std::env::set_var(TEMPO_SESSION_ID_ENV, format!("{session_id:?}")) };
 
         let args = ScriptArgs::parse_from(["foundry-cli", "Contract.sol"]);
-        let (_, evm_opts) = args.resolved_evm_opts().await.unwrap();
+        let (config, evm_opts) = args.load_config_and_evm_opts().unwrap();
+        let (_, evm_opts) = args.resolved_evm_opts(config, evm_opts).await.unwrap();
 
         assert!(evm_opts.networks.is_tempo());
     }
@@ -2204,7 +2404,14 @@ mod tests {
             ..Default::default()
         };
 
-        let err = match args.preprocess::<TempoEvmNetwork>(Config::default(), evm_opts).await {
+        let err = match args
+            .preprocess::<TempoEvmNetwork>(
+                Config::default(),
+                evm_opts,
+                ExecutorBuilder::<TempoEvmNetwork>::new(),
+            )
+            .await
+        {
             Ok(_) => panic!("expected --tempo.session with --private-key to fail"),
             Err(err) => err,
         };
@@ -2341,7 +2548,7 @@ mod tests {
         let mut config = Config { code_size_limit: Some(128), ..Default::default() };
         let evm_opts = EvmOpts { networks: NetworkConfigs::with_monad(), ..Default::default() };
         assert_eq!(
-            args.contract_size_limits::<MonadEvmNetwork>(&config, &evm_opts),
+            args.contract_size_limits::<MonadEvmNetwork>(&config, &evm_opts,),
             ContractSizeLimits::with_runtime_limit(64)
         );
 
@@ -2349,7 +2556,7 @@ mod tests {
             ScriptArgs::parse_from(["foundry-cli", "script", "script/Test.s.sol:TestScript"]);
         config.code_size_limit = Some(128);
         assert_eq!(
-            args.contract_size_limits::<MonadEvmNetwork>(&config, &evm_opts),
+            args.contract_size_limits::<MonadEvmNetwork>(&config, &evm_opts,),
             ContractSizeLimits::with_runtime_limit(128)
         );
     }

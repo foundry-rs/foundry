@@ -3,6 +3,30 @@
 //! This module provides high-performance parallel execution of mutation tests.
 //! Each mutant is tested in an isolated temporary workspace to enable concurrent execution.
 
+use crate::{
+    MultiContractRunnerBuilder,
+    cmd::test::{FilterArgs, RerunFailure},
+    mutation::{
+        SurvivedSpans,
+        mutant::{Mutant, MutationResult},
+        progress::MutationProgress,
+    },
+    result::SuiteResult,
+    workspace,
+};
+use eyre::Result;
+use foundry_common::{compile::ProjectCompiler, sh_eprintln, sh_println};
+use foundry_compilers::compilers::multi::MultiCompiler;
+use foundry_config::{Config, InlineConfig};
+use foundry_evm::{
+    core::evm::{
+        BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
+    },
+    executors::ExecutorBuilder,
+    fork::ResolvedFork,
+    opts::EvmOpts,
+};
+use rayon::prelude::*;
 use std::{
     collections::BTreeMap,
     fs,
@@ -16,35 +40,25 @@ use std::{
     thread::JoinHandle,
     time::Duration,
 };
-
-use eyre::Result;
-use foundry_common::{compile::ProjectCompiler, sh_eprintln, sh_println};
-use foundry_compilers::compilers::multi::MultiCompiler;
-use foundry_config::{Config, InlineConfig};
-#[cfg(feature = "monad")]
-use foundry_evm::core::evm::MonadEvmNetwork;
-#[cfg(feature = "optimism")]
-use foundry_evm::core::evm::OpEvmNetwork;
-use foundry_evm::{
-    core::evm::{
-        BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
-    },
-    opts::EvmOpts,
-};
-use rayon::prelude::*;
 use tempfile::TempDir;
 
-use crate::{
-    MultiContractRunnerBuilder,
-    cmd::test::{FilterArgs, RerunFailure},
-    mutation::{
-        SurvivedSpans,
-        mutant::{Mutant, MutationResult},
-        progress::MutationProgress,
-    },
-    result::SuiteResult,
-    workspace,
-};
+#[cfg(feature = "base")]
+use foundry_evm::core::evm::BaseEvmNetwork;
+
+#[cfg(feature = "monad")]
+use foundry_evm::core::evm::MonadEvmNetwork;
+
+#[cfg(feature = "optimism")]
+use foundry_evm::core::evm::OpEvmNetwork;
+
+const MUTATION_STACK_SIZE: usize = 16 * 1024 * 1024;
+
+#[cfg(test)]
+const MUTATION_STACK_PROBE_ENV: &str = "FOUNDRY_MUTATION_STACK_PROBE";
+#[cfg(test)]
+const MUTATION_STACK_PROBE_MARKER_ENV: &str = "FOUNDRY_MUTATION_STACK_PROBE_MARKER";
+#[cfg(test)]
+static MUTATION_STACK_PROBE_RAN: AtomicBool = AtomicBool::new(false);
 
 /// Result of testing a single mutant.
 #[derive(Debug, Clone)]
@@ -58,6 +72,14 @@ pub struct MutantTestResult {
 pub struct MutationBatchResult {
     pub results: Vec<MutantTestResult>,
     pub cancelled: bool,
+}
+
+/// Immutable EVM inputs shared by the baseline and every mutation worker.
+#[derive(Clone)]
+pub struct MutationEvmConfig {
+    pub opts: EvmOpts,
+    pub resolved_fork: Option<ResolvedFork>,
+    pub create2_deployer_available: bool,
 }
 
 /// Tracks progress and adaptive span skipping across parallel workers.
@@ -172,8 +194,7 @@ pub fn run_mutations_parallel_with_progress(
     source_path: PathBuf,
     original_source: Arc<String>,
     config: Arc<Config>,
-    evm_opts: EvmOpts,
-    create2_deployer_available: bool,
+    evm: MutationEvmConfig,
     num_workers: usize,
     progress: Option<MutationProgress>,
     silent: bool,
@@ -236,7 +257,7 @@ pub fn run_mutations_parallel_with_progress(
     // Configure rayon thread pool
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(num_workers)
-        .stack_size(16 * 1024 * 1024) // 16MB stack to avoid overflow in deep call chains
+        .stack_size(MUTATION_STACK_SIZE)
         .build()
         .map_err(|e| eyre::eyre!("Failed to create thread pool: {}", e))?;
 
@@ -262,8 +283,7 @@ pub fn run_mutations_parallel_with_progress(
                     &source_relative,
                     &original_source,
                     &config,
-                    &evm_opts,
-                    create2_deployer_available,
+                    &evm,
                     &shared_state,
                     &temp_root,
                     &filter_args,
@@ -342,8 +362,7 @@ fn test_single_mutant_isolated(
     source_relative: &PathBuf,
     original_source: &Arc<String>,
     config: &Arc<Config>,
-    evm_opts: &EvmOpts,
-    create2_deployer_available: bool,
+    evm: &MutationEvmConfig,
     shared_state: &Arc<SharedMutationState>,
     temp_root: &Path,
     filter_args: &Arc<FilterArgs>,
@@ -421,8 +440,7 @@ fn test_single_mutant_isolated(
     let result = match timeout {
         Some(budget) => run_compile_and_test_with_timeout(
             temp_config,
-            evm_opts,
-            create2_deployer_available,
+            evm,
             budget,
             temp_dir,
             shared_state,
@@ -434,8 +452,7 @@ fn test_single_mutant_isolated(
         None => {
             let res = match compile_and_test(
                 &temp_config,
-                evm_opts,
-                create2_deployer_available,
+                evm,
                 filter_args,
                 rerun_failures.as_ref().as_deref(),
                 selected_sources_relative,
@@ -475,8 +492,7 @@ fn test_single_mutant_isolated(
 #[allow(clippy::too_many_arguments)]
 fn run_compile_and_test_with_timeout(
     config: Arc<Config>,
-    evm_opts: &EvmOpts,
-    create2_deployer_available: bool,
+    evm: &MutationEvmConfig,
     budget: Duration,
     temp_dir: TempDir,
     shared_state: &Arc<SharedMutationState>,
@@ -486,7 +502,7 @@ fn run_compile_and_test_with_timeout(
     isolate: bool,
 ) -> MutationResult {
     let (tx, rx) = mpsc::channel::<Result<bool>>();
-    let opts = evm_opts.clone();
+    let evm = evm.clone();
     // Move `temp_dir` into the worker so its `Drop` only runs after the worker
     // thread exits. Do NOT capture by reference — the worker may outlive this
     // function on timeout.
@@ -496,19 +512,23 @@ fn run_compile_and_test_with_timeout(
     let selected_sources_for_worker = Arc::clone(&selected_sources_relative);
 
     let spawn_result = std::thread::Builder::new()
-        .stack_size(16 * 1024 * 1024)
+        .stack_size(MUTATION_STACK_SIZE)
         .name("mutation-worker".to_string())
         .spawn(move || {
+            // `test_collect` uses Rayon internally. Because this timeout worker
+            // is not itself a Rayon worker, nested parallel iterators would
+            // otherwise escape to the global pool and its default-sized stacks.
             let res = panic::catch_unwind(AssertUnwindSafe(|| {
-                compile_and_test(
-                    &cfg,
-                    &opts,
-                    create2_deployer_available,
-                    &filter_for_worker,
-                    rerun_for_worker.as_ref().as_deref(),
-                    &selected_sources_for_worker,
-                    isolate,
-                )
+                with_mutation_test_pool(|| {
+                    compile_and_test(
+                        &cfg,
+                        &evm,
+                        &filter_for_worker,
+                        rerun_for_worker.as_ref().as_deref(),
+                        &selected_sources_for_worker,
+                        isolate,
+                    )
+                })
             }))
             .unwrap_or_else(|_| Err(eyre::eyre!("worker panicked")));
             let _ = tx.send(res);
@@ -545,6 +565,37 @@ fn run_compile_and_test_with_timeout(
             shared_state.park_timed_out_worker(handle);
             MutationResult::TimedOut
         }
+    }
+}
+
+fn with_mutation_test_pool<T: Send>(op: impl FnOnce() -> Result<T> + Send) -> Result<T> {
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .stack_size(MUTATION_STACK_SIZE)
+        .thread_name(|_| "mutation-test".to_string())
+        .build()
+        .map_err(|err| eyre::eyre!("failed to create mutation test pool: {err}"))?
+        .install(|| {
+            #[cfg(test)]
+            if std::env::var_os(MUTATION_STACK_PROBE_ENV).is_some() {
+                std::hint::black_box(mutation_stack_probe(1024));
+                MUTATION_STACK_PROBE_RAN.store(true, Ordering::Release);
+            }
+            op()
+        })
+}
+
+#[cfg(test)]
+#[inline(never)]
+fn mutation_stack_probe(depth: usize) -> usize {
+    let frame = [depth as u8; 8 * 1024];
+    std::hint::black_box(&frame);
+    if depth == 0 {
+        frame[0] as usize
+    } else {
+        let result = mutation_stack_probe(depth - 1).wrapping_add(frame[depth % frame.len()] as _);
+        std::hint::black_box(&frame);
+        result
     }
 }
 
@@ -618,69 +669,82 @@ fn temp_config_for_mutation(config: &Config, temp_path: &Path) -> Config {
 /// Dispatches to the correct network type based on `evm_opts.networks`.
 fn compile_and_test(
     config: &Arc<Config>,
-    evm_opts: &EvmOpts,
-    create2_deployer_available: bool,
+    evm: &MutationEvmConfig,
     filter_args: &FilterArgs,
     rerun_failures: Option<&[RerunFailure]>,
     selected_sources_relative: &[PathBuf],
     isolate: bool,
 ) -> Result<bool> {
-    if evm_opts.networks.is_tempo() {
+    if evm.opts.networks.is_tempo() {
         compile_and_test_inner::<TempoEvmNetwork>(
             config,
-            evm_opts,
-            create2_deployer_available,
+            evm,
             filter_args,
             rerun_failures,
             selected_sources_relative,
             isolate,
+            ExecutorBuilder::<TempoEvmNetwork>::new(),
         )
     } else {
-        #[cfg(feature = "monad")]
-        if evm_opts.networks.is_monad() {
-            return compile_and_test_inner::<MonadEvmNetwork>(
+        #[cfg(feature = "base")]
+        if evm.opts.networks.is_base() {
+            return compile_and_test_inner::<BaseEvmNetwork>(
                 config,
-                evm_opts,
-                create2_deployer_available,
+                evm,
                 filter_args,
                 rerun_failures,
                 selected_sources_relative,
                 isolate,
+                ExecutorBuilder::<BaseEvmNetwork>::new(),
+            );
+        }
+        #[cfg(feature = "monad")]
+        if evm.opts.networks.is_monad() {
+            return compile_and_test_inner::<MonadEvmNetwork>(
+                config,
+                evm,
+                filter_args,
+                rerun_failures,
+                selected_sources_relative,
+                isolate,
+                ExecutorBuilder::<MonadEvmNetwork>::new(),
             );
         }
         #[cfg(feature = "optimism")]
-        if evm_opts.networks.is_optimism() {
+        if evm.opts.networks.is_optimism() {
             return compile_and_test_inner::<OpEvmNetwork>(
                 config,
-                evm_opts,
-                create2_deployer_available,
+                evm,
                 filter_args,
                 rerun_failures,
                 selected_sources_relative,
                 isolate,
+                ExecutorBuilder::<OpEvmNetwork>::new(),
             );
         }
         compile_and_test_inner::<EthEvmNetwork>(
             config,
-            evm_opts,
-            create2_deployer_available,
+            evm,
             filter_args,
             rerun_failures,
             selected_sources_relative,
             isolate,
+            ExecutorBuilder::<EthEvmNetwork>::new(),
         )
     }
 }
 
 fn compile_and_test_inner<FEN: FoundryEvmNetwork>(
     config: &Arc<Config>,
-    evm_opts: &EvmOpts,
-    create2_deployer_available: bool,
+    evm: &MutationEvmConfig,
     filter_args: &FilterArgs,
     rerun_failures: Option<&[RerunFailure]>,
     selected_sources_relative: &[PathBuf],
     isolate: bool,
+    executor_builder: ExecutorBuilder<FEN>,
 ) -> Result<bool> {
+    let evm_opts = &evm.opts;
+    let resolved_fork = evm.resolved_fork.as_ref();
     // Compile
     let files = selected_sources_relative
         .iter()
@@ -714,9 +778,10 @@ fn compile_and_test_inner<FEN: FoundryEvmNetwork>(
 
     // Use block_on to run within the runtime context
     let results: BTreeMap<String, SuiteResult> = rt.block_on(async {
-        let (evm_env, tx_env, fork_context) = evm_opts
-            .env_with_fork_context::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>()
+        let (evm_env, tx_env) = evm_opts
+            .env_with_resolved_fork::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>(resolved_fork)
             .await?;
+        let fork_context = resolved_fork.map(ResolvedFork::context);
         let fork_chain_id = fork_context.map(|context| context.source_chain_id);
         let fork_hardfork = fork_context.and_then(|context| context.hardfork);
 
@@ -728,15 +793,19 @@ fn compile_and_test_inner<FEN: FoundryEvmNetwork>(
             .set_debug(false)
             .initial_balance(evm_opts.initial_balance)
             .sender(evm_opts.sender)
-            .with_fork(
-                fork_context.and_then(|context| evm_opts.get_fork_with_context(config, context)),
-            )
+            .with_fork(evm_opts.get_fork_resolved(config, evm_env.cfg_env.chain_id, resolved_fork))
             .with_fork_chain_id(fork_chain_id)
             .with_fork_hardfork(fork_hardfork)
             .enable_isolation(isolate)
             .fail_fast(true)
-            .with_create2_deployer_available(create2_deployer_available)
-            .build::<FEN, MultiCompiler>(&compile_output, evm_env, tx_env, evm_opts.clone())?;
+            .with_create2_deployer_available(evm.create2_deployer_available)
+            .build::<FEN, MultiCompiler>(
+                &compile_output,
+                evm_env,
+                tx_env,
+                evm_opts.clone(),
+                executor_builder,
+            )?;
 
         runner.test_collect(&filter)
     })?;
@@ -751,6 +820,68 @@ fn compile_and_test_inner<FEN: FoundryEvmNetwork>(
 mod tests {
     use super::*;
     use alloy_primitives::U256;
+    use std::process::Command;
+
+    #[test]
+    fn timeout_path_uses_enlarged_test_worker_stack() {
+        if std::env::var_os(MUTATION_STACK_PROBE_ENV).is_some() {
+            let workspace = TempDir::new().unwrap();
+            let source = PathBuf::from("src/StackProbe.t.sol");
+            fs::create_dir_all(workspace.path().join("src")).unwrap();
+            fs::write(
+                workspace.path().join(&source),
+                "contract StackProbeTest { function test_stackProbe() public {} }",
+            )
+            .unwrap();
+            let mut config = Config::with_root(workspace.path());
+            config.out = workspace.path().join("out");
+            config.cache_path = workspace.path().join("cache/solidity-files-cache.json");
+            let config = Arc::new(config);
+            let evm = MutationEvmConfig {
+                opts: EvmOpts::default(),
+                resolved_fork: None,
+                create2_deployer_available: false,
+            };
+            let shared_state = Arc::new(SharedMutationState::default());
+
+            let result = run_compile_and_test_with_timeout(
+                config,
+                &evm,
+                Duration::from_secs(60),
+                workspace,
+                &shared_state,
+                Arc::new(FilterArgs::default()),
+                Arc::new(None),
+                Arc::new(vec![source]),
+                false,
+            );
+
+            assert!(!matches!(result, MutationResult::TimedOut), "unexpected result: {result:?}");
+            assert!(MUTATION_STACK_PROBE_RAN.load(Ordering::Acquire));
+            fs::write(std::env::var_os(MUTATION_STACK_PROBE_MARKER_ENV).unwrap(), b"ok").unwrap();
+            return;
+        }
+
+        let marker_dir = TempDir::new().unwrap();
+        let marker = marker_dir.path().join("completed");
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "mutation::runner::tests::timeout_path_uses_enlarged_test_worker_stack",
+            ])
+            .env(MUTATION_STACK_PROBE_ENV, "1")
+            .env(MUTATION_STACK_PROBE_MARKER_ENV, &marker)
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert!(
+            output.status.success(),
+            "stack-pressure child failed:\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+        assert!(marker.exists(), "stack-pressure child did not complete the production path");
+    }
 
     #[test]
     fn park_timed_out_worker_bounds_pending_handles() {
@@ -800,26 +931,27 @@ mod tests {
         config.mutation.timeout = Some(5);
 
         let temp_config = temp_config_for_mutation(&config, temp.path());
+        let expected_root = dunce::canonicalize(temp.path()).unwrap();
 
-        assert_eq!(temp_config.root, temp.path());
-        assert_eq!(temp_config.src, temp.path().join("contracts"));
-        assert_eq!(temp_config.test, temp.path().join("checks"));
-        assert_eq!(temp_config.script, temp.path().join("deploy"));
-        assert_eq!(temp_config.out, temp.path().join("custom-out"));
-        assert_eq!(temp_config.cache_path, temp.path().join("custom-cache"));
-        assert_eq!(temp_config.snapshots, temp.path().join("custom-snapshots"));
-        assert_eq!(temp_config.broadcast, temp.path().join("custom-broadcast"));
-        assert_eq!(temp_config.mutation_dir, temp.path().join("custom-cache/mutation"));
-        assert_eq!(temp_config.libs, vec![temp.path().join("vendor")]);
-        assert_eq!(temp_config.include_paths, vec![temp.path().join("shared")]);
-        assert_eq!(temp_config.allow_paths, vec![temp.path().join("fixtures")]);
+        assert_eq!(temp_config.root, expected_root);
+        assert_eq!(temp_config.src, expected_root.join("contracts"));
+        assert_eq!(temp_config.test, expected_root.join("checks"));
+        assert_eq!(temp_config.script, expected_root.join("deploy"));
+        assert_eq!(temp_config.out, expected_root.join("custom-out"));
+        assert_eq!(temp_config.cache_path, expected_root.join("custom-cache"));
+        assert_eq!(temp_config.snapshots, expected_root.join("custom-snapshots"));
+        assert_eq!(temp_config.broadcast, expected_root.join("custom-broadcast"));
+        assert_eq!(temp_config.mutation_dir, expected_root.join("custom-cache/mutation"));
+        assert_eq!(temp_config.libs, vec![expected_root.join("vendor")]);
+        assert_eq!(temp_config.include_paths, vec![expected_root.join("shared")]);
+        assert_eq!(temp_config.allow_paths, vec![expected_root.join("fixtures")]);
         assert_eq!(
             temp_config.fuzz.failure_persist_dir,
-            Some(temp.path().join("custom-cache/fuzz"))
+            Some(expected_root.join("custom-cache/fuzz"))
         );
         assert_eq!(
             temp_config.invariant.failure_persist_dir,
-            Some(temp.path().join("custom-cache/invariant"))
+            Some(expected_root.join("custom-cache/invariant"))
         );
         assert!(temp_config.dynamic_test_linking);
         assert!(temp_config.cache);

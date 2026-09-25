@@ -9,6 +9,7 @@
 //! It contains methods to read the json abi, generate rust bindings from the abi and ultimately
 //! write the bindings to a crate or modules.
 
+use alloy_json_abi::ToSolConfig;
 use alloy_sol_macro_expander::expand::expand;
 use alloy_sol_macro_input::{SolInput, SolInputKind};
 use eyre::{Context, OptionExt, Result};
@@ -47,7 +48,9 @@ impl SolMacroGen {
 
     pub fn get_sol_input(&self) -> Result<SolInput> {
         let path = self.path.to_string_lossy().into_owned();
-        let name = proc_macro2::Ident::new(&self.name, Span::call_site());
+        let name: syn::Ident = syn::parse_str(&self.name).wrap_err_with(|| {
+            format!("`{}` is not a valid Rust identifier for generated bindings", self.name)
+        })?;
         let tokens = quote::quote! {
             #[sol(ignore_unlinked)]
             #name,
@@ -81,9 +84,9 @@ impl MultiSolMacroGen {
         Ok(())
     }
 
-    pub fn generate_bindings(&mut self, all_derives: bool) -> Result<()> {
+    pub fn generate_bindings(&mut self, all_derives: bool, sol_config: &ToSolConfig) -> Result<()> {
         self.instances.par_iter_mut().try_for_each(|instance| {
-            Self::generate_binding(instance, all_derives).wrap_err_with(|| {
+            Self::generate_binding(instance, all_derives, sol_config).wrap_err_with(|| {
                 format!(
                     "failed to generate bindings for {}:{}",
                     instance.path.display(),
@@ -93,8 +96,12 @@ impl MultiSolMacroGen {
         })
     }
 
-    fn generate_binding(instance: &mut SolMacroGen, all_derives: bool) -> Result<()> {
-        let input = instance.get_sol_input()?.normalize_json()?;
+    fn generate_binding(
+        instance: &mut SolMacroGen,
+        all_derives: bool,
+        sol_config: &ToSolConfig,
+    ) -> Result<()> {
+        let input = instance.get_sol_input()?.normalize_json_with_config(sol_config.clone())?;
         let SolInput { attrs: _, path: _, kind } = input;
 
         let tokens = match kind {
@@ -137,8 +144,9 @@ impl MultiSolMacroGen {
         alloy_version: Option<String>,
         alloy_rev: Option<String>,
         all_derives: bool,
+        sol_config: &ToSolConfig,
     ) -> Result<()> {
-        self.generate_bindings(all_derives)?;
+        self.generate_bindings(all_derives, sol_config)?;
 
         let src = bindings_path.join("src");
         fs::create_dir_all(&src)?;
@@ -226,8 +234,9 @@ edition = "2021"
         bindings_path: &Path,
         single_file: bool,
         all_derives: bool,
+        sol_config: &ToSolConfig,
     ) -> Result<()> {
-        self.generate_bindings(all_derives)?;
+        self.generate_bindings(all_derives, sol_config)?;
 
         fs::create_dir_all(bindings_path)?;
 
@@ -548,5 +557,13 @@ mod tests {
             adapter("alloy::sol_types::private::Vec<[u64; 48]>"),
             Some("::std::vec::Vec<[::serde_with::Same; 48]>".to_string())
         );
+    }
+
+    #[test]
+    fn get_sol_input_rejects_invalid_identifier_instead_of_panicking() {
+        // `$` is valid in Solidity identifiers but not Rust identifiers.
+        let instance =
+            super::SolMacroGen::new(std::path::PathBuf::from("Foo.json"), "Foo$Bar".to_string());
+        assert!(instance.get_sol_input().is_err());
     }
 }

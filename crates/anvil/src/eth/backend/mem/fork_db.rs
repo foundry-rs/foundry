@@ -46,11 +46,11 @@ impl<N: Network> Db for ForkedDatabase<N> {
     }
 
     fn insert_block_hash(&mut self, number: U256, hash: B256) {
-        cache_block_hash(&mut self.inner().block_hashes().write(), number, hash);
+        cache_block_hash(&mut self.database_mut().cache.block_hashes, number, hash);
     }
 
     fn set_block_hashes(&mut self, block_hashes: Vec<(U256, B256)>) {
-        *self.inner().block_hashes().write() = block_hashes.into_iter().collect();
+        self.database_mut().cache.block_hashes = block_hashes.into_iter().collect();
     }
 
     fn dump_state(
@@ -115,6 +115,10 @@ impl<N: Network> Db for ForkedDatabase<N> {
 impl<N: Network> MaybeFullDatabase for ForkedDatabase<N> {
     fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
         Some(&self.database().cache.accounts)
+    }
+
+    fn maybe_as_full_db_mut(&mut self) -> Option<&mut AddressMap<DbAccount>> {
+        Some(&mut self.database_mut().cache.accounts)
     }
 
     fn maybe_full_db(&self) -> Option<AddressMap<DbAccount>> {

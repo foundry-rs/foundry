@@ -1,9 +1,10 @@
 //! Abstract global allocator implementation.
 
-#[cfg(feature = "mimalloc")]
-use mimalloc as _;
 #[cfg(all(feature = "jemalloc", unix))]
 use tikv_jemallocator as _;
+
+#[cfg(feature = "mimalloc")]
+use mimalloc as _;
 
 // If neither jemalloc nor mimalloc are enabled, use explicitly the system allocator.
 // By default jemalloc is enabled on Unix systems.

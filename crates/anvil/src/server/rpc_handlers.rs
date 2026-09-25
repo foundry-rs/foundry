@@ -27,12 +27,11 @@ impl HttpEthRpcHandler {
     }
 }
 
-#[async_trait::async_trait]
 impl RpcHandler for HttpEthRpcHandler {
     type Request = EthRequest;
 
-    async fn on_request(&self, request: Self::Request) -> ResponseResult {
-        self.api.execute(request).await
+    fn on_request(&self, request: Self::Request) -> impl Future<Output = ResponseResult> + Send {
+        self.api.execute(request)
     }
 }
 
@@ -148,7 +147,6 @@ impl PubSubEthRpcHandler {
     }
 }
 
-#[async_trait::async_trait]
 impl PubSubRpcHandler for PubSubEthRpcHandler {
     type Request = EthRpcCall;
     type SubscriptionId = SubscriptionId;

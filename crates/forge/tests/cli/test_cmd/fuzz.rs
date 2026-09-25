@@ -12,18 +12,27 @@ const DEFAULT_SENDER: &str = "0x0000000000000000000000000000000000000001";
 const DEFAULT_TEST_TARGET: &str = "0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496";
 
 fn find_first_json(root: &std::path::Path) -> std::path::PathBuf {
+    find_json_files(root)
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| panic!("no json corpus entry under {}", root.display()))
+}
+
+fn find_json_files(root: &std::path::Path) -> Vec<std::path::PathBuf> {
     let mut dirs = vec![root.to_path_buf()];
+    let mut files = Vec::new();
     while let Some(dir) = dirs.pop() {
         for entry in std::fs::read_dir(dir).unwrap() {
             let path = entry.unwrap().path();
             if path.is_dir() {
                 dirs.push(path);
             } else if path.extension().is_some_and(|extension| extension == "json") {
-                return path;
+                files.push(path);
             }
         }
     }
-    panic!("no json corpus entry under {}", root.display());
+    files.sort();
+    files
 }
 
 fn artifact_abi(root: &Path, artifact: &str) -> JsonAbi {
@@ -314,6 +323,225 @@ Ran 1 test suite [ELAPSED]: 0 tests passed, 0 failed, 2 skipped (2 total tests)
 
 "#
     ]]);
+});
+
+forgetest_init!(overloaded_fuzz_tests_use_distinct_paths, |prj, cmd| {
+    let corpus_root = prj.root().join("overloaded-corpus");
+    prj.update_config(|config| {
+        config.fuzz.runs = 1;
+        config.fuzz.seed = Some(U256::from(1));
+        config.fuzz.corpus.corpus_dir = Some(corpus_root.clone());
+    });
+    prj.add_test(
+        "OverloadedFuzz.t.sol",
+        r#"
+contract OverloadedFuzzTest {
+    function testFuzz_collision(address) external pure {
+        revert("ADDRESS_BUG");
+    }
+
+    function testFuzz_collision(uint256) external pure {
+        revert("UINT_BUG");
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mc", "OverloadedFuzzTest", "-j1"]).assert_failure();
+
+    let failure_root = prj.root().join("cache/fuzz/failures/OverloadedFuzzTest");
+    let address_name = format!(
+        "testFuzz_collision-{}",
+        hex::encode(&keccak256("testFuzz_collision(address)")[..4])
+    );
+    let uint_name = format!(
+        "testFuzz_collision-{}",
+        hex::encode(&keccak256("testFuzz_collision(uint256)")[..4])
+    );
+    let address_failure = failure_root.join(&address_name);
+    let uint_failure = failure_root.join(&uint_name);
+    assert!(address_failure.exists());
+    assert!(uint_failure.exists());
+    assert!(!failure_root.join("testFuzz_collision").exists());
+    assert!(corpus_root.join("OverloadedFuzzTest").join(&address_name).exists());
+    assert!(corpus_root.join("OverloadedFuzzTest").join(&uint_name).exists());
+
+    let address_corpus = corpus_root.join("OverloadedFuzzTest").join(&address_name);
+    let legacy_corpus = corpus_root.join("OverloadedFuzzTest/testFuzz_collision");
+    std::fs::rename(&address_corpus, &legacy_corpus).unwrap();
+
+    let legacy_showmap_root = prj.root().join("legacy-showmap");
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--mc",
+            "OverloadedFuzzTest",
+            "--mt",
+            r"^testFuzz_collision\(address\)$",
+            "--showmap-out",
+            "legacy-showmap",
+            "--showmap-trial",
+            "legacy",
+            "-j1",
+        ])
+        .assert_success();
+    let showmap_prefix = "replay__test_OverloadedFuzz.t.sol_OverloadedFuzzTest__";
+    assert!(
+        legacy_showmap_root.join(format!("{showmap_prefix}{address_name}/legacy.txt")).exists()
+    );
+
+    let override_corpus = prj.root().join("override-corpus/OverloadedFuzzTest/testFuzz_collision");
+    std::fs::create_dir_all(override_corpus.parent().unwrap()).unwrap();
+    std::fs::rename(&legacy_corpus, &override_corpus).unwrap();
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--mc",
+            "OverloadedFuzzTest",
+            "--mt",
+            r"^testFuzz_collision\(address\)$",
+            "--showmap-out",
+            "override-showmap",
+            "--showmap-corpus-dir",
+            "override-corpus",
+            "--showmap-trial",
+            "override",
+            "-j1",
+        ])
+        .assert_success();
+    assert!(
+        prj.root()
+            .join("override-showmap")
+            .join(format!("{showmap_prefix}{address_name}/override.txt"))
+            .exists()
+    );
+    std::fs::rename(&override_corpus, &legacy_corpus).unwrap();
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--mc",
+            "OverloadedFuzzTest",
+            "--mt",
+            r"^testFuzz_collision\(address\)$",
+            "-j1",
+        ])
+        .assert_failure();
+    assert!(address_corpus.exists());
+    assert!(legacy_corpus.exists());
+
+    let showmap_root = prj.root().join("overloaded-showmap");
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--mc",
+            "OverloadedFuzzTest",
+            "--mt",
+            "testFuzz_collision",
+            "--showmap-out",
+            "overloaded-showmap",
+            "--showmap-trial",
+            "overloaded",
+            "-j1",
+        ])
+        .assert_success();
+    assert!(showmap_root.join(format!("{showmap_prefix}{address_name}/overloaded.txt")).exists());
+    assert!(showmap_root.join(format!("{showmap_prefix}{uint_name}/overloaded.txt")).exists());
+    std::fs::remove_dir_all(&legacy_corpus).unwrap();
+
+    let address_replay = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--mc",
+            "OverloadedFuzzTest",
+            "--mt",
+            r"^testFuzz_collision\(address\)$",
+        ])
+        .assert_failure();
+    let stdout = String::from_utf8_lossy(&address_replay.get_output().stdout);
+    assert!(stdout.contains("[FAIL: ADDRESS_BUG; counterexample:"), "{stdout}");
+
+    let uint_replay = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--mc",
+            "OverloadedFuzzTest",
+            "--mt",
+            r"^testFuzz_collision\(uint256\)$",
+        ])
+        .assert_failure();
+    let stdout = String::from_utf8_lossy(&uint_replay.get_output().stdout);
+    assert!(stdout.contains("[FAIL: UINT_BUG; counterexample:"), "{stdout}");
+
+    prj.add_test(
+        "OverloadedFuzz.t.sol",
+        r#"
+contract OverloadedFuzzTest {
+    function testFuzz_collision(address) external pure {
+        revert("ADDRESS_BUG");
+    }
+}
+   "#,
+    );
+    let address_replay = cmd
+        .forge_fuse()
+        .args(["fuzz", "replay", "--mc", "OverloadedFuzzTest", "--mt", "testFuzz_collision"])
+        .assert_failure();
+    let stdout = String::from_utf8_lossy(&address_replay.get_output().stdout);
+    assert!(stdout.contains("[FAIL: ADDRESS_BUG; counterexample:"), "{stdout}");
+    assert!(address_failure.exists());
+    assert!(!failure_root.join("testFuzz_collision").exists());
+    assert!(corpus_root.join("OverloadedFuzzTest").join(&address_name).exists());
+    assert!(!corpus_root.join("OverloadedFuzzTest/testFuzz_collision").exists());
+
+    prj.add_test(
+        "OverloadedFuzz.t.sol",
+        r#"
+contract OverloadedFuzzTest {
+    function testFuzz_collision(address) external pure {
+        revert("ADDRESS_BUG");
+    }
+
+    function testFuzz_collision(uint256) external pure {
+        revert("UINT_BUG");
+    }
+}
+   "#,
+    );
+    std::fs::rename(&address_failure, failure_root.join("testFuzz_collision")).unwrap();
+    std::fs::remove_file(&uint_failure).unwrap();
+
+    let mismatched_legacy_replay = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--mc",
+            "OverloadedFuzzTest",
+            "--mt",
+            r"^testFuzz_collision\(uint256\)$",
+        ])
+        .assert_success();
+    let stdout = String::from_utf8_lossy(&mismatched_legacy_replay.get_output().stdout);
+    assert!(stdout.contains("no persisted fuzz failure found"), "{stdout}");
+
+    let legacy_replay = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--mc",
+            "OverloadedFuzzTest",
+            "--mt",
+            r"^testFuzz_collision\(address\)$",
+        ])
+        .assert_failure();
+    let stdout = String::from_utf8_lossy(&legacy_replay.get_output().stdout);
+    assert!(stdout.contains("[FAIL: ADDRESS_BUG; counterexample:"), "{stdout}");
 });
 
 forgetest_init!(forge_fuzz_replays_explicit_failure_file, |prj, cmd| {
@@ -744,6 +972,57 @@ contract ForgeFuzzReplayFailureTest {
     assert!(stdout.contains("[SKIP: not runnable in replay mode] test_unit()"), "{stdout}");
 });
 
+forgetest_init!(stateless_fuzz_does_not_persist_skips, |prj, cmd| {
+    let corpus_root = prj.root().join("fuzz_corpus");
+    prj.update_config(|config| {
+        config.fuzz.runs = 1;
+        config.fuzz.seed = Some(U256::from(1));
+        config.fuzz.corpus.corpus_dir = Some(corpus_root.clone());
+    });
+    prj.add_test(
+        "StatelessSkip.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract StatelessSkipTest is Test {
+    function testFuzz_skip(uint256) public {
+        vm.skip(true);
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "testFuzz_skip", "-q"]).assert_success();
+
+    assert!(!has_regular_file(&corpus_root));
+});
+
+forgetest_init!(stateless_fuzz_does_not_persist_assume_rejects, |prj, cmd| {
+    let corpus_root = prj.root().join("fuzz_corpus");
+    prj.update_config(|config| {
+        config.fuzz.runs = 1;
+        config.fuzz.max_test_rejects = 1;
+        config.fuzz.seed = Some(U256::from(1));
+        config.fuzz.corpus.corpus_dir = Some(corpus_root.clone());
+    });
+    prj.add_test(
+        "StatelessAssumeReject.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract StatelessAssumeRejectTest is Test {
+    function testFuzz_assume(uint256) public view {
+        vm.assume(false);
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "testFuzz_assume", "-q"]).assert_failure();
+
+    assert!(!has_regular_file(&corpus_root));
+});
+
 forgetest_init!(stateless_fuzz_preserves_payable_value, |prj, cmd| {
     let corpus_root = prj.root().join("fuzz_corpus");
     let frontier_root = prj.root().join("fuzz_frontiers");
@@ -1086,50 +1365,302 @@ contract ForgeFuzzRunWarningsTest {
     );
 });
 
-forgetest_init!(forge_fuzz_run_warns_for_fuzz_only_flag_on_invariant_only_match, |prj, cmd| {
+forgetest_init!(forge_fuzz_run_captures_stateful_branch_frontiers, |prj, cmd| {
     prj.add_test(
-        "ForgeFuzzRunInvariantWarnings.t.sol",
+        "ForgeFuzzRunStatefulFrontiers.t.sol",
         r#"
 import {Test} from "forge-std/Test.sol";
 
-contract ForgeFuzzRunInvariantWarningsTest is Test {
+contract StatefulFrontierTarget {
+    uint256 public phase;
+    uint256 public marker;
+
+    function advance(uint256 value) external {
+        if (phase == 0) {
+            marker = value < 100 ? 1 : 2;
+            phase = 1;
+        } else if (phase == 1) {
+            marker = value == 123456789 ? 3 : 4;
+            phase = 2;
+        }
+    }
+}
+
+contract ForgeFuzzRunStatefulFrontiersTest is Test {
     function setUp() public {
-        targetContract(address(this));
+        targetContract(address(new StatefulFrontierTarget()));
     }
 
     function invariant_ok() public pure {}
-
-    function targetTouch(uint256 value) external pure {
-        value;
-    }
 }
    "#,
     );
 
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "run",
+            "--match-contract",
+            "ForgeFuzzRunStatefulFrontiersTest",
+            "--match-test",
+            "invariant",
+            "--runs",
+            "1",
+            "--depth",
+            "3",
+            "--seed",
+            "0x1234",
+            "--threads",
+            "1",
+            "--frontier-dir",
+            "stateful_frontiers",
+        ])
+        .assert_success();
+
+    let frontier_path = find_first_json(&prj.root().join("stateful_frontiers"));
+    let artifact: Value = serde_json::from_slice(
+        &std::fs::read(&frontier_path)
+            .unwrap_or_else(|err| panic!("failed to read {}: {err}", frontier_path.display())),
+    )
+    .unwrap();
+    assert_eq!(artifact["schema"], "foundry:fuzz.branch-frontiers@v2");
+    assert_eq!(artifact["version"], 2);
+    assert_eq!(artifact["test"], "invariant_ok()");
+
+    let sequences = artifact["sequences"].as_array().unwrap();
+    assert!(!sequences.is_empty(), "{artifact:#}");
+    let frontiers = artifact["frontiers"].as_array().unwrap();
+    assert!(!frontiers.is_empty(), "{artifact:#}");
+    assert!(frontiers.iter().any(|frontier| frontier["call_index"] == 1), "{artifact:#}");
+    for frontier in frontiers {
+        let call_index = frontier["call_index"].as_u64().unwrap() as usize;
+        let sequence_index = frontier["sequence_index"].as_u64().unwrap() as usize;
+        let sequence = sequences[sequence_index].as_array().unwrap();
+        assert!(sequence.len() > call_index, "{frontier:#}");
+    }
+
+    prj.update_config(|config| config.invariant.call_override = true);
     let output = cmd
         .forge_fuse()
         .args([
             "fuzz",
             "run",
             "--match-contract",
-            "ForgeFuzzRunInvariantWarningsTest",
+            "ForgeFuzzRunStatefulFrontiersTest",
             "--match-test",
             "invariant",
             "--runs",
             "1",
             "--depth",
             "1",
+            "--threads",
+            "1",
             "--frontier-dir",
-            "frontier",
+            "override_frontiers",
         ])
-        .assert_success();
-    let stderr = String::from_utf8(output.get_output().stderr.clone()).unwrap();
+        .assert_success()
+        .get_output()
+        .clone();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains(
-            "`--frontier-dir` only applies to fuzz tests; no matched fuzz tests were found."
+            "Invariant frontier capture does not support `invariant.call_override`; running the \
+             campaign without writing frontier artifacts."
         ),
-        "{stderr}"
+        "stdout={stdout}\nstderr={stderr}"
     );
+    assert!(!prj.root().join("override_frontiers").exists());
+});
+
+forgetest_init!(forge_fuzz_run_isolates_unmerged_invariant_frontiers, |prj, cmd| {
+    prj.add_test(
+        "ForgeFuzzRunIsolatedFrontiers.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract IsolatedFrontierTarget {
+    uint256 public marker;
+
+    function step(uint256 value) external {
+        marker = value < 100 ? 1 : 2;
+    }
+}
+
+contract ForgeFuzzRunIsolatedFrontiersTest is Test {
+    function setUp() public {
+        targetContract(address(new IsolatedFrontierTarget()));
+    }
+
+    function invariant_one() public pure {}
+
+    /// forge-config: default.invariant.depth = 1
+    function invariant_two() public pure {}
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "run",
+            "--match-contract",
+            "ForgeFuzzRunIsolatedFrontiersTest",
+            "--runs",
+            "1",
+            "--depth",
+            "2",
+            "--seed",
+            "0x1234",
+            "--threads",
+            "2",
+            "--frontier-dir",
+            "isolated_frontiers",
+        ])
+        .assert_success();
+
+    let frontier_paths = find_json_files(&prj.root().join("isolated_frontiers"));
+    assert_eq!(frontier_paths.len(), 2);
+    let mut captured = BTreeSet::new();
+    for frontier_path in frontier_paths {
+        let artifact: Value = serde_json::from_slice(
+            &std::fs::read(&frontier_path)
+                .unwrap_or_else(|err| panic!("failed to read {}: {err}", frontier_path.display())),
+        )
+        .unwrap();
+        captured.insert(artifact["test"].as_str().unwrap().to_string());
+    }
+    assert_eq!(
+        captured,
+        BTreeSet::from(["invariant_one()".to_string(), "invariant_two()".to_string()])
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "run",
+            "--match-contract",
+            "ForgeFuzzRunIsolatedFrontiersTest",
+            "--match-test",
+            "invariant_two",
+            "--runs",
+            "1",
+            "--depth",
+            "2",
+            "--seed",
+            "0x1234",
+            "--threads",
+            "1",
+            "--frontier-dir",
+            "filtered_isolated_frontiers",
+        ])
+        .assert_success();
+    let filtered_paths = find_json_files(&prj.root().join("filtered_isolated_frontiers"));
+    assert_eq!(filtered_paths.len(), 1);
+    let artifact: Value =
+        serde_json::from_slice(&std::fs::read(&filtered_paths[0]).unwrap()).unwrap();
+    assert_eq!(artifact["test"], "invariant_two()");
+});
+
+forgetest_init!(forge_fuzz_run_frontiers_keep_reverted_environment_prefix, |prj, cmd| {
+    prj.add_test(
+        "ForgeFuzzRunRevertedFrontier.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForgeFuzzRunRevertedFrontierTest is Test {
+    uint256 public marker;
+
+    function setUp() public {
+        vm.warp(1);
+        targetContract(address(this));
+        targetSender(address(this));
+    }
+
+    function advance(uint256 value) external {
+        if (block.timestamp < 1000) {
+            vm.warp(1000);
+            revert("advance timestamp");
+        }
+        marker = value < 100 ? 1 : 2;
+    }
+
+    function invariant_ok() public pure {}
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "run",
+            "--match-contract",
+            "ForgeFuzzRunRevertedFrontierTest",
+            "--match-test",
+            "invariant",
+            "--runs",
+            "1",
+            "--depth",
+            "2",
+            "--seed",
+            "0x4321",
+            "--threads",
+            "1",
+            "--frontier-dir",
+            "reverted_frontiers",
+            "--corpus-dir",
+            "reverted_corpus",
+        ])
+        .assert_success();
+
+    let frontier_path = find_first_json(&prj.root().join("reverted_frontiers"));
+    let artifact: Value = serde_json::from_slice(
+        &std::fs::read(&frontier_path)
+            .unwrap_or_else(|err| panic!("failed to read {}: {err}", frontier_path.display())),
+    )
+    .unwrap();
+    let frontier = artifact["frontiers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|frontier| frontier["call_index"] == 1)
+        .unwrap_or_else(|| panic!("missing post-revert frontier in {artifact:#}"));
+    let sequence_index = frontier["sequence_index"].as_u64().unwrap() as usize;
+    assert_eq!(artifact["sequences"][sequence_index].as_array().unwrap().len(), 2);
+
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "run",
+            "--match-contract",
+            "ForgeFuzzRunRevertedFrontierTest",
+            "--match-test",
+            "invariant",
+            "--runs",
+            "1",
+            "--depth",
+            "2",
+            "--seed",
+            "0x4321",
+            "--threads",
+            "1",
+            "--corpus-dir",
+            "baseline_corpus",
+        ])
+        .assert_success();
+
+    let read_corpus = |name: &str| {
+        let dir = prj.root().join(name).join("ForgeFuzzRunRevertedFrontierTest/worker0/corpus");
+        let mut entries = find_json_files(&dir)
+            .into_iter()
+            .map(|entry| std::fs::read_to_string(entry).unwrap())
+            .collect::<Vec<_>>();
+        entries.sort();
+        entries
+    };
+    let captured = read_corpus("reverted_corpus");
+    assert!(!captured.is_empty());
+    assert_eq!(captured, read_corpus("baseline_corpus"));
 });
 
 forgetest_init!(forge_fuzz_run_runs_sets_invariant_runs, |prj, cmd| {
@@ -4933,6 +5464,36 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
     });
     check(&mut cmd, false);
     assert!(new_persist_dir.exists());
+});
+
+forgetest_init!(zero_fuzz_runs_rejected, |prj, cmd| {
+    prj.update_config(|config| config.fuzz.runs = 0);
+    prj.add_test(
+        "ZeroFuzzRuns.t.sol",
+        r#"
+contract ZeroFuzzRunsTest {
+    function testFuzz_value(uint256) external pure {}
+}
+   "#,
+    );
+
+    let output = cmd.arg("test").assert_failure();
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+    assert!(stderr.contains("`fuzz.runs` must be greater than 0"), "{stderr}");
+
+    prj.update_config(|config| config.fuzz.runs = 1);
+    prj.add_test(
+        "ZeroFuzzRuns.t.sol",
+        r#"
+contract ZeroFuzzRunsTest {
+    /// forge-config: default.fuzz.runs = 0
+    function testFuzz_value(uint256) external pure {}
+}
+   "#,
+    );
+    let output = cmd.forge_fuse().arg("test").assert_failure();
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    assert!(stdout.contains("`fuzz.runs` must be greater than 0"), "{stdout}");
 });
 
 // https://github.com/foundry-rs/foundry/pull/735 behavior changed with https://github.com/foundry-rs/foundry/issues/3521

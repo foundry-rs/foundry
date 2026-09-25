@@ -1,4 +1,4 @@
-note[custom-errors]: prefer using custom errors on revert and require calls
+note[custom-errors]: `revert` or `require` call does not use a custom error
    ╭▸ ROOT/testdata/CustomErrors.sol:LL:CC
    │
 LL │         require(a > 0, "Value must be greater than zero");
@@ -6,7 +6,7 @@ LL │         require(a > 0, "Value must be greater than zero");
    │
    ╰ help: https://getfoundry.sh/forge/linting/custom-errors
 
-note[custom-errors]: prefer using custom errors on revert and require calls
+note[custom-errors]: `revert` or `require` call does not use a custom error
    ╭▸ ROOT/testdata/CustomErrors.sol:LL:CC
    │
 LL │ …     require(a >= 0 && a <= 100 || b == 50, "Complex condition should be linted");
@@ -14,7 +14,7 @@ LL │ …     require(a >= 0 && a <= 100 || b == 50, "Complex condition should 
    │
    ╰ help: https://getfoundry.sh/forge/linting/custom-errors
 
-note[custom-errors]: prefer using custom errors on revert and require calls
+note[custom-errors]: `revert` or `require` call does not use a custom error
    ╭▸ ROOT/testdata/CustomErrors.sol:LL:CC
    │
 LL │         revert("Something went wrong");
@@ -22,7 +22,7 @@ LL │         revert("Something went wrong");
    │
    ╰ help: https://getfoundry.sh/forge/linting/custom-errors
 
-note[custom-errors]: prefer using custom errors on revert and require calls
+note[custom-errors]: `revert` or `require` call does not use a custom error
    ╭▸ ROOT/testdata/CustomErrors.sol:LL:CC
    │
 LL │         revert("");
@@ -30,7 +30,7 @@ LL │         revert("");
    │
    ╰ help: https://getfoundry.sh/forge/linting/custom-errors
 
-note[custom-errors]: prefer using custom errors on revert and require calls
+note[custom-errors]: `revert` or `require` call does not use a custom error
    ╭▸ ROOT/testdata/CustomErrors.sol:LL:CC
    │
 LL │         revert();
@@ -38,7 +38,7 @@ LL │         revert();
    │
    ╰ help: https://getfoundry.sh/forge/linting/custom-errors
 
-note[custom-errors]: prefer using custom errors on revert and require calls
+note[custom-errors]: `revert` or `require` call does not use a custom error
    ╭▸ ROOT/testdata/CustomErrors.sol:LL:CC
    │
 LL │         require(value > 0);

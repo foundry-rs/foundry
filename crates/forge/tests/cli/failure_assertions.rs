@@ -597,3 +597,49 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 "#]],
     );
 });
+
+// An `assumeNoRevert` partial-match reason shorter than a selector must not match revert data
+// that is also shorter than 4 bytes; the revert should surface as a failure instead of being
+// discarded as anticipated.
+forgetest_init!(assume_no_revert_short_partial_should_fail, |prj, cmd| {
+    prj.add_test(
+        "AssumeShortPartial.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {VmSafe} from "forge-std/Vm.sol";
+
+contract ShortReverter {
+    function revertShort() external pure {
+        assembly {
+            mstore(0x00, shl(240, 0xffff))
+            revert(0x00, 0x02)
+        }
+    }
+}
+
+contract AssumeShortPartialTest is Test {
+    ShortReverter reverter;
+
+    function setUp() public {
+        reverter = new ShortReverter();
+    }
+
+    function testShortPartialDoesNotMatch(uint256) public view {
+        vm.assumeNoRevert(
+            VmSafe.PotentialRevert({revertData: hex"ff", partialMatch: true, reverter: address(0)})
+        );
+        reverter.revertShort();
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--match-contract", "AssumeShortPartialTest"]).assert_failure().stdout_eq(
+        str![[r#"
+...
+[FAIL: EvmError: Revert; counterexample: calldata=[..] args=[..]] testShortPartialDoesNotMatch(uint256) (runs: 0, [AVG_GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]],
+    );
+});

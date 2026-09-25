@@ -31,32 +31,6 @@ use foundry_linking::Linker;
 use foundry_wallets::{MultiWalletOpts, wallet_browser::signer::BrowserSigner};
 use std::{path::PathBuf, str::FromStr, sync::Arc};
 
-/// Returns whether every scoped signer needed for resume is already available.
-///
-/// `Wallets` only tracks signers collected from CLI options and script cheatcodes. A Tempo
-/// session signer lives in the Accounts store instead, so resume needs to treat the session
-/// root account as available only on the chain covered by the session.
-fn has_available_script_signers(
-    tempo: &TempoOpts,
-    wallets: &MultiWalletOpts,
-    script_wallets: &Wallets,
-    expected_sender: Option<Address>,
-    remaining: &[RemainingScriptTransaction],
-) -> Result<bool> {
-    let signers = script_wallets
-        .signers()
-        .map_err(|e| eyre::eyre!("Failed to get available signers: {}", e))?;
-    if remaining.is_empty() {
-        return Ok(true);
-    }
-
-    let session_scope = tempo
-        .session_signer_for_multi_wallet_any_chain(wallets, expected_sender)?
-        .map(|s| SignerScope::new(s.session.chain_id, s.access_key.account()));
-
-    Ok(remaining.iter().all(|tx| signers.contains(&tx.from) || session_scope == Some(tx.scope())))
-}
-
 /// Container for the compiled contracts.
 #[derive(Clone, Debug)]
 pub struct BuildData {
@@ -443,6 +417,32 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
             Ok(ScriptSequenceKind::Multi(sequence))
         }
     }
+}
+
+/// Returns whether every scoped signer needed for resume is already available.
+///
+/// `Wallets` only tracks signers collected from CLI options and script cheatcodes. A Tempo
+/// session signer lives in the Accounts store instead, so resume needs to treat the session
+/// root account as available only on the chain covered by the session.
+fn has_available_script_signers(
+    tempo: &TempoOpts,
+    wallets: &MultiWalletOpts,
+    script_wallets: &Wallets,
+    expected_sender: Option<Address>,
+    remaining: &[RemainingScriptTransaction],
+) -> Result<bool> {
+    let signers = script_wallets
+        .signers()
+        .map_err(|e| eyre::eyre!("Failed to get available signers: {}", e))?;
+    if remaining.is_empty() {
+        return Ok(true);
+    }
+
+    let session_scope = tempo
+        .session_signer_for_multi_wallet_any_chain(wallets, expected_sender)?
+        .map(|s| SignerScope::new(s.session.chain_id, s.access_key.account()));
+
+    Ok(remaining.iter().all(|tx| signers.contains(&tx.from) || session_scope == Some(tx.scope())))
 }
 
 #[cfg(test)]

@@ -14,6 +14,10 @@ on:
       tag_name:
         required: true
         type: string
+      linux-validated:
+        description: Caller has completed protected GNU/Linux builds of this same commit
+        default: false
+        type: boolean
     outputs:
       digest:
         description: Immutable multi-platform image digest
@@ -29,10 +33,37 @@ env:
 
   # Keep the base features in sync with `release.yml`.
   RUST_PROFILE: dist
-  RUST_FEATURES: aws-kms,gcp-kms,turnkey,cli,asm-keccak,js-tracer,monad,optimism
+  RUST_FEATURES: aws-kms,gcp-kms,turnkey,cli,asm-keccak,js-tracer,base,monad,optimism
 
 jobs:
+  # Manual runs cannot opt out; reusable callers must gate on matching Linux builds.
+  validate-linux:
+    if: ${{ !inputs.linux-validated }}
+    runs-on: depot-ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@117919c943b804057be733b0c4034c5542e58959
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1
+        with:
+          toolchain: stable
+      - name: Validate locked Docker dependencies
+        shell: bash
+        run: |
+          # Use an empty cache so registry packages are fetched through Aegis.
+          CARGO_HOME="$(mktemp -d "$RUNNER_TEMP/docker-cargo.XXXXXX")"
+          export CARGO_HOME
+          cargo fetch --locked --target x86_64-unknown-linux-gnu --target aarch64-unknown-linux-gnu
+
   build:
+    needs: validate-linux
+    if: ${{ !cancelled() && (needs.validate-linux.result == 'success' || (inputs.linux-validated && needs.validate-linux.result == 'skipped')) }}
     name: build, sign, and stage
     runs-on: depot-ubuntu-latest
     permissions:
@@ -46,6 +77,8 @@ jobs:
     outputs:
       digest: ${{ steps.select.outputs.digest }}
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@117919c943b804057be733b0c4034c5542e58959
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -95,7 +128,7 @@ jobs:
 
       - name: Set up Depot CLI
         if: steps.existing.outputs.exists != 'true'
-        uses: depot/setup-action@15c09a5f77a0840ad4bce955686522a257853461 # v1.7.1
+        uses: depot/setup-action@91bc8495a33ebfc504ffc89e5674379ccf23c29c # v1.7.2
 
       - name: Build and push Foundry image
         id: build

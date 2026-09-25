@@ -2,9 +2,7 @@
 
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
-
-#[cfg(feature = "optimism")]
-use op_alloy_rpc_types as _;
+#![recursion_limit = "256"]
 
 use crate::{
     error::{NodeError, NodeResult},
@@ -27,7 +25,6 @@ use alloy_signer_local::PrivateKeySigner;
 use eth::backend::fork::ClientFork;
 use eyre::{Result, WrapErr};
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
-pub use foundry_evm::hardfork::EthereumHardfork;
 use foundry_primitives::FoundryNetwork;
 use futures::{FutureExt, TryFutureExt};
 use parking_lot::Mutex;
@@ -43,6 +40,11 @@ use tokio::{
     task::{JoinError, JoinHandle},
 };
 use tracing_subscriber::EnvFilter;
+
+#[cfg(feature = "optimism")]
+use op_alloy_rpc_types as _;
+
+pub use foundry_evm::hardfork::EthereumHardfork;
 
 /// contains the background service that drives the node
 mod service;

@@ -1,6 +1,4 @@
 //! In-memory blockchain storage
-#[cfg(feature = "monad")]
-use crate::eth::backend::db::MonadBlockReplayProfile;
 use crate::eth::{
     backend::{
         db::{
@@ -11,9 +9,8 @@ use crate::eth::{
     },
     pool::transactions::PoolTransaction,
 };
-use alloy_consensus::{BlockHeader, Header, constants::EMPTY_WITHDRAWALS};
-use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
-use alloy_evm::EvmEnv;
+use alloy_consensus::BlockHeader;
+use alloy_eips::eip7928::BlockAccessList;
 use alloy_network::Network;
 use alloy_primitives::{
     B256, Bytes, U256,
@@ -30,18 +27,14 @@ use anvil_core::eth::{
     block::{Block, create_block},
     transaction::{MaybeImpersonatedTransaction, TransactionInfo},
 };
-#[cfg(feature = "monad")]
-use foundry_evm::core::evm::MonadBlockParticipants;
 use foundry_evm::{
     backend::MemDb,
     traces::{CallKind, ParityTraceBuilder, TracingInspectorConfig},
 };
-#[cfg(test)]
-use foundry_primitives::FoundryNetwork;
 use foundry_primitives::{FoundryHeader, FoundryReceiptEnvelope, FoundryTxEnvelope};
 use parking_lot::RwLock;
-use revm::{context::Block as RevmBlock, primitives::hardfork::SpecId};
 use std::{collections::VecDeque, fmt, path::PathBuf, sync::Arc, time::Duration};
+
 // use yansi::Paint;
 
 // === various limits in number of blocks ===
@@ -164,14 +157,14 @@ impl InMemoryBlockStates {
                         continue;
                     }
 
-                    let state_snapshot = state.0.clear_into_state_snapshot();
+                    let state_snapshot = state.read_as_state_snapshot();
                     if self.disk_cache.write(hash, &state_snapshot) {
+                        state.clear();
                         // Write succeeded, move state to on-disk tracking
                         self.on_disk_states.insert(hash, state);
                         self.oldest_on_disk.push_back(hash);
                     } else {
-                        // Write failed, restore state to memory to avoid data loss
-                        state.init_from_state_snapshot(state_snapshot);
+                        // Write failed, keep state in memory to avoid data loss
                         self.states.insert(hash, state);
                         self.present.push_front(hash);
                         // Increase limit temporarily to prevent infinite retry loop
@@ -304,6 +297,8 @@ impl Default for InMemoryBlockStates {
 pub struct BlockchainStorage<N: Network> {
     /// all stored blocks (block hash -> block)
     pub blocks: B256HashMap<Block>,
+    /// EIP-7928 block access lists for locally mined blocks.
+    pub block_access_lists: B256HashMap<BlockAccessList>,
     /// mapping from block number -> block hash
     pub hashes: HashMap<u64, B256>,
     /// The current best hash
@@ -321,47 +316,27 @@ pub struct BlockchainStorage<N: Network> {
     pub total_difficulty: U256,
     /// Monad senders and authorities retained even when old transaction bodies are pruned.
     #[cfg(feature = "monad")]
-    pub monad_block_participants: B256HashMap<MonadBlockParticipants>,
+    pub monad_block_participants: B256HashMap<foundry_evm::core::evm::MonadBlockParticipants>,
     /// Execution profile used when each locally stored Monad block was created.
     #[cfg(feature = "monad")]
-    pub monad_block_replay_profiles: B256HashMap<MonadBlockReplayProfile>,
+    pub monad_block_replay_profiles: B256HashMap<crate::eth::backend::db::MonadBlockReplayProfile>,
 }
 
 impl<N: Network> BlockchainStorage<N> {
-    /// Creates a new storage with a genesis block
-    pub fn new(
-        evm_env: &EvmEnv,
-        base_fee: Option<u64>,
-        timestamp: u64,
-        genesis_number: u64,
-        is_tempo: bool,
-    ) -> Self {
-        let is_shanghai = *evm_env.spec_id() >= SpecId::SHANGHAI;
-        let is_cancun = *evm_env.spec_id() >= SpecId::CANCUN;
-        let is_prague = *evm_env.spec_id() >= SpecId::PRAGUE;
+    /// Removes all metadata associated with a locally stored Monad block.
+    #[cfg(feature = "monad")]
+    fn remove_monad_block_metadata(&mut self, block_hash: &B256) {
+        self.monad_block_participants.remove(block_hash);
+        self.monad_block_replay_profiles.remove(block_hash);
+    }
 
-        // create a dummy genesis block
-        let header = Header {
-            timestamp,
-            base_fee_per_gas: base_fee,
-            gas_limit: evm_env.block_env.gas_limit,
-            beneficiary: evm_env.block_env.beneficiary,
-            difficulty: evm_env.block_env.difficulty,
-            blob_gas_used: evm_env.block_env.blob_excess_gas_and_price.as_ref().map(|_| 0),
-            excess_blob_gas: evm_env.block_env.blob_excess_gas(),
-            number: genesis_number,
-            parent_beacon_block_root: is_cancun.then_some(Default::default()),
-            withdrawals_root: is_shanghai.then_some(EMPTY_WITHDRAWALS),
-            requests_hash: is_prague.then_some(EMPTY_REQUESTS_HASH),
-            ..Default::default()
-        };
-        let block = create_block(
-            FoundryHeader::new(header, is_tempo),
-            Vec::<MaybeImpersonatedTransaction<FoundryTxEnvelope>>::new(),
-        );
+    /// Creates a new storage with a genesis block.
+    pub fn new(header: FoundryHeader) -> Self {
+        let block =
+            create_block(header, Vec::<MaybeImpersonatedTransaction<FoundryTxEnvelope>>::new());
         let genesis_hash = block.header.hash_slow();
         let best_hash = genesis_hash;
-        let best_number = genesis_number;
+        let best_number = block.header.number();
 
         let mut blocks = B256HashMap::default();
         blocks.insert(genesis_hash, block);
@@ -370,11 +345,12 @@ impl<N: Network> BlockchainStorage<N> {
         hashes.insert(best_number, genesis_hash);
         Self {
             blocks,
+            block_access_lists: Default::default(),
             hashes,
             best_hash,
             best_number,
             genesis_hash,
-            genesis_number,
+            genesis_number: best_number,
             transactions: Default::default(),
             total_difficulty: Default::default(),
             #[cfg(feature = "monad")]
@@ -390,6 +366,7 @@ impl<N: Network> BlockchainStorage<N> {
 
         Self {
             blocks: B256HashMap::default(),
+            block_access_lists: Default::default(),
             hashes,
             best_hash: block_hash,
             best_number: block_number,
@@ -420,10 +397,9 @@ impl<N: Network> BlockchainStorage<N> {
                 if let Some(block) = self.blocks.remove(&hash) {
                     removed.push(block);
                 }
+                self.block_access_lists.remove(&hash);
                 #[cfg(feature = "monad")]
-                self.monad_block_participants.remove(&hash);
-                #[cfg(feature = "monad")]
-                self.monad_block_replay_profiles.remove(&hash);
+                self.remove_monad_block_metadata(&hash);
                 self.hashes.remove(&i);
             }
         }
@@ -435,6 +411,7 @@ impl<N: Network> BlockchainStorage<N> {
     pub fn empty() -> Self {
         Self {
             blocks: Default::default(),
+            block_access_lists: Default::default(),
             hashes: Default::default(),
             best_hash: Default::default(),
             best_number: Default::default(),
@@ -458,6 +435,7 @@ impl<N: Network> BlockchainStorage<N> {
 
     /// Removes all stored transactions for the given block hash
     pub fn remove_block_transactions(&mut self, block_hash: B256) {
+        self.block_access_lists.remove(&block_hash);
         if let Some(block) = self.blocks.get_mut(&block_hash) {
             for tx in &block.body.transactions {
                 self.transactions.remove(&tx.hash());
@@ -496,10 +474,17 @@ impl<N: Network> BlockchainStorage<N> {
         block_hash
     }
 
-    /// Deserialize and add all blocks data to the backend storage
-    pub fn load_blocks(&mut self, serializable_blocks: Vec<SerializableBlock>) {
+    /// Deserialize and add blocks above the fork boundary to the backend storage.
+    pub fn load_blocks(
+        &mut self,
+        serializable_blocks: Vec<SerializableBlock>,
+        fork_boundary: Option<u64>,
+    ) {
         for serializable_block in serializable_blocks {
             let block: Block = serializable_block.into();
+            if fork_boundary.is_some_and(|boundary| block.header.number() <= boundary) {
+                continue;
+            }
             self.insert_block(block);
         }
     }
@@ -512,14 +497,14 @@ impl<N: Network> BlockchainStorage<N> {
             BlockNumberOrTag::Pending => None,
             BlockNumberOrTag::Number(num) => self.hashes.get(&num).copied(),
             BlockNumberOrTag::Safe => {
-                if self.best_number > slots_in_an_epoch {
+                if self.best_number.saturating_sub(slots_in_an_epoch) > self.genesis_number {
                     self.hashes.get(&(self.best_number - slots_in_an_epoch)).copied()
                 } else {
                     Some(self.genesis_hash)
                 }
             }
             BlockNumberOrTag::Finalized => {
-                if self.best_number > slots_in_an_epoch * 2 {
+                if self.best_number.saturating_sub(slots_in_an_epoch * 2) > self.genesis_number {
                     self.hashes.get(&(self.best_number - slots_in_an_epoch * 2)).copied()
                 } else {
                     Some(self.genesis_hash)
@@ -542,9 +527,18 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> BlockchainStorage<N> 
         transactions
     }
 
-    /// Deserialize and add all transactions data to the backend storage
-    pub fn load_transactions(&mut self, serializable_transactions: Vec<SerializableTransaction>) {
+    /// Deserialize and add transactions above the fork boundary to the backend storage.
+    pub fn load_transactions(
+        &mut self,
+        serializable_transactions: Vec<SerializableTransaction>,
+        fork_boundary: Option<u64>,
+    ) {
         for serializable_transaction in serializable_transactions {
+            if fork_boundary
+                .is_some_and(|boundary| serializable_transaction.block_number <= boundary)
+            {
+                continue;
+            }
             let transaction: MinedTransaction<N> = serializable_transaction.into();
             self.transactions.insert(transaction.info.transaction_hash, transaction);
         }
@@ -559,23 +553,9 @@ pub struct Blockchain<N: Network> {
 }
 
 impl<N: Network> Blockchain<N> {
-    /// Creates a new storage with a genesis block
-    pub fn new(
-        evm_env: &EvmEnv,
-        base_fee: Option<u64>,
-        timestamp: u64,
-        genesis_number: u64,
-        is_tempo: bool,
-    ) -> Self {
-        Self {
-            storage: Arc::new(RwLock::new(BlockchainStorage::new(
-                evm_env,
-                base_fee,
-                timestamp,
-                genesis_number,
-                is_tempo,
-            ))),
-        }
+    /// Creates a new storage with a genesis block.
+    pub fn new(header: FoundryHeader) -> Self {
+        Self { storage: Arc::new(RwLock::new(BlockchainStorage::new(header))) }
     }
 
     pub fn forked(block_number: u64, block_hash: B256, total_difficulty: U256) -> Self {
@@ -713,8 +693,10 @@ pub struct MinedTransactionReceipt<N: Network> {
 mod tests {
     use super::*;
     use crate::eth::backend::{db::Db, mem::in_memory_db::StateRootDb};
+    use alloy_consensus::Header;
     use alloy_primitives::{Address, hex};
     use alloy_rlp::Decodable;
+    use foundry_primitives::FoundryNetwork;
     use revm::{database::DatabaseRef, interpreter::InstructionResult, state::AccountInfo};
     use tempo_primitives::TempoHeader;
 
@@ -921,8 +903,8 @@ mod tests {
 
         let mut load_storage = BlockchainStorage::<FoundryNetwork>::empty();
 
-        load_storage.load_blocks(serialized_blocks);
-        load_storage.load_transactions(serialized_transactions);
+        load_storage.load_blocks(serialized_blocks, None);
+        load_storage.load_transactions(serialized_transactions, None);
 
         let loaded_block = load_storage.blocks.get(&block_hash).unwrap();
         assert_eq!(loaded_block.header.gas_limit(), header.gas_limit());
@@ -952,7 +934,7 @@ mod tests {
         assert!(canonical_hash < stale_hash);
 
         let mut loaded = BlockchainStorage::<FoundryNetwork>::empty();
-        loaded.load_blocks(storage.serialized_blocks());
+        loaded.load_blocks(storage.serialized_blocks(), None);
         assert_eq!(loaded.hashes.get(&1), Some(&canonical_hash));
     }
 
@@ -1033,12 +1015,88 @@ mod tests {
         let serialized = serde_json::to_string(&dump_storage.serialized_blocks()).unwrap();
         let blocks: Vec<SerializableBlock> = serde_json::from_str(&serialized).unwrap();
         let mut load_storage = BlockchainStorage::<FoundryNetwork>::empty();
-        load_storage.load_blocks(blocks);
+        load_storage.load_blocks(blocks, None);
 
         let loaded_block = load_storage.blocks.get(&block_hash).unwrap();
         assert_eq!(loaded_block.header, expected_header);
         assert_eq!(loaded_block.header.as_tempo().unwrap().shared_gas_limit, 1_000_000);
         assert_eq!(load_storage.hashes.get(&7), Some(&block_hash));
+    }
+
+    #[test]
+    fn test_hash_safe_with_non_zero_genesis_number() {
+        let mut storage = BlockchainStorage::<FoundryNetwork>::new(
+            Header { number: 100, ..Default::default() }.into(),
+        );
+
+        for best_number in [100, 131, 132] {
+            storage.best_number = best_number;
+            assert_eq!(storage.hash(BlockNumberOrTag::Safe, 32), Some(storage.genesis_hash));
+        }
+    }
+
+    #[test]
+    fn test_hash_finalized_with_non_zero_genesis_number() {
+        let mut storage = BlockchainStorage::<FoundryNetwork>::new(
+            Header { number: 100, ..Default::default() }.into(),
+        );
+
+        for best_number in [100, 163, 164] {
+            storage.best_number = best_number;
+            assert_eq!(storage.hash(BlockNumberOrTag::Finalized, 32), Some(storage.genesis_hash));
+        }
+    }
+
+    #[test]
+    fn test_hash_safe_finalized_with_deep_non_zero_genesis() {
+        let mut storage = BlockchainStorage::<FoundryNetwork>::new(
+            Header { number: 100, ..Default::default() }.into(),
+        );
+        storage.best_number = 200;
+        let safe_hash = B256::repeat_byte(0xab);
+        let finalized_hash = B256::repeat_byte(0xcd);
+        storage.hashes.insert(168, safe_hash);
+        storage.hashes.insert(136, finalized_hash);
+
+        assert_eq!(storage.hash(BlockNumberOrTag::Safe, 32), Some(safe_hash));
+        assert_eq!(storage.hash(BlockNumberOrTag::Finalized, 32), Some(finalized_hash));
+    }
+
+    #[test]
+    fn test_hash_safe_finalized_with_zero_genesis() {
+        let mut storage = BlockchainStorage::<FoundryNetwork>::new(Header::default().into());
+
+        for (tag, offset) in [(BlockNumberOrTag::Safe, 32), (BlockNumberOrTag::Finalized, 64)] {
+            for best_number in [0, offset - 1, offset] {
+                storage.best_number = best_number;
+                assert_eq!(storage.hash(tag, 32), Some(storage.genesis_hash));
+            }
+
+            storage.best_number = offset + 1;
+            assert_eq!(storage.hash(tag, 32), None);
+            let hash = B256::repeat_byte(0xab);
+            storage.hashes.insert(1, hash);
+            assert_eq!(storage.hash(tag, 32), Some(hash));
+            storage.hashes.remove(&1);
+        }
+    }
+
+    #[test]
+    fn test_hash_safe_finalized_fork_preserves_local_miss() {
+        let mut storage = BlockchainStorage::<FoundryNetwork>::forked(
+            23_000_000,
+            B256::repeat_byte(0xab),
+            U256::ZERO,
+        );
+
+        for (tag, number) in
+            [(BlockNumberOrTag::Safe, 22_999_968), (BlockNumberOrTag::Finalized, 22_999_936)]
+        {
+            assert_eq!(storage.hash(tag, 32), None);
+            let hash = B256::repeat_byte(0xcd);
+            storage.hashes.insert(number, hash);
+            assert_eq!(storage.hash(tag, 32), Some(hash));
+        }
     }
 
     // Regression test for https://github.com/foundry-rs/foundry/issues/12645:
@@ -1066,7 +1124,7 @@ mod tests {
         let dummy_genesis_hash = B256::repeat_byte(0xab);
         load_storage.genesis_hash = dummy_genesis_hash;
 
-        load_storage.load_blocks(serialized_blocks);
+        load_storage.load_blocks(serialized_blocks, None);
 
         assert_eq!(load_storage.genesis_hash, block_hash);
         assert_ne!(load_storage.genesis_hash, dummy_genesis_hash);
@@ -1083,7 +1141,7 @@ mod tests {
             header_only_73.into(),
             Vec::<MaybeImpersonatedTransaction<FoundryTxEnvelope>>::new(),
         );
-        sanity_storage.load_blocks(vec![block_73.into()]);
+        sanity_storage.load_blocks(vec![block_73.into()], None);
         assert_eq!(sanity_storage.genesis_hash, dummy_genesis_hash);
     }
 }

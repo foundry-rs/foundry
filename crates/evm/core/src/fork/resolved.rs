@@ -1,13 +1,16 @@
 use crate::opts::ForkContext;
 use alloy_eips::{BlockId, BlockNumHash};
-use alloy_primitives::{B256, BlockNumber};
+use alloy_primitives::{B256, BlockNumber, keccak256};
 use std::fmt;
 
-/// A fork selector and block identity resolved from a configured RPC source.
+/// An exact fork snapshot resolved from a fully configured RPC source.
 ///
-/// This context binds exact preflight reads and EVM environment reconstruction to the source,
-/// selector, and block that were resolved together. The fork database itself remains
-/// number-pinned.
+/// The snapshot binds three layers that must travel together: the source URL, request headers, and
+/// JWT; the configured selector (`latest` or a block number); and the observed exact block (number
+/// and hash) plus endpoint context. `latest` is retained as the configured selector, while `block`
+/// is always exact. Reusing this value keeps preflight reads, environment reconstruction, cache
+/// identity, and backend construction on the same remote state. Endpoint profiles are canonical,
+/// so equivalent network selections share the same identity.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct ResolvedFork {
     source: ForkSource,
@@ -30,9 +33,11 @@ impl ResolvedFork {
         jwt: Option<&str>,
         selector: Option<BlockNumber>,
         block: BlockNumHash,
-        context: ForkContext,
+        mut context: ForkContext,
     ) -> Self {
         debug_assert_eq!(block.number, context.block_number);
+        // Match endpoint discovery, including default and explicitly selected Ethereum.
+        context.network_profile = context.network_profile.canonical_execution_profile();
         Self {
             source: ForkSource {
                 url: url.to_string(),
@@ -94,6 +99,55 @@ impl ResolvedFork {
     pub(crate) const fn block(&self) -> BlockNumHash {
         self.block
     }
+
+    /// Returns this resolution advanced to another exact block on the same RPC source.
+    pub(crate) fn at_block(&self, block: BlockNumHash) -> Self {
+        let mut resolved = self.clone();
+        resolved.selector = Some(block.number);
+        resolved.block = block;
+        resolved.context.block_number = block.number;
+        resolved
+    }
+
+    /// Returns an opaque identity for the complete configured RPC source.
+    pub(crate) fn source_id(&self) -> B256 {
+        let mut encoded = Vec::new();
+        encoded.extend_from_slice(b"foundry-resolved-fork-source-v1");
+        encode_source_part(&mut encoded, self.source.url.as_bytes());
+        encoded.extend_from_slice(
+            &u64::try_from(self.source.headers.len())
+                .expect("fork header count exceeds u64")
+                .to_be_bytes(),
+        );
+        for header in &self.source.headers {
+            encode_source_part(&mut encoded, header.as_bytes());
+        }
+        if let Some(jwt) = &self.source.jwt {
+            encoded.push(1);
+            encode_source_part(&mut encoded, jwt.as_bytes());
+        } else {
+            encoded.push(0);
+        }
+        keccak256(encoded)
+    }
+
+    /// Returns a redacted, opaque fingerprint of the complete resolved fork identity.
+    pub fn fingerprint(&self) -> B256 {
+        let encoded = serde_json::to_vec(&(
+            "foundry-resolved-fork-v1",
+            self.source_id(),
+            self.block,
+            self.context,
+        ))
+        .expect("resolved fork identity is serializable");
+        keccak256(encoded)
+    }
+}
+
+fn encode_source_part(encoded: &mut Vec<u8>, part: &[u8]) {
+    let len = u64::try_from(part.len()).expect("source identity part length exceeds u64");
+    encoded.extend_from_slice(&len.to_be_bytes());
+    encoded.extend_from_slice(part);
 }
 
 impl fmt::Debug for ResolvedFork {
@@ -155,12 +209,69 @@ mod tests {
     fn endpoint_identity_participates_in_equality_and_hashing() {
         let block = BlockNumHash::new(1, B256::with_last_byte(1));
         let first = ResolvedFork::new("http://localhost:8545", None, None, None, block, context(1));
-        let mut changed_context = context(1);
-        changed_context.instance_id = Some(B256::with_last_byte(2));
-        let second =
-            ResolvedFork::new("http://localhost:8545", None, None, None, block, changed_context);
+        for changed_context in [
+            ForkContext { instance_id: Some(B256::with_last_byte(2)), ..context(1) },
+            ForkContext { network_profile: NetworkConfigs::with_celo(), ..context(1) },
+            ForkContext {
+                network: NetworkVariant::Tempo,
+                network_profile: NetworkConfigs::with_tempo(),
+                ..context(1)
+            },
+        ] {
+            let second = ResolvedFork::new(
+                "http://localhost:8545",
+                None,
+                None,
+                None,
+                block,
+                changed_context,
+            );
 
-        assert_ne!(first, second);
-        assert_eq!(HashSet::from([first, second]).len(), 2);
+            assert_ne!(first, second);
+            assert_ne!(first.fingerprint(), second.fingerprint());
+            assert_eq!(HashSet::from([first.clone(), second]).len(), 2);
+        }
+    }
+
+    #[test]
+    fn configured_source_identity_is_unambiguous() {
+        let block = BlockNumHash::new(1, B256::with_last_byte(1));
+        let context = context(1);
+        let plain = ResolvedFork::new("http://localhost:8545", None, None, None, block, context);
+        let header = ResolvedFork::new(
+            "http://localhost:8545",
+            Some(&["secret".to_string()]),
+            None,
+            None,
+            block,
+            context,
+        );
+        let jwt =
+            ResolvedFork::new("http://localhost:8545", None, Some("secret"), None, block, context);
+
+        assert_ne!(plain.source_id(), header.source_id());
+        assert_ne!(plain.source_id(), jwt.source_id());
+        assert_ne!(header.source_id(), jwt.source_id());
+        assert_ne!(plain.fingerprint(), header.fingerprint());
+        assert_ne!(plain.fingerprint(), jwt.fingerprint());
+    }
+
+    #[test]
+    fn resolved_fork_canonicalizes_equivalent_ethereum_profiles() {
+        let url = "http://localhost:8545";
+        let block = BlockNumHash::new(1, B256::with_last_byte(1));
+        let implicit = ResolvedFork::new(url, None, None, Some(1), block, context(1));
+        let explicit = ResolvedFork::new(
+            url,
+            None,
+            None,
+            Some(1),
+            block,
+            ForkContext { network_profile: NetworkConfigs::with_ethereum(), ..context(1) },
+        );
+
+        assert_eq!(implicit.context(), explicit.context());
+        assert_eq!(implicit.fingerprint(), explicit.fingerprint());
+        assert_eq!(HashSet::from([implicit, explicit]).len(), 1);
     }
 }

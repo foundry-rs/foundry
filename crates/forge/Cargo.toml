@@ -83,13 +83,15 @@ revm = { workspace = true, features = ["parse"] }
 semver.workspace = true
 serde_json.workspace = true
 similar = { version = "3", features = ["inline"] }
-solar.workspace = true
+solar = { workspace = true, features = ["clap"] }
+solar-lsp.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["time", "signal"] }
+tokio = { workspace = true, features = ["time", "signal", "process"] }
 toml_edit.workspace = true
 watchexec = "8.0"
 watchexec-events = "6.0"
 watchexec-signals = "5.0"
+which.workspace = true
 clearscreen = "4.0"
 evm-disassembler.workspace = true
 path-slash.workspace = true
@@ -106,7 +108,13 @@ soldeer-core.workspace = true
 quick-junit = "0.7.0"
 tempfile.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", features = ["process"] }
+
 [dev-dependencies]
+async-lsp.workspace = true
+tokio-util.workspace = true
+futures = { workspace = true, features = ["executor"] }
 alloy-hardforks.workspace = true
 anvil.workspace = true
 forge-script-sequence.workspace = true
@@ -142,6 +150,19 @@ monad = [
     "foundry-cli/monad",
     "forge-script/monad",
     "forge-verify/monad",
+]
+base = [
+    "anvil/base",
+    "foundry-evm/base",
+    "foundry-evm-networks/base",
+    "foundry-evm-symbolic/base",
+    "foundry-common/base",
+    "foundry-config/base",
+    "foundry-cli/base",
+    "foundry-debugger/base",
+    "foundry-test-utils/base",
+    "forge-script/base",
+    "forge-verify/base",
 ]
 optimism = [
     "foundry-evm/optimism",

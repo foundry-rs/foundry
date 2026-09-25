@@ -1,12 +1,12 @@
-note[pascal-case-struct]: structs should use PascalCase
+note[pascal-case-struct]: struct name is not `PascalCase`
    ╭▸ ROOT/testdata/StructPascalCase.sol:LL:CC
    │
-LL │     struct _PascalCase {
-   │            ━━━━━━━━━━━ help: consider using: `PascalCase`
+LL │     struct _otherCase {
+   │            ━━━━━━━━━━ help: consider using (notice the capitalization): `_OtherCase`
    │
    ╰ help: https://getfoundry.sh/forge/linting/pascal-case-struct
 
-note[pascal-case-struct]: structs should use PascalCase
+note[pascal-case-struct]: struct name is not `PascalCase`
    ╭▸ ROOT/testdata/StructPascalCase.sol:LL:CC
    │
 LL │     struct pascalCase {
@@ -14,7 +14,7 @@ LL │     struct pascalCase {
    │
    ╰ help: https://getfoundry.sh/forge/linting/pascal-case-struct
 
-note[pascal-case-struct]: structs should use PascalCase
+note[pascal-case-struct]: struct name is not `PascalCase`
    ╭▸ ROOT/testdata/StructPascalCase.sol:LL:CC
    │
 LL │     struct pascalcase {
@@ -22,7 +22,7 @@ LL │     struct pascalcase {
    │
    ╰ help: https://getfoundry.sh/forge/linting/pascal-case-struct
 
-note[pascal-case-struct]: structs should use PascalCase
+note[pascal-case-struct]: struct name is not `PascalCase`
    ╭▸ ROOT/testdata/StructPascalCase.sol:LL:CC
    │
 LL │     struct pascal_case {
@@ -30,7 +30,7 @@ LL │     struct pascal_case {
    │
    ╰ help: https://getfoundry.sh/forge/linting/pascal-case-struct
 
-note[pascal-case-struct]: structs should use PascalCase
+note[pascal-case-struct]: struct name is not `PascalCase`
    ╭▸ ROOT/testdata/StructPascalCase.sol:LL:CC
    │
 LL │     struct PASCAL_CASE {
@@ -38,11 +38,27 @@ LL │     struct PASCAL_CASE {
    │
    ╰ help: https://getfoundry.sh/forge/linting/pascal-case-struct
 
-note[pascal-case-struct]: structs should use PascalCase
+note[pascal-case-struct]: struct name is not `PascalCase`
    ╭▸ ROOT/testdata/StructPascalCase.sol:LL:CC
    │
 LL │     struct PASCALCASE {
    │            ━━━━━━━━━━ help: consider using: `Pascalcase`
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/pascal-case-struct
+
+note[pascal-case-struct]: struct name is not `PascalCase`
+   ╭▸ ROOT/testdata/StructPascalCase.sol:LL:CC
+   │
+LL │     struct __ERC20Data {
+   │            ━━━━━━━━━━━ help: consider using: `_Erc20Data`
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/pascal-case-struct
+
+note[pascal-case-struct]: struct name is not `PascalCase`
+   ╭▸ ROOT/testdata/StructPascalCase.sol:LL:CC
+   │
+LL │     struct ERC20Data__ {
+   │            ━━━━━━━━━━━ help: consider using: `Erc20Data_`
    │
    ╰ help: https://getfoundry.sh/forge/linting/pascal-case-struct
 

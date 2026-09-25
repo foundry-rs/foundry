@@ -2228,6 +2228,69 @@ Encountered 1 failing test in test/InvariantReplayInitialAfterInvariantFailure.t
 "#]]);
 });
 
+forgetest_init!(invariant_replay_uses_full_persisted_sequence_after_depth_decrease, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 20;
+        config.invariant.depth = 20;
+    });
+
+    prj.add_test(
+        "InvariantReplayFullSequence.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract FullSequenceHandler {
+    uint256 public count;
+
+    function inc() external {
+        count += 1;
+    }
+}
+
+contract InvariantReplayFullSequence is Test {
+    FullSequenceHandler handler;
+
+    function setUp() public {
+        handler = new FullSequenceHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_count_below_five() public view {
+        require(handler.count() < 5, "count reached five");
+    }
+}
+"#,
+    );
+
+    // Five calls are needed to break the invariant; record that sequence.
+    assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
+...
+[FAIL: count reached five]
+	[SEQUENCE]
+ invariant_count_below_five() ([RUNS])
+...
+"#]]);
+
+    // A depth of 3 can never reach five calls on its own, so only the persisted sequence can
+    // still fail the test. It must be replayed in full rather than cut to the new depth.
+    prj.update_config(|config| {
+        config.invariant.runs = 20;
+        config.invariant.depth = 3;
+    });
+    cmd.forge_fuse().args(["test"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: count reached five]
+	[Sequence] (original: 5, shrunk: 5)
+		sender=[..] addr=[..] calldata=inc() args=[]
+		sender=[..] addr=[..] calldata=inc() args=[]
+		sender=[..] addr=[..] calldata=inc() args=[]
+		sender=[..] addr=[..] calldata=inc() args=[]
+		sender=[..] addr=[..] calldata=inc() args=[]
+ invariant_count_below_five() (runs: 1, calls: 5, reverts: 0)
+...
+"#]]);
+});
+
 forgetest_init!(invariant_test1, |prj, cmd| {
     prj.update_config(|config| {
         config.invariant.depth = 10;

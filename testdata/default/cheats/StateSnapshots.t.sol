@@ -101,6 +101,69 @@ contract StateSnapshotTest is Test {
     }
 }
 
+// Snapshots inherited from setUp must be deletable before backend initialization.
+contract StateSnapshotDeleteFromSetUpTest is Test {
+    uint256 id;
+
+    function setUp() public {
+        id = vm.snapshotState();
+    }
+
+    function testDeleteStateSnapshotTakenInSetUpAsFirstCall() public {
+        // Keep deletion as the first mutating cheatcode.
+        assertTrue(vm.deleteStateSnapshot(id));
+        assert(!vm.revertToState(id));
+    }
+
+    function testDeleteStateSnapshotsTakenInSetUpAsFirstCall() public {
+        vm.deleteStateSnapshots();
+        assert(!vm.revertToState(id));
+    }
+
+    function testFuzz_DeleteStateSnapshotTakenInSetUp(uint256) public {
+        // Each fuzz run inherits the same setup snapshot.
+        assertTrue(vm.deleteStateSnapshot(id));
+    }
+}
+
+/// forge-config: default.isolate = true
+contract StateSnapshotIsolationTest is Test {
+    uint256 value;
+
+    function testRevertFromIsolatedCallRestoresAbsentState() public {
+        address target = address(0xBEEF);
+        uint256 snapshotId = vm.snapshotState();
+        value = 2;
+        vm.deal(target, 5 ether);
+
+        assertTrue(this.restore(snapshotId));
+
+        assertEq(value, 0);
+        assertEq(target.balance, 0);
+    }
+
+    function restore(uint256 snapshotId) external returns (bool) {
+        return vm.revertToState(snapshotId);
+    }
+}
+
+contract StateSnapshotNestedRevertTest is Test {
+    uint256 value;
+
+    function testRevertFromNestedCallKeepsCallDepth() public {
+        uint256 snapshotId = vm.snapshotState();
+        value = 2;
+
+        assertTrue(this.restore(snapshotId));
+
+        assertEq(value, 0);
+    }
+
+    function restore(uint256 snapshotId) external returns (bool) {
+        return vm.revertToState(snapshotId);
+    }
+}
+
 // TODO: remove this test suite once `snapshot*` has been deprecated in favor of `snapshotState*`.
 contract DeprecatedStateSnapshotTest is Test {
     Storage store;

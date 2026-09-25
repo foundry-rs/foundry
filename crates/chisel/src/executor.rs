@@ -2,7 +2,10 @@
 //!
 //! This module contains the execution logic for the [SessionSource].
 
-use crate::prelude::{ChiselDispatcher, ChiselResult, ChiselRunner, SessionSource, SolidityHelper};
+use crate::{
+    prelude::{ChiselDispatcher, ChiselResult, ChiselRunner, SessionSource, SolidityHelper},
+    source::CachedBackend,
+};
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_json_abi::EventParam;
 use alloy_primitives::{Address, B256, U256, hex};
@@ -12,7 +15,6 @@ use foundry_evm::{
     backend::Backend,
     core::evm::{BlockEnvFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
     decode::decode_console_logs,
-    executors::ExecutorBuilder,
     inspectors::CheatsConfig,
     opts::{ExecutionSpecContext, resolve_execution_spec},
     traces::TraceRequirements,
@@ -281,42 +283,58 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
     }
 
     async fn build_runner(&mut self, final_pc: usize) -> Result<ChiselRunner<FEN>> {
-        let (mut evm_env, tx_env, fork_context) = self
-            .config
-            .evm_opts
-            .env_with_fork_context::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>()
-            .await?;
+        let (mut evm_env, tx_env, backend, resolved_fork) = match self.config.cached_backend.clone()
+        {
+            Some(CachedBackend { backend, resolved_fork }) => {
+                let (evm_env, tx_env) = self
+                    .config
+                    .evm_opts
+                    .env_with_resolved_fork::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>(
+                        resolved_fork.as_ref(),
+                    )
+                    .await?;
+                (evm_env, tx_env, backend, resolved_fork)
+            }
+            None => {
+                let (evm_env, tx_env, resolved_fork) = self
+                    .config
+                    .evm_opts
+                    .env_resolved::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>()
+                    .await?;
+                let fork = self.config.evm_opts.get_fork_resolved(
+                    &self.config.foundry_config,
+                    evm_env.cfg_env.chain_id,
+                    resolved_fork.as_ref(),
+                );
+                let backend = Backend::spawn(fork)?;
+                self.config.cached_backend = Some(CachedBackend {
+                    backend: backend.clone(),
+                    resolved_fork: resolved_fork.clone(),
+                });
+                (evm_env, tx_env, backend, resolved_fork)
+            }
+        };
+        let fork_context = resolved_fork.as_ref().map(|fork| fork.context());
         let fork_chain_id = fork_context.map(|context| context.source_chain_id);
         let fork_hardfork = fork_context.and_then(|context| context.hardfork);
         self.config.source_chain_id = fork_chain_id;
         self.config.resolved_hardfork = resolve_execution_spec(
-            &self.config.foundry_config,
-            self.config.evm_opts.networks,
+            self.config.foundry_config.evm_version,
+            self.config.foundry_config.hardfork,
             &mut evm_env,
             ExecutionSpecContext::local_or_fork(fork_chain_id, fork_hardfork),
             None,
-            None,
         );
 
-        let backend = match self.config.backend.clone() {
-            Some(backend) => backend,
-            None => {
-                let fork = fork_context.and_then(|context| {
-                    self.config.evm_opts.get_fork_with_context(&self.config.foundry_config, context)
-                });
-                let backend = Backend::spawn(fork)?;
-                self.config.backend = Some(backend.clone());
-                backend
-            }
-        };
-
-        let executor = ExecutorBuilder::default()
+        let executor = self
+            .config
+            .executor_builder
+            .clone()
             .inspectors(|stack| {
                 stack
                     .logs(self.config.foundry_config.live_logs)
                     .chisel_state(final_pc)
                     .trace_requirements(TraceRequirements::none().with_calls(true))
-                    .networks(self.config.evm_opts.networks)
                     .cheatcodes(
                         CheatsConfig::new(
                             &self.config.foundry_config,
@@ -330,7 +348,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
             })
             .gas_limit(self.config.evm_opts.gas_limit())
             .legacy_assertions(self.config.foundry_config.legacy_assertions)
-            .build(evm_env, tx_env, backend);
+            .build(evm_env, tx_env, backend, self.config.evm_opts.networks);
 
         Ok(ChiselRunner::new(executor, U256::MAX, Address::ZERO, self.config.calldata.clone()))
     }
@@ -618,10 +636,13 @@ mod tests {
     use crate::source::SessionSourceConfig;
     use foundry_compilers::{error::SolcError, solc::Solc};
     use foundry_config::Config;
-    use foundry_evm::{core::evm::EthEvmNetwork, opts::EvmOpts};
+    use foundry_evm::{core::evm::EthEvmNetwork, executors::ExecutorBuilder, opts::EvmOpts};
     use foundry_evm_networks::{NetworkConfigs, celo::transfer::CELO_TRANSFER_ADDRESS};
     use solar::sema::Compiler;
     use std::sync::Mutex;
+
+    #[cfg(feature = "monad")]
+    use foundry_evm::core::{constants::MONAD_CHEATCODE_ADDRESS, evm::MonadEvmNetwork};
 
     type TestSessionSource = SessionSource<EthEvmNetwork>;
 
@@ -666,6 +687,25 @@ mod tests {
             serde_json::from_str::<SessionSourceConfig<EthEvmNetwork>>(&encoded).unwrap();
         restored.initialize_local_context();
         assert_celo_transfer_precompile(restored).await;
+    }
+
+    #[cfg(feature = "monad")]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn chisel_runner_uses_dispatched_monad_tooling() {
+        let networks = NetworkConfigs::with_monad();
+        let mut source = SessionSource::<MonadEvmNetwork>::new(SessionSourceConfig {
+            foundry_config: Config { networks, ..Default::default() },
+            evm_opts: EvmOpts { networks, ..Default::default() },
+            executor_builder: ExecutorBuilder::<MonadEvmNetwork>::new(),
+            ..Default::default()
+        })
+        .unwrap();
+
+        let runner = source.build_runner(0).await.unwrap();
+        assert_eq!(
+            runner.executor.inspector().extra_cheatcode_addresses(),
+            &[MONAD_CHEATCODE_ADDRESS]
+        );
     }
 
     #[test]

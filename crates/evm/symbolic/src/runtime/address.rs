@@ -1,22 +1,5 @@
 use super::*;
 
-pub(crate) fn mask_bits(value: U256, bits: usize) -> U256 {
-    if bits >= 256 {
-        value
-    } else {
-        let mask = (U256::from(1) << bits) - U256::from(1);
-        value & mask
-    }
-}
-
-pub(crate) fn address_word(address: Address) -> U256 {
-    U256::from_be_bytes(address.into_word().0)
-}
-
-pub(crate) fn word_to_address(value: U256) -> Address {
-    Address::from_word(value.to_be_bytes::<32>().into())
-}
-
 impl SymExpr {
     pub(crate) fn representative_symbolic_address(&self) -> Address {
         let digest = keccak256(self.symbolic_address_key());
@@ -133,6 +116,23 @@ impl SymExpr {
     fn is_shift_96(&self) -> bool {
         self.as_const() == Some(U256::from(96))
     }
+}
+
+pub(crate) fn mask_bits(value: U256, bits: usize) -> U256 {
+    if bits >= 256 {
+        value
+    } else {
+        let mask = (U256::from(1) << bits) - U256::from(1);
+        value & mask
+    }
+}
+
+pub(crate) fn address_word(address: Address) -> U256 {
+    U256::from_be_bytes(address.into_word().0)
+}
+
+pub(crate) fn word_to_address(value: U256) -> Address {
+    Address::from_word(value.to_be_bytes::<32>().into())
 }
 
 pub(crate) fn stable_symbol(cx: &mut SymCx, prefix: &'static str, input: &[u8]) -> Symbol {

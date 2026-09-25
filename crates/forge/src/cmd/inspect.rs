@@ -1,8 +1,14 @@
 use alloy_json_abi::{Event, EventParam, InternalType, JsonAbi, Param};
 use clap::Parser;
-use comfy_table::{Cell, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN};
+use comfy_table::{
+    Cell, Table,
+    presets::{ASCII_FULL, ASCII_MARKDOWN},
+};
 use eyre::{Result, eyre};
-use foundry_cli::opts::{BuildOpts, CompilerOpts};
+use foundry_cli::{
+    opts::{BuildOpts, CompilerOpts},
+    utils::LoadConfig,
+};
 use foundry_common::{
     compile::{PathOrContractInfo, ProjectCompiler},
     find_matching_contract_artifact, find_target_path, shell,
@@ -80,7 +86,8 @@ impl InspectArgs {
         };
 
         // Build the project
-        let mut project = modified_build_args.project()?;
+        let config = modified_build_args.load_config_with_dependencies()?;
+        let mut project = config.project()?;
         if !user_extra_output
             && !project.build_info
             && let Some(selection) = field.inspect_output_selection()
@@ -436,9 +443,9 @@ fn print_table(
 ) -> Result<()> {
     let mut table = Table::new();
     if shell::is_markdown() {
-        table.load_preset(ASCII_MARKDOWN);
+        table.load_style(ASCII_MARKDOWN);
     } else {
-        table.apply_modifier(UTF8_ROUND_CORNERS);
+        table.load_style(ASCII_FULL.with_rounded_corners());
     }
     table.set_header(headers);
     if should_wrap {

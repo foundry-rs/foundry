@@ -5,10 +5,6 @@ use eyre::{Context, Result};
 use foundry_common::sh_println;
 use once_cell::sync::Lazy;
 use serde_json::json;
-#[cfg(unix)]
-use std::os::unix::process::CommandExt;
-#[cfg(unix)]
-use std::time::Duration;
 use std::{
     collections::HashSet,
     env,
@@ -18,6 +14,9 @@ use std::{
     process::{Child, Command, ExitStatus, Output, Stdio},
     sync::Mutex,
 };
+
+#[cfg(unix)]
+use std::{os::unix::process::CommandExt, time::Duration};
 
 const DEFAULT_SCFUZZBENCH_REPO: &str = "https://github.com/tempoxyz/scfuzzbench.git";
 const DEFAULT_SCFUZZBENCH_REF: &str = "main";

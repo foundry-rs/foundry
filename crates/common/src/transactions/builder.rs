@@ -1,5 +1,3 @@
-use std::num::NonZeroU64;
-
 use alloy_consensus::{
     BlobTransactionSidecar, BlobTransactionSidecarEip7594, BlobTransactionSidecarVariant,
 };
@@ -9,12 +7,19 @@ use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256};
 use alloy_provider::Provider;
 use eyre::Result;
 use foundry_wallets::TempoAccountsWallet;
+use std::num::NonZeroU64;
+use tempo_alloy::TempoNetwork;
+use tempo_primitives::{SignatureType, TempoTxType, transaction::Call};
+
+#[cfg(feature = "base")]
+use base_common_network::Base;
+#[cfg(feature = "base")]
+use base_common_rpc_types::BaseTransactionRequest;
+
 #[cfg(feature = "optimism")]
 use op_alloy_network::Optimism;
 #[cfg(feature = "optimism")]
 use op_alloy_rpc_types::OpTransactionRequest;
-use tempo_alloy::TempoNetwork;
-use tempo_primitives::{SignatureType, TempoTxType, transaction::Call};
 
 /// Composite transaction builder trait for Foundry transactions.
 ///
@@ -378,6 +383,21 @@ impl FoundryTransactionBuilder<AnyNetwork> for <AnyNetwork as Network>::Transact
 
     fn set_authorization_list(&mut self, authorization_list: Vec<SignedAuthorization>) {
         self.authorization_list = Some(authorization_list);
+    }
+}
+
+#[cfg(feature = "base")]
+impl FoundryTransactionBuilder<Base> for BaseTransactionRequest {
+    fn reset_gas_limit(&mut self) {
+        self.as_mut().gas = None;
+    }
+
+    fn authorization_list(&self) -> Option<&Vec<SignedAuthorization>> {
+        self.as_ref().authorization_list.as_ref()
+    }
+
+    fn set_authorization_list(&mut self, authorization_list: Vec<SignedAuthorization>) {
+        self.as_mut().authorization_list = Some(authorization_list);
     }
 }
 

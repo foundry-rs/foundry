@@ -1,5 +1,7 @@
 use super::*;
 
+const MAX_BOUND_ANALYSIS_VISITS: usize = 256;
+
 #[derive(Clone, Debug)]
 pub(crate) struct PathState {
     pub(crate) depth: usize,
@@ -209,6 +211,8 @@ impl PathState {
         // semantics unless the callee sets its own prank.
         child.prank = SymbolicPrank::default();
         child.loop_jumps.clear();
+        child.expected_revert = None;
+        child.assume_no_revert_next_call = None;
         child
     }
 
@@ -217,8 +221,6 @@ impl PathState {
         child.storage_hook_active = true;
         child.recorded_logs = None;
         child.access_record = None;
-        child.expected_revert = None;
-        child.assume_no_revert_next_call = None;
         child.expected_emit = None;
         child.expected_calls.clear();
         child.expected_creates.clear();
@@ -296,12 +298,26 @@ impl PathState {
         self.constrained_word(cx, expr).map(|value| usize::try_from(value).map_err(|_| value))
     }
 
-    pub(crate) fn upper_bound_usize(&self, cx: &mut SymCx, expr: &SymExpr) -> Option<usize> {
-        self.constrained_usize(cx, expr).or_else(|| {
-            expr.as_const()
-                .and_then(|value| usize::try_from(value).ok())
-                .or_else(|| self.expr_upper_bound_usize(expr))
-        })
+    pub(crate) fn upper_bound_usize(&self, _cx: &mut SymCx, expr: &SymExpr) -> Option<usize> {
+        let mut bounds = HashMap::default();
+        let mut ordering = HashMap::default();
+        let mut remaining = MAX_BOUND_ANALYSIS_VISITS;
+        self.expr_upper_bound_usize_cached(expr, &mut bounds, &mut ordering, &mut remaining)
+    }
+
+    /// Returns a conservative lower bound for values representable as host memory offsets.
+    pub(crate) fn lower_bound_usize(&self, expr: &SymExpr) -> usize {
+        let mut lower_bounds = HashMap::default();
+        let mut upper_bounds = HashMap::default();
+        let mut ordering = HashMap::default();
+        let mut remaining = MAX_BOUND_ANALYSIS_VISITS;
+        self.expr_lower_bound_usize(
+            expr,
+            &mut lower_bounds,
+            &mut upper_bounds,
+            &mut ordering,
+            &mut remaining,
+        )
     }
 
     pub(crate) fn constrained_word(&self, cx: &mut SymCx, expr: &SymExpr) -> Option<U256> {
@@ -403,6 +419,11 @@ impl PathState {
             std::mem::take(&mut child.mapping_hook_keccak_preimages);
         self.recorded_logs = child.recorded_logs.take();
         self.access_record = child.access_record.take();
+        // Inspector state survives child reverts and exceptional halts.
+        self.block = child.block.clone();
+        self.expected_calls = std::mem::take(&mut child.expected_calls);
+        self.call_mocks = std::mem::take(&mut child.call_mocks);
+        self.function_mocks = std::mem::take(&mut child.function_mocks);
     }
 
     pub(crate) fn take_reverted_top_level_effects(&mut self, mut reverted: Self) {
@@ -419,6 +440,14 @@ impl PathState {
         self.function_mocks = reverted.function_mocks;
     }
 
+    /// Returns `true` if the path can be materialized into a replayable corpus seed.
+    ///
+    /// Gas-dependent constraints are never modeled, so a seed for such a path would carry a
+    /// fabricated `gasleft()` value; skip the seed rather than failing the whole run.
+    pub(crate) fn can_materialize_seed(&self) -> bool {
+        !self.constraints.iter().any(SymBoolExpr::contains_gasleft)
+    }
+
     pub(crate) const fn satisfies_branch_target(&self) -> bool {
         self.branch_target.is_none() || self.branch_target_reached
     }
@@ -433,78 +462,280 @@ impl PathState {
         needs_check
     }
 
-    pub(crate) fn expr_upper_bound_usize(&self, expr: &SymExpr) -> Option<usize> {
-        if let Some(value) = expr.eval() {
-            return usize::try_from(value).ok();
+    fn expr_upper_bound_usize_cached(
+        &self,
+        expr: &SymExpr,
+        bounds: &mut HashMap<SymExpr, Option<usize>>,
+        ordering: &mut HashMap<(SymExpr, SymExpr), bool>,
+        remaining: &mut usize,
+    ) -> Option<usize> {
+        if let Some(bound) = bounds.get(expr) {
+            return *bound;
         }
-        if let Some(value) = expr.known_word() {
+        if let Some(value) = expr.as_const() {
             return usize::try_from(value).ok();
         }
 
         let constraint_bound = self.constraint_upper_bound_usize(expr);
-        let structural_bound = match expr.kind() {
-            SymExprKind::Const(value) => usize::try_from(*value).ok(),
-            SymExprKind::Var(_)
-            | SymExprKind::GasLeft(_)
-            | SymExprKind::Keccak { .. }
-            | SymExprKind::Hash { .. } => None,
-            SymExprKind::Not(_) => None,
-            SymExprKind::TernOp(_, _, _, modulus) => match modulus.eval() {
-                Some(modulus) if modulus.is_zero() => Some(0),
-                Some(modulus) => usize::try_from(modulus - U256::from(1)).ok(),
-                None => self.expr_upper_bound_usize(modulus).and_then(|bound| bound.checked_sub(1)),
-            },
-            SymExprKind::Ite(_, left, right) => {
-                Some(self.expr_upper_bound_usize(left)?.max(self.expr_upper_bound_usize(right)?))
-            }
-            SymExprKind::BinOp(op, left, right) => match op {
-                SymBinOp::Add => self
-                    .expr_upper_bound_usize(left)?
-                    .checked_add(self.expr_upper_bound_usize(right)?),
-                SymBinOp::Mul => self
-                    .expr_upper_bound_usize(left)?
-                    .checked_mul(self.expr_upper_bound_usize(right)?),
-                SymBinOp::UDiv => {
-                    let left = self.expr_upper_bound_usize(left)?;
-                    match right.eval()? {
-                        divisor if divisor.is_zero() => Some(0),
-                        divisor => Some(left / usize::try_from(divisor).ok()?),
+        let structural_bound = remaining.checked_sub(1).and_then(|next| {
+            *remaining = next;
+            match expr.kind() {
+                SymExprKind::Const(value) => usize::try_from(*value).ok(),
+                SymExprKind::Var(_)
+                | SymExprKind::GasLeft(_)
+                | SymExprKind::Keccak { .. }
+                | SymExprKind::Hash { .. } => None,
+                SymExprKind::Not(_) => None,
+                SymExprKind::TernOp(_, _, _, modulus) => match modulus.as_const() {
+                    Some(modulus) if modulus.is_zero() => Some(0),
+                    Some(modulus) => usize::try_from(modulus - U256::from(1)).ok(),
+                    None => self
+                        .expr_upper_bound_usize_cached(modulus, bounds, ordering, remaining)
+                        .and_then(|bound| bound.checked_sub(1)),
+                },
+                SymExprKind::Ite(condition, left, right) => {
+                    let left_bound =
+                        self.expr_upper_bound_usize_cached(left, bounds, ordering, remaining);
+                    let right_bound =
+                        self.expr_upper_bound_usize_cached(right, bounds, ordering, remaining);
+                    match (left_bound, right_bound) {
+                        (Some(left_bound), Some(right_bound)) => Some(left_bound.max(right_bound)),
+                        (None, Some(right_bound)) => condition
+                            .implies_unsigned_less_or_equal(true, left, right, remaining)
+                            .then_some(right_bound),
+                        (Some(left_bound), None) => condition
+                            .implies_unsigned_less_or_equal(false, right, left, remaining)
+                            .then_some(left_bound),
+                        (None, None) => None,
                     }
                 }
-                SymBinOp::URem => match right.eval() {
-                    Some(divisor) if divisor.is_zero() => Some(0),
-                    Some(divisor) => usize::try_from(divisor - U256::from(1)).ok(),
-                    None => self.expr_upper_bound_usize(left),
+                SymExprKind::BinOp(op, left, right) => match op {
+                    SymBinOp::Add => self
+                        .expr_upper_bound_usize_cached(left, bounds, ordering, remaining)?
+                        .checked_add(
+                            self.expr_upper_bound_usize_cached(right, bounds, ordering, remaining)?,
+                        ),
+                    SymBinOp::Mul => self
+                        .expr_upper_bound_usize_cached(left, bounds, ordering, remaining)?
+                        .checked_mul(
+                            self.expr_upper_bound_usize_cached(right, bounds, ordering, remaining)?,
+                        ),
+                    SymBinOp::UDiv => {
+                        let left =
+                            self.expr_upper_bound_usize_cached(left, bounds, ordering, remaining)?;
+                        match right.as_const()? {
+                            divisor if divisor.is_zero() => Some(0),
+                            divisor => Some(left / usize::try_from(divisor).ok()?),
+                        }
+                    }
+                    SymBinOp::URem => match right.as_const() {
+                        Some(divisor) if divisor.is_zero() => Some(0),
+                        Some(divisor) => usize::try_from(divisor - U256::from(1)).ok(),
+                        None => {
+                            self.expr_upper_bound_usize_cached(left, bounds, ordering, remaining)
+                        }
+                    },
+                    SymBinOp::And => right
+                        .as_const()
+                        .and_then(|value| usize::try_from(value).ok())
+                        .or_else(|| left.as_const().and_then(|value| usize::try_from(value).ok()))
+                        .map(|mask| {
+                            self.expr_upper_bound_usize_cached(left, bounds, ordering, remaining)
+                                .or_else(|| {
+                                    self.expr_upper_bound_usize_cached(
+                                        right, bounds, ordering, remaining,
+                                    )
+                                })
+                                .map_or(mask, |bound| bound.min(mask))
+                        }),
+                    SymBinOp::Shr => {
+                        let left =
+                            self.expr_upper_bound_usize_cached(left, bounds, ordering, remaining)?;
+                        let shift = usize::try_from(right.as_const()?).ok()?;
+                        Some(if shift >= usize::BITS as usize { 0 } else { left >> shift })
+                    }
+                    SymBinOp::Sub => {
+                        if let Some(difference) = left
+                            .constant_difference(right)
+                            .and_then(|difference| usize::try_from(difference).ok())
+                        {
+                            return Some(difference);
+                        }
+                        let left_bound =
+                            self.expr_upper_bound_usize_cached(left, bounds, ordering, remaining)?;
+                        self.expressions_are_unsigned_ordered(right, left, ordering, remaining)
+                            .then_some(left_bound)
+                    }
+                    SymBinOp::Shl => match right.as_const() {
+                        Some(shift) if shift >= U256::from(256) => Some(0),
+                        Some(shift) => usize::try_from(shift).ok().and_then(|shift| {
+                            let bound = self
+                                .expr_upper_bound_usize_cached(left, bounds, ordering, remaining)?;
+                            if bound == 0 {
+                                return Some(0);
+                            }
+                            let factor = 1usize.checked_shl(u32::try_from(shift).ok()?)?;
+                            bound.checked_mul(factor)
+                        }),
+                        None => None,
+                    },
+                    SymBinOp::SDiv
+                    | SymBinOp::SRem
+                    | SymBinOp::Or
+                    | SymBinOp::Xor
+                    | SymBinOp::Sar => None,
                 },
-                SymBinOp::And => right
-                    .eval()
-                    .and_then(|value| usize::try_from(value).ok())
-                    .or_else(|| left.eval().and_then(|value| usize::try_from(value).ok()))
-                    .map(|mask| {
-                        self.expr_upper_bound_usize(left)
-                            .or_else(|| self.expr_upper_bound_usize(right))
-                            .map_or(mask, |bound| bound.min(mask))
-                    }),
-                SymBinOp::Shr => {
-                    let left = self.expr_upper_bound_usize(left)?;
-                    let shift = usize::try_from(right.eval()?).ok()?;
-                    Some(if shift >= usize::BITS as usize { 0 } else { left >> shift })
-                }
-                SymBinOp::Sub
-                | SymBinOp::SDiv
-                | SymBinOp::SRem
-                | SymBinOp::Or
-                | SymBinOp::Xor
-                | SymBinOp::Shl
-                | SymBinOp::Sar => None,
-            },
-        };
+            }
+        });
 
-        match (constraint_bound, structural_bound) {
+        let bound = match (constraint_bound, structural_bound) {
             (Some(left), Some(right)) => Some(left.min(right)),
             (Some(bound), None) | (None, Some(bound)) => Some(bound),
             (None, None) => None,
+        };
+        bounds.insert(expr.clone(), bound);
+        bound
+    }
+
+    fn expressions_are_unsigned_ordered(
+        &self,
+        left: &SymExpr,
+        right: &SymExpr,
+        ordering: &mut HashMap<(SymExpr, SymExpr), bool>,
+        remaining: &mut usize,
+    ) -> bool {
+        if left == right {
+            return true;
         }
+        let key = (left.clone(), right.clone());
+        if let Some(ordered) = ordering.get(&key) {
+            return *ordered;
+        }
+        let Some(next) = remaining.checked_sub(1) else { return false };
+        *remaining = next;
+
+        let ordered = if let (Some(left), Some(right)) = (left.as_const(), right.as_const()) {
+            left <= right
+        } else if let SymExprKind::Ite(condition, then_value, else_value) = left.kind() {
+            let then_ordered = condition
+                .implies_unsigned_less_or_equal(true, then_value, right, remaining)
+                || self.expressions_are_unsigned_ordered(then_value, right, ordering, remaining);
+            let else_ordered = condition
+                .implies_unsigned_less_or_equal(false, else_value, right, remaining)
+                || self.expressions_are_unsigned_ordered(else_value, right, ordering, remaining);
+            then_ordered && else_ordered
+        } else if let SymExprKind::Ite(condition, then_value, else_value) = right.kind() {
+            let then_ordered = condition
+                .implies_unsigned_less_or_equal(true, left, then_value, remaining)
+                || self.expressions_are_unsigned_ordered(left, then_value, ordering, remaining);
+            let else_ordered = condition
+                .implies_unsigned_less_or_equal(false, left, else_value, remaining)
+                || self.expressions_are_unsigned_ordered(left, else_value, ordering, remaining);
+            then_ordered && else_ordered
+        } else {
+            false
+        };
+        ordering.insert(key, ordered);
+        ordered
+    }
+
+    fn expr_lower_bound_usize(
+        &self,
+        expr: &SymExpr,
+        lower_bounds: &mut HashMap<SymExpr, usize>,
+        upper_bounds: &mut HashMap<SymExpr, Option<usize>>,
+        ordering: &mut HashMap<(SymExpr, SymExpr), bool>,
+        remaining: &mut usize,
+    ) -> usize {
+        if let Some(bound) = lower_bounds.get(expr) {
+            return *bound;
+        }
+        if let Some(value) = expr.as_const().and_then(|value| usize::try_from(value).ok()) {
+            return value;
+        }
+        let Some(next) = remaining.checked_sub(1) else {
+            return 0;
+        };
+        *remaining = next;
+
+        let bound = match expr.kind() {
+            SymExprKind::Const(value) => usize::try_from(*value).unwrap_or_default(),
+            SymExprKind::Ite(_, left, right) => {
+                let left = self.expr_lower_bound_usize(
+                    left,
+                    lower_bounds,
+                    upper_bounds,
+                    ordering,
+                    remaining,
+                );
+                let right = self.expr_lower_bound_usize(
+                    right,
+                    lower_bounds,
+                    upper_bounds,
+                    ordering,
+                    remaining,
+                );
+                left.min(right)
+            }
+            SymExprKind::BinOp(SymBinOp::Add, left, right) => {
+                let no_wrap = self
+                    .expr_upper_bound_usize_cached(left, upper_bounds, ordering, remaining)
+                    .and_then(|left| {
+                        self.expr_upper_bound_usize_cached(right, upper_bounds, ordering, remaining)
+                            .and_then(|right| left.checked_add(right))
+                    })
+                    .is_some();
+                if no_wrap {
+                    let left = self.expr_lower_bound_usize(
+                        left,
+                        lower_bounds,
+                        upper_bounds,
+                        ordering,
+                        remaining,
+                    );
+                    let right = self.expr_lower_bound_usize(
+                        right,
+                        lower_bounds,
+                        upper_bounds,
+                        ordering,
+                        remaining,
+                    );
+                    left.checked_add(right).unwrap_or_default()
+                } else {
+                    0
+                }
+            }
+            SymExprKind::BinOp(SymBinOp::Sub, left, right) => left
+                .constant_difference(right)
+                .and_then(|difference| usize::try_from(difference).ok())
+                .unwrap_or_default(),
+            SymExprKind::BinOp(SymBinOp::Or, left, right) => {
+                let left = self.expr_lower_bound_usize(
+                    left,
+                    lower_bounds,
+                    upper_bounds,
+                    ordering,
+                    remaining,
+                );
+                let right = self.expr_lower_bound_usize(
+                    right,
+                    lower_bounds,
+                    upper_bounds,
+                    ordering,
+                    remaining,
+                );
+                left.max(right)
+            }
+            SymExprKind::Var(_)
+            | SymExprKind::GasLeft(_)
+            | SymExprKind::Keccak { .. }
+            | SymExprKind::Hash { .. }
+            | SymExprKind::Not(_)
+            | SymExprKind::BinOp(_, _, _)
+            | SymExprKind::TernOp(_, _, _, _) => 0,
+        };
+        lower_bounds.insert(expr.clone(), bound);
+        bound
     }
 
     pub(crate) fn constraint_upper_bound_usize(&self, expr: &SymExpr) -> Option<usize> {
@@ -601,7 +832,7 @@ impl PathState {
                 match kind {
                     ShiftKind::Shl => value << shift,
                     ShiftKind::Shr => value >> shift,
-                    ShiftKind::Sar => sar(value, shift),
+                    ShiftKind::Sar => value.arithmetic_shr(shift),
                 }
             };
             SymExpr::constant(cx, result)
@@ -622,7 +853,7 @@ impl PathState {
         let exponent = self.stack.pop()?;
         let result = if let Some(exponent) = self.constrained_word(cx, &exponent) {
             if let Some(base_value) = base.as_const() {
-                SymExpr::constant(cx, pow_mod(base_value, exponent))
+                SymExpr::constant(cx, base_value.wrapping_pow(exponent))
             } else if exponent <= U256::from(SYMBOLIC_EXP_CONCRETE_EXPONENT_LIMIT) {
                 exp_expr_for_concrete_exponent(
                     cx,
@@ -1075,7 +1306,7 @@ impl ExpectedCall {
             gas,
             min_gas,
             data,
-            expected: count.unwrap_or(1).max(1),
+            expected: count.unwrap_or(1),
             observed: 0,
             exact: count.is_some(),
         }
@@ -1137,11 +1368,34 @@ impl ExpectedCall {
     }
 }
 
+/// Registers an expected call using the concrete cheatcode's keyed-additive semantics.
+pub(crate) fn register_expected_call(
+    expected_calls: &mut Vec<ExpectedCall>,
+    cx: &mut SymCx,
+    expected: ExpectedCall,
+) -> Result<(), &'static str> {
+    if let Some(existing) = expected_calls
+        .iter_mut()
+        .find(|call| call.callee == expected.callee && call.data.same_bytes(cx, &expected.data))
+    {
+        if expected.exact {
+            return Err("counted expected calls can only bet set once");
+        }
+        if existing.exact {
+            return Err("cannot overwrite a counted expectCall with a non-counted expectCall");
+        }
+        existing.expected += 1;
+    } else {
+        expected_calls.push(expected);
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct CallMock {
-    callee: SymExpr,
+    pub(crate) callee: SymExpr,
     value: Option<U256>,
-    data: SymBytes,
+    pub(crate) data: SymBytes,
     returns: Vec<SymReturnData>,
     reverts: bool,
     calls: usize,
@@ -1301,8 +1555,8 @@ impl ExpectedEmit {
         if let Some(expected_emitter) = &self.emitter {
             conditions.push(expected_emitter.address_match_condition(cx, actual.emitter));
         }
-        for idx in 0..self.checks.topics.len() {
-            if !self.checks.topics[idx] {
+        for (idx, &check_topic) in self.checks.topics.iter().enumerate() {
+            if !check_topic {
                 continue;
             }
             match (template.topics.get(idx), actual.topics.get(idx)) {
@@ -2280,6 +2534,91 @@ fn symbolic_storage_symbol(cx: &mut SymCx, address: Address, key: &SymExpr) -> S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn expected_call_zero_count_is_satisfied_only_if_call_never_happens() {
+        let mut cx = SymCx::new();
+        let callee = SymExpr::zero(&mut cx);
+        let data = SymBytes::empty(&mut cx);
+
+        // vm.expectCall(callee, data, 0) - the call must NEVER happen.
+        let mut never_called =
+            ExpectedCall::new(callee.clone(), None, None, None, data.clone(), Some(0));
+        // If the forbidden call never occurs, the expectation is satisfied.
+        assert!(never_called.is_satisfied());
+
+        // A forbidden call is rejected without incrementing the observed count.
+        assert!(!never_called.observe());
+        assert!(never_called.is_satisfied());
+
+        // Sanity check: an exact count=1 expectation still behaves as before.
+        let mut called_once = ExpectedCall::new(callee, None, None, None, data, Some(1));
+        assert!(!called_once.is_satisfied());
+        assert!(called_once.observe());
+        assert!(called_once.is_satisfied());
+        // A second call beyond the exact count of 1 must be rejected.
+        assert!(!called_once.observe());
+    }
+
+    #[test]
+    fn duplicate_non_counted_expect_call_merges_additively() {
+        let mut cx = SymCx::new();
+        let callee = SymExpr::zero(&mut cx);
+        let data = SymBytes::empty(&mut cx);
+        let mut expected_calls = Vec::new();
+        let first = ExpectedCall::new(callee.clone(), None, None, None, data.clone(), None);
+        let second = ExpectedCall::new(callee, None, None, None, data, None);
+
+        assert_eq!(register_expected_call(&mut expected_calls, &mut cx, first), Ok(()));
+        assert_eq!(register_expected_call(&mut expected_calls, &mut cx, second), Ok(()));
+        assert_eq!(expected_calls.len(), 1);
+        assert_eq!(expected_calls[0].expected, 2);
+        assert!(expected_calls[0].observe());
+        assert!(!expected_calls[0].is_satisfied());
+        assert!(expected_calls[0].observe());
+        assert!(expected_calls[0].is_satisfied());
+    }
+
+    #[test]
+    fn duplicate_counted_expect_call_is_rejected() {
+        let mut cx = SymCx::new();
+        let callee = SymExpr::zero(&mut cx);
+        let data = SymBytes::empty(&mut cx);
+        let mut expected_calls = Vec::new();
+        let first = ExpectedCall::new(callee.clone(), None, None, None, data.clone(), Some(3));
+        let counted = ExpectedCall::new(callee.clone(), None, None, None, data.clone(), Some(5));
+        let non_counted = ExpectedCall::new(callee, None, None, None, data, None);
+
+        assert_eq!(register_expected_call(&mut expected_calls, &mut cx, first), Ok(()));
+        assert_eq!(
+            register_expected_call(&mut expected_calls, &mut cx, counted),
+            Err("counted expected calls can only bet set once")
+        );
+        assert_eq!(
+            register_expected_call(&mut expected_calls, &mut cx, non_counted),
+            Err("cannot overwrite a counted expectCall with a non-counted expectCall")
+        );
+        assert_eq!(expected_calls.len(), 1);
+        assert_eq!(expected_calls[0].expected, 3);
+    }
+
+    #[test]
+    fn counted_expect_call_over_existing_non_counted_is_rejected() {
+        let mut cx = SymCx::new();
+        let callee = SymExpr::zero(&mut cx);
+        let data = SymBytes::empty(&mut cx);
+        let mut expected_calls = Vec::new();
+        let first = ExpectedCall::new(callee.clone(), None, None, None, data.clone(), None);
+        let counted = ExpectedCall::new(callee, None, None, None, data, Some(2));
+
+        assert_eq!(register_expected_call(&mut expected_calls, &mut cx, first), Ok(()));
+        assert_eq!(
+            register_expected_call(&mut expected_calls, &mut cx, counted),
+            Err("counted expected calls can only bet set once")
+        );
+        assert_eq!(expected_calls.len(), 1);
+        assert_eq!(expected_calls[0].expected, 1);
+    }
 
     #[test]
     fn reverted_top_level_effects_preserve_storage_hook_registrations() {

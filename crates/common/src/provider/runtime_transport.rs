@@ -41,11 +41,6 @@ const KNOWN_MPP_HOSTS: &[&str] = &[".mpp.tempo.xyz", ".mpp.moderato.tempo.xyz"];
 static HTTP_URL_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"(?i)https?://[^\s<>"']+"#).expect("valid URL regex"));
 
-/// Returns `true` if `url` points to a known MPP-enabled RPC service.
-fn is_known_mpp_endpoint(url: &Url) -> bool {
-    url.host_str().is_some_and(|host| KNOWN_MPP_HOSTS.iter().any(|suffix| host.ends_with(suffix)))
-}
-
 /// An enum representing the different transports that can be used to connect to a runtime.
 /// Only meant to be used internally by [RuntimeTransport].
 #[derive(Clone, Debug)]
@@ -370,6 +365,11 @@ impl RuntimeTransport {
     {
         BoxTransport::new(self)
     }
+}
+
+/// Returns `true` if `url` points to a known MPP-enabled RPC service.
+fn is_known_mpp_endpoint(url: &Url) -> bool {
+    url.host_str().is_some_and(|host| KNOWN_MPP_HOSTS.iter().any(|suffix| host.ends_with(suffix)))
 }
 
 fn redact_http_transport_error(error: TransportError, endpoint: &Url) -> TransportError {
