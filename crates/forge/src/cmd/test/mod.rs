@@ -1662,6 +1662,7 @@ impl TestArgs {
             .dynamic_test_linking(config.dynamic_test_linking)
             .quiet(shell::is_json() || self.junit);
         let (output, selected_sources, inline_config) = if self.list {
+            let compiler = compiler.external_artifacts(false);
             // Only the ABI is needed to list tests, so skip the full compile when possible.
             let compiler = if filter.args().path_pattern.is_some()
                 && config.extra_output.is_empty()

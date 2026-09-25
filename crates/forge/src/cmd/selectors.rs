@@ -175,7 +175,10 @@ impl SelectorsSubcommands {
                         ]);
                     });
                 }
-                let mut compiler = ProjectCompiler::new().external_compilers(&config).quiet(true);
+                let mut compiler = ProjectCompiler::new()
+                    .external_compilers(&config)
+                    .external_artifacts(false)
+                    .quiet(true);
 
                 if let Some(contract_path) = &mut first_contract.path {
                     let target_path = canonicalize(&*contract_path)?;
@@ -465,6 +468,7 @@ fn project_from_paths(
     let config = build.load_config_with_dependencies()?;
     let compiler = ProjectCompiler::new()
         .external_compilers(&config)
+        .external_artifacts(false)
         .dynamic_test_linking(config.dynamic_test_linking);
     let mut project = config.project()?;
     if !project.build_info {

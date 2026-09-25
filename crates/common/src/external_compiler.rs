@@ -307,8 +307,8 @@ impl<'a> AdapterClient<'a> {
             let name = artifact.name.clone();
             validate_id("contract", &name)?;
             ensure!(
-                !name.contains('.'),
-                "external compiler contract name must not contain dots: {name}"
+                !name.contains(['.', '-']),
+                "external compiler contract name must contain only ASCII letters, digits, or underscores: {name}"
             );
             let source = validate_relative_path("source unit", &artifact.source)?.to_path_buf();
             let source_path = resolve_file(&self.config.root, &source)?;
@@ -784,14 +784,10 @@ fn hash_part(hasher: &mut Sha256, bytes: &[u8]) {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        ExternalArtifact, ensure_portable_child, normalize_root_path, validate_id,
-        validate_relative_path,
-    };
-    use std::{fs, path::Path};
+    use super::*;
 
     #[cfg(unix)]
-    use {super::retire_children, std::os::unix::fs::symlink};
+    use std::os::unix::fs::symlink;
 
     #[test]
     fn rejects_unsafe_protocol_paths_and_ids() {

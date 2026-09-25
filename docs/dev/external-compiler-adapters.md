@@ -106,9 +106,9 @@ artifact converter to produce ABI/bytecode artifacts. Debugging and additional c
 remain outside this protocol's initial integration.
 
 Source paths must be relative and may not contain `.` or `..` components. Unit IDs use the same
-restricted character set as adapter IDs. Contract names use that set without dots, which Foundry
-reserves for artifact version and profile suffixes. Source identities are canonicalized to match
-path-qualified Forge commands; virtual source files are not supported. Foundry rejects duplicate
+restricted character set as adapter IDs. Contract names permit only ASCII letters, digits, and
+underscores so binding generation preserves their identity. Source identities are canonicalized
+to match path-qualified Forge commands; virtual source files are not supported. Foundry rejects duplicate
 `(source, contract)` identities across adapters and conflicts with built-in compiler artifacts.
 
 After the last response Foundry closes stdin and requires the adapter to exit successfully. A
@@ -140,8 +140,8 @@ unit directory so contracts no longer emitted by a unit are retired. `forge clea
 host-owned artifacts and cache entries with the normal `out` and `cache` directories.
 
 The adapter cache is unit-scoped and independent of the Solidity/Vyper compiler cache. Read-only
-compilations, including every `forge inspect` field, may reuse it but do not publish artifacts or
-update or retire cache entries. Declaring a unit cacheable is a promise by the adapter that the
+compilations (`forge inspect`, `forge test --list`, and selector queries) may reuse it but do not
+publish artifacts or update or retire cache entries. Declaring a unit cacheable is a promise by the adapter that the
 discovery response lists its complete build-affecting input closure. Ambient inputs such as time,
 randomness, undeclared environment, mutable dependency caches, or unreported compiler resources require `cacheable = false`.
 

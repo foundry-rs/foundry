@@ -112,7 +112,7 @@ done
     assert!(invoked.exists());
     let artifact = prj.root().join("out/.external/fixture/app/native/src/lib.fe/Counter.json");
     let artifact_json: serde_json::Value =
-        serde_json::from_slice(&fs::read(artifact).unwrap()).unwrap();
+        serde_json::from_slice(&fs::read(&artifact).unwrap()).unwrap();
     assert_eq!(artifact_json["bytecode"]["object"], "0x6001600c60003960016000f300");
     assert_eq!(artifact_json["rawMetadata"], r#"{"language":"Fe"}"#);
 
@@ -133,6 +133,29 @@ done
     assert_eq!(fs::read(&retained_artifact).unwrap(), artifact_before);
 
     fs::remove_file(native.join("src/other.fe")).unwrap();
+    let read_only_commands = [
+        vec!["inspect", "native/src/lib.fe:Counter", "abi"],
+        vec!["inspect", "native/src/lib.fe:Counter", "artifact"],
+        vec!["inspect", "native/src/lib.fe:Counter", "bytecode"],
+        vec!["inspect", "native/src/lib.fe:Counter", "deployedBytecode"],
+        vec!["test", "--list"],
+        vec!["selectors", "list"],
+        vec!["selectors", "find", "c0406226"],
+        vec!["selectors", "collision", "Counter", "Counter"],
+        vec!["selectors", "collision", "Counter", "Counter", "--extra-output", "metadata"],
+    ];
+    let counter_before = fs::read(&artifact).unwrap();
+    for build_info in [false, true] {
+        prj.update_config(|config| config.build_info = build_info);
+        for args in &read_only_commands {
+            cmd.forge_fuse().args(args).assert_success();
+            assert!(!invoked.exists(), "read-only command recompiled cached units: {args:?}");
+            assert_eq!(fs::read(&retained_cache).unwrap(), cache_before);
+            assert_eq!(fs::read(&retained_artifact).unwrap(), artifact_before);
+            assert_eq!(fs::read(&artifact).unwrap(), counter_before);
+        }
+    }
+    prj.update_config(|config| config.build_info = false);
     cmd.forge_fuse().arg("build").assert_success();
     assert!(!retained_cache.exists(), "complete discovery retained a stale cache entry");
     assert!(!retained_artifact.exists(), "complete discovery retained a stale artifact");
@@ -144,10 +167,11 @@ done
 
     fs::remove_dir_all(prj.root().join("out/.external")).unwrap();
     fs::remove_dir_all(prj.root().join("cache/external-compilers")).unwrap();
-    for field in ["abi", "artifact", "bytecode", "deployedBytecode"] {
+    prj.update_config(|config| config.build_info = true);
+    for args in &read_only_commands {
         fs::remove_file(&invoked).unwrap();
-        cmd.forge_fuse().args(["inspect", "native/src/lib.fe:Counter", field]).assert_success();
-        assert!(invoked.exists(), "inspect did not compile an uncached external unit");
+        cmd.forge_fuse().args(args).assert_success();
+        assert!(invoked.exists(), "read-only command did not compile an uncached unit: {args:?}");
         assert!(!prj.root().join("out/.external").exists());
         assert!(!prj.root().join("cache/external-compilers").exists());
     }
@@ -156,13 +180,14 @@ done
     let cache_before = fs::read(&cache).unwrap();
     fs::remove_dir_all(prj.root().join("out/.external")).unwrap();
     fs::remove_file(&invoked).unwrap();
-    for field in ["abi", "artifact", "bytecode", "deployedBytecode"] {
-        cmd.forge_fuse().args(["inspect", "native/src/lib.fe:Counter", field]).assert_success();
-        assert!(!invoked.exists(), "inspect did not reuse the external cache");
+    for args in &read_only_commands {
+        cmd.forge_fuse().args(args).assert_success();
+        assert!(!invoked.exists(), "read-only command did not reuse the external cache: {args:?}");
         assert!(!prj.root().join("out/.external").exists());
         assert_eq!(fs::read(&cache).unwrap(), cache_before);
     }
 
+    prj.update_config(|config| config.build_info = false);
     cmd.forge_fuse().args(["bind", "--select", "^Counter$"]).assert_success();
     assert!(prj.root().join("out/bindings/src/counter.rs").is_file());
     let (_api, handle) = spawn(NodeConfig::test()).await;
@@ -272,11 +297,13 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]],
     );
-    fs::write(&adapter, adapter_script.replace("name=Counter", "name=Counter.V1")).unwrap();
-    cmd.forge_fuse().arg("build").assert_failure().stderr_eq(str![[r#"
-Error: external compiler contract name must not contain dots: Counter.V1
-
-"#]]);
+    for name in ["Counter.V1", "Counter-V1"] {
+        fs::write(&adapter, adapter_script.replace("name=Counter", &format!("name={name}")))
+            .unwrap();
+        cmd.forge_fuse().arg("build").assert_failure().stderr_eq(format!(
+            "Error: external compiler contract name must contain only ASCII letters, digits, or underscores: {name}\n"
+        ));
+    }
     fs::write(&adapter, adapter_script.replace("source=lib.fe", "source=missing.fe")).unwrap();
     cmd.forge_fuse().arg("build").assert_failure().stderr_eq(str![[r#"
 Error: failed to canonicalize [..]/native/src/missing.fe
