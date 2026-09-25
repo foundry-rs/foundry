@@ -9,7 +9,7 @@ mod resolved;
 pub use resolved::ResolvedFork;
 
 mod bal;
-pub use bal::{cache_bal_accounts, cache_bal_storage, validate_bal};
+pub use bal::{cache_bal, validate_bal};
 
 /// Represents a _fork_ of a remote chain whose data is available only via the `url` endpoint.
 #[derive(Clone, Debug)]
