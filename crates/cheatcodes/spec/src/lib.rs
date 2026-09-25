@@ -81,6 +81,8 @@ impl Cheatcodes<'static> {
                 Vm::Log::STRUCT.clone(),
                 Vm::Rpc::STRUCT.clone(),
                 Vm::EthGetLogs::STRUCT.clone(),
+                Vm::EthStorageProof::STRUCT.clone(),
+                Vm::EthGetProof::STRUCT.clone(),
                 Vm::DirEntry::STRUCT.clone(),
                 Vm::FsMetadata::STRUCT.clone(),
                 Vm::Wallet::STRUCT.clone(),
