@@ -492,7 +492,7 @@ impl<N: Network> EthApi<N> {
         node_info!("anvil_nodeInfo");
         let _lifecycle = self.lifecycle_lock.read().await;
 
-        let evm_env = self.backend.evm_env().read();
+        let evm_env = self.backend.evm_env().read().clone();
         let fork_config = self.backend.get_fork();
         let tx_order = self.transaction_order.read();
         let hard_fork = self.backend.hardfork().name();

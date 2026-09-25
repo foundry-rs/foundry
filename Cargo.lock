@@ -11845,7 +11845,7 @@ dependencies = [
 [[package]]
 name = "solar-ast"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=b649ead9a6b6bdda1e423b6764ef2235b5d8bab7#b649ead9a6b6bdda1e423b6764ef2235b5d8bab7"
+source = "git+https://github.com/paradigmxyz/solar?rev=57836270e90938826f19af88a5cb76f8d0e31b86#57836270e90938826f19af88a5cb76f8d0e31b86"
 dependencies = [
  "alloy-primitives",
  "bumpalo",
@@ -11861,7 +11861,7 @@ dependencies = [
 [[package]]
 name = "solar-cli"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=b649ead9a6b6bdda1e423b6764ef2235b5d8bab7#b649ead9a6b6bdda1e423b6764ef2235b5d8bab7"
+source = "git+https://github.com/paradigmxyz/solar?rev=57836270e90938826f19af88a5cb76f8d0e31b86#57836270e90938826f19af88a5cb76f8d0e31b86"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -11892,7 +11892,7 @@ dependencies = [
 [[package]]
 name = "solar-codegen"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=b649ead9a6b6bdda1e423b6764ef2235b5d8bab7#b649ead9a6b6bdda1e423b6764ef2235b5d8bab7"
+source = "git+https://github.com/paradigmxyz/solar?rev=57836270e90938826f19af88a5cb76f8d0e31b86#57836270e90938826f19af88a5cb76f8d0e31b86"
 dependencies = [
  "alloy-primitives",
  "arrayvec",
@@ -11913,7 +11913,7 @@ dependencies = [
 [[package]]
 name = "solar-compiler"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=b649ead9a6b6bdda1e423b6764ef2235b5d8bab7#b649ead9a6b6bdda1e423b6764ef2235b5d8bab7"
+source = "git+https://github.com/paradigmxyz/solar?rev=57836270e90938826f19af88a5cb76f8d0e31b86#57836270e90938826f19af88a5cb76f8d0e31b86"
 dependencies = [
  "alloy-primitives",
  "idna_adapter",
@@ -11931,7 +11931,7 @@ dependencies = [
 [[package]]
 name = "solar-config"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=b649ead9a6b6bdda1e423b6764ef2235b5d8bab7#b649ead9a6b6bdda1e423b6764ef2235b5d8bab7"
+source = "git+https://github.com/paradigmxyz/solar?rev=57836270e90938826f19af88a5cb76f8d0e31b86#57836270e90938826f19af88a5cb76f8d0e31b86"
 dependencies = [
  "alloy-primitives",
  "clap",
@@ -11944,7 +11944,7 @@ dependencies = [
 [[package]]
 name = "solar-data-structures"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=b649ead9a6b6bdda1e423b6764ef2235b5d8bab7#b649ead9a6b6bdda1e423b6764ef2235b5d8bab7"
+source = "git+https://github.com/paradigmxyz/solar?rev=57836270e90938826f19af88a5cb76f8d0e31b86#57836270e90938826f19af88a5cb76f8d0e31b86"
 dependencies = [
  "bumpalo",
  "diff",
@@ -11959,7 +11959,7 @@ dependencies = [
 [[package]]
 name = "solar-interface"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=b649ead9a6b6bdda1e423b6764ef2235b5d8bab7#b649ead9a6b6bdda1e423b6764ef2235b5d8bab7"
+source = "git+https://github.com/paradigmxyz/solar?rev=57836270e90938826f19af88a5cb76f8d0e31b86#57836270e90938826f19af88a5cb76f8d0e31b86"
 dependencies = [
  "annotate-snippets 0.12.16",
  "anstream",
@@ -11968,7 +11968,6 @@ dependencies = [
  "dunce",
  "inturn",
  "itertools 0.10.5",
- "itoa",
  "normalize-path",
  "once_map",
  "rayon",
@@ -11987,7 +11986,7 @@ dependencies = [
 [[package]]
 name = "solar-lint"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=b649ead9a6b6bdda1e423b6764ef2235b5d8bab7#b649ead9a6b6bdda1e423b6764ef2235b5d8bab7"
+source = "git+https://github.com/paradigmxyz/solar?rev=57836270e90938826f19af88a5cb76f8d0e31b86#57836270e90938826f19af88a5cb76f8d0e31b86"
 dependencies = [
  "rayon",
  "solar-ast",
@@ -11998,7 +11997,7 @@ dependencies = [
 [[package]]
 name = "solar-lsp"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=b649ead9a6b6bdda1e423b6764ef2235b5d8bab7#b649ead9a6b6bdda1e423b6764ef2235b5d8bab7"
+source = "git+https://github.com/paradigmxyz/solar?rev=57836270e90938826f19af88a5cb76f8d0e31b86#57836270e90938826f19af88a5cb76f8d0e31b86"
 dependencies = [
  "arc-swap",
  "async-lsp",
@@ -12025,7 +12024,7 @@ dependencies = [
 [[package]]
 name = "solar-macros"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=b649ead9a6b6bdda1e423b6764ef2235b5d8bab7#b649ead9a6b6bdda1e423b6764ef2235b5d8bab7"
+source = "git+https://github.com/paradigmxyz/solar?rev=57836270e90938826f19af88a5cb76f8d0e31b86#57836270e90938826f19af88a5cb76f8d0e31b86"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -12035,7 +12034,7 @@ dependencies = [
 [[package]]
 name = "solar-parse"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=b649ead9a6b6bdda1e423b6764ef2235b5d8bab7#b649ead9a6b6bdda1e423b6764ef2235b5d8bab7"
+source = "git+https://github.com/paradigmxyz/solar?rev=57836270e90938826f19af88a5cb76f8d0e31b86#57836270e90938826f19af88a5cb76f8d0e31b86"
 dependencies = [
  "alloy-primitives",
  "bitflags 2.13.1",
@@ -12056,7 +12055,7 @@ dependencies = [
 [[package]]
 name = "solar-sema"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=b649ead9a6b6bdda1e423b6764ef2235b5d8bab7#b649ead9a6b6bdda1e423b6764ef2235b5d8bab7"
+source = "git+https://github.com/paradigmxyz/solar?rev=57836270e90938826f19af88a5cb76f8d0e31b86#57836270e90938826f19af88a5cb76f8d0e31b86"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
