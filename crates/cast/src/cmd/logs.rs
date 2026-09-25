@@ -1,7 +1,7 @@
 use super::MAX_CONCURRENT_RPC_REQUESTS;
 use crate::args::encode_event_topic;
 use alloy_consensus::BlockHeader;
-use alloy_dyn_abi::Specifier;
+use alloy_dyn_abi::{EventExt, Specifier};
 use alloy_ens::NameOrAddress;
 use alloy_json_abi::Event;
 use alloy_json_rpc::RpcError;
@@ -16,9 +16,12 @@ use foundry_cli::{
     opts::RpcOpts,
     utils::{self, LoadConfig},
 };
-use foundry_common::{fmt::UIfmt, shell};
+use foundry_common::{
+    fmt::{UIfmt, format_token},
+    shell,
+};
 use futures::{FutureExt, StreamExt, TryStreamExt, future::Either};
-use std::{io::Write, str::FromStr};
+use std::{fmt::Write as _, io::Write as _, str::FromStr};
 use tokio::signal::ctrl_c;
 
 /// CLI arguments for `cast logs`.
@@ -80,14 +83,15 @@ impl LogsArgs {
 
         let config = rpc.load_config()?;
         let provider = utils::get_provider(&config)?;
-        let (filter, query_size) = query.resolve(&provider).await?;
+        let (filter, query_size, event) = query.resolve_with_event(&provider).await?;
 
         if !subscribe {
             let logs = match query_size {
-                Some(chunk_size) => {
-                    format_logs(get_logs_chunked(&provider, &filter, chunk_size).await?)?
-                }
-                None => format_logs(provider.get_logs(&filter).await?)?,
+                Some(chunk_size) => format_logs(
+                    get_logs_chunked(&provider, &filter, chunk_size).await?,
+                    event.as_ref(),
+                )?,
+                None => format_logs(provider.get_logs(&filter).await?, event.as_ref())?,
             };
             sh_println!("{logs}")?;
             return Ok(());
@@ -118,6 +122,7 @@ impl LogsArgs {
         }
 
         let mut first = true;
+        let mut warned_decode_failure = false;
         loop {
             tokio::select! {
                 block = match &mut block_subscription {
@@ -131,6 +136,7 @@ impl LogsArgs {
                     }
                 },
                 log = subscription.next() => {
+                    let Some(log) = log else { break };
                     if format_json {
                         if !first {
                             write!(output, ",")?;
@@ -138,7 +144,15 @@ impl LogsArgs {
                         first = false;
                         write!(output, "{}", serde_json::to_string(&log).unwrap())?;
                     } else {
-                        writeln!(output, "{}", pretty_log(&log))?;
+                        let (formatted, decode_failed) = format_log(&log, event.as_ref());
+                        if decode_failed && !warned_decode_failure {
+                            warned_decode_failure = true;
+                            sh_warn!(
+                                "failed to decode a log with the provided event signature; \
+                                 make sure its indexed parameters match the log topics"
+                            )?;
+                        }
+                        writeln!(output, "{formatted}")?;
                     }
                 },
                 // Break on the cancel signal so the JSON array is still closed.
@@ -175,6 +189,14 @@ impl LogQueryArgs {
         self,
         provider: &P,
     ) -> Result<(Filter, Option<u64>)> {
+        let (filter, query_size, _) = self.resolve_with_event(provider).await?;
+        Ok((filter, query_size))
+    }
+
+    async fn resolve_with_event<P: Provider<N>, N: Network>(
+        self,
+        provider: &P,
+    ) -> Result<(Filter, Option<u64>, Option<Event>)> {
         let Self { from_block, to_block, address, sig_or_topic, topics_or_args, query_size } = self;
 
         let addresses = match address {
@@ -192,9 +214,10 @@ impl LogQueryArgs {
                 .await?;
         let to_block =
             convert_block_number(&provider, Some(to_block.unwrap_or_else(BlockId::latest))).await?;
-        let filter = build_filter(from_block, to_block, addresses, sig_or_topic, topics_or_args)?;
+        let (filter, event) =
+            build_filter(from_block, to_block, addresses, sig_or_topic, topics_or_args)?;
 
-        Ok((filter, query_size))
+        Ok((filter, query_size, event))
     }
 }
 
@@ -207,13 +230,16 @@ fn build_filter(
     address: Option<Vec<Address>>,
     sig_or_topic: Option<String>,
     topics_or_args: Vec<String>,
-) -> Result<Filter> {
-    let topics = match sig_or_topic {
+) -> Result<(Filter, Option<Event>)> {
+    let (topics, event) = match sig_or_topic {
         Some(sig_or_topic) => match foundry_common::abi::get_event(&sig_or_topic) {
-            Ok(event) => event_topics(&event, &topics_or_args)?,
-            Err(_) => raw_topics([vec![sig_or_topic], topics_or_args].concat())?,
+            Ok(parsed) => {
+                let topics = event_topics(&parsed, &topics_or_args)?;
+                (topics, Some(parsed))
+            }
+            Err(_) => (raw_topics([vec![sig_or_topic], topics_or_args].concat())?, None),
         },
-        None => Default::default(),
+        None => (Default::default(), None),
     };
 
     let mut filter = Filter {
@@ -224,7 +250,7 @@ fn build_filter(
     if let Some(address) = address {
         filter = filter.address(address);
     }
-    Ok(filter)
+    Ok((filter, event))
 }
 
 /// Encodes `args` as the indexed topics of `event`; empty arguments match any value. Anonymous
@@ -406,19 +432,55 @@ async fn convert_block_number<P: Provider<N>, N: Network>(
     }
 }
 
-fn format_logs(logs: Vec<Log>) -> Result<String> {
+fn format_logs(logs: Vec<Log>, event: Option<&Event>) -> Result<String> {
     if shell::is_json() {
         Ok(serde_json::to_string(&logs)?)
     } else {
-        Ok(logs.iter().map(pretty_log).collect::<Vec<_>>().join("\n"))
+        let total = logs.len();
+        let mut failed = 0;
+        let formatted = logs
+            .iter()
+            .map(|log| {
+                let (text, decode_failed) = format_log(log, event);
+                failed += usize::from(decode_failed);
+                text
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        if failed > 0 {
+            sh_warn!(
+                "failed to decode {failed} of {total} logs with the provided event signature; \
+                 make sure its indexed parameters match the log topics"
+            )?;
+        }
+        Ok(formatted)
     }
 }
 
-/// Renders a log as an indented list item.
-fn pretty_log(log: &impl UIfmt) -> String {
-    log.pretty()
-        .replacen('\n', "- ", 1) // Remove empty first line
-        .replace('\n', "\n  ") // Indent
+fn format_log(log: &Log, event: Option<&Event>) -> (String, bool) {
+    let mut pretty = log.pretty();
+    let mut decode_failed = false;
+    if let Some(event) = event {
+        match format_log_params(event, log) {
+            Some(decoded) => pretty.push_str(&decoded),
+            None => decode_failed = true,
+        }
+    }
+    (pretty.replacen('\n', "- ", 1).replace('\n', "\n  "), decode_failed)
+}
+
+/// Formats decoded event parameters in declaration order.
+fn format_log_params(event: &Event, log: &Log) -> Option<String> {
+    let decoded = event.decode_log(log.data()).ok()?;
+    let mut indexed = decoded.indexed.iter();
+    let mut body = decoded.body.iter();
+    let mut result = String::from("\ndecoded:");
+    for (i, input) in event.inputs.iter().enumerate() {
+        let value = if input.indexed { indexed.next() } else { body.next() }?;
+        let name = if input.name.is_empty() { format!("param{i}") } else { input.name.clone() };
+        write!(result, "\n\t{name}: {}", format_token(value)).ok()?;
+    }
+    Some(result)
 }
 
 /// Returns `true` if `err` is a provider range/result-size limit that retrying over a smaller
@@ -456,7 +518,88 @@ fn is_range_limit_error(err: &RpcError<TransportErrorKind>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{U256, keccak256};
+    use alloy_dyn_abi::DynSolValue;
+    use alloy_primitives::{Log as PrimitiveLog, U256, keccak256};
+
+    fn rpc_log(topics: Vec<B256>, data: Vec<u8>) -> Log {
+        Log {
+            inner: PrimitiveLog::new_unchecked(Address::ZERO, topics, data.into()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn format_log_params_respects_signature_indexed_flags() {
+        let event = Event::parse("event Ev(bytes32 indexed a, address b)").unwrap();
+        let a = B256::repeat_byte(0x11);
+        let b = Address::repeat_byte(0x22);
+        let log = rpc_log(vec![event.selector(), a], DynSolValue::Address(b).abi_encode());
+
+        let params = format_log_params(&event, &log).unwrap();
+        assert_eq!(params, format!("\ndecoded:\n\ta: {a}\n\tb: {b}"));
+    }
+
+    #[test]
+    fn format_log_params_requires_explicit_indexed_flags() {
+        let event = Event::parse("event Ev(uint256 id, address owner)").unwrap();
+        let owner = Address::repeat_byte(0x22);
+        let log = rpc_log(
+            vec![event.selector(), B256::from(U256::from(7))],
+            DynSolValue::Address(owner).abi_encode(),
+        );
+
+        assert_eq!(format_log_params(&event, &log), None);
+    }
+
+    #[test]
+    fn format_log_params_preserves_declaration_order() {
+        let event =
+            Event::parse("event Ev(uint256 a, bytes32 indexed b, address c, bytes32 indexed d)")
+                .unwrap();
+        let b = B256::repeat_byte(0x11);
+        let c = Address::repeat_byte(0x22);
+        let d = B256::repeat_byte(0x33);
+        let data = DynSolValue::Tuple(vec![
+            DynSolValue::Uint(U256::from(7), 256),
+            DynSolValue::Address(c),
+        ])
+        .abi_encode_params();
+        let log = rpc_log(vec![event.selector(), b, d], data);
+
+        let params = format_log_params(&event, &log).unwrap();
+        assert_eq!(params, format!("\ndecoded:\n\ta: 7\n\tb: {b}\n\tc: {c}\n\td: {d}"));
+    }
+
+    #[test]
+    fn format_log_params_decodes_anonymous_event() {
+        let event = Event::parse("event Ev(bytes32 indexed key, uint256 value) anonymous").unwrap();
+        let key = B256::repeat_byte(0x44);
+        let log = rpc_log(vec![key], DynSolValue::Uint(U256::from(9), 256).abi_encode());
+
+        let params = format_log_params(&event, &log).unwrap();
+        assert_eq!(params, format!("\ndecoded:\n\tkey: {key}\n\tvalue: 9"));
+    }
+
+    #[test]
+    fn format_log_params_displays_dynamic_indexed_hash() {
+        let event = Event::parse("event Ev(string indexed key, uint256 value)").unwrap();
+        let key = keccak256("hello");
+        let log = rpc_log(
+            vec![event.selector(), key],
+            DynSolValue::Uint(U256::from(9), 256).abi_encode(),
+        );
+
+        let params = format_log_params(&event, &log).unwrap();
+        assert_eq!(params, format!("\ndecoded:\n\tkey: {key}\n\tvalue: 9"));
+    }
+
+    #[test]
+    fn format_log_params_mismatching_log() {
+        let event = Event::parse("event Ev(uint256 indexed a, uint256 b)").unwrap();
+        let log =
+            rpc_log(vec![event.selector()], DynSolValue::Uint(U256::from(1), 256).abi_encode());
+        assert_eq!(format_log_params(&event, &log), None);
+    }
 
     const ADDRESS: &str = "0x4D1A2e2bB4F88F0250f26Ffff098B0b30B26BF38";
     const OTHER_ADDRESS: &str = "0x000000000000000000000000000000000000dead";
@@ -472,6 +615,7 @@ mod tests {
             Some(sig_or_topic.to_string()),
             args.iter().map(|s| s.to_string()).collect(),
         )
+        .map(|(filter, _)| filter)
     }
 
     fn topics(topics: [Topic; 4]) -> Filter {
@@ -488,7 +632,8 @@ mod tests {
 
         let from_block = Some(BlockNumberOrTag::from(1337));
         let to_block = Some(BlockNumberOrTag::Latest);
-        let basic = build_filter(from_block, to_block, Some(vec![addr]), None, vec![]).unwrap();
+        let (basic, _) =
+            build_filter(from_block, to_block, Some(vec![addr]), None, vec![]).unwrap();
         assert_eq!(
             basic,
             Filter {
@@ -582,7 +727,7 @@ mod tests {
         .unwrap_err();
         assert!(too_many.to_string().contains("too many indexed inputs"), "{too_many}");
 
-        let multiple = build_filter(
+        let (multiple, _) = build_filter(
             None,
             None,
             Some(vec![Address::ZERO, addr]),
