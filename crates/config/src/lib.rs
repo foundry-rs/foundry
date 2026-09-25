@@ -38,6 +38,7 @@ use foundry_compilers::{
     error::SolcError,
     multi::{MultiCompilerParser, MultiCompilerRestrictions},
     solc::{CliSettings, SolcLanguage, SolcSettings},
+    utils::canonicalize,
 };
 use regex::Regex;
 use semver::Version;
@@ -1449,13 +1450,18 @@ impl Config {
         let mut warnings = Vec::new();
 
         if let Some(coverage_cache) = self.coverage_cache_path()
-            && let Err(err) = fs::remove_dir_all(&coverage_cache)
-            && err.kind() != io::ErrorKind::NotFound
+            && coverage_cache.exists()
         {
-            warnings.push(format!(
-                "failed to remove coverage cache {}: {err}",
-                coverage_cache.display()
-            ));
+            let result = Self::lock_coverage_cache(&coverage_cache)
+                .and_then(|_lock| fs::remove_dir_all(&coverage_cache));
+            if let Err(err) = result
+                && err.kind() != io::ErrorKind::NotFound
+            {
+                warnings.push(format!(
+                    "failed to remove coverage cache {}: {err}",
+                    coverage_cache.display()
+                ));
+            }
         }
 
         if let Err(err) = project.cleanup() {
@@ -1511,7 +1517,10 @@ impl Config {
             if suffix.components().any(|part| !matches!(part, Component::Normal(_))) {
                 return None;
             }
-            Some(fs::canonicalize(existing).ok()?.join(suffix))
+            let path = canonicalize(existing).ok()?.join(suffix);
+            #[cfg(windows)]
+            let path = PathBuf::from(path.to_slash_lossy().as_ref());
+            Some(path)
         };
         let root = resolve(self.root.clone())?;
         let cache = resolve(self.root.join(&self.cache_path).join("coverage"))?;
@@ -1532,6 +1541,21 @@ impl Config {
             return None;
         }
         Some(cache)
+    }
+
+    /// Locks the coverage cache for loading, publishing, or cleanup without waiting.
+    ///
+    /// Keep the lock file outside the cache directory and never remove it: all operations must
+    /// lock the same file even when cleanup removes the directory.
+    pub fn lock_coverage_cache(path: &Path) -> io::Result<fs::File> {
+        let lock = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(path.with_extension("lock"))?;
+        lock.try_lock()?;
+        Ok(lock)
     }
 
     /// Ensures that the configured version is installed if explicitly set
@@ -9294,6 +9318,20 @@ mod tests {
         fs::create_dir_all(&cache).unwrap();
         fs::write(cache.join("user-data"), "preserve").unwrap();
         assert!(config.coverage_cache_path().is_none());
+        fs::write(cache.join(Config::COVERAGE_CACHE_MARKER), "").unwrap();
+        assert_eq!(config.coverage_cache_path(), Some(cache));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn coverage_cache_uses_compiler_paths() {
+        let directory = tempdir().unwrap();
+        let mut config = Config::with_root(directory.path());
+        config.cache_path = "custom-cache".into();
+        config.out = "custom-out".into();
+        let cache = config.coverage_cache_path().unwrap();
+        fs::create_dir_all(&cache).unwrap();
+        assert_eq!(cache.as_os_str(), canonicalize(&cache).unwrap().as_os_str());
         fs::write(cache.join(Config::COVERAGE_CACHE_MARKER), "").unwrap();
         assert_eq!(config.coverage_cache_path(), Some(cache));
     }

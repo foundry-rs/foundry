@@ -40,7 +40,7 @@ use rayon::prelude::*;
 use semver::Version;
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs::{self, OpenOptions},
+    fs,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -257,14 +257,7 @@ impl CoverageArgs {
             .flatten()
             .and_then(|path| {
                 fs::create_dir_all(path.parent()?).ok()?;
-                let lock = OpenOptions::new()
-                    .read(true)
-                    .write(true)
-                    .create(true)
-                    .truncate(false)
-                    .open(path.with_extension("lock"))
-                    .ok()?;
-                lock.try_lock().ok()?;
+                let lock = Config::lock_coverage_cache(&path).ok()?;
                 match fs::create_dir(&path) {
                     Ok(()) => {
                         if fs::File::create_new(path.join(Config::COVERAGE_CACHE_MARKER)).is_err() {
@@ -281,7 +274,7 @@ impl CoverageArgs {
                 }
                 Some((path, lock))
             });
-        let cached = cache.is_some();
+        let original_paths = project.paths.clone();
         if let Some((path, _)) = &cache {
             project.cached = true;
             project.no_artifacts = false;
@@ -323,10 +316,19 @@ impl CoverageArgs {
                 .chain(source_files_iter(&config.script, MultiCompilerLanguage::FILE_EXTENSIONS))
                 .collect::<BTreeSet<_>>()
         });
-        // Coverage requires a complete compilation context, including sources without contract
-        // artifacts. Reuse the ordinary artifact cache only for an unchanged request; clear its
-        // index on edits so the compiler assigns fresh source IDs and artifact names together.
-        let fingerprint = if let Some((path, _)) = &cache {
+        let compile = |project: &Project| {
+            let mut compiler =
+                ProjectCompiler::new().dynamic_test_linking(config.dynamic_test_linking);
+            if let Some(files) = &files {
+                compiler = compiler.files(files.iter().cloned());
+            }
+            compiler.compile(project)
+        };
+        // Coverage needs complete build contexts, including sources without contract artifacts.
+        // Invalidate the owned cache as a whole on edits so source IDs, artifact names, and
+        // build-info files all belong to the same compilation.
+        let cached_output = (|| -> Result<Option<ProjectCompileOutput>> {
+            let Some((path, _)) = &cache else { return Ok(None) };
             let mut sources = if let Some(files) = &files
                 && !files.is_empty()
             {
@@ -371,26 +373,19 @@ impl CoverageArgs {
             if fs::read_to_string(&marker).ok().as_deref() != Some(&fingerprint) {
                 // Retain ownership even if compilation fails before the new fingerprint is saved.
                 fs::write(&marker, "")?;
-                match fs::remove_file(&project.paths.cache) {
-                    Ok(()) => {}
-                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(err) => return Err(err.into()),
+                for entry in fs::read_dir(path)? {
+                    let entry = entry?;
+                    if entry.file_name() == Config::COVERAGE_CACHE_MARKER {
+                        continue;
+                    }
+                    if entry.file_type()?.is_dir() {
+                        fs::remove_dir_all(entry.path())?;
+                    } else {
+                        fs::remove_file(entry.path())?;
+                    }
                 }
             }
-            Some((marker, fingerprint))
-        } else {
-            None
-        };
-        let compile = |project: &Project| {
-            let mut compiler =
-                ProjectCompiler::new().dynamic_test_linking(config.dynamic_test_linking);
-            if let Some(files) = &files {
-                compiler = compiler.files(files.iter().cloned());
-            }
-            compiler.compile(project)
-        };
-        let mut output = compile(&project)?;
-        if cached {
+            let output = compile(&project)?;
             // Compiler builds with no artifacts can be pruned from the cache. Coverage still
             // reports their free functions, so recover their source IDs with a fresh compilation.
             let mapped_sources = output
@@ -402,14 +397,27 @@ impl CoverageArgs {
                 .files()
                 .any(|idx| !mapped_sources.contains(output.graph().node_path(idx)))
             {
+                return Ok(None);
+            }
+            // Publication is optional once the compiler has returned a complete output.
+            if let Err(err) = fs::write(marker, fingerprint) {
+                debug!(%err, "failed to publish coverage cache fingerprint");
+            }
+            Ok(Some(output))
+        })();
+        let output = match cached_output {
+            Ok(Some(output)) => output,
+            Err(err) if !err.chain().any(|cause| cause.is::<std::io::Error>()) => return Err(err),
+            result => {
+                if let Err(err) = result {
+                    debug!(%err, "coverage cache unavailable; compiling without persistence");
+                }
                 project.cached = false;
                 project.no_artifacts = true;
-                output = compile(&project)?;
+                project.paths = original_paths;
+                compile(&project)?
             }
-        }
-        if let Some((marker, fingerprint)) = fingerprint {
-            fs::write(marker, fingerprint)?;
-        }
+        };
         let output = output.with_stripped_file_prefixes(project.root());
 
         Ok((project, output))

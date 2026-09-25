@@ -1,7 +1,7 @@
 use clap::CommandFactory;
 use forge::cmd::coverage::CoverageArgs;
 use foundry_common::fs::{self, files_with_ext};
-use foundry_config::{CompilationRestrictions, SettingsOverrides};
+use foundry_config::{CompilationRestrictions, Config, SettingsOverrides};
 use foundry_test_utils::{
     TestCommand, TestProject,
     snapbox::{Data, IntoData, cmd::Command},
@@ -4239,6 +4239,7 @@ forgetest!(coverage_cache_respects_warning_denial, |prj, cmd| {
 });
 
 forgetest!(coverage_cache_preserves_artifact_names_after_deletion, |prj, cmd| {
+    prj.update_config(|config| config.out = "custom-out".into());
     prj.add_source(
         "A.sol",
         "contract A { function value() public pure returns (uint256) { return 1; } }",
@@ -4261,7 +4262,7 @@ interface Vm {{
 contract NamesTest {{
     function testNames() public view {{
         Vm vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
-        bytes32 expected = keccak256(bytes(string.concat(vm.projectRoot(), "/out/{expected}")));
+        bytes32 expected = keccak256(bytes(string.concat(vm.projectRoot(), "/custom-out/{expected}")));
         require(keccak256(bytes(vm.getArtifactPathByCode(type(A).creationCode))) == expected);
         require(keccak256(bytes(vm.getArtifactPathByDeployedCode(type(A).runtimeCode))) == expected);
     }}
@@ -4271,5 +4272,88 @@ contract NamesTest {{
             prj.update_config(|config| config.cache = cached);
             cmd.forge_fuse().arg("coverage").assert_success();
         }
+    }
+});
+
+// Read-only restored cache files must not turn successful coverage into an error.
+forgetest!(coverage_cache_read_only_files, |prj, cmd| {
+    prj.add_source(
+        "A.sol",
+        "contract A { function value() public pure returns (uint256) { return 1; } }",
+    );
+    prj.add_test("A.t.sol", "import {A} from '../src/A.sol'; contract ATest { function testValue() public { require(new A().value() > 0); } }");
+    cmd.forge_fuse().args(["coverage", "--report=lcov"]).assert_success();
+    let reference = fs::read_to_string(prj.root().join("lcov.info")).unwrap();
+    let marker = prj.root().join("cache/coverage").join(Config::COVERAGE_CACHE_MARKER);
+    for edited in [false, true] {
+        if edited {
+            prj.add_source(
+                "A.sol",
+                "contract A { function value() public pure returns (uint256) { return 2; } }",
+            );
+        }
+        let permissions = std::fs::metadata(&marker).unwrap().permissions();
+        let mut read_only = permissions.clone();
+        read_only.set_readonly(true);
+        std::fs::set_permissions(&marker, read_only).unwrap();
+        let output = cmd.forge_fuse().args(["coverage", "--report=lcov"]).assert();
+        std::fs::set_permissions(&marker, permissions).unwrap();
+        output.success();
+        foundry_test_utils::snapbox::assert_data_eq!(
+            fs::read_to_string(prj.root().join("lcov.info")).unwrap(),
+            reference.clone()
+        );
+    }
+    // The failed reset must leave the cache invalidated by its old fingerprint, so the next
+    // writable run recompiles before subsequent runs can skip compilation.
+    cmd.forge_fuse().arg("coverage").assert_success();
+    cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
+No files changed, compilation skipped
+...
+"#]]);
+});
+
+forgetest!(coverage_cache_clean_respects_lock, |prj, cmd| {
+    prj.add_test("A.t.sol", "contract ATest { function testPass() public {} }");
+    cmd.forge_fuse().arg("coverage").assert_success();
+    let cache = prj.root().join("cache/coverage");
+    let lock = Config::lock_coverage_cache(&cache).unwrap();
+    cmd.forge_fuse().arg("clean").assert_success().stderr_eq(str![[r#"
+Warning: failed to remove coverage cache [..]: [..]
+"#]]);
+    assert!(cache.join(Config::COVERAGE_CACHE_MARKER).is_file());
+    // Coverage also falls back while another operation holds the lock.
+    cmd.forge_fuse().arg("coverage").assert_success();
+    drop(lock);
+    cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
+No files changed, compilation skipped
+...
+"#]]);
+    cmd.forge_fuse().arg("clean").assert_success().stderr_eq("");
+    assert!(!cache.exists());
+});
+
+forgetest!(coverage_cache_prunes_obsolete_files, |prj, cmd| {
+    prj.update_config(|config| config.build_info = true);
+    prj.add_source("Removed.sol", "contract Removed {}");
+    prj.add_test("A.t.sol", "contract ATest { function testPass() public {} }");
+    cmd.forge_fuse().arg("coverage").assert_success();
+    let cache = prj.root().join("cache/coverage");
+    let mut builds = files_with_ext(&cache.join("build-info"), "json").collect::<Vec<_>>();
+    assert_eq!(builds.len(), 1);
+    for edited in [false, true] {
+        if edited {
+            prj.add_test(
+                "A.t.sol",
+                "contract ATest { function testPass() public {} function testOther() public {} }",
+            );
+        } else {
+            fs::remove_file(prj.root().join("src/Removed.sol")).unwrap();
+        }
+        cmd.forge_fuse().arg("coverage").assert_success();
+        assert!(builds.iter().all(|path| !path.exists()));
+        assert!(!cache.join("artifacts/Removed.sol/Removed.json").exists());
+        builds = files_with_ext(&cache.join("build-info"), "json").collect();
+        assert_eq!(builds.len(), 1);
     }
 });
