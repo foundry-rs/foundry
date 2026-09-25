@@ -41,7 +41,7 @@ foundryup
 
 See the [installation guide](https://getfoundry.sh/getting-started/installation) for more details.
 
-To verify a downloaded release archive or container image, see [Verifying Releases](./SECURITY.md#verifying-releases).
+To verify a downloaded release archive or container image, see [Verifying Releases](./VERIFYING_RELEASES.md).
 
 ## Getting Started
 

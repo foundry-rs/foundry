@@ -1,10 +1,4 @@
-# Security Policy
-
-## Reporting a Vulnerability
-
-Contact [security@tempo.xyz](mailto:security@tempo.xyz).
-
-## Verifying Releases
+# Verifying Releases
 
 Every official Foundry release ships with multiple, independent integrity
 artifacts. All signing is keyless via [Sigstore](https://www.sigstore.dev/) —
