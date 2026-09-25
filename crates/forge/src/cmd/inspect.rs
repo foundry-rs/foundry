@@ -11,7 +11,6 @@ use foundry_cli::{
 };
 use foundry_common::{
     compile::{PathOrContractInfo, ProjectCompiler},
-    external_compiler::ExternalCompilerWorkflow,
     find_matching_contract_artifact, find_target_path, shell,
 };
 use foundry_compilers::{
@@ -104,7 +103,7 @@ impl InspectArgs {
             );
         }
         let compiler = ProjectCompiler::new()
-            .external_compilers(&config, ExternalCompilerWorkflow::Inspect)
+            .external_compilers(&config)
             .target_files([target_path.clone()])
             .quiet(true);
         let mut output = compiler.compile(&project)?;

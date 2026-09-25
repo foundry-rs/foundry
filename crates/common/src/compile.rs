@@ -2,9 +2,7 @@
 
 use crate::{
     TestFunctionExt,
-    external_compiler::{
-        ExternalCompilation, ExternalCompilerWorkflow, is_builtin_compiler_source,
-    },
+    external_compiler::{ExternalCompilation, is_builtin_compiler_source},
     preprocessor::DynamicTestLinkingPreprocessor,
     shell,
     term::SpinnerReporter,
@@ -94,8 +92,8 @@ pub struct ProjectCompiler {
     /// Whether ABI acquisition may consult the compiler-owned ABI cache.
     abi_cache: bool,
 
-    /// External compiler configuration and the workflow consuming its artifacts.
-    external_compilers: Option<(Config, ExternalCompilerWorkflow)>,
+    /// External compiler configuration.
+    external_compilers: Option<Config>,
 
     /// Preserves the caller's artifact policy when ABI caching enables artifacts on a cloned
     /// project.
@@ -213,12 +211,8 @@ impl ProjectCompiler {
     }
 
     /// Enables explicitly configured external compilers for this build.
-    pub fn external_compilers(
-        mut self,
-        config: &Config,
-        workflow: ExternalCompilerWorkflow,
-    ) -> Self {
-        self.external_compilers = Some((config.clone(), workflow));
+    pub fn external_compilers(mut self, config: &Config) -> Self {
+        self.external_compilers = Some(config.clone());
         self
     }
 
@@ -245,7 +239,7 @@ impl ProjectCompiler {
             && self
                 .external_compilers
                 .as_ref()
-                .is_none_or(|(config, _)| config.external_compilers.is_empty())
+                .is_none_or(|config| config.external_compilers.is_empty())
         {
             sh_println!("Nothing to compile")?;
             std::process::exit(0);
@@ -262,13 +256,8 @@ impl ProjectCompiler {
         self.compile_with(|| {
             let external = external_compilers
                 .as_ref()
-                .map(|(config, workflow)| {
-                    ExternalCompilation::compile(
-                        config,
-                        *workflow,
-                        &selected_paths,
-                        external_writes,
-                    )
+                .map(|config| {
+                    ExternalCompilation::compile(config, &selected_paths, external_writes)
                 })
                 .transpose()?;
             let sources = if explicit_selection {

@@ -11,7 +11,7 @@ use foundry_cli::{
 };
 use foundry_common::{
     compile::{PathOrContractInfo, ProjectCompiler, compile_abi_project},
-    external_compiler::{ExternalCompilerWorkflow, is_external_artifact},
+    external_compiler::is_external_artifact,
     selectors::{SelectorImportData, import_selectors},
     shell,
 };
@@ -175,9 +175,7 @@ impl SelectorsSubcommands {
                         ]);
                     });
                 }
-                let mut compiler = ProjectCompiler::new()
-                    .external_compilers(&config, ExternalCompilerWorkflow::Inspect)
-                    .quiet(true);
+                let mut compiler = ProjectCompiler::new().external_compilers(&config).quiet(true);
 
                 if let Some(contract_path) = &mut first_contract.path {
                     let target_path = canonicalize(&*contract_path)?;
@@ -466,7 +464,7 @@ fn project_from_paths(
     let build = BuildOpts { project_paths, ..Default::default() };
     let config = build.load_config_with_dependencies()?;
     let compiler = ProjectCompiler::new()
-        .external_compilers(&config, ExternalCompilerWorkflow::Inspect)
+        .external_compilers(&config)
         .dynamic_test_linking(config.dynamic_test_linking);
     let mut project = config.project()?;
     if !project.build_info {

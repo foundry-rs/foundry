@@ -59,7 +59,7 @@ if read -r compile; then
     if [ -e "$0.warning" ]; then
         diagnostics='[{"severity":"warning","message":"fixture warning"}]'
     fi
-    printf '%s\n' "{\"id\":3,\"result\":{\"diagnostics\":$diagnostics,\"artifacts\":[{\"source\":\"native/src/lib.fe\",\"name\":\"Counter\",\"abi\":[{\"type\":\"function\",\"name\":\"run\",\"inputs\":[],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"testExternalArtifactIsDeployable\",\"inputs\":[],\"outputs\":[],\"stateMutability\":\"nonpayable\"}],\"bytecode\":\"0x6001600c60003960016000f300\",\"deployedBytecode\":\"0x00\",\"metadata\":{\"language\":\"Fe\"}},{\"source\":\"native/src/lib.fe\",\"name\":\"CreationOnly\",\"bytecode\":\"0x00\",\"sourceId\":1}]}}"
+    printf '%s\n' "{\"id\":3,\"result\":{\"diagnostics\":$diagnostics,\"artifacts\":[{\"source\":\"native/src/lib.fe\",\"name\":\"Counter\",\"metadata\":{\"language\":\"Fe\"},\"contract\":{\"abi\":[{\"type\":\"function\",\"name\":\"run\",\"inputs\":[],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"testExternalArtifactIsDeployable\",\"inputs\":[],\"outputs\":[],\"stateMutability\":\"nonpayable\"}],\"evm\":{\"bytecode\":{\"object\":\"0x6001600c60003960016000f300\"},\"deployedBytecode\":{\"object\":\"0x00\"}}}},{\"source\":\"native/src/lib.fe\",\"name\":\"CreationOnly\",\"sourceId\":1,\"contract\":{\"evm\":{\"bytecode\":{\"object\":\"0x00\"}}}}]}}"
 fi
 "#,
     )
@@ -73,7 +73,7 @@ fi
             command: adapter.clone(),
             args: Vec::new(),
             roots: vec!["native".into()],
-            settings: serde_json::json!({ "optimization": "s" }),
+            settings: [("optimization".to_string(), "s".into())].into_iter().collect(),
         });
     });
 
@@ -114,7 +114,9 @@ fi
 
     fs::remove_file(&invoked).unwrap();
     cmd.forge_fuse().arg("build").assert_success();
-    assert!(!invoked.exists(), "cache hit unexpectedly invoked compilation");
+    cmd.forge_fuse().args(["test", "--list"]).assert_success();
+    cmd.forge_fuse().arg("build").assert_success();
+    assert!(!invoked.exists(), "switching Forge commands unexpectedly recompiled the unit");
     assert!(!retained_cache.exists(), "complete discovery retained a stale cache entry");
     assert!(!retained_artifact.exists(), "complete discovery retained a stale artifact");
 

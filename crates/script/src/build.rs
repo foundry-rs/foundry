@@ -16,10 +16,8 @@ use forge_script_sequence::ScriptSequence;
 use foundry_cheatcodes::Wallets;
 use foundry_cli::opts::TempoOpts;
 use foundry_common::{
-    ContractData, ContractsByArtifact, ContractsByArtifactBuilder,
-    compile::ProjectCompiler,
-    external_compiler::{ExternalCompilerWorkflow, is_builtin_compiler_source},
-    provider::ProviderBuilder,
+    ContractData, ContractsByArtifact, ContractsByArtifactBuilder, compile::ProjectCompiler,
+    external_compiler::is_builtin_compiler_source, provider::ProviderBuilder,
 };
 use foundry_compilers::{
     ArtifactId, ProjectCompileOutput,
@@ -223,7 +221,7 @@ impl<FEN: FoundryEvmNetwork> PreprocessedState<FEN> {
         );
 
         let compiler = ProjectCompiler::new()
-            .external_compilers(&script_config.config, ExternalCompilerWorkflow::Script)
+            .external_compilers(&script_config.config)
             .files(sources_to_compile)
             .dynamic_test_linking(script_config.config.dynamic_test_linking);
         let compiler = if is_builtin_compiler_source(&target_path) {

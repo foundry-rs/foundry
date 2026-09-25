@@ -12,7 +12,6 @@ use foundry_cli::{
 };
 use foundry_common::{
     compile::{ContractSizeLimits, ProjectCompiler},
-    external_compiler::ExternalCompilerWorkflow,
     shell,
 };
 use foundry_compilers::{
@@ -122,7 +121,7 @@ impl BuildArgs {
         let format_json = shell::is_json();
 
         let mut output = ProjectCompiler::new()
-            .external_compilers(&config, ExternalCompilerWorkflow::Build)
+            .external_compilers(&config)
             .files(files)
             .selected_paths(selected_paths)
             .dynamic_test_linking(config.dynamic_test_linking)

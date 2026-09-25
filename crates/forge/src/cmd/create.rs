@@ -20,7 +20,6 @@ use foundry_cli::{
 };
 use foundry_common::{
     FoundryTransactionBuilder, compile,
-    external_compiler::ExternalCompilerWorkflow,
     provider::{
         ProviderBuilder,
         fee::{estimate_eip1559_fees, resolve_broadcast_eip1559_fees},
@@ -197,7 +196,7 @@ impl CreateArgs {
         };
 
         let compiler = compile::ProjectCompiler::new()
-            .external_compilers(&config, ExternalCompilerWorkflow::Create)
+            .external_compilers(&config)
             .quiet(shell::is_json())
             .target_files([target_path.clone()]);
         let output = compiler.compile(&project)?;

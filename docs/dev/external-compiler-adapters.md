@@ -59,7 +59,7 @@ The adapter must select exactly `1.0`. Protocol and compiler versions are indepe
 ### `discover`
 
 ```json
-{"id":2,"method":"discover","params":{"roots":["/project/contracts"],"settings":{"optimization":"s"},"workflow":"build","selected_paths":[]}}
+{"id":2,"method":"discover","params":{"roots":["/project/contracts"],"settings":{"optimization":"s"},"selected_paths":[]}}
 {"id":2,"result":{"units":[{"id":"app","compiler":{"name":"fe","version":"26.3.0"},"inputs":["contracts/fe.toml","contracts/src/lib.fe"],"capabilities":["build/1"],"effectiveSettings":{"optimization":"s"},"cacheable":true}]}}
 ```
 
@@ -83,8 +83,8 @@ empty array requests complete discovery, so the adapter must return every active
 Foundry sends `compile` only on a cache miss or when caching is disabled:
 
 ```json
-{"id":3,"method":"compile","params":{"unit":"app","fingerprint":"<sha256>","workflow":"build"}}
-{"id":3,"result":{"diagnostics":[],"artifacts":[{"source":"contracts/src/lib.fe","name":"Counter","abi":[],"bytecode":"0x60006000f3","deployedBytecode":"0x00","metadata":{"language":"Fe"}}]}}
+{"id":3,"method":"compile","params":{"unit":"app","fingerprint":"<sha256>"}}
+{"id":3,"result":{"diagnostics":[],"artifacts":[{"source":"contracts/src/lib.fe","name":"Counter","contract":{"abi":[],"evm":{"bytecode":{"object":"0x60006000f3"},"deployedBytecode":{"object":"0x00"}}},"metadata":{"language":"Fe"}}]}}
 ```
 
 The result may contain `error`, `warning`, or `info` diagnostics. Error diagnostics fail the Forge
@@ -94,13 +94,16 @@ command. Each artifact supports these fields:
 | --- | --- | --- |
 | `source` | yes | Project-relative logical source path. |
 | `name` | yes | Contract name. |
-| `abi` | no | Standard JSON ABI; defaults to an empty ABI. |
-| `bytecode` | no | Creation bytecode. |
-| `deployedBytecode` | no | Runtime bytecode; requires creation bytecode. |
-| `sourceMap`, `deployedSourceMap` | no | Solidity-format instruction source maps. |
-| `linkReferences`, `deployedLinkReferences` | no | Fully linked bytecode only; must be empty in protocol v1. |
+| `contract` | yes | Existing compiler `Contract` JSON: `abi` and `evm` outputs. |
 | `metadata` | no | Adapter-owned JSON metadata, serialized into Foundry's `rawMetadata` field. |
 | `sourceId` | no | Source ID used by the supplied source maps. |
+
+`contract.evm.bytecode` and `contract.evm.deployedBytecode` use the existing compiler bytecode
+objects (`object`, `sourceMap`, `linkReferences`, and runtime `immutableReferences`). Bytecode must
+be fully linked: unresolved objects and nonempty link references are rejected. Runtime bytecode
+requires creation bytecode. Foundry derives method identifiers from the ABI and uses its existing
+artifact converter to produce ABI/bytecode artifacts. Debugging and additional compiler outputs
+remain outside this protocol's initial integration.
 
 Source paths must be relative and may not contain `.` or `..` components. Contract and unit IDs use
 the same restricted character set as adapter IDs. Foundry rejects duplicate `(source, contract)`
@@ -114,7 +117,10 @@ command; Foundry does not fall back to another compiler.
 
 Discovery runs on every build, including cache hits. For each cacheable unit Foundry hashes the
 protocol version, adapter executable path, bytes and arguments, requested and effective settings,
-workflow, compiler identity, unit descriptor, and the path and contents of every discovered input.
+compiler identity, unit descriptor, and the path and contents of every discovered input.
+Compilation is independent of the Forge command consuming the result, so `build`, `test`, and
+inspection can reuse the same unit. Build variants must be expressed in adapter settings and the
+unit's effective settings, rather than inferred from a command name.
 The SHA-256 fingerprint indexes the unit result under
 `cache/external-compilers/<adapter>/<unit>.json`. `cacheable = false`, `cache = false`, and
 `--force` bypass reuse.

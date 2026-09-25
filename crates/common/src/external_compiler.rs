@@ -1,21 +1,17 @@
 //! External compiler adapter protocol and process transport.
 
-use alloy_json_abi::JsonAbi;
-use alloy_primitives::{Bytes, hex};
+use alloy_primitives::hex;
 use eyre::{Context, ContextCompat, Result, bail, ensure};
 use foundry_compilers::{
-    ArtifactFile, Artifacts, ProjectCompileOutput,
-    artifacts::{
-        BytecodeObject, CompactBytecode, CompactDeployedBytecode, ConfigurableContractArtifact,
-        Evm, Offsets, Severity, contract::Contract,
-    },
+    ArtifactFile, ArtifactOutput, Artifacts, ConfigurableArtifacts, ProjectCompileOutput,
+    artifacts::{ConfigurableContractArtifact, Severity, contract::Contract},
     compilers::{Compiler, Language, multi::MultiCompilerLanguage},
     contracts::{VersionedContract, VersionedContracts},
 };
 use foundry_config::{Config, DenyLevel, ExternalCompiler};
 use semver::Version;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use serde_json::Value;
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -32,17 +28,6 @@ const MAX_PROTOCOL_LINE_BYTES: u64 = 16 * 1024 * 1024;
 const EXTERNAL_CACHE_DIR: &str = "external-compilers";
 const EXTERNAL_ARTIFACT_DIR: &str = ".external";
 
-/// The Foundry workflow consuming external compiler output.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum ExternalCompilerWorkflow {
-    Build,
-    Test,
-    Script,
-    Create,
-    Inspect,
-}
-
 /// External artifacts and the unit inventory used to publish them.
 pub(crate) struct ExternalCompilation<'a> {
     config: &'a Config,
@@ -58,7 +43,7 @@ impl<'a> ExternalCompilation<'a> {
     /// Runs adapters, staging their output until the built-in compilation succeeds.
     pub(crate) fn compile(
         config: &'a Config,
-        workflow: ExternalCompilerWorkflow,
+
         selected_paths: &[PathBuf],
         write_outputs: bool,
     ) -> Result<Self> {
@@ -80,8 +65,7 @@ impl<'a> ExternalCompilation<'a> {
             );
             ensure_portable_child(&config.out.join(EXTERNAL_ARTIFACT_DIR), &adapter.id, None)?;
             ensure_portable_child(&config.cache_path.join(EXTERNAL_CACHE_DIR), &adapter.id, None)?;
-            AdapterClient::new(config, adapter, workflow, selected_paths)?
-                .compile(&mut compilation)?;
+            AdapterClient::new(config, adapter, selected_paths)?.compile(&mut compilation)?;
         }
         Ok(compilation)
     }
@@ -151,7 +135,7 @@ struct AdapterClient<'a> {
     config: &'a Config,
     cache_root: PathBuf,
     adapter: &'a ExternalCompiler,
-    workflow: ExternalCompilerWorkflow,
+
     selected_paths: &'a [PathBuf],
     command: PathBuf,
 }
@@ -160,7 +144,7 @@ impl<'a> AdapterClient<'a> {
     fn new(
         config: &'a Config,
         adapter: &'a ExternalCompiler,
-        workflow: ExternalCompilerWorkflow,
+
         selected_paths: &'a [PathBuf],
     ) -> Result<Self> {
         validate_id("adapter", &adapter.id)?;
@@ -172,7 +156,6 @@ impl<'a> AdapterClient<'a> {
             config,
             cache_root: config.cache_path.join(EXTERNAL_CACHE_DIR).join(&adapter.id),
             adapter,
-            workflow,
             selected_paths,
             command,
         })
@@ -186,11 +169,11 @@ impl<'a> AdapterClient<'a> {
                 })?;
         let initialized: InitializeResult = process.request(
             "initialize",
-            InitializeParams {
-                protocols: [PROTOCOL_VERSION],
-                host: HostIdentity { name: "forge", version: env!("CARGO_PKG_VERSION") },
-                target: "evm",
-            },
+            json!({
+                "protocols": [PROTOCOL_VERSION],
+                "host": {"name": "forge", "version": env!("CARGO_PKG_VERSION")},
+                "target": "evm",
+            }),
         )?;
         ensure!(
             initialized.protocol == PROTOCOL_VERSION,
@@ -207,12 +190,11 @@ impl<'a> AdapterClient<'a> {
             .collect::<Result<Vec<_>>>()?;
         let discovery: DiscoverResult = process.request(
             "discover",
-            DiscoverParams {
-                roots,
-                settings: &self.adapter.settings,
-                workflow: self.workflow,
-                selected_paths: self.selected_paths,
-            },
+            json!({
+                "roots": roots,
+                "settings": self.adapter.settings,
+                "selected_paths": self.selected_paths,
+            }),
         )?;
 
         let mut active_units = BTreeSet::new();
@@ -259,14 +241,8 @@ impl<'a> AdapterClient<'a> {
             let (result, fresh) = match result {
                 Some(result) => (result, false),
                 None => {
-                    let result: CompileResult = process.request(
-                        "compile",
-                        CompileParams {
-                            unit: &unit.id,
-                            fingerprint: &fingerprint,
-                            workflow: self.workflow,
-                        },
-                    )?;
+                    let result: CompileResult = process
+                        .request("compile", json!({"unit": unit.id, "fingerprint": fingerprint}))?;
                     (result, true)
                 }
             };
@@ -294,10 +270,9 @@ impl<'a> AdapterClient<'a> {
         let mut hasher = Sha256::new();
         hash_part(&mut hasher, PROTOCOL_VERSION.as_bytes());
         hash_part(&mut hasher, self.command.as_os_str().as_encoded_bytes());
-        hash_file(&mut hasher, &self.command)?;
+        hash_part(&mut hasher, &fs::read(&self.command)?);
         hash_part(&mut hasher, &serde_json::to_vec(&self.adapter.args)?);
         hash_part(&mut hasher, &serde_json::to_vec(&self.adapter.settings)?);
-        hash_part(&mut hasher, &serde_json::to_vec(&self.workflow)?);
         hash_part(&mut hasher, &serde_json::to_vec(unit)?);
 
         let mut inputs = unit
@@ -309,7 +284,7 @@ impl<'a> AdapterClient<'a> {
         inputs.dedup();
         for input in inputs {
             hash_part(&mut hasher, input.as_os_str().as_encoded_bytes());
-            hash_file(&mut hasher, &input)?;
+            hash_part(&mut hasher, &fs::read(&input)?);
         }
         Ok(hex::encode(hasher.finalize()))
     }
@@ -521,30 +496,9 @@ struct ProtocolError {
     message: String,
 }
 
-#[derive(Serialize)]
-struct InitializeParams<'a> {
-    protocols: [&'a str; 1],
-    host: HostIdentity<'a>,
-    target: &'a str,
-}
-
-#[derive(Serialize)]
-struct HostIdentity<'a> {
-    name: &'a str,
-    version: &'a str,
-}
-
 #[derive(Deserialize)]
 struct InitializeResult {
     protocol: String,
-}
-
-#[derive(Serialize)]
-struct DiscoverParams<'a> {
-    roots: Vec<PathBuf>,
-    settings: &'a Value,
-    workflow: ExternalCompilerWorkflow,
-    selected_paths: &'a [PathBuf],
 }
 
 #[derive(Deserialize)]
@@ -572,13 +526,6 @@ struct CompilerIdentity {
     version: String,
 }
 
-#[derive(Serialize)]
-struct CompileParams<'a> {
-    unit: &'a str,
-    fingerprint: &'a str,
-    workflow: ExternalCompilerWorkflow,
-}
-
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CompileResult {
@@ -603,20 +550,7 @@ struct ExternalDiagnostic {
 struct ExternalArtifact {
     source: PathBuf,
     name: String,
-    #[serde(default)]
-    abi: JsonAbi,
-    #[serde(default)]
-    bytecode: Option<Bytes>,
-    #[serde(default)]
-    deployed_bytecode: Option<Bytes>,
-    #[serde(default)]
-    source_map: Option<String>,
-    #[serde(default)]
-    deployed_source_map: Option<String>,
-    #[serde(default)]
-    link_references: BTreeMap<String, BTreeMap<String, Vec<Offsets>>>,
-    #[serde(default)]
-    deployed_link_references: BTreeMap<String, BTreeMap<String, Vec<Offsets>>>,
+    contract: Contract,
     #[serde(default)]
     metadata: Option<Value>,
     #[serde(default)]
@@ -624,65 +558,41 @@ struct ExternalArtifact {
 }
 
 impl ExternalArtifact {
-    fn into_foundry_outputs(self) -> Result<(ConfigurableContractArtifact, Contract)> {
-        ensure!(
-            self.bytecode.is_some() || self.deployed_bytecode.is_none(),
-            "external artifact {} has runtime bytecode without creation bytecode",
-            self.name
-        );
-        ensure!(
-            self.link_references.is_empty() && self.deployed_link_references.is_empty(),
-            "external artifact {} must provide fully linked bytecode",
-            self.name
-        );
-        let bytecode = self.bytecode.map(|bytes| CompactBytecode {
-            object: BytecodeObject::Bytecode(bytes),
-            source_map: self.source_map,
-            link_references: Default::default(),
-        });
-        let deployed_bytecode = self.deployed_bytecode.map(|bytes| CompactDeployedBytecode {
-            bytecode: Some(CompactBytecode {
-                object: BytecodeObject::Bytecode(bytes),
-                source_map: self.deployed_source_map,
-                link_references: Default::default(),
-            }),
-            immutable_references: Default::default(),
-        });
+    fn into_foundry_outputs(mut self) -> Result<(ConfigurableContractArtifact, Contract)> {
         let method_identifiers = self
+            .contract
             .abi
+            .get_or_insert_with(Default::default)
             .functions()
             .map(|function| (function.signature(), hex::encode(function.selector())))
             .collect::<BTreeMap<_, _>>();
-        let compiler_contract = Contract {
-            abi: Some(self.abi.clone()),
-            metadata: None,
-            userdoc: Default::default(),
-            devdoc: Default::default(),
-            ir: None,
-            storage_layout: Default::default(),
-            transient_storage_layout: Default::default(),
-            evm: Some(Evm {
-                assembly: None,
-                legacy_assembly: None,
-                bytecode: bytecode.clone().map(Into::into),
-                deployed_bytecode: deployed_bytecode.clone().map(Into::into),
-                method_identifiers: method_identifiers.clone(),
-                gas_estimates: None,
-            }),
-            ewasm: None,
-            ir_optimized: None,
-            ir_optimized_ast: None,
-        };
-        let artifact = ConfigurableContractArtifact {
-            abi: Some(self.abi),
-            bytecode,
-            deployed_bytecode,
-            method_identifiers: Some(method_identifiers),
-            raw_metadata: self.metadata.as_ref().map(serde_json::to_string).transpose()?,
-            id: self.source_id,
-            ..Default::default()
-        };
-        Ok((artifact, compiler_contract))
+        if let Some(evm) = &mut self.contract.evm {
+            ensure!(
+                evm.bytecode.is_some() || evm.deployed_bytecode.is_none(),
+                "external artifact {} has runtime bytecode without creation bytecode",
+                self.name
+            );
+            for bytecode in evm.bytecode.iter().chain(
+                evm.deployed_bytecode.iter().filter_map(|deployed| deployed.bytecode.as_ref()),
+            ) {
+                ensure!(
+                    bytecode.object.is_bytecode() && bytecode.link_references.is_empty(),
+                    "external artifact {} must provide fully linked bytecode",
+                    self.name
+                );
+            }
+            evm.method_identifiers = method_identifiers.clone();
+        }
+        let mut artifact = ConfigurableArtifacts::default().contract_to_artifact(
+            &self.source,
+            &self.name,
+            self.contract.clone(),
+            None,
+        );
+        artifact.raw_metadata = self.metadata.as_ref().map(serde_json::to_string).transpose()?;
+        artifact.id = self.source_id;
+        artifact.method_identifiers = Some(method_identifiers);
+        Ok((artifact, self.contract))
     }
 }
 
@@ -748,9 +658,12 @@ fn emit_diagnostics(
 
 fn read_cache(path: &Path, fingerprint: &str) -> Result<Option<CompileResult>> {
     let Ok(file) = File::open(path) else { return Ok(None) };
-    let entry: CacheEntry<CompileResult> = serde_json::from_reader(file)
+    let entry: CacheEntry<Value> = serde_json::from_reader(file)
         .wrap_err_with(|| format!("failed to read external compiler cache {}", path.display()))?;
-    Ok((entry.fingerprint == fingerprint).then_some(entry.result))
+    if entry.fingerprint != fingerprint {
+        return Ok(None);
+    }
+    Ok(Some(serde_json::from_value(entry.result)?))
 }
 
 fn write_cache(path: &Path, contents: &[u8]) -> Result<()> {
@@ -847,11 +760,6 @@ fn hash_part(hasher: &mut Sha256, bytes: &[u8]) {
     hasher.update(bytes);
 }
 
-fn hash_file(hasher: &mut Sha256, path: &Path) -> Result<()> {
-    hash_part(hasher, &fs::read(path)?);
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
@@ -886,22 +794,20 @@ mod tests {
 
     #[test]
     fn rejects_unlinked_bytecode() {
-        for field in ["linkReferences", "deployedLinkReferences"] {
+        for field in ["bytecode", "deployedBytecode"] {
             let mut value = serde_json::json!({
                 "source": "native/src/lib.fe",
                 "name": "Token",
-                "bytecode": "0x0000000000000000000000000000000000000000"
+                "contract": {"evm": {"bytecode": {"object": "00"}}}
             });
-            value[field] = serde_json::json!({
-                "native/src/lib.fe": {"Library": [{"start": 0, "length": 20}]}
+            value["contract"]["evm"][field] = serde_json::json!({
+                "object": "0000000000000000000000000000000000000000",
+                "linkReferences": {"native/src/lib.fe": {"Library": [{"start": 0, "length": 20}]}}
             });
             let artifact: ExternalArtifact = serde_json::from_value(value).unwrap();
-            assert!(
-                artifact
-                    .into_foundry_outputs()
-                    .unwrap_err()
-                    .to_string()
-                    .contains("must provide fully linked bytecode")
+            assert_eq!(
+                artifact.into_foundry_outputs().unwrap_err().to_string(),
+                "external artifact Token must provide fully linked bytecode"
             );
         }
     }
