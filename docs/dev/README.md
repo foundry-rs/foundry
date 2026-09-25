@@ -44,6 +44,7 @@ use forking must contain `fork` in their name. Forge and Cast CLI tests live und
 - [Custom EVM integrations](./networks.md) describes network selection, execution ownership,
   state lifecycles, tool dispatch, and CI coverage.
 - [Output channels](./output-channels.md) defines the stdout/stderr contract for Foundry commands.
+- [Test compilers](./test-compilers.md) documents compiler pins, exceptions, and CI caching.
 - [Scripting](./scripting.md) documents the internal script execution and broadcast pipeline.
 - [Showmap corpus replay](./showmap.md) documents the persisted-corpus coverage workflow and file
   format.

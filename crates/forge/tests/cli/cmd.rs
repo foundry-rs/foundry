@@ -10,7 +10,7 @@ use foundry_test_utils::{
     foundry_compilers::PathStyle,
     rpc::next_etherscan_api_key,
     snapbox::IntoData,
-    util::{OutputExt, read_string},
+    util::{OutputExt, SOLC_VERSION, read_string},
 };
 use std::{
     fs,
@@ -104,11 +104,13 @@ contract Simple {
 
     prj.create_file(
         "foundry.toml",
-        r#"
+        format!(
+            r#"
 [default]
 evm_version = "cancun"
-solc = "0.8.5"
+solc = "{SOLC_VERSION}"
 "#,
+        ),
     );
     // `forge build` warns
     cmd.forge_fuse().arg("build").assert_success().stderr_eq(str![[r#"

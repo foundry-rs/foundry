@@ -1,6 +1,7 @@
 mod session;
 use chisel::session::ChiselSession as CachedChiselSession;
 use foundry_evm::core::evm::EthEvmNetwork;
+use foundry_test_utils::util::{OTHER_SOLC_VERSION, SOLC_VERSION};
 use session::ChiselSession;
 use std::{
     fs,
@@ -337,8 +338,8 @@ repl_test!(trailing_whitespace, |repl| {
 });
 
 // Issue #4652: Test that solc flags are respected.
-repl_test!(solc_flags, "--use 0.8.23", |repl| {
-    repl.sendln("pragma solidity 0.8.24;");
+repl_test!(solc_flags, &format!("--use {OTHER_SOLC_VERSION}"), |repl| {
+    repl.sendln(&format!("pragma solidity ={SOLC_VERSION};"));
     repl.expect("invalid compiler version");
 });
 
