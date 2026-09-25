@@ -229,12 +229,13 @@ jobs:
         run: ./.github/scripts/format.sh --check
 
   deny:
-    uses: tempoxyz/ci/.github/workflows/deny.yml@631b2c767919910a23685267999ae812f9902e87
+    uses: tempoxyz/gh-actions/.github/workflows/rust-deny.yml@5840979a7c849cbe541c67431ec7315cd6396e3b
     permissions:
       contents: read
       id-token: write
     with:
-      deny-flags: --all-features --locked
+      rust-toolchain: nightly
+      flags: --all-features --locked
 
   codeql:
     name: analyze (${{ matrix.language }})
