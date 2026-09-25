@@ -625,7 +625,7 @@ impl<
                                 // Apply only after choosing the backend, including an existing
                                 // cache.
                                 if let Some(bal) = bal {
-                                    bal::cache(&fork.backend.data(), bal);
+                                    bal::cache_bal(&fork.backend.data(), bal);
                                     fork.bal_prewarmed.store(true, Ordering::Relaxed);
                                 }
                                 this.insert_new_fork(fork_id, fork, sender, additional_senders);

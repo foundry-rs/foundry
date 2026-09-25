@@ -3,7 +3,7 @@
 use crate::eth::{backend::db::Db, error::BlockchainError};
 use alloy_chains::NamedChain;
 use alloy_consensus::{BlockHeader, TrieAccount};
-use alloy_eips::{eip2930::AccessListResult, eip7928::BlockAccessList};
+use alloy_eips::eip2930::AccessListResult;
 use alloy_network::{
     AnyNetwork, AnyRpcBlock, BlockResponse, Network, TransactionResponse,
     primitives::HeaderResponse,
@@ -38,7 +38,7 @@ use alloy_transport::TransportError;
 use foundry_common::provider::{RetryProvider, is_rpc_method_not_found};
 use foundry_evm::{
     backend::{AccountFetchPolicy, BlockchainDb, account_fetch_policy_for_source},
-    fork::{cache_bal_accounts, cache_bal_storage, validate_bal},
+    fork::{cache_bal, validate_bal},
     hardfork::FoundryHardfork,
 };
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
@@ -1014,7 +1014,7 @@ impl ClientForkConfig {
                 Err(error) if is_rpc_method_not_found(&error) => {}
                 _ => return Ok(()),
             }
-            cache_bal(db, bal);
+            cache_bal(db.db(), bal);
             Ok::<_, eyre::Report>(())
         };
         // Include retries and validation RPCs in the optional startup budget.
@@ -1024,14 +1024,6 @@ impl ClientForkConfig {
             Err(_) => debug!(target: "node", "fork BAL prefill timed out"),
         }
     }
-}
-
-/// Inserts validated post-state without inventing missing account fields or read-only slot values.
-fn cache_bal(db: &BlockchainDb, bal: BlockAccessList) {
-    let mut storage = db.storage().write();
-    let mut accounts = db.accounts().write();
-    cache_bal_accounts(&mut accounts, &bal);
-    cache_bal_storage(&mut storage, &bal);
 }
 
 #[cfg(test)]
