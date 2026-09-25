@@ -19,7 +19,9 @@ use crate::{
             fork::{ClientFork, ForkEndpointIdentity},
             genesis::GenesisConfig,
             mem::{
-                state::{state_root, state_trie_witness, storage_root, trie_accounts},
+                state::{
+                    StateRootCache, state_root, state_trie_witness, storage_root, trie_accounts,
+                },
                 storage::MinedTransactionReceipt,
             },
             notifications::{ChainNotification, ChainNotifications, NewBlockNotification},
@@ -8559,6 +8561,9 @@ impl Backend<FoundryNetwork> {
             let mut cache_db = BalDatabase::new(CacheDB::new(state));
             cache_db.cache.block_hashes.insert(U256::from(base_number), base_hash);
             let mut block_res = Vec::with_capacity(block_state_calls.len());
+            // A single block cannot amortize building an incremental trie.
+            let cache_state_roots = block_state_calls.len() > 1;
+            let mut state_root_cache = None::<(StateRootCache, AddressMap<DbAccount>)>;
             let mut parent_hash = base_hash;
             let mut next_base_fee = base_fee;
             let mut inherited_block_env = base_block_env;
@@ -9092,10 +9097,39 @@ impl Backend<FoundryNetwork> {
                 };
 
                 // Fork databases are partial, so their synthetic blocks use a zero state root.
-                let state_root = cache_db
-                    .maybe_full_db()
-                    .map(|accounts| state_root(&accounts))
-                    .unwrap_or_default();
+                let incremental = state_root_cache.as_mut().is_some_and(|(cache, previous)| {
+                    cache.record_overlay(&cache_db.cache.accounts, previous)
+                });
+                let state_root = if incremental {
+                    let (cache, previous) = state_root_cache.as_mut().unwrap();
+                    let root = cache.root(&cache_db.cache.accounts);
+                    previous.clone_from(&cache_db.cache.accounts);
+                    root
+                } else {
+                    cache_db
+                        .maybe_full_db()
+                        .map(|accounts| {
+                            // A deleted base account can retain storage written by
+                            // anvil_setStorageAt. A later touch exposes it in the full merge,
+                            // although it has no trie leaf. Keep the full rebuild in that case.
+                            if cache_state_roots
+                                && accounts.values().all(|account| {
+                                    account.account_state != AccountState::NotExisting
+                                        || account.storage.is_empty()
+                                })
+                            {
+                                let (cache, previous) =
+                                    state_root_cache.get_or_insert_with(Default::default);
+                                let root = cache.root(&accounts);
+                                previous.clone_from(&cache_db.cache.accounts);
+                                root
+                            } else {
+                                state_root_cache = None;
+                                state_root(&accounts)
+                            }
+                        })
+                        .unwrap_or_default()
+                };
                 let block_access_list_hash = cache_db
                     .bal_state
                     .take_built_alloy_bal()
