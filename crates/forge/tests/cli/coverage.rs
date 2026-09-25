@@ -1,6 +1,7 @@
 use clap::CommandFactory;
 use forge::cmd::coverage::CoverageArgs;
 use foundry_common::fs::{self, files_with_ext};
+use foundry_compilers::cache::SOLIDITY_FILES_CACHE_FILENAME;
 use foundry_config::{CompilationRestrictions, Config, SettingsOverrides};
 use foundry_test_utils::{
     TestCommand, TestProject,
@@ -4284,7 +4285,21 @@ forgetest!(coverage_cache_read_only_files, |prj, cmd| {
     prj.add_test("A.t.sol", "import {A} from '../src/A.sol'; contract ATest { function testValue() public { require(new A().value() > 0); } }");
     cmd.forge_fuse().args(["coverage", "--report=lcov"]).assert_success();
     let reference = fs::read_to_string(prj.root().join("lcov.info")).unwrap();
-    let marker = prj.root().join("cache/coverage").join(Config::COVERAGE_CACHE_MARKER);
+    let cache = prj.root().join("cache/coverage");
+    let compiler_cache = cache.join(SOLIDITY_FILES_CACHE_FILENAME);
+    let permissions = std::fs::metadata(&compiler_cache).unwrap().permissions();
+    let mut read_only = permissions.clone();
+    read_only.set_readonly(true);
+    std::fs::set_permissions(&compiler_cache, read_only).unwrap();
+    let output = cmd.forge_fuse().args(["coverage", "--report=lcov"]).assert();
+    std::fs::set_permissions(&compiler_cache, permissions).unwrap();
+    output.success();
+    foundry_test_utils::snapbox::assert_data_eq!(
+        fs::read_to_string(prj.root().join("lcov.info")).unwrap(),
+        reference.clone()
+    );
+
+    let marker = cache.join(Config::COVERAGE_CACHE_MARKER);
     for edited in [false, true] {
         if edited {
             prj.add_source(

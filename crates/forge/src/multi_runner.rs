@@ -774,7 +774,7 @@ impl MultiContractRunnerBuilder {
             {
                 id.path = self.config.out.join(path);
             }
-            id.with_stripped_file_prefixes(root)
+            id.with_stripped_file_prefixes(root).with_slashed_paths()
         };
         let contracts = output.artifact_ids().map(|(id, v)| (artifact_id(id), v)).collect();
         let linker = Linker::new(root, contracts);
