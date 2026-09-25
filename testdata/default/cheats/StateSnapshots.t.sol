@@ -147,6 +147,23 @@ contract StateSnapshotIsolationTest is Test {
     }
 }
 
+contract StateSnapshotNestedRevertTest is Test {
+    uint256 value;
+
+    function testRevertFromNestedCallKeepsCallDepth() public {
+        uint256 snapshotId = vm.snapshotState();
+        value = 2;
+
+        assertTrue(this.restore(snapshotId));
+
+        assertEq(value, 0);
+    }
+
+    function restore(uint256 snapshotId) external returns (bool) {
+        return vm.revertToState(snapshotId);
+    }
+}
+
 // TODO: remove this test suite once `snapshot*` has been deprecated in favor of `snapshotState*`.
 contract DeprecatedStateSnapshotTest is Test {
     Storage store;

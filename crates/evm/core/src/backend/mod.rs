@@ -1970,6 +1970,9 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
             // merge additional logs
             snapshot.merge(current_state);
             let BackendStateSnapshot { db, mut journaled_state, snap_evm_env } = snapshot;
+            // The snapshot restores state, not the call stack: keep the depth of the frame that
+            // reverts, otherwise reverting from a nested call desyncs the journal and tracer.
+            journaled_state.depth = current_state.depth;
             match db {
                 BackendDatabaseSnapshot::InMemory(mem_db) => {
                     self.mem_db = mem_db;
