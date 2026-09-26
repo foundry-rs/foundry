@@ -670,12 +670,8 @@ ignore them in the `.gitignore` file."
 
     /// Returns true if all submodules matching `paths` have initialized worktrees.
     fn submodules_initialized(self, paths: &[OsString]) -> Result<bool> {
-        // Let Git resolve relative roots and explicit repository/index overrides.
-        if !self.root.is_absolute()
-            || ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"]
-                .iter()
-                .any(|key| std::env::var_os(key).is_some())
-        {
+        // Let Git resolve relative roots.
+        if !self.root.is_absolute() {
             return Ok(false);
         }
         let Some(root) = find_git_root(self.root)? else {
