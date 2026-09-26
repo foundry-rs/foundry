@@ -108,11 +108,13 @@ fn push_frame(
         value: if is_selfdestruct { U256::ZERO } else { frame.value.unwrap_or_default() },
         data: frame.input.clone(),
         output,
+        bytecode: None,
         gas_used: frame.gas_used.saturating_to(),
         gas_limit: frame.gas.saturating_to(),
         gas_refund_counter: 0,
         status,
         steps: Vec::new(),
+        step_deltas: Vec::new(),
         decoded: None,
     };
 

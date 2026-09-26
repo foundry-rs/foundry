@@ -45,11 +45,13 @@
                     "value": "0x0",
                     "data": "{...}",
                     "output": "{...}",
+                    "bytecode": null,
                     "gas_used": "{...}",
                     "gas_limit": "{...}",
                     "gas_refund_counter": 0,
                     "status": "Return",
                     "steps": [],
+                    "step_deltas": [],
                     "decoded": null
                   },
                   "logs": [],
@@ -83,6 +85,7 @@
                     "value": "0x0",
                     "data": "0xf8a8fd6d",
                     "output": "0x",
+                    "bytecode": null,
                     "gas_used": "{...}",
                     "gas_limit": "{...}",
                     "gas_refund_counter": 0,
@@ -6335,6 +6338,7 @@
                         "decoded": null
                       }
                     ],
+                    "step_deltas": [],
                     "decoded": null
                   },
                   "logs": [],
@@ -7408,6 +7412,7 @@
                     "value": "0x0",
                     "data": "{...}",
                     "output": "{...}",
+                    "bytecode": null,
                     "gas_used": "{...}",
                     "gas_limit": "{...}",
                     "gas_refund_counter": 0,
@@ -7720,6 +7725,7 @@
                         "decoded": null
                       }
                     ],
+                    "step_deltas": [],
                     "decoded": null
                   },
                   "logs": [],
@@ -7794,6 +7800,7 @@
                     "value": "0x0",
                     "data": "0xe26d14740000000000000000000000000000000000000000000000000000000000000064",
                     "output": "0x",
+                    "bytecode": null,
                     "gas_used": "{...}",
                     "gas_limit": "{...}",
                     "gas_refund_counter": 0,
@@ -10019,6 +10026,7 @@
                         "decoded": null
                       }
                     ],
+                    "step_deltas": [],
                     "decoded": null
                   },
                   "logs": [],
@@ -10411,11 +10419,13 @@
                     "value": "0x0",
                     "data": "{...}",
                     "output": "0x",
+                    "bytecode": null,
                     "gas_used": "{...}",
                     "gas_limit": "{...}",
                     "gas_refund_counter": 0,
                     "status": "Stop",
                     "steps": [],
+                    "step_deltas": [],
                     "decoded": null
                   },
                   "logs": [],

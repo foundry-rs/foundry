@@ -406,7 +406,7 @@ alloy-op-evm = "0.32.0"
 
 # revm
 revm = { version = "43.0.2", default-features = false }
-revm-inspectors = { version = "0.43.0", features = ["serde"] }
+revm-inspectors = { version = "0.44.0", features = ["serde"] }
 op-revm = { git = "https://github.com/foundry-rs/optimism", rev = "206d26cedb9d861b983d89fc71e1122187dfa877", default-features = false }
 
 ## cli
