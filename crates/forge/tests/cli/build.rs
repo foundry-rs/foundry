@@ -1,7 +1,12 @@
 use crate::utils::generate_large_init_contract;
 use foundry_compilers::artifacts::{BytecodeHash, EvmVersion};
 use foundry_config::{CompilationRestrictions, SettingsOverrides};
-use foundry_test_utils::{forgetest, forgetest_init, snapbox::IntoData, str, util::OutputExt};
+use foundry_test_utils::{
+    forgetest, forgetest_init,
+    snapbox::IntoData,
+    str,
+    util::{OTHER_SOLC_VERSION, OutputExt},
+};
 use globset::Glob;
 use std::{
     collections::BTreeMap,
@@ -873,7 +878,7 @@ Compiler settings (profile: no-metadata): optimizer=true, optimizer_runs=777, vi
 forgetest_init!(build_sizes_no_forge_std, |prj, cmd| {
     prj.initialize_default_contracts();
     prj.update_config(|config| {
-        config.solc = Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 27)));
+        config.solc = Some(OTHER_SOLC_VERSION.into());
     });
 
     cmd.args(["build", "--sizes"]).assert_success().stdout_eq(str![[r#"

@@ -30,11 +30,12 @@ static TEMPLATE_LOCK: LazyLock<PathBuf> =
     LazyLock::new(|| env::temp_dir().join("foundry-forge-test-template.lock"));
 
 /// The default Solc version used when compiling tests.
+/// Keep Solidity fixtures and the compiler inventory in `docs/dev/test-compilers.md` in sync.
 pub const SOLC_VERSION: &str = "0.8.35";
 
 /// Another Solc version used when compiling tests.
 ///
-/// Necessary to avoid downloading multiple versions.
+/// Use this for version-switching tests instead of adding another compiler download.
 pub const OTHER_SOLC_VERSION: &str = "0.8.26";
 
 /// Initializes a project with `forge init` at the given path from a template directory.

@@ -638,6 +638,7 @@ mod tests {
     use foundry_config::Config;
     use foundry_evm::{core::evm::EthEvmNetwork, executors::ExecutorBuilder, opts::EvmOpts};
     use foundry_evm_networks::{NetworkConfigs, celo::transfer::CELO_TRANSFER_ADDRESS};
+    use foundry_test_utils::util::SOLC_VERSION;
     use solar::sema::Compiler;
     use std::sync::Mutex;
 
@@ -675,7 +676,11 @@ mod tests {
         let mut evm_opts = EvmOpts { networks, ..Default::default() };
         evm_opts.env.gas_limit = 30_000_000u64.into();
         let config = SessionSourceConfig::<EthEvmNetwork> {
-            foundry_config: Config { networks, ..Default::default() },
+            foundry_config: Config {
+                networks,
+                solc: Some(SOLC_VERSION.into()),
+                ..Default::default()
+            },
             evm_opts,
             ..Default::default()
         };
@@ -694,7 +699,11 @@ mod tests {
     async fn chisel_runner_uses_dispatched_monad_tooling() {
         let networks = NetworkConfigs::with_monad();
         let mut source = SessionSource::<MonadEvmNetwork>::new(SessionSourceConfig {
-            foundry_config: Config { networks, ..Default::default() },
+            foundry_config: Config {
+                networks,
+                solc: Some(SOLC_VERSION.into()),
+                ..Default::default()
+            },
             evm_opts: EvmOpts { networks, ..Default::default() },
             executor_builder: ExecutorBuilder::<MonadEvmNetwork>::new(),
             ..Default::default()
@@ -972,7 +981,7 @@ mod tests {
 
         // on some CI targets installing results in weird malformed solc files, we try installing it
         // multiple times
-        let version = "0.8.20";
+        let version = SOLC_VERSION;
         for _ in 0..3 {
             let mut is_preinstalled = PRE_INSTALL_SOLC_LOCK.lock().unwrap();
             if !*is_preinstalled {
@@ -997,7 +1006,11 @@ mod tests {
             }
         }
 
-        SessionSource::new(Default::default()).unwrap()
+        SessionSource::new(SessionSourceConfig {
+            foundry_config: Config { solc: Some(SOLC_VERSION.into()), ..Default::default() },
+            ..Default::default()
+        })
+        .unwrap()
     }
 
     fn array(ty: DynSolType) -> DynSolType {

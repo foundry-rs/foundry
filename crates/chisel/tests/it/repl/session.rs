@@ -1,5 +1,5 @@
 use foundry_compilers::PathStyle;
-use foundry_test_utils::TestProject;
+use foundry_test_utils::{TestProject, util::SOLC_VERSION};
 use rexpect::{reader::Options, session::PtySession, spawn_with_options};
 
 // Some inputs compile and evaluate code before the next prompt is printed; 3s is tight on CI.
@@ -30,6 +30,8 @@ impl ChiselSession {
             foundry_test_utils::util::initialize(project.root());
             project.initialize_default_contracts();
         }
+
+        project.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
 
         let bin = env!("CARGO_BIN_EXE_chisel");
         let mut command = std::process::Command::new(bin);

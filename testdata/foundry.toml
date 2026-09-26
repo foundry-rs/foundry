@@ -26,6 +26,8 @@ additional_compiler_profiles = [
     { name = "no-metadata", bytecode_hash = "None" },
 ]
 compilation_restrictions = [
+    # Keep auto-detected compilers within the shared test versions.
+    { paths = "**/*.sol", version = "<=0.8.35" },
     # paris - files in paris/ directory use paris EVM version
     { paths = "paris/**", evm_version = "paris" },
     # Keep multi-version bytecode stable across platforms while preserving the encoded solc version.

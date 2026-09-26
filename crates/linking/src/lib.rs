@@ -1138,7 +1138,7 @@ mod tests {
                 .build()
                 .unwrap();
 
-            let solc = Solc::find_or_install(&Version::new(0, 8, 18)).unwrap();
+            let solc = Solc::find_or_install(&Version::new(0, 8, 35)).unwrap();
             let project = Project::builder()
                 .paths(paths)
                 .ephemeral()
