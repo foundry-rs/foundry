@@ -67,6 +67,10 @@ pub struct InMemoryBlockStates {
     present: VecDeque<B256>,
     /// Stores old states on disk
     disk_cache: DiskStateCache,
+    /// Post-block states of blocks whose state was modified before their child was mined.
+    ///
+    /// For those blocks, `states` holds the state the child was executed on.
+    post_block_states: B256HashMap<StateDb>,
 }
 
 impl InMemoryBlockStates {
@@ -82,6 +86,7 @@ impl InMemoryBlockStates {
             oldest_on_disk: Default::default(),
             present: Default::default(),
             disk_cache: Default::default(),
+            post_block_states: Default::default(),
         }
     }
 
@@ -149,6 +154,9 @@ impl InMemoryBlockStates {
                 .pop_front()
                 .and_then(|hash| self.states.remove(&hash).map(|state| (hash, state)))
             {
+                if self.is_memory_only() {
+                    self.post_block_states.remove(&hash);
+                }
                 // only write to disk if supported
                 if !self.is_memory_only() {
                     if state.is_persistent() {
@@ -178,10 +186,11 @@ impl InMemoryBlockStates {
         // enforce on disk limit and purge the oldest state cached on disk
         while !self.is_memory_only() && self.oldest_on_disk.len() >= self.max_on_disk_limit {
             // evict the oldest block
-            if let Some(hash) = self.oldest_on_disk.pop_front()
-                && self.on_disk_states.remove(&hash).is_some_and(|state| !state.is_persistent())
-            {
-                self.disk_cache.remove(hash);
+            if let Some(hash) = self.oldest_on_disk.pop_front() {
+                self.post_block_states.remove(&hash);
+                if self.on_disk_states.remove(&hash).is_some_and(|state| !state.is_persistent()) {
+                    self.disk_cache.remove(hash);
+                }
             }
         }
     }
@@ -189,6 +198,16 @@ impl InMemoryBlockStates {
     /// Returns the in-memory state for the given `hash` if present
     pub fn get_state(&self, hash: &B256) -> Option<&StateDb> {
         self.states.get(hash)
+    }
+
+    /// Returns the post-block state for the given `hash` if it differs from the stored state.
+    pub fn get_post_block_state(&self, hash: &B256) -> Option<&StateDb> {
+        self.post_block_states.get(hash)
+    }
+
+    /// Records the post-block state for the given `hash`, unless one was already recorded.
+    pub fn insert_post_block_state_with(&mut self, hash: B256, state: impl FnOnce() -> StateDb) {
+        self.post_block_states.entry(hash).or_insert_with(state);
     }
 
     /// Returns on-disk state for the given `hash` if present
@@ -217,6 +236,7 @@ impl InMemoryBlockStates {
     /// Clears all entries
     pub fn clear(&mut self) {
         self.states.clear();
+        self.post_block_states.clear();
         self.present.clear();
         self.oldest_on_disk.clear();
         for (hash, state) in std::mem::take(&mut self.on_disk_states) {
@@ -233,6 +253,7 @@ impl InMemoryBlockStates {
     pub fn remove_block_states(&mut self, hashes: &[B256]) {
         for hash in hashes {
             self.states.remove(hash);
+            self.post_block_states.remove(hash);
             if self.on_disk_states.remove(hash).is_some_and(|state| !state.is_persistent()) {
                 self.disk_cache.remove(*hash);
             }
