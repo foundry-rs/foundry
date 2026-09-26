@@ -3,6 +3,7 @@ use crate::{
     broadcast::{BundledState, remaining_unsigned_transactions_for_recovery},
     execute::LinkedState,
     multi_sequence::MultiChainSequence,
+    progress::ScriptProgress,
     recovery::recovery_exists,
     sequence::ScriptSequenceKind,
     session::{
@@ -12,7 +13,7 @@ use crate::{
 use alloy_network::AnyNetwork;
 use alloy_primitives::{Address, B256, map::AddressHashSet};
 use alloy_provider::Provider;
-use eyre::{OptionExt, Result};
+use eyre::{ContextCompat, OptionExt, Result};
 use forge_script_sequence::ScriptSequence;
 use foundry_cheatcodes::Wallets;
 use foundry_cli::opts::TempoOpts;
@@ -297,7 +298,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
     }
 
     /// Tries loading the resumed state from the cache files, skipping simulation stage.
-    pub async fn resume(self) -> Result<BundledState<FEN>> {
+    pub async fn resume(mut self) -> Result<BundledState<FEN>> {
         let chain = if self.args.multi {
             None
         } else {
@@ -306,7 +307,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
             Some(provider.get_chain_id().await?)
         };
 
-        let sequence = if self.sequence_exists(chain, false)? {
+        let mut sequence = if self.sequence_exists(chain, false)? {
             self.try_load_sequence(chain, false)?
         } else {
             // If the script was simulated, but there was no attempt to broadcast yet,
@@ -321,6 +322,72 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
             )?;
             sequence
         };
+
+        if !self.args.batch {
+            let resolution = sequence.restore_delegated_pending(
+                self.args.resume_attempt,
+                self.args.resume_tx_hash,
+                self.args.resume_retry,
+            )?;
+            if let Some((sequence_index, _, attempt_id, hash)) = resolution {
+                let provider = ProviderBuilder::<FEN::Network>::from_config_with_url(
+                    &self.script_config.config,
+                    sequence.sequences()[sequence_index].rpc_url(),
+                )?
+                .build()?;
+                let transaction = provider
+                    .get_transaction_by_hash(hash)
+                    .await?
+                    .context("resolved transaction is not available from the recovery endpoint")?;
+                sequence.resolve_delegated_hash(attempt_id, hash, &transaction)?;
+            }
+            let progress = ScriptProgress::default();
+            for index in 0..sequence.sequences().len() {
+                if sequence.sequences()[index].pending.is_empty() {
+                    continue;
+                }
+                let durable_hashes = sequence.submission_hashes(index);
+                let replayable_hashes = sequence.signed_hashes(index);
+                let provider = ProviderBuilder::from_config_with_url(
+                    &self.script_config.config,
+                    sequence.sequences()[index].rpc_url(),
+                )?
+                .build()?;
+                let result = progress
+                    .wait_for_pending(
+                        index,
+                        &mut sequence.sequences_mut()[index],
+                        &provider,
+                        self.script_config.config.transaction_timeout,
+                        self.args.confirmations,
+                        (&durable_hashes, &replayable_hashes),
+                    )
+                    .await;
+                sequence.save(true, false)?;
+                result?;
+                sequence.ensure_delegated_outcomes_known(index)?;
+            }
+        }
+
+        if !self.args.unlocked
+            && !remaining_unsigned_transactions_for_recovery(&sequence).is_empty()
+        {
+            self.script_wallets =
+                Wallets::new(self.args.wallets.get_multi_wallet().await?, self.args.evm.sender);
+            self.browser_wallet = self.args.wallets.browser_signer::<FEN::Network>().await?;
+
+            if self.args.evm.sender.is_none() {
+                let addresses = self.script_wallets.addresses();
+                let sender = self
+                    .args
+                    .maybe_load_private_key()?
+                    .or_else(|| (addresses.len() == 1).then(|| addresses[0]))
+                    .or_else(|| self.browser_wallet.as_ref().map(|wallet| wallet.address()));
+                if let Some(sender) = sender {
+                    self.script_config.update_sender(sender).await?;
+                }
+            }
+        }
 
         let (args, build_data, script_wallets, browser_wallet, script_config) =
             if self.args.unlocked {
