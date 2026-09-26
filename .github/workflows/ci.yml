@@ -274,7 +274,7 @@ jobs:
       id-token: write
     with:
       pinact: true
-      secure-runner-fail-on-violation: false
+      ensure-secure-runner: false
 
   ci-success:
     runs-on: ubuntu-latest
