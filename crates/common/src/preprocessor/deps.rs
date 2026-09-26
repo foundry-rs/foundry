@@ -25,7 +25,7 @@ use solar::{
     },
 };
 use std::{
-    collections::{BTreeMap, BTreeSet, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     ops::{ControlFlow, Range},
     path::{Path, PathBuf},
 };
@@ -1057,6 +1057,22 @@ fn valid_constructor_call(
     true
 }
 
+/// Selects the same safe references as source preprocessing without changing their source.
+/// End offsets identify `new C` and `type(C).creationCode` in the original UTF-8 source.
+pub(super) fn native_test_link_args(gcx: Gcx<'_>, deps: &PreprocessorDependencies) -> Vec<String> {
+    deps.preprocessed_contracts
+        .iter()
+        .flat_map(|(id, references)| {
+            let source = gcx.hir.source(gcx.hir.contract(*id).source);
+            references.iter().map(move |reference| {
+                format!("--test-link={}:{}", source.file.name.display(), reference.loc.end)
+            })
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
 /// Finds return-buffer observations in a contract and the helpers it can call internally.
 struct ReturnDataObserver<'gcx> {
     gcx: Gcx<'gcx>,
@@ -1064,9 +1080,10 @@ struct ReturnDataObserver<'gcx> {
     functions: HashSet<FunctionId>,
     contracts: HashSet<ContractId>,
     visited_contracts: HashSet<ContractId>,
-    member_functions: HashSet<(FunctionId, Symbol)>,
+    member_functions: HashMap<Symbol, HashSet<FunctionId>>,
     sources: HashSet<SourceId>,
-    operator_functions: HashSet<(FunctionId, UserDefinableOperator)>,
+    operator_functions: HashMap<UserDefinableOperator, HashSet<FunctionId>>,
+    member_scopes: HashSet<(SourceId, Option<ContractId>)>,
 }
 
 impl<'gcx> ReturnDataObserver<'gcx> {
@@ -1077,63 +1094,78 @@ impl<'gcx> ReturnDataObserver<'gcx> {
             functions: HashSet::new(),
             contracts: HashSet::new(),
             visited_contracts: HashSet::new(),
-            member_functions: HashSet::new(),
+            member_functions: HashMap::new(),
             sources: HashSet::new(),
-            operator_functions: HashSet::new(),
+            operator_functions: HashMap::new(),
+            member_scopes: HashSet::new(),
         }
     }
 
     fn collect_member_functions(&mut self, source: SourceId, contract: Option<ContractId>) {
+        // All functions in a scope see the same declarations. In particular, inherited test
+        // helpers can contain hundreds of functions; do not rescan their complete hierarchy
+        // for every function we visit.
+        if !self.member_scopes.insert((source, contract)) {
+            return;
+        }
+        let gcx = self.gcx;
         let bases = contract
             .into_iter()
-            .flat_map(|id| self.gcx.hir.contract(id).linearized_bases)
+            .flat_map(|id| gcx.hir.contract(id).linearized_bases)
             .copied()
             .collect::<Vec<_>>();
         for &id in &bases {
-            self.member_functions.extend(
-                self.gcx
-                    .hir
+            self.extend_member_functions(
+                gcx.hir
                     .contract(id)
                     .functions()
-                    .filter_map(|id| self.gcx.hir.function(id).name.map(|name| (id, name.name))),
+                    .filter_map(|id| gcx.hir.function(id).name.map(|name| (id, name.name))),
             );
         }
-        let directives = self
-            .gcx
+        let directives = gcx
             .hir
             .source(source)
             .usings
             .iter()
-            .chain(bases.iter().flat_map(|&id| self.gcx.hir.contract(id).usings))
+            .chain(bases.iter().flat_map(|&id| gcx.hir.contract(id).usings))
             .chain(
-                self.gcx
-                    .hir
+                gcx.hir
                     .source_ids()
-                    .flat_map(|id| self.gcx.hir.source(id).usings)
+                    .flat_map(|id| gcx.hir.source(id).usings)
                     .filter(|directive| directive.global),
             );
         for directive in directives {
             for entry in directive.entries {
                 match entry.kind {
-                    UsingEntryKind::Library(id) => self.member_functions.extend(
-                        self.gcx.hir.contract(id).functions().filter_map(|id| {
-                            self.gcx.hir.function(id).name.map(|name| (id, name.name))
-                        }),
+                    UsingEntryKind::Library(id) => self.extend_member_functions(
+                        gcx.hir
+                            .contract(id)
+                            .functions()
+                            .filter_map(|id| gcx.hir.function(id).name.map(|name| (id, name.name))),
                     ),
                     UsingEntryKind::Functions(ids) => {
                         if let Some(operator) = entry.operator {
-                            self.operator_functions.extend(ids.iter().map(|&id| (id, operator)));
+                            self.operator_functions.entry(operator).or_default().extend(ids);
                         }
-                        self.member_functions.extend(ids.iter().copied().filter_map(|id| {
+                        self.extend_member_functions(ids.iter().copied().filter_map(|id| {
                             entry
                                 .name
-                                .or_else(|| self.gcx.hir.function(id).name.map(|name| name.name))
+                                .or_else(|| gcx.hir.function(id).name.map(|name| name.name))
                                 .map(|name| (id, name))
                         }))
                     }
                     UsingEntryKind::Err(_) => {}
                 }
             }
+        }
+    }
+
+    fn extend_member_functions(
+        &mut self,
+        functions: impl IntoIterator<Item = (FunctionId, Symbol)>,
+    ) {
+        for (id, name) in functions {
+            self.member_functions.entry(name).or_default().insert(id);
         }
     }
 }
@@ -1204,8 +1236,10 @@ impl<'gcx> Visit<'gcx> for ReturnDataObserver<'gcx> {
             // Type checking has not selected an overload yet, so visit every visible binding.
             let functions = self
                 .operator_functions
-                .iter()
-                .filter_map(|&(id, bound)| (bound == operator).then_some(id))
+                .get(&operator)
+                .into_iter()
+                .flatten()
+                .copied()
                 .collect::<Vec<_>>();
             for id in functions {
                 self.visit_nested_function(id)?;
@@ -1270,9 +1304,10 @@ impl<'gcx> Visit<'gcx> for ReturnDataObserver<'gcx> {
                 // or using-for method with this name.
                 let functions = self
                     .member_functions
-                    .iter()
+                    .get(&name.name)
+                    .into_iter()
+                    .flatten()
                     .copied()
-                    .filter_map(|(id, attached_name)| (attached_name == name.name).then_some(id))
                     .collect::<Vec<_>>();
                 for id in functions {
                     self.visit_nested_function(id)?;

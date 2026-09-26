@@ -484,6 +484,8 @@ pub fn format_benchmark_name(name: &str) -> String {
         "forge_test_filtered" => "Forge Test (Warm Cache)",
         "forge_build_no_cache" => "Forge Build (No Cache)",
         "forge_build_with_cache" => "Forge Build (With Cache)",
+        "forge_build_no_cache_dynamic" => "Forge Build (No Cache, Dynamic Linking)",
+        "forge_build_with_cache_dynamic" => "Forge Build (With Cache, Dynamic Linking)",
         "forge_fuzz_test" => "Forge Fuzz Test",
         "forge_coverage" => "Forge Coverage",
         "forge_isolate_test" => "Forge Test (Isolated)",

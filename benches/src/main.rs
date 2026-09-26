@@ -16,11 +16,13 @@ use std::{
     sync::Mutex,
 };
 
-const ALL_BENCHMARKS: [&str; 8] = [
+const ALL_BENCHMARKS: [&str; 10] = [
     "forge_test",
     "forge_test_filtered",
     "forge_build_no_cache",
     "forge_build_with_cache",
+    "forge_build_no_cache_dynamic",
+    "forge_build_with_cache_dynamic",
     "forge_fuzz_test",
     "forge_coverage",
     "forge_isolate_test",
@@ -77,7 +79,8 @@ struct Cli {
 
     /// Run only specific benchmarks (comma-separated:
     /// forge_test,forge_test_filtered,forge_build_no_cache,forge_build_with_cache,forge_fuzz_test,
-    /// forge_coverage, forge_symbolic_test)
+    /// forge_build_no_cache_dynamic,forge_build_with_cache_dynamic,forge_coverage,
+    /// forge_symbolic_test)
     #[clap(long, value_delimiter = ',')]
     benchmarks: Option<Vec<String>>,
 

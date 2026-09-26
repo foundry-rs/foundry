@@ -175,8 +175,16 @@ impl BenchmarkProject {
             }
         }
 
-        // Git submodules are already cloned via --recursive flag
-        // But npm dependencies still need to be installed
+        // Checkout can change the pinned submodule revisions after the initial recursive clone.
+        let status = Command::new("git")
+            .current_dir(root)
+            .args(["submodule", "update", "--init", "--recursive"])
+            .status()
+            .wrap_err("Failed to update pinned submodules")?;
+        if !status.success() {
+            eyre::bail!("Git submodule update failed for {}", config.name);
+        }
+
         Self::install_npm_dependencies(&root_path)?;
 
         sh_println!("  ✅ Project {} setup complete at {}", config.name, root);
@@ -598,6 +606,12 @@ impl BenchmarkProject {
             "forge_test_filtered" => self.bench_forge_test_filtered(version, runs, verbose),
             "forge_build_no_cache" => self.bench_forge_build_no_cache(version, runs, verbose),
             "forge_build_with_cache" => self.bench_forge_build_with_cache(version, runs, verbose),
+            "forge_build_no_cache_dynamic" => {
+                self.bench_forge_build_dynamic(version, runs, false, verbose)
+            }
+            "forge_build_with_cache_dynamic" => {
+                self.bench_forge_build_dynamic(version, runs, true, verbose)
+            }
             "forge_fuzz_test" => self.bench_forge_fuzz_test(version, runs, verbose),
             "forge_coverage" => self.bench_forge_coverage(version, runs, verbose),
             "forge_isolate_test" => self.bench_forge_isolate_test(version, runs, verbose),
@@ -606,6 +620,32 @@ impl BenchmarkProject {
                 eyre::bail!("Unknown benchmark: {}", benchmark);
             }
         }
+    }
+
+    /// Benchmark compilation with dynamic linking explicitly enabled on both warmups and samples.
+    fn bench_forge_build_dynamic(
+        &self,
+        version: &str,
+        runs: u32,
+        cached: bool,
+        verbose: bool,
+    ) -> Result<HyperfineResult> {
+        let command = self.cmd(
+            "FOUNDRY_DYNAMIC_TEST_LINKING=true FOUNDRY_LINT_LINT_ON_BUILD=false FOUNDRY_ISOLATE=false forge build",
+        );
+        let clean = "FOUNDRY_DYNAMIC_TEST_LINKING=true FOUNDRY_ISOLATE=false forge clean";
+        let name =
+            if cached { "forge_build_with_cache_dynamic" } else { "forge_build_no_cache_dynamic" };
+        self.hyperfine(
+            name,
+            version,
+            &command,
+            runs,
+            Some(if cached { &command } else { clean }),
+            None,
+            (!cached).then_some(clean),
+            verbose,
+        )
     }
 }
 

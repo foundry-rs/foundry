@@ -146,6 +146,13 @@ foundry-bench --versions local --benchmarks forge_test_filtered \
   --repos "aave/aave-v4:1e8de8630dfeb26ad309d986eaec44c1ceb48a6d --match-contract EngineFlagsTest --match-test test_toBool_zero_returnsFalse --threads 1"
 ```
 
+The ordinary build benchmarks keep dynamic linking disabled. To measure compilation
+with it enabled, use `forge_build_no_cache_dynamic` and
+`forge_build_with_cache_dynamic`. These cases enable it consistently for setup and
+timed commands, preserve repository arguments, and use distinct result IDs so they
+cannot be confused with static-linking results. The cached case measures an
+unchanged warm build, not a source edit.
+
 ## Branch vs master PR-body workflow
 
 Use this workflow when preparing performance numbers for a PR body. It keeps the
