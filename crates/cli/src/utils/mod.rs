@@ -1465,13 +1465,13 @@ mod tests {
         git.add(["tracked"]).unwrap();
 
         assert!(!git.submodules_initialized(&["lib".into()]).unwrap());
-        assert!(!git.has_missing_dependencies(["lib"]).unwrap());
+        assert!(git.has_missing_dependencies(["lib"]).is_err());
 
         let nested = tmp.path().join("packages/contracts");
         fs::create_dir_all(&nested).unwrap();
         let git = git.root(&nested);
         assert!(!git.submodules_initialized(&["lib".into()]).unwrap());
-        assert!(!git.has_missing_dependencies(["lib"]).unwrap());
+        assert!(git.has_missing_dependencies(["lib"]).is_err());
     }
 
     #[test]
@@ -1535,6 +1535,6 @@ mod tests {
         assert!(worktree.join(".git").is_file());
         let git = git.root(&worktree);
         assert!(!git.submodules_initialized(&["lib".into()]).unwrap());
-        assert!(!git.has_missing_dependencies(["lib"]).unwrap());
+        assert!(git.has_missing_dependencies(["lib"]).is_err());
     }
 }
