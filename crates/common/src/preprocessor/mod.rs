@@ -624,7 +624,7 @@ mod tests {
     #[test]
     fn return_data_member_index_preserves_all_overloads() {
         assert_return_data_scope_native(
-            "library Reader { function size(uint256 n) internal pure returns (uint256) { return n; } function size(uint256, uint256) internal view returns (uint256 n) { assembly { n := returndatasize() } } contract Observer { using Reader for uint256; function first() public { new Dep(); uint256(0).size(); } function second() public view returns (uint256) { return uint256(0).size(0); } }",
+            "library Reader { function size(uint256 n) internal pure returns (uint256) { return n; } function size(uint256, uint256) internal view returns (uint256 n) { assembly { n := returndatasize() } } } contract Observer { using Reader for uint256; function first() public { new Dep(); uint256(0).size(); } function second() public view returns (uint256) { return uint256(0).size(0); } }",
         );
     }
 }
