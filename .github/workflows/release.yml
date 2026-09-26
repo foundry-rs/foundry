@@ -368,13 +368,13 @@ jobs:
             arch: amd64
     steps:
       - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@117919c943b804057be733b0c4034c5542e58959
+        uses: tempoxyz/gh-actions/actions/secure-runner@ee2960a6cc25d99bda45614135bfe1197d879bac
         with:
           # Disable the pre-job hook too; a step condition alone does not skip it.
           disable-enforcement: ${{ runner.os == 'macOS' }}
       - name: Install Aegis on macOS
         if: runner.os == 'macOS'
-        uses: tempoxyz/gh-actions/actions/socket-firewall@d39baa2b43f5eba5d261c047521a4fbd56101129
+        uses: tempoxyz/gh-actions/actions/aegis@ee2960a6cc25d99bda45614135bfe1197d879bac
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
