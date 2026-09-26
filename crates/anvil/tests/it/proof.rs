@@ -138,7 +138,7 @@ async fn can_get_random_account_proofs() {
     }
 }
 
-// <https://github.com/foundry-rs/foundry/pull/17053>
+// <https://github.com/foundry-rs/foundry/issues/17062>
 #[tokio::test(flavor = "multi_thread")]
 async fn historical_proof_ignores_later_storage_override() {
     let (api, _handle) = spawn(NodeConfig::test()).await;
