@@ -285,7 +285,9 @@ need not remain the authoritative recovery state.
 - An unknown outcome remains unresolved until an operator or supported chain query establishes its
   result. Resume reports affected operations and conservatively blocks later submissions in saved
   sequence and multichain-container order until the unresolved outcome is resolved. Operations in
-  the same batch remain ordered together.
+  the same batch remain ordered together. Once established, the operator records a discovered hash
+  with `--resume-tx-hash`, or explicitly permits a retry with `--resume-retry` only after proving
+  non-submission. Either option resolves the first blocked operation reported by resume.
 - Apply the configured confirmation count independently while reconciling each chain; this does not
   introduce separate per-chain policies. Revalidation of already persisted confirmations across a
   later reorg is outside this contract. Concurrent reconciliation must preserve each chain's state.

@@ -16,7 +16,7 @@ use crate::{broadcast::BundledState, runner::ScriptRunner, simulate::PreSimulati
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_network::Network;
 use alloy_primitives::{
-    Address, Bytes, Log, U256, hex,
+    Address, B256, Bytes, Log, U256, hex,
     map::{AddressHashMap, HashMap},
 };
 use alloy_signer::Signer;
@@ -63,7 +63,7 @@ use foundry_evm::{
     traces::{InternalTraceMode, TraceRequirements, Traces},
 };
 use foundry_evm_networks::NetworkConfigs;
-use foundry_wallets::MultiWalletOpts;
+use foundry_wallets::{MultiWalletOpts, wallet_multi::MultiWallet};
 use serde::Serialize;
 use std::path::PathBuf;
 
@@ -207,6 +207,26 @@ pub struct ScriptArgs {
     /// otherwise it fails.
     #[arg(long)]
     pub resume: bool,
+
+    /// Selects the interrupted delegated submission attempt to resolve.
+    #[arg(long, requires = "resume")]
+    pub resume_attempt: Option<B256>,
+
+    /// Records a transaction hash discovered for an interrupted delegated submission.
+    #[arg(
+        long,
+        requires_all = ["resume", "resume_attempt"],
+        conflicts_with = "resume_retry"
+    )]
+    pub resume_tx_hash: Option<B256>,
+
+    /// Retries an interrupted delegated submission proven not to have been submitted.
+    #[arg(
+        long,
+        requires_all = ["resume", "resume_attempt"],
+        conflicts_with = "resume_tx_hash"
+    )]
+    pub resume_retry: bool,
 
     /// If present, --resume or --verify will be assumed to be a multi chain deployment.
     #[arg(long)]
@@ -355,14 +375,23 @@ impl ScriptArgs {
             tempo.session_sender_for_multi_wallet(&args.wallets, args.evm.sender)?
         };
 
-        let script_wallets = Wallets::new(args.wallets.get_multi_wallet().await?, args.evm.sender);
-        let browser_wallet = args.wallets.browser_signer::<FEN::Network>().await?;
+        // Resume reconciles durable submissions before loading interactive signers.
+        let (script_wallets, browser_wallet) = if args.resume {
+            (Wallets::new(MultiWallet::default(), args.evm.sender), None)
+        } else {
+            (
+                Wallets::new(args.wallets.get_multi_wallet().await?, args.evm.sender),
+                args.wallets.browser_signer::<FEN::Network>().await?,
+            )
+        };
 
         if let Some(sender) = session_sender {
             evm_opts.sender = sender;
-        } else if let Some(sender) = args.maybe_load_private_key()? {
+        } else if !args.resume
+            && let Some(sender) = args.maybe_load_private_key()?
+        {
             evm_opts.sender = sender;
-        } else if args.evm.sender.is_none() {
+        } else if !args.resume && args.evm.sender.is_none() {
             // If no sender was explicitly set via --sender, auto-detect it from available signers:
             // use the sole signer's address if there's exactly one, or fall back to the browser
             // wallet address if present.
@@ -1262,7 +1291,7 @@ mod tests {
     use alloy_chains::NamedChain;
     use alloy_eips::BlockId;
     use alloy_network::Ethereum;
-    use alloy_primitives::{B256, address};
+    use alloy_primitives::address;
     use alloy_provider::Provider as _;
     use alloy_rpc_types::TransactionRequest;
     use alloy_signer::SignerSync as _;

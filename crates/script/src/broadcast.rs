@@ -4,6 +4,7 @@ use crate::{
     ScriptArgs, ScriptConfig,
     build::LinkedBuildData,
     progress::ScriptProgress,
+    recovery::DelegatedStatus,
     sequence::ScriptSequenceKind,
     session::{
         RemainingScriptTransaction, SignerScope,
@@ -23,7 +24,11 @@ use alloy_primitives::{
     map::{AddressHashMap, AddressHashSet, HashMap},
     utils::format_units,
 };
-use alloy_provider::{Provider, RootProvider, utils::Eip1559Estimation};
+use alloy_provider::{
+    Provider, RootProvider,
+    transport::{RpcError, TransportError},
+    utils::Eip1559Estimation,
+};
 use alloy_rpc_types::TransactionRequest;
 use alloy_signer::Signature;
 use eyre::{Context, Result, bail};
@@ -46,7 +51,10 @@ use foundry_evm::core::{
     fork::ResolvedFork,
     opts::EvmOpts,
 };
-use foundry_wallets::{TempoAccountsWallet, wallet_browser::signer::BrowserSigner};
+use foundry_wallets::{
+    TempoAccountsWallet,
+    wallet_browser::{error::BrowserWalletError, signer::BrowserSigner},
+};
 use futures::{FutureExt, StreamExt, future::join_all, stream::FuturesUnordered};
 use itertools::Itertools;
 use revm_inspectors::tracing::types::CallKind;
@@ -70,11 +78,30 @@ where
     N::UnsignedTx: SignableTransaction<Signature>,
     N::TransactionRequest: FoundryTransactionBuilder<N>,
 {
-    const fn is_local(&self) -> bool {
-        matches!(
-            self,
-            Self::Raw(..) | Self::Signed(_) | Self::AccessKey(..) | Self::PreparedRaw(..)
-        )
+    const fn delegated_request(&self) -> Option<&N::TransactionRequest> {
+        match self {
+            Self::Unlocked(request) | Self::Browser(request, _) => Some(request),
+            _ => None,
+        }
+    }
+
+    fn validate_delegated_submission(&self) -> Result<()> {
+        let Self::Browser(request, signer) = self else { return Ok(()) };
+        if request.from().is_some_and(|from| from != signer.address()) {
+            bail!("Transaction `from` address does not match connected wallet address");
+        }
+        if request.chain_id().is_some_and(|chain_id| chain_id != signer.chain_id()) {
+            bail!("Transaction `chainId` does not match connected wallet chain ID");
+        }
+        Ok(())
+    }
+
+    fn is_definite_non_submission(&self, error: &eyre::Report) -> bool {
+        match self {
+            Self::Browser(..) => is_definite_browser_non_submission(error),
+            Self::Unlocked(_) => is_definite_unlocked_non_submission(error),
+            _ => false,
+        }
     }
 
     /// Prepares the transaction for broadcasting by synchronizing nonce and estimating gas.
@@ -236,6 +263,9 @@ where
             chain,
         )
         .await?;
+        if let Self::Unlocked(tx) = &mut self {
+            tx.prep_for_submission();
+        }
         Ok(match self {
             Self::Raw(tx, signer) => {
                 let signed = tx.build(signer).await?;
@@ -253,35 +283,29 @@ where
             kind => kind,
         })
     }
+}
 
-    /// Prepares and sends the transaction in one operation.
-    ///
-    /// This is a convenience method that combines [`prepare`](Self::prepare) and
-    /// [`send`](Self::send) into a single call.
-    #[allow(clippy::too_many_arguments)]
-    pub async fn prepare_and_send(
-        mut self,
-        provider: Arc<RootProvider<N>>,
-        sequential_broadcast: bool,
-        is_fixed_gas_limit: bool,
-        estimate_via_rpc: bool,
-        estimate_multiplier: u64,
-        tempo_sponsor: Option<&TempoSponsor>,
-        chain: Option<Chain>,
-    ) -> Result<TxHash> {
-        self.prepare(
-            &provider,
-            sequential_broadcast,
-            is_fixed_gas_limit,
-            estimate_via_rpc,
-            estimate_multiplier,
-            tempo_sponsor,
-            chain,
-        )
-        .await?;
+fn is_definite_browser_non_submission(error: &eyre::Report) -> bool {
+    let Some(alloy_signer::Error::Other(error)) = error.downcast_ref::<alloy_signer::Error>()
+    else {
+        return false;
+    };
+    matches!(
+        error.downcast_ref::<BrowserWalletError>(),
+        Some(BrowserWalletError::Rejected { .. } | BrowserWalletError::NotConnected)
+    )
+}
 
-        self.send(provider).await
-    }
+fn is_definite_unlocked_non_submission(error: &eyre::Report) -> bool {
+    matches!(
+        error.downcast_ref::<TransportError>(),
+        Some(RpcError::ErrorResp(error))
+            if is_unlocked_non_submission(error.code, &error.message)
+    )
+}
+
+fn is_unlocked_non_submission(code: i64, message: &str) -> bool {
+    code == -32602 && message == "No Signer available"
 }
 
 #[cfg(test)]
@@ -341,6 +365,10 @@ where
             let hash = sequence
                 .signed_payload(sequence_index, index)
                 .map(|signed| signed.hash)
+                .or_else(|| match sequence.delegated_status(sequence_index, index) {
+                    Some(DelegatedStatus::Pending { hash }) => Some(hash),
+                    _ => None,
+                })
                 .or(transaction.hash)
                 .or_else(|| match transaction.tx() {
                     TransactionMaybeSigned::Signed { tx, .. } => Some(tx.trie_hash()),
@@ -457,13 +485,16 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
         let durable_hashes = (0..self.sequence.sequences().len())
             .map(|sequence| self.sequence.submission_hashes(sequence))
             .collect::<Vec<_>>();
+        let replayable_hashes = (0..self.sequence.sequences().len())
+            .map(|sequence| self.sequence.signed_hashes(sequence))
+            .collect::<Vec<_>>();
         let futs = self
             .sequence
             .sequences_mut()
             .iter_mut()
-            .zip(durable_hashes)
+            .zip(durable_hashes.into_iter().zip(replayable_hashes))
             .enumerate()
-            .map(|(sequence_idx, (sequence, durable_hashes))| async move {
+            .map(|(sequence_idx, (sequence, (durable_hashes, replayable_hashes)))| async move {
                 let rpc_url = sequence.rpc_url();
                 let provider =
                     Arc::new(ProviderBuilder::from_config_with_url(config, rpc_url)?.build()?);
@@ -474,7 +505,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                         &provider,
                         self.script_config.config.transaction_timeout,
                         self.args.confirmations,
-                        (&durable_hashes, &durable_hashes),
+                        (&durable_hashes, &replayable_hashes),
                     )
                     .await
             })
@@ -617,10 +648,6 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                         .map(|signed| (signed.payload.clone(), signed.hash))
                 })
                 .collect::<Vec<_>>();
-            let durable_hashes = signed_payloads
-                .iter()
-                .filter_map(|signed| signed.as_ref().map(|(_, hash)| *hash))
-                .collect::<Vec<_>>();
             let mut sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
             let provider = Arc::new(
@@ -628,6 +655,14 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                     &self.script_config.config,
                     sequence.rpc_url(),
                 )?
+                .build()?,
+            );
+            let unlocked_submission_provider = Arc::new(
+                ProviderBuilder::from_config_with_url(
+                    &self.script_config.config,
+                    sequence.rpc_url(),
+                )?
+                .max_retry(0)
                 .build()?,
             );
 
@@ -756,7 +791,12 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                     required_addresses.len(),
                     ordering_addresses.len(),
                     has_batch_support(sequence.chain),
-                );
+                ) || transactions.iter().any(|(kind, _, _)| {
+                    matches!(
+                        kind,
+                        SendTransactionKind::Browser(..) | SendTransactionKind::Unlocked(..)
+                    )
+                });
 
                 // We send transactions and wait for receipts in batches of 100, since some networks
                 // cannot handle more than that.
@@ -773,21 +813,18 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                     if !batch.is_empty() {
                         let mut prepared = Vec::with_capacity(batch.len());
                         for (kind, is_fixed_gas_limit, index) in batch {
-                            let mut kind = if kind.is_local() {
-                                kind.clone()
-                                    .prepare_for_durable_send(
-                                        &provider,
-                                        sequential_broadcast,
-                                        *is_fixed_gas_limit,
-                                        estimate_via_rpc,
-                                        self.args.gas_estimate_multiplier,
-                                        tempo_sponsor.as_deref(),
-                                        Some(sequence_chain.into()),
-                                    )
-                                    .await?
-                            } else {
-                                kind.clone()
-                            };
+                            let mut kind = kind
+                                .clone()
+                                .prepare_for_durable_send(
+                                    &provider,
+                                    sequential_broadcast,
+                                    *is_fixed_gas_limit,
+                                    estimate_via_rpc,
+                                    self.args.gas_estimate_multiplier,
+                                    tempo_sponsor.as_deref(),
+                                    Some(sequence_chain.into()),
+                                )
+                                .await?;
                             if let SendTransactionKind::PreparedRaw(payload, hash) = &mut kind {
                                 *hash = self.sequence.persist_signed_payload(
                                     i,
@@ -797,31 +834,33 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                             }
                             prepared.push((kind, *is_fixed_gas_limit, *index));
                         }
-                        sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
-                        let pending_transactions =
-                            prepared.iter().map(|(kind, is_fixed_gas_limit, index)| {
-                                let provider = provider.clone();
-                                let tempo_sponsor = tempo_sponsor.clone();
-                                async move {
-                                    let res = kind
-                                        .clone()
-                                        .prepare_and_send(
-                                            provider,
-                                            sequential_broadcast,
-                                            *is_fixed_gas_limit,
-                                            estimate_via_rpc,
-                                            self.args.gas_estimate_multiplier,
-                                            tempo_sponsor.as_deref(),
-                                            Some(sequence_chain.into()),
-                                        )
-                                        .await;
-                                    (res, kind, *is_fixed_gas_limit, 0, None, *index)
-                                }
-                                .boxed()
-                            });
-
-                        let mut buffer = pending_transactions.collect::<FuturesUnordered<_>>();
+                        let mut buffer = FuturesUnordered::new();
+                        for (kind, is_fixed_gas_limit, index) in prepared {
+                            if let Some(request) = kind.delegated_request() {
+                                kind.validate_delegated_submission()?;
+                                self.sequence.persist_delegated_request(
+                                    i,
+                                    index,
+                                    request.clone(),
+                                )?;
+                            }
+                            let provider = if matches!(kind, SendTransactionKind::Unlocked(_)) {
+                                unlocked_submission_provider.clone()
+                            } else {
+                                provider.clone()
+                            };
+                            let mut pending = async move {
+                                let res = kind.clone().send(provider).await;
+                                (res, kind, is_fixed_gas_limit, 0, None, index)
+                            }
+                            .boxed();
+                            if let Some(result) = pending.as_mut().now_or_never() {
+                                buffer.push(futures::future::ready(result).boxed());
+                            } else {
+                                buffer.push(pending);
+                            }
+                        }
 
                         'send: while let Some((
                             mut res,
@@ -835,11 +874,27 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                             if res.is_err()
                                 && let SendTransactionKind::PreparedRaw(_, hash) = kind
                                 && provider
-                                    .get_transaction_by_hash(*hash)
+                                    .get_transaction_by_hash(hash)
                                     .await
                                     .is_ok_and(|transaction| transaction.is_some())
                             {
-                                res = Ok(*hash);
+                                res = Ok(hash);
+                            }
+                            if kind.delegated_request().is_some()
+                                && let Err(error) = res
+                            {
+                                if kind.is_definite_non_submission(&error) {
+                                    self.sequence.clear_delegated_request(i, index)?;
+                                    return Err(error);
+                                }
+                                self.sequence.persist_delegated_status(
+                                    i,
+                                    index,
+                                    DelegatedStatus::OutcomeUnknown,
+                                )?;
+                                bail!(
+                                    "submission outcome for delegated operation {index} is unknown; refusing to risk a duplicate transaction"
+                                );
                             }
                             if res.is_err()
                                 && self.script_config.tempo.sponsor_sig.is_some()
@@ -853,7 +908,6 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                 // Try to resubmit the transaction
                                 let provider = provider.clone();
                                 let progress = seq_progress.inner.clone();
-                                let tempo_sponsor = tempo_sponsor.clone();
                                 buffer.push(Box::pin(async move {
                                     debug!(err=?res, ?attempt, "retrying transaction ");
                                     let attempt = attempt + 1;
@@ -861,18 +915,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                         "retrying transaction {res:?} (attempt {attempt})"
                                     ));
                                     tokio::time::sleep(Duration::from_millis(1000 * attempt)).await;
-                                    let r = kind
-                                        .clone()
-                                        .prepare_and_send(
-                                            provider,
-                                            sequential_broadcast,
-                                            is_fixed_gas_limit,
-                                            estimate_via_rpc,
-                                            self.args.gas_estimate_multiplier,
-                                            tempo_sponsor.as_deref(),
-                                            Some(sequence_chain.into()),
-                                        )
-                                        .await;
+                                    let r = kind.clone().send(provider).await;
                                     (
                                         r,
                                         kind,
@@ -897,21 +940,30 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                 }
                             })?;
                             if let SendTransactionKind::PreparedRaw(_, expected) = kind
-                                && *expected != tx_hash
+                                && expected != tx_hash
                             {
                                 bail!("RPC returned hash {tx_hash} for signed payload {expected}");
                             }
+                            if kind.delegated_request().is_some() {
+                                self.sequence.persist_delegated_status(
+                                    i,
+                                    index,
+                                    DelegatedStatus::Pending { hash: tx_hash },
+                                )?;
+                            }
+                            sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
                             sequence.add_pending(index, tx_hash);
 
                             // Checkpoint save
                             self.sequence.save(true, false)?;
-                            sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
                             seq_progress.inner.write().tx_sent(tx_hash);
                         }
 
                         // Checkpoint save
                         self.sequence.save(true, false)?;
+                        let durable_hashes = self.sequence.submission_hashes(i);
+                        let replayable_hashes = self.sequence.signed_hashes(i);
                         sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
                         progress
@@ -921,9 +973,10 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                 &provider,
                                 self.script_config.config.transaction_timeout,
                                 self.args.confirmations,
-                                (&durable_hashes, &durable_hashes),
+                                (&durable_hashes, &replayable_hashes),
                             )
-                            .await?
+                            .await?;
+                        self.sequence.ensure_delegated_outcomes_known(i)?;
                     }
                     // Checkpoint save
                     self.sequence.save(true, false)?;
@@ -1815,6 +1868,34 @@ mod tests {
     fn signed_only_sequences_remain_sequential() {
         assert!(should_broadcast_sequentially(false, false, 0, 1, true));
         assert!(!should_broadcast_sequentially(false, false, 1, 1, true));
+    }
+
+    #[test]
+    fn browser_rejections_are_definite_non_submissions() {
+        let rejected =
+            eyre::Report::new(alloy_signer::Error::other(BrowserWalletError::Rejected {
+                operation: "Transaction",
+                reason: "Rejected by user".to_string(),
+            }));
+        assert!(is_definite_browser_non_submission(&rejected));
+        let send_error = eyre::Report::new(alloy_signer::Error::other(
+            BrowserWalletError::ServerError("replacement transaction underpriced".to_string()),
+        ));
+        assert!(!is_definite_browser_non_submission(&send_error));
+        let not_connected =
+            eyre::Report::new(alloy_signer::Error::other(BrowserWalletError::NotConnected));
+        assert!(is_definite_browser_non_submission(&not_connected));
+        let timeout = eyre::Report::new(alloy_signer::Error::other(BrowserWalletError::Timeout {
+            operation: "Transaction",
+        }));
+        assert!(!is_definite_browser_non_submission(&timeout));
+    }
+
+    #[test]
+    fn only_anvil_no_signer_errors_are_definite_non_submissions() {
+        assert!(is_unlocked_non_submission(-32602, "No Signer available"));
+        assert!(!is_unlocked_non_submission(-32603, "No Signer available"));
+        assert!(!is_unlocked_non_submission(-32602, "transaction rejected"));
     }
 
     #[test]
