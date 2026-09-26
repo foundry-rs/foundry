@@ -210,7 +210,10 @@ use tempo_revm::{
 };
 #[cfg(test)]
 use tokio::sync::Notify;
-use tokio::{sync::RwLock as AsyncRwLock, task::JoinSet};
+use tokio::{
+    sync::{RwLock as AsyncRwLock, RwLockWriteGuard as AsyncRwLockWriteGuard},
+    task::JoinSet,
+};
 
 #[cfg(any(feature = "base", feature = "optimism"))]
 use foundry_primitives::get_deposit_tx_parts;
@@ -1218,8 +1221,10 @@ impl<N: Network> Backend<N> {
 
     /// Writes the CREATE2 deployer code directly to the database at the address provided.
     pub async fn set_create2_deployer(&self, address: Address) -> DatabaseResult<()> {
-        self.set_code(address, Bytes::from_static(DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE)).await?;
-        Ok(())
+        self.db
+            .write()
+            .await
+            .set_code(address, Bytes::from_static(DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE))
     }
 
     /// Updates memory limits that should be more strict when auto-mine is enabled
@@ -1321,19 +1326,33 @@ impl<N: Network> Backend<N> {
         self.cheats.set_next_block_prevrandao(prevrandao);
     }
 
+    /// Locks the database for a state override of the current head.
+    ///
+    /// The head state is recorded as its block's post-block state first, so historical reads of
+    /// the block do not see the override once the next block is mined.
+    async fn db_for_head_override(&self) -> AsyncRwLockWriteGuard<'_, Box<dyn Db>> {
+        let db = self.db.write().await;
+        if self.prune_state_history_config.is_state_history_supported() {
+            self.states
+                .write()
+                .insert_post_block_state_with(self.best_hash(), || db.current_state());
+        }
+        db
+    }
+
     /// Sets the nonce of the given address
     pub async fn set_nonce(&self, address: Address, nonce: U256) -> DatabaseResult<()> {
-        self.db.write().await.set_nonce(address, nonce.try_into().unwrap_or(u64::MAX))
+        self.db_for_head_override().await.set_nonce(address, nonce.try_into().unwrap_or(u64::MAX))
     }
 
     /// Sets the balance of the given address
     pub async fn set_balance(&self, address: Address, balance: U256) -> DatabaseResult<()> {
-        self.db.write().await.set_balance(address, balance)
+        self.db_for_head_override().await.set_balance(address, balance)
     }
 
     /// Sets the code of the given address
     pub async fn set_code(&self, address: Address, code: Bytes) -> DatabaseResult<()> {
-        self.db.write().await.set_code(address, code)
+        self.db_for_head_override().await.set_code(address, code)
     }
 
     /// Sets the value for the given slot of the given address
@@ -1343,7 +1362,7 @@ impl<N: Network> Backend<N> {
         slot: U256,
         val: B256,
     ) -> DatabaseResult<()> {
-        self.db.write().await.set_storage_at(address, slot.into(), val)
+        self.db_for_head_override().await.set_storage_at(address, slot.into(), val)
     }
 
     /// Returns the configured specid
@@ -6826,7 +6845,10 @@ where
                 .map(|block| (block.header.hash, block))
             {
                 let read_guard = self.states.upgradable_read();
-                if let Some(state_db) = read_guard.get_state(&block_hash) {
+                if let Some(state_db) = read_guard
+                    .get_post_block_state(&block_hash)
+                    .or_else(|| read_guard.get_state(&block_hash))
+                {
                     return Ok(f(Box::new(state_db), self.block_env_from_header(&block.header)));
                 }
 
@@ -6897,7 +6919,10 @@ where
                 .map(|block| (block.header.hash, block))
             {
                 let read_guard = self.states.upgradable_read();
-                if let Some(state_db) = read_guard.get_state(&block_hash) {
+                if let Some(state_db) = read_guard
+                    .get_post_block_state(&block_hash)
+                    .or_else(|| read_guard.get_state(&block_hash))
+                {
                     return f(
                         Box::new(state_db),
                         self.block_env_from_header(&block.header),
@@ -9449,7 +9474,7 @@ impl Backend<FoundryNetwork> {
                 env.block_env.number.to::<u64>(),
             )
         };
-        let mut db = self.db.write().await;
+        let mut db = self.db_for_head_override().await;
         let mut storage = AnvilStorageProvider::new(
             &mut **db,
             chain_id,
