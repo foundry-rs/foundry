@@ -323,7 +323,13 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
             sequence
         };
 
-        if !self.args.batch {
+        if self.args.batch {
+            let _ = sequence.restore_batch_delegated_pending(
+                self.args.resume_attempt,
+                self.args.resume_tx_hash,
+                self.args.resume_retry,
+            )?;
+        } else {
             let resolution = sequence.restore_delegated_pending(
                 self.args.resume_attempt,
                 self.args.resume_tx_hash,

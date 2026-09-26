@@ -2,6 +2,7 @@ use crate::{
     multi_sequence::MultiChainSequence,
     recovery::{DelegatedStatus, RecoveryLock, RecoveryStore, SignedPayload},
 };
+use alloy_eips::eip2718::{Decodable2718, Encodable2718};
 use alloy_network::{Network, ReceiptResponse};
 use alloy_primitives::{B256, Bytes};
 use eyre::{ContextCompat, Result, bail};
@@ -12,9 +13,46 @@ use foundry_compilers::ArtifactId;
 use foundry_config::Config;
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashMap,
     fmt::{Error, Write},
     path::{Path, PathBuf},
 };
+
+pub(crate) fn completed_transaction_prefix<N: Network>(
+    sequence: &ScriptSequence<N>,
+) -> Result<usize> {
+    let mut receipts = HashMap::<_, usize>::new();
+    for receipt in &sequence.receipts {
+        *receipts.entry(receipt.transaction_hash()).or_default() += 1;
+    }
+
+    let mut prefix = 0;
+    let mut incomplete = false;
+    for transaction in &sequence.transactions {
+        let complete = transaction.hash.is_some_and(|hash| {
+            receipts.get_mut(&hash).is_some_and(|count| {
+                if *count == 0 {
+                    false
+                } else {
+                    *count -= 1;
+                    true
+                }
+            })
+        });
+        if complete {
+            if incomplete {
+                bail!("script progress contains a receipt after an incomplete operation");
+            }
+            prefix += 1;
+        } else {
+            incomplete = true;
+        }
+    }
+    if receipts.values().any(|count| *count != 0) {
+        bail!("script progress contains a receipt without a matching operation");
+    }
+    Ok(prefix)
+}
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(
@@ -304,6 +342,132 @@ where
             self.recovery.resolve_delegated_hash(attempt_id, hash, transaction)?;
         self.sequences_mut()[sequence].add_pending(index, hash);
         Ok(())
+    }
+
+    pub(crate) fn batch_signed_attempt(
+        &self,
+        sequence: usize,
+    ) -> Option<(&N::TransactionRequest, &SignedPayload)> {
+        self.recovery.batch_signed_attempt(sequence)
+    }
+
+    pub(crate) fn batch_first_operation(&self, sequence: usize) -> Option<usize> {
+        self.recovery.batch_first_operation(sequence)
+    }
+
+    pub(crate) fn has_batch_submission(&self, sequence: usize) -> bool {
+        self.recovery.has_batch_submission(sequence)
+    }
+
+    pub(crate) fn batch_delegated_status(&self, sequence: usize) -> Option<DelegatedStatus> {
+        self.recovery.batch_delegated_status(sequence)
+    }
+
+    pub(crate) fn batch_delegated_request(
+        &self,
+        sequence: usize,
+    ) -> Option<&N::TransactionRequest> {
+        self.recovery.batch_delegated_request(sequence)
+    }
+
+    pub(crate) fn legacy_batch_hash(&self, sequence: usize) -> Option<B256> {
+        self.recovery.legacy_batch_hash(sequence)
+    }
+
+    pub(crate) fn persist_batch_signed_payload(
+        &mut self,
+        sequence: usize,
+        first_operation: usize,
+        request: N::TransactionRequest,
+        payload: Bytes,
+    ) -> Result<B256>
+    where
+        N::TxEnvelope: Decodable2718 + Encodable2718,
+    {
+        self.recovery.persist_batch_signed_payload(sequence, first_operation, request, payload)
+    }
+
+    pub(crate) fn persist_batch_delegated_request(
+        &mut self,
+        sequence: usize,
+        first_operation: usize,
+        request: N::TransactionRequest,
+    ) -> Result<()> {
+        self.recovery.persist_batch_delegated_request(sequence, first_operation, request)
+    }
+
+    pub(crate) fn persist_batch_delegated_status(
+        &mut self,
+        sequence: usize,
+        status: DelegatedStatus,
+    ) -> Result<()> {
+        self.recovery.persist_batch_delegated_status(sequence, status)
+    }
+
+    pub(crate) fn clear_batch_submission(&mut self, sequence: usize) -> Result<()> {
+        self.recovery.clear_batch_submission(sequence)
+    }
+
+    pub(crate) fn restore_batch_delegated_pending(
+        &mut self,
+        attempt_id: Option<B256>,
+        resolved_hash: Option<B256>,
+        retry_unknown: bool,
+    ) -> Result<Option<(B256, B256)>> {
+        let resolution_requested = resolved_hash.is_some() || retry_unknown;
+        if resolution_requested && attempt_id.is_none() {
+            bail!("--resume-attempt is required to resolve an interrupted submission");
+        }
+        let mut status = self.recovery.batch_delegated_status(0);
+        if status == Some(DelegatedStatus::Prepared) {
+            self.recovery.persist_batch_delegated_status(0, DelegatedStatus::OutcomeUnknown)?;
+            status = Some(DelegatedStatus::OutcomeUnknown);
+        }
+
+        let Some(first) = self.recovery.batch_first_operation(0) else {
+            if resolution_requested {
+                bail!("no interrupted delegated submission requires resolution");
+            }
+            return Ok(None);
+        };
+        let expected = self.recovery.delegated_attempt_id(0, first);
+        if let Some(attempt_id) = attempt_id {
+            if expected != Some(attempt_id) || status != Some(DelegatedStatus::OutcomeUnknown) {
+                bail!("delegated submission attempt {attempt_id} does not require resolution");
+            }
+            if retry_unknown {
+                self.recovery.clear_batch_submission(0)?;
+                return Ok(None);
+            }
+            if let Some(hash) = resolved_hash {
+                return Ok(Some((attempt_id, hash)));
+            }
+            bail!("--resume-attempt requires --resume-tx-hash or --resume-retry");
+        }
+        if status == Some(DelegatedStatus::OutcomeUnknown) {
+            let attempt = expected.unwrap();
+            bail!(
+                "submission outcome for delegated Tempo batch attempt {attempt} is unknown; target it with --resume-attempt and provide --resume-tx-hash, or use --resume-retry only after proving it was not submitted"
+            );
+        }
+        Ok(None)
+    }
+
+    pub(crate) fn resolve_batch_delegated_hash(
+        &mut self,
+        attempt_id: B256,
+        hash: B256,
+    ) -> Result<()> {
+        let first = self
+            .recovery
+            .batch_first_operation(0)
+            .context("batch has no delegated submission attempt")?;
+        if self.recovery.delegated_attempt_id(0, first) != Some(attempt_id)
+            || self.recovery.batch_delegated_status(0) != Some(DelegatedStatus::OutcomeUnknown)
+        {
+            bail!("delegated submission attempt {attempt_id} does not require resolution");
+        }
+        self.recovery.persist_batch_delegated_status(0, DelegatedStatus::Pending { hash })
     }
 
     pub(crate) fn restore_delegated_pending(
