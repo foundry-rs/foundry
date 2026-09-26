@@ -218,6 +218,9 @@ mutation_weight_abi = 4
 mutation_weight_cmp = 4
 mutation_weight_crossover_insert = 1
 mutation_weight_crossover_replace = 1
+mutation_weight_insert = 4
+mutation_weight_delete = 4
+mutation_weight_swap = 4
 failure_persist_dir = "cache/fuzz"
 show_logs = false
 
@@ -258,6 +261,9 @@ mutation_weight_abi = 4
 mutation_weight_cmp = 4
 mutation_weight_crossover_insert = 1
 mutation_weight_crossover_replace = 1
+mutation_weight_insert = 4
+mutation_weight_delete = 4
+mutation_weight_swap = 4
 failure_persist_dir = "cache/invariant"
 show_metrics = true
 show_solidity = false
@@ -2236,6 +2242,9 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "mutation_weight_cmp": 4,
     "mutation_weight_crossover_insert": 1,
     "mutation_weight_crossover_replace": 1,
+    "mutation_weight_insert": 4,
+    "mutation_weight_delete": 4,
+    "mutation_weight_swap": 4,
     "failure_persist_dir": "cache/fuzz",
     "show_logs": false,
     "timeout": null
@@ -2279,6 +2288,9 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "mutation_weight_cmp": 4,
     "mutation_weight_crossover_insert": 1,
     "mutation_weight_crossover_replace": 1,
+    "mutation_weight_insert": 4,
+    "mutation_weight_delete": 4,
+    "mutation_weight_swap": 4,
     "failure_persist_dir": "cache/invariant",
     "show_metrics": true,
     "timeout": null,
