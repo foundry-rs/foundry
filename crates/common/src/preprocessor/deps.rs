@@ -1057,6 +1057,22 @@ fn valid_constructor_call(
     true
 }
 
+/// Selects the same safe references as source preprocessing without changing their source.
+/// End offsets identify `new C` and `type(C).creationCode` in the original UTF-8 source.
+pub(super) fn native_test_link_args(gcx: Gcx<'_>, deps: &PreprocessorDependencies) -> Vec<String> {
+    deps.preprocessed_contracts
+        .iter()
+        .flat_map(|(id, references)| {
+            let source = gcx.hir.source(gcx.hir.contract(*id).source);
+            references.iter().map(move |reference| {
+                format!("--test-link={}:{}", source.file.name.display(), reference.loc.end)
+            })
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
 /// Finds return-buffer observations in a contract and the helpers it can call internally.
 struct ReturnDataObserver<'gcx> {
     gcx: Gcx<'gcx>,
