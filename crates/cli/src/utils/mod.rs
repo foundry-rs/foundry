@@ -678,14 +678,11 @@ ignore them in the `.gitignore` file."
         {
             return Ok(false);
         }
-        let Some(root) = self.root.ancestors().find(|root| root.join(".git").exists()) else {
+        let Some(root) = find_git_root(self.root)? else {
             // A symlink can hide an enclosing repository from the lexical ancestors.
-            return Ok(!self
-                .root
-                .canonicalize()?
-                .ancestors()
-                .any(|root| root.join(".git").exists()));
+            return Ok(find_git_root(&self.root.canonicalize()?)?.is_none());
         };
+        let root = root.as_path();
         if paths.iter().any(|path| {
             Path::new(path)
                 .components()
