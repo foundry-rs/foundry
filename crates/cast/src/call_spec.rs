@@ -6,6 +6,7 @@
 //! - `0x123` - Just an address (empty call)
 //! - `0x123:0.1ether` - ETH transfer
 //! - `0x123::transfer(address,uint256):0x789,1000` - Contract call with signature
+//! - `0x123::batch(uint256[],(address,uint256)):[1,2],(0xabc,3)` - Array and tuple arguments
 //! - `0x123::0xabcdef` - Contract call with raw calldata
 
 use alloy_network::Network;
@@ -72,7 +73,7 @@ impl CallSpec {
                 spec.sig = Some(part.to_string());
                 if !tail.is_empty() {
                     // Args are comma-separated; rejoin any colons that were split off.
-                    spec.args = tail.join(":").split(',').map(|s| s.trim().to_string()).collect();
+                    spec.args = split_top_level_args(&tail.join(":"));
                 }
             }
             _ => {}
@@ -111,6 +112,32 @@ impl CallSpec {
         };
         Ok(Call { to: self.to.into(), value: self.value, input })
     }
+}
+
+/// Splits comma-separated arguments on top-level commas only.
+///
+/// Tuple and array arguments such as `(7,hello)` and `[1,2]` hold commas of their own, so a plain
+/// split would turn a single argument into several. Unbalanced closing delimiters are tolerated;
+/// the ABI encoder reports them.
+fn split_top_level_args(s: &str) -> Vec<String> {
+    let mut args = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+
+    for (idx, ch) in s.char_indices() {
+        match ch {
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                args.push(s[start..idx].trim().to_string());
+                start = idx + ch.len_utf8();
+            }
+            _ => {}
+        }
+    }
+
+    args.push(s[start..].trim().to_string());
+    args
 }
 
 #[cfg(test)]
@@ -184,5 +211,45 @@ mod tests {
                 "Unexpected trailing field(s) after raw calldata"
             );
         }
+    }
+
+    #[test]
+    fn test_parse_array_arg() {
+        let spec =
+            CallSpec::parse("0x1234567890123456789012345678901234567890::sum(uint256[]):[1,2,3]")
+                .unwrap();
+        assert_eq!(spec.sig.as_deref(), Some("sum(uint256[])"));
+        assert_eq!(spec.args, vec!["[1,2,3]"]);
+    }
+
+    #[test]
+    fn test_parse_tuple_arg() {
+        let spec = CallSpec::parse(
+            "0x1234567890123456789012345678901234567890::submit((uint256,string),uint256):(7,hello),9",
+        )
+        .unwrap();
+        assert_eq!(spec.sig.as_deref(), Some("submit((uint256,string),uint256)"));
+        assert_eq!(spec.args, vec!["(7,hello)", "9"]);
+    }
+
+    #[test]
+    fn test_parse_nested_args() {
+        let spec = CallSpec::parse(
+            "0x1234567890123456789012345678901234567890:1ether:airdrop((address,uint256[])[],bytes):[(0xabc,[1,2]),(0xdef,[3])],0x00",
+        )
+        .unwrap();
+        assert_eq!(spec.value, parse_ether_value("1ether").unwrap());
+        assert_eq!(spec.sig.as_deref(), Some("airdrop((address,uint256[])[],bytes)"));
+        assert_eq!(spec.args, vec!["[(0xabc,[1,2]),(0xdef,[3])]", "0x00"]);
+    }
+
+    #[test]
+    fn test_parse_args_preserve_colons_and_spacing() {
+        let spec = CallSpec::parse(
+            "0x1234567890123456789012345678901234567890::publish(string[],uint256): [https://a.co, b] , 2",
+        )
+        .unwrap();
+        assert_eq!(spec.sig.as_deref(), Some("publish(string[],uint256)"));
+        assert_eq!(spec.args, vec!["[https://a.co, b]", "2"]);
     }
 }
