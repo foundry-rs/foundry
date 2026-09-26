@@ -161,3 +161,34 @@ async fn historical_proof_ignores_later_storage_override() {
     let value = api.storage_at(target, slot, Some(block.into())).await.unwrap();
     assert_eq!(value, B256::with_last_byte(0x11));
 }
+
+// <https://github.com/foundry-rs/foundry/issues/17062>
+#[tokio::test(flavor = "multi_thread")]
+async fn head_reads_see_storage_override_before_next_block() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    let target = address!("0x00000000000000000000000000000000000000aa");
+    let slot = U256::from(1);
+
+    api.anvil_set_code(target, Bytes::from_static(&[0x00])).await.unwrap();
+    api.anvil_set_storage_at(target, slot, B256::with_last_byte(0x11)).await.unwrap();
+    api.evm_mine(None).await.unwrap();
+    let block = api.block_number().unwrap().to::<u64>();
+    let state_root = api.block_by_number(block.into()).await.unwrap().unwrap().header.state_root;
+
+    api.anvil_set_storage_at(target, slot, B256::with_last_byte(0x22)).await.unwrap();
+
+    for request in [None, Some(block.into())] {
+        let proof = api.get_proof(target, vec![slot.into()], request).await.unwrap();
+        assert_eq!(proof.storage_proof[0].value, U256::from(0x22));
+        let value = api.storage_at(target, slot, request).await.unwrap();
+        assert_eq!(value, B256::with_last_byte(0x22));
+    }
+
+    api.evm_mine(None).await.unwrap();
+
+    let proof = api.get_proof(target, vec![slot.into()], Some(block.into())).await.unwrap();
+    assert_eq!(proof.storage_proof[0].value, U256::from(0x11));
+    assert_eq!(alloy_primitives::keccak256(&proof.account_proof[0]), state_root);
+    let proof = api.get_proof(target, vec![slot.into()], None).await.unwrap();
+    assert_eq!(proof.storage_proof[0].value, U256::from(0x22));
+}
