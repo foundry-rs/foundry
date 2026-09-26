@@ -1,9 +1,9 @@
 use crate::{
     multi_sequence::MultiChainSequence,
-    recovery::{RecoveryLock, RecoveryStore},
+    recovery::{RecoveryLock, RecoveryStore, SignedPayload},
 };
 use alloy_network::Network;
-use alloy_primitives::B256;
+use alloy_primitives::{B256, Bytes};
 use eyre::{Result, bail};
 use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
 use foundry_cli::utils::Git;
@@ -144,7 +144,11 @@ where
         chain: u64,
         dry_run: bool,
         batch: bool,
-    ) -> Result<Self> {
+    ) -> Result<Self>
+    where
+        N::TxEnvelope: alloy_consensus::transaction::SignerRecoverable,
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+    {
         let paths = ScriptSequence::<N>::get_paths(config, sig, target, chain, dry_run)?;
         let lock = RecoveryLock::acquire(&paths)?;
         let recovery = if let Some(recovery) = RecoveryStore::load(&paths, batch, lock)? {
@@ -169,7 +173,11 @@ where
         target: &ArtifactId,
         dry_run: bool,
         batch: bool,
-    ) -> Result<Self> {
+    ) -> Result<Self>
+    where
+        N::TxEnvelope: alloy_consensus::transaction::SignerRecoverable,
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+    {
         let paths = MultiChainSequence::<N>::get_paths(config, sig, target, dry_run)?;
         let lock = RecoveryLock::acquire(&paths)?;
         let recovery = if let Some(recovery) = RecoveryStore::load(&paths, batch, lock)? {
@@ -226,6 +234,27 @@ where
 
     pub fn sequences_mut(&mut self) -> &mut [ScriptSequence<N>] {
         self.recovery.data_mut().sequences_mut()
+    }
+
+    pub(crate) fn signed_payload(&self, sequence: usize, index: usize) -> Option<&SignedPayload> {
+        self.recovery.signed_payload(sequence, index)
+    }
+
+    pub(crate) fn submission_hashes(&self, sequence: usize) -> Vec<B256> {
+        self.recovery.submission_hashes(sequence)
+    }
+
+    pub(crate) fn persist_signed_payload(
+        &mut self,
+        sequence: usize,
+        index: usize,
+        payload: Bytes,
+    ) -> Result<B256>
+    where
+        N::TxEnvelope: alloy_consensus::transaction::SignerRecoverable,
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+    {
+        self.recovery.persist_signed_payload(sequence, index, payload)
     }
 
     pub const fn is_multi(&self) -> bool {
