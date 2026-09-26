@@ -690,16 +690,7 @@ ignore them in the `.gitignore` file."
         if !gitmodules.is_file() {
             // Removing .gitmodules does not remove gitlinks from the index. Let Git handle
             // any remaining submodules, including those without a .gitmodules mapping.
-            let output = self
-                .cmd_at(if paths.is_empty() { root } else { self.root })
-                .args(["ls-files", "--stage", "-z", "--"])
-                .args(paths)
-                .output()?;
-            return Ok(output.status.success()
-                && !output
-                    .stdout
-                    .split(|byte| *byte == 0)
-                    .any(|entry| entry.starts_with(b"160000 ")));
+            return Ok(false);
         }
 
         let output = Command::new("git")
@@ -1466,20 +1457,20 @@ mod tests {
     }
 
     #[test]
-    fn skips_submodule_status_without_gitmodules() {
+    fn keeps_submodule_status_without_gitmodules() {
         let tmp = tempdir().unwrap();
         let git = Git::new(tmp.path());
         git.init().unwrap();
         fs::write(tmp.path().join("tracked"), "tracked file").unwrap();
         git.add(["tracked"]).unwrap();
 
-        assert!(git.submodules_initialized(&["lib".into()]).unwrap());
+        assert!(!git.submodules_initialized(&["lib".into()]).unwrap());
         assert!(!git.has_missing_dependencies(["lib"]).unwrap());
 
         let nested = tmp.path().join("packages/contracts");
         fs::create_dir_all(&nested).unwrap();
         let git = git.root(&nested);
-        assert!(git.submodules_initialized(&["lib".into()]).unwrap());
+        assert!(!git.submodules_initialized(&["lib".into()]).unwrap());
         assert!(!git.has_missing_dependencies(["lib"]).unwrap());
     }
 
@@ -1518,7 +1509,7 @@ mod tests {
     }
 
     #[test]
-    fn skips_submodule_status_in_worktree_without_gitmodules() {
+    fn keeps_submodule_status_in_worktree_without_gitmodules() {
         let tmp = tempdir().unwrap();
         let root = tmp.path().join("main");
         fs::create_dir(&root).unwrap();
@@ -1543,7 +1534,7 @@ mod tests {
 
         assert!(worktree.join(".git").is_file());
         let git = git.root(&worktree);
-        assert!(git.submodules_initialized(&["lib".into()]).unwrap());
+        assert!(!git.submodules_initialized(&["lib".into()]).unwrap());
         assert!(!git.has_missing_dependencies(["lib"]).unwrap());
     }
 }
