@@ -1023,6 +1023,7 @@ struct StateSnapshot {
     block_hash: B256,
     fees: FeeSnapshot,
     time_offset: i128,
+    next_block_timestamp: Option<u64>,
 }
 
 #[cfg(test)]
@@ -1874,6 +1875,7 @@ impl<N: Network> Backend<N> {
         let num = self.best_number();
         let hash = self.best_hash();
         let id = self.db.write().await.snapshot_state();
+        let (time_offset, next_block_timestamp) = self.time.snapshot();
         trace!(target: "backend", "creating snapshot {} at {}", id, num);
         self.active_state_snapshots.lock().insert(
             id,
@@ -1881,7 +1883,8 @@ impl<N: Network> Backend<N> {
                 block_number: num,
                 block_hash: hash,
                 fees: self.fees.snapshot(),
-                time_offset: self.time.offset(),
+                time_offset,
+                next_block_timestamp,
             },
         );
         id
@@ -5286,9 +5289,15 @@ impl<N: Network> Backend<N> {
     where
         N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
     {
-        let Some((num, hash, fees, time_offset)) =
+        let Some((num, hash, fees, time_offset, next_block_timestamp)) =
             self.active_state_snapshots.lock().get(&id).map(|snapshot| {
-                (snapshot.block_number, snapshot.block_hash, snapshot.fees, snapshot.time_offset)
+                (
+                    snapshot.block_number,
+                    snapshot.block_hash,
+                    snapshot.fees,
+                    snapshot.time_offset,
+                    snapshot.next_block_timestamp,
+                )
             })
         else {
             return Ok(false);
@@ -5310,7 +5319,7 @@ impl<N: Network> Backend<N> {
         }
 
         let reset_time = block.header.timestamp();
-        self.time.reset_with_offset(reset_time, time_offset);
+        self.time.reset_with_offset(reset_time, time_offset, next_block_timestamp);
         // drop any pending next-block prevrandao override so it does not leak into a block
         self.cheats.clear_next_block_prevrandao();
 

@@ -56,20 +56,31 @@ impl TimeManager {
     /// Resets the current time manager to the given timestamp, resetting the offsets and
     /// next block timestamp option
     pub fn reset(&self, start_timestamp: u64) {
-        self.reset_timestamp(start_timestamp, true, None);
+        self.reset_timestamp(start_timestamp, true, None, None);
     }
 
     /// Sets the current timestamp without changing when the current head was installed.
     pub fn set_time(&self, timestamp: u64) {
-        self.reset_timestamp(timestamp, false, None);
+        self.reset_timestamp(timestamp, false, None, None);
     }
 
     /// Restores the timestamp and offset captured by a state snapshot.
-    pub(crate) fn reset_with_offset(&self, start_timestamp: u64, offset: i128) {
-        self.reset_timestamp(start_timestamp, true, Some(offset));
+    pub(crate) fn reset_with_offset(
+        &self,
+        start_timestamp: u64,
+        offset: i128,
+        next_block_timestamp: Option<u64>,
+    ) {
+        self.reset_timestamp(start_timestamp, true, Some(offset), next_block_timestamp);
     }
 
-    fn reset_timestamp(&self, start_timestamp: u64, mark_new_head: bool, offset: Option<i128>) {
+    fn reset_timestamp(
+        &self,
+        start_timestamp: u64,
+        mark_new_head: bool,
+        offset: Option<i128>,
+        next_block_timestamp: Option<u64>,
+    ) {
         let current = duration_since_unix_epoch();
         let mut state = self.state.write();
         state.last_timestamp = start_timestamp;
@@ -79,12 +90,20 @@ impl TimeManager {
         state.offset =
             offset.unwrap_or_else(|| (start_timestamp as i128) - current.as_secs() as i128);
         state.offset_reset_generation = state.offset_reset_generation.wrapping_add(1);
-        state.next_exact_timestamp = None;
         state.next_override_generation = state.next_override_generation.wrapping_add(1);
+        state.next_exact_timestamp = next_block_timestamp.map(|timestamp| TimestampOverride {
+            timestamp,
+            generation: state.next_override_generation,
+        });
     }
 
     pub fn offset(&self) -> i128 {
         self.state.read().offset
+    }
+
+    pub(crate) fn snapshot(&self) -> (i128, Option<u64>) {
+        let state = self.state.read();
+        (state.offset, state.next_exact_timestamp.map(|override_| override_.timestamp))
     }
 
     /// Returns the UNIX wall time in milliseconds when the current head was installed.

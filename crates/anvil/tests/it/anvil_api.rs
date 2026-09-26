@@ -781,6 +781,22 @@ async fn test_revert_restores_time_offset() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_revert_restores_next_block_timestamp() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    let initial = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    let next_timestamp = initial.header.timestamp + 1_000;
+
+    api.evm_set_next_block_timestamp(next_timestamp).unwrap();
+    let snapshot = api.evm_snapshot().await.unwrap();
+    api.mine_one().await.unwrap();
+    assert!(api.evm_revert(snapshot).await.unwrap());
+    api.mine_one().await.unwrap();
+
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(block.header.timestamp, next_timestamp);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_revert_restores_next_block_base_fee() {
     let (api, _handle) = spawn(NodeConfig::test()).await;
     let base_fee = api.base_fee().unwrap();
