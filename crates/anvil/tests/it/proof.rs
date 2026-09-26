@@ -192,3 +192,35 @@ async fn head_reads_see_storage_override_before_next_block() {
     let proof = api.get_proof(target, vec![slot.into()], None).await.unwrap();
     assert_eq!(proof.storage_proof[0].value, U256::from(0x22));
 }
+
+// <https://github.com/foundry-rs/foundry/issues/17062>
+#[tokio::test(flavor = "multi_thread")]
+async fn historical_account_ignores_later_overrides() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    let target = address!("0x00000000000000000000000000000000000000aa");
+
+    api.anvil_set_balance(target, U256::from(1)).await.unwrap();
+    api.anvil_set_nonce(target, U256::from(1)).await.unwrap();
+    api.anvil_set_code(target, Bytes::from_static(&[0x00])).await.unwrap();
+    api.evm_mine(None).await.unwrap();
+    let block = api.block_number().unwrap().to::<u64>();
+    let state_root = api.block_by_number(block.into()).await.unwrap().unwrap().header.state_root;
+
+    api.anvil_set_balance(target, U256::from(2)).await.unwrap();
+    api.anvil_set_nonce(target, U256::from(2)).await.unwrap();
+    api.anvil_set_code(target, Bytes::from_static(&[0x01])).await.unwrap();
+
+    let proof = api.get_proof(target, Vec::new(), None).await.unwrap();
+    assert_eq!((proof.balance, proof.nonce), (U256::from(2), 2));
+
+    api.evm_mine(None).await.unwrap();
+
+    let at = Some(block.into());
+    let proof = api.get_proof(target, Vec::new(), at).await.unwrap();
+    assert_eq!((proof.balance, proof.nonce), (U256::from(1), 1));
+    assert_eq!(alloy_primitives::keccak256(&proof.account_proof[0]), state_root);
+    assert_eq!(api.balance(target, at).await.unwrap(), U256::from(1));
+    assert_eq!(api.transaction_count(target, at).await.unwrap(), U256::from(1));
+    assert_eq!(api.get_code(target, at).await.unwrap(), Bytes::from_static(&[0x00]));
+    assert_eq!(api.balance(target, None).await.unwrap(), U256::from(2));
+}
