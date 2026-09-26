@@ -1,4 +1,4 @@
-use super::fetch_code_via_rpc;
+use super::{MAX_CONCURRENT_RPC_REQUESTS, fetch_code_via_rpc};
 use crate::{
     debug::{ensure_remote_trace_context_unchanged, handle_traces, resolve_remote_trace_hardfork},
     rpc_trace::{call_frame_to_arena, is_method_not_found_error, is_missing_state_error},
@@ -16,7 +16,7 @@ use alloy_network::{
 };
 use alloy_primitives::{
     Address, B256, Bytes, U256,
-    map::{AddressHashMap, AddressSet},
+    map::{AddressHashMap, AddressSet, B256HashMap},
 };
 use alloy_provider::{Provider, ext::DebugApi};
 use alloy_rpc_types::{
@@ -45,7 +45,7 @@ use foundry_config::{
 };
 use foundry_evm::{
     core::{
-        FoundryBlock as _,
+        FoundryBlock as _, FoundryTransaction as _,
         env::FromAnyRpcTransaction as _,
         evm::{EthEvmNetwork, EvmEnvFor, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor},
     },
@@ -55,7 +55,7 @@ use foundry_evm::{
     traces::{InternalTraceMode, SparsedTraceArena, TraceContext, TraceRequirements},
 };
 use foundry_evm_networks::NetworkConfigs;
-use futures::TryFutureExt;
+use futures::{StreamExt, TryFutureExt};
 use revm::{
     DatabaseRef,
     context::Block,
@@ -180,6 +180,12 @@ struct MonadPrepared {
     compute_units_per_second: Option<u64>,
 }
 
+/// Chain-specific gas limits for transactions replayed by `cast run`.
+enum ReplayGasLimits {
+    Unchanged,
+    Nitro(B256HashMap<u64>),
+}
+
 /// State assembled by [`RunArgs::prepare`] and consumed by the network-specific `execute_*`
 /// methods below.
 struct PreparedRun<FEN: FoundryEvmNetwork> {
@@ -194,6 +200,7 @@ struct PreparedRun<FEN: FoundryEvmNetwork> {
     prestate_applied: bool,
     /// The block access list of the target's block, when the node serves one.
     block_access_list: Option<Arc<Bal>>,
+    replay_gas_limits: ReplayGasLimits,
     #[cfg(feature = "monad")]
     monad: MonadPrepared,
 }
@@ -580,6 +587,23 @@ impl RunArgs {
             None
         };
 
+        let mut replay_tx_hashes = vec![tx_hash];
+        if !self.quick
+            && !prestate_applied
+            && block_access_list.is_none()
+            && let Some(block) = &block
+        {
+            replay_tx_hashes.extend(
+                full_transactions(block)?
+                    .iter()
+                    .take_while(|tx| tx.tx_hash() != tx_hash)
+                    .filter(|tx| !is_system_transaction(tx) || self.replay_system_txes)
+                    .map(TransactionResponse::tx_hash),
+            );
+        }
+        let replay_gas_limits =
+            ReplayGasLimits::fetch(chain.id(), &provider, replay_tx_hashes).await?;
+
         Ok(PreparedRun {
             args: self,
             config,
@@ -591,6 +615,7 @@ impl RunArgs {
             trace_context,
             prestate_applied,
             block_access_list,
+            replay_gas_limits,
             #[cfg(feature = "monad")]
             monad: MonadPrepared { tx_block_number, compute_units_per_second },
         })
@@ -624,6 +649,12 @@ async fn fetch_block_access_list(
 }
 
 impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
+    fn transaction_env(&self, tx: &AnyRpcTransaction) -> Result<TxEnvFor<FEN>> {
+        let mut tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(tx)?;
+        self.replay_gas_limits.apply::<FEN>(tx, &mut tx_env)?;
+        Ok(tx_env)
+    }
+
     /// Prepares the executor for the target transaction: enables tracing and, when the sender
     /// was forged, disables the balance check.
     fn prepare_target(&mut self) {
@@ -700,7 +731,7 @@ impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
     fn execute_ordinary(&mut self) -> Result<TraceResult> {
         // Decode the target transaction before replaying the block: an envelope this build
         // can't decode should fail fast.
-        let target_tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(&self.tx)?;
+        let target_tx_env = self.transaction_env(&self.tx)?;
         let target_index = self.target_index()?;
         self.prepare_target();
 
@@ -717,14 +748,13 @@ impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
             let replay_system_txes = self.args.replay_system_txes;
             self.for_each_prefix_transaction(target_index, |_, tx| {
                 if !is_system_transaction(tx) || replay_system_txes {
-                    let tx_env =
-                        TxEnvFor::<FEN>::from_any_rpc_transaction(tx).wrap_err_with(|| {
-                            format!(
-                                "Failed to prepare transaction: {:?} in block {}",
-                                tx.tx_hash(),
-                                block_number
-                            )
-                        })?;
+                    let tx_env = self.transaction_env(tx).wrap_err_with(|| {
+                        format!(
+                            "Failed to prepare transaction: {:?} in block {}",
+                            tx.tx_hash(),
+                            block_number
+                        )
+                    })?;
                     replay.push((tx.tx_hash(), tx_env));
                 }
                 Ok(())
@@ -817,6 +847,63 @@ fn full_transactions(block: &AnyRpcBlock) -> Result<&[AnyRpcTransaction]> {
         eyre::bail!("Could not get block txs");
     };
     Ok(txs)
+}
+
+impl ReplayGasLimits {
+    async fn fetch(chain_id: u64, provider: &RetryProvider, tx_hashes: Vec<B256>) -> Result<Self> {
+        if !foundry_evm_networks::arbitrum::is_arbitrum_chain(chain_id) {
+            return Ok(Self::Unchanged);
+        }
+
+        let mut requests = futures::stream::iter(tx_hashes)
+            .map(|tx_hash| fetch_nitro_l1_gas_used(provider, tx_hash))
+            .buffer_unordered(MAX_CONCURRENT_RPC_REQUESTS);
+        let mut gas_used = B256HashMap::default();
+        while let Some(result) = requests.next().await {
+            let (tx_hash, l1_gas_used) = result?;
+            gas_used.insert(tx_hash, l1_gas_used);
+        }
+        Ok(Self::Nitro(gas_used))
+    }
+
+    fn apply<FEN: FoundryEvmNetwork>(
+        &self,
+        tx: &AnyRpcTransaction,
+        tx_env: &mut TxEnvFor<FEN>,
+    ) -> Result<()> {
+        let Self::Nitro(l1_gas_used) = self else { return Ok(()) };
+        let tx_hash = tx.tx_hash();
+        let l1_gas_used = l1_gas_used
+            .get(&tx_hash)
+            .ok_or_else(|| eyre::eyre!("receipt not found for Nitro transaction {tx_hash:?}"))?;
+        tx_env.set_gas_limit(nitro_execution_gas_limit(tx_hash, tx.gas_limit(), *l1_gas_used)?);
+        Ok(())
+    }
+}
+
+async fn fetch_nitro_l1_gas_used(provider: &RetryProvider, tx_hash: B256) -> Result<(B256, u64)> {
+    let receipt = provider
+        .get_transaction_receipt(tx_hash)
+        .await?
+        .ok_or_else(|| eyre::eyre!("receipt not found for Nitro transaction {tx_hash:?}"))?;
+    let l1_gas_used = parse_nitro_l1_gas_used(receipt.other_fields().get("gasUsedForL1"))
+        .wrap_err_with(|| format!("invalid Nitro poster gas for transaction {tx_hash:?}"))?;
+    Ok((tx_hash, l1_gas_used))
+}
+
+fn parse_nitro_l1_gas_used(field: Option<&serde_json::Value>) -> Result<u64> {
+    let field = field.ok_or_else(|| eyre::eyre!("missing `gasUsedForL1` receipt field"))?;
+    let value = serde_json::from_value::<U256>(field.clone())
+        .wrap_err("malformed `gasUsedForL1` receipt field")?;
+    value.try_into().map_err(|_| eyre::eyre!("`gasUsedForL1` value {value} exceeds u64::MAX"))
+}
+
+fn nitro_execution_gas_limit(tx_hash: B256, gas_limit: u64, l1_gas_used: u64) -> Result<u64> {
+    gas_limit.checked_sub(l1_gas_used).ok_or_else(|| {
+        eyre::eyre!(
+            "Nitro poster gas {l1_gas_used} exceeds gas limit {gas_limit} for transaction {tx_hash:?}"
+        )
+    })
 }
 
 /// Returns the number and hash of a fetched block.
@@ -1052,5 +1139,39 @@ mod tests {
         let config = TracingConfig { decode_internal: true, ..Default::default() };
 
         assert!(!args.resolve_tracing(&config, 0).decode_internal);
+    }
+
+    #[test]
+    fn parses_nitro_l1_gas_used() {
+        let field = serde_json::json!("0x26ed52");
+
+        assert_eq!(parse_nitro_l1_gas_used(Some(&field)).unwrap(), 2_551_122);
+        assert_eq!(nitro_execution_gas_limit(B256::ZERO, 2_733_748, 2_551_122).unwrap(), 182_626);
+    }
+
+    #[test]
+    fn rejects_invalid_nitro_gas() {
+        assert_eq!(
+            parse_nitro_l1_gas_used(None).unwrap_err().to_string(),
+            "missing `gasUsedForL1` receipt field"
+        );
+
+        let field = serde_json::json!("invalid");
+        assert_eq!(
+            parse_nitro_l1_gas_used(Some(&field)).unwrap_err().to_string(),
+            "malformed `gasUsedForL1` receipt field"
+        );
+
+        let field = serde_json::json!("0x10000000000000000");
+        assert_eq!(
+            parse_nitro_l1_gas_used(Some(&field)).unwrap_err().to_string(),
+            "`gasUsedForL1` value 18446744073709551616 exceeds u64::MAX"
+        );
+
+        let tx_hash = B256::repeat_byte(0x42);
+        assert_eq!(
+            nitro_execution_gas_limit(tx_hash, 100, 101).unwrap_err().to_string(),
+            format!("Nitro poster gas 101 exceeds gas limit 100 for transaction {tx_hash:?}")
+        );
     }
 }

@@ -264,6 +264,35 @@ network_replay_tests! {
     flaky_run_hyperevm => ("hyperevm", "https://rpc.purroofgroup.com", ReplaysOnly),
 }
 
+#[expect(clippy::disallowed_macros, reason = "skips have to be visible in the nightly test log")]
+fn assert_arbitrum_out_of_gas(cmd: &mut TestCommand) {
+    const RPC_URL: &str = "https://arbitrum-one.public.blastapi.io";
+    const TX_HASH: &str = "0x1d66909d9039e5937406357449fad064edbb6d9c81944a8001ebfc4f0ba6d0b9";
+
+    if json_output(cmd, &["receipt", TX_HASH, "--rpc-url", RPC_URL]).is_none() {
+        eprintln!("skipping arbitrum: archive endpoint unreachable");
+        return;
+    }
+
+    let output = cmd
+        .cast_fuse()
+        .args(["run", TX_HASH, "--rpc-url", RPC_URL])
+        .assert_success()
+        .stderr_eq(str![[r#"
+Executing previous transactions from the block.
+Error: Transaction failed.
+
+"#]])
+        .get_output()
+        .stdout_lossy();
+
+    assert_eq!(gas_used(&output), Some(177_864));
+}
+
+casttest!(flaky_run_arbitrum_out_of_gas, |_prj, cmd| {
+    assert_arbitrum_out_of_gas(&mut cmd);
+});
+
 casttest!(flaky_run_celo_cip64, |_prj, cmd| {
     assert_replays_recent_transaction(
         &mut cmd,
