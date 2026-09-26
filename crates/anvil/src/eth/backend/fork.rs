@@ -988,17 +988,11 @@ impl ClientForkConfig {
         }
 
         let prefill = async {
-            let bal = match self
-                .provider
-                .raw_request("eth_getBlockAccessList".into(), (self.block_hash,))
-                .await
-            {
-                Err(error) if is_rpc_method_not_found(&error) => {
-                    self.provider.get_block_access_list_by_hash(self.block_hash).await
-                }
-                response => response,
+            let Some(bal) =
+                self.provider.get_block_access_list(BlockId::hash(self.block_hash)).await?
+            else {
+                return Ok(());
             };
-            let Some(bal) = bal? else { return Ok(()) };
             let Some(block) = self.provider.get_block(BlockId::hash(self.block_hash)).await? else {
                 return Ok(());
             };

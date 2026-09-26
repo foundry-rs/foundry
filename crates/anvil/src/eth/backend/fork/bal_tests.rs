@@ -125,13 +125,12 @@ fn rpc_error(asserter: &Asserter, code: i64) {
 async fn fork_bal_prefill_validates_before_caching() {
     let hash = B256::repeat_byte(1);
     let address = Address::repeat_byte(1);
-    for (legacy, bad_commitment, wrong_hash, identity_code) in [
-        (false, false, false, -32601),
-        (true, false, false, -32601),
-        (false, true, false, -32601),
-        (false, false, true, -32601),
-        (false, false, false, -32603),
-        (false, false, false, 0),
+    for (bad_commitment, wrong_hash, identity_code) in [
+        (false, false, -32601),
+        (true, false, -32601),
+        (false, true, -32601),
+        (false, false, -32603),
+        (false, false, 0),
     ] {
         let asserter = Asserter::new();
         let config = fork_config(asserter.clone(), hash);
@@ -158,9 +157,6 @@ async fn fork_bal_prefill_validates_before_caching() {
             )
             .into(),
         );
-        if legacy {
-            rpc_error(&asserter, -32601);
-        }
         asserter.push_success(&bal);
         asserter.push_success(&block);
         if !bad_commitment && !wrong_hash {
@@ -198,7 +194,7 @@ async fn fork_bal_unavailable_does_not_fetch_block_or_change_cache() {
         if let Some(code) = error {
             rpc_error(&asserter, code);
         }
-        if error != Some(-32603) {
+        if error.is_none() {
             asserter.push_success(&serde_json::Value::Null);
         }
         // A following response must stay untouched when no BAL is available.
