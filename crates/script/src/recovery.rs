@@ -1,4 +1,4 @@
-use crate::sequence::SequenceData;
+use crate::sequence::{SequenceData, completed_transaction_prefix};
 use alloy_consensus::{Transaction, transaction::SignerRecoverable};
 use alloy_eips::eip2718::{Decodable2718, Encodable2718};
 use alloy_network::{Network, TransactionBuilder, TransactionResponse};
@@ -77,6 +77,24 @@ struct SubmissionAttempt<T> {
 enum AttemptKind<T> {
     Signed { request: Option<T>, payload: SignedPayload },
     Delegated { request: T, status: DelegatedStatus },
+    Legacy { hash: B256 },
+}
+
+fn batch_members<N: Network>(
+    deployment: &RecoveryDeployment<N>,
+    first_operation: usize,
+) -> Result<Vec<OperationId>> {
+    let members = deployment
+        .operations
+        .get(first_operation..)
+        .context("batch operation is not in the recovery snapshot")?
+        .iter()
+        .map(|operation| operation.id)
+        .collect::<Vec<_>>();
+    if members.is_empty() {
+        bail!("batch submission has no operations");
+    }
+    Ok(members)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -167,7 +185,10 @@ where
     ) -> Result<Self> {
         let generation = B256::random();
         data.set_recovery_generation(generation);
-        let plan = RecoveryPlan::new(data, batch, generation)?;
+        let mut plan = RecoveryPlan::new(data, batch, generation)?;
+        if batch {
+            plan.import_legacy_batch_attempts()?;
+        }
         write_snapshot(&lock.path, &plan)?;
         Self::finish_open(lock, plan)
     }
@@ -196,7 +217,7 @@ where
             }
             match &attempt.kind {
                 AttemptKind::Signed { payload, .. } => Some(payload),
-                AttemptKind::Delegated { .. } => None,
+                AttemptKind::Delegated { .. } | AttemptKind::Legacy { .. } => None,
             }
         })
     }
@@ -214,7 +235,7 @@ where
             }
             match &attempt.kind {
                 AttemptKind::Delegated { status, .. } => Some(*status),
-                AttemptKind::Signed { .. } => None,
+                AttemptKind::Signed { .. } | AttemptKind::Legacy { .. } => None,
             }
         })
     }
@@ -240,6 +261,7 @@ where
                 AttemptKind::Delegated { status: DelegatedStatus::Pending { hash }, .. } => {
                     Some(*hash)
                 }
+                AttemptKind::Legacy { hash } => Some(*hash),
                 AttemptKind::Delegated { .. } => None,
             })
             .collect()
@@ -253,9 +275,80 @@ where
             .flat_map(|deployment| &deployment.attempts)
             .filter_map(|attempt| match &attempt.kind {
                 AttemptKind::Signed { payload, .. } => Some(payload.hash),
-                AttemptKind::Delegated { .. } => None,
+                AttemptKind::Delegated { .. } | AttemptKind::Legacy { .. } => None,
             })
             .collect()
+    }
+
+    pub(crate) fn batch_signed_attempt(
+        &self,
+        sequence: usize,
+    ) -> Option<(&N::TransactionRequest, &SignedPayload)> {
+        if !self.plan.batch {
+            return None;
+        }
+        self.plan.deployments.get(sequence)?.attempts.iter().find_map(|attempt| {
+            let AttemptKind::Signed { request: Some(request), payload } = &attempt.kind else {
+                return None;
+            };
+            Some((request, payload))
+        })
+    }
+
+    pub(crate) fn batch_first_operation(&self, sequence: usize) -> Option<usize> {
+        if !self.plan.batch {
+            return None;
+        }
+        self.plan
+            .deployments
+            .get(sequence)?
+            .attempts
+            .first()?
+            .members
+            .first()
+            .map(|member| member.index as usize)
+    }
+
+    pub(crate) fn has_batch_submission(&self, sequence: usize) -> bool {
+        self.plan.batch
+            && self
+                .plan
+                .deployments
+                .get(sequence)
+                .is_some_and(|deployment| !deployment.attempts.is_empty())
+    }
+
+    pub(crate) fn batch_delegated_status(&self, sequence: usize) -> Option<DelegatedStatus> {
+        if !self.plan.batch {
+            return None;
+        }
+        self.plan.deployments.get(sequence)?.attempts.iter().find_map(|attempt| {
+            let AttemptKind::Delegated { status, .. } = &attempt.kind else { return None };
+            Some(*status)
+        })
+    }
+
+    pub(crate) fn batch_delegated_request(
+        &self,
+        sequence: usize,
+    ) -> Option<&N::TransactionRequest> {
+        if !self.plan.batch {
+            return None;
+        }
+        self.plan.deployments.get(sequence)?.attempts.iter().find_map(|attempt| {
+            let AttemptKind::Delegated { request, .. } = &attempt.kind else { return None };
+            Some(request)
+        })
+    }
+
+    pub(crate) fn legacy_batch_hash(&self, sequence: usize) -> Option<B256> {
+        if !self.plan.batch {
+            return None;
+        }
+        self.plan.deployments.get(sequence)?.attempts.iter().find_map(|attempt| {
+            let AttemptKind::Legacy { hash } = &attempt.kind else { return None };
+            Some(*hash)
+        })
     }
 
     pub(crate) fn persist_signed_payload(
@@ -437,6 +530,94 @@ where
         Ok((sequence, index))
     }
 
+    pub(crate) fn persist_batch_signed_payload(
+        &mut self,
+        sequence: usize,
+        first_operation: usize,
+        request: N::TransactionRequest,
+        payload: Bytes,
+    ) -> Result<B256>
+    where
+        N::TxEnvelope: Decodable2718 + Encodable2718,
+    {
+        let signed = SignedPayload { hash: signed_payload_hash::<N>(&payload)?, payload };
+        let members = batch_members(
+            self.plan
+                .deployments
+                .get(sequence)
+                .context("batch deployment is not in the recovery snapshot")?,
+            first_operation,
+        )?;
+        if self.has_batch_submission(sequence) {
+            bail!("refusing to replace an existing batch submission attempt");
+        }
+        self.plan.deployments[sequence].attempts.push(SubmissionAttempt {
+            id: B256::random(),
+            members,
+            kind: AttemptKind::Signed { request: Some(request), payload: signed },
+        });
+        if let Err(error) = write_snapshot(&self.path, &self.plan) {
+            self.plan.deployments[sequence].attempts.pop();
+            return Err(error);
+        }
+        Ok(self.batch_signed_attempt(sequence).unwrap().1.hash)
+    }
+
+    pub(crate) fn persist_batch_delegated_request(
+        &mut self,
+        sequence: usize,
+        first_operation: usize,
+        request: N::TransactionRequest,
+    ) -> Result<()> {
+        let members = batch_members(
+            self.plan
+                .deployments
+                .get(sequence)
+                .context("batch deployment is not in the recovery snapshot")?,
+            first_operation,
+        )?;
+        if self.has_batch_submission(sequence) {
+            bail!("refusing to replace an existing batch submission attempt");
+        }
+        self.plan.deployments[sequence].attempts.push(SubmissionAttempt {
+            id: B256::random(),
+            members,
+            kind: AttemptKind::Delegated { request, status: DelegatedStatus::Prepared },
+        });
+        if let Err(error) = write_snapshot(&self.path, &self.plan) {
+            self.plan.deployments[sequence].attempts.pop();
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn persist_batch_delegated_status(
+        &mut self,
+        sequence: usize,
+        status: DelegatedStatus,
+    ) -> Result<()> {
+        let first = self
+            .batch_first_operation(sequence)
+            .context("batch has no delegated submission attempt")?;
+        self.persist_delegated_status(sequence, first, status)
+    }
+
+    pub(crate) fn clear_batch_submission(&mut self, sequence: usize) -> Result<()> {
+        let attempt = self
+            .plan
+            .deployments
+            .get_mut(sequence)
+            .context("batch deployment is not in the recovery snapshot")?
+            .attempts
+            .pop();
+        let Some(attempt) = attempt else { return Ok(()) };
+        if let Err(error) = write_snapshot(&self.path, &self.plan) {
+            self.plan.deployments[sequence].attempts.push(attempt);
+            return Err(error);
+        }
+        Ok(())
+    }
+
     pub(crate) fn prepare_relocation(
         &self,
         paths: &(PathBuf, PathBuf),
@@ -546,6 +727,42 @@ where
         })
     }
 
+    fn import_legacy_batch_attempts(&mut self) -> Result<()> {
+        for (deployment, data) in self.deployments.iter_mut().zip(self.data.sequences().iter()) {
+            if data.pending.is_empty() {
+                continue;
+            }
+            let [hash] = data.pending.as_slice() else {
+                bail!("cannot import legacy batch progress with multiple pending hashes");
+            };
+            let first = data
+                .transactions
+                .iter()
+                .position(|transaction| transaction.hash == Some(*hash))
+                .context("legacy batch hash is not bound to a recovery operation")?;
+            if completed_transaction_prefix(data)? != first {
+                bail!("legacy batch progress omits an incomplete operation");
+            }
+            if data
+                .transactions
+                .iter()
+                .skip(first)
+                .any(|transaction| transaction.hash != Some(*hash))
+            {
+                bail!("cannot import inconsistent legacy batch operation hashes");
+            }
+            deployment.attempts.push(SubmissionAttempt {
+                id: B256::random(),
+                members: deployment.operations[first..]
+                    .iter()
+                    .map(|operation| operation.id)
+                    .collect(),
+                kind: AttemptKind::Legacy { hash: *hash },
+            });
+        }
+        Ok(())
+    }
+
     fn validate(&self, batch: bool) -> Result<()> {
         if self.version != RECOVERY_VERSION {
             bail!(
@@ -582,28 +799,105 @@ where
         N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
         for (sequence, deployment) in self.deployments.iter().enumerate() {
+            let data = &self.data.sequences()[sequence];
+            if self.batch && deployment.attempts.is_empty() {
+                let completed = completed_transaction_prefix(data)?;
+                if !data.pending.is_empty()
+                    || data
+                        .transactions
+                        .iter()
+                        .skip(completed)
+                        .any(|transaction| transaction.hash.is_some())
+                {
+                    bail!("batch progress exists without a durable submission attempt");
+                }
+            }
+            if self.batch && deployment.attempts.len() > 1 {
+                bail!("recovery snapshot contains multiple batch submission attempts");
+            }
+            let mut claimed = vec![false; deployment.operations.len()];
             for attempt in &deployment.attempts {
-                let [member] = attempt.members.as_slice() else {
+                let Some(first) = attempt.members.first() else {
                     bail!("recovery snapshot attempt has invalid operation membership");
                 };
-                if member.sequence as usize != sequence {
+                if first.sequence as usize != sequence {
                     bail!("recovery snapshot attempt has invalid operation membership");
                 }
-                deployment
-                    .operations
-                    .get(member.index as usize)
-                    .filter(|operation| operation.id == *member)
+                let start = first.index as usize;
+                let end = start
+                    .checked_add(attempt.members.len())
                     .context("recovery snapshot attempt has invalid operation membership")?;
-                let transaction =
-                    &self.data.sequences()[sequence].transactions[member.index as usize];
-                if let AttemptKind::Signed { payload, .. } = &attempt.kind
-                    && validate_signed_payload::<N>(
-                        payload.payload.clone(),
-                        transaction,
-                        deployment.chain,
-                    )? != *payload
+                let operations = deployment
+                    .operations
+                    .get(start..end)
+                    .context("recovery snapshot attempt has invalid operation membership")?;
+                if operations
+                    .iter()
+                    .map(|operation| operation.id)
+                    .ne(attempt.members.iter().copied())
+                    || claimed[start..end].iter().any(|claimed| *claimed)
+                    || if self.batch {
+                        end != deployment.operations.len()
+                    } else {
+                        attempt.members.len() != 1
+                    }
                 {
-                    bail!("recovery snapshot signed payload does not match its hash");
+                    bail!("recovery snapshot attempt has invalid operation membership");
+                }
+                if self.batch {
+                    let completed = completed_transaction_prefix(data)?;
+                    if completed != start && completed != deployment.operations.len() {
+                        bail!("batch submission attempt omits an incomplete operation");
+                    }
+                    let expected_hash = match &attempt.kind {
+                        AttemptKind::Signed { payload, .. } => Some(payload.hash),
+                        AttemptKind::Delegated {
+                            status: DelegatedStatus::Pending { hash },
+                            ..
+                        }
+                        | AttemptKind::Legacy { hash } => Some(*hash),
+                        AttemptKind::Delegated { .. } => None,
+                    };
+                    if data.pending.len() > 1
+                        || data.pending.iter().any(|hash| Some(*hash) != expected_hash)
+                        || data
+                            .transactions
+                            .iter()
+                            .skip(start)
+                            .filter_map(|transaction| transaction.hash)
+                            .any(|hash| Some(hash) != expected_hash)
+                    {
+                        bail!("batch submission attempt conflicts with script progress");
+                    }
+                }
+                claimed[start..end].fill(true);
+                match &attempt.kind {
+                    AttemptKind::Signed { request, payload } => {
+                        if request.is_some() != self.batch {
+                            bail!("recovery snapshot signed attempt has an invalid request");
+                        }
+                        let validated = if let [operation] = operations
+                            && !self.batch
+                        {
+                            validate_signed_payload::<N>(
+                                payload.payload.clone(),
+                                &data.transactions[operation.id.index as usize],
+                                deployment.chain,
+                            )?
+                        } else {
+                            SignedPayload {
+                                hash: signed_payload_hash::<N>(&payload.payload)?,
+                                payload: payload.payload.clone(),
+                            }
+                        };
+                        if validated != *payload {
+                            bail!("recovery snapshot signed payload does not match its hash");
+                        }
+                    }
+                    AttemptKind::Legacy { .. } if !self.batch => {
+                        bail!("non-batch recovery snapshot contains a legacy batch attempt");
+                    }
+                    AttemptKind::Delegated { .. } | AttemptKind::Legacy { .. } => {}
                 }
             }
         }
@@ -685,6 +979,15 @@ fn commit_pending_plan(pending: &Path, path: &Path) -> Result<()> {
 fn recovery_path_from_sensitive(sensitive_path: &Path) -> Result<PathBuf> {
     let filename = sensitive_path.file_name().context("sensitive cache path has no filename")?;
     Ok(sensitive_path.with_file_name(format!("{}.recovery.json", filename.to_string_lossy())))
+}
+
+fn signed_payload_hash<N: Network>(payload: &Bytes) -> Result<B256>
+where
+    N::TxEnvelope: Decodable2718 + Encodable2718,
+{
+    Ok(N::TxEnvelope::decode_2718_exact(payload)
+        .wrap_err("recovery snapshot contains an invalid signed payload")?
+        .trie_hash())
 }
 
 fn validate_signed_payload<N: Network>(
@@ -1031,5 +1334,90 @@ mod tests {
         drop(store);
 
         assert!(load(&paths, false).unwrap().delegated_status(0, 0).is_none());
+    }
+
+    #[test]
+    fn batch_attempt_uses_shared_membership_and_survives_reload() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = signed_sequence(dir.path());
+        let paths = data.paths();
+        let request = TransactionRequest::default();
+        {
+            let mut store = RecoveryStore::create(data, true).unwrap();
+            store
+                .persist_batch_signed_payload(0, 0, request.clone(), SIGNED_TX.to_vec().into())
+                .unwrap();
+            assert!(store.persist_signed_payload(0, 1, OTHER_SIGNED_TX.to_vec().into()).is_err());
+        }
+
+        let store = load(&paths, true).unwrap();
+        assert_eq!(store.batch_first_operation(0), Some(0));
+        assert_eq!(store.batch_signed_attempt(0).unwrap().0, &request);
+    }
+
+    #[test]
+    fn batch_attempt_rejects_conflicting_progress() {
+        let foreign = B256::repeat_byte(0x66);
+        for (transaction_hash, pending) in [(Some(foreign), vec![]), (None, vec![foreign])] {
+            let dir = tempfile::tempdir().unwrap();
+            let data = signed_sequence(dir.path());
+            let paths = data.paths();
+            {
+                let mut store = RecoveryStore::create(data, true).unwrap();
+                store
+                    .persist_batch_signed_payload(
+                        0,
+                        0,
+                        TransactionRequest::default(),
+                        SIGNED_TX.to_vec().into(),
+                    )
+                    .unwrap();
+                let deployment = &mut store.data_mut().sequences_mut()[0];
+                deployment.transactions[0].hash = transaction_hash;
+                deployment.pending = pending;
+                write_snapshot(&store.path, &store.plan).unwrap();
+            }
+
+            assert!(load(&paths, true).is_err());
+        }
+    }
+
+    #[test]
+    fn batch_progress_without_an_attempt_fails_closed() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = signed_sequence(dir.path());
+        let paths = data.paths();
+        {
+            let mut store = RecoveryStore::create(data, true).unwrap();
+            store.data_mut().sequences_mut()[0].pending.push(B256::repeat_byte(0x77));
+            write_snapshot(&store.path, &store.plan).unwrap();
+        }
+
+        assert!(load(&paths, true).is_err());
+    }
+
+    #[test]
+    fn legacy_batch_import_requires_one_consistent_pending_hash() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut data = signed_sequence(dir.path());
+        let paths = data.paths();
+        let hash = B256::repeat_byte(0x55);
+        let deployment = &mut data.sequences_mut()[0];
+        for transaction in &mut deployment.transactions {
+            transaction.hash = Some(hash);
+        }
+        deployment.pending.push(hash);
+        let store =
+            RecoveryStore::import(data, true, RecoveryLock::acquire(&paths).unwrap()).unwrap();
+        assert_eq!(store.legacy_batch_hash(0), Some(hash));
+        drop(store);
+
+        let other = tempfile::tempdir().unwrap();
+        let mut data = signed_sequence(other.path());
+        let paths = data.paths();
+        let deployment = &mut data.sequences_mut()[0];
+        deployment.transactions[1].hash = Some(hash);
+        deployment.pending.push(hash);
+        assert!(RecoveryStore::import(data, true, RecoveryLock::acquire(&paths).unwrap()).is_err());
     }
 }
