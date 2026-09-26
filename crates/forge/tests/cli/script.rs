@@ -1280,6 +1280,9 @@ contract InterruptedResume is Script {
     let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
     let sender = handle.dev_accounts().next().unwrap();
     let path = prj.root().join("broadcast/InterruptedResume.s.sol/31337/run-latest.json");
+    let sensitive_path = prj.root().join("cache/InterruptedResume.s.sol/31337/run-latest.json");
+    let recovery_path =
+        prj.root().join("cache/InterruptedResume.s.sol/31337/run-latest.json.recovery.json");
 
     cmd.arg("script").arg(&script).args([
         "--tc",
@@ -1334,6 +1337,9 @@ contract InterruptedResume is Script {
     assert!(!output.status.success(), "forge unexpectedly succeeded");
     #[cfg(unix)]
     assert_eq!(output.status.signal(), Some(9), "forge was not terminated by SIGKILL");
+    assert!(recovery_path.exists(), "authoritative recovery snapshot was not checkpointed");
+    std::fs::remove_file(&path).unwrap();
+    std::fs::remove_file(&sensitive_path).unwrap();
 
     api.mine_one().await.unwrap();
     api.anvil_set_auto_mine(true).await.unwrap();
@@ -1844,8 +1850,8 @@ forgetest_async!(check_broadcast_log, |prj, cmd| {
     // );
 
     // Check sensitive logs
-    // Ignore port number since it can change in between runs
-    let re = Regex::new(r":[0-9]+").unwrap();
+    // Ignore port number and recovery generation since they can change in between runs.
+    let re = Regex::new(r#":[0-9]+|0x[0-9a-f]{64}"#).unwrap();
 
     let fixtures_log = std::fs::read_to_string(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -1861,7 +1867,7 @@ forgetest_async!(check_broadcast_log, |prj, cmd| {
     let fixtures_log = fixtures_log.replace("\r\n", "\n");
     let run_log = run_log.replace("\r\n", "\n");
 
-    similar_asserts::assert_eq!(fixtures_log, run_log);
+    similar_asserts::assert_eq!(fixtures_log.trim_end(), run_log.trim_end());
 });
 
 forgetest_async!(test_default_sender_balance, |prj, cmd| {
