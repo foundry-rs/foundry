@@ -922,6 +922,8 @@ mod tests {
         assert_eq!(evm_spec_id_from_str::<TempoHardfork>("tempo:T8"), Some(TempoHardfork::T8));
         assert_eq!(evm_spec_id_from_str::<TempoHardfork>("tempo:T13"), Some(TempoHardfork::T13));
         assert_eq!(evm_spec_id_from_str::<TempoHardfork>("T13"), Some(TempoHardfork::T13));
+        assert_eq!(evm_spec_id_from_str::<TempoHardfork>("tempo:T14"), Some(TempoHardfork::T14));
+        assert_eq!(evm_spec_id_from_str::<TempoHardfork>("T14"), Some(TempoHardfork::T14));
         assert_eq!(evm_spec_id_from_str::<TempoHardfork>("ethereum:prague"), None);
 
         #[cfg(feature = "monad")]
