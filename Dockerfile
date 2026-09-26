@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM rust:1-bookworm@sha256:13c186980fa33cc12759b429662a1322939dbe697484b7c33b47dd2698d28460 AS chef
+FROM rust:1.98-bookworm@sha256:93ce27a88655056a51dbdd8f5f2d7ddc071c7b0070fb288a37b5a285fc83971e AS chef
 WORKDIR /app
 
 RUN apt update && apt install -y build-essential libssl-dev git pkg-config curl perl
