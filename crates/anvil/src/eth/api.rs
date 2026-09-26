@@ -146,6 +146,14 @@ struct TransactionFeeDefaults {
     blob_gas_price: u128,
 }
 
+#[cfg(test)]
+#[derive(Default)]
+struct MineDetailedTestHook {
+    first_block_mined: tokio::sync::Notify,
+    before_block_reads: tokio::sync::Notify,
+    resume: tokio::sync::Notify,
+}
+
 /// The entry point for executing eth api RPC call - The Eth RPC interface.
 ///
 /// This type is cheap to clone and can be used concurrently
@@ -184,6 +192,8 @@ pub struct EthApi<N: Network> {
     lifecycle_lock: Arc<tokio::sync::RwLock<()>>,
     /// Serializes reset preparation without blocking identity RPCs made by the target endpoint.
     reset_lock: Arc<tokio::sync::Mutex<()>>,
+    #[cfg(test)]
+    mine_detailed_test_hook: Option<Arc<MineDetailedTestHook>>,
 }
 
 impl<N: Network> Clone for EthApi<N> {
@@ -204,6 +214,8 @@ impl<N: Network> Clone for EthApi<N> {
             instance_id: self.instance_id.clone(),
             lifecycle_lock: self.lifecycle_lock.clone(),
             reset_lock: self.reset_lock.clone(),
+            #[cfg(test)]
+            mine_detailed_test_hook: self.mine_detailed_test_hook.clone(),
         }
     }
 }
@@ -240,6 +252,8 @@ impl<N: Network> EthApi<N> {
             instance_id: Arc::new(RwLock::new(B256::random())),
             lifecycle_lock: Arc::new(tokio::sync::RwLock::new(())),
             reset_lock: Arc::new(tokio::sync::Mutex::new(())),
+            #[cfg(test)]
+            mine_detailed_test_hook: None,
         }
     }
 
@@ -4185,12 +4199,16 @@ impl EthApi<FoundryNetwork> {
         }
 
         self.on_blocking_task(|this| async move {
+            // Hold the mining lock for the whole run, so a concurrent chain-height mutation cannot
+            // unwind blocks this call already mined, and so an interval's time increase stays
+            // paired with the block it was applied for.
+            let _mining_guard = this.backend.lock_mining_owned().await;
             // mine all the blocks
             for _ in 0..blocks.saturating_to::<u64>() {
                 // If we have an interval, jump forwards in time to the "next" timestamp
                 let pending_increase =
                     interval.map(|interval| this.backend.time().apply_time_increase(interval));
-                if let Err(error) = this.mine_one().await {
+                if let Err(error) = this.mine_one_locked().await {
                     if let Some(pending) = pending_increase {
                         this.backend.time().revert_time_increase(pending);
                     }
@@ -4584,7 +4602,15 @@ impl EthApi<FoundryNetwork> {
     pub async fn evm_mine_detailed(&self, opts: Option<MineOptions>) -> Result<Vec<AnyRpcBlock>> {
         node_info!("evm_mine_detailed");
 
-        let mined_blocks = self.do_evm_mine(opts).await?;
+        // Keep the mining lock for the block reads below: the chain height this reports must still
+        // cover every block that was just mined.
+        let (mined_blocks, _mining_guard) = self.do_evm_mine(opts).await?;
+
+        #[cfg(test)]
+        if let Some(hook) = &self.mine_detailed_test_hook {
+            hook.before_block_reads.notify_one();
+            hook.resume.notified().await;
+        }
 
         let mut blocks = Vec::with_capacity(mined_blocks as usize);
 
@@ -4769,12 +4795,15 @@ impl EthApi<FoundryNetwork> {
 }
 
 impl EthApi<FoundryNetwork> {
-    /// Executes the `evm_mine` and returns the number of blocks mined
-    async fn do_evm_mine(&self, opts: Option<MineOptions>) -> Result<u64> {
+    /// Executes the `evm_mine` and returns the number of blocks mined, along with the mining lock
+    /// they were mined under so a caller can keep reading the chain it just extended.
+    async fn do_evm_mine(
+        &self,
+        opts: Option<MineOptions>,
+    ) -> Result<(u64, tokio::sync::OwnedMutexGuard<()>)> {
         let mut blocks_to_mine = 1u64;
-
-        if let Some(opts) = opts {
-            let timestamp = match opts {
+        let next_timestamp = if let Some(opts) = opts {
+            match opts {
                 MineOptions::Timestamp(timestamp) => timestamp,
                 MineOptions::Options { timestamp, blocks } => {
                     if let Some(blocks) = blocks {
@@ -4782,25 +4811,40 @@ impl EthApi<FoundryNetwork> {
                     }
                     timestamp
                 }
-            };
-            if let Some(timestamp) = timestamp {
-                // timestamp was explicitly provided to be the next timestamp
-                self.evm_set_next_block_timestamp(timestamp)?;
             }
-        }
+        } else {
+            None
+        };
 
         // this can be blocking for a bit, especially in forking mode
         // <https://github.com/foundry-rs/foundry/issues/6036>
-        self.on_blocking_task(|this| async move {
-            // mine all the blocks
-            for _ in 0..blocks_to_mine {
-                this.mine_one().await?;
-            }
-            Ok(())
-        })
-        .await?;
+        //
+        // Hold the mining lock for the whole run instead of re-taking it per block, so that no
+        // concurrent chain-height mutation can unwind blocks this call already mined, and so the
+        // requested next-block timestamp cannot be consumed by another block producer first.
+        let mining_guard = self
+            .on_blocking_task(|this| async move {
+                let mining_guard = this.backend.lock_mining_owned().await;
+                if let Some(timestamp) = next_timestamp {
+                    // timestamp was explicitly provided to be the next timestamp
+                    this.evm_set_next_block_timestamp(timestamp)?;
+                }
+                #[cfg(test)]
+                let mut first_block_hook = this.mine_detailed_test_hook.as_ref();
+                // mine all the blocks
+                for _ in 0..blocks_to_mine {
+                    this.mine_one_locked().await?;
+                    #[cfg(test)]
+                    if let Some(hook) = first_block_hook.take() {
+                        hook.first_block_mined.notify_one();
+                        hook.resume.notified().await;
+                    }
+                }
+                Ok(mining_guard)
+            })
+            .await?;
 
-        Ok(blocks_to_mine)
+        Ok((blocks_to_mine, mining_guard))
     }
 
     async fn do_estimate_gas(
@@ -4974,6 +5018,11 @@ impl EthApi<FoundryNetwork> {
     /// Mines exactly one block
     pub async fn mine_one(&self) -> Result<()> {
         let _mining = self.backend.lock_mining().await;
+        self.mine_one_locked().await
+    }
+
+    /// Mines exactly one block while the caller holds the mining lock.
+    async fn mine_one_locked(&self) -> Result<()> {
         let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
         let outcome = self.backend.mine_block_locked(transactions).await?;
 
@@ -5714,6 +5763,49 @@ fn reward_at_percentile(rewards: &[u128], percentile: f64) -> u128 {
 mod tests {
     use super::*;
     use crate::{NodeConfig, spawn};
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn evm_mine_detailed_handles_concurrent_rollback() {
+        tokio::time::timeout(Duration::from_secs(30), async {
+            let (mut api, _handle) = spawn(NodeConfig::test().with_no_mining(true)).await;
+            let hook = Arc::new(MineDetailedTestHook::default());
+            api.mine_detailed_test_hook = Some(hook.clone());
+
+            let mining_api = api.clone();
+            let mining = tokio::spawn(async move {
+                mining_api
+                    .evm_mine_detailed(Some(MineOptions::Options {
+                        timestamp: None,
+                        blocks: Some(3),
+                    }))
+                    .await
+            });
+
+            hook.first_block_mined.notified().await;
+            let rollback = api.anvil_rollback(Some(1));
+            tokio::pin!(rollback);
+            assert!(futures::poll!(rollback.as_mut()).is_pending());
+
+            hook.resume.notify_one();
+            tokio::select! {
+                result = rollback.as_mut() => panic!("rollback completed during multi-block mining: {result:?}"),
+                () = hook.before_block_reads.notified() => {}
+            }
+            assert!(futures::poll!(rollback.as_mut()).is_pending());
+
+            hook.resume.notify_one();
+            let blocks = mining.await.unwrap().unwrap();
+            rollback.await.unwrap();
+
+            assert_eq!(
+                blocks.iter().map(|block| block.header.number).collect::<Vec<_>>(),
+                [1, 2, 3]
+            );
+            assert_eq!(api.backend.best_number(), 2);
+        })
+        .await
+        .unwrap();
+    }
 
     #[cfg(feature = "base")]
     #[tokio::test(flavor = "multi_thread")]
