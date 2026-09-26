@@ -117,7 +117,7 @@ mod fuzz;
 pub use fuzz::{FuzzConfig, FuzzCorpusConfig, FuzzCorpusMutationWeights, FuzzDictionaryConfig};
 
 mod invariant;
-pub use invariant::{InvariantConfig, InvariantDepthMode, InvariantWorkers};
+pub use invariant::{InvariantConfig, InvariantDepthMode, InvariantTxGenerator, InvariantWorkers};
 
 mod symbolic;
 pub use symbolic::{SymbolicConfig, SymbolicExplorationOrder, SymbolicStorageLayout};
@@ -5602,6 +5602,7 @@ mod tests {
                 min_depth = 2
                 depth_mode = "random"
                 workers = 4
+                tx_generator = "jev"
                 corpus_random_sequence_weight = 30
                 payable_value_weight = 12
                 mutation_weight_cmp = 7
@@ -5616,6 +5617,7 @@ mod tests {
                     depth: 10,
                     min_depth: 2,
                     depth_mode: InvariantDepthMode::Random,
+                    tx_generator: InvariantTxGenerator::Jev,
                     workers: InvariantWorkers::Fixed(NonZeroUsize::new(4).unwrap()),
                     corpus: FuzzCorpusConfig {
                         corpus_random_sequence_weight: 30,

@@ -65,6 +65,28 @@ impl FuzzRunIdentifiedContracts {
         Ref::map(self.fuzzed_functions.borrow(), Vec::as_slice)
     }
 
+    /// Returns the currently known read-only ABI functions. These are grammar candidates only;
+    /// their output types do not establish that they are semantically valid inputs to a handler.
+    pub(crate) fn view_functions(&self) -> Vec<FuzzedFunction> {
+        self.targets
+            .borrow()
+            .iter()
+            .flat_map(|(address, contract)| {
+                contract
+                    .abi
+                    .functions()
+                    .filter(|function| {
+                        matches!(
+                            function.state_mutability,
+                            alloy_json_abi::StateMutability::Pure
+                                | alloy_json_abi::StateMutability::View
+                        )
+                    })
+                    .map(|function| (*address, function.clone()))
+            })
+            .collect()
+    }
+
     /// Returns the current fuzzed-functions generation.
     pub fn fuzzed_functions_generation(&self) -> u64 {
         self.fuzzed_functions_generation.get()

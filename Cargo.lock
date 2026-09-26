@@ -6105,10 +6105,13 @@ dependencies = [
  "parking_lot",
  "proptest",
  "rand 0.9.5",
+ "reqwest 0.13.5",
  "revm",
  "serde",
+ "serde_json",
  "solar-compiler",
  "thiserror 2.0.20",
+ "tokio",
  "tracing",
 ]
 

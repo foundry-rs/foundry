@@ -224,6 +224,7 @@ runs = 256
 depth = 500
 min_depth = 1
 depth_mode = "fixed"
+tx_generator = "rng"
 workers = "auto"
 fail_on_revert = false
 call_override = false
@@ -2239,6 +2240,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "depth": 500,
     "min_depth": 1,
     "depth_mode": "fixed",
+    "tx_generator": "rng",
     "workers": "auto",
     "fail_on_revert": false,
     "call_override": false,
