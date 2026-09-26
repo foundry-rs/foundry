@@ -30,7 +30,7 @@ use foundry_test_utils::{
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, process::Output, sync::atomic::Ordering};
 
-const BAL_METHOD: &str = "eth_getBlockAccessListByBlockHash";
+const BAL_METHOD: &str = "eth_getBlockAccessList";
 
 /// Three counter transactions in one block, plus the BAL the block would have produced.
 struct Fixture {
