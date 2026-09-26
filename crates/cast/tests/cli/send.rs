@@ -744,3 +744,65 @@ casttest!(publish_raw_transaction, async |_prj, cmd| {
         .assert_success()
         .stdout_eq(format!("{hash}\n"));
 });
+
+// <https://github.com/foundry-rs/foundry/issues/4454>
+casttest!(send_bump_fee_replaces_pending_tx, async |_prj, cmd| {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let rpc = handle.http_endpoint();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+    let recipient = address!("0x000000000000000000000000000000000000dEaD");
+    let recipient_str = recipient.to_string();
+    let send = |value: &'static str| {
+        [
+            "send",
+            recipient_str.as_str(),
+            "--value",
+            value,
+            "--nonce",
+            "0",
+            "--gas-price",
+            "10gwei",
+            "--priority-gas-price",
+            "1gwei",
+            "--async",
+            "--private-key",
+            pk.as_str(),
+            "--rpc-url",
+            rpc.as_str(),
+        ]
+    };
+
+    // Leave a transaction pending in the mempool.
+    cmd.args(send("1")).assert_success();
+
+    // Resending with the same nonce and fees is rejected.
+    cmd.cast_fuse().args(send("2")).assert_failure().stderr_eq(str![[r#"
+Error: server returned an error response: error code -32003: replacement transaction underpriced
+
+"#]]);
+
+    // Bumping can't go past the max gas price.
+    cmd.cast_fuse()
+        .args(send("2"))
+        .args(["--bump-fee", "--bump-fee-max-gas-price", "10gwei"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: cannot bump max fee per gas above --bump-fee-max-gas-price (10000000000)
+
+Context:
+- server returned an error response: error code -32003: replacement transaction underpriced
+
+"#]]);
+
+    // With `--bump-fee`, the fees are increased until the replacement is accepted.
+    cmd.cast_fuse().args(send("2")).arg("--bump-fee").assert_success().stderr_eq(str![[r#"
+Warning: Transaction underpriced, retrying with max fee per gas 11000000000 and max priority fee per gas 1100000000
+
+"#]]);
+
+    api.mine_one().await.unwrap();
+    let balance = handle.http_provider().get_balance(recipient).await.unwrap();
+    assert_eq!(balance, U256::from(2));
+});

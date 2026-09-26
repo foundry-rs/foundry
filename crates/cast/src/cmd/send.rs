@@ -9,15 +9,18 @@ use crate::{
 };
 use alloy_consensus::{SignableTransaction, Signed};
 use alloy_ens::NameOrAddress;
-use alloy_network::{Ethereum, EthereumWallet, Network, NetworkTransactionBuilder};
-use alloy_primitives::{Address, B256, hex};
+use alloy_network::{
+    Ethereum, EthereumWallet, Network, NetworkTransactionBuilder, TransactionBuilder,
+};
+use alloy_primitives::{Address, B256, U256, hex};
 use alloy_provider::{Provider, ProviderBuilder as AlloyProviderBuilder};
 use alloy_signer::{Signature, Signer};
-use clap::Parser;
+use alloy_transport::TransportError;
+use clap::{Args, Parser};
 use eyre::{Result, eyre};
 use foundry_cli::{
     opts::TransactionOpts,
-    utils::{LoadConfig, get_chain, resolve_lane},
+    utils::{LoadConfig, get_chain, parse_ether_value, resolve_lane},
 };
 use foundry_common::{
     FoundryTransactionBuilder,
@@ -79,6 +82,9 @@ pub struct SendTxArgs {
     #[command(flatten)]
     tx: TransactionOpts,
 
+    #[command(flatten)]
+    bump_fee: BumpFeeArgs,
+
     /// The path of blob data to be sent.
     #[arg(
         long,
@@ -107,6 +113,121 @@ pub enum SendTxSubcommands {
     },
 }
 
+/// Options for replacing a transaction that the node rejects as underpriced.
+#[derive(Clone, Debug, Args)]
+#[command(next_help_heading = "Fee bumping options")]
+pub struct BumpFeeArgs {
+    /// Resend the transaction with higher fees if the node rejects it as underpriced, e.g. when
+    /// a transaction with the same nonce is stuck in the mempool.
+    ///
+    /// The gas price (or the max fee and max priority fee for EIP-1559 transactions) is
+    /// increased by `--bump-fee-percent` on every attempt.
+    #[arg(long)]
+    bump_fee: bool,
+
+    /// Percentage to increase the fees by on every attempt.
+    #[arg(
+        long,
+        requires = "bump_fee",
+        default_value = "10",
+        value_parser = clap::value_parser!(u64).range(1..),
+        value_name = "PERCENT"
+    )]
+    bump_fee_percent: u64,
+
+    /// Maximum number of times to bump the fees before giving up.
+    #[arg(long, requires = "bump_fee", default_value = "10", value_name = "ATTEMPTS")]
+    bump_fee_max_attempts: u32,
+
+    /// Maximum gas price (or max fee per gas for EIP-1559 transactions) to bump up to, either
+    /// specified in wei, or as a string with a unit type.
+    ///
+    /// Examples: 100gwei, 0.000001ether
+    #[arg(long, requires = "bump_fee", value_parser = parse_ether_value, value_name = "PRICE")]
+    bump_fee_max_gas_price: Option<U256>,
+}
+
+impl Default for BumpFeeArgs {
+    fn default() -> Self {
+        Self {
+            bump_fee: false,
+            bump_fee_percent: 10,
+            bump_fee_max_attempts: 10,
+            bump_fee_max_gas_price: None,
+        }
+    }
+}
+
+impl BumpFeeArgs {
+    /// Returns the fee bumping settings, or `None` if `--bump-fee` was not passed.
+    fn fee_bump(&self) -> Option<FeeBump> {
+        self.bump_fee.then(|| FeeBump {
+            percent: self.bump_fee_percent.into(),
+            max_attempts: self.bump_fee_max_attempts,
+            max_gas_price: self.bump_fee_max_gas_price.map(|price| price.saturating_to()),
+        })
+    }
+}
+
+/// Settings for resending an underpriced transaction with increased fees.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct FeeBump {
+    percent: u128,
+    max_attempts: u32,
+    max_gas_price: Option<u128>,
+}
+
+impl FeeBump {
+    /// Increases the fees of `tx` by the configured percentage, capped at the max gas price.
+    ///
+    /// Both the max fee and the max priority fee of EIP-1559 transactions are bumped, as nodes
+    /// require both to increase for a replacement to be accepted.
+    fn apply<N: Network>(&self, tx: &mut N::TransactionRequest) -> Result<()> {
+        let cap = self.max_gas_price.unwrap_or(u128::MAX);
+        let bump = |fee: u128| {
+            fee.saturating_add((fee.saturating_mul(self.percent) / 100).max(1)).min(cap)
+        };
+
+        if let Some(gas_price) = tx.gas_price() {
+            let bumped = bump(gas_price);
+            eyre::ensure!(
+                bumped > gas_price,
+                "cannot bump gas price above --bump-fee-max-gas-price ({cap})"
+            );
+            sh_warn!("Transaction underpriced, retrying with gas price {bumped}")?;
+            tx.set_gas_price(bumped);
+        } else if let Some(max_fee) = tx.max_fee_per_gas() {
+            let bumped = bump(max_fee);
+            eyre::ensure!(
+                bumped > max_fee,
+                "cannot bump max fee per gas above --bump-fee-max-gas-price ({cap})"
+            );
+            tx.set_max_fee_per_gas(bumped);
+            if let Some(priority_fee) = tx.max_priority_fee_per_gas() {
+                let priority_fee = bump(priority_fee).min(bumped);
+                tx.set_max_priority_fee_per_gas(priority_fee);
+                sh_warn!(
+                    "Transaction underpriced, retrying with max fee per gas {bumped} and max priority fee per gas {priority_fee}"
+                )?;
+            } else {
+                sh_warn!("Transaction underpriced, retrying with max fee per gas {bumped}")?;
+            }
+        } else {
+            eyre::bail!("cannot bump the fees of a transaction without a gas price");
+        }
+
+        Ok(())
+    }
+}
+
+/// Returns `true` if the node rejected the transaction because its fees are too low, e.g. to
+/// replace a pending transaction with the same nonce.
+fn is_underpriced_error(err: &eyre::Report) -> bool {
+    err.downcast_ref::<TransportError>()
+        .and_then(|err| err.as_error_resp())
+        .is_some_and(|resp| resp.message.to_ascii_lowercase().contains("underpriced"))
+}
+
 impl SendTxArgs {
     /// Creates a `cast send` invocation for pre-encoded contract calldata.
     pub(crate) fn contract_call(
@@ -126,6 +247,7 @@ impl SendTxArgs {
             force: false,
             gas_estimate_multiplier: None,
             tx: tx.into_transaction_opts(),
+            bump_fee: BumpFeeArgs::default(),
             path: None,
         }
     }
@@ -212,6 +334,7 @@ impl SendTxArgs {
             unlocked,
             force,
             gas_estimate_multiplier,
+            bump_fee,
             path,
         } = self;
 
@@ -333,8 +456,21 @@ impl SendTxArgs {
 
         tempo::print_expires(expires_at)?;
 
+        let fee_bump = bump_fee.fee_bump();
+        if fee_bump.is_some() {
+            if send_tx.browser.browser || pre_resolved_browser.is_some() {
+                eyre::bail!("--bump-fee cannot be combined with --browser");
+            }
+            if access_key.is_some() {
+                eyre::bail!("--bump-fee is not supported with Tempo access keys");
+            }
+            if tempo_sponsor.is_some() || sponsor_url.is_some() {
+                eyre::bail!("--bump-fee is not supported for sponsored transactions");
+            }
+        }
+
         // Without a sponsor the fee token is resolved for the sender while sending.
-        let send_opts = SendOptions::new(&send_tx, &config);
+        let send_opts = SendOptions::new(&send_tx, &config).with_fee_bump(fee_bump);
         let fee_send_opts =
             send_opts.resolving_fee_token(tempo_sponsor.is_none().then_some(chain), &config);
 
@@ -503,6 +639,8 @@ pub(crate) struct SendOptions {
     fee_chain: Option<Chain>,
     /// Whether the provider may be queried for the stored fee token and its symbol.
     query_fee_token: bool,
+    /// Resend with increased fees if the transaction is rejected as underpriced.
+    fee_bump: Option<FeeBump>,
 }
 
 impl SendOptions {
@@ -515,7 +653,13 @@ impl SendOptions {
             timeout: send_tx.timeout.unwrap_or(config.transaction_timeout),
             fee_chain: None,
             query_fee_token: false,
+            fee_bump: None,
         }
+    }
+
+    /// Resends the transaction with increased fees if it is rejected as underpriced.
+    pub(crate) const fn with_fee_bump(self, fee_bump: Option<FeeBump>) -> Self {
+        Self { fee_bump, ..self }
     }
 
     /// Resolves the sender's fee token on `chain` before sending, querying the RPC unless the
@@ -587,13 +731,28 @@ where
     N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
 {
     opts.resolve_and_print_fee_token(&provider, &mut tx).await?;
-    let (tx_hash, receipt) = if opts.sync {
-        // JSON envelope not supported: N::ReceiptResponse is generic over Display but not
-        // Serialize; adding Serialize would ripple across all network-generic callers.
-        let (tx_hash, receipt) = CastTxSender::new(&provider).send_sync(tx).await?;
-        (tx_hash, Some(receipt))
-    } else {
-        (*CastTxSender::new(&provider).send(tx).await?.tx_hash(), None)
+    let sender = CastTxSender::new(&provider);
+    let mut attempts = 0;
+    let (tx_hash, receipt) = loop {
+        let result = if opts.sync {
+            // JSON envelope not supported: N::ReceiptResponse is generic over Display but not
+            // Serialize; adding Serialize would ripple across all network-generic callers.
+            sender.send_sync(tx.clone()).await.map(|(tx_hash, receipt)| (tx_hash, Some(receipt)))
+        } else {
+            sender.send(tx.clone()).await.map(|pending| (*pending.tx_hash(), None))
+        };
+        match (result, opts.fee_bump) {
+            (Err(err), Some(fee_bump)) if is_underpriced_error(&err) => {
+                if attempts >= fee_bump.max_attempts {
+                    return Err(err.wrap_err(format!(
+                        "transaction still underpriced after {attempts} fee bumps"
+                    )));
+                }
+                attempts += 1;
+                fee_bump.apply::<N>(&mut tx).map_err(|bump_err| err.wrap_err(bump_err))?;
+            }
+            (result, _) => break result?,
+        }
     };
     opts.print_send_result(provider, tx_hash, receipt).await
 }
@@ -675,12 +834,13 @@ pub(crate) fn validate_sponsor_url(raw: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_json_rpc::{RequestPacket, ResponsePacket};
+    use alloy_json_rpc::{ErrorPayload, RequestPacket, ResponsePacket};
     use alloy_provider::mock::Asserter;
     use alloy_rpc_client::RpcClient;
     use alloy_rpc_types::TransactionRequest;
-    use alloy_transport::{TransportError, TransportFut, mock::MockTransport};
+    use alloy_transport::{TransportFut, mock::MockTransport};
     use foundry_wallets::utils::create_local_signer;
+    use serde_json::value::RawValue;
     use std::{
         sync::{Arc, Mutex},
         task::{Context, Poll},
@@ -709,6 +869,79 @@ mod tests {
             }
             self.inner.call(req)
         }
+    }
+
+    #[test]
+    fn fee_bump_increases_legacy_gas_price() {
+        let fee_bump = FeeBump { percent: 10, max_attempts: 1, max_gas_price: None };
+        let mut tx = TransactionRequest { gas_price: Some(100), ..Default::default() };
+
+        fee_bump.apply::<Ethereum>(&mut tx).unwrap();
+        assert_eq!(tx.gas_price, Some(110));
+
+        // Fees too small for the percentage to register still increase.
+        tx.gas_price = Some(1);
+        fee_bump.apply::<Ethereum>(&mut tx).unwrap();
+        assert_eq!(tx.gas_price, Some(2));
+    }
+
+    #[test]
+    fn fee_bump_increases_eip1559_fees() {
+        let fee_bump = FeeBump { percent: 20, max_attempts: 1, max_gas_price: None };
+        let mut tx = TransactionRequest {
+            max_fee_per_gas: Some(1_000),
+            max_priority_fee_per_gas: Some(100),
+            ..Default::default()
+        };
+
+        fee_bump.apply::<Ethereum>(&mut tx).unwrap();
+        assert_eq!(tx.max_fee_per_gas, Some(1_200));
+        assert_eq!(tx.max_priority_fee_per_gas, Some(120));
+    }
+
+    #[test]
+    fn fee_bump_respects_max_gas_price() {
+        let fee_bump = FeeBump { percent: 10, max_attempts: 1, max_gas_price: Some(1_050) };
+        let mut tx = TransactionRequest {
+            max_fee_per_gas: Some(1_000),
+            max_priority_fee_per_gas: Some(1_000),
+            ..Default::default()
+        };
+
+        // Clamped to the cap, and the priority fee never exceeds the max fee.
+        fee_bump.apply::<Ethereum>(&mut tx).unwrap();
+        assert_eq!(tx.max_fee_per_gas, Some(1_050));
+        assert_eq!(tx.max_priority_fee_per_gas, Some(1_050));
+
+        // Already at the cap.
+        let err = fee_bump.apply::<Ethereum>(&mut tx).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "cannot bump max fee per gas above --bump-fee-max-gas-price (1050)"
+        );
+    }
+
+    #[test]
+    fn fee_bump_requires_fees() {
+        let fee_bump = FeeBump { percent: 10, max_attempts: 1, max_gas_price: None };
+        let mut tx = TransactionRequest::default();
+        assert!(fee_bump.apply::<Ethereum>(&mut tx).is_err());
+    }
+
+    #[test]
+    fn detects_underpriced_errors() {
+        let rpc_error = |message: &'static str| {
+            eyre::Report::new(TransportError::err_resp(ErrorPayload::<Box<RawValue>> {
+                code: -32000,
+                message: message.into(),
+                data: None,
+            }))
+        };
+
+        assert!(is_underpriced_error(&rpc_error("replacement transaction underpriced")));
+        assert!(is_underpriced_error(&rpc_error("transaction underpriced")));
+        assert!(!is_underpriced_error(&rpc_error("nonce too low")));
+        assert!(!is_underpriced_error(&eyre!("replacement transaction underpriced")));
     }
 
     #[test]
@@ -780,6 +1013,7 @@ mod tests {
             timeout: 1,
             fee_chain: None,
             query_fee_token: false,
+            fee_bump: None,
         };
         let actual_hash = cast_send_with_tempo_wallet(&provider, tx, &wallet, &opts).await.unwrap();
 
