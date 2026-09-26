@@ -1,6 +1,6 @@
 use crate::{
     ScriptArgs, ScriptConfig,
-    broadcast::{BundledState, remaining_unsigned_transactions},
+    broadcast::{BundledState, remaining_unsigned_transactions_for_recovery},
     execute::LinkedState,
     multi_sequence::MultiChainSequence,
     recovery::recovery_exists,
@@ -333,7 +333,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                 )
             } else {
                 let remaining_transactions =
-                    remaining_unsigned_transactions(sequence.sequences()).collect::<Vec<_>>();
+                    remaining_unsigned_transactions_for_recovery(&sequence);
                 let remaining_froms =
                     remaining_transactions.iter().map(|tx| tx.from).collect::<AddressHashSet>();
                 let expected_session_sender = script_session_expected_sender_if_configured(
