@@ -1516,17 +1516,13 @@ impl<N: Network> EthApi<N> {
     pub async fn trace_call(
         &self,
         request: WithOtherFields<TransactionRequest>,
-        mut trace_types: HashSet<TraceType>,
+        trace_types: HashSet<TraceType>,
         block_id: Option<BlockId>,
     ) -> Result<TraceResults>
     where
         N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>,
     {
         node_info!("trace_call");
-        if trace_types.is_empty() {
-            trace_types.insert(TraceType::Trace);
-        }
-
         let block_id = block_id.unwrap_or_default();
         let block_request = match &block_id {
             BlockId::Number(BlockNumber::Pending) => {
@@ -4163,8 +4159,7 @@ impl EthApi<FoundryNetwork> {
         block_number: Option<BlockId>,
     ) -> Result<Vec<TraceResults>> {
         node_info!("trace_callMany");
-        let block_number = block_number.unwrap_or(BlockId::Number(BlockNumber::Pending));
-        let block_request = self.block_request(Some(block_number)).await?;
+        let block_request = self.block_request(block_number).await?;
 
         self.backend.trace_call_many(calls, Some(block_request)).await
     }
