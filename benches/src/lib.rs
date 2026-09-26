@@ -175,8 +175,16 @@ impl BenchmarkProject {
             }
         }
 
-        // Git submodules are already cloned via --recursive flag
-        // But npm dependencies still need to be installed
+        // Checkout can change the pinned submodule revisions after the initial recursive clone.
+        let status = Command::new("git")
+            .current_dir(root)
+            .args(["submodule", "update", "--init", "--recursive"])
+            .status()
+            .wrap_err("Failed to update pinned submodules")?;
+        if !status.success() {
+            eyre::bail!("Git submodule update failed for {}", config.name);
+        }
+
         Self::install_npm_dependencies(&root_path)?;
 
         sh_println!("  ✅ Project {} setup complete at {}", config.name, root);
