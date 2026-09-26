@@ -6845,7 +6845,10 @@ where
                 .map(|block| (block.header.hash, block))
             {
                 let read_guard = self.states.upgradable_read();
-                if let Some(state_db) = read_guard.get_state(&block_hash) {
+                if let Some(state_db) = read_guard
+                    .get_post_block_state(&block_hash)
+                    .or_else(|| read_guard.get_state(&block_hash))
+                {
                     return Ok(f(Box::new(state_db), self.block_env_from_header(&block.header)));
                 }
 
@@ -6916,7 +6919,10 @@ where
                 .map(|block| (block.header.hash, block))
             {
                 let read_guard = self.states.upgradable_read();
-                if let Some(state_db) = read_guard.get_state(&block_hash) {
+                if let Some(state_db) = read_guard
+                    .get_post_block_state(&block_hash)
+                    .or_else(|| read_guard.get_state(&block_hash))
+                {
                     return f(
                         Box::new(state_db),
                         self.block_env_from_header(&block.header),
