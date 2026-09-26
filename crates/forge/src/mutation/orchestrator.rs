@@ -67,6 +67,7 @@ struct FilterArgsFingerprint<'a> {
     contract_pattern_inverse: Option<&'a str>,
     path_pattern: Option<&'a str>,
     path_pattern_inverse: Option<&'a str>,
+    rerun_pattern: Option<&'a str>,
 }
 
 /// Configuration for mutation testing run.
@@ -491,6 +492,7 @@ fn filter_args_fingerprint(filter_args: &FilterArgs) -> FilterArgsFingerprint<'_
             .map(|re| re.as_str()),
         path_pattern: filter_args.path_pattern.as_ref().map(|glob| glob.as_str()),
         path_pattern_inverse: filter_args.path_pattern_inverse.as_ref().map(|glob| glob.as_str()),
+        rerun_pattern: filter_args.rerun_pattern.as_ref().map(|re| re.as_str()),
     }
 }
 
@@ -661,6 +663,7 @@ mod tests {
             path_pattern: None,
             path_pattern_inverse: None,
             coverage_pattern_inverse: None,
+            rerun_pattern: None,
         }
     }
 
@@ -852,6 +855,32 @@ mod tests {
         .unwrap();
 
         assert_ne!(first_key, second_key);
+    }
+
+    #[test]
+    fn execution_cache_key_changes_when_legacy_rerun_filter_changes() {
+        let config = Config::default();
+        let evm_opts = EvmOpts::default();
+        let artifacts = vec![artifact("build-a")];
+        let cache_key = |pattern: Option<&str>| {
+            let mut filter = filter_args();
+            filter.rerun_pattern = pattern.map(|pattern| regex::Regex::new(pattern).unwrap());
+            mutation_execution_cache_key_from_parts(
+                &config,
+                &evm_opts,
+                &filter,
+                1,
+                artifacts.clone(),
+            )
+            .unwrap()
+        };
+        let first_key = cache_key(None);
+        let second_key = cache_key(Some("testWeak"));
+        let third_key = cache_key(Some("testStrong"));
+
+        assert_ne!(first_key, second_key);
+        assert_ne!(second_key, third_key);
+        assert_ne!(first_key, third_key);
     }
 
     #[test]

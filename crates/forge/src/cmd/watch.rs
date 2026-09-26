@@ -370,6 +370,8 @@ pub async fn watch_test(args: TestArgs) -> Result<()> {
     let no_reconfigure = filter.args().test_pattern.is_some()
         || filter.args().path_pattern.is_some()
         || filter.args().contract_pattern.is_some()
+        || filter.args().rerun_pattern.is_some()
+        || filter.rerun_failures().is_some()
         || args.watch.run_all;
 
     let last_test_files = Mutex::new(HashSet::<String>::default());

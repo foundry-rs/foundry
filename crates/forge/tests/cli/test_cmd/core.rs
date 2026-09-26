@@ -463,3 +463,229 @@ Ran 2 test suites [ELAPSED]: 1 tests passed, 1 failed, 0 skipped (2 total tests)
 ...
 "#]]);
 });
+
+forgetest_init!(rerun_intersects_filters_and_replaces_cache, |prj, cmd| {
+    prj.add_test(
+        "RerunFilter.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract RerunFilterTest is Test {
+    function testBrokenA() public {
+        assertTrue(false);
+    }
+
+    function testBrokenB() public {
+        assertTrue(false);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "-j1"]).assert_failure();
+    let failures_file = prj.root().join("cache/test-failures");
+
+    // A CLI `match_test` takes precedence over config, then intersects the recorded failures.
+    prj.update_config(|config| {
+        config.test_pattern = Some(regex::Regex::new(r"^testBrokenA\b").unwrap().into());
+    });
+    cmd.forge_fuse()
+        .args(["test", "--rerun", "--match-test", "testBrokenB", "-j1"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/RerunFilter.t.sol:RerunFilterTest
+[FAIL: assertion failed] testBrokenB() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+...
+"#]]);
+
+    // Rebuild the full failure record, then prove the config pattern is an independent subset.
+    prj.update_config(|config| config.test_pattern = None);
+    cmd.forge_fuse().args(["test", "-j1"]).assert_failure();
+    prj.update_config(|config| {
+        config.test_pattern = Some(regex::Regex::new(r"^testBrokenA\b").unwrap().into());
+    });
+    cmd.forge_fuse().args(["test", "--rerun", "-j1"]).assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/RerunFilter.t.sol:RerunFilterTest
+[FAIL: assertion failed] testBrokenA() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+...
+"#]]);
+
+    prj.update_config(|config| config.test_pattern = None);
+    prj.add_test(
+        "RerunFilter.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract RerunFilterTest is Test {
+    function testBrokenA() public {
+        assertTrue(true);
+    }
+
+    function testBrokenB() public {
+        assertTrue(true);
+    }
+}
+"#,
+    );
+
+    // Each completed run replaces the record, so only the config-narrowed failure is left.
+    cmd.forge_fuse().args(["test", "--rerun", "-j1"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/RerunFilter.t.sol:RerunFilterTest
+[PASS] testBrokenA() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+    assert!(!failures_file.exists());
+});
+
+forgetest_init!(rerun_cache_tracks_completed_invocation, |prj, cmd| {
+    let failures_file = prj.root().join("cache/test-failures");
+    let recorded_failure = r#"{"version":1,"failures":[{"contract":"test/RerunLifecycle.t.sol:RerunLifecycleTest","test":"testBroken"}]}"#;
+    let passing_test = r#"
+contract RerunLifecycleTest {
+    function testBroken() public {}
+}
+"#;
+
+    // A compilation error does not complete a test invocation and must preserve the last record.
+    std::fs::create_dir_all(failures_file.parent().unwrap()).unwrap();
+    std::fs::write(&failures_file, recorded_failure).unwrap();
+    prj.add_test("RerunLifecycle.t.sol", "contract Broken {");
+    cmd.args(["test", "-j1"]).assert_failure();
+    assert_eq!(std::fs::read_to_string(&failures_file).unwrap(), recorded_failure);
+
+    // Serialized output modes still update the cache after their tests complete.
+    for output_flag in ["--json", "--junit"] {
+        prj.add_test("RerunLifecycle.t.sol", passing_test);
+        std::fs::write(&failures_file, recorded_failure).unwrap();
+        cmd.forge_fuse().args(["test", "--rerun", output_flag, "-j1"]).assert_success();
+        assert!(!failures_file.exists());
+    }
+
+    // A stale recorded identity that no longer matches a renamed test clears the cache.
+    std::fs::write(&failures_file, recorded_failure).unwrap();
+    prj.add_test(
+        "RerunLifecycle.t.sol",
+        r#"
+contract RerunLifecycleTest {
+    function testRenamed() public {}
+}
+"#,
+    );
+    cmd.forge_fuse().args(["test", "--rerun", "-j1"]).assert_success();
+    assert!(!failures_file.exists());
+});
+
+forgetest_init!(rerun_cache_merges_network_pass_failures, |prj, cmd| {
+    prj.add_test(
+        "RerunNetworks.t.sol",
+        r#"
+contract RerunNetworksTest {
+    function testDefaultFailure() public pure {
+        require(false, "default failure");
+    }
+
+    /// forge-config: default.networks.network = "tempo"
+    function testTempoSuccess() public pure {}
+}
+"#,
+    );
+
+    cmd.args(["test", "-j1"]).assert_failure();
+    let failures_file = prj.root().join("cache/test-failures");
+    let failures: Value =
+        serde_json::from_str(&std::fs::read_to_string(&failures_file).unwrap()).unwrap();
+    assert_eq!(failures["failures"].as_array().unwrap().len(), 1);
+    assert_eq!(failures["failures"][0]["test"], "testDefaultFailure");
+
+    prj.add_test(
+        "RerunNetworks.t.sol",
+        r#"
+contract RerunNetworksTest {
+    function testDefaultFailure() public pure {
+        require(false, "default failure");
+    }
+
+    /// forge-config: default.networks.network = "tempo"
+    function testTempoFailure() public pure {
+        require(false, "tempo failure");
+    }
+}
+"#,
+    );
+    cmd.forge_fuse().args(["test", "-j1"]).assert_failure();
+    let failures: Value =
+        serde_json::from_str(&std::fs::read_to_string(&failures_file).unwrap()).unwrap();
+    let failed_tests = failures["failures"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|failure| failure["test"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(failed_tests.len(), 2);
+    assert!(failed_tests.contains(&"testDefaultFailure"));
+    assert!(failed_tests.contains(&"testTempoFailure"));
+});
+
+forgetest_init!(rerun_intersects_legacy_failure_pattern, |prj, cmd| {
+    prj.add_test(
+        "RerunLegacy.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract RerunLegacyTest is Test {
+    function testBrokenA() public {
+        assertTrue(false);
+    }
+
+    function testBrokenB() public {
+        assertTrue(false);
+    }
+}
+"#,
+    );
+
+    // Older versions persisted the failed test names as a plain regex. It is applied on top of
+    // `--match-test` in both directions instead of one replacing the other.
+    let failures_file = prj.root().join("cache/test-failures");
+    std::fs::create_dir_all(failures_file.parent().unwrap()).unwrap();
+    std::fs::write(&failures_file, "testBroken[AB]").unwrap();
+
+    cmd.args(["test", "--rerun", "--match-test", "testBrokenA", "-j1"]).assert_failure().stdout_eq(
+        str![[r#"
+...
+Ran 1 test for test/RerunLegacy.t.sol:RerunLegacyTest
+[FAIL: assertion failed] testBrokenA() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+...
+"#]],
+    );
+
+    std::fs::write(&failures_file, "testBrokenB").unwrap();
+
+    cmd.forge_fuse()
+        .args(["test", "--rerun", "--match-test", "testBroken[AB]", "-j1"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/RerunLegacy.t.sol:RerunLegacyTest
+[FAIL: assertion failed] testBrokenB() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+...
+"#]]);
+});
