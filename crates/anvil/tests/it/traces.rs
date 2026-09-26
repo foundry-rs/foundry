@@ -541,6 +541,51 @@ async fn test_trace_call_many_local() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_trace_call_empty_trace_types() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_wallets().next().unwrap().address();
+
+    // NUMBER PUSH0 MSTORE PUSH1 0x20 PUSH0 RETURN
+    let tx = TransactionRequest::default()
+        .from(from)
+        .with_deploy_code(Bytes::from_hex("0x435f5260205ff3").unwrap());
+    let traces: TraceResults = provider
+        .client()
+        .request(
+            "trace_call",
+            (WithOtherFields::new(tx), Vec::<TraceType>::new(), BlockId::latest()),
+        )
+        .await
+        .unwrap();
+
+    assert!(traces.trace.is_empty());
+    assert!(traces.vm_trace.is_none());
+    assert!(traces.state_diff.is_none());
+    assert_eq!(traces.output.len(), 32);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_call_many_defaults_to_latest() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_wallets().next().unwrap().address();
+
+    // NUMBER PUSH0 MSTORE PUSH1 0x20 PUSH0 RETURN
+    let tx = TransactionRequest::default()
+        .from(from)
+        .with_deploy_code(Bytes::from_hex("0x435f5260205ff3").unwrap());
+    let traces: Vec<TraceResults> = provider
+        .client()
+        .request("trace_callMany", (vec![(WithOtherFields::new(tx), vec![TraceType::Trace])],))
+        .await
+        .unwrap();
+
+    let latest = provider.get_block_number().await.unwrap();
+    assert_eq!(U256::from_be_slice(&traces[0].output), U256::from(latest));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_trace_get_local() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
@@ -1553,8 +1598,7 @@ async fn test_trace_filter() {
     let from_two = accounts[2].address();
     let to_two = accounts[3].address();
 
-    // Test default block ranges.
-    // From will be earliest, to will be best/latest
+    // Test default block ranges: omitted bounds both default to latest.
     let tracer = TraceFilter {
         from_block: None,
         to_block: None,
@@ -1571,8 +1615,18 @@ async fn test_trace_filter() {
         provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
     }
 
-    let traces = api.trace_filter(tracer).await.unwrap();
+    let latest = provider.get_block_number().await.unwrap();
+    let traces = api.trace_filter(tracer.clone()).await.unwrap();
+    assert_eq!(traces.len(), 1);
+    assert_eq!(traces[0].block_number, Some(latest));
+
+    let traces =
+        api.trace_filter(TraceFilter { from_block: Some(0), ..tracer.clone() }).await.unwrap();
     assert_eq!(traces.len(), 6);
+
+    // An explicit end before the implicit latest start is a reversed range.
+    let traces = api.trace_filter(TraceFilter { to_block: Some(1), ..tracer }).await;
+    assert!(traces.is_err());
 
     // Test filtering by address
     let tracer = TraceFilter {
