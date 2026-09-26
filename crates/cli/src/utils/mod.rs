@@ -670,8 +670,21 @@ ignore them in the `.gitignore` file."
 
     /// Returns true if all submodules matching `paths` have initialized worktrees.
     fn submodules_initialized(self, paths: &[OsString]) -> Result<bool> {
-        let Some(root) = self.root.ancestors().find(|root| root.join(".git").exists()) else {
+        // Let Git resolve relative roots and explicit repository/index overrides.
+        if !self.root.is_absolute()
+            || ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"]
+                .iter()
+                .any(|key| std::env::var_os(key).is_some())
+        {
             return Ok(false);
+        }
+        let Some(root) = self.root.ancestors().find(|root| root.join(".git").exists()) else {
+            // A symlink can hide an enclosing repository from the lexical ancestors.
+            return Ok(!self
+                .root
+                .canonicalize()?
+                .ancestors()
+                .any(|root| root.join(".git").exists()));
         };
         if paths.iter().any(|path| {
             Path::new(path)
@@ -683,7 +696,18 @@ ignore them in the `.gitignore` file."
         let relative_root = self.root.strip_prefix(root).unwrap_or_else(|_| Path::new(""));
         let gitmodules = root.join(".gitmodules");
         if !gitmodules.is_file() {
-            return Ok(false);
+            // Removing .gitmodules does not remove gitlinks from the index. Let Git handle
+            // any remaining submodules, including those without a .gitmodules mapping.
+            let output = self
+                .cmd_at(if paths.is_empty() { root } else { self.root })
+                .args(["ls-files", "--stage", "-z", "--"])
+                .args(paths)
+                .output()?;
+            return Ok(output.status.success()
+                && !output
+                    .stdout
+                    .split(|byte| *byte == 0)
+                    .any(|entry| entry.starts_with(b"160000 ")));
         }
 
         let output = Command::new("git")
@@ -1437,5 +1461,112 @@ mod tests {
             paths.get(Path::new("lib/openzeppelin-contracts")).unwrap(),
             "v4.8.0-791-g8829465a"
         );
+    }
+
+    #[test]
+    fn skips_submodule_status_outside_repository() {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("nested/project");
+        fs::create_dir_all(&root).unwrap();
+        let git = Git::new(&root);
+        assert!(git.submodules_initialized(&["lib".into()]).unwrap());
+        assert!(!git.has_missing_dependencies(["lib"]).unwrap());
+    }
+
+    #[test]
+    fn skips_submodule_status_without_gitmodules() {
+        let tmp = tempdir().unwrap();
+        let git = Git::new(tmp.path());
+        git.init().unwrap();
+        fs::write(tmp.path().join("tracked"), "tracked file").unwrap();
+        git.add(["tracked"]).unwrap();
+
+        assert!(git.submodules_initialized(&["lib".into()]).unwrap());
+        assert!(!git.has_missing_dependencies(["lib"]).unwrap());
+
+        let nested = tmp.path().join("packages/contracts");
+        fs::create_dir_all(&nested).unwrap();
+        let git = git.root(&nested);
+        assert!(git.submodules_initialized(&["lib".into()]).unwrap());
+        assert!(!git.has_missing_dependencies(["lib"]).unwrap());
+    }
+
+    #[test]
+    fn detects_missing_dependencies_with_deleted_gitmodules() {
+        let tmp = tempdir().unwrap();
+        let git = Git::new(tmp.path());
+        git.init().unwrap();
+        let gitmodules = tmp.path().join(".gitmodules");
+        fs::write(&gitmodules, "[submodule \"lib/dep\"]\n\tpath = lib/dep\n\turl = ../dep\n")
+            .unwrap();
+        git.add([".gitmodules"]).unwrap();
+        git.cmd()
+            .args([
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                "160000,1111111111111111111111111111111111111111,lib/dep",
+            ])
+            .exec()
+            .unwrap();
+        assert!(git.has_missing_dependencies(["lib"]).unwrap());
+
+        fs::remove_file(gitmodules).unwrap();
+        assert!(!git.submodules_initialized(&["lib".into()]).unwrap());
+        assert!(git.has_missing_dependencies(["lib"]).unwrap());
+
+        let nested = tmp.path().join("nested");
+        fs::create_dir(&nested).unwrap();
+        assert!(!git.root(&nested).submodules_initialized(&[]).unwrap());
+        assert!(git.root(&nested).submodules_uninitialized().unwrap());
+
+        git.cmd().args(["rm", "--cached", ".gitmodules"]).exec().unwrap();
+        assert!(!git.submodules_initialized(&["lib".into()]).unwrap());
+        assert!(git.has_missing_dependencies(["lib"]).is_err());
+    }
+
+    #[test]
+    fn skips_submodule_status_in_worktree_without_gitmodules() {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("main");
+        fs::create_dir(&root).unwrap();
+        let git = Git::new(&root);
+        git.init().unwrap();
+        git.cmd()
+            .args([
+                "-c",
+                "user.name=Foundry",
+                "-c",
+                "user.email=foundry@example.com",
+                "commit",
+                "--no-gpg-sign",
+                "--allow-empty",
+                "-m",
+                "test: initialize worktree fixture",
+            ])
+            .exec()
+            .unwrap();
+        let worktree = tmp.path().join("worktree");
+        git.cmd().args(["worktree", "add", "--detach"]).arg(&worktree).exec().unwrap();
+
+        assert!(worktree.join(".git").is_file());
+        let git = git.root(&worktree);
+        assert!(git.submodules_initialized(&["lib".into()]).unwrap());
+        assert!(!git.has_missing_dependencies(["lib"]).unwrap());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn keeps_submodule_status_for_symlinked_repository() {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("repo");
+        fs::create_dir(&root).unwrap();
+        Git::new(&root).init().unwrap();
+        let nested = root.join("nested");
+        fs::create_dir(&nested).unwrap();
+        let link = tmp.path().join("linked");
+        std::os::unix::fs::symlink(&nested, &link).unwrap();
+
+        assert!(!Git::new(&link).submodules_initialized(&[]).unwrap());
     }
 }
