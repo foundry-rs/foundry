@@ -1,7 +1,7 @@
 use crate::sequence::SequenceData;
 use alloy_consensus::{Transaction, transaction::SignerRecoverable};
 use alloy_eips::eip2718::{Decodable2718, Encodable2718};
-use alloy_network::Network;
+use alloy_network::{Network, TransactionBuilder, TransactionResponse};
 use alloy_primitives::{B256, Bytes, keccak256};
 use eyre::{ContextCompat, Result, WrapErr, bail};
 use forge_script_sequence::TransactionWithMetadata;
@@ -67,6 +67,7 @@ pub(crate) struct SignedPayload {
 
 #[derive(Clone, Serialize, Deserialize)]
 struct SubmissionAttempt<T> {
+    id: B256,
     members: Vec<OperationId>,
     kind: AttemptKind<T>,
 }
@@ -75,6 +76,15 @@ struct SubmissionAttempt<T> {
 #[serde(tag = "kind", rename_all = "camelCase")]
 enum AttemptKind<T> {
     Signed { request: Option<T>, payload: SignedPayload },
+    Delegated { request: T, status: DelegatedStatus },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub(crate) enum DelegatedStatus {
+    Prepared,
+    Pending { hash: B256 },
+    OutcomeUnknown,
 }
 
 /// Owns the authoritative recovery snapshot and its process-lifetime writer lock.
@@ -184,8 +194,38 @@ where
             if !attempt.members.contains(&id) {
                 return None;
             }
-            let AttemptKind::Signed { payload, .. } = &attempt.kind;
-            Some(payload)
+            match &attempt.kind {
+                AttemptKind::Signed { payload, .. } => Some(payload),
+                AttemptKind::Delegated { .. } => None,
+            }
+        })
+    }
+
+    pub(crate) fn delegated_status(
+        &self,
+        sequence: usize,
+        index: usize,
+    ) -> Option<DelegatedStatus> {
+        let deployment = self.plan.deployments.get(sequence)?;
+        let id = deployment.operations.get(index)?.id;
+        deployment.attempts.iter().find_map(|attempt| {
+            if !attempt.members.contains(&id) {
+                return None;
+            }
+            match &attempt.kind {
+                AttemptKind::Delegated { status, .. } => Some(*status),
+                AttemptKind::Signed { .. } => None,
+            }
+        })
+    }
+
+    pub(crate) fn delegated_attempt_id(&self, sequence: usize, index: usize) -> Option<B256> {
+        let deployment = self.plan.deployments.get(sequence)?;
+        let operation = deployment.operations.get(index)?.id;
+        deployment.attempts.iter().find_map(|attempt| {
+            (attempt.members.contains(&operation)
+                && matches!(attempt.kind, AttemptKind::Delegated { .. }))
+            .then_some(attempt.id)
         })
     }
 
@@ -195,8 +235,25 @@ where
             .get(sequence)
             .into_iter()
             .flat_map(|deployment| &deployment.attempts)
-            .map(|attempt| match &attempt.kind {
-                AttemptKind::Signed { payload, .. } => payload.hash,
+            .filter_map(|attempt| match &attempt.kind {
+                AttemptKind::Signed { payload, .. } => Some(payload.hash),
+                AttemptKind::Delegated { status: DelegatedStatus::Pending { hash }, .. } => {
+                    Some(*hash)
+                }
+                AttemptKind::Delegated { .. } => None,
+            })
+            .collect()
+    }
+
+    pub(crate) fn signed_hashes(&self, sequence: usize) -> Vec<B256> {
+        self.plan
+            .deployments
+            .get(sequence)
+            .into_iter()
+            .flat_map(|deployment| &deployment.attempts)
+            .filter_map(|attempt| match &attempt.kind {
+                AttemptKind::Signed { payload, .. } => Some(payload.hash),
+                AttemptKind::Delegated { .. } => None,
             })
             .collect()
     }
@@ -233,6 +290,7 @@ where
             bail!("refusing to replace an existing submission attempt");
         }
         self.plan.deployments[sequence].attempts.push(SubmissionAttempt {
+            id: B256::random(),
             members: vec![id],
             kind: AttemptKind::Signed { request: None, payload: signed },
         });
@@ -241,6 +299,142 @@ where
             return Err(error);
         }
         Ok(self.signed_payload(sequence, index).expect("signed payload was persisted").hash)
+    }
+
+    pub(crate) fn persist_delegated_request(
+        &mut self,
+        sequence: usize,
+        index: usize,
+        request: N::TransactionRequest,
+    ) -> Result<()> {
+        let deployment = self
+            .plan
+            .deployments
+            .get(sequence)
+            .context("delegated operation is not in the recovery snapshot")?;
+        let id = deployment
+            .operations
+            .get(index)
+            .context("delegated operation is not in the recovery snapshot")?
+            .id;
+        if deployment.attempts.iter().any(|attempt| attempt.members.contains(&id)) {
+            bail!("refusing to replace an existing submission attempt");
+        }
+        self.plan.deployments[sequence].attempts.push(SubmissionAttempt {
+            id: B256::random(),
+            members: vec![id],
+            kind: AttemptKind::Delegated { request, status: DelegatedStatus::Prepared },
+        });
+        if let Err(error) = write_snapshot(&self.path, &self.plan) {
+            self.plan.deployments[sequence].attempts.pop();
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn persist_delegated_status(
+        &mut self,
+        sequence: usize,
+        index: usize,
+        status: DelegatedStatus,
+    ) -> Result<()> {
+        let deployment = self
+            .plan
+            .deployments
+            .get_mut(sequence)
+            .context("delegated operation is not in the recovery snapshot")?;
+        let id = deployment
+            .operations
+            .get(index)
+            .context("delegated operation is not in the recovery snapshot")?
+            .id;
+        let attempt = deployment
+            .attempts
+            .iter_mut()
+            .find(|attempt| attempt.members.contains(&id))
+            .context("delegated operation has no submission attempt")?;
+        let AttemptKind::Delegated { status: current, .. } = &mut attempt.kind else {
+            bail!("operation has no delegated submission attempt");
+        };
+        let previous = *current;
+        if previous == status {
+            return Ok(());
+        }
+        *current = status;
+        if let Err(error) = write_snapshot(&self.path, &self.plan) {
+            let AttemptKind::Delegated { status, .. } = &mut self.plan.deployments[sequence]
+                .attempts
+                .iter_mut()
+                .find(|attempt| attempt.members.contains(&id))
+                .unwrap()
+                .kind
+            else {
+                unreachable!()
+            };
+            *status = previous;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn clear_delegated_request(&mut self, sequence: usize, index: usize) -> Result<()> {
+        let deployment = self
+            .plan
+            .deployments
+            .get_mut(sequence)
+            .context("delegated operation is not in the recovery snapshot")?;
+        let id = deployment
+            .operations
+            .get(index)
+            .context("delegated operation is not in the recovery snapshot")?
+            .id;
+        let position = deployment
+            .attempts
+            .iter()
+            .position(|attempt| {
+                attempt.members.contains(&id)
+                    && matches!(&attempt.kind, AttemptKind::Delegated { .. })
+            })
+            .context("delegated operation has no submission attempt")?;
+        let attempt = deployment.attempts.remove(position);
+        if let Err(error) = write_snapshot(&self.path, &self.plan) {
+            self.plan.deployments[sequence].attempts.insert(position, attempt);
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn delegated_attempt_location(&self, id: B256) -> Option<(usize, usize)> {
+        self.plan.deployments.iter().enumerate().find_map(|(sequence, deployment)| {
+            let attempt = deployment.attempts.iter().find(|attempt| {
+                attempt.id == id && matches!(attempt.kind, AttemptKind::Delegated { .. })
+            })?;
+            let operation = attempt.members.first()?;
+            Some((sequence, operation.index as usize))
+        })
+    }
+
+    pub(crate) fn resolve_delegated_hash(
+        &mut self,
+        attempt_id: B256,
+        hash: B256,
+        transaction: &N::TransactionResponse,
+    ) -> Result<(usize, usize)>
+    where
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+    {
+        let (sequence, index) = self
+            .delegated_attempt_location(attempt_id)
+            .context("no interrupted delegated submission matches --resume-attempt")?;
+        let deployment = &self.plan.deployments[sequence];
+        let attempt = deployment.attempts.iter().find(|attempt| attempt.id == attempt_id).unwrap();
+        let AttemptKind::Delegated { request, status } = &attempt.kind else { unreachable!() };
+        if !matches!(status, DelegatedStatus::Prepared | DelegatedStatus::OutcomeUnknown) {
+            bail!("delegated submission attempt {attempt_id} does not require resolution");
+        }
+        validate_delegated_transaction::<N>(transaction, request, deployment.chain, hash)?;
+        self.persist_delegated_status(sequence, index, DelegatedStatus::Pending { hash })?;
+        Ok((sequence, index))
     }
 
     pub(crate) fn prepare_relocation(
@@ -311,7 +505,7 @@ impl RecoveryLock {
 
 impl<N: Network> RecoveryPlan<N>
 where
-    N::TransactionRequest: Serialize,
+    N::TransactionRequest: for<'de> Deserialize<'de> + Serialize,
     N::TxEnvelope: for<'de> Deserialize<'de> + Serialize,
 {
     fn new(data: SequenceData<N>, batch: bool, generation: B256) -> Result<Self> {
@@ -376,7 +570,7 @@ where
             deployment.attempts.clear();
         }
         let expected = Self::new(self.data.clone(), self.batch, self.generation)?;
-        if serde_json::to_value(saved)? != serde_json::to_value(expected.deployments)? {
+        if serde_json::to_value(saved)? != serde_json::to_value(&expected.deployments)? {
             bail!("recovery snapshot does not match the script operations; refusing to resume");
         }
         Ok(())
@@ -402,12 +596,12 @@ where
                     .context("recovery snapshot attempt has invalid operation membership")?;
                 let transaction =
                     &self.data.sequences()[sequence].transactions[member.index as usize];
-                let AttemptKind::Signed { payload, .. } = &attempt.kind;
-                if validate_signed_payload::<N>(
-                    payload.payload.clone(),
-                    transaction,
-                    deployment.chain,
-                )? != *payload
+                if let AttemptKind::Signed { payload, .. } = &attempt.kind
+                    && validate_signed_payload::<N>(
+                        payload.payload.clone(),
+                        transaction,
+                        deployment.chain,
+                    )? != *payload
                 {
                     bail!("recovery snapshot signed payload does not match its hash");
                 }
@@ -528,6 +722,31 @@ where
     Ok(SignedPayload { hash: envelope.trie_hash(), payload })
 }
 
+fn validate_delegated_transaction<N: Network>(
+    transaction: &N::TransactionResponse,
+    planned: &N::TransactionRequest,
+    chain: u64,
+    hash: B256,
+) -> Result<()>
+where
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+{
+    if transaction.tx_hash() != hash
+        || transaction.from() != planned.from().context("delegated request has no sender")?
+        || transaction.chain_id() != Some(chain)
+        || planned.chain_id() != Some(chain)
+        || transaction.nonce() != planned.nonce().context("delegated request has no nonce")?
+        || transaction.to() != planned.to()
+        || transaction.value() != planned.value().unwrap_or_default()
+        || transaction.input() != planned.input().unwrap_or_default()
+        || transaction.authorization_list().unwrap_or_default()
+            != planned.authorization_list().map(Vec::as_slice).unwrap_or_default()
+    {
+        bail!("resolved transaction does not match its delegated submission attempt");
+    }
+    Ok(())
+}
+
 fn write_snapshot<N: Network>(path: &Path, plan: &RecoveryPlan<N>) -> Result<()>
 where
     N::TransactionRequest: Serialize,
@@ -563,10 +782,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_consensus::TxEnvelope;
+    use alloy_consensus::{TxEnvelope, transaction::Recovered};
     use alloy_network::Ethereum;
     use alloy_primitives::hex;
-    use alloy_rpc_types::TransactionRequest;
+    use alloy_rpc_types::{Transaction as RpcTransaction, TransactionRequest};
 
     const SIGNED_TX: &[u8] = &hex!(
         "02f86b0180843b9aca008502540be4008252089400000000000000000000000000000000000000016480c001a070d55e79ed3ac9fc8f51e78eb91fd054720d943d66633f2eb1bc960f0126b0eca052eda05a792680de3181e49bab4093541f75b49d1ecbe443077b3660c836016a"
@@ -601,6 +820,22 @@ mod tests {
         };
         sequence.paths = Some((dir.join("broadcast.json"), dir.join("cache.json")));
         SequenceData::Single(sequence)
+    }
+
+    fn delegated_transaction(payload: &[u8]) -> (TransactionRequest, RpcTransaction) {
+        let envelope = TxEnvelope::decode_2718_exact(payload).unwrap();
+        let from = envelope.recover_signer().unwrap();
+        let mut request: TransactionRequest = envelope.clone().into();
+        request.from = Some(from);
+        let transaction = RpcTransaction {
+            inner: Recovered::new_unchecked(envelope, from),
+            block_hash: None,
+            block_number: None,
+            transaction_index: None,
+            effective_gas_price: None,
+            block_timestamp: None,
+        };
+        (request, transaction)
     }
 
     fn load(paths: &(PathBuf, PathBuf), batch: bool) -> Result<RecoveryStore<Ethereum>> {
@@ -752,5 +987,49 @@ mod tests {
 
         assert!(store.persist_signed_payload(1, 0, SIGNED_TX.to_vec().into()).is_err());
         assert!(store.persist_signed_payload(0, 1, SIGNED_TX.to_vec().into()).is_err());
+    }
+
+    #[test]
+    fn delegated_submission_is_immutable_and_survives_reload() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = sequence(dir.path());
+        let paths = data.paths();
+        let request = <Ethereum as Network>::TransactionRequest::default();
+        let hash = B256::repeat_byte(0x42);
+        {
+            let mut store = RecoveryStore::create(data, false).unwrap();
+            store.persist_delegated_request(0, 0, request).unwrap();
+            store.persist_delegated_status(0, 0, DelegatedStatus::Pending { hash }).unwrap();
+            assert!(store.persist_delegated_request(0, 0, Default::default()).is_err());
+        }
+
+        let store = load(&paths, false).unwrap();
+        assert!(
+            matches!(store.delegated_status(0, 0), Some(DelegatedStatus::Pending { hash: value }) if value == hash)
+        );
+    }
+
+    #[test]
+    fn delegated_resolution_is_bound_to_its_planned_transaction() {
+        let (request, transaction) = delegated_transaction(SIGNED_TX);
+        let hash = transaction.tx_hash();
+        validate_delegated_transaction::<Ethereum>(&transaction, &request, 1, hash).unwrap();
+
+        let (other, _) = delegated_transaction(OTHER_SIGNED_TX);
+        assert!(validate_delegated_transaction::<Ethereum>(&transaction, &other, 1, hash).is_err());
+    }
+
+    #[test]
+    fn definite_non_submission_clears_delegated_request() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = sequence(dir.path());
+        let paths = data.paths();
+        let mut store = RecoveryStore::create(data, false).unwrap();
+        store.persist_delegated_request(0, 0, Default::default()).unwrap();
+        store.clear_delegated_request(0, 0).unwrap();
+        assert!(store.delegated_status(0, 0).is_none());
+        drop(store);
+
+        assert!(load(&paths, false).unwrap().delegated_status(0, 0).is_none());
     }
 }
