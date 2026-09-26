@@ -675,8 +675,7 @@ ignore them in the `.gitignore` file."
             return Ok(false);
         }
         let Some(root) = find_git_root(self.root)? else {
-            // A symlink can hide an enclosing repository from the lexical ancestors.
-            return Ok(find_git_root(&self.root.canonicalize()?)?.is_none());
+            return Ok(true);
         };
         let root = root.as_path();
         if paths.iter().any(|path| {
@@ -1546,20 +1545,5 @@ mod tests {
         let git = git.root(&worktree);
         assert!(git.submodules_initialized(&["lib".into()]).unwrap());
         assert!(!git.has_missing_dependencies(["lib"]).unwrap());
-    }
-
-    #[test]
-    #[cfg(unix)]
-    fn keeps_submodule_status_for_symlinked_repository() {
-        let tmp = tempdir().unwrap();
-        let root = tmp.path().join("repo");
-        fs::create_dir(&root).unwrap();
-        Git::new(&root).init().unwrap();
-        let nested = root.join("nested");
-        fs::create_dir(&nested).unwrap();
-        let link = tmp.path().join("linked");
-        std::os::unix::fs::symlink(&nested, &link).unwrap();
-
-        assert!(!Git::new(&link).submodules_initialized(&[]).unwrap());
     }
 }
