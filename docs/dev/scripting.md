@@ -274,7 +274,9 @@ need not remain the authoritative recovery state.
   failure to update an export must not roll recovery state backward.
 - Import generationless legacy artifacts only after validating the public/sensitive pair, then
   publish their recovery generation through the same recoverable replacement protocol. Missing,
-  mixed, corrupt, or conflicting generation-tagged recovery state fails closed.
+  mixed, corrupt, or conflicting generation-tagged recovery state fails closed. Legacy batch
+  hashes are imported only when every remaining operation and the pending set identify one hash;
+  generation-tagged batch progress never infers an attempt from mutable transaction hashes.
 
 ### Conservative reconciliation
 
