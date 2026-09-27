@@ -80,12 +80,12 @@ def compare(base, candidate, rules):
     print("|-----------|--------:|---------:|--------|")
     has_regression = False
     has_missing = False
-    for key in sorted(base.keys() | candidate.keys()):
+    for key in sorted(base.keys() | candidate.keys() | rules.keys()):
         has_base, has_candidate = key in base, key in candidate
         if not has_base or not has_candidate:
             has_missing = True
-            present = duration(mean_of(candidate[key] if not has_base else base[key], key))
-            left, right = ("N/A", present) if not has_base else (present, "N/A")
+            left = duration(mean_of(base[key], key)) if has_base else "N/A"
+            right = duration(mean_of(candidate[key], key)) if has_candidate else "N/A"
             print(f"| `{key}` | {left} | {right} | ⚠️ Incomplete benchmark |")
             continue
 
