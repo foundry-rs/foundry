@@ -7070,3 +7070,91 @@ Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 "#
     ]]);
 });
+
+// `eth_getLogs` and `getRawBlockHeader` must reach the fork with its configured auth.
+forgetest_async!(fork_eth_get_logs_and_raw_block_header_with_auth, |prj, cmd| {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let target = Address::repeat_byte(0x42);
+    let topic = B256::repeat_byte(0x11);
+
+    // PUSH32 topic, PUSH1 0, PUSH1 0, LOG1, STOP
+    let code = [&[0x7f][..], topic.as_slice(), &[0x60, 0x00, 0x60, 0x00, 0xa1, 0x00]].concat();
+    api.anvil_set_code(target, Bytes::from(code)).await.unwrap();
+
+    let provider = handle.http_provider();
+    let from = handle.dev_accounts().next().unwrap();
+    let tx_hash: B256 = provider
+        .raw_request(
+            "eth_sendTransaction".into(),
+            (serde_json::json!({ "from": from, "to": target }),),
+        )
+        .await
+        .unwrap();
+    api.anvil_mine(Some(U256::ONE), None).await.unwrap();
+    let block =
+        provider.get_transaction_receipt(tx_hash).await.unwrap().unwrap().block_number.unwrap();
+    let block_hash = provider.get_block(block.into()).await.unwrap().unwrap().header.hash;
+
+    let endpoint = rpc::spawn_rpc_proxy_requiring_header(
+        handle.http_endpoint(),
+        "authorization",
+        "Bearer secret",
+    )
+    .await;
+    std::fs::write(
+        prj.config(),
+        format!(
+            r#"[rpc_endpoints]
+authenticated = {{ endpoint = "{endpoint}", auth = "Bearer secret" }}
+"#
+        ),
+    )
+    .unwrap();
+
+    prj.add_test(
+        "ForkAuth.t.sol",
+        &format!(
+            r#"
+interface Vm {{
+    struct EthGetLogs {{ address emitter; bytes32[] topics; bytes data; bytes32 blockHash; uint64 blockNumber; bytes32 transactionHash; uint64 transactionIndex; uint256 logIndex; bool removed; }}
+    function createSelectFork(string calldata urlOrAlias) external returns (uint256 forkId);
+    function eth_getLogs(uint256 fromBlock, uint256 toBlock, address target, bytes32[] calldata topics) external view returns (EthGetLogs[] memory logs);
+    function getRawBlockHeader(uint256 blockNumber) external view returns (bytes memory rlpHeader);
+}}
+
+contract ForkAuthTest {{
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function testForkEthGetLogs() public {{
+        vm.createSelectFork("authenticated");
+        bytes32[] memory topics = new bytes32[](1);
+        topics[0] = {topic};
+
+        Vm.EthGetLogs[] memory logs = vm.eth_getLogs({block}, {block}, {target}, topics);
+
+        require(logs.length == 1, "logs length");
+        require(logs[0].emitter == {target}, "emitter");
+        require(logs[0].topics[0] == {topic}, "topic");
+        require(logs[0].blockNumber == {block}, "block number");
+    }}
+
+    function testForkGetRawBlockHeader() public {{
+        vm.createSelectFork("authenticated");
+        require(keccak256(vm.getRawBlockHeader({block})) == {block_hash}, "block hash");
+    }}
+}}
+"#
+        ),
+    );
+
+    cmd.args(["test", "--match-contract", "ForkAuthTest"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 2 tests for test/ForkAuth.t.sol:ForkAuthTest
+[PASS] testForkEthGetLogs() ([GAS])
+[PASS] testForkGetRawBlockHeader() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]]);
+});

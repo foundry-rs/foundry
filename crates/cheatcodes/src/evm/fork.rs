@@ -281,9 +281,12 @@ impl Cheatcode for eth_getLogsCall {
             bail!("topics array must contain at most 4 elements")
         }
 
-        let url =
-            ccx.ecx.db().active_fork_url().ok_or_else(|| fmt_err!("no active fork URL found"))?;
-        let provider = ProviderBuilder::<AnyNetwork>::new(&url).build()?;
+        let fork = ccx
+            .ecx
+            .db()
+            .active_fork_options()
+            .ok_or_else(|| fmt_err!("no active fork URL found"))?;
+        let provider = fork.evm_opts.fork_provider_with_url::<AnyNetwork>(&fork.url)?;
         let mut filter = Filter::new().address(*target).from_block(from_block).to_block(to_block);
         for (i, &topic) in topics.iter().enumerate() {
             filter.topics[i] = topic.into();
@@ -350,8 +353,8 @@ impl Cheatcode for eth_getProofCall {
 impl Cheatcode for getRawBlockHeaderCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { blockNumber } = self;
-        let url = ccx.ecx.db().active_fork_url().ok_or_else(|| fmt_err!("no active fork"))?;
-        let provider = ProviderBuilder::<AnyNetwork>::new(&url).build()?;
+        let fork = ccx.ecx.db().active_fork_options().ok_or_else(|| fmt_err!("no active fork"))?;
+        let provider = fork.evm_opts.fork_provider_with_url::<AnyNetwork>(&fork.url)?;
         let block_number = u64::try_from(blockNumber)
             .map_err(|_| fmt_err!("block number must be less than 2^64"))?;
         let block =
