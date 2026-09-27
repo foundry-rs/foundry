@@ -18,11 +18,11 @@
   "foundry_environment_overrides": {},
   "catalog_commit": "de70065957a32fc5dd5fba3e53bb60f8564c722c",
   "forge": {
-    "sha256": "c5116f1a871fc6dd7345171db3a54ae5a76d599d82776a2b3c903081b75d0085",
-    "version": "forge Version: 1.8.4-dev\nCommit SHA: d55e99f992dd30d75f3e8bc886db1aa96ada675f\nBuild Timestamp: 2026-09-17T19:12:43.821515000Z (1789672363)\nBuild Profile: profiling"
+    "sha256": "6d89564d3873341e0d9838455315d7d3d82bfda3a860483480032d538ed6acc8",
+    "version": "forge Version: 1.8.4-dev\nCommit SHA: d295a23ec328a8e0edd7dfda1625e65b79fe2687\nBuild Timestamp: 2026-09-27T14:03:46.372052000Z (1790517826)\nBuild Profile: profiling"
   },
   "runner": {
-    "sha256": "26f3c687d7a77f07124e305f0b6a48ab9e64c024b489a1276a9800eba22959ae"
+    "sha256": "f77c8f4f06b810baa3298b7acd807932a59632e8746f5e9209230f258d128b5b"
   },
   "source_base": "84254d8a56a13aba9f2a11b88acdbc371c4d8f35",
   "scfuzzbench_commit": "3bad5ea092113613c3d2fea03131a3a047acdaef",

@@ -15,9 +15,9 @@ There are 30 measured trials. Three seed streams run concurrently on the same Ma
 the policy order is rotated by stream. CPU contention and unequal setup duration
 make this a plumbing screen, not an isolated throughput benchmark.
 
-All arms use the same existing profiling Forge binary at reported commit
-`d55e99f992dd30d75f3e8bc886db1aa96ada675f`, **not a fresh build of this PR or current
-master**. Binary hashes and environment details are in [evidence.json](evidence.json).
+All arms use fresh profiling Forge and `foundry-scfuzzbench` binaries built from
+the initial PR commit `d295a23ec328a8e0edd7dfda1625e65b79fe2687`. Binary hashes and
+environment details are in [evidence.json](evidence.json).
 The runner pins `tempoxyz/scfuzzbench` at
 `3bad5ea092113613c3d2fea03131a3a047acdaef`. Each trial receives a fresh cloned target,
 corpus and failure directory; compilation and post-campaign showmap replay are
@@ -27,16 +27,16 @@ outside the 15-second campaign budget. There were no `FOUNDRY_*` overrides.
 
 | Suite | Policy | Unique known bugs | Known bug × seed hits | Median calls | Calls/budget s | Median showmap locations |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| drips | baseline | N/A | N/A | 20,400 | 1,360 | 39,227 |
-| drips | uniform | N/A | N/A | 27,800 | 1,853 | 39,296 |
-| drips | round-robin | N/A | N/A | 14,800 | 987 | 39,238 |
-| drips | greedy | N/A | N/A | 14,000 | 933 | 39,185 |
-| drips | weighted | N/A | N/A | 25,500 | 1,700 | 39,337 |
-| origin-dollar | baseline | 4/12 | 12/36 | 372,500 | 24,833 | 14,547 |
-| origin-dollar | uniform | 5/12 | 13/36 | 308,350 | 20,557 | 14,522 |
-| origin-dollar | round-robin | 5/12 | 14/36 | 310,000 | 20,667 | 14,547 |
-| origin-dollar | greedy | 6/12 | 14/36 | 374,800 | 24,987 | 14,547 |
-| origin-dollar | weighted | 4/12 | 12/36 | 363,800 | 24,253 | 14,547 |
+| drips | baseline | N/A | N/A | 19,000 | 1,267 | 39,233 |
+| drips | uniform | N/A | N/A | 17,200 | 1,147 | 39,242 |
+| drips | round-robin | N/A | N/A | 6,200 | 413 | 39,214 |
+| drips | greedy | N/A | N/A | 4,600 | 307 | 39,192 |
+| drips | weighted | N/A | N/A | 18,200 | 1,213 | 39,270 |
+| origin-dollar | baseline | 4/12 | 12/36 | 272,900 | 18,193 | 14,550 |
+| origin-dollar | uniform | 4/12 | 12/36 | 265,900 | 17,727 | 14,512 |
+| origin-dollar | round-robin | 5/12 | 13/36 | 292,900 | 19,527 | 14,547 |
+| origin-dollar | greedy | 5/12 | 13/36 | 273,800 | 18,253 | 14,547 |
+| origin-dollar | weighted | 4/12 | 12/36 | 251,300 | 16,753 | 14,512 |
 
 `calls/s` is final calls divided by the 15-second budget, not a sampled steady-state
 rate. Coverage is the median number of distinct showmap instruction locations in
@@ -60,13 +60,11 @@ Origin Dollar per-bug hit rates (three trials per policy):
 | burn-balance-shortfall | 3/3 | 3/3 | 3/3 | 3/3 | 3/3 |
 | change-supply-mismatch | 3/3 | 3/3 | 3/3 | 3/3 | 3/3 |
 | rebasing-credits-per-token-increase | 3/3 | 3/3 | 3/3 | 3/3 | 3/3 |
-| total-supply-below-balances | 0/3 | 1/3 | 2/3 | 1/3 | 0/3 |
+| total-supply-below-balances | 0/3 | 0/3 | 1/3 | 1/3 | 0/3 |
 | transfer-sender-shortfall | 3/3 | 3/3 | 3/3 | 3/3 | 3/3 |
-| transfer-within-balance-reverts | 0/3 | 0/3 | 0/3 | 1/3 | 0/3 |
 
-The other six catalog entries have 0/3 hits for every policy. Every Origin Dollar
-trial hits at least one known bug. Median time-to-first is in the starting clock
-second for all policies; the weighted arm has a 0–1 second observed range.
+The other seven catalog entries have 0/3 hits for every policy. Every Origin Dollar
+trial hits at least one known bug, in the starting clock second.
 
 Time-to-first uses the runner log's campaign-start timestamp and the first matching
 failure event's epoch timestamp, both at whole-second precision. The existing
