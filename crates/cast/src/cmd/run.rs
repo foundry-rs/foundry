@@ -1,7 +1,9 @@
 use super::{MAX_CONCURRENT_RPC_REQUESTS, fetch_code_via_rpc};
 use crate::{
     debug::{ensure_remote_trace_context_unchanged, handle_traces, resolve_remote_trace_hardfork},
-    rpc_trace::{call_frame_to_arena, is_method_not_found_error, is_missing_state_error},
+    rpc_trace::{
+        call_frame_to_arena, call_tracer_config, is_method_not_found_error, is_missing_state_error,
+    },
     traces::TraceKind,
     utils::{
         apply_chain_and_block_specific_env_changes_for_chain,
@@ -21,7 +23,7 @@ use alloy_primitives::{
 use alloy_provider::{Provider, ext::DebugApi};
 use alloy_rpc_types::{
     BlockId, BlockTransactions,
-    trace::geth::{CallConfig, CallFrame, GethDebugTracingOptions, GethTrace, PreStateConfig},
+    trace::geth::{CallFrame, GethDebugTracingOptions, GethTrace, PreStateConfig},
 };
 use alloy_transport::TransportError;
 use clap::Parser;
@@ -346,7 +348,7 @@ impl RunArgs {
             provider
                 .debug_trace_transaction(
                     tx_hash,
-                    GethDebugTracingOptions::call_tracer(CallConfig::default().with_log()),
+                    GethDebugTracingOptions::call_tracer(call_tracer_config()),
                 )
                 .await,
             "debug_traceTransaction",
