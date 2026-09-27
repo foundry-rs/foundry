@@ -729,3 +729,44 @@ contract ArbitrumArbSysTest is Test {
         cmd.args(["test", "--mt", "test_arbitrum_fork_arbsys_arb_block_number"]).assert_success();
     }
 );
+
+// Nitro serves ArbSys as a precompile, so calls to it pay the warm account access cost, and
+// `arbBlockNumber()` charges 803 gas: 800 to open the ArbOS state and 3 to copy the result.
+// Without a fork it reports the current block, following `vm.roll`.
+forgetest_init!(arbitrum_arbsys_arb_block_number_gas, |prj, cmd| {
+    prj.add_test(
+        "ArbSysGas.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract ArbSysGasTest is Test {
+    function arbBlockNumber() internal view returns (uint256 blockNumber, uint256 gasUsed) {
+        assembly {
+            mstore(0, shl(224, 0xa3b1b31d))
+            let before := gas()
+            let success := staticcall(gas(), 0x64, 0, 4, 0, 32)
+            gasUsed := sub(before, gas())
+            if iszero(success) { revert(0, 0) }
+            blockNumber := mload(0)
+        }
+    }
+
+    function test_arbsys_arb_block_number_gas() public {
+        (uint256 blockNumber, uint256 gasUsed) = arbBlockNumber();
+        assertEq(blockNumber, block.number);
+        // 100 for the warm access and 803 inside ArbSys, plus the surrounding stack operations. A
+        // cold access alone would cost 2600.
+        assertGe(gasUsed, 903);
+        assertLt(gasUsed, 1000);
+
+        vm.roll(1234);
+        (blockNumber,) = arbBlockNumber();
+        assertEq(blockNumber, 1234);
+    }
+}
+"#,
+    );
+
+    cmd.env("FOUNDRY_CHAIN_ID", "42161");
+    cmd.args(["test", "--mt", "test_arbsys_arb_block_number_gas"]).assert_success();
+});

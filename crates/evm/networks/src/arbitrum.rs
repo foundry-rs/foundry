@@ -3,7 +3,7 @@
 use std::borrow::Cow;
 
 use alloy_chains::Chain;
-use alloy_evm::precompiles::{DynPrecompile, PrecompileInput};
+use alloy_evm::precompiles::{DynPrecompile, PrecompileInput, PrecompilesMap};
 use alloy_primitives::{Address, Bytes, U256, address, hex};
 use revm::precompile::{PrecompileHalt, PrecompileId, PrecompileOutput, PrecompileResult};
 
@@ -13,8 +13,9 @@ pub const ARB_SYS_ADDRESS: Address = address!("000000000000000000000000000000000
 /// `ArbSys.arbBlockNumber()` selector.
 pub const ARB_BLOCK_NUMBER_SELECTOR: [u8; 4] = hex!("a3b1b31d");
 
-/// Gas charged by Nitro for returning the 32-byte `arbBlockNumber()` result.
-pub const ARB_BLOCK_NUMBER_GAS_COST: u64 = 3;
+/// Gas Nitro charges inside `ArbSys.arbBlockNumber()`: opening the ArbOS state reads its version
+/// from storage (800, the EIP-2200 `SLOAD` cost), and copying the 32-byte result costs 3.
+pub const ARB_BLOCK_NUMBER_GAS_COST: u64 = 803;
 
 /// ID for the ArbSys precompile.
 pub static PRECOMPILE_ID_ARB_SYS: PrecompileId = PrecompileId::Custom(Cow::Borrowed("ArbSys"));
@@ -33,6 +34,20 @@ pub fn arb_block_number_output(block_number: u64) -> Bytes {
 pub fn arb_block_number_call(gas_limit: u64, block_number: u64) -> Option<(u64, Bytes)> {
     (gas_limit >= ARB_BLOCK_NUMBER_GAS_COST)
         .then(|| (ARB_BLOCK_NUMBER_GAS_COST, arb_block_number_output(block_number)))
+}
+
+/// Registers ArbSys on Arbitrum chains, reporting `block_number` from `arbBlockNumber()`.
+///
+/// Nitro serves ArbSys as a precompile, so calls to it pay the warm account access cost.
+pub fn apply_arb_sys_precompile(
+    precompiles: &mut PrecompilesMap,
+    chain_id: u64,
+    block_number: u64,
+) {
+    if is_arbitrum_chain(chain_id) {
+        precompiles
+            .apply_precompile(&ARB_SYS_ADDRESS, move |_| Some(arb_sys_precompile(block_number)));
+    }
 }
 
 /// Returns an ArbSys precompile for the provided L2 block number.
