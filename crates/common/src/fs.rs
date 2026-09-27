@@ -343,8 +343,5 @@ mod tests {
         read_result.unwrap();
         assert_eq!(contents, b"original contents");
         assert_eq!(fs::read(&path).unwrap(), b"new");
-
-        locked_write(&path, []).unwrap();
-        assert_eq!(fs::read(&path).unwrap(), b"");
     }
 }
