@@ -4028,7 +4028,7 @@ contract Counter {
         let contents = fs::read(&path).unwrap();
         (path, contents)
     });
-    let output_cache = prj.cache().with_extension("json.outputs");
+    let abi_cache = prj.cache().with_extension("json.abi");
     let fields = ["ir", "irOptimized", "assembly"];
     let uncached = fields.map(|field| {
         cmd.forge_fuse()
@@ -4037,13 +4037,14 @@ contract Counter {
             .get_output()
             .stdout_lossy()
     });
-    assert!(!output_cache.exists());
+    assert!(!abi_cache.exists());
 
     for (field, expected) in fields.iter().zip(&uncached) {
         cmd.forge_fuse().args(["inspect", "Counter", field, "--json"]).assert_json_stdout(expected);
+        cmd.forge_fuse().args(["inspect", "Counter", field, "--json"]).assert_json_stdout(expected);
     }
-    assert!(output_cache.is_dir());
-    // Alternating fields must retain each output selection's cached artifacts.
+    assert!(abi_cache.is_dir());
+    // Switching fields must preserve output correctness even when a selection is recompiled.
     for (field, expected) in fields.iter().zip(&uncached).rev() {
         cmd.forge_fuse().args(["inspect", "Counter", field, "--json"]).assert_json_stdout(expected);
     }
@@ -4069,17 +4070,17 @@ contract Counter {
         assert_eq!(fs::read(path).unwrap(), *contents);
     }
 
-    let marker = output_cache.join("force-marker");
+    let marker = abi_cache.join("force-marker");
     fs::write(&marker, "").unwrap();
     cmd.forge_fuse().args(["inspect", "Counter", "ir", "--force"]).assert_success();
     assert!(!marker.exists());
-    assert!(!output_cache.exists());
+    assert!(!abi_cache.exists());
     assert!(!prj.paths().artifacts.exists());
     assert!(!prj.cache().exists());
     cmd.forge_fuse().args(["inspect", "Counter", "ir"]).assert_success();
-    assert!(output_cache.is_dir());
+    assert!(abi_cache.is_dir());
     cmd.forge_fuse().arg("clean").assert_success();
-    assert!(!output_cache.exists());
+    assert!(!abi_cache.exists());
 });
 
 forgetest!(inspect_output_cache_respects_warning_denial, |prj, cmd| {

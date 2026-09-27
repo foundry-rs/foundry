@@ -110,12 +110,19 @@ impl InspectArgs {
         if project.no_artifacts
             && project.cached
             && !config.force
+            && is_solidity_source(&target_path)
             && project.artifacts.additional_files == Default::default()
             // Cached artifacts do not retain compiler diagnostics.
             && !config.deny.warnings()
         {
             project.no_artifacts = false;
-            compiler = compiler.cache_outputs();
+            if field != ContractOutputSelection::Abi {
+                project.update_output_selection(|selection| {
+                    *selection =
+                        std::mem::take(selection).with_output("*", "*", ["abi".to_string()]);
+                });
+            }
+            compiler = compiler.cache_abi();
         }
         let mut output = compiler.compile(&project)?;
 
