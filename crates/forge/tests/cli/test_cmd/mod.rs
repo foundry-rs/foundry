@@ -3646,6 +3646,21 @@ Suite result: ok. 0 passed; 0 failed; 6 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 0 tests passed, 0 failed, 6 skipped (6 total tests)
 
 "#]]);
+
+    cmd.forge_fuse()
+        .args(["test", "--mt", "invariant_", "--summary", "--json"])
+        .assert_json_stdout(str![[r#"
+{
+  "results": [
+    {
+      "suite": "Skips",
+      "passed": 0,
+      "failed": 0,
+      "skipped": 2
+    }
+  ]
+}
+"#]]);
 });
 
 forgetest_init!(skip_setup, |prj, cmd| {
