@@ -110,3 +110,36 @@ adaptive corpus retention, long-run exploration, or statistical significance.
 The unchanged-depth baseline and uniform arm separate candidate diversity from
 scheduler effects in the design, but these short, noisy trials cannot establish a
 reliable effect size. No change to core is justified by these results.
+
+## Frontier-selection follow-up
+
+A separate screen captured 256 stateful Origin Dollar comparison frontiers from one
+20-second, depth-100 campaign. Five arms started from exact copies of that artifact,
+received 16 one-second symbolic attempts, concretely replayed every candidate, and
+then ran only one depth-one invariant iteration. The first Jev tournament compared
+all frontiers from concrete metadata. The second retained 92 one-sided frontiers
+with nontrivial Solidity source-map fragments before ranking them. Each candidate in
+each tournament appeared in four randomized groups.
+
+| Selector | Replayed entries | Showmap locations | Property failures | Solve wall |
+| --- | ---: | ---: | ---: | ---: |
+| Foundry automatic | 1 | 1,160 | 0 | 4.30s |
+| Jev metadata | 2 | 7,355 | 0 | 5.45s |
+| Random, all frontiers | 3 | 7,341 | 0 | 4.22s |
+| Jev source-aware | 3 | 7,693 | 0 | 3.75s |
+| Random, source-filtered | 2 | 2,667 | 0 | 4.11s |
+
+The source-aware arm crossed more replayable branches than the automatic selector,
+but did not beat unrestricted random selection on accepted entries and produced no
+bug. Showmap totals include each retained concrete prefix, so a deeper sequence can
+inflate the total without representing equivalent incremental coverage. They are not
+evidence of a bug-discovery gain.
+
+The two tournaments made 176 Jev 1.13 calls costing $0.176. Their aggregate reported
+latency was 703.751 seconds; median calls took about 3.8 seconds. Calls were issued
+four at a time for the experiment, but an in-engine scheduler still cannot treat
+that latency or external dependency as free. The bounded result is therefore
+negative: source context makes the judgments less arbitrary, but neither tested Jev
+policy establishes enough value to replace Foundry's local selector. The exact
+configuration and aggregate outcomes are in
+[frontier-selection-evidence.json](frontier-selection-evidence.json).

@@ -111,6 +111,15 @@ The live calls cost $0.001 each and took 5.096 and 4.889 seconds. Planning laten
 must be charged against an equal end-to-end budget. Do not promote this into core
 based on the plumbing screen or these no-op decisions.
 
+A later frontier-selection screen tested two materially different Jev policies:
+ranking concrete EVM comparison metadata and ranking the subset with usable Solidity
+source-map context. Both used equal solver budgets and concrete replay. The
+source-aware policy emitted three replayable seeds versus the built-in selector's
+one, but it tied an unmodelled random arm and found no property failure. Its inference
+cost also exceeded the guided symbolic work by two orders of magnitude.
+The aggregate evidence is recorded in
+`frontier-selection-evidence.json`; it does not justify an in-engine Jev client.
+
 ## Source evidence
 
 The [TypeSafe announcement](https://typesafe.ai/blog/introducing-system-one-models-and-jev)
