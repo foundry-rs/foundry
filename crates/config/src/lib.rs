@@ -5601,6 +5601,7 @@ mod tests {
                 depth = 10
                 min_depth = 2
                 depth_mode = "random"
+                lifecycle_bootstrap = true
                 workers = 4
                 corpus_random_sequence_weight = 30
                 payable_value_weight = 12
@@ -5616,6 +5617,7 @@ mod tests {
                     depth: 10,
                     min_depth: 2,
                     depth_mode: InvariantDepthMode::Random,
+                    lifecycle_bootstrap: true,
                     workers: InvariantWorkers::Fixed(NonZeroUsize::new(4).unwrap()),
                     corpus: FuzzCorpusConfig {
                         corpus_random_sequence_weight: 30,

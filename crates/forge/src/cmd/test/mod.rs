@@ -723,6 +723,15 @@ pub struct TestArgs {
     #[arg(long, env = "FOUNDRY_INVARIANT_DEPTH_MODE", value_name = "fixed|random")]
     pub invariant_depth_mode: Option<InvariantDepthMode>,
 
+    /// Briefly interleave ABI-derived protocol lifecycles in invariant campaigns.
+    #[arg(
+        long,
+        env = "FOUNDRY_INVARIANT_LIFECYCLE_BOOTSTRAP",
+        default_missing_value = "true",
+        num_args = 0..=1
+    )]
+    pub invariant_lifecycle_bootstrap: Option<bool>,
+
     /// Percent of invariant calldata/senders generated from the dictionary.
     #[arg(long, env = "FOUNDRY_INVARIANT_DICTIONARY_WEIGHT", value_name = "PERCENT")]
     pub invariant_dictionary_weight: Option<u32>,
@@ -3008,6 +3017,7 @@ impl Provider for TestArgs {
             "depth" => self.invariant_depth,
             "min_depth" => self.invariant_min_depth,
             "depth_mode" => self.invariant_depth_mode.map(Value::serialize).transpose()?,
+            "lifecycle_bootstrap" => self.invariant_lifecycle_bootstrap,
             "workers" => self.invariant_workers.map(Value::serialize).transpose()?,
             "dictionary_weight" => self.invariant_dictionary_weight,
             "max_fuzz_dictionary_addresses" => self.invariant_dictionary_addresses.clone(),
@@ -3830,6 +3840,7 @@ mod tests {
             "20",
             "--invariant-depth-mode",
             "random",
+            "--invariant-lifecycle-bootstrap",
             "--invariant-workers",
             "4",
             "--invariant-dictionary-weight",
@@ -3874,6 +3885,7 @@ mod tests {
         assert_eq!(config.invariant.depth, 300);
         assert_eq!(config.invariant.min_depth, 20);
         assert_eq!(config.invariant.depth_mode, InvariantDepthMode::Random);
+        assert!(config.invariant.lifecycle_bootstrap);
         assert_eq!(config.invariant.dictionary.dictionary_weight, 45);
         assert_eq!(config.invariant.dictionary.max_fuzz_dictionary_addresses, 8765);
         assert_eq!(config.invariant.dictionary.max_fuzz_dictionary_values, usize::MAX);

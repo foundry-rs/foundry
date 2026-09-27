@@ -373,8 +373,3 @@ owners use that contract to provision storage and release/trend views.
 3. **Build failures**: Some repositories may have specific dependencies - check their README files
 4. **Hyperfine not found**: Install hyperfine using the instructions in Prerequisites
 5. **npm/Node.js errors**: Ensure Node.js and npm are installed for repositories that require them
-
-## Experimental campaign planning
-
-The [offline Jev plan experiment](jev-plan/README.md) compares local campaign
-schedulers through `foundry-scfuzzbench`, without adding a provider to the fuzz engine.
