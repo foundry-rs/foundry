@@ -6,8 +6,10 @@ transactions, arguments, assertions, shrinking, and corpus replay. Nothing chang
 in normal RNG or stateless fuzzing. There is no provider client or new Foundry setting.
 
 This is a plumbing prototype, **not evidence that Jev improves bug discovery**.
-The included response is explicitly synthetic. It was not produced by Jev, and its
-probabilities and confidence must not be interpreted as benchmark predictions.
+The original screen uses an explicitly synthetic response. Two later live Jev 1.13
+recordings for Origin Dollar are checked in separately. Neither selected a campaign
+different from the suite's existing configuration, so they do not establish a model
+gain either.
 
 ## Boundary and candidates
 
@@ -85,9 +87,15 @@ For an actual model experiment, capture a response to the **same request and
 candidate set** with immutable model ID, full response/usage, measured latency,
 cost, target revision, and pre-campaign context; mark provenance `live`.
 No API request is made by this script. Do not relabel unrelated model recordings
-or synthetic values as judgments about these candidates. The current minimal
-request contains only candidate descriptions and depths; informative state summaries
-and evidence that the decision has semantic content remain research work.
+or synthetic values as judgments about these candidates.
+
+The live Origin Dollar depth recording chose the existing depth 100 with 18%
+confidence. With 20% exploration, its weighted schedule is identical to uniform in
+35 of 36 pre-registered slices across seeds 1009, 2003, and 3001. A second live
+Choice over four executable profiles also chose the existing configuration, with
+40% confidence. The request and response are preserved in
+`live-origin-dollar-profile-recording.json`; no provider client or credential is
+part of this repository.
 
 ## Evidence and next gate
 
@@ -99,7 +107,9 @@ other schedulers versus uniform. Keep handlers and correctness oracles identical
 Include unique known bugs (deduplicating aliases/canaries), per-bug hit rates and
 censored time-to-first, coverage unions, calls/throughput, and planning latency/cost.
 Charge planning time against the same total budget when comparing end-to-end utility.
-Do not promote this into core based on the plumbing screen.
+The live calls cost $0.001 each and took 5.096 and 4.889 seconds. Planning latency
+must be charged against an equal end-to-end budget. Do not promote this into core
+based on the plumbing screen or these no-op decisions.
 
 ## Source evidence
 

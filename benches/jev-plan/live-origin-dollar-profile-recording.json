@@ -1,0 +1,71 @@
+{
+  "provenance": "live",
+  "provider": "https://agent402.tools/v1/judge",
+  "latency_ms": 4889,
+  "cost_usd": 0.001,
+  "request": {
+    "model": "jev-latest",
+    "state": {
+      "target_repo": "https://github.com/scfuzzbench/origin-dollar-scfuzzbench.git",
+      "target_ref": "299ec6b6bf5401b43efc3e9f7ee5cab3e76167c4",
+      "suite": "Origin Dollar OUSD stateful invariant harness",
+      "public_harness": {
+        "actions": [
+          "mint",
+          "burn",
+          "changeSupply",
+          "transfer",
+          "transferFrom",
+          "optIn",
+          "optOut",
+          "approve"
+        ],
+        "state_interactions": [
+          "rebasing and non-rebasing account modes",
+          "allowances and delegated transfers",
+          "supply changes and credit accounting",
+          "rounding across mint, burn, transfer, and mode changes"
+        ],
+        "existing_config": {
+          "depth": 100,
+          "depth_mode": "fixed",
+          "dictionary_weight": 80,
+          "corpus_random_sequence_weight": 10
+        }
+      },
+      "experiment": "Each profile receives identical wall time and engine seeds. A fresh workspace is used for each trial. Select for unique catalogued bug discovery, not throughput."
+    },
+    "questions": {
+      "profile": {
+        "type": "choice",
+        "instructions": "Choose the most promising bounded Foundry invariant-campaign profile for this public harness. Do not invent configuration outside the listed profiles.",
+        "criteria": {
+          "baseline": "Fixed depth 100, dictionary weight 80%, fresh-sequence weight 10%; preserve the existing suite configuration.",
+          "restart": "Random depth 1..100, dictionary weight 80%, fresh-sequence weight 50%; favor more varied and independent prefixes.",
+          "deep": "Random depth 10..200, dictionary weight 80%, fresh-sequence weight 10%; permit longer state transitions while retaining varied run lengths.",
+          "mutate": "Fixed depth 100, dictionary weight 80%, fresh-sequence weight 5%; spend more attempts mutating retained coverage-winning sequences."
+        }
+      }
+    }
+  },
+  "response": {
+    "model": "jev-1.13.0",
+    "answers": {
+      "profile": {
+        "type": "choice",
+        "choice": "baseline",
+        "confidence": 0.4,
+        "probabilities": {
+          "baseline": 0.55,
+          "deep": 0.22,
+          "mutate": 0.16,
+          "restart": 0.07
+        }
+      }
+    },
+    "usage": {
+      "input_tokens": 685,
+      "output_tokens": 46
+    }
+  }
+}

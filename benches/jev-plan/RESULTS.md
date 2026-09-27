@@ -1,10 +1,25 @@
 # Plumbing screen: 2026-09-27
 
-**No live Jev calls were made. No Jev bug-discovery or performance improvement is
-established.** The fixture is handwritten and labeled `synthetic`, because no Jev
-credentials or relevant campaign-policy recording was available. The real recording
-inspected in #16936 concerns a different action grammar; it was not relabeled or
-reused as a prediction about these campaign budgets.
+**The 30-trial screen below made no live Jev calls and establishes no Jev
+bug-discovery or performance improvement.** Its fixture is handwritten and labeled
+`synthetic`. A later live follow-up is recorded separately below.
+
+## Live follow-up
+
+Two Jev 1.13 Choice calls used only the public Origin Dollar harness and pinned
+revision. The first chose the suite's existing depth 100 with 18% confidence. After
+the planner's exploration floor, its weighted schedule is identical to uniform in
+35 of 36 pre-registered slices across three seeds. The second chose the complete
+existing campaign profile with 40% confidence over restart-heavy, deep, and
+mutation-heavy alternatives. That selected arm is exactly the baseline, so rerunning
+it cannot measure a model effect.
+
+Each call cost $0.001 and took 5.096 and 4.889 seconds. The full public requests,
+resolved model ID, response probabilities, confidence, and token usage are in
+`live-origin-dollar-recording.json` and
+`live-origin-dollar-profile-recording.json`. Payment credentials and wallet data are
+not retained. This is negative evidence for this narrow planning use case: the live
+model supplied no distinct configuration to test, and the draft remains experimental.
 
 The screen runs real stateful suites through `foundry-scfuzzbench`: Drips at
 `0ae8bd881e3c4f4a254f3cf92091e9997c5e88be` and Origin Dollar at
