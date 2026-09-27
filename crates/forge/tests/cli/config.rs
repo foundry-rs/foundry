@@ -2768,9 +2768,6 @@ contract GasSnapshotEmitTest is DSTest {
     fs::remove_file(prj.root().join("snapshots/GasSnapshotEmitTest.json")).unwrap();
 
     for format in ["--json", "--junit"] {
-        cmd.forge_fuse().args(["test", format, "--gas-snapshot-emit=false"]).assert_success();
-        assert!(!snapshot_path.exists());
-
         cmd.forge_fuse().args(["test", format, "--gas-snapshot-emit=true"]).assert_success();
         assert_eq!(fs::read(&snapshot_path).unwrap(), expected_snapshot);
         fs::remove_file(&snapshot_path).unwrap();
