@@ -2621,6 +2621,23 @@ Error: Snapshots differ from previous run
 ...
 "#]]);
 
+    let snapshot_path = prj.root().join("snapshots/GasSnapshotCheckTest.json");
+    let previous_snapshot = fs::read(&snapshot_path).unwrap();
+    for format in ["--json", "--junit"] {
+        cmd.forge_fuse()
+            .args(["test", format, "--gas-snapshot-check=true"])
+            .assert_failure()
+            .stderr_eq(str![[r#"
+...
+[GasSnapshotCheckTest] Failed to match snapshots:
+- [testAssertGasExternal] [..] → [..]
+
+Error: Snapshots differ from previous run
+...
+"#]]);
+        assert_eq!(fs::read(&snapshot_path).unwrap(), previous_snapshot);
+    }
+
     // Disable gas_snapshot_check, assert that running the test will pass.
     prj.update_config(|config| config.gas_snapshot_check = false);
     cmd.forge_fuse().args(["test"]).assert_success().stdout_eq(str![[r#"
@@ -2744,8 +2761,20 @@ contract GasSnapshotEmitTest is DSTest {
     // Assert that snapshots were emitted to disk.
     assert!(prj.root().join("snapshots/GasSnapshotEmitTest.json").exists());
 
+    let snapshot_path = prj.root().join("snapshots/GasSnapshotEmitTest.json");
+    let expected_snapshot = fs::read(&snapshot_path).unwrap();
+
     // Remove the snapshot file.
     fs::remove_file(prj.root().join("snapshots/GasSnapshotEmitTest.json")).unwrap();
+
+    for format in ["--json", "--junit"] {
+        cmd.forge_fuse().args(["test", format, "--gas-snapshot-emit=false"]).assert_success();
+        assert!(!snapshot_path.exists());
+
+        cmd.forge_fuse().args(["test", format, "--gas-snapshot-emit=true"]).assert_success();
+        assert_eq!(fs::read(&snapshot_path).unwrap(), expected_snapshot);
+        fs::remove_file(&snapshot_path).unwrap();
+    }
 
     // Test that `--gas-snapshot-emit=false` flag can be used to disable writing snapshots.
     cmd.forge_fuse().args(["test", "--gas-snapshot-emit=false"]).assert_success();
