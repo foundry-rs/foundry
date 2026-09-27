@@ -3874,16 +3874,16 @@ impl<N: Network> Backend<N> {
     pub async fn trace_transaction(
         &self,
         hash: B256,
-    ) -> Result<Vec<LocalizedTransactionTrace>, BlockchainError> {
+    ) -> Result<Option<Vec<LocalizedTransactionTrace>>, BlockchainError> {
         if let Some(traces) = self.mined_parity_trace_transaction(hash) {
-            return Ok(traces);
+            return Ok(Some(traces));
         }
 
         if let Some(fork) = self.get_fork() {
             return Ok(fork.trace_transaction(hash).await?);
         }
 
-        Ok(vec![])
+        Ok(None)
     }
 
     /// Returns a transaction trace at a given index.

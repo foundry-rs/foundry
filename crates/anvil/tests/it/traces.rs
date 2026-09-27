@@ -619,6 +619,54 @@ async fn test_trace_get_local() {
     assert_eq!(invalid_indices, None);
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_transaction_unknown_hash_local() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    let traces = handle
+        .http_provider()
+        .client()
+        .request::<_, Option<Vec<LocalizedTransactionTrace>>>("trace_transaction", (B256::ZERO,))
+        .await
+        .unwrap();
+    assert_eq!(traces, None);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_transaction_unknown_hash_fork() {
+    let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let origin = origin_handle.http_provider();
+    origin_api.mine_one().await.unwrap();
+    origin_api.anvil_set_auto_mine(false).await.unwrap();
+
+    let accounts = origin_handle.dev_wallets().collect::<Vec<_>>();
+    let tx = TransactionRequest::default()
+        .to(accounts[1].address())
+        .value(U256::from(1000))
+        .from(accounts[0].address());
+    let tx = WithOtherFields::new(tx);
+    let hash = *origin.send_transaction(tx).await.unwrap().tx_hash();
+
+    let config = NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()));
+    let (_api, handle) = spawn(config).await;
+    let provider = handle.http_provider();
+
+    for hash in [B256::ZERO, hash] {
+        let traces = provider
+            .client()
+            .request::<_, Option<Vec<LocalizedTransactionTrace>>>("trace_transaction", (hash,))
+            .await
+            .unwrap();
+        assert_eq!(traces, None);
+    }
+
+    // A missing hash is not cached, so it resolves once mined upstream.
+    origin_api.mine_one().await.unwrap();
+    let traces = provider.trace_transaction(hash).await.unwrap();
+    assert!(!traces.is_empty());
+    assert_eq!(traces, origin.trace_transaction(hash).await.unwrap());
+}
+
 sol!(
     #[sol(rpc, bytecode = "0x6080604052348015600f57600080fd5b50336000806101000a81548173ffffffffffffffffffffffffffffffffffffffff021916908373ffffffffffffffffffffffffffffffffffffffff16021790555060a48061005e6000396000f3fe6080604052348015600f57600080fd5b506004361060285760003560e01c806375fc8e3c14602d575b600080fd5b60336035565b005b60008054906101000a900473ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff16fffea26469706673582212205006867290df97c54f2df1cb94fc081197ab670e2adf5353071d2ecce1d694b864736f6c634300080d0033")]
     contract SuicideContract {
