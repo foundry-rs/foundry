@@ -1,7 +1,10 @@
 use super::{MAX_CONCURRENT_RPC_REQUESTS, fetch_code_via_rpc};
 use crate::{
     debug::{ensure_remote_trace_context_unchanged, handle_traces, resolve_remote_trace_hardfork},
-    rpc_trace::{call_frame_to_arena, is_method_not_found_error, is_missing_state_error},
+    rpc_trace::{
+        call_frame_to_arena, is_method_not_found_error, is_missing_state_error,
+        is_missing_state_message,
+    },
     traces::TraceKind,
     utils::{
         apply_chain_and_block_specific_env_changes_for_chain,
@@ -72,6 +75,9 @@ use foundry_evm::core::evm::{BlockContext, ChainFor, MonadEvmNetwork};
 
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
+
+/// Points at the remote trace when a transaction cannot be replayed locally.
+const REMOTE_TRACE_HINT: &str = "`--debug-trace-transaction` renders the node's own trace instead";
 
 /// CLI arguments for `cast run`.
 #[derive(Clone, Debug, Parser)]
@@ -249,6 +255,20 @@ impl RunArgs {
             return self.remote_trace(config, evm_opts).await;
         }
 
+        self.replay(config, evm_opts).await.map_err(|err| {
+            if err.chain().any(|cause| is_missing_state_message(&cause.to_string())) {
+                err.wrap_err(
+                    "the RPC endpoint does not have the historical state for the transaction's \
+                     block; use an archive endpoint",
+                )
+            } else {
+                err
+            }
+        })
+    }
+
+    /// Replays the transaction locally with the EVM of its network.
+    async fn replay(self, config: Box<Config>, evm_opts: EvmOpts) -> Result<()> {
         if evm_opts.networks.is_tempo() {
             return self
                 .run_with_evm(config, evm_opts, ExecutorBuilder::<TempoEvmNetwork>::new())
@@ -294,6 +314,14 @@ impl RunArgs {
         executor_builder: ExecutorBuilder<FEN>,
     ) -> Result<()> {
         let target = self.fetch_target(&config).await?;
+        if let Some(chain) = target.tx.chain_id().map(alloy_chains::Chain::from_id)
+            && chain.is_elastic()
+        {
+            eyre::bail!(
+                "{chain} executes EraVM bytecode, which cannot be replayed locally; \
+                 {REMOTE_TRACE_HINT}"
+            );
+        }
         if is_system_transaction(&target.tx) && !self.replay_system_txes {
             eyre::bail!(
                 "{:?} is a system transaction.\nReplaying system transactions is currently not supported.",
@@ -731,7 +759,12 @@ impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
     fn execute_ordinary(&mut self) -> Result<TraceResult> {
         // Decode the target transaction before replaying the block: an envelope this build
         // can't decode should fail fast.
-        let target_tx_env = self.transaction_env(&self.tx)?;
+        let target_tx_env = self.transaction_env(&self.tx).wrap_err_with(|| {
+            format!(
+                "cannot replay transaction {:?} locally; {REMOTE_TRACE_HINT}",
+                self.tx.tx_hash()
+            )
+        })?;
         let target_index = self.target_index()?;
         self.prepare_target();
 
@@ -750,7 +783,8 @@ impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
                 if !is_system_transaction(tx) || replay_system_txes {
                     let tx_env = self.transaction_env(tx).wrap_err_with(|| {
                         format!(
-                            "Failed to prepare transaction: {:?} in block {}",
+                            "Failed to prepare transaction: {:?} in block {}; `--quick` skips the \
+                             transactions before the target, and {REMOTE_TRACE_HINT}",
                             tx.tx_hash(),
                             block_number
                         )

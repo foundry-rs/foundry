@@ -39,23 +39,34 @@ pub fn is_method_not_found_error(err: &TransportError) -> bool {
     err.as_error_resp().is_some_and(|resp| resp.code == -32601)
 }
 
-/// Returns `true` if `err` looks like a missing-historical-state rejection: an archive-depth
-/// error, usually with a generic code (-32000) distinguishable only by message, hit whenever a
+/// Returns `true` if `err` looks like a missing-historical-state rejection, hit whenever a
 /// `debug_trace*` request targets a block whose state a full node has pruned.
 pub fn is_missing_state_error(err: &TransportError) -> bool {
-    let message = err
-        .as_error_resp()
-        .map(|resp| resp.message.to_ascii_lowercase())
-        .unwrap_or_else(|| err.to_string().to_ascii_lowercase());
+    match err.as_error_resp() {
+        Some(resp) => is_missing_state_message(&resp.message),
+        None => is_missing_state_message(&err.to_string()),
+    }
+}
+
+/// Returns `true` if `message` reads like a node rejecting a request for state it has pruned.
+///
+/// These rejections usually carry a generic code (-32000), so only the message tells them apart.
+pub fn is_missing_state_message(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
     [
         "missing trie node",
         "required historical state",
         "historical state",
         "header not found",
         "missing state",
+        // Cosmos SDK based nodes, e.g. "height 1 is not available, lowest height is 2".
+        "lowest height is",
+        // Providers that gate history behind a plan, e.g. "Archive, Debug and Trace requests
+        // are not available on your current plan".
+        "archive",
     ]
     .iter()
-    .any(|needle| message.contains(*needle))
+    .any(|needle| message.contains(needle))
 }
 
 /// Pushes `frame` and all of its children into `nodes`, returning the index of the pushed node.
@@ -419,6 +430,20 @@ mod tests {
             root.ordering,
             vec![TraceMemberOrder::Call(0), TraceMemberOrder::Log(0), TraceMemberOrder::Call(1),]
         );
+    }
+
+    /// Pruned-state rejections as geth, Cosmos SDK nodes and plan-gated providers word them.
+    #[test]
+    fn recognizes_missing_state_messages() {
+        for message in [
+            "missing trie node 5d1c4b4a2f7a1c1d8f0b6f3e0a5b8c9d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a2b (path ) <nil>",
+            "header not found",
+            "height 20170443 is not available, lowest height is 90850001",
+            "Archive, Debug and Trace requests are not available on your current plan.",
+        ] {
+            assert!(is_missing_state_message(message), "{message}");
+        }
+        assert!(!is_missing_state_message("execution reverted"));
     }
 
     #[test]

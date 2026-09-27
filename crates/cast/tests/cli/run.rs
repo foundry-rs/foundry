@@ -440,3 +440,26 @@ casttest!(run_evm_version_updates_gas_params, |_prj, cmd| {
         "expected Spurious Dragon gas (177241), got: {sd_output}"
     );
 });
+
+// ZK stack chains execute EraVM bytecode, which a local replay cannot run.
+casttest!(cast_run_rejects_elastic_chains, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test().with_chain_id(Some(324u64))).await;
+    let provider = handle.http_provider();
+    let from = provider.get_accounts().await.unwrap()[0];
+    let tx_hash = provider
+        .send_transaction(TransactionRequest::default().with_from(from).with_to(from).into())
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap()
+        .transaction_hash()
+        .to_string();
+
+    cmd.args(["run", &tx_hash, "--rpc-url", &handle.http_endpoint()])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: zksync executes EraVM bytecode, which cannot be replayed locally; `--debug-trace-transaction` renders the node's own trace instead
+
+"#]]);
+});
