@@ -102,11 +102,21 @@ impl InspectArgs {
                 "linearization inspection is only supported for Solidity contracts (.sol targets)"
             );
         }
-        let compiler = ProjectCompiler::new()
+        let mut compiler = ProjectCompiler::new()
             .external_compilers(&config)
             .external_artifacts(false)
             .target_files([target_path.clone()])
             .quiet(true);
+        if project.no_artifacts
+            && project.cached
+            && !config.force
+            && project.artifacts.additional_files == Default::default()
+            // Cached artifacts do not retain compiler diagnostics.
+            && !config.deny.warnings()
+        {
+            project.no_artifacts = false;
+            compiler = compiler.cache_outputs();
+        }
         let mut output = compiler.compile(&project)?;
 
         // Find the artifact

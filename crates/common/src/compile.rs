@@ -89,8 +89,8 @@ pub struct ProjectCompiler {
     /// Whether to compile with dynamic linking tests and scripts.
     dynamic_test_linking: bool,
 
-    /// Whether ABI acquisition may consult the compiler-owned ABI cache.
-    abi_cache: bool,
+    /// The compiler-owned secondary artifact cache to consult.
+    secondary_cache: Option<SecondaryCache>,
 
     /// External compiler configuration.
     external_compilers: Option<Config>,
@@ -98,6 +98,12 @@ pub struct ProjectCompiler {
     /// Preserves the caller's artifact policy when ABI caching enables artifacts on a cloned
     /// project.
     external_writes: bool,
+}
+
+#[derive(Clone, Copy)]
+enum SecondaryCache {
+    Abi,
+    Outputs,
 }
 
 impl Default for ProjectCompiler {
@@ -123,7 +129,7 @@ impl ProjectCompiler {
             files: Vec::new(),
             selected_paths: Vec::new(),
             dynamic_test_linking: false,
-            abi_cache: false,
+            secondary_cache: None,
             external_compilers: None,
             external_writes: true,
         }
@@ -222,6 +228,14 @@ impl ProjectCompiler {
         self
     }
 
+    /// Reuses normal artifacts first and caches missing outputs separately.
+    ///
+    /// The project's artifact policy controls writes to the secondary cache.
+    pub const fn cache_outputs(mut self) -> Self {
+        self.secondary_cache = Some(SecondaryCache::Outputs);
+        self
+    }
+
     /// Compiles the project.
     #[instrument(target = "forge::compile", skip_all)]
     pub fn compile<C: Compiler<CompilerContract = Contract>>(
@@ -256,7 +270,7 @@ impl ProjectCompiler {
         let explicit_selection = !files.is_empty() || !self.selected_paths.is_empty();
         let selected_paths = std::mem::take(&mut self.selected_paths);
         let preprocess = self.dynamic_test_linking;
-        let abi_cache = self.abi_cache;
+        let secondary_cache = self.secondary_cache;
         let external_compilers = self.external_compilers.take();
         let external_writes = self.external_writes && !project.no_artifacts;
         self.compile_with(|| {
@@ -277,8 +291,11 @@ impl ProjectCompiler {
             if preprocess {
                 compiler = compiler.with_preprocessor(DynamicTestLinkingPreprocessor);
             }
-            let mut output =
-                if abi_cache { compiler.compile_abi_cached()? } else { compiler.compile()? };
+            let mut output = match secondary_cache {
+                Some(SecondaryCache::Abi) => compiler.compile_abi_cached()?,
+                Some(SecondaryCache::Outputs) => compiler.compile_outputs_cached()?,
+                None => compiler.compile()?,
+            };
             if !output.has_compiler_errors()
                 && let Some(external) = external
             {
@@ -782,7 +799,9 @@ where
         // Request ABI so compilers populate `contracts` without producing bytecode outputs.
         *selection = OutputSelection::common_output_selection(["abi".to_string()]);
     });
-    compiler.abi_cache |= project.no_artifacts;
+    if project.no_artifacts {
+        compiler.secondary_cache = Some(SecondaryCache::Abi);
+    }
     compiler.compile(project)
 }
 
@@ -804,7 +823,7 @@ where
     }
     let mut cached_project = project.clone();
     cached_project.no_artifacts = false;
-    compiler.abi_cache = true;
+    compiler.secondary_cache = Some(SecondaryCache::Abi);
     compiler.external_writes &= !project.no_artifacts;
     compile_abi_project(&mut cached_project, compiler)
 }
