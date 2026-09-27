@@ -165,7 +165,11 @@ pub async fn get_func_etherscan(
     etherscan_api_url: Option<&str>,
 ) -> Result<Function> {
     let client = if let Some(api_url) = etherscan_api_url {
-        Client::builder().with_api_key(etherscan_api_key).with_api_url(api_url)?.build()?
+        Client::builder()
+            .with_api_key(etherscan_api_key)
+            .with_api_url(api_url)?
+            .with_url(api_url)?
+            .build()?
     } else {
         Client::new(chain, etherscan_api_key)?
     };
@@ -233,6 +237,7 @@ mod tests {
     use super::*;
     use alloy_dyn_abi::EventExt;
     use alloy_primitives::{B256, U256};
+    use axum::{Json, Router, routing::get};
 
     /// `Proxy: 1` with an empty `Implementation` used to panic on `.unwrap()`
     /// (real-world shape, see `foundry_block_explorers`' own `can_deserialize_address_opt` test).
@@ -435,5 +440,44 @@ mod tests {
         let res = encode_args(&params, &args);
         assert!(res.is_err());
         assert!(format!("{}", res.unwrap_err()).contains("encode length mismatch"));
+    }
+
+    #[tokio::test]
+    async fn get_func_etherscan_with_configured_api_url() {
+        let app = Router::new().route(
+            "/api",
+            get(|| async {
+                Json(serde_json::json!({
+                    "status": "1",
+                    "message": "OK",
+                    "result": [{
+                        "SourceCode": "contract Example { function ping() external {} }",
+                        "ABI": r#"[{"type":"function","name":"ping","inputs":[],"outputs":[],"stateMutability":"nonpayable"}]"#,
+                        "ContractName": "Example",
+                        "CompilerVersion": "v0.8.30+commit.73712a01",
+                        "OptimizationUsed": "0",
+                        "Runs": "200",
+                        "EVMVersion": "Default",
+                        "Proxy": "0"
+                    }]
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/api", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let result = get_func_etherscan(
+            "ping",
+            Address::repeat_byte(0x11),
+            &[],
+            Chain::mainnet(),
+            "test-key",
+            Some(&url),
+        )
+        .await;
+        server.abort();
+
+        assert_eq!(result.unwrap().signature(), "ping()");
     }
 }
