@@ -203,15 +203,16 @@ pub fn find_source(
             )?;
             match find_source(client, implementation).await {
                 impl_source @ Ok(_) => impl_source,
-                Err(e) => {
-                    let err = EtherscanError::ContractCodeNotVerified(address).to_string();
-                    if e.to_string() == err {
-                        error!(%err);
-                        Ok(source)
-                    } else {
-                        Err(e)
-                    }
+                Err(e)
+                    if matches!(
+                        e.downcast_ref::<EtherscanError>(),
+                        Some(EtherscanError::ContractCodeNotVerified(address)) if *address == implementation
+                    ) =>
+                {
+                    error!(%e);
+                    Ok(source)
                 }
+                Err(e) => Err(e),
             }
         } else {
             if metadata.proxy != 0 {
