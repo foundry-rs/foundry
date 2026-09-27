@@ -1,0 +1,33 @@
+{
+  "date": "2026-09-27",
+  "platform": "macOS-26.5.1-arm64-arm-64bit-Mach-O",
+  "python": "3.14.6",
+  "parallel_trials": 3,
+  "workers_per_trial": 1,
+  "timeout_seconds": 15,
+  "slices": 1,
+  "seeds": [
+    1009,
+    2003,
+    3001
+  ],
+  "recording": "synthetic-recording.json",
+  "live_requests": 0,
+  "live_cost_usd": 0,
+  "model_latency_ms": null,
+  "foundry_environment_overrides": {},
+  "catalog_commit": "de70065957a32fc5dd5fba3e53bb60f8564c722c",
+  "forge": {
+    "sha256": "c5116f1a871fc6dd7345171db3a54ae5a76d599d82776a2b3c903081b75d0085",
+    "version": "forge Version: 1.8.4-dev\nCommit SHA: d55e99f992dd30d75f3e8bc886db1aa96ada675f\nBuild Timestamp: 2026-09-17T19:12:43.821515000Z (1789672363)\nBuild Profile: profiling"
+  },
+  "runner": {
+    "sha256": "26f3c687d7a77f07124e305f0b6a48ab9e64c024b489a1276a9800eba22959ae"
+  },
+  "source_base": "84254d8a56a13aba9f2a11b88acdbc371c4d8f35",
+  "scfuzzbench_commit": "3bad5ea092113613c3d2fea03131a3a047acdaef",
+  "targets": {
+    "drips": "0ae8bd881e3c4f4a254f3cf92091e9997c5e88be",
+    "origin-dollar": "299ec6b6bf5401b43efc3e9f7ee5cab3e76167c4"
+  }
+}
