@@ -341,15 +341,22 @@ impl<N: Network> ClientFork<N> {
         self.provider().get_account(address).block_id(blocknumber.into()).await
     }
 
-    pub async fn trace_transaction(&self, hash: B256) -> Result<Vec<Trace>, TransportError> {
+    pub async fn trace_transaction(
+        &self,
+        hash: B256,
+    ) -> Result<Option<Vec<Trace>>, TransportError> {
         if let Some(traces) = self.storage_read().transaction_traces.get(&hash).cloned() {
-            return Ok(traces);
+            return Ok(Some(traces));
         }
 
-        let traces = self.provider().trace_transaction(hash).await?.into_iter().collect::<Vec<_>>();
+        let traces = self
+            .provider()
+            .raw_request::<_, Option<Vec<Trace>>>("trace_transaction".into(), (hash,))
+            .await?;
 
-        let mut storage = self.storage_write();
-        storage.transaction_traces.insert(hash, traces.clone());
+        if let Some(traces) = &traces {
+            self.storage_write().transaction_traces.insert(hash, traces.clone());
+        }
 
         Ok(traces)
     }

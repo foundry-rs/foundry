@@ -1549,7 +1549,10 @@ impl<N: Network> EthApi<N> {
     /// Returns traces for the transaction hash via parity's tracing endpoint
     ///
     /// Handler for RPC call: `trace_transaction`
-    pub async fn trace_transaction(&self, tx_hash: B256) -> Result<Vec<LocalizedTransactionTrace>> {
+    pub async fn trace_transaction(
+        &self,
+        tx_hash: B256,
+    ) -> Result<Option<Vec<LocalizedTransactionTrace>>> {
         node_info!("trace_transaction");
         self.backend.trace_transaction(tx_hash).await
     }
