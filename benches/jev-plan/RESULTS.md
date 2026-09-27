@@ -9,7 +9,7 @@ bug-discovery or performance improvement.** Its fixture is handwritten and label
 Two Jev 1.13 Choice calls used only the public Origin Dollar harness and pinned
 revision. The first chose the suite's existing depth 100 with 18% confidence. After
 the planner's exploration floor, its weighted schedule is identical to uniform in
-35 of 36 pre-registered slices across three seeds. The second chose the complete
+35 of 36 deterministically compiled slices across three seeds. The second chose the complete
 existing campaign profile with 40% confidence over restart-heavy, deep, and
 mutation-heavy alternatives. That selected arm is exactly the baseline, so rerunning
 it cannot measure a model effect.

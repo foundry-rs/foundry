@@ -91,7 +91,7 @@ or synthetic values as judgments about these candidates.
 
 The live Origin Dollar depth recording chose the existing depth 100 with 18%
 confidence. With 20% exploration, its weighted schedule is identical to uniform in
-35 of 36 pre-registered slices across seeds 1009, 2003, and 3001. A second live
+35 of 36 deterministically compiled slices across seeds 1009, 2003, and 3001. A second live
 Choice over four executable profiles also chose the existing configuration, with
 40% confidence. The request and response are preserved in
 `live-origin-dollar-profile-recording.json`; no provider client or credential is
