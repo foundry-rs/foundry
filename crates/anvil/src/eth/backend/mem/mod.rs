@@ -1974,8 +1974,8 @@ impl<N: Network> Backend<N> {
     where
         DB: DatabaseRef<Error = DatabaseError> + Debug,
     {
-        let mut cache_db = AnvilCacheDB::new(db);
         let (evm_env, hardfork) = self.tx_replay_evm_env(block);
+        let mut cache_db = AnvilCacheDB::new(db, *evm_env.spec_id());
         let inspector_tx_config = self.inspector_tx_config();
         let gas_config = self.pool_tx_gas_config(&evm_env);
 
@@ -5671,7 +5671,7 @@ where
 
         let (block_info, state_changes, block_hash) = {
             let db = self.db.read().await;
-            let mut overlay = AnvilCacheDB::new(&**db);
+            let mut overlay = AnvilCacheDB::new(&**db, *replay_env.spec_id());
             let ExecutedHistoricalReplay {
                 block_result,
                 transactions,
@@ -6046,7 +6046,7 @@ where
                 let inspector_tx_config = self.inspector_tx_config();
                 let gas_config = self.pool_tx_gas_config(&mining_evm_env);
 
-                let mut candidate_db = AnvilCacheDB::new(&**db);
+                let mut candidate_db = AnvilCacheDB::new(&**db, *mining_evm_env.spec_id());
                 if matches!(
                     hardfork,
                     FoundryHardfork::Ethereum(hardfork) if hardfork >= EthereumHardfork::Amsterdam
@@ -6306,7 +6306,7 @@ where
         let db = self.db.read().await;
         let evm_env = self.next_evm_env();
 
-        let mut cache_db = AnvilCacheDB::new(&*db);
+        let mut cache_db = AnvilCacheDB::new(&*db, *evm_env.spec_id());
 
         let parent_hash = self.blockchain.storage.read().best_hash;
 
