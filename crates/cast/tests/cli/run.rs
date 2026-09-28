@@ -442,6 +442,60 @@ casttest!(run_evm_version_updates_gas_params, |_prj, cmd| {
     );
 });
 
+// Anvil can use an Elastic chain ID while still executing EVM bytecode.
+casttest!(cast_run_replays_elastic_chain_id_on_anvil, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test().with_chain_id(Some(324u64))).await;
+    let provider = handle.http_provider();
+    let from = provider.get_accounts().await.unwrap()[0];
+    let tx_hash = provider
+        .send_transaction(TransactionRequest::default().with_from(from).with_to(from).into())
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap()
+        .transaction_hash()
+        .to_string();
+
+    cmd.args(["run", &tx_hash, "--rpc-url", &handle.http_endpoint()]).assert_success().stdout_eq(
+        str![[r#"
+...
+Transaction successfully executed.
+[GAS]
+
+"#]],
+    );
+});
+
+// Without Anvil metadata, retain the chain-ID-based rejection for Elastic chains.
+casttest!(cast_run_rejects_elastic_chains, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test().with_chain_id(Some(324u64))).await;
+    let provider = handle.http_provider();
+    let from = provider.get_accounts().await.unwrap()[0];
+    let tx_hash = provider
+        .send_transaction(TransactionRequest::default().with_from(from).with_to(from).into())
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap()
+        .transaction_hash()
+        .to_string();
+    let endpoint = spawn_rpc_proxy_method_not_found_before(
+        handle.http_endpoint(),
+        "anvil_nodeInfo",
+        usize::MAX,
+    )
+    .await;
+
+    cmd.args(["run", &tx_hash, "--rpc-url", &endpoint])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: zksync executes EraVM bytecode, which cannot be replayed locally; `--debug-trace-transaction` renders the node's own trace instead
+
+"#]]);
+});
+
 // A replay that does not reproduce the transaction's receipt must say so. The `--evm-version`
 // overrides stand in for rules the replay does not model: Shanghai predates the `MCOPY` the first
 // transaction executes, and Cancun predates the EIP-7623 calldata floor that prices the second.

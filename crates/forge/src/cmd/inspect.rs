@@ -182,7 +182,8 @@ impl InspectArgs {
                 print_json(&artifact.userdoc)?;
             }
             ContractArtifactField::Ewasm => {
-                print_json_str(&artifact.ewasm, None)?;
+                let ewasm = artifact.ewasm.as_ref().ok_or_else(|| missing_error("EWASM output"))?;
+                print_json_str(ewasm, None)?;
             }
             ContractArtifactField::Errors => {
                 let out = artifact.abi.as_ref().map_or(Map::new(), parse_errors);

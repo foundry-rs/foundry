@@ -239,12 +239,12 @@ need not remain the authoritative recovery state.
 - Persist a versioned, immutable operation plan before the first submission.
 - Give every operation a stable ID independent of receipt order, container position changes, and
   process lifetime. Scope identity by deployment and chain.
-- Record as provenance the build and execution inputs that can change the ordered transaction
-  requests, including build artifacts, selected signature and arguments, linked libraries, chain
-  ID, sender, initial nonce, and execution-affecting configuration. A mismatch blocks rebuilding the
-  saved plan or preparing new attempts, but not reconciliation or identical-byte rebroadcast of a
-  persisted signed attempt. Verification-only settings, signer location, and validated endpoint
-  handoff may change without invalidating the plan.
+- Admit resume only when the snapshot's immutable plan matches its ordered operations, including
+  chain, batch membership, transaction requests, and RPC assignment. Hashes, receipts, and pending
+  progress are mutable snapshot state and do not define plan identity. The initial implementation
+  does not separately persist build artifacts, signature arguments, or full execution
+  configuration: changes to those inputs are admitted only when they reconstruct the same immutable
+  operations.
 - Never silently rebuild, renumber, omit, or insert operations during resume.
 - Preserve batch membership and assign a stable batch ID when operations share one network
   transaction.
@@ -272,6 +272,9 @@ need not remain the authoritative recovery state.
 - Exclude competing writers for the same deployment. A reader must never observe a partial write.
 - Generate public broadcast and sensitive compatibility artifacts from authoritative state;
   failure to update an export must not roll recovery state backward.
+- Import generationless legacy artifacts only after validating the public/sensitive pair, then
+  publish their recovery generation through the same recoverable replacement protocol. Missing,
+  mixed, corrupt, or conflicting generation-tagged recovery state fails closed.
 
 ### Conservative reconciliation
 
@@ -297,17 +300,18 @@ Recovery preserves every field that can change transaction identity or behavior,
 - Tempo fee token, nonce key, validity window, calls, access-key metadata, sponsor data, and batch
   membership.
 
-Reconciliation and rebroadcast of identical locally signed bytes do not request a signer. Replacing
-an attempt is a separate, explicitly authorized transition that may change fees or validity fields
-and require a new signature. It must preserve the operation's intent and record both hashes.
+Reconciliation and rebroadcast of identical locally signed bytes do not request a signer. The
+initial recovery implementation fails closed instead of replacing an existing attempt with changed
+fees or validity fields. Replacement workflows are deferred to deployment plans and handoff.
 
 ### Handoff and compatibility
 
 - Recovery state may contain public signed payloads and RPC information but never signer secrets.
-- Another operator provides a signer only for operations with no signed or submitted attempt, or
-  for an explicitly authorized replacement. Reconciliation and identical-byte rebroadcast do not
-  need that signer, and an ambiguous delegated attempt remains blocked.
-- Endpoint rebinding validates chain identity and retains original chain-scoped operation IDs.
+- Another operator provides a signer only for operations with no signed or submitted attempt.
+  Reconciliation and identical-byte rebroadcast do not need that signer, and an ambiguous delegated
+  attempt remains blocked.
+- The initial recovery implementation retains the saved endpoint. Validated endpoint rebinding is
+  deferred to deployment plans and handoff.
 - Legacy import validates transaction, hash, pending, receipt, and sensitive-metadata associations.
   If it cannot prove a safe state, it imports the operation as unresolved rather than guessing.
 

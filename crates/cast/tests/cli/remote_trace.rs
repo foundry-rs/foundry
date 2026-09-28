@@ -43,6 +43,12 @@ enum ResponseMutation {
         replacement: String,
         lookups: Arc<AtomicUsize>,
     },
+    /// Rejects account and storage reads the way a node that pruned the state does.
+    MissingState,
+    /// Reports the transaction with an envelope type Foundry cannot execute.
+    UnknownTransactionType {
+        tx_hash: String,
+    },
     /// Answers `debug_trace*` requests the way ZKsync nodes do: a `callTracer` config without
     /// `onlyTopCall` is rejected, and call types are reported in camelCase.
     ZksyncCallTracer,
@@ -103,6 +109,34 @@ fn mutate_rpc_response(request: &Value, response: &mut Value, mutation: &Respons
 fn mutate_rpc_result(request: &Value, response: &mut Value, mutation: &ResponseMutation) {
     let Some(method) = request.get("method").and_then(Value::as_str) else { return };
     let requested_target = request.pointer("/params/0").and_then(Value::as_str);
+
+    if matches!(mutation, ResponseMutation::MissingState)
+        && matches!(
+            method,
+            "eth_getAccountInfo"
+                | "eth_getBalance"
+                | "eth_getCode"
+                | "eth_getProof"
+                | "eth_getStorageAt"
+                | "eth_getTransactionCount"
+        )
+    {
+        *response = json!({
+            "jsonrpc": "2.0",
+            "id": request["id"],
+            "error": { "code": -32000, "message": "missing trie node" },
+        });
+        return;
+    }
+
+    if let ResponseMutation::UnknownTransactionType { tx_hash } = mutation
+        && method == "eth_getTransactionByHash"
+        && requested_target.is_some_and(|target| target.eq_ignore_ascii_case(tx_hash))
+        && let Some(result) = response.get_mut("result").and_then(Value::as_object_mut)
+    {
+        result.insert("type".to_string(), json!("0x71"));
+        return;
+    }
 
     if matches!(mutation, ResponseMutation::ZksyncCallTracer)
         && let Some(options_index) = match method {
@@ -452,6 +486,44 @@ casttest!(cast_run_rejects_target_missing_from_replay_block, async |_prj, cmd| {
         output.contains(&format!("transaction {tx_hash} is missing from its block")),
         "{output}"
     );
+});
+
+casttest!(cast_run_hints_archive_endpoint_for_missing_state, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let (tx_hash, _, _) = send_identity_transaction(&handle).await;
+    let (endpoint, _) =
+        spawn_recording_rpc_proxy(handle.http_endpoint(), ResponseMutation::MissingState).await;
+
+    cmd.args(["run", &tx_hash.to_string(), "--rpc-url", &endpoint])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+...
+Error: the RPC endpoint does not have the historical state for the transaction's block; use an archive endpoint
+
+Context:
+- database error: failed to get account for [..]: server returned an error response: error code -32000: missing trie node
+
+"#]]);
+});
+
+casttest!(cast_run_hints_remote_trace_for_unknown_transaction_type, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let (tx_hash, _, _) = send_identity_transaction(&handle).await;
+    let (endpoint, _) = spawn_recording_rpc_proxy(
+        handle.http_endpoint(),
+        ResponseMutation::UnknownTransactionType { tx_hash: tx_hash.to_string() },
+    )
+    .await;
+
+    cmd.args(["run", &tx_hash.to_string(), "--rpc-url", &endpoint])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: cannot replay transaction [..] locally; `--debug-trace-transaction` renders the node's own trace instead
+
+Context:
+- cannot convert unknown transaction type 0x71 to TxEnv
+
+"#]]);
 });
 
 // ZKsync nodes reject a `callTracer` config that omits `onlyTopCall` and report call types in

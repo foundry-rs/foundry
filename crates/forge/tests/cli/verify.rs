@@ -1128,7 +1128,14 @@ contract Deploy is Script {{
         .unwrap()
         .creator_code_addresses
         .clear();
+    sequence.recovery_generation = None;
     std::fs::write(&broadcast_path, serde_json::to_vec_pretty(&sequence).unwrap()).unwrap();
+    let cache_path = prj.root().join("cache/Deploy.s.sol/31337/run-latest.json");
+    let mut cache: serde_json::Value = foundry_common::fs::read_json_file(&cache_path).unwrap();
+    cache.as_object_mut().unwrap().remove("recovery_generation");
+    std::fs::write(cache_path, serde_json::to_vec_pretty(&cache).unwrap()).unwrap();
+    std::fs::remove_file(prj.root().join("cache/Deploy.s.sol/31337/run-latest.json.recovery.json"))
+        .unwrap();
 
     let failed = prj
         .forge_command()
