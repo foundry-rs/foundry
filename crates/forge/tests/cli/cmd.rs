@@ -4004,6 +4004,104 @@ forgetest!(inspect_abi_does_not_write_artifacts, |prj, cmd| {
     assert_eq!(built, inspected);
 });
 
+forgetest!(inspect_output_cache_preserves_fields_and_artifacts, |prj, cmd| {
+    prj.add_source(
+        "Dependency.sol",
+        "library Dependency { function value() internal pure returns (uint256) { return 1; } }",
+    );
+    prj.add_source(
+        "Counter.sol",
+        r#"
+import {Dependency} from "./Dependency.sol";
+contract Counter {
+    function value() external pure returns (uint256) { return Dependency.value(); }
+}
+"#,
+    );
+    cmd.args(["build", "--no-lint"]).assert_success();
+    let built = [
+        prj.paths().artifacts.join("Counter.sol/Counter.json"),
+        prj.paths().artifacts.join("Dependency.sol/Dependency.json"),
+        prj.cache().clone(),
+    ]
+    .map(|path| {
+        let contents = fs::read(&path).unwrap();
+        (path, contents)
+    });
+    let abi_cache = prj.cache().with_extension("json.abi");
+    let fields = ["ir", "irOptimized", "assembly"];
+    let uncached = fields.map(|field| {
+        cmd.forge_fuse()
+            .args(["inspect", "Counter", field, "--json", "--no-cache"])
+            .assert_success()
+            .get_output()
+            .stdout_lossy()
+    });
+    assert!(!abi_cache.exists());
+
+    for (field, expected) in fields.iter().zip(&uncached) {
+        cmd.forge_fuse().args(["inspect", "Counter", field, "--json"]).assert_json_stdout(expected);
+        cmd.forge_fuse().args(["inspect", "Counter", field, "--json"]).assert_json_stdout(expected);
+    }
+    assert!(abi_cache.is_dir());
+    // Switching fields must preserve output correctness even when a selection is recompiled.
+    for (field, expected) in fields.iter().zip(&uncached).rev() {
+        cmd.forge_fuse().args(["inspect", "Counter", field, "--json"]).assert_json_stdout(expected);
+    }
+    for (path, contents) in &built {
+        assert_eq!(fs::read(path).unwrap(), *contents);
+    }
+
+    prj.add_source(
+        "Dependency.sol",
+        "library Dependency { function value() internal pure returns (uint256) { return 2; } }",
+    );
+    for (field, previous) in fields.iter().zip(&uncached) {
+        let expected = cmd
+            .forge_fuse()
+            .args(["inspect", "Counter", field, "--json", "--no-cache"])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        assert_ne!(&expected, previous);
+        cmd.forge_fuse().args(["inspect", "Counter", field, "--json"]).assert_json_stdout(expected);
+    }
+    for (path, contents) in &built {
+        assert_eq!(fs::read(path).unwrap(), *contents);
+    }
+
+    let marker = abi_cache.join("force-marker");
+    fs::write(&marker, "").unwrap();
+    cmd.forge_fuse().args(["inspect", "Counter", "ir", "--force"]).assert_success();
+    assert!(!marker.exists());
+    assert!(!abi_cache.exists());
+    assert!(!prj.paths().artifacts.exists());
+    assert!(!prj.cache().exists());
+    cmd.forge_fuse().args(["inspect", "Counter", "ir"]).assert_success();
+    assert!(abi_cache.is_dir());
+    cmd.forge_fuse().arg("clean").assert_success();
+    assert!(!abi_cache.exists());
+});
+
+forgetest!(inspect_output_cache_respects_warning_denial, |prj, cmd| {
+    prj.add_source(
+        "Counter.sol",
+        "contract Counter { function value() external returns (uint256) { return 1; } }",
+    );
+    cmd.args(["inspect", "Counter", "ir"]).assert_success();
+    cmd.forge_fuse().args(["inspect", "Counter", "ir"]).assert_success();
+    let expected = cmd
+        .forge_fuse()
+        .args(["inspect", "Counter", "ir", "--deny", "warnings", "--no-cache"])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+    cmd.forge_fuse()
+        .args(["inspect", "Counter", "ir", "--deny", "warnings"])
+        .assert_failure()
+        .stderr_eq(expected.into_data().raw());
+});
+
 forgetest!(inspect_custom_counter_events, |prj, cmd| {
     prj.add_source("Counter.sol", CUSTOM_COUNTER);
 

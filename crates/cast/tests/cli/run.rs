@@ -465,6 +465,69 @@ Error: zksync executes EraVM bytecode, which cannot be replayed locally; `--debu
 "#]]);
 });
 
+// A replay that does not reproduce the transaction's receipt must say so. The `--evm-version`
+// overrides stand in for rules the replay does not model: Shanghai predates the `MCOPY` the first
+// transaction executes, and Cancun predates the EIP-7623 calldata floor that prices the second.
+casttest!(cast_run_warns_on_receipt_mismatch, async |_prj, cmd| {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    // MCOPY(0, 0, 0) STOP
+    api.anvil_set_code(
+        address!("0x00000000000000000000000000000000000000aa"),
+        hex!("0x6000600060005e00").into(),
+    )
+    .await
+    .unwrap();
+    let provider = handle.http_provider();
+    let from = provider.get_accounts().await.unwrap()[0];
+    let mut tx_hashes = Vec::new();
+    for (to, input) in [
+        (address!("0x00000000000000000000000000000000000000aa"), Bytes::new()),
+        (address!("0x00000000000000000000000000000000000000cc"), vec![1u8; 1000].into()),
+    ] {
+        let receipt = provider
+            .send_transaction(
+                TransactionRequest::default().with_from(from).with_to(to).with_input(input).into(),
+            )
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+        tx_hashes.push(receipt.transaction_hash().to_string());
+    }
+    let [mcopy_tx, floor_tx] = &tx_hashes[..] else { unreachable!() };
+
+    for tx_hash in [mcopy_tx, floor_tx] {
+        cmd.cast_fuse()
+            .args(["run", tx_hash, "--rpc-url", &endpoint, "--evm-version", "prague"])
+            .assert_success()
+            .stderr_eq(str![[r#"
+Executing previous transactions from the block.
+
+"#]]);
+    }
+
+    cmd.cast_fuse()
+        .args(["run", mcopy_tx, "--rpc-url", &endpoint, "--evm-version", "shanghai"])
+        .assert_success()
+        .stderr_eq(str![[r#"
+Executing previous transactions from the block.
+Error: Transaction failed.
+Warning: the replay does not match the transaction's receipt: it succeeded on-chain but reverted in the replay. The chain may apply rules the replay does not model; `--debug-trace-transaction` shows the node's own trace if it exposes the `debug` namespace.
+
+"#]]);
+
+    cmd.cast_fuse()
+        .args(["run", floor_tx, "--rpc-url", &endpoint, "--evm-version", "cancun"])
+        .assert_success()
+        .stderr_eq(str![[r#"
+Executing previous transactions from the block.
+Warning: the replay does not match the transaction's receipt: it used 61000 gas on-chain but 37000 in the replay. The chain may apply rules the replay does not model; `--debug-trace-transaction` shows the node's own trace if it exposes the `debug` namespace.
+
+"#]]);
+});
+
 // Forked state reports an account that does not exist as empty, but replay must not refund the
 // EIP-7702 authorization of an authority that did not exist before the transaction.
 casttest!(cast_run_charges_fresh_eip7702_authority, async |_prj, cmd| {
