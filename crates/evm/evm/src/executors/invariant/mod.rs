@@ -16,7 +16,7 @@ use crate::{
     },
     inspectors::Fuzzer,
 };
-use alloy_json_abi::{Function, JsonAbi};
+use alloy_json_abi::Function;
 use alloy_primitives::{
     Address, Bytes, FixedBytes, I256, Selector, U256, keccak256,
     map::{AddressMap, AddressSet, HashMap, hash_map::Entry as AddressMapEntry},
@@ -121,17 +121,6 @@ sol! {
             string[] artifacts;
         }
 
-        #[derive(Default)]
-        struct FuzzCall {
-            address target;
-            bytes4 selector;
-        }
-
-        #[derive(Default)]
-        struct FuzzCallSequence {
-            FuzzCall[] calls;
-        }
-
         function afterInvariant() external;
 
         #[derive(Default)]
@@ -154,9 +143,6 @@ sol! {
 
         #[derive(Default)]
         function targetContracts() public view returns (address[] memory targetedContracts);
-
-        #[derive(Default)]
-        function targetCallSequences() public view returns (FuzzCallSequence[] memory sequences);
 
         #[derive(Default)]
         function targetSelectors() public view returns (FuzzSelector[] memory targetedSelectors);
@@ -328,9 +314,6 @@ fn focused_campaign_seed_for_worker(
     worker_count: usize,
     focus_seed: Option<U256>,
 ) -> Option<InvariantCampaignSeed> {
-    if (plan.first_global_run as usize) < campaign_seed.call_sequences.len() {
-        return None;
-    }
     let focus_index = invariant_focus_worker_index(plan.worker_id, worker_count)?;
     let targeted_contracts =
         focused_targeted_contracts(&campaign_seed.targeted_contracts, focus_index, focus_seed)?;
@@ -786,16 +769,12 @@ struct RecordedCallSequence {
     cmp_seq: Vec<Vec<crate::inspectors::CmpOperands>>,
 }
 
-type TargetCallSequence = Vec<(Address, Function)>;
-type TargetCallSequences = Arc<[TargetCallSequence]>;
-
 /// Immutable state selected once for a logical invariant campaign and cloned into each worker.
 #[derive(Clone)]
 struct InvariantCampaignSeed {
     artifact_filters: ArtifactFilters,
     sender_filters: SenderFilters,
     targeted_contracts: TargetedContracts,
-    call_sequences: TargetCallSequences,
     targets_are_updatable: bool,
     initial_handler_failures: Map<(Address, Selector), InvariantFuzzError>,
 }
@@ -1180,8 +1159,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             let initial_seq = sequence_plan.initial();
 
             let run_depth =
-                invariant_run_depth(&config, &mut invariant_test.test_data.branch_runner)
-                    .max(sequence_plan.required_depth() as u32);
+                invariant_run_depth(&config, &mut invariant_test.test_data.branch_runner);
 
             let mut corpus_run = Option::<RecordedCallSequence>::None;
             let mut frontier_run = (frontier_limit > 0).then(|| RecordedCallSequence {
@@ -1770,14 +1748,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         self.select_contract_artifacts(invariant_contract.address)?;
         let (sender_filters, targeted_contracts) =
             self.select_contracts_and_senders(invariant_contract.address)?;
-        let call_sequences = {
-            let targets = targeted_contracts.targets();
-            self.target_call_sequences(
-                invariant_contract.address,
-                invariant_contract.abi,
-                &targets,
-            )?
-        };
         let targets_are_updatable = targeted_contracts.is_updatable;
         let targeted_contracts = targeted_contracts.targets().clone();
 
@@ -1785,7 +1755,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             artifact_filters: self.artifact_filters.clone(),
             sender_filters,
             targeted_contracts,
-            call_sequences,
             targets_are_updatable,
             initial_handler_failures,
         })
@@ -1815,12 +1784,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             plan.worker_id,
             worker_count,
         ));
-        let sequence_start =
-            (plan.first_global_run as usize).min(campaign_seed.call_sequences.len());
-        let sequence_end = sequence_start
-            .saturating_add(plan.runs as usize)
-            .min(campaign_seed.call_sequences.len());
-        let call_sequences = campaign_seed.call_sequences[sequence_start..sequence_end].to_vec();
 
         // Creates the invariant strategy.
         let generator = TxGenerator::invariant(
@@ -1829,7 +1792,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             targeted_contracts.clone(),
             config.clone(),
             fuzz_fixtures.clone(),
-            !call_sequences.is_empty(),
         );
 
         // If any of the targeted contracts have the storage layout enabled then we can sample
@@ -1877,8 +1839,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             fuzz_fixtures.clone(),
             targeted_contracts.clone(),
             &config.corpus,
-        )?
-        .with_call_sequences(call_sequences);
+        )?;
         let mut worker = WorkerCorpus::from_seed(
             plan.worker_id as usize,
             config.corpus.clone(),
@@ -2108,75 +2069,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         }
 
         Ok((sender_filters, FuzzRunIdentifiedContracts::new(contracts, selected.is_empty())))
-    }
-
-    fn target_call_sequences(
-        &self,
-        invariant_address: Address,
-        invariant_abi: &JsonAbi,
-        targeted_contracts: &TargetedContracts,
-    ) -> Result<TargetCallSequences> {
-        if !invariant_abi.functions().any(|function| {
-            function.selector() == IInvariantTest::targetCallSequencesCall::SELECTOR
-        }) {
-            return Ok(Arc::from([]));
-        }
-        let declared = self
-            .executor
-            .call_sol(
-                CALLER,
-                invariant_address,
-                &IInvariantTest::targetCallSequencesCall {},
-                U256::ZERO,
-                None,
-            )
-            .map_err(|error| eyre!("failed calling targetCallSequences(): {error}"))?
-            .decoded_result;
-        let mut sequences = Vec::with_capacity(declared.len());
-        let mut seen = HashSet::new();
-        for (sequence_index, sequence) in declared.into_iter().enumerate() {
-            if sequence.calls.len() < 2 {
-                return Err(eyre!(
-                    "targetCallSequences sequence {sequence_index} must contain at least two calls"
-                ));
-            }
-            if sequence.calls.len() > self.config.depth as usize {
-                return Err(eyre!(
-                    "targetCallSequences sequence {sequence_index} has {} calls, exceeding the configured invariant depth {}",
-                    sequence.calls.len(),
-                    self.config.depth
-                ));
-            }
-            let mut calls = Vec::with_capacity(sequence.calls.len());
-            let mut key = Vec::with_capacity(sequence.calls.len());
-            for call in sequence.calls {
-                let Some(contract) = targeted_contracts.get(&call.target) else {
-                    return Err(eyre!(
-                        "targetCallSequences sequence {sequence_index} references untargeted contract {}",
-                        call.target
-                    ));
-                };
-                let Some(function) = contract.fuzzed_function_by_selector(call.selector) else {
-                    return Err(eyre!(
-                        "targetCallSequences sequence {sequence_index} references unfuzzable selector {} at {}",
-                        call.selector,
-                        call.target
-                    ));
-                };
-                key.push((call.target, call.selector));
-                calls.push((call.target, function.clone()));
-            }
-            if seen.insert(key) {
-                if sequences.len() == self.config.runs as usize {
-                    return Err(eyre!(
-                        "targetCallSequences declares more unique sequences than the configured {} invariant runs",
-                        self.config.runs
-                    ));
-                }
-                sequences.push(calls);
-            }
-        }
-        Ok(Arc::from(sequences))
     }
 
     /// Excludes registered storage-hook callbacks from implicit invariant targets.
@@ -2991,7 +2883,6 @@ mod tests {
             artifact_filters: ArtifactFilters::default(),
             sender_filters: SenderFilters::new(vec![CALLER], Vec::new()),
             targeted_contracts,
-            call_sequences: Arc::from([]),
             targets_are_updatable: false,
             initial_handler_failures: Map::default(),
         };
@@ -3127,7 +3018,6 @@ mod tests {
             artifact_filters: ArtifactFilters::default(),
             sender_filters: SenderFilters::default(),
             targeted_contracts,
-            call_sequences: Arc::from([]),
             targets_are_updatable: true,
             initial_handler_failures: Map::default(),
         };

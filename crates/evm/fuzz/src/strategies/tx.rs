@@ -11,7 +11,7 @@ use alloy_json_abi::Function;
 use alloy_primitives::{Address, U256};
 use eyre::{Result, eyre};
 use foundry_config::InvariantConfig;
-use proptest::{prelude::*, strategy::ValueTree, test_runner::TestRunner};
+use proptest::{prelude::*, test_runner::TestRunner};
 use std::{cell::RefCell, rc::Rc};
 
 #[derive(Default)]
@@ -24,23 +24,12 @@ struct PlannedCalls {
 #[derive(Clone)]
 pub struct TxGenerator {
     strategy: BoxedStrategy<BasicTxDetails>,
-    invariant: Option<Rc<InvariantTxContext>>,
-}
-
-struct InvariantTxContext {
-    state: FuzzState,
-    fixtures: FuzzFixtures,
-    senders: Rc<SenderFilters>,
-    dictionary_weight: u32,
-    max_time_delay: Option<u32>,
-    max_block_delay: Option<u32>,
-    payable_value_weight: u32,
 }
 
 impl TxGenerator {
     /// Wraps a prebuilt strategy, primarily for deterministic tests.
     pub const fn from_strategy(strategy: BoxedStrategy<BasicTxDetails>) -> Self {
-        Self { strategy, invariant: None }
+        Self { strategy }
     }
     /// Creates a fixed-target, fixed-sender stateless generator.
     pub fn stateless(
@@ -61,7 +50,6 @@ impl TxGenerator {
             payable_value_weight,
         );
         Self {
-            invariant: None,
             strategy: call
                 .prop_map(move |call_details| BasicTxDetails {
                     warp: None,
@@ -80,22 +68,10 @@ impl TxGenerator {
         contracts: FuzzRunIdentifiedContracts,
         config: InvariantConfig,
         fixtures: FuzzFixtures,
-        materialize_call_sequences: bool,
     ) -> Self {
+        let senders = Rc::new(senders);
         let dictionary_weight = config.dictionary.dictionary_weight;
         let payable_value_weight = config.corpus.payable_value_weight;
-        let senders = Rc::new(senders);
-        let invariant = materialize_call_sequences.then(|| {
-            Rc::new(InvariantTxContext {
-                state: state.clone(),
-                fixtures: fixtures.clone(),
-                senders: Rc::clone(&senders),
-                dictionary_weight,
-                max_time_delay: config.max_time_delay,
-                max_block_delay: config.max_block_delay,
-                payable_value_weight,
-            })
-        });
         let planned = Rc::new(RefCell::new(PlannedCalls::default()));
         let strategy = any::<prop::sample::Selector>()
             .prop_flat_map(move |selector| {
@@ -133,52 +109,12 @@ impl TxGenerator {
                 call_details,
             })
             .boxed();
-        Self { strategy, invariant }
+        Self { strategy }
     }
 
     /// Draws the next transaction from this generator.
     pub fn next_tx(&self, runner: &mut TestRunner) -> Result<BasicTxDetails> {
         Ok(self.strategy.new_tree(runner).map_err(|_| eyre!("Could not generate case"))?.current())
-    }
-
-    /// Materializes one ordered invariant-call prefix with a shared permitted sender.
-    pub(crate) fn call_sequence(
-        &self,
-        calls: &[(Address, Function)],
-        runner: &mut TestRunner,
-    ) -> Result<Vec<BasicTxDetails>> {
-        let context = self.invariant.as_ref().ok_or_else(|| eyre!("not an invariant generator"))?;
-        let sender =
-            select_sender(&context.state, Rc::clone(&context.senders), context.dictionary_weight)
-                .new_tree(runner)
-                .map_err(|_| eyre!("Could not generate invariant sender"))?
-                .current();
-        calls
-            .iter()
-            .map(|(target, function)| {
-                (
-                    optional_delay(context.max_time_delay),
-                    optional_delay(context.max_block_delay),
-                    Self::call_strategy(
-                        &context.state,
-                        &context.fixtures,
-                        *target,
-                        function.clone(),
-                        context.dictionary_weight,
-                        context.payable_value_weight,
-                    ),
-                )
-                    .prop_map(move |(warp, roll, call_details)| BasicTxDetails {
-                        warp,
-                        roll,
-                        sender,
-                        call_details,
-                    })
-                    .new_tree(runner)
-                    .map(|tree| tree.current())
-                    .map_err(|_| eyre!("Could not generate declared call sequence"))
-            })
-            .collect()
     }
 
     /// Generates calldata and payable value for one contract call.
@@ -300,12 +236,11 @@ mod tests {
             identified.clone(),
             InvariantConfig::default(),
             FuzzFixtures::default(),
-            false,
         );
         let mut runner = TestRunner::deterministic();
 
         // Populate the lazy cache while both calls are available, then invalidate it solely via
-        // the public target-update API used after invariant runs.
+        // the public lifecycle API used after invariant runs.
         let _ = generator.next_tx(&mut runner).unwrap();
         identified.clear_created_contracts(vec![removed]);
         for _ in 0..32 {
