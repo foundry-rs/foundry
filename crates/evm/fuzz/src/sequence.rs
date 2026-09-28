@@ -9,7 +9,7 @@ use crate::{
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
-use alloy_primitives::U256;
+use alloy_primitives::{Address, U256};
 use eyre::{Result, eyre};
 use foundry_config::{FuzzCorpusConfig, FuzzCorpusMutationWeights};
 use proptest::test_runner::TestRunner;
@@ -17,6 +17,9 @@ use rand::{
     Rng,
     distr::{Distribution, weighted::WeightedIndex},
 };
+use std::{cell::RefCell, collections::VecDeque};
+
+type DeclaredCallSequence = Vec<(Address, Function)>;
 
 /// A neutral borrowed view of one corpus entry.
 #[derive(Clone, Copy)]
@@ -59,6 +62,7 @@ pub struct SequenceGenerator {
     fresh_weight: u32,
     payable_weight: u32,
     has_corpus_dir: bool,
+    call_sequences: Option<RefCell<VecDeque<DeclaredCallSequence>>>,
 }
 
 /// An initial sequence and the generator used to lazily continue it.
@@ -69,6 +73,7 @@ pub struct SequencePlan {
     has_corpus_dir: bool,
     stateless: bool,
     source: Option<usize>,
+    fixed_prefix_len: usize,
 }
 
 enum InitialSequence {
@@ -102,6 +107,9 @@ impl SequencePlan {
     pub const fn source(&self) -> Option<usize> {
         self.source
     }
+    pub const fn required_depth(&self) -> usize {
+        self.fixed_prefix_len
+    }
     pub fn next(
         &self,
         runner: &mut TestRunner,
@@ -110,6 +118,9 @@ impl SequencePlan {
     ) -> Result<BasicTxDetails> {
         if self.stateless {
             return Err(eyre!("stateless sequence is limited to one transaction"));
+        }
+        if !discarded && depth < self.fixed_prefix_len {
+            return Ok(self.initial.as_slice()[depth].clone());
         }
         if !self.has_corpus_dir || discarded {
             return self.tx.next_tx(runner);
@@ -215,7 +226,14 @@ impl SequenceGenerator {
             fresh_weight: config.corpus_random_sequence_weight.min(100),
             payable_weight: config.payable_value_weight,
             has_corpus_dir: config.corpus_dir.is_some(),
+            call_sequences: None,
         })
+    }
+
+    /// Adds ordered call prefixes to execute once before ordinary invariant generation.
+    pub fn with_call_sequences(mut self, sequences: Vec<Vec<(Address, Function)>>) -> Self {
+        self.call_sequences = (!sequences.is_empty()).then(|| RefCell::new(sequences.into()));
+        self
     }
 
     pub fn start<'a, F>(
@@ -228,12 +246,26 @@ impl SequenceGenerator {
     where
         F: FnMut(usize) -> Result<CorpusEntryView<'a>>,
     {
-        let (initial, source) = match &self.mode {
+        let (initial, source, fixed_prefix_len) = match &self.mode {
             SequenceMode::Stateless(function) => {
-                self.start_stateless(runner, corpus_len, &mut entry_at, coverage, function)?
+                let (initial, source) =
+                    self.start_stateless(runner, corpus_len, &mut entry_at, coverage, function)?;
+                (initial, source, 0)
             }
             SequenceMode::Invariant(targets) => {
-                self.start_invariant(runner, corpus_len, &mut entry_at, coverage, targets)?
+                if let Some(calls) = self
+                    .call_sequences
+                    .as_ref()
+                    .and_then(|sequences| sequences.borrow_mut().pop_front())
+                {
+                    let sequence = self.tx.call_sequence(&calls, runner)?;
+                    let len = sequence.len();
+                    (InitialSequence::Multiple(sequence), None, len)
+                } else {
+                    let (initial, source) =
+                        self.start_invariant(runner, corpus_len, &mut entry_at, coverage, targets)?;
+                    (initial, source, 0)
+                }
             }
         };
         Ok(SequencePlan {
@@ -243,6 +275,7 @@ impl SequenceGenerator {
             has_corpus_dir: self.has_corpus_dir,
             stateless: matches!(self.mode, SequenceMode::Stateless(_)),
             source,
+            fixed_prefix_len,
         })
     }
 
@@ -642,7 +675,7 @@ mod tests {
     };
     use alloy_dyn_abi::DynSolValue;
     use alloy_json_abi::JsonAbi;
-    use alloy_primitives::{Address, Bytes};
+    use alloy_primitives::Bytes;
     use foundry_config::FuzzDictionaryConfig;
     use proptest::{prelude::Just, strategy::Strategy};
     use revm::database::{CacheDB, EmptyDB};
@@ -834,6 +867,7 @@ mod tests {
             has_corpus_dir: generator.has_corpus_dir,
             stateless: false,
             source: Some(0),
+            fixed_prefix_len: 0,
         };
 
         assert_eq!(plan.next(&mut runner, false, 1).unwrap().sender, tx(2).sender);
@@ -856,6 +890,7 @@ mod tests {
                 has_corpus_dir: true,
                 stateless: false,
                 source: Some(0),
+                fixed_prefix_len: 0,
             };
             let mut actual = TestRunner::deterministic();
             let mut reference = TestRunner::deterministic();
@@ -868,6 +903,23 @@ mod tests {
             );
             assert_eq!(sentinel(&mut actual), sentinel(&mut reference));
         }
+    }
+
+    #[test]
+    fn fixed_prefix_precedes_corpus_and_recovers_from_rejection() {
+        let plan = SequencePlan {
+            initial: InitialSequence::Multiple(vec![tx(1), tx(2)]),
+            tx: generator_tx(9),
+            fresh_weight: 100,
+            has_corpus_dir: true,
+            stateless: false,
+            source: None,
+            fixed_prefix_len: 2,
+        };
+        let mut runner = TestRunner::deterministic();
+
+        assert_eq!(plan.next(&mut runner, false, 1).unwrap().sender, tx(2).sender);
+        assert_eq!(plan.next(&mut runner, true, 1).unwrap().sender, tx(9).sender);
     }
 
     #[test]

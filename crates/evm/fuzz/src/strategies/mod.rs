@@ -19,8 +19,6 @@ pub use state::{EvmFuzzState, FuzzState};
 mod invariants;
 pub use invariants::override_call_strat;
 
-mod lifecycle;
-
 mod tx;
 pub use tx::TxGenerator;
 

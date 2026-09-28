@@ -328,6 +328,9 @@ fn focused_campaign_seed_for_worker(
     worker_count: usize,
     focus_seed: Option<U256>,
 ) -> Option<InvariantCampaignSeed> {
+    if (plan.first_global_run as usize) < campaign_seed.call_sequences.len() {
+        return None;
+    }
     let focus_index = invariant_focus_worker_index(plan.worker_id, worker_count)?;
     let targeted_contracts =
         focused_targeted_contracts(&campaign_seed.targeted_contracts, focus_index, focus_seed)?;
@@ -783,7 +786,7 @@ struct RecordedCallSequence {
     cmp_seq: Vec<Vec<crate::inspectors::CmpOperands>>,
 }
 
-type TargetCallSequence = Vec<(Address, Selector)>;
+type TargetCallSequence = Vec<(Address, Function)>;
 type TargetCallSequences = Arc<[TargetCallSequence]>;
 
 /// Immutable state selected once for a logical invariant campaign and cloned into each worker.
@@ -1177,7 +1180,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             let initial_seq = sequence_plan.initial();
 
             let run_depth =
-                invariant_run_depth(&config, &mut invariant_test.test_data.branch_runner);
+                invariant_run_depth(&config, &mut invariant_test.test_data.branch_runner)
+                    .max(sequence_plan.required_depth() as u32);
 
             let mut corpus_run = Option::<RecordedCallSequence>::None;
             let mut frontier_run = (frontier_limit > 0).then(|| RecordedCallSequence {
@@ -1811,15 +1815,21 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             plan.worker_id,
             worker_count,
         ));
+        let sequence_start =
+            (plan.first_global_run as usize).min(campaign_seed.call_sequences.len());
+        let sequence_end = sequence_start
+            .saturating_add(plan.runs as usize)
+            .min(campaign_seed.call_sequences.len());
+        let call_sequences = campaign_seed.call_sequences[sequence_start..sequence_end].to_vec();
 
         // Creates the invariant strategy.
         let generator = TxGenerator::invariant(
             fuzz_state.clone(),
             campaign_seed.sender_filters.clone(),
             targeted_contracts.clone(),
-            Arc::clone(&campaign_seed.call_sequences),
             config.clone(),
             fuzz_fixtures.clone(),
+            !call_sequences.is_empty(),
         );
 
         // If any of the targeted contracts have the storage layout enabled then we can sample
@@ -1867,7 +1877,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             fuzz_fixtures.clone(),
             targeted_contracts.clone(),
             &config.corpus,
-        )?;
+        )?
+        .with_call_sequences(call_sequences);
         let mut worker = WorkerCorpus::from_seed(
             plan.worker_id as usize,
             config.corpus.clone(),
@@ -2112,15 +2123,32 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         }
         let declared = self
             .executor
-            .call_sol_default(invariant_address, &IInvariantTest::targetCallSequencesCall {});
+            .call_sol(
+                CALLER,
+                invariant_address,
+                &IInvariantTest::targetCallSequencesCall {},
+                U256::ZERO,
+                None,
+            )
+            .map_err(|error| eyre!("failed calling targetCallSequences(): {error}"))?
+            .decoded_result;
         let mut sequences = Vec::with_capacity(declared.len());
+        let mut seen = HashSet::new();
         for (sequence_index, sequence) in declared.into_iter().enumerate() {
             if sequence.calls.len() < 2 {
                 return Err(eyre!(
                     "targetCallSequences sequence {sequence_index} must contain at least two calls"
                 ));
             }
+            if sequence.calls.len() > self.config.depth as usize {
+                return Err(eyre!(
+                    "targetCallSequences sequence {sequence_index} has {} calls, exceeding the configured invariant depth {}",
+                    sequence.calls.len(),
+                    self.config.depth
+                ));
+            }
             let mut calls = Vec::with_capacity(sequence.calls.len());
+            let mut key = Vec::with_capacity(sequence.calls.len());
             for call in sequence.calls {
                 let Some(contract) = targeted_contracts.get(&call.target) else {
                     return Err(eyre!(
@@ -2128,16 +2156,25 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         call.target
                     ));
                 };
-                if contract.fuzzed_function_by_selector(call.selector).is_none() {
+                let Some(function) = contract.fuzzed_function_by_selector(call.selector) else {
                     return Err(eyre!(
                         "targetCallSequences sequence {sequence_index} references unfuzzable selector {} at {}",
                         call.selector,
                         call.target
                     ));
-                }
-                calls.push((call.target, call.selector));
+                };
+                key.push((call.target, call.selector));
+                calls.push((call.target, function.clone()));
             }
-            sequences.push(calls);
+            if seen.insert(key) {
+                if sequences.len() == self.config.runs as usize {
+                    return Err(eyre!(
+                        "targetCallSequences declares more unique sequences than the configured {} invariant runs",
+                        self.config.runs
+                    ));
+                }
+                sequences.push(calls);
+            }
         }
         Ok(Arc::from(sequences))
     }

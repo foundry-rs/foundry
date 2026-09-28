@@ -3091,9 +3091,11 @@ contract InvariantStorageHooks is Test {
 
 forgetest_init!(invariant_declared_call_sequence, |prj, cmd| {
     prj.update_config(|config| {
-        config.invariant.runs = 1;
+        config.invariant.runs = 2;
         config.invariant.depth = 2;
         config.invariant.shrink_run_limit = 0;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(2).unwrap());
     });
 
     prj.add_test(
@@ -3112,9 +3114,11 @@ struct FuzzCallSequence {
 
 contract PrepareHandler {
     bool public prepared;
+    address public actor;
 
     function arbitraryName() external {
         prepared = true;
+        actor = msg.sender;
     }
 }
 
@@ -3127,7 +3131,10 @@ contract ExerciseHandler {
     }
 
     function anotherArbitraryName() external {
-        if (prepareHandler.prepared()) broken = true;
+        if (
+            prepareHandler.prepared() && prepareHandler.actor() == msg.sender
+                && msg.sender == address(0xbeef)
+        ) broken = true;
     }
 }
 
@@ -3141,14 +3148,20 @@ contract InvariantCallSequencesTest is Test {
 
         targetContract(address(prepareHandler));
         targetContract(address(exerciseHandler));
+        targetSender(address(0xbeef));
     }
 
     function targetCallSequences() public view returns (FuzzCallSequence[] memory sequences) {
-        sequences = new FuzzCallSequence[](1);
+        sequences = new FuzzCallSequence[](2);
         sequences[0].calls = new FuzzCall[](2);
         sequences[0].calls[0] =
-            FuzzCall(address(prepareHandler), PrepareHandler.arbitraryName.selector);
+            FuzzCall(address(exerciseHandler), ExerciseHandler.anotherArbitraryName.selector);
         sequences[0].calls[1] =
+            FuzzCall(address(prepareHandler), PrepareHandler.arbitraryName.selector);
+        sequences[1].calls = new FuzzCall[](2);
+        sequences[1].calls[0] =
+            FuzzCall(address(prepareHandler), PrepareHandler.arbitraryName.selector);
+        sequences[1].calls[1] =
             FuzzCall(address(exerciseHandler), ExerciseHandler.anotherArbitraryName.selector);
     }
 
@@ -3183,6 +3196,41 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 [SEED] (use `--fuzz-seed` to reproduce)
+Invariant workers: 2 (use `--invariant-workers 2` to reproduce)
 
 "#]]);
+});
+
+forgetest_init!(invariant_declared_call_sequence_rejects_broken_hook, |prj, cmd| {
+    prj.add_test(
+        "BrokenInvariantCallSequences.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+struct FuzzCall {
+    address target;
+    bytes4 selector;
+}
+
+struct FuzzCallSequence {
+    FuzzCall[] calls;
+}
+
+contract BrokenInvariantCallSequencesTest is Test {
+    function setUp() public {
+        targetContract(address(this));
+    }
+
+    function noop() external {}
+
+    function targetCallSequences() public pure returns (FuzzCallSequence[] memory) {
+        revert("broken hook");
+    }
+
+    function invariant_ok() public pure {}
+}
+"#,
+    );
+
+    cmd.args(["test"]).assert_failure();
 });

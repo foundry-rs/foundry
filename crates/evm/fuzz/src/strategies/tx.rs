@@ -1,7 +1,6 @@
 use super::{
     DictionaryRead, EvmFuzzState, FuzzState, fuzz_calldata, fuzz_calldata_from_state,
     fuzz_msg_value, fuzz_param, fuzz_param_from_state,
-    lifecycle::{LifecycleStep, lifecycle_scenarios},
 };
 use crate::{
     BasicTxDetails, CallDetails, FuzzFixtures,
@@ -9,14 +8,11 @@ use crate::{
 };
 use alloy_dyn_abi::DynSolType;
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, Selector, U256};
+use alloy_primitives::{Address, U256};
 use eyre::{Result, eyre};
 use foundry_config::InvariantConfig;
-use proptest::{prelude::*, test_runner::TestRunner};
-use std::{cell::RefCell, collections::VecDeque, rc::Rc, sync::Arc};
-
-const LIFECYCLE_TRANSACTION_WEIGHT: u32 = 20;
-const MAX_LIFECYCLE_SEQUENCES: usize = 256;
+use proptest::{prelude::*, strategy::ValueTree, test_runner::TestRunner};
+use std::{cell::RefCell, rc::Rc};
 
 #[derive(Default)]
 struct PlannedCalls {
@@ -28,94 +24,23 @@ struct PlannedCalls {
 #[derive(Clone)]
 pub struct TxGenerator {
     strategy: BoxedStrategy<BasicTxDetails>,
-    lifecycle: Option<Rc<RefCell<LifecycleBootstrap>>>,
+    invariant: Option<Rc<InvariantTxContext>>,
 }
 
-struct LifecycleBootstrap {
-    generation: Option<u64>,
-    declared: Arc<[Vec<(Address, Selector)>]>,
-    scenarios: Vec<Vec<LifecycleStep>>,
-    eager_sequences: usize,
-    cursor: usize,
-    sequences: usize,
-    pending: VecDeque<LifecycleStep>,
-    calls: Vec<[BoxedStrategy<BasicTxDetails>; 2]>,
+struct InvariantTxContext {
     state: FuzzState,
     fixtures: FuzzFixtures,
-    contracts: FuzzRunIdentifiedContracts,
-    actor: Address,
+    senders: Rc<SenderFilters>,
+    dictionary_weight: u32,
     max_time_delay: Option<u32>,
     max_block_delay: Option<u32>,
     payable_value_weight: u32,
 }
 
-impl LifecycleBootstrap {
-    fn next_tx(&mut self, runner: &mut TestRunner) -> Result<Option<BasicTxDetails>> {
-        let generation = self.contracts.fuzzed_functions_generation();
-        if self.generation != Some(generation) {
-            let functions = self.contracts.fuzzed_functions();
-            (self.scenarios, self.eager_sequences) =
-                lifecycle_scenarios(&functions, &self.declared);
-            let actor = self.actor;
-            self.calls = functions
-                .iter()
-                .map(|(target, function)| {
-                    [0, 100].map(|dictionary_weight| {
-                        let call = TxGenerator::call_strategy(
-                            &self.state,
-                            &self.fixtures,
-                            *target,
-                            function.clone(),
-                            dictionary_weight,
-                            self.payable_value_weight,
-                        );
-                        (
-                            optional_delay(self.max_time_delay),
-                            optional_delay(self.max_block_delay),
-                            call,
-                        )
-                            .prop_map(move |(warp, roll, call_details)| BasicTxDetails {
-                                warp,
-                                roll,
-                                sender: actor,
-                                call_details,
-                            })
-                            .boxed()
-                    })
-                })
-                .collect();
-            self.pending.clear();
-            self.cursor = 0;
-            self.generation = Some(generation);
-        }
-
-        if self.pending.is_empty() {
-            if self.sequences == MAX_LIFECYCLE_SEQUENCES
-                || self.scenarios.is_empty()
-                || (self.sequences >= self.eager_sequences
-                    && !runner.rng().random_ratio(LIFECYCLE_TRANSACTION_WEIGHT, 100))
-            {
-                return Ok(None);
-            }
-            self.pending.extend(self.scenarios[self.cursor].iter().copied());
-            self.cursor = (self.cursor + 1) % self.scenarios.len();
-            self.sequences += 1;
-        }
-
-        let step = self.pending.pop_front().expect("checked non-empty");
-        let strategy = &self.calls[step.function][usize::from(step.dictionary)];
-        let tx = strategy
-            .new_tree(runner)
-            .map_err(|_| eyre!("Could not generate lifecycle case"))?
-            .current();
-        Ok(Some(tx))
-    }
-}
-
 impl TxGenerator {
     /// Wraps a prebuilt strategy, primarily for deterministic tests.
     pub const fn from_strategy(strategy: BoxedStrategy<BasicTxDetails>) -> Self {
-        Self { strategy, lifecycle: None }
+        Self { strategy, invariant: None }
     }
     /// Creates a fixed-target, fixed-sender stateless generator.
     pub fn stateless(
@@ -136,7 +61,7 @@ impl TxGenerator {
             payable_value_weight,
         );
         Self {
-            lifecycle: None,
+            invariant: None,
             strategy: call
                 .prop_map(move |call_details| BasicTxDetails {
                     warp: None,
@@ -153,42 +78,24 @@ impl TxGenerator {
         state: FuzzState,
         senders: SenderFilters,
         contracts: FuzzRunIdentifiedContracts,
-        call_sequences: Arc<[Vec<(Address, Selector)>]>,
         config: InvariantConfig,
         fixtures: FuzzFixtures,
+        materialize_call_sequences: bool,
     ) -> Self {
         let dictionary_weight = config.dictionary.dictionary_weight;
         let payable_value_weight = config.corpus.payable_value_weight;
-        let lifecycle = (config.lifecycle_bootstrap || !call_sequences.is_empty()).then(|| {
-            let actor = senders.targeted.first().copied().unwrap_or_else(|| {
-                let mut suffix = 1u8;
-                loop {
-                    let actor = Address::with_last_byte(suffix);
-                    if senders.allows(actor) {
-                        break actor;
-                    }
-                    suffix = suffix.wrapping_add(1);
-                }
-            });
-            Rc::new(RefCell::new(LifecycleBootstrap {
-                generation: None,
-                declared: call_sequences,
-                scenarios: Vec::new(),
-                eager_sequences: 0,
-                cursor: 0,
-                sequences: 0,
-                pending: VecDeque::new(),
-                calls: Vec::new(),
+        let senders = Rc::new(senders);
+        let invariant = materialize_call_sequences.then(|| {
+            Rc::new(InvariantTxContext {
                 state: state.clone(),
                 fixtures: fixtures.clone(),
-                contracts: contracts.clone(),
-                actor,
+                senders: Rc::clone(&senders),
+                dictionary_weight,
                 max_time_delay: config.max_time_delay,
                 max_block_delay: config.max_block_delay,
                 payable_value_weight,
-            }))
+            })
         });
-        let senders = Rc::new(senders);
         let planned = Rc::new(RefCell::new(PlannedCalls::default()));
         let strategy = any::<prop::sample::Selector>()
             .prop_flat_map(move |selector| {
@@ -226,17 +133,52 @@ impl TxGenerator {
                 call_details,
             })
             .boxed();
-        Self { strategy, lifecycle }
+        Self { strategy, invariant }
     }
 
     /// Draws the next transaction from this generator.
     pub fn next_tx(&self, runner: &mut TestRunner) -> Result<BasicTxDetails> {
-        if let Some(lifecycle) = &self.lifecycle
-            && let Some(tx) = lifecycle.borrow_mut().next_tx(runner)?
-        {
-            return Ok(tx);
-        }
         Ok(self.strategy.new_tree(runner).map_err(|_| eyre!("Could not generate case"))?.current())
+    }
+
+    /// Materializes one ordered invariant-call prefix with a shared permitted sender.
+    pub(crate) fn call_sequence(
+        &self,
+        calls: &[(Address, Function)],
+        runner: &mut TestRunner,
+    ) -> Result<Vec<BasicTxDetails>> {
+        let context = self.invariant.as_ref().ok_or_else(|| eyre!("not an invariant generator"))?;
+        let sender =
+            select_sender(&context.state, Rc::clone(&context.senders), context.dictionary_weight)
+                .new_tree(runner)
+                .map_err(|_| eyre!("Could not generate invariant sender"))?
+                .current();
+        calls
+            .iter()
+            .map(|(target, function)| {
+                (
+                    optional_delay(context.max_time_delay),
+                    optional_delay(context.max_block_delay),
+                    Self::call_strategy(
+                        &context.state,
+                        &context.fixtures,
+                        *target,
+                        function.clone(),
+                        context.dictionary_weight,
+                        context.payable_value_weight,
+                    ),
+                )
+                    .prop_map(move |(warp, roll, call_details)| BasicTxDetails {
+                        warp,
+                        roll,
+                        sender,
+                        call_details,
+                    })
+                    .new_tree(runner)
+                    .map(|tree| tree.current())
+                    .map_err(|_| eyre!("Could not generate declared call sequence"))
+            })
+            .collect()
     }
 
     /// Generates calldata and payable value for one contract call.
@@ -356,109 +298,18 @@ mod tests {
             state,
             SenderFilters::default(),
             identified.clone(),
-            Arc::from([]),
             InvariantConfig::default(),
             FuzzFixtures::default(),
+            false,
         );
         let mut runner = TestRunner::deterministic();
 
         // Populate the lazy cache while both calls are available, then invalidate it solely via
-        // the public lifecycle API used after invariant runs.
+        // the public target-update API used after invariant runs.
         let _ = generator.next_tx(&mut runner).unwrap();
         identified.clear_created_contracts(vec![removed]);
         for _ in 0..32 {
             assert_eq!(generator.next_tx(&mut runner).unwrap().call_details.target, retained);
-        }
-    }
-
-    #[test]
-    fn invariant_generator_emits_lifecycle_sequences() {
-        let target = Address::with_last_byte(1);
-        let functions = [
-            "switchActor(uint256)",
-            "switch_asset(uint256)",
-            "supply(uint256,uint256)",
-            "setUsingAsCollateral(uint256,bool)",
-            "borrow(uint256,uint256)",
-            "liquidationCall(uint256,uint256)",
-        ]
-        .into_iter()
-        .map(|signature| Function::parse(signature).unwrap())
-        .collect::<Vec<_>>();
-        let mut abi = JsonAbi::new();
-        for function in &functions {
-            abi.functions.entry(function.name.clone()).or_default().push(function.clone());
-        }
-        let mut targets = TargetedContracts::new();
-        targets.insert(target, TargetedContract::new("Target".into(), abi));
-        let state = EvmFuzzState::new(
-            &[],
-            &CacheDB::<EmptyDB>::default(),
-            FuzzDictionaryConfig::default(),
-            None,
-        )
-        .into_invariant();
-        let config = InvariantConfig { lifecycle_bootstrap: true, ..Default::default() };
-        let generator = TxGenerator::invariant(
-            state,
-            SenderFilters::default(),
-            FuzzRunIdentifiedContracts::new(targets, false),
-            Arc::from([]),
-            config,
-            FuzzFixtures::default(),
-        );
-        let expected = [0, 1, 3, 2, 4, 0, 5].map(|index| functions[index].selector());
-        let mut matched = 0;
-        let mut runner = TestRunner::deterministic();
-
-        for _ in 0..256 {
-            let tx = generator.next_tx(&mut runner).unwrap();
-            let selector = &tx.call_details.calldata[..4];
-            if selector == expected[matched].as_slice() {
-                matched += 1;
-                if matched == expected.len() {
-                    return;
-                }
-            } else {
-                matched = usize::from(selector == expected[0].as_slice());
-            }
-        }
-        panic!("lifecycle sequence was not emitted");
-    }
-
-    #[test]
-    fn invariant_generator_eagerly_emits_declared_sequence() {
-        let first = Address::with_last_byte(1);
-        let second = Address::with_last_byte(2);
-        let prepare = Function::parse("prepare()").unwrap();
-        let exercise = Function::parse("exercise()").unwrap();
-        let mut targets = TargetedContracts::new();
-        for (target, function) in [(first, &prepare), (second, &exercise)] {
-            let mut abi = JsonAbi::new();
-            abi.functions.entry(function.name.clone()).or_default().push(function.clone());
-            targets.insert(target, TargetedContract::new("Target".into(), abi));
-        }
-        let state = EvmFuzzState::new(
-            &[],
-            &CacheDB::<EmptyDB>::default(),
-            FuzzDictionaryConfig::default(),
-            None,
-        )
-        .into_invariant();
-        let generator = TxGenerator::invariant(
-            state,
-            SenderFilters::default(),
-            FuzzRunIdentifiedContracts::new(targets, false),
-            Arc::from([vec![(first, prepare.selector()), (second, exercise.selector())]]),
-            InvariantConfig::default(),
-            FuzzFixtures::default(),
-        );
-        let mut runner = TestRunner::deterministic();
-
-        for (target, selector) in [(first, prepare.selector()), (second, exercise.selector())] {
-            let tx = generator.next_tx(&mut runner).unwrap();
-            assert_eq!(tx.call_details.target, target);
-            assert_eq!(&tx.call_details.calldata[..4], selector.as_slice());
         }
     }
 }

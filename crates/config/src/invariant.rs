@@ -129,8 +129,6 @@ pub struct InvariantConfig {
     pub min_depth: u32,
     /// How to choose the effective depth for each invariant run.
     pub depth_mode: InvariantDepthMode,
-    /// Whether to briefly interleave ABI-derived protocol lifecycles before random generation.
-    pub lifecycle_bootstrap: bool,
     /// Worker selection mode used to shard invariant runs.
     ///
     /// Defaults to `auto`, which derives the worker count from `--jobs`. Use a positive integer
@@ -191,7 +189,6 @@ impl Default for InvariantConfig {
             depth: 500,
             min_depth: 1,
             depth_mode: InvariantDepthMode::default(),
-            lifecycle_bootstrap: false,
             workers: InvariantWorkers::default(),
             fail_on_revert: false,
             call_override: false,
