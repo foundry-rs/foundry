@@ -222,6 +222,15 @@ impl ProjectCompiler {
         self
     }
 
+    /// Reuses normal artifacts before consulting the compiler-owned ABI cache.
+    ///
+    /// The project must request ABI output and may include other contract outputs.
+    /// The project's artifact policy controls writes to the secondary cache.
+    pub const fn cache_abi(mut self) -> Self {
+        self.abi_cache = true;
+        self
+    }
+
     /// Compiles the project.
     #[instrument(target = "forge::compile", skip_all)]
     pub fn compile<C: Compiler<CompilerContract = Contract>>(
