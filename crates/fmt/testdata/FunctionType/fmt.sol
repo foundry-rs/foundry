@@ -37,3 +37,19 @@ library ArrayUtils {
         }
     }
 }
+
+contract FnTypeTrailingComment {
+    function f(
+        function(bytes memory) external pure /*g*/
+    )
+        public
+        pure {}
+}
+
+library FnTypeTrailingCommentInLibrary {
+    function f(
+        function(uint256) internal returns (uint256) /*x*/
+    )
+        internal
+        pure {}
+}

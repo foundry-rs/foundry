@@ -254,7 +254,9 @@ impl<'ast> State<'_, 'ast> {
             state.print_comments(span.lo(), CommentConfig::skip_ws().mixed_prev_space());
             print(state, &values[0]);
 
-            if !state.print_trailing_comment(span.hi(), None) && skip_break {
+            // Bound the scan to the closing paren. Unbounded, it reaches past the list and claims a
+            // comment that trails whatever follows it, such as the modifiers of a function type.
+            if !state.print_trailing_comment(span.hi(), Some(pos_hi)) && skip_break {
                 state.neverbreak();
             } else {
                 state.break_offset_if_not_bol(0, -state.ind, false);
