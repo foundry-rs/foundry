@@ -2544,6 +2544,16 @@ impl<'ast> State<'_, 'ast> {
             {
                 self.neverbreak();
                 self.print_sep(Separator::Nbsp);
+            } else if inline
+                && matches!(cond.kind, ast::ExprKind::Call(..))
+                && matches!(
+                    self.config.single_line_statement_blocks,
+                    config::SingleLineBlockStyle::Preserve
+                )
+            {
+                // Keep the body beside a wrapped call condition so Preserve sees the same
+                // layout on the next pass.
+                self.print_sep(Separator::Nbsp);
             } else {
                 self.print_sep(Separator::Space);
             }
