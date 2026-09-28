@@ -4264,6 +4264,11 @@ interface VmBlockEnvironment {
     function difficulty(uint256 value) external;
     function prevrandao(bytes32 value) external;
     function prevrandao(uint256 value) external;
+    function roll(uint256 value) external;
+    function warp(uint256 value) external;
+    function etch(address target, bytes calldata code) external;
+    function store(address target, bytes32 slot, bytes32 value) external;
+    function load(address target, bytes32 slot) external view returns (bytes32);
 }
 
 contract EthereumBlockEnvironmentTest {
@@ -4296,6 +4301,44 @@ contract EthereumBlockEnvironmentTest {
             require(reason.length != 0);
         }
     }
+
+    function testRoll() public {
+        vm.roll(10);
+        require(block.number == 10);
+        vm.roll(5);
+        require(block.number == 5);
+    }
+
+    function testRollRejectedInStaticCall() public {
+        uint256 beforeRoll = block.number;
+        (bool success,) = address(vm).staticcall(abi.encodeCall(VmBlockEnvironment.roll, (10)));
+        require(!success, "roll accepted");
+        require(block.number == beforeRoll, "block changed");
+
+        uint256 beforeWarp = block.timestamp;
+        (success,) = address(vm).staticcall(abi.encodeCall(VmBlockEnvironment.warp, (10)));
+        require(!success, "warp accepted");
+        require(block.timestamp == beforeWarp, "timestamp changed");
+    }
+
+    function testRollFillsHistory() public {
+        address history = prepareHistory();
+        vm.roll(3);
+        require(vm.load(history, bytes32(uint256(2))) == keccak256(bytes("2")), "history slot");
+    }
+
+    function testRollLeavesHistoryBeforePrague() public {
+        address history = prepareHistory();
+        vm.roll(3);
+        require(vm.load(history, bytes32(uint256(2))) == bytes32(uint256(99)), "history slot");
+    }
+
+    function prepareHistory() internal returns (address history) {
+        history = 0x0000F90827F1C53a10cb7A02335B175320002935;
+        vm.etch(history, hex"3373fffffffffffffffffffffffffffffffffffffffe14604657602036036042575f35600143038111604257611fff81430311604257611fff9006545f5260205ff35b5f5ffd5b5f35611fff60014303065500");
+        vm.roll(1);
+        vm.store(history, bytes32(uint256(2)), bytes32(uint256(99)));
+    }
 }
 "#,
     );
@@ -4306,12 +4349,46 @@ contract EthereumBlockEnvironmentTest {
             "--mc",
             "^EthereumBlockEnvironmentTest$",
             "--mt",
-            "^test(CoinbaseAndPrevrandao|DifficultyRejectedAfterMerge)[(]",
+            "^test(CoinbaseAndPrevrandao|DifficultyRejectedAfterMerge|Roll|RollRejectedInStaticCall)[(]",
         ])
         .assert_success()
         .stdout_eq(str![[r#"
 ...
-Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--evm-version",
+            "prague",
+            "--mc",
+            "^EthereumBlockEnvironmentTest$",
+            "--mt",
+            "^testRollFillsHistory[(]",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+[PASS] testRollFillsHistory() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--evm-version",
+            "cancun",
+            "--mc",
+            "^EthereumBlockEnvironmentTest$",
+            "--mt",
+            "^testRollLeavesHistoryBeforePrague[(]",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+[PASS] testRollLeavesHistoryBeforePrague() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
     cmd.forge_fuse()

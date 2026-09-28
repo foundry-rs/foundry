@@ -17,7 +17,7 @@ use alloy_sol_types::{SolCall, SolInterface, SolValue};
 use evm2::{
     EvmFeatures, Inspector,
     bytecode::Bytecode,
-    evm::{AccountInfo, Database, inspector::CallAction},
+    evm::{AccountInfo, Database, DynDatabase, inspector::CallAction},
     interpreter::{
         GasTracker, InstrStop, Interpreter, Message, MessageKind, MessageResult, MessageResultExt,
         derive_create_destination,
@@ -29,7 +29,10 @@ use foundry_evm_core::{
         CALLER, CHEATCODE_ADDRESS, CHEATCODE_CONTRACT_HASH, MAGIC_ASSUME, MAGIC_SKIP,
         TEST_CONTRACT_ADDRESS,
     },
-    eip2935::{HISTORY_STORAGE_ADDRESS, HISTORY_STORAGE_CODE},
+    eip2935::{
+        HISTORY_STORAGE_ADDRESS, HISTORY_STORAGE_CODE, forward_fill_start, history_storage_slot,
+        history_storage_value,
+    },
     ethereum::{FoundryEvmTypes, LocalState},
     evm::{EthEvmNetwork, TransactionRequestFor},
 };
@@ -311,6 +314,7 @@ impl EthereumCheatcodes {
                 host.set_block(block);
                 (InstrStop::Return, Bytes::new())
             }
+            Vm::VmCalls::roll(call) => Self::roll(interp, call.newHeight),
             Vm::VmCalls::coinbase(call) => {
                 let host = interp.host();
                 let mut block = *host.block();
@@ -818,6 +822,41 @@ impl EthereumCheatcodes {
                 (InstrStop::FatalExternalError, Bytes::new())
             }
         }
+    }
+
+    fn roll(
+        interp: &mut Interpreter<'_, '_, FoundryEvmTypes>,
+        new_height: U256,
+    ) -> (InstrStop, Bytes) {
+        let current_height = interp.host().block().number;
+        if interp.spec() >= evm2::SpecId::PRAGUE && new_height > current_height {
+            let filled = (|| -> Result<(), evm2::ErrorCode> {
+                let state = interp.host().state_mut();
+                let history_code_hash = state.account(&HISTORY_STORAGE_ADDRESS, false)?.code_hash();
+                if history_code_hash == keccak256(&HISTORY_STORAGE_CODE) {
+                    let mut number = forward_fill_start(current_height, new_height);
+                    while number < new_height {
+                        let hash = DynDatabase::get_block_hash(state.overlay_db_mut(), &number)
+                            .unwrap_or_default();
+                        let slot = history_storage_slot(number);
+                        state
+                            .storage_slot(&HISTORY_STORAGE_ADDRESS, slot, false)?
+                            .set(history_storage_value(hash));
+                        number += U256::ONE;
+                    }
+                }
+                Ok(())
+            })();
+            if let Err(error) = filled {
+                interp.host().set_error_code(error);
+                return (InstrStop::FatalExternalError, Bytes::new());
+            }
+        }
+        let host = interp.host();
+        let mut block = *host.block();
+        block.number = new_height;
+        host.set_block(block);
+        (InstrStop::Return, Bytes::new())
     }
 
     fn artifact_result<T: SolValue>(result: crate::Result<T>) -> (InstrStop, Bytes) {
@@ -1337,12 +1376,13 @@ impl Inspector<FoundryEvmTypes> for EthereumCheatcodes {
                 InstrStop::Revert,
                 Error::encode(format!("vm.{name}: disabled during restricted execution")),
             ))
-        } else if interp.is_static()
+        } else if (message.kind == MessageKind::StaticCall || message.caller_is_static)
             && matches!(
                 &decoded,
                 Vm::VmCalls::deal(_)
                     | Vm::VmCalls::etch(_)
                     | Vm::VmCalls::warp(_)
+                    | Vm::VmCalls::roll(_)
                     | Vm::VmCalls::coinbase(_)
                     | Vm::VmCalls::difficulty(_)
                     | Vm::VmCalls::prevrandao_0(_)
