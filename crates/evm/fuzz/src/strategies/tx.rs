@@ -9,11 +9,11 @@ use crate::{
 };
 use alloy_dyn_abi::DynSolType;
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, Selector, U256};
 use eyre::{Result, eyre};
 use foundry_config::InvariantConfig;
 use proptest::{prelude::*, test_runner::TestRunner};
-use std::{cell::RefCell, collections::VecDeque, rc::Rc};
+use std::{cell::RefCell, collections::VecDeque, rc::Rc, sync::Arc};
 
 const LIFECYCLE_TRANSACTION_WEIGHT: u32 = 20;
 const MAX_LIFECYCLE_SEQUENCES: usize = 256;
@@ -33,7 +33,9 @@ pub struct TxGenerator {
 
 struct LifecycleBootstrap {
     generation: Option<u64>,
+    declared: Arc<[Vec<(Address, Selector)>]>,
     scenarios: Vec<Vec<LifecycleStep>>,
+    eager_sequences: usize,
     cursor: usize,
     sequences: usize,
     pending: VecDeque<LifecycleStep>,
@@ -52,7 +54,8 @@ impl LifecycleBootstrap {
         let generation = self.contracts.fuzzed_functions_generation();
         if self.generation != Some(generation) {
             let functions = self.contracts.fuzzed_functions();
-            self.scenarios = lifecycle_scenarios(&functions);
+            (self.scenarios, self.eager_sequences) =
+                lifecycle_scenarios(&functions, &self.declared);
             let actor = self.actor;
             self.calls = functions
                 .iter()
@@ -89,7 +92,8 @@ impl LifecycleBootstrap {
         if self.pending.is_empty() {
             if self.sequences == MAX_LIFECYCLE_SEQUENCES
                 || self.scenarios.is_empty()
-                || !runner.rng().random_ratio(LIFECYCLE_TRANSACTION_WEIGHT, 100)
+                || (self.sequences >= self.eager_sequences
+                    && !runner.rng().random_ratio(LIFECYCLE_TRANSACTION_WEIGHT, 100))
             {
                 return Ok(None);
             }
@@ -149,12 +153,13 @@ impl TxGenerator {
         state: FuzzState,
         senders: SenderFilters,
         contracts: FuzzRunIdentifiedContracts,
+        call_sequences: Arc<[Vec<(Address, Selector)>]>,
         config: InvariantConfig,
         fixtures: FuzzFixtures,
     ) -> Self {
         let dictionary_weight = config.dictionary.dictionary_weight;
         let payable_value_weight = config.corpus.payable_value_weight;
-        let lifecycle = config.lifecycle_bootstrap.then(|| {
+        let lifecycle = (config.lifecycle_bootstrap || !call_sequences.is_empty()).then(|| {
             let actor = senders.targeted.first().copied().unwrap_or_else(|| {
                 let mut suffix = 1u8;
                 loop {
@@ -167,7 +172,9 @@ impl TxGenerator {
             });
             Rc::new(RefCell::new(LifecycleBootstrap {
                 generation: None,
+                declared: call_sequences,
                 scenarios: Vec::new(),
+                eager_sequences: 0,
                 cursor: 0,
                 sequences: 0,
                 pending: VecDeque::new(),
@@ -349,6 +356,7 @@ mod tests {
             state,
             SenderFilters::default(),
             identified.clone(),
+            Arc::from([]),
             InvariantConfig::default(),
             FuzzFixtures::default(),
         );
@@ -395,6 +403,7 @@ mod tests {
             state,
             SenderFilters::default(),
             FuzzRunIdentifiedContracts::new(targets, false),
+            Arc::from([]),
             config,
             FuzzFixtures::default(),
         );
@@ -415,5 +424,41 @@ mod tests {
             }
         }
         panic!("lifecycle sequence was not emitted");
+    }
+
+    #[test]
+    fn invariant_generator_eagerly_emits_declared_sequence() {
+        let first = Address::with_last_byte(1);
+        let second = Address::with_last_byte(2);
+        let prepare = Function::parse("prepare()").unwrap();
+        let exercise = Function::parse("exercise()").unwrap();
+        let mut targets = TargetedContracts::new();
+        for (target, function) in [(first, &prepare), (second, &exercise)] {
+            let mut abi = JsonAbi::new();
+            abi.functions.entry(function.name.clone()).or_default().push(function.clone());
+            targets.insert(target, TargetedContract::new("Target".into(), abi));
+        }
+        let state = EvmFuzzState::new(
+            &[],
+            &CacheDB::<EmptyDB>::default(),
+            FuzzDictionaryConfig::default(),
+            None,
+        )
+        .into_invariant();
+        let generator = TxGenerator::invariant(
+            state,
+            SenderFilters::default(),
+            FuzzRunIdentifiedContracts::new(targets, false),
+            Arc::from([vec![(first, prepare.selector()), (second, exercise.selector())]]),
+            InvariantConfig::default(),
+            FuzzFixtures::default(),
+        );
+        let mut runner = TestRunner::deterministic();
+
+        for (target, selector) in [(first, prepare.selector()), (second, exercise.selector())] {
+            let tx = generator.next_tx(&mut runner).unwrap();
+            assert_eq!(tx.call_details.target, target);
+            assert_eq!(&tx.call_details.calldata[..4], selector.as_slice());
+        }
     }
 }

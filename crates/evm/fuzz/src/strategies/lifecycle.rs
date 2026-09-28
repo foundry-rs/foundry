@@ -1,7 +1,7 @@
 //! ABI-derived transaction sequences for stateful invariant campaigns.
 
 use alloy_json_abi::Function;
-use alloy_primitives::Address;
+use alloy_primitives::{Address, Selector};
 
 const MAX_SCENARIOS: usize = 4096;
 
@@ -11,9 +11,29 @@ pub(super) struct LifecycleStep {
     pub(super) dictionary: bool,
 }
 
-/// Derives common lending and vault lifecycles without interpreting contract source or state.
-pub(super) fn lifecycle_scenarios(functions: &[(Address, Function)]) -> Vec<Vec<LifecycleStep>> {
+/// Resolves declared call sequences or derives common lending and vault lifecycles.
+pub(super) fn lifecycle_scenarios(
+    functions: &[(Address, Function)],
+    declared: &[Vec<(Address, Selector)>],
+) -> (Vec<Vec<LifecycleStep>>, usize) {
     let mut scenarios = Vec::new();
+    if !declared.is_empty() {
+        for calls in declared {
+            let sequence = calls
+                .iter()
+                .filter_map(|(target, selector)| {
+                    functions.iter().position(|(address, function)| {
+                        address == target && function.selector() == *selector
+                    })
+                })
+                .collect::<Vec<_>>();
+            if sequence.len() == calls.len() && append_scenario(&mut scenarios, &sequence) {
+                break;
+            }
+        }
+    }
+    let eager = scenarios.len();
+
     let names = functions
         .iter()
         .map(|(_, function)| function.name.to_ascii_lowercase())
@@ -104,16 +124,8 @@ pub(super) fn lifecycle_scenarios(functions: &[(Address, Function)]) -> Vec<Vec<
                     }
                     sequence.push(terminal);
 
-                    for dictionary in [true, false] {
-                        scenarios.push(
-                            sequence
-                                .iter()
-                                .map(|&function| LifecycleStep { function, dictionary })
-                                .collect(),
-                        );
-                        if scenarios.len() == MAX_SCENARIOS {
-                            return scenarios;
-                        }
+                    if append_scenario(&mut scenarios, &sequence) {
+                        return (scenarios, eager);
                     }
                 }
             }
@@ -143,22 +155,26 @@ pub(super) fn lifecycle_scenarios(functions: &[(Address, Function)]) -> Vec<Vec<
             }) {
                 let mut sequence = base.clone();
                 sequence.push(terminal);
-                for dictionary in [true, false] {
-                    scenarios.push(
-                        sequence
-                            .iter()
-                            .map(|&function| LifecycleStep { function, dictionary })
-                            .collect(),
-                    );
-                    if scenarios.len() == MAX_SCENARIOS {
-                        return scenarios;
-                    }
+                if append_scenario(&mut scenarios, &sequence) {
+                    return (scenarios, eager);
                 }
             }
         }
     }
 
-    scenarios
+    (scenarios, eager)
+}
+
+fn append_scenario(scenarios: &mut Vec<Vec<LifecycleStep>>, sequence: &[usize]) -> bool {
+    for dictionary in [true, false] {
+        scenarios.push(
+            sequence.iter().map(|&function| LifecycleStep { function, dictionary }).collect(),
+        );
+        if scenarios.len() == MAX_SCENARIOS {
+            return true;
+        }
+    }
+    false
 }
 
 #[cfg(test)]
@@ -181,7 +197,7 @@ mod tests {
         .map(|signature| (target, Function::parse(signature).unwrap()))
         .collect::<Vec<_>>();
 
-        let scenarios = lifecycle_scenarios(&functions);
+        let (scenarios, _) = lifecycle_scenarios(&functions, &[]);
         assert_eq!(
             scenarios[0],
             [0, 1, 3, 2, 4, 5, 0, 6]
@@ -208,10 +224,32 @@ mod tests {
         .map(|signature| (target, Function::parse(signature).unwrap()))
         .collect::<Vec<_>>();
 
-        let scenarios = lifecycle_scenarios(&functions);
+        let (scenarios, _) = lifecycle_scenarios(&functions, &[]);
         assert_eq!(
             scenarios[0],
             [0, 1, 2, 3, 4, 5, 6]
+                .into_iter()
+                .map(|function| LifecycleStep { function, dictionary: true })
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn resolves_declared_cross_contract_sequence() {
+        let first = Address::with_last_byte(1);
+        let second = Address::with_last_byte(2);
+        let functions = [
+            (first, Function::parse("prepare(bytes32)").unwrap()),
+            (second, Function::parse("exercise(uint256)").unwrap()),
+        ];
+        let declared =
+            vec![vec![(first, functions[0].1.selector()), (second, functions[1].1.selector())]];
+
+        let (scenarios, _) = lifecycle_scenarios(&functions, &declared);
+
+        assert_eq!(
+            scenarios[0],
+            [0, 1]
                 .into_iter()
                 .map(|function| LifecycleStep { function, dictionary: true })
                 .collect::<Vec<_>>()

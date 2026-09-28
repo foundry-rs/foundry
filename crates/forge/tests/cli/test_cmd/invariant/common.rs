@@ -3088,3 +3088,101 @@ contract InvariantStorageHooks is Test {
 
     assert_invariant(cmd.args(["test"])).success();
 });
+
+forgetest_init!(invariant_declared_call_sequence, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 2;
+        config.invariant.shrink_run_limit = 0;
+    });
+
+    prj.add_test(
+        "InvariantCallSequences.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+struct FuzzCall {
+    address target;
+    bytes4 selector;
+}
+
+struct FuzzCallSequence {
+    FuzzCall[] calls;
+}
+
+contract PrepareHandler {
+    bool public prepared;
+
+    function arbitraryName() external {
+        prepared = true;
+    }
+}
+
+contract ExerciseHandler {
+    PrepareHandler immutable prepareHandler;
+    bool public broken;
+
+    constructor(PrepareHandler prepareHandler_) {
+        prepareHandler = prepareHandler_;
+    }
+
+    function anotherArbitraryName() external {
+        if (prepareHandler.prepared()) broken = true;
+    }
+}
+
+contract InvariantCallSequencesTest is Test {
+    PrepareHandler prepareHandler;
+    ExerciseHandler exerciseHandler;
+
+    function setUp() public {
+        prepareHandler = new PrepareHandler();
+        exerciseHandler = new ExerciseHandler(prepareHandler);
+
+        targetContract(address(prepareHandler));
+        targetContract(address(exerciseHandler));
+    }
+
+    function targetCallSequences() public view returns (FuzzCallSequence[] memory sequences) {
+        sequences = new FuzzCallSequence[](1);
+        sequences[0].calls = new FuzzCall[](2);
+        sequences[0].calls[0] =
+            FuzzCall(address(prepareHandler), PrepareHandler.arbitraryName.selector);
+        sequences[0].calls[1] =
+            FuzzCall(address(exerciseHandler), ExerciseHandler.anotherArbitraryName.selector);
+    }
+
+    function invariant_sequence_does_not_break_state() public view {
+        require(!exerciseHandler.broken(), "declared sequence reached");
+    }
+}
+"#,
+    );
+
+    assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantCallSequences.t.sol:InvariantCallSequencesTest
+[FAIL: declared sequence reached]
+	[SEQUENCE]
+ invariant_sequence_does_not_break_state() ([RUNS])
+
+[STATS]
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/InvariantCallSequences.t.sol:InvariantCallSequencesTest
+[FAIL: declared sequence reached]
+	[SEQUENCE]
+ invariant_sequence_does_not_break_state() ([RUNS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
+
+"#]]);
+});
