@@ -4083,6 +4083,21 @@ contract Counter {
     assert!(!abi_cache.exists());
 });
 
+forgetest!(inspect_output_cache_rejects_missing_ewasm, |prj, cmd| {
+    prj.add_source("Counter.sol", "contract Counter {}");
+
+    for _ in 0..2 {
+        cmd.forge_fuse()
+            .args(["inspect", "Counter", "ewasm"])
+            .assert_failure()
+            .stdout_eq("")
+            .stderr_eq(
+                "Error: EWASM output missing from artifact; this could be a spurious caching issue, \
+                 consider running `forge clean`\n",
+            );
+    }
+});
+
 forgetest!(inspect_output_cache_respects_warning_denial, |prj, cmd| {
     prj.add_source(
         "Counter.sol",
