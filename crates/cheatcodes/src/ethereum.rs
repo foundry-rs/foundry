@@ -90,6 +90,8 @@ impl EthereumCheatcodes {
                 &decoded,
                 Vm::VmCalls::deal(_)
                     | Vm::VmCalls::warp(_)
+                    | Vm::VmCalls::fee(_)
+                    | Vm::VmCalls::txGasPrice(_)
                     | Vm::VmCalls::allowCheatcodes(_)
                     | Vm::VmCalls::store(_)
                     | Vm::VmCalls::setNonce(_)
@@ -126,6 +128,24 @@ impl EthereumCheatcodes {
                 let mut block = *host.block();
                 block.timestamp = call.newTimestamp;
                 host.set_block(block);
+                (InstrStop::Return, Bytes::new())
+            }
+            Vm::VmCalls::fee(call) => {
+                if call.newBasefee > U256::from(u64::MAX) {
+                    return (InstrStop::Revert, Error::encode("base fee must be less than 2^64"));
+                }
+                let host = interp.host();
+                let mut block = *host.block();
+                block.basefee = call.newBasefee;
+                host.set_block(block);
+                host.ext_mut().basefee_override = Some(call.newBasefee);
+                (InstrStop::Return, Bytes::new())
+            }
+            Vm::VmCalls::txGasPrice(call) => {
+                if call.newGasPrice > U256::from(u64::MAX) {
+                    return (InstrStop::Revert, Error::encode("gas price must be less than 2^64"));
+                }
+                interp.host().ext_mut().gas_price_override = Some(call.newGasPrice);
                 (InstrStop::Return, Bytes::new())
             }
             Vm::VmCalls::allowCheatcodes(call) => {

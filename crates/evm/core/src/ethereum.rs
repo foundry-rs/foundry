@@ -28,12 +28,14 @@ pub struct EthereumEnv {
     pub spec: SpecId,
     pub version: Version,
     pub block: BlockEnvExt,
+    /// Gas price observed by synthetic Foundry calls; transaction fee accounting stays at zero.
+    pub gas_price: U256,
 }
 
 impl EthereumEnv {
     /// Uses the protocol defaults for `spec`.
     pub const fn new(spec: SpecId, block: BlockEnvExt) -> Self {
-        Self { spec, version: Version::new(spec), block }
+        Self { spec, version: Version::new(spec), block, gas_price: U256::ZERO }
     }
 
     /// Applies Foundry's local Ethereum execution options without a legacy EVM environment.
@@ -52,6 +54,7 @@ impl EthereumEnv {
             },
         );
         env.version.chain_id = opts.env.chain_id.unwrap_or(DEV_CHAIN_ID);
+        env.gas_price = U256::from(opts.env.gas_price.unwrap_or_default());
         env.version.memory_limit = opts.memory_limit;
         env.version.max_code_size = opts.env.code_size_limit.unwrap_or(usize::MAX);
         if !opts.enable_tx_gas_limit {
@@ -94,6 +97,7 @@ mod tests {
         opts.env.block_coinbase = Address::with_last_byte(0xa);
         opts.env.block_timestamp = U256::from(123);
         opts.env.block_base_fee_per_gas = 7;
+        opts.env.gas_price = Some(9);
         opts.env.code_size_limit = Some(64_000);
         opts.memory_limit = 1_000_000;
         opts.disable_block_gas_limit = true;
@@ -104,6 +108,7 @@ mod tests {
         assert_eq!(env.block.timestamp, U256::from(123));
         assert_eq!(env.block.basefee, U256::from(7));
         assert_eq!(env.block.gas_limit, U256::from(opts.gas_limit()));
+        assert_eq!(env.gas_price, U256::from(9));
         assert_eq!(env.version.chain_id, 31_337);
         assert_eq!(env.version.memory_limit, 1_000_000);
         assert_eq!(env.version.max_code_size, 64_000);

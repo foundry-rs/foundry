@@ -39,6 +39,10 @@ impl EthereumFork {
 
         let mut env = EthereumEnv::local_from_config(config, opts)?;
         env.version.chain_id = opts.env.chain_id.unwrap_or(resolved.context().execution_chain_id);
+        env.gas_price = U256::from(match opts.env.gas_price {
+            Some(gas_price) => gas_price as u128,
+            None => provider.get_gas_price().await?,
+        });
         let blob_params = match env.spec {
             spec if spec >= SpecId::OSAKA => BlobParams::osaka(),
             spec if spec >= SpecId::PRAGUE => BlobParams::prague(),

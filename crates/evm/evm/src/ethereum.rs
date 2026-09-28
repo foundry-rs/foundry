@@ -1,10 +1,14 @@
 //! Ethereum EVM construction.
 
-use alloy_consensus::transaction::Recovered;
+use alloy_consensus::{TxLegacy, transaction::Recovered};
+use alloy_primitives::{Address, Bytes, TxKind, U256};
 use evm2::{
-    Evm, ExecutionConfig, Inspector, NoopInspector, Precompiles, TxResult,
+    Evm, ExecutionConfig, Inspector, NoopInspector, Precompiles, SpecId, TxResult,
     ethereum::{TxEnvelope, ethereum_tx_registry},
-    evm::{Database, Db, DynDatabase, EmptyDB, registry::HandlerResult},
+    evm::{
+        Database, Db, DynDatabase, EmptyDB,
+        registry::{HandlerError, HandlerResult},
+    },
 };
 use foundry_cheatcodes::{CheatsConfig, ethereum::CheatcodeAccessMode};
 use foundry_evm_core::ethereum::{EthereumEnv, FoundryEvmTypes, LocalState};
@@ -107,10 +111,64 @@ impl<D: Database + Clone + 'static, I: Inspector<FoundryEvmTypes> + Clone> Ether
 
     /// Executes without accepting state, returning this execution's inspector observations.
     pub fn inspect(&self, tx: &Recovered<TxEnvelope>) -> HandlerResult<(TxResult, I)> {
+        self.inspect_with_env(self.env, tx, false)
+    }
+
+    /// Simulates a Foundry call without accepting its state changes.
+    pub fn call_raw(
+        &self,
+        caller: Address,
+        target: Address,
+        input: Bytes,
+        value: U256,
+    ) -> HandlerResult<TxResult> {
+        self.inspect_raw(caller, target, input, value).map(|(result, _)| result)
+    }
+
+    /// Simulates a Foundry call and returns its inspector observations.
+    pub fn inspect_raw(
+        &self,
+        caller: Address,
+        target: Address,
+        input: Bytes,
+        value: U256,
+    ) -> HandlerResult<(TxResult, I)> {
+        let tx = self.synthetic_tx(caller, TxKind::Call(target), input, value)?;
+        self.inspect_with_env(self.synthetic_env(), &tx, true)
+    }
+
+    /// Executes a Foundry call and accepts its state changes.
+    pub fn transact_raw(
+        &mut self,
+        caller: Address,
+        target: Address,
+        input: Bytes,
+        value: U256,
+    ) -> HandlerResult<TxResult> {
+        let tx = self.synthetic_tx(caller, TxKind::Call(target), input, value)?;
+        self.transact_with_env(self.synthetic_env(), &tx, true)
+    }
+
+    /// Deploys a contract through a Foundry synthetic transaction.
+    pub fn deploy(&mut self, caller: Address, code: Bytes, value: U256) -> HandlerResult<TxResult> {
+        let tx = self.synthetic_tx(caller, TxKind::Create, code, value)?;
+        self.transact_with_env(self.synthetic_env(), &tx, true)
+    }
+
+    fn inspect_with_env(
+        &self,
+        env: EthereumEnv,
+        tx: &Recovered<TxEnvelope>,
+        synthetic: bool,
+    ) -> HandlerResult<(TxResult, I)> {
         let mut state = self.state.clone();
         let mut inspector = self.inspector.clone();
         let result = {
-            let mut evm = EthereumFactory.create(self.env, Db::new(&mut state));
+            let mut evm = EthereumFactory.create(env, Db::new(&mut state));
+            if synthetic {
+                evm.ext_mut().basefee_override = Some(self.env.block.basefee);
+                evm.ext_mut().gas_price_override = Some(self.env.gas_price);
+            }
             evm.set_inspector(&mut inspector);
             evm.transact(tx)?.discard()
         };
@@ -119,29 +177,76 @@ impl<D: Database + Clone + 'static, I: Inspector<FoundryEvmTypes> + Clone> Ether
 
     /// Executes and accepts a transaction's state changes.
     pub fn transact(&mut self, tx: &Recovered<TxEnvelope>) -> HandlerResult<TxResult> {
+        self.transact_with_env(self.env, tx, false)
+    }
+
+    fn transact_with_env(
+        &mut self,
+        env: EthereumEnv,
+        tx: &Recovered<TxEnvelope>,
+        synthetic: bool,
+    ) -> HandlerResult<TxResult> {
         let mut inspector = self.inspector.clone();
-        let (outcome, block) = {
-            let mut evm = EthereumFactory.create(self.env, Db::new(&mut self.state));
+        let (outcome, mut block, basefee_override, gas_price_override) = {
+            let mut evm = EthereumFactory.create(env, Db::new(&mut self.state));
+            if synthetic {
+                evm.ext_mut().basefee_override = Some(self.env.block.basefee);
+                evm.ext_mut().gas_price_override = Some(self.env.gas_price);
+            }
             evm.set_inspector(&mut inspector);
             let outcome = evm.transact(tx)?.detach();
-            (outcome, *evm.block())
+            (outcome, *evm.block(), evm.ext().basefee_override, evm.ext().gas_price_override)
         };
+        if let Some(basefee) = basefee_override {
+            block.basefee = basefee;
+        }
         self.state.commit(&outcome.pending_state);
         self.env.block = block;
+        if let Some(gas_price) = gas_price_override {
+            self.env.gas_price = gas_price;
+        }
         self.inspector = inspector;
         Ok(outcome.result)
+    }
+
+    const fn synthetic_env(&self) -> EthereumEnv {
+        let mut env = self.env;
+        env.block.basefee = U256::ZERO;
+        env
+    }
+
+    fn synthetic_tx(
+        &self,
+        caller: Address,
+        to: TxKind,
+        input: Bytes,
+        value: U256,
+    ) -> HandlerResult<Recovered<TxEnvelope>> {
+        let mut state = self.state.clone();
+        let nonce = Database::get_account(&mut state, &caller)
+            .map_err(HandlerError::External)?
+            .map_or(0, |account| account.nonce);
+        Ok(Recovered::new_unchecked(
+            TxEnvelope::Legacy(TxLegacy {
+                chain_id: (self.env.spec >= SpecId::SPURIOUS_DRAGON)
+                    .then_some(self.env.version.chain_id),
+                nonce,
+                gas_limit: self.env.block.gas_limit.saturating_to(),
+                to,
+                value,
+                input,
+                ..Default::default()
+            }),
+            caller,
+        ))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_consensus::TxLegacy;
-    use alloy_primitives::{Address, Bytes, TxKind, U256};
     use alloy_sol_types::SolCall;
-    use evm2::{
-        SpecId, bytecode::Bytecode, env::BlockEnvExt, evm::AccountInfo, interpreter::Interpreter,
-    };
+    use evm2::{bytecode::Bytecode, env::BlockEnvExt, evm::AccountInfo, interpreter::Interpreter};
     use foundry_cheatcodes::{Error, Vm};
     use foundry_compilers::artifacts::EvmVersion;
     use foundry_evm_core::{
@@ -307,6 +412,119 @@ mod tests {
         let result = evm.transact(&tx).unwrap().discard();
         assert!(result.status);
         assert_eq!(U256::from_be_slice(&result.output), U256::from_be_slice(origin.as_slice()));
+    }
+
+    #[test]
+    fn synthetic_deploy_and_call_preserve_observed_fees() {
+        let caller = Address::with_last_byte(0xa);
+        let fee_code =
+            Bytes::from_static(&[0x48, 0x5f, 0x52, 0x3a, 0x60, 0x20, 0x52, 0x60, 0x40, 0x5f, 0xf3]);
+        let mut initcode = vec![
+            0x60,
+            fee_code.len() as u8,
+            0x60,
+            12,
+            0x60,
+            0,
+            0x39,
+            0x60,
+            fee_code.len() as u8,
+            0x60,
+            0,
+            0xf3,
+        ];
+        initcode.extend_from_slice(&fee_code);
+        let mut env = EthereumEnv::new(
+            SpecId::CANCUN,
+            BlockEnvExt {
+                basefee: U256::from(7),
+                gas_limit: U256::from(30_000_000),
+                ..Default::default()
+            },
+        );
+        env.gas_price = U256::from(5);
+        let mut executor = EthereumExecutor::new_foundry(
+            env,
+            LocalState::default(),
+            Arc::default(),
+            CheatcodeAccessMode::Local,
+        );
+        let deployed = executor.deploy(caller, initcode.into(), U256::ZERO).unwrap();
+        assert!(deployed.status);
+        let contract = deployed.created_address.unwrap();
+        let observed = executor.call_raw(caller, contract, Bytes::new(), U256::ZERO).unwrap();
+        assert_eq!(U256::from_be_slice(&observed.output[..32]), U256::from(7));
+        assert_eq!(U256::from_be_slice(&observed.output[32..]), U256::from(5));
+        assert_eq!(executor.env().block.basefee, U256::from(7));
+
+        let fee = Vm::feeCall { newBasefee: U256::from(11) }.abi_encode().into();
+        assert!(executor.transact_raw(caller, CHEATCODE_ADDRESS, fee, U256::ZERO).unwrap().status);
+        assert_eq!(executor.env().block.basefee, U256::from(11));
+        let price = Vm::txGasPriceCall { newGasPrice: U256::from(13) }.abi_encode().into();
+        assert!(
+            executor.transact_raw(caller, CHEATCODE_ADDRESS, price, U256::ZERO).unwrap().status
+        );
+        assert_eq!(executor.env().gas_price, U256::from(13));
+        let observed = executor.call_raw(caller, contract, Bytes::new(), U256::ZERO).unwrap();
+        assert_eq!(U256::from_be_slice(&observed.output[..32]), U256::from(11));
+        assert_eq!(U256::from_be_slice(&observed.output[32..]), U256::from(13));
+    }
+
+    #[test]
+    fn gas_price_cheatcode_updates_the_active_frame() {
+        let caller = Address::with_last_byte(0xa);
+        let contract = Address::with_last_byte(0xb);
+        let calldata = Vm::txGasPriceCall { newGasPrice: U256::from(13) }.abi_encode();
+        let mut code = cheatcode_calling_contract_code(&calldata);
+        code.truncate(code.len() - calldata.len() - 1);
+        let continuation = [0x50, 0x3a, 0x5f, 0x52, 0x60, 0x20, 0x5f, 0xf3];
+        code.extend_from_slice(&continuation);
+        code[3] += continuation.len() as u8 - 1;
+        code.extend_from_slice(&calldata);
+        let mut state = LocalState::default();
+        state.database_mut().insert_account_info(
+            &contract,
+            AccountInfo::default().with_code(Bytecode::new_legacy(code.into())),
+        );
+        let mut env = EthereumEnv::new(
+            SpecId::CANCUN,
+            BlockEnvExt {
+                basefee: U256::from(7),
+                gas_limit: U256::from(30_000_000),
+                ..Default::default()
+            },
+        );
+        env.gas_price = U256::from(5);
+        let mut executor =
+            EthereumExecutor::new_foundry(env, state, Arc::default(), CheatcodeAccessMode::Local);
+        let observed = executor.call_raw(caller, contract, Bytes::new(), U256::ZERO).unwrap();
+        assert_eq!(U256::from_be_slice(&observed.output), U256::from(13));
+        assert_eq!(executor.env().gas_price, U256::from(5));
+
+        let observed = executor.transact_raw(caller, contract, Bytes::new(), U256::ZERO).unwrap();
+        assert_eq!(U256::from_be_slice(&observed.output), U256::from(13));
+        assert_eq!(executor.env().gas_price, U256::from(13));
+    }
+
+    #[test]
+    fn synthetic_call_respects_pre_eip155_transactions() {
+        let caller = Address::with_last_byte(0xa);
+        let contract = Address::with_last_byte(0xb);
+        let mut state = LocalState::default();
+        state.database_mut().insert_account_info(
+            &contract,
+            AccountInfo::default().with_code(Bytecode::new_legacy(Bytes::from_static(&[
+                0x60, 0x01, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3,
+            ]))),
+        );
+        let env = EthereumEnv::new(
+            SpecId::HOMESTEAD,
+            BlockEnvExt { gas_limit: U256::from(30_000_000), ..Default::default() },
+        );
+        let executor = EthereumExecutor::new(env, state);
+        let result = executor.call_raw(caller, contract, Bytes::new(), U256::ZERO).unwrap();
+        assert!(result.status);
+        assert_eq!(U256::from_be_slice(&result.output), U256::from(1));
     }
 
     #[test]

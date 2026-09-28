@@ -1,6 +1,6 @@
 //! EVM type family and opcode behavior for Foundry execution.
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, U256};
 use evm2::{
     BaseEvmConfig, Evm, EvmConfig, EvmConfigSelector, EvmTypesHost, ExecutionConfig, OpcodeConfig,
     SpecId,
@@ -14,6 +14,10 @@ use evm2_macros::instruction;
 pub struct FoundryContext {
     /// Overrides the origin reported by the ORIGIN opcode while a prank or broadcast is active.
     pub origin_override: Option<Address>,
+    /// Preserves the configured base fee when synthetic transaction accounting uses zero base fee.
+    pub basefee_override: Option<U256>,
+    /// Preserves the configured gas price when synthetic transaction accounting uses zero price.
+    pub gas_price_override: Option<U256>,
 }
 
 /// Ethereum EVM types with Foundry's live execution context.
@@ -55,6 +59,10 @@ impl<const BASE_SPEC_ID: u32> EvmConfig<FoundryEvmTypes> for FoundryConfig<BASE_
     const OPCODE_CONFIG: &'static OpcodeConfig<FoundryEvmTypes> = &{
         let mut config = OpcodeConfig::base::<BaseEvmConfig<BASE_SPEC_ID>>();
         config.set_instruction::<foundry_origin>(op::ORIGIN, 2);
+        config.set_instruction::<foundry_gasprice>(op::GASPRICE, 2);
+        if BASE_SPEC_ID >= SpecId::LONDON as u32 {
+            config.set_instruction::<foundry_basefee>(op::BASEFEE, 2);
+        }
         config
     };
 }
@@ -64,4 +72,16 @@ fn foundry_origin(cx: _) -> out {
     let origin = cx.state.tx().origin;
     let origin = cx.state.host().ext().origin_override.unwrap_or(origin);
     *out = Word::from_be_slice(origin.as_slice());
+}
+
+#[instruction(EvmTypes = FoundryEvmTypes)]
+fn foundry_basefee(cx: _) -> out {
+    let host = cx.state.host();
+    *out = host.ext().basefee_override.unwrap_or(host.block().basefee);
+}
+
+#[instruction(EvmTypes = FoundryEvmTypes)]
+fn foundry_gasprice(cx: _) -> out {
+    let gas_price = cx.state.tx().gas_price;
+    *out = cx.state.host().ext().gas_price_override.unwrap_or(gas_price);
 }
