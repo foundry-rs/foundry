@@ -23,18 +23,19 @@ use foundry_evm_core::{
 use revm::context::{ContextTr, JournalTr};
 
 pub use Vm::ForgeContext;
+pub use broadcast::{BroadcastableTransaction, BroadcastableTransactions};
 pub use config::CheatsConfig;
 pub use error::{Error, ErrorKind, Result};
 pub use foundry_evm_core::evm::NestedEvmClosureFor;
-pub use inspector::{
-    BroadcastableTransaction, BroadcastableTransactions, Cheatcodes, CheatcodesExecutor,
-};
+pub use inspector::{Cheatcodes, CheatcodesExecutor};
 pub use spec::{CheatcodeDef, Vm};
 
 #[macro_use]
 mod error;
 
 mod base64;
+
+mod broadcast;
 
 mod config;
 

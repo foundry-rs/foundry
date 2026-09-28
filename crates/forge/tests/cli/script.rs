@@ -461,6 +461,109 @@ Error: script failed: setup failed
 "#]]);
 });
 
+forgetest!(ethereum_script_collects_broadcast_call, |prj, cmd| {
+    let script = prj.add_source(
+        "BroadcastCall",
+        r#"
+interface Vm {
+    function broadcast(address sender) external;
+}
+
+contract BroadcastCall {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function run() external {
+        vm.broadcast(address(0xBEEF));
+        (bool success,) = address(0xCAFE).call(hex"1234");
+        require(success, "call failed");
+    }
+}
+"#,
+    );
+
+    cmd.arg("script").arg(script).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Script ran successfully.
+[GAS]
+
+If you wish to simulate on-chain transactions pass a RPC URL.
+
+"#]]);
+});
+
+forgetest_async!(ethereum_script_simulates_broadcast_call, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let script = prj.add_source(
+        "BroadcastCall",
+        r#"
+interface Vm {
+    function broadcast(address sender) external;
+}
+
+contract BroadcastCall {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function run() external {
+        vm.broadcast(address(0xBEEF));
+        (bool success,) = address(0xCAFE).call(hex"1234");
+        require(success, "call failed");
+    }
+}
+"#,
+    );
+
+    cmd.arg("script").arg(script).args(["--fork-url", &handle.http_endpoint()]).assert_success();
+
+    let path = foundry_common::fs::json_files(&prj.root().join("broadcast"))
+        .find(|path| path.ends_with("run-latest.json"))
+        .expect("No broadcast artifact");
+    let sequence: ScriptSequence<Ethereum> = foundry_common::fs::read_json_file(&path).unwrap();
+    assert_eq!(sequence.transactions.len(), 1);
+    let transaction = &sequence.transactions[0].transaction;
+    assert_eq!(transaction.from(), Some(address!("0x000000000000000000000000000000000000bEEF")));
+    assert_eq!(transaction.to(), Some(address!("0x000000000000000000000000000000000000cafe")));
+    assert_eq!(transaction.input().unwrap().as_ref(), &[0x12, 0x34]);
+    assert_eq!(transaction.nonce(), Some(0));
+});
+
+forgetest_async!(ethereum_script_collects_start_broadcast_calls, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let script = prj.add_source(
+        "StartBroadcastCalls",
+        r#"
+interface Vm {
+    function startBroadcast(address sender) external;
+    function stopBroadcast() external;
+}
+
+contract StartBroadcastCalls {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function run() external {
+        vm.startBroadcast(address(0xBEEF));
+        (bool first,) = address(0xCAFE).call(hex"1234");
+        (bool second,) = address(0xCAFE).call(hex"5678");
+        vm.stopBroadcast();
+        require(first && second, "call failed");
+    }
+}
+"#,
+    );
+
+    cmd.arg("script").arg(script).args(["--fork-url", &handle.http_endpoint()]).assert_success();
+
+    let path = foundry_common::fs::json_files(&prj.root().join("broadcast"))
+        .find(|path| path.ends_with("run-latest.json"))
+        .expect("No broadcast artifact");
+    let sequence: ScriptSequence<Ethereum> = foundry_common::fs::read_json_file(&path).unwrap();
+    assert_eq!(sequence.transactions.len(), 2);
+    assert_eq!(sequence.transactions[0].transaction.nonce(), Some(0));
+    assert_eq!(sequence.transactions[1].transaction.nonce(), Some(1));
+    assert_eq!(sequence.transactions[1].transaction.input().unwrap().as_ref(), &[0x56, 0x78]);
+});
+
 forgetest_async!(ethereum_script_reads_fork_state, |prj, cmd| {
     let (api, handle) = spawn(NodeConfig::test()).await;
     api.anvil_set_balance(address!("0x000000000000000000000000000000000000bEEF"), U256::from(123))

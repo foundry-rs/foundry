@@ -1,6 +1,6 @@
 //! Implementations of [`Scripting`](spec::Group::Scripting) cheatcodes.
 
-use crate::{Cheatcode, CheatsCtxt, Result, Vm::*, evm::journaled_account};
+use crate::{Cheatcode, CheatsCtxt, Result, Vm::*, broadcast::Broadcast, evm::journaled_account};
 use alloy_consensus::{SidecarBuilder, SimpleCoder};
 use alloy_primitives::{Address, B256, U256, Uint};
 use alloy_rpc_types::Authorization;
@@ -285,22 +285,6 @@ impl Cheatcode for getWalletsCall {
         let wallets = ccx.state.wallets().signers().unwrap_or_default();
         Ok(wallets.abi_encode())
     }
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct Broadcast {
-    /// Address of the transaction origin
-    pub new_origin: Address,
-    /// Original caller
-    pub original_caller: Address,
-    /// Original `tx.origin`
-    pub original_origin: Address,
-    /// Depth of the broadcast
-    pub depth: usize,
-    /// Whether the prank stops by itself after the next call
-    pub single_call: bool,
-    /// Whether `vm.deployCode` cheatcode is used to deploy from code.
-    pub deploy_from_code: bool,
 }
 
 /// Contains context for wallet management.

@@ -64,6 +64,7 @@ impl PreExecutionState<EthEvmNetwork> {
             false,
         ));
         let mut executor = EthereumExecutor::new_foundry(env, state, cheats, access_mode);
+        executor.inspector_mut().cheatcodes_mut().set_wallets(self.script_wallets.clone());
         if !self.args.broadcast && access_mode == CheatcodeAccessMode::Local {
             executor.deploy_create2_deployer()?;
         }
@@ -98,11 +99,14 @@ impl PreExecutionState<EthEvmNetwork> {
             logs.extend(executor.inspector_mut().take_logs());
             if !setup.status {
                 let gas_used = setup.tx_gas_used();
+                let transactions =
+                    executor.inspector_mut().cheatcodes_mut().take_broadcastable_transactions();
                 return Ok(self.into_executed(ScriptResult {
                     returned: setup.output,
                     success: false,
                     gas_used,
                     logs,
+                    transactions: (!transactions.is_empty()).then_some(transactions),
                     exit_reason: Some(format!("{:?}", setup.stop)),
                     ..Default::default()
                 }));
@@ -116,12 +120,14 @@ impl PreExecutionState<EthEvmNetwork> {
             U256::ZERO,
         )?;
         logs.extend(inspector.take_logs());
+        let transactions = inspector.cheatcodes_mut().take_broadcastable_transactions();
         let gas_used = execution.tx_gas_used();
         let result = ScriptResult {
             returned: execution.output,
             success: execution.status,
             gas_used,
             logs,
+            transactions: (!transactions.is_empty()).then_some(transactions),
             exit_reason: Some(format!("{:?}", execution.stop)),
             ..Default::default()
         };

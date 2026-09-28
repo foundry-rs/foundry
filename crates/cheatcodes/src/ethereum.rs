@@ -1,10 +1,14 @@
 //! Cheatcode inspection for Ethereum evm2 execution.
 
 use crate::{
-    CheatsConfig, Error, Vm, dispatch,
+    CheatsConfig, Error, Vm,
+    broadcast::{Broadcast, BroadcastableTransaction, BroadcastableTransactions},
+    dispatch,
     fs::{ConfigCheatcode, get_artifact_code, get_artifact_selectors},
     prank::Prank,
+    script::Wallets,
 };
+use alloy_network::{Ethereum, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256, map::AddressHashSet};
 use alloy_sol_types::{SolCall, SolInterface, SolValue};
 use evm2::{
@@ -16,6 +20,7 @@ use evm2::{
         derive_create_destination,
     },
 };
+use foundry_common::TransactionMaybeSigned;
 use foundry_evm_core::{
     constants::{
         CALLER, CHEATCODE_ADDRESS, CHEATCODE_CONTRACT_HASH, MAGIC_ASSUME, MAGIC_SKIP,
@@ -23,6 +28,7 @@ use foundry_evm_core::{
     },
     eip2935::{HISTORY_STORAGE_ADDRESS, HISTORY_STORAGE_CODE},
     ethereum::{FoundryEvmTypes, LocalState},
+    evm::{EthEvmNetwork, TransactionRequestFor},
 };
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -36,6 +42,9 @@ pub struct EthereumCheatcodes {
     access_mode: CheatcodeAccessMode,
     allowed_callers: AddressHashSet,
     pranks: BTreeMap<usize, Prank>,
+    broadcast: Option<Broadcast>,
+    broadcastable_transactions: BroadcastableTransactions<Ethereum>,
+    wallets: Option<Wallets>,
     skip_payloads: Vec<Bytes>,
     expected_revert: Option<ExpectedRevert>,
 }
@@ -59,6 +68,9 @@ impl EthereumCheatcodes {
                 .into_iter()
                 .collect(),
             pranks: BTreeMap::new(),
+            broadcast: None,
+            broadcastable_transactions: Default::default(),
+            wallets: None,
             skip_payloads: Vec::new(),
             expected_revert: None,
         }
@@ -77,6 +89,16 @@ impl EthereumCheatcodes {
     /// Drains genuine skip payloads recorded during the last execution.
     pub fn take_skip_payloads(&mut self) -> Vec<Bytes> {
         std::mem::take(&mut self.skip_payloads)
+    }
+
+    /// Supplies script signers for broadcast sender selection.
+    pub fn set_wallets(&mut self, wallets: Wallets) {
+        self.wallets = Some(wallets);
+    }
+
+    /// Drains transactions collected during script execution.
+    pub fn take_broadcastable_transactions(&mut self) -> BroadcastableTransactions<Ethereum> {
+        std::mem::take(&mut self.broadcastable_transactions)
     }
 
     /// Installs the cheatcode contract account used by Solidity code checks.
@@ -376,6 +398,27 @@ impl EthereumCheatcodes {
                 self.pranks.remove(&usize::from(message.depth.saturating_sub(1)));
                 (InstrStop::Return, Bytes::new())
             }
+            Vm::VmCalls::broadcast_0(_) => self.start_broadcast(interp, message, None, true),
+            Vm::VmCalls::broadcast_1(call) => {
+                self.start_broadcast(interp, message, Some(call.signer), true)
+            }
+            Vm::VmCalls::broadcast_2(call) => {
+                self.start_broadcast_key(interp, message, &call.privateKey, true)
+            }
+            Vm::VmCalls::startBroadcast_0(_) => self.start_broadcast(interp, message, None, false),
+            Vm::VmCalls::startBroadcast_1(call) => {
+                self.start_broadcast(interp, message, Some(call.signer), false)
+            }
+            Vm::VmCalls::startBroadcast_2(call) => {
+                self.start_broadcast_key(interp, message, &call.privateKey, false)
+            }
+            Vm::VmCalls::stopBroadcast(_) => {
+                if self.broadcast.take().is_some() {
+                    (InstrStop::Return, Bytes::new())
+                } else {
+                    (InstrStop::Revert, Error::encode("no broadcast in progress to stop"))
+                }
+            }
             _ => (
                 InstrStop::Revert,
                 Error::encode(format!("vm.{name}: unsupported in evm2 execution")),
@@ -616,6 +659,154 @@ impl EthereumCheatcodes {
         (InstrStop::Return, Bytes::new())
     }
 
+    fn start_broadcast(
+        &mut self,
+        interp: &mut Interpreter<'_, '_, FoundryEvmTypes>,
+        message: &Message<FoundryEvmTypes>,
+        explicit_origin: Option<Address>,
+        single_call: bool,
+    ) -> (InstrStop, Bytes) {
+        if message.depth == 0 {
+            return (InstrStop::Revert, Error::encode("top-level broadcast is unsupported"));
+        }
+        let depth = usize::from(message.depth - 1);
+        if self.pranks.range(..=depth).next_back().is_some() {
+            return (
+                InstrStop::Revert,
+                Error::encode(
+                    "you have an active prank; broadcasting and pranks are not compatible",
+                ),
+            );
+        }
+        if self.broadcast.is_some() {
+            return (InstrStop::Revert, Error::encode("a broadcast is active already"));
+        }
+
+        let mut origin = explicit_origin;
+        if origin.is_none()
+            && let Some(wallets) = &self.wallets
+        {
+            let mut wallets = wallets.inner.lock();
+            if let Some(provided_sender) = wallets.provided_sender {
+                origin = Some(provided_sender);
+            } else {
+                match wallets.multi_wallet.signers() {
+                    Ok(signers) if signers.len() == 1 => {
+                        origin = signers.keys().next().copied();
+                    }
+                    Ok(_) => {}
+                    Err(error) => return (InstrStop::Revert, Error::encode(error.to_string())),
+                }
+            }
+        }
+        let context = interp.host().ext();
+        let original_origin = context
+            .origin_override
+            .or(context.transaction_origin)
+            .unwrap_or(self.config.evm_opts.sender);
+        let new_origin = origin.unwrap_or(original_origin);
+        let loaded = interp.host().state_mut().account(&new_origin, false).map(|mut account| {
+            account.touch();
+        });
+        if let Err(error) = loaded {
+            interp.host().set_error_code(error);
+            return (InstrStop::FatalExternalError, Bytes::new());
+        }
+        self.broadcast = Some(Broadcast {
+            new_origin,
+            original_caller: message.caller,
+            original_origin,
+            depth,
+            single_call,
+            deploy_from_code: false,
+        });
+        (InstrStop::Return, Bytes::new())
+    }
+
+    fn start_broadcast_key(
+        &mut self,
+        interp: &mut Interpreter<'_, '_, FoundryEvmTypes>,
+        message: &Message<FoundryEvmTypes>,
+        private_key: &U256,
+        single_call: bool,
+    ) -> (InstrStop, Bytes) {
+        let wallet = match crate::crypto::parse_wallet(private_key) {
+            Ok(wallet) => wallet,
+            Err(error) => return (InstrStop::Revert, Error::encode(error.to_string())),
+        };
+        let result = self.start_broadcast(interp, message, Some(wallet.address()), single_call);
+        if result.0 == InstrStop::Return
+            && let Some(wallets) = &self.wallets
+        {
+            wallets.add_local_signer(wallet);
+        }
+        result
+    }
+
+    fn apply_broadcast_call(
+        &mut self,
+        interp: &mut Interpreter<'_, '_, FoundryEvmTypes>,
+        message: &mut Message<FoundryEvmTypes>,
+    ) -> Option<(InstrStop, Bytes)> {
+        let broadcast = self.broadcast.as_ref()?;
+        if message.depth == 0
+            || usize::from(message.depth - 1) != broadcast.depth
+            || message.caller != broadcast.original_caller
+        {
+            return None;
+        }
+        if message.kind == MessageKind::StaticCall || message.caller_is_static {
+            if broadcast.single_call {
+                return Some((
+                    InstrStop::Revert,
+                    Error::encode(
+                        "`staticcall`s are not allowed after `broadcast`; use `startBroadcast` instead",
+                    ),
+                ));
+            }
+            return None;
+        }
+        if message.kind != MessageKind::Call {
+            return Some((
+                InstrStop::Revert,
+                Error::encode("broadcasting this call kind is not yet supported in evm2 execution"),
+            ));
+        }
+
+        let origin = broadcast.new_origin;
+        let nonce = interp.host().state_mut().account(&origin, false).map(|mut account| {
+            let nonce = account.nonce();
+            nonce.checked_add(1).map(|next_nonce| {
+                account.set_nonce(next_nonce);
+                nonce
+            })
+        });
+        let nonce = match nonce {
+            Ok(Some(nonce)) => nonce,
+            Ok(None) => {
+                return Some((InstrStop::Revert, Error::encode("broadcast nonce overflow")));
+            }
+            Err(error) => {
+                interp.host().set_error_code(error);
+                return Some((InstrStop::FatalExternalError, Bytes::new()));
+            }
+        };
+        let transaction = TransactionRequestFor::<EthEvmNetwork>::default()
+            .with_from(origin)
+            .with_to(message.call_target)
+            .with_value(message.value)
+            .with_input(message.input.clone())
+            .with_nonce(nonce)
+            .with_chain_id(interp.host().version().chain_id);
+        self.broadcastable_transactions.push_back(BroadcastableTransaction {
+            rpc: self.config.evm_opts.fork_url.clone(),
+            transaction: TransactionMaybeSigned::new(transaction),
+        });
+        message.caller = origin;
+        interp.host().ext_mut().origin_override = Some(origin);
+        None
+    }
+
     fn start_prank(
         &mut self,
         interp: &mut Interpreter<'_, '_, FoundryEvmTypes>,
@@ -751,6 +942,9 @@ impl Inspector<FoundryEvmTypes> for EthereumCheatcodes {
         message: &mut Message<FoundryEvmTypes>,
     ) -> CallAction<FoundryEvmTypes> {
         if message.call_target != CHEATCODE_ADDRESS {
+            if let Some((stop, output)) = self.apply_broadcast_call(interp, message) {
+                return CallAction::Override(Self::result(message, stop, output));
+            }
             self.apply_prank(interp, message);
             self.observe_revert_depth(message);
             return CallAction::Continue;
@@ -805,6 +999,13 @@ impl Inspector<FoundryEvmTypes> for EthereumCheatcodes {
                     | Vm::VmCalls::startPrank_2(_)
                     | Vm::VmCalls::startPrank_3(_)
                     | Vm::VmCalls::stopPrank(_)
+                    | Vm::VmCalls::broadcast_0(_)
+                    | Vm::VmCalls::broadcast_1(_)
+                    | Vm::VmCalls::broadcast_2(_)
+                    | Vm::VmCalls::startBroadcast_0(_)
+                    | Vm::VmCalls::startBroadcast_1(_)
+                    | Vm::VmCalls::startBroadcast_2(_)
+                    | Vm::VmCalls::stopBroadcast(_)
                     | Vm::VmCalls::deployCode_0(_)
                     | Vm::VmCalls::deployCode_1(_)
                     | Vm::VmCalls::deployCode_2(_)
@@ -844,6 +1045,16 @@ impl Inspector<FoundryEvmTypes> for EthereumCheatcodes {
                 result.stop = InstrStop::Return;
             }
         } else {
+            if let Some(broadcast) = &self.broadcast
+                && message.depth > 0
+                && usize::from(message.depth - 1) == broadcast.depth
+                && message.caller == broadcast.new_origin
+            {
+                interp.host().ext_mut().origin_override = Some(broadcast.original_origin);
+                if broadcast.single_call {
+                    self.broadcast = None;
+                }
+            }
             self.finish_prank(interp, message);
             self.finish_expected_revert(message, result, false);
         }
@@ -855,6 +1066,17 @@ impl Inspector<FoundryEvmTypes> for EthereumCheatcodes {
         message: &mut Message<FoundryEvmTypes>,
     ) -> Option<MessageResult<FoundryEvmTypes>> {
         self.observe_revert_depth(message);
+        if let Some(broadcast) = &self.broadcast
+            && message.depth > 0
+            && usize::from(message.depth - 1) == broadcast.depth
+            && message.caller == broadcast.original_caller
+        {
+            return Some(Self::result(
+                message,
+                InstrStop::Revert,
+                Error::encode("broadcast CREATE is not yet supported in evm2 execution"),
+            ));
+        }
         if message.depth > 0 {
             let depth = usize::from(message.depth - 1);
             if let Some(prank) = self.pranks.range(..=depth).next_back().map(|(_, prank)| *prank)

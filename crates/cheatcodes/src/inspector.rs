@@ -3,13 +3,14 @@
 use crate::{
     Cheatcode, CheatsConfig, CheatsCtxt, Error, Result,
     Vm::{self, AccountAccess},
+    broadcast::{Broadcast, BroadcastableTransaction, BroadcastableTransactions},
     evm::{
         DealRecord, GasRecord, RecordAccess, journaled_account,
         mock::{MockCallDataContext, MockCallReturnData},
     },
     inspector::utils::CommonCreateInput,
     prank::Prank,
-    script::{Broadcast, Wallets},
+    script::Wallets,
     test::{
         assume::AssumeNoRevert,
         expect::{
@@ -21,7 +22,7 @@ use crate::{
     utils::IgnoredTraces,
 };
 use alloy_consensus::BlobTransactionSidecarVariant;
-use alloy_network::{Ethereum, Network, TransactionBuilder};
+use alloy_network::TransactionBuilder;
 use alloy_primitives::{
     Address, B256, Bytes, Log, TxKind, U256, hex,
     map::{AddressHashMap, HashMap, HashSet},
@@ -259,15 +260,6 @@ impl TestContext {
     pub fn clear(&mut self) {
         self.opened_read_files.clear();
     }
-}
-
-/// Helps collecting transactions from different forks.
-#[derive(Clone, Debug)]
-pub struct BroadcastableTransaction<N: Network = Ethereum> {
-    /// The optional RPC URL.
-    pub rpc: Option<String>,
-    /// The transaction to broadcast.
-    pub transaction: TransactionMaybeSigned<N>,
 }
 
 #[derive(Clone, Debug, Copy)]
@@ -639,9 +631,6 @@ impl ArbitraryStorage {
         value
     }
 }
-
-/// List of transactions that can be broadcasted.
-pub type BroadcastableTransactions<N> = VecDeque<BroadcastableTransaction<N>>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CreatedAccountsFrameKind {
