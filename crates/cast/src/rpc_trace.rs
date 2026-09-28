@@ -63,7 +63,7 @@ pub fn is_missing_state_message(message: &str) -> bool {
         "lowest height is",
         // Providers that gate history behind a plan, e.g. "Archive, Debug and Trace requests
         // are not available on your current plan".
-        "archive",
+        "archive, debug and trace requests are not available on your current plan",
     ]
     .iter()
     .any(|needle| message.contains(needle))
@@ -443,7 +443,9 @@ mod tests {
         ] {
             assert!(is_missing_state_message(message), "{message}");
         }
-        assert!(!is_missing_state_message("execution reverted"));
+        for message in ["execution reverted", "failed to connect to archive RPC endpoint"] {
+            assert!(!is_missing_state_message(message), "{message}");
+        }
     }
 
     #[test]
