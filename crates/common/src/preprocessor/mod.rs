@@ -23,6 +23,10 @@ use deps::{
     remove_bytecode_dependencies,
 };
 
+/// Keeps native test-link arguments comfortably below Windows' 32 KiB command-line limit while
+/// reserving space for the compiler path, ordinary arguments, and environment expansion.
+const MAX_NATIVE_TEST_LINK_ARGS_BYTES: usize = 16 * 1024;
+
 /// Preprocessor that replaces static bytecode linking in tests and scripts (`new Contract`) with
 /// dynamic linkage through (`Vm.create*`).
 ///
@@ -95,6 +99,13 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
                 .settings
                 .evm_version
                 .is_none_or(|version| version >= EvmVersion::Byzantium);
+        let compiler_args_bytes = match solc {
+            SolcCompiler::Specific(compiler) => command_line_args_bytes(&compiler.extra_args),
+            #[allow(unreachable_patterns)]
+            _ => 0,
+        };
+        let existing_args_bytes = compiler_args_bytes
+            .saturating_add(command_line_args_bytes(&input.cli_settings.extra_args));
         let mut native_args = Vec::new();
         let mut parser_paths = paths.clone();
         parser_paths.include_paths.extend(input.cli_settings.include_paths.iter().cloned());
@@ -144,8 +155,16 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
                 preprocessor_state,
             );
             if native_test_linking {
-                native_args = native_test_link_args(gcx, &deps);
-                return Ok(());
+                let args = native_test_link_args(gcx, &deps);
+                if existing_args_bytes.saturating_add(command_line_args_bytes(&args))
+                    <= MAX_NATIVE_TEST_LINK_ARGS_BYTES
+                {
+                    native_args = args;
+                    return Ok(());
+                }
+                debug!(
+                    "native test-link arguments exceed the command-line budget; using source preprocessing"
+                );
             }
             // Collect data of source contracts referenced in tests and scripts.
             let data = collect_preprocessor_data(
@@ -243,6 +262,11 @@ fn supports_native_test_linking(compiler: &SolcCompiler) -> bool {
     let metadata = compiler.version.build.as_str();
     metadata.split('.').any(|part| part == "solar")
         && metadata.split('.').any(|part| part == "testlink1")
+}
+
+/// Includes the separator or terminating NUL required for each process argument.
+fn command_line_args_bytes(args: &[String]) -> usize {
+    args.iter().fold(0usize, |total, arg| total.saturating_add(arg.len() + 1))
 }
 
 /// Falls back to native bytecode and invalidates affected files after any project source change.
@@ -389,6 +413,27 @@ mod tests {
         )
         .unwrap();
         assert!(input.cli_settings.extra_args.is_empty());
+        assert_preprocessed(&paths, &input, &mocks);
+    }
+
+    #[test]
+    fn native_linking_falls_back_when_arguments_exceed_process_budget() {
+        let (_root, paths, mut input) = input();
+        input.cli_settings.extra_args = vec!["x".repeat(MAX_NATIVE_TEST_LINK_ARGS_BYTES)];
+        let compiler = SolcCompiler::Specific(Solc::new_with_version(
+            "unused-compiler",
+            "0.8.30+commit.1234567.solar.0.2.0.testlink1".parse().unwrap(),
+        ));
+        let mut mocks = HashSet::new();
+        <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::preprocess(
+            &DynamicTestLinkingPreprocessor,
+            &compiler,
+            &mut input,
+            &paths,
+            &mut mocks,
+        )
+        .unwrap();
+        assert_eq!(input.cli_settings.extra_args.len(), 1);
         assert_preprocessed(&paths, &input, &mocks);
     }
 

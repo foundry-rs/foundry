@@ -175,10 +175,19 @@ impl BenchmarkProject {
             }
         }
 
-        // Checkout can change the pinned submodule revisions after the initial recursive clone.
+        // Checkout can change submodule URLs and pinned revisions after the recursive clone.
         let status = Command::new("git")
             .current_dir(root)
-            .args(["submodule", "update", "--init", "--recursive"])
+            .args(["submodule", "sync", "--recursive"])
+            .status()
+            .wrap_err("Failed to synchronize submodule URLs")?;
+        if !status.success() {
+            eyre::bail!("Git submodule sync failed for {}", config.name);
+        }
+
+        let status = Command::new("git")
+            .current_dir(root)
+            .args(["submodule", "update", "--init", "--recursive", "--checkout", "--force"])
             .status()
             .wrap_err("Failed to update pinned submodules")?;
         if !status.success() {
@@ -630,10 +639,12 @@ impl BenchmarkProject {
         cached: bool,
         verbose: bool,
     ) -> Result<HyperfineResult> {
-        let command = self.cmd(
-            "FOUNDRY_DYNAMIC_TEST_LINKING=true FOUNDRY_LINT_LINT_ON_BUILD=false FOUNDRY_ISOLATE=false forge build",
-        );
-        let clean = "FOUNDRY_DYNAMIC_TEST_LINKING=true FOUNDRY_ISOLATE=false forge clean";
+        let base = if cached {
+            "FOUNDRY_DYNAMIC_TEST_LINKING=true FOUNDRY_LINT_LINT_ON_BUILD=false FOUNDRY_ISOLATE=false forge build"
+        } else {
+            "FOUNDRY_FORCE=true FOUNDRY_DYNAMIC_TEST_LINKING=true FOUNDRY_LINT_LINT_ON_BUILD=false FOUNDRY_ISOLATE=false forge build"
+        };
+        let command = self.cmd(base);
         let name =
             if cached { "forge_build_with_cache_dynamic" } else { "forge_build_no_cache_dynamic" };
         self.hyperfine(
@@ -641,9 +652,9 @@ impl BenchmarkProject {
             version,
             &command,
             runs,
-            Some(if cached { &command } else { clean }),
+            cached.then_some(command.as_str()),
             None,
-            (!cached).then_some(clean),
+            None,
             verbose,
         )
     }
