@@ -138,7 +138,43 @@ impl<D: Database + Clone + 'static, I: Inspector<FoundryEvmTypes> + Clone> Ether
         input: Bytes,
         value: U256,
     ) -> HandlerResult<(TxResult, I)> {
-        let tx = self.synthetic_tx(caller, TxKind::Call(target), input, value)?;
+        self.inspect_raw_with_gas_limit(
+            caller,
+            target,
+            input,
+            value,
+            self.env.block.gas_limit.saturating_to(),
+        )
+    }
+
+    /// Simulates a Foundry call with a transaction gas limit independent of the block limit.
+    pub fn call_raw_with_gas_limit(
+        &self,
+        caller: Address,
+        target: Address,
+        input: Bytes,
+        value: U256,
+        gas_limit: u64,
+    ) -> HandlerResult<TxResult> {
+        self.inspect_raw_with_gas_limit(caller, target, input, value, gas_limit)
+            .map(|(result, _)| result)
+    }
+
+    fn inspect_raw_with_gas_limit(
+        &self,
+        caller: Address,
+        target: Address,
+        input: Bytes,
+        value: U256,
+        gas_limit: u64,
+    ) -> HandlerResult<(TxResult, I)> {
+        let tx = self.synthetic_tx_with_gas_limit(
+            caller,
+            TxKind::Call(target),
+            input,
+            value,
+            gas_limit,
+        )?;
         self.inspect_with_env(self.synthetic_env(), &tx, true)
     }
 
@@ -254,6 +290,23 @@ impl<D: Database + Clone + 'static, I: Inspector<FoundryEvmTypes> + Clone> Ether
         input: Bytes,
         value: U256,
     ) -> HandlerResult<Recovered<TxEnvelope>> {
+        self.synthetic_tx_with_gas_limit(
+            caller,
+            to,
+            input,
+            value,
+            self.env.block.gas_limit.saturating_to(),
+        )
+    }
+
+    fn synthetic_tx_with_gas_limit(
+        &self,
+        caller: Address,
+        to: TxKind,
+        input: Bytes,
+        value: U256,
+        gas_limit: u64,
+    ) -> HandlerResult<Recovered<TxEnvelope>> {
         let mut state = self.state.clone();
         let nonce = Database::get_account(&mut state, &caller)
             .map_err(HandlerError::External)?
@@ -263,7 +316,7 @@ impl<D: Database + Clone + 'static, I: Inspector<FoundryEvmTypes> + Clone> Ether
                 chain_id: (self.env.spec >= SpecId::SPURIOUS_DRAGON)
                     .then_some(self.env.version.chain_id),
                 nonce,
-                gas_limit: self.env.block.gas_limit.saturating_to(),
+                gas_limit,
                 to,
                 value,
                 input,
@@ -339,6 +392,40 @@ mod tests {
         assert!(executor.transact(&tx).unwrap().status);
         assert_eq!(executor.state().database().cache.accounts[&caller].as_ref().unwrap().nonce, 2);
         assert_eq!(snapshot.state().database().cache.accounts[&caller].as_ref().unwrap().nonce, 1);
+    }
+
+    #[test]
+    fn gas_limited_call_preserves_the_block_limit_and_accepted_state() {
+        let caller = Address::with_last_byte(0xa);
+        let target = Address::with_last_byte(0xb);
+        let mut state = LocalState::default();
+        state.database_mut().insert_account_info(
+            &target,
+            AccountInfo::default().with_code(Bytecode::new_legacy(Bytes::from_static(&[
+                0x60, 0x01, 0x60, 0x00, 0x55, 0x00,
+            ]))),
+        );
+        let block_gas_limit = U256::from(1_000_000);
+        let env = EthereumEnv::new(
+            SpecId::CANCUN,
+            BlockEnvExt { gas_limit: block_gas_limit, ..Default::default() },
+        );
+        let executor = EthereumExecutor::new(env, state);
+
+        let limited = executor
+            .call_raw_with_gas_limit(caller, target, Bytes::new(), U256::ZERO, 25_000)
+            .unwrap();
+        let sufficient = executor
+            .call_raw_with_gas_limit(caller, target, Bytes::new(), U256::ZERO, 100_000)
+            .unwrap();
+
+        assert!(!limited.status);
+        assert!(sufficient.status);
+        assert_eq!(executor.env().block.gas_limit, block_gas_limit);
+        assert_eq!(
+            Database::get_storage(&mut executor.state().clone(), &target, &U256::ZERO).unwrap(),
+            U256::ZERO
+        );
     }
 
     #[test]
