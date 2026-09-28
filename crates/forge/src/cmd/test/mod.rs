@@ -2,6 +2,7 @@ use super::{fuzz::FuzzRunArgs, watch::WatchArgs};
 use crate::{
     MultiContractRunner, MultiContractRunnerBuilder, brutalizer,
     decode::decode_console_logs,
+    ethereum_runner::EthereumMultiContractRunner,
     gas_report::GasReport,
     multi_runner::{
         FuzzFailureReplayConfig, FuzzMinimizeConfig, FuzzMinimizeEdgeIndices, FuzzMinimizeMode,
@@ -18,6 +19,7 @@ use crate::{
         SymbolicRegression, SymbolicRegressionConfig, attach_symbolic_regressions_to_suites,
         collect_symbolic_artifacts_from_suites, emit_symbolic_regressions,
     },
+    test_contract::PreparedTestArtifacts,
     traces::{
         CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
         debug::{ContractSources, DebugTraceIdentifier},
@@ -65,8 +67,9 @@ use foundry_config::{
 };
 use foundry_debugger::{Debugger, DebuggerLayout};
 use foundry_evm::{
-    core::evm::{
-        BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
+    core::{
+        ethereum::{EthereumEnv, LocalState},
+        evm::{BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor},
     },
     executors::{ExecutorBuilder, ShowmapDomain},
     fork::ResolvedFork,
@@ -2150,6 +2153,76 @@ impl TestArgs {
     }
 
     /// Builds the runner for one network pass and runs its tests.
+    async fn run_ethereum_network_pass(
+        &self,
+        config: Arc<Config>,
+        evm_opts: EvmOpts,
+        output: &ProjectCompileOutput,
+        filter: &ProjectPathsAwareFilter,
+        execution: TestExecutionOptions,
+        resolved_fork: Option<&ResolvedFork>,
+    ) -> Result<(Libraries, TestOutcome)> {
+        eyre::ensure!(
+            resolved_fork.is_none() && evm_opts.fork_url.is_none(),
+            "Ethereum evm2 fork tests are not yet supported"
+        );
+        eyre::ensure!(
+            !execution.coverage
+                && execution.multi_network.all_override_networks.is_empty()
+                && execution.replay_symbolic_artifact.is_none()
+                && !self.debug
+                && !self.gas_report
+                && !self.flamegraph
+                && !self.flamechart
+                && self.evm_profile.is_none()
+                && !self.fuzz_only
+                && !self.fuzz_failure_replay
+                && !self.junit
+                && self.mutate.is_none(),
+            "this Ethereum evm2 Forge workflow is not yet supported"
+        );
+        let start = Instant::now();
+        let create2_deployer_available = evm_opts.can_use_create2_deployer_resolved(None).await?;
+        let prepared = PreparedTestArtifacts::new(
+            &config,
+            &execution.inline_config,
+            execution.replay_symbolic_artifact.as_ref(),
+            output,
+            &evm_opts,
+            execution.coverage,
+            create2_deployer_available,
+        )?;
+        let libraries = prepared.libraries.clone();
+        let known_contracts = prepared.known_contracts.clone();
+        let env = EthereumEnv::local_from_config(&config, &evm_opts)?;
+        let runner = EthereumMultiContractRunner::new(
+            prepared,
+            config.clone(),
+            execution.inline_config,
+            evm_opts,
+            env,
+            LocalState::default(),
+        );
+        let results = runner.run(filter)?;
+        if shell::is_json() {
+            sh_println!("{}", serde_json::to_string(&results)?)?;
+        } else {
+            for (name, suite) in &results {
+                sh_println!("\nRan {} tests for {name}", suite.len())?;
+                for (test, result) in &suite.test_results {
+                    sh_println!("{}", result.short_result_with_suite(test, name))?;
+                }
+                sh_println!("{}", suite.summary())?;
+            }
+        }
+        let outcome =
+            TestOutcome::new(Some(known_contracts), results, self.allow_failure, config.fuzz.seed);
+        self.print_summary(&outcome, start.elapsed())?;
+        persist_run_failures(&config, &outcome);
+        Ok((libraries, outcome))
+    }
+
+    /// Builds the runner for one network pass and runs its tests.
     async fn run_network_pass(
         &self,
         pass: NetworkPass,
@@ -2160,6 +2233,18 @@ impl TestArgs {
     ) -> Result<(Libraries, TestOutcome)> {
         let NetworkPass { config, evm_opts, multi_network } = pass;
         let execution = TestExecutionOptions { multi_network, ..execution };
+        if evm_opts.networks.execution_network() == NetworkVariant::Ethereum {
+            return self
+                .run_ethereum_network_pass(
+                    Arc::new(config),
+                    evm_opts,
+                    output,
+                    filter,
+                    execution,
+                    resolved_fork,
+                )
+                .await;
+        }
         let verbosity = evm_opts.verbosity;
         let config = Arc::new(config);
         dispatch_network!(&evm_opts, |Net| {

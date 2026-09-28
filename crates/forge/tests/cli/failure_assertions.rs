@@ -39,6 +39,50 @@ Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing te
 "#]]);
 });
 
+forgetest!(ethereum_assertion_flags_are_isolated, |prj, cmd| {
+    prj.update_config(|config| config.assertions_revert = false);
+    prj.add_source(
+        "EthereumAssertionFlags.t.sol",
+        r#"
+pragma solidity ^0.8.20;
+
+interface VmStore {
+    function store(address target, bytes32 slot, bytes32 value) external;
+}
+
+/// forge-config: default.legacy_assertions = true
+contract EthereumAssertionFlagsTest {
+    VmStore constant vm = VmStore(address(uint160(uint256(keccak256("hevm cheat code")))));
+    bool public failed;
+
+    function testGlobalFailure() public {
+        vm.store(address(vm), bytes32("failed"), bytes32(uint256(1)));
+    }
+
+    function testLegacyFailure() public {
+        failed = true;
+    }
+
+    function testPass() public view {
+        require(!failed);
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args(["test", "--mc", "EthereumAssertionFlagsTest"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: assertion failed] testGlobalFailure() ([GAS])
+[FAIL: assertion failed] testLegacyFailure() ([GAS])
+[PASS] testPass() ([GAS])
+Suite result: FAILED. 1 passed; 2 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+});
+
 forgetest!(expect_revert_tests_should_fail, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_vm();

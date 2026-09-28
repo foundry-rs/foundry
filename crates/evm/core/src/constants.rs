@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, B256, address, b256, hex};
+use alloy_primitives::{Address, B256, U256, address, b256, hex, uint};
 
 pub use foundry_evm_networks::MONAD_CHEATCODE_ADDRESS;
 
@@ -16,6 +16,10 @@ pub const CHEATCODE_ADDRESS: Address = address!("0x7109709ECfa91a80626fF3989D68f
 /// `keccak256(abi.encodePacked(CHEATCODE_ADDRESS))`.
 pub const CHEATCODE_CONTRACT_HASH: B256 =
     b256!("0xb0450508e5a2349057c3b4c9c84524d62be4bb17e565dbe2df34725a26872291");
+
+/// `bytes32("failed")`, the global assertion flag stored at [`CHEATCODE_ADDRESS`].
+pub const GLOBAL_FAIL_SLOT: U256 =
+    uint!(0x6661696c65640000000000000000000000000000000000000000000000000000_U256);
 
 /// The Hardhat console address.
 ///

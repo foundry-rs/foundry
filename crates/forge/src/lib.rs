@@ -23,6 +23,8 @@ pub mod brutalizer;
 
 pub mod gas_report;
 
+mod ethereum_runner;
+
 mod test_contract;
 mod test_matcher;
 
