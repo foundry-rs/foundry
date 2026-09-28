@@ -43,6 +43,13 @@ pub struct ListArgs {
     #[arg(long, hide = !cfg!(feature = "turnkey"))]
     turnkey: bool,
 
+    /// List accounts from Azure Key Vault.
+    ///
+    /// Ensure either one of AZURE_KEY_VAULT_KEY_IDS (comma-separated) or AZURE_KEY_VAULT_KEY_ID
+    /// environment variables are set.
+    #[arg(long, hide = !cfg!(feature = "azure-key-vault"))]
+    azure: bool,
+
     /// List all configured accounts.
     #[arg(long, group = "hw-wallets")]
     all: bool,
@@ -60,7 +67,12 @@ impl ListArgs {
         // list local accounts as files in keystore dir, no need to unlock / provide password
         if self.dir.is_some()
             || self.all
-            || (!self.ledger && !self.trezor && !self.aws && !self.gcp && !self.turnkey)
+            || (!self.ledger
+                && !self.trezor
+                && !self.aws
+                && !self.gcp
+                && !self.turnkey
+                && !self.azure)
         {
             match self.list_local_senders() {
                 Ok(local) => accounts.extend(local),
@@ -77,6 +89,7 @@ impl ListArgs {
             .aws(self.aws || self.all)
             .gcp(self.gcp || (self.all && gcp_env_vars_set()))
             .turnkey(self.turnkey || self.all)
+            .azure(self.azure || self.all)
             .interactives(0)
             .interactive(false)
             .browser(Default::default())
@@ -112,6 +125,7 @@ impl ListArgs {
         list_senders!(list_opts.aws_signers(), "AWS");
         list_senders!(list_opts.gcp_signers(), "GCP");
         list_senders!(async { list_opts.turnkey_signers() }, "Turnkey");
+        list_senders!(list_opts.azure_signers(), "Azure");
 
         if format_json {
             print_json_success(accounts)?;

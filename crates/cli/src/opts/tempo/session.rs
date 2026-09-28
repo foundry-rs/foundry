@@ -165,6 +165,7 @@ impl ExplicitSignerOpts for WalletOpts {
             || self.aws
             || self.gcp
             || self.turnkey
+            || self.azure
             || self.tempo_access_key.is_some()
     }
 }
@@ -196,6 +197,7 @@ impl ExplicitSignerOpts for MultiWalletOpts {
             || self.aws
             || self.gcp
             || self.turnkey
+            || self.azure
             || self.browser.browser
     }
 }
