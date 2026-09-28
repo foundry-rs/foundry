@@ -347,6 +347,36 @@ repl_test!(eval_subcommand, "eval type(uint8).max", |repl| {
     repl.expect("Decimal: 255");
 });
 
+// Issue #17125: external function references display their address and selector.
+repl_test!(external_function_references, |repl| {
+    repl.sendln_raw(
+        "interface IProbe { function value() external view returns (uint256); function pair() external view returns (uint256, bool); function ping() external; }",
+    );
+    repl.expect_prompt();
+
+    repl.sendln("IProbe(address(0x1234)).value");
+    repl.expect("Type: function");
+    repl.expect("Address: 0x0000000000000000000000000000000000001234");
+    repl.expect("Selector: 0x3fa4f245");
+
+    repl.sendln("IProbe(address(0x1234)).pair");
+    repl.expect("Type: function");
+    repl.expect("Address: 0x0000000000000000000000000000000000001234");
+    repl.expect("Selector: 0xa8aa1b31");
+
+    repl.sendln("IProbe(address(0x1234)).ping");
+    repl.expect("Type: function");
+    repl.expect("Address: 0x0000000000000000000000000000000000001234");
+    repl.expect("Selector: 0x5c36b186");
+
+    repl.sendln("uint256(1)");
+    repl.sendln("[IProbe(address(0x1234)).ping]");
+    repl.expect("Type: function");
+    repl.expect("Selector: 0x5c36b186");
+    repl.sendln("$_");
+    repl.expect("no previous result");
+});
+
 // Issue #4963: inspect the value of the final inline assembly expression.
 repl_test!(inline_assembly_expression, |repl| {
     repl.sendln("uint256 value = 1");
