@@ -766,7 +766,16 @@ impl<'ast> State<'_, 'ast> {
             Some((pre_cmnts, inner_cmnts, post_cmnts)) => {
                 // Print preceding comments. The separator before the attribute is printed below,
                 // so a mixed comment must not add one of its own or the two become a blank line.
+                let mut previous_mixed = false;
                 for cmnt in pre_cmnts {
+                    // A line comment after a mixed comment becomes isolated once the header wraps.
+                    if previous_mixed
+                        && cmnt.style.is_trailing()
+                        && matches!(cmnt.kind, ast::CommentKind::Line)
+                    {
+                        self.hardbreak_if_not_bol();
+                    }
+                    previous_mixed = cmnt.style.is_mixed();
                     let Some(cmnt) = self.handle_comment(cmnt, false) else {
                         continue;
                     };

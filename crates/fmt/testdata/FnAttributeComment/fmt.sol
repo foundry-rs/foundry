@@ -4,4 +4,9 @@ contract C {
         public {}
 
     function shortOne() /* c */ public {}
+
+    function mixedThenLine()
+        /* a */
+        // b
+        public {}
 }
