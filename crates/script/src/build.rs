@@ -351,8 +351,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                 if sequence.sequences()[index].pending.is_empty() {
                     continue;
                 }
-                let durable_hashes = sequence.submission_hashes(index);
-                let replayable_hashes = sequence.signed_hashes(index);
+                let (durable_hashes, replayable_hashes) = sequence.submission_hashes(index);
                 let provider = ProviderBuilder::from_config_with_url(
                     &self.script_config.config,
                     sequence.sequences()[index].rpc_url(),

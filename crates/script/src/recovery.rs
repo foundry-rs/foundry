@@ -187,17 +187,29 @@ where
         write_snapshot(&self.path, &self.plan)
     }
 
+    fn submission_attempts(
+        &self,
+        sequence: usize,
+        index: usize,
+    ) -> impl Iterator<Item = &SubmissionAttempt<N::TransactionRequest>> {
+        let operation = self
+            .plan
+            .deployments
+            .get(sequence)
+            .and_then(|deployment| deployment.operations.get(index))
+            .map(|operation| operation.id);
+        self.plan
+            .deployments
+            .get(sequence)
+            .into_iter()
+            .flat_map(|deployment| &deployment.attempts)
+            .filter(move |attempt| operation.is_some_and(|id| attempt.members.contains(&id)))
+    }
+
     pub(crate) fn signed_payload(&self, sequence: usize, index: usize) -> Option<&SignedPayload> {
-        let deployment = self.plan.deployments.get(sequence)?;
-        let id = deployment.operations.get(index)?.id;
-        deployment.attempts.iter().find_map(|attempt| {
-            if !attempt.members.contains(&id) {
-                return None;
-            }
-            match &attempt.kind {
-                AttemptKind::Signed { payload, .. } => Some(payload),
-                AttemptKind::Delegated { .. } => None,
-            }
+        self.submission_attempts(sequence, index).find_map(|attempt| match &attempt.kind {
+            AttemptKind::Signed { payload, .. } => Some(payload),
+            AttemptKind::Delegated { .. } => None,
         })
     }
 
@@ -206,56 +218,40 @@ where
         sequence: usize,
         index: usize,
     ) -> Option<DelegatedStatus> {
-        let deployment = self.plan.deployments.get(sequence)?;
-        let id = deployment.operations.get(index)?.id;
-        deployment.attempts.iter().find_map(|attempt| {
-            if !attempt.members.contains(&id) {
-                return None;
-            }
-            match &attempt.kind {
-                AttemptKind::Delegated { status, .. } => Some(*status),
-                AttemptKind::Signed { .. } => None,
-            }
+        self.submission_attempts(sequence, index).find_map(|attempt| match &attempt.kind {
+            AttemptKind::Delegated { status, .. } => Some(*status),
+            AttemptKind::Signed { .. } => None,
         })
     }
 
     pub(crate) fn delegated_attempt_id(&self, sequence: usize, index: usize) -> Option<B256> {
-        let deployment = self.plan.deployments.get(sequence)?;
-        let operation = deployment.operations.get(index)?.id;
-        deployment.attempts.iter().find_map(|attempt| {
-            (attempt.members.contains(&operation)
-                && matches!(attempt.kind, AttemptKind::Delegated { .. }))
-            .then_some(attempt.id)
+        self.submission_attempts(sequence, index).find_map(|attempt| {
+            matches!(attempt.kind, AttemptKind::Delegated { .. }).then_some(attempt.id)
         })
     }
 
-    pub(crate) fn submission_hashes(&self, sequence: usize) -> Vec<B256> {
-        self.plan
+    pub(crate) fn submission_hashes(&self, sequence: usize) -> (Vec<B256>, Vec<B256>) {
+        let mut durable = Vec::new();
+        let mut replayable = Vec::new();
+        for attempt in self
+            .plan
             .deployments
             .get(sequence)
             .into_iter()
             .flat_map(|deployment| &deployment.attempts)
-            .filter_map(|attempt| match &attempt.kind {
-                AttemptKind::Signed { payload, .. } => Some(payload.hash),
-                AttemptKind::Delegated { status: DelegatedStatus::Pending { hash }, .. } => {
-                    Some(*hash)
+        {
+            match &attempt.kind {
+                AttemptKind::Signed { payload, .. } => {
+                    durable.push(payload.hash);
+                    replayable.push(payload.hash);
                 }
-                AttemptKind::Delegated { .. } => None,
-            })
-            .collect()
-    }
-
-    pub(crate) fn signed_hashes(&self, sequence: usize) -> Vec<B256> {
-        self.plan
-            .deployments
-            .get(sequence)
-            .into_iter()
-            .flat_map(|deployment| &deployment.attempts)
-            .filter_map(|attempt| match &attempt.kind {
-                AttemptKind::Signed { payload, .. } => Some(payload.hash),
-                AttemptKind::Delegated { .. } => None,
-            })
-            .collect()
+                AttemptKind::Delegated { status: DelegatedStatus::Pending { hash }, .. } => {
+                    durable.push(*hash);
+                }
+                AttemptKind::Delegated { .. } => {}
+            }
+        }
+        (durable, replayable)
     }
 
     pub(crate) fn persist_signed_payload(
@@ -737,6 +733,14 @@ where
     let sender = planned.from().context("delegated request has no sender")?;
     let planned_tempo_aa = planned.is_tempo_aa();
     let resolved_tempo_aa = resolved.is_tempo_aa();
+    let planned_fields = serde_json::to_value(planned)?;
+    let resolved_fields = serde_json::to_value(&resolved)?;
+    let same = |field: &str| planned_fields.get(field) == resolved_fields.get(field);
+    let same_list = |field: &str| {
+        let empty = serde_json::Value::Array(Vec::new());
+        planned_fields.get(field).filter(|value| !value.is_null()).unwrap_or(&empty)
+            == resolved_fields.get(field).filter(|value| !value.is_null()).unwrap_or(&empty)
+    };
     if transaction.tx_hash() != hash
         || transaction.from() != sender
         || transaction.chain_id() != Some(chain)
@@ -749,28 +753,18 @@ where
                 || resolved.input().unwrap_or_default() != planned.input().unwrap_or_default()))
         || transaction.authorization_list().unwrap_or_default()
             != planned.authorization_list().map(Vec::as_slice).unwrap_or_default()
-    {
-        bail!("resolved transaction does not match its delegated submission attempt");
-    }
-
-    let planned_fields = serde_json::to_value(planned)?;
-    let resolved_fields = serde_json::to_value(&resolved)?;
-    let same = |field: &str| planned_fields.get(field) == resolved_fields.get(field);
-    let same_list = |field: &str| {
-        let empty = serde_json::Value::Array(Vec::new());
-        planned_fields.get(field).filter(|value| !value.is_null()).unwrap_or(&empty)
-            == resolved_fields.get(field).filter(|value| !value.is_null()).unwrap_or(&empty)
-    };
-    if !same_list("accessList")
-        || !same_list("blobVersionedHashes")
+        || planned.access_list().filter(|list| !list.is_empty())
+            != resolved.access_list().filter(|list| !list.is_empty())
+        || planned.blob_versioned_hashes().filter(|hashes| !hashes.is_empty())
+            != resolved.blob_versioned_hashes().filter(|hashes| !hashes.is_empty())
         || (planned_tempo_aa
             && canonical_tempo_calls::<N>(planned, &planned_fields)?
                 != canonical_tempo_calls::<N>(&resolved, &resolved_fields)?)
         || !same_list("aaAuthorizationList")
         || planned.nonce_key().unwrap_or_default() != resolved.nonce_key().unwrap_or_default()
-        || !same("feeToken")
-        || !same("validBefore")
-        || !same("validAfter")
+        || planned.fee_token() != resolved.fee_token()
+        || planned.valid_before() != resolved.valid_before()
+        || planned.valid_after() != resolved.valid_after()
         || !same("keyAuthorization")
         || delegated_fee_payer::<N>(planned, sender)?
             != delegated_fee_payer::<N>(&resolved, sender)?
@@ -858,9 +852,7 @@ mod tests {
     use alloy_rpc_types::{Transaction as RpcTransaction, TransactionRequest};
     use alloy_signer::SignerSync;
     use tempo_alloy::{TempoNetwork, rpc::TempoTransactionRequest};
-    use tempo_primitives::{
-        AASigned, TempoSignature, TempoTransaction, TempoTxEnvelope, transaction::Call,
-    };
+    use tempo_primitives::{AASigned, TempoSignature, TempoTxEnvelope, transaction::Call};
 
     const SIGNED_TX: &[u8] = &hex!(
         "02f86b0180843b9aca008502540be4008252089400000000000000000000000000000000000000016480c001a070d55e79ed3ac9fc8f51e78eb91fd054720d943d66633f2eb1bc960f0126b0eca052eda05a792680de3181e49bab4093541f75b49d1ecbe443077b3660c836016a"
@@ -1134,34 +1126,32 @@ mod tests {
     #[test]
     fn delegated_tempo_resolution_checks_nonce_domain_and_calls() {
         let from = Address::repeat_byte(0x11);
-        let envelope = TempoTxEnvelope::AA(AASigned::new_unhashed(
-            TempoTransaction {
-                chain_id: 4217,
-                nonce_key: U256::from(7),
-                calls: vec![
-                    Call {
-                        to: TxKind::Call(Address::repeat_byte(0x22)),
-                        value: U256::from(1),
-                        input: Bytes::from_static(&[0x12]),
-                    },
-                    Call {
-                        to: TxKind::Call(Address::repeat_byte(0x33)),
-                        value: U256::from(2),
-                        input: Bytes::from_static(&[0x34]),
-                    },
-                ],
+        let resolved = TempoTransactionRequest {
+            inner: TransactionRequest {
+                from: Some(from),
+                gas: Some(0),
+                max_fee_per_gas: Some(0),
+                max_priority_fee_per_gas: Some(0),
+                nonce: Some(0),
+                chain_id: Some(4217),
                 ..Default::default()
             },
-            TempoSignature::default(),
-        ));
-        let transaction = RpcTransaction {
-            inner: Recovered::new_unchecked(envelope, from),
-            block_hash: None,
-            block_number: None,
-            transaction_index: None,
-            effective_gas_price: None,
-            block_timestamp: None,
+            nonce_key: Some(U256::from(7)),
+            calls: vec![
+                Call {
+                    to: TxKind::Call(Address::repeat_byte(0x22)),
+                    value: U256::from(1),
+                    input: Bytes::from_static(&[0x12]),
+                },
+                Call {
+                    to: TxKind::Call(Address::repeat_byte(0x33)),
+                    value: U256::from(2),
+                    input: Bytes::from_static(&[0x34]),
+                },
+            ],
+            ..Default::default()
         };
+        let transaction = tempo_transaction(resolved, from);
         let mut request = <TempoTransactionRequest as From<_>>::from(transaction.clone());
         request.from = Some(from);
         let hash = transaction.tx_hash();

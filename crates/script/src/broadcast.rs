@@ -482,17 +482,14 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
         let progress = ScriptProgress::default();
         let progress_ref = &progress;
         let config = &self.script_config.config;
-        let durable_hashes = (0..self.sequence.sequences().len())
+        let submission_hashes = (0..self.sequence.sequences().len())
             .map(|sequence| self.sequence.submission_hashes(sequence))
-            .collect::<Vec<_>>();
-        let replayable_hashes = (0..self.sequence.sequences().len())
-            .map(|sequence| self.sequence.signed_hashes(sequence))
             .collect::<Vec<_>>();
         let futs = self
             .sequence
             .sequences_mut()
             .iter_mut()
-            .zip(durable_hashes.into_iter().zip(replayable_hashes))
+            .zip(submission_hashes)
             .enumerate()
             .map(|(sequence_idx, (sequence, (durable_hashes, replayable_hashes)))| async move {
                 let rpc_url = sequence.rpc_url();
@@ -962,8 +959,8 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
 
                         // Checkpoint save
                         self.sequence.save(true, false)?;
-                        let durable_hashes = self.sequence.submission_hashes(i);
-                        let replayable_hashes = self.sequence.signed_hashes(i);
+                        let (durable_hashes, replayable_hashes) =
+                            self.sequence.submission_hashes(i);
                         sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
                         progress
