@@ -421,7 +421,7 @@ where
         transaction: &N::TransactionResponse,
     ) -> Result<(usize, usize)>
     where
-        N::TransactionRequest: FoundryTransactionBuilder<N>,
+        N::TransactionRequest: FoundryTransactionBuilder<N> + From<N::TransactionResponse>,
     {
         let (sequence, index) = self
             .delegated_attempt_location(attempt_id)
@@ -729,18 +729,43 @@ fn validate_delegated_transaction<N: Network>(
     hash: B256,
 ) -> Result<()>
 where
-    N::TransactionRequest: FoundryTransactionBuilder<N>,
+    N::TransactionRequest: FoundryTransactionBuilder<N> + From<N::TransactionResponse>,
 {
+    // Preserve network-specific execution fields while allowing the signer to choose gas and fees.
+    let resolved =
+        <N::TransactionRequest as From<N::TransactionResponse>>::from(transaction.clone());
     if transaction.tx_hash() != hash
         || transaction.from() != planned.from().context("delegated request has no sender")?
         || transaction.chain_id() != Some(chain)
         || planned.chain_id() != Some(chain)
         || transaction.nonce() != planned.nonce().context("delegated request has no nonce")?
-        || transaction.to() != planned.to()
-        || transaction.value() != planned.value().unwrap_or_default()
-        || transaction.input() != planned.input().unwrap_or_default()
+        || resolved.to() != planned.to()
+        || resolved.value().unwrap_or_default() != planned.value().unwrap_or_default()
+        || resolved.input().unwrap_or_default() != planned.input().unwrap_or_default()
         || transaction.authorization_list().unwrap_or_default()
             != planned.authorization_list().map(Vec::as_slice).unwrap_or_default()
+    {
+        bail!("resolved transaction does not match its delegated submission attempt");
+    }
+
+    let planned_fields = serde_json::to_value(planned)?;
+    let resolved_fields = serde_json::to_value(&resolved)?;
+    let same = |field: &str| planned_fields.get(field) == resolved_fields.get(field);
+    let same_list = |field: &str| {
+        let empty = serde_json::Value::Array(Vec::new());
+        planned_fields.get(field).filter(|value| !value.is_null()).unwrap_or(&empty)
+            == resolved_fields.get(field).filter(|value| !value.is_null()).unwrap_or(&empty)
+    };
+    if !same_list("accessList")
+        || !same_list("blobVersionedHashes")
+        || !same_list("calls")
+        || !same_list("aaAuthorizationList")
+        || planned.is_tempo_aa() != resolved.is_tempo_aa()
+        || planned.nonce_key().unwrap_or_default() != resolved.nonce_key().unwrap_or_default()
+        || !same("feeToken")
+        || !same("validBefore")
+        || !same("validAfter")
+        || !same("keyAuthorization")
     {
         bail!("resolved transaction does not match its delegated submission attempt");
     }
@@ -784,8 +809,12 @@ mod tests {
     use super::*;
     use alloy_consensus::{TxEnvelope, transaction::Recovered};
     use alloy_network::Ethereum;
-    use alloy_primitives::hex;
+    use alloy_primitives::{Address, TxKind, U256, hex};
     use alloy_rpc_types::{Transaction as RpcTransaction, TransactionRequest};
+    use tempo_alloy::{TempoNetwork, rpc::TempoTransactionRequest};
+    use tempo_primitives::{
+        AASigned, TempoSignature, TempoTransaction, TempoTxEnvelope, transaction::Call,
+    };
 
     const SIGNED_TX: &[u8] = &hex!(
         "02f86b0180843b9aca008502540be4008252089400000000000000000000000000000000000000016480c001a070d55e79ed3ac9fc8f51e78eb91fd054720d943d66633f2eb1bc960f0126b0eca052eda05a792680de3181e49bab4093541f75b49d1ecbe443077b3660c836016a"
@@ -1011,12 +1040,70 @@ mod tests {
 
     #[test]
     fn delegated_resolution_is_bound_to_its_planned_transaction() {
-        let (request, transaction) = delegated_transaction(SIGNED_TX);
+        let (mut request, transaction) = delegated_transaction(SIGNED_TX);
         let hash = transaction.tx_hash();
         validate_delegated_transaction::<Ethereum>(&transaction, &request, 1, hash).unwrap();
 
+        request.gas = Some(100_000);
+        request.max_fee_per_gas = Some(10_000);
+        validate_delegated_transaction::<Ethereum>(&transaction, &request, 1, hash).unwrap();
+
+        request.blob_versioned_hashes = Some(vec![B256::repeat_byte(0x42)]);
+        assert!(
+            validate_delegated_transaction::<Ethereum>(&transaction, &request, 1, hash).is_err()
+        );
+
         let (other, _) = delegated_transaction(OTHER_SIGNED_TX);
         assert!(validate_delegated_transaction::<Ethereum>(&transaction, &other, 1, hash).is_err());
+    }
+
+    #[test]
+    fn delegated_tempo_resolution_checks_nonce_domain_and_calls() {
+        let from = Address::repeat_byte(0x11);
+        let envelope = TempoTxEnvelope::AA(AASigned::new_unhashed(
+            TempoTransaction {
+                chain_id: 4217,
+                nonce_key: U256::from(7),
+                calls: vec![
+                    Call {
+                        to: TxKind::Call(Address::repeat_byte(0x22)),
+                        value: U256::from(1),
+                        input: Bytes::from_static(&[0x12]),
+                    },
+                    Call {
+                        to: TxKind::Call(Address::repeat_byte(0x33)),
+                        value: U256::from(2),
+                        input: Bytes::from_static(&[0x34]),
+                    },
+                ],
+                ..Default::default()
+            },
+            TempoSignature::default(),
+        ));
+        let transaction = RpcTransaction {
+            inner: Recovered::new_unchecked(envelope, from),
+            block_hash: None,
+            block_number: None,
+            transaction_index: None,
+            effective_gas_price: None,
+            block_timestamp: None,
+        };
+        let mut request = <TempoTransactionRequest as From<_>>::from(transaction.clone());
+        request.from = Some(from);
+        let hash = transaction.tx_hash();
+        validate_delegated_transaction::<TempoNetwork>(&transaction, &request, 4217, hash).unwrap();
+
+        request.nonce_key = Some(U256::from(8));
+        assert!(
+            validate_delegated_transaction::<TempoNetwork>(&transaction, &request, 4217, hash)
+                .is_err()
+        );
+        request.nonce_key = Some(U256::from(7));
+        request.calls.swap(0, 1);
+        assert!(
+            validate_delegated_transaction::<TempoNetwork>(&transaction, &request, 4217, hash)
+                .is_err()
+        );
     }
 
     #[test]

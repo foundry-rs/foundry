@@ -298,7 +298,7 @@ where
         transaction: &N::TransactionResponse,
     ) -> Result<()>
     where
-        N::TransactionRequest: FoundryTransactionBuilder<N>,
+        N::TransactionRequest: FoundryTransactionBuilder<N> + From<N::TransactionResponse>,
     {
         let (sequence, index) =
             self.recovery.resolve_delegated_hash(attempt_id, hash, transaction)?;
