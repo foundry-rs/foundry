@@ -105,7 +105,7 @@ impl<'gcx> Analyzer<'gcx> {
                 }
                 _ => false,
             }),
-            ExprKind::Call(callee, args, _) if is_cast(self.gcx, callee) => {
+            ExprKind::Call(callee, args) if is_cast(self.gcx, callee) => {
                 args.exprs().next().is_some_and(|arg| self.is_trusted_target_inner(arg, depth))
             }
             ExprKind::Payable(inner) => self.is_trusted_target_inner(inner, depth),
@@ -114,7 +114,7 @@ impl<'gcx> Analyzer<'gcx> {
                     && self.is_trusted_target_inner(if_false, depth)
             }
             ExprKind::Assign(_, _, rhs) => self.is_trusted_target_inner(rhs, depth),
-            ExprKind::Call(callee, args, _) => {
+            ExprKind::Call(callee, args) => {
                 depth > 0
                     && args.exprs().next().is_none()
                     && no_arg_helper_return(self.gcx, callee)
@@ -365,7 +365,7 @@ impl<'gcx> Visit<'gcx> for Analyzer<'gcx> {
                 let false_state = self.visit_arm(cond, true, |this| this.visit_expr(if_false));
                 self.join(true_state, false_state)
             }
-            ExprKind::Call(callee, args, _) if is_require_or_assert(self.gcx, callee) => {
+            ExprKind::Call(callee, args) if is_require_or_assert(self.gcx, callee) => {
                 let _ = self.walk_expr(expr);
                 let mut args = args.exprs();
                 if let Some(cond) = args.next()
@@ -397,7 +397,7 @@ impl<'gcx> Visit<'gcx> for Analyzer<'gcx> {
 fn underlying_var(gcx: Gcx<'_>, expr: &Expr<'_>) -> Option<VariableId> {
     match &expr.peel_parens().kind {
         ExprKind::Ident(_) => gcx.resolved_variable(expr),
-        ExprKind::Call(callee, args, _) if is_cast(gcx, callee) => {
+        ExprKind::Call(callee, args) if is_cast(gcx, callee) => {
             args.exprs().next().and_then(|expr| underlying_var(gcx, expr))
         }
         ExprKind::Payable(inner) => underlying_var(gcx, inner),
