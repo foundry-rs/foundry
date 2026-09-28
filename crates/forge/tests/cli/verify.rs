@@ -7,10 +7,11 @@ use alloy_network::Ethereum;
 use alloy_primitives::{Address, U256, hex};
 use anvil::{NodeConfig, spawn};
 use axum::{
-    Router,
+    Form, Router,
     extract::Query,
     http::{StatusCode, header},
     response::IntoResponse,
+    routing::post,
 };
 use forge_script_sequence::ScriptSequence;
 use foundry_common::retry::Retry;
@@ -539,15 +540,26 @@ forgetest_async!(can_validate_verifier_settings, |prj, cmd| {
     // Argument validation should not depend on a public block explorer being available.
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let verifier_url = format!("http://{}", listener.local_addr().unwrap());
-    let app = Router::new().fallback(|Query(query): Query<HashMap<String, String>>| async move {
-        assert_eq!(query.get("module").map(String::as_str), Some("contract"));
-        assert_eq!(query.get("action").map(String::as_str), Some("getabi"));
-        assert_eq!(
-            query["address"].parse::<Address>().unwrap(),
-            "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2".parse::<Address>().unwrap()
-        );
-        r#"{"status":"1","message":"OK","result":"[]"}"#
-    });
+    let app = Router::new()
+        .route(
+            "/api",
+            post(|Form(form): Form<HashMap<String, String>>| async move {
+                if form.get("apikey").map(String::as_str) == Some("verifier-key") {
+                    r#"{"status":"1","message":"OK","result":"Pass - Verified"}"#
+                } else {
+                    r#"{"status":"0","message":"NOTOK","result":"Invalid API Key"}"#
+                }
+            }),
+        )
+        .fallback(|Query(query): Query<HashMap<String, String>>| async move {
+            assert_eq!(query.get("module").map(String::as_str), Some("contract"));
+            assert_eq!(query.get("action").map(String::as_str), Some("getabi"));
+            assert_eq!(
+                query["address"].parse::<Address>().unwrap(),
+                "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2".parse::<Address>().unwrap()
+            );
+            r#"{"status":"1","message":"OK","result":"[]"}"#
+        });
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
 
     // Use the explicit chain ID so validation does not depend on a public RPC endpoint.
@@ -634,6 +646,22 @@ Start verifying contract `0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2` deployed o
 
 Verifying on blockscout...
 Contract [src/Counter.sol:Counter] "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2" is already verified. Skipping verification.
+
+"#]]);
+    // Status checks prefer the verifier key over the Etherscan key.
+    cmd.forge_fuse()
+        .args(["verify-check", "job-id", "--verifier", "custom"])
+        .args(["--verifier-url", &format!("{verifier_url}/api")])
+        .args(["--verifier-api-key", "verifier-key", "--etherscan-api-key", "fallback-key"])
+        .args(["--chain", "1", "--retries", "1", "--delay", "0"])
+        .assert_success()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
+Checking verification status on mainnet
+Contract verification status:
+Response: `OK`
+Details: `Pass - Verified`
+Contract successfully verified
 
 "#]]);
     server.abort();
