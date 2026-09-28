@@ -3742,6 +3742,64 @@ Suite result: FAILED. 0 passed; 3 failed; 0 skipped; [ELAPSED]
 "#]]);
 });
 
+forgetest!(ethereum_before_test_setup, |prj, cmd| {
+    prj.add_source(
+        "EthereumBeforeTest.t.sol",
+        r#"
+pragma solidity ^0.8.20;
+
+contract EthereumBeforeTest {
+    uint256 value;
+
+    function beforeTestSetup(bytes4 selector) external view returns (bytes[] memory calls) {
+        if (selector == this.testPrepared.selector || selector == this.testFuzzPrepared.selector) {
+            calls = new bytes[](1);
+            calls[0] = abi.encodeCall(this.setValue, (7));
+        }
+    }
+
+    function setValue(uint256 next) external { value = next; }
+    function testPrepared() public view { require(value == 7, "preparation missing"); }
+    function testUnprepared() public view { require(value == 0, "preparation leaked"); }
+    function testFuzzPrepared(uint256 input) public view {
+        require(value == 7 && input == input, "fuzz preparation missing");
+    }
+}
+
+contract EthereumBeforeTestFailure {
+    function beforeTestSetup(bytes4) external view returns (bytes[] memory calls) {
+        calls = new bytes[](1);
+        calls[0] = abi.encodeCall(this.failPreparation, ());
+    }
+    function failPreparation() external pure { revert("preparation failed"); }
+    function testNeverRuns() public pure { require(false); }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args(["test", "--mc", "^EthereumBeforeTest$", "--fuzz-runs", "16", "--fuzz-seed", "1"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+[PASS] testFuzzPrepared(uint256) (runs: 16, [AVG_GAS])
+[PASS] testPrepared() ([GAS])
+[PASS] testUnprepared() ([GAS])
+Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["test", "--mc", "^EthereumBeforeTestFailure$"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: preparation failed] testNeverRuns() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+});
+
 forgetest!(ethereum_stateless_fuzz, |prj, cmd| {
     prj.add_source(
         "EthereumFuzz.t.sol",

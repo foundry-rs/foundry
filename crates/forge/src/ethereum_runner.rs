@@ -8,6 +8,7 @@ use crate::{
     test_matcher::{TestFunctionMatcher, is_generated_symbolic_regression_contract},
 };
 use alloy_primitives::{Address, Bytes, KECCAK256_EMPTY, Log, U256, keccak256};
+use alloy_sol_types::{SolCall, sol};
 use evm2::{
     TxResult,
     ethereum::intrinsic_gas,
@@ -29,6 +30,12 @@ use foundry_evm::{
 use std::{collections::BTreeMap, sync::Arc, time::Instant};
 
 mod fuzz;
+
+sol! {
+    interface EthereumTestHooks {
+        function beforeTestSetup(bytes4 testSelector) external view returns (bytes[] memory beforeTestCalldata);
+    }
+}
 
 /// Linked local test suites executed with Ethereum evm2 state.
 pub(crate) struct EthereumMultiContractRunner<D: Database + Clone = EmptyDB> {
@@ -207,6 +214,7 @@ pub(crate) struct EthereumContractRunner<D: Database + Clone = EmptyDB> {
     executor: EthereumExecutor<D, EthereumInspectorStack>,
     address: Address,
     legacy_assertions: bool,
+    has_before_test_setup: bool,
     setup_logs: Vec<Log>,
 }
 
@@ -386,7 +394,16 @@ impl<D: Database + Clone + 'static> EthereumContractRunner<D> {
                 });
             }
         }
-        Ok(Self { executor, address, legacy_assertions, setup_logs })
+        Ok(Self {
+            executor,
+            address,
+            legacy_assertions,
+            has_before_test_setup: contract
+                .abi
+                .functions()
+                .any(|f| f.selector() == EthereumTestHooks::beforeTestSetupCall::SELECTOR),
+            setup_logs,
+        })
     }
 
     /// Returns the deployed test contract address.
@@ -397,8 +414,36 @@ impl<D: Database + Clone + 'static> EthereumContractRunner<D> {
     /// Executes one test against an isolated copy of the state after `setUp`.
     pub(crate) fn run_test(&self, calldata: Bytes, value: U256) -> Result<EthereumTestExecution> {
         let mut executor = self.executor.clone();
-        let result = executor.transact_raw(CALLER, self.address, calldata, value)?;
         let mut logs = self.setup_logs.clone();
+        if self.has_before_test_setup
+            && let Some(selector) = calldata.get(..4)
+        {
+            let hook = EthereumTestHooks::beforeTestSetupCall {
+                testSelector: selector.try_into().expect("four-byte selector"),
+            };
+            let preparatory = executor
+                .call_raw(CALLER, self.address, hook.abi_encode().into(), U256::ZERO)
+                .ok()
+                .filter(|result| result.status)
+                .and_then(|result| {
+                    EthereumTestHooks::beforeTestSetupCall::abi_decode_returns(&result.output).ok()
+                })
+                .unwrap_or_default();
+            for input in preparatory {
+                let result = executor.transact_raw(CALLER, self.address, input, U256::ZERO)?;
+                logs.extend(executor.inspector_mut().take_logs());
+                if !result.status {
+                    let skip_reason = Self::take_skip_reason(&mut executor, &result);
+                    return Ok(EthereumTestExecution {
+                        result,
+                        logs,
+                        assertion_failed: false,
+                        skip_reason,
+                    });
+                }
+            }
+        }
+        let result = executor.transact_raw(CALLER, self.address, calldata, value)?;
         logs.extend(executor.inspector_mut().take_logs());
         let skip_reason = Self::take_skip_reason(&mut executor, &result);
         let assertion_failed = result.status
