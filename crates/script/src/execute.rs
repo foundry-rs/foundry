@@ -509,7 +509,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                     .execution_artifacts
                     .decoder
                     .revert_decoder
-                    .decode(&result.returned[..], result.exit_reason)
+                    .decode_with_exit_reason(&result.returned, result.exit_reason.as_deref())
             ));
         }
 
@@ -600,7 +600,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                     .execution_artifacts
                     .decoder
                     .revert_decoder
-                    .decode(&result.returned[..], result.exit_reason)
+                    .decode_with_exit_reason(&result.returned, result.exit_reason.as_deref())
             ));
         }
 

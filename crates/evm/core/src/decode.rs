@@ -129,6 +129,15 @@ impl RevertDecoder {
         })
     }
 
+    /// Decodes a script failure using an engine-independent exit reason for fallback output.
+    pub fn decode_with_exit_reason(&self, err: &[u8], exit_reason: Option<&str>) -> String {
+        self.maybe_decode(err, None)
+            .or_else(|| exit_reason.map(|reason| format!("EvmError: {reason}")))
+            .unwrap_or_else(|| {
+                if err.is_empty() { EMPTY_REVERT_DATA.to_string() } else { trimmed_hex(err) }
+            })
+    }
+
     /// Tries to decode an error message from the given revert bytes.
     ///
     /// See [`decode`](Self::decode) for more information.
@@ -301,5 +310,17 @@ mod tests {
 
         assert_eq!(decoder.maybe_decode_known(data), None);
         assert_eq!(decoder.maybe_decode(data, None).as_deref(), Some(".,Bo"));
+    }
+
+    #[test]
+    fn script_exit_reason_only_supplies_missing_revert_data() {
+        let decoder = RevertDecoder::new();
+
+        assert_eq!(decoder.decode_with_exit_reason(&[], Some("OutOfGas")), "EvmError: OutOfGas");
+        assert_eq!(decoder.decode_with_exit_reason(b"failure", Some("OutOfGas")), "failure");
+        assert_eq!(
+            decoder.decode_with_exit_reason(&[], Some("Revert")),
+            decoder.decode(&[], Some(InstructionResult::Revert))
+        );
     }
 }

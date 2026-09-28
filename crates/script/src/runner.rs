@@ -382,7 +382,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
             debug_bytecodes: self.maybe_debug_bytecodes(debug_bytecodes),
             // Manually adjust gas for the trace to add back the stipend/real used gas
             traces: traces.map(|traces| vec![(TraceKind::Execution, traces)]).unwrap_or_default(),
-            exit_reason,
+            exit_reason: exit_reason.map(|status| format!("{status:?}")),
             address: Some(address),
             ..Default::default()
         })
@@ -473,7 +473,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                 .unwrap_or_default(),
             labeled_addresses: labels,
             transactions,
-            exit_reason,
+            exit_reason: exit_reason.map(|status| format!("{status:?}")),
             address: None,
             breakpoints,
         }
