@@ -148,10 +148,11 @@ pub fn locked_write(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> Resul
     let mut file = fs::OpenOptions::new()
         .write(true)
         .create(true)
-        .truncate(true)
+        .truncate(false)
         .open(path)
         .map_err(|err| FsPathError::open(err, path))?;
     file.lock().map_err(|err| FsPathError::lock(err, path))?;
+    file.set_len(0).map_err(|err| FsPathError::write(err, path))?;
     file.write_all(contents.as_ref()).map_err(|err| FsPathError::write(err, path))?;
     file.unlock().map_err(|err| FsPathError::unlock(err, path))
 }
@@ -286,6 +287,7 @@ pub fn canonicalize_path(path: impl AsRef<Path>) -> std::io::Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{sync::mpsc, thread, time::Duration};
 
     #[cfg(unix)]
     #[test]
@@ -308,5 +310,38 @@ mod tests {
         let p = Path::new("/a/../file.txt");
         let normalized = normalize_path(p);
         assert_eq!(normalized, PathBuf::from("/file.txt"));
+    }
+
+    #[test]
+    fn test_locked_write_waits_before_truncating() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("locked.txt");
+        fs::write(&path, b"original contents").unwrap();
+        let mut reader = File::open(&path).unwrap();
+        reader.lock_shared().unwrap();
+
+        let (started_tx, started_rx) = mpsc::channel();
+        let (finished_tx, finished_rx) = mpsc::channel();
+        let writer_path = path.clone();
+        let writer = thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            let result = locked_write(writer_path, b"new");
+            finished_tx.send(()).unwrap();
+            result
+        });
+        started_rx.recv().unwrap();
+        // Give the writer time to reach the held lock before inspecting the original contents.
+        let pending = finished_rx.recv_timeout(Duration::from_millis(100));
+        let mut contents = Vec::new();
+        let read_result = reader.read_to_end(&mut contents);
+        let unlock_result = reader.unlock();
+        drop(reader);
+        writer.join().unwrap().unwrap();
+
+        unlock_result.unwrap();
+        assert_eq!(pending, Err(mpsc::RecvTimeoutError::Timeout));
+        read_result.unwrap();
+        assert_eq!(contents, b"original contents");
+        assert_eq!(fs::read(&path).unwrap(), b"new");
     }
 }

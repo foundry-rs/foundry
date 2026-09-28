@@ -802,6 +802,12 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         self.networks = networks;
     }
 
+    /// Sets the block number the active fork reports while executing transactions of that block
+    /// on top of its parent's state.
+    pub const fn set_fork_block_number_override(&mut self, block_number: u64) {
+        self.fork_block_number_override = Some(block_number);
+    }
+
     pub fn insert_account_info(&mut self, address: Address, account: AccountInfo) {
         if let Some(db) = self.active_fork_db_mut() {
             db.insert_account_info(address, account)
@@ -2760,7 +2766,7 @@ impl<FEN: FoundryEvmNetwork> Database for Backend<FEN> {
             self.mem_db.basic(address)?
         };
         self.apply_bal_account(address, &mut account)?;
-        Ok(account)
+        Ok(existing_account(self.inner.spec_id, account))
     }
 
     fn code_by_hash(&mut self, code_hash: B256) -> Result<Bytecode, Self::Error> {
@@ -3226,6 +3232,24 @@ pub(crate) fn merge_account_data<ExtDB: DatabaseRef, N: Network, B: ForkBlockEnv
     }
 
     *active_journaled_state = target_fork.journaled_state.clone();
+}
+
+/// Returns `account` as execution at `spec` loads it.
+///
+/// Foundry's databases report an account they do not hold as an existing empty account, and
+/// forked state cannot tell the two apart because RPC endpoints report a missing account as empty.
+/// From Spurious Dragon on an empty account does not exist (EIP-161), so it is loaded as absent;
+/// loading it as existing would, for example, refund the EIP-7702 authorization of a fresh
+/// authority.
+pub fn existing_account(
+    spec: impl Into<SpecId>,
+    account: Option<AccountInfo>,
+) -> Option<AccountInfo> {
+    if spec.into().is_enabled_in(SpecId::SPURIOUS_DRAGON) {
+        account.filter(|account| !account.is_empty())
+    } else {
+        account
+    }
 }
 
 /// Returns the account-loading policy required by a fork source.
