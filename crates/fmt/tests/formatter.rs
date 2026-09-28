@@ -891,3 +891,30 @@ struct AfterInitializer {
         assert_eq!(formatted, expected, "{case}");
     }
 }
+
+#[test]
+fn concatenated_string_trailing_comment_stays_after_last_literal() {
+    let source = r#"contract C {
+    function f() public pure returns (bytes memory) {
+        return bytes.concat(
+            "abc"
+            "123456789012345678901234567890123456789012345678901234567890" // Longer than 32 bytes
+        );
+    }
+}
+"#;
+    let expected = r#"contract C {
+    function f() public pure returns (bytes memory) {
+        return
+            bytes.concat(
+                "abc" "123456789012345678901234567890123456789012345678901234567890" // Longer than 32 bytes
+            );
+    }
+}
+"#;
+
+    assert_eq!(
+        format(source, Path::new("concatenated-string.sol"), Arc::new(FormatterConfig::default())),
+        expected
+    );
+}

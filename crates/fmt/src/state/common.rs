@@ -32,17 +32,18 @@ impl<'ast> State<'_, 'ast> {
         match *kind {
             ast::LitKind::Str(kind, ..) => {
                 self.s.ibox(0);
-                for (pos, (span, symbol)) in lit.literals().delimited() {
+                let mut literals = lit.literals().peekable();
+                while let Some((span, symbol)) = literals.next() {
                     if !self.handle_span(span, false) {
                         let quote_pos = span.lo() + kind.prefix().len() as u32;
                         self.print_str_lit(kind, quote_pos, symbol.as_str());
                     }
-                    if pos.is_last {
-                        self.neverbreak();
-                    } else {
-                        if !self.print_trailing_comment(span.hi(), None) {
+                    if let Some((next_span, _)) = literals.peek() {
+                        if !self.print_trailing_comment(span.hi(), Some(next_span.lo())) {
                             self.space_if_not_bol();
                         }
+                    } else {
+                        self.neverbreak();
                     }
                 }
                 self.end();
