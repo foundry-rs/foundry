@@ -204,6 +204,49 @@ end_of_record
     );
 }
 
+forgetest!(ethereum_native_coverage, |prj, cmd| {
+    prj.add_source(
+        "Subject.sol",
+        r#"
+pragma solidity ^0.8.20;
+
+contract Subject {
+    uint256 public value;
+
+    function set(uint256 next) external {
+        if (next > 10) {
+            value = next;
+        } else {
+            value = next + 1;
+        }
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "Subject.t.sol",
+        r#"
+pragma solidity ^0.8.20;
+import "./Subject.sol";
+
+contract SubjectTest {
+    Subject subject;
+    function setUp() public { subject = new Subject(); }
+    function testHigh() public { subject.set(12); require(subject.value() == 12); }
+    function testLow() public { subject.set(3); require(subject.value() == 4); }
+}
+"#,
+    );
+
+    cmd.args(["coverage", "--mc", "^SubjectTest$", "--report=summary"]).assert_success().stdout_eq(
+        str![[r#"
+...
+| src/Subject.sol | 100.00% (4/4) | 100.00% (3/3) | 100.00% (2/2) | 100.00% (1/1) |
+...
+"#]],
+    );
+});
+
 forgetest_init!(basic, |prj, cmd| {
     prj.initialize_default_contracts();
     basic_base(prj, cmd);

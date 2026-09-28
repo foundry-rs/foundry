@@ -24,6 +24,7 @@ use foundry_evm::{
         decode::{RevertDecoder, SkipReason},
         ethereum::{EthereumEnv, LocalState},
     },
+    coverage::HitMaps,
     ethereum::{EthereumExecutor, EthereumInspectorStack},
     opts::EvmOpts,
 };
@@ -45,6 +46,7 @@ pub(crate) struct EthereumMultiContractRunner<D: Database + Clone = EmptyDB> {
     opts: EvmOpts,
     env: EthereumEnv,
     state: LocalState<D>,
+    coverage: bool,
 }
 
 impl<D: Database + Clone + 'static> EthereumMultiContractRunner<D> {
@@ -56,8 +58,9 @@ impl<D: Database + Clone + 'static> EthereumMultiContractRunner<D> {
         opts: EvmOpts,
         env: EthereumEnv,
         state: LocalState<D>,
+        coverage: bool,
     ) -> Self {
-        Self { prepared, config, inline_config, opts, env, state }
+        Self { prepared, config, inline_config, opts, env, state, coverage }
     }
 
     /// Runs matching unit tests, cloning post-setup state for each test.
@@ -93,6 +96,7 @@ impl<D: Database + Clone + 'static> EthereumMultiContractRunner<D> {
                     revert_decoder: &self.prepared.revert_decoder,
                     libraries: &self.prepared.libs_to_deploy,
                     library_deployment: self.prepared.library_deployment,
+                    coverage: self.coverage,
                 },
             ) {
                 Ok(runner) => runner,
@@ -192,8 +196,10 @@ impl<D: Database + Clone + 'static> EthereumMultiContractRunner<D> {
                     kind: TestKind::Unit { gas: result.tx_gas_used().saturating_sub(stipend) },
                     logs: execution.logs,
                     duration: start.elapsed(),
+                    line_coverage: runner.setup_coverage().cloned(),
                     ..Default::default()
                 };
+                test_result.merge_coverages(execution.line_coverage);
                 if let Some(reason) = execution.skip_reason {
                     test_result.single_skip(reason);
                 }
@@ -216,6 +222,7 @@ pub(crate) struct EthereumContractRunner<D: Database + Clone = EmptyDB> {
     legacy_assertions: bool,
     has_before_test_setup: bool,
     setup_logs: Vec<Log>,
+    setup_coverage: Option<HitMaps>,
 }
 
 #[derive(Debug)]
@@ -235,6 +242,7 @@ pub(crate) struct EthereumTestConfig<'a> {
     revert_decoder: &'a RevertDecoder,
     libraries: &'a [Bytes],
     library_deployment: LibraryDeployment,
+    coverage: bool,
 }
 
 /// One test transaction and the assertion status observed after it commits.
@@ -244,6 +252,7 @@ pub(crate) struct EthereumTestExecution {
     pub logs: Vec<Log>,
     pub assertion_failed: bool,
     pub skip_reason: Option<SkipReason>,
+    pub line_coverage: Option<HitMaps>,
 }
 
 impl<D: Database + Clone + 'static> EthereumContractRunner<D> {
@@ -263,6 +272,7 @@ impl<D: Database + Clone + 'static> EthereumContractRunner<D> {
             revert_decoder,
             libraries,
             library_deployment,
+            coverage,
         } = config;
         let address = (|| -> Result<_> {
             state.set_balance(sender, U256::MAX)?;
@@ -280,6 +290,9 @@ impl<D: Database + Clone + 'static> EthereumContractRunner<D> {
             logs: Vec::new(),
         })?;
         let mut executor = EthereumExecutor::new_foundry(env, state, cheats, access_mode);
+        if coverage {
+            executor.inspector_mut().enable_line_coverage();
+        }
         let deployment = (|| -> Result<()> {
             if let LibraryDeployment::Create2 { deployer, .. } = library_deployment
                 && deployer == DEFAULT_CREATE2_DEPLOYER
@@ -394,6 +407,7 @@ impl<D: Database + Clone + 'static> EthereumContractRunner<D> {
                 });
             }
         }
+        let setup_coverage = executor.inspector_mut().take_line_coverage();
         Ok(Self {
             executor,
             address,
@@ -403,12 +417,17 @@ impl<D: Database + Clone + 'static> EthereumContractRunner<D> {
                 .functions()
                 .any(|f| f.selector() == EthereumTestHooks::beforeTestSetupCall::SELECTOR),
             setup_logs,
+            setup_coverage,
         })
     }
 
     /// Returns the deployed test contract address.
     pub(crate) const fn address(&self) -> Address {
         self.address
+    }
+
+    pub(crate) const fn setup_coverage(&self) -> Option<&HitMaps> {
+        self.setup_coverage.as_ref()
     }
 
     /// Executes one test against an isolated copy of the state after `setUp`.
@@ -439,6 +458,7 @@ impl<D: Database + Clone + 'static> EthereumContractRunner<D> {
                         logs,
                         assertion_failed: false,
                         skip_reason,
+                        line_coverage: executor.inspector_mut().take_line_coverage(),
                     });
                 }
             }
@@ -448,7 +468,13 @@ impl<D: Database + Clone + 'static> EthereumContractRunner<D> {
         let skip_reason = Self::take_skip_reason(&mut executor, &result);
         let assertion_failed = result.status
             && Self::assertion_failed(&mut executor, self.address, self.legacy_assertions)?;
-        Ok(EthereumTestExecution { result, logs, assertion_failed, skip_reason })
+        Ok(EthereumTestExecution {
+            result,
+            logs,
+            assertion_failed,
+            skip_reason,
+            line_coverage: executor.inspector_mut().take_line_coverage(),
+        })
     }
 
     fn take_skip_reason(
@@ -530,6 +556,7 @@ mod tests {
                 revert_decoder: &RevertDecoder::new(),
                 libraries: &[],
                 library_deployment: LibraryDeployment::Nonce,
+                coverage: false,
             },
         )
         .unwrap();

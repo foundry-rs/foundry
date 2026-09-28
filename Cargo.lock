@@ -6188,6 +6188,7 @@ name = "foundry-evm-coverage"
 version = "1.8.4"
 dependencies = [
  "alloy-primitives",
+ "evm2",
  "eyre",
  "foundry-common",
  "foundry-compilers",

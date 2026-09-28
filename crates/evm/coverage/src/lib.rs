@@ -34,6 +34,9 @@ pub mod anchors;
 mod inspector;
 pub use inspector::LineCoverageCollector;
 
+mod native_inspector;
+pub use native_inspector::NativeLineCoverageCollector;
+
 /// A coverage report.
 ///
 /// A coverage report contains coverage items and opcodes corresponding to those items (called

@@ -2167,8 +2167,7 @@ impl TestArgs {
             "Ethereum evm2 fork tests are not yet supported"
         );
         eyre::ensure!(
-            !execution.coverage
-                && execution.multi_network.all_override_networks.is_empty()
+            execution.multi_network.all_override_networks.is_empty()
                 && execution.replay_symbolic_artifact.is_none()
                 && !self.debug
                 && !self.gas_report
@@ -2203,6 +2202,7 @@ impl TestArgs {
             evm_opts,
             env,
             LocalState::default(),
+            execution.coverage,
         );
         let mut results = runner.run(filter)?;
         if shell::is_json() {

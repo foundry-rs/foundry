@@ -1,6 +1,6 @@
 //! Stateless fuzz cases executed against the native post-setup EVM state.
 
-use super::{EthereumContractRunner, EthereumEnv, TestResult, U256};
+use super::{EthereumContractRunner, EthereumEnv, HitMaps, TestResult, U256};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
 use alloy_primitives::Log;
@@ -26,6 +26,7 @@ struct Cases {
     first: Option<FuzzCase>,
     logs: Vec<Log>,
     skipped: Option<String>,
+    coverage: Option<HitMaps>,
 }
 
 pub(super) fn run<D: Database + Clone + 'static>(
@@ -55,7 +56,7 @@ pub(super) fn run<D: Database + Clone + 'static>(
     };
     let strategy = fuzz_calldata(function.clone(), &FuzzFixtures::default());
     let outcome = proptest.run(&strategy, |calldata| {
-        let execution = runner
+        let mut execution = runner
             .run_test(calldata.clone(), U256::ZERO)
             .map_err(|error| TestCaseError::fail(error.to_string()))?;
         if !execution.result.status && execution.result.output.as_ref() == MAGIC_ASSUME {
@@ -65,6 +66,7 @@ pub(super) fn run<D: Database + Clone + 'static>(
             cases.borrow_mut().skipped = Some(reason.to_string());
             return Err(TestCaseError::fail("skipped"));
         }
+        HitMaps::merge_opt(&mut cases.borrow_mut().coverage, execution.line_coverage.take());
         if !execution.result.status || execution.assertion_failed {
             cases.borrow_mut().logs = execution.logs;
             let reason = if execution.assertion_failed {
@@ -97,6 +99,7 @@ pub(super) fn run<D: Database + Clone + 'static>(
         first_case: cases.first.unwrap_or_default(),
         gas_by_case: cases.gas,
         logs: cases.logs,
+        line_coverage: cases.coverage,
         ..Default::default()
     };
     match outcome {
@@ -117,6 +120,7 @@ pub(super) fn run<D: Database + Clone + 'static>(
     }
     let mut result = TestResult::default();
     result.fuzz_result(campaign);
+    result.merge_coverages(runner.setup_coverage().cloned());
     result.duration = start.elapsed();
     Ok(result)
 }

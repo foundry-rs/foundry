@@ -277,6 +277,7 @@ impl<D: Database + Clone + 'static, I: Inspector<FoundryEvmTypes> + Clone> Ether
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::keccak256;
     use alloy_sol_types::SolCall;
     use evm2::{bytecode::Bytecode, env::BlockEnvExt, evm::AccountInfo, interpreter::Interpreter};
     use foundry_cheatcodes::{Error, Vm};
@@ -337,6 +338,35 @@ mod tests {
         assert!(executor.transact(&tx).unwrap().status);
         assert_eq!(executor.state().database().cache.accounts[&caller].as_ref().unwrap().nonce, 2);
         assert_eq!(snapshot.state().database().cache.accounts[&caller].as_ref().unwrap().nonce, 1);
+    }
+
+    #[test]
+    fn native_line_coverage_records_executed_pcs() {
+        let caller = Address::with_last_byte(0xa);
+        let contract = Address::with_last_byte(0xb);
+        let code = Bytes::from_static(&[0x60, 0x01, 0x60, 0x00, 0x55, 0x00]);
+        let mut state = LocalState::default();
+        state.database_mut().insert_account_info(
+            &contract,
+            AccountInfo::default().with_code(Bytecode::new_legacy(code.clone())),
+        );
+        let env = EthereumEnv::new(
+            SpecId::CANCUN,
+            BlockEnvExt { gas_limit: U256::from(30_000_000), ..Default::default() },
+        );
+        let mut executor =
+            EthereumExecutor::new_foundry(env, state, Arc::default(), CheatcodeAccessMode::Local);
+        executor.inspector_mut().enable_line_coverage();
+        assert!(executor.transact_raw(caller, contract, Bytes::new(), U256::ZERO).unwrap().status);
+
+        let coverage = executor.inspector_mut().take_line_coverage().unwrap();
+        let hits = &coverage[&keccak256(&code)];
+        assert_eq!(hits.bytecode(), &code);
+        assert_eq!(hits.iter().collect::<Vec<_>>().len(), 4);
+        for pc in [0, 2, 4, 5] {
+            assert_eq!(hits.get(pc).unwrap().get(), 1);
+        }
+        assert!(executor.inspector_mut().take_line_coverage().unwrap().is_empty());
     }
 
     #[test]
