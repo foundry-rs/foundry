@@ -739,20 +739,38 @@ forgetest_init!(arbitrum_arbsys_arb_block_number_gas, |prj, cmd| {
         r#"
 import "forge-std/Test.sol";
 
-contract ArbSysGasTest is Test {
-    function arbBlockNumber() internal view returns (uint256 blockNumber, uint256 gasUsed) {
-        assembly {
-            mstore(0, shl(224, 0xa3b1b31d))
-            let before := gas()
-            let success := staticcall(gas(), 0x64, 0, 4, 0, 32)
-            gasUsed := sub(before, gas())
-            if iszero(success) { revert(0, 0) }
-            blockNumber := mload(0)
-        }
+function callArbBlockNumber() view returns (uint256 blockNumber, uint256 gasUsed) {
+    assembly {
+        mstore(0, shl(224, 0xa3b1b31d))
+        let before := gas()
+        let success := staticcall(gas(), 0x64, 0, 4, 0, 32)
+        gasUsed := sub(before, gas())
+        if iszero(success) { revert(0, 0) }
+        blockNumber := mload(0)
     }
+}
 
+contract ArbSysCaller {
+    uint256 calls;
+
+    function arbBlockNumber() external returns (uint256 blockNumber, uint256 gasUsed) {
+        calls++;
+        return callArbBlockNumber();
+    }
+}
+
+contract ArbSysConstructor {
+    uint256 public blockNumber;
+    uint256 public gasUsed;
+
+    constructor() {
+        (blockNumber, gasUsed) = callArbBlockNumber();
+    }
+}
+
+contract ArbSysGasTest is Test {
     function test_arbsys_arb_block_number_gas() public {
-        (uint256 blockNumber, uint256 gasUsed) = arbBlockNumber();
+        (uint256 blockNumber, uint256 gasUsed) = callArbBlockNumber();
         assertEq(blockNumber, block.number);
         // 100 for the warm access and 803 inside ArbSys, plus the surrounding stack operations. A
         // cold access alone would cost 2600.
@@ -760,8 +778,25 @@ contract ArbSysGasTest is Test {
         assertLt(gasUsed, 1000);
 
         vm.roll(1234);
-        (blockNumber,) = arbBlockNumber();
+        (blockNumber,) = callArbBlockNumber();
         assertEq(blockNumber, 1234);
+    }
+
+    function test_arbsys_isolated_call_gas() public {
+        ArbSysCaller caller = new ArbSysCaller();
+        (uint256 blockNumber, uint256 gasUsed) = caller.arbBlockNumber();
+
+        assertEq(blockNumber, block.number);
+        assertGe(gasUsed, 903);
+        assertLt(gasUsed, 1000);
+    }
+
+    function test_arbsys_isolated_create_gas() public {
+        ArbSysConstructor created = new ArbSysConstructor();
+
+        assertEq(created.blockNumber(), block.number);
+        assertGe(created.gasUsed(), 903);
+        assertLt(created.gasUsed(), 1000);
     }
 
     function test_arbsys_other_selector_uses_code() public {
@@ -771,7 +806,7 @@ contract ArbSysGasTest is Test {
         assertTrue(success);
         assertEq(abi.decode(output, (uint256)), 42);
 
-        (uint256 blockNumber,) = arbBlockNumber();
+        (uint256 blockNumber,) = callArbBlockNumber();
         assertEq(blockNumber, block.number);
     }
 }
@@ -779,5 +814,5 @@ contract ArbSysGasTest is Test {
     );
 
     cmd.env("FOUNDRY_CHAIN_ID", "42161");
-    cmd.args(["test", "--mt", "test_arbsys_"]).assert_success();
+    cmd.args(["test", "--mt", "test_arbsys_", "--isolate"]).assert_success();
 });
