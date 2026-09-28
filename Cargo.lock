@@ -5520,6 +5520,7 @@ dependencies = [
  "clap",
  "dialoguer",
  "dunce",
+ "evm2",
  "eyre",
  "forge-script-sequence",
  "forge-verify",

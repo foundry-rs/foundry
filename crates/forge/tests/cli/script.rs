@@ -461,6 +461,32 @@ Error: script failed: setup failed
 "#]]);
 });
 
+forgetest_async!(ethereum_script_reads_fork_state, |prj, cmd| {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    api.anvil_set_balance(address!("0x000000000000000000000000000000000000bEEF"), U256::from(123))
+        .await
+        .unwrap();
+    let script = prj.add_source(
+        "ForkStateScript",
+        r#"
+interface Vm {
+    function load(address target, bytes32 slot) external view returns (bytes32);
+}
+
+contract ForkStateScript {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function run() external view {
+        require(address(0xBEEF).balance == 123, "fork state missing");
+        require(vm.load(address(0xBEEF), bytes32(0)) == bytes32(0), "fork cheatcode denied");
+    }
+}
+"#,
+    );
+
+    cmd.arg("script").arg(script).args(["--fork-url", &handle.http_endpoint()]).assert_success();
+});
+
 forgetest!(verbosity_five_shows_script_storage_changes, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
     let script = prj.add_script(

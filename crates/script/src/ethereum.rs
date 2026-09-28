@@ -5,6 +5,7 @@ use crate::{
     execute::{ExecutedState, PreExecutionState},
 };
 use alloy_primitives::{Bytes, U256};
+use evm2::evm::Database;
 use eyre::{Result, ensure};
 use foundry_cheatcodes::{CheatsConfig, ethereum::CheatcodeAccessMode};
 use foundry_cli::utils::needs_setup;
@@ -12,7 +13,7 @@ use foundry_config::Config;
 use foundry_evm::{
     constants::CALLER,
     core::{
-        ethereum::{EthereumEnv, LocalState},
+        ethereum::{EthereumEnv, EthereumFork, LocalState},
         evm::EthEvmNetwork,
     },
     ethereum::EthereumExecutor,
@@ -23,23 +24,38 @@ impl PreExecutionState<EthEvmNetwork> {
     /// Executes a linked Ethereum script with evm2, retaining the existing script pipeline.
     pub async fn execute_ethereum(self) -> Result<ExecutedState<EthEvmNetwork>> {
         ensure!(
-            self.script_config.evm_opts.fork_url.is_none(),
-            "evm2 script forks are not yet supported"
-        );
-        ensure!(
             self.build_data.predeploy_libraries.libraries_count() == 0,
             "evm2 script library predeployment is not yet supported"
         );
         ensure!(!self.args.debug, "evm2 script debugging is not yet supported");
 
+        let fork = self.script_config.resolved_fork()?.cloned();
+        if let Some(fork) = fork {
+            let execution =
+                EthereumFork::open(&self.script_config.config, &self.script_config.evm_opts, &fork)
+                    .await?;
+            self.execute_with_state(execution.env, execution.state, CheatcodeAccessMode::Forked)
+        } else {
+            let env = EthereumEnv::local_from_config(
+                &self.script_config.config,
+                &self.script_config.evm_opts,
+            )?;
+            self.execute_with_state(env, LocalState::default(), CheatcodeAccessMode::Local)
+        }
+    }
+
+    fn execute_with_state<D: Database + Clone + 'static>(
+        self,
+        env: EthereumEnv,
+        mut state: LocalState<D>,
+        access_mode: CheatcodeAccessMode,
+    ) -> Result<ExecutedState<EthEvmNetwork>> {
         let opts = &self.script_config.evm_opts;
         let sender = opts.sender;
-        let mut state = LocalState::default();
         if !self.args.broadcast && sender == Config::DEFAULT_SENDER {
             state.set_balance(sender, U256::MAX)?;
         }
         state.set_balance(CALLER, U256::MAX)?;
-        let env = EthereumEnv::local_from_config(&self.script_config.config, opts)?;
         let cheats = Arc::new(CheatsConfig::new(
             &self.script_config.config,
             opts.clone(),
@@ -47,9 +63,8 @@ impl PreExecutionState<EthEvmNetwork> {
             Some(self.build_data.build_data.target.clone()),
             false,
         ));
-        let mut executor =
-            EthereumExecutor::new_foundry(env, state, cheats, CheatcodeAccessMode::Local);
-        if !self.args.broadcast {
+        let mut executor = EthereumExecutor::new_foundry(env, state, cheats, access_mode);
+        if !self.args.broadcast && access_mode == CheatcodeAccessMode::Local {
             executor.deploy_create2_deployer()?;
         }
         executor.state_mut().set_nonce(sender, self.script_config.sender_nonce)?;
@@ -57,6 +72,9 @@ impl PreExecutionState<EthEvmNetwork> {
         let deployment_nonce = if sender == CALLER { u64::MAX / 2 } else { 0 };
         let script_address = CALLER.create(deployment_nonce);
         executor.state_mut().set_balance(script_address, opts.initial_balance)?;
+        if access_mode == CheatcodeAccessMode::Forked {
+            executor.inspector_mut().cheatcodes_mut().allow_caller(script_address);
+        }
         if sender == CALLER {
             executor.state_mut().set_nonce(sender, u64::MAX / 2)?;
         }
