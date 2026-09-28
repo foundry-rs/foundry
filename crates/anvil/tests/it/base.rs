@@ -19,6 +19,7 @@ use alloy_rpc_types::{
 use alloy_serde::WithOtherFields;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
+use alloy_sol_types::{SolCall, sol};
 use anvil::{NodeConfig, spawn};
 use base_common_consensus::{
     Call, Eip8130Constants, Eip8130Contracts, Eip8130Signed, Predeploys, TxEip8130,
@@ -34,6 +35,17 @@ const ACTIVATION_REGISTRY: Address = address!("845300000000000000000000000000000
 const MAINNET_BERYL_ACTIVATION_ADMIN: Address =
     address!("ce3a3bee7e72e2a24079f3c0cb3b97740ed425a9");
 const NONCE_MANAGER: Address = address!("813000000000000000000000000000000000aa01");
+
+sol! {
+    interface IBaseTime {
+        error BaseTime_InvalidTimestampMillisPart();
+        error BaseTime_NotDepositor();
+
+        function timestampMillisPart() external view returns (uint16);
+        function timestampMs() external view returns (uint64);
+        function setTimestampMillisPart(uint16 timestampMillisPart) external;
+    }
+}
 
 fn eip8130_envelope_with(
     signer: &PrivateKeySigner,
@@ -370,6 +382,59 @@ async fn base_standalone_mines_ordinary_transaction() {
     assert_eq!(receipt.to(), Some(to));
     assert_eq!(provider.get_balance(to).await.unwrap(), before + value);
     assert!(provider.get_balance(Predeploys::L1_FEE_VAULT).await.unwrap() > U256::ZERO);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn base_standalone_denim_initializes_base_time() {
+    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Denim.into()));
+    let (api, handle) = spawn(config).await;
+    let provider = handle.http_provider();
+
+    assert!(!provider.get_code_at(Predeploys::BASE_TIME).await.unwrap().is_empty());
+
+    let millis_part = provider
+        .call(
+            TransactionRequest::default()
+                .with_to(Predeploys::BASE_TIME)
+                .with_input(IBaseTime::timestampMillisPartCall {}.abi_encode())
+                .into(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(IBaseTime::timestampMillisPartCall::abi_decode_returns(&millis_part).unwrap(), 0);
+
+    let depositor = address!("DeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001");
+    api.anvil_set_balance(depositor, U256::from(1_000_000_000_000_000_000u64)).await.unwrap();
+    api.anvil_impersonate_account(depositor).await.unwrap();
+    provider
+        .send_transaction(
+            TransactionRequest::default()
+                .with_from(depositor)
+                .with_to(Predeploys::BASE_TIME)
+                .with_input(
+                    IBaseTime::setTimestampMillisPartCall { timestampMillisPart: 600 }.abi_encode(),
+                )
+                .with_gas_limit(100_000)
+                .into(),
+        )
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    let timestamp_ms = provider
+        .call(
+            TransactionRequest::default()
+                .with_to(Predeploys::BASE_TIME)
+                .with_input(IBaseTime::timestampMsCall {}.abi_encode())
+                .into(),
+        )
+        .await
+        .unwrap();
+    let timestamp_ms = IBaseTime::timestampMsCall::abi_decode_returns(&timestamp_ms).unwrap();
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert_eq!(timestamp_ms, block.header.timestamp * 1_000 + 600);
 }
 
 #[tokio::test(flavor = "multi_thread")]
