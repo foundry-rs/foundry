@@ -704,6 +704,8 @@ fmt_tests! {
     IfStatement,
     IfStatement2,
     IfStatement3,
+    IfStatementLongCondition,
+    IfStatementMultilineCall,
     ImportDirective,
     InlineDisable,
     IntTypes,
