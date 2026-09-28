@@ -1,6 +1,10 @@
 //! Cheatcode inspection for Ethereum evm2 execution.
 
-use crate::{CheatsConfig, Error, Vm, dispatch, fs::get_artifact_code, prank::Prank};
+use crate::{
+    CheatsConfig, Error, Vm, dispatch,
+    fs::{get_artifact_code, get_artifact_selectors},
+    prank::Prank,
+};
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256, map::AddressHashSet};
 use alloy_sol_types::{SolCall, SolInterface, SolValue};
 use evm2::{
@@ -187,6 +191,15 @@ impl EthereumCheatcodes {
                 }
             }
             Vm::VmCalls::etch(call) => Self::etch(interp, call.target, call.newRuntimeBytecode),
+            Vm::VmCalls::getCode(call) => {
+                Self::artifact_result(get_artifact_code(&self.config, &call.artifactPath, false))
+            }
+            Vm::VmCalls::getDeployedCode(call) => {
+                Self::artifact_result(get_artifact_code(&self.config, &call.artifactPath, true))
+            }
+            Vm::VmCalls::getSelectors(call) => {
+                Self::artifact_result(get_artifact_selectors(&self.config, &call.artifactPath))
+            }
             Vm::VmCalls::warp(call) => {
                 let host = interp.host();
                 let mut block = *host.block();
@@ -508,6 +521,13 @@ impl EthereumCheatcodes {
                 interp.host().set_error_code(error);
                 (InstrStop::FatalExternalError, Bytes::new())
             }
+        }
+    }
+
+    fn artifact_result<T: SolValue>(result: crate::Result<T>) -> (InstrStop, Bytes) {
+        match result {
+            Ok(value) => (InstrStop::Return, value.abi_encode().into()),
+            Err(error) => (InstrStop::Revert, Error::encode(error.to_string())),
         }
     }
 

@@ -395,21 +395,7 @@ impl Cheatcode for getDeployedCodeCall {
 impl Cheatcode for getSelectorsCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { artifactPath: path } = self;
-        let selectors: Vec<FixedBytes<4>> = match get_artifact_source(&state.config, path)? {
-            ArtifactSource::InMemory(data) => data.abi.functions().map(|f| f.selector()).collect(),
-            ArtifactSource::Disk(path) => {
-                let data = read_artifact_file(&state.config, &path)?;
-                // Parse as raw JSON rather than `ContractObject` so we can still read selectors
-                // from artifacts with unlinked bytecode (which `ContractObject` rejects).
-                let json: serde_json::Value = serde_json::from_str(&data)?;
-                let abi =
-                    json.get("abi").ok_or_else(|| fmt_err!("no `abi` field in artifact JSON"))?;
-                let abi: alloy_json_abi::JsonAbi =
-                    serde_json::from_value(abi.clone()).map_err(|e| fmt_err!("{e}"))?;
-                abi.functions().map(|f| f.selector()).collect()
-            }
-        };
-        Ok(selectors.abi_encode())
+        Ok(get_artifact_selectors(&state.config, path)?.abi_encode())
     }
 }
 
@@ -802,6 +788,24 @@ pub(crate) fn get_artifact_code(
         }
     };
     maybe_bytecode.ok_or_else(|| fmt_err!("no bytecode for contract; is it abstract or unlinked?"))
+}
+
+pub(crate) fn get_artifact_selectors(
+    config: &CheatsConfig,
+    path: &str,
+) -> Result<Vec<FixedBytes<4>>> {
+    match get_artifact_source(config, path)? {
+        ArtifactSource::InMemory(data) => Ok(data.abi.functions().map(|f| f.selector()).collect()),
+        ArtifactSource::Disk(path) => {
+            let data = read_artifact_file(config, &path)?;
+            // Parse as raw JSON rather than `ContractObject` so unlinked bytecode remains valid.
+            let json: serde_json::Value = serde_json::from_str(&data)?;
+            let abi = json.get("abi").ok_or_else(|| fmt_err!("no `abi` field in artifact JSON"))?;
+            let abi: alloy_json_abi::JsonAbi =
+                serde_json::from_value(abi.clone()).map_err(|e| fmt_err!("{e}"))?;
+            Ok(abi.functions().map(|f| f.selector()).collect())
+        }
+    }
 }
 
 impl Cheatcode for ffiCall {

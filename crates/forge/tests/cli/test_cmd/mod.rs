@@ -4110,6 +4110,9 @@ contract RevertingConstructor {
 interface VmDeployCode {
     function deal(address account, uint256 balance) external;
     function prank(address sender) external;
+    function getCode(string calldata path) external view returns (bytes memory);
+    function getDeployedCode(string calldata path) external view returns (bytes memory);
+    function getSelectors(string calldata path) external view returns (bytes4[] memory);
     function deployCode(string calldata path, bytes calldata args) external returns (address);
     function deployCode(string calldata path) external returns (address);
     function deployCode(string calldata path, bytes calldata args, uint256 value) external returns (address);
@@ -4119,6 +4122,13 @@ interface VmDeployCode {
 contract EthereumDeployCodeTest {
     VmDeployCode constant vm = VmDeployCode(address(uint160(uint256(keccak256("hevm cheat code")))));
     string constant artifact = "src/Counter.sol:Counter";
+
+    function testArtifactLookup() public view {
+        require(keccak256(vm.getCode(artifact)) == keccak256(type(Counter).creationCode));
+        require(keccak256(vm.getDeployedCode(artifact)) == keccak256(type(Counter).runtimeCode));
+        bytes4[] memory selectors = vm.getSelectors(artifact);
+        require(selectors.length == 1 && selectors[0] == bytes4(keccak256("value()")));
+    }
 
     function testConstructorArgsAndValue() public {
         vm.deal(address(this), 1 ether);
@@ -4179,7 +4189,7 @@ contract EthereumDeployCodeTest {
     cmd.forge_fuse().args(["test", "--mc", "^EthereumDeployCodeTest$"]).assert_success().stdout_eq(
         str![[r#"
 ...
-Suite result: ok. 6 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 7 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]],
     );
