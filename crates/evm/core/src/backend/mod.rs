@@ -1224,14 +1224,10 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         transactions.iter().map(TxEnvFor::<FEN>::from_any_rpc_transaction).collect()
     }
 
-    /// Converts a replayable transaction while preserving the established behavior of skipping
-    /// system envelopes that this build cannot decode.
+    /// Converts replayable transactions, skipping system envelopes this network cannot decode.
     fn replay_tx_env(tx: &AnyRpcTransaction) -> eyre::Result<Option<TxEnvFor<FEN>>> {
         let is_system = is_known_system_sender(tx.from()) || tx.ty() == SYSTEM_TRANSACTION_TYPE;
         if is_system {
-            #[cfg(not(feature = "monad"))]
-            return Ok(None);
-            #[cfg(feature = "monad")]
             return Ok(TxEnvFor::<FEN>::from_any_rpc_transaction(tx).ok());
         }
 
@@ -1818,7 +1814,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         for (index, tx) in transactions[..target_index].iter().enumerate() {
             let Some(tx_env) = Self::replay_tx_env(tx)? else { continue };
             let is_system = is_known_system_sender(tx.from()) || tx.ty() == SYSTEM_TRANSACTION_TYPE;
-            txs_to_replay.push((index, tx.clone(), tx_env, is_system));
+            txs_to_replay.push((index, *tx.tx_hash(), tx_env, is_system));
         }
 
         // Replay all preceding transactions against a cloned ForkDB.
@@ -1839,11 +1835,11 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
 
             #[cfg(feature = "monad")]
             if let Some(context) = block_context {
-                for (index, tx, tx_env, is_system) in &txs_to_replay {
+                for (index, tx_hash, tx_env, is_system) in &txs_to_replay {
                     let mut evm = factory.create_nested_evm(&mut replay_backend, evm_env.clone());
                     *evm.chain_mut() = context.transaction(*index);
                     inject_replay_precompiles(networks, evm.precompiles_mut(), chain_id, timestamp);
-                    trace!(tx=?tx.tx_hash(), "committing transaction");
+                    trace!(tx=?tx_hash, "committing transaction");
                     let result = evm
                         .transact_replay(tx_env.clone(), *is_system)
                         .wrap_err("backend: failed replaying transaction")?;
@@ -1858,38 +1854,49 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             #[cfg(not(feature = "monad"))]
             let replay_without_context = true;
             if replay_without_context {
-                // Keep one Foundry EVM for ordinary transactions. Only system envelopes
-                // need the nested replay operation; it borrows the same staged database.
-                let mut evm = factory.create_foundry_evm_with_inspector(
-                    &mut replay_backend,
-                    evm_env.clone(),
-                    NoOpInspector,
-                );
-                inject_replay_precompiles(networks, evm.precompiles_mut(), chain_id, timestamp);
-                for (_, tx, tx_env, is_system) in &txs_to_replay {
-                    trace!(tx=?tx.tx_hash(), "committing transaction");
-                    let state = if *is_system {
+                // Reuse one Foundry EVM for each consecutive batch of ordinary transactions.
+                // Recreate it after a system transaction commits so its journal cannot retain
+                // account state from before the separately executed system transaction.
+                let mut index = 0;
+                while index < txs_to_replay.len() {
+                    let (_, tx_hash, tx_env, is_system) = &txs_to_replay[index];
+                    if *is_system {
+                        trace!(tx=?tx_hash, "committing transaction");
                         let mut replay =
-                            factory.create_nested_evm(&mut **evm.db_mut(), evm_env.clone());
+                            factory.create_nested_evm(&mut replay_backend, evm_env.clone());
                         inject_replay_precompiles(
                             networks,
                             replay.precompiles_mut(),
                             chain_id,
                             timestamp,
                         );
-                        let Some(result) = replay
+                        if let Some(result) = replay
                             .transact_replay(tx_env.clone(), true)
                             .wrap_err("backend: failed replaying system transaction")?
-                        else {
-                            continue;
-                        };
-                        result.state
-                    } else {
-                        evm.transact(tx_env.clone())
+                        {
+                            drop(replay);
+                            replay_backend.commit(result.state);
+                        }
+                        index += 1;
+                        continue;
+                    }
+
+                    let mut evm = factory.create_foundry_evm_with_inspector(
+                        &mut replay_backend,
+                        evm_env.clone(),
+                        NoOpInspector,
+                    );
+                    inject_replay_precompiles(networks, evm.precompiles_mut(), chain_id, timestamp);
+                    while index < txs_to_replay.len() && !txs_to_replay[index].3 {
+                        let (_, tx_hash, tx_env, _) = &txs_to_replay[index];
+                        trace!(tx=?tx_hash, "committing transaction");
+                        let state = evm
+                            .transact(tx_env.clone())
                             .wrap_err("backend: failed replaying transaction")?
-                            .state
-                    };
-                    evm.db_mut().commit(state);
+                            .state;
+                        evm.db_mut().commit(state);
+                        index += 1;
+                    }
                 }
             }
 
@@ -3501,9 +3508,29 @@ mod tests {
     #[cfg(feature = "base")]
     use base_common_chains::ChainConfig;
     #[cfg(feature = "base")]
-    use base_common_consensus::Predeploys;
+    use base_common_consensus::{
+        BaseTransactionInfo, BaseTxEnvelope, Predeploys, TxDeposit as BaseTxDeposit,
+    };
     #[cfg(feature = "base")]
     use base_common_evm::{BaseSpecId, BaseUpgrade};
+    #[cfg(feature = "base")]
+    use base_common_precompiles::ActivationRegistryStorage;
+    #[cfg(feature = "base")]
+    use base_common_rpc_types::Transaction as BaseRpcTransaction;
+
+    #[cfg(feature = "optimism")]
+    use crate::evm::OpEvmNetwork;
+    #[cfg(feature = "optimism")]
+    use op_alloy_consensus::{
+        OpTxEnvelope, TxDeposit as OpTxDeposit, transaction::OpTransactionInfo,
+    };
+    #[cfg(feature = "optimism")]
+    use op_alloy_rpc_types::Transaction as OpRpcTransaction;
+
+    #[cfg(any(feature = "base", feature = "optimism"))]
+    use alloy_consensus::Sealed;
+    #[cfg(any(feature = "base", feature = "optimism"))]
+    use alloy_eips::Typed2718;
 
     #[cfg(feature = "monad")]
     use super::ensure_block_identity;
@@ -4034,6 +4061,186 @@ mod tests {
                 .is_none()
         );
         assert!(Backend::<EthEvmNetwork>::replay_tx_env(&transaction(0xff)).is_err());
+    }
+
+    #[cfg(feature = "optimism")]
+    #[test]
+    fn optimism_fork_transaction_hash_replay_executes_deposit_prefix() {
+        let sender = Address::with_last_byte(0xaa);
+        let recipient = Address::with_last_byte(0xbb);
+        let deposit = OpTxDeposit {
+            source_hash: B256::repeat_byte(0x11),
+            from: sender,
+            to: TxKind::Call(recipient),
+            mint: 1_000,
+            value: U256::from(600),
+            gas_limit: 100_000,
+            is_system_transaction: false,
+            input: Bytes::new(),
+        };
+        let rpc = OpRpcTransaction::from_transaction(
+            Recovered::new_unchecked(OpTxEnvelope::Deposit(Sealed::new(deposit)), sender),
+            OpTransactionInfo::default(),
+        );
+        let deposit_rpc =
+            serde_json::from_value::<AnyRpcTransaction>(serde_json::to_value(rpc).unwrap())
+                .unwrap();
+        assert_eq!(deposit_rpc.ty(), SYSTEM_TRANSACTION_TYPE);
+
+        let target = B256::with_last_byte(2);
+        let mut block = rpc_block(1, B256::with_last_byte(1), B256::ZERO);
+        block.inner.transactions = BlockTransactions::Full(vec![
+            rpc_transaction(
+                address!("6f49a8f621353f12378d0046e7d7e4b9b249dc9e"),
+                0,
+                0,
+                0,
+                recipient,
+                B256::with_last_byte(3),
+            ),
+            deposit_rpc,
+            rpc_transaction(sender, 0, 0, 21_000, recipient, target),
+        ]);
+        let mut fork = fork_with_closed_backend();
+        fork.db.insert_account_info(sender, AccountInfo::default());
+        fork.db.insert_account_info(recipient, AccountInfo::default());
+
+        let result = Backend::<OpEvmNetwork>::replay_until(
+            &mut fork,
+            ReplayInputs {
+                fork_id: ForkId::new("http://localhost", Some(0)),
+                forks: MultiFork::spawn(),
+                evm_env: EvmEnv::default(),
+                networks: NetworkConfigs::with_optimism(),
+            },
+            &block,
+            #[cfg(feature = "monad")]
+            None,
+            target,
+            &mut JournalInner::new(),
+            &AddressSet::default(),
+        )
+        .unwrap();
+
+        assert!(result.is_some());
+        assert_eq!(fork.db.basic_ref(sender).unwrap().unwrap().balance, U256::from(400));
+        assert_eq!(fork.db.basic_ref(recipient).unwrap().unwrap().balance, U256::from(600));
+    }
+
+    #[cfg(feature = "base")]
+    #[test]
+    fn base_fork_replay_refreshes_accounts_after_deposit() {
+        let deposit_sender = Address::with_last_byte(0xaa);
+        let sender = Address::with_last_byte(0xbb);
+        let destroyer = Address::with_last_byte(0xcc);
+        let recorder = Address::with_last_byte(0xdd);
+        let registry = ActivationRegistryStorage::ADDRESS;
+
+        // Transfer the deposit value to the registry without invoking the registry precompile.
+        let mut destroyer_code = vec![0x73];
+        destroyer_code.extend(registry);
+        destroyer_code.push(0xff);
+        let destroyer_code = revm::bytecode::Bytecode::new_legacy(destroyer_code.into());
+
+        // Store the registry balance in slot 0.
+        let mut recorder_code = vec![0x73];
+        recorder_code.extend(registry);
+        recorder_code.extend([0x31, 0x5f, 0x55, 0x00]);
+        let recorder_code = revm::bytecode::Bytecode::new_legacy(recorder_code.into());
+
+        let deposit = BaseTxDeposit {
+            source_hash: B256::repeat_byte(0x11),
+            from: deposit_sender,
+            to: TxKind::Call(destroyer),
+            mint: 1_000,
+            value: U256::from(600),
+            gas_limit: 100_000,
+            is_system_transaction: false,
+            input: Bytes::new(),
+        };
+        let rpc = BaseRpcTransaction::from_transaction(
+            Recovered::new_unchecked(BaseTxEnvelope::Deposit(Sealed::new(deposit)), deposit_sender),
+            BaseTransactionInfo::default(),
+        );
+        let deposit_rpc =
+            serde_json::from_value::<AnyRpcTransaction>(serde_json::to_value(rpc).unwrap())
+                .unwrap();
+        assert_eq!(deposit_rpc.ty(), SYSTEM_TRANSACTION_TYPE);
+
+        let target = B256::with_last_byte(3);
+        let mut block = rpc_block(1, B256::with_last_byte(1), B256::ZERO);
+        block.inner.transactions = BlockTransactions::Full(vec![
+            deposit_rpc,
+            rpc_transaction(sender, 0, 0, 100_000, recorder, B256::with_last_byte(2)),
+            rpc_transaction(sender, 1, 0, 21_000, recorder, target),
+        ]);
+
+        let mut fork = fork_with_closed_backend();
+        fork.db.insert_account_info(deposit_sender, AccountInfo::default());
+        fork.db.insert_account_info(sender, AccountInfo::default());
+        fork.db.insert_account_info(
+            destroyer,
+            AccountInfo {
+                code_hash: destroyer_code.hash_slow(),
+                code: Some(destroyer_code),
+                ..Default::default()
+            },
+        );
+        fork.db.insert_account_info(
+            recorder,
+            AccountInfo {
+                code_hash: recorder_code.hash_slow(),
+                code: Some(recorder_code),
+                ..Default::default()
+            },
+        );
+        let sentinel = revm::bytecode::Bytecode::new_legacy(Bytes::from_static(
+            crate::constants::SYSTEM_PRECOMPILE_STUB,
+        ));
+        fork.db.insert_account_info(
+            registry,
+            AccountInfo {
+                code_hash: sentinel.hash_slow(),
+                code: Some(sentinel),
+                ..Default::default()
+            },
+        );
+        for address in base_code_sentinel_addresses(BaseUpgrade::Beryl).chain([
+            Address::ZERO,
+            Predeploys::L1_BLOCK_INFO,
+            Predeploys::BASE_FEE_VAULT,
+            Predeploys::L1_FEE_VAULT,
+            Predeploys::OPERATOR_FEE_VAULT,
+        ]) {
+            fork.db.cache.accounts.entry(address).or_default();
+        }
+        for account in fork.db.cache.accounts.values_mut() {
+            account.account_state = AccountState::StorageCleared;
+        }
+
+        let mut cfg = revm::context::CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Beryl));
+        cfg.chain_id = 8453;
+        let result = Backend::<BaseEvmNetwork>::replay_until(
+            &mut fork,
+            ReplayInputs {
+                fork_id: ForkId::new("http://localhost", Some(0)),
+                forks: MultiFork::spawn(),
+                evm_env: EvmEnv::new(cfg, BlockEnv::default()),
+                networks: NetworkConfigs::with_base(),
+            },
+            &block,
+            #[cfg(feature = "monad")]
+            None,
+            target,
+            &mut JournalInner::new(),
+            &AddressSet::default(),
+        )
+        .unwrap();
+
+        assert!(result.is_some());
+        assert_eq!(fork.db.basic_ref(deposit_sender).unwrap().unwrap().balance, U256::from(400));
+        assert_eq!(fork.db.basic_ref(registry).unwrap().unwrap().balance, U256::from(600));
+        assert_eq!(fork.db.storage_ref(recorder, U256::ZERO).unwrap(), U256::from(600));
     }
 
     #[tokio::test(flavor = "multi_thread")]
