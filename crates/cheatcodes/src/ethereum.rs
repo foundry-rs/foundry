@@ -111,6 +111,10 @@ impl EthereumCheatcodes {
                 &decoded,
                 Vm::VmCalls::deal(_)
                     | Vm::VmCalls::warp(_)
+                    | Vm::VmCalls::coinbase(_)
+                    | Vm::VmCalls::difficulty(_)
+                    | Vm::VmCalls::prevrandao_0(_)
+                    | Vm::VmCalls::prevrandao_1(_)
                     | Vm::VmCalls::fee(_)
                     | Vm::VmCalls::txGasPrice(_)
                     | Vm::VmCalls::allowCheatcodes(_)
@@ -229,6 +233,32 @@ impl EthereumCheatcodes {
                 block.timestamp = call.newTimestamp;
                 host.set_block(block);
                 (InstrStop::Return, Bytes::new())
+            }
+            Vm::VmCalls::coinbase(call) => {
+                let host = interp.host();
+                let mut block = *host.block();
+                block.beneficiary = call.newCoinbase;
+                host.set_block(block);
+                (InstrStop::Return, Bytes::new())
+            }
+            Vm::VmCalls::difficulty(call) => {
+                if interp.spec() >= evm2::SpecId::MERGE {
+                    return (
+                        InstrStop::Revert,
+                        Error::encode(
+                            "`difficulty` is not supported after the Paris hard fork, use `prevrandao` instead; see EIP-4399: https://eips.ethereum.org/EIPS/eip-4399",
+                        ),
+                    );
+                }
+                let host = interp.host();
+                let mut block = *host.block();
+                block.difficulty = call.newDifficulty;
+                host.set_block(block);
+                (InstrStop::Return, Bytes::new())
+            }
+            Vm::VmCalls::prevrandao_0(call) => Self::set_prevrandao(interp, call.newPrevrandao),
+            Vm::VmCalls::prevrandao_1(call) => {
+                Self::set_prevrandao(interp, call.newPrevrandao.into())
             }
             Vm::VmCalls::fee(call) => {
                 if call.newBasefee > U256::from(u64::MAX) {
@@ -413,6 +443,25 @@ impl EthereumCheatcodes {
                 (InstrStop::FatalExternalError, Bytes::new())
             }
         }
+    }
+
+    fn set_prevrandao(
+        interp: &mut Interpreter<'_, '_, FoundryEvmTypes>,
+        value: B256,
+    ) -> (InstrStop, Bytes) {
+        if interp.spec() < evm2::SpecId::MERGE {
+            return (
+                InstrStop::Revert,
+                Error::encode(
+                    "`prevrandao` is not supported before the Paris hard fork, use `difficulty` instead; see EIP-4399: https://eips.ethereum.org/EIPS/eip-4399",
+                ),
+            );
+        }
+        let host = interp.host();
+        let mut block = *host.block();
+        block.prevrandao = U256::from_be_slice(value.as_slice());
+        host.set_block(block);
+        (InstrStop::Return, Bytes::new())
     }
 
     fn start_prank(

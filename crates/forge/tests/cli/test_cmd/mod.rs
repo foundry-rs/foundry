@@ -3986,6 +3986,85 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 "#]]);
 });
 
+forgetest!(ethereum_block_environment_cheatcodes, |prj, cmd| {
+    prj.add_source(
+        "EthereumBlockEnvironment.t.sol",
+        r#"
+pragma solidity ^0.8.20;
+
+interface VmBlockEnvironment {
+    function coinbase(address value) external;
+    function difficulty(uint256 value) external;
+    function prevrandao(bytes32 value) external;
+    function prevrandao(uint256 value) external;
+}
+
+contract EthereumBlockEnvironmentTest {
+    VmBlockEnvironment constant vm = VmBlockEnvironment(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function testCoinbaseAndPrevrandao() public {
+        vm.coinbase(address(0x1234));
+        require(block.coinbase == address(0x1234));
+        vm.prevrandao(bytes32(uint256(42)));
+        require(block.prevrandao == 42);
+        vm.prevrandao(uint256(43));
+        require(block.prevrandao == 43);
+    }
+
+    function testDifficulty() public {
+        vm.coinbase(address(0x1234));
+        require(block.coinbase == address(0x1234));
+        vm.difficulty(44);
+        require(block.difficulty == 44);
+    }
+
+    function testDifficultyRejectedAfterMerge() public {
+        try vm.difficulty(44) { revert("difficulty accepted"); } catch (bytes memory reason) {
+            require(reason.length != 0);
+        }
+    }
+
+    function testPrevrandaoRejectedBeforeMerge() public {
+        try vm.prevrandao(uint256(43)) { revert("prevrandao accepted"); } catch (bytes memory reason) {
+            require(reason.length != 0);
+        }
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--mc",
+            "^EthereumBlockEnvironmentTest$",
+            "--mt",
+            "^test(CoinbaseAndPrevrandao|DifficultyRejectedAfterMerge)[(]",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--evm-version",
+            "london",
+            "--mc",
+            "^EthereumBlockEnvironmentTest$",
+            "--mt",
+            "^test(Difficulty|PrevrandaoRejectedBeforeMerge)[(]",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+});
+
 forgetest_init!(skip_output, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_vm();
