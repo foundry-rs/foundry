@@ -2,7 +2,7 @@ use alloy_evm::{
     EthEvm, EthEvmFactory, Evm, EvmEnv, EvmFactory, eth::EthEvmContext, precompiles::PrecompilesMap,
 };
 use alloy_network::Ethereum;
-use foundry_evm_networks::{apply_bsc_p256_precompile, arbitrum::apply_arb_sys_precompile};
+use foundry_evm_networks::apply_bsc_p256_precompile;
 use foundry_fork_db::DatabaseError;
 use revm::{
     context::{
@@ -62,13 +62,11 @@ impl FoundryEvmFactory for EthEvmFactory {
     ) -> Self::FoundryEvm<'db, I> {
         let chain_id = evm_env.cfg_env.chain_id;
         let timestamp = evm_env.block_env.timestamp.saturating_to();
-        let block_number = evm_env.block_env.number.saturating_to();
         let mut eth_evm = Self::default().create_evm_with_inspector(db, evm_env, inspector);
         eth_evm.cfg.tx_chain_id_check = true;
         let networks = eth_evm.inspector().get_networks();
         networks.inject_precompiles(eth_evm.precompiles_mut());
         apply_bsc_p256_precompile(eth_evm.precompiles_mut(), chain_id, timestamp);
-        apply_arb_sys_precompile(eth_evm.precompiles_mut(), chain_id, block_number);
         eth_evm
     }
 

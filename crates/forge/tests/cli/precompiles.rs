@@ -763,10 +763,21 @@ contract ArbSysGasTest is Test {
         (blockNumber,) = arbBlockNumber();
         assertEq(blockNumber, 1234);
     }
+
+    function test_arbsys_other_selector_uses_code() public {
+        vm.etch(address(0x64), hex"602a60005260206000f3");
+
+        (bool success, bytes memory output) = address(0x64).staticcall(hex"deadbeef");
+        assertTrue(success);
+        assertEq(abi.decode(output, (uint256)), 42);
+
+        (uint256 blockNumber,) = arbBlockNumber();
+        assertEq(blockNumber, block.number);
+    }
 }
 "#,
     );
 
     cmd.env("FOUNDRY_CHAIN_ID", "42161");
-    cmd.args(["test", "--mt", "test_arbsys_arb_block_number_gas"]).assert_success();
+    cmd.args(["test", "--mt", "test_arbsys_"]).assert_success();
 });

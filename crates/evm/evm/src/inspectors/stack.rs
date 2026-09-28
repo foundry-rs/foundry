@@ -1275,6 +1275,13 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
     fn top_level_frame_start(&mut self, ecx: &mut FoundryContextFor<'_, FEN>) {
         self.locally_created_accounts.clear();
         self.top_level_frame_failed_before_rewrite = false;
+        if arbitrum::is_arbitrum_chain(ecx.cfg().chain_id()) {
+            // Nitro warms ArbSys like a precompile. Use the access list so other selectors can
+            // still execute code at the address.
+            let mut access_list = ecx.journal_inner().warm_addresses.access_list().clone();
+            access_list.entry(arbitrum::ARB_SYS_ADDRESS).or_default();
+            ecx.journal_mut().warm_access_list(access_list);
+        }
         if let Some(cheatcodes) = &mut self.cheatcodes {
             cheatcodes.clear_storage_hook_mapping_slots();
         }
@@ -2072,8 +2079,7 @@ fn handle_arbitrum_system_call<FEN: FoundryEvmNetwork>(
     }
 
     // Forks report their L2 block, which the block env lacks on Arbitrum because `NUMBER` returns
-    // the L1 block there. Without a fork the block env is read here rather than by the registered
-    // precompile, which captures the block when the EVM is created and would miss `vm.roll`.
+    // the L1 block there. Without a fork the block env is read here to follow `vm.roll`.
     let block_number = match ecx.db().active_fork_block_number() {
         Some(block_number) => block_number,
         None => ecx.block().number().saturating_to(),
