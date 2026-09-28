@@ -8,6 +8,7 @@ use forge_script_sequence::TransactionWithMetadata;
 use foundry_common::{FoundryTransactionBuilder, TransactionMaybeSigned};
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::{HashMap, HashSet},
     fs::{File, OpenOptions},
     io::{BufWriter, Write},
     path::{Path, PathBuf},
@@ -188,6 +189,8 @@ where
         let mut plan = RecoveryPlan::new(data, batch, generation)?;
         if batch {
             plan.import_legacy_batch_attempts()?;
+        } else {
+            plan.import_legacy_attempts()?;
         }
         write_snapshot(&lock.path, &plan)?;
         Self::finish_open(lock, plan)
@@ -759,6 +762,64 @@ where
         Ok(())
     }
 
+    fn import_legacy_attempts(&mut self) -> Result<()> {
+        for (deployment, data) in self.deployments.iter_mut().zip(self.data.sequences_mut()) {
+            let completed = completed_transaction_prefix(data)?;
+            let mut hashes = HashMap::new();
+            for (index, transaction) in data.transactions.iter().enumerate() {
+                if let Some(hash) = transaction.hash
+                    && hashes.insert(hash, index).is_some()
+                {
+                    bail!("legacy transaction hash is associated with multiple operations");
+                }
+            }
+
+            let mut pending = HashSet::new();
+            for hash in &data.pending {
+                if !pending.insert(*hash) {
+                    bail!("legacy progress contains duplicate pending hashes");
+                }
+                if let Some(&index) = hashes.get(hash) {
+                    if index < completed {
+                        bail!("legacy pending hash belongs to a completed operation");
+                    }
+                    continue;
+                }
+                let mut candidates = data
+                    .transactions
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, transaction)| transaction.hash.is_none());
+                let Some((index, _)) = candidates.next() else {
+                    bail!("legacy pending hash has no recovery operation");
+                };
+                if candidates.next().is_some() {
+                    bail!("legacy pending hash has ambiguous recovery operations");
+                }
+                data.transactions[index].hash = Some(*hash);
+                hashes.insert(*hash, index);
+            }
+
+            for transaction in data.transactions.iter().skip(completed) {
+                if let Some(hash) = transaction.hash
+                    && !data.pending.contains(&hash)
+                {
+                    data.pending.push(hash);
+                }
+            }
+            for (index, transaction) in data.transactions.iter().enumerate() {
+                if let Some(hash) = transaction.hash {
+                    deployment.attempts.push(SubmissionAttempt {
+                        id: B256::random(),
+                        members: vec![deployment.operations[index].id],
+                        kind: AttemptKind::Legacy { hash },
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn validate(&self, batch: bool) -> Result<()> {
         if self.version != RECOVERY_VERSION {
             bail!(
@@ -890,8 +951,10 @@ where
                             bail!("recovery snapshot signed payload does not match its hash");
                         }
                     }
-                    AttemptKind::Legacy { .. } if !self.batch => {
-                        bail!("non-batch recovery snapshot contains a legacy batch attempt");
+                    AttemptKind::Legacy { hash } if !self.batch => {
+                        if data.transactions[start].hash != Some(*hash) {
+                            bail!("legacy recovery attempt conflicts with script progress");
+                        }
                     }
                     AttemptKind::Delegated { .. } | AttemptKind::Legacy { .. } => {}
                 }
@@ -1648,5 +1711,60 @@ mod tests {
         deployment.transactions[1].hash = Some(hash);
         deployment.pending.push(hash);
         assert!(RecoveryStore::import(data, true, RecoveryLock::acquire(&paths).unwrap()).is_err());
+    }
+
+    #[test]
+    fn legacy_ordinary_import_preserves_hash_only_progress() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut data = signed_sequence(dir.path());
+        let paths = data.paths();
+        let hashes = [B256::repeat_byte(0x55), B256::repeat_byte(0x66)];
+        for (transaction, hash) in data.sequences_mut()[0].transactions.iter_mut().zip(hashes) {
+            transaction.hash = Some(hash);
+        }
+
+        let store =
+            RecoveryStore::import(data, false, RecoveryLock::acquire(&paths).unwrap()).unwrap();
+        assert_eq!(store.data().sequences()[0].pending, hashes);
+        assert_eq!(store.submission_hashes(0), (hashes.to_vec(), Vec::new()));
+        drop(store);
+
+        let store = load(&paths, false).unwrap();
+        assert_eq!(store.submission_hashes(0), (hashes.to_vec(), Vec::new()));
+    }
+
+    #[test]
+    fn legacy_ordinary_import_binds_unique_pending_hash() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut data = sequence(dir.path());
+        let paths = data.paths();
+        let hash = B256::repeat_byte(0x55);
+        data.sequences_mut()[0].pending.push(hash);
+
+        let store =
+            RecoveryStore::import(data, false, RecoveryLock::acquire(&paths).unwrap()).unwrap();
+        assert_eq!(store.data().sequences()[0].transactions[0].hash, Some(hash));
+        assert_eq!(store.submission_hashes(0), (vec![hash], Vec::new()));
+    }
+
+    #[test]
+    fn legacy_ordinary_import_rejects_ambiguous_hashes() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut data = signed_sequence(dir.path());
+        let paths = data.paths();
+        data.sequences_mut()[0].pending.push(B256::repeat_byte(0x55));
+        assert!(
+            RecoveryStore::import(data, false, RecoveryLock::acquire(&paths).unwrap()).is_err()
+        );
+
+        let other = tempfile::tempdir().unwrap();
+        let mut data = signed_sequence(other.path());
+        let paths = data.paths();
+        for transaction in &mut data.sequences_mut()[0].transactions {
+            transaction.hash = Some(B256::repeat_byte(0x55));
+        }
+        assert!(
+            RecoveryStore::import(data, false, RecoveryLock::acquire(&paths).unwrap()).is_err()
+        );
     }
 }

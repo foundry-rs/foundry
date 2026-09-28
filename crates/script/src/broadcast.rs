@@ -412,6 +412,23 @@ fn validate_tempo_batch_envelope(
     Ok(())
 }
 
+fn validate_tempo_batch_nonce_domain(
+    envelope: &TempoTxEnvelope,
+    request: &TempoTransactionRequest,
+) -> Result<()> {
+    let TempoTxEnvelope::AA(signed) = envelope else {
+        bail!("recovered batch transaction is not a Tempo transaction");
+    };
+    let expected = request
+        .clone()
+        .build_aa()
+        .map_err(|error| eyre::eyre!("invalid persisted batch request: {error}"))?;
+    if signed.tx().nonce != expected.nonce || signed.tx().nonce_key != expected.nonce_key {
+        bail!("resolved batch transaction does not match its persisted nonce domain");
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 pub(crate) fn remaining_unsigned_transactions<N: Network>(
     sequences: &[ScriptSequence<N>],
@@ -1270,6 +1287,12 @@ impl BundledState<TempoEvmNetwork> {
                 .await?
                 .context("resolved transaction is not available from the recovery endpoint")?;
             validate_tempo_batch_envelope(transaction.as_ref(), sender, chain_id, &calls)?;
+            validate_tempo_batch_nonce_domain(
+                transaction.as_ref(),
+                recovered_delegated_request
+                    .as_ref()
+                    .context("resolved batch has no persisted delegated request")?,
+            )?;
             self.sequence.resolve_batch_delegated_hash(attempt_id, hash)?;
             recovered_delegated_status = self.sequence.batch_delegated_status(0);
         }
@@ -2321,6 +2344,15 @@ mod tests {
         );
         let other_envelope = TempoTxEnvelope::decode_2718_exact(&other_payload).unwrap();
         assert!(validate_tempo_batch_envelope(&other_envelope, sender, 4217, &calls).is_err());
+
+        let envelope = TempoTxEnvelope::decode_2718_exact(&payload).unwrap();
+        assert!(validate_tempo_batch_nonce_domain(&envelope, &request).is_ok());
+        let mut other_request = request.clone();
+        other_request.inner.nonce = Some(1);
+        assert!(validate_tempo_batch_nonce_domain(&envelope, &other_request).is_err());
+        other_request.inner.nonce = request.inner.nonce;
+        other_request.nonce_key = Some(U256::ONE);
+        assert!(validate_tempo_batch_nonce_domain(&envelope, &other_request).is_err());
     }
 
     #[test]
