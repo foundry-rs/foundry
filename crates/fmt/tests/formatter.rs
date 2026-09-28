@@ -694,6 +694,7 @@ fmt_tests! {
     EnumVariants,
     ErrorDefinition,
     EventDefinition,
+    FnAttributeComment,
     ForStatement,
     FunctionCall,
     FunctionCallArgsStatement,

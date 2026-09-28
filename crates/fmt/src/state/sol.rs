@@ -764,12 +764,16 @@ impl<'ast> State<'_, 'ast> {
     ) {
         match map.remove(&span.lo()) {
             Some((pre_cmnts, inner_cmnts, post_cmnts)) => {
-                // Print preceding comments.
+                // Print preceding comments. The separator before the attribute is printed below,
+                // so a mixed comment must not add one of its own or the two become a blank line.
                 for cmnt in pre_cmnts {
                     let Some(cmnt) = self.handle_comment(cmnt, false) else {
                         continue;
                     };
-                    self.print_comment(cmnt, CommentConfig::default());
+                    self.print_comment(
+                        cmnt,
+                        CommentConfig::default().mixed_no_break_post().mixed_prev_space(),
+                    );
                 }
                 // Push the inner comments back to the queue, so that they are printed in their
                 // intended place.
