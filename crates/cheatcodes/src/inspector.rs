@@ -11,12 +11,13 @@ use crate::{
     expected_call::{
         self, ExpectedCallData, ExpectedCallKind, ExpectedCallTracker, ExpectedCallType,
     },
+    expected_emit::ExpectedEmitTracker,
     inspector::utils::CommonCreateInput,
     prank::Prank,
     script::Wallets,
     test::{
         assume::AssumeNoRevert,
-        expect::{self, ExpectedCreate, ExpectedEmitTracker, ExpectedRevert, ExpectedRevertKind},
+        expect::{self, ExpectedCreate, ExpectedRevert, ExpectedRevertKind},
         revert_handlers,
     },
     utils::IgnoredTraces,
@@ -2700,79 +2701,41 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         // events will not be matched)
 
         // First, check that we're at the call depth where the emits were declared from.
-        let should_check_emits = self
-            .expected_emits
-            .iter()
-            .any(|(expected, _)| {
-                let curr_depth = ecx.journal().depth();
-                expected.depth == curr_depth
-            }) &&
-            // Ignore staticcalls
-            !call.is_static;
-        if should_check_emits {
-            let expected_counts = self
-                .expected_emits
-                .iter()
-                .filter_map(|(expected, count_map)| {
-                    let count = match expected.address {
-                        Some(emitter) => match count_map.get(&emitter) {
-                            Some(log_count) => expected
-                                .log
-                                .as_ref()
-                                .map(|l| log_count.count(l))
-                                .unwrap_or_else(|| log_count.count_unchecked()),
-                            None => 0,
-                        },
-                        None => match &expected.log {
-                            Some(log) => count_map.values().map(|logs| logs.count(log)).sum(),
-                            None => count_map.values().map(|logs| logs.count_unchecked()).sum(),
-                        },
+        if let Some(failure) = crate::expected_emit::validate(
+            &mut self.expected_emits,
+            ecx.journal().depth(),
+            call.is_static,
+        ) {
+            match failure {
+                crate::expected_emit::EmitValidation::Missing(expected) => {
+                    let message = expected
+                        .mismatch_error
+                        .as_ref()
+                        .map(|mismatch| {
+                            mismatch.to_error_msg(
+                                self,
+                                expected.checks,
+                                expected.log.as_ref(),
+                                expected.anonymous,
+                            )
+                        })
+                        .unwrap_or_else(|| "log != expected log".to_string());
+                    outcome.result.result = InstructionResult::Revert;
+                    outcome.result.output = message.abi_encode().into();
+                }
+                crate::expected_emit::EmitValidation::WrongCount { expected, actual } => {
+                    let message = if outcome.result.is_ok() {
+                        format!("log emitted {actual} times, expected {expected}")
+                    } else {
+                        "expected an emit, but the call reverted instead. \
+                         ensure you're testing the happy path when using `expectEmit`"
+                            .to_string()
                     };
-
-                    (count != expected.count).then_some((expected, count))
-                })
-                .collect::<Vec<_>>();
-
-            // Revert if not all emits expected were matched.
-            if let Some((expected, _)) = self
-                .expected_emits
-                .iter()
-                .find(|(expected, _)| !expected.found && expected.count > 0)
-            {
-                outcome.result.result = InstructionResult::Revert;
-                let mismatch_error = expected.mismatch_error.clone();
-                let expected_log = expected.log.clone();
-                let checks = expected.checks;
-                let anonymous = expected.anonymous;
-                let error_msg = mismatch_error
-                    .as_ref()
-                    .map(|mismatch| {
-                        mismatch.to_error_msg(self, checks, expected_log.as_ref(), anonymous)
-                    })
-                    .unwrap_or_else(|| "log != expected log".to_string());
-                outcome.result.output = error_msg.abi_encode().into();
-                return;
+                    outcome.result.result = InstructionResult::Revert;
+                    outcome.result.output = Error::encode(message);
+                }
             }
-
-            if !expected_counts.is_empty() {
-                let msg = if outcome.result.is_ok() {
-                    let (expected, count) = expected_counts.first().unwrap();
-                    format!("log emitted {count} times, expected {}", expected.count)
-                } else {
-                    "expected an emit, but the call reverted instead. \
-                     ensure you're testing the happy path when using `expectEmit`"
-                        .to_string()
-                };
-
-                outcome.result.result = InstructionResult::Revert;
-                outcome.result.output = Error::encode(msg);
-                return;
-            }
-
-            // All emits were found, we're good.
-            // Clear the queue, as we expect the user to declare more events for the next call
-            // if they wanna match further events.
-            self.expected_emits.clear()
+            return;
         }
 
         // try to diagnose reverts in multi-fork mode where a call is made to an address that does
@@ -4305,7 +4268,7 @@ mod tests {
 
         cheats.recorded_logs = None;
         cheats.expected_emits.push_back((
-            expect::ExpectedEmit {
+            crate::expected_emit::ExpectedEmit {
                 depth: 0,
                 log: None,
                 checks: [false; 5],

@@ -3893,6 +3893,122 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 "#]]);
 });
 
+forgetest!(ethereum_expected_emits, |prj, cmd| {
+    prj.add_source(
+        "EthereumExpectedEmit.t.sol",
+        r#"
+pragma solidity ^0.8.20;
+
+interface VmEmit {
+    function expectEmit() external;
+    function expectEmit(address) external;
+    function expectEmit(uint64) external;
+}
+
+contract EmitTarget {
+    event Ping(uint256 indexed id);
+    event Pong(uint256 indexed id);
+
+    function ping(uint256 id) external { emit Ping(id); }
+    function pong(uint256 id) external { emit Pong(id); }
+}
+
+contract EthereumExpectedEmitTest {
+    VmEmit constant vm = VmEmit(address(uint160(uint256(keccak256("hevm cheat code")))));
+    EmitTarget target;
+
+    event Ping(uint256 indexed id);
+    event Pong(uint256 indexed id);
+
+    function setUp() public { target = new EmitTarget(); }
+
+    function testMatch() public {
+        vm.expectEmit(address(target));
+        emit Ping(7);
+        target.ping(7);
+    }
+
+    function testOrdered() public {
+        vm.expectEmit();
+        emit Ping(1);
+        vm.expectEmit();
+        emit Pong(2);
+        target.ping(1);
+        target.pong(2);
+    }
+
+    function testCount() public {
+        vm.expectEmit(uint64(2));
+        emit Ping(3);
+        target.ping(3);
+        target.ping(3);
+    }
+
+    function testMissing() public {
+        vm.expectEmit();
+        emit Ping(4);
+        target.pong(4);
+    }
+
+    function testForbidden() public {
+        vm.expectEmit(uint64(0));
+        emit Ping(5);
+        target.ping(5);
+    }
+
+    function testCountMissing() public {
+        vm.expectEmit(uint64(2));
+        emit Ping(6);
+        target.ping(6);
+    }
+
+    function testWrongEmitter() public {
+        vm.expectEmit(address(target));
+        emit Ping(8);
+        emit Ping(8);
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--mc",
+            "^EthereumExpectedEmitTest$",
+            "--mt",
+            "test(Match|Ordered|Count)[(]",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+[PASS] testCount() ([GAS])
+[PASS] testMatch() ([GAS])
+[PASS] testOrdered() ([GAS])
+Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--mc",
+            "^EthereumExpectedEmitTest$",
+            "--mt",
+            "test(Missing|Forbidden|CountMissing|WrongEmitter)[(]",
+        ])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: log != expected log] testCountMissing() ([GAS])
+[FAIL: log emitted but expected 0 times] testForbidden() ([GAS])
+[FAIL: log != expected log] testMissing() ([GAS])
+[FAIL: log emitter mismatch: expected=0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f, got=0x7fa9385be102ac3eac297483dd6233d62b3e1496] testWrongEmitter() ([GAS])
+Suite result: FAILED. 0 passed; 4 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+});
+
 forgetest!(ethereum_before_test_setup, |prj, cmd| {
     prj.add_source(
         "EthereumBeforeTest.t.sol",

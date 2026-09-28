@@ -55,6 +55,8 @@ mod evm;
 mod expected_call;
 pub use expected_call::ExpectedCallTracker;
 
+mod expected_emit;
+
 mod external_storage;
 
 mod fs;

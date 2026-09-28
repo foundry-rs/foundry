@@ -5,6 +5,7 @@ use crate::{
     broadcast::{Broadcast, BroadcastableTransaction, BroadcastableTransactions},
     dispatch,
     expected_call::{self, ExpectedCallKind, ExpectedCallTracker, ExpectedCallType},
+    expected_emit::{self, EmitMismatch, EmitValidation, ExpectedEmitTracker},
     fs::{ConfigCheatcode, get_artifact_code, get_artifact_selectors},
     prank::Prank,
     recorded_logs,
@@ -45,6 +46,8 @@ pub struct EthereumCheatcodes {
     allowed_callers: AddressHashSet,
     pranks: BTreeMap<usize, Prank>,
     expected_calls: ExpectedCallTracker,
+    expected_emits: ExpectedEmitTracker,
+    log_error: Option<Bytes>,
     recorded_logs: Option<Vec<Vm::Log>>,
     broadcast: Option<Broadcast>,
     broadcastable_transactions: BroadcastableTransactions<Ethereum>,
@@ -63,6 +66,8 @@ type ExpectedCallArgs<'a> = (
     u64,
     ExpectedCallType,
 );
+
+type ExpectedEmitArgs = ([bool; 5], Option<Address>, bool, u64);
 
 /// Caller authorization policy for the active execution database.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -84,6 +89,8 @@ impl EthereumCheatcodes {
                 .collect(),
             pranks: BTreeMap::new(),
             expected_calls: Default::default(),
+            expected_emits: Default::default(),
+            log_error: None,
             recorded_logs: None,
             broadcast: None,
             broadcastable_transactions: Default::default(),
@@ -121,6 +128,18 @@ impl EthereumCheatcodes {
     /// Observes an EVM log for active cheatcode recording.
     pub fn observe_log(&mut self, log: &alloy_primitives::Log) {
         recorded_logs::record(&mut self.recorded_logs, log);
+        if !self.expected_emits.is_empty()
+            && let Some(error) = expected_emit::observe(&mut self.expected_emits, log)
+        {
+            self.log_error = Some(Error::encode(error));
+        }
+    }
+
+    /// Stops the frame after an immediately invalid log expectation.
+    pub const fn finish_log_step(&self, interp: &mut Interpreter<'_, '_, FoundryEvmTypes>) {
+        if self.log_error.is_some() {
+            interp.set_stop(InstrStop::Revert);
+        }
     }
 
     /// Installs the cheatcode contract account used by Solidity code checks.
@@ -159,6 +178,17 @@ impl EthereumCheatcodes {
                 )
                 .map(|()| Vec::new()),
             );
+        }
+        if let Some((checks, emitter, anonymous, count)) = Self::expected_emit_args(&decoded) {
+            expected_emit::register(
+                &mut self.expected_emits,
+                usize::from(message.depth.saturating_sub(1)),
+                checks,
+                emitter,
+                anonymous,
+                count,
+            );
+            return (InstrStop::Return, Bytes::new());
         }
         match decoded {
             Vm::VmCalls::assume(call) => {
@@ -597,6 +627,70 @@ impl EthereumCheatcodes {
                 1,
                 ExpectedCallType::NonCount,
             )),
+            _ => None,
+        }
+    }
+
+    const fn expected_emit_args(decoded: &Vm::VmCalls) -> Option<ExpectedEmitArgs> {
+        match decoded {
+            Vm::VmCalls::expectEmit_0(call) => Some((
+                [true, call.checkTopic1, call.checkTopic2, call.checkTopic3, call.checkData],
+                None,
+                false,
+                1,
+            )),
+            Vm::VmCalls::expectEmit_1(call) => Some((
+                [true, call.checkTopic1, call.checkTopic2, call.checkTopic3, call.checkData],
+                Some(call.emitter),
+                false,
+                1,
+            )),
+            Vm::VmCalls::expectEmit_2(_) => Some(([true; 5], None, false, 1)),
+            Vm::VmCalls::expectEmit_3(call) => Some(([true; 5], Some(call.emitter), false, 1)),
+            Vm::VmCalls::expectEmit_4(call) => Some((
+                [true, call.checkTopic1, call.checkTopic2, call.checkTopic3, call.checkData],
+                None,
+                false,
+                call.count,
+            )),
+            Vm::VmCalls::expectEmit_5(call) => Some((
+                [true, call.checkTopic1, call.checkTopic2, call.checkTopic3, call.checkData],
+                Some(call.emitter),
+                false,
+                call.count,
+            )),
+            Vm::VmCalls::expectEmit_6(call) => Some(([true; 5], None, false, call.count)),
+            Vm::VmCalls::expectEmit_7(call) => {
+                Some(([true; 5], Some(call.emitter), false, call.count))
+            }
+            Vm::VmCalls::expectEmitAnonymous_0(call) => Some((
+                [
+                    call.checkTopic0,
+                    call.checkTopic1,
+                    call.checkTopic2,
+                    call.checkTopic3,
+                    call.checkData,
+                ],
+                None,
+                true,
+                1,
+            )),
+            Vm::VmCalls::expectEmitAnonymous_1(call) => Some((
+                [
+                    call.checkTopic0,
+                    call.checkTopic1,
+                    call.checkTopic2,
+                    call.checkTopic3,
+                    call.checkData,
+                ],
+                Some(call.emitter),
+                true,
+                1,
+            )),
+            Vm::VmCalls::expectEmitAnonymous_2(_) => Some(([true; 5], None, true, 1)),
+            Vm::VmCalls::expectEmitAnonymous_3(call) => {
+                Some(([true; 5], Some(call.emitter), true, 1))
+            }
             _ => None,
         }
     }
@@ -1135,6 +1229,57 @@ impl EthereumCheatcodes {
             self.pranks.remove(&depth);
         }
     }
+
+    fn finish_log_error(&mut self, result: &mut MessageResult<FoundryEvmTypes>) {
+        if let Some(error) = self.log_error.take() {
+            result.stop = InstrStop::Revert;
+            result.output = error;
+        }
+    }
+
+    fn finish_expected_emit(
+        &mut self,
+        message: &Message<FoundryEvmTypes>,
+        result: &mut MessageResult<FoundryEvmTypes>,
+    ) {
+        if !result.is_success() {
+            return;
+        }
+        let failure = expected_emit::validate(
+            &mut self.expected_emits,
+            usize::from(message.depth),
+            message.kind == MessageKind::StaticCall || message.caller_is_static,
+        );
+        let Some(failure) = failure else { return };
+        result.stop = InstrStop::Revert;
+        result.output = match failure {
+            EmitValidation::Missing(expected) => {
+                let message = match expected.mismatch_error {
+                    Some(EmitMismatch::Log { actual }) => expected.log.as_ref().map_or_else(
+                        || "log != expected log".to_string(),
+                        |log| {
+                            expected_emit::get_emit_mismatch_message(
+                                expected.checks,
+                                log,
+                                &actual,
+                                expected.anonymous,
+                                None,
+                                None,
+                            )
+                        },
+                    ),
+                    Some(EmitMismatch::Emitter { expected, actual }) => {
+                        format!("log emitter mismatch: expected={expected:#x}, got={actual:#x}")
+                    }
+                    None => "log != expected log".to_string(),
+                };
+                message.abi_encode().into()
+            }
+            EmitValidation::WrongCount { expected, actual } => {
+                Error::encode(format!("log emitted {actual} times, expected {expected}"))
+            }
+        };
+    }
 }
 
 impl Inspector<FoundryEvmTypes> for EthereumCheatcodes {
@@ -1254,6 +1399,7 @@ impl Inspector<FoundryEvmTypes> for EthereumCheatcodes {
         message: &Message<FoundryEvmTypes>,
         result: &mut MessageResult<FoundryEvmTypes>,
     ) {
+        self.finish_log_error(result);
         if message.call_target == CHEATCODE_ADDRESS {
             if Self::is_deployment_call(&message.input)
                 && let Some(address) = result.created_address.filter(|_| result.is_success())
@@ -1275,6 +1421,7 @@ impl Inspector<FoundryEvmTypes> for EthereumCheatcodes {
             }
             self.finish_prank(interp, message);
             self.finish_expected_revert(message, result, false);
+            self.finish_expected_emit(message, result);
             if message.depth == 0
                 && result.is_success()
                 && let Some(reason) = expected_call::first_unmet_call(&self.expected_calls)
@@ -1359,6 +1506,7 @@ impl Inspector<FoundryEvmTypes> for EthereumCheatcodes {
         message: &Message<FoundryEvmTypes>,
         result: &mut MessageResult<FoundryEvmTypes>,
     ) {
+        self.finish_log_error(result);
         if let Some(broadcast) = &self.broadcast
             && message.depth > 0
             && usize::from(message.depth - 1) == broadcast.depth
