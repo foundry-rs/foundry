@@ -732,6 +732,7 @@ forgetest!(can_override_tag_in_update, |prj, cmd| {
 
     assert_ne!(oz_init_lock, oz_update_lock);
     assert_eq!(oz_update_lock.name(), "v5.1.0");
+    assert_eq!(submodules_update.0[0].rev(), oz_update_lock.rev());
     assert_eq!(solady_init_lock, solady_update_lock);
 });
 
