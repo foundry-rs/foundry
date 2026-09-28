@@ -194,7 +194,7 @@ pub struct ScriptArgs {
     /// Send via `eth_sendTransaction` using the `--sender` argument as sender.
     #[arg(
         long,
-        conflicts_with_all = &["private_key", "private_keys", "ledger", "trezor", "aws", "browser"],
+        conflicts_with_all = &["private_key", "private_keys", "ledger", "trezor", "aws", "azure", "browser"],
     )]
     pub unlocked: bool,
 

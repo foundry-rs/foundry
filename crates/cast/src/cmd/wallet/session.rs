@@ -62,6 +62,8 @@ const SESSION_CHILD_SIGNER_ENV: &[&str] = &[
     "TURNKEY_API_PRIVATE_KEY",
     "TURNKEY_ORGANIZATION_ID",
     "TURNKEY_ADDRESS",
+    "AZURE_KEY_VAULT_KEY_ID",
+    "AZURE_KEY_VAULT_KEY_IDS",
 ];
 
 /// Arguments for `cast wallet session`.

@@ -576,10 +576,49 @@ solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "ab300772cbccf
 solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "ab300772cbccfd7e5bca424c34fceeed83bd6fde" }
 
 ## foundry-core
-foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "57dad48701b209e0b68b10458d0efab5a5e7597a" }
-foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "57dad48701b209e0b68b10458d0efab5a5e7597a" }
-foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", rev = "57dad48701b209e0b68b10458d0efab5a5e7597a" }
-foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "57dad48701b209e0b68b10458d0efab5a5e7597a" }
+foundry-wallets = { git = "https://github.com/aelmanaa/foundry-core", rev = "0efd87ef24a9335954d75134b92e92501c722c07" }
+foundry-compilers = { git = "https://github.com/aelmanaa/foundry-core", rev = "0efd87ef24a9335954d75134b92e92501c722c07" }
+foundry-block-explorers = { git = "https://github.com/aelmanaa/foundry-core", rev = "0efd87ef24a9335954d75134b92e92501c722c07" }
+foundry-fork-db = { git = "https://github.com/aelmanaa/foundry-core", rev = "0efd87ef24a9335954d75134b92e92501c722c07" }
+
+## alloy (temporary: `alloy-signer-azure` is not released yet)
+alloy-consensus = { git = "https://github.com/aelmanaa/alloy", rev = "f96f2f661df382790dadaf3eb7e469af0fbb5517" }
+alloy-consensus-any = { git = "https://github.com/aelmanaa/alloy", rev = "f96f2f661df382790dadaf3eb7e469af0fbb5517" }
+alloy-contract = { git = "https://github.com/aelmanaa/alloy", rev = "f96f2f661df382790dadaf3eb7e469af0fbb5517" }
+alloy-eip5792 = { git = "https://github.com/aelmanaa/alloy", rev = "f96f2f661df382790dadaf3eb7e469af0fbb5517" }
+alloy-eips = { git = "https://github.com/aelmanaa/alloy", rev = "f96f2f661df382790dadaf3eb7e469af0fbb5517" }
+alloy-ens = { git = "https://github.com/aelmanaa/alloy", rev = "f96f2f661df382790dadaf3eb7e469af0fbb5517" }
+alloy-genesis = { git = "https://github.com/aelmanaa/alloy", rev = "f96f2f661df382790dadaf3eb7e469af0fbb5517" }
+alloy-json-rpc = { git = "https://github.com/aelmanaa/alloy", rev = "f96f2f661df382790dadaf3eb7e469af0fbb5517" }
+alloy-network = { git = "https://github.com/aelmanaa/alloy", rev = "f96f2f661df382790dadaf3eb7e469af0fbb5517" }
+alloy-network-primitives = { git = "https://github.com/aelmanaa/alloy", rev = "f96f2f661df382790dadaf3eb7e469af0fbb5517" }
+alloy-provider = { git = "https://github.com/aelmanaa/alloy", rev = "f96f2f661df382790dadaf3eb7e469af0fbb5517" }
+alloy-pubsub = { git = "https://github.com/aelmanaa/alloy", rev = "f96f2f661df382790dadaf3eb7e469af0fbb5517" }
+alloy-rpc-client = { git = "https://github.com/aelmanaa/alloy", rev = "f96f2f661df382790dadaf3eb7e469af0fbb5517" }
+alloy-rpc-types = { git = "https://github.com/aelmanaa/alloy", rev = "f96f2f661df382790dadaf3eb7e469af0fbb5517" }
+alloy-rpc-types-anvil = { git = "https://github.com/aelmanaa/alloy", rev = "f96f2f661df382790dadaf3eb7e469af0fbb5517" }
+alloy-rpc-types-any = { git = "https://github.com/aelmanaa/alloy", rev = "f96f2f661df382790dadaf3eb7e469af0fbb5517" }
+alloy-rpc-types-beacon = { git = "https://github.com/aelmanaa/alloy", rev = "f96f2f661df382790dadaf3eb7e469af0fbb5517" }
+alloy-rpc-types-debug = { git = "https://github.com/aelmanaa/alloy", rev = "f96f2f661df382790dadaf3eb7e469af0fbb5517" }
+alloy-rpc-types-engine = { git = "https://github.com/aelmanaa/alloy", rev = "f96f2f661df382790dadaf3eb7e469af0fbb5517" }
+alloy-rpc-types-eth = { git = "https://github.com/aelmanaa/alloy", rev = "f96f2f661df382790dadaf3eb7e469af0fbb5517" }
+alloy-rpc-types-mev = { git = "https://github.com/aelmanaa/alloy", rev = "f96f2f661df382790dadaf3eb7e469af0fbb5517" }
+alloy-rpc-types-trace = { git = "https://github.com/aelmanaa/alloy", rev = "f96f2f661df382790dadaf3eb7e469af0fbb5517" }
+alloy-rpc-types-txpool = { git = "https://github.com/aelmanaa/alloy", rev = "f96f2f661df382790dadaf3eb7e469af0fbb5517" }
+alloy-serde = { git = "https://github.com/aelmanaa/alloy", rev = "f96f2f661df382790dadaf3eb7e469af0fbb5517" }
+alloy-signer = { git = "https://github.com/aelmanaa/alloy", rev = "f96f2f661df382790dadaf3eb7e469af0fbb5517" }
+alloy-signer-aws = { git = "https://github.com/aelmanaa/alloy", rev = "f96f2f661df382790dadaf3eb7e469af0fbb5517" }
+alloy-signer-azure = { git = "https://github.com/aelmanaa/alloy", rev = "f96f2f661df382790dadaf3eb7e469af0fbb5517" }
+alloy-signer-gcp = { git = "https://github.com/aelmanaa/alloy", rev = "f96f2f661df382790dadaf3eb7e469af0fbb5517" }
+alloy-signer-ledger = { git = "https://github.com/aelmanaa/alloy", rev = "f96f2f661df382790dadaf3eb7e469af0fbb5517" }
+alloy-signer-local = { git = "https://github.com/aelmanaa/alloy", rev = "f96f2f661df382790dadaf3eb7e469af0fbb5517" }
+alloy-signer-trezor = { git = "https://github.com/aelmanaa/alloy", rev = "f96f2f661df382790dadaf3eb7e469af0fbb5517" }
+alloy-signer-turnkey = { git = "https://github.com/aelmanaa/alloy", rev = "f96f2f661df382790dadaf3eb7e469af0fbb5517" }
+alloy-transport = { git = "https://github.com/aelmanaa/alloy", rev = "f96f2f661df382790dadaf3eb7e469af0fbb5517" }
+alloy-transport-http = { git = "https://github.com/aelmanaa/alloy", rev = "f96f2f661df382790dadaf3eb7e469af0fbb5517" }
+alloy-transport-ipc = { git = "https://github.com/aelmanaa/alloy", rev = "f96f2f661df382790dadaf3eb7e469af0fbb5517" }
+alloy-transport-ws = { git = "https://github.com/aelmanaa/alloy", rev = "f96f2f661df382790dadaf3eb7e469af0fbb5517" }
+alloy-tx-macros = { git = "https://github.com/aelmanaa/alloy", rev = "f96f2f661df382790dadaf3eb7e469af0fbb5517" }
 
 ## alloy-core
 # alloy-dyn-abi = { path = "../../alloy-rs/core/crates/dyn-abi" }

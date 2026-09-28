@@ -2565,7 +2565,7 @@ async fn run_key_auth_sign(
         (None, Some(wallet)) => wallet.key_id()?,
         _ => eyre::bail!(
             "a signer is required to sign key authorizations; pass a signer with \
-             --browser, --private-key, --keystore, Ledger, Trezor, AWS, GCP, or Turnkey"
+             --browser, --private-key, --keystore, Ledger, Trezor, AWS, GCP, Turnkey, or Azure"
         ),
     };
 
@@ -2895,8 +2895,8 @@ pub(crate) async fn resolve_keychain_root_signer(
             "submitting AccountKeychain admin mutators (authorize / revoke / policy) signed by a \
              Tempo access key currently reverts on-chain with UnauthorizedCaller() on the pinned \
              Tempo build, even for an active admin key. Use a root account signer (--browser for \
-             passkey roots, or --private-key / --keystore / Ledger / Trezor / AWS / GCP / Turnkey) \
-             for direct mutations."
+             passkey roots, or --private-key / --keystore / Ledger / Trezor / AWS / GCP / \
+             Turnkey / Azure) for direct mutations."
         );
     }
 
