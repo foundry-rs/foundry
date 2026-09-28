@@ -531,12 +531,15 @@ pub struct Config {
     pub rpc_endpoints: RpcEndpoints,
     /// Whether to store the referenced sources in the metadata as literal data.
     pub use_literal_content: bool,
-    /// Whether to include the metadata hash.
+    /// The hash method used for the metadata hash appended to the bytecode.
     ///
-    /// The metadata hash is machine dependent. By default, this is set to [BytecodeHash::None] to allow for deterministic code, See: <https://docs.soliditylang.org/en/latest/metadata.html>
+    /// Defaults to [BytecodeHash::Ipfs], matching solc. The hash depends on the source contents,
+    /// source paths, and compiler settings. Set to [BytecodeHash::None] to omit the hash without
+    /// disabling the CBOR metadata trailer.
+    /// See: <https://docs.soliditylang.org/en/latest/metadata.html>
     #[serde(with = "from_str_lowercase")]
     pub bytecode_hash: BytecodeHash,
-    /// Whether to append the metadata hash to the bytecode.
+    /// Whether to append CBOR-encoded metadata to the bytecode. Defaults to `true`.
     ///
     /// If this is `false` and the `bytecode_hash` option above is not `None` solc will issue a
     /// warning.
