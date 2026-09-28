@@ -32,6 +32,9 @@ pub use monad_revm::MonadHardfork;
 #[cfg(feature = "optimism")]
 pub use alloy_op_hardforks::OpHardfork;
 
+mod ethereum;
+pub use ethereum::{ethereum_spec_from_evm_version, ethereum_spec_id};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(into = "String")]
 pub enum FoundryHardfork {

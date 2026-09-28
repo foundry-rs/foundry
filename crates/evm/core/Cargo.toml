@@ -22,6 +22,9 @@ foundry-evm-abi.workspace = true
 foundry-evm-hardforks.workspace = true
 foundry-evm-networks.workspace = true
 
+evm2.workspace = true
+evm2-macros.workspace = true
+
 alloy-chains.workspace = true
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
 alloy-evm = { workspace = true, features = ["rpc"] }
@@ -44,6 +47,7 @@ alloy-rpc-types = { workspace = true, features = ["anvil"] }
 alloy-sol-types.workspace = true
 alloy-rlp.workspace = true
 foundry-fork-db.workspace = true
+foundry-fork-db-evm2 = { package = "foundry-fork-db", git = "https://github.com/mablr/foundry-core", rev = "e58e6f560a3a4f793c3aa62a870ad5aa3b1a3754" }
 
 # Base
 base-common-chains = { workspace = true, optional = true, features = ["std"] }

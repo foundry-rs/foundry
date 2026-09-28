@@ -558,7 +558,7 @@ impl EvmOpts {
         )
     }
 
-    async fn ensure_resolved_fork_endpoint<N: Network, P: Provider<N>>(
+    pub(crate) async fn ensure_resolved_fork_endpoint<N: Network, P: Provider<N>>(
         &self,
         provider: &P,
         fork: &ResolvedFork,

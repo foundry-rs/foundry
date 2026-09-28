@@ -8,6 +8,7 @@
 #[macro_use]
 extern crate tracing;
 
+pub mod ethereum;
 pub mod executors;
 pub mod inspectors;
 

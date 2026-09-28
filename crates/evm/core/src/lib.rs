@@ -40,6 +40,7 @@ pub mod bytecode;
 pub mod constants;
 pub mod decode;
 pub mod eip2935;
+pub mod ethereum;
 pub mod evm;
 pub mod fork;
 pub mod hardfork;
