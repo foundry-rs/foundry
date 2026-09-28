@@ -317,8 +317,13 @@ impl RunArgs {
         executor_builder: ExecutorBuilder<FEN>,
     ) -> Result<()> {
         let target = self.fetch_target(&config).await?;
+        let endpoint_is_anvil = evm_opts
+            .fork_endpoint
+            .as_ref()
+            .is_some_and(|identity| identity.reported_hardfork.is_some());
         if let Some(chain) = target.tx.chain_id().map(alloy_chains::Chain::from_id)
             && chain.is_elastic()
+            && !endpoint_is_anvil
         {
             eyre::bail!(
                 "{chain} executes EraVM bytecode, which cannot be replayed locally; \
