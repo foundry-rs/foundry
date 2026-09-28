@@ -4195,6 +4195,55 @@ Suite result: ok. 7 passed; 0 failed; 0 skipped; [ELAPSED]
     );
 });
 
+forgetest!(ethereum_filesystem_reads, |prj, cmd| {
+    std::fs::write(prj.root().join("note.txt"), "hello\n").unwrap();
+    std::fs::write(
+        prj.config(),
+        "[profile.default]\nfs_permissions = [{ access = \"read\", path = \"./\" }]\n",
+    )
+    .unwrap();
+    prj.add_source(
+        "EthereumFilesystem.t.sol",
+        r#"
+pragma solidity ^0.8.20;
+
+interface VmFilesystem {
+    function exists(string calldata path) external view returns (bool);
+    function isDir(string calldata path) external view returns (bool);
+    function isFile(string calldata path) external view returns (bool);
+    function projectRoot() external view returns (string memory);
+    function currentFilePath() external view returns (string memory);
+    function unixTime() external view returns (uint256);
+    function readFile(string calldata path) external view returns (string memory);
+    function readFileBinary(string calldata path) external view returns (bytes memory);
+}
+
+contract EthereumFilesystemTest {
+    VmFilesystem constant vm = VmFilesystem(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function testReadOnlyFilesystem() public view {
+        require(vm.exists("note.txt"));
+        require(vm.isFile("note.txt") && !vm.isDir("note.txt"));
+        require(vm.isDir("src") && !vm.isFile("src"));
+        require(bytes(vm.projectRoot()).length > 0);
+        require(keccak256(bytes(vm.currentFilePath())) == keccak256("src/EthereumFilesystem.t.sol"));
+        require(vm.unixTime() > 0);
+        require(keccak256(bytes(vm.readFile("note.txt"))) == keccak256("hello\n"));
+        require(keccak256(vm.readFileBinary("note.txt")) == keccak256("hello\n"));
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse().args(["test", "--mc", "^EthereumFilesystemTest$"]).assert_success().stdout_eq(
+        str![[r#"
+...
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]],
+    );
+});
+
 forgetest_async!(ethereum_fork_state, |prj, cmd| {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let target = Address::repeat_byte(0x42);

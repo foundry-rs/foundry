@@ -111,11 +111,14 @@ fn parse_artifact_path(path: &str) -> std::result::Result<ParsedArtifactPath<'_>
     Ok(ParsedArtifactPath { file, contract_name, version, profile })
 }
 
+/// Filesystem cheatcodes that only need Foundry configuration.
+pub(crate) trait ConfigCheatcode {
+    fn apply_config(&self, config: &CheatsConfig) -> Result;
+}
+
 impl Cheatcode for existsCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { path } = self;
-        let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
-        Ok(path.exists().abi_encode())
+        self.apply_config(&state.config)
     }
 }
 
@@ -147,47 +150,31 @@ impl Cheatcode for fsMetadataCall {
 
 impl Cheatcode for isDirCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { path } = self;
-        let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
-        Ok(path.is_dir().abi_encode())
+        self.apply_config(&state.config)
     }
 }
 
 impl Cheatcode for isFileCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { path } = self;
-        let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
-        Ok(path.is_file().abi_encode())
+        self.apply_config(&state.config)
     }
 }
 
 impl Cheatcode for projectRootCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
-        let Self {} = self;
-        Ok(state.config.root.display().to_string().abi_encode())
+        self.apply_config(&state.config)
     }
 }
 
 impl Cheatcode for currentFilePathCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
-        let Self {} = self;
-        let artifact = state
-            .config
-            .running_artifact
-            .as_ref()
-            .ok_or_else(|| fmt_err!("no running contract found"))?;
-        let relative = artifact.source.strip_prefix(&state.config.root).unwrap_or(&artifact.source);
-        Ok(relative.display().to_string().abi_encode())
+        self.apply_config(&state.config)
     }
 }
 
 impl Cheatcode for unixTimeCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        let Self {} = self;
-        let difference = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|e| fmt_err!("failed getting Unix timestamp: {e}"))?;
-        Ok(difference.as_millis().abi_encode())
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+        self.apply_config(&state.config)
     }
 }
 
@@ -246,17 +233,13 @@ impl Cheatcode for readDir_2Call {
 
 impl Cheatcode for readFileCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { path } = self;
-        let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
-        Ok(fs::locked_read_to_string(path)?.abi_encode())
+        self.apply_config(&state.config)
     }
 }
 
 impl Cheatcode for readFileBinaryCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { path } = self;
-        let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
-        Ok(fs::locked_read(path)?.abi_encode())
+        self.apply_config(&state.config)
     }
 }
 
@@ -1185,6 +1168,67 @@ where
         .first()
         .ok_or_else(|| fmt_err!("no deployment found for {contract_name} on chain {chain_id}"))
         .cloned()
+}
+
+impl ConfigCheatcode for existsCall {
+    fn apply_config(&self, config: &CheatsConfig) -> Result {
+        let path = config.ensure_path_allowed(&self.path, FsAccessKind::Read)?;
+        Ok(path.exists().abi_encode())
+    }
+}
+
+impl ConfigCheatcode for isDirCall {
+    fn apply_config(&self, config: &CheatsConfig) -> Result {
+        let path = config.ensure_path_allowed(&self.path, FsAccessKind::Read)?;
+        Ok(path.is_dir().abi_encode())
+    }
+}
+
+impl ConfigCheatcode for isFileCall {
+    fn apply_config(&self, config: &CheatsConfig) -> Result {
+        let path = config.ensure_path_allowed(&self.path, FsAccessKind::Read)?;
+        Ok(path.is_file().abi_encode())
+    }
+}
+
+impl ConfigCheatcode for projectRootCall {
+    fn apply_config(&self, config: &CheatsConfig) -> Result {
+        Ok(config.root.display().to_string().abi_encode())
+    }
+}
+
+impl ConfigCheatcode for currentFilePathCall {
+    fn apply_config(&self, config: &CheatsConfig) -> Result {
+        let artifact = config
+            .running_artifact
+            .as_ref()
+            .ok_or_else(|| fmt_err!("no running contract found"))?;
+        let relative = artifact.source.strip_prefix(&config.root).unwrap_or(&artifact.source);
+        Ok(relative.display().to_string().abi_encode())
+    }
+}
+
+impl ConfigCheatcode for unixTimeCall {
+    fn apply_config(&self, _config: &CheatsConfig) -> Result {
+        let difference = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| fmt_err!("failed getting Unix timestamp: {e}"))?;
+        Ok(difference.as_millis().abi_encode())
+    }
+}
+
+impl ConfigCheatcode for readFileCall {
+    fn apply_config(&self, config: &CheatsConfig) -> Result {
+        let path = config.ensure_path_allowed(&self.path, FsAccessKind::Read)?;
+        Ok(fs::locked_read_to_string(path)?.abi_encode())
+    }
+}
+
+impl ConfigCheatcode for readFileBinaryCall {
+    fn apply_config(&self, config: &CheatsConfig) -> Result {
+        let path = config.ensure_path_allowed(&self.path, FsAccessKind::Read)?;
+        Ok(fs::locked_read(path)?.abi_encode())
+    }
 }
 
 #[cfg(test)]

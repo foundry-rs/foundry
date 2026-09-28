@@ -2,7 +2,7 @@
 
 use crate::{
     CheatsConfig, Error, Vm, dispatch,
-    fs::{get_artifact_code, get_artifact_selectors},
+    fs::{ConfigCheatcode, get_artifact_code, get_artifact_selectors},
     prank::Prank,
 };
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256, map::AddressHashSet};
@@ -199,6 +199,18 @@ impl EthereumCheatcodes {
             }
             Vm::VmCalls::getSelectors(call) => {
                 Self::artifact_result(get_artifact_selectors(&self.config, &call.artifactPath))
+            }
+            Vm::VmCalls::exists(call) => Self::encoded_result(call.apply_config(&self.config)),
+            Vm::VmCalls::isDir(call) => Self::encoded_result(call.apply_config(&self.config)),
+            Vm::VmCalls::isFile(call) => Self::encoded_result(call.apply_config(&self.config)),
+            Vm::VmCalls::projectRoot(call) => Self::encoded_result(call.apply_config(&self.config)),
+            Vm::VmCalls::currentFilePath(call) => {
+                Self::encoded_result(call.apply_config(&self.config))
+            }
+            Vm::VmCalls::unixTime(call) => Self::encoded_result(call.apply_config(&self.config)),
+            Vm::VmCalls::readFile(call) => Self::encoded_result(call.apply_config(&self.config)),
+            Vm::VmCalls::readFileBinary(call) => {
+                Self::encoded_result(call.apply_config(&self.config))
             }
             Vm::VmCalls::warp(call) => {
                 let host = interp.host();
@@ -527,6 +539,13 @@ impl EthereumCheatcodes {
     fn artifact_result<T: SolValue>(result: crate::Result<T>) -> (InstrStop, Bytes) {
         match result {
             Ok(value) => (InstrStop::Return, value.abi_encode().into()),
+            Err(error) => (InstrStop::Revert, Error::encode(error.to_string())),
+        }
+    }
+
+    fn encoded_result(result: crate::Result) -> (InstrStop, Bytes) {
+        match result {
+            Ok(value) => (InstrStop::Return, value.into()),
             Err(error) => (InstrStop::Revert, Error::encode(error.to_string())),
         }
     }
