@@ -14,12 +14,12 @@ use crate::{
 };
 use alloy_chains::{Chain, NamedChain};
 use alloy_consensus::{SignableTransaction, Signed};
-use alloy_eips::eip2718::Encodable2718;
+use alloy_eips::eip2718::{Decodable2718, Encodable2718};
 use alloy_network::{
     EthereumWallet, Network, NetworkTransactionBuilder, ReceiptResponse, TransactionBuilder,
 };
 use alloy_primitives::{
-    Address, TxHash, TxKind, U256, keccak256,
+    Address, Bytes, TxHash, TxKind, U256, keccak256,
     map::{AddressHashMap, AddressHashSet, HashMap},
     utils::format_units,
 };
@@ -61,6 +61,7 @@ pub enum SendTransactionKind<'a, N: Network> {
     Browser(N::TransactionRequest, &'a BrowserSigner<N>),
     Signed(N::TxEnvelope),
     AccessKey(N::TransactionRequest, Box<TempoAccountsWallet>),
+    PreparedRaw(Bytes, TxHash),
 }
 
 impl<'a, N: Network> SendTransactionKind<'a, N>
@@ -69,6 +70,13 @@ where
     N::UnsignedTx: SignableTransaction<Signature>,
     N::TransactionRequest: FoundryTransactionBuilder<N>,
 {
+    const fn is_local(&self) -> bool {
+        matches!(
+            self,
+            Self::Raw(..) | Self::Signed(_) | Self::AccessKey(..) | Self::PreparedRaw(..)
+        )
+    }
+
     /// Prepares the transaction for broadcasting by synchronizing nonce and estimating gas.
     ///
     /// This method performs two key operations:
@@ -90,7 +98,7 @@ where
         let (tx, tempo_wallet) = match self {
             Self::Raw(tx, _) | Self::Unlocked(tx) | Self::Browser(tx, _) => (tx, None),
             Self::AccessKey(tx, wallet) => (tx, Some(wallet)),
-            Self::Signed(_) => return Ok(()),
+            Self::Signed(_) | Self::PreparedRaw(..) => return Ok(()),
         };
 
         reject_access_key_create::<N>(tx, tempo_wallet.is_some())?;
@@ -200,7 +208,50 @@ where
                 let pending = provider.send_raw_transaction(&raw_tx).await?;
                 Ok(*pending.tx_hash())
             }
+            Self::PreparedRaw(payload, _) => {
+                let pending = provider.send_raw_transaction(&payload).await?;
+                Ok(*pending.tx_hash())
+            }
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn prepare_for_durable_send(
+        mut self,
+        provider: &RootProvider<N>,
+        sequential_broadcast: bool,
+        is_fixed_gas_limit: bool,
+        estimate_via_rpc: bool,
+        estimate_multiplier: u64,
+        tempo_sponsor: Option<&TempoSponsor>,
+        chain: Option<Chain>,
+    ) -> Result<Self> {
+        self.prepare(
+            provider,
+            sequential_broadcast,
+            is_fixed_gas_limit,
+            estimate_via_rpc,
+            estimate_multiplier,
+            tempo_sponsor,
+            chain,
+        )
+        .await?;
+        Ok(match self {
+            Self::Raw(tx, signer) => {
+                let signed = tx.build(signer).await?;
+                Self::PreparedRaw(Bytes::from(signed.encoded_2718()), signed.trie_hash())
+            }
+            Self::Signed(tx) => {
+                let hash = tx.trie_hash();
+                Self::PreparedRaw(Bytes::from(tx.encoded_2718()), hash)
+            }
+            Self::AccessKey(tx, wallet) => {
+                let payload = Bytes::from(tx.sign_with_tempo_wallet(&wallet).await?);
+                let envelope = N::TxEnvelope::decode_2718_exact(&payload)?;
+                Self::PreparedRaw(payload, envelope.trie_hash())
+            }
+            kind => kind,
+        })
     }
 
     /// Prepares and sends the transaction in one operation.
@@ -233,6 +284,7 @@ where
     }
 }
 
+#[cfg(test)]
 pub(crate) fn remaining_unsigned_transactions<N: Network>(
     sequences: &[ScriptSequence<N>],
 ) -> impl Iterator<Item = RemainingScriptTransaction> + '_ {
@@ -244,6 +296,89 @@ pub(crate) fn remaining_unsigned_transactions<N: Network>(
             }
         })
     })
+}
+
+pub(crate) fn remaining_unsigned_transactions_for_recovery<N: Network>(
+    sequence: &ScriptSequenceKind<N>,
+) -> Vec<RemainingScriptTransaction>
+where
+    N::TxEnvelope: for<'de> serde::Deserialize<'de> + serde::Serialize,
+    N::TransactionRequest: for<'de> serde::Deserialize<'de> + serde::Serialize,
+{
+    sequence
+        .sequences()
+        .iter()
+        .enumerate()
+        .flat_map(|(sequence_index, deployment)| {
+            remaining_operation_indices(sequence, sequence_index).into_iter().filter_map(
+                move |index| {
+                    let tx = deployment.transactions[index].tx();
+                    (tx.is_unsigned() && sequence.signed_payload(sequence_index, index).is_none())
+                        .then(|| RemainingScriptTransaction {
+                            chain: deployment.chain,
+                            from: tx.from().expect("missing from"),
+                        })
+                },
+            )
+        })
+        .collect()
+}
+
+fn remaining_operation_indices<N: Network>(
+    sequence: &ScriptSequenceKind<N>,
+    sequence_index: usize,
+) -> Vec<usize>
+where
+    N::TxEnvelope: for<'de> serde::Deserialize<'de> + serde::Serialize,
+    N::TransactionRequest: for<'de> serde::Deserialize<'de> + serde::Serialize,
+{
+    let deployment = &sequence.sequences()[sequence_index];
+    deployment
+        .transactions
+        .iter()
+        .enumerate()
+        .filter_map(|(index, transaction)| {
+            let hash = sequence
+                .signed_payload(sequence_index, index)
+                .map(|signed| signed.hash)
+                .or(transaction.hash)
+                .or_else(|| match transaction.tx() {
+                    TransactionMaybeSigned::Signed { tx, .. } => Some(tx.trie_hash()),
+                    TransactionMaybeSigned::Unsigned(_) => None,
+                });
+            let completed = hash.is_some_and(|hash| {
+                deployment.receipts.iter().any(|receipt| receipt.transaction_hash() == hash)
+            });
+            (!completed).then_some(index)
+        })
+        .collect()
+}
+
+fn remaining_sender_addresses<N: Network>(sequence: &ScriptSequenceKind<N>) -> AddressHashSet
+where
+    N::TxEnvelope: for<'de> serde::Deserialize<'de> + serde::Serialize,
+    N::TransactionRequest: for<'de> serde::Deserialize<'de> + serde::Serialize,
+{
+    sequence
+        .sequences()
+        .iter()
+        .enumerate()
+        .flat_map(|(sequence_index, deployment)| {
+            remaining_operation_indices(sequence, sequence_index)
+                .into_iter()
+                .filter_map(|index| deployment.transactions[index].tx().from())
+        })
+        .collect()
+}
+
+const fn should_broadcast_sequentially(
+    estimate_via_rpc: bool,
+    slow: bool,
+    required_signers: usize,
+    ordering_senders: usize,
+    batch_supported: bool,
+) -> bool {
+    estimate_via_rpc || slow || required_signers == 0 || ordering_senders != 1 || !batch_supported
 }
 
 fn remaining_transaction_start<N: Network>(sequence: &ScriptSequence<N>) -> usize {
@@ -319,12 +454,16 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
         let progress = ScriptProgress::default();
         let progress_ref = &progress;
         let config = &self.script_config.config;
+        let durable_hashes = (0..self.sequence.sequences().len())
+            .map(|sequence| self.sequence.submission_hashes(sequence))
+            .collect::<Vec<_>>();
         let futs = self
             .sequence
             .sequences_mut()
             .iter_mut()
+            .zip(durable_hashes)
             .enumerate()
-            .map(|(sequence_idx, sequence)| async move {
+            .map(|(sequence_idx, (sequence, durable_hashes))| async move {
                 let rpc_url = sequence.rpc_url();
                 let provider =
                     Arc::new(ProviderBuilder::from_config_with_url(config, rpc_url)?.build()?);
@@ -335,6 +474,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                         &provider,
                         self.script_config.config.transaction_timeout,
                         self.args.confirmations,
+                        (&durable_hashes, &durable_hashes),
                     )
                     .await
             })
@@ -352,9 +492,18 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
     }
 
     /// Broadcasts transactions from all sequences.
-    pub async fn broadcast(mut self) -> Result<BroadcastedState<FEN>> {
-        let remaining_transactions =
-            remaining_unsigned_transactions(self.sequence.sequences()).collect::<Vec<_>>();
+    pub async fn broadcast(mut self) -> Result<BroadcastedState<FEN>>
+    where
+        <FEN::Network as Network>::TxEnvelope: alloy_consensus::transaction::SignerRecoverable,
+    {
+        let remaining_transactions = remaining_unsigned_transactions_for_recovery(&self.sequence);
+        let ordering_addresses = remaining_sender_addresses(&self.sequence);
+        let has_unprepared_transactions =
+            self.sequence.sequences().iter().enumerate().any(|(sequence_index, _)| {
+                remaining_operation_indices(&self.sequence, sequence_index)
+                    .into_iter()
+                    .any(|index| self.sequence.signed_payload(sequence_index, index).is_none())
+            });
         let required_addresses =
             remaining_transactions.iter().map(|tx| tx.from).collect::<AddressHashSet>();
 
@@ -364,7 +513,13 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
             );
         }
 
-        let send_kind = if self.args.unlocked {
+        let send_kind = if required_addresses.is_empty() {
+            SendTransactionsKind::Raw {
+                eth_wallets: AddressHashMap::default(),
+                browser: None,
+                access_keys: HashMap::default(),
+            }
+        } else if self.args.unlocked {
             SendTransactionsKind::Unlocked(required_addresses.clone())
         } else {
             let expected_session_sender = script_session_expected_sender_if_configured(
@@ -437,7 +592,11 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
             SendTransactionsKind::Raw { eth_wallets, browser: self.browser_wallet, access_keys }
         };
 
-        let tempo_sponsor = self.script_config.tempo.sponsor_config().await?.map(Arc::new);
+        let tempo_sponsor = if has_unprepared_transactions {
+            self.script_config.tempo.sponsor_config().await?.map(Arc::new)
+        } else {
+            None
+        };
         if tempo_sponsor.is_some()
             && self.script_config.tempo.sponsor_sig.is_some()
             && remaining_transactions.len() > 1
@@ -450,6 +609,18 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
         let progress = ScriptProgress::default();
 
         for i in 0..self.sequence.sequences().len() {
+            let remaining_indices = remaining_operation_indices(&self.sequence, i);
+            let signed_payloads = (0..self.sequence.sequences()[i].transactions.len())
+                .map(|index| {
+                    self.sequence
+                        .signed_payload(i, index)
+                        .map(|signed| (signed.payload.clone(), signed.hash))
+                })
+                .collect::<Vec<_>>();
+            let durable_hashes = signed_payloads
+                .iter()
+                .filter_map(|signed| signed.as_ref().map(|(_, hash)| *hash))
+                .collect::<Vec<_>>();
             let mut sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
             let provider = Arc::new(
@@ -459,21 +630,24 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 )?
                 .build()?,
             );
-            let already_broadcasted = sequence.receipts.len();
 
             let seq_progress = progress.get_sequence_progress(i, sequence);
 
-            if already_broadcasted < sequence.transactions.len() {
+            if !remaining_indices.is_empty() {
                 let is_legacy = Chain::from(sequence.chain).is_legacy() || self.args.legacy;
                 // Make a one-time gas price estimation
+                let all_signed =
+                    remaining_indices.iter().all(|index| signed_payloads[*index].is_some());
                 let (gas_price, eip1559_fees) = match (
+                    all_signed,
                     is_legacy,
                     self.args.with_gas_price,
                     self.args.priority_gas_price,
                 ) {
-                    (true, Some(gas_price), _) => (Some(gas_price.to()), None),
-                    (true, None, _) => (Some(provider.get_gas_price().await?), None),
-                    (false, Some(max_fee_per_gas), Some(max_priority_fee_per_gas)) => {
+                    (true, _, _, _) => (None, None),
+                    (false, true, Some(gas_price), _) => (Some(gas_price.to()), None),
+                    (false, true, None, _) => (Some(provider.get_gas_price().await?), None),
+                    (false, false, Some(max_fee_per_gas), Some(max_priority_fee_per_gas)) => {
                         let max_fee: u128 = max_fee_per_gas.to();
                         let max_priority: u128 = max_priority_fee_per_gas.to();
                         if max_priority > max_fee {
@@ -489,7 +663,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                             }),
                         )
                     }
-                    (false, _, _) => {
+                    (false, false, _, _) => {
                         let fees = estimate_eip1559_fees(
                             &provider,
                             self.script_config.config.eip1559_fee_estimate,
@@ -521,14 +695,16 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 // Iterate through transactions, matching the `from` field with the associated
                 // wallet. Then send the transaction. Panics if we find a unknown `from`
                 let sequence_chain = sequence.chain;
-                let mut transactions = Vec::with_capacity(
-                    sequence.transactions.len().saturating_sub(already_broadcasted),
-                );
-                for tx_with_metadata in sequence.transactions.iter().skip(already_broadcasted) {
+                let mut transactions = Vec::with_capacity(remaining_indices.len());
+                for index in remaining_indices {
+                    let tx_with_metadata = &sequence.transactions[index];
                     let is_fixed_gas_limit = tx_with_metadata.is_fixed_gas_limit;
 
-                    let kind = match tx_with_metadata.tx().clone() {
-                        TransactionMaybeSigned::Signed { tx, .. } => {
+                    let kind = match (&signed_payloads[index], tx_with_metadata.tx().clone()) {
+                        (Some((payload, hash)), _) => {
+                            SendTransactionKind::PreparedRaw(payload.clone(), *hash)
+                        }
+                        (None, TransactionMaybeSigned::Signed { tx, .. }) => {
                             if tempo_sponsor.is_some() {
                                 eyre::bail!(
                                     "cannot attach Tempo sponsor signature to an already signed script transaction"
@@ -536,7 +712,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                             }
                             SendTransactionKind::Signed(tx)
                         }
-                        TransactionMaybeSigned::Unsigned(mut tx) => {
+                        (None, TransactionMaybeSigned::Unsigned(mut tx)) => {
                             let from = tx.from().expect("No sender for onchain transaction!");
 
                             tx.set_chain_id(sequence_chain);
@@ -562,8 +738,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                             send_kind.for_sender(sequence_chain, &from, tx)?
                         }
                     };
-
-                    transactions.push((kind, is_fixed_gas_limit));
+                    transactions.push((kind, is_fixed_gas_limit, index));
                 }
 
                 let estimate_via_rpc = has_different_gas_calc(sequence.chain)
@@ -575,10 +750,13 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 // their order otherwise.
                 // Or if the chain does not support batched transactions (eg. Arbitrum).
                 // Or if we need to invoke eth_estimateGas before sending transactions.
-                let sequential_broadcast = estimate_via_rpc
-                    || self.args.slow
-                    || required_addresses.len() != 1
-                    || !has_batch_support(sequence.chain);
+                let sequential_broadcast = should_broadcast_sequentially(
+                    estimate_via_rpc,
+                    self.args.slow,
+                    required_addresses.len(),
+                    ordering_addresses.len(),
+                    has_batch_support(sequence.chain),
+                );
 
                 // We send transactions and wait for receipts in batches of 100, since some networks
                 // cannot handle more than that.
@@ -593,10 +771,36 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                     ));
 
                     if !batch.is_empty() {
-                        let pending_transactions = batch.iter().enumerate().map(
-                            |(position, (kind, is_fixed_gas_limit))| {
-                                let index =
-                                    already_broadcasted + batch_number * batch_size + position;
+                        let mut prepared = Vec::with_capacity(batch.len());
+                        for (kind, is_fixed_gas_limit, index) in batch {
+                            let mut kind = if kind.is_local() {
+                                kind.clone()
+                                    .prepare_for_durable_send(
+                                        &provider,
+                                        sequential_broadcast,
+                                        *is_fixed_gas_limit,
+                                        estimate_via_rpc,
+                                        self.args.gas_estimate_multiplier,
+                                        tempo_sponsor.as_deref(),
+                                        Some(sequence_chain.into()),
+                                    )
+                                    .await?
+                            } else {
+                                kind.clone()
+                            };
+                            if let SendTransactionKind::PreparedRaw(payload, hash) = &mut kind {
+                                *hash = self.sequence.persist_signed_payload(
+                                    i,
+                                    *index,
+                                    payload.clone(),
+                                )?;
+                            }
+                            prepared.push((kind, *is_fixed_gas_limit, *index));
+                        }
+                        sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
+
+                        let pending_transactions =
+                            prepared.iter().map(|(kind, is_fixed_gas_limit, index)| {
                                 let provider = provider.clone();
                                 let tempo_sponsor = tempo_sponsor.clone();
                                 async move {
@@ -612,16 +816,15 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                             Some(sequence_chain.into()),
                                         )
                                         .await;
-                                    (res, kind, *is_fixed_gas_limit, 0, None, index)
+                                    (res, kind, *is_fixed_gas_limit, 0, None, *index)
                                 }
                                 .boxed()
-                            },
-                        );
+                            });
 
                         let mut buffer = pending_transactions.collect::<FuturesUnordered<_>>();
 
                         'send: while let Some((
-                            res,
+                            mut res,
                             kind,
                             is_fixed_gas_limit,
                             attempt,
@@ -630,7 +833,17 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                         )) = buffer.next().await
                         {
                             if res.is_err()
+                                && let SendTransactionKind::PreparedRaw(_, hash) = kind
+                                && provider
+                                    .get_transaction_by_hash(*hash)
+                                    .await
+                                    .is_ok_and(|transaction| transaction.is_some())
+                            {
+                                res = Ok(*hash);
+                            }
+                            if res.is_err()
                                 && self.script_config.tempo.sponsor_sig.is_some()
+                                && !matches!(kind, SendTransactionKind::PreparedRaw(..))
                                 && attempt == 0
                             {
                                 debug!(
@@ -683,6 +896,11 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                     "Failed to send transaction".to_string()
                                 }
                             })?;
+                            if let SendTransactionKind::PreparedRaw(_, expected) = kind
+                                && *expected != tx_hash
+                            {
+                                bail!("RPC returned hash {tx_hash} for signed payload {expected}");
+                            }
                             sequence.add_pending(index, tx_hash);
 
                             // Checkpoint save
@@ -703,6 +921,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                 &provider,
                                 self.script_config.config.transaction_timeout,
                                 self.args.confirmations,
+                                (&durable_hashes, &durable_hashes),
                             )
                             .await?
                     }
@@ -1391,10 +1610,13 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
+    use alloy_consensus::{
+        Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom, TxEnvelope,
+        transaction::SignerRecoverable,
+    };
     use alloy_eips::BlockId;
     use alloy_network::Ethereum;
-    use alloy_primitives::{Bloom, address};
+    use alloy_primitives::{Bloom, address, hex};
     use alloy_rpc_types::TransactionReceipt;
     use alloy_signer::Signer;
     use forge_script_sequence::TransactionWithMetadata;
@@ -1403,6 +1625,12 @@ mod tests {
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
     const ACCESS_KEY_PRIVATE_KEY: &str =
         "0x59c6995e998f97a5a004497e5da3b5d2b2b66a87f064d39c44da0b6d6e4f8ff0";
+    const SIGNED_TX: &[u8] = &hex!(
+        "02f86b0180843b9aca008502540be4008252089400000000000000000000000000000000000000016480c001a070d55e79ed3ac9fc8f51e78eb91fd054720d943d66633f2eb1bc960f0126b0eca052eda05a792680de3181e49bab4093541f75b49d1ecbe443077b3660c836016a"
+    );
+    const OTHER_SIGNED_TX: &[u8] = &hex!(
+        "02f86b0180843b9aca008502540be4008252089400000000000000000000000000000000000000018080c001a0cce9a61187b5d18a89ecd27ec675e3b3f10d37f165627ef89a15a7fe76395ce8a07537f5bffb358ffbef22cda84b1c92f7211723f9e09ae037e81686805d3e5505"
+    );
 
     #[tokio::test(flavor = "multi_thread")]
     async fn next_nonce_uses_exact_fork_hash() {
@@ -1550,6 +1778,102 @@ mod tests {
     }
 
     #[test]
+    fn recovered_signed_payload_does_not_require_a_signer() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut sequence = ScriptSequence::<Ethereum> {
+            chain: 1,
+            transactions: [planned_tx(SIGNED_TX)].into(),
+            ..Default::default()
+        };
+        sequence.paths = Some((dir.path().join("broadcast.json"), dir.path().join("cache.json")));
+        let mut sequence = ScriptSequenceKind::new_single(sequence, false).unwrap();
+        let payload = Bytes::from_static(SIGNED_TX);
+        sequence.persist_signed_payload(0, 0, payload).unwrap();
+
+        assert!(remaining_unsigned_transactions_for_recovery(&sequence).is_empty());
+    }
+
+    #[test]
+    fn recovered_sender_still_requires_sequential_ordering() {
+        let dir = tempfile::tempdir().unwrap();
+        let unsigned = address!("0x2222222222222222222222222222222222222222");
+        let mut sequence = ScriptSequence::<Ethereum> {
+            chain: 1,
+            transactions: [planned_tx(SIGNED_TX), script_tx(unsigned)].into(),
+            ..Default::default()
+        };
+        sequence.paths = Some((dir.path().join("broadcast.json"), dir.path().join("cache.json")));
+        let mut sequence = ScriptSequenceKind::new_single(sequence, false).unwrap();
+        sequence.persist_signed_payload(0, 0, Bytes::from_static(SIGNED_TX)).unwrap();
+
+        let required = remaining_unsigned_transactions_for_recovery(&sequence);
+        assert_eq!(required.iter().map(|tx| tx.from).collect::<Vec<_>>(), [unsigned]);
+        assert_eq!(remaining_sender_addresses(&sequence).len(), 2);
+    }
+
+    #[test]
+    fn signed_only_sequences_remain_sequential() {
+        assert!(should_broadcast_sequentially(false, false, 0, 1, true));
+        assert!(!should_broadcast_sequentially(false, false, 1, 1, true));
+    }
+
+    #[test]
+    fn recovered_completion_is_matched_by_hash() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut deployment = ScriptSequence::<Ethereum> {
+            chain: 1,
+            transactions: [planned_tx(SIGNED_TX), planned_tx(OTHER_SIGNED_TX)].into(),
+            ..Default::default()
+        };
+        deployment.paths = Some((dir.path().join("broadcast.json"), dir.path().join("cache.json")));
+        let mut sequence = ScriptSequenceKind::new_single(deployment, false).unwrap();
+        sequence.persist_signed_payload(0, 0, Bytes::from_static(SIGNED_TX)).unwrap();
+        let second_hash =
+            sequence.persist_signed_payload(0, 1, Bytes::from_static(OTHER_SIGNED_TX)).unwrap();
+        let mut second_receipt = receipt();
+        second_receipt.transaction_hash = second_hash;
+        sequence.sequences_mut()[0].receipts.push(second_receipt);
+
+        assert_eq!(remaining_operation_indices(&sequence, 0), [0]);
+    }
+
+    #[test]
+    fn externally_signed_completion_uses_the_persisted_hash() {
+        let dir = tempfile::tempdir().unwrap();
+        let sender = address!("0x1111111111111111111111111111111111111111");
+        let mut deployment = ScriptSequence::<Ethereum> {
+            chain: 1,
+            transactions: [script_tx(sender), script_tx(sender)].into(),
+            receipts: vec![receipt()],
+            ..Default::default()
+        };
+        deployment.transactions[1].hash = Some(deployment.receipts[0].transaction_hash());
+        deployment.paths = Some((dir.path().join("broadcast.json"), dir.path().join("cache.json")));
+        let sequence = ScriptSequenceKind::new_single(deployment, false).unwrap();
+
+        assert_eq!(remaining_operation_indices(&sequence, 0), [0]);
+    }
+
+    #[test]
+    fn duplicate_receipts_do_not_complete_an_unsigned_operation() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut deployment = ScriptSequence::<Ethereum> {
+            chain: 1,
+            transactions: [planned_tx(SIGNED_TX), planned_tx(OTHER_SIGNED_TX)].into(),
+            ..Default::default()
+        };
+        deployment.paths = Some((dir.path().join("broadcast.json"), dir.path().join("cache.json")));
+        let mut sequence = ScriptSequenceKind::new_single(deployment, false).unwrap();
+        let first_hash =
+            sequence.persist_signed_payload(0, 0, Bytes::from_static(SIGNED_TX)).unwrap();
+        let mut first_receipt = receipt();
+        first_receipt.transaction_hash = first_hash;
+        sequence.sequences_mut()[0].receipts = vec![first_receipt.clone(), first_receipt];
+
+        assert_eq!(remaining_operation_indices(&sequence, 0), [1]);
+    }
+
+    #[test]
     fn remaining_transactions_skip_receipt_prefix() {
         let completed = address!("0x1111111111111111111111111111111111111111");
         let second = address!("0x2222222222222222222222222222222222222222");
@@ -1641,6 +1965,14 @@ mod tests {
             from: Some(from),
             ..Default::default()
         }))
+    }
+
+    fn planned_tx(payload: &[u8]) -> TransactionWithMetadata<Ethereum> {
+        let envelope = TxEnvelope::decode_2718_exact(payload).unwrap();
+        let from = envelope.recover_signer().unwrap();
+        let mut request: TransactionRequest = envelope.into();
+        request.from = Some(from);
+        TransactionWithMetadata::from_tx_request(TransactionMaybeSigned::new(request))
     }
 
     fn receipt() -> TransactionReceipt {
