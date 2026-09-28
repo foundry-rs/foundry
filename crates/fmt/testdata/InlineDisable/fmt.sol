@@ -545,3 +545,13 @@ contract  DisabledSuffix3 {}
 contract IsolationBefore {}
 
 contract  IsolationDisabledLine {} // forgefmt: disable-line
+
+function disableStartAfterStatement(string[2][] memory rpcs) {
+    for (uint256 i = 0; i < rpcs.length; i++) {
+        (string memory name, string memory rpcUrl) = (rpcs[i][0], rpcs[i][1]);
+        // forgefmt: disable-start
+        if (isEqual(name, "anvil")) x = rpcUrl;
+        else if (isEqual(name, "hardhat")) y = rpcUrl;
+        // forgefmt: disable-end
+    }
+}
