@@ -3742,6 +3742,67 @@ Suite result: FAILED. 0 passed; 3 failed; 0 skipped; [ELAPSED]
 "#]]);
 });
 
+forgetest!(ethereum_stateless_fuzz, |prj, cmd| {
+    prj.add_source(
+        "EthereumFuzz.t.sol",
+        r#"
+pragma solidity ^0.8.20;
+
+interface VmFuzz {
+    function assume(bool) external;
+}
+
+contract EthereumFuzzTest {
+    VmFuzz constant vm = VmFuzz(address(uint160(uint256(keccak256("hevm cheat code")))));
+    uint256 counter;
+
+    function testFuzzPass(uint256 value) public pure { require((value ^ value) == 0); }
+    function testFuzzIsolation(uint256) public {
+        counter++;
+        require(counter == 1);
+    }
+    function testFuzzAssume(uint256 value) public {
+        vm.assume(value > 0);
+        require(value != 0);
+    }
+    function testFuzzFailure(bool value) public pure { require(!value, "boolean was true"); }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--mc",
+            "^EthereumFuzzTest$",
+            "--mt",
+            "testFuzz(Pass|Assume|Isolation)[(]",
+            "--fuzz-runs",
+            "16",
+            "--fuzz-seed",
+            "1",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+[PASS] testFuzzAssume(uint256) (runs: 16, [AVG_GAS])
+[PASS] testFuzzIsolation(uint256) (runs: 16, [AVG_GAS])
+[PASS] testFuzzPass(uint256) (runs: 16, [AVG_GAS])
+Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["test", "--mc", "^EthereumFuzzTest$", "--mt", "testFuzzFailure[(]", "--fuzz-runs", "16", "--fuzz-seed", "1"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: boolean was true; counterexample: calldata=[..] args=[true]] testFuzzFailure(bool) (runs: 0, [AVG_GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+});
+
 forgetest!(ethereum_skip_authenticity, |prj, cmd| {
     prj.add_source(
         "EthereumSkip.t.sol",

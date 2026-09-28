@@ -28,6 +28,8 @@ use foundry_evm::{
 };
 use std::{collections::BTreeMap, sync::Arc, time::Instant};
 
+mod fuzz;
+
 /// Linked local test suites executed with Ethereum evm2 state.
 pub(crate) struct EthereumMultiContractRunner<D: Database + Clone = EmptyDB> {
     pub prepared: PreparedTestArtifacts,
@@ -128,12 +130,31 @@ impl<D: Database + Clone + 'static> EthereumMultiContractRunner<D> {
                     function,
                     is_generated_symbolic_regression_contract(&contract.abi),
                 );
-                let TestFunctionKind::UnitTest { .. } = kind else {
+                if matches!(kind, TestFunctionKind::FuzzTest { .. }) {
+                    let function_config = inline_config_for(
+                        &self.config,
+                        &self.inline_config,
+                        &id.identifier(),
+                        Some(function),
+                    )?;
+                    tests.insert(
+                        function.signature(),
+                        fuzz::run(
+                            &runner,
+                            function,
+                            &function_config.fuzz,
+                            &self.prepared.revert_decoder,
+                            &self.env,
+                        )?,
+                    );
+                    continue;
+                }
+                if !matches!(kind, TestFunctionKind::UnitTest { .. }) {
                     eyre::bail!(
                         "Ethereum evm2 execution does not yet support {} tests",
                         kind.name()
                     );
-                };
+                }
                 let start = Instant::now();
                 let input: Bytes = function.selector().to_vec().into();
                 let execution = runner.run_test(input.clone(), U256::ZERO)?;
