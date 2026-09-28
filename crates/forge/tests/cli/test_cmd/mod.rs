@@ -3708,6 +3708,54 @@ contract EthereumNestedSkipTest {
 "#]]);
 });
 
+forgetest!(ethereum_setup_logs, |prj, cmd| {
+    prj.add_source(
+        "EthereumSetupLogs.t.sol",
+        r#"
+pragma solidity ^0.8.20;
+
+contract EthereumSetupLogsTest {
+    event log_string(string);
+    function setUp() public { emit log_string("setup"); }
+    function testEmits() public { emit log_string("test"); }
+}
+
+contract EthereumSetupFailureLogsTest {
+    event log_string(string);
+    function setUp() public { emit log_string("setup failure"); revert("oops"); }
+    function testNeverRuns() public pure {}
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args(["test", "--mc", "^EthereumSetupLogsTest$", "-vv"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+[PASS] testEmits() ([GAS])
+Logs:
+  setup
+  test
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["test", "--mc", "^EthereumSetupFailureLogsTest$", "-vv"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: oops] setUp() ([GAS])
+Logs:
+  setup failure
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+});
+
 forgetest_init!(skip_output, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_vm();

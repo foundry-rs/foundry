@@ -89,6 +89,7 @@ impl<D: Database + Clone + 'static> EthereumMultiContractRunner<D> {
                 Ok(runner) => runner,
                 Err(failure) => {
                     let mut result = TestResult::fail(failure.reason);
+                    result.logs = failure.logs;
                     if failure.skipped {
                         result.status = TestStatus::Skipped;
                     }
@@ -185,6 +186,7 @@ pub(crate) struct EthereumContractRunner<D: Database + Clone = EmptyDB> {
     executor: EthereumExecutor<D, EthereumInspectorStack>,
     address: Address,
     legacy_assertions: bool,
+    setup_logs: Vec<Log>,
 }
 
 #[derive(Debug)]
@@ -192,6 +194,7 @@ pub(crate) struct EthereumSetupFailure {
     name: &'static str,
     reason: String,
     skipped: bool,
+    logs: Vec<Log>,
 }
 
 pub(crate) struct EthereumTestConfig<'a> {
@@ -232,14 +235,23 @@ impl<D: Database + Clone + 'static> EthereumContractRunner<D> {
             libraries,
             library_deployment,
         } = config;
-        let deployment = (|| -> Result<_> {
+        let address = (|| -> Result<_> {
             state.set_balance(sender, U256::MAX)?;
             state.set_nonce(sender, 1)?;
             state.set_balance(CALLER, U256::MAX)?;
             state.set_balance(LIBRARY_DEPLOYER, U256::MAX)?;
             let address = sender.create(1);
             state.set_balance(address, initial_balance)?;
-            let mut executor = EthereumExecutor::new_foundry(env, state, cheats, access_mode);
+            Ok(address)
+        })()
+        .map_err(|error| EthereumSetupFailure {
+            name: "constructor()",
+            reason: error.to_string(),
+            skipped: false,
+            logs: Vec::new(),
+        })?;
+        let mut executor = EthereumExecutor::new_foundry(env, state, cheats, access_mode);
+        let deployment = (|| -> Result<()> {
             if let LibraryDeployment::Create2 { deployer, .. } = library_deployment
                 && deployer == DEFAULT_CREATE2_DEPLOYER
             {
@@ -304,15 +316,16 @@ impl<D: Database + Clone + 'static> EthereumContractRunner<D> {
             if matches!(library_deployment, LibraryDeployment::Nonce) {
                 executor.deploy_create2_deployer()?;
             }
-            executor.inspector_mut().take_logs();
-            executor.inspector_mut().cheatcodes_mut().take_skip_payloads();
-            Ok((executor, address))
+            Ok(())
         })();
-        let (mut executor, address) = deployment.map_err(|error| EthereumSetupFailure {
+        deployment.map_err(|error| EthereumSetupFailure {
             name: "constructor()",
             reason: error.to_string(),
             skipped: false,
+            logs: executor.inspector_mut().take_logs(),
         })?;
+        let mut setup_logs = executor.inspector_mut().take_logs();
+        executor.inspector_mut().cheatcodes_mut().take_skip_payloads();
         if let Some(setup) =
             contract.abi.functions().find(|f| f.name == "setUp" && f.inputs.is_empty())
         {
@@ -322,6 +335,7 @@ impl<D: Database + Clone + 'static> EthereumContractRunner<D> {
                     name: "setUp()",
                     reason: error.to_string(),
                     skipped: false,
+                    logs: setup_logs.clone(),
                 })?;
             let skip_reason = Self::take_skip_reason(&mut executor, &result);
             let assertion_failed = result.status
@@ -330,8 +344,10 @@ impl<D: Database + Clone + 'static> EthereumContractRunner<D> {
                         name: "setUp()",
                         reason: error.to_string(),
                         skipped: false,
+                        logs: setup_logs.clone(),
                     },
                 )?;
+            setup_logs.extend(executor.inspector_mut().take_logs());
             if !result.status || assertion_failed {
                 return Err(EthereumSetupFailure {
                     name: "setUp()",
@@ -345,11 +361,11 @@ impl<D: Database + Clone + 'static> EthereumContractRunner<D> {
                             .unwrap_or_else(|| format!("{:?}", result.stop))
                     },
                     skipped: skip_reason.is_some(),
+                    logs: setup_logs,
                 });
             }
-            executor.inspector_mut().take_logs();
         }
-        Ok(Self { executor, address, legacy_assertions })
+        Ok(Self { executor, address, legacy_assertions, setup_logs })
     }
 
     /// Returns the deployed test contract address.
@@ -361,7 +377,8 @@ impl<D: Database + Clone + 'static> EthereumContractRunner<D> {
     pub(crate) fn run_test(&self, calldata: Bytes, value: U256) -> Result<EthereumTestExecution> {
         let mut executor = self.executor.clone();
         let result = executor.transact_raw(CALLER, self.address, calldata, value)?;
-        let logs = executor.inspector_mut().take_logs();
+        let mut logs = self.setup_logs.clone();
+        logs.extend(executor.inspector_mut().take_logs());
         let skip_reason = Self::take_skip_reason(&mut executor, &result);
         let assertion_failed = result.status
             && Self::assertion_failed(&mut executor, self.address, self.legacy_assertions)?;

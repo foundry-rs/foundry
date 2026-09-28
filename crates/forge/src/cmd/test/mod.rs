@@ -2195,6 +2195,7 @@ impl TestArgs {
         let libraries = prepared.libraries.clone();
         let known_contracts = prepared.known_contracts.clone();
         let env = EthereumEnv::local_from_config(&config, &evm_opts)?;
+        let verbosity = evm_opts.verbosity;
         let runner = EthereumMultiContractRunner::new(
             prepared,
             config.clone(),
@@ -2203,14 +2204,25 @@ impl TestArgs {
             env,
             LocalState::default(),
         );
-        let results = runner.run(filter)?;
+        let mut results = runner.run(filter)?;
         if shell::is_json() {
+            prepare_results_for_json(&mut results, verbosity, None);
             sh_println!("{}", serde_json::to_string(&results)?)?;
         } else {
             for (name, suite) in &results {
                 sh_println!("\nRan {} tests for {name}", suite.len())?;
                 for (test, result) in &suite.test_results {
                     sh_println!("{}", result.short_result_with_suite(test, name))?;
+                    if verbosity >= 2 {
+                        let logs = decode_console_logs(&result.logs);
+                        if !logs.is_empty() {
+                            sh_println!("Logs:")?;
+                            for log in logs {
+                                sh_println!("  {log}")?;
+                            }
+                            sh_println!()?;
+                        }
+                    }
                 }
                 sh_println!("{}", suite.summary())?;
             }
