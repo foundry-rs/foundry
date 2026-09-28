@@ -37,7 +37,7 @@ impl UpdateArgs {
     pub fn run(self) -> Result<()> {
         let config = self.load_config()?;
         // dep_overrides consists of absolute paths of dependencies and their tags
-        let (root, _paths, dep_overrides) = dependencies_paths(&self.dependencies, &config)?;
+        let (root, paths, dep_overrides) = dependencies_paths(&self.dependencies, &config)?;
         // Mapping of relative path of lib to its tag type
         // e.g "lib/forge-std" -> DepIdentifier::Tag { name: "v0.1.0", rev: "1234567" }
         let git = Git::new(&root);
@@ -45,67 +45,63 @@ impl UpdateArgs {
         let mut foundry_lock = Lockfile::new(&config.root).with_git(&git);
         let out_of_sync_deps = foundry_lock.sync(config.install_lib_dir())?;
 
-        // update the submodules' tags if any overrides are present
+        // Update selected branches without an explicit ref override.
+        for (path, dep_id) in foundry_lock.iter_mut() {
+            if dep_id.is_branch()
+                && (paths.is_empty() || paths.contains(path))
+                && !dep_overrides.contains_key(&root.join(path))
+            {
+                dep_id.mark_override();
+            }
+        }
+
+        // Update the submodules' tags if any overrides are present.
         let mut prev_dep_ids: DepMap = HashMap::default();
-        if dep_overrides.is_empty() {
-            // running `forge update`, update all deps
-            foundry_lock.iter_mut().for_each(|(_path, dep_id)| {
-                // Set r#override flag to true if the dep is a branch
+        for (dep_path, override_tag) in &dep_overrides {
+            let rel_path = dep_path
+                .strip_prefix(&root)
+                .wrap_err("Dependency path is not relative to the repository root")?;
+
+            if let Ok(mut dep_id) = DepIdentifier::resolve_type(&git, dep_path, override_tag) {
+                // Store the previous state before overriding
+                let prev = foundry_lock.get(rel_path).cloned();
+
+                // If it's a branch, mark it as overridden so it gets updated below
                 if let DepIdentifier::Branch { .. } = dep_id {
                     dep_id.mark_override();
                 }
-            });
-        } else {
-            for (dep_path, override_tag) in &dep_overrides {
-                let rel_path = dep_path
-                    .strip_prefix(&root)
-                    .wrap_err("Dependency path is not relative to the repository root")?;
 
-                if let Ok(mut dep_id) = DepIdentifier::resolve_type(&git, dep_path, override_tag) {
-                    // Store the previous state before overriding
-                    let prev = foundry_lock.get(rel_path).cloned();
+                // Update the lockfile
+                foundry_lock.override_dep(rel_path, dep_id)?;
 
-                    // If it's a branch, mark it as overridden so it gets updated below
-                    if let DepIdentifier::Branch { .. } = dep_id {
-                        dep_id.mark_override();
-                    }
-
-                    // Update the lockfile
-                    foundry_lock.override_dep(rel_path, dep_id)?;
-
-                    // Only track as updated if there was a previous dependency
-                    if let Some(prev) = prev {
-                        prev_dep_ids.insert(rel_path.to_owned(), prev);
-                    }
-                } else {
-                    sh_warn!(
-                        "Could not r#override submodule at {} with tag {}, try using forge install",
-                        rel_path.display(),
-                        override_tag
-                    )?;
+                // Only track as updated if there was a previous dependency
+                if let Some(prev) = prev {
+                    prev_dep_ids.insert(rel_path.to_owned(), prev);
                 }
+            } else {
+                sh_warn!(
+                    "Could not r#override submodule at {} with tag {}, try using forge install",
+                    rel_path.display(),
+                    override_tag
+                )?;
             }
         }
 
         // fetch the latest changes for each submodule (recursively if flag is set)
         let git = Git::new(&root);
-        let update_paths = self.update_dep_paths(&foundry_lock);
+        let mut update_paths = self.update_dep_paths(&foundry_lock);
+        let initialize_nested = !update_paths.is_empty();
+        // Include every selected dependency, including pins that need initialization or recursive
+        // updates. With no selection, preserve the update-all behavior.
+        if !paths.is_empty() {
+            update_paths.clone_from(&paths);
+        }
         trace!(?update_paths, "updating deps at");
 
-        if self.recursive {
-            // update submodules recursively
-            git.submodule_update(self.force, true, false, true, update_paths)?;
-        } else {
-            let is_empty = update_paths.is_empty();
+        git.submodule_update(self.force, true, false, self.recursive, update_paths)?;
 
-            // update submodules
-            git.submodule_update(self.force, true, false, false, update_paths)?;
-
-            if !is_empty {
-                // initialize submodules of each submodule recursively (otherwise direct submodule
-                // dependencies will revert to last commit)
-                git.submodule_foreach(false, "git submodule update --init --progress --recursive")?;
-            }
+        if !self.recursive && initialize_nested && paths.is_empty() {
+            git.submodule_foreach(false, "git submodule update --init --progress --recursive")?;
         }
 
         // Update branches to their latest commit from origin
@@ -152,7 +148,7 @@ impl UpdateArgs {
         // Skip branches that were already updated above to avoid reverting to local branch
         for (path, dep_id) in foundry_lock.iter() {
             // Ignore other dependencies if single update.
-            if !dep_overrides.is_empty() && !dep_overrides.contains_key(&root.join(path)) {
+            if !paths.is_empty() && !paths.contains(path) {
                 continue;
             }
 
@@ -161,6 +157,19 @@ impl UpdateArgs {
                 continue;
             }
             git.checkout_at(dep_id.checkout_id(), &root.join(path))?;
+        }
+
+        if !self.recursive && initialize_nested {
+            // Initialize nested submodules after restoring their selected parents' final revisions.
+            for path in &paths {
+                git.root(&root.join(path)).submodule_update(
+                    false,
+                    false,
+                    false,
+                    true,
+                    std::iter::empty::<PathBuf>(),
+                )?;
+            }
         }
 
         if out_of_sync_deps.is_some_and(|o| !o.is_empty())

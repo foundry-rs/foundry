@@ -692,6 +692,76 @@ forgetest!(can_update_and_retain_tag_revs, |prj, cmd| {
     assert_eq!(solady_init, solady_update);
 });
 
+forgetest!(can_update_only_selected_dependencies, |prj, cmd| {
+    cmd.git_init();
+
+    let source = tempfile::tempdir().unwrap();
+    let source_git = Git::new(source.path());
+    source_git.init().unwrap();
+    fs::write(source.path().join("source.txt"), "first revision\n").unwrap();
+    source_git.add(["source.txt"]).unwrap();
+    source_git.commit("first revision").unwrap();
+    let (first, branch) = source_git.current_rev_branch(source.path()).unwrap();
+    fs::write(source.path().join("source.txt"), "second revision\n").unwrap();
+    source_git.add(["source.txt"]).unwrap();
+    source_git.commit("second revision").unwrap();
+    let second = source_git.head().unwrap();
+
+    let mut lock = Lockfile::new(prj.root());
+    for name in ["dep-a", "dep-b", "dep-c", "dep-pin"] {
+        let path = PathBuf::from(format!("lib/{name}"));
+        let output = Command::new("git")
+            .current_dir(prj.root())
+            .args(["-c", "protocol.file.allow=always", "submodule", "add", "--"])
+            .arg(source.path())
+            .arg(&path)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        Git::new(&prj.root().join(&path)).checkout(false, &first).unwrap();
+        let dep = if name == "dep-pin" {
+            DepIdentifier::Rev { rev: first.clone(), r#override: false }
+        } else {
+            Git::new(prj.root()).set_submodule_branch(&path, &branch).unwrap();
+            DepIdentifier::Branch { name: branch.clone(), rev: first.clone(), r#override: false }
+        };
+        lock.insert(path, dep);
+    }
+    lock.write().unwrap();
+    cmd.git_add();
+    cmd.git_commit("pin dependency fixtures");
+
+    let assert_revisions = |expected: [&str; 4]| {
+        for (name, rev) in ["dep-a", "dep-b", "dep-c", "dep-pin"].into_iter().zip(expected) {
+            let path = PathBuf::from(format!("lib/{name}"));
+            assert_eq!(Git::new(&prj.root().join(&path)).head().unwrap(), rev, "{name}");
+            assert_eq!(lockfile_get(prj.root(), &path).unwrap().rev(), rev, "{name}");
+        }
+    };
+
+    // A pinned selection must not become Git's empty-path update of every dependency.
+    cmd.forge_fuse();
+    cmd.env("GIT_ALLOW_PROTOCOL", "file");
+    cmd.args(["update", "dep-pin"]).assert_success();
+    assert_revisions([&first, &first, &first, &first]);
+
+    cmd.forge_fuse();
+    cmd.env("GIT_ALLOW_PROTOCOL", "file");
+    cmd.args(["update", "dep-a"]).assert_success();
+    assert_revisions([&second, &first, &first, &first]);
+
+    // Unqualified branches must still update when another selection has an explicit ref.
+    cmd.forge_fuse();
+    cmd.env("GIT_ALLOW_PROTOCOL", "file");
+    cmd.args(["update", "dep-b", &format!("fixture/dep-pin@{second}")]).assert_success();
+    assert_revisions([&second, &second, &first, &second]);
+
+    cmd.forge_fuse();
+    cmd.env("GIT_ALLOW_PROTOCOL", "file");
+    cmd.arg("update").assert_success();
+    assert_revisions([&second, &second, &second, &second]);
+});
+
 forgetest!(can_override_tag_in_update, |prj, cmd| {
     cmd.git_init();
 
