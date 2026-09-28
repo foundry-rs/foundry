@@ -412,7 +412,8 @@ contract RiddleTest is Test {
 In this style:
 
 - `require(...)` prunes paths when the condition is false.
-- `vm.assume(...)` also prunes paths.
+- `vm.assume(...)` also prunes paths. If assumptions reject every path, Forge
+  reports an incomplete result instead of a proof.
 - `assert`, forge-std assertions, and DSTest failure signals are treated as
   properties to disprove.
 - User reverts terminate the current path. If every path reverts, Forge reports
