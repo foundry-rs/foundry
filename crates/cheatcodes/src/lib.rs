@@ -40,6 +40,8 @@ mod config;
 
 mod crypto;
 
+mod dispatch;
+
 mod version;
 
 mod env;

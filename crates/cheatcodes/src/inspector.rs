@@ -4168,44 +4168,20 @@ fn append_storage_access(
     }
 }
 
-/// Returns the [`spec::Cheatcode`] definition for a given [`spec::CheatcodeDef`] implementor.
-const fn cheatcode_of<T: spec::CheatcodeDef>(_: &T) -> &'static spec::Cheatcode<'static> {
-    T::CHEATCODE
-}
-
-fn cheatcode_name(cheat: &spec::Cheatcode<'static>) -> &'static str {
-    cheat.func.signature.split('(').next().unwrap()
-}
-
-const fn cheatcode_id(cheat: &spec::Cheatcode<'static>) -> &'static str {
-    cheat.func.id
-}
-
-const fn cheatcode_signature(cheat: &spec::Cheatcode<'static>) -> &'static str {
-    cheat.func.signature
-}
-
 /// Dispatches the cheatcode call to the appropriate function.
 fn apply_dispatch<FEN: FoundryEvmNetwork>(
     calls: &Vm::VmCalls,
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
     executor: &mut dyn CheatcodesExecutor<FEN>,
 ) -> Result {
-    // Extract metadata for logging/deprecation via CheatcodeDef.
-    macro_rules! get_cheatcode {
-        ($($variant:ident),*) => {
-            match calls {
-                $(Vm::VmCalls::$variant(cheat) => cheatcode_of(cheat),)*
-            }
-        };
-    }
-    let cheat = vm_calls!(get_cheatcode);
+    let cheat = crate::dispatch::metadata(calls);
 
-    let _guard = debug_span!(target: "cheatcodes", "apply", id = %cheatcode_id(cheat)).entered();
-    trace!(target: "cheatcodes", cheat = %cheatcode_signature(cheat), "applying");
+    let _guard =
+        debug_span!(target: "cheatcodes", "apply", id = %crate::dispatch::id(cheat)).entered();
+    trace!(target: "cheatcodes", cheat = %crate::dispatch::signature(cheat), "applying");
 
     if let spec::Status::Deprecated(replacement) = cheat.status {
-        ccx.state.deprecated.insert(cheatcode_signature(cheat), replacement);
+        ccx.state.deprecated.insert(crate::dispatch::signature(cheat), replacement);
     }
 
     // Monomorphized dispatch: calls apply_full directly, no trait objects.
@@ -4226,7 +4202,7 @@ fn apply_dispatch<FEN: FoundryEvmNetwork>(
     if let Err(e) = &mut result
         && e.is_str()
     {
-        let name = cheatcode_name(cheat);
+        let name = crate::dispatch::name(cheat);
         // Skip showing the cheatcode name for:
         // - assertions: too verbose, and can already be inferred from the error message
         // - `rpcUrl`: forge-std relies on it in `getChainWithUpdatedRpcUrl`
