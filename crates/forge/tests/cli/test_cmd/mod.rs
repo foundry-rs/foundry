@@ -4204,6 +4204,7 @@ interface VmForkState {{
     function getBlockNumber() external view returns (uint256);
     function load(address account, bytes32 slot) external view returns (bytes32);
     function store(address account, bytes32 slot, bytes32 value) external;
+    function etch(address target, bytes calldata code) external;
 }}
 
 contract ForkChild {{
@@ -4225,12 +4226,16 @@ contract EthereumForkStateTest {{
         require(vm.load(target, slot) == bytes32(uint256(0xaa)));
         vm.store(target, slot, bytes32(uint256(0xbb)));
         require(vm.load(target, slot) == bytes32(uint256(0xbb)));
+        vm.etch(target, hex"602a60005260206000f3");
+        (bool ok, bytes memory output) = target.staticcall("");
+        require(ok && abi.decode(output, (uint256)) == 42);
         new ForkChild();
     }}
 
     function testBForkStateIsIsolated() public view {{
         require(target.balance == 1337);
         require(vm.load(target, slot) == bytes32(uint256(0xaa)));
+        require(target.code.length == 0);
     }}
 }}
 "#

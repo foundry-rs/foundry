@@ -284,6 +284,7 @@ mod tests {
     use foundry_compilers::artifacts::EvmVersion;
     use foundry_evm_core::{
         constants::CHEATCODE_ADDRESS,
+        eip2935::{HISTORY_STORAGE_ADDRESS, HISTORY_STORAGE_CODE},
         ethereum::{ForkState, fork_db},
         opts::EvmOpts,
     };
@@ -977,6 +978,43 @@ mod tests {
                 "cannot use precompile {} as an argument",
                 Address::with_last_byte(1)
             ))
+        );
+    }
+
+    #[test]
+    fn etch_clears_history_contract_storage() {
+        let caller = Address::with_last_byte(0xa);
+        let slot = U256::ONE;
+        let mut state = LocalState::default();
+        state.database_mut().insert_account_info(
+            &HISTORY_STORAGE_ADDRESS,
+            AccountInfo::default()
+                .with_code(Bytecode::new_legacy(HISTORY_STORAGE_CODE.to_vec().into())),
+        );
+        state.database_mut().insert_account_storage(
+            &HISTORY_STORAGE_ADDRESS,
+            &slot,
+            &U256::from(7),
+        );
+        let env = EthereumEnv::new(
+            SpecId::CANCUN,
+            BlockEnvExt { gas_limit: U256::from(30_000_000), ..Default::default() },
+        );
+        let mut executor =
+            EthereumExecutor::new_foundry(env, state, Arc::default(), CheatcodeAccessMode::Local);
+        let etch = cheatcode_tx(
+            caller,
+            Vm::etchCall {
+                target: HISTORY_STORAGE_ADDRESS,
+                newRuntimeBytecode: Bytes::from_static(&[0]),
+            }
+            .abi_encode()
+            .into(),
+        );
+        assert!(executor.transact(&etch).unwrap().status);
+        assert_eq!(
+            Database::get_storage(executor.state_mut(), &HISTORY_STORAGE_ADDRESS, &slot).unwrap(),
+            U256::ZERO
         );
     }
 

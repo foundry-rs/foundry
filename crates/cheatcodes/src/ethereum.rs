@@ -1,7 +1,7 @@
 //! Cheatcode inspection for Ethereum evm2 execution.
 
 use crate::{CheatsConfig, Error, Vm, dispatch, fs::get_artifact_code, prank::Prank};
-use alloy_primitives::{Address, B256, Bytes, U256, map::AddressHashSet};
+use alloy_primitives::{Address, B256, Bytes, U256, keccak256, map::AddressHashSet};
 use alloy_sol_types::{SolCall, SolInterface, SolValue};
 use evm2::{
     EvmFeatures, Inspector,
@@ -17,6 +17,7 @@ use foundry_evm_core::{
         CALLER, CHEATCODE_ADDRESS, CHEATCODE_CONTRACT_HASH, MAGIC_ASSUME, MAGIC_SKIP,
         TEST_CONTRACT_ADDRESS,
     },
+    eip2935::{HISTORY_STORAGE_ADDRESS, HISTORY_STORAGE_CODE},
     ethereum::{FoundryEvmTypes, LocalState},
 };
 use std::{collections::BTreeMap, sync::Arc};
@@ -185,6 +186,7 @@ impl EthereumCheatcodes {
                     }
                 }
             }
+            Vm::VmCalls::etch(call) => Self::etch(interp, call.target, call.newRuntimeBytecode),
             Vm::VmCalls::warp(call) => {
                 let host = interp.host();
                 let mut block = *host.block();
@@ -469,6 +471,46 @@ impl EthereumCheatcodes {
         }
     }
 
+    fn etch(
+        interp: &mut Interpreter<'_, '_, FoundryEvmTypes>,
+        target: Address,
+        code: Bytes,
+    ) -> (InstrStop, Bytes) {
+        if interp.host().precompiles().contains(&target) {
+            return (
+                InstrStop::Revert,
+                Error::encode(format!("cannot use precompile {target} as an argument")),
+            );
+        }
+        let code = match Bytecode::new_raw_checked(code) {
+            Ok(code) => code,
+            Err(error) => {
+                return (
+                    InstrStop::Revert,
+                    Error::encode(format!("failed to create bytecode: {error}")),
+                );
+            }
+        };
+        let updated = (|| {
+            let state = interp.host().state_mut();
+            let old_hash = state.account(&target, false)?.code_hash();
+            if target == HISTORY_STORAGE_ADDRESS
+                && old_hash == keccak256(&HISTORY_STORAGE_CODE)
+                && code.hash_slow() != old_hash
+            {
+                state.storage(&target).wipe_journaled();
+            }
+            state.account(&target, false).map(|mut account| account.set_code_slow(code))
+        })();
+        match updated {
+            Ok(()) => (InstrStop::Return, Bytes::new()),
+            Err(error) => {
+                interp.host().set_error_code(error);
+                (InstrStop::FatalExternalError, Bytes::new())
+            }
+        }
+    }
+
     fn skip(
         &mut self,
         message: &Message<FoundryEvmTypes>,
@@ -703,6 +745,7 @@ impl Inspector<FoundryEvmTypes> for EthereumCheatcodes {
             && matches!(
                 &decoded,
                 Vm::VmCalls::deal(_)
+                    | Vm::VmCalls::etch(_)
                     | Vm::VmCalls::warp(_)
                     | Vm::VmCalls::coinbase(_)
                     | Vm::VmCalls::difficulty(_)
