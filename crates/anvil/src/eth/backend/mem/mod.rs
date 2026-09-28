@@ -215,7 +215,7 @@ use tokio::{sync::RwLock as AsyncRwLock, task::JoinSet};
 #[cfg(any(feature = "base", feature = "optimism"))]
 use foundry_primitives::get_deposit_tx_parts;
 #[cfg(any(feature = "base", feature = "optimism"))]
-use op_alloy_consensus::DEPOSIT_TX_TYPE_ID;
+use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, TxDeposit};
 #[cfg(any(feature = "base", feature = "optimism"))]
 use op_revm::transaction::deposit::DepositTransactionParts;
 
@@ -225,7 +225,8 @@ use alloy_hardforks::ForkCondition;
 use base_common_chains::{ChainConfig, ChainUpgrades};
 #[cfg(feature = "base")]
 use base_common_consensus::{
-    BaseTransactionInfo, BaseTxEnvelope, EIP8130_REJECTION_MSG, Eip8130Constants, Predeploys,
+    BaseTimeDepositSource, BaseTransactionInfo, BaseTxEnvelope, DepositSourceDomain,
+    EIP8130_REJECTION_MSG, Eip8130Constants, Predeploys, SystemAddresses,
 };
 #[cfg(feature = "base")]
 use base_common_evm::{
@@ -1520,6 +1521,40 @@ impl<N: Network> Backend<N> {
         } else {
             self.base_upgrade()
         }
+    }
+
+    /// Builds the canonical BaseTime metadata deposit for a local Denim block.
+    #[cfg(feature = "base")]
+    fn base_time_update_transaction(
+        &self,
+        block_number: u64,
+    ) -> Option<Arc<PoolTransaction<FoundryTxEnvelope>>> {
+        if !self.is_base() || self.base_upgrade() < BaseUpgrade::Denim {
+            return None;
+        }
+
+        let timestamp_millis_part = (block_number % 5) as u16 * 200;
+        let mut input = Vec::with_capacity(36);
+        input.extend(BaseTime::SET_TIMESTAMP_MILLIS_PART_SELECTOR);
+        input.extend([0; 30]);
+        input.extend(timestamp_millis_part.to_be_bytes());
+        let source_hash =
+            DepositSourceDomain::BaseTime(BaseTimeDepositSource { block_number }).source_hash();
+        let transaction = FoundryTxEnvelope::Deposit(alloy_consensus::Sealed::new(TxDeposit {
+            source_hash,
+            from: SystemAddresses::DEPOSITOR_ACCOUNT,
+            to: TxKind::Call(Predeploys::BASE_TIME),
+            mint: 0,
+            value: U256::ZERO,
+            gas_limit: 1_000_000,
+            is_system_transaction: false,
+            input: input.into(),
+        }));
+        let pending = anvil_core::eth::transaction::PendingTransaction::with_impersonated(
+            transaction,
+            SystemAddresses::DEPOSITOR_ACCOUNT,
+        );
+        Some(Arc::new(PoolTransaction::new(pending)))
     }
 
     /// Returns the head timestamp snapshot used for EIP-8130 pool admission.
@@ -6062,6 +6097,21 @@ where
                 // to ensure the timestamp is as close as possible to the actual execution.
                 let pending_timestamp = self.time.prepare_next_timestamp();
                 evm_env.block_env.timestamp = U256::from(pending_timestamp.timestamp);
+                #[cfg(feature = "base")]
+                if self.is_base() && self.base_upgrade() >= BaseUpgrade::Denim {
+                    evm_env.block_env.timestamp = U256::from(
+                        self.genesis.timestamp.saturating_add(block_number.saturating_div(5)),
+                    );
+                }
+
+                #[cfg(feature = "base")]
+                let protocol_transactions = self
+                    .base_time_update_transaction(block_number)
+                    .into_iter()
+                    .chain(pool_transactions.iter().cloned())
+                    .collect::<Vec<_>>();
+                #[cfg(not(feature = "base"))]
+                let protocol_transactions = pool_transactions.clone();
 
                 // Forced historical transactions bypass pool admission and are replayed while
                 // mining. Keep this exception local to the disposable mining environment.
@@ -6090,7 +6140,7 @@ where
                     hardfork,
                     Some(B256::ZERO),
                     BlockExecutionKind::Complete,
-                    &pool_transactions,
+                    &protocol_transactions,
                     &gas_config,
                     &inspector_tx_config,
                     &|pool_tx, account| {

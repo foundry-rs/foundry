@@ -438,6 +438,30 @@ async fn base_standalone_denim_initializes_base_time() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn base_standalone_denim_mines_base_time_updates() {
+    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Denim.into()));
+    let (api, handle) = spawn(config).await;
+    let provider = handle.http_provider();
+
+    for expected_millis_part in [200, 400, 600, 800, 0] {
+        api.mine_one().await.unwrap();
+        let output = provider
+            .call(
+                TransactionRequest::default()
+                    .with_to(Predeploys::BASE_TIME)
+                    .with_input(IBaseTime::timestampMillisPartCall {}.abi_encode())
+                    .into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            IBaseTime::timestampMillisPartCall::abi_decode_returns(&output).unwrap(),
+            expected_millis_part
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn base_standalone_mines_deposit_transaction() {
     let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Beryl.into()));
     let (_api, handle) = spawn(config).await;
