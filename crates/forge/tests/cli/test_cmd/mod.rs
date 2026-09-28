@@ -993,6 +993,46 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 });
 
+forgetest!(ethereum_linked_library_deployment, |prj, cmd| {
+    prj.add_source(
+        "LinkedLibrary.t.sol",
+        r#"
+pragma solidity ^0.8.20;
+
+library LinkedLibrary {
+    function twice(uint256 value) external pure returns (uint256) {
+        return value * 2;
+    }
+}
+
+contract LinkedLibraryTest {
+    function testLinkedLibrary() public pure {
+        require(LinkedLibrary.twice(21) == 42);
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse().args(["test", "--mc", "^LinkedLibraryTest$"]).assert_success().stdout_eq(
+        str![[r#"
+...
+[PASS] testLinkedLibrary() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]],
+    );
+
+    prj.update_config(|config| config.create2_deployer = Address::ZERO);
+    cmd.forge_fuse().args(["test", "--mc", "^LinkedLibraryTest$"]).assert_success().stdout_eq(
+        str![[r#"
+...
+[PASS] testLinkedLibrary() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]],
+    );
+});
+
 forgetest_init!(links_library_artifacts_across_versions, |prj, cmd| {
     prj.wipe_contracts();
     prj.update_config(|config| config.solc = None);

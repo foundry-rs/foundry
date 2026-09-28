@@ -4,10 +4,10 @@ use crate::{
     TestFilter,
     result::{SuiteResult, TestKind, TestResult, TestStatus},
     runner::inline_config_for,
-    test_contract::{PreparedTestArtifacts, TestContract},
+    test_contract::{LibraryDeployment, PreparedTestArtifacts, TestContract},
     test_matcher::{TestFunctionMatcher, is_generated_symbolic_regression_contract},
 };
-use alloy_primitives::{Address, Bytes, Log, U256, keccak256};
+use alloy_primitives::{Address, Bytes, KECCAK256_EMPTY, Log, U256, keccak256};
 use evm2::{
     TxResult,
     ethereum::intrinsic_gas,
@@ -15,11 +15,11 @@ use evm2::{
 };
 use eyre::{Result, ensure};
 use foundry_cheatcodes::{CheatsConfig, ethereum::CheatcodeAccessMode};
-use foundry_common::{TestFunctionExt, TestFunctionKind};
+use foundry_common::{LIBRARY_DEPLOYER, TestFunctionExt, TestFunctionKind};
 use foundry_config::{Config, InlineConfig};
 use foundry_evm::{
     core::{
-        constants::{CALLER, CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT},
+        constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, GLOBAL_FAIL_SLOT},
         decode::RevertDecoder,
         ethereum::{EthereumEnv, LocalState},
     },
@@ -53,10 +53,6 @@ impl<D: Database + Clone + 'static> EthereumMultiContractRunner<D> {
 
     /// Runs matching unit tests, cloning post-setup state for each test.
     pub(crate) fn run(&self, filter: &dyn TestFilter) -> Result<BTreeMap<String, SuiteResult>> {
-        ensure!(
-            self.prepared.libs_to_deploy.is_empty(),
-            "Ethereum evm2 test runner does not yet deploy linked libraries"
-        );
         let matcher = TestFunctionMatcher::new(&self.config, &self.inline_config, None);
         let mut suites = BTreeMap::new();
         for (id, contract) in &self.prepared.contracts {
@@ -86,6 +82,8 @@ impl<D: Database + Clone + 'static> EthereumMultiContractRunner<D> {
                     initial_balance: self.opts.initial_balance,
                     legacy_assertions: contract_config.legacy_assertions,
                     revert_decoder: &self.prepared.revert_decoder,
+                    libraries: &self.prepared.libs_to_deploy,
+                    library_deployment: self.prepared.library_deployment,
                 },
             ) {
                 Ok(runner) => runner,
@@ -197,6 +195,8 @@ pub(crate) struct EthereumTestConfig<'a> {
     initial_balance: U256,
     legacy_assertions: bool,
     revert_decoder: &'a RevertDecoder,
+    libraries: &'a [Bytes],
+    library_deployment: LibraryDeployment,
 }
 
 /// One test transaction and the assertion status observed after it commits.
@@ -222,14 +222,67 @@ impl<D: Database + Clone + 'static> EthereumContractRunner<D> {
             initial_balance,
             legacy_assertions,
             revert_decoder,
+            libraries,
+            library_deployment,
         } = config;
         let deployment = (|| -> Result<_> {
             state.set_balance(sender, U256::MAX)?;
             state.set_nonce(sender, 1)?;
             state.set_balance(CALLER, U256::MAX)?;
+            state.set_balance(LIBRARY_DEPLOYER, U256::MAX)?;
             let address = sender.create(1);
             state.set_balance(address, initial_balance)?;
             let mut executor = EthereumExecutor::new_foundry(env, state, cheats, access_mode);
+            if let LibraryDeployment::Create2 { deployer, .. } = library_deployment
+                && deployer == DEFAULT_CREATE2_DEPLOYER
+            {
+                executor.deploy_create2_deployer()?;
+            }
+            match library_deployment {
+                LibraryDeployment::Nonce => {
+                    for (nonce, code) in libraries.iter().enumerate() {
+                        let expected = LIBRARY_DEPLOYER.create(nonce as u64);
+                        let deployed =
+                            executor.deploy(LIBRARY_DEPLOYER, code.clone(), U256::ZERO)?;
+                        ensure!(
+                            deployed.status && deployed.created_address == Some(expected),
+                            "library deployment failed at {expected}: {:?}",
+                            deployed.stop
+                        );
+                    }
+                }
+                LibraryDeployment::Create2 { deployer, salt } => {
+                    for code in libraries {
+                        let expected = deployer.create2_from_code(salt, code);
+                        let installed = Database::get_account(executor.state_mut(), &expected)?
+                            .is_some_and(|account| {
+                                !account.code_hash.is_zero() && account.code_hash != KECCAK256_EMPTY
+                            });
+                        if installed {
+                            continue;
+                        }
+                        let mut calldata = Vec::with_capacity(32 + code.len());
+                        calldata.extend_from_slice(salt.as_slice());
+                        calldata.extend_from_slice(code);
+                        let deployed = executor.transact_raw(
+                            LIBRARY_DEPLOYER,
+                            deployer,
+                            calldata.into(),
+                            U256::ZERO,
+                        )?;
+                        ensure!(
+                            deployed.status,
+                            "CREATE2 library deployment failed: {:?}",
+                            deployed.stop
+                        );
+                        let installed = Database::get_account(executor.state_mut(), &expected)?
+                            .is_some_and(|account| {
+                                !account.code_hash.is_zero() && account.code_hash != KECCAK256_EMPTY
+                            });
+                        ensure!(installed, "CREATE2 library has no code at {expected}");
+                    }
+                }
+            }
             let deployed = executor.deploy(sender, contract.bytecode.clone(), U256::ZERO)?;
             ensure!(
                 deployed.status && deployed.created_address == Some(address),
@@ -240,6 +293,10 @@ impl<D: Database + Clone + 'static> EthereumContractRunner<D> {
             );
             executor.state_mut().set_balance(sender, initial_balance)?;
             executor.state_mut().set_balance(CALLER, initial_balance)?;
+            executor.state_mut().set_balance(LIBRARY_DEPLOYER, initial_balance)?;
+            if matches!(library_deployment, LibraryDeployment::Nonce) {
+                executor.deploy_create2_deployer()?;
+            }
             executor.inspector_mut().take_logs();
             Ok((executor, address))
         })();
@@ -359,6 +416,8 @@ mod tests {
                 initial_balance: U256::from(100),
                 legacy_assertions: false,
                 revert_decoder: &RevertDecoder::new(),
+                libraries: &[],
+                library_deployment: LibraryDeployment::Nonce,
             },
         )
         .unwrap();

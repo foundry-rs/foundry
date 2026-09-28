@@ -1,7 +1,7 @@
 //! Ethereum EVM construction.
 
 use alloy_consensus::{TxLegacy, transaction::Recovered};
-use alloy_primitives::{Address, Bytes, TxKind, U256};
+use alloy_primitives::{Address, Bytes, KECCAK256_EMPTY, TxKind, U256};
 use evm2::{
     Evm, ExecutionConfig, Inspector, NoopInspector, Precompiles, SpecId, TxResult,
     ethereum::{TxEnvelope, ethereum_tx_registry},
@@ -11,7 +11,12 @@ use evm2::{
     },
 };
 use foundry_cheatcodes::{CheatsConfig, ethereum::CheatcodeAccessMode};
-use foundry_evm_core::ethereum::{EthereumEnv, FoundryEvmTypes, LocalState};
+use foundry_evm_core::{
+    constants::{
+        DEFAULT_CREATE2_DEPLOYER, DEFAULT_CREATE2_DEPLOYER_CODE, DEFAULT_CREATE2_DEPLOYER_DEPLOYER,
+    },
+    ethereum::{EthereumEnv, FoundryEvmTypes, LocalState},
+};
 use std::sync::Arc;
 
 mod inspector;
@@ -153,6 +158,31 @@ impl<D: Database + Clone + 'static, I: Inspector<FoundryEvmTypes> + Clone> Ether
     pub fn deploy(&mut self, caller: Address, code: Bytes, value: U256) -> HandlerResult<TxResult> {
         let tx = self.synthetic_tx(caller, TxKind::Create, code, value)?;
         self.transact_with_env(self.synthetic_env(), &tx, true)
+    }
+
+    /// Installs the canonical local CREATE2 factory if it has no code yet.
+    pub fn deploy_create2_deployer(&mut self) -> eyre::Result<()> {
+        let installed = Database::get_account(&mut self.state, &DEFAULT_CREATE2_DEPLOYER)?
+            .is_some_and(|account| {
+                !account.code_hash.is_zero() && account.code_hash != KECCAK256_EMPTY
+            });
+        if installed {
+            return Ok(());
+        }
+
+        let creator = DEFAULT_CREATE2_DEPLOYER_DEPLOYER;
+        let balance = Database::get_account(&mut self.state, &creator)?
+            .map_or(U256::ZERO, |account| account.balance);
+        self.state.set_balance(creator, U256::MAX)?;
+        let deployed = self.deploy(creator, DEFAULT_CREATE2_DEPLOYER_CODE.into(), U256::ZERO);
+        self.state.set_balance(creator, balance)?;
+        let deployed = deployed?;
+        eyre::ensure!(
+            deployed.status && deployed.created_address == Some(DEFAULT_CREATE2_DEPLOYER),
+            "CREATE2 factory deployment failed: {:?}",
+            deployed.stop
+        );
+        Ok(())
     }
 
     fn inspect_with_env(
