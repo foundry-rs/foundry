@@ -79,6 +79,7 @@ use foundry_evm::core::evm::OpEvmNetwork;
 mod broadcast;
 mod build;
 mod execute;
+mod gas_search;
 mod library_deployments;
 mod multi_sequence;
 mod progress;
