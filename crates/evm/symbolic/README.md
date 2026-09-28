@@ -490,6 +490,12 @@ set, generates symbolic arguments with the same ABI model used for stateless
 tests, preserves symbolic world state between calls, and replays a concrete
 sequence before reporting a counterexample.
 
+Within an invariant predicate or `afterInvariant`, including nested calls,
+`vm.assume` is supported only when the current path constraints imply its
+condition. If the assumption could reject a reachable state, symbolic execution
+reports incomplete instead of restricting the property to the accepted states.
+Assumptions in target handler calls continue to discard inputs normally.
+
 Some invariant harnesses deploy dependency contracts in `setUp`, then rely on
 those dependencies having satisfiable environment state during the campaign. For
 example, a lending invariant may call an ERC20 mock for balances and allowances,
