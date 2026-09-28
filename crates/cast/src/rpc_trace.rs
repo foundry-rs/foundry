@@ -10,12 +10,20 @@
 //! actionable hints.
 
 use alloy_primitives::{Address, Bytes, LogData, U256};
-use alloy_rpc_types::trace::geth::{CallFrame, CallLogFrame};
+use alloy_rpc_types::trace::geth::{CallConfig, CallFrame, CallLogFrame};
 use alloy_transport::TransportError;
 use foundry_evm::traces::{
     CallKind, CallLog, CallTrace, CallTraceArena, CallTraceNode, TraceMemberOrder,
 };
 use revm::interpreter::InstructionResult;
+
+/// Returns the `callTracer` config for remote traces: every nested call, with its logs.
+///
+/// `onlyTopCall` is sent explicitly although `false` is its default, because ZKsync nodes reject a
+/// config that omits it.
+pub const fn call_tracer_config() -> CallConfig {
+    CallConfig { only_top_call: Some(false), with_log: Some(true) }
+}
 
 /// Builds a [`CallTraceArena`] from a geth `callTracer` [`CallFrame`] tree, overriding the root
 /// frame's address with `root_address` when the tracer omitted it.
@@ -182,9 +190,10 @@ fn status_from_frame(frame: &CallFrame) -> InstructionResult {
     }
 }
 
-/// Maps a geth `callTracer` call type string to a [`CallKind`].
+/// Maps a `callTracer` call type string to a [`CallKind`], ignoring case: geth reports
+/// `DELEGATECALL`, ZKsync `delegateCall`.
 fn call_kind(typ: &str) -> CallKind {
-    match typ {
+    match typ.to_ascii_uppercase().as_str() {
         "STATICCALL" => CallKind::StaticCall,
         "DELEGATECALL" => CallKind::DelegateCall,
         "CALLCODE" => CallKind::CallCode,
@@ -431,6 +440,9 @@ mod tests {
             ("AUTHCALL", CallKind::AuthCall),
             ("CREATE", CallKind::Create),
             ("CREATE2", CallKind::Create2),
+            // ZKsync reports call types in camelCase.
+            ("call", CallKind::Call),
+            ("delegateCall", CallKind::DelegateCall),
             // `SELFDESTRUCT` and unknown types render as a plain call.
             ("SELFDESTRUCT", CallKind::Call),
             ("NOT_A_REAL_TYPE", CallKind::Call),
