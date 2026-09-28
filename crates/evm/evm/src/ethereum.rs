@@ -6,7 +6,12 @@ use evm2::{
     ethereum::{TxEnvelope, ethereum_tx_registry},
     evm::{Database, Db, DynDatabase, EmptyDB, registry::HandlerResult},
 };
+use foundry_cheatcodes::{CheatsConfig, ethereum::CheatcodeAccessMode};
 use foundry_evm_core::ethereum::{EthereumEnv, FoundryEvmTypes, LocalState};
+use std::sync::Arc;
+
+mod inspector;
+pub use inspector::EthereumInspectorStack;
 
 /// Constructs the Ethereum execution host used by Foundry.
 #[derive(Clone, Copy, Debug, Default)]
@@ -45,6 +50,20 @@ impl<D: Database + Clone + 'static> EthereumExecutor<D, NoopInspector> {
     }
 }
 
+impl<D: Database + Clone + 'static> EthereumExecutor<D, EthereumInspectorStack> {
+    /// Creates an executor with Foundry cheatcodes and observation hooks.
+    pub fn new_foundry(
+        env: EthereumEnv,
+        mut state: LocalState<D>,
+        config: Arc<CheatsConfig>,
+        access_mode: CheatcodeAccessMode,
+    ) -> Self {
+        let inspector = EthereumInspectorStack::new(config, access_mode);
+        inspector.install(&mut state);
+        Self { env, state, inspector }
+    }
+}
+
 impl<D: Database + Clone + 'static, I: Inspector<FoundryEvmTypes> + Clone> EthereumExecutor<D, I> {
     /// Creates an executor that retains inspector observations across accepted transactions.
     pub const fn with_inspector(env: EthereumEnv, state: LocalState<D>, inspector: I) -> Self {
@@ -54,6 +73,11 @@ impl<D: Database + Clone + 'static, I: Inspector<FoundryEvmTypes> + Clone> Ether
     /// Returns retained inspector observations.
     pub const fn inspector(&self) -> &I {
         &self.inspector
+    }
+
+    /// Returns mutable inspector state and observations.
+    pub const fn inspector_mut(&mut self) -> &mut I {
+        &mut self.inspector
     }
 
     /// Returns the environment used for the next transaction.
@@ -114,19 +138,19 @@ mod tests {
     use super::*;
     use alloy_consensus::TxLegacy;
     use alloy_primitives::{Address, Bytes, TxKind, U256};
+    use alloy_sol_types::SolCall;
     use evm2::{
         SpecId, bytecode::Bytecode, env::BlockEnvExt, evm::AccountInfo, interpreter::Interpreter,
     };
+    use foundry_cheatcodes::{Error, Vm};
     use foundry_compilers::artifacts::EvmVersion;
     use foundry_evm_core::{
+        constants::CHEATCODE_ADDRESS,
         ethereum::{ForkState, fork_db},
         opts::EvmOpts,
     };
     use std::{
-        sync::{
-            Arc,
-            atomic::{AtomicBool, Ordering},
-        },
+        sync::atomic::{AtomicBool, Ordering},
         time::Duration,
     };
     use tiny_http::{Response, Server};
@@ -285,6 +309,125 @@ mod tests {
         assert_eq!(U256::from_be_slice(&result.output), U256::from_be_slice(origin.as_slice()));
     }
 
+    #[test]
+    fn cheatcode_dispatch_enforces_policy_and_execution_boundaries() {
+        let caller = Address::with_last_byte(0xa);
+        let target = Address::with_last_byte(0xb);
+        let env = EthereumEnv::new(
+            SpecId::CANCUN,
+            BlockEnvExt { gas_limit: U256::from(30_000_000), ..Default::default() },
+        );
+        let deal = cheatcode_tx(
+            caller,
+            Vm::dealCall { account: target, newBalance: U256::from(7) }.abi_encode().into(),
+        );
+        let mut executor = EthereumExecutor::new_foundry(
+            env,
+            LocalState::default(),
+            Arc::default(),
+            CheatcodeAccessMode::Local,
+        );
+        assert!(executor.call(&deal).unwrap().status);
+        assert!(!executor.state().database().cache.accounts.contains_key(&target));
+        assert!(executor.transact(&deal).unwrap().status);
+        assert_eq!(
+            executor.state().database().account_info(&target).unwrap().balance,
+            U256::from(7)
+        );
+
+        let mut config = CheatsConfig::default();
+        config.blocked_cheatcodes.push(Vm::dealCall::SELECTOR);
+        let blocked = EthereumExecutor::new_foundry(
+            env,
+            LocalState::default(),
+            Arc::new(config),
+            CheatcodeAccessMode::Local,
+        );
+        let blocked_result = blocked.call(&deal).unwrap();
+        assert!(!blocked_result.status);
+        assert_eq!(
+            blocked_result.output,
+            Error::encode("vm.deal: disabled during restricted execution")
+        );
+
+        let mut forked = EthereumExecutor::new_foundry(
+            env,
+            LocalState::default(),
+            Arc::default(),
+            CheatcodeAccessMode::Forked,
+        );
+        let denied = forked.call(&deal).unwrap();
+        assert!(!denied.status);
+        assert_eq!(
+            denied.output,
+            Error::encode(format!("vm.deal: cheatcode access denied for {caller}"))
+        );
+        forked.inspector_mut().cheatcodes_mut().allow_caller(caller);
+        assert!(forked.transact(&deal).unwrap().status);
+
+        let unsupported = cheatcode_tx(
+            caller,
+            Vm::etchCall { target, newRuntimeBytecode: Bytes::new() }.abi_encode().into(),
+        );
+        let unsupported_executor = EthereumExecutor::new_foundry(
+            env,
+            LocalState::default(),
+            Arc::default(),
+            CheatcodeAccessMode::Local,
+        );
+        let unsupported_result = unsupported_executor.call(&unsupported).unwrap();
+        assert!(!unsupported_result.status);
+        assert_eq!(
+            unsupported_result.output,
+            Error::encode("vm.etch: unsupported in evm2 execution")
+        );
+    }
+
+    #[test]
+    fn forked_contract_needs_its_own_cheatcode_access() {
+        let caller = Address::with_last_byte(0xa);
+        let contract = Address::with_last_byte(0xb);
+        let target = Address::with_last_byte(0xc);
+        let calldata = Vm::dealCall { account: target, newBalance: U256::from(7) }.abi_encode();
+        let mut state = LocalState::default();
+        state.database_mut().insert_account_info(
+            &contract,
+            AccountInfo::default()
+                .with_code(Bytecode::new_legacy(cheatcode_calling_contract_code(&calldata).into())),
+        );
+        let env = EthereumEnv::new(
+            SpecId::CANCUN,
+            BlockEnvExt { gas_limit: U256::from(30_000_000), ..Default::default() },
+        );
+        let tx = Recovered::new_unchecked(
+            TxEnvelope::Legacy(TxLegacy {
+                gas_limit: 100_000,
+                to: TxKind::Call(contract),
+                ..Default::default()
+            }),
+            caller,
+        );
+
+        let mut denied = EthereumExecutor::new_foundry(
+            env,
+            state.clone(),
+            Arc::default(),
+            CheatcodeAccessMode::Forked,
+        );
+        denied.inspector_mut().cheatcodes_mut().allow_caller(caller);
+        assert!(denied.transact(&tx).unwrap().status);
+        assert!(denied.state().database().account_info(&target).is_none());
+
+        let mut allowed =
+            EthereumExecutor::new_foundry(env, state, Arc::default(), CheatcodeAccessMode::Forked);
+        allowed.inspector_mut().cheatcodes_mut().allow_caller(contract);
+        assert!(allowed.transact(&tx).unwrap().status);
+        assert_eq!(
+            allowed.state().database().account_info(&target).unwrap().balance,
+            U256::from(7)
+        );
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn rpc_fork_reads_do_not_commit_to_the_backing_database() {
         let server = Server::http("127.0.0.1:0").unwrap();
@@ -344,5 +487,45 @@ mod tests {
 
         stopped.store(true, Ordering::Relaxed);
         handle.join().unwrap();
+    }
+
+    fn cheatcode_tx(caller: Address, input: Bytes) -> Recovered<TxEnvelope> {
+        Recovered::new_unchecked(
+            TxEnvelope::Legacy(TxLegacy {
+                gas_limit: 100_000,
+                to: TxKind::Call(CHEATCODE_ADDRESS),
+                input,
+                ..Default::default()
+            }),
+            caller,
+        )
+    }
+
+    fn cheatcode_calling_contract_code(calldata: &[u8]) -> Vec<u8> {
+        let mut code = vec![
+            0x60,
+            calldata.len() as u8,
+            0x60,
+            0,
+            0x60,
+            0,
+            0x39, // Copy calldata into memory.
+            0x60,
+            0,
+            0x60,
+            0,
+            0x60,
+            calldata.len() as u8,
+            0x60,
+            0,
+            0x60,
+            0,
+            0x73,
+        ];
+        code.extend_from_slice(CHEATCODE_ADDRESS.as_slice());
+        code.extend_from_slice(&[0x61, 0x27, 0x10, 0xf1, 0x00]);
+        code[3] = code.len() as u8;
+        code.extend_from_slice(calldata);
+        code
     }
 }

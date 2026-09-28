@@ -15,6 +15,7 @@ exclude.workspace = true
 workspace = true
 
 [dependencies]
+evm2.workspace = true
 foundry-cheatcodes-spec.workspace = true
 foundry-common.workspace = true
 foundry-compilers.workspace = true

@@ -42,6 +42,8 @@ mod crypto;
 
 mod dispatch;
 
+pub mod ethereum;
+
 mod version;
 
 mod env;
