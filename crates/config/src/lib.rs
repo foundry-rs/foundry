@@ -266,6 +266,14 @@ pub struct Config {
     /// The EVM version to use when building contracts.
     #[serde(with = "from_str_lowercase")]
     pub evm_version: EvmVersion,
+    /// Whether `evm_version` was supplied by a config provider.
+    #[serde(default, skip_serializing)]
+    #[doc(hidden)]
+    pub evm_version_configured: bool,
+    /// Whether `evm_version` was derived from an implicit compiler version.
+    #[serde(default, skip_serializing)]
+    #[doc(hidden)]
+    pub evm_version_normalized: bool,
     /// The runtime hardfork to use when executing tests and scripts.
     pub hardfork: Option<FoundryHardfork>,
     /// List of contracts to generate gas reports for.
@@ -770,6 +778,8 @@ impl Config {
     /// The default profile: "default"
     pub const DEFAULT_PROFILE: Profile = Profile::Default;
 
+    const DEFAULT_EVM_VERSION: EvmVersion = EvmVersion::Osaka;
+
     /// The hardhat profile: "hardhat"
     pub const HARDHAT_PROFILE: Profile = Profile::const_new("hardhat");
 
@@ -876,13 +886,28 @@ impl Config {
     #[doc(alias = "try_from")]
     pub fn from_provider<T: Provider>(provider: T) -> Result<Self, ExtractConfigError> {
         trace!("load config with provider: {:?}", provider.metadata());
-        Self::from_figment(Figment::from(provider.legacy_labels()))
+        let figment = Figment::from(provider);
+        let evm_version_value_configured = figment_value_is_configured(&figment, "evm_version");
+        let evm_version_configured = evm_version_value_configured
+            || figment.extract_inner::<bool>("evm_version_configured").unwrap_or(false);
+        let evm_version_normalized = !evm_version_value_configured
+            && figment.extract_inner::<bool>("evm_version_normalized").unwrap_or(false);
+        let mut figment = Figment::from(figment.legacy_labels());
+        figment = figment
+            .merge(("evm_version_configured", evm_version_configured))
+            .merge(("evm_version_normalized", evm_version_normalized));
+        Self::from_figment(figment)
     }
 
     /// Applies an inline provider on top of the current config without reloading external
     /// providers such as `foundry.toml`, env vars, or remappings.
     pub fn merge_inline_provider<T: Provider>(&self, provider: T) -> Result<Self, Error> {
         let provider = Figment::from(provider.legacy_labels()).select(self.profile.clone());
+        let provider_overrides_solc = provider.contains("solc");
+        let provider_overrides_evm_version = provider.contains("evm_version");
+        let evm_version_configured = self.is_evm_version_configured()
+            || provider_overrides_evm_version
+            || provider.extract_inner::<bool>("evm_version_configured").unwrap_or(false);
         let invariant_corpus_random_sequence_weight_configured =
             self.invariant.corpus_random_sequence_weight_configured
                 || provider.contains("invariant.corpus_random_sequence_weight")
@@ -893,13 +918,27 @@ impl Config {
             || provider.contains("invariant.workers")
             || provider.extract_inner::<bool>("invariant.workers_configured").unwrap_or(false)
             || provider.extract_inner::<InvariantWorkers>("invariant.workers").is_ok();
-        let figment = self.to_figment(FigmentProviders::None).merge(provider);
+        let mut base = self.clone();
+        if self.evm_version_normalized && provider_overrides_solc && !provider_overrides_evm_version
+        {
+            base.evm_version = Self::DEFAULT_EVM_VERSION;
+            base.evm_version_normalized = false;
+        }
+        let figment = base.to_figment(FigmentProviders::None).merge(provider);
         let mut config = figment.extract::<Self>()?;
         config.profile = self.profile.clone();
         config.profiles = self.profiles.clone();
+        config.evm_version_configured = evm_version_configured;
+        config.evm_version_normalized = if provider_overrides_evm_version || provider_overrides_solc
+        {
+            false
+        } else {
+            self.evm_version_normalized
+        };
         config.invariant.corpus_random_sequence_weight_configured =
             invariant_corpus_random_sequence_weight_configured;
         config.invariant.workers_configured = invariant_workers_configured;
+        config.normalize_default_evm_version();
         config.normalize_hardfork_settings()?;
 
         Ok(config)
@@ -925,6 +964,11 @@ impl Config {
         figment: Figment,
         strict_profile: bool,
     ) -> Result<Self, ExtractConfigError> {
+        let evm_version_value_configured = figment_value_is_configured(&figment, "evm_version");
+        let evm_version_configured = evm_version_value_configured
+            || figment.extract_inner::<bool>("evm_version_configured").unwrap_or(false);
+        let evm_version_normalized = !evm_version_value_configured
+            && figment.extract_inner::<bool>("evm_version_normalized").unwrap_or(false);
         let invariant_corpus_random_sequence_weight_configured = figment
             .extract_inner::<bool>("invariant.corpus_random_sequence_weight_configured")
             .unwrap_or_else(|_| {
@@ -934,6 +978,8 @@ impl Config {
             .extract_inner::<bool>("invariant.workers_configured")
             .unwrap_or_else(|_| figment_value_is_configured(&figment, "invariant.workers"));
         let mut config = figment.extract::<Self>().map_err(ExtractConfigError::new)?;
+        config.evm_version_configured = evm_version_configured;
+        config.evm_version_normalized = evm_version_normalized;
         config.invariant.corpus_random_sequence_weight_configured =
             invariant_corpus_random_sequence_weight_configured;
         config.invariant.workers_configured = invariant_workers_configured;
@@ -971,6 +1017,7 @@ impl Config {
         }
 
         config.normalize_optimizer_settings();
+        config.normalize_default_evm_version();
         config.normalize_hardfork_settings().map_err(ExtractConfigError::new)?;
 
         // Validate optimizer_runs does not exceed u32::MAX (Solidity compiler limit)
@@ -1094,9 +1141,19 @@ impl Config {
             || figment.extract_inner::<bool>("invariant.workers_configured").unwrap_or_else(|_| {
                 figment.extract_inner::<InvariantWorkers>("invariant.workers").is_ok()
             });
+        let evm_version_configured = self.is_evm_version_configured()
+            || figment.contains("evm_version")
+            || figment
+                .extract_inner::<bool>("evm_version_configured")
+                .unwrap_or_else(|_| figment_value_is_configured(&figment, "evm_version"));
+        let evm_version_normalized = self.evm_version_normalized
+            || figment.extract_inner::<bool>("evm_version_normalized").unwrap_or(false);
 
         // normalize defaults
         figment = self.normalize_defaults(figment);
+        figment = figment
+            .merge(("evm_version_configured", evm_version_configured))
+            .merge(("evm_version_normalized", evm_version_normalized));
         if invariant_corpus_random_sequence_weight_configured {
             figment = figment.merge(("invariant.corpus_random_sequence_weight_configured", true));
         }
@@ -1199,6 +1256,21 @@ impl Config {
         self.evm_version = self.get_normalized_evm_version();
     }
 
+    fn is_evm_version_configured(&self) -> bool {
+        self.evm_version_configured
+            || (!self.evm_version_normalized && self.evm_version != Self::DEFAULT_EVM_VERSION)
+    }
+
+    fn normalize_default_evm_version(&mut self) {
+        if !self.is_evm_version_configured()
+            && let Some(SolcReq::Version(version)) = &self.solc
+            && let Some(evm_version) = Self::DEFAULT_EVM_VERSION.normalize_version_solc(version)
+        {
+            self.evm_version = evm_version;
+            self.evm_version_normalized = true;
+        }
+    }
+
     /// Normalizes optimizer settings:
     /// - with default settings, optimizer is set to false and optimizer runs to 200
     /// - if optimizer is set and optimizer runs not specified, then optimizer runs is set to 200
@@ -1220,8 +1292,8 @@ impl Config {
 
     /// Returns the normalized [EvmVersion] for the current solc version, or the configured one.
     pub fn get_normalized_evm_version(&self) -> EvmVersion {
-        if let Some(version) = self.solc_version()
-            && let Some(evm_version) = self.evm_version.normalize_version_solc(&version)
+        if let Some(SolcReq::Version(version)) = &self.solc
+            && let Some(evm_version) = self.evm_version.normalize_version_solc(version)
         {
             return evm_version;
         }
@@ -1292,6 +1364,33 @@ impl Config {
     /// cache.
     pub fn ephemeral_project(&self) -> Result<Project<MultiCompiler>, SolcError> {
         self.create_project(false, true)
+    }
+
+    /// An ephemeral project for parsing source files without instantiating configured compilers.
+    pub fn parsing_project(&self) -> Result<Project<MultiCompiler>, SolcError> {
+        let mut project = self.create_project_with_compiler(
+            false,
+            true,
+            MultiCompiler { solc: Some(SolcCompiler::AutoDetect), vyper: None },
+        )?;
+        // Version resolution is only used to parse sources and must not depend on locally installed
+        // compilers.
+        project.offline = false;
+        Ok(project)
+    }
+
+    /// Returns the configured project and applies its effective EVM version to this config.
+    pub fn project_with_normalized_evm_version(
+        &mut self,
+    ) -> Result<Project<MultiCompiler>, SolcError> {
+        let project = self.project()?;
+        if !self.is_evm_version_configured()
+            && let Some(evm_version) = project.settings.solc.settings.evm_version
+        {
+            self.evm_version = evm_version;
+            self.evm_version_normalized = true;
+        }
+        Ok(project)
     }
 
     /// A cached, in-memory project that does not request any artifacts.
@@ -1380,8 +1479,24 @@ impl Config {
     ///
     /// Prefer using [`Self::project`] or [`Self::ephemeral_project`] instead.
     pub fn create_project(&self, cached: bool, no_artifacts: bool) -> Result<Project, SolcError> {
-        let settings = self.compiler_settings()?;
+        self.create_project_with_compiler(cached, no_artifacts, self.compiler()?)
+    }
+
+    fn create_project_with_compiler(
+        &self,
+        cached: bool,
+        no_artifacts: bool,
+        compiler: MultiCompiler,
+    ) -> Result<Project, SolcError> {
+        let mut settings = self.compiler_settings()?;
         let paths = self.project_paths();
+
+        if let Some(SolcCompiler::Specific(solc)) = &compiler.solc
+            && let Some(evm_version) = self.evm_version.normalize_version_solc(&solc.version)
+        {
+            settings.solc.settings.evm_version = Some(evm_version);
+            settings.vyper.evm_version = Some(evm_version);
+        }
 
         // Strip "./" prefix for consistent path matching
         let parse_path = |path: &PathBuf| path.strip_prefix("./").unwrap_or(path).to_path_buf();
@@ -1412,7 +1527,7 @@ impl Config {
             builder = builder.sparse_output(filter);
         }
 
-        let project = builder.build(self.compiler()?)?;
+        let project = builder.build(compiler)?;
 
         // `ProjectBuilder` slashes paths on Windows. Re-encode a contextual remapping's trailing
         // directory boundary with the native separator so a later `Remapping::to_string` does not
@@ -2774,26 +2889,7 @@ impl Config {
     }
 
     /// Check if any defaults need to be normalized.
-    ///
-    /// This normalizes the default `evm_version` if a `solc` was provided in the config.
-    ///
-    /// See also <https://github.com/foundry-rs/foundry/issues/7014>
     fn normalize_defaults(&self, mut figment: Figment) -> Figment {
-        if figment.contains("evm_version") {
-            return figment;
-        }
-
-        // Normalize `evm_version` based on the provided solc version.
-        if let Ok(solc) = figment.extract_inner::<SolcReq>("solc")
-            && let Some(version) = solc
-                .try_version()
-                .ok()
-                .and_then(|version| self.evm_version.normalize_version_solc(&version))
-        {
-            let profile = figment.profile().clone();
-            figment = figment.merge(Serialized::default("evm_version", version).profile(profile));
-        }
-
         // Normalize `deny` based on the provided `deny_warnings` value.
         if figment.extract_inner::<bool>("deny_warnings").unwrap_or(false)
             && figment.extract_inner("deny") == Ok(DenyLevel::Never)
@@ -2980,11 +3076,27 @@ impl Provider for Config {
         if let Some(entry) = data.get_mut(&Self::DEFAULT_PROFILE) {
             entry.insert("root".to_string(), root.clone());
             entry.insert("labels".to_string(), labels.clone());
+            entry.insert(
+                "evm_version_configured".to_string(),
+                Value::serialize(self.is_evm_version_configured())?,
+            );
+            entry.insert(
+                "evm_version_normalized".to_string(),
+                Value::serialize(self.evm_version_normalized)?,
+            );
             normalize_legacy_labels_in_profile(entry);
         }
         if let Some(entry) = data.get_mut(&self.profile) {
             entry.insert("root".to_string(), root);
             entry.insert("labels".to_string(), labels);
+            entry.insert(
+                "evm_version_configured".to_string(),
+                Value::serialize(self.is_evm_version_configured())?,
+            );
+            entry.insert(
+                "evm_version_normalized".to_string(),
+                Value::serialize(self.evm_version_normalized)?,
+            );
             normalize_legacy_labels_in_profile(entry);
         }
         Ok(data)
@@ -3019,7 +3131,9 @@ impl Default for Config {
             allow_paths: vec![],
             include_paths: vec![],
             force: false,
-            evm_version: EvmVersion::Osaka,
+            evm_version: Self::DEFAULT_EVM_VERSION,
+            evm_version_configured: false,
+            evm_version_normalized: false,
             hardfork: None,
             gas_reports: vec!["*".to_string()],
             gas_reports_ignore: vec![],
@@ -3392,13 +3506,18 @@ mod tests {
     #[cfg(feature = "base")]
     use foundry_evm_hardforks::BaseUpgrade;
 
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+
     // Helper function to clear `__warnings` in config, since it will be populated during loading
     // from file, causing testing problem when comparing to those created from `default()`, etc.
     fn clear_warning(config: &mut Config) {
         config.warnings = vec![];
     }
 
-    fn mark_serialized_invariant_provenance(config: &mut Config) {
+    fn mark_serialized_provenance(config: &mut Config) {
+        config.evm_version_configured = true;
+        config.evm_version_normalized = false;
         config.invariant.corpus_random_sequence_weight_configured = true;
         config.invariant.workers_configured = true;
     }
@@ -4874,6 +4993,8 @@ mod tests {
                     eth_rpc_url: Some("https://example.com/".to_string()),
                     auto_detect_solc: false,
                     evm_version: EvmVersion::Berlin,
+                    evm_version_configured: true,
+                    evm_version_normalized: false,
                     ..Config::default().normalized_optimizer_settings()
                 }
             );
@@ -5279,7 +5400,7 @@ mod tests {
             let mut other = Config::load().unwrap();
             clear_warning(&mut other);
             let mut serialized_default = default;
-            mark_serialized_invariant_provenance(&mut serialized_default);
+            mark_serialized_provenance(&mut serialized_default);
             assert_eq!(serialized_default, other);
 
             Ok(())
@@ -5381,7 +5502,7 @@ mod tests {
 
             let s = loaded.to_string_pretty().unwrap();
             jail.create_file("foundry.toml", &s)?;
-            mark_serialized_invariant_provenance(&mut loaded);
+            mark_serialized_provenance(&mut loaded);
 
             let mut reloaded = Config::load().unwrap();
             clear_warning(&mut reloaded);
@@ -5432,7 +5553,7 @@ mod tests {
 
             let s = loaded.to_string_pretty().unwrap();
             jail.create_file("foundry.toml", &s)?;
-            mark_serialized_invariant_provenance(&mut loaded);
+            mark_serialized_provenance(&mut loaded);
 
             let mut reloaded = Config::load().unwrap();
             clear_warning(&mut reloaded);
@@ -6149,6 +6270,87 @@ mod tests {
             assert_eq!(loaded.evm_version, EvmVersion::Amsterdam);
             Ok(())
         });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn local_solc_is_only_probed_when_creating_project() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r"
+                [default]
+                solc = './fake-solc'
+            ",
+            )?;
+            jail.create_file(
+                "fake-solc",
+                r#"#!/bin/sh
+touch fake-solc.invoked
+echo "solc, the solidity compiler commandline interface"
+echo "Version: 0.8.13+commit.abaa5c0e"
+"#,
+            )?;
+            let solc = jail.directory().join("fake-solc");
+            let mut permissions = fs::metadata(&solc).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(solc, permissions).unwrap();
+
+            let mut config = Config::load().unwrap().sanitized();
+            assert!(!jail.directory().join("fake-solc.invoked").exists());
+
+            let project = config.project_with_normalized_evm_version().unwrap();
+            assert!(jail.directory().join("fake-solc.invoked").exists());
+            assert_eq!(project.settings.solc.settings.evm_version, Some(EvmVersion::London));
+            assert_eq!(project.settings.vyper.evm_version, Some(EvmVersion::London));
+            assert_eq!(config.evm_version, EvmVersion::London);
+
+            config.evm_version = EvmVersion::Cancun;
+            config.evm_version_configured = true;
+            config.evm_version_normalized = false;
+            let project = config.project_with_normalized_evm_version().unwrap();
+            assert_eq!(project.settings.solc.settings.evm_version, Some(EvmVersion::London));
+            assert_eq!(config.evm_version, EvmVersion::Cancun);
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn evm_version_provenance_survives_providers_and_compiler_overrides() {
+        let explicit = Config {
+            solc: Some(SolcReq::Version(Version::new(0, 8, 13))),
+            evm_version_configured: true,
+            ..Config::default()
+        };
+        let roundtrip = Config::from_provider(explicit).unwrap();
+        assert_eq!(roundtrip.evm_version, EvmVersion::Osaka);
+        assert!(roundtrip.evm_version_configured);
+
+        let explicit_after_base = Config::from_provider(
+            Figment::from(Config::default())
+                .merge(("solc", "0.8.13"))
+                .merge(("evm_version", "osaka")),
+        )
+        .unwrap();
+        assert_eq!(explicit_after_base.evm_version, EvmVersion::Osaka);
+        assert!(explicit_after_base.evm_version_configured);
+
+        let mut implicit =
+            Config { solc: Some(SolcReq::Version(Version::new(0, 8, 13))), ..Config::default() };
+        implicit.normalize_default_evm_version();
+        assert_eq!(implicit.evm_version, EvmVersion::London);
+        assert!(implicit.evm_version_normalized);
+
+        let implicit = implicit.merge_inline_provider(("optimizer", true)).unwrap();
+        assert_eq!(implicit.evm_version, EvmVersion::London);
+        assert!(implicit.evm_version_normalized);
+
+        let overridden = implicit
+            .merge_inline_provider(("solc", SolcReq::Version(Version::new(0, 8, 37))))
+            .unwrap();
+        assert_eq!(overridden.evm_version, EvmVersion::Osaka);
+        assert!(!overridden.evm_version_configured);
+        assert!(overridden.evm_version_normalized);
     }
 
     // a test to print the config, mainly used to update the example config in the README

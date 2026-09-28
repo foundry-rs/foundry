@@ -4,6 +4,11 @@ use foundry_test_utils::snapbox;
 // ensures that we can run forge-bind even if files are depending on yet non-existent bindings and
 // that generated bindings are correct
 forgetest_init!(test_bind_json, |prj, cmd| {
+    std::fs::write(
+        prj.root().join("src/Unrelated.vy"),
+        "@external\ndef value() -> uint256: return 1\n",
+    )
+    .unwrap();
     prj.add_test(
         "JsonBindings",
         r#"

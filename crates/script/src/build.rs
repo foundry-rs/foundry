@@ -200,8 +200,8 @@ impl<FEN: FoundryEvmNetwork> PreprocessedState<FEN> {
     /// Parses user input and compiles the contracts depending on script target.
     /// After compilation, finds exact [ArtifactId] of the target contract.
     pub fn compile(self) -> Result<CompiledState<FEN>> {
-        let Self { args, script_config, script_wallets, browser_wallet } = self;
-        let project = script_config.config.project()?;
+        let Self { args, mut script_config, script_wallets, browser_wallet } = self;
+        let project = script_config.config.project_with_normalized_evm_version()?;
 
         let mut target_name = args.target_contract.clone();
 

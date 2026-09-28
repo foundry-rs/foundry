@@ -96,10 +96,20 @@ pragma solidity 0.7.6;
 contract Old {}
 "#,
     );
+    fs::write(prj.root().join("src/Unrelated.vy"), "@external\ndef value() -> uint256: return 1\n")
+        .unwrap();
 
     cmd.arg("doc").assert_success();
     assert!(prj.root().join("docs/src/pages/src/contract.New.mdx").exists());
     assert!(prj.root().join("docs/src/pages/src/contract.Old.mdx").exists());
+});
+
+forgetest!(doc_supports_vyper_only_projects, |prj, cmd| {
+    fs::create_dir_all(prj.root().join("src")).unwrap();
+    fs::write(prj.root().join("src/Only.vy"), "@external\ndef value() -> uint256: return 1\n")
+        .unwrap();
+
+    cmd.arg("doc").assert_success();
 });
 
 #[cfg(unix)]
@@ -127,18 +137,20 @@ pragma solidity ^0.8.35;
 contract Skipped {}
 "#,
     );
+    fs::write(prj.root().join("src/Unrelated.vy"), "@external\ndef value() -> uint256: return 1\n")
+        .unwrap();
 
     let solc = prj.root().join("fake-solc");
     let invoked = prj.root().join("fake-solc.invoked");
     fs::write(
         &solc,
         r#"#!/bin/sh
+touch "$0.invoked"
 if [ "$1" = "--version" ]; then
     echo "solc, the solidity compiler commandline interface"
     echo "Version: 0.8.35+commit.69074fbd"
     exit 0
 fi
-touch "$0.invoked"
 exit 1
 "#,
     )
@@ -149,12 +161,33 @@ exit 1
 
     prj.update_config(|config| {
         config.solc = Some(foundry_config::SolcReq::Local(solc));
+        config.offline = true;
         config.skip = vec!["*Skipped*".parse().unwrap()];
     });
 
     cmd.arg("doc").assert_success();
     assert!(!invoked.exists(), "forge doc invoked the configured solc binary");
     assert!(!prj.root().join("docs/src/pages/src/contract.Skipped.mdx").exists());
+});
+
+#[cfg(unix)]
+forgetest!(empty_doc_project_does_not_run_solc, |prj, cmd| {
+    use std::os::unix::fs::PermissionsExt;
+
+    let solc = prj.root().join("fake-solc");
+    let invoked = prj.root().join("fake-solc.invoked");
+    fs::write(&solc, "#!/bin/sh\ntouch \"$0.invoked\"\nexit 1\n").unwrap();
+    let mut permissions = fs::metadata(&solc).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&solc, permissions).unwrap();
+    fs::write(
+        prj.root().join(foundry_config::Config::FILE_NAME),
+        format!("[profile.default]\nsolc = '{}'\n", solc.display()),
+    )
+    .unwrap();
+
+    cmd.arg("doc").assert_success();
+    assert!(!invoked.exists(), "forge doc invoked the configured solc binary");
 });
 
 // Test that overloaded functions in interfaces inherit the correct NatSpec comments

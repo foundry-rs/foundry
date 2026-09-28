@@ -30,6 +30,29 @@ use std::{
     thread,
 };
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
+#[cfg(unix)]
+fn write_recording_solc(path: &Path) {
+    fs::write(
+        path,
+        r#"#!/bin/sh
+touch "$0.invoked"
+if [ "$1" = "--version" ]; then
+    echo "solc, the solidity compiler commandline interface"
+    echo "Version: 0.8.13+commit.abaa5c0e"
+    exit 0
+fi
+exit 1
+"#,
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(path).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(path, permissions).unwrap();
+}
+
 const DEFAULT_CONFIG: &str = r#"[profile.default]
 src = "src"
 test = "test"
@@ -333,6 +356,8 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         broadcast: "broadcast".into(),
         force: true,
         evm_version: EvmVersion::Byzantium,
+        evm_version_configured: true,
+        evm_version_normalized: false,
         hardfork: None,
         gas_reports: vec!["Contract".to_string()],
         gas_reports_ignore: vec![],
@@ -841,6 +866,39 @@ Compiler run successful!
     cmd.forge_fuse();
     cmd.env("PATH", bin_dir);
     cmd.args(["build", "--force"]).root_arg().assert_success();
+});
+
+#[cfg(unix)]
+forgetest!(compiler_override_does_not_run_project_solc, |prj, cmd| {
+    prj.add_raw_source("Foo", "pragma solidity *; contract Foo {}");
+    let solc = prj.root().join("unselected-solc");
+    write_recording_solc(&solc);
+    fs::write(
+        prj.root().join(Config::FILE_NAME),
+        format!("[profile.default]\nsolc = '{}'\n", solc.display()),
+    )
+    .unwrap();
+
+    cmd.args(["build", "--use", OTHER_SOLC_VERSION]).assert_success();
+    assert!(!solc.with_extension("invoked").exists(), "the overridden compiler was invoked");
+});
+
+#[cfg(unix)]
+forgetest!(nested_config_does_not_run_solc, |prj, cmd| {
+    let dependency = prj.root().join("lib/dependency");
+    fs::create_dir_all(dependency.join("src")).unwrap();
+    fs::write(dependency.join("src/Dependency.sol"), "contract Dependency {}").unwrap();
+
+    let solc = dependency.join("nested-solc");
+    write_recording_solc(&solc);
+    fs::write(
+        dependency.join(Config::FILE_NAME),
+        "[profile.default]\nsolc = 'lib/dependency/nested-solc'\n",
+    )
+    .unwrap();
+
+    cmd.args(["config", "--json"]).assert_success();
+    assert!(!solc.with_extension("invoked").exists(), "the dependency compiler was invoked");
 });
 
 // test to ensure yul optimizer can be set as intended
@@ -1992,7 +2050,9 @@ forgetest_init!(can_resolve_symlink_fs_permissions, |prj, cmd| {
 });
 
 // tests if evm version is normalized for config output
-forgetest!(normalize_config_evm_version, |_prj, cmd| {
+forgetest!(normalize_config_evm_version, |prj, cmd| {
+    fs::write(prj.root().join(Config::FILE_NAME), "[profile.default]\nsolc = '0.8.13'\n").unwrap();
+
     let output = cmd
         .args(["config", "--use", "0.8.0", "--json"])
         .assert_success()

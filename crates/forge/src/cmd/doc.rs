@@ -9,6 +9,7 @@ use foundry_cli::{
     utils::Git,
 };
 use foundry_common::{compile::ProjectCompiler, shell};
+use foundry_compilers::artifacts::output_selection::OutputSelection;
 use foundry_config::{Config, load_config_with_root};
 use solar::{interface::Session, sema::Compiler};
 use std::{path::PathBuf, time::Instant};
@@ -63,7 +64,7 @@ impl DocArgs {
         install::install_missing_dependencies(&mut config, || self.config())?;
 
         let root = &config.root;
-        let project = config.ephemeral_project()?;
+        let mut project = config.parsing_project()?;
         let mut compiler = Compiler::new(Session::builder().with_stderr_emitter().build());
         let source_status = compiler.enter_mut(|compiler| -> Result<_> {
             let mut pcx = compiler.parse();
@@ -74,14 +75,28 @@ impl DocArgs {
             Ok(status)
         })?;
 
-        // Solar does not support Solidity versions prior to 0.8.0. Preserve support for old,
-        // mixed-version, and Solidity-free projects by using the existing compiler-backed parser.
+        // Solar does not support Solidity versions prior to 0.8.0. Preserve support for old and
+        // mixed-version projects by using the compiler-backed parser with auto-detected Solc.
         let mut output = if source_status.is_fully_supported() {
             None
         } else {
-            let mut compile_project = config.solar_project()?;
-            compile_project.no_artifacts = true;
-            Some(ProjectCompiler::new().compile(&compile_project)?)
+            let files = project
+                .paths
+                .input_files_iter()
+                .filter(|path| path.extension().is_some_and(|extension| extension == "sol"))
+                .filter(|path| {
+                    project.sparse_output.as_ref().is_none_or(|filter| filter.is_match(path))
+                })
+                .collect::<Vec<_>>();
+            if files.is_empty() {
+                None
+            } else {
+                project.offline = config.offline;
+                project.update_output_selection(|selection| {
+                    *selection = OutputSelection::common_output_selection(["abi".into()]);
+                });
+                Some(ProjectCompiler::new().files(files).compile(&project)?)
+            }
         };
 
         let mut doc_cfg = config.doc;

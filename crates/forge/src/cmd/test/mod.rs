@@ -1635,7 +1635,7 @@ impl TestArgs {
         self.apply_test_config_overrides(&mut config);
 
         // Set up the project.
-        let mut project = config.project()?;
+        let mut project = config.project_with_normalized_evm_version()?;
         let project_root = project.paths.root.clone();
 
         let replay_symbolic_artifact = self.load_symbolic_artifact_replay()?;

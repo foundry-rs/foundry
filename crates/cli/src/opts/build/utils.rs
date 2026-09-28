@@ -91,10 +91,10 @@ fn configure_pcx_with_sources(
     // Process build options
     let project = match project {
         Some(project) => project,
-        None => &config.ephemeral_project()?,
+        None => &config.parsing_project()?,
     };
 
-    let sources = match target_paths {
+    let mut sources = match target_paths {
         // If target files are provided, only process those sources
         Some(targets) => {
             let mut sources = Sources::new();
@@ -114,6 +114,9 @@ fn configure_pcx_with_sources(
             sources
         }
     };
+    sources.retain(|path, _| {
+        path.extension().is_some_and(|extension| extension == "sol" || extension == "yul")
+    });
 
     // Process Solar-compatible sources and use the latest version for the compiler input.
     let graph = Graph::<MultiCompilerParser>::resolve_sources(&project.paths, sources)?;
