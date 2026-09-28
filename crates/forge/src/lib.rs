@@ -23,6 +23,9 @@ pub mod brutalizer;
 
 pub mod gas_report;
 
+mod test_contract;
+mod test_matcher;
+
 pub mod multi_runner;
 pub use multi_runner::{MultiContractRunner, MultiContractRunnerBuilder};
 

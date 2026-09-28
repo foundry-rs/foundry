@@ -3,23 +3,18 @@
 use crate::{
     ContractRunner, TestFilter,
     progress::TestsProgress,
-    result::{SuiteResult, SymbolicCounterexampleArtifact, SymbolicCounterexampleArtifactKind},
+    result::SuiteResult,
     runner::{
         ContractRunnerContext, InvariantCampaignScope, count_runnable_invariant_campaign_anchors,
-        function_matches_network_pass,
     },
-    symbolic_regression::SYMBOLIC_REGRESSION_MARKER,
+    test_contract::{PreparedTestArtifacts, analyze_compiled_sources},
 };
-use alloy_json_abi::{Function, JsonAbi};
+use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, ChainId, U256};
 use eyre::Result;
-use foundry_cli::opts::configure_pcx_from_compile_output;
-use foundry_common::{
-    ContractsByArtifact, ContractsByArtifactBuilder, EmptyTestFilter, LIBRARY_DEPLOYER,
-    TestFunctionKind, external_compiler::external_artifact_is_test_eligible, get_contract_name,
-};
+use foundry_common::{ContractsByArtifact, TestFunctionKind, get_contract_name};
 use foundry_compilers::{
-    Artifact, ArtifactId, Compiler, ProjectCompileOutput,
+    ArtifactId, Compiler, ProjectCompileOutput,
     artifacts::{Contract, Libraries},
 };
 use foundry_config::{Config, FoundryHardfork, InlineConfig};
@@ -37,27 +32,23 @@ use foundry_evm::{
     opts::{EvmOpts, ExecutionSpecContext, resolve_execution_spec},
     traces::{InternalTraceMode, TraceRequirements},
 };
-use foundry_evm_networks::NetworkVariant;
 
-use foundry_linking::{DetailedLinkOutput, LinkOutput, Linker, LinkerError, Resolver};
 use rayon::prelude::*;
 use std::{
-    borrow::Borrow,
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     ops::{Deref, DerefMut},
     path::PathBuf,
     sync::{Arc, Mutex, mpsc},
     time::Instant,
 };
 
-#[derive(Debug, Clone)]
-pub struct TestContract {
-    pub abi: JsonAbi,
-    pub bytecode: Bytes,
-    pub library_addresses: BTreeSet<Address>,
-}
-
-pub type DeployableContracts = BTreeMap<ArtifactId, TestContract>;
+pub(crate) use crate::test_matcher::{
+    TestFunctionMatcher, is_generated_symbolic_regression_contract,
+};
+pub use crate::{
+    test_contract::{DeployableContracts, LibraryDeployment, TestContract},
+    test_matcher::{MultiNetworkConfig, SymbolicArtifactReplayConfig},
+};
 
 /// A multi contract runner receives a set of contracts deployed in an EVM instance and proceeds
 /// to run all test functions in these contracts.
@@ -92,13 +83,6 @@ pub struct MultiContractRunner<FEN: FoundryEvmNetwork> {
 
     /// The base configuration for the test runner.
     pub tcfg: TestRunnerConfig<FEN>,
-}
-
-/// Forge-local library deployment strategy.
-#[derive(Clone, Copy, Debug)]
-pub enum LibraryDeployment {
-    Nonce,
-    Create2 { deployer: Address, salt: alloy_primitives::B256 },
 }
 
 impl<FEN: FoundryEvmNetwork> Deref for MultiContractRunner<FEN> {
@@ -331,25 +315,6 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
     }
 }
 
-/// Tracks network assignment across a multi-network test run.
-///
-/// When inline config specifies different networks for different tests, the runner performs one
-/// pass per distinct network. This struct encodes which pass we're in so each `ContractRunner`
-/// can skip tests that belong to a different pass.
-///
-/// Default (empty `all_override_networks`, `None` pass) = single-pass mode, every test runs.
-#[derive(Clone, Debug, Default)]
-pub struct MultiNetworkConfig {
-    /// All networks explicitly referenced in inline config annotations across the whole suite.
-    /// Empty means single-pass mode (no per-test network overrides present).
-    pub all_override_networks: Vec<NetworkVariant>,
-    /// The network this pass is responsible for.
-    /// `None` = default pass: runs tests *without* an explicit network annotation (or annotated
-    /// with a network not in `all_override_networks`).
-    /// `Some(v)` = override pass: runs only tests annotated with exactly `v`.
-    pub pass_network: Option<NetworkVariant>,
-}
-
 /// CLI-only options that switch fuzz/invariant tests into corpus replay
 /// mode that emits AFL-`afl-showmap`-style coverage files.
 #[derive(Clone, Debug)]
@@ -404,14 +369,6 @@ pub struct FuzzMinimizeObservation {
     pub target: String,
     /// Replay result for this target.
     pub observation: ReplayObservation,
-}
-
-#[derive(Clone, Debug)]
-pub struct SymbolicArtifactReplayConfig {
-    /// Artifact payload to replay.
-    pub artifact: SymbolicCounterexampleArtifact,
-    /// Path the artifact was loaded from, used in diagnostics.
-    pub path: PathBuf,
 }
 
 /// A validated stateless fuzz failure and its unique replay target.
@@ -760,144 +717,26 @@ impl MultiContractRunnerBuilder {
         evm_opts: EvmOpts,
         executor_builder: ExecutorBuilder<FEN>,
     ) -> Result<MultiContractRunner<FEN>> {
-        let root = &self.config.root;
-        let coverage_artifacts = self
-            .line_coverage
-            .then(|| self.config.coverage_cache_path())
-            .flatten()
-            .map(|path| path.join("artifacts"));
-        let artifact_id = |mut id: ArtifactId| {
-            // Artifact-path cheatcodes retain the logical output paths even when coverage
-            // compilation stores its unoptimized artifacts in a separate cache.
-            if let Some(coverage_artifacts) = &coverage_artifacts
-                && let Ok(path) = id.path.strip_prefix(coverage_artifacts)
-            {
-                id.path = self.config.out.join(path);
-            }
-            id.with_stripped_file_prefixes(root).with_slashed_paths()
-        };
-        let contracts = output.artifact_ids().map(|(id, v)| (artifact_id(id), v)).collect();
-        let linker = Linker::new(root, contracts);
-
-        // Build revert decoder from ABIs of all artifacts.
-        let abis = linker
-            .contracts
-            .values()
-            .filter_map(|contract| contract.abi.as_ref().map(|abi| abi.borrow()));
-        let revert_decoder = RevertDecoder::new().with_abis(abis);
-
-        let configured_libraries = self.config.libraries_with_remappings()?;
-        let create2 = if self.create2_deployer_available(&evm_opts) {
-            match linker.link_with_create2_detailed(
-                configured_libraries.clone(),
-                evm_opts.create2_deployer,
-                self.config.create2_library_salt,
-                linker.contracts.keys(),
-            ) {
-                Ok(output) => Some(output),
-                Err(LinkerError::CyclicDependency) => None,
-                Err(err) => return Err(err.into()),
-            }
-        } else {
-            None
-        };
-        let (
-            DetailedLinkOutput {
-                output: LinkOutput { libraries, library_addresses, libs_to_deploy },
-                artifact_libraries,
-                ..
-            },
+        let PreparedTestArtifacts {
+            contracts: deployable_contracts,
+            known_contracts,
+            revert_decoder,
+            libs_to_deploy,
+            library_addresses,
             library_deployment,
-        ) = match create2 {
-            Some(output) => {
-                let deployment = if output.output.libs_to_deploy.is_empty() {
-                    LibraryDeployment::Nonce
-                } else {
-                    LibraryDeployment::Create2 {
-                        deployer: evm_opts.create2_deployer,
-                        salt: self.config.create2_library_salt,
-                    }
-                };
-                (output, deployment)
-            }
-            None => (
-                linker.link_with_nonce_or_address_detailed(
-                    configured_libraries,
-                    LIBRARY_DEPLOYER,
-                    0,
-                    linker.contracts.keys(),
-                )?,
-                LibraryDeployment::Nonce,
-            ),
-        };
-
-        let linked_contracts = linker
-            .get_linked_artifacts_cow_with_artifact_libraries(&libraries, &artifact_libraries)?;
+            libraries,
+        } = PreparedTestArtifacts::new(
+            &self.config,
+            &self.inline_config,
+            self.symbolic_artifact_replay.as_ref(),
+            output,
+            &evm_opts,
+            self.line_coverage,
+            self.create2_deployer_available(&evm_opts),
+        )?;
         let inline_config = self.inline_config;
 
-        // Collect every deployable test contract: a test contract with a default constructor.
-        let mut deployable_contracts = DeployableContracts::default();
-        let test_matcher = TestFunctionMatcher::new(
-            &self.config,
-            &inline_config,
-            self.symbolic_artifact_replay.as_ref(),
-        );
-        let empty_filter = EmptyTestFilter::default();
-        let resolver = Resolver::new(&linker);
-        for (id, contract) in linked_contracts.iter() {
-            let Some(abi) = contract.abi.as_ref() else { continue };
-            if abi.constructor.as_ref().is_some_and(|c| !c.inputs.is_empty())
-                || !test_matcher.matches_contract(&empty_filter, id, abi)
-            {
-                continue;
-            }
-            linker.ensure_linked(contract, id)?;
-            let Some(bytecode) =
-                contract.get_bytecode_bytes().map(|b| b.into_owned()).filter(|b| !b.is_empty())
-            else {
-                continue;
-            };
-            let artifact_libraries = artifact_libraries.get(id).unwrap_or(&libraries);
-            let library_addresses = resolver.linked_library_addresses(id, artifact_libraries)?;
-            deployable_contracts.insert(
-                id.clone(),
-                TestContract { abi: abi.clone().into_owned(), bytecode, library_addresses },
-            );
-        }
-
-        // Create known contracts from linked contracts and storage layout information (if any).
-        let known_contracts = ContractsByArtifactBuilder::new(linked_contracts)
-            .with_storage_layouts(output.artifact_ids().filter_map(|(id, artifact)| {
-                artifact.storage_layout.as_ref().map(|layout| (artifact_id(id), layout.clone()))
-            }))
-            .build();
-
-        // Initialize and configure the solar compiler.
-        let mut analysis = solar::sema::Compiler::new(
-            solar::interface::Session::builder().with_stderr_emitter().build(),
-        );
-        let dcx = analysis.dcx_mut();
-        dcx.set_emitter(Box::new(
-            solar::interface::diagnostics::HumanEmitter::stderr(Default::default())
-                .source_map(Some(dcx.source_map().unwrap())),
-        ));
-        dcx.set_flags_mut(|f| f.track_diagnostics = false);
-
-        // Populate solar's global context by parsing and lowering the sources.
-        let files: Vec<_> = output.output().sources.as_ref().keys().cloned().collect();
-        analysis.enter_mut(|compiler| -> Result<()> {
-            let mut pcx = compiler.parse();
-            configure_pcx_from_compile_output(
-                &mut pcx,
-                &self.config,
-                output,
-                (!self.line_coverage && !files.is_empty()).then_some(&files),
-            )?;
-            pcx.parse();
-            let _ = compiler.lower_asts();
-            Ok(())
-        })?;
-        let analysis = Arc::new(analysis);
+        let analysis = analyze_compiled_sources(&self.config, output, self.line_coverage)?;
 
         // Enum variant counts used to constrain fuzzed enum inputs to valid values.
         let enum_bounds = EnumBounds::collect(&analysis);
@@ -974,153 +813,9 @@ impl MultiContractRunnerBuilder {
     }
 }
 
-#[derive(Clone, Copy)]
-pub(crate) struct TestFunctionMatcher<'a> {
-    config: &'a Config,
-    inline_config: &'a InlineConfig,
-    symbolic_artifact_replay: Option<&'a SymbolicArtifactReplayConfig>,
-}
-
-impl<'a> TestFunctionMatcher<'a> {
-    pub(crate) const fn new(
-        config: &'a Config,
-        inline_config: &'a InlineConfig,
-        symbolic_artifact_replay: Option<&'a SymbolicArtifactReplayConfig>,
-    ) -> Self {
-        Self { config, inline_config, symbolic_artifact_replay }
-    }
-
-    fn symbolic_tests_enabled(&self, contract_id: &str) -> bool {
-        self.symbolic_artifact_replay.is_some_and(|artifact| {
-            artifact.artifact.kind == SymbolicCounterexampleArtifactKind::SingleCall
-        }) || self.inline_config.contract_symbolic_enabled(
-            &self.config.profile,
-            contract_id,
-            self.config.symbolic.enabled,
-        )
-    }
-
-    pub(crate) fn test_function_kind(
-        &self,
-        contract_id: &str,
-        func: &Function,
-        generated_symbolic_regression: bool,
-    ) -> TestFunctionKind {
-        if generated_symbolic_regression && !func.name.starts_with("test_regression_") {
-            return TestFunctionKind::Unknown;
-        }
-
-        TestFunctionKind::classify(
-            func.name.as_str(),
-            !func.inputs.is_empty(),
-            self.symbolic_tests_enabled(contract_id),
-        )
-    }
-
-    /// Returns the functions of `abi` accepted by `keep`, which is given the contract identifier,
-    /// the function and its classification.
-    pub(crate) fn test_functions(
-        self,
-        contract_id: String,
-        abi: &JsonAbi,
-        mut keep: impl FnMut(&str, &Function, TestFunctionKind) -> bool,
-    ) -> impl Iterator<Item = &Function> {
-        let generated_symbolic_regression = is_generated_symbolic_regression_contract(abi);
-        abi.functions().filter(move |func| {
-            let kind = self.test_function_kind(&contract_id, func, generated_symbolic_regression);
-            keep(&contract_id, func, kind)
-        })
-    }
-
-    /// Returns the test functions of `abi` that match `filter`.
-    fn matching_test_functions<'b>(
-        self,
-        filter: &dyn TestFilter,
-        id: &ArtifactId,
-        abi: &'b JsonAbi,
-    ) -> impl Iterator<Item = &'b Function> {
-        self.test_functions(id.identifier(), abi, move |contract_id, func, kind| {
-            filter.matches_test_function_kind_in_contract(contract_id, func, kind)
-        })
-    }
-
-    /// Counts the fuzz test functions and runnable invariant campaign anchors of `abi` that
-    /// match `filter` in the current network pass.
-    pub(crate) fn count_fuzz_engine_targets(
-        &self,
-        filter: &dyn TestFilter,
-        id: &ArtifactId,
-        abi: &JsonAbi,
-        multi_network: &MultiNetworkConfig,
-    ) -> (usize, usize) {
-        let contract_name = id.identifier();
-        let matches_network_pass = |func: &Function| {
-            function_matches_network_pass(
-                &multi_network.all_override_networks,
-                multi_network.pass_network.as_ref(),
-                self.inline_config.network_for(&self.config.profile, &contract_name, &func.name),
-            )
-        };
-        let fuzz = self
-            .test_functions(contract_name.clone(), abi, |contract_id, func, kind| {
-                matches!(kind, TestFunctionKind::FuzzTest { .. })
-                    && filter.matches_test_function_kind_in_contract(contract_id, func, kind)
-                    && matches_network_pass(func)
-            })
-            .count();
-        let invariant = count_runnable_invariant_campaign_anchors(
-            abi,
-            filter,
-            InvariantCampaignScope {
-                config: self.config,
-                inline_config: self.inline_config,
-                contract_name: &contract_name,
-                all_override_networks: &multi_network.all_override_networks,
-                pass_network: multi_network.pass_network.as_ref(),
-            },
-        );
-        (fuzz, invariant)
-    }
-
-    pub(crate) fn matches_contract(
-        &self,
-        filter: &dyn TestFilter,
-        id: &ArtifactId,
-        abi: &JsonAbi,
-    ) -> bool {
-        external_artifact_is_test_eligible(&id.build_id)
-            && filter.matches_path(&id.source)
-            && filter.matches_contract(&id.name)
-            && self.matching_test_functions(filter, id, abi).next().is_some()
-    }
-}
-
-pub(crate) fn is_generated_symbolic_regression_contract(abi: &JsonAbi) -> bool {
-    abi.functions().any(|func| func.name == SYMBOLIC_REGRESSION_MARKER && func.inputs.is_empty())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn abi_with_functions(functions: &[&str]) -> JsonAbi {
-        let mut abi = JsonAbi::new();
-        for function in functions {
-            let function = Function::parse(function).unwrap();
-            abi.functions.entry(function.name.clone()).or_default().push(function);
-        }
-        abi
-    }
-
-    #[test]
-    fn generated_symbolic_regression_detection_uses_marker() {
-        let user_suffix_abi = abi_with_functions(&["test_fails()"]);
-        assert!(!is_generated_symbolic_regression_contract(&user_suffix_abi));
-
-        let generated_abi =
-            abi_with_functions(&[&format!("{SYMBOLIC_REGRESSION_MARKER}()"), "test_fails()"]);
-        assert!(is_generated_symbolic_regression_contract(&generated_abi));
-    }
 
     #[test]
     fn create2_deployer_availability_default_is_conservative() {
