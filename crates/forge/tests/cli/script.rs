@@ -564,6 +564,100 @@ contract StartBroadcastCalls {
     assert_eq!(sequence.transactions[1].transaction.input().unwrap().as_ref(), &[0x56, 0x78]);
 });
 
+forgetest_async!(ethereum_script_simulates_broadcast_create, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let script = prj.add_source(
+        "BroadcastCreate",
+        r#"
+interface Vm {
+    function broadcast(address sender) external;
+}
+
+contract Deployed {
+    uint256 public value;
+
+    constructor(uint256 value_) {
+        value = value_;
+    }
+}
+
+contract BroadcastCreate {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function run() external {
+        vm.broadcast(address(0xBEEF));
+        Deployed deployed = new Deployed(42);
+        require(deployed.value() == 42, "deployment failed");
+    }
+}
+"#,
+    );
+
+    cmd.arg("script")
+        .arg(script)
+        .args(["--tc", "BroadcastCreate", "--fork-url", &handle.http_endpoint()])
+        .assert_success();
+
+    let path = foundry_common::fs::json_files(&prj.root().join("broadcast"))
+        .find(|path| path.ends_with("run-latest.json"))
+        .expect("No broadcast artifact");
+    let sequence: ScriptSequence<Ethereum> = foundry_common::fs::read_json_file(&path).unwrap();
+    assert_eq!(sequence.transactions.len(), 1);
+    let transaction = &sequence.transactions[0].transaction;
+    assert_eq!(transaction.from(), Some(address!("0x000000000000000000000000000000000000bEEF")));
+    assert_eq!(transaction.to(), None);
+    assert_eq!(transaction.nonce(), Some(0));
+    assert!(!transaction.input().unwrap().is_empty());
+});
+
+forgetest_async!(ethereum_script_broadcasts_create, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let sender = handle.dev_wallets().next().unwrap().address();
+    let script = prj.add_source(
+        "BroadcastCreate",
+        r#"
+interface Vm {
+    function startBroadcast(uint256 privateKey) external;
+    function stopBroadcast() external;
+}
+
+contract Deployed {
+    uint256 public value;
+
+    constructor(uint256 value_) {
+        value = value_;
+    }
+
+    function setValue(uint256 value_) external {
+        value = value_;
+    }
+}
+
+contract BroadcastCreate {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    uint256 constant PRIVATE_KEY = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
+
+    function run() external {
+        vm.startBroadcast(PRIVATE_KEY);
+        Deployed deployed = new Deployed(42);
+        deployed.setValue(7);
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+
+    cmd.arg("script")
+        .arg(script)
+        .args(["--tc", "BroadcastCreate", "--fork-url", &handle.http_endpoint(), "--broadcast"])
+        .assert_success();
+
+    let provider = handle.http_provider();
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 2);
+    assert!(!provider.get_code_at(sender.create(0)).await.unwrap().is_empty());
+    assert_eq!(provider.get_storage_at(sender.create(0), U256::ZERO).await.unwrap(), U256::from(7));
+});
+
 forgetest_async!(ethereum_script_reads_fork_state, |prj, cmd| {
     let (api, handle) = spawn(NodeConfig::test()).await;
     api.anvil_set_balance(address!("0x000000000000000000000000000000000000bEEF"), U256::from(123))

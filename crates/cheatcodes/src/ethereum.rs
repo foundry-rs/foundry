@@ -9,7 +9,7 @@ use crate::{
     script::Wallets,
 };
 use alloy_network::{Ethereum, TransactionBuilder};
-use alloy_primitives::{Address, B256, Bytes, U256, keccak256, map::AddressHashSet};
+use alloy_primitives::{Address, B256, Bytes, TxKind, U256, keccak256, map::AddressHashSet};
 use alloy_sol_types::{SolCall, SolInterface, SolValue};
 use evm2::{
     EvmFeatures, Inspector,
@@ -807,6 +807,61 @@ impl EthereumCheatcodes {
         None
     }
 
+    fn apply_broadcast_create(
+        &mut self,
+        interp: &mut Interpreter<'_, '_, FoundryEvmTypes>,
+        message: &mut Message<FoundryEvmTypes>,
+    ) -> Option<MessageResult<FoundryEvmTypes>> {
+        let broadcast = self.broadcast.as_ref()?;
+        if message.depth == 0
+            || usize::from(message.depth - 1) != broadcast.depth
+            || message.caller != broadcast.original_caller
+        {
+            return None;
+        }
+        if message.kind != MessageKind::Create {
+            return Some(Self::result(
+                message,
+                InstrStop::Revert,
+                Error::encode("broadcast CREATE2 is not yet supported in evm2 execution"),
+            ));
+        }
+        if interp.host().feature(EvmFeatures::EIP8037) {
+            return Some(Self::result(
+                message,
+                InstrStop::Revert,
+                Error::encode("broadcast CREATE with EIP-8037 is unsupported in evm2 execution"),
+            ));
+        }
+
+        let origin = broadcast.new_origin;
+        let nonce = interp.host().state_mut().account(&origin, false).map(|a| a.nonce());
+        let nonce = match nonce {
+            Ok(nonce) => nonce,
+            Err(error) => {
+                interp.host().set_error_code(error);
+                return Some(Self::result(message, InstrStop::FatalExternalError, Bytes::new()));
+            }
+        };
+        let transaction = TransactionRequestFor::<EthEvmNetwork>::default()
+            .with_from(origin)
+            .with_kind(TxKind::Create)
+            .with_value(message.value)
+            .with_input(message.input.clone())
+            .with_nonce(nonce)
+            .with_chain_id(interp.host().version().chain_id);
+        self.broadcastable_transactions.push_back(BroadcastableTransaction {
+            rpc: self.config.evm_opts.fork_url.clone(),
+            transaction: TransactionMaybeSigned::new(transaction),
+        });
+        message.caller = origin;
+        message.destination =
+            derive_create_destination(message.kind, &origin, &message.salt, &message.input, nonce);
+        message.call_target = message.destination;
+        interp.host().ext_mut().origin_override = Some(origin);
+        None
+    }
+
     fn start_prank(
         &mut self,
         interp: &mut Interpreter<'_, '_, FoundryEvmTypes>,
@@ -1066,16 +1121,8 @@ impl Inspector<FoundryEvmTypes> for EthereumCheatcodes {
         message: &mut Message<FoundryEvmTypes>,
     ) -> Option<MessageResult<FoundryEvmTypes>> {
         self.observe_revert_depth(message);
-        if let Some(broadcast) = &self.broadcast
-            && message.depth > 0
-            && usize::from(message.depth - 1) == broadcast.depth
-            && message.caller == broadcast.original_caller
-        {
-            return Some(Self::result(
-                message,
-                InstrStop::Revert,
-                Error::encode("broadcast CREATE is not yet supported in evm2 execution"),
-            ));
+        if let Some(result) = self.apply_broadcast_create(interp, message) {
+            return Some(result);
         }
         if message.depth > 0 {
             let depth = usize::from(message.depth - 1);
@@ -1142,6 +1189,16 @@ impl Inspector<FoundryEvmTypes> for EthereumCheatcodes {
         message: &Message<FoundryEvmTypes>,
         result: &mut MessageResult<FoundryEvmTypes>,
     ) {
+        if let Some(broadcast) = &self.broadcast
+            && message.depth > 0
+            && usize::from(message.depth - 1) == broadcast.depth
+            && message.caller == broadcast.new_origin
+        {
+            interp.host().ext_mut().origin_override = Some(broadcast.original_origin);
+            if broadcast.single_call {
+                self.broadcast = None;
+            }
+        }
         self.finish_prank(interp, message);
         self.finish_expected_revert(message, result, true);
     }
