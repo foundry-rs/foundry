@@ -13,7 +13,10 @@ use evm2::{
     },
 };
 use foundry_evm_core::{
-    constants::{CHEATCODE_ADDRESS, CHEATCODE_CONTRACT_HASH, MAGIC_ASSUME, MAGIC_SKIP},
+    constants::{
+        CALLER, CHEATCODE_ADDRESS, CHEATCODE_CONTRACT_HASH, MAGIC_ASSUME, MAGIC_SKIP,
+        TEST_CONTRACT_ADDRESS,
+    },
     ethereum::{FoundryEvmTypes, LocalState},
 };
 use std::{collections::BTreeMap, sync::Arc};
@@ -47,7 +50,9 @@ impl EthereumCheatcodes {
         Self {
             config,
             access_mode,
-            allowed_callers: AddressHashSet::default(),
+            allowed_callers: [CHEATCODE_ADDRESS, TEST_CONTRACT_ADDRESS, CALLER]
+                .into_iter()
+                .collect(),
             pranks: BTreeMap::new(),
             skip_payloads: Vec::new(),
             expected_revert: None,
@@ -768,56 +773,61 @@ impl Inspector<FoundryEvmTypes> for EthereumCheatcodes {
         message: &mut Message<FoundryEvmTypes>,
     ) -> Option<MessageResult<FoundryEvmTypes>> {
         self.observe_revert_depth(message);
-        if message.depth == 0 {
-            return None;
-        }
-        let depth = usize::from(message.depth.saturating_sub(1));
-        let prank = self.pranks.range(..=depth).next_back().map(|(_, prank)| *prank)?;
-        if message.caller != prank.prank_caller {
-            return None;
-        }
-        if depth == prank.depth && interp.host().feature(EvmFeatures::EIP8037) {
-            // The parent opcode already charged state gas for the original destination.
-            return Some(MessageResultExt {
-                stop: InstrStop::Revert,
-                gas: GasTracker::new(message.gas_limit),
-                output: Error::encode(
-                    "prank before CREATE with EIP-8037 is unsupported in evm2 execution",
-                ),
-                ..Default::default()
-            });
-        }
-        if depth == prank.depth {
-            let nonce =
-                interp.host().state_mut().account(&prank.new_caller, false).map(|a| a.nonce());
-            let nonce = match nonce {
-                Ok(nonce) => nonce,
-                Err(error) => {
-                    interp.host().set_error_code(error);
+        if message.depth > 0 {
+            let depth = usize::from(message.depth - 1);
+            if let Some(prank) = self.pranks.range(..=depth).next_back().map(|(_, prank)| *prank)
+                && message.caller == prank.prank_caller
+            {
+                if depth == prank.depth && interp.host().feature(EvmFeatures::EIP8037) {
+                    // The parent opcode already charged state gas for the original destination.
                     return Some(MessageResultExt {
-                        stop: InstrStop::FatalExternalError,
+                        stop: InstrStop::Revert,
                         gas: GasTracker::new(message.gas_limit),
+                        output: Error::encode(
+                            "prank before CREATE with EIP-8037 is unsupported in evm2 execution",
+                        ),
                         ..Default::default()
                     });
                 }
-            };
-            message.caller = prank.new_caller;
-            message.destination = derive_create_destination(
-                message.kind,
-                &message.caller,
-                &message.salt,
-                &message.input,
-                nonce,
-            );
-            message.call_target = message.destination;
+                if depth == prank.depth {
+                    let nonce = interp
+                        .host()
+                        .state_mut()
+                        .account(&prank.new_caller, false)
+                        .map(|a| a.nonce());
+                    let nonce = match nonce {
+                        Ok(nonce) => nonce,
+                        Err(error) => {
+                            interp.host().set_error_code(error);
+                            return Some(MessageResultExt {
+                                stop: InstrStop::FatalExternalError,
+                                gas: GasTracker::new(message.gas_limit),
+                                ..Default::default()
+                            });
+                        }
+                    };
+                    message.caller = prank.new_caller;
+                    message.destination = derive_create_destination(
+                        message.kind,
+                        &message.caller,
+                        &message.salt,
+                        &message.input,
+                        nonce,
+                    );
+                    message.call_target = message.destination;
+                }
+                if let Some(origin) = prank.new_origin {
+                    interp.host().ext_mut().origin_override = Some(origin);
+                }
+                if (depth == prank.depth || prank.new_origin.is_some())
+                    && let Some(applied) = prank.first_time_applied()
+                {
+                    self.pranks.insert(prank.depth, applied);
+                }
+            }
         }
-        if let Some(origin) = prank.new_origin {
-            interp.host().ext_mut().origin_override = Some(origin);
-        }
-        if (depth == prank.depth || prank.new_origin.is_some())
-            && let Some(applied) = prank.first_time_applied()
-        {
-            self.pranks.insert(prank.depth, applied);
+        if message.depth == 0 || self.allowed_callers.contains(&message.caller) {
+            self.allowed_callers.insert(message.destination);
         }
         None
     }

@@ -2,7 +2,7 @@ use super::{fuzz::FuzzRunArgs, watch::WatchArgs};
 use crate::{
     MultiContractRunner, MultiContractRunnerBuilder, brutalizer,
     decode::decode_console_logs,
-    ethereum_runner::EthereumMultiContractRunner,
+    ethereum_runner::{EthereumMultiContractRunner, EthereumRunContext},
     gas_report::GasReport,
     multi_runner::{
         FuzzFailureReplayConfig, FuzzMinimizeConfig, FuzzMinimizeEdgeIndices, FuzzMinimizeMode,
@@ -68,7 +68,7 @@ use foundry_config::{
 use foundry_debugger::{Debugger, DebuggerLayout};
 use foundry_evm::{
     core::{
-        ethereum::{EthereumEnv, LocalState},
+        ethereum::{EthereumEnv, EthereumFork, LocalState},
         evm::{BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor},
     },
     executors::{ExecutorBuilder, ShowmapDomain},
@@ -2163,10 +2163,6 @@ impl TestArgs {
         resolved_fork: Option<&ResolvedFork>,
     ) -> Result<(Libraries, TestOutcome)> {
         eyre::ensure!(
-            resolved_fork.is_none() && evm_opts.fork_url.is_none(),
-            "Ethereum evm2 fork tests are not yet supported"
-        );
-        eyre::ensure!(
             execution.multi_network.all_override_networks.is_empty()
                 && execution.replay_symbolic_artifact.is_none()
                 && !self.debug
@@ -2181,7 +2177,12 @@ impl TestArgs {
             "this Ethereum evm2 Forge workflow is not yet supported"
         );
         let start = Instant::now();
-        let create2_deployer_available = evm_opts.can_use_create2_deployer_resolved(None).await?;
+        let resolved_fork = match resolved_fork {
+            Some(fork) => Some(fork.clone()),
+            None => evm_opts.resolve_fork().await?,
+        };
+        let create2_deployer_available =
+            evm_opts.can_use_create2_deployer_resolved(resolved_fork.as_ref()).await?;
         let prepared = PreparedTestArtifacts::new(
             &config,
             &execution.inline_config,
@@ -2193,18 +2194,37 @@ impl TestArgs {
         )?;
         let libraries = prepared.libraries.clone();
         let known_contracts = prepared.known_contracts.clone();
-        let env = EthereumEnv::local_from_config(&config, &evm_opts)?;
         let verbosity = evm_opts.verbosity;
-        let runner = EthereumMultiContractRunner::new(
-            prepared,
-            config.clone(),
-            execution.inline_config,
-            evm_opts,
-            env,
-            LocalState::default(),
-            execution.coverage,
-        );
-        let mut results = runner.run(filter)?;
+        let mut results = if let Some(resolved_fork) = &resolved_fork {
+            let fork = EthereumFork::open(&config, &evm_opts, resolved_fork).await?;
+            EthereumMultiContractRunner::new(
+                prepared,
+                config.clone(),
+                execution.inline_config,
+                evm_opts,
+                EthereumRunContext {
+                    env: fork.env,
+                    state: fork.state,
+                    access_mode: foundry_cheatcodes::ethereum::CheatcodeAccessMode::Forked,
+                },
+                execution.coverage,
+            )
+            .run(filter)?
+        } else {
+            EthereumMultiContractRunner::new(
+                prepared,
+                config.clone(),
+                execution.inline_config,
+                evm_opts.clone(),
+                EthereumRunContext {
+                    env: EthereumEnv::local_from_config(&config, &evm_opts)?,
+                    state: LocalState::default(),
+                    access_mode: foundry_cheatcodes::ethereum::CheatcodeAccessMode::Local,
+                },
+                execution.coverage,
+            )
+            .run(filter)?
+        };
         if shell::is_json() {
             prepare_results_for_json(&mut results, verbosity, None);
             sh_println!("{}", serde_json::to_string(&results)?)?;

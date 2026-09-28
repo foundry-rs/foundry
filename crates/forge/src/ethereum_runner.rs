@@ -46,21 +46,29 @@ pub(crate) struct EthereumMultiContractRunner<D: Database + Clone = EmptyDB> {
     opts: EvmOpts,
     env: EthereumEnv,
     state: LocalState<D>,
+    access_mode: CheatcodeAccessMode,
     coverage: bool,
+}
+
+/// Execution state and cheatcode policy for one Ethereum test pass.
+pub(crate) struct EthereumRunContext<D: Database + Clone> {
+    pub env: EthereumEnv,
+    pub state: LocalState<D>,
+    pub access_mode: CheatcodeAccessMode,
 }
 
 impl<D: Database + Clone + 'static> EthereumMultiContractRunner<D> {
     /// Creates a runner from Forge's linked artifacts and Ethereum execution state.
-    pub(crate) const fn new(
+    pub(crate) fn new(
         prepared: PreparedTestArtifacts,
         config: Arc<Config>,
         inline_config: Arc<InlineConfig>,
         opts: EvmOpts,
-        env: EthereumEnv,
-        state: LocalState<D>,
+        context: EthereumRunContext<D>,
         coverage: bool,
     ) -> Self {
-        Self { prepared, config, inline_config, opts, env, state, coverage }
+        let EthereumRunContext { env, state, access_mode } = context;
+        Self { prepared, config, inline_config, opts, env, state, access_mode, coverage }
     }
 
     /// Runs matching unit tests, cloning post-setup state for each test.
@@ -89,7 +97,7 @@ impl<D: Database + Clone + 'static> EthereumMultiContractRunner<D> {
                 self.state.clone(),
                 EthereumTestConfig {
                     cheats,
-                    access_mode: CheatcodeAccessMode::Local,
+                    access_mode: self.access_mode,
                     sender: self.opts.sender,
                     initial_balance: self.opts.initial_balance,
                     legacy_assertions: contract_config.legacy_assertions,

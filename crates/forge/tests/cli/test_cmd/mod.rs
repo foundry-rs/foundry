@@ -4185,6 +4185,74 @@ Suite result: ok. 6 passed; 0 failed; 0 skipped; [ELAPSED]
     );
 });
 
+forgetest_async!(ethereum_fork_state, |prj, cmd| {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let target = Address::repeat_byte(0x42);
+    let slot = B256::with_last_byte(1);
+    api.anvil_set_balance(target, U256::from(1337)).await.unwrap();
+    api.anvil_set_storage_at(target, slot.into(), B256::with_last_byte(0xaa)).await.unwrap();
+    api.anvil_mine(Some(U256::ONE), None).await.unwrap();
+    let block = handle.http_provider().get_block_number().await.unwrap();
+
+    prj.add_source(
+        "EthereumForkState.t.sol",
+        &format!(
+            r#"
+pragma solidity ^0.8.20;
+
+interface VmForkState {{
+    function getBlockNumber() external view returns (uint256);
+    function load(address account, bytes32 slot) external view returns (bytes32);
+    function store(address account, bytes32 slot, bytes32 value) external;
+}}
+
+contract ForkChild {{
+    constructor() {{
+        VmForkState vm = VmForkState(address(uint160(uint256(keccak256("hevm cheat code")))));
+        require(vm.getBlockNumber() == {block});
+    }}
+}}
+
+contract EthereumForkStateTest {{
+    VmForkState constant vm = VmForkState(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address constant target = {target};
+    bytes32 constant slot = {slot};
+
+    constructor() {{ require(vm.getBlockNumber() == {block}); }}
+
+    function testAForkReadsAndWritesStorage() public {{
+        require(target.balance == 1337);
+        require(vm.load(target, slot) == bytes32(uint256(0xaa)));
+        vm.store(target, slot, bytes32(uint256(0xbb)));
+        require(vm.load(target, slot) == bytes32(uint256(0xbb)));
+        new ForkChild();
+    }}
+
+    function testBForkStateIsIsolated() public view {{
+        require(target.balance == 1337);
+        require(vm.load(target, slot) == bytes32(uint256(0xaa)));
+    }}
+}}
+"#
+        ),
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--fork-url",
+            &handle.http_endpoint(),
+            "--fork-block-number",
+            &block.to_string(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+});
+
 forgetest_init!(skip_output, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_vm();
