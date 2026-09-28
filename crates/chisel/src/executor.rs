@@ -243,7 +243,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
             let StmtKind::DeclSingle(vid) = last.kind else { return None };
             let var = gcx.hir.variable(vid);
             let init = var.initializer?;
-            let ExprKind::Call(_callee, args, _) = &init.kind else { return None };
+            let ExprKind::Call(_callee, args) = &init.kind else { return None };
             let inner_expr = args.exprs().next()?;
 
             let ty = expr_to_dyn(gcx, inner_expr)?;
@@ -529,7 +529,7 @@ fn should_continue(expr: &Expr<'_>) -> bool {
             UnOpKind::PreInc | UnOpKind::PreDec | UnOpKind::PostInc | UnOpKind::PostDec
         ),
         // Array.pop()
-        ExprKind::Call(callee, _, _) => match &callee.kind {
+        ExprKind::Call(callee, _) => match &callee.kind {
             ExprKind::Member(_, ident) => ident.as_str() == "pop",
             _ => false,
         },
